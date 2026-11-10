@@ -1,0 +1,259 @@
+# Code QA: design 80 - a simpler Calls & Contacts page (branch `calls-simpler`)
+
+Reviewed: `calls-simpler` at db4eae05 against `main` e54fc73d (`git diff e54fc73d...db4eae05`, 71 files): 813c7f88
+(server steps 1-2), 7e93b86b (step 3, the wire, both directories), 76649c70 (the "Tilpasset" row's height) and the
+merge of main (design 79). Read against `docs/design/80-calls-contacts-simpler.md` (revision 2 with its "As built"
+line), `server/CLAUDE.md`, `docs/notes/server/calls-and-contacts.md`, `launcher/CLAUDE.md` and
+`docs/notes/launcher/calls.md`, and the code the diff leans on (`MmsFlow.onRetrieved`, `MmsGate`, `SmsEngine.send` and
+its outbox, `SqliteMessageStore`'s open helper, `sms::sanitize_state`, `save_sms`, `add_family_contact`).
+
+Run here: the server suite, the jstests and the launcher's unit tests once each, `cargo fmt --check`, and 13 targeted
+mutations. No browser pass, no emulator, no clippy.
+
+## Verdict
+
+**Mergeable after M1.** It is a one-line template fix with a test. L1-L4 should go in the same fix round: each is
+small and touches a rule a parent relies on. The other Lows and the Nits can follow.
+
+What holds, checked by reading and by the mutations:
+- **Auth and CSRF.** The one new route (`POST /devices/{id}/calls/own-number/use`) sits in `build_admin_router` beside
+  `/calls/sms`, under the same session middleware and `csrf_guard` layer. The split `/calls/settings`, the per-slot
+  `/calls/sms`, Add Contact and the contact form are the old routes with new fields. Every write is scoped
+  `WHERE device_id = ?`, an unknown phone is a 404, and the server has one family.
+- **D3 can't widen anything by a missing field.** `calls_form::both_ways` turns a pair on only when the two-way switch
+  is present and `*_shown` says it was drawn off. A missing switch under `on` turns both off. The stale-page guard only
+  keeps what is stored. Every outcome is a pair the page can draw (on, off or "Tilpasset"), and every pair can be
+  changed back from Avansert, so no post leaves a state the PWA can't undo. `sms_in` is never stored for an emergency
+  number. Mutations S1 and S2 are killed.
+- **Groups fail closed.** With `groups_shown`, a missing `sms_groups` means off. Without the marker (an older page) the
+  stored value is kept. The column defaults to on (S7 killed).
+- **The emergency menu's rules are untouched.** Only its routes' returns gained `?advanced=1`.
+- **The wire.**
+  - `call_policy.sms_groups` is always sent. It is pinned by the policy snapshot, `PolicyResponseCompatTest` and both
+    `sms_contract.json` copies, which are byte-identical.
+  - An older launcher ignores the key (ignoreUnknownKeys).
+  - An older server drops `own_learned`: `sanitize_state` keeps only known keys.
+  - The new launcher reads an absent key as on, both from the DTO and from stored rules.
+  - The root `CLAUDE.md` contract paragraph matches what `SmsContractTest` and `sms::tests` do.
+  - Migration 0134 is one `ADD COLUMN ... NOT NULL DEFAULT 1`, the next number after 0133.
+- **The launcher's group switch.** It is enforced on every path a group message takes:
+  - an incoming group MMS (`MmsGate.group`, judged at `onRetrieved`, so a deferred fetch is judged by today's rules);
+  - a new send (`SmsEngine.send`, `targets.size > 1`);
+  - a queued group message at the outbox, failed as `refused:groups_off`;
+  - the compose bar (`ComposeState.GROUPS_OFF`).
+
+  Groups are never held, so there is no release path to guard. Existing group threads stay readable and can't be
+  answered. LM1 and LM4 are killed.
+- **The store.** `messages.db` v4 creates `own_learned` both in `onUpgrade` (`oldVersion < 4`, after v2 and v3, so v1,
+  v2 and v3 all reach it) and in `onCreate` (through `onUpgrade(1, 4)`). The fake store keeps the same
+  null-means-delete contract.
+- **The learning rule** is as §4.4 describes. Its sender must be a contact with `sms_in`, the message must have exactly
+  one `To` and no `Cc`, and the `To` must be a full `+` number that isn't a short code, an emergency number, the sender
+  or any contact. A conflict locks learning (LM5 killed). What it learns is "us" for the group rule only: no SMS, call
+  or allow rule reads it.
+
+**Counts: Critical 0, High 0, Medium 1, Low 7, Nit 5.**
+
+## Medium
+
+### M1. A page drawn before the phone claimed `sms_groups_v1` turns group texts off on its next SMS save - confirmed by reading
+
+`templates/device_calls.html:546` posts `groups_shown=1` always, also while the switch below it is `disabled`.
+`handlers/calls_sms.rs:961-969` decides at post time: with the marker, and the phone's newest report claiming the
+capability, it stores `form.contains_key("sms_groups")`.
+
+**What happens:**
+1. Anna's phone runs a launcher before step 3. The parent opens Samtaler og kontakter, so the switch is drawn checked
+   and disabled ("Oppdater Vibb One først"). A disabled checkbox is never posted.
+2. The phone updates (Install Now, or the catalog's self-update) and its next report claims `sms_groups_v1`.
+3. On the same page, the parent turns on "Vis meldingstekst på låseskjermen", or saves an own number. The form posts
+   `groups_shown=1` and no `sms_groups`.
+4. The handler sees the capability and stores `sms_groups = 0`. The phone then drops every group MMS. The parent chose
+   nothing about groups, and only the closed Avansert row says "Gruppemeldinger av".
+
+The window is exactly when a parent is likely to be on this page, right after an update. Without JS, the noscript
+Save does the same.
+
+**Fix:** draw the marker only with an enabled switch: `{% if sms.groups_capable %}<input type="hidden"
+name="groups_shown" value="1">{% endif %}`. Add a test: draw the page without the capability, post the report with
+it, then post the drawn form; `sms_groups` stays on.
+
+## Low
+
+### L1. A learned number is refused as a contact with "Det er telefonens eget nummer" - confirmed by reading
+
+`handlers/calls.rs:2163-2170` with `calls_sms::phone_numbers`, which includes `own_learned.number`; `load_page`'s family
+filter does the same.
+
+**What happens:** §4.4's attack teaches the stranger S as "us". S might also be a real person the parent wants to add,
+for example a classmate who was Bcc'd.
+- Add Contact refuses S with "That's the phone's own number". The server states as fact what is only the phone's
+  guess, and the guess came from a message a contact controls.
+- A parent who believes it taps "Bruk dette nummeret" (one row away) and stores S for good. The parent's number wins
+  over everything, so the attack's gain becomes permanent and is no longer flagged as learned.
+- The refusal also makes the phone's own clearing rule unreachable from the PWA: "a contact with the learned number
+  clears it" (`OwnLearning.current`, decision 4).
+
+The design asks for this refusal (L6), so the gap is in the design's wording, not the build.
+
+**Fix (smallest):** refuse only the stored and SIM-reported numbers. For a learned one, add the contact and let the
+phone clear the learned number, as decision 4 already does. **Or** keep the refusal and word it by source: "Telefonen
+lærte dette nummeret fra en melding fra {contact}. Er det feil, endre det under Avansert."
+
+### L2. A momentary empty SIM list deletes the learned number for good - confirmed by reading
+
+`sms/SmsRuntime.kt:191-196` (`simSet` is `""` for an empty `activeSubscriptionInfoList` or a `SecurityException`),
+`sms/engine/OwnLearning.kt:50` (`state.sims != sims` gives null), `sms/engine/MmsFlow.kt:527-532`
+(`ownLearnedFor` deletes the row when `current` is null).
+
+**What happens:** `ownLearnedFor` runs for every status report (`SmsRuntime` around line 421). If a report runs while
+no subscription is active (the SIM still loading after a boot, a SIM refresh, a modem restart), `""` differs from the
+stored `"1"`. The state is then deleted, not just ignored, so groups are dropped again until a contact sends the next
+one-to-one MMS. An open conflict is erased the same way, which reopens learning. Design §4.4 says nothing more is
+learned "until the parent stores a number or the SIMs change".
+
+**Fix:** treat `""` as unknown: keep the stored state, and neither use it nor learn while the set can't be read.
+Clear only on a non-empty set that differs. Add one `OwnLearningTest` row.
+
+### L3. A stale SMS form deletes a stored own number - confirmed by reading
+
+`templates/device_calls.html:556-575` (a "known" row still posts its hidden field with the stored value, empty when
+nothing is stored) and `calls_sms.rs` `save_sms` (an empty field removes the slot).
+
+**What happens:**
+1. The page shows "Telefonens nummer · +47 900 00 009 · Fra SIM-kortet" with an empty `own_number_1` behind
+   "Endre…".
+2. The parent taps "Bruk dette nummeret", which stores the number outside this form.
+3. The parent comes back to the older document (Back into the bfcache, or a second tab) and turns on the lock text or
+   "Gruppemeldinger". The form posts `own_number_1=` and slot 1 is deleted. The phone then falls back to the live SIM
+   reading, the momentary IMS number M3 meant to pin.
+
+D11 makes the stale page likelier here. Every save in the page's Avansert returns with `?advanced=1`, so a
+`details.section[open]` is shown, and `reconnect.js` refuses its reload-in-place on that page while Avansert stays
+open (also `auto-reload.js` when the page has it).
+
+**Fix:** the same idea as D3's L1. Post `own_number_<n>_shown` with the drawn value, and write a slot only when the
+posted value differs from it. Alternatively, let `shownOpen` ignore `details.section` (a page-level disclosure holding
+nothing typed; `edited(doc)` already guards typed text in reconnect). The first fix is enough on its own.
+
+### L4. "Bruk dette nummeret"'s checks are untested and skip the phone code; a SIM row can offer a number the route refuses - confirmed (mutation S6 survives)
+
+`calls_sms.rs:1100` (`own_number_ok`), `calls_sms.rs:148` (`reported_own` keeps a SIM number by `sender_ok("number")`
+alone, no `+`).
+
+**What happens:**
+- Replacing the filter with a no-op passes every test. Nothing pins that a reported short code, an emergency number
+  or a number without `+` can't be stored by the tap.
+- A SIM that reports `"90000009"` (no `+`) gets the "Fra SIM-kortet" row with "Bruk dette nummeret". The tap is
+  refused and lands on "Telefonen meldte et annet nummer i mellomtiden", which is not what happened.
+- The stored number never goes through `phone::normalize`, unlike `save_sms`. The brief asks that number
+  normalisation go through the existing phone code.
+
+**Fix:** filter `reported_own`'s SIM numbers (and the learned ones) with `own_number_ok` in one place, so a row is
+offered only for a number the tap will store. In the route, require `phone::normalize(n, &cc) == Ok(n)`. Add a test
+with a reported `"113"` and a `"90000009"`.
+
+### L5. Add Contact of an emergency number ignores the two-way texts switch without JS - confirmed by reading
+
+`handlers/calls_form.rs:98-99` (for an emergency number, texts = `(false, on("sms_out"))`), Add Contact's form
+(`templates/device_calls.html:367-414`: the two-way `texts` plus Avansert's `sms_in`/`sms_out`).
+
+**What happens:** the parent types 113 and, without JS, turns off "Kan sende og få meldinger". The post has
+`texts_shown=on`, no `texts`, and Avansert's `sms_out=on`. `resolve` reads only `sms_out` for an emergency number, so
+the kid can text 113, against the switch the parent turned off. With JS, the mirror clears the pair first.
+
+Separately, the refusal redraw uses `resolve(sent, None, false)` (`calls.rs:889`), while the save uses
+`is_emergency(&number)`, so the redraw and the save disagree for such a number.
+
+**Fix:** in `resolve`'s emergency branch, run `both_ways` on `(sms_out, sms_out)` and take `.1`. The edit form's
+emergency row posts no `texts_shown`, so it keeps working. In the redraw, pass `is_emergency` of the sent number.
+
+### L6. The short-number request's Home and Pictures defaults are unpinned - confirmed (mutation S4b survives)
+
+`calls.rs:903` `[false; 6]`. Turning on `show_on_home` and `mms` there passes every test.
+`contact_requests::the_prefill_and_retry_rules` checks only the four call and text switches. The user's decision, as
+built and documented, is "every switch off".
+
+**Fix:** add `("mms", false), ("show_on_home", false)` to that test's loop.
+
+### L7. The learning's sender guards beyond "a contact with `sms_in`" are untested - confirmed (mutation LM3 survives)
+
+`MmsFlow.kt:460-461`. Dropping both `smsMode == MANAGED` and `!judge.isEmergency(m.from)` passes `OwnLearningTest`,
+`MmsEngineTest` and `MessagesModelTest`. `OwnLearningTest` passes `senderAllowed` in as a flag, so only the flow
+computes it.
+
+These are defence in depth: the server never sends `sms_in` for an emergency number, and the flow runs only with the
+role held. They are the guards §4.4 names, though.
+
+**Fix:** add an `MmsEngineTest` row: a contact with `sms_in` that is an emergency number (by the platform's list)
+teaches nothing.
+
+## Nit
+
+- **N1.** `shownOpen` is the same 20 lines in `auto-reload.js`, `reconnect.js` and `pull-refresh.js` (D11 asked for it
+  that way, and each has its jstest). A comment in each naming the other two would keep them in step.
+- **N2.** `save_settings` (`calls.rs:1998`) treats an unknown `section` as the old write-all, which resets the default
+  Message button to SMS. Refuse any value other than `channels` and `button` (400).
+- **N3.** The flag on "Tilpasset" at 390 px: a larger font or a narrower phone only wraps a line, it doesn't break.
+  - `.row-label` has `min-width: 0` and `overflow-wrap: anywhere`, and the value is `flex: none; nowrap` at 0.875rem,
+    so nothing overflows sideways.
+  - At 320 px, "Kan sende og få meldinger" wraps to two lines.
+  - The value is about 27 px wider than the 51 px switch, so the "Tilpasset" label can wrap one width step before the
+    switch row's label does. A save that splits a channel can then shift what is under it by one line. L8 holds at
+    the default size only.
+- **N4.** `?notice=own_number_gone` also covers "no free slot" (`use_own_number`, conflict or learned with every
+  active slot stored). It then says "the phone reported another number meanwhile". Either a second code or neutral
+  words ("Nummeret ble ikke lagret").
+- **N5.** `device.requests.short_choose` says "barnet" / "your child", where the page's other lines name the kid
+  ("{name}"). Pass the name.
+
+## The implementer's decisions
+
+| Decision | Assessment |
+|---|---|
+| (1) `groups_capability` as its own contract key | Right: `capability` stays a string an older test reads, and both sides check the new key. |
+| (2) the Matrix ID field only while used or stored; a post without it keeps the stored ID | Right. An emptied field still removes it. Without JS, choosing Element X and typing the ID takes two saves (the field appears after the first), which is acceptable. |
+| (3) a forged family add of the own number lands on "contact_gone" | Fine for a forged post. Nothing is written. |
+| (4) the learned number cleared by a stored number, a SIM change or a contact with it | Implemented as described. The SIM rule is too eager (L2), and the contact rule is unreachable from the PWA (L1). |
+| (5) "Mangler Matrix-ID" under the field | Fine. |
+| (6) the RCS ⓘ string while managed | Fine. The words are natural Norwegian, and the en string matches. |
+| The short number's defaults | As the user decided: calls and texts off, with the line. Home and Pictures are off too, but unpinned (L6). |
+
+## Mutations
+
+Each mutation was rerun only against its targeted tests, then reverted (`git checkout --`).
+
+| # | Mutation | Tests rerun | Result |
+|---|---|---|---|
+| S1 | `both_ways`: the stale-page guard returns the posted pair instead of the stored one | `calls_form`, `calls_simpler::a_contacts_two_way…` | killed (2) |
+| S2 | `both_ways`: a changed two-way switch always sets both **on** (a missing switch defaulting on) | `calls_form`, `calls_simpler` | killed (3) |
+| S3 | `save_sms`: the group switch written without the capability | `calls_simpler`, `sms` | killed (1) |
+| S4a | the short-number request gets §14's normal defaults | `contact_requests`, `calls_simpler` | killed (1) |
+| S4b | the short-number request with Home and Pictures on | same | **survived** (L6) |
+| S5 | "Legg til fra familien" no longer excludes the phone's own number | `calls_simpler` | killed (1) |
+| S6 | "Bruk dette nummeret" without `own_number_ok` | `calls_simpler`, `sms` | **survived** (L4) |
+| S7 | migration 0134 `DEFAULT 0` | `tests::sms::`, `calls_simpler`, `policy_json` | killed (5) |
+| LM1 | `MmsGate.group` ignores `groups = false` | `OwnLearningTest`, `MmsEngineTest` | killed (2) |
+| LM2 | `OwnLearning.current` ignores a SIM change | `OwnLearningTest`, `MmsEngineTest`, `MessagesModelTest` | killed (2) |
+| LM3 | `MmsFlow`'s `senderAllowed` without the SMS-mode and emergency checks | same | **survived** (L7) |
+| LM4 | the outbox sends a queued group message with groups off | same | killed (1) |
+| LM5 | the conflict no longer locks learning | same | killed (1) |
+
+## Suites
+
+- Server `cargo test`: **1839 passed, 0 failed** (729 s). The two clock-sensitive tests the implementer named passed in
+  this run. `cargo fmt --check` is clean. Clippy was not run.
+- jstests (`node --test jstest/*.test.js`): **332 passed, 0 failed**.
+- Launcher `testDebugUnitTest -PwarningsAsErrors=true`: **2392 tests, 0 failed, 0 skipped** (counted from the result
+  XMLs).
+
+## Not checked
+
+- No browser pass: the 390 px light and dark views, the no-shift claim (L8), iOS Safari and Chrome on Android, and
+  `?advanced=1`/`&more=` across a real reconnect. N3 is from the CSS only.
+- No emulator or device: the store's v3 to v4 upgrade on a real install (read only, with no instrumented test), the
+  SIM-loading timing behind L2, and whether a PIN-locked SIM lists as an active subscription.
+- `cargo clippy`.
+- The mockups (`80-mockups.html`), and the design QA's table point by point (only where the code touched it).
+- Older launcher plus new server, and the reverse, were checked by reading only: the DTO defaults and
+  `sanitize_state`'s known keys.
