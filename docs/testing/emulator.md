@@ -3093,6 +3093,104 @@ way a parent would, with Home's "Lås igjen".
 - **What `handy36` can't show:** how often either race comes on the Jelly Star, whether its build resets the
   features after the packages the same way, and whether OK gets a real phone out of the blocked screen.
 
+## 6ag. A failed picture's retry, and the compose bar with a picture over the keyboard (2026-11-10)
+
+Run on **`jelly36`** (480 x 854, 240 dpi, a 36 px status bar, the gesture bar `[0,818][480,854]`) on 2026-11-10, the
+debug launcher of branch `retry-picture` at its merge of main (main cc1396b4 with §6af, plus the retry and the compose
+bar's layout). The AVD had never been started, so the pass made its phone from nothing and put the AVD's directory
+back after: `-timezone Europe/Oslo`, the launcher made Device Owner as in §4, the server's address
+(`http://10.0.2.2:3111`) and "Enroll with code" in the launcher's Settings, main's server on the host on a copy of
+§6ad's database (managed SMS, Mamma `+4790000001`, Pappa `+4790000002`, the kid's code and the Parent PIN its own),
+the PWA through headless Chromium. Pictures are §6v step 3b's fake MMSC and `MmsDebugReceiver`'s `mmsc_host` and
+`stand_in`; the kid's own picture is "+", "Ta bilde", the shutter and the tick, both at (240,764). Gboard's top with
+the keyboard up is y = 429 (`dumpsys window`, `type=ime frame=[0,429][480,854]`), so the room under the header is
+`thread_body` `[24,126][456,429]`, 303 px; with it down `[24,126][456,818]`.
+
+What the AVD doesn't do by itself, beyond §6ae's list:
+
+- **`adb shell input text` types ASCII only** ("å" throws a `NullPointerException` in `sendText`) and raises the
+  keyboard; a Delete key event with the keyboard down does not raise it, and a Back with it down leaves the thread
+  (the draft and its picture are kept). `input keycombination 113 29` and a Delete empty the field. The dumped *text*
+  of the field can lag while it is typed; the bounds don't - count the lines on a screenshot.
+- **`adb install -r` restarts the launcher:** the PIN lock comes up (a swipe on the glance, then the kid's code) and
+  the debug hook's MMS settings are gone.
+- **A contact's switches from the PWA:** "Bilder i meldinger" is the contact form's `mms`, "Meldinger" its `texts`
+  (the one-way `sms_out` sits in a closed "Avansert"); the phone had the change within 12 s of the save.
+- **`uiautomator dump` to `/data/local/tmp`**, and the dump read before any tap: `/sdcard/ui.xml` can't be removed by
+  the shell on these images, and an old dump answers for a new screen.
+
+### A. "Prøv igjen" on a failed picture
+
+A failed picture is one sent with no stand-in set (`FAILED`, `mms:12`); the retry is the tap on its line with the
+stand-in on. Read from the fake MMSC's kept POSTs (the JPEG inside and its SHA-256 against the `part` row's) and the
+launcher's `messages.db`.
+
+- **A picture with "Se hva jeg fant":** the tap: one POST, with the JPEG (19 067 bytes, the part's hash) and the
+  text, to Mamma. The failed row is gone and one new row is there, `SENT`, its client id `retry:<the failed id>`.
+- **Two taps 80 ms apart** (two `input tap` from one shell; the gap between the injected events was not measured):
+  one POST, one new row.
+- **A picture alone:** one POST with the JPEG and no text; the new row's body is empty.
+- **"Bilder i meldinger" switched off for Mamma between the failure and the tap** (the stand-in on, so a send would
+  have gone): the "+" leaves the compose bar; the tap: no POST, the row still `FAILED` with its picture, the toast
+  "Dette bildet kan ikke sendes". After that refused tap the line says "Ikke sendt" without the offer until the
+  thread is read again (reopened: the offer is back - texts are still allowed; `retryOffered` asks the text gate
+  alone, not changed here). Pictures on again, the tap: the POST with the JPEG and the text, the row `SENT`.
+- **A failed text alone** (airplane mode, `sms:2`; airplane mode off): the tap sends it as before, "Levert · 20:56",
+  nothing at the MMSC.
+- Four POSTs in the whole pass, one for each retry that should send; none for the refused tap.
+
+### B. The compose bar, measured
+
+`uiautomator` bounds in px (1.5 px per dp), Mamma's thread, the text typed with `input text`. The send button is
+`[384,342][456,414]` with the keyboard up and `[384,731][456,803]` with it down in every row; the bar's bottom is 414
+and 803.
+
+| Picture, lines | Keyboard up: field | preview | list | Keyboard down: field | preview | list |
+|---|---|---|---|---|---|---|
+| yes, 1 | `[132,342][348,408]` | 144 x 144 | 48 | `[132,731][348,797]` | 144 x 144 | 437 |
+| yes, 2 | `[132,341][348,408]` | 144 x 144 | 47 | `[132,730][348,797]` | 144 x 144 | 436 |
+| yes, 3 | `[132,309][348,408]` | 144 x 144 | 15 | `[132,698][348,797]` | 144 x 144 | 404 |
+| yes, 4 | `[132,277][348,408]` | 144 x 127 | 0 | `[132,666][348,797]` | 144 x 144 | 372 |
+| yes, 5 | `[132,245][348,408]` | 144 x 95 | 0 | `[132,634][348,797]` | 144 x 144 | 340 |
+| no, 5 | `[132,245][348,408]` | - | 107 | `[132,634][348,797]` | - | 496 |
+
+- **Holds in every row:** the field's bottom (408) and the send button's (414) are above the keyboard's top (429)
+  with one to five lines; the preview is 96 x 96 dp with up to three lines and gives way with four and five (its
+  picture cropped to the row, the cross whole), 1 px lower than computed; with the keyboard down it is 96 x 96 dp
+  throughout.
+- **Main's build, the same phone, a picture and five lines, keyboard up:** the bar `[24,132][456,463]`, the field
+  down to 457 and the send button `[384,391][456,463]` - 34 px under the keyboard, the list without height.
+- **The other panels in `thread_body`**, each opened on this build and on main's (`install -r` of the main checkout's
+  debug APK, built before this branch's layout: no `thread_body` in its resources), the same thread at its end:
+
+  | Panel | Bounds, both builds | Pixels under the status bar |
+  |---|---|---|
+  | The line ("Du kan ikke svare her", Mamma's texts off) | `thread_line` `[24,728][456,800]`, the list to 722 | the same from the line down |
+  | The picture choice | `[24,540][456,806]`, the list to 528 | the same from the panel down (the list had one message more) |
+  | The react panel | `[24,515][456,806]`, the list to 503 | identical |
+  | The delete confirm | `[24,593][456,806]`, the list to 581 | identical |
+  | The emoji picker | `[24,132][456,806]` | identical |
+
+### C. The Settings gate's Parent PIN dialog at this height
+
+`am start` of the launcher's `SettingsActivity`, the phone in Norwegian. The title "Skriv inn koden for å åpne
+innstillingene" is two lines.
+
+- **No code set** (the PIN's hash and salt emptied in the pass's database copy, a PWA save for the sync; put back
+  after): the dialog `[24,67][456,787]`, the reason "Innstillingene er låst. Sett en opplåsingskode for denne
+  telefonen på serveren for å åpne dem." in three lines `[45,605][435,691]`, whole, the keys and OK dimmed, "Avbryt"
+  and OK `[222,709]…[438,781]` whole.
+- **A wrong code** (six digits): the dialog `[24,94][456,759]`, "Feil kode. Prøv igjen." one line
+  `[45,632][435,663]`, whole. Five digits: "Skriv inn minst 6 sifre.", one line in the same place.
+- Not raised here: the longer lines (one try left, the lockout, an app with foreign access).
+
+### What `jelly36` can't show
+
+The Jelly Star's own keyboard and its height (the table is Gboard's 425 px on this image); a carrier's MMSC and a
+real refusal; two taps of a finger rather than two injected ones; a display size or font scale other than the
+default. `handy36`'s rows of the compose bar stay computed (`docs/notes/launcher/calls.md`). Screenshots of the run
+are in the session's `scratchpad/retry-shots/`.
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:

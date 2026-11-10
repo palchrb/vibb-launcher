@@ -284,13 +284,18 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
   the one being typed, and near half the send button. Layout only (`activity_thread.xml`, no code, no strings):
   everything under the header is in one weighted `thread_body`, so the bar is offered exactly the room there is (less
   its margins), and the preview's row is the bar's one weighted child at 96 dp, its picture as high as the row - where
-  the bar is taller than its room the row is lower by exactly what is missing and the field keeps its lines. Computed,
-  keyboard up (no emulator in that round - the pass that follows measures it): at a 36 px status bar the preview is
-  96 x 96 dp as before with up to three lines, 96 x 85 dp with four and 96 x 64 dp with five; on `handy36` 96 x 62 dp
-  with one or two lines, 96 x 40 dp with three, 96 x 18 dp with four (the 40 dp cross cut to the row), none with five.
-  The field and the send button are whole in every case. With the keyboard down the preview is 96 x 96 dp as it was.
-  The other panels under the header (the line, the picture choice, the react panel, the delete confirm) are offered
-  the same room now instead of the screen's height; their place is unchanged.
+  the bar is taller than its room the row is lower by exactly what is missing and the field keeps its lines. **Measured
+  on `jelly36`** (`docs/testing/emulator.md` §6ag; uiautomator bounds, Gboard's top at y = 429 of 854, 303 px of room),
+  keyboard up, a picture attached: the preview is 144 x 144 px (96 x 96 dp) with one, two and three lines of text,
+  144 x 127 px with four and 144 x 95 px with five (1 px less than computed - the field is 66, 67, 99, 131 and 163 px);
+  the list keeps 48, 47, 15, 0 and 0 px; the field's bottom is at y = 408 and the send button's at 414 in all five,
+  whole above the keyboard. Main's build in the five-line case: the field down to y = 457 and the send button to 463,
+  34 px under the keyboard. With the keyboard down the preview is 144 x 144 px with one to five lines, as it was, and
+  without a picture five lines leave the list 107 px with the keyboard up. The other panels under the header (the line,
+  the picture choice, the react panel, the delete confirm, the emoji picker) are offered the same room now instead of
+  the screen's height; their bounds, and their pixels, are main's. Still computed only, for `handy36`'s 136 px status
+  bar: 96 x 62 dp with one or two lines, 96 x 40 dp with three, 96 x 18 dp with four (the 40 dp cross cut to the row),
+  none with five. The Jelly Star's own keyboard height is not known from an emulator.
 - **The engine's thread:** every read and write goes through `SmsRuntime.ask` (the engine thread, the answer posted to
   the main thread) and the screens reload on `SmsRuntime.events` (the engine's live flow). `SmsHome` holds what Home
   and the time-rule screen need (history, the unread total, the role), refreshed after every event, every rule change
@@ -419,7 +424,9 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
   `messages_picture_unusable`; a time rule, SMS off and the rest keep the send's own words). Two taps still send once
   (the engine's repeat rule compares the text and the hashes). Not changed: the link is offered by the text gate alone
   (`retryOffered`), so it also shows on a failed picture whose recipient lost "Bilder i meldinger" - the tap then says
-  the line above; and a failed reaction's retry sends its words as before. `MessagesModelTest`, `MmsEngineTest`.
+  the line above; and a failed reaction's retry sends its words as before. `MessagesModelTest`, `MmsEngineTest`. Seen
+  on `jelly36` against the fake MMSC, each case above by its POST and its rows: `docs/testing/emulator.md` §6ag (where
+  a refused tap also leaves the line at "Ikke sendt", without the offer, until the thread is read again).
 - **Debug-only emulator hook:** `src/debug/.../sms/MmsDebugReceiver` (DUMP-guarded, `checkReleaseHasNoDebugHook`,
   `DebugHookAbsentTest`): `--es push_hex` commits a push as `MmsPushReceiver` does (the AVD's console can't deliver
   one), `--es mmsc_host --es mccmnc` puts a fake MMS server on the list in memory, `--es stand_in <url>` plays the
