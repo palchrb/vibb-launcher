@@ -2705,6 +2705,91 @@ was up - the phone ran on its stored policy):
   down: the first hit's top is at the list's top every time (the row's picture 10 dp under it, as in a list at rest),
   at font scale 1.0 and 1.3; the list itself is still shorter than a row on this AVD.
 
+## 6ac. A thread's "Ny melding" mark (2026-11-10)
+
+Run on `handy36` on its kept data (no `-wipe-data`, `wm density 240`, `install -r`) on 2026-11-10, branch
+`thread-new-mark` (d1fc6b65). No server was up - the phone ran on its stored policy: managed SMS, Mamma
+(`+4790000001`, a thread of 250 messages at the start) and Pappa (`+4790000002`). Measured in `uiautomator dump`
+(1.5 px per dp): the list's frame is `[24,226][456,719]`, the compose bar `[24,725][456,803]`, and "at the end" is the
+last row's bottom at 702. A slow `input swipe` at x=400 scrolls without a fling; the store is read with `run-as ...
+cat databases/messages.db` (`message.is_read`).
+
+- **The mark comes and the rows stay:** scrolled up, one SMS in: `thread_new`, a Button "Ny melding",
+  `[161,647][318,719]` - 104.7 x 48 dp, its centre at x 239.5 of the frame's 240, its bottom the list's bottom, 6 px
+  over the compose bar; `is_read` 0. A second: "Nye meldinger", `[146,647][333,719]`. Every visible row's bounds are
+  the same before and after both. In en (`cmd locale set-app-locales me.vibb.launcher.debug --locales en`, for one
+  thread visit) "New message" `[149,647][331,719]` and "New messages" `[144,647][336,719]`.
+- **The tap, and the end by hand:** a tap on the mark: the last bubble's bottom at 702, the mark gone, unread 0. With
+  Home between (the tile "Meldinger, 2 uleste", the notification posted): the thread comes back scrolled up with
+  "Nye meldinger" and its rows where they were; the tap reads it, the notification is gone and the tile reads
+  "Meldinger". Recents and back (`KEYCODE_APP_SWITCH` twice) keeps the mark and the rows too. A slow drag to the end
+  does what the tap does. A tall last bubble is whole after the tap: a five-line text `[24,454][369,702]`, and a
+  picture from the fake MMSC with its text `[24,347][369,702]` (237 dp) - on the kept data the push's location needs
+  `?to=%2B4790000020`, the phone's own number there; the default `To` is blocked as `group`.
+- **The keyboard, the font scale:** with the keyboard up the frame is `[24,226][456,330]` and the mark
+  `[161,258][318,330]`, over the compose bar at 336; a tap goes to the end, the keyboard stays. Opening and closing
+  the keyboard keeps the mark and the rows. At font scale 1.3 "Ny melding" is `[142,639][338,719]` (130.7 x 53.3 dp)
+  and "Nye meldinger" `[121,639][358,719]`, centred, the rows unmoved.
+- **No mark:** the kid's own send with the mark showing (the thread goes to the end and is read); the delivery report
+  of that send arriving after the kid scrolled up again; Mamma's `'Likte «…»'` for a bubble on screen and for one above
+  it - a reaction is no row of its own (a `message` row with `reaction_to`, never counted unread), the bubble's chip
+  and "Reaksjoner: 👍 fra Mamma" are all that change; an SMS in Pappa's thread while Mamma's shows "Ny melding" (it
+  stays "Ny melding", Pappa's gets its notification); a message followed at the end and the kid scrolling up 3 s, 1 s,
+  0.5 s, 0.2 s and at once after it (five of five: no mark, read).
+- **A fling to the end and straight back up:** with the drag back about 200 ms after the fling began (one `adb
+  shell`, no pause) the end wasn't reached in 8 of 10 - the mark stayed and the message stayed unread - and was in 2:
+  read, no mark. With 0.05-0.5 s between them: 14 of 14 read, no mark. The mark never showed over a read thread in the
+  24 tries, and never stayed away over an unread one.
+- **What is open for a bubble:** "Slette meldingen?" up (`messages_confirm [24,593][456,806]`, the frame ending at
+  581), an SMS in: the mark is `[161,509][318,581]`, over the confirm; the tap closes the confirm, the compose bar is
+  back, the thread at its end and read, and the bubble is still in the store. The same with the reaction panel
+  (`messages_react` from 515, the mark `[161,431][318,503]`): the panel closes, nothing is sent. The emoji picker
+  takes the list and the mark away and Back brings both back, the rows where they were, still unread; the picture
+  choice in the compose bar's place leaves the mark over it (`[161,456][318,528]`).
+- **A delete while the mark shows:** in the long thread a deleted bubble is filled from above - the rows under it keep
+  their place - so the end doesn't come into view and the mark and the unread message stay. In a short one (Pappa's:
+  three in, two of the kid's own, scrolled to its top, one more in) the first delete leaves the new message under the
+  edge and the mark up; the second makes the thread fit, the new message's bottom is at 702, the mark is gone and the
+  thread read.
+- **Another thread opened meanwhile:** every way in from outside the list - the notification, `smsto:` - starts the
+  list under the thread (`CLEAR_TOP`), so the thread is a new activity (another `ActivityRecord` in `dumpsys activity
+  activities`), not `onNewIntent`. Pappa's notification tapped 0.7 s after a fling's lift in Mamma's thread (a fling
+  coasts 1.9 s here), `am start -a android.intent.action.SENDTO -d smsto:...` 20 ms after a fling, and the same 1.2 s
+  into a 4 s `input swipe` still held down: the other thread is at its end, without a mark and read, and its next SMS
+  is followed. `onNewIntent` itself was reached only by two taps on two rows of the Meldinger list 20-30 ms apart
+  (`input tap 240 400 & sleep 0.03; input tap 240 283`; two `START ... ThreadActivity` lines 70-85 ms apart, 5 of 26
+  tries): the second row's thread shows, at its end, no mark, the next SMS followed.
+- **TalkBack** (`settings put secure enabled_accessibility_services
+  com.google.android.marvin.talkback/com.google.android.marvin.talkback.TalkBackService`, `accessibility_enabled 1`;
+  its first start in the kiosk puts "App is not available" over the screen - its tutorial is refused - and Back takes
+  that away). No `uiautomator dump` while it runs - that connection suspends the other accessibility services; its
+  focus is read as the green frame in a screenshot and its speech as the TTS engine's `Synthesis request` lines in
+  logcat (this user build logs no text). A message followed at the end: no request. The mark coming: one request in
+  nb and one in en-US 2.2-2.6 s later; "Ny melding" turning into "Nye meldinger": the same pair. The frame stays where
+  it was when the mark comes. Keyboard focus moved to the mark (the field tapped, `input
+  keycombination SHIFT_LEFT TAB` twice): the frame is on the mark; Enter: the thread is at its end and the frame is on
+  the header's back button, 0.4 s and 3 s after - not on the last bubble and not on the mark that left.
+- **Animations off:** frames taken in the same `adb shell` as the tap (`input tap 240 683; screencap ...`), compared
+  in the mark's rectangle with the settled screen. At `animator_duration_scale` 1 the first frame showed the mark
+  half faded over a list already at its end in 2 of 3 runs; at 0 the first frame was the settled screen in 4 of 4.
+  Coming, a `screencap` takes about a second here: no frame caught the mark mid-fade at either scale.
+- **A press:** held down, the pill is lighter (`#47455B` for `#34324A`) and the pixels at the target's corners and
+  beside the pill are the picture and the bubble under it; let go, it goes to the end.
+- **Found, not fixed:** (1) a drag that begins on the mark scrolls nothing and taps nothing: with the mark showing,
+  `input swipe 240 683 240 400 1500` leaves every row's bounds and the mark as they were, the same drag at x=400
+  scrolls - 105-158 dp of the list's lower edge, where a thumb may well start. (2) Over a received bubble the pill is
+  the bubble's own colour with a 1 dp outline and covers part of its text or picture until the tap. (3) A reaction for
+  a bubble on screen while scrolled up moves the rows over that bubble up by the chip's 18 dp (the list keeps its
+  lower rows; the follow round's behaviour, not the mark's). (4) The Meldinger list's header action reads "Ny
+  melding" too (a new conversation).
+- **What `handy36` can't show:** TalkBack by touch - an injected `input tap` isn't touch exploration here (one tap on
+  the mark with TalkBack on went straight to the end), so the double-tap, the words spoken and where accessibility
+  focus lands without keyboard focus are the phone's to show; a thread switch through `onNewIntent` with the old list
+  coasting or held (no way in keeps the activity; the two-tap way leaves it 0.1 s old); the touch sound (`-no-audio`);
+  a real thumb's fling and return; the keyboard-up view (the list is 104 px, §6ab); the read-only line in the compose
+  bar's place (needs a rule from a server); a portrait picture's bubble (the fake MMSC's is 160 x 120).
+- Screenshots of the run are in the session's `scratchpad/mark-shots/`.
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:

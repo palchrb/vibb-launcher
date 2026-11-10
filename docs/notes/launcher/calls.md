@@ -204,8 +204,8 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
   animator); a 150 ms fade in and out, none with the system's animations off (`ValueAnimator.areAnimatorsEnabled`). No
   sound and no buzz of its own. **TalkBack:** a button, a polite live region touched only when the mark changes (it is
   heard as it comes, and once more if "Ny melding" becomes "Nye meldinger"), its action "gå til den nyeste meldingen";
-  no fade under touch exploration, so the live region's event never finds the mark at alpha 0. Not run on an emulator
-  yet.
+  no fade under touch exploration, so the live region's event never finds the mark at alpha 0. The emulator pass, with
+  what it found and what it could not show (TalkBack by touch among it), is `docs/testing/emulator.md` §6ac.
 - **The compose bar (QA N2):** the draft carries one `clientId`, kept (also across a rotation and, in memory only, while
   the kid looks elsewhere) until the engine accepted that text; two quick taps send the same id and the engine sends
   once. "2 SMS" over the field past one part (`SmsMessage.calculateLength`). No field menu (`NoTextActions`), bubbles
