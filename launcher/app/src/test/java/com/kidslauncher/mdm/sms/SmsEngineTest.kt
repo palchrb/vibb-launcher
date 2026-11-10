@@ -11,7 +11,11 @@ import com.kidslauncher.mdm.sms.engine.HeldState
 import com.kidslauncher.mdm.sms.engine.HoldPolicy
 import com.kidslauncher.mdm.sms.engine.IdSource
 import com.kidslauncher.mdm.sms.engine.IncomingSms
+import com.kidslauncher.mdm.sms.engine.Message
 import com.kidslauncher.mdm.sms.engine.Origin
+import com.kidslauncher.mdm.sms.engine.ReactionCommand
+import com.kidslauncher.mdm.sms.engine.ReactionOp
+import com.kidslauncher.mdm.sms.engine.ReactionRef
 import com.kidslauncher.mdm.sms.engine.Received
 import com.kidslauncher.mdm.sms.engine.Refusal
 import com.kidslauncher.mdm.sms.engine.SendCommand
@@ -47,7 +51,8 @@ class SmsEngineTest {
         override fun ulid(now: Long) = "U%022d".format(++counter)
         override fun hex() = "%032x".format(++counter)
     }
-    private val engine = SmsEngine(store, { now }, { judge() }, radio, ids)
+    private val engine = SmsEngine(store, { now }, { judge() }, radio, ids, emojiList = { EmojiAsset.list })
+    private var timeBlocked = false
 
     private fun rules(contacts: List<RuleContact>, names: List<String> = emptyList()) =
         CallRules(callsEnabled = true, smsEnabled = false, contacts = contacts, callsMode = ChannelMode.MANAGED, smsMode = ChannelMode.MANAGED, smsNames = names)
@@ -55,6 +60,7 @@ class SmsEngineTest {
     private fun judge() = SmsJudge(
         state = rules?.let { CallPolicyState.Managed(it) } ?: CallPolicyState.UnknownFailClosed,
         roleHeld = true,
+        timeBlocked = { timeBlocked },
         platformEmergency = { false },
     )
 
@@ -235,7 +241,7 @@ class SmsEngineTest {
         now += 60_000
         rules = rules(listOf(mamma))
         val shown = engine.judgeHeldForRules()
-        assertEquals(arrived, shown.single().message.at)
+        assertEquals(arrived, (shown.single() as Received.Shown).message.at)
         assertEquals("the stranger goes to the parent", 1, held().size)
         assertTrue(store.messagesHeldForRules().isEmpty())
     }
@@ -258,14 +264,14 @@ class SmsEngineTest {
         rules = rules(listOf(mamma, RuleContact(9, "Annen", "+4790000042", smsIn = true)), names = listOf("+4790000041"))
         assertTrue(engine.releasePass(emptyList()).isEmpty())
         rules = rules(listOf(mamma, RuleContact(9, "Ny", "+4790000041", smsIn = true)))
-        val released = engine.releasePass(emptyList()).single()
+        val released = engine.releasePass(emptyList()).single() as Received.Shown
         assertEquals("fra en fremmed", released.message.body)
         assertEquals(held.at, released.message.at)
         assertEquals(HeldState.RELEASED, store.held(held.id)!!.state)
         assertNull("the body moved out of held", store.held(held.id)!!.body)
         // The name is still held until it is listed.
         rules = rules!!.copy(smsNames = listOf("dnb"))
-        assertEquals("kode", engine.releasePass(emptyList()).single().message.body)
+        assertEquals("kode", (engine.releasePass(emptyList()).single() as Received.Shown).message.body)
     }
 
     @Test
@@ -350,5 +356,135 @@ class SmsEngineTest {
         engine.releasePass(listOf(row.id))
         engine.markReported(posted)
         assertEquals("dropped", engine.unreported(50).single().state)
+    }
+
+    // ---- Design 81: reactions ----
+
+    private val mammaNumber = "+4791234567"
+
+    private fun kidSays(text: String): Message =
+        (engine.send(SendCommand(java.util.UUID.randomUUID().toString(), null, mammaNumber, text, origin = Origin.KID_SCREEN)) as SendResult.Accepted).message
+
+    private fun react(target: Message, emoji: String, op: ReactionOp = ReactionOp.ADD, clientId: String = java.util.UUID.randomUUID().toString()) =
+        engine.send(SendCommand(clientId, target.conversationId, null, "", origin = Origin.KID_SCREEN, reaction = ReactionCommand(target.id, emoji, op, "nb")))
+
+    private fun bubble(id: ConversationId, of: Message) = engine.messages(id, null, 10).single { it.id == of.id }
+
+    @Test
+    fun `an iPhone's reaction attaches to the bubble it names - its own outcome, not unread, nothing moves (D2-D6, D12)`() {
+        val mine = kidSays("Kommer kl 5")
+        val id = mine.conversationId
+        val before = engine.conversation(id)!!
+        now += 1000
+        val attached = engine.receiveSms(sms(mammaNumber, "Likte «Kommer kl 5»")) as Received.Attached
+        assertTrue(attached.notify)
+        assertEquals(ReactionRef(mine.id, "👍", ReactionOp.ADD), attached.reaction.reaction)
+        val after = engine.conversation(id)!!
+        assertEquals(0, after.unread)
+        assertEquals(before.lastSeq, after.lastSeq)
+        // The engine folds (M2): the bubbles only, each with its reactions.
+        assertEquals(listOf(mine.id), engine.messages(id, null, 10).map { it.id })
+        assertEquals(listOf(mammaNumber to "👍"), bubble(id, mine).reactions.map { it.by to it.emoji })
+        // The events carry the reaction row itself (the bridge's m.reaction, L8).
+        assertEquals(attached.reaction.id, engine.events(0).filterIsInstance<EngineEvent.MessageAdded>().last().message.id)
+        assertEquals(mine.id, engine.notifiable(id, 5).single().target!!.id)
+    }
+
+    @Test
+    fun `a replacement and a removal change the badge and the lines, a real message's line stays (D4, D12)`() {
+        val mine = kidSays("Kommer kl 5")
+        val id = mine.conversationId
+        engine.receiveSms(sms(mammaNumber, "Hallo?"))
+        engine.receiveSms(sms(mammaNumber, "Likte «Kommer kl 5»"))
+        assertTrue(engine.receiveSms(sms(mammaNumber, "Satte et hjerte ved «Kommer kl 5»")) is Received.Attached)
+        assertEquals(listOf("❤️"), bubble(id, mine).reactions.map { it.emoji })
+        assertEquals(listOf("Hallo?", "Satte et hjerte ved «Kommer kl 5»"), engine.notifiable(id, 5).map { it.message.body })
+        val removed = engine.receiveSms(sms(mammaNumber, "Fjernet et hjerte fra «Kommer kl 5»")) as Received.Attached
+        assertFalse("a removal never notifies", removed.notify)
+        assertTrue(bubble(id, mine).reactions.isEmpty())
+        assertEquals(listOf("Hallo?"), engine.notifiable(id, 5).map { it.message.body })
+        assertEquals(1, engine.conversation(id)!!.unread)
+        // With nothing left to remove it is a message (D4).
+        assertTrue(engine.receiveSms(sms(mammaNumber, "Fjernet et hjerte fra «Kommer kl 5»")) is Received.Shown)
+    }
+
+    @Test
+    fun `reading the thread marks a reaction that came later read too`() {
+        val mine = kidSays("Ok")
+        val id = mine.conversationId
+        engine.receiveSms(sms(mammaNumber, "Hei"))
+        engine.markRead(id, engine.conversation(id)!!.lastSeq, Origin.KID_SCREEN)
+        engine.receiveSms(sms(mammaNumber, "Likte «Ok»"))
+        assertEquals(0, engine.conversation(id)!!.unread)
+        assertEquals(1, engine.notifiable(id, 5).size)
+        // The thread marks up to its newest bubble, older than the reaction: the reaction on it goes read with it.
+        engine.markRead(id, engine.conversation(id)!!.lastSeq, Origin.KID_SCREEN)
+        assertTrue(engine.notifiable(id, 5).isEmpty())
+    }
+
+    @Test
+    fun `a sentence naming no bubble, and a reaction the parent released, stay text (N3, D10)`() {
+        val mine = kidSays("Ok")
+        val id = mine.conversationId
+        assertTrue(engine.receiveSms(sms(mammaNumber, "Likte «filmen»")) is Received.Shown)
+        // Mamma taken out of the phone book: her reaction is held; let in again, it shows as the text it is.
+        rules = rules(listOf(trener, ambulanse))
+        assertTrue(engine.receiveSms(sms(mammaNumber, "Likte «Ok»")) is Received.HeldForParent)
+        rules = rules(listOf(mamma, trener, ambulanse))
+        assertEquals("Likte «Ok»", (engine.releasePass(emptyList()).single() as Received.Shown).message.body)
+        assertTrue(bubble(id, mine).reactions.isEmpty())
+    }
+
+    @Test
+    fun `the kid's reaction goes as Apple's words through the outbox - pending, then sent, a failed change drops out (D4, D8)`() {
+        val hei = (engine.receiveSms(sms(mammaNumber, "Hei")) as Received.Shown).message
+        val id = hei.conversationId
+        val like = react(hei, "👍") as SendResult.Accepted
+        assertEquals("Likte «Hei»", like.message.body)
+        assertEquals(listOf<String?>(null), bubble(id, hei).reactions.map { it.by })
+        assertTrue(bubble(id, hei).reactions.single().pending)
+        engine.drainOutbox()
+        assertEquals(mammaNumber to "Likte «Hei»", sent.last())
+        engine.onSent(like.message.id.value, 0, 1, true, 0)
+        assertFalse(bubble(id, hei).reactions.single().pending)
+        val change = react(hei, "🎉") as SendResult.Accepted
+        assertEquals("Reagerte med 🎉 på «Hei»", change.message.body)
+        engine.drainOutbox()
+        engine.onSent(change.message.id.value, 0, 1, false, 1)
+        assertEquals(listOf("👍"), bubble(id, hei).reactions.map { it.emoji })
+        // No bubble of its own: the thread and the list's last line see only "Hei".
+        assertEquals(listOf(hei.id), engine.messages(id, null, 10).map { it.id })
+        assertEquals(hei.seq, engine.conversation(id)!!.lastSeq)
+    }
+
+    @Test
+    fun `the gate refuses a reaction as it refuses a text, and a repeated clientId is the same reaction (L5)`() {
+        val hei = (engine.receiveSms(sms(mammaNumber, "Hei")) as Received.Shown).message
+        val mine = kidSays("Ok")
+        timeBlocked = true
+        assertEquals(SendResult.Refused(Refusal.TIME_RULE), react(hei, "👍"))
+        timeBlocked = false
+        assertEquals("the kid's own bubble", SendResult.Refused(Refusal.NOT_ALLOWED), react(mine, "👍"))
+        assertEquals("not a listed emoji", SendResult.Refused(Refusal.NOT_ALLOWED), react(hei, "hei"))
+        assertEquals("nothing to remove", SendResult.Refused(Refusal.NOT_ALLOWED), react(hei, "👍", ReactionOp.REMOVE))
+        val first = react(hei, "👍", clientId = "c1") as SendResult.Accepted
+        assertEquals(first.message.id, (react(hei, "👍", clientId = "c1") as SendResult.Accepted).message.id)
+        assertEquals(SendResult.Refused(Refusal.DUPLICATE_CLIENT_ID), react(hei, "❤️", clientId = "c1"))
+        assertEquals(1, store.reactions(listOf(hei.id.value)).size)
+    }
+
+    @Test
+    fun `Fjern reaksjonene takes only others' reactions, a deleted bubble takes all of them, each told (D5, L8)`() {
+        val hei = (engine.receiveSms(sms(mammaNumber, "Hei")) as Received.Shown).message
+        val id = hei.conversationId
+        val mammas = engine.receiveSms(sms(mammaNumber, "Likte «Hei»")) as Received.Attached
+        val kids = react(hei, "😂") as SendResult.Accepted
+        engine.removeReactions(hei.id, Origin.KID_SCREEN)
+        assertEquals(listOf<String?>(null), bubble(id, hei).reactions.map { it.by })
+        assertTrue(engine.events(0).filterIsInstance<EngineEvent.MessageDeleted>().any { it.id == mammas.reaction.id })
+        engine.delete(hei.id, Origin.KID_SCREEN)
+        val deleted = engine.events(0).filterIsInstance<EngineEvent.MessageDeleted>().map { it.id }
+        assertTrue(deleted.containsAll(listOf(hei.id, kids.message.id)))
+        assertTrue(store.reactions(listOf(hei.id.value)).isEmpty())
     }
 }

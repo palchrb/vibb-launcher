@@ -51,6 +51,12 @@ data class MessageRow(
     val sendingAt: Long? = null,
     /** An MMS (step 3b): IN, its fetch is in the `mms` table; OUT, it goes as an m-send-req (a picture, or a group). */
     val mms: Boolean = false,
+    /** Design 81 D5, on a reaction row only: the bubble it names (its id), its emoji (fully-qualified), its key
+     * ([EmojiList.key]) and whether it adds or removes. */
+    val reactionTo: String? = null,
+    val reactionEmoji: String? = null,
+    val reactionKey: String? = null,
+    val reactionOp: ReactionOp? = null,
 ) {
     /** The seam's message, with its [parts] from the `part` table (empty for SMS). */
     fun toMessage(parts: List<Part> = emptyList()): Message = Message(
@@ -69,6 +75,7 @@ data class MessageRow(
         read = read,
         clientId = clientId,
         origin = origin,
+        reaction = reactionTo?.let { ReactionRef(MessageId(it), reactionEmoji.orEmpty(), reactionOp ?: ReactionOp.ADD) },
     )
 }
 
@@ -226,13 +233,21 @@ interface MessageStore {
     /** The message with its parts and its `mms` row. */
     fun deleteMessageRow(id: String)
 
-    /** Shown messages of a conversation with `seq < beforeSeq` (all when `null`), newest first. */
+    /** Shown messages of a conversation with `seq < beforeSeq` (all when `null`), newest first - the bubbles: reaction
+     * rows are left out (design 81 M2), so they never shrink a page, a window or the last message. */
     fun messages(conversationId: String, beforeSeq: Long?, limit: Int): List<MessageRow>
+
+    /** Design 81 D4: the reaction rows naming any of [targetIds], oldest first. */
+    fun reactions(targetIds: Collection<String>): List<MessageRow>
+
+    /** Design 81 D12: a conversation's unread incoming reaction adds, newest first, at most [limit]. */
+    fun unreadReactions(conversationId: String, limit: Int): List<MessageRow>
     fun messagesHeldForRules(): List<MessageRow>
     fun messagesInDelivery(states: Set<Delivery>): List<MessageRow>
 
     /** Marks a conversation's shown IN messages up to [upToSeq] read, in one statement (QA L7: no walk over a whole
-     * conversation inside a transaction the receive path may wait for). Returns how many changed. */
+     * conversation inside a transaction the receive path may wait for) - and the reactions on those bubbles, which may
+     * have come later (design 81 D5). Returns how many changed. */
     fun markReadUpTo(conversationId: String, upToSeq: Long): Int
 
     /** QA L6: an SMS the platform delivered again (its raw row survived our commit) is known by [key] for a day. */
@@ -240,10 +255,10 @@ interface MessageStore {
     fun rememberReceived(key: String, at: Long)
     fun pruneReceived(before: Long)
 
-    /** Shown IN messages of a conversation not read yet. */
+    /** Shown IN messages of a conversation not read yet (reactions never count, design 81 D6). */
     fun unread(conversationId: String): Int
 
-    /** The newest shown message of a conversation. */
+    /** The newest shown message of a conversation (a bubble, never a reaction). */
     fun lastMessage(conversationId: String): MessageRow?
 
     fun insertEvent(row: EventRow)

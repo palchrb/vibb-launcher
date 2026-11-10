@@ -24,6 +24,7 @@ import com.kidslauncher.mdm.sms.engine.PartFiles
 import com.kidslauncher.mdm.sms.engine.PartState
 import com.kidslauncher.mdm.sms.engine.PendingPushRow
 import com.kidslauncher.mdm.sms.engine.PushOutcome
+import com.kidslauncher.mdm.sms.engine.Received
 import com.kidslauncher.mdm.sms.engine.Refusal
 import com.kidslauncher.mdm.sms.engine.RetrievedMms
 import com.kidslauncher.mdm.sms.engine.RetrievedPart
@@ -183,7 +184,7 @@ class MmsEngineTest {
         assertTrue(mms.onDownloaded(id))
         assertEquals(listOf(id), mms.parseJobs().map { it.messageId })
         assertTrue(mms.parseJobs().single().pictures)
-        val told = mms.onRetrieved(id, retrieved())
+        val told = mms.onRetrieved(id, retrieved()) as Received.Shown?
         assertNotNull(told)
         val message = engine.messages(ConversationId(told!!.conversation.id), null, 10).single()
         assertEquals("Se her!", message.body)
@@ -386,7 +387,7 @@ class MmsEngineTest {
         val group = (arrive() as PushOutcome.Shown).shown.message.id.value
         val oneToOne = store.message(group)!!.conversationId
         mms.onDownloaded(group)
-        val told = mms.onRetrieved(group, retrieved(to = listOf(kid, bestemor.number)))!!
+        val told = mms.onRetrieved(group, retrieved(to = listOf(kid, bestemor.number))) as Received.Shown
         assertEquals(listOf(mamma.number, bestemor.number), told.conversation.participants.map { it.address })
         assertTrue(told.conversation.id != oneToOne)
         assertEquals(told.conversation.id, store.message(group)!!.conversationId)
@@ -527,7 +528,7 @@ class MmsEngineTest {
     fun `a group's reply goes to every stored participant as one MMS (D12)`() {
         val group = (arrive() as PushOutcome.Shown).shown.message.id.value
         mms.onDownloaded(group)
-        val conversation = mms.onRetrieved(group, retrieved(to = listOf(kid, bestemor.number)))!!.conversation
+        val conversation = (mms.onRetrieved(group, retrieved(to = listOf(kid, bestemor.number))) as Received.Shown).conversation
         val reply = engine.send(SendCommand("g1", ConversationId(conversation.id), null, "Ja!", origin = Origin.KID_SCREEN)) as SendResult.Accepted
         assertNull(reply.message.sender)
         engine.drainOutbox()
@@ -692,13 +693,13 @@ class MmsEngineTest {
         mms.drainDownloads()
         mms.onDownloaded(id)
         val oneToOne = store.message(id)!!.conversationId
-        val arrived = mms.onRetrieved(id, retrieved(to = listOf(kid, bestemor.number)))!!
+        val arrived = mms.onRetrieved(id, retrieved(to = listOf(kid, bestemor.number))) as Received.Shown
         assertTrue(arrived.again)
         assertEquals(oneToOne, arrived.movedFrom)
         // A fresh one is told loudly, once, and has moved nowhere.
         val fresh = (arrive() as PushOutcome.Shown).shown.message.id.value
         mms.onDownloaded(fresh)
-        val first = mms.onRetrieved(fresh, retrieved())!!
+        val first = mms.onRetrieved(fresh, retrieved()) as Received.Shown
         assertFalse(first.again)
         assertNull(first.movedFrom)
     }
@@ -735,7 +736,7 @@ class MmsEngineTest {
     fun `deleting a conversation deletes its pictures' files (D18)`() {
         val id = (arrive() as PushOutcome.Shown).shown.message.id.value
         mms.onDownloaded(id)
-        val shown = mms.onRetrieved(id, retrieved())!!
+        val shown = mms.onRetrieved(id, retrieved()) as Received.Shown
         assertEquals(1, files.stored.size)
         engine.deleteConversation(ConversationId(shown.conversation.id), Origin.KID_SCREEN)
         assertTrue(files.stored.isEmpty())
@@ -801,7 +802,7 @@ class MmsEngineTest {
     fun `group texts off - a group of contacts is blocked, a one-to-one MMS isn't, and a group reply is refused`() {
         val group = (arrive() as PushOutcome.Shown).shown.message.id.value
         mms.onDownloaded(group)
-        val conversation = mms.onRetrieved(group, retrieved(to = listOf(kid, bestemor.number)))!!.conversation
+        val conversation = (mms.onRetrieved(group, retrieved(to = listOf(kid, bestemor.number))) as Received.Shown).conversation
         val queued = engine.send(SendCommand("q", ConversationId(conversation.id), null, "Ja", origin = Origin.KID_SCREEN)) as SendResult.Accepted
         groups = false
         // The queued group reply isn't sent; a new one is refused.
@@ -867,5 +868,31 @@ class MmsEngineTest {
         // A contact added with the learned number clears it.
         rules = rules()!!.copy(contacts = rules!!.contacts + RuleContact(9, "Meg", kid))
         assertNull(mms.ownLearned())
+    }
+
+    @Test
+    fun `a group MMS of one text naming a bubble attaches when its text arrives, a picture with that text stays a message (design 81 D9, H1)`() {
+        val first = (arrive() as PushOutcome.Shown).shown.message.id.value
+        mms.onDownloaded(first)
+        val group = (mms.onRetrieved(first, retrieved(to = listOf(kid, bestemor.number))) as Received.Shown).conversation
+        val reaction = (arrive() as PushOutcome.Shown).shown.message.id.value
+        mms.onDownloaded(reaction)
+        val attached = mms.onRetrieved(reaction, retrieved(to = listOf(kid, bestemor.number), texts = listOf("Likte «Se her!»"), parts = emptyList()))
+        attached as Received.Attached
+        assertEquals(group.id, attached.conversation.id)
+        assertEquals(first, attached.reaction.reaction!!.target.value)
+        assertTrue(attached.notify)
+        assertEquals(listOf(mamma.number), engine.messages(ConversationId(group.id), null, 10).single().reactions.map { it.by })
+        val picture = (arrive() as PushOutcome.Shown).shown.message.id.value
+        mms.onDownloaded(picture)
+        assertTrue(mms.onRetrieved(picture, retrieved(to = listOf(kid, bestemor.number), texts = listOf("Likte «Se her!»"))) is Received.Shown)
+    }
+
+    @Test
+    fun `an MMS reaction never names a bubble newer than its own push (design 81 L1)`() {
+        val waiting = (arrive() as PushOutcome.Shown).shown
+        engine.send(SendCommand("ok", ConversationId(waiting.conversation.id), null, "Ok", origin = Origin.KID_SCREEN))
+        mms.onDownloaded(waiting.message.id.value)
+        assertTrue(mms.onRetrieved(waiting.message.id.value, retrieved(texts = listOf("Likte «Ok»"), parts = emptyList())) is Received.Shown)
     }
 }

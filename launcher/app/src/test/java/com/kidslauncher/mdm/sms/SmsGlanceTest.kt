@@ -239,13 +239,13 @@ class SmsGlanceTest {
     fun `after a group move the one-to-one notification keeps what is still unread`() {
         val first = receive("+4791234567", "Hei") as Received.Shown
         val id = ConversationId(first.conversation.id)
-        val left = smsNotifiedMessages(engine.messages(id, null, 10), 5)
+        val left = engine.notifiable(id, 5).map { it.message }
         assertEquals(listOf("Hei"), left.map { it.body })
         engine.markRead(id, first.message.seq, Origin.KID_SCREEN)
-        assertTrue("nothing unread: the notification goes", smsNotifiedMessages(engine.messages(id, null, 10), 5).isEmpty())
+        assertTrue("nothing unread: the notification goes", engine.notifiable(id, 5).map { it.message }.isEmpty())
         // Oldest first, at most five.
         repeat(7) { receive("+4791234567", "m$it") }
-        assertEquals((2..6).map { "m$it" }, smsNotifiedMessages(engine.messages(id, null, 10), 5).map { it.body })
+        assertEquals((2..6).map { "m$it" }, engine.notifiable(id, 5).map { it.message }.map { it.body })
     }
 
     /** The one source check left: the wake's one trigger is our notification's own post - after it, never in "not

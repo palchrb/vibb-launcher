@@ -25,6 +25,7 @@ import com.kidslauncher.mdm.sms.engine.Part
 import com.kidslauncher.mdm.sms.engine.PartState
 import com.kidslauncher.mdm.sms.engine.Participant
 import com.kidslauncher.mdm.sms.engine.PendingPushRow
+import com.kidslauncher.mdm.sms.engine.ReactionOp
 import com.kidslauncher.mdm.sms.engine.SenderClass
 import com.kidslauncher.mdm.sms.engine.SenderKind
 
@@ -151,10 +152,23 @@ class SqliteMessageStore(context: Context) : MessageStore {
     }
 
     override fun messages(conversationId: String, beforeSeq: Long?, limit: Int): List<MessageRow> {
-        val where = "conversation_id = ? AND verdict = 'SHOWN'" + if (beforeSeq != null) " AND seq < ?" else ""
+        val where = "conversation_id = ? AND verdict = 'SHOWN' AND reaction_to IS NULL" + if (beforeSeq != null) " AND seq < ?" else ""
         val args = listOfNotNull(conversationId, beforeSeq?.toString()).toTypedArray()
         return messageList(where, args, "seq DESC", limit.takeIf { it < Int.MAX_VALUE }?.toString())
     }
+
+    override fun reactions(targetIds: Collection<String>): List<MessageRow> =
+        // In chunks well under SQLite's bound on parameters (a thread's pages can hold more bubbles than one takes).
+        targetIds.distinct().chunked(REACTION_CHUNK).flatMap { chunk ->
+            val marks = chunk.joinToString(",") { "?" }
+            messageList("reaction_to IN ($marks) AND verdict = 'SHOWN'", chunk.toTypedArray(), "seq", null)
+        }.sortedBy { it.seq }
+
+    override fun unreadReactions(conversationId: String, limit: Int): List<MessageRow> =
+        messageList(
+            "conversation_id = ? AND verdict = 'SHOWN' AND direction = 'IN' AND is_read = 0 AND reaction_to IS NOT NULL AND reaction_op = ?",
+            arrayOf(conversationId, ReactionOp.ADD.name), "seq DESC", limit.toString(),
+        )
 
     override fun messagesHeldForRules(): List<MessageRow> = messageList("verdict = 'HELD_RULES'", emptyArray(), "at", null)
 
@@ -166,7 +180,7 @@ class SqliteMessageStore(context: Context) : MessageStore {
 
     override fun unread(conversationId: String): Int =
         db.rawQuery(
-            "SELECT COUNT(*) FROM message WHERE conversation_id = ? AND verdict = 'SHOWN' AND direction = 'IN' AND is_read = 0",
+            "SELECT COUNT(*) FROM message WHERE conversation_id = ? AND verdict = 'SHOWN' AND direction = 'IN' AND is_read = 0 AND reaction_to IS NULL",
             arrayOf(conversationId),
         ).use { it.moveToFirst(); it.getInt(0) }
 
@@ -175,8 +189,9 @@ class SqliteMessageStore(context: Context) : MessageStore {
     override fun markReadUpTo(conversationId: String, upToSeq: Long): Int =
         db.update(
             "message", ContentValues().apply { put("is_read", 1) },
-            "conversation_id = ? AND verdict = 'SHOWN' AND direction = 'IN' AND is_read = 0 AND seq <= ?",
-            arrayOf(conversationId, upToSeq.toString()),
+            "conversation_id = ? AND verdict = 'SHOWN' AND direction = 'IN' AND is_read = 0 AND (seq <= ? OR reaction_to IN " +
+                "(SELECT id FROM message WHERE conversation_id = ? AND seq <= ?))",
+            arrayOf(conversationId, upToSeq.toString(), conversationId, upToSeq.toString()),
         )
 
     override fun receivedBefore(key: String): Boolean =
@@ -215,6 +230,10 @@ class SqliteMessageStore(context: Context) : MessageStore {
         put("parts_sent", row.partsSent)
         put("sending_at", row.sendingAt)
         put("is_mms", if (row.mms) 1 else 0)
+        put("reaction_to", row.reactionTo)
+        put("reaction_emoji", row.reactionEmoji)
+        put("reaction_key", row.reactionKey)
+        put("reaction_op", row.reactionOp?.name)
     }
 
     private fun messageOf(c: Cursor) = MessageRow(
@@ -239,6 +258,10 @@ class SqliteMessageStore(context: Context) : MessageStore {
         partsSent = c.long("parts_sent"),
         sendingAt = c.longOrNull("sending_at"),
         mms = c.long("is_mms") != 0L,
+        reactionTo = c.str("reaction_to"),
+        reactionEmoji = c.str("reaction_emoji"),
+        reactionKey = c.str("reaction_key"),
+        reactionOp = c.str("reaction_op")?.let { runCatching { ReactionOp.valueOf(it) }.getOrNull() },
     )
 
     // ---- event ----
@@ -543,23 +566,35 @@ class SqliteMessageStore(context: Context) : MessageStore {
             onUpgrade(db, 1, DB_VERSION)
         }
 
-        /** Each version adds its own steps, never drops the history. */
+        /** Each version adds its own steps, never drops the history ([STEPS]: version n's at index n - 2). */
         override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-            if (oldVersion < 2) for (statement in VERSION_2) db.execSQL(statement)
-            if (oldVersion < 3) for (statement in VERSION_3) db.execSQL(statement)
-            if (oldVersion < 4) for (statement in VERSION_4) db.execSQL(statement)
+            STEPS.forEachIndexed { i, step -> if (oldVersion < i + 2) for (statement in step) db.execSQL(statement) }
         }
     }
 
     companion object {
         private const val LOG_TAG = "SmsStore"
         const val DB_NAME = "messages.db"
-        private const val DB_VERSION = 4
+        /** Version 1 is [SCHEMA]; each later one is a list in [STEPS] (design 81 L7: `SqliteStoreVersionTest` pins them,
+         * append only). A debug build of a lower version can't open a higher one: there is no downgrade. */
+        internal const val DB_VERSION = 5
+
+        /** Design 81 D5: reactions - a reaction row links the bubble it names; the reads filter on it. */
+        private val VERSION_5 = listOf(
+            "ALTER TABLE message ADD COLUMN reaction_to TEXT",
+            "ALTER TABLE message ADD COLUMN reaction_emoji TEXT",
+            "ALTER TABLE message ADD COLUMN reaction_key TEXT",
+            "ALTER TABLE message ADD COLUMN reaction_op TEXT",
+            "CREATE INDEX message_reaction ON message (reaction_to)",
+        )
 
         /** Design 80 §4.4: the own number learned from a message, one row. */
         private val VERSION_4 = listOf(
             "CREATE TABLE own_learned (id INTEGER PRIMARY KEY CHECK (id = 1), json TEXT NOT NULL)",
         )
+
+        /** At most this many ids in one `IN (...)`. */
+        private const val REACTION_CHUNK = 500
 
         /** Step 3b's code QA fix round (L2): whether an MMS was fetched deferred. Its own step (verification N-V1), so a
          * development install of the first step 3b build, already at version 2, gains it too. */
@@ -581,7 +616,7 @@ class SqliteMessageStore(context: Context) : MessageStore {
         )
 
         /** §6.6's tables. */
-        private val SCHEMA = listOf(
+        internal val SCHEMA = listOf(
             "CREATE TABLE engine_state (key TEXT PRIMARY KEY, value INTEGER NOT NULL)",
             "INSERT INTO engine_state (key, value) VALUES ('seq', 0)",
             "CREATE TABLE counter (key TEXT PRIMARY KEY, value INTEGER NOT NULL)",
@@ -609,6 +644,9 @@ class SqliteMessageStore(context: Context) : MessageStore {
             // QA L6: the incoming SMS of the last day by their identity (a hash, never the text).
             "CREATE TABLE received_key (key TEXT PRIMARY KEY, at INTEGER NOT NULL)",
         )
+
+        /** Versions 2, 3, ... in order (declared after them: a companion's values are made top to bottom). */
+        internal val STEPS = listOf(VERSION_2, VERSION_3, VERSION_4, VERSION_5)
     }
 }
 

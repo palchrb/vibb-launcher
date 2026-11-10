@@ -83,7 +83,7 @@ object MmsRuntime {
     private fun pass(app: Context) {
         pushes(app)
         val told = SmsRuntime.call(app) { it.mms.drainDownloads() }.orEmpty()
-        told.forEach { SmsRuntime.notifyShown(app, it) }
+        told.forEach { SmsRuntime.notifyReceived(app, it) }
         parses(app)
     }
 
@@ -106,7 +106,7 @@ object MmsRuntime {
             }
             if (outcome == null) continue
             when (outcome) {
-                is PushOutcome.Shown -> if (!outcome.fetch) SmsRuntime.notifyShown(app, outcome.shown)
+                is PushOutcome.Shown -> if (!outcome.fetch) SmsRuntime.notifyReceived(app, outcome.shown)
                 is PushOutcome.Held, is PushOutcome.Blocked -> SmsRuntime.requestHeldSyncSoon(app)
                 PushOutcome.Waiting, PushOutcome.Duplicate -> Unit
             }
@@ -123,7 +123,7 @@ object MmsRuntime {
         val files = files(app)
         for (job in jobs) {
             val (go, givenUp) = SmsRuntime.call(app) { it.mms.beginParse(job.messageId) } ?: (false to null)
-            givenUp?.let { SmsRuntime.notifyShown(app, it) }
+            givenUp?.let { SmsRuntime.notifyReceived(app, it) }
             if (!go) {
                 if (SmsRuntime.call(app) { it.mms.awaitsParse(job.messageId) } == false) MmsFileProvider.deleteDownload(app, job.messageId)
                 continue
@@ -131,11 +131,11 @@ object MmsRuntime {
             val file = File(File(File(app.noBackupFilesDir, "mms"), "in"), job.messageId)
             val bytes = file.takeIf { it.isFile && it.length() <= job.maxBytes }?.readBytes()
             if (bytes == null) {
-                SmsRuntime.call(app) { it.mms.onParseFailed(job.messageId) }?.let { SmsRuntime.notifyShown(app, it) }
+                SmsRuntime.call(app) { it.mms.onParseFailed(job.messageId) }?.let { SmsRuntime.notifyReceived(app, it) }
                 MmsFileProvider.deleteDownload(app, job.messageId)
                 continue
             }
-            val told: Received.Shown? = when (val answer = MmsParser.parseRetrieve(app, bytes, job.maxBytes, job.pictures)) {
+            val told: Received? = when (val answer = MmsParser.parseRetrieve(app, bytes, job.maxBytes, job.pictures)) {
                 is MmsParser.Answer.Ok -> {
                     val content = retrieved(answer.value, files)
                     SmsRuntime.call(app) { it.mms.onRetrieved(job.messageId, content) }
@@ -149,7 +149,7 @@ object MmsRuntime {
                 }
             }
             if (SmsRuntime.call(app) { it.mms.awaitsParse(job.messageId) } == false) MmsFileProvider.deleteDownload(app, job.messageId)
-            told?.let { SmsRuntime.notifyShown(app, it) }
+            told?.let { SmsRuntime.notifyReceived(app, it) }
         }
     }
 
@@ -196,7 +196,7 @@ object MmsRuntime {
         if (MmsFileProvider.overCap(app, messageId)) {
             // Code QA L5: past our byte cap - too large, final; never fetched again (whatever the platform answered).
             MmsFileProvider.deleteDownload(app, messageId)
-            SmsRuntime.call(app) { it.mms.onDownloadTooLarge(messageId) }?.let { SmsRuntime.notifyShown(app, it) }
+            SmsRuntime.call(app) { it.mms.onDownloadTooLarge(messageId) }?.let { SmsRuntime.notifyReceived(app, it) }
             return
         }
         if (resultCode == Activity.RESULT_OK && file != null) {
@@ -209,7 +209,7 @@ object MmsRuntime {
         val error = if (resultCode == Activity.RESULT_OK) DownloadError.OTHER else MmsFlow.downloadErrorOf(resultCode, httpStatus)
         if (error == DownloadError.NO_DATA && !mobileDataOn(app)) SmsPrefs.mmsFetched(app, withoutData = false)
         Log.w(LOG_TAG, "A download failed: $resultCode (http $httpStatus) -> $error")
-        SmsRuntime.call(app) { it.mms.onDownloadFailed(messageId, error) }?.let { SmsRuntime.notifyShown(app, it) }
+        SmsRuntime.call(app) { it.mms.onDownloadFailed(messageId, error) }?.let { SmsRuntime.notifyReceived(app, it) }
     }
 
     /** Mobile data as the user's switch has it (`false` when it can't be read). */

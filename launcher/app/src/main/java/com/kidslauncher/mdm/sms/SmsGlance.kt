@@ -45,11 +45,6 @@ fun smsGlanceRow(conversation: Conversation, newestFirst: List<Message>, showTex
     )
 }
 
-/** What a conversation's notification shows: its newest unread incoming messages, at most [max], oldest first - empty
- * when nothing is unread (then it has no notification). [newestFirst] is the engine's backfill order. */
-fun smsNotifiedMessages(newestFirst: List<Message>, max: Int): List<Message> =
-    newestFirst.filter { it.direction == Direction.IN && !it.read }.take(max).reversed()
-
 /** `NotificationManager.IMPORTANCE_DEFAULT`: the lowest importance that makes a sound (pure here). */
 private const val SMS_ALERT_IMPORTANCE = 3
 

@@ -14,6 +14,7 @@ import com.kidslauncher.mdm.sms.engine.MmsRow
 import com.kidslauncher.mdm.sms.engine.MmsState
 import com.kidslauncher.mdm.sms.engine.Part
 import com.kidslauncher.mdm.sms.engine.PendingPushRow
+import com.kidslauncher.mdm.sms.engine.ReactionOp
 
 /** The engine's store in memory, with SQLite's contract: a transaction is all or nothing, `client_id` is unique
  * ([insertOutgoing] decides, QA L8). */
@@ -105,16 +106,28 @@ class FakeMessageStore : MessageStore {
 
     private fun shown() = messages.values.filter { it.verdict == MessageVerdict.SHOWN }
 
+    /** The bubbles: reaction rows are left out (design 81 M2), as SQLite's `reaction_to IS NULL`. */
+    private fun bubbles() = shown().filter { it.reactionTo == null }
+
     override fun messages(conversationId: String, beforeSeq: Long?, limit: Int) =
-        shown().filter { it.conversationId == conversationId && (beforeSeq == null || it.seq < beforeSeq) }.sortedByDescending { it.seq }.take(limit)
+        bubbles().filter { it.conversationId == conversationId && (beforeSeq == null || it.seq < beforeSeq) }.sortedByDescending { it.seq }.take(limit)
+
+    override fun reactions(targetIds: Collection<String>) = shown().filter { it.reactionTo != null && it.reactionTo in targetIds }.sortedBy { it.seq }
+    override fun unreadReactions(conversationId: String, limit: Int) = shown()
+        .filter { it.conversationId == conversationId && it.direction == Direction.IN && !it.read && it.reactionOp == ReactionOp.ADD && it.reactionTo != null }
+        .sortedByDescending { it.seq }.take(limit)
 
     override fun messagesHeldForRules() = messages.values.filter { it.verdict == MessageVerdict.HELD_RULES }.sortedBy { it.at }
     override fun messagesInDelivery(states: Set<Delivery>) = shown().filter { it.delivery in states }.sortedBy { it.seq }
-    override fun unread(conversationId: String) = shown().count { it.conversationId == conversationId && it.direction == Direction.IN && !it.read }
+    override fun unread(conversationId: String) = bubbles().count { it.conversationId == conversationId && it.direction == Direction.IN && !it.read }
     override fun lastMessage(conversationId: String) = messages(conversationId, null, 1).firstOrNull()
 
     override fun markReadUpTo(conversationId: String, upToSeq: Long): Int {
-        val unread = shown().filter { it.conversationId == conversationId && it.direction == Direction.IN && !it.read && it.seq <= upToSeq }
+        // As SQLite's statement: the bubbles up to the mark, and the reactions on them that came later (design 81 D5).
+        val seen = shown().filter { it.conversationId == conversationId && it.seq <= upToSeq }.map { it.id }.toSet()
+        val unread = shown().filter {
+            it.conversationId == conversationId && it.direction == Direction.IN && !it.read && (it.seq <= upToSeq || it.reactionTo in seen)
+        }
         unread.forEach { messages[it.id] = it.copy(read = true) }
         return unread.size
     }

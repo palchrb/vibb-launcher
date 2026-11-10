@@ -17,6 +17,8 @@ import com.kidslauncher.mdm.calls.CallPolicyStore
 import com.kidslauncher.mdm.calls.ContactPhotos
 import com.kidslauncher.mdm.sms.engine.ConversationRow
 import com.kidslauncher.mdm.sms.engine.Message
+import com.kidslauncher.mdm.sms.engine.Notifiable
+import com.kidslauncher.mdm.sms.engine.Reactions
 import com.kidslauncher.mdm.sms.engine.SmsEngine
 import com.kidslauncher.mdm.ui.messages.MessagesScreens
 import java.util.UUID
@@ -28,11 +30,25 @@ private const val LOG_TAG = "SmsNotifier"
 const val NOTIFICATION_CHANNEL_MESSAGES = "launcher:messages"
 const val NOTIFICATION_CHANNEL_MESSAGES_SILENT = "launcher:messages_silent"
 
+/**
+ * Design 81 D12 (revision 4, the user: "en kortere vibrasjon ved reactions"): a reaction from someone else - no sound,
+ * one short buzz, no heads-up. DEFAULT importance, because Android buzzes only from DEFAULT up (LOW never does) and
+ * peeks only at HIGH. A channel's sound and vibration are the user's once it exists, so this id is new and fixed:
+ * a change of mind needs a new id, not a new pattern here.
+ */
+const val NOTIFICATION_CHANNEL_REACTIONS = "launcher:messages_reactions"
+
+/** One pulse of 80 ms - a message's default is 350 + 250 + 350 ms. */
+private val REACTION_VIBRATION = longArrayOf(0, 80)
+
 /** One notification per conversation: this id, tagged with the conversation's id. */
 const val MESSAGES_NOTIFICATION_ID = 1009
 
-/** How many of a conversation's newest unread messages the notification shows. */
+/** How many of a conversation's newest unread messages (and reactions) the notification shows. */
 private const val SHOWN_MESSAGES = 5
+
+/** Design 81 D12: a reaction's line quotes at most this many characters of its bubble. */
+private const val QUOTE_MAX = 40
 
 /**
  * The notification of an accepted message (§6.8): `MessagingStyle` with the contact's name and photo (our own
@@ -54,22 +70,47 @@ object SmsNotifier {
                 NOTIFICATION_CHANNEL_MESSAGES_SILENT, context.getString(R.string.notification_channel_messages_silent), NotificationManager.IMPORTANCE_LOW,
             ).apply { setSound(null, null) },
         )
+        manager.createNotificationChannel(
+            NotificationChannel(
+                NOTIFICATION_CHANNEL_REACTIONS, context.getString(R.string.notification_channel_messages_reactions), NotificationManager.IMPORTANCE_DEFAULT,
+            ).apply {
+                setSound(null, null)
+                enableVibration(true)
+                vibrationPattern = REACTION_VIBRATION
+            },
+        )
     }
 
-    /** Posts (or updates) [conversation]'s notification after [message] arrived; [silent] under a time rule. [wake]:
-     * this post may be a notice on the lock (a message's own post; not a group move's re-post, [afterMove]). */
-    fun notify(context: Context, engine: SmsEngine, conversation: ConversationRow, message: Message, silent: Boolean, wake: Boolean = true) {
+    /**
+     * Posts (or updates) [conversation]'s notification after [message] arrived; [silent] under a time rule. [wake]:
+     * this post may be a notice on the lock (a message's own post; not a group move's re-post, [afterMove]). Its lines
+     * are what is unread there ([SmsEngine.notifiable]). With [reaction] (design 81 D12) [message] is a reaction from
+     * someone else: its own channel's short buzz, silent under a time rule and under any Do Not Disturb (fail closed),
+     * nothing posted when the kid has read it meanwhile.
+     */
+    fun notify(
+        context: Context,
+        engine: SmsEngine,
+        conversation: ConversationRow,
+        message: Message,
+        silent: Boolean,
+        wake: Boolean = true,
+        reaction: Boolean = false,
+    ) {
         try {
             createChannels(context)
             val id = com.kidslauncher.mdm.sms.engine.ConversationId(conversation.id)
-            val unread = smsNotifiedMessages(engine.messages(id, null, SHOWN_MESSAGES * 2), SHOWN_MESSAGES).ifEmpty { listOf(message) }
+            val lines = engine.notifiable(id, SHOWN_MESSAGES)
+            if (lines.isEmpty() && reaction) return
             val me = Person.Builder().setName(context.getString(R.string.sms_notification_me)).build()
             val sender = senderPerson(context, conversation)
             val style = NotificationCompat.MessagingStyle(me)
             val group = conversation.participants.size > 1
-            for (m in unread) {
+            for (line in lines.ifEmpty { listOf(Notifiable(message)) }) {
+                val m = line.message
                 // Step 3b: a picture without text says "Bilde" - never its pixels (the large icon stays the contact's).
-                val body = m.body?.takeIf { it.isNotBlank() } ?: context.getString(R.string.messages_picture).takeIf { m.parts.isNotEmpty() }.orEmpty()
+                val body = line.target?.let { reactionLine(context, m, it) }
+                    ?: m.body?.takeIf { it.isNotBlank() } ?: context.getString(R.string.messages_picture).takeIf { m.parts.isNotEmpty() }.orEmpty()
                 val text = if (m.unknownSender) context.getString(R.string.sms_unknown_sender_line, body) else body
                 // D12: in a group each message names who in it wrote it.
                 val from = if (group) m.sender?.let { groupMember(context, it) } ?: sender else sender
@@ -78,10 +119,16 @@ object SmsNotifier {
             if (group) style.setGroupConversation(true).setConversationTitle(groupTitle(context, conversation))
             val now = engine.conversation(id)
             val canSend = now?.canSend == true
-            val channel = if (silent) NOTIFICATION_CHANNEL_MESSAGES_SILENT else NOTIFICATION_CHANNEL_MESSAGES
+            // Design 81 D12: a reaction is quiet under any Do Not Disturb, whatever the mode lets through.
+            val quiet = silent || (reaction && !passesFilter(context))
+            val channel = when {
+                quiet -> NOTIFICATION_CHANNEL_MESSAGES_SILENT
+                reaction -> NOTIFICATION_CHANNEL_REACTIONS
+                else -> NOTIFICATION_CHANNEL_MESSAGES
+            }
             val public = NotificationCompat.Builder(context, channel)
                 .setSmallIcon(R.drawable.ic_launcher_foreground)
-                .setContentTitle(context.getString(R.string.sms_notification_public))
+                .setContentTitle(context.getString(if (reaction) R.string.sms_notification_public_reaction else R.string.sms_notification_public))
                 .build()
             val builder = NotificationCompat.Builder(context, channel)
                 .setSmallIcon(R.drawable.ic_launcher_foreground)
@@ -94,12 +141,12 @@ object SmsNotifier {
                 .setPublicVersion(public)
                 .setAutoCancel(true)
                 .setOnlyAlertOnce(false)
-                .setSilent(silent)
+                .setSilent(quiet)
                 .setContentIntent(openIntent(context, conversation.id))
             if (canSend) builder.addAction(replyAction(context, conversation.id))
             val manager = NotificationManagerCompat.from(context)
             manager.notify(conversation.id, MESSAGES_NOTIFICATION_ID, builder.build())
-            if (wake) wakeIfAlerts(context, manager, channel, silent, conversation.id, message.seq, unreadAfter = now?.unread ?: 0)
+            if (wake) wakeIfAlerts(context, manager, channel, quiet, conversation.id, message.seq, unreadAfter = now?.unread ?: 0)
         } catch (e: SecurityException) {
             Log.w(LOG_TAG, "No permission to notify")
         } catch (e: Exception) {
@@ -124,8 +171,7 @@ object SmsNotifier {
         val importance = manager.getNotificationChannel(channel)?.importance
         val enabled = manager.areNotificationsEnabled()
         // Code QA H1: under any Do Not Disturb no wake - fail closed (an unknown filter counts as one).
-        val passesFilter = context.getSystemService(NotificationManager::class.java)?.currentInterruptionFilter ==
-            NotificationManager.INTERRUPTION_FILTER_ALL
+        val passesFilter = passesFilter(context)
         main.post {
             val mark = SmsGlance.comeBack(conversationId, seq)
             val gainsRow = smsGainsRow(unreadAfter, mark, seq)
@@ -142,8 +188,32 @@ object SmsNotifier {
     fun afterMove(context: Context, engine: SmsEngine, conversationId: String) {
         val id = com.kidslauncher.mdm.sms.engine.ConversationId(conversationId)
         val row = engine.conversationRow(id)
-        val newest = smsNotifiedMessages(engine.messages(id, null, SHOWN_MESSAGES * 2), SHOWN_MESSAGES).lastOrNull()
+        val newest = engine.notifiable(id, SHOWN_MESSAGES).lastOrNull()?.message
         if (row == null || newest == null) cancel(context, conversationId) else notify(context, engine, row, newest, silent = true, wake = false)
+    }
+
+    /**
+     * Design 81 D12: a reaction was removed, or a waiting picture the kid was told of turned out to be a reaction - a
+     * notification of [conversationId] that is up is rebuilt quietly from what is still unread (a real message's line
+     * never goes), or goes when nothing is. One the kid swiped away stays away. Engine thread.
+     */
+    fun afterReaction(context: Context, engine: SmsEngine, conversationId: String) {
+        val up = context.getSystemService(NotificationManager::class.java)?.activeNotifications.orEmpty()
+            .any { it.id == MESSAGES_NOTIFICATION_ID && it.tag == conversationId }
+        if (up) afterMove(context, engine, conversationId)
+    }
+
+    /** No Do Not Disturb at all (`INTERRUPTION_FILTER_ALL`); an unknown filter counts as one (fail closed). */
+    private fun passesFilter(context: Context): Boolean =
+        context.getSystemService(NotificationManager::class.java)?.currentInterruptionFilter == NotificationManager.INTERRUPTION_FILTER_ALL
+
+    /** D12's line for a reaction: "Reagerte med ❤️ på «Kommer kl 5»" (the quote cut at 40 characters), or "på et bilde". */
+    private fun reactionLine(context: Context, reaction: Message, target: Message): String {
+        val emoji = reaction.reaction?.emoji.orEmpty()
+        val text = target.body?.let(Reactions::normalise)?.takeIf { it.isNotEmpty() }
+            ?: return context.getString(R.string.sms_notification_reaction_picture, emoji)
+        val quote = if (text.length <= QUOTE_MAX) text else Reactions.cut(text, QUOTE_MAX - Reactions.CUT.length) + Reactions.CUT
+        return context.getString(R.string.sms_notification_reaction, emoji, quote)
     }
 
     /** After a reply the engine refused: the conversation's notification says it wasn't sent (no reply then). */
