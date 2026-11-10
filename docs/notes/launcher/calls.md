@@ -571,5 +571,9 @@ on the wire but nb's heart.
   takes the list's place: "Nylig brukt" (five, the six excluded, `ReactionRecents` in the launcher's own CE
   preferences, written only after an accepted add), the nine groups' strip and headings, five columns, only what the
   font draws.
-- **Not checked on a device yet:** the whole emulator loop (`docs/testing/emulator.md` §6aa) - it needs a server with
-  an SMS-managed policy.
+- **On the emulator** (2026-11-10, `docs/review/qa-81-code.md` "Emulator pass", `docs/testing/emulator.md` §6aa): the
+  v4 -> v5 upgrade and a fresh store alike, the SQL with reaction rows present, the chip, panel and picker at 288 dp,
+  the channel and its 80 ms buzz (silent under Do Not Disturb and a time rule), the picture rule, a group reaction, the
+  sent bytes. Not on a device yet: TalkBack running, the pending dim, whether the buzz is felt. Seen there, outside
+  this design: on a kiosk phone every notification is muted while handy's lock is up (`featuresWhileLocked` removes
+  NOTIFICATIONS) - for the user to decide.

@@ -311,3 +311,42 @@ to the emulator pass.
 Added to "What the emulator pass must check": item 2 also runs SQLite's `unread()` and `lastMessage()` with reaction
 rows present (m12), and item 7's M1 sequence now expects the SMS as a plain message from the start (it never attaches
 to a placeholder).
+
+## Emulator pass (2026-11-10, `sms-reactions` after merging `origin/main` edeb78a6)
+
+`handy36` (Android 16, `-wipe-data`, `wm density 240`: the Jelly Star's 320 x 569 dp), the debug launcher only, a
+throwaway server built once from this branch (port 3109, its own data dir; the phone seeded in its database: SMS and
+calls "Styrt av Vibb", nb, Child PIN, the lock's wake on, Mamma, Pappa and Bestemor with `sms_in`/`sms_out`/`mms`, the
+own number `+4790000010` for groups), `scripts/fake-mmsc.py` with the debug hook's `mmsc_host`/`stand_in` for MMS
+(§6v step 3b). Screenshots in the session's `scratchpad/sms-reactions/emu/shots/`. The steps are in
+`docs/testing/emulator.md` §6aa.
+
+| # | Check | What was done | What was seen |
+|---|---|---|---|
+| 1 | The store's upgrade, and a fresh store | main's build (edeb78a6, store v4) installed and enrolled, three SMS received; this branch's build installed over it (`install -r`). Later the store removed (from the app's own uid) and made again at the next open | Upgraded: `user_version` 5, `reaction_to`/`_emoji`/`_key`/`_op` added, `message_reaction` there, the three rows kept, the next reaction attached. Fresh: the same 19 objects, identical SQL, `user_version` 5. |
+| 2 | The SQL no JVM test runs (m12 included) | Reactions attached to old bubbles; the lock glance, the list and the store read | Glance "2 nye meldinger fra Mamma, 2:56" with a 2:58 reaction present, later "3 nye meldinger ..., 3:14" with a 3:15 one; the list kept Mamma below Pappa with "Ok" as her last line. Opening the thread marked a reaction newer than every bubble read (`is_read` 1: `markReadUpTo`'s subquery). Deleting the kid's "Kommer kl 6" took its three reaction rows; "Fjern reaksjonene" took Mamma's row on the picture. |
+| 3 | The chip at 288 dp (L3) | Incoming, the kid's own, a picture, two emoji with the kid's ring; again at font scale 1.3 | Below the bubble at the corner facing the middle, never over the time or "Levert", at 1.0 and 1.3; the kid's own in the peach ring; on the picture bubble's edge. **Not seen:** the dim while pending (the emulator's network sends at once), "+N" (needs four different people), the dot for a missing glyph (the Android 16 font has every emoji of the list). |
+| 4 | The panel | Long presses on a received bubble, on one others reacted to, on the kid's own, in a group with group texts off | The 4 x 2 grid and "Slett" fit at 288 dp, the bubble ringed; "Fjern reaksjonene" only once someone else reacted; the eighth cell the kid's 👋 read "Fjern din 👋"; on the kid's own bubble only "Fjern reaksjonene" / "Slett"; group texts off: straight to "Slette meldingen?". The cells' descriptions read "Reager med ❤️" ... "Flere emojier" (uiautomator). **Not checked:** TalkBack running (its focus and the custom actions themselves), a tap on the thread closing the panel, the read-only history. |
+| 5 | The picker | "+", the strip, a pick, a second opening | Filled within a second on the emulator; "Velg en reaksjon", ✕, the nine-icon strip (a tap jumps to "Mennesker og kropp"), headings, five columns, no skin tones, no empty boxes. 👋 picked: sent as `Reagerte med 👋 på «Kommer kl 5»`, and "Nylig brukt" then held 👋; 👋 picked again (the kid's current) sent `Fjernet 👋 fra «Kommer kl 5»`. **Found:** the second opening kept the first visit's scroll position, so "Nylig brukt" at the top was out of sight - fixed (the grid scrolls to the top once its lines are in; `MessagesWiringTest` "the reaction picker opens at the top, where Nylig brukt is"). Not re-run on the emulator after the fix. |
+| 6 | The notification | Reactions from Mamma and Pappa with the kid on Home; then with `cmd notification set_dnd priority`; then under a time rule without calls (a device rule seeded for the day) | The channel: `launcher:messages_reactions`, importance 3, `mSound=null`, pattern `[0, 80]`, no DND bypass. An add posts there with "Reagerte med ❤️ på «Kommer kl 6»" and the public "Ny reaksjon"; the vibrator ran one 81 ms `NOTIFICATION` effect at full amplitude, no sound. Under Do Not Disturb and under the time rule the same post went to `launcher:messages_silent` (importance 2), no vibration. See the two notes below. |
+| 7 | MMS with the fake MMSC | A push from Mamma waiting (`WAITING_DATA`: the MMSC listed, no stand-in); her `Likte et bilde` by SMS; then the stand-in, the picture fetched; `Loved an image`; a group MMS (to the kid and Bestemor) and the kid's 😂 into it | `Likte et bilde` stayed a plain message while the MMS waited (M1); once the picture was `AVAILABLE`, `Loved an image` attached to it. The kid's group reaction went as one send-req to both members with `Lo av «Hei fra den falske MMS-serveren 32»`. **Not checked:** an incoming group text reaction (the fake MMSC's text is fixed); `MmsEngineTest` covers it. |
+| 8 | The sent bytes | 👍 on "Ok"; ❤️ on a 306-character message | `Likte «Ok»` (nb launcher), delivered. The long one: `Satte et hjerte ved «Husk at vi ... Vi kjø…»`, exactly 200 UTF-16 units, 3 parts, delivered. |
+| 9 | The buzz | - | Whether 80 ms is felt in a pocket can't be judged on an emulator (the open point stays with the user). Seen here: Android's own "notification cooldown" attenuated a reaction that came 10 s after a message from the same app (amplitude 0.16); after a quiet minute it ran at full strength. |
+
+**The suite after the pass's fix:** 2,424 tests, 0 failures, 0 errors, 0 skipped (one full `assembleDebug
+testDebugUnitTest lintDebug -PwarningsAsErrors=true`; 2,423 after merging main, plus the picker's test).
+
+Two notes from the pass:
+- **The wake:** with the screen off a reaction left it off - but so did an ordinary message here (the lock's wake on
+  notice didn't fire on this AVD), so the pass can't tell the two apart. The code posts a reaction with
+  `wake = false` (`SmsGlanceTest` "the notifier's one wake comes after the post" pins it).
+- **Outside this design - every notification is muted while handy's lock is up.** In kiosk, Android turns off every
+  notification's sound and vibration (`mDisableNotificationEffects=true`, `DISABLE_NOTIFICATION_ALERTS` from
+  `LockTaskController`) whenever the lock-task features lack NOTIFICATIONS. `featuresWhileLocked` removes NOTIFICATIONS
+  while the PIN lock is LOCKED (design 10's "minus the shade/heads-up alerts"), so on a kiosk phone with its lock up -
+  the usual state in a pocket - a message rings and buzzes not at all, a reaction neither. Seen here twice: locked,
+  effects off; unlocked (features 127), effects on and the buzz played. Not changed in this round; it needs the user's
+  decision (it may be the intended trade, but it reads as if messages stay silent on a locked phone).
+- The seed first copied an older run's `lock_task_features = 0` (no NOTIFICATIONS even unlocked), which muted the first
+  reactions; set to the server's default (63) the pass went on. A sync without killing the debug hook's memory: an SMS
+  from a stranger; a sync at all: `run-as <package> kill <pid>` (a device owner can't be force-stopped) and Home.
