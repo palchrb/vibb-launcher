@@ -257,11 +257,14 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
   bottom, the line in it (`threadEndGap` measures the row). Scrolled up, a row that isn't laid out moves nothing; **the
   one case that moves what the kid looks at:** the last bubble is cut by the list's lower edge (the end more than 8 dp
   away, so the thread doesn't follow) and a message comes in on its run - that row is the layout's anchor by its bottom
-  (`stackFromEnd`), so what stands over it comes down by the line's height. Read from the code, not measured; the same
-  kind of move as a reaction chip coming onto that row (the open Low), and no anchor was built for it. A long line (a
-  large text size) wraps towards the bubble's side and never widens the row (`wrap_content` in the row's width, no
-  `maxLines`). A picture with no text under it has lost its 6 dp bottom margin with the time. Built, not run on an
-  emulator yet.
+  (`stackFromEnd`), so what stands over it comes down by the line's height. Measured on the emulator: 26 dp for each
+  such message; the same kind of move as a reaction chip coming onto that row (the open Low), and no anchor was built
+  for it. A long line (a large text size) wraps towards the bubble's side and never widens the row (`wrap_content` in
+  the row's width, no `maxLines`). A picture with no text under it has lost its 6 dp bottom margin with the time. The
+  line is clickable only as the tap to try again (the listener is set before `isClickable`: `setOnClickListener` makes
+  a view clickable, with null too). The emulator pass, with its measures, the two faults it saw beside this (a failed
+  picture's retry sends its text alone; the compose bar with a picture under the keyboard) and what it could not show
+  ("Sender …" on screen among it), is `docs/testing/emulator.md` §6ae.
 - **The compose bar (QA N2):** the draft carries one `clientId`, kept (also across a rotation and, in memory only, while
   the kid looks elsewhere) until the engine accepted that text; two quick taps send the same id and the engine sends
   once. "2 SMS" over the field past one part (`SmsMessage.calculateLength`). No field menu (`NoTextActions`), bubbles

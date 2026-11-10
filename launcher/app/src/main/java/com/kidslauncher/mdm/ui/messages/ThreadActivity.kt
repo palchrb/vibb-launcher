@@ -1118,9 +1118,10 @@ class ThreadActivity : UIObjectActivity() {
             holder.line.gravity = if (mine) Gravity.END else Gravity.START
             val failed = item.delivery == DeliveryLine.NOT_SENT || item.delivery == DeliveryLine.MAYBE_NOT_SENT
             holder.line.setTextColor(context.getColor(if (failed) R.color.kid_missed_text else R.color.kid_core_dim))
+            // The listener first: setOnClickListener makes a view clickable, also with null.
+            holder.line.setOnClickListener(if (retry) View.OnClickListener { retry(m) } else null)
             holder.line.isClickable = retry
             holder.line.isFocusable = retry
-            holder.line.setOnClickListener(if (retry) View.OnClickListener { retry(m) } else null)
             val whoText = if (mine) getString(R.string.messages_you) else groupSender ?: MessagesScreens.name(context, who())
             bindChip(holder, m, mine)
             // Design 81 D6 (N2): the reactions are part of the bubble's description; the chip itself isn't read.

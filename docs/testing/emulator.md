@@ -2828,6 +2828,84 @@ cat databases/messages.db` (`message.is_read`).
   bar's place (needs a rule from a server); a portrait picture's bubble (the fake MMSC's is 160 x 120).
 - Screenshots of the run are in the session's `scratchpad/mark-shots/`.
 
+## 6ae. A message's time under the last bubble of its run (2026-11-10)
+
+Run on `handy36` on its kept data (no `-wipe-data`, `wm density 240`, `install -r`) on 2026-11-10, branch
+`bubble-time` (15f37355, without design 82; the re-check on the commit after it). No server was up - the phone ran on
+its stored policy, as in §6ac: Mamma (`+4790000001`), Pappa (`+4790000002`), the list's frame `[24,226][456,719]`,
+"at the end" the last row's bottom at 702 (1.5 px per dp). New messages by `adb emu sms send`; `settings put system
+time_12_24 24` (it was unset). What the AVD doesn't do by itself:
+
+- **A failed send** is airplane mode (`cmd connectivity airplane-mode enable`, the send, `disable`): the delivery is
+  `FAILED` (`sms:2`). `adb emu gsm voice off` fails nothing - the message is delivered.
+- **Pictures** are §6v step 3b's fake MMSC, the stand-in set by `MmsDebugReceiver` (in memory: a process death
+  forgets it, and a picture sent without it fails as `mms:12`, a second way to a failed line). The kid's own:
+  "+", the camera, the shutter and the tick at (240,764), send.
+- **A reaction** is the contact's "Likte «text»" as an SMS: a 👍 chip on the bubble with that text, the kid's or the
+  contact's.
+- **A new day and an empty message** are an edit of the store, since every kept message is from one day and none is
+  empty: the launcher's process killed as its own uid (`run-as me.vibb.launcher.debug sh -c 'kill -9 $(pidof ...);
+  cat > databases/messages.db; rm -f databases/messages.db-wal databases/messages.db-shm'`, the edited copy on its
+  stdin - `am force-stop` does not end the Device Owner's process here), four messages of one run moved to 23:58,
+  23:59, 00:01 and 00:02 and one message's `body` set to `''`.
+
+What it showed:
+
+- **One time per run:** four received within a minute: one "14:27", under the last; three more: "16:53" under the
+  third, the time of the last one. A message of the other side ends the run (its own line under it), and so does a gap
+  over 5 minutes. Across midnight: "I går", two bubbles, "23:59"; "I dag", two bubbles, "00:02".
+- **The measures (text size 1.0):** a one-line bubble is 61 px; inside a run the next bubble starts 10 px (6.7 dp)
+  under it; the line's box starts 3 px (2 dp) under the run's last bubble and is 36 px (24 dp) high, its text at the
+  top of the box, so the time stands close to its bubble; from a run's last bubble to the next run's first is 49 px
+  (32.7 dp). A thread of short messages reads calmer than with a time in every bubble, and the runs stand apart as
+  groups; the 24 dp under each run does not look loose at this size. Not changed: it is also the height of the failed
+  line's tap.
+- **The kid's own:** with the keyboard up "Sendt · 16:54" `[333,277][456,313]` becomes "Levert · 16:54"
+  `[328,277][456,313]`: the same right edge and height, nothing else moves (the frames of a screen recording across
+  the send too). "Sender …" is never on screen - the emulator's radio answers faster than a frame. A picture stops at
+  "Sendt · 17:07" (MMS has no delivery report). The state is the newest sent message's alone: once a newer one
+  exists, an older run's line is its time alone.
+- **A failed send:** "Ikke sendt - trykk for å prøve igjen" in red `[161,666][456,702]`, no time; a run of four
+  ending in it shows no time at all. With the radio back, a tap on the line sends it again: it is the thread's newest
+  with "Levert · 17:00". A failed message with a delivered one after it keeps its red line, and the run's last has
+  the state and the time.
+- **A message joining a run while the thread follows:** the line leaves the bubble before, stands under the new last
+  one, and the last row's bottom is at 702 before and after.
+- **Reactions, pictures:** a chip `[321,629][367,663]` overlaps its bubble by 7 px and the line starts 3 px under the
+  chip, on both sides ("Levert · 17:00" under the kid's, "17:00" under the contact's); the thread stays at 702 when
+  the chip comes. A picture alone: the bubble `[112,235][456,663]`, the picture `[133,249][435,651]` - 14 px over and
+  12 px under it, as a text bubble's text - and the line 3 px under the bubble. A received picture with a text as a
+  run's last: `[24,336][369,663]`, "17:06" under it.
+- **The text size:** at 1.3 the failed line is one line `[86,666][456,702]`. At 2.0 it is two lines
+  `[24,602][456,702]`, set to the right, inside the row; "Levert · 17:09" `[214,651][456,702]` and, in 12 h,
+  "Levert · 5:09 p.m." `[157,651][456,702]` are one line; a time alone is 51 px high.
+- **The one move, measured:** the run's last bubble cut by the list's lower edge (`[24,664][137,719]`, its line under
+  the edge), a message joining its run: every visible row comes down 39 px (26 dp: the line's 24 and its 2), once for
+  each message, and the "Ny melding" mark comes. Scrolled further up, the last row off the screen: nothing moves.
+- **The "Ny melding" mark (§6ac) with the new rows:** scrolled up, one SMS in: the mark `[161,647][318,719]`, the rows
+  unmoved; its tap: the last line's bottom at 702, no mark. A drag of 120 px from the mark scrolls the thread 109 px,
+  the mark stays.
+- **TalkBack's tree** (`uiautomator dump --compressed`, which leaves out what accessibility ignores): a time alone is
+  no node; a state's line is one node described "Levert" or "Sendt", the failed line by its whole text; every
+  bubble's description has its time ("Pappa, 16:53, Hei Emma", "Du, 17:07, Bilde", the reactions after it).
+- **An empty message** is a pill without content, `[24,558][66,584]` (28 x 17 dp), "16:53" under it as a run's last,
+  described "Pappa, 16:53". Before, its time was the bubble's content.
+- **A fault found here and fixed:** every line was `clickable="true"` in the tree, a time alone too -
+  `setOnClickListener(null)` makes a view clickable, and it ran after `isClickable`. The listener is set first now.
+  Re-check on the rebuilt APK: a time alone (both sides) and "Levert · 17:31" are `clickable="false"
+  focusable="false"`, the failed line is `true`, and its tap still sends ("Hentes naa", "Levert · 17:31").
+- **Seen beside it, the same on `main`, not changed:** a failed picture's line offers the tap to try again, but the
+  retry sends the message's text alone (`MessageActions.retry`). A picture alone: nothing is sent (the row stays
+  `FAILED`, no POST at the fake MMSC) and the line says "Ikke sendt" until the thread is read again. A picture with
+  "Se": the tap sends "Se" as an SMS ("Levert · 17:36") and the failed picture message is gone from the store. And
+  with a picture attached and the keyboard up the compose bar `[24,232][456,466]` is higher than the room over the
+  keyboard (its top at 430): the list has no height, and the text field and the send button `[384,394][456,466]` are
+  half under the keyboard - a tap on the button's visible half sends.
+- **What `handy36` can't show:** "Sender …" on screen, and the line's width changing from it; a carrier's delivery
+  report coming minutes later, and a real MMS; what TalkBack speaks (§6ac: an injected tap isn't touch exploration);
+  the thumb's feel of the 26 dp move on the cut row; how the spacing reads on the phone's own panel.
+- Screenshots of the run are in the session's `scratchpad/bubble-shots/`.
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:
