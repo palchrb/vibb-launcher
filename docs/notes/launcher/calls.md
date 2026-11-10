@@ -502,5 +502,60 @@ Meldinger rows". What was decided (the design left it open):
   - the rows gain a row (code QA M1, `smsGainsRow`): the conversation's only unread message, or the first one after its
     row was swiped away. Twelve messages from a cousin wake once, as twelve in one Element X room do.
 - **A group MMS leaving a one-to-one conversation** (D12; step 3b's code QA L8): `SmsNotifier.afterMove` rebuilds that
-  conversation's notification quietly from what is still unread there (`smsNotifiedMessages`), and cancels it only when
-  nothing is - before, a group's message took away the sender's own unread messages from the shade.
+  conversation's notification quietly from what is still unread there (`engine.notifiable` since design 81), and cancels
+  it only when nothing is - before, a group's message took away the sender's own unread messages from the shade.
+
+## SMS reactions (design 81 steps 1-3; branch `sms-reactions`)
+
+The design note is `docs/design/81-sms-reactions.md` (its §12 lists where the build goes past it). Step 0, the capture
+from a real iPhone, isn't done (the user: build without it): every form is Apple's string table, nothing is confirmed
+on the wire but nb's heart.
+
+- **The forms and the rules (`sms/engine/Reactions.kt`, pure):** `FORMS` is §1's table - en (US, with the en_GB
+  `Emphasised` / `exclamation mark` read only) and nb, the six classic Tapbacks and the iOS 18 `{e}` form, a quoted text
+  or `an image` / `et bilde`, adding and removing. `parse` is strict and whole-message: a known head, one of four quote
+  pairs closed by the very last character, a body of at most 2,000 units; `candidate` is H1 (an SMS, or an MMS of
+  exactly one text part and nothing else); `resolve` is D3 over the conversation's newest 100 bubbles older than the
+  reaction (equal texts: an add to the newest the reactor didn't write, a removal to the one carrying it; a cut quote
+  with ten code points; a picture only when exactly one image part is among the newest ten, there or on its way);
+  `state` is D4 (per person the newest add unless a later removal of the same key; the kid's failed rows ignored,
+  queued/sending/uncertain pending); `format` is D8 (classic words for the six, the iOS 18 form otherwise, 200 units
+  with a grapheme-safe cut). **The vectors** `launcher/app/src/test/resources/sms_reactions.json` (launcher only, as
+  `sms_rules.json`) pin every form with its `source` (`apple` with the iOS versions, `wire`; a capture adds rows marked
+  `capture`), the parse, H1, the matching, the state and the sent bodies (`SmsReactionsTest`, which also parses every
+  sent body back).
+- **The emoji list (`sms/engine/Emoji.kt`, `assets/sms/emoji-16.0.txt`):** Unicode 16.0's `emoji-test.txt` stripped by
+  `scripts/emoji-list.py` (the source's SHA-256 pinned there; the asset's in the vectors). `canonical`: at most 16 units,
+  U+FE0E dropped, a listed sequence, returned fully-qualified; `key` drops the selectors. Its `groups` (fully-qualified,
+  no skin tones, no Component) are the picker's. `SmsRuntime.emoji` reads it once (at start, before a receive needs it).
+- **The store (`messages.db` v5, on design 80's v4):** `reaction_to`, `reaction_emoji`, `reaction_key`, `reaction_op` and
+  the `message_reaction` index. `messages()`, `lastMessage()` and `unread()` leave reaction rows out; `reactions(ids)`
+  and `unreadReactions` read them; `markReadUpTo` marks the bubbles and the reactions on them that came later. The
+  version steps are one list (`STEPS`) whose hashes `SqliteStoreVersionTest` pins (L7, append only).
+- **The engine:** `show(…, attach)` matches inside the receive's transaction (`attachment`) and returns
+  `Received.Attached` - an incoming add stored unread, a removal read; never for a released held message (D10).
+  `MmsFlow.onRetrieved` does the same once the text is in, in the conversation the message ended up in, after every
+  sender and group check (a group with texts off is dropped first, design 80 D13); a moved group MMS detaches reactions
+  that had named it in the one-to-one. `messages()` hangs `reactions` on each bubble; front ends never fold.
+  `send` takes `SendCommand.reaction` (`ReactionCommand`): the body composed first, the target a shown received
+  non-reaction bubble of the conversation with text or an available picture, the emoji listed, a removal only of the
+  kid's own in effect - then the same gate, outbox and `UNCERTAIN` as any text (a group reaction is a group MMS, refused
+  with `GROUPS_OFF` when group texts are off). `repeated` compares target, op and key. A delete takes the bubble's
+  reactions with it, one `MessageDeleted` each; `removeReactions` ("Fjern reaksjonene") deletes the others' rows only.
+- **The notification (`SmsNotifier`):** lines from `engine.notifiable` (unread bubbles and unread reactions in effect,
+  "Reagerte med ❤️ på «…»" with the quote cut at 40, or "på et bilde"; public "Ny reaksjon"). A reaction from someone
+  else posts on **`launcher:messages_reactions`** (DEFAULT, no sound, one 80 ms buzz, no heads-up) - or on
+  `launcher:messages_silent` under a time rule without calls or any Do Not Disturb (filter not `ALL`, fail closed) -
+  and never wakes the lock. A removal, or a waiting picture that turned out to be a reaction, rebuilds the notification
+  only while it is up (`afterReaction`).
+- **The thread (`ThreadActivity`, models in `MessagesModel`):** the chip (`reactionChip`: three different emoji then
+  "+N", the kid's own in a peach ring and dimmed while pending, `•` where `Paint.hasGlyph` says the font can't draw it)
+  on the bubble's bottom edge at the corner facing the middle, the bubble 10 dp higher and never narrower than its chip;
+  TalkBack reads "Reaksjoner: ❤️ fra Mamma, 👍 fra deg" in the bubble's description. A long press opens the panel
+  (`reactPanel`: the 4 x 2 grid only where the compose bar is open and on a received bubble with text or an available
+  picture - the six, "+", the kid's other reaction; "Fjern reaksjonene" when others reacted; "Slett"), or the delete
+  confirm as before when there is nothing else; TalkBack gets the same as custom actions. The picker (`pickerItems`)
+  takes the list's place: "Nylig brukt" (five, the six excluded, `ReactionRecents` in the launcher's own CE
+  preferences), the nine groups' strip and headings, five columns, only what the font draws.
+- **Not checked on a device yet:** the whole emulator loop (`docs/testing/emulator.md` §6aa) - it needs a server with
+  an SMS-managed policy.

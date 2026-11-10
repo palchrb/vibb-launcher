@@ -2596,6 +2596,39 @@ some of a long string).
   waiting row, Lina added on the server, a sync (`adb install -r`): Lina's contact has the picture,
   `contact_request_photos/` and `request_photo_draft/` are empty.
 
+## 6aa. SMS reactions (design 81 steps 1-3)
+
+**Not run yet** (written in the build round, 2026-11-10): it needs the setup of §6v - a server, the phone enrolled,
+SMS "Styrt av Vibb", Mamma (`+4791234567`) a contact with `sms_in`, `sms_out` and `mms`. On `jelly36`, or `handy36`
+with `adb shell wm density 240` for the Jelly Star's 320 x 569 dp (back with `wm density reset`). The engine's store and
+the notifications as in §6v (`messages.db` and `-wal`, `dumpsys notification --noredact`); the console's `sms send`
+takes the text after the number as it is, quotes and emoji included (quote the whole command for the shell).
+
+- **An incoming reaction attaches:** the kid sends Mamma "Kommer kl 5"; then
+  `adb emu sms send +4791234567 'Likte «Kommer kl 5»'` -> the thread shows no new bubble, a chip with 👍 on the kid's
+  bubble's bottom-left edge; `message` has the row with `reaction_to` = the bubble's id, `reaction_op` `ADD`; Home's
+  badge and the list's last line don't change. The same with `'Liked “Kommer kl 5”'`, `'Loved "Kommer kl 5"'` (straight
+  quotes), `'Satte et hjerte ved «Kommer kl 5»'` (replaces the 👍), `'Reagerte med 🎉 på «Kommer kl 5»'`, and
+  `'Fjernet 🎉 fra «Kommer kl 5»'` (the chip goes, no notification).
+- **An unknown form stays text:** `'Likte «filmen»'` (no such bubble), `'Reacted with a sticker to “Ok”'`,
+  `'Liked “Kommer kl 5” !'` -> ordinary bubbles, notified as messages.
+- **The notification:** after an add, `dumpsys notification --noredact` shows the conversation's notification on
+  `launcher:messages_reactions` with the line "Reagerte med 👍 på «Kommer kl 5»" and public "Ny reaksjon"; the
+  emulator's vibrator (`dumpsys vibrator_manager`) one 80 ms effect, no sound. Under a time rule without calls, and with
+  Do Not Disturb on (`adb shell cmd notification set_dnd priority`, back with `off`), the same post goes on
+  `launcher:messages_silent`, no vibration. No wake on the lock either way.
+- **The long press:** on Mamma's bubble the panel - two rows of four 56 dp cells (❤️ 👍 👎 😂 / ‼️ ❓ + and the kid's
+  other reaction), "Fjern reaksjonene" once Mamma reacted to it, "Slett" - fits at 288 dp; a tap on the thread closes
+  it; TalkBack's actions list "Reager med ❤️" ... "Slett". On the kid's own bubble, or under a time rule, only
+  "Fjern reaksjonene" / "Slett", or the delete confirm at once.
+- **Sending:** tap 👍 -> the chip shows dimmed at once, the stored `OUT` row's body is exactly `Likte «Hei»` (nb
+  launcher) or `Liked “Hei”` (en), `SENT` -> full colour. "+" -> the picker: "Velg en reaksjon", the group strip, five
+  columns, no skin tones, no empty boxes; pick 🎉 -> `Reagerte med 🎉 på «Hei»`, and 🎉 leads "Nylig brukt" next time.
+- **MMS:** with `scripts/fake-mmsc.py` (§6v step 3b) a group text reaction (`Likte «…»` to the kid and Bestemor)
+  attaches in the group's thread when its text arrives; a picture plus the same text stays a picture message.
+
+Screenshots: the chip, the panel and the picker at 288 dp.
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:
