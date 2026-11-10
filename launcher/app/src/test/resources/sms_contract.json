@@ -164,7 +164,9 @@
     {"entry": "10.0.0.0.1", "valid": false},
     {"entry": "mmsc.example.123", "valid": false},
     {"entry": "2130706433", "valid": false},
-    {"entry": "0x7f000001", "valid": false}
+    {"entry": "0x7f000001", "valid": false},
+    {"entry": "127.0.0.1", "valid": false},
+    {"entry": "0.0.0.0:8002", "valid": false}
   ],
   "app": {
     "key": "me.vibb.builtin.messages",

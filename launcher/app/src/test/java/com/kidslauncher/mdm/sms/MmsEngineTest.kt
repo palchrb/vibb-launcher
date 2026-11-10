@@ -63,7 +63,7 @@ class MmsEngineTest {
     private val pappa = RuleContact(2, "Pappa", "+4790000002", inbound = true, outbound = true, smsIn = true, smsOut = true, mms = false)
     private val bestemor = RuleContact(5, "Bestemor", "+4790000005", smsIn = true, smsOut = true, mms = true)
     private val kid = "+4790000010"
-    private val operator = "24299"
+    private var operator = "24299"
     private val host = "mmsc.carrier.invalid"
     private var table = listOf(MmscRule(operator, listOf(host)))
     private var own = listOf(OwnNumberRule(1, kid))
@@ -280,6 +280,33 @@ class MmsEngineTest {
         mms.drainDownloads()
         assertEquals(id to location, downloads.single())
         assertTrue(mms.unlisted().isEmpty())
+    }
+
+    @Test
+    fun `a waiting picture whose address left the SIM's row is kept at the fetch, not fetched (design 83, code QA M1)`() {
+        fun waiting(): String {
+            downloadThrows = true
+            val id = (arrive() as PushOutcome.Shown).shown.message.id.value
+            downloadThrows = false
+            assertEquals(MmsState.WAITING_DATA, store.mms(id)!!.state)
+            return id
+        }
+        fun keptAtTheFetch(id: String) {
+            // Data is back: a waiting row is notified again unchecked, so the check before the download is the only one.
+            assertTrue(mms.retryWaiting(dataOn = true))
+            mms.drainDownloads()
+            assertTrue(downloads.isEmpty())
+            assertEquals(MmsState.FAILED to MmsRow.MMSC_UNKNOWN, store.mms(id)!!.let { it.state to it.failure })
+        }
+        // The parent's "Fjern" (or a replaced policy) between the push and the fetch.
+        val removed = waiting()
+        table = listOf(MmscRule(operator, listOf("other.carrier.invalid")))
+        keptAtTheFetch(removed)
+        // Another SIM in the phone: the row is the first one's operator's.
+        table = listOf(MmscRule(operator, listOf(host)))
+        val swapped = waiting()
+        operator = "24201"
+        keptAtTheFetch(swapped)
     }
 
     @Test

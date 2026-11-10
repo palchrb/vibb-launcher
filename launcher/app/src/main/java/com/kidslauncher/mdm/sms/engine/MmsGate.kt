@@ -53,9 +53,10 @@ object MmsGate {
     /**
      * D10 check 2 on `X-Mms-Content-Location`: printable ASCII with no whitespace (the parser keeps CR, LF and TAB, and
      * latin-1 octets - the codec's note for step 3b), a URI whose scheme is `http` or `https`, with no userinfo, whose
-     * host - lower-cased, a trailing dot off - and port make a valid entry ([validEntry]: `host` with no port or 80, 443
-     * or 8080, else `host:port`). That entry is then looked up, exactly, on [table]'s row for [operator] (the SIM's
-     * MCC/MNC). A location that fails the shape is [Location.Bad] before the operator is asked.
+     * host - lower-cased, a trailing dot off a name of several labels (a single label with one is refused) - and port
+     * make a valid entry ([validEntry]: `host` with no port or 80, 443 or 8080, else `host:port`). That entry is then
+     * looked up, exactly, on [table]'s row for [operator] (the SIM's MCC/MNC). A location that fails the shape is
+     * [Location.Bad] before the operator is asked.
      */
     fun location(contentLocation: String, operator: String?, table: List<MmscRule>): Location {
         if (contentLocation.isEmpty() || contentLocation.any { it.code !in 0x21..0x7E }) return Location.Bad
@@ -68,7 +69,10 @@ object MmsGate {
         if (scheme != "http" && scheme != "https") return Location.Bad
         if (uri.isOpaque || uri.rawUserInfo != null) return Location.Bad
         // A host Java can't read as a server name (an underscore, a registry-based authority) has no `host`.
-        val host = uri.host?.lowercase()?.trimEnd('.') ?: return Location.Bad
+        val named = uri.host?.lowercase() ?: return Location.Bad
+        val host = named.trimEnd('.')
+        // `mmsc.` is an absolute name: another lookup than the entry `mmsc`, which the resolver's search list completes.
+        if (host != named && '.' !in host) return Location.Bad
         val entry = if (uri.port == -1 || uri.port in PLAIN_PORTS) host else "$host:${uri.port}"
         if (!validEntry(entry)) return Location.Bad
         val hosts = table.firstOrNull { it.mccmnc == operator }?.hosts.orEmpty()
@@ -79,8 +83,9 @@ object MmsGate {
      * Design 83 §1's entry, one grammar on both sides (`sms_contract.json`'s `mmsc_entries`; the server's
      * `mmsc_hosts::valid_entry`): `host` or `host:port`. The host is 1-253 bytes of `[a-z0-9.-]` in non-empty labels,
      * and either its last label starts with a letter or it is exactly four decimal octets - so nothing a resolver could
-     * read as another address (`010.0.0.1`, `2130706433`). The port is 1-65535 without a leading zero and never 80, 443
-     * or 8080: on those the bare host is the entry.
+     * read as another address (`010.0.0.1`, `2130706433`) - whose first is neither 0 nor 127: "this host" is no MMS
+     * server, and no question to put to a parent. The port is 1-65535 without a leading zero and never 80, 443 or 8080:
+     * on those the bare host is the entry.
      */
     fun validEntry(entry: String): Boolean {
         if (':' in entry) {
@@ -91,7 +96,8 @@ object MmsGate {
         val host = entry.substringBefore(':')
         if (host.length !in 1..253 || host.any { it !in 'a'..'z' && it !in '0'..'9' && it != '.' && it != '-' }) return false
         val labels = host.split('.')
-        return labels.none { it.isEmpty() } && (labels.last()[0] in 'a'..'z' || (labels.size == 4 && labels.all(::octet)))
+        if (labels.any { it.isEmpty() }) return false
+        return labels.last()[0] in 'a'..'z' || (labels.size == 4 && labels.all(::octet) && labels[0] != "0" && labels[0] != "127")
     }
 
     private fun octet(label: String): Boolean =

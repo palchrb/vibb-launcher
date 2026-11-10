@@ -769,9 +769,11 @@ The server's side is `docs/notes/server/calls-and-contacts.md`, "The MMSC list a
 capability, device route or kid-facing string: the bubble is still "Bildet kunne ikke hentes".
 - **The gate (`MmsGate.location`):** a location is `Bad` only for its shape - not printable ASCII, not `http`/`https`,
   userinfo, or a host the entry grammar refuses (`MmsGate.validEntry`: `[a-z0-9.-]` in non-empty labels, the last one
-  starting with a letter or exactly four decimal octets; so no IPv6 literal, `010.0.0.9` or `2130706433`) - and blocks
-  as `bad_location`. Anything else names an **entry**: the lower-cased host (a trailing dot dropped) when the port is
-  absent or 80, 443 or 8080, `host:port` for any other port. The entry on the SIM's row (exact, without case, never a
+  starting with a letter or exactly four decimal octets whose first is neither 0 nor 127; so no IPv6 literal,
+  `010.0.0.9`, `2130706433` or `127.0.0.1`), or a single label with a trailing dot (`mmsc.` is an absolute name, another
+  lookup than the entry `mmsc`; code QA L3, L4) - and blocks as `bad_location`. Anything else names an **entry**: the
+  lower-cased host (a trailing dot dropped from a name of several labels) when the port is absent or 80, 443 or 8080,
+  `host:port` for any other port. The entry on the SIM's row (exact, without case, never a
   suffix) is `Ok(host)`; any other - a SIM without a row or an unreadable operator included - is `Unlisted(entry)`.
   `validEntry` and the server's `mmsc_hosts::valid_entry` run the same rows (`sms_contract.json`'s `mmsc_entries`).
 - **A kept picture (`MmsFlow.admit`):** an allowed sender's `Unlisted` picture is stored `FAILED`/`mmsc_unknown`

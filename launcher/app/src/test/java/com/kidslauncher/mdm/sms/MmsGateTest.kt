@@ -50,12 +50,18 @@ class MmsGateTest {
             MmsGate.Location.Unlisted("mmsc.carrier.invalid.attacker.invalid"),
             location("http://mmsc.carrier.invalid.attacker.invalid/x"),
         )
+        // Nor is a listed entry the end of another name or address.
+        assertEquals(MmsGate.Location.Unlisted("evil.mmsc.carrier.invalid"), location("http://evil.mmsc.carrier.invalid/x"))
+        assertEquals(MmsGate.Location.Unlisted("110.0.0.9"), location("http://110.0.0.9/x"))
+        assertEquals(MmsGate.Location.Unlisted("xmmsc"), location("http://xmmsc/x"))
         // Not a plain http(s) URL to a host of the entry grammar: no entry, so nothing a parent could allow.
         for (bad in listOf(
             "ftp://mmsc.carrier.invalid/x", "http://user:pw@mmsc.carrier.invalid/x", "http://mmsc.carrier.invalid\r\nHost: x/",
             "http://mmsc.carrier.invalid/a b", "http://mmsc.carrier.invalid\t/x", "mmsc.carrier.invalid/x", "http:mmsc", "",
             "http://mmsc_carrier.invalid/x", "http://mmsc.carrier.invalid/é", "http://[fd00::9]/x", "http://[::ffff:10.0.0.9]/x",
             "http://010.0.0.9/x", "http://2130706433/x", "http://0x7f000001/x", "http://10.0.0.9.1/x", "http://mmsc.carrier.invalid:0/x",
+            // "This host", and the listed single label as an absolute name: another lookup than the entry `mmsc`.
+            "http://127.0.0.1/x", "http://0.0.0.0/x", "http://mmsc./x",
         )) {
             assertEquals(bad, MmsGate.Location.Bad, location(bad))
         }

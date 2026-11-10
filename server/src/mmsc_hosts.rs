@@ -83,8 +83,9 @@ fn octet(label: &str) -> bool {
 /// Design 83 §1's entry, one grammar on both sides (`testdata/sms_contract.json`'s `mmsc_entries`; the launcher's
 /// `MmsGate.validEntry`): `host` or `host:port`. The host is 1-253 bytes of `[a-z0-9.-]` in non-empty labels, and
 /// either its last label starts with a letter or it is exactly four decimal octets - so nothing a resolver could read
-/// as another address (`010.0.0.1`, `2130706433`). The port is 1-65535 without a leading zero and never 80, 443 or
-/// 8080: on those the bare host is the entry.
+/// as another address (`010.0.0.1`, `2130706433`) - whose first is neither 0 nor 127: "this host" is no MMS server,
+/// and no question to put to a parent. The port is 1-65535 without a leading zero and never 80, 443 or 8080: on those
+/// the bare host is the entry.
 pub fn valid_entry(entry: &str) -> bool {
     let (host, port) = match entry.split_once(':') {
         Some((host, port)) => (host, Some(port)),
@@ -106,10 +107,12 @@ pub fn valid_entry(entry: &str) -> bool {
             .bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.' || b == b'-');
     let labels: Vec<&str> = host.split('.').collect();
+    let address = labels.len() == 4
+        && labels.iter().all(|label| octet(label))
+        && !["0", "127"].contains(&labels[0]);
     shape
         && labels.iter().all(|label| !label.is_empty())
-        && (labels[labels.len() - 1].as_bytes()[0].is_ascii_lowercase()
-            || (labels.len() == 4 && labels.iter().all(|label| octet(label))))
+        && (labels[labels.len() - 1].as_bytes()[0].is_ascii_lowercase() || address)
 }
 
 /// A reported SIM operator: its MCC/MNC and the name the SIM gives (may be empty).
