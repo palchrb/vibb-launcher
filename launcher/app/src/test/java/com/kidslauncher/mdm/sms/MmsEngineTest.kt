@@ -839,7 +839,15 @@ class MmsEngineTest {
         val dropped = (arrive() as PushOutcome.Shown).shown.message.id.value
         mms.onDownloaded(dropped)
         assertNull(mms.onRetrieved(dropped, retrieved(to = listOf(kid, bestemor.number))))
-        // A change of the active SIMs clears it.
+        // Code QA L2: a moment with no readable SIM list keeps the conflict (nothing used, nothing learned) ...
+        sims = ""
+        assertNull(mms.ownLearned())
+        val unread = (arrive() as PushOutcome.Shown).shown.message.id.value
+        mms.onDownloaded(unread)
+        mms.onRetrieved(unread, retrieved(to = listOf("+4790000030")))
+        sims = "1"
+        assertEquals(listOf(kid, "+4790000020"), mms.ownLearned()!!.conflict)
+        // ... a change of the active SIMs clears it.
         sims = "2"
         assertNull(mms.ownLearned())
         assertNull(store.ownLearnedJson)
@@ -867,5 +875,24 @@ class MmsEngineTest {
         // A contact added with the learned number clears it.
         rules = rules()!!.copy(contacts = rules!!.contacts + RuleContact(9, "Meg", kid))
         assertNull(mms.ownLearned())
+    }
+
+    @Test
+    fun `nothing is learned from a contact with sms_in that is an emergency number (code QA L7)`() {
+        own = emptyList()
+        // A rule set the server never sends (it never sends `sms_in` for an emergency number), as a phone could hold it.
+        val ambulanse = RuleContact(10, "Ambulanse", "113", smsIn = true, smsOut = true, mms = true)
+        rules = rules()!!.copy(contacts = rules!!.contacts + ambulanse)
+        // The callback window lets it in, so the message is fetched - but the learning's own sender rule refuses it.
+        callbackWindow = true
+        val id = (arrive(notification(from = "113/TYPE=PLMN")) as PushOutcome.Shown).shown.message.id.value
+        mms.onDownloaded(id)
+        assertNotNull(mms.onRetrieved(id, retrieved(from = "113/TYPE=PLMN", to = listOf(kid))))
+        assertNull(mms.ownLearned())
+        // A contact that isn't one teaches.
+        val again = (arrive() as PushOutcome.Shown).shown.message.id.value
+        mms.onDownloaded(again)
+        mms.onRetrieved(again, retrieved(to = listOf(kid)))
+        assertEquals(kid, mms.ownLearned()?.number)
     }
 }

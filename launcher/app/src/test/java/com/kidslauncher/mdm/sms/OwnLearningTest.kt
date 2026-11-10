@@ -54,6 +54,8 @@ class OwnLearningTest {
         assertNull(learn(to = listOf(MmsAddress("kid@example.invalid"))))
         // A phone that already knows a number (the parent's or a SIM's).
         assertNull(learn(known = setOf("+4790000011")))
+        // Code QA L2: nor while the active SIMs can't be read.
+        assertNull(OwnLearning.learn(null, emptySet(), mamma.number, true, plmn(kid), emptyList(), contacts, { false }, "47", 1000L, ""))
     }
 
     @Test

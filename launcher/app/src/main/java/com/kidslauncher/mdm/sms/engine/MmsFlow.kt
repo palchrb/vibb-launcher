@@ -526,7 +526,9 @@ class MmsFlow internal constructor(
      * the number) is forgotten in the store, so nothing comes back after the reason goes. */
     private fun ownLearnedFor(judge: SmsJudge): OwnLearned? {
         val raw = store.ownLearned() ?: return null
-        val current = OwnLearning.current(OwnLearning.decode(raw), judge.simSet(), judge.rules?.ownNumbers.orEmpty(), judge.rules?.contacts.orEmpty())
+        // Code QA L2: the active SIMs can't be read right now - keep what is stored, use none of it.
+        val sims = judge.simSet().ifEmpty { return null }
+        val current = OwnLearning.current(OwnLearning.decode(raw), sims, judge.rules?.ownNumbers.orEmpty(), judge.rules?.contacts.orEmpty())
         if (current == null) store.putOwnLearned(null)
         return current
     }
