@@ -234,38 +234,60 @@ body {
     position: relative;
 }
 
-/* The installed iPhone app (the user, 2026-10-23: the tab bar sat 59 pt too high after re-adding the
-   app with the black-translucent status bar): in standalone mode there is no toolbar, and iOS 26
-   reports the dynamic viewport (100dvh, innerHeight) short by exactly the top inset with that
-   status bar (WebKit 301108), while 100vh is the screen. So the shell is 100vh there, which is
-   right by construction - no toolbar can change it - whether or not WebKit fixes the bug. With
-   today's opaque black bar (head.html, 2026-11-09) 100vh is the screen below the bar, as right; an
-   app added before keeps its translucent bar until it is added again, and this still serves it. */
+/* The installed app's shell: exactly the visible page under either iPhone status bar (the user,
+   2026-10-23 and 2026-11-10). html is the layout viewport (height: 100%):
+   - under the black-translucent bar (head.html: Safari 26 and older) the page runs beneath the bar,
+     100vh is the screen, and iOS 26 reports the layout viewport (and 100dvh) short by exactly the
+     top inset (WebKit 301108) - 100% + the inset is the screen, and 100vh holds it there should
+     WebKit fix that;
+   - under the `default` bar (iOS 27 and later) the page starts below the bar and the inset is 0,
+     while 100vh is still the whole screen (WebKit 316008, so 100vh alone was one bar too tall and
+     the tab bar fell off the bottom) - 100% is the page, right under the bar.
+   The inset itself, never --top-strip: the strip's 12 px minimum is paint, not page. Android's
+   installed app and a desktop have no inset: the layout viewport. */
 @media (display-mode: standalone) {
     body {
-        height: 100vh;
+        height: min(100vh, calc(100% + env(safe-area-inset-top, 0px)));
     }
 }
 
-/* Night behind the status bar on every page (the user, 2026-10-22). Since 2026-11-09 the installed
-   iPhone app's bar is opaque black (head.html: iOS 27 blurs a black-translucent one grey), the page
-   below it, so the top inset is 0 there and this strip is nothing; it stays for an app added before
-   that change (iOS keeps its translucent bar until it is added again) and any other bar the page runs
-   under. Under a translucent bar the page runs beneath it and iOS draws white text on whatever is
-   there - so the top inset is vibb's night in both schemes. Absolute in the body, which
-   is the screen and never scrolls (design 43), so main scrolls under it and the strip never moves;
-   exactly the inset's height, so with no inset (a desktop, Android's Chrome) it is nothing. On
-   Devices the night band runs on through it. Over main's sticky editor bar (z-index 5), under the
-   Connecting bar and chip, which start below it. The auth pages scroll the document, so there it
-   is the document's top. */
-body::before {
-    content: "";
-    position: absolute;
-    z-index: 20;
+/* Night behind the status bar on every page, in both schemes (the user, 2026-10-22; a real element
+   since 2026-11-10): <div class="top-strip"> comes first in every page's body. iOS 26 and later
+   hide the web view's top fade (UIKit's scroll pocket) and give the status area a colour only from
+   a "fixed container edge": WebKit (LocalFrameView::fixedContainerEdges) hit-tests the middle of
+   the page's top edge, 4 px in, whatever its pointer-events, and takes the first position: fixed or
+   sticky box up from what it hits that is at least 90 % of the width - by its declared background
+   when it is over 10 px both ways, visible and not see-through. An absolute box or a pseudo-element
+   (the body::before this was) never counts. So this is the PWA's one fixed box, the deliberate
+   exception to design 43's "nothing against the viewport" (a standalone app's stale viewport after
+   a long background moved a bottom-fixed bar): pinned to the top edge, a stale height can't move it.
+   Its height is --top-strip, the top inset: under the black-translucent bar iOS draws white text on
+   this night. In the installed iPhone app it is never under 12 px, so it is there (and its colour
+   counts) under the `default` bar too, where the inset is 0; elsewhere (a desktop, Android, a Safari
+   tab) it is the inset, 0 - no strip. Everything placed "below the status bar" counts from
+   --top-strip. Over everything that can sit at the top's middle (the photo crop's veil, 3000, is the
+   highest; no page has a <dialog>); taps pass through it. The auth pages scroll the document: the
+   strip stays at the top, the card scrolls under it. */
+:root {
+    --top-strip: env(safe-area-inset-top, 0px);
+}
+
+/* The installed app on iOS alone (-webkit-touch-callout is iOS Safari's). */
+@media (display-mode: standalone) {
+    @supports (-webkit-touch-callout: none) {
+        :root {
+            --top-strip: max(env(safe-area-inset-top, 0px), 12px);
+        }
+    }
+}
+
+.top-strip {
+    position: fixed;
+    z-index: 4000;
     top: 0;
     left: 0;
     right: 0;
-    height: env(safe-area-inset-top, 0px);
+    height: var(--top-strip);
     background: var(--night);
     pointer-events: none;
 }
@@ -359,8 +381,13 @@ input[type="radio"] {
 
 /* The scroller: the full width (the scrollbar at the window's edge, the wheel working over the
    margins, the same width on every page), the 720 px column (480 px narrow) from its padding.
-   viewport-fit=cover (head.html): every edge takes its safe-area inset - the status bar or notch
-   above, the notch's sides in landscape; the tab bar over its bottom clears the home indicator.
+   viewport-fit=cover (head.html): every edge takes its safe-area inset - the status bar's above,
+   the notch's sides in landscape; the tab bar over its bottom clears the home indicator. The top
+   is 8 px under the inset and never less than the status bar's night strip (--top-strip): under
+   the `default` bar of iOS 27 the inset is 0 and the strip 12 px, so the page starts at the
+   strip's lower edge - 12 pt under the status bar, 4 more than iOS 26's 8 (the user's pick on the
+   iPhone, 2026-11-10; 8 px + the strip was 12 pt too tall). With the inset as the strip (iOS 26's
+   translucent bar) or neither (a browser tab) it is 8 px + the inset.
    touch-action here, not on body: a scroller resets an inherited one, so the rows inside would
    keep double-tap zoom; pinch zoom stays, and Leaflet's own rules win on the map. */
 .container {
@@ -370,7 +397,7 @@ input[type="radio"] {
     overscroll-behavior-y: contain;
     touch-action: manipulation;
     padding: 8px 16px 16px;
-    padding-top: calc(8px + env(safe-area-inset-top, 0px));
+    padding-top: max(calc(8px + env(safe-area-inset-top, 0px)), var(--top-strip));
     padding-right: max(16px, env(safe-area-inset-right, 0px), calc((100% - 720px) / 2 + 16px));
     padding-left: max(16px, env(safe-area-inset-left, 0px), calc((100% - 720px) / 2 + 16px));
     /* A page without the tab bar (music_spotify_done) reaches the home indicator itself. */
@@ -404,7 +431,7 @@ input[type="radio"] {
     font-size: 1.875rem;
     font-weight: 800;
     line-height: 1.15;
-    margin: 4px 0 20px;
+    margin: 12px 0 20px;
     word-break: break-word;
     overflow-wrap: anywhere;
 }
@@ -1201,8 +1228,16 @@ details.confirm > summary.row {
     align-items: center;
     justify-content: center;
     padding: 24px 16px;
-    padding: calc(24px + env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px))
+    padding: calc(24px + var(--top-strip)) max(16px, env(safe-area-inset-right, 0px))
         calc(24px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
+}
+
+/* The installed app: the visible page under either status bar, as the shell's body (above), so a short card sits on
+   its middle and nothing scrolls by a bar's height. */
+@media (display-mode: standalone) {
+    .auth-page {
+        min-height: min(100vh, calc(100% + env(safe-area-inset-top, 0px)));
+    }
 }
 
 label {
@@ -2093,7 +2128,7 @@ details.edit[open] > summary .chev {
    room or adding scrollable overflow (ink overflow, clipped at main's edges), so the bar, + and the
    bell, and the large title under it sit exactly where every other tab has them. The band is main's
    content like the bar, so it scrolls away with it, under the status bar's night strip
-   (body::before), which it meets without a seam; its 100vh above the top is what an iOS pull-down
+   (.top-strip), which it meets without a seam; its 100vh above the top is what an iOS pull-down
    bounce shows (night, not the grey ground). */
 .title-bar-night { border-image: linear-gradient(var(--night), var(--night)) fill 0 / 0 / 100vh 100vw 0; }
 .title-bar-night .title-action { color: var(--night-action); }
@@ -2418,7 +2453,7 @@ input.row-input {
     bottom: 0;
     left: 0;
     display: flex;
-    padding: calc(env(safe-area-inset-top, 0px) + 16px) 16px calc(env(safe-area-inset-bottom, 0px) + 16px);
+    padding: calc(var(--top-strip) + 16px) 16px calc(env(safe-area-inset-bottom, 0px) + 16px);
     background: rgba(12, 12, 20, 0.6);
     overflow-y: auto;
     overscroll-behavior: contain;
@@ -2564,8 +2599,11 @@ input.row-num { width: 6.5em; text-align: right; }
 /* The rule editor's top bar stays in view while the form scrolls (qa-31-s9-code L1): Save in
    reach after editing a lower field, and a save's flash or a refusal's reason under it. */
 /* It sticks inside <main> (design 43), and a sticky offset counts from inside the scroller's
-   padding (8px + the status bar's inset): -8px puts it right under the status bar, as before. Its
-   side margins reach the 720 px column's edge (main's wider padding outside it is page background). */
+   padding (.container: 8px + the status bar's inset, at least the night strip): -8px puts the bar's
+   box right under the status bar and its own 8 px of padding back, so the back link and Save stay
+   exactly where they are before any scrolling. In the installed app on iOS 27 (no inset, a 12 px
+   strip) the box starts 4 px down and the strip covers its padding alone. Its side margins reach
+   the 720 px column's edge (main's wider padding outside it is page background). */
 .editor-bar { position: -webkit-sticky; position: sticky; top: -8px; z-index: 5; margin: -8px -16px 0; padding: 8px 16px 0; background: var(--bg); }
 /* The container's sides take the notch's inset in landscape: the bar's background reaches its edge too. */
 .editor-bar { margin-left: calc(-1 * max(16px, env(safe-area-inset-left, 0px))); margin-right: calc(-1 * max(16px, env(safe-area-inset-right, 0px))); padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
@@ -2575,7 +2613,8 @@ input.row-num { width: 6.5em; text-align: right; }
 
 /* The header (the DeviceSummary mockup): the large avatar with its dot, the name, the state line,
    the lock badge and today's bar, centred. */
-.summary-head { display: flex; flex-direction: column; align-items: center; margin: 4px 0 20px; text-align: center; }
+/* Its top margin is .page-title's: the device page's header sits at the height of every other page's title. */
+.summary-head { display: flex; flex-direction: column; align-items: center; margin: 12px 0 20px; text-align: center; }
 .avatar-large { width: 76px; height: 76px; font-size: 2.125rem; }
 .avatar-large .avatar-dot { width: 16px; height: 16px; border-width: 3px; right: 1px; bottom: 1px; border-color: var(--bg); }
 /* The header's avatar is the picture's picker (server round C): the file field is hidden but stays
@@ -2615,7 +2654,7 @@ a.act, a.act:hover { text-decoration: none; }
 
 /* A tab's landing page opens on its large title under a 44px bar (the mockups) that ends with the bell
    (design 35) on every tab; Devices and Apps put their + before it. */
-.container > .page-title:first-child { margin-top: 48px; }
+.container > .page-title:first-child { margin-top: 56px; }
 .title-add { justify-content: center; min-width: 44px; padding: 0; }
 .title-add svg { width: 22px; height: 22px; }
 /* Connect's two ways (QR code, Code): a large title with its one-line case under it. */
@@ -2772,12 +2811,12 @@ details.app-display[open] > summary .section-chev {
 /* A thin bar along the top while the page comes; it never takes a tap. Both are absolute, never
    fixed (design 43: the shell's document doesn't scroll, so its top is the screen's, and an iOS
    standalone app's stale viewport moved fixed boxes). */
-.net-progress { position: absolute; z-index: 2000; top: env(safe-area-inset-top, 0px); left: 0; right: 0; height: 3px; overflow: hidden; pointer-events: none; }
+.net-progress { position: absolute; z-index: 2000; top: var(--top-strip); left: 0; right: 0; height: 3px; overflow: hidden; pointer-events: none; }
 .net-progress::before { content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 40%; background: var(--tint); animation: net-progress 1.2s ease-in-out infinite; }
 @keyframes net-progress { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
 /* "Connecting…": a small calm chip at the top - no alarm colour, no modal, the page usable under
    it; "Try again" in it only after 20 s. */
-.net-chip { position: absolute; z-index: 2000; top: calc(env(safe-area-inset-top, 0px) + 10px); left: 50%; transform: translateX(-50%); display: flex; align-items: center; max-width: calc(100% - 32px); min-height: 36px; padding: 0 14px; border-radius: 18px; background: var(--surface); color: var(--label-2); box-shadow: 0 1px 8px rgba(0, 0, 0, 0.16); font-size: 0.875rem; white-space: nowrap; }
+.net-chip { position: absolute; z-index: 2000; top: calc(var(--top-strip) + 10px); left: 50%; transform: translateX(-50%); display: flex; align-items: center; max-width: calc(100% - 32px); min-height: 36px; padding: 0 14px; border-radius: 18px; background: var(--surface); color: var(--label-2); box-shadow: 0 1px 8px rgba(0, 0, 0, 0.16); font-size: 0.875rem; white-space: nowrap; }
 .net-retry { min-height: 36px; margin: 0 -6px 0 10px; padding: 0 6px; border: 0; background: none; color: var(--tint); font: inherit; font-weight: 600; cursor: pointer; }
 .net-progress[hidden], .net-chip[hidden], .net-retry[hidden] { display: none; }
 @media (prefers-reduced-motion: reduce) {
@@ -2790,7 +2829,7 @@ details.app-display[open] > summary .section-chev {
    shift and the fade), turns over once a release would reload, and becomes a spinner then. Absolute
    in the body, as the chip (design 43: never fixed). main's overscroll-behavior-y: contain (.container)
    keeps the browser's own pull and chaining out. */
-.pull-refresh { position: absolute; z-index: 1900; top: calc(env(safe-area-inset-top, 0px) + 6px); left: 50%; width: 36px; height: 36px; margin-left: -18px; border-radius: 50%; background: var(--surface); color: var(--tint); box-shadow: 0 1px 8px rgba(0, 0, 0, 0.16); display: flex; align-items: center; justify-content: center; pointer-events: none; opacity: 0; transform: translateY(-20px); transition: opacity 0.15s ease, transform 0.15s ease; }
+.pull-refresh { position: absolute; z-index: 1900; top: calc(var(--top-strip) + 6px); left: 50%; width: 36px; height: 36px; margin-left: -18px; border-radius: 50%; background: var(--surface); color: var(--tint); box-shadow: 0 1px 8px rgba(0, 0, 0, 0.16); display: flex; align-items: center; justify-content: center; pointer-events: none; opacity: 0; transform: translateY(-20px); transition: opacity 0.15s ease, transform 0.15s ease; }
 .pull-refresh.is-pulling { transition: none; }
 .pull-refresh svg { width: 20px; height: 20px; transition: transform 0.15s ease; }
 .pull-refresh.is-armed svg { transform: rotate(180deg); }
@@ -2810,7 +2849,7 @@ details.app-display[open] > summary .section-chev {
 [data-zone-slider-row][hidden], [data-use-phone][hidden] { display: none; }
 
 /* ---- The tab-switch timing line (static/nav-timing.js, only after ?timing=1): debug, never in the way ---- */
-.timing-line { position: absolute; z-index: 1999; top: calc(env(safe-area-inset-top, 0px) + 3px); left: 8px; right: 8px; padding: 2px 6px; border-radius: 6px; background: var(--surface); color: var(--label-2); font: 11px/1.4 ui-monospace, Menlo, monospace; white-space: normal; overflow-wrap: anywhere; pointer-events: none; opacity: 0.92; }
+.timing-line { position: absolute; z-index: 1999; top: calc(var(--top-strip) + 3px); left: 8px; right: 8px; padding: 2px 6px; border-radius: 6px; background: var(--surface); color: var(--label-2); font: 11px/1.4 ui-monospace, Menlo, monospace; white-space: normal; overflow-wrap: anywhere; pointer-events: none; opacity: 0.92; }
 
 /* ---- Design 69: Device › Calendar (templates/device_calendar.html, device_calendar_rule.html) ---- */
 /* A saved calendar the phone no longer reports, greyed. A title rule's row: its words link to the editor, the
@@ -2873,18 +2912,19 @@ a.row.passkey-only-row { justify-content: flex-start; color: var(--label); }
 .password-on-lede { margin: -4px 4px 8px; font-size: 0.9375rem; line-height: 1.4; color: var(--label-2); }
 /* ---- Design 74 step 3: the app lock (static/app-lock.js, lock.html, account.html's #app-lock) ---- */
 /* A page of a lock-on session that is due, or hidden (the app switcher's picture): nothing on it shows - the body's own
-   ground stays. The lock is the server's; this only keeps the page from flashing up first (D3.3). */
-html.locked body > *,
-html.veiled body > * { visibility: hidden !important; }
+   ground stays, and so does the status bar's night strip (iOS skips a hidden box, .top-strip). The lock is the
+   server's; this only keeps the page from flashing up first (D3.3). */
+html.locked body > :not(.top-strip),
+html.veiled body > :not(.top-strip) { visibility: hidden !important; }
 /* The lock screen (§6.5; the user's pick A "Pust", 2026-11-03): vibb's night edge to edge in both schemes, the Vibb mark
    breathing, "Vibb is locked" in Nunito under it, the hint at the bottom and Sign Out under the hint. The whole screen
    is the Unlock button: `.lock-tap` covers the body (absolute in it, never the viewport - design 43), under Sign Out
    alone; the words show through it. On night: cream 16.2:1, the hint and Sign Out 8.4:1, the red line pale red 11.4:1.
    It takes over from the iPhone start-up splash with no jump (the user: "en fin overgang"): the mark at the splash's
-   size (--vibb-mark-size, from the splash's MARK_SHARE) on the screen's centre - the middle of the visible height,
-   the screen itself in the installed app (100vh there; under the black-translucent status bar before 2026-11-09, the
-   screen below the opaque black bar since, so the centre may sit half the bar's height lower than the splash's - the
-   user's iPhone check) -, its first frame at rest as the splash draws it, the title below it; the title, then the hint and Sign Out fade
+   size (--vibb-mark-size, from the splash's MARK_SHARE) on the middle of the visible page - in the installed app the
+   screen under the black-translucent status bar (Safari 26 and older), the page below the bar under `default` (iOS 27
+   and later; there the centre sits half the bar's height lower than the splash's - not yet seen on an iPhone) -, its
+   first frame at rest as the splash draws it, the title below it; the title, then the hint and Sign Out fade
    in. */
 /* The Vibb mark's size: written by scripts/pwa-startup-images.py from testdata/pwa_startup_screens.json. */
 :root { --vibb-mark-size: min(51.30vmin, 240px); }
@@ -2899,18 +2939,25 @@ html.veiled body > * { visibility: hidden !important; }
 }
 .lock-screen { flex: 1 0 auto; display: flex; flex-direction: column; align-items: center; width: 100%; max-width: 420px; text-align: center; }
 .lock-form { flex: 1 0 auto; display: flex; flex-direction: column; align-items: center; width: 100%; }
-/* In the flow (never over the foot): the space above the mark puts its centre on the screen's (the body's padding and
-   the status bar's inset taken off), so the foot comes after the title, scrolling if it must. */
+/* In the flow (never over the foot): the space above the mark puts its centre on the visible page's (the body's padding
+   - 24 px and the status bar's strip - taken off), so the foot comes after the title, scrolling if it must. */
 .lock-centre {
     display: flex;
     flex-direction: column;
     align-items: center;
-    margin-top: max(0px, calc(50vh - var(--vibb-mark-size) / 2 - 24px - env(safe-area-inset-top, 0px)));
-    margin-top: max(0px, calc(50dvh - var(--vibb-mark-size) / 2 - 24px - env(safe-area-inset-top, 0px)));
+    margin-top: max(0px, calc(50vh - var(--vibb-mark-size) / 2 - 24px - var(--top-strip)));
+    margin-top: max(0px, calc(50dvh - var(--vibb-mark-size) / 2 - 24px - var(--top-strip)));
 }
+/* The installed app: the half of the shell's height (the body rule above). A margin's % counts from the width, so the
+   layout viewport is 100dvh here - iOS 26 reports both short by the same inset under the translucent bar (WebKit
+   301108), and under `default` 100dvh is the layout viewport (measured on iOS 27.2, 2026-11-10: 793 of the screen's
+   852, as innerHeight; 100vh 852). Without dvh (iOS before 15.4, always under the translucent bar) 100vh is the
+   screen. */
 @media (display-mode: standalone) {
-    .lock-page { min-height: 100vh; }
-    .lock-centre { margin-top: max(0px, calc(50vh - var(--vibb-mark-size) / 2 - 24px - env(safe-area-inset-top, 0px))); }
+    .lock-centre {
+        margin-top: max(0px, calc(50vh - var(--vibb-mark-size) / 2 - 24px - var(--top-strip)));
+        margin-top: max(0px, calc(min(100vh, calc(100dvh + env(safe-area-inset-top, 0px))) / 2 - var(--vibb-mark-size) / 2 - 24px - var(--top-strip)));
+    }
 }
 .lock-centre .vibb-breath { width: var(--vibb-mark-size); height: var(--vibb-mark-size); }
 /* No room for the splash's centre with the foot below it (a Safari tab on a small iPhone, any phone on its side - no

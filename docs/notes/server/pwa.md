@@ -1131,7 +1131,9 @@ man er inne på en device". Branch `pwa-fixes-b`.
   with it; Devices' `night_top` is gone. The shell test pins the strip's rule, `black-translucent` and the one
   `theme-color` on every tab page. The real iPhone check (white text on night on every tab, the bounce) is the user's.
 - **An opaque black status bar since iOS 27** (2026-11-09, the user on iOS 27.2, with a screenshot: "pwa en rar
-  overgangsfarge på toppen" - a grey-to-dark gradient over the status bar above the night header): iOS 27 draws its own
+  overgangsfarge på toppen" - a grey-to-dark gradient over the status bar above the night header). *Superseded on
+  2026-11-10 by "The status bar by iOS version" (below): iOS 27 painted no black bar, and the 100vh shell was one bar too
+  tall.* iOS 27 draws its own
   blur over a `black-translucent` home-screen app's status bar (developer reports; the fix they use is an opaque bar).
   `head.html`'s `apple-mobile-web-app-status-bar-style` is now `black`: iOS paints an opaque black bar with white text
   and the page starts below it, so the top inset is 0 there. Black `#000` beside the night `#0C0C14` is the nearest
@@ -1146,6 +1148,81 @@ man er inne på en device". Branch `pwa-fixes-b`.
   until it is relaunched (swiped away and opened) or, if that is not enough, removed and added again. Not checked on
   an iPhone here: the user checks the top on every tab in both schemes, the pull-down bounce, the tab bar's place at
   the bottom, and the splash-to-lock handover.
+- **The status bar by iOS version** (2026-11-10, the user on iOS 27.2 with server 0.72.0, the app removed and added
+  again, with a screenshot: with 2026-11-09's `black` iOS 27 painted no black bar - the status area was the page's light
+  ground with dark text, a soft fade lay over the top of the night header, and the tab bar was cut off at the bottom
+  by about the status bar's height; on iOS 26 with `black-translucent` everything had been good). What was wrong with
+  2026-11-09's fix: both its assumptions - an opaque black bar, and the 100vh shell being the screen below it. Three
+  causes, read from WebKit's source and Bugzilla (not measured on a device by us):
+  1. The top fade is UIKit's scroll pocket on the web view. WebKit hides it (`WKWebView _updateHiddenScrollPocketEdges`)
+     and gives the status area a colour only from a "fixed container edge": `LocalFrameView::fixedContainerEdges`
+     hit-tests the middle of the top edge 4 px inside the viewport (ignoring `pointer-events`), walks up from the hit
+     node to the first renderer that is `position: fixed` or `sticky`, has a layer and is at least 90 % of the viewport's
+     width, and takes its declared `background-color` when its border box is over 10 px both ways and the colour is not
+     nearly transparent (`visibility: hidden` and opacity under 0.1 are skipped). An absolute box or a pseudo-element
+     of a box that isn't fixed never counts - so `body::before` did nothing, and the status area took the page's ground.
+  2. Without `black-translucent` the page starts below the status bar while `100vh` is still the whole screen (WebKit
+     316008, open): `body { height: 100vh }` in standalone was one status bar too tall, so the tab bar fell off the
+     bottom.
+  3. Apple calls `black-translucent` deprecated and says to remove the key - the status bar takes the page's colour
+     (WebKit 317153). Also cited by the research: WebKit 301994, and 301108 (iOS 26 reports the layout viewport and
+     `100dvh` short by the top inset under the translucent bar - why the shell was `100vh`, 2026-10-23).
+
+  The fix: (A) `<div class="top-strip" aria-hidden="true">` is the first child of every page's `<body>` (all 54
+  templates; no shared partial follows `<body>`), replacing `body::before`: `position: fixed`, top 0, the whole width,
+  `height: var(--top-strip)`, vibb's night, `pointer-events: none`, `z-index: 4000` (above the photo crop's veil, 3000,
+  the highest; no page has a `<dialog>`, and nothing else is fixed). The PWA's one fixed box, the deliberate exception
+  to design 43's "nothing against the viewport" (only a fixed or sticky box counts for WebKit; pinned to the top edge,
+  a stale viewport height can't move it). `--top-strip` is `env(safe-area-inset-top, 0px)`, and in the installed app
+  on iOS alone (`@media (display-mode: standalone)` with `@supports (-webkit-touch-callout: none)`) never under 12 px,
+  so the strip exists and its colour counts when iOS reports a top inset of 0 under `default`; Android's installed app,
+  desktops and Safari's tab keep the inset (0 - no strip, as before). Everything placed "below the status bar" counts
+  from `--top-strip`: the auth pages' padding, the photo crop's padding, the Connecting bar and chip, the
+  pull-to-refresh arrow, the timing line and the lock page's centring; main's `padding-top` is
+  `max(calc(8px + env(safe-area-inset-top, 0px)), var(--top-strip))` (below, "On the device"). The veil (`html.locked`/`html.veiled`)
+  hides every child of the body but the strip (a hidden box is skipped by WebKit). The auth pages scroll the document:
+  the fixed strip stays at the top and the card scrolls under it. (B) The installed app's shell is
+  `height: min(100vh, calc(100% + env(safe-area-inset-top, 0px)))` (`html` is `height: 100%`, the layout viewport):
+  under the translucent bar 100% is short by the inset (301108), so this is 100vh, the screen - the state the user saw
+  good on iOS 26; under `default` the inset is 0 and it is the layout viewport, right below the bar. The inset, never
+  `--top-strip` (the 12 px are paint, not page). The auth pages' standalone `min-height` is the same expression; the
+  lock page's mark is centred on half of it, with `100dvh` for the layout viewport since a margin's % counts from the
+  width (`50vh` first, for iOS before 15.4). (C) `head.html`'s `apple-mobile-web-app-status-bar-style` is `default`,
+  Apple's direction for iOS 27 and later; Safari 26 and older get `black-translucent`, the one combination seen good
+  there. iOS reads the style from the page Safari had when the app was added, and Safari's User-Agent tells its version
+  only by `Version/NN` (the OS token is frozen at `18_6` since iOS 26), so `status_bar::status_bar_style` decides from
+  the User-Agent - `iPhone`, `iPad` or `Macintosh` with `Version/NN`, NN <= 26, and no product token ending in `iOS/`
+  (`CriOS/`, `FxiOS/`, `EdgiOS/`, `OPiOS/`: another iOS browser, some with a `Version/` of their own, is never read as
+  Safari) -> `black-translucent`; anything else (none, no `Version/` as the installed app's own requests, 27 and
+  later, an unreadable number) -> `default` - and the middleware `status_bar::old_safari_bar` (on the admin router, beside `mark_post_answer`) swaps
+  exactly that one meta line in a `text/html` answer to an old Safari, read whole, `Content-Length` dropped; the common
+  path is never rewritten, nothing that isn't HTML (the event stream, downloads, static files) is touched. Every HTML
+  answer carries `Vary: User-Agent`: the pages are `private, no-cache` (or `no-store`) and carry no validator, so a
+  browser may keep one for Back; the service worker caches no page. `style.css?v=90`. The shell test pins the strip as
+  every page's first element, its rule, the iOS 12 px, the standalone height (the auth pages' `min-height` and the lock
+  page's margin too), no `body::before`, the veil's exemption, `default` on every tab page, and through the router
+  `black-translucent` for Safari 26 (a POST's answer too, with `data-post-answer`), `default` for Safari 27 and no
+  User-Agent, the stylesheet byte for byte and without `Vary: User-Agent`, and the phones' event stream answering its
+  first chunk unbuffered; `status_bar::tests` runs the User-Agent table and
+  `a_rewritten_page_never_keeps_its_old_length`.
+  **On the device** (the user's iPhone, iOS 27.2, the installed app with `default` and the 12 px strip, 2026-11-10):
+  screen 393 x 852; `innerHeight` = `clientHeight` = the visual viewport = 793; `100vh` and `100lvh` 852, `100dvh` and
+  `100svh` 793; `safe-area-inset-top` 0, bottom 34; the body 0..793, the strip 0..12, the tab bar 676..745. The status
+  area is night with a white clock, no fade, the tab bar in place. So under `default` on iOS 27 `100dvh` is the layout
+  viewport and the page starts below the bar. From it: main's top padding is
+  `max(calc(8px + env(safe-area-inset-top, 0px)), var(--top-strip))` - 12 px there, 4 pt more than iOS 26's look
+  (`8px + --top-strip` gave 20, 12 more, and the user picked the tighter one on the lab), and exactly as before the
+  strip on iOS 26's installed app and in a browser tab. The sticky editor bar keeps `top: -8px` and its own 8 px
+  padding: stuck, its row sits where every page's title bar is in all three (on iOS 27 the strip covers the bar's
+  padding alone). `.page-title`'s top margin is 12 px (was 4; the user: more air between the band and the title, the
+  same height on every page), and the title as main's first child 56 (44 + 12). Chromium at 393 px (measured): the
+  title's top at 64 in a tab, 123 with a 59 px inset, 68 on iOS 27's numbers, the same on every page shape.
+  **Not known yet**: iOS 26 with `default` (why it keeps `black-translucent`); whether iOS reads the bar style only at
+  Add to Home Screen; the 12 px band in iPhone landscape (the strip is 12 px there too, on iOS 26 as well since the
+  top inset is 0 in landscape); the grey ground during a momentum bounce above the night band; an app added on iOS 26
+  and then updated to iOS 27 (it may keep `black-translucent`). **The knobs if the device says otherwise**: the
+  strip's colour is `.top-strip`'s `background` (one line in `style.css`); the bar style rule is `status_bar_style`'s
+  `major <= 26` (one line in `src/status_bar.rs`); the strip's minimum is the 12 px in the iOS-standalone `:root`.
 - **The brand mark is the app icon** (2026-10-22, the user: the lifted tile read as a lighter square on the band, and
   the hand-drawn rings were "not the right icon"): Devices' `.vibb-mark` is `<img src="/static/icons/icon-192.png"
   width="34" height="34" alt="" decoding="async">` - the PWA's own icon, its night ground baked in, straight on the night

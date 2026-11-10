@@ -4,6 +4,7 @@
 {% include "partials/head.html" %}
 </head>
 <body>
+<div class="top-strip" aria-hidden="true"></div>
 {#- The one page whose tab is a field (`device_pages::Tab`): Apps when opened from the Apps tab
     (`?from=apps` or `app:<id>`), else Devices. -#}
 {% let tab = nav_tab.name() %}

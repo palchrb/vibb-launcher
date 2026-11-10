@@ -6,7 +6,7 @@
 //   here but `window.handyLock` (due() is false, lock() goes to /lock).
 // - The last input (a pointer or key event) is kept in sessionStorage (`handy-used`), so it survives the page's own
 //   reloads and navigations; the later of it and the server's last use counts (an unreadable store is the server's).
-// - Due = the lock time since the last input. Then `html.locked` (style.css hides `body > *`) and
+// - Due = the lock time since the last input. Then `html.locked` (style.css hides `body > :not(.top-strip)`) and
 //   `location.replace("/lock?next=<this path>")` - at once at load, when the page becomes visible or comes back from
 //   the back-forward cache, when the time runs out on screen, or at an input that comes too late.
 // - A history load (Back/Forward) or a page served from the HTTP cache counts only the stored input, and none is due:

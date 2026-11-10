@@ -15,6 +15,7 @@
     asks first), and the sign-in page keeps where the parent was going. Without a passkey here or without WebAuthn there is no tap target,
     only the note. -#}
 <body class="auth-page lock-page">
+<div class="top-strip" aria-hidden="true"></div>
 {% include "partials/js_words.html" %}
 <main class="auth-card lock-screen">
     <form method="post" action="/lock" id="unlock" class="lock-form" data-passkey-unlock>
