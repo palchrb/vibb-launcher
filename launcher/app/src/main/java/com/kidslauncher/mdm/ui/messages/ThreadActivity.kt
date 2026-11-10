@@ -750,8 +750,9 @@ class ThreadActivity : UIObjectActivity() {
         renderCompose()
     }
 
-    /** "Prøv igjen" ([MessageActions.retry]): the same text under the failed message's retry id; the failed one goes once
-     * it is accepted. The link answers once until the next read (code QA M1). */
+    /** "Prøv igjen" ([MessageActions.retry]): the same text and pictures under the failed message's retry id; the failed
+     * one goes once that is accepted. A picture that can't go again has its own words ([afterRetryRefusal]) and the
+     * failed message stays. The link answers once until the next read (code QA M1). */
     @android.annotation.SuppressLint("NotifyDataSetChanged")
     private fun retry(failed: Message) {
         if (!retrying.add(failed.id.value)) return
@@ -761,7 +762,7 @@ class ThreadActivity : UIObjectActivity() {
             MessageActions.retry({ SmsRuntime.send(app, it) }, { engine.delete(it, Origin.KID_SCREEN) }, failed)
         }) { result ->
             if (isDestroyed) return@ask
-            if (result is SendResult.Refused) refused(afterRefusal(result.reason), "", again = true)
+            if (result is SendResult.Refused) refused(afterRetryRefusal(failed, result.reason), "", again = true)
             load()
         }
     }

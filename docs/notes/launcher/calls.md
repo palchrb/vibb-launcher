@@ -152,7 +152,8 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
   weekday this week, else the date), `threadItems` (by `seq`, a day separator per day, the time under each run's last bubble - below), `deliveryLine` ("Sendt"/"Levert"/
   "Sender …" under the kid's last message; "Ikke sendt"/"Kanskje ikke sendt - trykk for å prøve igjen" wherever a
   failed or `UNCERTAIN` one is), `partViews` (step 3b's parts), `MessageActions` (D18's deletes; "Prøv igjen" sends the
-  text again with a new `clientId` and deletes the failed message once accepted - refused, it stays).
+  same message again - its text and its pictures - under `retry:<failed id>` and deletes the failed one only when the
+  engine accepted a message with all of it; refused, it stays - "A failed picture's retry" below).
 - **Screens (`ui/messages/`, XML views, Dagen's ground and header):** `MessagesActivity` (the list; "Ny melding" as the
   header's action while `composeState` would send; long-press or TalkBack's "Slett samtale" asks in the screen),
   `ThreadActivity` (bubbles - received in `kid_message_in` (#34324A, the user's D2), the kid's in `kid_message_out`
@@ -263,13 +264,38 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
   the row's width, no `maxLines`). A picture with no text under it has lost its 6 dp bottom margin with the time. The
   line is clickable only as the tap to try again (the listener is set before `isClickable`: `setOnClickListener` makes
   a view clickable, with null too). The emulator pass, with its measures, the two faults it saw beside this (a failed
-  picture's retry sends its text alone; the compose bar with a picture under the keyboard) and what it could not show
+  picture's retry sent its text alone; the compose bar with a picture lay under the keyboard - both fixed since, "A
+  failed picture's retry" and "The compose bar with a picture, over the keyboard" below) and what it could not show
   ("Sender …" on screen among it), is `docs/testing/emulator.md` §6ae.
 - **The compose bar (QA N2):** the draft carries one `clientId`, kept (also across a rotation and, in memory only, while
   the kid looks elsewhere) until the engine accepted that text; two quick taps send the same id and the engine sends
   once. "2 SMS" over the field past one part (`SmsMessage.calculateLength`). No field menu (`NoTextActions`), bubbles
   never selectable or linked: nothing opens another app (`KidScreensEscapeTest`, which guards `ui/messages` and allows
   `Intent.createChooser` in `PictureShare.kt` alone).
+- **The compose bar with a picture, over the keyboard (2026-11-10, found by the bubble-time emulator pass):** the bar
+  with a picture is 234 px at 320 x 569 dp (the 96 dp preview over a field of one or two lines; 266, 299 and 331 px
+  with three, four and five), and a `LinearLayout` offers a child measured after a weighted one (the list) the
+  parent's whole height, not what is left - so a bar taller than the room between the header and the keyboard lay with
+  its lower part, the field's last lines and the send button, under the keyboard. Seen on `handy36` (a 136 px status
+  bar: 204 px of room, the bar's lower 36 px hidden with one line of text). **By the numbers for the Jelly Star's
+  36 px status bar** (`jelly36`; the keyboard's top where `handy36` had it, 424 px from the screen's bottom - the
+  phone's own keyboard may differ): 304 px of room; with one or two lines the bar fits and the list keeps 49 px, with
+  three 17 px; with four the bar's bottom edge is 1 px under the keyboard; with five 33 px are - the field's last line,
+  the one being typed, and near half the send button. Layout only (`activity_thread.xml`, no code, no strings):
+  everything under the header is in one weighted `thread_body`, so the bar is offered exactly the room there is (less
+  its margins), and the preview's row is the bar's one weighted child at 96 dp, its picture as high as the row - where
+  the bar is taller than its room the row is lower by exactly what is missing and the field keeps its lines. **Measured
+  on `jelly36`** (`docs/testing/emulator.md` §6ag; uiautomator bounds, Gboard's top at y = 429 of 854, 303 px of room),
+  keyboard up, a picture attached: the preview is 144 x 144 px (96 x 96 dp) with one, two and three lines of text,
+  144 x 127 px with four and 144 x 95 px with five (1 px less than computed - the field is 66, 67, 99, 131 and 163 px);
+  the list keeps 48, 47, 15, 0 and 0 px; the field's bottom is at y = 408 and the send button's at 414 in all five,
+  whole above the keyboard. Main's build in the five-line case: the field down to y = 457 and the send button to 463,
+  34 px under the keyboard. With the keyboard down the preview is 144 x 144 px with one to five lines, as it was, and
+  without a picture five lines leave the list 107 px with the keyboard up. The other panels under the header (the line,
+  the picture choice, the react panel, the delete confirm, the emoji picker) are offered the same room now instead of
+  the screen's height; their bounds, and their pixels, are main's. Still computed only, for `handy36`'s 136 px status
+  bar: 96 x 62 dp with one or two lines, 96 x 40 dp with three, 96 x 18 dp with four (the 40 dp cross cut to the row),
+  none with five. The Jelly Star's own keyboard height is not known from an emulator.
 - **The engine's thread:** every read and write goes through `SmsRuntime.ask` (the engine thread, the answer posted to
   the main thread) and the screens reload on `SmsRuntime.events` (the engine's live flow). `SmsHome` holds what Home
   and the time-rule screen need (history, the unread total, the role), refreshed after every event, every rule change
@@ -288,7 +314,8 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
   decoded off the main thread); a tap opens `PictureActivity`. Since step 3b `Message.parts` comes from the `part`
   table and `openPart` gives the main process's own JPEG.
 - **Fix round after the code QA (`docs/review/qa-sms-screens.md`):** "Prøv igjen" sends under `retry:<failed id>` (two
-  taps send once) and only while the compose bar is open; the contact avatars' badge is missed calls plus unread
+  taps send once) and only while the compose bar is open (since 2026-11-10 with the failed message's pictures -
+  "A failed picture's retry" below); the contact avatars' badge is missed calls plus unread
   messages (`ContactBadge`, `SmsHome.unreadFrom`, Home, the phone book, the sheet); the notification lets the system add
   no contextual actions; the engine's live flow is a drop-oldest change signal collected off the engine thread, and the
   screens coalesce their reads (`Coalescer`, the thread reads its one conversation); the time-rule row and the tile
@@ -382,6 +409,24 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
   with its parts; the outbox (`drainMms`) gates every recipient again, composes the m-send-req with the vendored
   `PduComposer` from our files and hands it to `sendMultimediaMessage`; the result's m-send-conf is read in the isolated
   parse (a refusal there is `FAILED`).
+- **A failed picture's retry (2026-11-10, found by the bubble-time emulator pass):** "Prøv igjen" sent `failed.body`
+  alone - a failed picture with text went again as its text only and the failed message, picture and all, was deleted;
+  a picture alone did nothing (an empty send, `Refusal.EMPTY`, no words). Now `MessageActions.retry` builds the send
+  from the failed message's parts (`PictureRef` of each part's hash and size, in their order) with its text, as the
+  first send did, and deletes the failed message only when the accepted message has the same text and the same hashes.
+  **The bytes are there while the failed message is:** an outgoing picture is our own JPEG in `PartFiles`, named by its
+  SHA-256; the `part` row of the message holds it, a file is deleted only when no part names it (`dropUnheld`,
+  `prune`), and the retry's new message names the same hash before the failed one goes - so nothing is copied and
+  nothing is lost. What can still stop it is the gate, as for any send: "Bilder i meldinger" switched off for the
+  recipient since, the file gone all the same, the carrier's maximum lower now, or a part that isn't `AVAILABLE`. Then
+  nothing is sent - never the text alone - and nothing is deleted: the failed message stays with its line and the toast
+  is "Dette bildet kan ikke sendes" (`afterRetryRefusal` -> `AfterRefusal.PICTURE`, the existing
+  `messages_picture_unusable`; a time rule, SMS off and the rest keep the send's own words). Two taps still send once
+  (the engine's repeat rule compares the text and the hashes). Not changed: the link is offered by the text gate alone
+  (`retryOffered`), so it also shows on a failed picture whose recipient lost "Bilder i meldinger" - the tap then says
+  the line above; and a failed reaction's retry sends its words as before. `MessagesModelTest`, `MmsEngineTest`. Seen
+  on `jelly36` against the fake MMSC, each case above by its POST and its rows: `docs/testing/emulator.md` §6ag (where
+  a refused tap also leaves the line at "Ikke sendt", without the offer, until the thread is read again).
 - **Debug-only emulator hook:** `src/debug/.../sms/MmsDebugReceiver` (DUMP-guarded, `checkReleaseHasNoDebugHook`,
   `DebugHookAbsentTest`): `--es push_hex` commits a push as `MmsPushReceiver` does (the AVD's console can't deliver
   one), `--es mmsc_host --es mccmnc` puts a fake MMS server on the list in memory, `--es stand_in <url>` plays the

@@ -19,6 +19,7 @@ import com.kidslauncher.mdm.sms.engine.Origin
 import com.kidslauncher.mdm.sms.engine.Part
 import com.kidslauncher.mdm.sms.engine.PartState
 import com.kidslauncher.mdm.sms.engine.Participant
+import com.kidslauncher.mdm.sms.engine.PictureRef
 import com.kidslauncher.mdm.sms.engine.Received
 import com.kidslauncher.mdm.sms.engine.Refusal
 import com.kidslauncher.mdm.sms.engine.SendCommand
@@ -580,6 +581,31 @@ class MessagesModelTest {
         engine.drainOutbox()
         assertEquals(listOf("kommer"), sent)
         assertEquals(listOf(one.message.id), engine.messages(failed.conversationId, null, 10).map { it.id })
+    }
+
+    /** A failed picture's retry (the engine's side is `MmsEngineTest`): the gate is asked for the text and the picture
+     * under the retry id, and the failed message goes only for an accepted message that carries both. */
+    @Test
+    fun `try again asks for the picture with its text and drops the failed one only for a message with both`() {
+        val part = Part(0, "image/jpeg", 4, "a".repeat(64), 1280, 960, PartState.AVAILABLE)
+        val failed = message("f", 1, now, Direction.OUT, Delivery.FAILED, "Se her", listOf(part))
+        val asked = mutableListOf<SendCommand>()
+        val deleted = mutableListOf<MessageId>()
+        fun accepted(parts: List<Part>) = SendResult.Accepted(message("n", 2, now, Direction.OUT, Delivery.QUEUED, "Se her", parts))
+        MessageActions.retry({ asked += it; accepted(emptyList()) }, { deleted += it }, failed)
+        assertTrue("the text alone doesn't take the failed message's place", deleted.isEmpty())
+        MessageActions.retry({ asked += it; accepted(listOf(part)) }, { deleted += it }, failed)
+        assertEquals(listOf(failed.id), deleted)
+        val command = SendCommand("retry:f", ConversationId("c"), null, "Se her", listOf(PictureRef("a".repeat(64), 1280, 960)), Origin.KID_SCREEN)
+        assertEquals(listOf(command, command), asked)
+        // A part that can't be sent again: the gate isn't asked at all - never the text without its picture.
+        val unsendable = failed.copy(parts = listOf(part.copy(state = PartState.GONE)))
+        assertEquals(SendResult.Refused(Refusal.NOT_ALLOWED), MessageActions.retry({ error("sent") }, { error("deleted") }, unsendable))
+        // Its words are the picture's; a text's refusal, and a picture's for another reason, keep the send's own.
+        assertEquals(AfterRefusal.PICTURE, afterRetryRefusal(failed, Refusal.NOT_ALLOWED))
+        assertEquals(AfterRefusal.PICTURE, afterRetryRefusal(failed, Refusal.TOO_LARGE))
+        assertEquals(AfterRefusal.NOT_NOW, afterRetryRefusal(failed, Refusal.TIME_RULE))
+        assertEquals(AfterRefusal.NOT_ALLOWED, afterRetryRefusal(failed.copy(parts = emptyList()), Refusal.NOT_ALLOWED))
     }
 
     // ---- code QA of step 2: the badges, the reloads, the live signal, the share sheet, the smsto: draft ----
