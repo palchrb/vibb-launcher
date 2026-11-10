@@ -350,3 +350,118 @@ Two notes from the pass:
 - The seed first copied an older run's `lock_task_features = 0` (no NOTIFICATIONS even unlocked), which muted the first
   reactions; set to the server's default (63) the pass went on. A sync without killing the debug hook's memory: an SMS
   from a stranger; a sync at all: `run-as <package> kill <pid>` (a device owner can't be force-stopped) and Home.
+
+## Verification (2026-11-10, `sms-reactions` at 84c43dfb)
+
+Merged into `qa-81-code` as a fast-forward. I read:
+- the launcher's main-code diff `c95dd85a..84c43dfb` in full;
+- the tests it added;
+- the merge's shared files (`MmsFlow.kt`, `OwnLearning.kt`, the end of `MmsEngineTest`; the store's steps are
+  unchanged since the review, v4 is design 80's as merged and v5 is still the last step);
+- the "Fix round" and "Emulator pass" sections above.
+
+Targeted runs only. At 84c43dfb, `com.kidslauncher.mdm.sms.*`, `ui.messages.*` and `badges.*` run 326 tests, 0
+failures, 0 errors, 0 skipped (JUnit XML). The implementer's full count, 2,424/0, isn't re-run here.
+
+**Verdict:** every finding is fixed. One new Nit. Nothing in the fix round or the merge breaks a reaction path I
+traced. None of the pass's unchecked items blocks the merge.
+
+**Counts after the fix round: Critical 0, High 0, Medium 0, Low 0, Nit 1 (V1).**
+
+### The findings
+
+| Finding | Result | How it holds |
+|---|---|---|
+| M1 | **Fixed** | `PICTURE_TARGET = {AVAILABLE}` (`Reactions.kt:88`). Every image part still counts among the ten, so a placeholder beside a real picture makes the reaction ambiguous. A placeholder never has a body, so no text reaction names it either. The kid's send already required `AVAILABLE`. A row can't carry a reaction while it is a placeholder. The only things that move (the group move), drop (`drop`) or turn a row into a reaction (`onRetrieved`) all act on placeholders, so removing `detachReactionsOn` and the drop's cascade loses nothing. Reaction-on-reaction can't arise any more: targets come from the bubble query or from `reactionToSend`'s `reactionTo == null`, so `deleteConversation`'s one-level cascade is enough. Cost: a reaction to a picture we haven't fetched yet stays visible text. Re-allowing `PENDING`/`WAITING_DATA` fails three tests. Withdrawing departure 8 follows. |
+| L1 | **Fixed** | `notifiable` takes up to five unread messages, then fills the remaining room with the newest reactions in effect, oldest first (`SmsEngine.kt:241-252`). Restoring the old merge fails the new `SmsEngineTest` case. |
+| L2 | **Fixed** | m6 (group texts off) and m10 (told-before) are now killed by their `MmsEngineTest` cases. m7 is killed in the pure `smsChannel`. m11 and m16: their code is gone (M1). m12 survives as expected: it moved to the emulator pass, and that pass's item 2 shows the glance count, the list's order and last line, and `markReadUpTo`'s subquery with reaction rows present. The one remaining unit-test gap is in the glue: `SmsNotifier` handing `passesFilter(context)` to `smsChannel` survives as a mutant. The emulator's Do Not Disturb post on `messages_silent` (item 6) is its check. Acceptable. |
+| L3 | **Fixed** (by the emulator only) | The bubble's bottom margin is the chip's measured height less 5 dp (`ThreadActivity.kt:1010`), so the overlap stays inside the 8 dp bottom padding at any font scale. The pass saw it clear of the time and "Levert" at font scale 1.0 and 1.3. A JVM test can't check layout. |
+| N1 | **Fixed** | `Reactions.emoji` = the list's rule, else the six by key. It is used by both the parse and `reactionToSend`. Reverting the send path fails the new engine test. It now also accepts an unlisted variant whose key is one of the six (stored fully-qualified). That is harmless. |
+| N2 | **Fixed** | `smsPublicIsReaction(shown)`: "Ny reaksjon" only when every line is a reaction; the `any` mutant is killed. |
+| N3 | **Fixed** | `candidate(textParts, otherParts)`; the vectors were updated. |
+| N4 | **Fixed** | `TYPE_HEADING` / `TYPE_EMOJI`. |
+| N5 | **Fixed** | `GLYPHS` is a process-wide `ConcurrentHashMap`. Each thread uses its own `Paint` (the screen's on the main thread, a fresh one in the picker's background pass). |
+| N6 | **Fixed** | `recentAfterSend` runs in the send's answer: only an accepted add. Its mutant is killed. The wiring (`fromPicker = true`) survives as a mutant; the pass's item 5 saw 👋 learned after an accepted send. |
+| N7 | **Fixed** | `LICENSE-UNICODE` holds the licence text, and both Unicode entries in `NOTICE.md` name it. |
+| Departure 8 | **Withdrawn** | Nothing hangs on a placeholder, so there is nothing for a drop to take. |
+| Open point (the buzz) | Still open | `0, 80` stays, with the freeze noted at the constant. The pass found that the question is wider than the pattern; see below. |
+
+### New
+
+**V1 (Nit). A reaction may buzz without its line.**
+- **Where:** `SmsRuntime.kt:304` with `SmsEngine.kt:241-244`.
+- **What happens:** since L1's fill, five unread messages leave no room for a reaction's line. The reaction still
+  posts on `messages_reactions`: the kid feels the short buzz and finds only the five messages, with the public "Ny
+  melding".
+- **Fix:** in `notifyAttached`, post with `reaction = true` only when the reaction is among `notifiable`'s lines;
+  otherwise rebuild quietly (`afterReaction`).
+
+Nothing else new. Checked and fine:
+- **The scroll reset:** `submitList(items) { grid.scrollToPosition(0) }` runs its callback even when the list is
+  unchanged, so a second opening scrolls too.
+- **The L3 margin:** set on the holder's own params before layout, as before.
+- **The merge's `OwnLearning` change** (design 80's L2: an unreadable SIM list keeps the stored state and uses none
+  of it) doesn't touch reactions. For one message it gives the same result as the old clearing would have; judging it
+  belongs to design 80's review.
+
+### The mutants (verification)
+
+| Mutant | Tests | Result |
+|---|---|---|
+| m6 again: `GROUPS_OFF` skipped for a reaction | `MmsEngineTest` | killed |
+| m7 again: `smsChannel` ignores Do Not Disturb | `SmsGlanceTest` | killed |
+| m7b: `SmsNotifier` passes `true` for the filter | `sms.*`, `ui.messages.*`, `badges.*` | **survived** (glue; the emulator's DND check covers it) |
+| m10 again: `!m.notified` dropped | `MmsEngineTest` | killed |
+| m12 again: SQLite `unread()` counts reactions | `sms.*` | **survived** (no JVM SQLite; the emulator's item 2) |
+| `PICTURE_TARGET` back to `AVAILABLE`, `PENDING`, `WAITING_DATA` | `SmsReactionsTest`, `MmsEngineTest` | killed (3 tests) |
+| `notifiable` back to the newest-five merge | `SmsEngineTest`, `SmsGlanceTest` | killed |
+| `recentAfterSend` ignores the answer and the op | `MessagesModelTest` | killed |
+| the picker's scroll reset removed | `MessagesWiringTest` | killed (a source-text test) |
+| `smsPublicIsReaction`: `all` -> `any` | `SmsGlanceTest` | killed |
+| the send path back to the list-only emoji rule | `SmsEngineTest` | killed |
+| the picker's `fromPicker = true` dropped | `ui.messages.*` | **survived** (glue; the emulator's item 5 saw it learn) |
+
+Every mutant was reverted with `git checkout -- <file>`, and `git status` was clean before this commit.
+
+### The emulator pass, read against the nine checks
+
+No row claims more than its steps can show. In particular:
+- Item 2's "a reaction newer than every bubble marked read" can only come from `markReadUpTo`'s subquery.
+- Item 1's fresh store was made by the app itself after the file was removed.
+- Item 4's "descriptions" were read by uiautomator, and the pass says so rather than claiming TalkBack.
+
+Not done from my list, but not claimed either:
+- item 6's removal rebuild, the swiped notification staying away, and L1's case (the JVM test covers L1);
+- item 3's pending dim, "+N" and the dot;
+- item 7's incoming group reaction (covered by `MmsEngineTest`).
+
+**Blockers among the unchecked items: none.**
+
+| Not checked | Blocker? | Why |
+|---|---|---|
+| The lock wake (inconclusive) | No | The code posts with `wake = false`, and `SmsGlanceTest` pins that the wake comes only after a post that asks for it. On this AVD an ordinary message didn't wake either, so the pass can't separate the two. |
+| TalkBack running | No | The labels are there (uiautomator). The custom actions are plain `ViewCompat` calls. It should be run once with the next TalkBack pass of the messages screens. |
+| A tap on the thread closing the panel | No | Back closes it, and a choice closes it. A failure here would only leave the panel up. |
+| The read-only history | No | `reactPanel`'s test pins "no grid unless the compose bar is `OPEN`". Badges come from the same `messages()` as any thread. |
+| An incoming group reaction | No | `MmsEngineTest` covers it. The fake MMSC's text is fixed. |
+| The picker fix not re-run | No | A one-line commit callback, pinned by a source test. Look at it in the next emulator session. |
+
+### For the user (from the pass, outside this design)
+
+**Kiosk mutes every notification while the PIN lock is up.**
+- **What the pass saw:** `featuresWhileLocked` takes NOTIFICATIONS out while the lock is LOCKED. Android then turns
+  off every notification's sound and vibration (`DISABLE_NOTIFICATION_ALERTS`).
+- **Effect:** on the kid's phone with its lock up - the usual state in a pocket - a message neither rings nor buzzes,
+  and a reaction doesn't buzz either.
+- **For the buzz question:** whether 80 ms is felt in a pocket matters only if notifications may alert under the lock
+  at all. The user should decide that first; it belongs to the lock (design 10), not to design 81.
+
+**Android's "notification cooldown" is not a concern for the Jelly Star.** The pass saw it soften a reaction that
+came 10 s after a message. Cooldown is an Android 15+ feature, and the Jelly Star runs Android 13/14, so the pass's
+observation doesn't carry over to it.
+
+### Not checked in this verification
+
+- **Nothing on a device:** L3's layout, the panel, the picker and TalkBack rest on the emulator pass as written.
+- **The full suite:** not re-run; only the three packages above.
+- **Design 80's merged changes:** their own merits are not judged here.
