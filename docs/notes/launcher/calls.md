@@ -221,7 +221,9 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
   from a sloppy tap). A touch on the mark stops a coasting list, as one on a row. While the reaction panel is open
   the mark hands nothing on: a touch in the list is spent on closing the panel, and the mark's tap closes it too.
   `thread_list_frame` has `splitMotionEvents="false"`: a second finger is never the list's own gesture next to the one
-  handed on. TalkBack's click and a keyboard's Enter don't pass the listener. Built, not run on an emulator yet.
+  handed on. TalkBack's click and a keyboard's Enter don't pass the listener. Run on the emulator
+  (`docs/testing/emulator.md` §6ac, the "Re-check" points); TalkBack's own click with accessibility focus alone on the
+  mark, a second finger and the focus where there is no compose bar are the phone's to show.
   **`take()` keeps `submitList(emptyList())`** (code QA L5's question, decided 2026-11-10 after the emulator pass):
   `submitList(null)` would empty the list at once, where a finger still dragging the old thread's rows could turn
   following off before the new thread's first list - but no way in hands a new intent to a thread that was scrolled

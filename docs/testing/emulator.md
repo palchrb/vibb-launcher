@@ -2782,10 +2782,47 @@ cat databases/messages.db` (`message.is_read`).
   a bubble on screen while scrolled up moves the rows over that bubble up by the chip's 18 dp (the list keeps its
   lower rows; the follow round's behaviour, not the mark's). (4) The Meldinger list's header action reads "Ny
   melding" too (a new conversation). After the pass: (1) and the focus after the mark's tap (the header's back
-  button, above) are fixed on the branch - built, not run here yet (`docs/notes/launcher/calls.md`, the mark).
+  button, above) were fixed on the branch (cc0e143f; `docs/notes/launcher/calls.md`, the mark) and run again the same
+  day on the same AVD and data - the six "Re-check" points below.
+- **Re-check, a drag from the mark:** with the mark showing, `input swipe 240 683 240 400 1500` moves every row 279 px
+  (twice), the same drag at x=400 277; the mark stays, the message stays unread, the end isn't in view - no jump at
+  the lift, no tap. Three rounds of 183 px up and 117 px down: from the mark 174, 174, 174 and 106, 106, 105; at x=400
+  174, 173 and 106, 105; at x=60, on a bubble, 174, 172 and 105, 105. A short fling (77 px in 150 ms, six each way)
+  ends 105-113 px on from the mark and 108-113 beside it. The slop is the list's own: 14, 20 and 30 px in 600 ms move
+  the rows 2, 8 and 18 px from the mark and at x=400 alike and tap nothing; 10 px from the mark is a tap.
+- **Re-check, the tap:** `input tap` on the mark (far up and near the end), in its target's corner (164,650) and five
+  sloppy ones (`input swipe` of 3-9 px in 30-600 ms, up, down and sideways): each time the last row's bottom at 702,
+  the mark gone, unread 0.
+- **Re-check, the mark leaving under the finger:** 140 px and the new row from the end, one swipe from the mark of
+  433 px in 3 s: a frame at 2.4 s has the list at its end and no mark, the finger still down; after the lift the
+  thread is read, and the next drags at x=400 move the list (191 px for 200 down, 140 for 150 up). The finger in steps
+  (`input motionevent DOWN 240 683`, then `MOVE` 20 px at a time): 380 px up the mark is gone and the thread read; 200
+  px down again in the same gesture the rows follow (145 px - the end's stretch is let go first) and 60 px up again
+  they move 60; the lift moves nothing, the next drag moves the list, a new SMS brings the mark and its tap goes to
+  the end. A 50 ms fling from the mark about 1000 px from the end, three of three: the end is reached in the coast,
+  read, no mark, and the next drag moves the list (191-193 px for 200).
+- **Re-check, a tap on the mark while the list coasts:** `input tap 240 683` 20 ms after a fling's lift, in the same
+  `adb shell`: after a fling up the list at x=400, after one towards the end from the mark (183 px in 50 ms from
+  about 2000 px up - with no tap it stops short of the end, the mark still up, two of two) and after one up the list
+  from the mark; two tries each, six of six at the end, read, no mark.
+- **Re-check, the focus after the tap:** the field tapped, Back, `input keycombination SHIFT_LEFT TAB` twice: `focused`
+  is on `thread_new` (the keyboard is up again, the mark `[161,258][318,330]`); Enter: `thread_field` is `focused` 0.4
+  s and 3 s after, the last row's bottom at 313 (the frame ends at 330), read, no mark. With TalkBack on, the green
+  frame is on the mark, and after Enter on the field `[132,342][348,408]`, 0.4 s and 3 s after - with both the
+  keyboard's and TalkBack's focus on the mark the frame follows the keyboard's. A finger's tap: no view `focused`
+  before or after, `mInputShown=false`; with the field focused, a keyboard that is down stays down and one that is up
+  stays up, the focus on the field.
+- **Re-check, long presses and the reaction panel:** the finger held 1.5 s on the mark over a wide bubble
+  (`[24,583][369,719]`): no panel, the pill pressed (`#47455B`); lifted, the thread is at its end and read - a press,
+  as before. A long press at (60,683), on the bubble beside the mark: the panel (`messages_react` from 515, the mark
+  `[161,431][318,503]`). With the panel open a drag from the mark (100 px up) moves no row, closes nothing and taps
+  nothing; the same drag at x=400 closes the panel; the mark's tap closes it and goes to the end, nothing sent (10
+  sent rows before and after).
 - **What `handy36` can't show:** TalkBack by touch - an injected `input tap` isn't touch exploration here (one tap on
   the mark with TalkBack on went straight to the end), so the double-tap, the words spoken and where accessibility
-  focus lands without keyboard focus are the phone's to show; a thread switch through `onNewIntent` with the old list
+  focus lands without keyboard focus are the phone's to show (TalkBack's own keys - Alt+Left, Alt+Enter and the
+  other keymaps' - did nothing injected with `input keycombination`); a second finger beside the one on the mark; the
+  focus going to the last bubble where there is no compose bar; a thread switch through `onNewIntent` with the old list
   coasting or held (no way in keeps the activity; the two-tap way leaves it 0.1 s old); the touch sound (`-no-audio`);
   a real thumb's fling and return; the keyboard-up view (the list is 104 px, §6ab); the read-only line in the compose
   bar's place (needs a rule from a server); a portrait picture's bubble (the fake MMSC's is 160 x 120).
