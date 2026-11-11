@@ -2537,35 +2537,115 @@ since design 83 a host alone covers those three and any other port is its own `h
 
 ### 6v, design 83: the MMSC list and the parent's allow
 
-**Not run yet** (written with the build, 2026-11-10; the first pass fills in what was seen). Step 3b's set-up: the
-debug launcher, `fake-mmsc.py serve 8080`, the stand-in (`--es stand_in http://10.0.2.2:8080/mmsc`, in memory), a
-server from this branch, Mamma a contact with "Bilder i meldinger". The AVD's SIM is 310260: Android's list has five
+**Run 2026-11-11** on `handy36` with its kept data (enrolled, `wm density 240`; Mamma `+4790000001` a contact with
+"Bilder i meldinger", Pappa `+4790000002`, the phone's own number `+4790000020`), main at 8793669c. Step 3b's set-up:
+the debug launcher (0.23.6, `install -r`), `fake-mmsc.py serve` on 8080 and on 8002, the stand-in
+(`--es stand_in http://10.0.2.2:8080/mmsc`, in memory - set again after every process death), server 0.73.0 on the
+host with a throwaway database, the PWA in nb driven by the host's Playwright at 360 and 320 CSS px. **The whole chain
+ran**: report, question, allow, nudge, fetch. Below, a statement was **seen** unless it says "read in the code" or
+"not run". Times are UTC on the host's clock, which was 1.0-1.3 s ahead of the phone's (a logcat line can read
+earlier than the tap that caused it). The AVD's data was copied before the start and put back after it, checksums
+compared. The AVD's SIM is 310260 (the phone reports it as "T-Mobile"): Android's list has five
 names for it, all hints (`grep '^310260 ' server/testdata/mmsc_hosts.txt`), so the policy has **no row** for it
 until a parent allows an address. Two ways onto the row, and each scenario uses one:
 
 - **The hook** (`--es mmsc_host 10.0.2.2 --es mccmnc 310260`): for every run that is about something else than the
   list - step 3b's cases, reactions, the thread's pictures. In memory, merged into the SIM's row; it never reaches the
-  server, so the PWA shows no address.
+  server, so the PWA shows no address. Not used in this run.
 - **The parent's allow** (no `mmsc_host` broadcast in this process's life - kill the process to forget one): for
-  everything below.
-  - *Kept and reported*: `push 31 +4790000001 http://10.0.2.2:8080/mms/31` -> "Bildet kunne ikke hentes", **no GET**;
-    within the minute a status report with `sms_state.sim_operators` (310260 and the AVD's operator name) and
-    `mmsc_unlisted` (`10.0.2.2`, Mamma's number); the PWA's Calls page asks under "Meldinger som venter", with
-    "Android's list has: ..." and the warning (the address isn't one of the five), the inbox has the event, the device
-    page's count includes it.
-  - *Allow -> fetch*: "Tillat" -> the page returns to the row in "Bildeadresser", the phone is nudged, its policy has
-    `{"mccmnc": "310260", "hosts": ["10.0.2.2"]}`, `GET /mms/31` and the picture in the thread.
-  - *The hint*: a push naming one of the five names (`http://mms.tracfone.com/mms/32`) -> the question says the
-    address is in Android's list; "Ikke tillat" -> no GET, the row under "Bildeadresser" as "Ikke tillatt", and a
-    second push at that address asks nothing.
-  - *Another port*: serve on 8002 too; a push at `http://10.0.2.2:8002/mms/33` is its own question (`10.0.2.2:8002`)
-    although `10.0.2.2` is allowed.
-  - *Take back*: "Fjern" on `10.0.2.2` -> the next push there is kept again and asks nothing (declined).
-  - *A restart or an expiry in between*: kill the process, or wait past the picture's `X-Mms-Expiry`, between the
-    push and the allow - fetched after the allow, or "Bildet er ikke lenger tilgjengelig".
-  - *A stranger in the callback window*: kept, no report row, no question.
-  - *The SIM's operator changes*: only where the AVD can change it; else read the JVM and server tests
-    (`the_policy_has_the_reported_sims_entries`).
+  everything below. **On kept data, two things first** (both seen):
+  - a push number the store has had before is dropped without a trace: `push 31 ...` logged "Push of 84 bytes kept:
+    true" and then nothing - no bubble, no report, no GET. This data's store held `T-fake-0031`..`0035` and `0041`
+    from earlier runs (read in the code: `MmsFlow.judgePush`, `PushOutcome.Duplicate`). The run used 131 and up;
+  - the fake's default `To` is `+4790000010`, which is not this data's own number: a location without
+    `?to=%2B4790000020` is fetched after the allow and then blocked as a group with a stranger (design 80; the phone's
+    `blocked` row of kind `group`) - with push 131 the "Bildet kunne ikke hentes" bubble went and no picture came.
+    Every later location carried `?to=%2B4790000020`.
+  - *Kept and reported* - seen. `push 131 +4790000001 http://10.0.2.2:8080/mms/131` at 06:39:42.4:
+    `I/MmsDebug: Push of 85 bytes kept: true`, the store's row `FAILED`/`mmsc_unknown`, "Bildet kunne ikke hentes" in
+    Mamma's thread (`k1-thread.png`), **no GET**. The phone asked for the sync itself: a status report 2.6 s after the
+    push with `sms_state.sim_operators` `[{"mccmnc":"310260","name":"T-Mobile"}]` and `mmsc_unlisted`
+    `[{"at":...,"from":"+4790000001","host":"10.0.2.2","mccmnc":"310260"}]`, a `device_mmsc_hosts` row `open` and one
+    `mmsc_host` event. The Calls page asks in `#mmsc`, right below `#held`, under its own heading "Bildeadresser" -
+    not under "Meldinger som venter", which is not on the page while no message is held: "Telefonen vil hente bilder
+    fra 10.0.2.2. Tillat?", "Det gjelder en bildemelding fra Mamma 07:39.", "Adressen står ikke i Androids liste for
+    SIM-kortets operatør (T-Mobile). Listen har:" and the five names, the warning "Tillat bare hvis Mamma virkelig
+    sendte et bilde da. En falsk melding kan be telefonen hente fra en fremmed adresse.", "Tillater du, hentes alle
+    senere bilder fra adressen uten spørsmål, helt til du fjerner den.", then "Tillat" and "Ikke tillat"
+    (`p1-question.png`). The inbox has "Testtelefon: et bilde fra Mamma venter" / "Telefonen vil hente det fra en
+    adresse du må godkjenne."; the device page's Meldinger row reads "1 melding venter".
+  - *Allow -> fetch* - seen. "Tillat" at 06:44:02.4 -> the page comes back at `/devices/1/calls?mmsc=1#mmsc-1`, the
+    row in the opened "Bildeadresser" group at the foot: "10.0.2.2", "T-Mobile · Tillatt 11. nov. av <account>",
+    "Fjern". The phone: `I/MmsDebug: stand-in download of http://10.0.2.2:8080/mms/131: result -1, http 200`,
+    `GET /mms/131` at the fake 1.75 s after the tap, and its cached policy has
+    `"mmsc_hosts":[{"mccmnc":"310260","hosts":["10.0.2.2"]}]`. The picture in the thread: push 141 at the now allowed
+    address was fetched 0.7 s after the push with no question, answered with an m-notifyresp-ind (`POST`, type 0x83)
+    and shown (`a3-thread.png`).
+  - *The hint* - seen. Push 132 at `http://mms.tracfone.com/mms/132?to=...` -> a report 2.1 s later, its own row and
+    event; the question has "Adressen står i Androids liste over MMS-adresser for SIM-kortets operatør (T-Mobile)."
+    in place of the list, and no warning line. "Ikke tillat" -> "mms.tracfone.com", "T-Mobile · Ikke tillatt",
+    "Tillat likevel" in "Bildeadresser", no GET. A second push there (134): kept, no new row, event or question.
+    (Never "Tillat" this one on an AVD with internet: the name is a real operator's.)
+  - *Another port* - seen. Push 133 at `http://10.0.2.2:8002/mms/133?to=...` while `10.0.2.2` was allowed: kept, a
+    report 2.1 s later, its own `open` row and event, and a question naming `10.0.2.2:8002` with the not-in-the-list
+    text and the warning.
+  - *A restart in between* - seen. The process killed between push 133 and the answer (a new pid, the stand-in set
+    again, the store's row still `FAILED`/`mmsc_unknown`); "Tillat" on `10.0.2.2:8002` ->
+    `stand-in download of http://10.0.2.2:8002/mms/133?to=%2B4790000020: result -1, http 200`, the GET at the 8002
+    fake 0.8 s after the tap, the picture in the thread (`r1-thread.png`).
+  - *Take back* - seen. "Fjern" on `10.0.2.2` (one tap, no confirmation) -> "Ikke tillatt" with "Tillat likevel";
+    the phone's cached row was `["10.0.2.2:8002"]` within seconds. Push 142 at `http://10.0.2.2:8080/...`: kept
+    (`FAILED`/`mmsc_unknown`), the next report names `10.0.2.2` again, the row stays declined, **no GET**, no event,
+    no question. "Tillat likevel" six minutes later: fetched 0.8 s after the tap and shown with its first receipt
+    time (6:49 a.m.).
+  - *An expiry in between* - seen, with a notification whose `X-Mms-Expiry` is 100 s (the fake's is seven days; the
+    run's own helper swapped the PDU's expiry field - `fake-mmsc.py` has no switch for it). Push 150 at
+    `http://10.0.2.2:8003/mms/150?to=...`: reported and asked as the others. The question was still open, with
+    nothing in it about the expiry, 1 min 52 s after the picture had expired; "Tillat" then -> no "stand-in download"
+    line, **no GET**, the store's row `GONE`, the bubble "Bildet er ikke lenger tilgjengelig" (`e1-thread.png`), the
+    PWA's row "Tillatt". As designed (design 83 §4; read in the code: `MmsFlow.unlisted()` leaves the notification's
+    own expiry out, "its sender's word", and reports the address for seven days) - but a parent is asked about a
+    picture that can no longer come, and allowing gives the kid only the "no longer available" bubble.
+  - *A stranger in the callback window* - seen. The window was opened with an emergency call from the lock glance
+    ("Nødsamtale" -> "Ringe 112?" -> "RING"; the AVD's dialer showed "Emergency number" with a running timer, ended
+    after about 18 s): the next status report has `callback_window_until` ten minutes after the call and the server an
+    `emergency_call` event (ten minutes is the provisional window: the call was off-hook for less than
+    `PLACED_CONNECT_EVIDENCE_MS`, 20 s - read in the code, `CallRules.kt` and `PlacedCallWatch.kt`). Push 160 from
+    `+4790000077` at `http://10.0.2.2:8004/mms/160?to=...` 36 s after the call was placed:
+    `Push of 102 bytes kept: true`, the store's row `FAILED`/`mmsc_unknown`, **no GET**. The phone asked for no sync
+    (none in two minutes); the report a PWA action nudged out, the window still open, names only the two addresses
+    left unlisted from before, not `10.0.2.2:8004`; no row, no event, no question. The kid: "+4790000077, Bilde" in
+    the list, and in the thread "Ukjent avsender", "Bildet kunne ikke hentes", "Du kan ikke svare her"
+    (`s1-stranger.png`) - and it stays so, no parent is ever asked (design 83 §4).
+  - *The SIM's operator changes* - **not run**: this AVD cannot change it. Its image is a user build
+    (`ro.build.type=user`, `ro.debuggable=0`, no `su`), and the emulator writes
+    `<avd>/modem_simulator/iccprofile_for_sim0.xml` anew at every start: its IMSI line set to 310410 with the emulator
+    off was gone after the cold start and the SIM still read 310260 / "T-Mobile" (seen: `gsm.sim.operator.numeric`,
+    the next reports' `sim_operators`). The JVM and server tests stand for it
+    (`the_policy_has_the_reported_sims_entries`). Seen by the way: across that cold start the phone's cached row
+    (`["10.0.2.2","10.0.2.2:8002"]`) held, and push 181 at the allowed `http://10.0.2.2:8080/...` was fetched at
+    once with no question.
+  - *A 253-character address on a narrow screen* - seen. The host: four labels of 63, 63, 63 and 53 letters and
+    digits and `.invalid`, no hyphen, pushed as from Mamma; it came in through the phone's own status report, whole,
+    as a real one would. The question at 320 CSS px (`n320-question.png`): the address breaks over nine lines inside
+    its card, nothing is cut, both buttons are on the screen; `innerWidth` and the document's, body's and main's
+    `scrollWidth` are all 320, the cell is 288 wide (16 to 304) with `scrollWidth` = `clientWidth`, and
+    `scrollTo(500, 0)` leaves `scrollX` at 0. At 360 px the same in eight lines (`n360-question.png`). After "Ikke
+    tillat", the row in "Bildeadresser" at 320 px (`n320-declined.png`): the address takes sixteen short lines in the
+    left column, "Tillat likevel" stays on the screen at the right, "T-Mobile · Ikke tillatt" below; no sideways
+    scroll. The inbox and the device page at 320 px: nothing past the viewport - their texts carry no address; the
+    address is printed by `device_calls.html` alone (read in the code). The one thing on the Calls page reaching past
+    320 px is not design 83's: the link `messages.google.com/disable-chat` in the RCS line's folded info text
+    (`section#settings`, left 163, right 356), which makes no sideways scroll.
+  - **Times**: push -> the report at the server 2.1-2.6 s (once 16.4 s: the 253-character push came 45 s after the
+    report before it and its report exactly a minute after that one - the cause not looked into); "Tillat" -> the
+    phone's GET 0.8-1.75 s.
+  - **Also seen**: the inbox (`n320-inbox.png`) had five rows of the same two lines, one per address, differing only
+    in their age - no row says which address, and a row still reads "venter" once its question is answered (read in
+    the code: `calls_mmsc.rs::answer` marks the event read; the row stays in the list). After each cold boot a
+    SystemUI "isn't responding" dialog ("Wait"), and once the stock launcher on top for a few seconds before Home -
+    the AVD's, not design 83's.
+  - Screenshots of the run are in the session's `scratchpad/mmsc-emu/shots/`.
 - **Not on the AVD**: what an operator's notification names, whether a listed name matches it, which network the
   platform fetches on (the stand-in fetches over the AVD's only network), redirects - design 77's step 0 on a real
   SIM, with its two checks for design 83's gate (design 77 §9, "Design 83's gate, step by step": a test phone's debug
