@@ -248,6 +248,32 @@ class Application : android.app.Application() {
 
     private var unlockedInitDone = false
 
+    /** The languages the notification channels were last named in; null until the unlocked setup has named them. */
+    private var channelLocales: android.os.LocaleList? = null
+
+    /**
+     * Design 78 §5.3 (L3, the emulator pass of 2026-11-11): the channels are named from this context in the
+     * unlocked setup. On a boot whose stored record has lost the launcher's languages, and when the process was
+     * alive before the unlock, the languages `LauncherLocales.atUnlockedStart` asks for reach the process only
+     * after that - as a configuration change, not as `ACTION_LOCALE_CHANGED` (that is the phone's language) - and
+     * the names stayed in the phone's language until the next process start. Name them again when the languages
+     * differ from the ones they were read in; creating a channel again only updates its name. A change of the
+     * phone's language comes the same way. The night-mode and language calls are not touched.
+     */
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        val named = channelLocales ?: return
+        val now = newConfig.locales
+        if (now == named) return
+        channelLocales = now
+        try {
+            createNotificationChannels(this)
+            android.util.Log.i("Application", "Notification channels named again: ${now.toLanguageTags()}")
+        } catch (e: Exception) {
+            android.util.Log.w("Application", "The notification channels weren't named again", e)
+        }
+    }
+
     /** Design 59 F3: when the unlocked setup began (elapsed realtime) - the unlock reaching this process; `BootHome`
      * logs its Home start against it. */
     @Volatile
@@ -403,6 +429,8 @@ class Application : android.app.Application() {
         // phone the store is never suspended (QA M1).
         com.kidslauncher.mdm.server.WindowRelock.addListener { loadApps() }
 
+        // Design 78 §5.3 (L3): the languages these names were read in - see onConfigurationChanged.
+        channelLocales = resources.configuration.locales
         createNotificationChannels(this)
 
         // Time rules (handy step 6): the call path's lifts/override-aware answer, screen-time

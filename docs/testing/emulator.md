@@ -3197,7 +3197,8 @@ are in the session's `scratchpad/retry-shots/`.
 (`docs/review/qa-78-step1-code.md`, L8). Run in part on 2026-11-11 on `jelly36`**: "The run of 2026-11-11" at the end
 of this section has what passed, the one finding (the launcher's own language) and what was never reached - the host
 killed the emulator for memory before B.9. B.13-B.16 and the control on main came on 2026-11-11 with the language
-fix and have not been run. The steps themselves are no result. Step 1 is the mechanism and
+fix; "The second run of 2026-11-11" after it has them and the rest (B.7's install half, B.9-B.11, C-F), with what was
+still not run. The steps themselves are no result. Step 1 is the mechanism and
 Kalender (`docs/notes/launcher/ui-polish.md`, "The kid's look: Mørk or Lys"); the row in kid Settings exists in the
 **debug** build only.
 
@@ -3365,6 +3366,10 @@ language to English in the PWA, leave Home and come back. Expected: `W LauncherL
 language` with `Can't change activity type once set` at every Home resume for as long as Kalender's card is in Recents,
 the launcher staying Norwegian; with the card swiped away (kiosk off) or after a reboot it is set. If main sets it at
 the first Home resume instead, the reading of the source is wrong about main: say so.
+**Corrected by the second run of 2026-11-11** (seen on `jelly36`, main's APK installed over this build, not a wiped
+AVD): main refuses, but not "at every Home resume for as long as the card is in Recents" - at every Home resume where
+Kalender's activity is the one the process follows (Home straight from Kalender). An activity of Home's own task added
+in between (the phone book and Back) lets the change through with the card still in Recents.
 
 The waiting change by a real tap (a tap while a page task is started, run at Home's next resume) is **not reliably**
 reached by hand: with kid Settings in front the page the kid left is stopped, so the tap would have to land before
@@ -3543,6 +3548,205 @@ files, SHA-256 identical).
   `jelly36` refuses to suspend the Play Store), the pinned screens on a change of look, the unlock with the PIN lock
   showing on a system-light phone; E; F.
 - B.13-B.16 and the control on main (written after the run, with the language fix of 2026-11-11): never run.
+
+### The second run of 2026-11-11 (`jelly36`): B.13-B.16, the control, B.7-B.11, C-F
+
+`kid-look-1` at 9ca55e8e (the debug APK from one gated `assembleDebug`, the emulator down), put with `adb install -r`
+over 163aceb5 on the first run's AVD as that run left it (a copy; `jelly36` itself was put back from the copy taken
+before the first run and verified, 22 files, SHA-256 identical). Main's debug APK (809bbcd0) for the control. The test
+server was the binary main's tree had already built (0.73.0, no cargo). System language en-US, the launcher's `nb`
+from the policy, the kiosk on, gesture navigation unless said, the phone's own PIN lock unless said, `-timezone
+Europe/Oslo` (the times below are the phone's). **A "reboot" here is `adb shell reboot -p`, the memory gate read with
+the emulator down (8.1-8.2 GB each time) and a cold start** (`-no-snapshot-load`): seven of them (r1-r4, a1, a2, t1),
+the emulator never killed. `cmd locale set-app-locales` was **not run at all** in this pass
+(`com.google.android.deskclock` still had `[nb]` from the first run); `get-app-locales` only reads. Every boot on this
+host has ANRs in SystemUI, the phone app and others and a "System UI isn't responding" dialog over the lock (Android's
+own, in English, the system's language); on r1 `system_server` died once more and the launcher started twice. Every
+line is **seen** or **measured** on `jelly36` unless it says **read** (AOSP `android-16.0.0_r1`) or **inferred**.
+
+**B.13 and B.14, the language over the boots.** Before each: Lys, Kalender's and Meldinger's cards behind Home.
+
+| Boot | The system's record after the unlock | `Launcher language: nb` | Look / language / `Unlocked setup took` (ms) | Home | The channels named in the unlocked setup |
+|---|---|---|---|---|---|
+| r1, first runtime | `[]` right after the boot | 04:24:10.649 | 272 / 52 / 9642 | created once | not read |
+| r1, second runtime | not read | 04:25:19.794 | 290 / 304 / 20393 | created once | Norwegian |
+| r2 | **without** the languages | 04:39:06.127 | 37 / 53 / 2662 | **relaunched** (`wm_relaunch_resume_activity` 04:39:06.126; created 04:39:10.206 and 04:39:14.118) | **English** |
+| r3 | with them (`[nb]` before the process started) | 04:49:14.291 | 38 / 62 / 4943 | created once | Norwegian |
+| r4 | **without** | 05:19:58.671 | 127 / **1679** / 13828 | created once, after the call | **English** |
+| a1 (Android's lock; the process alive before the unlock) | **without** | 05:35:28.841; 05:35:48.502 in the process after the ANR below | 677 / 839 / 11455; 39 / 59 / 2232 | created once, by the second process | Norwegian (made by the second process) |
+| a2 (the same) | with them (`[nb]` two seconds after the code) | 05:43:30.152 | **2648** / 168 / 4739 | created once | **English** |
+| t1 (the T1 control's boot) | **without** | 07:00:37.554 | 1011 / 1099 / 3326 | **relaunched** (`wm_relaunch_resume_activity` 07:00:37.547; created 07:00:41.895, destroyed 07:00:44.530, created 07:00:45.430) | **English** |
+
+- After every boot `get-app-locales` read `[nb]` from the launcher's call on, with no `Couldn't set the launcher
+  language`; the lock's glance ("Ons. 11. nov.", "Nødsamtale", "Lommelykt"), the keypad ("Skriv inn koden din",
+  "Foreldrekode"), Home, kid Settings, the phone book, Kalender ("Onsdag", "Pågår nå") and Meldinger were Norwegian.
+  **The first run's finding is gone.**
+- **No launcher frame in English was seen** at any boot (the emulator console's screenshots at about two a second -
+  the PIN lock is a secure window, `screenrecord` shows it black: 289-725 frames a boot). On r2 the screen was black
+  behind Android's ANR dialog from 04:39:10 to 04:39:21, so Home's first instance - created before the relaunch - was
+  not pictured; on t1 no frame between the dark ground and the Norwegian lock showed one either. On a2 Home's first
+  visible frame behind the dialog was Norwegian; on a1 Home's first frame was not pictured (the cover and the dialog).
+- **Home's relaunch** (the design's named cost) came on two of the four boots whose record had no languages (r2, t1),
+  and on neither of the two with them.
+- **Not every second boot**: r2 without, r3 with, r4 without is the alternation; a1 (without, right after r4) and t1
+  are boots after changes of look and language in between. Why a1 had none was not found (the stored record cannot be
+  read without root); no boot showed the launcher in the phone's language, whichever record it had.
+- **The restored cards are gone when the kiosk starts**: Kalender's and Meldinger's tasks of before the reboot are in
+  Recents from the user's unlock (r3: both there at the language call, which was not refused) and gone at the first
+  read with `mLockTaskModeState=LOCKED` (r3 04:49:20, r4 05:20:15, a2 05:43:43, t1 07:00:45). So on a kiosk phone no
+  page is opened "from its restored card": every open after a boot is a cold one (why: not read in source). The cold
+  opens in Lys (recordings after r1 and r3): Home's last frame, the system's cross-fade, the paper (F3F1ED) starting
+  window, no dark frame, one `wm_on_create_called`. Meldinger's cold open is night throughout, as step 1 means it.
+- **`expedite_activity_launch_on_cold_start`**: not on this image - `aflags` needs root on a user build, and the
+  flag is not among the 29 of `com.android.server.am` in the image's `aconfig_flags.pb` files. Its state is unread.
+- **The costs** (measured, L2's line): the language call 52-304 ms on six starts and 839-1679 ms on three (r4, a1,
+  t1), the look's call up to 2648 ms (a2), both on the main thread of a loaded boot. On a1 the launcher itself got an
+  ANR ("executing service KidVpnService, waited 20166ms", 05:35:40.575, cpu pressure 69 %) and was killed; its next
+  process did the setup in 2232 ms and everything after was right. One sighting, on this host's loaded boot; the first
+  run's two loaded starts (9300 and 14231 ms, without the language call) had none.
+
+**The application's own texts (the code QA's L3): seen, by two routes.** On r2, r4 and t1 - a record without the
+languages - and on a2 - a process alive before the unlock, with a record that had them - the channels the unlocked
+setup names from the application's context were in English in the app's notification settings (`dumpsys
+notification`: "App installs and updates", "Calls", "Calls (call screen open)", "Find My Device background
+connection", "Play install mode", "Missed calls", "Find My Device ring", "Content filter", "Opened with the parent
+code"), while the three `SmsNotifier` makes before each post were Norwegian ("Meldinger", "Meldinger (stille)",
+"Reaksjoner"). On r1's second runtime, r3 and a1's second process all twelve were Norwegian. The ongoing notification
+of the listener service has the title "Vibb One" and no text; an ongoing call's heads-up was "Pågående samtale" with
+Android's own "Hang Up". **Fixed after the pass, not seen running**: `Application.onConfigurationChanged` names the
+channels again when the process's languages differ from the ones they were named in (the app's own languages reach a
+process as a configuration change; `ACTION_LOCALE_CHANGED` is the phone's language). To see on the next pass: a boot
+whose record has no languages, then `I Application: Notification channels named again: nb` and Norwegian names.
+
+**B.15, a parent's change** (one process, r3's, then the ones named).
+
+- Both cards alive, Home in front, English saved in the PWA: nothing until Home was left and resumed (the phone book,
+  Back); then **set at once** (`Launcher language: en` 04:56:14.541, no warning, Home created again, both cards
+  alive, each page in English from its card).
+- Norwegian saved with Kalender in front: nothing on Kalender. **Home straight from Kalender: one warning**
+  (04:56:54.826), both tasks closed, `Launcher language: nb` 04:56:54.834 **in the same resume**. From a Meldinger
+  thread: one warning 04:57:42.660, `en` 04:57:42.663. So the second ask of the resume got through although the page
+  was only paused: the code QA's M1 outcome ("refused twice, then set late") did not come here, and the late ask was
+  not needed. Home's `wm_on_resume_called` to the page's `wm_destroy_activity`: 356 ms and 344 ms.
+- The page opened again and straight Home, three times with the language set: nothing asked, nothing closed.
+- **The kiosk around a repair**: before, `mLockTaskModeState=LOCKED` with Home's task #18, Kalender's #25 and
+  Meldinger's #26 in `mLockTaskModeTasks`; after, `LOCKED` with #18 alone. After each repair only `HomeActivity` was in
+  the launcher's process (`dumpsys activity processes`).
+- **A standard-type activity that stays** (M2). A plain `am start -a android.intent.action.DIAL` from the shell puts
+  the phone book in Home's task (type home): no lingering one. With `-f 0x18000000` (new task, multiple) it gets a task
+  of its own, type standard - that stood in for the `tel:` link in another app, which was not done. Then a change of
+  language was refused at three rounds of Kalender and Home (the ask and the late ask each time: 05:02:57.868 and
+  05:02:59.871, 05:03:06.588 and 05:03:08.591, 05:03:15.329 and 05:03:17.331), **Kalender's card closed at the first
+  only**, the process holding Home, the phone book's task and Kalender. The language did not land while that task
+  lived. With the task removed (`am stack remove`, the run's own): Kalender then the Home gesture was **still refused**
+  (the close is not made twice for one language, so Kalender stayed the followed activity); Kalender left with Back:
+  refused at the resume (05:04:00.999) and **set by the late ask** two seconds later (`en` 05:04:03.003) - the late ask
+  seen working, and the M2 rule's cost seen: after a close in vain the change waits for a Back out of the page, the
+  PIN lock or a process start.
+- The PIN lock up when the sync lands: nothing while locked; at the unlock one warning (05:04:55.108), Kalender's card
+  closed, `nb` 05:04:55.113 in the same resume. During an incoming call: nothing for ten seconds and no lifecycle
+  event; at Home after the caller hung up one warning (05:06:08.309), the card closed, `en` 05:06:08.335.
+- Killed with Kalender in front (as its own uid): the new process created Home first, then the PIN lock; a change
+  saved after the unlock was set at once at the phone book and Back. Nothing stayed refused on this route.
+- No screen was seen in a mix of the two languages. Meldinger's tile and header read "Beskjeder" in both - the test
+  database's own display name for the app, no missing string.
+
+**B.16, a change of look refused: seen (the review's N1), on a natural route twice.**
+
+- Route 1 (Kalender in front, killed, unlock, the other look): **not refused**, twice (the new process creates Home
+  first on this image).
+- A constructed start (the kill and a new-task `DIAL` in one shell line, so the phone book's standard-type task is
+  the process's first activity): the tap on Mørk logged `E PageLook: The app's night mode wasn't set` with `Can't
+  change activity type once set: {... mActivityType=standard ...} activityType=home`; `kid_look.xml` had `dark`/`dark`;
+  Kalender's cold open showed **the paper starting window for about 440 ms** before the page in night. `adb install -r`
+  (a process start) put it right: night in every frame.
+- **Route 2, natural** (r4: the process started at boot for `KidVpnService`, no activity at the unlocked start's two
+  calls; English saved in the PWA while the PIN lock was up; unlock): the language was set at once at that resume
+  (05:24:09.763, the PIN lock finishing and not yet destroyed), and then the tap on Mørk in kid Settings was
+  **refused** (05:24:50.734, the same exception); `dark`/`dark` stored; Kalender's cold open showed the paper starting
+  window for about 330 ms, then night. A tap back on Lys was refused too. **Again on a2** (Android's lock screen,
+  another boot): the language set at the unlock 05:45:39.242, the tap on Mørk refused 05:45:52.324.
+- In r4's process the model's two predictions were then tried and held: a language change at a plain Home resume (the
+  phone book and Back) refused, late ask included; the same change at Home straight from Kalender set at once.
+- **Read and inferred**: the process's scratch configuration takes the type of the first call that passes with an
+  activity followed; here that was the language call at the unlock, under the PIN lock (standard), and every later
+  call under Home or kid Settings (home) is refused for that process's life. The call that fixes the wrong type is the
+  first ask of a Home resume right after the PIN lock, a page or a call - the one this build makes at once.
+
+**The control on main** (809bbcd0 with `adb install -r -d` over this build; the system's record still held this
+build's night mode): the first change of the process's life was set at the phone book and Back (06:00:03.466). With
+Kalender's card alive, the second change was **refused twice** at Home straight from Kalender (06:00:27.990,
+06:00:36.093, `Can't change activity type once set`), and then set at the phone book and Back with the card still in
+Recents (06:00:43.204). So the refusal is older than step 1, as read; the steps' "at every Home resume" was too wide
+(corrected above).
+
+**T1, the control for the reboot's cause** (boot t1): before the power-off both the launcher and
+`com.google.android.deskclock` read `[nb]`. After the boot the launcher read `[]` until its own call
+(07:00:37.554), and the clock app - which has no night mode and which nobody sets - read `[nb]` at its first read. One
+boot; it agrees with the source reading (a record with a night mode loses its languages on disk).
+
+**B.7's `install -r` half, B.9, B.10, B.11: passed.**
+
+- B.7: `light`/`light` after the install, the look's call 12 ms, the language's 11 ms, the setup 178 ms; Kalender's
+  cold open paper from its first light frame, one `wm_on_create_called`.
+- B.9: killed with Kalender's card behind Home; the tap on Mørk: no error, `dark`/`dark`, the card removed
+  (`wm_destroy_activity ... finish-and-remove-task`), `LOCKED` before and after, the next open night in every frame.
+- B.10 (`light`/`light` written by hand, kill): no change ran; Kalender's cold open in Lys, one create.
+- B.11 (`applied` = `dark`, `choice` = `light` written by hand with Kalender's card behind, kill): Home's first resume
+  ran the change (the card destroyed 56 ms after Home's create, before the PIN lock came up), `light`/`light`, still
+  `LOCKED`; the next open in Lys. That is the stored half of the first review's L4; **the death between the change's
+  first write and the tasks' removal was not constructed** (nothing to stop the process there). **L5** (Home's resume
+  closing a task just opened while a change waits) was **not constructed** either: two fast one-line tries put the tap
+  into the outgoing Kalender window, and B.11's waiting change is finished before the PIN lock is up.
+- B.12's lines on these starts: 2-47 ms for each call, 126-829 ms for the setup.
+
+**C, Kalender in both looks** (sets of pictures compared pixel by pixel below the status bar).
+
+- **Mørk is main's picture** with the system dark and light, on the day view, an event's page, the kid's own event,
+  the delete dialog, the editor, both pickers and Varighet - but for the time-dependent rows and digits, a keyboard
+  glyph, and one improvement: Varighet's choices are readable in Mørk on a system-light phone (almost invisible on
+  main). The pickers' "AVBRYT"/"OK" in Mørk are as faint as on main: unchanged by step 1.
+- **Lys** reads well on every one of them; the pressed row's ripple is visible; today's number while another day is
+  chosen is peach on white, faint but legible; the delete dialog is a white panel with dark text and accent buttons.
+  The system keyboard follows the system's theme under either look.
+- **3-button navigation, the code QA's M1**: in Mørk the bottom of each screen is main's picture in both system
+  modes (no scrim band on either build on this image). **Finding**: the three buttons follow the **system's** dark
+  theme, not the page - Lys with the system light: dark grey buttons on the paper, clear, the keyboard up too; **Lys
+  with the system dark: white buttons on the paper, nearly invisible**. SystemUI's `LightBarController` under that
+  page: `mHasLightNavigationBar=true` (the page asks for dark buttons), `mNavigationLight=false`,
+  `mForceDarkForScrim=true` - SystemUI's own override, inferred from its dump. A real phone's bar is unknown. Nothing
+  built.
+- The key under the day list: part-way down the list its last word runs under the "+" disc in Lys as on main; at the
+  list's end it is clear of the disc in both looks. The neighbouring days' rows peek at both edges in both looks.
+  Neither is step 1's.
+
+**D, the screens that are not pages.**
+
+- System dark on and off, Mørk: this build is main's picture on Home, the phone book, the contact card, Meldinger's
+  list and a thread, kid Settings' lists (Wi-Fi, Bluetooth, sound), the drawer, the parent PIN dialog, the link-blocked
+  notice, the PIN lock's glance and keypad, the emergency menu, the time-rule screen, an incoming and an ongoing call -
+  but for clock digits, the debug "Utseende" row and Bluetooth's state text. Lys against Mørk on this build: the
+  same, but for the row and its preview.
+- With Lys applied and the system's dark theme flipped twice under each of them (the glance included): no
+  `wm_relaunch_activity` and no new create anywhere, the incoming and the ongoing call included.
+- A change of look during an ongoing call (kid Settings under the call's heads-up, Mørk then Lys): both applied, no
+  lifecycle event on the call screen.
+- The phone book's and Meldinger's cold opens in Lys on a system-light phone: night (090A11) in every frame.
+
+**E.** TalkBack itself was **not run**: switched on under the kiosk it brought Android's "App is not available"
+notice (`BlockedAppActivity`), and it was switched off again. The nodes instead (`uiautomator dump`): the heading
+"Utseende", a group "Utseende" with "Mørk" and "Lys" as checkable choices, the applied one checked, the caption; the
+preview strip and its two texts are not in the tree. Font 1.3: the segments 48 dp with whole words, the strip 56 dp
+with both bubbles inside, the caption on three lines; Kalender's screens, dialogs and pickers in Lys fine.
+
+**F.** The image has no `accessibility_force_invert_color_enabled` setting and the flag's state is unread. With the
+key written by hand and the system dark, a cold Kalender in Lys was the same picture as without it; the key was
+deleted again. Android's own switch was not looked for in its Settings; nothing is judged. The release build's half
+was not run (no release APK).
+
+**Not run**: TalkBack itself; Android's "make more apps dark" switch; L4's death between the write and the removal;
+L5; the phone book through a `tel:` link in another app (a new-task `DIAL` from the shell instead); the control on
+main on a wiped AVD; a release build; the channels' fix; anything on a phone. Pictures of the run are in the session's `scratchpad/kid-look-1/shots/`.
 
 ## 7. Reporting back
 

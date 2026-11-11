@@ -252,3 +252,44 @@ The five surviving mutations again, on 1c6e1564, one at a time with the `ui.look
 Still only the emulator pass can settle everything under "Only the emulator pass can settle", and with it the fix
 round's own: the scrim in Mørk with 3-button navigation, the window grounds, L4's card in Recents, L5, and the look's
 cost at the unlocked start.
+
+Emulator pass, the second of 2026-11-11 (`docs/testing/emulator.md` §6ah, "The second run of 2026-11-11"; `jelly36`,
+9ca55e8e debug, seven cold boots, the emulator never killed) - what it says about this review's findings and the
+language fix's. Seen on `jelly36` unless it says otherwise.
+
+- **M1, both halves**: Kalender in Mørk with 3-button navigation is main's picture in both system modes, the bottom
+  of the screen included (no scrim band on either build on this image), and the window grounds do not differ. New
+  beside it: in **Lys with the system dark** the three buttons are white on the paper, nearly invisible - they follow
+  the system's theme, not the page, although the page asks for dark ones (`mHasLightNavigationBar=true`,
+  `mNavigationLight=false`, `mForceDarkForScrim=true` in SystemUI's dump). Not built; a real phone's bar is unknown.
+  For step 2, with the bars.
+- **L4**: its stored half passed (B.11: a change that waited is finished at Home's first resume after a process
+  death, before the PIN lock is up). The death between the change's first write and the tasks' removal was **not
+  constructed**; the note's sentence stays "read, not seen".
+- **L5**: **not constructed** (two fast tries put the tap into the outgoing Kalender window). Still for step 2.
+- **The language fix**: holds over seven boots (B.13, B.14); no English launcher frame pictured. **Its M1** (Home
+  straight from a page): repaired in the same resume, one warning - the "refused twice, then late" outcome did not come
+  on this image; the late ask was seen to work after a page left with Back. **Its M2** (a standard-type activity that
+  stays): the card closed once and not again, the language waiting while that task lived; and the rule's cost seen -
+  after a close in vain, Home straight from Kalender stays refused until a Back out of the page, the PIN lock or a
+  process start. **Its L2**: the timed line read on every start (2-300 ms; 0.8-1.7 s on three loaded boots, the look's
+  call 2.6 s on one; one ANR of the launcher on a loaded boot with Android's lock screen). **Its L3**: seen on four
+  boots by two routes (a record without the languages; a process alive before the unlock) - the channels the unlocked
+  setup names were in English. **Fixed after the pass**: `Application.onConfigurationChanged` names them again when the
+  process's languages change; **not seen running**. No test of its own: it is one comparison and one call.
+- **N1** (a change of look refused): **seen on a natural route, twice** - a parent's change of language landing while
+  the phone is locked is set at the unlock's resume under the PIN lock, and from then on that process refuses every
+  change of look from kid Settings (Kalender's starting window in the old look for about 330 ms). The design's §5.3 has
+  it with the proposal (never ask under an activity outside Home's task); it is the mechanism, so nothing was built.
+  It has to be settled before step 2 shows the row.
+- **The control on main**: main refuses a second change of language at Home straight from Kalender (twice) and sets it
+  at the phone book and Back with the card still in Recents. **T1**: over one boot the launcher lost its languages and
+  the clock app, with no night mode, kept them.
+- Of "Only the emulator pass can settle": the pinned screens stay night with no relaunch on a flip of the system's or
+  the app's night mode (the call screen during a call included), `finishAndRemoveTask` under lock task, D2's screens
+  on a system-light phone and the link-blocked notice, the bars with the keyboard up in Lys, the pickers, the dialogs
+  and the "+" disc in Lys, the row's nodes and font scale 1.3 are seen. Still open: TalkBack itself (the kiosk blocked
+  it on the image), Android's "make more apps dark" (no switch found, the flag unread), Android 14's bars, the Jelly
+  Star's own build, a release build.
+- One gated run on the tree with the channels' fix: `BUILD SUCCESSFUL`, 244 suites, 2473 tests, 0 failures, 0 errors,
+  0 skipped (from the XML).

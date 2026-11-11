@@ -408,24 +408,24 @@ stack are that tag's), not seen running beyond the lines above:
   standard-type activity that stays (below) and a kid who leaves Home within two seconds every time, the close can
   repeat. Held the other way, a language could stay stuck behind a page the kid opened again; the repeat was taken as
   the smaller cost.
-- **What is still refused** (inferred from the source; nothing of it seen): a call refused through the close and the
-  retry leaves the system's value as it was, and every later Home resume asks again. Three cases. A standard-type
-  activity of the launcher's outside the two page tasks that stays alive and was added to the process last - the
-  phone book opened by a `tel:` link in another app's task, for one: nothing the launcher closes helps, the page
-  tasks are closed once for nothing, and the change waits until that activity is gone. A process whose last call got
-  through under a standard-type activity - started again under a page, the PIN lock or a call, or a call at Home's
-  resume right after one of them - while Home is what it follows: every plain Home resume is refused, and the change
-  gets through only at a resume right after the PIN lock, a page or a call (the first ask, under the activity not
-  yet destroyed), or at the next process start (the unlocked start's ask); the first refusal also closes the page
-  tasks, once, for nothing. And the PIN lock, a page or the call screen just left where the retry was dropped or ran
-  too early: the next resume without such an activity gets through (the pass saw the refusals end at the first Home
-  resume without one). The app cannot read which case it is in; a parent's change of language can so wait until the
-  kid next unlocks. The screens stay in the old language meanwhile, never in a mix.
-- **The application's own texts** (the code QA's L3; inferred, not seen, not fixed): on the boot whose file has no
-  languages, the language reaches the process after `Application.onCreate` has begun, so what is read from the
-  application's context there - the notification channels' names (`createNotificationChannels`), an ongoing
-  notification's text - may be in the phone's language until the next process start. To be looked for in the pass;
-  if seen, the small fix is the channels once more on `ACTION_LOCALE_CHANGED`.
+- **What is still refused** (inferred from the source; its first two cases seen in the second pass, below): a call
+  refused through the close and the retry leaves the system's value as it was, and every later Home resume asks again.
+  Three cases. A standard-type activity of the launcher's outside the two page tasks that stays alive and was added to
+  the process last - the phone book opened by a `tel:` link in another app's task, for one: nothing the launcher closes
+  helps, the page tasks are closed once for nothing, and the change waits until that activity is gone. A process whose
+  last call got through under a standard-type activity - started again under a page, the PIN lock or a call, or a call
+  at Home's resume right after one of them - while Home is what it follows: every plain Home resume is refused, and the
+  change gets through only at a resume right after the PIN lock, a page or a call (the first ask, under the activity not
+  yet destroyed), or at the next process start (the unlocked start's ask); the first refusal also closes the page tasks,
+  once, for nothing. And the PIN lock, a page or the call screen just left where the retry was dropped or ran too early:
+  the next resume without such an activity gets through (the pass saw the refusals end at the first Home resume without
+  one). The app cannot read which case it is in; a parent's change of language can so wait until the kid next unlocks.
+  The screens stay in the old language meanwhile, never in a mix.
+- **The application's own texts** (the code QA's L3; inferred when written - seen and fixed since, the second pass
+  below): on the boot whose file has no languages, the language reaches the process after `Application.onCreate` has
+  begun, so what is read from the application's context there - the notification channels' names
+  (`createNotificationChannels`), an ongoing notification's text - may be in the phone's language until the next process
+  start. To be looked for in the pass; if seen, the small fix is the channels once more on `ACTION_LOCALE_CHANGED`.
 - **Costs**: a refused change closes Meldinger too, and until step 2 keeps a thread's unsent text (§5.4.4) a
   half-typed message is lost at it - a parent's change of language that was refused, rare. Every second boot the first
   activity may be created once more when the language comes back (Android's flag `expediteActivityLaunchOnColdStart`
@@ -434,8 +434,9 @@ stack are that tag's), not seen running beyond the lines above:
   (`KidAppComponentFactory`) may show that activity once in the phone's language before it is created again. If a pass
   shows either as a frame the kid sees, the next belt is the wanted language in each activity's `attachBaseContext`,
   beside the night mode's; it is not built, since nothing seen calls for it yet.
-- **Open, for step 2** (inferred from the same source, not seen): `setApplicationNightMode` can be refused the same
-  way. In a process whose last call got through under a standard-type activity, a change of look from kid Settings
+- **Open, for step 2** (inferred from the same source; seen in the second pass, below, on a natural route):
+  `setApplicationNightMode` can be refused the same way. In a process whose last call got through under a
+  standard-type activity, a change of look from kid Settings
   (home-type) is refused; so is a change that waited for Home's resume right after a page was left, in a process whose
   last call got through under Home. The pages still draw in the stored look (their own AppCompat mode); their starting
   windows keep the old one until the next process start. Step 1's release builds have no change of look (the row is
@@ -448,6 +449,60 @@ stack are that tag's), not seen running beyond the lines above:
   on a call that can be refused (texts from the application's own context - notifications, toasts - would still); or
   not using the system's per-app night mode, which gives up the starting window's ground and is another mechanism than
   this design's. None is built; the choice is the design's.
+
+**The second pass, 2026-11-11** (`jelly36`, 9ca55e8e debug, seven cold boots; `docs/testing/emulator.md` §6ah, "The
+second run of 2026-11-11") - what it showed about the cause and the fix. Seen there unless it says otherwise.
+
+- **The fix holds.** After every boot the launcher had its language from the unlocked start's call on - four boots
+  whose record had lost the languages, two that had them, Android's own lock screen with the process alive before the
+  unlock included - with no refusal at the unlocked start and no launcher screen in the phone's language in any
+  pictured frame. Home was created once more by Android on two of the four boots without the languages (the named
+  cost), with no English frame pictured; on one of the two the screen was behind Android's own ANR dialog meanwhile.
+- **The cause holds.** The control: over one boot the launcher (a night mode set) came back without its languages and
+  the clock app (none set) with them. The boots did not strictly alternate once changes of look and language were made
+  in between; the stored record cannot be read without root, so why is not known.
+- **The refusal's model held every time it was tried**: every refusal and every pass followed "the followed
+  activity's type against the scratch configuration's". Main's build refused a second change at Home straight from
+  Kalender and let it through at the phone book and Back with the card still in Recents - the refusal is older than
+  step 1, and narrower than "while the card lives".
+- **Home straight from a page was repaired in the same resume** (one warning, the tasks closed, the language set a few
+  milliseconds later; the page destroyed about 350 ms after): the removal took a paused page out of what the process
+  follows at once on this image, against the code QA's reading of the source (M1). The late ask was seen to work in
+  another case (a page left with Back after a close in vain).
+- **"What is still refused" was seen, both cases**: with a standard-type task of the launcher's that stays, the
+  language did not land for as long as the task lived and Kalender's card was closed once, not again; in a process
+  holding the standard type, a plain Home resume was refused (late ask included) and Home straight from Kalender set
+  it. **And a cost of "a close that did not help is not made again"**: once the lingering task was gone, Home straight
+  from Kalender was still refused - the page is no longer closed for that language, so it stays the followed
+  activity - until the kid left the page with Back (the late ask), the PIN lock or a process start.
+- **A change of look can be refused, and on a natural route** (the "Open, for step 2" line; seen twice, on two boots
+  and both lock screens). A process started at boot for a service makes the unlocked start's two calls with no
+  activity. A parent's change of language that lands while the phone is locked is then set at the unlock's Home resume
+  **at once, with the PIN lock still the followed activity** - this build's first ask - and that fixes the standard
+  type for the process's life: every change of look from kid Settings is refused (`E PageLook: The app's night mode
+  wasn't set`), the pages draw in the stored look and Kalender's starting window shows the old look for about 330 ms,
+  until the next process start. In step 1's release builds there is no change of look, so what remains there is the
+  language's half: in such a process a later change of language waits for a Home resume right after a page, the PIN
+  lock or a call. **Proposed, not built** (it is the mechanism): no call of the launcher's is made while an activity
+  outside Home's task is alive in its process. Home's resume then waits for the PIN lock or the call screen just left
+  to be destroyed (the late ask's place) and closes a page's task before it asks, not after a refusal - the reason for
+  "only after a refusal" above is a process that holds the standard type, which this rule never makes - and the
+  unlocked start's two calls wait for Home in a process started under such an activity. That is the first way out
+  named in "Open, for step 2" above, now with the route that makes it needed; its cost to step 0's ground for that
+  start's first window stands, and the choice is the design's.
+- **The application's own texts were in the phone's language** (L3) on three boots whose record had no languages, and
+  on the boot where the process was alive before the unlock although the record had them: the channels the unlocked
+  setup names, in the app's notification settings. **Fixed after the pass, not seen running**:
+  `Application.onConfigurationChanged` names the channels again when the process's languages differ from the ones
+  they were named in. Departure, 2026-11-11: not on `ACTION_LOCALE_CHANGED` as the line above proposed - that
+  broadcast is the phone's language; the app's own languages reach the process as a configuration change (read).
+- **The two calls' time on the main thread** at a loaded emulator boot: the look's up to 2.6 s, the language's up to
+  1.7 s (2-300 ms otherwise). On one boot with Android's lock screen the launcher got an ANR 20 s into
+  `KidVpnService`'s start (the whole unlocked setup 11.5 s, the two calls 1.5 s of it) and was started again; the
+  second process was right. One sighting on a host where SystemUI and the phone app get ANRs at every boot; whether a
+  phone's boot comes near it is not known.
+- **Not settled by the pass**: Android's flag `expediteActivityLaunchOnColdStart` (not on the image), a release build,
+  a real phone.
 
 ### 5.4 When the look changes
 

@@ -415,8 +415,12 @@ so nothing on a release build can pick Lys. Built and unit-tested 2026-11-10, wi
   tasks and asks once more, then one last time two seconds later, and never closes twice for one language
   (`home-and-photos.md`, "Language"). **Open before step 2 shows the row in release builds**:
   a change of look can be refused the same way, for one in a process whose last call got through under the PIN lock, a
-  page or a call (inferred from Android 16's source, not seen; the pages still draw right, their starting windows keep
-  the old look until the next process start) - the design has the ways out and their costs.
+  page or a call (inferred from Android 16's source; seen on `jelly36` on 2026-11-11, twice, after a parent's change of
+  language that landed at an unlock; the pages still draw right, their starting windows keep the old look until the
+  next process start) - the design has the ways out and their costs. **The notification channels** are named from the
+  application's context in the unlocked setup, before the languages asked for there have reached the process on a boot
+  whose record lost them (seen: English names); `Application.onConfigurationChanged` names them again when the
+  process's languages change (2026-11-11, not seen running).
 - **The row** (`activity_kid_settings.xml`'s `kid_settings_look_section`, `gone` in the layout; `KidSettingsActivity`
   shows it and sets its listeners only `if (BuildConfig.DEBUG)`, and `renderLook` returns at once while it is gone):
   the heading "Utseende" / "Appearance", a card with design 34 P9's segmented control (Mørk / Lys) and a 56 dp preview
