@@ -31,4 +31,14 @@
     <color name="kid_page_alert">#B3261E</color>
     <color name="kid_page_danger">#FBE3E1</color>
     <color name="kid_page_danger_text">#A1241C</color>
+    <!-- Step 2. The lists' second ink is the dim's: 6.4:1 on the ground. A card is a tile. -->
+    <color name="kid_page_ink_dim">#5E5752</color>
+    <color name="kid_page_card">#FFFFFF</color>
+    <!-- Ring's green on its tonal disc over a white tile: 4.9:1. -->
+    <color name="kid_page_call_glyph">#2B7340</color>
+    <!-- The accent at 70 %: 3.2:1 on a white tile. -->
+    <color name="kid_page_focus">#B3A64B25</color>
+    <color name="kid_page_accent_edge">#B3A64B25</color>
+    <!-- An input on a white card: the compose field's hairline. -->
+    <color name="kid_page_field_edge">#24000000</color>
 </resources>

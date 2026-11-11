@@ -12,7 +12,8 @@ import com.kidslauncher.mdm.ui.UIObjectActivity
  * `configChanges`, so the phone's theme never restarts it (PageManifestTest). Its layouts and drawables name page
  * tokens only (PageTokensScanTest). The class gives it its variant's look as its AppCompat night mode, set before the
  * base context is attached so the configuration is right from the start (one `onCreate` per open, no `recreate`),
- * the page colours over the launcher's theme, and its place in [PageLook]'s registry and started count.
+ * the page colours over the launcher's theme, and its place in [PageLook]'s registry and - for a page of a task of its
+ * own - its started count.
  */
 abstract class KidPageActivity : UIObjectActivity() {
     override fun lookNightMode(): Int = PageLook.pageNightMode(javaClass)
@@ -28,13 +29,17 @@ abstract class KidPageActivity : UIObjectActivity() {
         PageLook.closeIfOtherLook(this)
     }
 
+    /** A page that can top a task of its own (a row in [PageKind]); a page with one class is in Home's task (R9)
+     * and is not counted for [mayChange]. */
+    private val ownTask: Boolean get() = PageKind.lookOf(javaClass) != null
+
     override fun onStart() {
         super.onStart()
-        PageLook.pageTaskStarted()
+        if (ownTask) PageLook.pageTaskStarted()
     }
 
     override fun onStop() {
-        PageLook.pageTaskStopped()
+        if (ownTask) PageLook.pageTaskStopped()
         super.onStop()
     }
 

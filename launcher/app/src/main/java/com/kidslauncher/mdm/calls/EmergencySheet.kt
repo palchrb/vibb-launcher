@@ -10,6 +10,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.kidslauncher.mdm.R
+import com.kidslauncher.mdm.ui.look.nightOver
 
 /**
  * The emergency menu's sheet (design 73, mockup variant A) in Vibb night: "Call an emergency number", the rows
@@ -20,9 +21,11 @@ import com.kidslauncher.mdm.R
 object EmergencySheet {
 
     fun show(activity: Activity, rows: List<EmergencyRow>, onTap: (EmergencyTap) -> Unit): Dialog {
-        val inflater = LayoutInflater.from(activity)
+        // Emergency looks the same everywhere, the phone book in Lys included (design 78 §2).
+        val night = nightOver(activity)
+        val inflater = LayoutInflater.from(night)
         val view = inflater.inflate(R.layout.sheet_emergency, null)
-        val dialog = Dialog(activity, R.style.KidSheetDialog)
+        val dialog = Dialog(night, R.style.KidSheetDialog)
         dialog.setContentView(view)
         dialog.setUpKidSheet(view)
         val list = view.findViewById<LinearLayout>(R.id.emergency_rows)

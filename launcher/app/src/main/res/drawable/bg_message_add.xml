@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- The compose bar's "+" for a picture (design 77 D11, the approved mockup: left of the field): a disc in the field's own
      night tile, quieter than the peach send. -->
-<ripple xmlns:android="http://schemas.android.com/apk/res/android" android:color="#1FFFFFFF">
+<ripple xmlns:android="http://schemas.android.com/apk/res/android" android:color="@color/kid_page_ripple">
     <item>
         <shape android:shape="oval">
-            <solid android:color="@color/kid_music_tile" />
+            <solid android:color="@color/kid_page_tile" />
         </shape>
     </item>
 </ripple>

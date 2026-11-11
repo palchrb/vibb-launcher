@@ -12,6 +12,7 @@ import com.kidslauncher.mdm.ui.KidHeader
 import com.kidslauncher.mdm.ui.KidInsets
 import com.kidslauncher.mdm.ui.UIObjectActivity
 import com.kidslauncher.mdm.ui.day.LockWatch
+import com.kidslauncher.mdm.ui.look.PageLook
 
 /**
  * A received picture, fit to the screen, with "Lagre" and "Del" (design 77 §6.7; the user, 2026-11-09). The bytes are
@@ -20,6 +21,18 @@ import com.kidslauncher.mdm.ui.day.LockWatch
  * there, or not yet - pictures come with step 3b) it closes.
  */
 class PictureActivity : UIObjectActivity() {
+    /** Design 78 §5.4.1: no page - a photo is seen best on the night, in both looks - but in Meldinger's task, so it
+     * counts among the started activities a change of look waits for. */
+    override fun onStart() {
+        super.onStart()
+        PageLook.pageTaskStarted()
+    }
+
+    override fun onStop() {
+        PageLook.pageTaskStopped()
+        super.onStop()
+    }
+
 
     private lateinit var binding: ActivityPictureBinding
     private var message = MessageId("")

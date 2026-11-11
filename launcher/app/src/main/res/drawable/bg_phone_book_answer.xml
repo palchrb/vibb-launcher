@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- A request's answer in the phone book (design 79 §3.4): the row's tile, no ripple (nothing to tap). -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
-    <solid android:color="@color/kid_music_tile" />
+    <solid android:color="@color/kid_page_tile" />
     <corners android:radius="18dp" />
 </shape>

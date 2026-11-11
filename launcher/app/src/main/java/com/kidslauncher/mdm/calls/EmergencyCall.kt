@@ -12,6 +12,8 @@ import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.lock.PinLockRuntime
 import com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
 import com.kidslauncher.mdm.server.QuickControls
+import com.kidslauncher.mdm.ui.look.nightOver
+import com.kidslauncher.mdm.ui.look.showNight
 
 /**
  * "Emergency call" on the time-rule screen, handy's PIN lock (its keypad, its glance, its VoIP ring card) and the
@@ -41,11 +43,11 @@ object EmergencyCall {
         val busy = !secondCallAllowed(OngoingCalls.states, emergency = false)
         val rows = emergencyRows(menu, CallPolicyStore.effectiveState(), busy, isEmergency, locked || phoneLocked(activity))
         return when (val shape = emergencyMenuShape(rows)) {
-            is EmergencyMenuShape.Dialog -> AlertDialog.Builder(activity, R.style.KidAlertDialog)
+            is EmergencyMenuShape.Dialog -> AlertDialog.Builder(nightOver(activity), R.style.KidAlertDialog)
                 .setTitle(activity.getString(R.string.calls_confirm_title, shape.row.entry.number))
                 .setPositiveButton(R.string.calls_call) { _, _ -> place(activity, emergencyTap(shape.row), onCalling) }
                 .setNegativeButton(R.string.calls_cancel, null)
-                .show()
+                .let(::showNight)
             is EmergencyMenuShape.Sheet -> EmergencySheet.show(activity, shape.rows) { tap -> place(activity, tap, onCalling) }
         }
     }

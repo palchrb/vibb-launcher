@@ -24,7 +24,7 @@
             android:importantForAccessibility="no"
             android:padding="22dp"
             android:src="@drawable/ic_kid_search"
-            android:tint="@color/kid_accent" />
+            android:tint="@color/kid_page_accent" />
 
         <TextView
             android:id="@+id/kid_search_empty_text"
@@ -34,7 +34,7 @@
             android:accessibilityLiveRegion="polite"
             android:fontFamily="@font/nunito_extrabold"
             android:text="@string/search_nothing_found"
-            android:textColor="@color/kid_ink"
+            android:textColor="@color/kid_page_ink"
             android:textSize="16sp" />
 
         <Button
@@ -48,7 +48,7 @@
             android:paddingStart="20dp"
             android:paddingEnd="20dp"
             android:textAllCaps="false"
-            android:textColor="@color/kid_core"
+            android:textColor="@color/kid_page_core"
             android:textSize="15sp"
             android:visibility="gone" />
     </LinearLayout>

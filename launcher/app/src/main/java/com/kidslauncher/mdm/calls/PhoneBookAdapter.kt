@@ -201,7 +201,7 @@ class PhoneBookAdapter(
             val actions = item.actions ?: ContactActions(callEnabled = true, message = MessageAction.None)
             callDisc.setBackgroundResource(if (row.emergency) R.drawable.bg_phone_book_button_emergency else R.drawable.bg_phone_book_button)
             callDisc.imageTintList = android.content.res.ColorStateList.valueOf(
-                context.getColor(if (row.emergency) R.color.kid_emergency_text else R.color.kid_call_glyph),
+                context.getColor(if (row.emergency) R.color.kid_page_danger_text else R.color.kid_page_call_glyph),
             )
             // Dimmed and inert while another call is live (an emergency number excepted).
             call.isEnabled = actions.callEnabled
@@ -252,7 +252,7 @@ class PhoneBookAdapter(
             photo.setImageDrawable(picture?.let { KidAvatars.circular(itemView.context, it) })
             initial.visibility = if (picture == null) View.VISIBLE else View.GONE
             initial.text = request.name.trim().take(1).uppercase()
-            initial.setTextColor(itemView.context.getColor(if (row is PhoneBookRow.Waiting) R.color.kid_accent else R.color.kid_core_dim))
+            initial.setTextColor(itemView.context.getColor(if (row is PhoneBookRow.Waiting) R.color.kid_page_accent else R.color.kid_page_dim))
         }
 
         fun bind(row: PhoneBookRow) {
@@ -314,7 +314,7 @@ class PhoneBookAdapter(
             }
             val out = SpannableStringBuilder()
             val red = MissedCallText.short(context, missed.count, missed.lastAtMs)
-            out.append(red, ForegroundColorSpan(context.getColor(R.color.kid_missed_text)), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            out.append(red, ForegroundColorSpan(context.getColor(R.color.kid_page_alert)), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
             if (row.unread > 0) out.append(" · ").append(context.resources.getQuantityString(R.plurals.contact_unread_short, row.unread, row.unread))
             return out
         }

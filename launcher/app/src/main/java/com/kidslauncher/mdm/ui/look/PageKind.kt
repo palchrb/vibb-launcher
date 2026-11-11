@@ -7,9 +7,14 @@ import com.kidslauncher.mdm.ui.day.EventEditActivity
 import com.kidslauncher.mdm.ui.day.LightDayActivity
 import com.kidslauncher.mdm.ui.day.LightEventActivity
 import com.kidslauncher.mdm.ui.day.LightEventEditActivity
+import com.kidslauncher.mdm.ui.messages.LightMessagesActivity
+import com.kidslauncher.mdm.ui.messages.LightThreadActivity
+import com.kidslauncher.mdm.ui.messages.MessagesActivity
+import com.kidslauncher.mdm.ui.messages.ThreadActivity
 
 /**
- * The table (design 78 §12.2 R4): each page that can be the top of a task of the launcher's own, as its night class -
+ * The table (design 78 §12.2 R4): each page that can be the top of a task of the launcher's own - Kalender's three
+ * and, since step 2, Meldinger's list and thread - as its night class -
  * the class as it always was - and its light twin. Android draws such a page's starting window from the manifest
  * theme of the class it starts, before any code of ours, so the look is in the class. This file is the only place
  * that names a page class as `::class` (PageLookScanTest): every start asks [current], and everything that knows a
@@ -19,13 +24,16 @@ enum class PageKind(private val night: Class<out Activity>, private val light: C
     DAY(DayActivity::class.java, LightDayActivity::class.java),
     EVENT(EventActivity::class.java, LightEventActivity::class.java),
     EVENT_EDIT(EventEditActivity::class.java, LightEventEditActivity::class.java),
+    MESSAGES(MessagesActivity::class.java, LightMessagesActivity::class.java),
+    THREAD(ThreadActivity::class.java, LightThreadActivity::class.java),
     ;
 
     /** This page's class in [look]. */
     fun of(look: LookMode): Class<out Activity> = if (look == LookMode.LIGHT) light else night
 
-    /** The class a start of this page names: the applied look's (R5, the pages' intent builders). */
-    fun current(): Class<out Activity> = of(PageLook.applied)
+    /** The class a start of this page names: the applied look's (R5, the pages' intent builders). A start asked for
+     * holds a waiting change back until the page exists ([PageLook.pageStartAsked], step 1's code QA L5). */
+    fun current(): Class<out Activity> = of(PageLook.applied).also { PageLook.pageStartAsked() }
 
     /** Whether [className] is one of this page's two classes. */
     fun has(className: String?): Boolean = className == night.name || className == light.name

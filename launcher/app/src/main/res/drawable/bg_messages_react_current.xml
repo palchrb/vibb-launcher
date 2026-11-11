@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Design 81 D7: the kid's reaction now, in the panel's grid - the peach ring; a tap takes it away. -->
-<ripple xmlns:android="http://schemas.android.com/apk/res/android" android:color="#1FFFFFFF">
+<ripple xmlns:android="http://schemas.android.com/apk/res/android" android:color="@color/kid_page_ripple">
     <item>
         <shape android:shape="rectangle">
-            <stroke android:width="2dp" android:color="@color/kid_accent" />
+            <stroke android:width="2dp" android:color="@color/kid_page_accent" />
             <corners android:radius="14dp" />
         </shape>
     </item>

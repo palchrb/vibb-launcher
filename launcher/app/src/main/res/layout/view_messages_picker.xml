@@ -33,7 +33,7 @@
             android:focusable="true"
             android:fontFamily="@font/nunito_extrabold"
             android:text="@string/messages_picker_title"
-            android:textColor="@color/kid_core"
+            android:textColor="@color/kid_page_core"
             android:textSize="17sp" />
 
         <ImageButton

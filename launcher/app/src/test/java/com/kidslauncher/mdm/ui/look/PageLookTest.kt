@@ -5,6 +5,10 @@ import com.kidslauncher.mdm.ui.day.DayActivity
 import com.kidslauncher.mdm.ui.day.EventActivity
 import com.kidslauncher.mdm.ui.day.LightDayActivity
 import com.kidslauncher.mdm.ui.day.LightEventActivity
+import com.kidslauncher.mdm.ui.messages.LightMessagesActivity
+import com.kidslauncher.mdm.ui.messages.LightThreadActivity
+import com.kidslauncher.mdm.ui.messages.MessagesActivity
+import com.kidslauncher.mdm.ui.messages.ThreadActivity
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -108,6 +112,8 @@ class PageLookTest {
         }
         assertEquals(DayActivity::class.java, PageKind.DAY.of(LookMode.DARK))
         assertEquals(LightEventActivity::class.java, PageKind.EVENT.of(LookMode.LIGHT))
+        assertEquals(LightMessagesActivity::class.java, PageKind.MESSAGES.of(LookMode.LIGHT))
+        assertEquals(ThreadActivity::class.java, PageKind.THREAD.of(LookMode.DARK))
         // A page with one class has no row: it takes the applied look (dark before any unlocked start, as here).
         assertNull(PageKind.lookOf(KidPageActivity::class.java))
         assertEquals(AppCompatDelegate.MODE_NIGHT_YES, PageLook.pageNightMode(KidPageActivity::class.java))
@@ -118,22 +124,29 @@ class PageLookTest {
     }
 
     @Test
-    fun `a change finishes every live page and closes Kalender's task, whichever class is its root`() {
+    fun `a change finishes every live page and closes Kalender's and Meldinger's tasks, whichever class is the root`() {
         val registry = PageRegistry<String>()
         registry.created("day")
         registry.created("event")
         registry.created("edit")
         registry.destroyed("edit")
         assertEquals(listOf("day", "event"), registry.live())
-        // The task is known by its root: Kalender's in either look, never Home's or the lock's.
-        assertTrue(closesTask(DayActivity::class.java.name))
-        assertTrue(closesTask(LightDayActivity::class.java.name))
+        // The task is known by its root: Kalender's and Meldinger's in either look, never Home's or the lock's - nor
+        // a page that is no root (a thread, a picture, an event) or one in Home's task (the phone book, the lists).
+        for (root in listOf(DayActivity::class.java, LightDayActivity::class.java, MessagesActivity::class.java, LightMessagesActivity::class.java)) {
+            assertTrue(root.name, closesTask(root.name))
+        }
         val others = listOf(
             null,
             "com.kidslauncher.mdm.ui.HomeActivity",
             "com.kidslauncher.mdm.lock.PinLockActivity",
             EventActivity::class.java.name,
             LightEventActivity::class.java.name,
+            ThreadActivity::class.java.name,
+            LightThreadActivity::class.java.name,
+            "com.kidslauncher.mdm.ui.messages.PictureActivity",
+            "com.kidslauncher.mdm.calls.PhoneBookActivity",
+            "com.kidslauncher.mdm.ui.quickcontrols.WifiNetworksActivity",
         )
         for (root in others) assertFalse("$root", closesTask(root))
     }
@@ -163,14 +176,14 @@ class PageLookTest {
         look.choose(LookMode.LIGHT, pageTaskStarted = 1)
         assertEquals("light", host.choice)
         host.calls.clear()
-        look.onHomeResumed()
+        look.onHomeResumed(startInFlight = false)
         assertEquals(listOf("finish [day]", "close tasks", "task left?", "refused", "store choice=dark applied=dark"), host.calls)
         assertEquals(LookMode.DARK to LookMode.DARK, look.choice to look.applied)
         assertEquals("dark" to "dark", host.choice to host.applied)
         // Nothing tries again on its own, also once the task is gone.
         host.taskLeft = false
         host.calls.clear()
-        look.onHomeResumed()
+        look.onHomeResumed(startInFlight = false)
         assertEquals(emptyList<String>(), host.calls)
     }
 
@@ -239,17 +252,52 @@ class PageLookTest {
         val host = Recorder(applied = "dark")
         host.pages.created("day")
         val look = started(host)
-        look.onHomeResumed()
+        look.onHomeResumed(startInFlight = false)
         assertEquals(emptyList<String>(), host.calls)
         look.choose(LookMode.LIGHT, pageTaskStarted = 1)
         host.calls.clear()
         // Not behind mayChange again: the page the kid left is stopped only after Home has resumed.
-        look.onHomeResumed()
+        look.onHomeResumed(startInFlight = false)
         assertEquals(change, host.calls)
         assertEquals(LookMode.LIGHT to LookMode.LIGHT, look.choice to look.applied)
         // Every later resume: the applied look is the choice, so Kalender's task is left alone.
         host.calls.clear()
-        look.onHomeResumed()
+        look.onHomeResumed(startInFlight = false)
         assertEquals(emptyList<String>(), host.calls)
+    }
+
+    /** Step 1's code QA L5: a Home resume between a page's start and its creation (the unlock on the way to a page the
+     * glance opened) does not run a waiting change - it would close the task just made. The next resume does. */
+    @Test
+    fun `a waiting change holds back while a page's start is in flight`() {
+        val host = Recorder(applied = "dark")
+        host.pages.created("day")
+        val look = started(host)
+        look.choose(LookMode.LIGHT, pageTaskStarted = 1)
+        host.calls.clear()
+        look.onHomeResumed(startInFlight = true)
+        assertEquals(emptyList<String>(), host.calls)
+        assertEquals(LookMode.LIGHT to LookMode.DARK, look.choice to look.applied)
+        look.onHomeResumed(startInFlight = false)
+        assertEquals(change, host.calls)
+        assertEquals(LookMode.LIGHT to LookMode.LIGHT, look.choice to look.applied)
+    }
+
+    @Test
+    fun `a start is in flight from its ask until its page is created, or for five seconds at most`() {
+        val registry = PageRegistry<String>()
+        assertFalse(registry.startInFlight(1_000))
+        registry.startAsked(1_000)
+        assertTrue(registry.startInFlight(1_000))
+        assertTrue(registry.startInFlight(1_000 + START_IN_FLIGHT_MS - 1))
+        // A start that never made a page (refused, or a singleTop page brought back) stops holding.
+        assertFalse(registry.startInFlight(1_000 + START_IN_FLIGHT_MS))
+        // The page created: nothing in flight.
+        registry.startAsked(9_000)
+        registry.created("thread")
+        assertFalse(registry.startInFlight(9_001))
+        // A clock that went back (another boot's elapsed time) holds nothing.
+        registry.startAsked(9_000)
+        assertFalse(registry.startInFlight(8_000))
     }
 }

@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- The phone book row's Ring and Melding (design 79 §3.4): a 38 dp tonal disc (white 8 %) on the row's tile. -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
-    <solid android:color="@color/kid_sheet_button" />
+    <solid android:color="@color/kid_page_button" />
 </shape>

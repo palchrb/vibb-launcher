@@ -4120,6 +4120,95 @@ SystemUI, Phone, GMS and the keyboard - §6ah's "every boot on this host"). The 
 a crash of the launcher (no hook to force one; AOSP takes the same `handleAppDied` path after the crash's finish of
 Home is blocked); a release build; a phone.
 
+## 6aj. The kid's look, step 2: Meldinger, the phone book and the lists (design 78)
+
+**Steps, written with the build on 2026-11-11 (branch `kid-look-3`); not run yet.** Step 2 puts Meldinger's three
+screens, the phone book and kid Settings' Wi-Fi, Bluetooth and sound lists on the page tokens, keeps a thread's unsent
+text, and shows the "Utseende" row in every build (`docs/notes/launcher/ui-polish.md`, "The kid's look: Mørk or Lys";
+design 78 §8, "Step 2, 2026-11-11").
+
+Setup: **`jelly36`** (§3), as §6ah's setup (the debug launcher of `kid-look-3` as Device Owner, enrolled, the kiosk on,
+the phone in Norwegian), with SMS "Styrt av Vibb" and §6v's fake MMS server for pictures; contacts Mamma, Pappa (both
+"Kan få melding fra" and "Bilder i meldinger" on), Emma (a group with Mamma and Pappa), Jack without "Kan få melding
+fra", 112 in the phone book; a missed call from Pappa; an open contact request (§6x's form); two paired Bluetooth
+devices; a few Wi-Fi networks. §6ah's command block applies, with:
+
+```
+adb logcat -b events -d | grep -E "wm_on_create_called|wm_relaunch_activity|wm_destroy_activity" | grep -E "messages|calls|quickcontrols|kidsettings"
+adb shell dumpsys activity recents | grep -c "\.messages"             # Meldinger's task: 1, or 0 after a change
+adb shell dumpsys window windows | grep -E "Splash Screen|APPLICATION_STARTING"
+adb shell run-as me.vibb.launcher.debug cat shared_prefs/sms_drafts.xml # the kept texts
+```
+
+### A. Every screen in both looks
+
+Each in Lys beside `docs/design/78-mockups.html` and in Mørk beside main's build of the same screen (Mørk must be
+main's picture; anything that differs is a finding), at font scale 1.0 and 1.3, the system's dark theme on and off:
+
+- [ ] Meldinger's list: the header and its back disc, the search field (focused: its peach ring), a row with the
+  avatar, name, last line, time and the unread dot, the empty search's state, "Ny melding" and its contact list, the
+  delete confirm (long-press) with "Avbryt" and "Slett".
+- [ ] A thread: received and own bubbles (Mamma; Emma's group with the sender's name over each received bubble;
+  "Ukjent avsender"), a picture's place before the picture opens and after, "Prøv igjen" on a picture that failed, the
+  delivery line ("Sendt", "Levert", "Ikke sendt - trykk ...") and the day separator, a selected bubble of each side
+  (its ring), the reaction chip, the reaction panel and the emoji picker, the "Ny melding" mark, the compose field
+  (its hairline in Lys) with the keyboard up, "+" and the picture choice, send. The read-only line (Jack's thread).
+- [ ] A received picture (`PictureActivity`): night in both looks, from its first frame.
+- [ ] The phone book: the header, the search, the "+" disc, a contact row with its badge, Ring and Melding discs, the
+  emergency number's red Ring, the missed-call line, the open request row (its peach edge) and an answer row, the
+  request form (fields, the photo place, errors, "Send", the sent card).
+- [ ] Over the phone book in Lys: the contact card, "Bilde av …", the emergency menu and the emergency Ring's confirm
+  are **night**, every text, ripple and button as in Mørk; the sheets reach the screen's bottom with the dim behind
+  (the window token and dim with `nightOver`'s context). The other two confirms (a `tel:` link) are the page's dialog.
+- [ ] Kid Settings' Wi-Fi list (and its password dialog: a white panel in Lys), the Bluetooth list, the ringtone and the
+  message-sound pickers (the card, the radio rows, the captions).
+- [ ] The status bar's icons and the gesture pill on each, and with the keyboard up. 3-button navigation in Lys with the
+  system's dark theme on: note the buttons (design §12.9 point 4; known white on the paper).
+
+### B. Starting windows and the change
+
+1. Record (§6k's frame-stepping) Home's Meldinger tile -> the list, cold and warm, in each look and each system theme:
+   no frame of the other look's ground; the events log has one `wm_on_create_called` for the look's class
+   (`MessagesActivity` in Mørk, `LightMessagesActivity` in Lys), no relaunch line.
+2. The same for the phone book (Home's tile) and the three lists: `dumpsys window windows` shows **no** `Splash Screen`
+   for them (home-type, R9), and no frame of the other look's ground.
+3. The phone book's doors from outside (design §12.9 point 1), with the look unlike the system's theme: a `tel:` link in
+   another allowed app, and the missed-call notification's tap. Each: `dumpsys window windows` without a `Splash
+   Screen` for the phone book, and no frame of the other look's ground. A splash on one is a finding (that door would
+   need the look-less entry).
+4. The message notification (a message from Mamma with Meldinger closed), posted in Mørk, the look changed to Lys,
+   then tapped - and the other way round: the thread over the list in the **stored** look's classes, no frame of the
+   other look, no black or empty frame, no Home frame between (the entry has its own task: `taskAffinity=""`), the
+   entry not in Recents. Tapped with Kalender in front too.
+5. A change of look in kid Settings with Meldinger's task behind (a thread open on the list): `.messages` 0 in Recents
+   right after, `wm_destroy_activity` for both; the next open makes one task with the new look's classes alone; no
+   `E PageLook`. With the kiosk on (§6ah B.3's checks).
+6. **L5** (a waiting change at a Home resume while a page's start is in flight) is not constructed here: with kid
+   Settings in front no page task is started, so no change waits. The rule is in `PageLookTest`; note any
+   `E PageLook` over the whole pass.
+
+### C. The kept text
+
+1. Type "Hei Mamma" in Mamma's thread (do not send), go Home, change the look, open Meldinger and Mamma's thread: the
+   text is in the field. `sms_drafts.xml` has one entry for the conversation.
+2. The same across a process kill (`am kill` is refused for the home app; `kill -9` on the launcher's pid as §6ai) and
+   a reboot: the text is back.
+3. Send it: the field clears, the entry leaves `sms_drafts.xml`. Type and empty the field: no entry.
+4. Type in Pappa's thread, then delete the conversation from the list: the entry goes. Type in Mamma's thread, then
+   turn off "Kan få melding fra" for Mamma in the PWA: after the sync the thread shows its line instead of the bar and
+   the entry is gone (also when the list loads without opening the thread). Set SMS to "Av": every entry goes.
+
+### D. The row in a release build
+
+From CI's release APK on an emulator of its own (never a local build on a phone): kid Settings shows "Utseende" with
+Mørk / Lys, the preview and the caption; a tap on Lys changes Meldinger, Kalender, the phone book and the lists, and
+nothing else.
+
+### What `jelly36` can't show
+
+The Jelly Star's build (step 0's recording there is still owed before release), a real SIM's MMS, an Android 14
+phone's bars under a Lys page, TalkBack where the kiosk blocks it.
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:

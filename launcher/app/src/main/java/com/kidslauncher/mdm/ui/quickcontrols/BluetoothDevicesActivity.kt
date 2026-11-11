@@ -31,7 +31,7 @@ import com.kidslauncher.mdm.server.btPairOffered
 import com.kidslauncher.mdm.server.cachedPolicy
 import com.kidslauncher.mdm.ui.kidsettings.bluetoothPageAllowed
 import com.kidslauncher.mdm.ui.kidsettings.controlsSection
-import com.kidslauncher.mdm.ui.UIObjectActivity
+import com.kidslauncher.mdm.ui.look.KidPageActivity
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -53,7 +53,7 @@ import kotlinx.coroutines.launch
  * needs `BLUETOOTH_PRIVILEGED`, a signature permission no non-preinstalled app can hold. Settings
  * hits the same dialog, so this isn't a regression, just not fully invisible like the WiFi flow.
  */
-class BluetoothDevicesActivity : UIObjectActivity() {
+class BluetoothDevicesActivity : KidPageActivity() {
     private lateinit var binding: ActivityBluetoothDevicesBinding
     private lateinit var dpm: DevicePolicyManager
     private lateinit var admin: ComponentName

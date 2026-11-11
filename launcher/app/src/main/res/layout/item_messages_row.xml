@@ -54,7 +54,7 @@
             android:ellipsize="end"
             android:fontFamily="@font/nunito_extrabold"
             android:maxLines="1"
-            android:textColor="@color/kid_ink"
+            android:textColor="@color/kid_page_ink"
             android:textSize="16sp" />
 
         <TextView
@@ -65,7 +65,7 @@
             android:ellipsize="end"
             android:fontFamily="@font/nunito_semibold"
             android:maxLines="1"
-            android:textColor="@color/kid_core_dim"
+            android:textColor="@color/kid_page_dim"
             android:textSize="14sp" />
     </LinearLayout>
 
@@ -83,7 +83,7 @@
             android:layout_height="wrap_content"
             android:fontFamily="@font/nunito_bold"
             android:maxLines="1"
-            android:textColor="@color/kid_core_dim"
+            android:textColor="@color/kid_page_dim"
             android:textSize="12sp" />
 
         <View

@@ -23,6 +23,8 @@
     <color name="kid_on_accent">#0C0C14</color>
     <color name="kid_on_accent_press">#33000000</color>
     <color name="kid_badge">#B4532C</color>
+    <!-- The badge's ink, white; its own name so a page can name it (design 78 step 2: the same in both looks). -->
+    <color name="kid_badge_ink">#FFFFFF</color>
     <color name="kid_call_badge">#2F9E44</color>
     <!-- The Phone book tile (and the time-rule screen's phone book row): a muted call green,
          white 5.5:1, ground 3.6:1 (design 34 P1, QA M3; it was #37B24D, white 2.75:1). -->

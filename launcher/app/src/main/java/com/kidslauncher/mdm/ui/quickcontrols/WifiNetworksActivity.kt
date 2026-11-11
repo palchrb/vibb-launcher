@@ -16,7 +16,7 @@ import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.databinding.ActivityWifiNetworksBinding
 import com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
 import com.kidslauncher.mdm.server.QuickControls
-import com.kidslauncher.mdm.ui.UIObjectActivity
+import com.kidslauncher.mdm.ui.look.KidPageActivity
 
 private const val CONNECT_POLL_INTERVAL_MS = 3_000L
 private const val CONNECT_TIMEOUT_MS = 15_000L
@@ -26,7 +26,7 @@ private const val CONNECT_TIMEOUT_MS = 15_000L
  * [QuickControls]' Device-Owner WiFi APIs rather than `Settings.ACTION_WIFI_SETTINGS` or any QS
  * panel, for the same reason the rest of Quick Controls exists (see that screen's doc comment).
  */
-class WifiNetworksActivity : UIObjectActivity() {
+class WifiNetworksActivity : KidPageActivity() {
     private lateinit var binding: ActivityWifiNetworksBinding
     private lateinit var dpm: DevicePolicyManager
     private lateinit var admin: ComponentName
