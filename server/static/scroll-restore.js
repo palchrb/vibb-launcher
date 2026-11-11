@@ -33,6 +33,16 @@
 // Back must land where the parent was, not at the group. A plain navigation (a link) restores no
 // place: the fragment or the top, as before. The form record wins over the place record. On the
 // shell's pages the window is put back at 0 when iOS leaves it offset (the keyboard's pan).
+//
+// The band's back link (design 84, the user's iPhone, 2026-11-11): a page under a tab goes back by
+// a plain link, often to the row it was opened from (`/apps#phone-3`), and with the band scrolling
+// away the fragment's jump put that row at the screen's top - not where the parent was left. So a
+// page reached by a link remembers which page it came from (`handy-from`, its path -> the
+// referrer's path + search, kept across its own saves and a return to it by its child's back link),
+// and a tap on its back link (`a.nav-back`) to exactly that page leaves a record like a save's,
+// `back: true`, with the parent's place record: the parent then opens where it was left, over its
+// #fragment. A parent never left in this session, a back link to another page than the one it came
+// from, a link opened directly or no JS: the plain link, its fragment or the top, as before.
 (function (root) {
     "use strict";
     var KEY = "handy-scroll";
@@ -40,6 +50,7 @@
     var MAX_AGE_MS = 20000;
     var PLACE_KEY = "handy-place";
     var MAX_PLACES = 50;
+    var FROM_KEY = "handy-from";
 
     function has(tops, id) {
         return Object.prototype.hasOwnProperty.call(tops, id) && typeof tops[id] === "number";
@@ -90,21 +101,49 @@
         return "navigate";
     }
 
-    /** `places` with `key` at `y`, the newest MAX_PLACES kept. */
-    function withPlace(places, key, y, t) {
+    /** `map` with `entry` (it has its time, `t`) under `key`, the newest MAX_PLACES kept. */
+    function withEntry(map, key, entry) {
         var next = {};
         var keys = [];
-        for (var k in places) {
-            var p = places[k];
-            if (k !== key && Object.prototype.hasOwnProperty.call(places, k) && p && typeof p.y === "number" && typeof p.t === "number") {
+        for (var k in map) {
+            var p = map[k];
+            if (k !== key && Object.prototype.hasOwnProperty.call(map, k) && p && typeof p.t === "number") {
                 keys.push(k);
             }
         }
-        keys.sort(function (a, b) { return places[b].t - places[a].t; });
+        keys.sort(function (a, b) { return map[b].t - map[a].t; });
         keys = keys.slice(0, MAX_PLACES - 1);
-        for (var i = 0; i < keys.length; i++) next[keys[i]] = places[keys[i]];
-        next[key] = { y: y, t: t };
+        for (var i = 0; i < keys.length; i++) next[keys[i]] = map[keys[i]];
+        next[key] = entry;
         return next;
+    }
+
+    /** `places` with `key` at `y`, the newest MAX_PLACES kept. */
+    function withPlace(places, key, y, t) {
+        return withEntry(places, key, { y: y, t: t });
+    }
+
+    /** The referrer's path + search when it is a page of this origin, else null. */
+    function referrerKey(win) {
+        var ref = String((win.document && win.document.referrer) || "");
+        if (!ref || typeof URL !== "function") return null;
+        try {
+            var url = new URL(ref);
+            if (win.location.origin && url.origin !== win.location.origin) return null;
+            return url.pathname + url.search;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    /** The band's back link (`a.nav-back`) at or above `el`, or null. */
+    function backLinkOf(el) {
+        for (; el; el = el.parentNode) {
+            if (el.tagName && String(el.tagName).toUpperCase() === "A") {
+                return (" " + el.className + " ").indexOf(" nav-back ") >= 0 ? el : null;
+            }
+        }
+        return null;
     }
 
     /**
@@ -118,6 +157,8 @@
         if (saved.path !== path) return null;
         var age = now - saved.t;
         if (age < 0 || age >= MAX_AGE_MS) return null;
+        // The band's back link: where the parent was left, over its #fragment.
+        if (saved.back === true) return saved.y;
         if (!hash || hash === "#") return saved.y;
         var tops = saved.tops;
         if (!tops || typeof tops !== "object") return null;
@@ -157,12 +198,17 @@
         } catch (e) {}
 
         function remember(form) {
-            var record = JSON.stringify({
+            carry({
                 path: win.location.pathname,
                 y: scrollerOf(win).top(),
                 t: now(),
                 tops: screenTops(form)
             });
+        }
+
+        /** The record for the next page, in both carriers. */
+        function carry(value) {
+            var record = JSON.stringify(value);
             if (storage) {
                 try {
                     storage.setItem(KEY, record);
@@ -186,13 +232,16 @@
 
         // The place record: this page's position when it goes away, for Back and reload.
         var placeKey = win.location.pathname + (win.location.search || "");
-        function readPlaces() {
+        function readMap(key) {
             try {
-                var places = JSON.parse(storage.getItem(PLACE_KEY) || "null");
-                return places && typeof places === "object" ? places : {};
+                var map = JSON.parse(storage.getItem(key) || "null");
+                return map && typeof map === "object" ? map : {};
             } catch (e) {
                 return {};
             }
+        }
+        function readPlaces() {
+            return readMap(PLACE_KEY);
         }
         function keepPlace() {
             if (!storage) return;
@@ -235,6 +284,31 @@
         if (saved) win.handyPlaceRecord = saved;
         var place = null;
         var type = navigationType(win);
+
+        // Where this page was opened from: a link from another page sets it; a save's answer (the
+        // same path), a return by a child's back link, Back/Forward and a reload keep it.
+        var backHere = !!(saved && saved.back === true && saved.path === win.location.pathname);
+        if (storage && type === "navigate" && !backHere) {
+            var from = referrerKey(win);
+            if (from !== null && from.split("?")[0] !== win.location.pathname) {
+                try {
+                    storage.setItem(FROM_KEY, JSON.stringify(withEntry(readMap(FROM_KEY), win.location.pathname, { key: from, t: now() })));
+                } catch (e) {}
+            }
+        }
+        // A tap on the back link to the page this one came from: that page's place goes with it.
+        doc.addEventListener("click", function (e) {
+            if (!storage || !e || e.defaultPrevented) return;
+            if (e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+            var link = backLinkOf(e.target);
+            if (!link || typeof link.pathname !== "string") return;
+            if (link.host !== undefined && win.location.host !== undefined && link.host !== win.location.host) return;
+            var to = link.pathname + (link.search || "");
+            var came = readMap(FROM_KEY)[win.location.pathname];
+            var left = readPlaces()[to];
+            if (!came || came.key !== to || !left || typeof left.y !== "number") return;
+            carry({ path: link.pathname, href: to, y: left.y, t: now(), back: true });
+        });
         if (storage && (type === "back_forward" || type === "reload")) {
             var stored = readPlaces()[placeKey];
             if (stored && typeof stored.y === "number") place = stored.y;
@@ -311,7 +385,8 @@
         NAME_PREFIX: NAME_PREFIX,
         MAX_AGE_MS: MAX_AGE_MS,
         PLACE_KEY: PLACE_KEY,
-        MAX_PLACES: MAX_PLACES
+        MAX_PLACES: MAX_PLACES,
+        FROM_KEY: FROM_KEY
     };
     if (typeof module !== "undefined" && module.exports) {
         module.exports = api;

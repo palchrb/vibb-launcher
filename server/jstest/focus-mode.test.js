@@ -6,10 +6,11 @@ const test = require("node:test");
 const assert = require("node:assert");
 const { install } = require("../static/focus-mode.js");
 
-function fakeDocument() {
+function fakeDocument(hash = "") {
     const listeners = {};
     const classes = new Set();
     const doc = {
+        location: { hash },
         activeElement: null,
         documentElement: {
             classList: {
@@ -25,7 +26,7 @@ function fakeDocument() {
         const event = Object.assign({ type }, extra || {});
         (listeners[type] || []).forEach((fn) => fn(event));
     }
-    return { doc, fire, marked: () => classes.has("pointer-focus") };
+    return { doc, fire, marked: () => classes.has("pointer-focus"), fragment: () => classes.has("fragment-focus") };
 }
 
 const textField = { tagName: "INPUT", type: "text" };
@@ -92,4 +93,30 @@ test("an engine without classList is left alone", () => {
     const listeners = [];
     install({ documentElement: {}, addEventListener: (t) => listeners.push(t) });
     assert.deepStrictEqual(listeners, []);
+});
+
+// The user's iPhone, 2026-11-11: a back link to `/apps#phone-3` landed with the browser's focus on the
+// row (a link) and the keyboard's ring round it.
+test("a page opened at a #fragment hides the target's ring until a key moves focus", () => {
+    for (const hash of ["", "#"]) {
+        const { doc, fragment } = fakeDocument(hash);
+        install(doc);
+        assert.strictEqual(fragment(), false, JSON.stringify(hash));
+    }
+    const { doc, fire, fragment } = fakeDocument("#phone-3");
+    install(doc);
+    assert.strictEqual(fragment(), true);
+    // A tap, or a caret move in a field, keeps it; Tab (or an arrow on a row) ends it with pointer mode.
+    fire("touchstart");
+    doc.activeElement = textField;
+    fire("keydown", { key: "ArrowLeft" });
+    assert.strictEqual(fragment(), true, "a caret move in a field");
+    doc.activeElement = { tagName: "A" };
+    fire("keydown", { key: "Tab" });
+    assert.strictEqual(fragment(), false, "Tab");
+    // A document without a location: nothing marked.
+    const bare = fakeDocument();
+    delete bare.doc.location;
+    install(bare.doc);
+    assert.strictEqual(bare.fragment(), false);
 });

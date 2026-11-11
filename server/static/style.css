@@ -379,6 +379,14 @@ select.pick:focus {
     outline: none;
 }
 
+/* A page opened at a #fragment: the browser focuses the fragment's element when it can (a row that
+   is a link) and counts it as :focus-visible, so the row wore the keyboard's ring after a back link
+   (the user's iPhone, 2026-11-11). focus-mode.js marks <html> until a key moves focus: no ring on
+   the :target until then, the keyboard's from the first key on. */
+.fragment-focus :target:focus {
+    outline: none;
+}
+
 input[type="checkbox"],
 input[type="radio"] {
     accent-color: var(--switch-on);
@@ -417,6 +425,21 @@ input[type="radio"] {
     }
 }
 
+/* A scrolling page's main (an editor's is the sheet itself, below): a column of the band and the
+   sheet, the sheet taking the rest of the height, so a short page's sheet still reaches main's
+   bottom. main's own ground is what an iOS bounce shows past either end of the content - iOS draws
+   nothing of the scrolled content above its top or below its end (the user's iPhone, 2026-11-11:
+   a light field between the status bar and the band on a pull-down, where the band's border-image
+   outset painted nothing) - and a scroller's background stays with its box, never with the
+   content: night in the top half, the page's ground in the bottom half, so a pull at the top bares
+   night under the strip and one at the bottom the sheet's ground. Nothing else ever shows it: the
+   band and the sheet cover main. */
+.container:not(.container-fixed) {
+    display: flex;
+    flex-direction: column;
+    background: linear-gradient(var(--night) 50%, var(--bg) 50%);
+}
+
 /* The night band (design 84, F2b; templates/partials/band.html): every page in the shell opens on
    it - the round mark (a tab) or the back chevron (a page under one), the page's name, which is
    the page's only <h1>, and the page's actions. It is main's first child and scrolls away with
@@ -427,9 +450,8 @@ input[type="radio"] {
    and 32 px under the row. 10 px of those are band; the last 22 px lie under the rounded top of
    the next box (the sheet, or an editor's main), pulled up by the band's own negative margin, so
    what shows in that box's two corners is the band's foot - on an editor too.
-   border-image's outset paints 100vh of night above the band without taking room or adding
-   scrollable overflow (ink overflow): it is what an iOS pull-down bounce shows over the band, and
-   it meets the status bar's night strip (.top-strip) without a seam. */
+   What an iOS pull-down bounce shows above a scrolling band is main's own ground (.container:not(
+   .container-fixed)), not the band's: iOS paints nothing of the scrolled content above its top. */
 .band {
     display: flex;
     align-items: center;
@@ -438,7 +460,6 @@ input[type="radio"] {
     padding: var(--band-top) max(16px, env(safe-area-inset-right, 0px), calc((100% - 720px) / 2 + 16px)) 32px max(16px, env(safe-area-inset-left, 0px), calc((100% - 720px) / 2 + 16px));
     background: var(--night);
     color: var(--night-text);
-    border-image: linear-gradient(var(--night), var(--night)) fill 0 / 0 / 100vh 0 0;
 }
 
 /* An editor's band is the body's own child, beside main: it keeps its height, main takes the rest. */
@@ -588,6 +609,66 @@ input[type="radio"] {
 
 .tab-bar ~ .container > .sheet {
     padding-bottom: calc(var(--tab-bar-room) + env(safe-area-inset-bottom, 0px));
+}
+
+.container > .sheet {
+    flex: 1 0 auto;
+}
+
+/* A scrolling band lies over the sheet's top (over the cap below, under the tab bar): its 22 px
+   foot is night only outside the sheet's two rounded corners and clear between them, so the sheet
+   shows as before, and while the band scrolls away its foot keeps the cap's curve covered until
+   the sheet's own edge has passed it - the two hand over with no seam. */
+.container > .band {
+    position: relative;
+    z-index: 8;
+    flex: none;
+    background:
+        radial-gradient(circle at 100% 100%, transparent 22px, var(--night) 22.5px) left bottom / 22px 22px no-repeat,
+        radial-gradient(circle at 0 100%, transparent 22px, var(--night) 22.5px) right bottom / 22px 22px no-repeat,
+        linear-gradient(var(--night), var(--night)) left top / 100% calc(100% - 22px) no-repeat;
+}
+
+/* The cap (the user's mockup, 2026-11-11): once the band has scrolled away the sheet keeps its
+   rounded top right under the status bar and the rows scroll under that edge, never straight into
+   the strip. main's first box, sticky at --top-strip and taking no room (margin-bottom -22px): its
+   box is the sheet's top - the same radius - and its shadow is night all round it (up over the
+   strip, into its two corners), so nothing of a row shows outside the curve. At the page's top it
+   lies under the band, unseen. A pseudo-element, so iOS never takes it for the status bar's colour
+   (.top-strip); it never takes a tap, and the night of its corners stays within 1 px of the
+   screen's edge at the 16 px column, clear of every tap target. Not on an editor: its band stays
+   put and main is the sheet itself.
+   Its edge, the sheet's hairline in dark, is drawn only once main has scrolled (a scroll timeline:
+   Safari 26, Chrome 115): during a pull-down bounce iOS may hold a sticky box where it is while the
+   band moves down, and the line would hang alone in the night above the band. Without scroll
+   timelines there is no edge: in light there is none to draw, in dark the cap is night on night. */
+.container:not(.container-fixed)::before {
+    content: "";
+    position: sticky;
+    z-index: 7;
+    top: var(--top-strip);
+    flex: none;
+    box-sizing: border-box;
+    height: 22px;
+    margin-bottom: -22px;
+    border-top: 1px solid transparent;
+    border-radius: 22px 22px 0 0;
+    box-shadow: 0 -50vh 0 50vh var(--night);
+    pointer-events: none;
+}
+
+@supports (animation-timeline: scroll()) {
+    .container:not(.container-fixed)::before {
+        animation: cap-edge linear both;
+        animation-timeline: scroll();
+        animation-range: 0px 1px;
+    }
+}
+
+@keyframes cap-edge {
+    to {
+        border-top-color: var(--band-edge);
+    }
 }
 
 .container-narrow > .band,
