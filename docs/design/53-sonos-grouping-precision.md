@@ -32,7 +32,7 @@ user: not now). The design QA is `qa-53-design.md`; what it changed is listed in
 - **One socket follows only the groups its speaker coordinates.** Subscribing to another group answers
   `groupCoordinatorChanged` with `groupStatus: GROUP_STATUS_MOVED`, that coordinator's `websocketUrl` and `playerId`.
   On the own group a membership change sends `groupInfo`, `groups` and a `global/groupCoordinatorChanged
-  GROUP_STATUS_UPDATED`; the group id (`RINCON_...:100`, name "Sverre + 1") stays while the coordinator stays.
+  GROUP_STATUS_UPDATED`; the group id (`RINCON_...:100`, name "Emma + 1") stays while the coordinator stays.
   `groups:1 modifyGroupMembers` added and removed a room in ~0.2 s on the user's speakers - proven, **not used** (§2.6).
 - **Not measured yet** (§5 check 1 records them; each rule below that rests on one says what changes if it is false):
   (a) `positionMillis` at the natural end's IDLE (maybe 0); (b) whether a seek and a resume go through BUFFERING;

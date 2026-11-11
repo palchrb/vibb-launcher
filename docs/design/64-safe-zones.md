@@ -45,13 +45,13 @@ deprecated** (`LocationManager` in `android16-release`).
    fixes newer than the last one evaluated count (a re-sent or late fix is stored for the trail, never evaluated
    twice). One bad fix can't flap a zone; a burst of 1 Hz fixes from one moment isn't two observations.
 4. **The first side of a new or moved zone is set silently** (state unknown -> the first confirmed side raises
-   nothing): drawing "Home" while the kid is home must not push "Sverre arrived at Home".
+   nothing): drawing "Home" while the kid is home must not push "Emma arrived at Home".
 5. **Zones are the phone's, shared by the family; the push is each parent's.** The per-zone "Notify on arrive / leave"
    switches (default both on) decide whether an event is raised at all; Notify Me About's new switch "Zones" (per
    parent, default on) decides only the push - as every kind (design 35: every kind is stored, the switches govern
    the push).
 6. **Zone events go away with the location history** (the phone's Keep history for, 1-30 days), not after the inbox's
-   90 days: "Sverre arrived at Home 08:12" is a location record and must not outlive the trail it was read from.
+   90 days: "Emma arrived at Home 08:12" is a location record and must not outlive the trail it was read from.
 7. **Zones need fixes and never change the parent's mode silently.** Off and Only when asked keep zones stored but
    unwatched (step 2: not in the policy), the page says so and offers one tap to Regularly (§3.6).
 8. **At most 10 zones per phone, radius 100 m - 2 km, default 150 m** (§11 decides). 10 keeps the phone's work and the
@@ -171,8 +171,8 @@ logged (the report's other parts are already stored, as today a failed location 
 - Two kinds, `Kind::ZoneArrived` (`zone_arrived`) and `Kind::ZoneLeft` (`zone_left`), after `PhoneOn` in `Kind::ALL`;
   both `switch()` = `("push_zones", "Zones: arrived and left")`; not urgent, foldable, TTL 3600, urgency normal.
 - Raised only when the zone's switch for that direction is on (decision 5). Key `<zone id>:<side>:<pending_at>`.
-- Words (`Phone::zone`, design 35's limits, the zone's name as stored when raised): title "Sverre arrived at Home" /
-  "Sverre left School"; summary the time by `Phone::at` ("15:42", "Yesterday 21:14"). Target
+- Words (`Phone::zone`, design 35's limits, the zone's name as stored when raised): title "Emma arrived at Home" /
+  "Emma left School"; summary the time by `Phone::at` ("15:42", "Yesterday 21:14"). Target
   `/devices/locate?device={id}#location`. §11 asks about Norwegian.
 - **Pushed only while it is news**: `Push::Now` when the confirming fix is under 30 min old at intake, else `Push::No`
   (inbox and Activity only). A phone back from a day without data must not push "arrived at School 08:10" at 15:00.
@@ -462,7 +462,7 @@ Emulator (`docs/testing/emulator.md`, a new §6 entry; the Play image, the debug
 2. Inside, silent: `set-test-provider-location fused --location <centre> --accuracy 20` twice, 2 min apart - the
    registration echo dropped (logcat), Home's side set, no event.
 3. Leave: a fix 1 km away (accuracy 30) -> the fence's exit broadcast -> a check, a report, the confirming fix 2 min
-   later (`adb emu geo fix <lon> <lat>` - longitude first - for the GPS path, set to the same place first) -> "Sverre
+   later (`adb emu geo fix <lon> <lat>` - longitude first - for the GPS path, set to the same place first) -> "Emma
    left Home" in the inbox and as a push.
 4. Straddle: a fix 100 m from the centre with accuracy 200 -> unsure, nothing raised, nothing reported beyond the
    heartbeat.
@@ -493,8 +493,8 @@ SMS fallback. Notifications in Norwegian beyond §11's choice (the PWA's words a
 2. Zones per phone: **10** (Android has no cap; the 100 is Play's).
 3. Heartbeat with zones: **30 min** (the fence polls every 30 min anyway, §5) or 60 min.
 4. A pause: **zones keep watching and pushing** (locating isn't a restriction) or events are held during a pause.
-5. The push wording: **English like every other event** - "Sverre arrived at Home" / "Sverre left School" - or
-   Norwegian, "Sverre kom til Hjem" / "Sverre forlot Skole" (a fixed form; "kom hjem" needs a per-zone phrase, out
+5. The push wording: **English like every other event** - "Emma arrived at Home" / "Emma left School" - or
+   Norwegian, "Emma kom til Hjem" / "Emma forlot Skole" (a fixed form; "kom hjem" needs a per-zone phrase, out
    of scope).
 6. The kid's line in Kid Settings: **yes, one calm line while location isn't off** (§4.6), or nothing as today.
 7. Mock locations in a release build: **ignored and logged** (decision 14), or reported and marked.
