@@ -21,6 +21,10 @@ builds only. Built and unit-tested; not yet seen running (`docs/testing/emulator
 departs from this note or settles something it left open, a line marked "Step 1, 2026-11-10" says so at the place.
 The code QA's fix round (`docs/review/qa-78-step1-code.md`) is marked "Fix round, 2026-11-10" the same way.
 
+**Step 2 built, 2026-11-11** (branch `kid-look-3`, on revision 3's mechanism): Meldinger, the phone book, kid Settings'
+lists, the kept thread text, L5 settled, the row in every build. Built and unit-tested, not yet seen running
+(`docs/testing/emulator.md` §6aj). §8's "Step 2, 2026-11-11" paragraph has what it is and where it departs.
+
 **Addition, 2026-11-10 - the phone book is a page too.** Since the batch `sms-follow-book-ground` the phone book is no
 longer on the wallpaper: it has Dagen's plain ground (`kid_ground`), on the user's wish ("bare lys/mørk bakgrunn akkurat
 som for kalender"), and the user expects it to follow the same choice ("jeg regner med vi har samme lys/mørk modus som
@@ -703,6 +707,49 @@ For step 2, from step 1's code QA (L5, 2026-11-10; read, not seen): Home's resum
 `mayChange` (§5.4), so while a change waits, a Home resume that falls between an open of Kalender and the page's
 creation removes the task that was just opened along with the old one. Only a debug build can have a waiting change in
 step 1; settle it before the row is shown in release builds.
+
+**Step 2, 2026-11-11: built as listed, on revision 3's mechanism (§12), on branch `kid-look-3`.** Not seen running: no
+emulator was started in the build; `docs/testing/emulator.md` §6aj is its pass.
+
+- **Meldinger**: `MessagesActivity` and `ThreadActivity` are own-task pages, so each is two classes (R2; twins in
+  `ui/messages/LightPages.kt`, rows `MESSAGES` and `THREAD` in `PageKind`); `MessagesScreens.listIntent` and
+  `threadIntent` are the builders (R5); `closesTask` and `languageClosesTask` know Meldinger's task by either root.
+  Their layouts, drawables and the thread's own colours are on page tokens: the received bubble, its ink and time
+  (`kid_page_message_in*`), the selection rings (the received one `kid_page_accent`; the own one stays
+  `kid_message_out_ink`, dark on the peach in both looks - design 77's fix round made it so after §4.1 was written, so
+  `kid_page_selected_out` names nothing yet), the picture's place (`kid_page_control`), the unread dot, the compose
+  field (`kid_page_tile` with the `kid_page_edge` hairline) and send (`bg_day_add`, the glyph `kid_on_accent`), the
+  confirm (`kid_page_lift`) with its pills (`kid_page_button`, `kid_page_danger`/`_text`), the delivery line
+  (`kid_page_dim`, `kid_page_alert`), the day separator, the reaction chip, panel and picker, the search field.
+- **`PictureActivity`** stays night and one class (§2, §12.3: no twin), and counts itself in the started count.
+- **The notification** names a look-less entry (R7): `MessagesEntryActivity`, translucent, `noHistory`,
+  `excludeFromRecents`, not exported, `taskAffinity=""` - a task of its own, a departure from "as `ComposeActivity`
+  is" (which has the default affinity): a notification's start comes with `NEW_TASK`, and the default affinity would
+  bring Home's task forward under the translucent entry, Home's resume included. Inferred, not seen; §6aj looks.
+- **The phone book and the three lists** are one-class pages on the qualified `KidPageTheme` (R9), their layouts on page
+  tokens first (§12.7.2's leg B finding). They are live pages but not in the started count: they are no page task's.
+- **What stays night over a Lys page** (§2): the contact card, "Bilde av …", the emergency menu, the 112 confirms and
+  the phone book's emergency Ring confirm are built from `nightOver(activity)` - the activity with the night bit forced
+  and `PageColors` laid on again - not from the page itself, whose theme attributes and shared page tokens would be
+  the day's. The two confirms are AppCompat dialogs, which take the page's own night mode back from the activity behind
+  their context (AppCompat 1.7.1's dialog delegate, read): `showNight` sets theirs to night before they are shown.
+- **New tokens**, each night value today's: `kid_page_ink_dim`, `kid_page_card`, `kid_page_call_glyph` (#2B7340 in Lys),
+  `kid_page_focus`, `kid_page_accent_edge` (#B3A64B25 in Lys, 3.2:1 on white) and `kid_page_field_edge`; the badge
+  (`kid_badge` with a new unqualified `kid_badge_ink`, white, 4.98:1) is the same in both looks.
+- **The kept thread text** (§5.4.4): in memory and in CE prefs - **`sms_drafts`, not `kid_look`** (a departure from §6:
+  the texts are Meldinger's data, read and cleared by its screens; `kid_look` stays the look's alone, touched only by
+  `PageLook`). The text and its draft `clientId`, at most 1,600 characters and 50 conversations; cleared when sent or
+  emptied, when the conversation is deleted, when the kid may no longer text there (read-only, not allowed, a group
+  not allowed, groups off - also for a conversation not opened again, at the list's load), and all of them while SMS
+  is off or the phone unmanaged ("when the phone goes unmanaged" is held at every read, not at the moment of the
+  change: nothing listens for it).
+- **L5, settled**: a Home resume does not run a waiting change while a page's start is in flight - asked for through
+  `PageKind.current()` within the last 5 s, no page created since (`PageRegistry.startInFlight`). The change then
+  waits for the next resume. R6's check stays the route for anything that gets past it.
+- **The row** is shown and listens in every build; its caption (the phone book named, 2026-11-10's wording) is true now.
+- **`KidHeader`** needed nothing: the arrow's `kid_page_ink` tint is in `include_kid_header` since step 1.
+- Tests as listed; `PageTokensScanTest` now reads its layouts from every page class's code and its drawables from
+  those layouts, their styles and the classes, and holds the night sheets to `nightOver`.
 
 Docs at each step: a new section in `docs/notes/launcher/ui-polish.md` ("The kid's look: Mørk or Lys", design 78), its
 line in `launcher/CLAUDE.md`'s index, `docs/testing/emulator.md`.
