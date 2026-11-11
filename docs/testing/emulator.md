@@ -3194,7 +3194,9 @@ are in the session's `scratchpad/retry-shots/`.
 ## 6ah. The kid's look: Mørk or Lys - step 1's pass (design 78)
 
 **Steps, written with the build on 2026-11-10 and added to in the code QA's fix round the same day
-(`docs/review/qa-78-step1-code.md`, L8). Not run yet**: nothing below is a result. Step 1 is the mechanism and
+(`docs/review/qa-78-step1-code.md`, L8). Run in part on 2026-11-11 on `jelly36`**: "The run of 2026-11-11" at the end
+of this section has what passed, the one finding (the launcher's own language) and what was never reached - the host
+killed the emulator for memory before B.9. The steps themselves are no result. Step 1 is the mechanism and
 Kalender (`docs/notes/launcher/ui-polish.md`, "The kid's look: Mørk or Lys"); the row in kid Settings exists in the
 **debug** build only.
 
@@ -3352,6 +3354,105 @@ blocked" notice (a `market://` link while the Play Store is suspended, `docs/not
 
 The Jelly Star's own Android build (step 0's repeat there is still open - a debug build on a test phone, never the
 kid's), a finger's tap instead of an injected one, an Android 14 phone's bars under a Lys page.
+
+### The run of 2026-11-11 (`jelly36`), stopped before B.9
+
+`kid-look-1` at 163aceb5 (the debug APK from one gated `assembleDebug` on the clean tree, 2026-11-10 23:54 UTC), on a
+wiped `jelly36` (Android 16, 480x854, 36 px bar), headless, `-timezone Europe/Oslo`. Main's debug APK (bc547c84) was
+installed and provisioned first, for the before pictures, and this build put over it with `adb install -r` (B.8). The
+system's language en-US, the launcher's own `nb` from the policy, the kiosk on, gesture navigation. Every line is
+**seen** (on `jelly36`: a picture or `dumpsys`), **measured** (a recording stepped frame by frame, or a log line) or
+**inferred**, and says which; made-up names only.
+
+**Stopped at 01:38 UTC**: the host's kernel killed the emulator for memory (`Out of memory: Killed process ...
+(qemu-system-x86)`, 4.7 GB on a 12 GB host where another session's Kotlin daemon held 3.4 GB) during the pass's second
+reboot. By the standing rule it was not started again. The AVD was put back from the copy taken before the pass (22
+files, SHA-256 identical).
+
+**Passed**
+
+- **A, the events log** (measured; 12 recordings - system dark on: both looks, tile and glance, cold and warm; system
+  dark off: both looks from the tile, cold and warm): one `wm_on_create_called` for `DayActivity` on every cold open,
+  none on a warm one, no `wm_relaunch_activity` anywhere.
+- **A, the other look's frame** (measured): Mørk never shows a light frame, with the system light too. Lys from the
+  tile goes from Home's night frame through the system's cross-fade (66-240 ms) to the paper and never back; from the
+  glance the page slides in from the right over the lock, already drawn in Lys.
+- **A, the status bar in Lys** (measured: how long white ink stands on the paper, the tint's fade included). From the
+  tile, cold: 255 ms (system light), 379 ms (system dark), 498 ms on the first open after a boot with the emulator
+  loaded - step 0's case, somewhat longer here. From the tile, **warm: 201 ms and 165 ms** - new beside step 0's "cold
+  only"; on a warm open the system's task-to-front animation also shows a thin night edge around the light page for
+  about two frames. From the glance, cold and warm: dark ink from the first light frame.
+- **The late tint's cause** (measured): the page has a starting window (`Splash Screen me.vibb.launcher.debug`,
+  `ty=APPLICATION_STARTING`) although `launcherBaseTheme`'s `windowDisablePreview` is inherited, and it has the look's
+  ground. With the launcher's process held (SIGSTOP) right after the tap, that window alone goes from night to paper in
+  about 130 ms, and the bar's ink still turns dark only 210-310 ms after the first light frame. So it is neither the
+  starting window's lifetime nor the inherited `windowDisablePreview`: the status bar follows the app transition late,
+  whoever owns the window. No theme item changes that; nothing was changed.
+- **A, the flips** (seen; Kalender open in Mørk and again in Lys): `cmd uimode night no`, `yes`, Battery Saver on and
+  off, and Battery Saver with the system light - no lifecycle event, the same `ActivityRecord`, the pictures identical
+  below the status bar (in Lys the last one differs in the reminder's minute only). On this image Battery Saver is on
+  in `dumpsys power` and does not move `mComputedNightMode`, so that half says less than its name.
+- **Home on a switch of the system's dark theme** (seen): no create and no relaunch on this build; main's Home was
+  created again by the same `cmd uimode night yes`.
+- **B.1-B.3, the kiosk on** (seen): at the tap on Lys only the control and the strip differ from the picture before
+  (x 45..434, y 510..685) and kid Settings has no event; `DayActivity` is finished and destroyed, `kid_look.xml` is
+  `light`/`light`, the recents count 0, `mLockTaskModeState=LOCKED` before and after with Home's task alone in
+  `mLockTaskModeTasks`, nothing of the kiosk shown or dropped. **B.4**: A's cold Lys recordings are that open.
+- **B.5** (seen): with an event page open in Kalender's task, the tap on Mørk finishes and destroys `DayActivity` and
+  `EventActivity`, `dark`/`dark`, count 0, still `LOCKED`; the next open is the day view, one `wm_on_create_called`.
+  **B.6**: a tap on the applied look - no event, the count stays 1.
+- **B.7, the reboot** (seen, measured): after Lys and `adb reboot`, `light`/`light`, and Kalender's first open is Lys
+  from its first light frame with one `wm_on_create_called`. (During that boot Android's own runtime restarted once:
+  `system_server` died on a `DeadSystemRuntimeException` in `TelephonyManager` after `com.android.phone` stopped
+  answering under the boot's load - not the launcher's - so the launcher's process started twice.)
+- **B.8** (seen, measured): main's build with the system's dark theme off, this build over it: `applied` = `dark` with
+  no tap, and Kalender's first open is night in every frame, one `wm_on_create_called`.
+- **B.12** (measured), `The kid's look took` beside `Unlocked setup took`: 14 ms / 372 ms (B.8's install), 58 ms /
+  578 ms (an `install -r`), 332 ms / 9300 ms and 405 ms / 14231 ms (the two starts of the loaded boot). Small beside
+  the head's every time.
+
+**Finding: the launcher's own language is gone after a reboot, and its repair is refused while Kalender's task lives**
+
+- **Seen**: after B.7's reboot `cmd locale get-app-locales me.vibb.launcher.debug --user 0` read `[]` (`nb` before),
+  and Home, the PIN lock ("Wrong code", "Emergency call", "Parent code"), kid Settings and Kalender ("Wednesday",
+  "Happening now") were in English, the system's language.
+- **Seen**: `LauncherLocales.applyIfSafe` (Home's resume) asked for `nb` again and the system refused it, five times
+  in two launcher processes: `W LauncherLocales: Couldn't set the launcher language`, `IllegalStateException: Can't
+  change activity type once set: {... mActivityType=home ...} activityType=standard`, thrown in the system server
+  (`WindowConfiguration.setActivityType` under `ConfigurationContainer.applyAppSpecificConfig` and
+  `PackageConfigurationUpdaterImpl.updateConfig`, from `ILocaleManager.setApplicationLocales`). The last time Home was
+  in front and Kalender's task, opened after Home, was in Recents; the four before were around the PIN lock and
+  Kalender's open after the boot.
+- **Seen**: a change of look from kid Settings (which removes Kalender's task) went through with no `PageLook` error,
+  and the Home resume after it set the language: `I LauncherLocales: Launcher language: nb`, `[nb]`, Home created again
+  in Norwegian. So the phone stayed in the system's language from the reboot until the first Home resume with no task
+  of the launcher's own above Home's; with the kiosk on the kid has no way to close Kalender's task.
+- **Inferred, not seen**: Android keeps an app's night mode and its languages in one per-package record
+  (`PackageConfigPersister`), and by AOSP's source as remembered a record that has a night mode is written to disk
+  without its languages - then every phone on this build loses the launcher's language at every reboot. The refusal
+  looks like the system's own scratch configuration for the process keeping the activity type of the last such call
+  (Home's, from the unlocked start's `setApplicationNightMode`) and refusing the next call when the process's newest
+  activity is of another type. Main asks for the language once per change and never sets a night mode, so it meets
+  neither. The control for the first half - another app's language set from the shell, a reboot, both read right
+  after it - was the reboot the emulator died in. Whether `setApplicationNightMode` can be refused the same way (a
+  process whose first activity is the PIN lock or Kalender, then a change from kid Settings) was B.9's to show.
+- A phone whose system language is the launcher's shows none of it. Not fixed in the pass: what to do is the
+  design's (§5.3, the line of 2026-11-11).
+
+**Not run** (the emulator was gone)
+
+- B.7's `install -r` half: it ran once from a wrong state (the pass's helpers find Home's tiles by their Norwegian
+  names, which the finding had turned English), so only its cost line counts. B.9, B.10, B.11, the waiting change by
+  a real tap.
+- C on this build: both looks of the three screens, the pickers at 1.0 and 1.3 with today's unselected number, the
+  dialogs, the "+" disc, the bars with the keyboard up, and 3-button navigation (the code QA's M1 - not seen). Main's
+  before pictures were taken; on main (seen) the pickers' "AVBRYT"/"OK" are almost invisible in both system modes,
+  "Varighet"'s choices almost invisible with the system light, the 3-button bar has dark grey buttons with the system
+  light and white ones with it dark and no scrim band to see, the day view's key line runs under the "+" disc, and the
+  neighbouring days' rows show a few pixels at both edges.
+- D on this build (main's pictures were taken; the link-blocked notice had to be opened by its component, since
+  `jelly36` refuses to suspend the Play Store), the pinned screens on a change of look, the unlock with the PIN lock
+  showing on a system-light phone; E; F.
 
 ## 7. Reporting back
 

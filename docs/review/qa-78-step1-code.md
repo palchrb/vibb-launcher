@@ -117,6 +117,18 @@ finding was checked against the code first; one half of M1 was refuted (below), 
 the fixed tree: `BUILD SUCCESSFUL`, 244 suites, 2464 tests, 0 failures, 0 errors, 0 skipped. Nothing was run on an
 emulator or a phone.
 
+Emulator pass, 2026-11-11 (`docs/testing/emulator.md` §6ah, "The run of 2026-11-11"; `jelly36`, 163aceb5, stopped
+before B.9 when the host killed the emulator for memory) - what it says about M1, L4 and L5: **nothing yet**. **M1**
+was not seen: no screen of this build was looked at with 3-button navigation, and the window ground behind Kalender in
+Mørk was not compared; only main's before pictures exist (no scrim band to see on main's 3-button bar on `jelly36`, the
+buttons dark grey with the system light). **L4** (the old look's card in Recents after a cut-short change) and **L5**
+(Home's resume closing a just-opened task while a change waits) need B.9-B.11 and the waiting change, which were not
+run. Of the rest under "Only the emulator pass can settle" the pass confirmed: one `onCreate` and no relaunch per
+open, the starting window per look and way in, the change with Kalender behind and its task removed under lock task,
+no relaunch of Kalender or Home on a flip of the system's night mode, and the unlocked start's cost (L7's two lines:
+14-405 ms beside 372-14231 ms). It also found what no review read: the app's night mode against the launcher's own
+language (the design's §5.3, the line of 2026-11-11).
+
 - **M1** (1c6e1564): `KidPageTheme`'s `android:enforceNavigationBarContrast` is `@bool/kid_page_nav_contrast` - true in
   `values/`, false in `values-notnight/` - so Kalender in Mørk with 3-button navigation keeps the system's scrim;
   `KidPaletteTest`'s theme test pins the item and both bools files. The window's two grounds are **no difference** in

@@ -328,6 +328,18 @@ one `PageManifestTest` can hold. `PlayLinkBlockedTheme` is `Theme.Material.NoAct
 preview, the fade, Nunito, the accent and a framework coloured button with night text, as `launcherBaseTheme` gave the
 notice; its look is in step 1's pass.
 
+Emulator pass, 2026-11-11 (`docs/testing/emulator.md` §6ah, "The run of 2026-11-11"; **open**): the app's night mode
+and the launcher's own language (`LauncherLocales`, `LocaleManager`) are one per-package record in the system, and the
+two calls get in each other's way. Seen on `jelly36`: after a reboot the
+launcher's language was gone (`get-app-locales` `[]`, Home and the PIN lock in the system's language), and
+`setApplicationLocales` at Home's resume was refused by the system server (`IllegalStateException: Can't change
+activity type once set`, under `PackageConfigurationUpdaterImpl.updateConfig`) for as long as an activity in a task of
+the launcher's own - the PIN lock, Kalender's page - was the process's newest; the first Home resume without one set
+it again. Why the reboot loses it is inferred, not seen (a record with a night mode written without its languages), and
+whether `setApplicationNightMode` can be refused the same way was not reached. "The system keeps it per package" above
+is true of the night mode; what the call costs the language is this line. Nothing was changed in the code: the
+unlocked start's unconditional call stays as it is until this is decided.
+
 ### 5.4 When the look changes
 
 The applied mode lives in memory and in CE prefs (`kid_look.applied`). It changes in one place,
@@ -376,6 +388,12 @@ A page draws edge to edge (targetSdk 36) under transparent bars; the icon ink co
 theme, so it is right from the starting window on (step 0 checks the splash's bars). `KidInsets` is unchanged. Home
 and the wallpaper screens keep `WallpaperInk`'s choice. (The contact card's bar ink, QA M6, is moot: the card stays
 night.)
+
+Emulator pass, 2026-11-11 (measured on `jelly36`, §6ah): the late tint is not the theme's. A page gets a starting
+window in the look's ground although `windowDisablePreview` is inherited, and with the launcher's process held that
+window alone has white ink on the paper for 210-310 ms: the system's status bar follows the app transition late. From
+Home's tile the white ink stands 255-498 ms on a cold open and 165-201 ms on a **warm** one (new beside step 0's cold
+case); from the glance the ink is dark from the first light frame. No theme item changes it, and none was added.
 
 ### 5.6 Rejected
 
@@ -482,6 +500,11 @@ started in the build round.
 
 Fix round, 2026-11-10: the code QA (`docs/review/qa-78-step1-code.md`: no High, three Medium, nine Low) and what each
 finding became are in the review's "Fixes"; §5.2, §5.4 and §7 have its lines, and §6ah its additions.
+
+Emulator pass, 2026-11-11: §6ah was run on `jelly36` as far as B.8 and stopped when the host killed the emulator for
+memory. A's recordings, the change under the kiosk, the reboot and the update pass; one finding, the launcher's own
+language (§5.3's line of this date); Kalender's screens in both looks, 3-button navigation, the screens that are not
+pages, TalkBack and the font scale were not reached (§6ah, "The run of 2026-11-11").
 
 **Step 2 - Meldinger and the lists** (after design 77 step 2 is merged). The three message screens on page tokens
 (bubbles, selection rings, the picture's place, the unread dot, compose field with its hairline, send, the delete
