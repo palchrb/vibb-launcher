@@ -16,7 +16,7 @@ use sha2::{Digest, Sha256};
 use sqlx::{SqliteConnection, SqlitePool};
 
 use crate::display_time::Zone;
-use crate::i18n::{Lang, t, t_count, t_params};
+use crate::i18n::{Lang, phone_of, t, t_count, t_params};
 use crate::models::{PowerOff, PowerOn, PowerReport};
 use crate::window_relock::ForeignAccess;
 
@@ -2017,8 +2017,8 @@ pub fn app_updated(
 }
 
 /// An app update notice's words: the inbox's "Signal 7.2.0 is available" / "14:02 · 7.1.4 →
-/// 7.2.0" and "Vibb One updated on Anna" / the same, the push's "Signal: update available" /
-/// "14:02 · version 7.2.0" and "Anna: Vibb One updated" / the same.
+/// 7.2.0" and "Vibb One updated on Anna's phone" / the same, the push's "Signal: update available" /
+/// "14:02 · version 7.2.0" and "Anna's phone: Vibb One updated" / the same.
 fn app_update_told(
     form: Form,
     kind: Kind,
@@ -2039,7 +2039,7 @@ fn app_update_told(
             t_params(lang, &key, &[("app", a), ("to", to)])
         }),
         _ => fit_name(phone, TITLE_MAX, |n| {
-            t_params(lang, &key, &[("name", n), ("app", app)])
+            t_params(lang, &key, &[("phone", &phone_of(lang, n)), ("app", app)])
         }),
     };
     let body = match form {
@@ -2217,7 +2217,7 @@ pub fn server_tls_seen(
     }
 }
 
-/// "The certificate check for Anna was turned off by Mamma" / "14:02"; "Anna saw a certificate for your server from
+/// "Certificate check for Anna's phone turned off by Mamma" / "14:02"; "Anna's phone saw a server certificate from
 /// emSign Root CA - G1" / "14:02 · Wi-Fi" - the same words pushed.
 fn server_tls_told(
     form: Form,
@@ -2233,7 +2233,11 @@ fn server_tls_told(
     let (title, body) = if kind == Kind::ServerTlsOff {
         let key = format!("events.server_tls_off.{}.title", form.key());
         let title = fit_name(&p.phone, TITLE_MAX, |phone| {
-            t_params(lang, &key, &[("phone", phone), ("name", &p.parent)])
+            t_params(
+                lang,
+                &key,
+                &[("phone", &phone_of(lang, phone)), ("name", &p.parent)],
+            )
         });
         (title, at)
     } else {
@@ -2243,8 +2247,9 @@ fn server_tls_told(
             if p.refused { "refused" } else { "title" }
         );
         // The issuer is cut to fit (up to 64 characters from the phone), never the phone's name.
+        let phone = phone_of(lang, &p.phone);
         let title = fit_name(&p.issuer, TITLE_MAX, |issuer| {
-            t_params(lang, &key, &[("phone", &p.phone), ("issuer", issuer)])
+            t_params(lang, &key, &[("phone", &phone), ("issuer", issuer)])
         });
         let network = t(
             lang,
@@ -2325,7 +2330,7 @@ fn push_body(at: &str, number: Option<String>) -> String {
 }
 
 /// An event's words as shown (the inbox, Activity), made from its parameters at `now` in `zone`
-/// and its language ("Sverre arrived at Home" / "15:42", "Yesterday 21:14"; nb "I går 21:14"). A
+/// and its language ("Emma arrived at Home" / "15:42", "Yesterday 21:14"; nb "I går 21:14"). A
 /// row with stored words - every stored-words kind raised before design 70's slice 2 - keeps its
 /// `title` and `summary`. Parameters that don't read leave them too.
 pub fn told(
@@ -2466,9 +2471,12 @@ pub fn detail(
     }
 }
 
-/// A title with the phone's name in it, the name cut so the whole fits [TITLE_MAX].
+/// A title with the phone's name in it, the name cut so the whole fits [TITLE_MAX]: `{name}` the bare name (what the kid
+/// did: "Anna called an emergency number"), `{phone}` the phone ([phone_of]: "Anna's phone was turned off").
 fn titled(lang: Lang, key: &str, name: &str) -> String {
-    let title = fit_name(name, TITLE_MAX, |n| t_params(lang, key, &[("name", n)]));
+    let title = fit_name(name, TITLE_MAX, |n| {
+        t_params(lang, key, &[("name", n), ("phone", &phone_of(lang, n))])
+    });
     crate::audit::clip(&title, TITLE_MAX).to_string()
 }
 
@@ -2613,7 +2621,7 @@ fn phone_event_told(
                         t_params(
                             lang,
                             "events.low_battery.inbox.title",
-                            &[("name", name), ("level", &level)],
+                            &[("phone", &phone_of(lang, name)), ("level", &level)],
                         )
                     });
                     let state = if p.charging {
@@ -2864,19 +2872,19 @@ mod tests {
         for (event, title, summary, push) in [
             (
                 phone.phone_off(&off(b(3, false), None, None), at, false),
-                "Anna was turned off",
+                "Anna's phone was turned off",
                 "14:02 · battery 3 %, probably flat",
                 held,
             ),
             (
                 phone.phone_off(&off(b(4, false), None, None), yesterday, false),
-                "Anna was turned off",
+                "Anna's phone was turned off",
                 "Yesterday 19:14 · battery 4 %, not charging",
                 held,
             ),
             (
                 phone.phone_off(&off(b(1, false), None, Some("battery")), at, false),
-                "Anna shut down: battery flat",
+                "Anna's phone shut down: battery flat",
                 "14:02 · battery 1 %",
                 held,
             ),
@@ -2886,38 +2894,38 @@ mod tests {
                     at,
                     false,
                 ),
-                "Anna shut down: too hot",
+                "Anna's phone shut down: too hot",
                 "14:02 · battery 64 %",
                 held,
             ),
             (
                 phone.phone_off(&off(b(64, false), None, Some("thermal")), at, false),
-                "Anna shut down: too hot",
+                "Anna's phone shut down: too hot",
                 "14:02 · battery 64 %",
                 held,
             ),
             // `userrequested` and an unknown reason say nothing more.
             (
                 phone.phone_off(&off(b(64, false), None, Some("userrequested")), at, false),
-                "Anna was turned off",
+                "Anna's phone was turned off",
                 "14:02 · battery 64 %, not charging",
                 held,
             ),
             (
                 phone.phone_off(&off(b(2, true), Some(false), Some("<b>x</b>")), at, false),
-                "Anna was turned off",
+                "Anna's phone was turned off",
                 "14:02 · battery 2 %, charging",
                 held,
             ),
             (
                 phone.phone_off(&off(b(64, true), Some(true), None), at, false),
-                "Anna is restarting",
+                "Anna's phone is restarting",
                 "14:02 · battery 64 %, charging",
                 Push::No,
             ),
             (
                 phone.phone_off(&off(None, None, None), at, true),
-                "Anna was turned off",
+                "Anna's phone was turned off",
                 "14:02 · told at the next start",
                 Push::No,
             ),
@@ -2973,9 +2981,9 @@ mod tests {
             let (told_title, told_summary) = inbox(&phone, &event);
             assert_eq!(told_summary, summary);
             let title = if how == Start::Restart {
-                "Anna restarted"
+                "Anna's phone restarted"
             } else {
-                "Anna was turned on"
+                "Anna's phone was turned on"
             };
             assert_eq!((told_title.as_str(), event.push), (title, Push::Now));
             assert_eq!(event.dedup_key, "boot:2026-10-01 08:00:00:42");
@@ -3108,7 +3116,7 @@ mod tests {
                     false
                 )
             );
-            assert_eq!(inbox(&phone, &plan.events[1]).0, "Anna restarted");
+            assert_eq!(inbox(&phone, &plan.events[1]).0, "Anna's phone restarted");
             assert!(
                 inbox(&phone, &plan.events[0])
                     .1
@@ -3124,7 +3132,10 @@ mod tests {
                     true
                 )
             );
-            assert_eq!(inbox(&phone, &plan.events[1]).0, "Anna was turned on");
+            assert_eq!(
+                inbox(&phone, &plan.events[1]).0,
+                "Anna's phone was turned on"
+            );
             assert!(
                 inbox(&phone, &plan.events[1])
                     .1
@@ -3332,7 +3343,7 @@ mod tests {
                         None,
                     ))
                     .unwrap(),
-                "Parent PIN used on Anna",
+                "Parent PIN used on Anna's phone",
                 "Time lock · 14:02",
                 "/devices/3/lock#parent-pin",
             ),
@@ -3345,31 +3356,31 @@ mod tests {
                         Some("2026-10-18 12:30:30"),
                     ))
                     .unwrap(),
-                "Parent PIN locked on Anna",
+                "Parent PIN locked on Anna's phone",
                 "Too many wrong tries · until 14:30",
                 "/devices/3/lock#parent-pin",
             ),
             (
                 phone.foreign_access(&one_admin, "{}", 7, &names),
-                "An app may read the PIN on Anna",
+                "An app may read the PIN on Anna's phone",
                 "1 app with device admin",
                 "/devices/3#foreign-access",
             ),
             (
                 phone.unseen_boot(2, Some(two.timestamp_millis())),
-                "Anna started without Vibb One",
+                "Anna's phone started without Vibb One",
                 "Safe mode or a start cut short",
                 "/devices/3/about#diagnostics",
             ),
             (
                 phone.phone_off(&off(Some(battery(2, false, true)), None, None), two, false),
-                "Anna was turned off",
+                "Anna's phone was turned off",
                 "14:02 · battery 2 %, probably flat",
                 "/devices/3",
             ),
             (
                 phone.phone_on(&on(Some(battery(64, true, false))), two, &Start::Restart),
-                "Anna restarted",
+                "Anna's phone restarted",
                 "14:02 · battery 64 %",
                 "/devices/3",
             ),
@@ -3388,7 +3399,7 @@ mod tests {
             ),
             (
                 phone.low_battery(&battery(14, false, true), two),
-                "Battery low on Anna (14 %)",
+                "Anna's phone is low on battery (14 %)",
                 "Not charging · 14:02",
                 "/devices/3",
             ),
@@ -3435,13 +3446,13 @@ mod tests {
             // Design 76: the certificate check, told from its parameters.
             (
                 server_tls_off(&phone, "Mamma", two),
-                "The certificate check for Anna was turned off by Mamma",
+                "Certificate check for Anna's phone turned off by Mamma",
                 "14:02",
                 "/devices/3/advanced#server-tls",
             ),
             (
                 server_tls_seen(&phone, &tls_outside("seen"), two),
-                "Anna saw a certificate for your server from emSign Root CA…",
+                "Anna's phone saw a server certificate from emSign Root CA -…",
                 "14:02 · Wi-Fi",
                 "/devices/3/advanced#server-tls",
             ),
@@ -3571,7 +3582,7 @@ mod tests {
                         None,
                     ))
                     .unwrap(),
-                "Anna: parent PIN used",
+                "Anna's phone: parent PIN used",
                 "14:02",
             ),
             (
@@ -3583,42 +3594,42 @@ mod tests {
                         Some("2026-10-18 12:45:00"),
                     ))
                     .unwrap(),
-                "Anna: parent PIN locked",
+                "Anna's phone: parent PIN locked",
                 "Until 14:45",
             ),
             (
                 phone.foreign_access(&two_apps, "{}", 7, &Default::default()),
-                "Anna: an app may read the PIN",
+                "Anna's phone: an app may read the PIN",
                 "14:30 · 2 apps",
             ),
             (
                 phone.unseen_boot(2, Some(two.timestamp_millis())),
-                "Anna: started without Vibb One",
+                "Anna's phone: started without Vibb One",
                 "14:02",
             ),
             (
                 phone.low_battery(&battery(14, false, true), two),
-                "Anna: battery low",
+                "Anna's phone: battery low",
                 "14:02 · battery 14 %",
             ),
             (
                 phone.phone_off(&off(b(3, false), None, None), two, false),
-                "Anna: turned off",
+                "Anna's phone: turned off",
                 "14:02 · battery 3 %",
             ),
             (
                 phone.phone_off(&off(b(1, false), None, Some("battery")), two, false),
-                "Anna: battery flat, shut down",
+                "Anna's phone: battery flat, shut down",
                 "14:02 · battery 1 %",
             ),
             (
                 phone.phone_off(&off(b(64, false), None, Some("thermal")), two, false),
-                "Anna: too hot, shut down",
+                "Anna's phone: too hot, shut down",
                 "14:02",
             ),
             (
                 phone.phone_off(&off(b(64, true), Some(true), None), two, false),
-                "Anna: restarting",
+                "Anna's phone: restarting",
                 "14:02",
             ),
             (
@@ -3627,7 +3638,7 @@ mod tests {
                     utc("2026-10-18 12:20:00"),
                     &Start::Restart,
                 ),
-                "Anna: restarted",
+                "Anna's phone: restarted",
                 "14:20 · battery 64 %",
             ),
             (
@@ -3639,7 +3650,7 @@ mod tests {
                         at: yesterday,
                     },
                 ),
-                "Anna: turned on",
+                "Anna's phone: turned on",
                 "14:20 · battery 64 %",
             ),
             (
@@ -3648,7 +3659,7 @@ mod tests {
                     utc("2026-10-18 12:20:00"),
                     &Start::NoShutdownSeen(Some(last)),
                 ),
-                "Anna: turned on",
+                "Anna's phone: turned on",
                 "14:20",
             ),
             (
@@ -3699,7 +3710,7 @@ mod tests {
                     "0.36.0",
                     two,
                 ),
-                "Anna: Vibb One updated",
+                "Anna's phone: Vibb One updated",
                 "14:02 · version 0.36.0",
             ),
         ];
@@ -3729,25 +3740,28 @@ mod tests {
         let nb_rows = [
             ("Anna: nødanrop", "14:02"),
             ("Anna: nødanrop", "I går 19:14"),
-            ("Anna: foreldre-PIN brukt", "14:02"),
-            ("Anna: foreldre-PIN sperret", "Til 14:45"),
-            ("Anna: en app kan lese PIN-koden", "14:30 · 2 apper"),
-            ("Anna: startet uten Vibb One", "14:02"),
-            ("Anna: lite batteri", "14:02 · batteri 14 %"),
-            ("Anna: slått av", "14:02 · batteri 3 %"),
-            ("Anna: tomt batteri, slått av", "14:02 · batteri 1 %"),
-            ("Anna: for varm, slått av", "14:02"),
-            ("Anna: starter på nytt", "14:02"),
-            ("Anna: startet på nytt", "14:20 · batteri 64 %"),
-            ("Anna: slått på", "14:20 · batteri 64 %"),
-            ("Anna: slått på", "14:20"),
+            ("Annas mobil: foreldre-PIN brukt", "14:02"),
+            ("Annas mobil: foreldre-PIN sperret", "Til 14:45"),
+            ("Annas mobil: en app kan lese PIN-koden", "14:30 · 2 apper"),
+            ("Annas mobil: startet uten Vibb One", "14:02"),
+            ("Annas mobil: lite strøm", "14:02 · batteri 14 %"),
+            ("Annas mobil: slått av", "14:02 · batteri 3 %"),
+            (
+                "Annas mobil: tomt batteri, skrudde seg av",
+                "14:02 · batteri 1 %",
+            ),
+            ("Annas mobil: for varm, skrudde seg av", "14:02"),
+            ("Annas mobil: starter på nytt", "14:02"),
+            ("Annas mobil: startet på nytt", "14:20 · batteri 64 %"),
+            ("Annas mobil: slått på", "14:20 · batteri 64 %"),
+            ("Annas mobil: slått på", "14:20"),
             ("Anna: kom til Home", "14:02"),
             ("Anna: dro fra School", "14:02"),
             ("Anna: ber om mer tid", "14:02"),
             ("Anna: ber om mer tid", "14:02 · 1 t 20 min igjen"),
             ("Anna: ber om mer tid", "14:02"),
             ("Signal: oppdatering tilgjengelig", "14:02 · versjon 7.2.0"),
-            ("Anna: Vibb One oppdatert", "14:02 · versjon 0.36.0"),
+            ("Annas mobil: Vibb One oppdatert", "14:02 · versjon 0.36.0"),
         ];
         assert_eq!(rows.len(), nb_rows.len());
         for ((event, ..), (title, body)) in rows.iter().zip(nb_rows) {
@@ -4028,7 +4042,7 @@ mod tests {
             (Some(3), "1:360009")
         );
         let (title, summary) = inbox(&updated);
-        assert_eq!(title, "Vibb One updated on Anna");
+        assert_eq!(title, "Vibb One updated on Anna's phone");
         assert_eq!(summary, "14:02 · 0.36.0-rc.7 → 0.36.0");
         assert_eq!(
             crate::handlers::activity::without_own_clock(&summary, "14:02"),
@@ -4047,7 +4061,10 @@ mod tests {
         );
         let (title, _) = inbox(&long);
         assert!(title.chars().count() <= TITLE_MAX, "{title}");
-        assert!(title.starts_with("Vibb One updated on Anna"), "{title}");
+        assert!(
+            title.starts_with("Vibb One updated on Anna") && title.ends_with("…'s phone"),
+            "{title}"
+        );
     }
 
     #[test]
@@ -4126,14 +4143,17 @@ mod tests {
             "Charging · 14:30"
         );
         // A 40-character name is cut so the title fits, the level kept.
-        phone.name = "Annabelle-Sofie Marie Kristiansen Olsen!".to_string();
+        phone.name = "Emma Emma Emma Emma Emma Emma Emma Emma!".to_string();
         let title = inbox(
             &phone,
             &phone.low_battery(&battery(14, false, true), phone.now),
         )
         .0;
         assert_eq!(title.chars().count(), TITLE_MAX);
-        assert!(title.starts_with("Battery low on Annabelle") && title.ends_with("… (14 %)"));
+        assert_eq!(
+            title,
+            "Emma Emma Emma Emma Emma E…'s phone is low on battery (14 %)"
+        );
         for event in [
             phone.emergency_call(phone.now),
             phone.unseen_boot(1, None),

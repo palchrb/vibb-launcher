@@ -253,6 +253,19 @@ pub fn t_params(lang: Lang, key: &str, params: &[(&str, &str)]) -> String {
     out
 }
 
+/// The phone named by its name, in `lang`'s genitive: "Emma's phone" (English, always "'s": "Jonas's phone"), "Emmas
+/// mobil" (Norwegian; "Jonas' mobil" after a name ending in s, x or z). The parent names each phone after the kid, so
+/// an event about the phone itself says `{phone}`, one about what the kid does or asks `{name}` (2026-11-11).
+pub fn phone_of(lang: Lang, name: &str) -> String {
+    match lang {
+        Lang::En => format!("{name}'s phone"),
+        Lang::Nb => match name.chars().last().and_then(|c| c.to_lowercase().next()) {
+            Some('s' | 'x' | 'z') => format!("{name}' mobil"),
+            _ => format!("{name}s mobil"),
+        },
+    }
+}
+
 /// A counted text: `<key>.one` or `<key>.other` by [Lang::plural_form], `{count}` filled with `n` and the rest with
 /// `params`. Zero is its own key the caller picks.
 pub fn t_count(lang: Lang, key: &str, n: i64, params: &[(&str, &str)]) -> String {
@@ -349,6 +362,22 @@ mod tests {
             .collect();
         out.sort();
         out
+    }
+
+    #[test]
+    fn the_phone_is_named_in_each_languages_genitive() {
+        for (name, en, nb) in [
+            ("Emma", "Emma's phone", "Emmas mobil"),
+            ("Anna", "Anna's phone", "Annas mobil"),
+            ("Jonas", "Jonas's phone", "Jonas' mobil"),
+            ("JONAS", "JONAS's phone", "JONAS' mobil"),
+            ("Phone x", "Phone x's phone", "Phone x' mobil"),
+            ("Phone Z", "Phone Z's phone", "Phone Z' mobil"),
+            ("Phone 2", "Phone 2's phone", "Phone 2s mobil"),
+        ] {
+            assert_eq!(phone_of(Lang::En, name), en);
+            assert_eq!(phone_of(Lang::Nb, name), nb);
+        }
     }
 
     #[test]

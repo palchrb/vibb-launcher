@@ -126,7 +126,7 @@ async fn a_launcher_report_raises_both() {
     assert_eq!(rows.len(), 2, "{rows:?}");
     assert_eq!(
         (rows[0].0.as_str(), rows[0].1.as_str()),
-        ("phone_off", "Anna was turned off")
+        ("phone_off", "Anna's phone was turned off")
     );
     assert!(
         rows[0]
@@ -136,12 +136,12 @@ async fn a_launcher_report_raises_both() {
     );
     assert_eq!(
         (rows[1].0.as_str(), rows[1].1.as_str()),
-        ("phone_on", "Anna was turned on")
+        ("phone_on", "Anna's phone was turned on")
     );
     assert!(rows[1].2.contains("off since"), "{rows:?}");
     assert!(rows[1].2.ends_with(", battery was 3 %"), "{rows:?}");
     assert!(deliveries(&app, "phone_off").await.is_empty());
-    assert_eq!(send_at(&app, Utc::now()).await, ["Anna: turned on"]);
+    assert_eq!(send_at(&app, Utc::now()).await, ["Anna's phone: turned on"]);
     // The off's last position: one of the phone's fixes, marked as the shutdown's, and in the
     // event's parameters.
     let fixes = shutdown_fixes(&app, id).await;
@@ -263,7 +263,7 @@ async fn the_shutdowns_last_position_is_on_locate() {
         "{detail}"
     );
     let rows = events(&app, id).await;
-    assert_eq!(rows[0].1, "Anna was turned off");
+    assert_eq!(rows[0].1, "Anna's phone was turned off");
     for text in [&rows[0].2, &detail] {
         assert!(!text.contains("59.") && !text.contains("10.75"), "{text}");
     }
@@ -274,8 +274,8 @@ async fn the_shutdowns_last_position_is_on_locate() {
     assert_eq!(pushed.len(), 1);
     let push = payload(&pushed[0]);
     // The push's own short words since the shorter push texts (`parent_events::pushed`); the
-    // inbox keeps "Anna was turned off".
-    assert_eq!(push["notification"]["title"], "Anna: turned off");
+    // inbox keeps "Anna's phone was turned off".
+    assert_eq!(push["notification"]["title"], "Anna's phone: turned off");
     let push_text = push.to_string();
     assert!(
         !push_text.contains("59.9") && !push_text.contains("Locate"),
@@ -403,7 +403,7 @@ async fn a_bad_shutdown_position_costs_the_position_only() {
     assert_eq!(provider, None);
 }
 
-/// Q-5: a restart the phone announced ("Anna is restarting") never says "before the phone went
+/// Q-5: a restart the phone announced ("Anna's phone is restarting") never says "before the phone went
 /// off", whatever the hold.
 #[tokio::test]
 async fn a_known_restart_says_no_last_position() {
@@ -499,11 +499,11 @@ async fn a_restart_drops_the_held_off_push() {
     );
     let rows = events(&app, id).await;
     assert_eq!(rows.len(), 2);
-    assert_eq!(rows[1].1, "Anna restarted");
+    assert_eq!(rows[1].1, "Anna's phone restarted");
     assert!(rows[1].2.ends_with(" · battery 60 %"), "{rows:?}");
     assert_eq!(
         send_at(&app, now + Duration::minutes(6)).await,
-        ["Anna: restarted"]
+        ["Anna's phone: restarted"]
     );
     // The off row has no delivery line (not "Not sent"): only the start's.
     let inbox = app.get_page("/notifications", &cookie).await.text();
@@ -528,13 +528,13 @@ async fn an_off_without_a_quick_start_is_pushed_after_the_hold() {
     post(&app, &token, json!({ "off": off(shutdown, 41, json!({})) })).await;
     assert_eq!(
         send_at(&app, now + Duration::minutes(5) + Duration::seconds(3)).await,
-        ["Anna: turned off"]
+        ["Anna's phone: turned off"]
     );
     let body = json!({ "off": off(shutdown, 41, json!({})), "on": on(now, 42) });
     post(&app, &token, body).await;
     assert_eq!(
         send_at(&app, now + Duration::minutes(6)).await,
-        ["Anna: turned on"]
+        ["Anna's phone: turned on"]
     );
     let rows = events(&app, id).await;
     assert_eq!(rows.len(), 2);
@@ -554,7 +554,7 @@ async fn a_quick_start_after_a_power_off_sends_the_off_first() {
     post(&app, &token, body).await;
     assert_eq!(
         send_at(&app, now).await,
-        ["Anna: turned off", "Anna: turned on"]
+        ["Anna's phone: turned off", "Anna's phone: turned on"]
     );
 }
 
@@ -573,7 +573,7 @@ async fn a_known_restart_pushes_only_the_start() {
     assert!(deliveries(&app, "phone_off").await.is_empty());
     let body = json!({ "off": restarting, "on": on(now, 42) });
     post(&app, &token, body).await;
-    assert_eq!(send_at(&app, now).await, ["Anna: restarted"]);
+    assert_eq!(send_at(&app, now).await, ["Anna's phone: restarted"]);
 }
 
 /// A start with no shutdown seen says the last report before the boot; a switch off stores the
@@ -663,7 +663,7 @@ async fn the_route_refuses_what_isnt_a_power_report() {
         events(&app, id).await,
         [(
             "phone_off".to_string(),
-            "Anna was turned off".to_string(),
+            "Anna's phone was turned off".to_string(),
             crate::display_time::Zone::load(&app.db, crate::i18n::Lang::En)
                 .await
                 .at(
@@ -683,7 +683,7 @@ async fn the_route_refuses_what_isnt_a_power_report() {
 #[tokio::test]
 async fn a_shutdowns_words_read_in_all_four_places_before_and_after_the_prune() {
     let (app, anna, anna_token) = setup().await;
-    let (bea, bea_token) = app.enrolled_device("Bea").await;
+    let (emma, emma_token) = app.enrolled_device("Emma").await;
     let cookie = app.admin_cookie().await;
     let shutdown = Utc::now() - Duration::minutes(30);
     let fix_at = shutdown - Duration::minutes(3);
@@ -705,7 +705,7 @@ async fn a_shutdowns_words_read_in_all_four_places_before_and_after_the_prune() 
     );
     flat["battery"] = json!({ "level": 1, "charging": false, "low": true });
     assert_eq!(
-        post(&app, &bea_token, json!({ "off": flat })).await,
+        post(&app, &emma_token, json!({ "off": flat })).await,
         StatusCode::NO_CONTENT
     );
     // The offs' pushes held no more: they arrived longer than OFF_HOLD ago.
@@ -726,14 +726,20 @@ async fn a_shutdowns_words_read_in_all_four_places_before_and_after_the_prune() 
             // 1. The inbox, in each language; the detail while the position is kept.
             let en = app.get_page("/notifications", cookie).await.text();
             let nb = app.get_page("/notifications?lang=nb", cookie).await.text();
-            assert!(en.contains("Anna is restarting"), "{en}");
-            assert!(en.contains("Bea shut down: battery flat"), "{en}");
+            assert!(en.contains("Anna&#39;s phone is restarting"), "{en}");
+            assert!(
+                en.contains("Emma&#39;s phone shut down: battery flat"),
+                "{en}"
+            );
             assert!(
                 en.contains(&format!("{} · battery 1 %", capitalized(when))),
                 "{en}"
             );
-            assert!(nb.contains("Anna starter på nytt"), "{nb}");
-            assert!(nb.contains("Bea slo seg av: tomt batteri"), "{nb}");
+            assert!(nb.contains("Annas mobil starter på nytt"), "{nb}");
+            assert!(
+                nb.contains("Emmas mobil skrudde seg av: tomt batteri"),
+                "{nb}"
+            );
             assert!(
                 nb.contains(&format!("{} · batteri 1 %", capitalized(when_nb))),
                 "{nb}"
@@ -756,26 +762,26 @@ async fn a_shutdowns_words_read_in_all_four_places_before_and_after_the_prune() 
                 .await
                 .text();
             assert!(!anna_page.contains("data-power-off"), "a known restart");
-            let bea_page = app
-                .get_page(&device_page(bea, Section::Summary), cookie)
+            let emma_page = app
+                .get_page(&device_page(emma, Section::Summary), cookie)
                 .await
                 .text();
             assert_eq!(
-                status_lines(&bea_page),
+                status_lines(&emma_page),
                 [format!("Turned off {when} · battery was 1 %")],
-                "{bea_page}"
+                "{emma_page}"
             );
-            let bea_nb = app
+            let emma_nb = app
                 .get_page(
-                    &format!("{}?lang=nb", device_page(bea, Section::Summary)),
+                    &format!("{}?lang=nb", device_page(emma, Section::Summary)),
                     cookie,
                 )
                 .await
                 .text();
             assert_eq!(
-                status_lines(&bea_nb),
+                status_lines(&emma_nb),
                 [format!("Slått av {when_nb} · batteriet var 1 %")],
-                "{bea_nb}"
+                "{emma_nb}"
             );
             let list = app.get_page("/devices?lang=nb", cookie).await.text();
             let lines = status_lines(&list);
@@ -798,13 +804,13 @@ async fn a_shutdowns_words_read_in_all_four_places_before_and_after_the_prune() 
                 !anna_locate.contains("data-fix-before-off"),
                 "a known restart"
             );
-            let bea_locate = app
-                .get_page(&format!("/devices/locate?device={bea}"), cookie)
+            let emma_locate = app
+                .get_page(&format!("/devices/locate?device={emma}"), cookie)
                 .await
                 .text();
             assert!(
-                bea_locate.contains("data-fix-before-off"),
-                "pruned {pruned}: {bea_locate}"
+                emma_locate.contains("data-fix-before-off"),
+                "pruned {pruned}: {emma_locate}"
             );
         }
     };
@@ -812,7 +818,7 @@ async fn a_shutdowns_words_read_in_all_four_places_before_and_after_the_prune() 
     // 4. The push: the battery-flat shutdown's, worded at send time (a restart's is never sent).
     assert_eq!(
         send_at(&app, Utc::now() + Duration::minutes(6)).await,
-        ["Bea: battery flat, shut down"]
+        ["Emma's phone: battery flat, shut down"]
     );
 
     // Retention removes the event's position alone (the location history's days): the words
@@ -822,8 +828,8 @@ async fn a_shutdowns_words_read_in_all_four_places_before_and_after_the_prune() 
         .await
         .unwrap();
     crate::retention::prune(&app.db).await;
-    assert_eq!(shutdown_fixes(&app, bea).await.len(), 1);
-    let (params, detail) = off_params(&app, bea).await;
+    assert_eq!(shutdown_fixes(&app, emma).await.len(), 1);
+    let (params, detail) = off_params(&app, emma).await;
     assert!(params.get("location").is_none(), "{params}");
     assert_eq!(
         (
@@ -954,7 +960,7 @@ async fn a_report_after_the_shutdown_ends_off_since() {
     assert!(!page().await.contains("data-power-off"));
 }
 
-/// 2026-11-01 (Sverre, off at 20:35 and the list orange): the reports are weighed against the off's
+/// 2026-11-01 (Emma, off at 20:35 and the list orange): the reports are weighed against the off's
 /// arrival, not the phone's clock - a phone 3 min behind whose last report came 30 s after its off
 /// is still turned off, and its dot is grey at once.
 #[tokio::test]
@@ -1021,7 +1027,7 @@ async fn a_newer_shutdown_supersedes_an_older_held_push() {
     assert_eq!(held[1].0, "queued");
     assert_eq!(
         send_at(&app, now + Duration::minutes(6)).await,
-        ["Anna: turned off"]
+        ["Anna's phone: turned off"]
     );
     // The older off arriving again (resent) supersedes nothing.
     post(

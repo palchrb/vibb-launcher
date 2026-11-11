@@ -505,7 +505,7 @@ one row per phone, no row = `watching`):
   so. An outside sighting (a new `outside` row, or `seen.in_set: false`) sets
   `stopped_at`: never switched on by itself, the window isn't restarted (R-2). `on` is sticky against outside rows. A
   new outside row of a phone that has shown an in-set chain at all (`in_set_seen`, R-2(c), code QA L-2) raises
-  `server_tls_seen` (`parent_events`, no switch, "Anna saw a certificate for your server from …"), at most one a day
+  `server_tls_seen` (`parent_events`, no switch, "Anna's phone saw a server certificate from …"), at most one a day
   per phone, never while `off`. Each kept row is `open` while the phone's last report still carries it (it drops a
   row only after a 2xx over a working connection); past 8 rows `seen` rows go first, then refusals no longer sent and
   older than a week, only then the oldest refusal (verification L-a). The last report's `seen` is kept
@@ -531,7 +531,7 @@ one row per phone, no row = `watching`):
   route refuses it otherwise, `?notice=server_tls_unchanged`), "Turn
   the check on now" while off or stopped. Each at once: stored, its own security event (`server_tls_off` /
   `server_tls_on`, the parent's username, `security.detail.server_tls.*` naming the phone - never the settings log's
-  `settings_saved`), for off the `server_tls_off` event pushed to every parent ("The certificate check for Anna was
+  `settings_saved`), for off the `server_tls_off` event pushed to every parent ("Certificate check for Anna's phone
   turned off by Mamma"), and an SSE nudge (R-4). Each returns to `#server-tls` with `?notice=`.
 - **Contract**: `testdata/server_tls_report.json` (root `CLAUDE.md`); `tests::server_tls` posts its `report` and
   produces its `policy` rows.

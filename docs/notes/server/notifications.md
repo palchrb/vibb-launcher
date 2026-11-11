@@ -445,6 +445,13 @@ migration `0098_push_words.sql`. (0097 is branch `last-position`'s, built in par
 - Tests: `parent_events::tests::the_push_words_are_short` (every row of the table, the long name, a pre-0098 row),
   `tests::power` (the inbox keeps "Anna was turned off", the push says "Anna: turned off"), `tests::web_push`,
   `tests::zones`, `tests::time_request` (the pushed titles), `migrations_73_to_99_in_order`.
+- **The phone named as the phone (2026-11-11, branch `phone-words`)**: the parent names each phone after the kid, so an
+  event about the phone itself says `{phone}` - `i18n::phone_of`: "Anna's phone", nb "Annas mobil" ("Jonas' mobil"
+  after s, x, z) - and one about what the kid does or asks keeps `{name}`. Phone: `pin_used`, `pin_lockout`,
+  `foreign_access`, `unseen_boot`, `low_battery`, `phone_off`, `phone_on`, `app_updated`, `server_tls_off`/`_seen`
+  ("Anna's phone: turned off", "Annas mobil skrudde seg av: tomt batteri"); kid: `emergency_call`, the zones,
+  `extra_time_request`, `sms_held`, `contact_request`, `mmsc_host`. The table above shows the older bare names; rows
+  stored as words before slice 2 keep theirs. The inbox and Activity follow (the same keys); no page heading changes.
 
 ## App update notices (2026-10-25, migration `0099_app_update_notices.sql`)
 
