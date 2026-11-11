@@ -735,7 +735,7 @@ class LockGlanceGuardTest {
         // Design 77 §6.8: an SMS row's thread - the notification's own way in (the list under it, the messages task).
         assertEquals(1, Regex("""\bstartThread\(""").findAll(opener).count())
         assertTrue(opener.contains("com.kidslauncher.mdm.ui.messages.MessagesScreens.startThread(activity, conversationId, null)"))
-        assertTrue(code("MessagesScreens.kt").contains("Intent(context, MessagesActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)"))
+        assertTrue(code("MessagesScreens.kt").contains("Intent(context, PageKind.MESSAGES.current()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)"))
         // Only the app's own content intent - never an action, a reply or a delete intent.
         for (forbidden in listOf("actions", "actionIntent", "RemoteInput", "deleteIntent", "fullScreenIntent", "cancelNotification", "snoozeNotification", "setNotificationsShown")) {
             assertFalse("GlanceOpener uses $forbidden", opener.contains(forbidden))

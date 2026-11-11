@@ -58,15 +58,13 @@
 
         <!-- The kid's look (design 78 §7): Mørk or Lys for the kid's own pages, as the sound row's segmented control,
              with a preview drawn in the chosen look's real tokens (PageLook.wrap) and a caption that says what it
-             covers. Gone unless the activity shows it: debug builds only until step 2, since only Kalender follows
-             the look yet. -->
+             covers. Shown in every build since step 2. -->
         <LinearLayout
             android:id="@+id/kid_settings_look_section"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="14dp"
-            android:orientation="vertical"
-            android:visibility="gone">
+            android:orientation="vertical">
 
             <TextView
                 android:id="@+id/kid_settings_look_heading"

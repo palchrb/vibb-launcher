@@ -12,5 +12,5 @@
     android:paddingTop="6dp"
     android:paddingEnd="4dp"
     android:text="@string/phone_book_waiting"
-    android:textColor="@color/kid_ink_dim"
+    android:textColor="@color/kid_page_ink_dim"
     android:textSize="13sp" />

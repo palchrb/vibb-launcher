@@ -10,7 +10,8 @@ import javax.xml.parsers.DocumentBuilderFactory
 /**
  * Design 78 §12.2 (revision 3): a page that tops a task of its own is two manifest entries, identical but for the
  * theme (R2), neither reachable from outside the process (R7); every activity declares `uiMode`, so the phone's theme
- * never restarts one (R8). Kalender's three pages in step 1.
+ * never restarts one (R8). Kalender's three pages in step 1, Meldinger's list and thread in step 2; the one-class pages
+ * in Home's task (R9) and the notification's look-less entry (R7) since step 2.
  */
 class PageManifestTest {
     private val ns = "http://schemas.android.com/apk/res/android"
@@ -33,6 +34,14 @@ class PageManifestTest {
         ".ui.day.DayActivity" to ".ui.day.LightDayActivity",
         ".ui.day.EventActivity" to ".ui.day.LightEventActivity",
         ".ui.day.EventEditActivity" to ".ui.day.LightEventEditActivity",
+        ".ui.messages.MessagesActivity" to ".ui.messages.LightMessagesActivity",
+        ".ui.messages.ThreadActivity" to ".ui.messages.LightThreadActivity",
+    )
+
+    /** The pages with one class, in Home's task (R9): the phone book and kid Settings' three lists. */
+    private val oneClass = setOf(
+        ".calls.PhoneBookActivity", ".ui.quickcontrols.WifiNetworksActivity", ".ui.quickcontrols.BluetoothDevicesActivity",
+        ".ui.kidsettings.KidSoundPickerActivity",
     )
 
     @Test
@@ -41,10 +50,14 @@ class PageManifestTest {
         fun on(theme: String) = activities.filter { it.getAttributeNS(ns, "theme") == theme }.map(::name).toSet()
         assertEquals(pairs.keys, on("@style/KidPageNightTheme"))
         assertEquals(pairs.values.toSet(), on("@style/KidPageLightTheme"))
-        // The qualified theme itself is for a page with one class, in Home's task (R9): none before step 2.
-        assertEquals(emptySet<String>(), on("@style/KidPageTheme"))
-        val twins = file("java/com/kidslauncher/mdm/ui/day/LightPages.kt").readText()
+        // The qualified theme itself is for a page with one class, in Home's task (R9).
+        assertEquals(oneClass, on("@style/KidPageTheme"))
+        for (page in oneClass) {
+            val code = file("java/com/kidslauncher/mdm/${page.removePrefix(".").replace('.', '/')}.kt").readText()
+            assertTrue(page, code.contains("\nclass ${page.substringAfterLast('.')} : KidPageActivity() {"))
+        }
         for ((night, light) in pairs) {
+            val twins = file("java/com/kidslauncher/mdm/${night.removePrefix(".").substringBeforeLast('.').replace('.', '/')}/LightPages.kt").readText()
             val nightEntry = activities.single { name(it) == night }
             val lightEntry = activities.single { name(it) == light }
             assertEquals(night, rest(nightEntry), rest(lightEntry))
@@ -60,7 +73,20 @@ class PageManifestTest {
             assertTrue(light, twins.contains("\nclass Light$simple : $simple()\n"))
         }
         // No alias stands in for a page under a name of its own.
-        assertTrue(elements("activity-alias").none { it.getAttributeNS(ns, "targetActivity") in pairs.keys + pairs.values })
+        assertTrue(elements("activity-alias").none { it.getAttributeNS(ns, "targetActivity") in pairs.keys + pairs.values + oneClass })
+    }
+
+    /** R7: what a notification names is the entry with no look - translucent (no starting window), a task of its own,
+     * gone at once, and reachable from the launcher alone. */
+    @Test
+    fun `the message notification's entry has no look`() {
+        val entry = elements("activity").single { name(it) == ".ui.messages.MessagesEntryActivity" }
+        assertEquals("@android:style/Theme.Translucent.NoTitleBar", entry.getAttributeNS(ns, "theme"))
+        for ((attribute, value) in listOf("exported" to "false", "noHistory" to "true", "excludeFromRecents" to "true", "taskAffinity" to "")) {
+            assertTrue(attribute, entry.hasAttributeNS(ns, attribute))
+            assertEquals(attribute, value, entry.getAttributeNS(ns, attribute))
+        }
+        assertEquals(0, entry.getElementsByTagName("*").length)
     }
 
     @Test

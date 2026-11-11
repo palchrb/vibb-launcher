@@ -637,9 +637,60 @@ fun pictureRatio(width: Int?, height: Int?): Float =
 fun draftKeyOf(conversationId: String?, number: String?): String = conversationId ?: "number:${number.orEmpty()}"
 
 /** The draft a thread shows when it opens (verification L8): under the conversation's key, else under the number's - a
- * thread opened by number moves its draft to the conversation once it learns the id. Text and `clientId`. */
-fun keptDraft(drafts: Map<String, Pair<String, String>>, conversationId: String?, number: String?): Pair<String, String>? =
+ * thread opened by number moves its draft to the conversation once it learns the id. */
+fun keptDraft(drafts: Map<String, KeptText>, conversationId: String?, number: String?): KeptText? =
     conversationId?.let { drafts[it] } ?: number?.let { drafts[draftKeyOf(null, it)] }
+
+/**
+ * A thread's unsent text as the phone keeps it (design 78 §5.4.4): a change of look closes Meldinger's task, and a
+ * process may die while the kid is elsewhere, so the text outlives both - the words, the draft's `clientId` (a send
+ * after a restart still goes once, §6.2) and when it was kept, which decides the oldest.
+ */
+data class KeptText(val text: String, val clientId: String, val atMs: Long)
+
+/** At most this many characters are kept of one text: the engine's longest send (`SmsEngine.SEND_MAX`). */
+const val KEPT_TEXT_MAX = 1_600
+
+/** At most this many conversations keep a text; past it the oldest goes. */
+const val KEPT_CONVERSATIONS_MAX = 50
+
+/**
+ * [kept] after the thread [key]'s field held [text]: an empty or blank field (sent, or emptied) keeps nothing; a text is
+ * kept to its first [KEPT_TEXT_MAX] characters (a surrogate pair never cut in two), newest at [nowMs], and past
+ * [KEPT_CONVERSATIONS_MAX] the oldest other conversation's text goes.
+ */
+fun keepText(kept: Map<String, KeptText>, key: String, text: String, clientId: String, nowMs: Long): Map<String, KeptText> {
+    if (text.isBlank()) return kept - key
+    val cut = if (text.length <= KEPT_TEXT_MAX) text else text.substring(0, if (text[KEPT_TEXT_MAX - 1].isHighSurrogate()) KEPT_TEXT_MAX - 1 else KEPT_TEXT_MAX)
+    val next = LinkedHashMap(kept - key)
+    next[key] = KeptText(cut, clientId, nowMs)
+    while (next.size > KEPT_CONVERSATIONS_MAX) {
+        next.remove(next.entries.filter { it.key != key }.minBy { it.value.atMs }.key)
+    }
+    return next
+}
+
+/** Whether a thread's kept text goes because the kid may no longer text there - its contact, the group, or SMS as a
+ * whole ("Av", "Ikke styrt": the phone unmanaged). Not for a time rule or rules that can't be read now: those pass. */
+fun keptTextDropped(state: ComposeState): Boolean = when (state) {
+    ComposeState.READ_ONLY, ComposeState.NOT_ALLOWED, ComposeState.GROUP_NOT_ALLOWED, ComposeState.GROUPS_OFF -> true
+    ComposeState.OPEN, ComposeState.NOT_NOW, ComposeState.UNAVAILABLE -> false
+}
+
+/** Whether any kept text may stay at all under the SMS channel's [smsMode]: not when SMS is off or the phone unmanaged
+ * (nobody may be texted from Vibb One then); unknown rules (`null`) keep them. */
+fun keptTextsStay(smsMode: ChannelMode?): Boolean = smsMode != ChannelMode.OFF && smsMode != ChannelMode.UNMANAGED
+
+/** One kept text as one stored string: when, the id, then the words (which may hold line breaks). */
+fun encodeKeptText(kept: KeptText): String = "${kept.atMs}\n${kept.clientId}\n${kept.text}"
+
+/** [encodeKeptText] read back; anything else (an older or broken value) is `null` and is dropped. */
+fun decodeKeptText(stored: String?): KeptText? {
+    val parts = stored?.split('\n', limit = 3)?.takeIf { it.size == 3 } ?: return null
+    val at = parts[0].toLongOrNull() ?: return null
+    if (parts[1].isEmpty() || parts[2].isBlank()) return null
+    return KeptText(parts[2], parts[1], at)
+}
 
 /** What the kid asked to delete, waiting for the in-screen confirm (D18: one confirm, no trash, no undo). */
 sealed interface DeleteTarget {

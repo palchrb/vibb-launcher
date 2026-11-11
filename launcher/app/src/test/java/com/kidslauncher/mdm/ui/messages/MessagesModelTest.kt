@@ -680,12 +680,71 @@ class MessagesModelTest {
      * the draft moved there, else under the number's key. */
     @Test
     fun `a draft is found by the conversation, else by the number`() {
-        val drafts = mapOf("C1" to ("hei" to "id-1"), draftKeyOf(null, "+4790000005") to ("hallo" to "id-2"))
-        assertEquals("hei" to "id-1", keptDraft(drafts, "C1", "+4790000001"))
-        assertEquals("hallo" to "id-2", keptDraft(drafts, "C9", "+4790000005"))
-        assertEquals("hallo" to "id-2", keptDraft(drafts, null, "+4790000005"))
+        val hei = KeptText("hei", "id-1", 1)
+        val hallo = KeptText("hallo", "id-2", 2)
+        val drafts = mapOf("C1" to hei, draftKeyOf(null, "+4790000005") to hallo)
+        assertEquals(hei, keptDraft(drafts, "C1", "+4790000001"))
+        assertEquals(hallo, keptDraft(drafts, "C9", "+4790000005"))
+        assertEquals(hallo, keptDraft(drafts, null, "+4790000005"))
         assertNull(keptDraft(drafts, null, null))
         assertEquals("C1", draftKeyOf("C1", "+4790000001"))
+    }
+
+    /** Design 78 §5.4.4: the unsent text is stored and read back whole - line breaks and emoji included - with its id;
+     * a value that isn't one is dropped. */
+    @Test
+    fun `a kept text is stored and restored`() {
+        val kept = KeptText("Hei Mamma!\nKommer 🚲", "id-7", 1_700_000_000_000)
+        assertEquals(kept, decodeKeptText(encodeKeptText(kept)))
+        val after = keepText(emptyMap(), "C1", kept.text, "id-7", 5)
+        assertEquals(mapOf("C1" to KeptText(kept.text, "id-7", 5)), after)
+        assertEquals(after["C1"], keptDraft(after, "C1", null))
+        for (broken in listOf(null, "", "hei", "x\nid\nhei", "5\n\nhei", "5\nid\n  ")) assertNull(broken, decodeKeptText(broken))
+    }
+
+    /** Sent or emptied: the field is empty when it is kept again, and nothing stays (a blank field neither). */
+    @Test
+    fun `a sent or emptied text is no longer kept`() {
+        val kept = keepText(emptyMap(), "C1", "hei", "id-1", 1) + keepText(emptyMap(), "C2", "hallo", "id-2", 2)
+        assertEquals(setOf("C2"), keepText(kept, "C1", "", "id-3", 3).keys)
+        assertEquals(setOf("C2"), keepText(kept, "C1", "  \n ", "id-3", 3).keys)
+        // A thread whose field was never typed in leaves the others alone.
+        assertEquals(kept, keepText(kept, "C9", "", "id-4", 4))
+    }
+
+    /** The two caps: 1,600 characters of one text (an emoji never cut in two), 50 conversations (the oldest goes). */
+    @Test
+    fun `a kept text is capped at 1,600 characters and 50 conversations`() {
+        assertEquals(1_600, KEPT_TEXT_MAX)
+        assertEquals(SmsEngine.SEND_MAX, KEPT_TEXT_MAX)
+        val long = "a".repeat(2_000)
+        assertEquals(1_600, keepText(emptyMap(), "C1", long, "id", 1).getValue("C1").text.length)
+        val emojiAtEnd = "a".repeat(1_599) + "🚲" + "b"
+        assertEquals("a".repeat(1_599), keepText(emptyMap(), "C1", emojiAtEnd, "id", 1).getValue("C1").text)
+        val exactly = "a".repeat(1_600)
+        assertEquals(exactly, keepText(emptyMap(), "C1", exactly, "id", 1).getValue("C1").text)
+        var kept = emptyMap<String, KeptText>()
+        for (i in 1..KEPT_CONVERSATIONS_MAX) kept = keepText(kept, "C$i", "text $i", "id", i.toLong())
+        assertEquals(50, kept.size)
+        // C1 is typed in again: it is the newest now, and the 51st conversation pushes out the oldest, C2.
+        kept = keepText(kept, "C1", "again", "id", 100)
+        kept = keepText(kept, "C51", "new", "id", 101)
+        assertEquals(50, kept.size)
+        assertTrue("C1" in kept && "C51" in kept && "C2" !in kept)
+    }
+
+    /** It goes when the kid may no longer text there - the contact, the group, SMS off or the phone unmanaged - and
+     * stays through a time rule or rules that can't be read now. */
+    @Test
+    fun `a kept text goes when its contact may no longer text, and all go when unmanaged`() {
+        val dropped = ComposeState.entries.filter(::keptTextDropped).toSet()
+        assertEquals(setOf(ComposeState.READ_ONLY, ComposeState.NOT_ALLOWED, ComposeState.GROUP_NOT_ALLOWED, ComposeState.GROUPS_OFF), dropped)
+        // The phone unmanaged, or SMS off: composeState says READ_ONLY, and no text stays at all.
+        assertFalse(keptTextsStay(ChannelMode.UNMANAGED))
+        assertFalse(keptTextsStay(ChannelMode.OFF))
+        assertTrue(keptTextsStay(ChannelMode.MANAGED))
+        assertTrue(keptTextsStay(null))
+        assertEquals(ComposeState.READ_ONLY, composeState(SmsJudge(state = CallPolicyState.Unmanaged, roleHeld = true), "+4790000001"))
     }
 
     /** Code QA N1: the extra first, then EXTRA_TEXT, then the link's own body from the encoded part ("&" survives). */

@@ -56,7 +56,7 @@
                  out there: a wider badge never pushes itself back over the avatar; its parents don't clip). -->
             <TextView
                 android:id="@+id/contact_badge"
-                style="@style/KidBadge"
+                style="@style/KidPageBadge"
                 android:layout_height="20dp"
                 android:layout_gravity="top|end"
                 android:translationX="10dp"
@@ -85,7 +85,7 @@
                 android:ellipsize="end"
                 android:fontFamily="@font/nunito_extrabold"
                 android:maxLines="2"
-                android:textColor="@color/kid_ink"
+                android:textColor="@color/kid_page_ink"
                 android:textSize="16sp" />
 
             <TextView
@@ -94,7 +94,7 @@
                 android:layout_height="wrap_content"
                 android:fontFamily="@font/nunito_bold"
                 android:maxLines="2"
-                android:textColor="@color/kid_core_dim"
+                android:textColor="@color/kid_page_dim"
                 android:textSize="13sp"
                 android:visibility="gone" />
         </LinearLayout>
@@ -124,7 +124,7 @@
                     android:padding="10dp"
                     android:scaleType="fitCenter"
                     android:src="@drawable/ic_kid_phone"
-                    android:tint="@color/kid_call_glyph" />
+                    android:tint="@color/kid_page_call_glyph" />
             </FrameLayout>
 
             <FrameLayout
@@ -145,7 +145,7 @@
                     android:padding="10dp"
                     android:scaleType="fitCenter"
                     android:src="@drawable/ic_kid_message"
-                    android:tint="@color/kid_accent" />
+                    android:tint="@color/kid_page_accent" />
             </FrameLayout>
         </LinearLayout>
     </LinearLayout>

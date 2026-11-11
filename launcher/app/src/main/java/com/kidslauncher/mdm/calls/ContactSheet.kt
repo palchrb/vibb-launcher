@@ -17,6 +17,7 @@ import com.kidslauncher.mdm.server.OfflineOverride
 import com.kidslauncher.mdm.server.RestrictionsPause
 import com.kidslauncher.mdm.server.currentPolicyDecision
 import com.kidslauncher.mdm.ui.home.KidAvatars
+import com.kidslauncher.mdm.ui.look.nightOver
 
 /**
  * The contact sheet (mockup ContactCard.dc.html): photo, name, missed calls, Call, Message (our own thread in SMS
@@ -33,8 +34,10 @@ object ContactSheet {
         // Any contact sheet deals with the missed-call notification (design 12, QA #3).
         MissedCallNotifier.dismiss(activity)
         val emergency = CallSystem.isEmergencyOutgoing(activity, contact.number)
-        val view = LayoutInflater.from(activity).inflate(R.layout.sheet_contact, null)
-        val dialog = Dialog(activity, R.style.KidSheetDialog)
+        // Night in both looks, also over the phone book in Lys (design 78 §2, the user's answer 4).
+        val night = nightOver(activity)
+        val view = LayoutInflater.from(night).inflate(R.layout.sheet_contact, null)
+        val dialog = Dialog(night, R.style.KidSheetDialog)
         dialog.setContentView(view)
         dialog.setUpKidSheet(view)
         // The photo may still be decoding in the background: show it as soon as it's ready.

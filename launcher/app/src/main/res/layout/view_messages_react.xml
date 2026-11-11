@@ -46,7 +46,7 @@
         android:minHeight="48dp"
         android:text="@string/messages_remove_reactions"
         android:textAllCaps="false"
-        android:textColor="@color/kid_core"
+        android:textColor="@color/kid_page_core"
         android:textSize="16sp" />
 
     <Button
@@ -59,6 +59,6 @@
         android:minHeight="48dp"
         android:text="@string/messages_delete"
         android:textAllCaps="false"
-        android:textColor="@color/kid_emergency_text"
+        android:textColor="@color/kid_page_danger_text"
         android:textSize="16sp" />
 </LinearLayout>

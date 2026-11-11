@@ -30,7 +30,6 @@ import android.widget.SeekBar
 import android.widget.TextView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
-import com.kidslauncher.mdm.BuildConfig
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.apps.AbstractAppInfo
 import com.kidslauncher.mdm.apps.AppFilter.Companion.AppSetVisibility
@@ -182,15 +181,12 @@ class KidSettingsActivity : UIObjectActivity() {
                 section?.let { renderControls(it) }
             }
         }
-        // Design 78 §7: the look's row - shown and listening - in debug builds only until step 2 (only Kalender
-        // follows the look yet).
-        if (BuildConfig.DEBUG) {
-            binding.kidSettingsLookSection.visibility = View.VISIBLE
-            for ((button, mode) in lookButtons()) {
-                button.setOnClickListener {
-                    PageLook.choose(this, mode)
-                    renderLook()
-                }
+        // Design 78 §7: the look's row, in every build since step 2 (Meldinger, Kalender, the phone book and the lists
+        // here follow it, as its caption says).
+        for ((button, mode) in lookButtons()) {
+            button.setOnClickListener {
+                PageLook.choose(this, mode)
+                renderLook()
             }
         }
         for ((row, kind) in pickRows()) {
@@ -533,7 +529,6 @@ class KidSettingsActivity : UIObjectActivity() {
      * [PageLook.wrap], so its page tokens resolve in that look although this screen stays night. Redrawn at the tap.
      */
     private fun renderLook() {
-        if (binding.kidSettingsLookSection.visibility != View.VISIBLE) return
         val look = PageLook.choice
         binding.kidSettingsLookGroup.check(if (look == LookMode.LIGHT) R.id.kid_settings_look_light else R.id.kid_settings_look_dark)
         if (look == previewLook) return

@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- The contact request's picture circle (design 79 §5.5): an empty tonal disc with a dashed peach edge - "a field". -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
-    <solid android:color="@color/kid_sheet_button" />
+    <solid android:color="@color/kid_page_button" />
     <stroke
         android:width="1.5dp"
-        android:color="#73F0A884"
+        android:color="@color/kid_page_accent_edge"
         android:dashGap="4dp"
         android:dashWidth="6dp" />
 </shape>

@@ -86,13 +86,14 @@ class KidPaletteTest {
         assertTrue(contrast("kid_ground", "kid_accent") >= 4.5)
         assertTrue(contrast("kid_accent", "kid_music_control") >= 4.5)
         assertTrue(contrast("kid_core_dim", "kid_music_control") >= 4.5)
-        // The row's layout uses exactly these.
+        // The row's layout uses exactly these - as page tokens since design 78 step 2, each at night the colour above
+        // (a page in Mørk is today's night, below; Lys has its own pairs there).
         val row = resFile("layout/item_phone_book_row.xml").readText()
-        for (needed in listOf("@drawable/bg_day_event", "@color/kid_call_glyph", "@color/kid_accent", "@color/kid_ink", "@color/kid_core_dim")) {
+        for (needed in listOf("@drawable/bg_day_event", "@color/kid_page_call_glyph", "@color/kid_page_accent", "@color/kid_page_ink", "@color/kid_page_dim")) {
             assertTrue(needed, row.contains(needed))
         }
-        assertTrue(resFile("drawable/bg_phone_book_button.xml").readText().contains("@color/kid_sheet_button"))
-        assertTrue(resFile("drawable/bg_phone_book_button_emergency.xml").readText().contains("@color/kid_emergency_tonal"))
+        assertTrue(resFile("drawable/bg_phone_book_button.xml").readText().contains("@color/kid_page_button"))
+        assertTrue(resFile("drawable/bg_phone_book_button_emergency.xml").readText().contains("@color/kid_page_danger"))
     }
 
     /** Design 75 §5.5 (launcher QA L7): the weather card's two tokens - the mockup's rain blue and the current period's
@@ -289,9 +290,12 @@ class KidPaletteTest {
             val file = listOf("src/main/res/drawable/$name.xml", "app/src/main/res/drawable/$name.xml").map(::File).first { it.exists() }
             return Regex("<$tag[^>]*android:color=\"([^\"]+)\"").find(file.readText())!!.groupValues[1]
         }
-        for ((ring, bubble) in listOf("bg_message_selected_out" to "bg_message_out", "bg_message_selected_in" to "bg_message_in")) {
-            val c = contrast(drawableColour(ring, "stroke"), drawableColour(bubble, "solid"))
-            assertTrue("$ring on $bubble: $c", c >= 3.0)
+        // In both of the kid's looks (design 78 step 2: the received bubble and its ring are page tokens).
+        for (day in listOf(false, true)) {
+            for ((ring, bubble) in listOf("bg_message_selected_out" to "bg_message_out", "bg_message_selected_in" to "bg_message_in")) {
+                val c = contrast(inLook(drawableColour(ring, "stroke"), day), inLook(drawableColour(bubble, "solid"), day))
+                assertTrue("$ring on $bubble: $c", c >= 3.0)
+            }
         }
         // Design 77 §6.7: Meldinger's tile is the teal tone.
         assertTrue(resolve("kid_messages_tile").equals("#%06X".format(TONE_TEAL and 0xFFFFFF), ignoreCase = true))
@@ -486,6 +490,11 @@ class KidPaletteTest {
             "kid_page_message_in" to "@color/kid_message_in", "kid_page_message_in_ink" to "@color/kid_ink",
             "kid_page_message_in_dim" to "@color/kid_message_in_dim", "kid_page_alert" to "@color/kid_missed_text",
             "kid_page_danger" to "@color/kid_emergency_tonal", "kid_page_danger_text" to "#FF8A8A",
+            // Step 2: the lists' second ink, the sound picker's card (bg_kid_card's literal), the phone book's Ring
+            // glyph, the search field's focus ring, an open request's and a missing photo's edge, the request form's
+            // field edge.
+            "kid_page_ink_dim" to "@color/kid_ink_dim", "kid_page_card" to "#14FFFFFF", "kid_page_call_glyph" to "@color/kid_call_glyph",
+            "kid_page_focus" to "#80F0A884", "kid_page_accent_edge" to "#73F0A884", "kid_page_field_edge" to "@color/kid_sheet_button",
         )
         assertEquals(today, pageNight)
         assertEquals("#FF8A8A", resolve("kid_emergency_text").uppercase())
@@ -534,6 +543,17 @@ class KidPaletteTest {
             "kid_page_alert" to ground, "kid_page_alert" to tile,
             "kid_page_danger_text" to c("kid_page_danger"),
             "kid_message_out_ink" to own, "kid_message_out_dim" to own,
+            // Step 2. Meldinger: the confirm's and the pickers' words on the raised panel, the "Ny melding" mark on its
+            // received-bubble surface, the picture's place, a received picture's "try again" on its bubble.
+            "kid_page_core" to c("kid_page_lift"), "kid_page_dim" to c("kid_page_lift"), "kid_page_core" to bubble,
+            "kid_page_dim" to c("kid_page_control"), "kid_page_alert" to bubble,
+            "kid_page_danger_text" to c("kid_page_danger"),
+            // The lists and the phone book: the second ink, the sound picker's names on its card, the badge.
+            "kid_page_ink_dim" to ground, "kid_page_ink_dim" to tile,
+            "kid_page_ink" to over(c("kid_page_card"), ground), "kid_page_dim" to over(c("kid_page_card"), ground),
+            "kid_badge_ink" to c("kid_badge"),
+            // The request form: its words and fields on the raised panel.
+            "kid_page_ink" to c("kid_page_ground"), "kid_page_accent" to c("kid_page_lift"),
         )
         for ((ink, under) in texts) {
             val ratio = contrast(c(ink), under)
@@ -544,6 +564,19 @@ class KidPaletteTest {
         val rings = listOf("kid_page_accent" to tile, "kid_page_accent" to bubble) + if (day) listOf("kid_page_selected_out" to own) else emptyList()
         for ((ring, under) in rings) {
             assertTrue("$ring on $under", contrast(c(ring), under) >= 3.0)
+        }
+        // Step 2's glyphs and dots at 3:1: the unread dot on its row, the phone book's Ring and Melding glyphs on their
+        // tonal discs over the row's tile, an emergency Ring's red on its disc, the search glyph on its empty-state
+        // tile. The search field's focus ring and an open request's edge are held to 3:1 in Lys only - in Mørk they
+        // are today's peach at half strength, unchanged (D2).
+        val disc = over(c("kid_page_button"), tile)
+        val glyphs = listOf(
+            "kid_page_accent" to tile, "kid_page_call_glyph" to disc, "kid_page_accent" to disc,
+            "kid_page_danger_text" to c("kid_page_danger"), "kid_page_dim" to tile,
+        ) + if (day) listOf("kid_page_focus" to tile, "kid_page_accent_edge" to tile) else emptyList()
+        for ((glyph, under) in glyphs) {
+            val ratio = contrast(c(glyph), under)
+            assertTrue("${if (day) "Lys" else "Mørk"}: $glyph on $under: $ratio", ratio >= 3.0)
         }
     }
 

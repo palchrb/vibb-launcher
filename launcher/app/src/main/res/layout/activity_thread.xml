@@ -6,7 +6,7 @@
     android:id="@+id/thread_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/kid_ground"
+    android:background="@color/kid_page_ground"
     android:orientation="vertical"
     android:paddingStart="16dp"
     android:paddingTop="4dp"
@@ -67,7 +67,7 @@
                 android:paddingBottom="14dp"
                 android:stateListAnimator="@null"
                 android:textAllCaps="false"
-                android:textColor="@color/kid_core"
+                android:textColor="@color/kid_page_core"
                 android:textSize="14sp"
                 android:visibility="gone" />
         </FrameLayout>
@@ -86,7 +86,7 @@
             android:minHeight="48dp"
             android:paddingStart="8dp"
             android:paddingEnd="8dp"
-            android:textColor="@color/kid_core_dim"
+            android:textColor="@color/kid_page_dim"
             android:textSize="15sp"
             android:visibility="gone" />
 
@@ -156,7 +156,7 @@
                         android:layout_marginStart="8dp"
                         android:fontFamily="@font/nunito_bold"
                         android:maxWidth="160dp"
-                        android:textColor="@color/kid_core_dim"
+                        android:textColor="@color/kid_page_dim"
                         android:textSize="13sp"
                         android:visibility="gone" />
 
@@ -185,8 +185,8 @@
                     android:maxLines="5"
                     android:minHeight="44dp"
                     android:saveEnabled="false"
-                    android:textColor="@color/kid_ink"
-                    android:textColorHint="@color/kid_core_dim"
+                    android:textColor="@color/kid_page_ink"
+                    android:textColorHint="@color/kid_page_dim"
                     android:textSize="16sp" />
 
                 <TextView
@@ -195,7 +195,7 @@
                     android:layout_height="wrap_content"
                     android:layout_gravity="end"
                     android:fontFamily="@font/nunito_bold"
-                    android:textColor="@color/kid_core_dim"
+                    android:textColor="@color/kid_page_dim"
                     android:textSize="12sp"
                     android:visibility="gone" />
             </LinearLayout>

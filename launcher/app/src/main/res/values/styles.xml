@@ -393,6 +393,13 @@
         <item name="android:visibility">gone</item>
     </style>
 
+    <!-- KidBadge on a page (design 78 step 2: the phone book's rows): the ring in the page's ground; the pill and its
+         white ink are the same in both looks (4.98:1, KidPaletteTest). -->
+    <style name="KidPageBadge" parent="KidBadge">
+        <item name="android:background">@drawable/bg_kid_page_badge</item>
+        <item name="android:textColor">@color/kid_badge_ink</item>
+    </style>
+
     <style name="KidSheetButton">
         <item name="android:layout_width">0dp</item>
         <item name="android:layout_height">64dp</item>
@@ -492,7 +499,7 @@
         <item name="android:fontFamily">@font/nunito_bold</item>
         <item name="android:paddingStart">2dp</item>
         <item name="android:paddingEnd">2dp</item>
-        <item name="android:textColor">@color/kid_ink</item>
+        <item name="android:textColor">@color/kid_page_ink</item>
         <item name="android:textSize">14sp</item>
     </style>
 
@@ -540,7 +547,7 @@
         <item name="android:layout_height">wrap_content</item>
         <item name="android:layout_marginTop">4dp</item>
         <item name="android:fontFamily">@font/nunito_bold</item>
-        <item name="android:textColor">@color/kid_accent</item>
+        <item name="android:textColor">@color/kid_page_accent</item>
         <item name="android:textSize">14sp</item>
         <item name="android:visibility">gone</item>
     </style>

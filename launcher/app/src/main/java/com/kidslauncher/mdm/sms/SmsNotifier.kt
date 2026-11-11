@@ -20,7 +20,7 @@ import com.kidslauncher.mdm.sms.engine.Message
 import com.kidslauncher.mdm.sms.engine.Notifiable
 import com.kidslauncher.mdm.sms.engine.Reactions
 import com.kidslauncher.mdm.sms.engine.SmsEngine
-import com.kidslauncher.mdm.ui.messages.MessagesScreens
+import com.kidslauncher.mdm.ui.messages.MessagesEntryActivity
 import java.util.UUID
 
 private const val LOG_TAG = "SmsNotifier"
@@ -273,15 +273,13 @@ object SmsNotifier {
         return builder.build()
     }
 
-    /** The tap (§6.8): the conversation's thread over the list, in the messages task - Back goes to the list. Told
-     * apart by the thread intent's identifier (part of the intent's identity, not of its resolution; the last intent is
-     * the PendingIntent's key), never by a hashCode (QA L1). The thread checks the time rule itself. */
-    private fun openIntent(context: Context, conversationId: String): PendingIntent {
-        val thread = MessagesScreens.threadIntent(context, conversationId, null).setIdentifier(conversationId)
-        return PendingIntent.getActivities(
-            context, 0, arrayOf(MessagesScreens.listUnder(context), thread), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
-    }
+    /** The tap (§6.8): the conversation's thread over the list, in the messages task - Back goes to the list. Through
+     * the look-less entry (design 78 §12.2 R7), which starts the applied look's classes when tapped; told apart by the
+     * entry intent's identifier (part of the intent's identity, not of its resolution), never by a hashCode (QA L1).
+     * The thread checks the time rule itself. */
+    private fun openIntent(context: Context, conversationId: String): PendingIntent = PendingIntent.getActivity(
+        context, 0, MessagesEntryActivity.intent(context, conversationId), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+    )
 
     /**
      * The reply carries its own `clientId`, made when the notification is posted: a double tap sends once (§6.8). Both
