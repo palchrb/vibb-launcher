@@ -23,6 +23,9 @@ class LauncherLocaleTest {
     ) : LanguageHost {
         val calls = ArrayList<String>()
 
+        /** A [retryLater] waits. */
+        var retryWaiting = false
+
         override fun wanted(): String? = wanted
 
         override fun current(): String = current
@@ -45,6 +48,15 @@ class LauncherLocaleTest {
             }
             if (!refused) current = tags
             return !refused
+        }
+
+        override fun retryLater() {
+            calls += "retry later"
+            retryWaiting = true
+        }
+
+        override fun cancelRetry() {
+            retryWaiting = false
         }
     }
 
@@ -102,6 +114,14 @@ class LauncherLocaleTest {
     }
 
     @Test
+    fun `a refused unlocked start asks once, closes nothing and leaves the rest to Home's resume`() {
+        val host = Recorder(wanted = "nb", pageTasks = 1, refuses = Refuses.ALWAYS)
+        LauncherLanguage(host).atUnlockedStart()
+        assertEquals(listOf("ask 'nb'"), host.calls)
+        assertEquals(1, host.pageTasks)
+    }
+
+    @Test
     fun `Home's resume asks only for a real change outside a call, and a switch that got through closes nothing`() {
         val change = Recorder(wanted = "nb", current = "", pageTasks = 2)
         LauncherLanguage(change).onHomeResumed()
@@ -124,6 +144,7 @@ class LauncherLocaleTest {
 
     @Test
     fun `a refused switch closes the page tasks and asks once more`() {
+        // A page stopped behind Home: out of the process with its task.
         val host = Recorder(wanted = "nb", current = "", pageTasks = 1, refuses = Refuses.WHILE_A_PAGE_TASK_LIVES)
         LauncherLanguage(host).onHomeResumed()
         assertEquals(listOf("ask 'nb'", "close tasks", "ask 'nb'"), host.calls)
@@ -131,21 +152,83 @@ class LauncherLocaleTest {
     }
 
     @Test
-    fun `a switch still refused starts over at every resume, with one more ask only when a task was closed`() {
+    fun `a resume that ends refused asks one last time later, while Home is in front and no call is live`() {
+        // Home straight from a page: the page is still in the process until the system destroys it.
         val host = Recorder(wanted = "nb", current = "", pageTasks = 1, refuses = Refuses.ALWAYS)
         val language = LauncherLanguage(host)
         language.onHomeResumed()
-        assertEquals(listOf("ask 'nb'", "close tasks", "ask 'nb'"), host.calls)
-        host.calls.clear()
-        language.onHomeResumed()
-        assertEquals(listOf("ask 'nb'", "close tasks"), host.calls)
-        assertEquals("", host.current)
-
+        assertEquals(listOf("ask 'nb'", "close tasks", "ask 'nb'", "retry later"), host.calls)
         host.refuses = Refuses.NEVER
         host.calls.clear()
-        language.onHomeResumed()
-        language.onHomeResumed()
+        language.onRetry()
         assertEquals(listOf("ask 'nb'"), host.calls)
+        assertEquals("nb", host.current)
+
+        // With nothing to close too (the PIN lock just left).
+        val bare = Recorder(wanted = "nb", current = "", refuses = Refuses.ALWAYS)
+        val second = LauncherLanguage(bare)
+        second.onHomeResumed()
+        assertEquals(listOf("ask 'nb'", "close tasks", "retry later"), bare.calls)
+        // Home left the front, and came back: the old retry is gone, the resume has its own.
+        second.onHomePaused()
+        assertFalse(bare.retryWaiting)
+        second.onHomeResumed()
+        assertTrue(bare.retryWaiting)
+        // A call came in before it ran, or the language is in place by then: nothing.
+        bare.calls.clear()
+        bare.call = true
+        second.onRetry()
+        bare.call = false
+        bare.current = "nb"
+        second.onRetry()
+        assertEquals(emptyList<String>(), bare.calls)
+    }
+
+    @Test
+    fun `a close that did not help is not made again for that language`() {
+        // Something else of the launcher's is what the process follows: closing the pages changes nothing.
+        val host = Recorder(wanted = "nb", current = "", pageTasks = 1, refuses = Refuses.ALWAYS)
+        val language = LauncherLanguage(host)
+        language.onHomeResumed()
+        language.onRetry()
+        assertEquals(listOf("ask 'nb'", "close tasks", "ask 'nb'", "retry later", "ask 'nb'"), host.calls)
+        // The kid opened Kalender again and came Home, twice: asked each time, the page left alone.
+        for (round in 1..2) {
+            host.pageTasks = 1
+            host.calls.clear()
+            language.onHomeResumed()
+            language.onRetry()
+            assertEquals("round $round", listOf("ask 'nb'", "retry later", "ask 'nb'"), host.calls)
+            assertEquals(1, host.pageTasks)
+        }
+        // Another wanted value starts over.
+        host.wanted = "en"
+        host.calls.clear()
+        language.onHomeResumed()
+        assertEquals(listOf("ask 'en'", "close tasks", "ask 'en'", "retry later"), host.calls)
+        language.onRetry()
+        // So does an ask that got through: were the language lost again, a refusal would close once more.
+        host.refuses = Refuses.NEVER
+        language.onHomeResumed()
+        assertEquals("en", host.current)
+        host.current = ""
+        host.pageTasks = 1
+        host.refuses = Refuses.ALWAYS
+        host.calls.clear()
+        language.onHomeResumed()
+        assertEquals(listOf("ask 'en'", "close tasks", "ask 'en'", "retry later"), host.calls)
+    }
+
+    @Test
+    fun `a retry that never ran decides nothing`() {
+        val host = Recorder(wanted = "nb", current = "", pageTasks = 1, refuses = Refuses.ALWAYS)
+        val language = LauncherLanguage(host)
+        language.onHomeResumed()
+        language.onHomePaused()
+        host.pageTasks = 1
+        host.calls.clear()
+        language.onHomeResumed()
+        assertEquals(listOf("ask 'nb'", "close tasks", "ask 'nb'", "retry later"), host.calls)
     }
 
     @Test

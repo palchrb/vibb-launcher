@@ -3216,7 +3216,7 @@ adb logcat -b events -d | grep -E "wm_on_create_called|wm_relaunch_activity|wm_d
 adb shell dumpsys activity recents | grep -c "\.day"                     # Kalender's task: 1, or 0 after a change
 adb shell settings put system font_scale 1.3                             # and 1.0 after
 adb shell dumpsys activity activities | grep -E "mLockTaskModeState|mLockTaskModeTasks"   # the kiosk and its tasks
-adb logcat -d -s Application | grep -E "The kid's look took|Unlocked setup"               # an unlocked start's cost
+adb logcat -d -s Application | grep -E "The kid's look took|The launcher's language took|Unlocked setup"   # an unlocked start's cost
 adb shell cmd overlay enable-exclusive --category com.android.internal.systemui.navbar.threebutton   # .gestural back
 ```
 
@@ -3284,7 +3284,9 @@ Kalender, Home, Kalender). Then the four tile recordings once more with the syst
 12. **The unlocked start's cost.** After each process start above (the `install -r`, the reboot, the kills), read the
    `Application` lines: `The kid's look took N ms` (one small prefs file and one binder call, on every
    unlock-to-Home path) beside `Unlocked setup took N ms` (design 59's head, which does not include it). Write the
-   numbers down; one that isn't small beside the head's is a finding.
+   numbers down; one that isn't small beside the head's is a finding. Since the language fix's code QA (L2,
+   2026-11-11) the language's ask has its own line between the two, `The launcher's language took N ms` (the default
+   prefs file, at most one call to Telecom and one binder call): the same rule.
 
 Steps 13-16 were written on 2026-11-11 with the language fix (design 78 §5.3, "The cause" and "Decision"), from
 Android 16's source and with no emulator: **none of them has been seen running**. They need the phone's own language
@@ -3326,9 +3328,21 @@ adb shell aflags list | grep expedite_activity_launch_on_cold_start      # if th
    language: en`, `dumpsys activity recents | grep -c "\.day\|MessagesActivity"` is 0 and both cards are gone. A
    warning with no `Launcher language: en` after it is the design's "what is still refused": write down which
    activities were alive (`dumpsys activity activities | grep -E "Hist|mActivityType"`) and at which later Home resume
-   it got through. Back to `nb` with **Kalender in front** when the sync lands: nothing happens on Kalender; at Home
-   the same outcomes. Then once with the PIN lock up when the sync lands (at the unlock's Home: set at once, or
-   refused and set at the next Home resume), and once during a call (nothing until Home after the call, and nothing
+   it got through. Back to `nb` with **Kalender in front** when the sync lands: nothing happens on Kalender. **Home
+   straight from the page** (the Home gesture with Kalender in front; once more from a Meldinger thread) is the
+   code QA's M1 and has its own outcome: set at once, or **refused twice, then set late** - two warnings in that
+   resume (the page is closed but not yet destroyed), both cards gone, and about two seconds later, with Home still in
+   front, `Launcher language: nb` from the one late ask (`LANGUAGE_RETRY_DELAY_MS`). Write down the time between
+   Home's `wm_on_resume_called` and the page's `wm_destroy_activity` in the events log: the delay has to be longer.
+   A late ask that is refused too, or two warnings with no third ask while Home stayed in front, is a finding. Then
+   open the page again and go straight Home twice more: once the language is set, nothing is asked and no card is
+   closed. **A standard-type activity that stays** (the code QA's M2): open the phone book through a `tel:` link in
+   another app (`adb shell am start -a android.intent.action.DIAL -d tel:123` from that app's task, or a link in the
+   browser), go Home, change the language, and resume Home several times with Kalender opened again each time:
+   Kalender's card is closed at the first refused resume only (when its late ask ran), and never again for that
+   language; at each refusal write down `dumpsys activity processes` for the launcher. Then once with the PIN lock up
+   when the sync lands (at the unlock's Home: set at once, or refused and set by the late ask or at the next Home
+   resume), and once during a call (nothing until Home after the call, and nothing
    relaunched during it). **The rest the design names**: Kalender in front, kill the launcher's process as its own uid
    (step 9's line), unlock, go Home, change the language in the PWA, leave Home and come back. If it is refused here
    (twice in one resume, Kalender's card gone for nothing) it should stay refused at every plain Home resume and get

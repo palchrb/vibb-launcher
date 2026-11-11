@@ -379,24 +379,53 @@ stack are that tag's), not seen running beyond the lines above:
   starts from a file without the languages, the call brings them back and the file written then has both; the boot
   after starts with them and writes them away again. In a process started at the
   unlock both calls are its first and follow the same activity, so neither is refused. "Follow the phone" is asked for
-  only while the system still holds a language. Nothing during a call, as every switch.
+  only while the system still holds a language. Nothing during a call, as every switch. The order - the night mode,
+  then the language, before the rest of the setup - is load-bearing: `PageLookScanTest` holds it as a source scan
+  (2026-11-11, the code QA's fix round). A refused ask here closes nothing and is left to Home's resume
+  (`LauncherLocaleTest`).
 - **A switch at Home's resume is asked for as before; refused, Kalender's and Meldinger's tasks are closed and it is
   asked for once more** (`languageClosesTask`). A page stopped behind Home is what the process follows for as long as
   its task lives, which is the refusal that was seen to last; removing a stopped task takes its activities out of the
-  process at once, and the process then follows Home. The tasks are closed only after a refusal, not before the first
-  ask: in a process whose last call got through under a page, the page behind Home is what lets the call through, and
-  closing it first would turn that into a refusal. A switch that got through at once leaves the page tasks alone, as
-  on main.
-- **What is still refused** (inferred from the source; nothing of it seen): a call refused with no page task to close,
-  or refused again after the close, leaves the system's value as it was, and every later Home resume starts over. Two
-  cases. The PIN lock or the call screen just left and not yet destroyed: a resume after it is destroyed gets through
-  (the pass saw the refusals end at the first Home resume without such an activity). And a process whose last call got
-  through under a standard-type activity - started again under a page, the
-  PIN lock or a call, or a call at Home's resume right after one of them - while Home is what it follows: every plain
-  Home resume is refused, and the change gets through only at a resume right after the PIN lock, a page or a call, or
-  at the next process start (the unlocked start's ask). In that case the first refusal also closes the page tasks for
-  nothing. The app cannot read which case it is in; a parent's change of language can so wait until the kid next
-  unlocks. The screens stay in the old language meanwhile, never in a mix.
+  process at once, and the process then follows Home. "At once" holds for a stopped page only (the code QA's M1,
+  2026-11-11, read in `WindowProcessController`, `Task` and `ActivityRecord`): a page the kid came Home straight from
+  is paused and still visible in that resume, the removal only marks it finishing, and the system destroys it once
+  Home has reported idle - so the second ask in the same resume is refused too. The tasks are closed only after a
+  refusal, not before the first ask: in a process whose last call got through under a page, the page behind Home is
+  what lets the call through, and closing it first would turn that into a refusal. A switch that got through at once
+  leaves the page tasks alone, as on main.
+- **A resume that ends refused asks one last time two seconds later** (`LANGUAGE_RETRY_DELAY_MS`, M1's fix), while
+  Home is still in front and no call is live: one ask, no loop; Home's `onPause` drops it and the next resume has its
+  own. Two seconds because the activity just left is destroyed after the transition to Home, when Home has reported
+  idle - well under a second on a phone, and Android's own fallback for an idle report that never comes is ten
+  seconds; an idle handler of the launcher's own in `onResume` would run before Android's and so be too early. Too
+  early only means one more refusal, and the next resume asks again. Departure from the QA's wording, 2026-11-11: the
+  retry follows every resume that ends refused, not only one that closed a task - the PIN lock just left is the same
+  wait with nothing to close.
+- **A close that did not help is not made again** (the code QA's M2): when the retry after a close was refused too,
+  the process remembers that wanted language and later resumes ask without closing, so the kid's open page is not
+  thrown away at every Home resume. An ask that gets through, or another wanted language, clears it. A retry that
+  never ran (Home left within the two seconds) decides nothing, so the resume after it may close once more: with a
+  standard-type activity that stays (below) and a kid who leaves Home within two seconds every time, the close can
+  repeat. Held the other way, a language could stay stuck behind a page the kid opened again; the repeat was taken as
+  the smaller cost.
+- **What is still refused** (inferred from the source; nothing of it seen): a call refused through the close and the
+  retry leaves the system's value as it was, and every later Home resume asks again. Three cases. A standard-type
+  activity of the launcher's outside the two page tasks that stays alive and was added to the process last - the
+  phone book opened by a `tel:` link in another app's task, for one: nothing the launcher closes helps, the page
+  tasks are closed once for nothing, and the change waits until that activity is gone. A process whose last call got
+  through under a standard-type activity - started again under a page, the PIN lock or a call, or a call at Home's
+  resume right after one of them - while Home is what it follows: every plain Home resume is refused, and the change
+  gets through only at a resume right after the PIN lock, a page or a call (the first ask, under the activity not
+  yet destroyed), or at the next process start (the unlocked start's ask); the first refusal also closes the page
+  tasks, once, for nothing. And the PIN lock, a page or the call screen just left where the retry was dropped or ran
+  too early: the next resume without such an activity gets through (the pass saw the refusals end at the first Home
+  resume without one). The app cannot read which case it is in; a parent's change of language can so wait until the
+  kid next unlocks. The screens stay in the old language meanwhile, never in a mix.
+- **The application's own texts** (the code QA's L3; inferred, not seen, not fixed): on the boot whose file has no
+  languages, the language reaches the process after `Application.onCreate` has begun, so what is read from the
+  application's context there - the notification channels' names (`createNotificationChannels`), an ongoing
+  notification's text - may be in the phone's language until the next process start. To be looked for in the pass;
+  if seen, the small fix is the channels once more on `ACTION_LOCALE_CHANGED`.
 - **Costs**: a refused change closes Meldinger too, and until step 2 keeps a thread's unsent text (§5.4.4) a
   half-typed message is lost at it - a parent's change of language that was refused, rare. Every second boot the first
   activity may be created once more when the language comes back (Android's flag `expediteActivityLaunchOnColdStart`
@@ -585,6 +614,10 @@ Emulator pass, 2026-11-11: §6ah was run on `jelly36` as far as B.8 and stopped 
 memory. A's recordings, the change under the kiosk, the reboot and the update pass; one finding, the launcher's own
 language (§5.3's line of this date); Kalender's screens in both looks, 3-button navigation, the screens that are not
 pages, TalkBack and the font scale were not reached (§6ah, "The run of 2026-11-11").
+
+The language's fix, 2026-11-11: read from Android's source and built inside the mechanism (§5.3, "The cause" and
+"Decision"); its code QA (no High, two Medium, four Low) and the fix round - the late retry, the close that is not
+repeated, the timed log line, the order under a scan test - are in the review's "The language fix's code QA".
 
 **Step 2 - Meldinger and the lists** (after design 77 step 2 is merged). The three message screens on page tokens
 (bubbles, selection rings, the picture's place, the unread dot, compose field with its hairline, send, the delete

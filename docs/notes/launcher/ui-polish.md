@@ -410,8 +410,10 @@ so nothing on a release build can pick Lys. Built and unit-tested 2026-11-10, wi
   With a night mode set Android writes the record to disk without the languages, and it refuses either call while the
   process's newest activity is of another kind of task (Home's, or one of the launcher's own) than at the last call
   that got through. So `Application.initUnlocked` asks for the language right after the look
-  (`LauncherLocales.atUnlockedStart`), and a language switch the system refused closes Kalender's and Meldinger's
-  tasks and asks once more (`home-and-photos.md`, "Language"). **Open before step 2 shows the row in release builds**:
+  (`LauncherLocales.atUnlockedStart`; the order is held by `PageLookScanTest`, and the ask has its own log line,
+  `The launcher's language took N ms`), and a language switch the system refused closes Kalender's and Meldinger's
+  tasks and asks once more, then one last time two seconds later, and never closes twice for one language
+  (`home-and-photos.md`, "Language"). **Open before step 2 shows the row in release builds**:
   a change of look can be refused the same way, for one in a process whose last call got through under the PIN lock, a
   page or a call (inferred from Android 16's source, not seen; the pages still draw right, their starting windows keep
   the old look until the next process start) - the design has the ways out and their costs.

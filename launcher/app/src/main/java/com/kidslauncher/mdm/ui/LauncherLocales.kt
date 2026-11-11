@@ -3,7 +3,9 @@ package com.kidslauncher.mdm.ui
 import android.app.ActivityManager
 import android.app.LocaleManager
 import android.content.Context
+import android.os.Handler
 import android.os.LocaleList
+import android.os.Looper
 import android.telecom.TelecomManager
 import android.util.Log
 import androidx.core.content.edit
@@ -19,12 +21,23 @@ import com.kidslauncher.mdm.server.dto.LauncherUi
  * in-call screen, PIN dialog or contact sheet is showing - and skips while a call is active.
  * [atUnlockedStart] asks for the recorded wish again at every unlocked start, since Android
  * does not always keep it across a reboot, and a switch the system refused closes Kalender's
- * and Meldinger's tasks and asks once more (design 78 §5.3, 2026-11-11). The rules are the
- * pure [LauncherLanguage]; this is its Android host.
+ * and Meldinger's tasks and asks once more, then one last time a little later while Home is
+ * still in front (design 78 §5.3, 2026-11-11). The rules are the pure [LauncherLanguage], one
+ * for the process; this is its Android host. Main thread, but for [remember].
  */
 object LauncherLocales {
     private const val LOG_TAG = "LauncherLocales"
     private const val PREF = "launcher_language_wanted"
+
+    private val main = Handler(Looper.getMainLooper())
+    private var language: LauncherLanguage? = null
+    private val retry = Runnable {
+        try {
+            language?.onRetry()
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't set the launcher language", e)
+        }
+    }
 
     /** After an accepted policy: what the parent wants ("" = follow the phone). */
     fun remember(context: Context, ui: LauncherUi?) {
@@ -51,10 +64,16 @@ object LauncherLocales {
         }
     }
 
+    /** `HomeActivity.onPause`: a retry that waits is for a Home still in front. */
+    fun onHomePaused() {
+        language?.onHomePaused()
+    }
+
     private fun language(context: Context): LauncherLanguage? {
+        language?.let { return it }
         val app = context.applicationContext
         val manager = app.getSystemService(LocaleManager::class.java) ?: return null
-        return LauncherLanguage(host(app, manager))
+        return LauncherLanguage(host(app, manager)).also { language = it }
     }
 
     private fun host(app: Context, manager: LocaleManager): LanguageHost = object : LanguageHost {
@@ -96,9 +115,17 @@ object LauncherLocales {
                 true
             } catch (e: RuntimeException) {
                 // The system server refuses the call while the process's newest activity is of another kind of
-                // task than at its last such call ("Can't change activity type once set"), and keeps nothing.
+                // task than at its last such call that got through ("Can't change activity type once set"), and
+                // keeps the language nowhere.
                 Log.w(LOG_TAG, "Couldn't set the launcher language", e)
                 false
             }
+
+        override fun retryLater() {
+            main.removeCallbacks(retry)
+            main.postDelayed(retry, LANGUAGE_RETRY_DELAY_MS)
+        }
+
+        override fun cancelRetry() = main.removeCallbacks(retry)
     }
 }

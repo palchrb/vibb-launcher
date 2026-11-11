@@ -158,6 +158,46 @@ the cause with its files and methods) - one finding fixed, one new and open:
   `attachBaseContext`; another mechanism than the per-app night mode) has a cost the design must weigh - its §5.3,
   "Open, for step 2". §6ah's B.16 is the step that shows it or clears it.
 
+The language fix's code QA, 2026-11-11 (a fresh reviewer, 7b15ee70 read against the fetched AOSP files; no emulator):
+the three source claims confirmed (the write record without the languages, the refusal by the followed activity's
+type, a refused call storing no language), no High, two Medium, four Low. All handled in the commit after 7b15ee70;
+the gated run on it: `BUILD SUCCESSFUL`, 244 suites, 2473 tests, 0 failures, 0 errors, 0 skipped
+(`LauncherLocaleTest` 12, `PageLookScanTest` 3). **Nothing of it seen running** when this was written.
+
+- **M1 (inferred from AOSP): the second ask inside the same Home resume is probably refused when the kid comes Home
+  straight from the page.** The process chooses the activity it follows again only when one is added or removed
+  (`WindowProcessController.java:844, 870, 877`); a paused, still-visible page is only marked finishing by the task's
+  removal (`Task.java:1664-1668`, `ActivityRecord.java:3744-3812, 3837-3862`) and destroyed once the next activity
+  reports idle. So: two warnings, the card gone, no language. **Fixed**: a resume that ends refused asks one last time
+  `LANGUAGE_RETRY_DELAY_MS` (two seconds) later while Home is still in front and no call is live - one ask, dropped at
+  Home's `onPause` (`LauncherLanguage.onRetry`, the host's `retryLater`/`cancelRetry` on the main handler). Two
+  seconds: past the transition and Home's idle report, short of Android's ten-second fallback; the pass measures it.
+  Wider than the finding's wording: it follows every resume that ends refused, with or without a close (the PIN lock
+  just left is the same wait) - the design's §5.3 has the dated line.
+- **M2 (read in the code): a change that stays refused closed Kalender's and Meldinger's tasks at every Home
+  resume.** Not bounded on M1's path, nor with a standard-type activity of the launcher's outside the two page tasks
+  alive (the phone book opened by a `tel:` link in another app's task). **Fixed**: `LauncherLanguage` remembers the
+  wanted language for which a close was followed by a refused late ask and does not close again for it; it keeps
+  asking at each resume, and an ask that gets through or another wanted language clears it. The process's one
+  `LauncherLanguage` is kept in `LauncherLocales`. A rest, stated in the design: a late ask that never ran (Home left
+  within the two seconds) decides nothing, so with such a lingering activity and a kid who leaves Home that fast every
+  time the close can repeat; held the other way a language could stay stuck behind a page opened again.
+- **L1: no test held a refused unlocked start** (the mutation "a refused unlocked-start ask closes the page tasks and
+  asks again" survived). **Fixed**: `a refused unlocked start asks once, closes nothing and leaves the rest to Home's
+  resume`.
+- **L2: the language call's time was in neither log line.** **Fixed**: `I Application: The launcher's language took N
+  ms`, between the look's line and `Unlocked setup took` (§6ah B.12).
+- **L3 (inferred): the application's own texts on the boot whose record has no languages** - the new configuration
+  reaches the process after `Application.onCreate` has begun, so the notification channels' names and other texts from
+  the application's context may be in the phone's language until the next process start. **Not fixed before it is
+  seen**; the pass looks for it (§6ah), and the small fix would be the channels once more on `ACTION_LOCALE_CHANGED`.
+- **L4, wording** - **fixed**: `Application.initUnlocked`'s comment (the second call is refused only if the kind of
+  activity the process follows changed between the two binder calls; caught, repaired at Home's resume) and
+  `LanguageHost.ask`'s (a refused call keeps the language nowhere; `LocaleManagerService` does write its backup
+  helper's modification info before the commit, which is not the language).
+- **The order "night mode, then language"** was load-bearing and under no test: `PageLookScanTest` now holds it (the
+  language's ask once in `Application.kt`, after the look's and before the rest of the unlocked setup).
+
 - **M1** (1c6e1564): `KidPageTheme`'s `android:enforceNavigationBarContrast` is `@bool/kid_page_nav_contrast` - true in
   `values/`, false in `values-notnight/` - so Kalender in Mørk with 3-button navigation keeps the system's scrim;
   `KidPaletteTest`'s theme test pins the item and both bools files. The window's two grounds are **no difference** in

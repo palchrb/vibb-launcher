@@ -538,6 +538,8 @@ class HomeActivity : UIObjectActivity() {
         // Design 16e (qa-16e-code #2): anything over the mark - even translucent - ends the boot's
         // wait, unless Home is resumed again at once (a re-delivered HOME intent pauses it).
         PinLockRuntime.onHomePaused(isChangingConfigurations)
+        // A language retry that waits (design 78 §5.3) is for a Home still in front.
+        LauncherLocales.onHomePaused()
         resumedNow = false
         night?.stop()
         super.onPause()

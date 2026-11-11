@@ -42,6 +42,12 @@ class PageLookScanTest {
         assertEquals(1, Regex("""\bPageLook\b""").findAll(app).count())
         val unlocked = app.substringAfter("private fun initUnlocked() {").substringBefore("\n    }\n")
         assertTrue(unlocked.contains("com.kidslauncher.mdm.ui.look.PageLook.atUnlockedStart(this)"))
+        // The launcher's language is asked for right after it, once, and before the rest of the setup: Android
+        // writes both to disk only when the language call follows the night mode's (design 78 §5.3, 2026-11-11).
+        assertEquals(1, app.split("LauncherLocales.atUnlockedStart(").size - 1)
+        val look = unlocked.indexOf("PageLook.atUnlockedStart(this)")
+        val language = unlocked.indexOf("com.kidslauncher.mdm.ui.LauncherLocales.atUnlockedStart(this)")
+        assertTrue(look in 0 until language && language < unlocked.indexOf("val setupStart"))
         // Home: once, in onResume, after the lock's dark return.
         val home = sources.getValue("$root/ui/HomeActivity.kt")
         assertEquals(1, Regex("""\bPageLook\b""").findAll(home).count())

@@ -293,15 +293,19 @@ class Application : android.app.Application() {
         android.util.Log.i("Application", "The kid's look took ${android.os.SystemClock.elapsedRealtime() - lookStart} ms")
         // Design 78 §5.3 (2026-11-11): the launcher's language is asked for again here, since Android writes the
         // app's record to disk without it once the app has a night mode - a reboot then brought the launcher back in
-        // the phone's language. After the night mode, so both land in one write; and right after it, with no
-        // activity added to the process in between: the two are this process's first such calls, and the system
-        // refuses only a later one. Nothing while a call is live (Home's resume asks then). Outside "Unlocked
-        // setup took", as the look.
+        // the phone's language. After the night mode - that order is what lets both land in one write (held by
+        // PageLookScanTest) - and right after it: the two are this process's first such calls, and the system
+        // refuses the second only if the kind of activity the process follows changed between the two binder
+        // calls. That is caught inside and repaired at Home's resume. Nothing while a call is live (Home's resume
+        // asks then). Outside "Unlocked setup took", as the look, with a line of its own: the default prefs, at
+        // most one Telecom call and one binder call.
+        val languageStart = android.os.SystemClock.elapsedRealtime()
         try {
             com.kidslauncher.mdm.ui.LauncherLocales.atUnlockedStart(this)
         } catch (e: Exception) {
             android.util.Log.e("Application", "The launcher's language wasn't asked for", e)
         }
+        android.util.Log.i("Application", "The launcher's language took ${android.os.SystemClock.elapsedRealtime() - languageStart} ms")
         val setupStart = android.os.SystemClock.elapsedRealtime()
         try {
             LauncherPreferences.init(PreferenceManager.getDefaultSharedPreferences(this), this.resources)
