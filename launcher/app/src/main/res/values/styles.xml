@@ -136,9 +136,10 @@
     </style>
 
     <!-- A page: a full-screen kid screen that paints its own solid ground and follows the kid's Mørk or Lys
-         (design 78 §5.2; ui/look/KidPageActivity). The manifest sets it, so the starting window Android draws
-         before our code runs has the page's ground and bar icons - both follow the app's night mode
-         (PageLook). PageManifestTest keeps it on exactly the pages. -->
+         (design 78 §5.2; ui/look/KidPageActivity). Its items are qualified: they follow the night mode of the
+         context that reads them - the page's own (its class's look) and PageLook.wrap's. A manifest entry names one
+         of the two themes below instead (PageManifestTest): Android draws the starting window from the entry's
+         theme under the phone's own night mode, where a qualified item would be the phone's and not the kid's. -->
     <style name="KidPageTheme" parent="launcherBaseTheme">
         <item name="android:windowBackground">@color/kid_page_ground</item>
         <item name="android:windowSplashScreenBackground">@color/kid_page_ground</item>
@@ -146,6 +147,26 @@
         <item name="android:windowLightNavigationBar">@bool/kid_page_light_bars</item>
         <item name="android:enforceNavigationBarContrast">@bool/kid_page_nav_contrast</item>
         <item name="alertDialogTheme">@style/KidPageAlertDialog</item>
+    </style>
+
+    <!-- A page's two manifest themes (design 78 §12.2 R3): the night class's and its light twin's. The five window
+         items are literals over colours with one value in every configuration - kid_ground, and kid_paper, which
+         equals the day's kid_page_ground (KidPaletteTest) - so the starting window has the look's ground and bar
+         icons whatever the phone's theme is (SplashThemeTest). Everything else is KidPageTheme's. -->
+    <style name="KidPageNightTheme" parent="KidPageTheme">
+        <item name="android:windowBackground">@color/kid_ground</item>
+        <item name="android:windowSplashScreenBackground">@color/kid_ground</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:enforceNavigationBarContrast">true</item>
+    </style>
+
+    <style name="KidPageLightTheme" parent="KidPageTheme">
+        <item name="android:windowBackground">@color/kid_paper</item>
+        <item name="android:windowSplashScreenBackground">@color/kid_paper</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:enforceNavigationBarContrast">false</item>
     </style>
 
     <!-- A page's colours, laid over its theme by KidPageActivity.getTheme after UIObject.modifyTheme (which

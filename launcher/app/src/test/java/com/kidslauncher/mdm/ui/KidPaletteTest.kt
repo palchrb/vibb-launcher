@@ -557,6 +557,9 @@ class KidPaletteTest {
         assertEquals("@bool/kid_page_light_bars", page["android:windowLightNavigationBar"])
         assertEquals("@bool/kid_page_nav_contrast", page["android:enforceNavigationBarContrast"])
         assertEquals("@style/KidPageAlertDialog", page["alertDialogTheme"])
+        // §12.2 R3: the light twin's window ground is a colour with one value, for a starting window drawn under
+        // the phone's own night mode - the same paper as the page then paints.
+        assertEquals(inLook("kid_page_ground", true), resolve("kid_paper"))
         // The bars per look. At night light icons and the system's scrim behind a 3-button navigation bar - the
         // default, what Kalender had before the design (D2); on the paper dark icons and no scrim.
         fun bools(dir: String): Map<String, String> {

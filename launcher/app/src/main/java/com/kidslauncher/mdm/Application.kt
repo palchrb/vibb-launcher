@@ -304,27 +304,22 @@ class Application : android.app.Application() {
         // Design 59 §3.9: the boot's first CE start (decide's boot-count test) stamps this boot's start with the
         // unlock, before the anchor's first sync can send it. Never throws.
         com.kidslauncher.mdm.server.PowerEvents.recordUnlock(this, com.kidslauncher.mdm.lock.AndroidLock.firstCeStartOfBoot)
-        // Design 78 §5.4: the kid's look goes to the system at every unlocked start, the first run included - before
-        // any page of this process can open. Guarded on its own: with `kid_look` unreadable the pages stay night,
-        // nothing else. A system call that failed is logged inside (PageLook's host); the pages then still draw in
-        // the stored look, and only a starting window can be the other look's.
-        val lookStart = android.os.SystemClock.elapsedRealtime()
+        // Design 78 §5.4 as §12 (revision 3) leaves it: the kid's look is read from its store at every unlocked
+        // start, the first run included - before any page of this process can open - and nothing is asked of the
+        // system (one small prefs file). Guarded on its own: with `kid_look` unreadable the pages stay night,
+        // nothing else.
         try {
             com.kidslauncher.mdm.ui.look.PageLook.atUnlockedStart(this)
         } catch (e: Exception) {
             android.util.Log.e("Application", "The kid's look wasn't read", e)
         }
-        // Its own line (one small prefs file and one binder call): "Unlocked setup took" below stays the head that
-        // design 59 F3's recipe reads - LauncherPreferences.init and initRest.
-        android.util.Log.i("Application", "The kid's look took ${android.os.SystemClock.elapsedRealtime() - lookStart} ms")
-        // Design 78 §5.3 (2026-11-11): the launcher's language is asked for again here, since Android writes the
-        // app's record to disk without it once the app has a night mode - a reboot then brought the launcher back in
-        // the phone's language. After the night mode - that order is what lets both land in one write (held by
-        // PageLookScanTest) - and right after it: the two are this process's first such calls, and the system
-        // refuses the second only if the kind of activity the process follows changed between the two binder
-        // calls. That is caught inside and repaired at Home's resume. Nothing while a call is live (Home's resume
-        // asks then). Outside "Unlocked setup took", as the look, with a line of its own: the default prefs, at
-        // most one Telecom call and one binder call.
+        // Design 78 §5.3 (2026-11-11): the launcher's language is asked for again here. Built when the app had a
+        // night mode of its own, which made Android write the app's record to disk without the languages - a reboot
+        // then brought the launcher back in the phone's language. That night mode is gone (§12, revision 3); the ask
+        // stays as built until it is decided as its own item (§12.9 point 2). A refusal is caught inside and repaired
+        // at Home's resume. Nothing while a call is live (Home's resume asks then). Outside "Unlocked setup took"
+        // (the head that design 59 F3's recipe reads - LauncherPreferences.init and initRest), with a line of its
+        // own: the default prefs, at most one Telecom call and one binder call.
         val languageStart = android.os.SystemClock.elapsedRealtime()
         try {
             com.kidslauncher.mdm.ui.LauncherLocales.atUnlockedStart(this)

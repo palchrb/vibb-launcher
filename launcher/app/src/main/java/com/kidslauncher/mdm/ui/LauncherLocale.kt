@@ -1,14 +1,15 @@
 package com.kidslauncher.mdm.ui
 
-import com.kidslauncher.mdm.ui.day.DayActivity
+import com.kidslauncher.mdm.ui.look.PageKind
 import com.kidslauncher.mdm.ui.messages.MessagesActivity
 
 /*
  * The launcher's language (design 05-ui-photos-i18n.md) - pure, tested in LauncherLocaleTest.
  * The parent sets it per device (`launcher_ui.language`); LauncherLocales applies it with
- * `LocaleManager.setApplicationLocales`. Android keeps it while the phone is up, but writes it to disk without
- * the languages once the app has a night mode too (design 78 §5.3, 2026-11-11), so [LauncherLanguage] asks for it
- * again at every unlocked start.
+ * `LocaleManager.setApplicationLocales`. [LauncherLanguage] asks for it again at every unlocked start: built when
+ * the app had a night mode of its own, which made Android write its record without the languages (design 78 §5.3,
+ * 2026-11-11). That night mode is gone (§12, revision 3); what is left of the reason is a process alive before the
+ * unlock, and whether the ask stays is its own item (§12.9 point 2).
  */
 
 /** Languages the launcher ships besides the English default. */
@@ -32,13 +33,13 @@ fun applyLocaleNow(currentTags: String, desired: String, callActive: Boolean): B
 
 /**
  * A task a refused switch closes before it asks once more, by its root activity's class name: the launcher's own
- * tasks that stay alive behind Home - Kalender's and Meldinger's. The system refuses the call while the process's
- * newest activity is of another kind of task than at the last call that got through (design 78 §5.3, 2026-11-11),
- * and a stopped page behind Home stays the newest for as long as its task lives; the switch would have created
- * its activities again anyway.
+ * tasks that stay alive behind Home - Kalender's (either look's class, `PageKind`) and Meldinger's. The system
+ * refuses the call while the process's newest activity is of another kind of task than at the last call that got
+ * through (design 78 §5.3, 2026-11-11), and a stopped page behind Home stays the newest for as long as its task
+ * lives; the switch would have created its activities again anyway.
  */
 fun languageClosesTask(rootClassName: String?): Boolean =
-    rootClassName == DayActivity::class.java.name || rootClassName == MessagesActivity::class.java.name
+    PageKind.DAY.has(rootClassName) || rootClassName == MessagesActivity::class.java.name
 
 /**
  * How long after a refused resume the language is asked for once more. The system refuses the call while the
@@ -87,7 +88,7 @@ internal class LauncherLanguage(private val host: LanguageHost) {
     private var retryClosedFor: String? = null
 
     /**
-     * Every unlocked start, right after the look's `setApplicationNightMode`: a wanted language is asked for
+     * Every unlocked start, right after the look has read its store: a wanted language is asked for
      * unconditionally, once. A reboot can bring the launcher back without it (the record on disk), and a process
      * started before the unlock never got the record; equal to the system's value the call changes nothing. "Follow
      * the phone" is asked for only while the system still holds a language. Never during a call, as every switch:

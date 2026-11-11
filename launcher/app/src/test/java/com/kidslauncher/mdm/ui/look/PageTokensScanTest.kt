@@ -109,4 +109,29 @@ class PageTokensScanTest {
         val adapter = kotlin(File(main, "java/com/kidslauncher/mdm/ui/day/DayListAdapter.kt"))
         assertEquals(2, Regex("""\.argb\((text\.)?context\)""").findAll(adapter).count())
     }
+
+    /** §12.3: the application's context follows the phone's theme, not the kid's look. */
+    @Test
+    fun `a page token is read through a page's context, never the application's`() {
+        // Kotlin names a page colour only in Kalender's classes ...
+        val all = listOf("java", "../debug/java").map { File(main, it) }.flatMap { dir ->
+            dir.walkTopDown().filter { it.isFile && it.extension == "kt" }.toList()
+        }
+        assertTrue(all.size > 100)
+        val naming = all.filter { kotlin(it).contains("R.color.kid_page_") }.map { it.path.replace(File.separatorChar, '/').substringAfter("/mdm/") }
+        assertEquals(listOf("ui/day/DayListAdapter.kt"), naming)
+        // ... and there the application's context only does the calendar's reads and writes: no resource is taken
+        // from it, nothing is inflated from it, no dot colour is asked with it.
+        val app = """(?<![.\w])(app|applicationContext|application)"""
+        val reads = Regex("$app\\s*\\.\\s*(getColor|getColorStateList|getDrawable|resources|theme|obtainStyledAttributes)\\b")
+        val given = Regex("(LayoutInflater\\.from|\\.argb|\\.getColor|\\.getColorStateList|\\.getDrawable)\\(\\s*$app\\b")
+        for (file in File(main, "java/com/kidslauncher/mdm/ui/day").listFiles { f -> f.extension == "kt" }.orEmpty()) {
+            val code = kotlin(file)
+            assertEquals(file.name, emptyList<String>(), (reads.findAll(code) + given.findAll(code)).map { it.value }.toList())
+        }
+        // Kid Settings' preview, on a night screen: inflated from PageLook.wrap, which sets the look's night bit
+        // itself whatever context it is given.
+        val settings = kotlin(File(main, "java/com/kidslauncher/mdm/ui/kidsettings/KidSettingsActivity.kt"))
+        assertTrue(settings.contains("LayoutInflater.from(PageLook.wrap(this, look)).inflate(R.layout.view_look_preview, "))
+    }
 }

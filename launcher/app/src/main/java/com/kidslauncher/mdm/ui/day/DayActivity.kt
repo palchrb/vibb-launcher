@@ -30,6 +30,7 @@ import com.kidslauncher.mdm.ui.KidHeader
 import com.kidslauncher.mdm.ui.KidInsets
 import com.kidslauncher.mdm.ui.LockActivity
 import com.kidslauncher.mdm.ui.look.KidPageActivity
+import com.kidslauncher.mdm.ui.look.PageKind
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
@@ -40,9 +41,10 @@ import java.time.temporal.ChronoUnit
  * action jumps back ("← I dag" on a later day, "I dag →" on an earlier one). A page shows nothing until its day is
  * read (no empty-day flash); the provider's change notification reloads the bound pages; a minute tick moves
  * "Pågår nå"; a new day, a time set or a zone change moves the anchor and keeps the page's date. Read-only but for
- * the kid's own events ("+", step 3). Nothing here reaches the server.
+ * the kid's own events ("+", step 3). Nothing here reaches the server. `open` for its light twin alone
+ * (`LightDayActivity`, design 78 §12.2 R2).
  */
-class DayActivity : KidPageActivity() {
+open class DayActivity : KidPageActivity() {
 
     private lateinit var binding: ActivityDayBinding
     private lateinit var adapter: DayPagerAdapter
@@ -73,6 +75,7 @@ class DayActivity : KidPageActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (isFinishing) return // The other look's class: its task is closing (KidPageActivity).
         // Dagen is a task of its own (2026-10-27): its Recents card carries Dagen's name and the launcher's icon,
         // as an app's would (the root's description serves the whole task; minSdk 34 always has the Builder).
         setTaskDescription(
@@ -259,10 +262,10 @@ class DayActivity : KidPageActivity() {
          * [day] a task already there comes back as it was (an event page on top stays, as any app's task); with one
          * (the reminder's) `FLAG_ACTIVITY_CLEAR_TOP` lands on the day view itself (singleTop: `onNewIntent`) - an
          * open "Ny avtale" above it is discarded unsaved, accepted (qa-day-task-code Q-3: before the own task the form
-         * died at every screen-off anyway).
+         * died at every screen-off anyway). The class is the applied look's (design 78 §12.2 R5).
          */
         fun intent(context: Context, day: LocalDate? = null): Intent =
-            Intent(context, DayActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK).apply {
+            Intent(context, PageKind.DAY.current()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK).apply {
                 if (day != null) {
                     putExtra(EXTRA_DAY, day.toEpochDay())
                     addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)

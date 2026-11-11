@@ -6,6 +6,10 @@
      9.9:1, light 16:1. Use these resources, not literals. -->
 <resources>
     <color name="kid_ground">#0C0C14</color>
+    <!-- The paper, a page's ground in Lys, with one value in every configuration (design 78 §12.2 R3): only
+         KidPageLightTheme's window items name it, for a starting window drawn under the phone's own night mode. A
+         page's own drawing names kid_page_ground, whose day value this equals (KidPaletteTest). -->
+    <color name="kid_paper">#F6F2EF</color>
     <!-- A slightly lifted night, the top of the call screens' gradient and their status bar. -->
     <color name="kid_ground_lift">#1C1A2A</color>
     <color name="kid_accent">#F0A884</color>

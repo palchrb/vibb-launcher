@@ -1304,6 +1304,60 @@ recording). No leg is made to pass by changing the build: a failed leg is the re
     printed. What stops the spike on the way: step 2's home-app check and step 4. Everything else is run to the end and
     reported whole; the verdict is §12.7's "Pass" list, and the architect's to draw.
 
+#### 12.7.2 The run
+
+Run on 2026-11-11: branch `spike-78-twins` at `eb398122` (a throwaway, never merged), the debug APK with SHA-256
+`00892561a28c20b69f04cbb784c436778807e7f15d4f9fc5a41cbc66f3fd54d3`, on a restored clean `jelly36` (480x854, Android 16,
+build `BE2A.250530.026.D1`, gesture navigation, not rooted). **Every gating leg passed** (A1-A8), so step 1 is reworked
+as §12.4 says. Nothing in §12.2 changed with the run. By the sheet's steps:
+
+| Step | Result |
+|---|---|
+| 2, the set-up | HOME resolves to the debug launcher; `dumpsys uimode` holds no night mode for the app; the launcher's language `nb`, the phone's `en-US` |
+| 3, the lines | Both log groups print, the server's and the Shell's |
+| 4, A2 | Pass, eight holds of eight: with the process stopped the page's area is 100.0 % `F6F2EF` in Lys and 100.0 % `0C0C14` in Mørk, in both phone themes; no ANR dialog |
+| 5, A1 and A3 | Pass, twelve recordings of twelve: one create of the look's class when the task is made; a bring-forward from the tile shows a snapshot with no create, one from the glance row a solid splash; no relaunch line |
+| 6, A5 | Pass both ways: the `.day` task left Recents about 350-450 ms after the tap; the next open made one `.day` task with the new look's class alone; no `E PageLook` |
+| 7, A6 and A7 | A6 passes on the routes that could be run (below). A7 passes: `nb` after both boots, Home created once, no relaunch line |
+| 8, A4 | Pass: `cmd uimode night no` and `yes` and Battery Saver, in front of Home and behind it: no page created, no relaunch line, the pictures before and after identical; a picker and newly bound rows after the flip in the page's look |
+| 9, leg B | No starting window either way. Mørk with the phone light: right. Lys with the phone dark: a finding (below) |
+| 10, leg C (does not gate) | Pass both ways: `LightDayActivity` with theme `7f130134` and colour `fff6f2ef`; `DayActivity` with `7f130135` and `ff0c0c14`; the entry had no starting window |
+| 11, A8 | Pass: 334,055 log lines, none with `Can't change activity type once set`, no `E PageLook` |
+
+Over the whole pass the system drew 95 starting windows for a page, none against a rule: 59 splashes (29 in the light
+theme, 30 in the night one) and 36 snapshots (20 light, 16 night).
+
+**Step 7's card routes could not be run as written.** After each reboot the system restored the `.day` task, and it
+left Recents about 5 s after the kiosk locked again - before a card could be opened. After `kill -9` the task stays in
+`dumpsys activity recents`, but the overview shows no card for it. Run instead, in each look: from Home's tile, and with
+`adb shell am task focus <id>` on the task that was still listed, then the tile again. Each time the look's class was
+created again, with a splash in its theme and colour and no frame of the other look. A tap on the card itself was not
+seen: `am task focus` stood in for it.
+
+**Leg B's finding, and what step 1 does about it.** For leg B the spike made `KidSoundPickerActivity` a page on
+`KidPageTheme`. In Lys with the phone dark it showed its night ground (97.6 % flat night, the largest paper share
+0.2 %) under the light look's ink (the title `FF1B1B1F`, dark status-bar icons): the picker's layout paints
+`@color/kid_ground`, a night token, and only the theme and the text followed the look. So the mechanism for a one-class
+page in Home's task holds (no starting window, R9), and the layouts are what is missing. Step 1 builds nothing for it:
+the sound picker stays what it is on `kid-look-1`, a non-page activity pinned to night with a night theme (§12.4's
+"stays" row), so it is whole night in both looks and both phone themes. For step 2 the finding is §5.1's rule: a list
+that becomes a page names page tokens in its layouts before it takes the page's theme.
+
+**Noted, not gating.**
+
+- The status bar's ink on the Lys starting window is white for about 125-345 ms over seven openings (step 1: 165-498).
+- 3-button navigation in Lys with the phone dark: the buttons are white on the paper, all but invisible (§12.9 point
+  4). Changing the navigation overlay relaunched the page in front - the system's own, and the pass's only relaunch
+  line.
+- No force-invert switch on the image.
+- Whether a bring-forward shows a snapshot or a splash depends on whether the phone's theme changed while the task was
+  behind; both are in the task's own look.
+- The unlocked start without the two system calls (the spike had the language ask switched off, step 1 keeps it as
+  built): the look 122 ms on the first start after the install, then 3 ms and 6 ms; the language 0 ms.
+- A picker's buttons (`VibbPickerDialog`) have dark ink in Mørk in both phone themes: not an effect of a flip and not
+  the spike's, noted for step 2's pass.
+- 18 ANR lines of the system's at the boots, none the launcher's.
+
 ### 12.8 What this replaces
 
 | Where | Read it as |

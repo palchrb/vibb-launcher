@@ -46,8 +46,8 @@ object LauncherLocales {
         }
     }
 
-    /** `Application.initUnlocked`, right after `PageLook.atUnlockedStart`: the night mode first is the order in
-     * which Android writes both to disk. */
+    /** `Application.initUnlocked`, right after `PageLook.atUnlockedStart` (which asks nothing of the system since
+     * design 78's revision 3, so the order no longer matters). */
     fun atUnlockedStart(context: Context) {
         try {
             language(context)?.atUnlockedStart()

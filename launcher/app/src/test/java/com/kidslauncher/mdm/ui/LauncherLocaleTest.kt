@@ -2,6 +2,7 @@ package com.kidslauncher.mdm.ui
 
 import com.kidslauncher.mdm.ui.day.DayActivity
 import com.kidslauncher.mdm.ui.day.EventActivity
+import com.kidslauncher.mdm.ui.day.LightDayActivity
 import com.kidslauncher.mdm.ui.messages.MessagesActivity
 import com.kidslauncher.mdm.ui.messages.ThreadActivity
 import org.junit.Assert.assertEquals
@@ -234,6 +235,8 @@ class LauncherLocaleTest {
     @Test
     fun `a refused switch closes Kalender's and Meldinger's tasks, by their roots, and no other`() {
         assertTrue(languageClosesTask(DayActivity::class.java.name))
+        // Kalender's task in Lys has the light twin as its root (design 78 §12.2).
+        assertTrue(languageClosesTask(LightDayActivity::class.java.name))
         assertTrue(languageClosesTask(MessagesActivity::class.java.name))
         val others = listOf(
             null,

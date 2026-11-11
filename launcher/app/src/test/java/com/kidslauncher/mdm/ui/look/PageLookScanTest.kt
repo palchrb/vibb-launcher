@@ -7,8 +7,9 @@ import org.junit.Test
 import java.io.File
 
 /**
- * Design 78 §5.3 and §6, as source scans: who touches the kid's look (stored in CE prefs, so never before the first
- * unlock), and that every screen that is not a page is night as a constant.
+ * Design 78 §5.3, §6 and §12.2, as source scans: who touches the kid's look (stored in CE prefs, so never before the
+ * first unlock), that every screen that is not a page is night as a constant, that nothing asks the system for a
+ * night mode (R1), and that a page's class is chosen in one place and never leaves the process (R5, R7).
  */
 class PageLookScanTest {
     private val java = listOf("src/main/java", "app/src/main/java").map(::File).first { it.isDirectory }
@@ -17,9 +18,17 @@ class PageLookScanTest {
         .replace(Regex("/\\*.*?\\*/", RegexOption.DOT_MATCHES_ALL), "")
         .replace(Regex("//[^\\n]*"), "")
 
-    private val sources: Map<String, String> by lazy {
-        java.walkTopDown().filter { it.isFile && (it.extension == "kt" || it.extension == "java") }
-            .associate { it.relativeTo(java).path.replace(File.separatorChar, '/') to code(it) }
+    private fun sourcesOf(dir: File): Map<String, String> =
+        dir.walkTopDown().filter { it.isFile && (it.extension == "kt" || it.extension == "java") }
+            .associate { it.relativeTo(dir).path.replace(File.separatorChar, '/') to code(it) }
+
+    private val sources: Map<String, String> by lazy { sourcesOf(java) }
+
+    /** The main source set and the debug one, which a debug build compiles in. */
+    private val shipped: Map<String, String> by lazy {
+        val debug = File(java, "../../debug/java")
+        assertTrue(debug.isDirectory)
+        sources + sourcesOf(debug).mapKeys { "debug:${it.key}" }
     }
 
     @Test
@@ -42,12 +51,11 @@ class PageLookScanTest {
         assertEquals(1, Regex("""\bPageLook\b""").findAll(app).count())
         val unlocked = app.substringAfter("private fun initUnlocked() {").substringBefore("\n    }\n")
         assertTrue(unlocked.contains("com.kidslauncher.mdm.ui.look.PageLook.atUnlockedStart(this)"))
-        // The launcher's language is asked for right after it, once, and before the rest of the setup: Android
-        // writes both to disk only when the language call follows the night mode's (design 78 §5.3, 2026-11-11).
+        // The launcher's language is still asked for there, once, before the rest of the setup - as built, its own
+        // item now (§12.9); its order against the look no longer matters, the look asks nothing of the system.
         assertEquals(1, app.split("LauncherLocales.atUnlockedStart(").size - 1)
-        val look = unlocked.indexOf("PageLook.atUnlockedStart(this)")
         val language = unlocked.indexOf("com.kidslauncher.mdm.ui.LauncherLocales.atUnlockedStart(this)")
-        assertTrue(look in 0 until language && language < unlocked.indexOf("val setupStart"))
+        assertTrue(language in 0 until unlocked.indexOf("val setupStart"))
         // Home: once, in onResume, after the lock's dark return.
         val home = sources.getValue("$root/ui/HomeActivity.kt")
         assertEquals(1, Regex("""\bPageLook\b""").findAll(home).count())
@@ -72,7 +80,8 @@ class PageLookScanTest {
     @Test
     fun `a page takes its look, its colours and its place in the registry from its base class`() {
         val page = sources.getValue("com/kidslauncher/mdm/ui/look/KidPageActivity.kt")
-        assertTrue(page.contains("override fun lookNightMode(): Int = PageLook.pageNightMode()"))
+        // The look of the class, not the applied one: a window and its content never disagree (§12.2 R4).
+        assertTrue(page.contains("override fun lookNightMode(): Int = PageLook.pageNightMode(javaClass)"))
         // The page colours over the launcher's theme, forced: without `true` the theme's own night values stay.
         assertTrue(page.contains("override fun getTheme(): Resources.Theme? = super.getTheme()?.also { it.applyStyle(R.style.PageColors, true) }"))
         // The registry of live pages (what a change finishes) and the started count (when a change may run).
@@ -90,6 +99,15 @@ class PageLookScanTest {
         // Kid Settings' preview is drawn as a page in a look: the same colours, forced the same way.
         val look = sources.getValue("com/kidslauncher/mdm/ui/look/PageLook.kt")
         assertTrue(look.contains("wrapped.theme.applyStyle(R.style.PageColors, true)"))
+        // §12.2 R6's check: a page of the other look's class closes its task before it sets any content - asked
+        // once the activity exists, and each page's own onCreate stops there.
+        val create = page.substringAfter("override fun onCreate(savedInstanceState: Bundle?) {").substringBefore("\n    }\n")
+        assertTrue(create.indexOf("super.onCreate(savedInstanceState)") in 0 until create.indexOf("PageLook.closeIfOtherLook(this)"))
+        for (name in listOf("DayActivity", "EventActivity", "EventEditActivity")) {
+            val own = sources.getValue("com/kidslauncher/mdm/ui/day/$name.kt")
+                .substringAfter("override fun onCreate(savedInstanceState: Bundle?) {")
+            assertTrue(name, own.trimStart().startsWith("super.onCreate(savedInstanceState)\n        if (isFinishing) return"))
+        }
     }
 
     @Test
@@ -115,8 +133,49 @@ class PageLookScanTest {
         assertEquals(setOf("$root/ui/look/KidPageActivity.kt"), overriding.toSet())
         val pages = sources.filterValues { Regex(""":\s*KidPageActivity\(\)""").containsMatchIn(it) }.keys
         assertEquals(setOf("$root/ui/day/DayActivity.kt", "$root/ui/day/EventActivity.kt", "$root/ui/day/EventEditActivity.kt"), pages.toSet())
-        // Nothing else sets a night mode: no setDefaultNightMode, and the app's own only in PageLook.
-        assertTrue(sources.values.none { it.contains("setDefaultNightMode") })
-        assertEquals(listOf("$root/ui/look/PageLook.kt"), sources.filterValues { it.contains("setApplicationNightMode") }.keys.toList())
+        // Nothing else sets a night mode: no setDefaultNightMode, and no night mode of the app's (§12.2 R1) - the
+        // system keeps that one per package and writes it into the same record as the launcher's language.
+        assertEquals(emptyList<String>(), shipped.filterValues { it.contains("setDefaultNightMode") || it.contains("setApplicationNightMode") }.keys.toList())
+    }
+
+    @Test
+    fun `a page's class is named in the table alone, and a start's intent goes nowhere but into the start`() {
+        val root = "com/kidslauncher/mdm"
+        // R5: neither a night class nor a twin as a class literal anywhere else - the intent builders and the two
+        // task rules ask the table. (`is DayActivity` holds for a twin and stays allowed.)
+        val literal = Regex("""\b(Light)?(Day|Event|EventEdit)Activity::class""")
+        assertEquals(listOf("$root/ui/look/PageKind.kt"), shipped.filterValues { literal.containsMatchIn(it) }.keys.toList())
+        assertEquals(6, literal.findAll(shipped.getValue("$root/ui/look/PageKind.kt")).count())
+        // The table's users: the three builders, the look's own task rule and the language's.
+        val users = shipped.filterValues { Regex("""\bPageKind\b""").containsMatchIn(it) }.keys.filterNot { it.startsWith("$root/ui/look/") }
+        assertEquals(
+            setOf("$root/ui/day/DayActivity.kt", "$root/ui/day/EventActivity.kt", "$root/ui/day/EventEditActivity.kt", "$root/ui/LauncherLocale.kt"),
+            users.toSet(),
+        )
+        assertTrue(shipped.getValue("$root/ui/look/PageLook.kt").contains("fun closesTask(rootClassName: String?): Boolean = PageKind.DAY.has(rootClassName)"))
+        assertTrue(shipped.getValue("$root/ui/LauncherLocale.kt").contains("PageKind.DAY.has(rootClassName) || rootClassName == MessagesActivity::class.java.name"))
+        // One chooser: each builder names the applied look's class, and nothing else asks for one.
+        val chosen = mapOf(
+            "$root/ui/day/DayActivity.kt" to listOf("Intent(context, PageKind.DAY.current())"),
+            "$root/ui/day/EventActivity.kt" to listOf("Intent(context, PageKind.EVENT.current())"),
+            "$root/ui/day/EventEditActivity.kt" to listOf("Intent(context, PageKind.EVENT_EDIT.current())", "Intent(context, PageKind.EVENT_EDIT.current())"),
+        )
+        val uses = Regex("""Intent\(context, PageKind\.[A-Z_]+\.current\(\)\)|PageKind\.DAY\.has\(rootClassName\)|import com\.kidslauncher\.mdm\.ui\.look\.PageKind\n""")
+        for ((file, text) in shipped.filterKeys { !it.startsWith("$root/ui/look/") }) {
+            assertEquals(file, chosen[file].orEmpty(), uses.findAll(text).map { it.value }.filter { it.startsWith("Intent(") }.toList())
+            assertTrue(file, "PageKind" !in uses.replace(text, ""))
+        }
+        // R7: a builder's intent is handed straight to startActivity, every time - never kept, never wrapped in a
+        // PendingIntent, never given to a notification or to the system as a preferred activity. So no variant's
+        // name outlives the look it was built in, outside the process.
+        val builder = """(DayActivity\.intent|EventActivity\.intent|EventEditActivity\.newIntent|EventEditActivity\.editIntent)\("""
+        var starts = 0
+        for ((file, text) in shipped) {
+            val built = Regex("\\b$builder").findAll(text).count()
+            val started = Regex("\\bstartActivity\\((com\\.kidslauncher\\.mdm\\.ui\\.day\\.)?$builder").findAll(text).count()
+            assertEquals(file, built, started)
+            starts += started
+        }
+        assertEquals(6, starts)
     }
 }
