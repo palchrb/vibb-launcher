@@ -43,6 +43,11 @@
 // `back: true`, with the parent's place record: the parent then opens where it was left, over its
 // #fragment. A parent never left in this session, a back link to another page than the one it came
 // from, a link opened directly or no JS: the plain link, its fragment or the top, as before.
+// A save's answer on another path takes the form page's entry (an Add's `/new` -> `/5`), never one
+// that names the answer itself (a child's Delete back to its parent keeps the parent's); a link load
+// with no referrer of this origin (a notification, a typed address) forgets the page's entry. Pages
+// are compared without the one-shot query words a save adds (`notice`, `app`, `saved`), which
+// reconnect.js and auto-reload.js take off the address again.
 (function (root) {
     "use strict";
     var KEY = "handy-scroll";
@@ -51,6 +56,8 @@
     var PLACE_KEY = "handy-place";
     var MAX_PLACES = 50;
     var FROM_KEY = "handy-from";
+    // A save's one-shot words in the address: not part of which page it is.
+    var ONE_SHOT = { notice: 1, app: 1, saved: 1 };
 
     function has(tops, id) {
         return Object.prototype.hasOwnProperty.call(tops, id) && typeof tops[id] === "number";
@@ -123,14 +130,24 @@
         return withEntry(places, key, { y: y, t: t });
     }
 
-    /** The referrer's path + search when it is a page of this origin, else null. */
+    /** A page's key: its path and its query without a save's one-shot words. */
+    function pageKey(path, search) {
+        var parts = String(search || "").replace(/^\?/, "").split("&");
+        var kept = [];
+        for (var i = 0; i < parts.length; i++) {
+            if (parts[i] && ONE_SHOT[parts[i].split("=")[0]] !== 1) kept.push(parts[i]);
+        }
+        return path + (kept.length ? "?" + kept.join("&") : "");
+    }
+
+    /** The referrer's page key when it is a page of this origin, else null. */
     function referrerKey(win) {
         var ref = String((win.document && win.document.referrer) || "");
         if (!ref || typeof URL !== "function") return null;
         try {
             var url = new URL(ref);
             if (win.location.origin && url.origin !== win.location.origin) return null;
-            return url.pathname + url.search;
+            return pageKey(url.pathname, url.search);
         } catch (e) {
             return null;
         }
@@ -231,7 +248,7 @@
         }
 
         // The place record: this page's position when it goes away, for Back and reload.
-        var placeKey = win.location.pathname + (win.location.search || "");
+        var placeKey = pageKey(win.location.pathname, win.location.search);
         function readMap(key) {
             try {
                 var map = JSON.parse(storage.getItem(key) || "null");
@@ -285,16 +302,34 @@
         var place = null;
         var type = navigationType(win);
 
-        // Where this page was opened from: a link from another page sets it; a save's answer (the
-        // same path), a return by a child's back link, Back/Forward and a reload keep it.
-        var backHere = !!(saved && saved.back === true && saved.path === win.location.pathname);
+        // Where this page was opened from: a link from another page sets it, one with no referrer of
+        // this origin clears it; a save's answer takes the form page's (another path) or keeps its
+        // own; a return by a child's back link, Back/Forward and a reload keep it.
+        var here = win.location.pathname;
+        var backHere = !!(saved && saved.back === true && saved.path === here);
+        var savedAge = saved && typeof saved.t === "number" ? now() - saved.t : -1;
+        var answer = !!(saved && !saved.back && typeof saved.path === "string" && savedAge >= 0 && savedAge < MAX_AGE_MS);
         if (storage && type === "navigate" && !backHere) {
-            var from = referrerKey(win);
-            if (from !== null && from.split("?")[0] !== win.location.pathname) {
-                try {
-                    storage.setItem(FROM_KEY, JSON.stringify(withEntry(readMap(FROM_KEY), win.location.pathname, { key: from, t: now() })));
-                } catch (e) {}
+            var froms = readMap(FROM_KEY);
+            var next;
+            if (answer) {
+                var formFrom = froms[saved.path];
+                if (saved.path !== here && formFrom && typeof formFrom.key === "string" && formFrom.key.split("?")[0] !== here) {
+                    next = { key: formFrom.key, t: now() };
+                }
+            } else {
+                var from = referrerKey(win);
+                if (from === null) next = null;
+                else if (from.split("?")[0] !== here) next = { key: from, t: now() };
             }
+            try {
+                if (next) {
+                    storage.setItem(FROM_KEY, JSON.stringify(withEntry(froms, here, next)));
+                } else if (next === null && Object.prototype.hasOwnProperty.call(froms, here)) {
+                    delete froms[here];
+                    storage.setItem(FROM_KEY, JSON.stringify(froms));
+                }
+            } catch (e) {}
         }
         // A tap on the back link to the page this one came from: that page's place goes with it.
         doc.addEventListener("click", function (e) {
@@ -303,7 +338,7 @@
             var link = backLinkOf(e.target);
             if (!link || typeof link.pathname !== "string") return;
             if (link.host !== undefined && win.location.host !== undefined && link.host !== win.location.host) return;
-            var to = link.pathname + (link.search || "");
+            var to = pageKey(link.pathname, link.search);
             var came = readMap(FROM_KEY)[win.location.pathname];
             var left = readPlaces()[to];
             if (!came || came.key !== to || !left || typeof left.y !== "number") return;

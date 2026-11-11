@@ -589,13 +589,19 @@ test("a page opened by a link remembers the page it came from; its saves, a retu
         install(saved.win, () => 20);
         assert.deepStrictEqual(fromOf(saved), came, referrer);
     }
-    // Back, Forward and a reload; no referrer, another origin's, one that doesn't read.
-    for (const [navType, referrer] of [["back_forward", "/x"], ["reload", "/x"], ["navigate", ""],
-        ["navigate", "https://elsewhere.example/apps"], ["navigate", "not an address"]]) {
-        const w = opened({ path: "/devices/3/apps", navType }, referrer);
+    // Back, Forward and a reload keep it.
+    for (const navType of ["back_forward", "reload"]) {
+        const w = opened({ path: "/devices/3/apps", navType }, "/x");
         w.store.set(FROM_KEY, JSON.stringify(came));
         install(w.win, () => 20);
-        assert.deepStrictEqual(fromOf(w), came, `${navType} ${referrer}`);
+        assert.deepStrictEqual(fromOf(w), came, navType);
+    }
+    // A link load with no referrer of this origin (a notification, a typed address) forgets it (code QA L2).
+    for (const referrer of ["", "https://elsewhere.example/apps", "not an address"]) {
+        const w = opened({ path: "/devices/3/apps", navType: "navigate" }, referrer);
+        w.store.set(FROM_KEY, JSON.stringify(Object.assign({ "/apps": { key: "/devices", t: 1 } }, came)));
+        install(w.win, () => 20);
+        assert.deepStrictEqual(fromOf(w), { "/apps": { key: "/devices", t: 1 } }, referrer);
     }
     // Back on it by its own child's back link: it still came from Apps.
     const returned = opened({
@@ -605,6 +611,53 @@ test("a page opened by a link remembers the page it came from; its saves, a retu
     returned.store.set(FROM_KEY, JSON.stringify(came));
     install(returned.win, () => 20);
     assert.deepStrictEqual(fromOf(returned), came);
+});
+
+// Code QA M2: a save's answer on another path, and the one-shot words a save adds to an address.
+test("a save's answer on another path takes the form page's entry, never one naming itself", () => {
+    const froms = {
+        "/schedules/rules/new": { key: "/schedules", t: 1 },
+        "/devices/3/calendar/rules/7": { key: "/devices/3/calendar", t: 2 },
+        "/devices/3/calendar": { key: "/devices/3", t: 3 },
+    };
+    // An Add: `/new` posts and the answer is the rule's own page - it came from Time Rules too.
+    const added = opened({
+        path: "/schedules/rules/5", search: "?saved=1", navType: "navigate",
+        stored: { path: "/schedules/rules/new", y: 0, t: 15, tops: {} },
+    }, "/schedules/rules/new");
+    added.store.set(FROM_KEY, JSON.stringify(froms));
+    install(added.win, () => 20);
+    assert.deepStrictEqual(fromOf(added)["/schedules/rules/5"], { key: "/schedules", t: 20 });
+    // A child's Delete back to its parent: the parent keeps where it came from.
+    const deleted = opened({
+        path: "/devices/3/calendar", search: "?notice=deleted", hash: "#rules", navType: "navigate",
+        stored: { path: "/devices/3/calendar/rules/7", y: 0, t: 15, tops: {} },
+    }, "/devices/3/calendar/rules/7");
+    deleted.store.set(FROM_KEY, JSON.stringify(froms));
+    install(deleted.win, () => 20);
+    assert.deepStrictEqual(fromOf(deleted), froms);
+    // An old form record is no answer: the referrer counts.
+    const old = opened({
+        path: "/devices/3/calendar", navType: "navigate", stored: { path: "/devices/3/calendar/rules/7", y: 0, t: 0, tops: {} },
+    }, "/devices/3/calendar/rules/7");
+    install(old.win, () => MAX_AGE_MS);
+    assert.deepStrictEqual(fromOf(old)["/devices/3/calendar"], { key: "/devices/3/calendar/rules/7", t: MAX_AGE_MS });
+});
+
+test("pages are compared without a save's one-shot words (notice, app, saved)", () => {
+    // The parent was opened with a notice, left with it, and the child's back link names it bare.
+    const child = opened({ path: "/devices/3/calendar/link/abc", navType: "navigate" }, "/devices/3/calendar?notice=added&app=x&saved=1");
+    child.store.set(PLACE_KEY, JSON.stringify({ "/devices/3/calendar": { y: 260, t: 5 } }));
+    install(child.win, () => 10);
+    assert.deepStrictEqual(fromOf(child)["/devices/3/calendar/link/abc"], { key: "/devices/3/calendar", t: 10 });
+    child.listeners.click(chevron("/devices/3/calendar", "?saved=1").tap);
+    assert.deepStrictEqual(JSON.parse(child.store.get(KEY)),
+        { path: "/devices/3/calendar", href: "/devices/3/calendar", y: 260, t: 10, back: true });
+    // The parent's own place goes under the bare key, whatever words its address carried.
+    const parent = opened({ mode: "main", path: "/devices/3/calendar", search: "?notice=added&span=24", navType: "navigate", scrollY: 70 }, "");
+    install(parent.win, () => 30);
+    parent.winListeners.pagehide();
+    assert.deepStrictEqual(JSON.parse(parent.store.get(PLACE_KEY)), { "/devices/3/calendar?span=24": { y: 70, t: 30 } });
 });
 
 both("the back link to the page it came from carries that page's place, which wins over its #fragment", (mode) => {

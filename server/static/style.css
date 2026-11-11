@@ -615,18 +615,35 @@ input[type="radio"] {
     flex: 1 0 auto;
 }
 
+/* main always has 1 px to scroll (code QA M1): on a page that fits the screen iOS would otherwise
+   bounce the document, whose canvas is body's --bg - the light field again. With something to
+   scroll, every bounce is main's own, on every iOS since 14 (overscroll-behavior on the document
+   needs 16, and a night canvas would show at the bottom too). */
+.container:not(.container-fixed)::after {
+    content: "";
+    flex: none;
+    height: 1px;
+}
+
 /* A scrolling band lies over the sheet's top (over the cap below, under the tab bar): its 22 px
    foot is night only outside the sheet's two rounded corners and clear between them, so the sheet
    shows as before, and while the band scrolls away its foot keeps the cap's curve covered until
-   the sheet's own edge has passed it - the two hand over with no seam. */
+   the sheet's own edge has passed it - the two hand over with no seam. Only its contents take taps
+   (code QA L1): the foot lies over the top of the sheet's first box (Devices' Attention row, the
+   summary's picture), which keeps its taps there. */
 .container > .band {
     position: relative;
     z-index: 8;
     flex: none;
+    pointer-events: none;
     background:
         radial-gradient(circle at 100% 100%, transparent 22px, var(--night) 22.5px) left bottom / 22px 22px no-repeat,
         radial-gradient(circle at 0 100%, transparent 22px, var(--night) 22.5px) right bottom / 22px 22px no-repeat,
         linear-gradient(var(--night), var(--night)) left top / 100% calc(100% - 22px) no-repeat;
+}
+
+.container > .band > * {
+    pointer-events: auto;
 }
 
 /* The cap (the user's mockup, 2026-11-11): once the band has scrolled away the sheet keeps its

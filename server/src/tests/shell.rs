@@ -1298,6 +1298,11 @@ fn the_app_shell_scrolls_main_not_the_document() {
          background: linear-gradient(var(--night) 50%, var(--bg) 50%);"
     );
     assert_eq!(block(".container > .sheet"), "flex: 1 0 auto;");
+    // main always has 1 px to scroll, so a short page's bounce is main's, never the document's.
+    assert_eq!(
+        block(".container:not(.container-fixed)::after"),
+        "content: \"\"; flex: none; height: 1px;"
+    );
     // Its last 22 px lie under the rounded top of the next box: the sheet, or an editor's main.
     assert!(band.contains("margin-bottom: -22px;"), "{band}");
     // A scrolling band lies over the sheet's top and the cap, night only outside the sheet's corners.
@@ -1305,12 +1310,15 @@ fn the_app_shell_scrolls_main_not_the_document() {
     for needle in [
         "position: relative;",
         "z-index: 8;",
+        "pointer-events: none;",
         "radial-gradient(circle at 100% 100%, transparent 22px, var(--night) 22.5px) left bottom / 22px 22px no-repeat,",
         "radial-gradient(circle at 0 100%, transparent 22px, var(--night) 22.5px) right bottom / 22px 22px no-repeat,",
         "linear-gradient(var(--night), var(--night)) left top / 100% calc(100% - 22px) no-repeat;",
     ] {
         assert!(over.contains(needle), "the band's foot: {needle} in {over}");
     }
+    // Its contents take taps; the foot over the sheet's first box doesn't.
+    assert_eq!(block(".container > .band > *"), "pointer-events: auto;");
     // The cap (the user's mockup, 2026-11-11): the sheet's rounded top stays under the status bar
     // once the band has gone - sticky in main, a pseudo-element (never the status bar's colour),
     // taking no room or tap, under the band. Not on an editor.

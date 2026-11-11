@@ -1889,8 +1889,13 @@ pointer here.
     `.container > .sheet` grows (`flex: 1 0 auto`), so a short page's sheet still covers `main`'s lower half and the
     ground shows nowhere else. The pull-to-refresh pages (Devices, a phone's summary) are the same `main`: before a
     pull takes over the bounce shows night, and the arrow comes down over the sheet as before. An editor's `main` is
-    the sheet itself and bounces inside its rounded top on `--bg`, as before. Seen only in Chromium with the content
-    moved by hand (neither Chromium nor WebKit here has a rubber band): the iPhone has the last word.
+    the sheet itself and bounces inside its rounded top on `--bg`, as before. `main` always has 1 px to scroll
+    (`.container:not(.container-fixed)::after`, code QA M1): on a page that fits the screen (Add Phone, the setup code,
+    Spotify done, a short sub-page on a tall iPhone) iOS would otherwise bounce the document, whose canvas is `body`'s
+    `--bg`. Chosen over `overscroll-behavior` on the document (iOS 16 and later only) and a night canvas (which would
+    show at the bottom too): with something to scroll every bounce is `main`'s, on every iOS since 14. Seen only in
+    Chromium with the content moved by hand (neither Chromium nor WebKit here has a rubber band): the iPhone has the
+    last word.
   - *The back link's place*: the band's back link is a plain link, often to the row it came from (`/apps#phone-3`,
     `/apps/tracked/2#phone-3`, `/music#spotify`, `/music#entry-4`, `/account#passkey-only`,
     `/devices/3/calendar#sources`, `/devices/locate?device=3#zones`, Advanced's `#connection`, the summary's
@@ -1904,7 +1909,13 @@ pointer here.
     without a fragment, after saves on the child page and through a child's child too. A parent not left in this
     session, a back link to another page than the one it came from (the target depends on where the page was opened,
     `apps_nav`), a page opened directly or no JS: the plain link, its fragment or the top, as before. Not
-    `history.back()`: after a save on the child the previous entry is the child itself.
+    `history.back()`: after a save on the child the previous entry is the child itself. Code QA M2/L2: a save's
+    answer on another path (a form record of another path came with the load) takes the form page's entry - an Add's
+    `/schedules/rules/new` -> `/schedules/rules/5` keeps Time Rules - unless that entry names the answer itself (a
+    child's Delete back to its parent keeps the parent's own); a link load with no referrer of this origin (a
+    notification's `client.navigate`, a typed address) forgets the page's entry; and pages are compared - and their
+    places keyed - without a save's one-shot query words `notice`, `app` and `saved`, which reconnect.js's reload and
+    auto-reload.js take off the address again.
   - *The ring on the row*: WebKit and Chromium focus a fragment's element when it can take focus (a row that is a
     link) and count that focus as `:focus-visible` (measured: the row is `document.activeElement` and matches
     `:focus-visible` in both), so the row wore the keyboard's 2 px tint ring, clipped by its group's rounded corners.
@@ -1919,7 +1930,8 @@ pointer here.
     corners - so nothing of a row shows outside the curve (in a browser tab, without an inset, the corners alone at
     the top). A pseudo-element: WebKit never takes it for the status bar's colour (`.top-strip`). It takes no tap
     (`pointer-events: none`), and its corners' night reaches 1 px into the 16 px column, so it covers no tap target.
-    Its z-index is 7 and a scrolling band lies over it (`.container > .band`: `position: relative; z-index: 8`),
+    Its z-index is 7 and a scrolling band lies over it (`.container > .band`: `position: relative; z-index: 8`; only
+    its children take taps, `pointer-events`, so its foot never catches a tap on the sheet's first box, code QA L1),
     with its 22 px foot drawn night only outside the sheet's two corners (two `radial-gradient`s under a
     `linear-gradient` of the band's night): the sheet shows between them as before, and the foot covers the cap's
     curve until the sheet's own edge has passed it, so the two hand over with no seam (seen with the sheet's top 10
@@ -1934,7 +1946,7 @@ pointer here.
     fragment, with a query; every case that carries nothing), `jstest/focus-mode.test.js` (the fragment's mark),
     `shell::the_app_shell_scrolls_main_not_the_document` (`main`'s ground and column, the sheet's growth, the band's
     foot and z-index, the cap and its edge, the no-ring rule, no `border-image` left).
-- **Cache**: `style.css?v=94`, `scroll-restore.js?v=7`, `focus-mode.js?v=3`.
+- **Cache**: `style.css?v=95`, `scroll-restore.js?v=8`, `focus-mode.js?v=3`.
 - **Tests**: the two shell tests above; `the_app_shell_scrolls_main_not_the_document` pins the band's, the
   sheet's, `.container-fixed`'s and the flash's numbers and the form's `flow-root`;
   `the_tab_pages_open_on_their_large_title` reads each tab's band (mark, name, the bell last);
