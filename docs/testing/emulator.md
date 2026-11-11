@@ -4009,7 +4009,8 @@ task in lock task mode` (12:48:32.313, 12:49:00.712, 12:49:04.856, 12:49:14.336)
 brings the same task back; the overview shows no card for it (six tries in both looks). With Home as the root, Back on
 the day view finishes the task as it should. The state ends when the task is removed (a change of look, with finding
 1's effect) or at a reboot. **Inferred** older than design 78: main's manifest already gives the day view the task of
-its own (`taskAffinity` `.day`); main was not run for it.
+its own (`taskAffinity` `.day`); main was not run for it. **Both findings: cause and fix in §6ai** (Home's record
+removed at the kill; reproduced on main's tip, gone with `stateNotNeeded`).
 
 **A change of language with an event's page in front** (English, then Norwegian, saved in the PWA): nothing on the
 page for 6 s; at the Home key two `W LauncherLocales: Couldn't set the launcher language` (12:27:59.732 and .748;
@@ -4060,6 +4061,64 @@ one language change each way were run instead); C-F; a release build; anything o
 eye (Kalender's day view, an event and the edit page and kid Settings' "Utseende" in both looks, Home once) are in the
 session's `scratchpad/kid-look-2/shots/`; the pages' times are in the 12-hour form there ("8:30 a.m.": the emulator's
 en-US system, inferred), which is not the look's.
+
+## 6ai. Home stays the lock task's root after a process kill (kiosk-root, 2026-11-11)
+
+§6ah's two findings under the kiosk, fixed by `android:stateNotNeeded` on `HomeActivity`
+(`docs/notes/launcher/kiosk-escapes-and-updates.md`, "Home stays the lock-task root after a process death").
+
+**Setup**: `jelly36` as §6ah left it (the debug launcher as Device Owner, enrolled, the kiosk on, the launcher's own PIN
+lock, gesture navigation), the test server §6ah used; no `adb root` (a `user` build): the kill is the launcher's own uid.
+Kalender is the tile at (388, 312), Meldinger (240, 312), kid Settings (240, 616), its Mørk/Lys at (145|335, 546), a
+page's own back button (58, 84). Each check:
+
+```sh
+adb install -r app-debug.apk                       # the build under test, then unlock
+adb shell input keyevent 3; adb shell input tap 388 312   # Kalender (or 240 312, Meldinger)
+adb shell input keyevent 3                          # Home in front, the page's task stopped behind it
+adb shell dumpsys activity activities | grep -E "mLockTaskModeState|mLockTaskModeTasks" -A3
+adb shell "run-as me.vibb.launcher.debug sh -c 'kill -9 \$(pidof me.vibb.launcher.debug)'"
+# the PIN lock comes back: unlock, Home; the lock task's order again
+adb shell input tap 388 312; adb shell input keyevent 4   # the page from its tile, Back (or tap 58 84)
+adb logcat -d | grep "Not finishing task in lock task mode"
+adb logcat -b events -d | grep -E "wm_(finish|destroy|restart|create)_activity|wm_task_(created|removed)"
+# the change of look: after the kill, Home, kid Settings (240 616), tap the other look, recorded with screenrecord
+```
+
+**Before, on main's tip (610eec36)**: both findings reproduced. The kill with Home in front:
+`wm_finish_activity [0,137220399,103,..HomeActivity,proc died without state saved]` 13:50:16.460, `wm_task_created 106`
+and a new Home record in it, the old Home task 103 removed 3 s later; the lock task's order went from `#0 #103 home,
+#1 #105 .day` to `#0 #105 .day, #1 #106 home`. Kalender from the tile, then the Back key and the page's own button:
+`Not finishing task in lock task mode` 13:50:45.937 and 13:50:49.008, the day view still in front. Kid Settings, the
+tap on Mørk: `finish-and-remove-task` of the day view, then `wm_destroy_activity [.., HomeActivity,
+finish-imm:clear-task-all]` and `wm_finish_activity [.., KidSettingsActivity, clear-task-all]` at 13:50:57.716, a new
+Home task 108 at once, Home in front at the read 3 s after the tap; the look stored, `LOCKED` with task 108 alone.
+
+**After, the fix (e490362f)**: `dumpsys activity activities` shows `stateNotNeeded=true` on Home's record. Eight kills
+with Home in front: no `proc died without state saved` (the three in the whole log are main's install, the kill on
+main above and the fix's install - a package replace removes every record), `wm_restart_activity` on the **same**
+Home record in the same task (110 throughout), no new Home task, and the order before and after every kill `#0 #110
+home, #1 <the page's task>`, `LOCKED`.
+
+| Check (the kill with Home in front first, unless "plain") | Result |
+|---|---|
+| Kalender (Mørk), the Back key | Home in front, the day view `app-request` finished, task 112 removed, no refusal |
+| Kalender, the page's back button | the same (task 114) |
+| Kalender alive, kid Settings, Mørk to Lys | kid Settings in front throughout (film: 41 frames, all kid Settings' night ground; paper at most 6.0 %, its own Lys preview), the day view's task `finish-and-remove-task`, `LOCKED` with task 110 alone |
+| Kalender (Lys) alive, Lys to Mørk | the same (40 frames), `LightDayActivity` removed |
+| Meldinger, the Back key / the page's back button | Home in front, `MessagesActivity` finished, its task removed, no refusal |
+| Meldinger alive, Mørk to Lys and back | kid Settings in front (43 and 34 frames, all kid Settings); Meldinger's task stays (this build closes only Kalender's at a change of look) |
+| plain: Kalender, the Back key; Meldinger, the Back key | Home, the task removed |
+| plain: Kalender alive, Mørk to Lys and back | kid Settings in front (43 and 40 frames), the day view finished (`finishIfPossible`), task removed |
+
+No `Not finishing task in lock task mode` after the fix's install, `LOCKED` at every read, no crash of the launcher.
+One ANR of the launcher at the cold boot (13:47:42, the build before both installs, in the boot's wave of ANRs in
+SystemUI, Phone, GMS and the keyboard - §6ah's "every boot on this host"). The logs and films are in the session's
+`scratchpad/kiosk-root/steps/` and `rec/`.
+
+**Not run**: the `.call` task (no call placed - the same rule covers it: the cause is Home's record, not the page);
+a crash of the launcher (no hook to force one; AOSP takes the same `handleAppDied` path after the crash's finish of
+Home is blocked); a release build; a phone.
 
 ## 7. Reporting back
 
