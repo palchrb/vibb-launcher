@@ -7,10 +7,11 @@
 <div class="top-strip" aria-hidden="true"></div>
 {% let tab = "settings" %}
 {% include "partials/tab_bar.html" %}
+{% import "partials/band.html" as band %}
 {% import "partials/group_flash.html" as group_flash %}
 <main class="container container-narrow">
-    <a class="nav-back" href="/settings"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ self.t("account.back") }}</a>
-    <h1 class="page-title">{{ self.t("account.title") }}</h1>
+    {% call band::sub(self.t("account.title"), "/settings", self.t("nav.settings")) %}{% endcall %}
+    <div class="sheet">
 
     {% if let Some(warning) = live_warning %}
     <div class="attention attention-alarm" id="live-warning">
@@ -406,6 +407,7 @@
         </div>
         <p class="group-footer">{{ self.t("account.parents.footer") }}</p>
     </section>
+    </div>
 </main>
 {% if otp.is_some() %}<script src="/static/reveal.js?v=4"></script>{% endif %}
 <script src="/static/passkey.js?v=8" defer></script>

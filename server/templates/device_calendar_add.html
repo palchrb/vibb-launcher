@@ -7,9 +7,10 @@
 <div class="top-strip" aria-hidden="true"></div>
 {% let tab = "devices" %}
 {% include "partials/tab_bar.html" %}
+{% import "partials/band.html" as band %}
 <main class="container container-narrow">
-    <a class="nav-back" href="/devices/{{ device_id }}/calendar#sources"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ self.t("calendar.title") }}</a>
-    <h1 class="page-title">{{ title }}</h1>
+    {% call band::sub(title, "/devices/" ~ device_id ~ "/calendar#sources", self.t("calendar.title")) %}{% endcall %}
+    <div class="sheet">
 
     {% if off %}
     <p class="group-footer" data-sources="off">{{ self.t("calendar.sources.no_key") }}</p>
@@ -78,6 +79,7 @@
         </div>
     </div>
     {% endif %}
+    </div>
 </main>
 </body>
 </html>

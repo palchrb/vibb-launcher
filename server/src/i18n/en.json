@@ -345,7 +345,6 @@
   "error.csrf": "Refused: this form was sent from another site.",
 
   "account.title": "Account & Parents",
-  "account.back": "Settings",
 
   "account.warning.live_title": "Wrong two-factor codes",
   "account.warning.live.one": "{count} wrong two-factor code was entered since your last sign-in. Whoever entered them knows your password - change it now (that also lifts the lock).",
@@ -957,6 +956,7 @@
   "nav.locate": "Locate",
   "nav.music": "Music",
   "nav.settings": "Settings",
+  "nav.back_to": "Back to {name}",
   "nav.bell": "Notifications",
   "nav.bell_unread.one": "Notifications, {count} unread",
   "nav.bell_unread.other": "Notifications, {count} unread",

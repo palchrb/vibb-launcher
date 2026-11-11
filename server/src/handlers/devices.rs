@@ -521,10 +521,27 @@ struct EnrollCodeTemplate {
     until: String,
     /// The phone is enrolled: using the code cuts the enrolled phone off (recovery).
     enrolled: bool,
+    /// The band's back link and its spoken name ([setup_back]).
+    back_href: String,
+    back_label: String,
     /// Until when typed codes are paused (local), when they are (too many wrong ones this hour).
     paused_until: Option<String>,
 }
 crate::i18n::words!(EnrollCodeTemplate);
+
+/// Where the two setup pages (the typed code's, the QR code's) go back to, and that page's name (design 84 §2):
+/// where the page was opened from - Advanced › Connection for a connected phone, the summary's Connect This Phone
+/// group (`#access`) for one not set up yet.
+pub(crate) fn setup_back(lang: Lang, device: &Device) -> (String, String) {
+    if device.enrolled_at.is_some() {
+        (
+            format!("/devices/{}/advanced#connection", device.id),
+            t(lang, "device.page.advanced").to_string(),
+        )
+    } else {
+        (format!("/devices/{}#access", device.id), device.name.clone())
+    }
+}
 
 /// "New Setup Code" on Connect and Advanced › Connection (design 22 §3.1): a typed code (8
 /// characters, 15 minutes), shown on this response only - only its hash is stored, and the page is
@@ -573,8 +590,11 @@ pub async fn regenerate_code(
     .await;
     let zone = crate::display_time::Zone::load(&state.db, lang).await;
     let now = chrono::Utc::now();
+    let (back_href, back_label) = setup_back(lang, &device);
     let page = EnrollCodeTemplate {
         lang,
+        back_href,
+        back_label,
         title: t_params(lang, "devices.code.page_title", &[("name", &device.name)]),
         code: crate::enrollment::display(&code),
         until: zone.until_db(&expires_at, now),
