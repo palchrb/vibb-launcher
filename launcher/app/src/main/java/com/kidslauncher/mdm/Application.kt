@@ -291,6 +291,17 @@ class Application : android.app.Application() {
         // Its own line (one small prefs file and one binder call): "Unlocked setup took" below stays the head that
         // design 59 F3's recipe reads - LauncherPreferences.init and initRest.
         android.util.Log.i("Application", "The kid's look took ${android.os.SystemClock.elapsedRealtime() - lookStart} ms")
+        // Design 78 §5.3 (2026-11-11): the launcher's language is asked for again here, since Android writes the
+        // app's record to disk without it once the app has a night mode - a reboot then brought the launcher back in
+        // the phone's language. After the night mode, so both land in one write; and right after it, with no
+        // activity added to the process in between: the two are this process's first such calls, and the system
+        // refuses only a later one. Nothing while a call is live (Home's resume asks then). Outside "Unlocked
+        // setup took", as the look.
+        try {
+            com.kidslauncher.mdm.ui.LauncherLocales.atUnlockedStart(this)
+        } catch (e: Exception) {
+            android.util.Log.e("Application", "The launcher's language wasn't asked for", e)
+        }
         val setupStart = android.os.SystemClock.elapsedRealtime()
         try {
             LauncherPreferences.init(PreferenceManager.getDefaultSharedPreferences(this), this.resources)

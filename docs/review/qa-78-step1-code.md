@@ -129,6 +129,35 @@ no relaunch of Kalender or Home on a flip of the system's night mode, and the un
 14-405 ms beside 372-14231 ms). It also found what no review read: the app's night mode against the launcher's own
 language (the design's §5.3, the line of 2026-11-11).
 
+Source reading and fix, 2026-11-11 (AOSP `frameworks/base`, tag `android-16.0.0_r1`; no emulator; the design's §5.3 has
+the cause with its files and methods) - one finding fixed, one new and open:
+
+- **The launcher's language after a reboot, and its refused repair** (the pass's finding; Medium: a phone whose own
+  language is not the launcher's shows English until Home resumes with no task of the launcher's own behind it) -
+  **fixed in the mechanism, with a rest**: the language is asked for again at every unlocked start, right after the
+  night mode, and a switch at Home's resume that the system refused closes Kalender's and Meldinger's tasks and asks
+  once more (`LauncherLanguage` over a host in `ui/LauncherLocale.kt`, `LauncherLocales`, `Application.initUnlocked`;
+  six tests more in `LauncherLocaleTest`, nine in all). The last gated run: `BUILD SUCCESSFUL`, 244 suites, 2470 tests,
+  0 failures, 0 errors, 0 skipped. The rest (Low; inferred, not seen): a parent's change of language while the phone is
+  up can stay refused over plain Home resumes in a process whose last call got through under the PIN lock, a page or a
+  call, until a Home resume right after one of them or the next process start; the screens stay whole in the old
+  language meanwhile. The reboot's loss does not depend on it: the unlocked start's ask comes before any activity or
+  right after the night mode's call under the same one. **Not seen running**: §6ah's B.13-B.15 are its steps.
+- **N1 (Medium for step 2, nothing in step 1's release builds; inferred from the source, not seen): a change of look
+  can be refused like the language was.** `setApplicationNightMode` goes through the same
+  `PackageConfigurationUpdaterImpl.updateConfig`, so it is refused when the activity the process follows is of another
+  type (home or standard) than at the last call that got through. A process whose last call got through under a
+  standard-type activity - started again under a page, the PIN lock or the call screen, or a language switch at Home's
+  resume while the PIN lock was not yet destroyed - then refuses a change from kid Settings (Home's task); so can a
+  waiting change at Home's resume right after a page was left. `LookState` has stored the look and closed the tasks by
+  then, and the host logs `The app's night mode wasn't set`: the pages draw in the new look, their starting windows in
+  the old one until the next process start - a frame of the other look, which step 0's ground rules out. Step 1's
+  release builds have no change of look (the row is debug-only), so nothing ships with it; it has to be settled before
+  step 2 shows the row. Not fixed here: a gate on the app's side alone does not settle it, and each way that would
+  (never asking under a standard-type activity, the unlocked start included; the language in each activity's
+  `attachBaseContext`; another mechanism than the per-app night mode) has a cost the design must weigh - its §5.3,
+  "Open, for step 2". §6ah's B.16 is the step that shows it or clears it.
+
 - **M1** (1c6e1564): `KidPageTheme`'s `android:enforceNavigationBarContrast` is `@bool/kid_page_nav_contrast` - true in
   `values/`, false in `values-notnight/` - so Kalender in Mørk with 3-button navigation keeps the system's scrim;
   `KidPaletteTest`'s theme test pins the item and both bools files. The window's two grounds are **no difference** in

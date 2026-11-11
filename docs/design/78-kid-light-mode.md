@@ -328,17 +328,97 @@ one `PageManifestTest` can hold. `PlayLinkBlockedTheme` is `Theme.Material.NoAct
 preview, the fade, Nunito, the accent and a framework coloured button with night text, as `launcherBaseTheme` gave the
 notice; its look is in step 1's pass.
 
-Emulator pass, 2026-11-11 (`docs/testing/emulator.md` §6ah, "The run of 2026-11-11"; **open**): the app's night mode
-and the launcher's own language (`LauncherLocales`, `LocaleManager`) are one per-package record in the system, and the
-two calls get in each other's way. Seen on `jelly36`: after a reboot the
-launcher's language was gone (`get-app-locales` `[]`, Home and the PIN lock in the system's language), and
-`setApplicationLocales` at Home's resume was refused by the system server (`IllegalStateException: Can't change
-activity type once set`, under `PackageConfigurationUpdaterImpl.updateConfig`) for as long as an activity in a task of
-the launcher's own - the PIN lock, Kalender's page - was the process's newest; the first Home resume without one set
-it again. Why the reboot loses it is inferred, not seen (a record with a night mode written without its languages), and
-whether `setApplicationNightMode` can be refused the same way was not reached. "The system keeps it per package" above
-is true of the night mode; what the call costs the language is this line. Nothing was changed in the code: the
-unlocked start's unconditional call stays as it is until this is decided.
+Emulator pass, 2026-11-11 (`docs/testing/emulator.md` §6ah, "The run of 2026-11-11"): the app's night mode and the
+launcher's own language (`LauncherLocales`, `LocaleManager`) are one per-package record in the system, and the two
+calls get in each other's way. Seen on `jelly36`: after a reboot the launcher's language was gone (`get-app-locales`
+`[]`, Home and the PIN lock in the system's language), and `setApplicationLocales` at Home's resume was refused by the
+system server (`IllegalStateException: Can't change activity type once set`, under
+`PackageConfigurationUpdaterImpl.updateConfig`) for as long as an activity in a task of the launcher's own - the PIN
+lock, Kalender's page - was the process's newest; the first Home resume without one set it again. "The system keeps it
+per package" above is true of the night mode for a boot and across reboots; of the languages only for a boot.
+
+**The cause, 2026-11-11** - read in AOSP `frameworks/base` at tag `android-16.0.0_r1` (the line numbers of the seen
+stack are that tag's), not seen running beyond the lines above:
+
+- **The reboot** (`PackageConfigPersister.updateFromImpl`, the same lines from Android 13 to `main`). The record in
+  memory is kept whole, so nothing is lost while the phone is up. The record that goes to disk is filled by
+  `!updateNightMode(..) && !updateLocales(..) && !updateGender(..)`: the chain stops at the first value that changed,
+  so a new write record of a package with a night mode gets the night mode alone, and `WriteProcessItem.saveToXml`
+  writes only what it holds. The languages get into the file only when a language change comes within three seconds
+  of another write of the package (`PersisterQueue.PRE_TASK_DELAY_MS`; a waiting write record is reused). And the
+  first call of every boot counts as a change (the gender is an `int` 0 in the call and `null` in a record just read,
+  `loadUserPackages`), so it writes the file again - without the languages. It is no race and no order of the two calls
+  avoids it: with a night mode set, a file that has the languages is replaced by one without them at the next boot's
+  first call. On this branch that is every phone (the unlocked start's call is unconditional); it shows only where the
+  phone's language is not the launcher's. The file is read at the user's unlock (`ActivityTaskManagerService`'s
+  `loadRecentTasksForUser`), and its values reach a process when it is added and an activity when its record is made
+  (`updateConfigIfNeeded`) - a process started before the unlock gets none.
+- **The refusal** (`ConfigurationContainer.applyAppSpecificConfig`, `WindowConfiguration.setActivityType`). Both calls
+  go through `PackageConfigurationUpdaterImpl.commit`, which first applies the values to every process of the app
+  (`updateConfig`) and only then stores them (`updateFromImpl`). A process's container copies its override
+  configuration into a scratch object it keeps between calls, and that configuration is the one of the activity the
+  process follows - the one added to it last that was not finishing then (`WindowProcessController`'s
+  `updateActivityConfigurationListener`, looked at again only when an activity is added or removed). The scratch object
+  keeps the activity type of the last call that got through, and a system-server `WindowConfiguration` refuses to go
+  from one defined type to another. So a call is refused when the followed activity is of another type - home or
+  standard - than at the last call that got through; activities in Home's task are home-type (`Task`'s
+  `onDescendantActivityAdded`), the PIN lock, Kalender, Meldinger and the call screen standard. The night mode took the
+  same path and got through because kid Settings is in Home's task. Refused, nothing is stored - neither in memory nor
+  on disk - so a later process start does not have the value either.
+- **Main has the refusal too, narrowly** (older than this design): the first language call of a process's life always
+  gets through; a second change in the same life is refused while the followed activity's type is not the first one's
+  (a parent changing the language twice, the second time with Kalender's task the newest). Main never loses the
+  language at a reboot: it has no night mode, so its file has the languages.
+
+**Decision, 2026-11-11** (inside the mechanism; `ui/LauncherLocale.kt`'s `LauncherLanguage` over a host,
+`LauncherLocaleTest`):
+
+- **The language is asked for again at every unlocked start**, unconditionally, right after the night mode
+  (`Application.initUnlocked`): the system gets it back in memory before an activity of that process exists, whatever
+  the file had. After the night mode because that is the one order in which both land in one write: every second boot
+  starts from a file without the languages, the call brings them back and the file written then has both; the boot
+  after starts with them and writes them away again. In a process started at the
+  unlock both calls are its first and follow the same activity, so neither is refused. "Follow the phone" is asked for
+  only while the system still holds a language. Nothing during a call, as every switch.
+- **A switch at Home's resume is asked for as before; refused, Kalender's and Meldinger's tasks are closed and it is
+  asked for once more** (`languageClosesTask`). A page stopped behind Home is what the process follows for as long as
+  its task lives, which is the refusal that was seen to last; removing a stopped task takes its activities out of the
+  process at once, and the process then follows Home. The tasks are closed only after a refusal, not before the first
+  ask: in a process whose last call got through under a page, the page behind Home is what lets the call through, and
+  closing it first would turn that into a refusal. A switch that got through at once leaves the page tasks alone, as
+  on main.
+- **What is still refused** (inferred from the source; nothing of it seen): a call refused with no page task to close,
+  or refused again after the close, leaves the system's value as it was, and every later Home resume starts over. Two
+  cases. The PIN lock or the call screen just left and not yet destroyed: a resume after it is destroyed gets through
+  (the pass saw the refusals end at the first Home resume without such an activity). And a process whose last call got
+  through under a standard-type activity - started again under a page, the
+  PIN lock or a call, or a call at Home's resume right after one of them - while Home is what it follows: every plain
+  Home resume is refused, and the change gets through only at a resume right after the PIN lock, a page or a call, or
+  at the next process start (the unlocked start's ask). In that case the first refusal also closes the page tasks for
+  nothing. The app cannot read which case it is in; a parent's change of language can so wait until the kid next
+  unlocks. The screens stay in the old language meanwhile, never in a mix.
+- **Costs**: a refused change closes Meldinger too, and until step 2 keeps a thread's unsent text (§5.4.4) a
+  half-typed message is lost at it - a parent's change of language that was refused, rare. Every second boot the first
+  activity may be created once more when the language comes back (Android's flag `expediteActivityLaunchOnColdStart`
+  decides whether Home is attached before `Application.onCreate` ends; its state on a phone is not known). A process
+  that was started before the unlock and has its first activity mid-launch when the files open
+  (`KidAppComponentFactory`) may show that activity once in the phone's language before it is created again. If a pass
+  shows either as a frame the kid sees, the next belt is the wanted language in each activity's `attachBaseContext`,
+  beside the night mode's; it is not built, since nothing seen calls for it yet.
+- **Open, for step 2** (inferred from the same source, not seen): `setApplicationNightMode` can be refused the same
+  way. In a process whose last call got through under a standard-type activity, a change of look from kid Settings
+  (home-type) is refused; so is a change that waited for Home's resume right after a page was left, in a process whose
+  last call got through under Home. The pages still draw in the stored look (their own AppCompat mode); their starting
+  windows keep the old one until the next process start. Step 1's release builds have no change of look (the row is
+  debug-only), so it has to be settled before the row is shown. A gate on the app's side alone (ask only while no
+  activity outside Home's task is alive in the process) does not settle it: a process that already holds the standard
+  type refuses under Home for the rest of its life. What would: the gate together with never asking under a
+  standard-type activity at all (the unlocked start's two calls included, which then wait for Home in a process started
+  under a page, the PIN lock or a call - a cost to step 0's ground for that start's first window); or each
+  activity's `attachBaseContext` carrying the language as it carries the night mode, so nothing the kid sees depends
+  on a call that can be refused (texts from the application's own context - notifications, toasts - would still); or
+  not using the system's per-app night mode, which gives up the starting window's ground and is another mechanism than
+  this design's. None is built; the choice is the design's.
 
 ### 5.4 When the look changes
 

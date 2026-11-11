@@ -3196,7 +3196,8 @@ are in the session's `scratchpad/retry-shots/`.
 **Steps, written with the build on 2026-11-10 and added to in the code QA's fix round the same day
 (`docs/review/qa-78-step1-code.md`, L8). Run in part on 2026-11-11 on `jelly36`**: "The run of 2026-11-11" at the end
 of this section has what passed, the one finding (the launcher's own language) and what was never reached - the host
-killed the emulator for memory before B.9. The steps themselves are no result. Step 1 is the mechanism and
+killed the emulator for memory before B.9. B.13-B.16 and the control on main came on 2026-11-11 with the language
+fix and have not been run. The steps themselves are no result. Step 1 is the mechanism and
 Kalender (`docs/notes/launcher/ui-polish.md`, "The kid's look: Mørk or Lys"); the row in kid Settings exists in the
 **debug** build only.
 
@@ -3284,6 +3285,72 @@ Kalender, Home, Kalender). Then the four tile recordings once more with the syst
    `Application` lines: `The kid's look took N ms` (one small prefs file and one binder call, on every
    unlock-to-Home path) beside `Unlocked setup took N ms` (design 59's head, which does not include it). Write the
    numbers down; one that isn't small beside the head's is a finding.
+
+Steps 13-16 were written on 2026-11-11 with the language fix (design 78 §5.3, "The cause" and "Decision"), from
+Android 16's source and with no emulator: **none of them has been seen running**. They need the phone's own language
+to be English (`adb shell settings get system system_locales` reads `en-US`) and the launcher's `nb` from the policy
+(the PWA, the phone's language choice).
+
+```
+adb shell cmd locale get-app-locales me.vibb.launcher.debug --user 0     # the launcher's languages in the system
+adb logcat -d -s LauncherLocales PageLook                                # "Launcher language: nb", or a refused call
+adb logcat -b events -d | grep -E "wm_on_create_called|wm_relaunch_activity" | grep -E "HomeActivity|PinLock"
+adb shell aflags list | grep expedite_activity_launch_on_cold_start      # if the image has aflags: write its state down
+```
+
+13. **The language over three reboots.** `get-app-locales` reads `[nb]` and Home is Norwegian. Kid Settings, **Lys**.
+   Open Kalender, go Home (its task stays behind). `adb reboot`. After the unlock: the keypad if one shows, Home, kid
+   Settings, the phone book, Meldinger and Kalender ("onsdag", "Pågår nå", never "Wednesday" or "Happening now") are
+   all Norwegian, `get-app-locales` reads `[nb]`, the log has `I LauncherLocales: Launcher language: nb` once for the
+   process start and no `Couldn't set the launcher language`, and Kalender's cold open is Lys from its first frame
+   (step 7). **Reboot twice more** with Kalender left open each time, the same checks after each: by the source every
+   second boot starts from a stored record without the languages and the one after from a record with them, so three
+   boots cover both. For each boot write down Home's lines in the events log - one `wm_on_create_called`, and whether
+   a `wm_relaunch_activity` follows it (the design's named cost: the first activity created once more when the
+   language comes back) - and step a recording of the boot's first Home (`screenrecord` started as soon as `adb` answers)
+   for a frame in English: **an English frame the kid can see is a finding**, a relaunch with none is the cost as
+   written. The stored record itself (`/data/system_ce/0/package_configs/`) can be read only on an image with root.
+   Before the fix (4845b74d, the run of 2026-11-11) the first of these reboots left every screen in English.
+14. **A process that was alive before the unlock.** With a PIN on Android's own lock screen (design 59) and the look
+   Lys: `adb reboot`, wait at the lock screen until `adb shell pidof me.vibb.launcher.debug` answers, start a
+   recording, unlock. The same checks as step 13, on two reboots in a row. Here Home can be mid-launch when the
+   launcher's files open: a Home drawn in English first is the design's second named cost - write down whether it is
+   there and for how many frames.
+15. **A parent's change with the page tasks alive.** Open Kalender, go Home, open Meldinger, go Home (both cards in
+   Recents). Change the phone's language to English in the PWA and wait for the sync. Nothing changes while Home just
+   stays in front; leave Home and come back (the phone book and Back). Two outcomes are the design's, and which one
+   comes depends on what the process's last such call ran under (write it down with the flag's state from the block
+   above): **set at once** - `Launcher language: en`, `[en]`, Home created again in English, no `Couldn't set the
+   launcher language`, both cards still in Recents and each page in English when opened; or **refused, then set** -
+   one `W LauncherLocales: Couldn't set the launcher language` and right after it, in the same resume, `Launcher
+   language: en`, `dumpsys activity recents | grep -c "\.day\|MessagesActivity"` is 0 and both cards are gone. A
+   warning with no `Launcher language: en` after it is the design's "what is still refused": write down which
+   activities were alive (`dumpsys activity activities | grep -E "Hist|mActivityType"`) and at which later Home resume
+   it got through. Back to `nb` with **Kalender in front** when the sync lands: nothing happens on Kalender; at Home
+   the same outcomes. Then once with the PIN lock up when the sync lands (at the unlock's Home: set at once, or
+   refused and set at the next Home resume), and once during a call (nothing until Home after the call, and nothing
+   relaunched during it). **The rest the design names**: Kalender in front, kill the launcher's process as its own uid
+   (step 9's line), unlock, go Home, change the language in the PWA, leave Home and come back. If it is refused here
+   (twice in one resume, Kalender's card gone for nothing) it should stay refused at every plain Home resume and get
+   through at the Home resume right after the PIN lock (screen off, on, the code) or after `adb install -r`: write down
+   each. Refused still after an unlock with the PIN lock is a finding; so is any screen in a mix of the two languages.
+   A text half typed in a thread is gone when a refusal closed Meldinger's task, until step 2 keeps it: known.
+16. **Can a change of look be refused?** (the review's N1, inferred from the source.) Kalender in front, kill the
+   launcher's process as its own uid (step 9's line); unlock, go Home, kid Settings, tap the other look. Read the log
+   for `E PageLook: The app's night mode wasn't set` with `Can't change activity type once set`. With it: `kid_look.xml`
+   has the new look, and a recording of Kalender's cold open shows a starting window in the **old** look before the
+   page in the new one - the finding, seen; `adb install -r` (a process start) must put it right. Without it: the
+   change went through; do the second route too - reboot with the PIN lock up, change the language in the PWA while
+   locked, unlock (the switch at Home's resume while the PIN lock is being destroyed), then kid Settings and the other
+   look - and write down that neither refused. Either result goes to the design before step 2 shows the row.
+
+**The control on main** (a bug older than step 1, by the source; main's debug APK on a wiped `jelly36`, the phone in
+English, no look to choose): set the launcher's language to `nb` in the PWA - Home takes it (`Launcher language: nb`),
+the first change of the process's life. Without a process start in between: open Kalender, go Home, change the
+language to English in the PWA, leave Home and come back. Expected: `W LauncherLocales: Couldn't set the launcher
+language` with `Can't change activity type once set` at every Home resume for as long as Kalender's card is in Recents,
+the launcher staying Norwegian; with the card swiped away (kiosk off) or after a reboot it is set. If main sets it at
+the first Home resume instead, the reading of the source is wrong about main: say so.
 
 The waiting change by a real tap (a tap while a page task is started, run at Home's next resume) is **not reliably**
 reached by hand: with kid Settings in front the page the kid left is stopped, so the tap would have to land before
@@ -3436,8 +3503,16 @@ files, SHA-256 identical).
   neither. The control for the first half - another app's language set from the shell, a reboot, both read right
   after it - was the reboot the emulator died in. Whether `setApplicationNightMode` can be refused the same way (a
   process whose first activity is the PIN lock or Kalender, then a change from kid Settings) was B.9's to show.
-- A phone whose system language is the launcher's shows none of it. Not fixed in the pass: what to do is the
-  design's (§5.3, the line of 2026-11-11).
+- **Read in source, 2026-11-11** (AOSP `frameworks/base`, tag `android-16.0.0_r1`; the design's §5.3, "The cause",
+  has the files and methods; no emulator): the first half of the line above holds and is no race - with a night mode
+  set, the record on disk loses the languages at the next boot's first call. The refusal is as guessed, with one
+  correction: the scratch configuration keeps the type of the last call that **got through**, whichever it was, and
+  what it is compared with is the activity the process follows - the one added to it last. "Main meets neither" is
+  wrong in its second half: main never loses the language at a reboot, but it has the refusal too, narrowly - a second
+  change of language in one process life while the followed activity's type is not the first change's (the control on
+  main, above).
+- A phone whose system language is the launcher's shows none of it. Not fixed in the pass; fixed on 2026-11-11 in the
+  mechanism (the design's §5.3, "Decision") and **not seen running**: B.13-B.15 are its steps.
 
 **Not run** (the emulator was gone)
 
@@ -3453,6 +3528,7 @@ files, SHA-256 identical).
 - D on this build (main's pictures were taken; the link-blocked notice had to be opened by its component, since
   `jelly36` refuses to suspend the Play Store), the pinned screens on a change of look, the unlock with the PIN lock
   showing on a system-light phone; E; F.
+- B.13-B.16 and the control on main (written after the run, with the language fix of 2026-11-11): never run.
 
 ## 7. Reporting back
 
