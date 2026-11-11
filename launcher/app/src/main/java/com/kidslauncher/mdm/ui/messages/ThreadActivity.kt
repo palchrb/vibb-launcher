@@ -560,8 +560,9 @@ open class ThreadActivity : KidPageActivity() {
         val before = compose
         compose = composeState(judge, targets)
         if (before != compose && adapter.itemCount > 0) adapter.notifyDataSetChanged()
-        // Design 78 §5.4.4: the kid may no longer text here - the unsent text goes, the kept one too.
-        if (keptTextDropped(compose)) {
+        // Design 78 §5.4.4: the kid may no longer text here - the unsent text goes, the kept one too. Judged only once
+        // the recipients are known: before its first read a thread opened by id has none (code QA H1).
+        if (threadDropsKeptText(compose, recipientsKnown = conversation != null || conversationId == null)) {
             binding.threadField.text = null
             ThreadDrafts.drop(this, draftKey())
         }
@@ -728,7 +729,9 @@ open class ThreadActivity : KidPageActivity() {
         SmsRuntime.ask(this, { SmsRuntime.send(app, command) }) { result ->
             when (result) {
                 is SendResult.Accepted -> {
-                    ThreadDrafts.drop(app, key)
+                    // On the disk before anything else: a process death must not bring the sent text back with its
+                    // old id (code QA L2).
+                    ThreadDrafts.drop(app, key, sync = true)
                     if (sentPicture != null) pictureDrafts.remove(key)
                     if (isDestroyed) return@ask
                     if (command.clientId == clientId) clientId = UUID.randomUUID().toString()

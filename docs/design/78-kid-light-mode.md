@@ -743,6 +743,10 @@ emulator was started in the build; `docs/testing/emulator.md` §6aj is its pass.
   not allowed, groups off - also for a conversation not opened again, at the list's load), and all of them while SMS
   is off or the phone unmanaged ("when the phone goes unmanaged" is held at every read, not at the moment of the
   change: nothing listens for it).
+- **The code QA's fix round, 2026-11-11** (1 High, 1 Medium, 3 Low): a thread opened by id judged its kept text
+  before its first read and dropped it (H1: now only once the recipients are known); the search's highlight was the
+  night peach on the white rows (M1: `kid_page_accent`); the list also drops new threads' texts for a number and
+  gone conversations' (L1); a sent text leaves the disk with `commit()` (L2); the 5 s in-flight mark stays (L3).
 - **L5, settled**: a Home resume does not run a waiting change while a page's start is in flight - asked for through
   `PageKind.current()` within the last 5 s, no page created since (`PageRegistry.startInFlight`). The change then
   waits for the next resume. R6's check stays the route for anything that gets past it.

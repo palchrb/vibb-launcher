@@ -677,6 +677,27 @@ fun keptTextDropped(state: ComposeState): Boolean = when (state) {
     ComposeState.OPEN, ComposeState.NOT_NOW, ComposeState.UNAVAILABLE -> false
 }
 
+/**
+ * Whether the open thread drops its kept text now: only once its recipients are known ([recipientsKnown]: the
+ * conversation read, or a thread for a number). A thread opened by its conversation's id knows nobody until its first
+ * read, and the "not allowed" its empty recipients give then is no answer about them (code QA H1).
+ */
+fun threadDropsKeptText(state: ComposeState, recipientsKnown: Boolean): Boolean = recipientsKnown && keptTextDropped(state)
+
+/**
+ * The kept texts the list drops at a load (design 78 §5.4.4): a conversation's where the kid may no longer text there
+ * ([dropFor] its recipients), a new thread's for a number (`number:` keys) the same way, and a conversation's that no
+ * longer exists - every conversation is in [conversations] (id to its recipients' addresses).
+ */
+fun keptTextsToDrop(kept: Set<String>, conversations: Map<String, List<String>>, dropFor: (List<String>) -> Boolean): Set<String> =
+    kept.filterTo(LinkedHashSet()) { key ->
+        val numberKey = draftKeyOf(null, "")
+        when {
+            key.startsWith(numberKey) -> dropFor(listOf(key.removePrefix(numberKey)))
+            else -> conversations[key]?.let(dropFor) ?: true
+        }
+    }
+
 /** Whether any kept text may stay at all under the SMS channel's [smsMode]: not when SMS is off or the phone unmanaged
  * (nobody may be texted from Vibb One then); unknown rules (`null`) keep them. */
 fun keptTextsStay(smsMode: ChannelMode?): Boolean = smsMode != ChannelMode.OFF && smsMode != ChannelMode.UNMANAGED

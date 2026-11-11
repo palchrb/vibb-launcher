@@ -160,22 +160,20 @@ open class MessagesActivity : KidPageActivity() {
             done()
             if (isDestroyed) return@ask
             rows = listRows(entries.orEmpty(), MessagesScreens.rules())
-            dropKeptTexts()
+            dropKeptTexts(entries.orEmpty().associate { (c, _) -> c.id.value to c.participants.map { it.address } })
             if (deleting != null && rows.none { it.conversation.id == deleting?.conversation?.id }) cancelDelete()
             render()
         }
     }
 
-    /** Design 78 §5.4.4: a conversation's kept text goes once the kid may no longer text there ([keptTextDropped]) -
-     * also for a thread not opened again. All of them go with SMS off or the phone unmanaged ([ThreadDrafts.all]). */
-    private fun dropKeptTexts() {
+    /** Design 78 §5.4.4: a kept text goes once the kid may no longer text there ([keptTextsToDrop]) - also for a
+     * thread not opened again, a new thread's for a number, and a conversation gone. All of them go with SMS off or the
+     * phone unmanaged ([ThreadDrafts.all]). [conversations]: every conversation's id and recipients. */
+    private fun dropKeptTexts(conversations: Map<String, List<String>>) {
         val kept = ThreadDrafts.all(this)
         if (kept.isEmpty()) return
         val judge = SmsRuntime.judge(this)
-        for (row in rows) {
-            val key = row.conversation.id.value
-            if (key in kept && keptTextDropped(composeState(judge, row.conversation.participants.map { it.address }))) ThreadDrafts.drop(this, key)
-        }
+        for (key in keptTextsToDrop(kept.keys, conversations) { keptTextDropped(composeState(judge, it)) }) ThreadDrafts.drop(this, key)
     }
 
     /** Whether the kid may start a conversation now: "Styrt av Vibb", the role ours, the gate not shut by a time rule

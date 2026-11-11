@@ -736,6 +736,29 @@ class MessagesModelTest {
     /** It goes when the kid may no longer text there - the contact, the group, SMS off or the phone unmanaged - and
      * stays through a time rule or rules that can't be read now. */
     @Test
+    fun `a thread drops its kept text only once its recipients are known`() {
+        // Code QA H1: a thread opened by its conversation's id has no recipients before its first read, and their
+        // "not allowed" says nothing about them - the restored text stays.
+        for (state in ComposeState.entries) assertFalse("$state", threadDropsKeptText(state, recipientsKnown = false))
+        val noOne = composeState(SmsJudge(state = CallPolicyState.UnknownFailClosed, roleHeld = true), emptyList<String>())
+        assertFalse(threadDropsKeptText(noOne, recipientsKnown = false))
+        assertTrue(threadDropsKeptText(ComposeState.NOT_ALLOWED, recipientsKnown = true))
+        assertFalse(threadDropsKeptText(ComposeState.OPEN, recipientsKnown = true))
+    }
+
+    /** Code QA L1: at the list's load a conversation's text goes when its recipients may no longer be texted, a new
+     * thread's for a number the same way, and a conversation's that no longer exists. */
+    @Test
+    fun `the list drops the texts of conversations and numbers that may no longer be texted, and of gone ones`() {
+        val mayNot = setOf("+4790000003")
+        val drop = { targets: List<String> -> targets.any { it in mayNot } }
+        val kept = setOf("C1", "C2", "C9", draftKeyOf(null, "+4790000001"), draftKeyOf(null, "+4790000003"))
+        val conversations = mapOf("C1" to listOf("+4790000001"), "C2" to listOf("+4790000001", "+4790000003"))
+        assertEquals(setOf("C2", "C9", draftKeyOf(null, "+4790000003")), keptTextsToDrop(kept, conversations, drop))
+        assertEquals(emptySet<String>(), keptTextsToDrop(emptySet(), conversations, drop))
+    }
+
+    @Test
     fun `a kept text goes when its contact may no longer text, and all go when unmanaged`() {
         val dropped = ComposeState.entries.filter(::keptTextDropped).toSet()
         assertEquals(setOf(ComposeState.READ_ONLY, ComposeState.NOT_ALLOWED, ComposeState.GROUP_NOT_ALLOWED, ComposeState.GROUPS_OFF), dropped)

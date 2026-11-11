@@ -483,9 +483,13 @@ rework is unit-tested and **not yet seen running**.
   prefs `sms_drafts` (not `kid_look`: it is Meldinger's data; never sent anywhere, never in the saved instance state),
   so it survives a change of look - which closes Meldinger's task - and a process death. `keepText`: at most 1,600
   characters (`SmsEngine.SEND_MAX`; a surrogate pair never cut) and 50 conversations, the oldest dropped; an empty or
-  blank field keeps nothing (sent, emptied). It goes when the conversation is deleted (the list's confirm, or a
+  blank field keeps nothing (sent, emptied). A text the engine accepted leaves the disk with `commit()` at once, so a
+  process death cannot bring it back with its old id (code QA L2). The search's highlight (`highlightMatch`) is
+  `kid_page_accent` (code QA M1). It goes when the conversation is deleted (the list's confirm, or a
   thread whose conversation is gone), when the kid may no longer text there (`keptTextDropped`: read-only, not allowed,
-  a group not allowed or groups off - the thread clears its field, the list drops a row's text at every load), and all
+  a group not allowed or groups off - the thread clears its field once its recipients are known, never before its
+  first read (`threadDropsKeptText`, code QA H1); the list drops at every load the texts of conversations and of new
+  threads for a number that may no longer be texted, and of conversations gone, `keptTextsToDrop`), and all
   of them while SMS is off or the phone unmanaged (`keptTextsStay`, checked at every read). A time rule or unreadable
   rules keep it. The picture picked for a draft stays in memory only.
 - **The row** (`activity_kid_settings.xml`'s `kid_settings_look_section`; since step 2 shown and listening in every

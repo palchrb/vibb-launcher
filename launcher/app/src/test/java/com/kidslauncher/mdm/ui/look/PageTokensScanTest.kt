@@ -20,7 +20,9 @@ class PageTokensScanTest {
         fun dir(path: String) = File(java, path).listFiles { f -> f.extension == "kt" }.orEmpty().toList()
         val files = dir("ui/day") + dir("ui/messages").filterNot { it.name == "PictureActivity.kt" } + dir("ui/quickcontrols") +
             dir("ui/kidsettings").filter { it.name.startsWith("KidSoundPicker") } +
-            listOf("PhoneBookActivity.kt", "PhoneBookAdapter.kt", "ContactRequestForm.kt").map { File(java, "calls/$it") }
+            listOf("PhoneBookActivity.kt", "PhoneBookAdapter.kt", "ContactRequestForm.kt").map { File(java, "calls/$it") } +
+            // The search's highlight, on the phone book's and Meldinger's rows (code QA M1).
+            File(java, "ui/search/KidSearchField.kt")
         files.forEach { assertTrue(it.path, it.isFile) }
         files
     }
@@ -154,7 +156,10 @@ class PageTokensScanTest {
         }
         assertTrue(all.size > 100)
         val naming = all.filter { kotlin(it).contains("R.color.kid_page_") }.map { it.path.replace(File.separatorChar, '/').substringAfter("/mdm/") }
-        assertEquals(setOf("ui/day/DayListAdapter.kt", "ui/messages/ThreadActivity.kt", "calls/PhoneBookAdapter.kt"), naming.toSet())
+        assertEquals(
+            setOf("ui/day/DayListAdapter.kt", "ui/messages/ThreadActivity.kt", "calls/PhoneBookAdapter.kt", "ui/search/KidSearchField.kt"),
+            naming.toSet(),
+        )
         // ... and there the application's context only does what isn't drawing: no resource is taken from it, nothing
         // is inflated from it, no colour is asked with it.
         val app = """(?<![.\w])(app|applicationContext|application)"""

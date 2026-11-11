@@ -31,9 +31,10 @@ object ThreadDrafts {
     fun keep(context: Context, key: String, text: String, clientId: String) =
         write(context, keepText(all(context), key, text, clientId, System.currentTimeMillis()))
 
-    fun drop(context: Context, key: String) {
+    /** [sync]: written to the disk before this returns (`commit()`), for a text the engine has accepted. */
+    fun drop(context: Context, key: String, sync: Boolean = false) {
         val kept = all(context)
-        if (key in kept) write(context, kept - key)
+        if (key in kept) write(context, kept - key, sync)
     }
 
     /** A thread opened by number learned its conversation: its text moves to the conversation's key. */
@@ -51,13 +52,13 @@ object ThreadDrafts {
     private fun read(context: Context): Map<String, KeptText> =
         prefs(context).all.mapNotNull { (key, value) -> decodeKeptText(value as? String)?.let { key to it } }.toMap()
 
-    private fun write(context: Context, next: Map<String, KeptText>) {
+    private fun write(context: Context, next: Map<String, KeptText>, sync: Boolean = false) {
         val before = cache.orEmpty()
         cache = next
         val edit = prefs(context).edit()
         for (key in before.keys - next.keys) edit.remove(key)
         for ((key, kept) in next) if (before[key] != kept) edit.putString(key, encodeKeptText(kept))
-        edit.apply()
+        if (sync) edit.commit() else edit.apply()
     }
 
     private fun prefs(context: Context) = context.applicationContext.getSharedPreferences(FILE, Context.MODE_PRIVATE)

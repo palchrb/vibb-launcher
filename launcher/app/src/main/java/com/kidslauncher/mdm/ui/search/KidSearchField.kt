@@ -10,13 +10,14 @@ import androidx.core.widget.doAfterTextChanged
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.ui.NoTextActions
 
-/** [text] with the search's matched part in peach (design 79 §4.1: 8.6:1 on the row's tile); as it is without a
- * match or with a span outside it. */
+/** [text] with the search's matched part in the page's accent (design 79 §4.1: 8.6:1 on the row's tile at night;
+ * design 78: the dark peach in Lys, 5.8:1 - the phone book and Meldinger are pages); as it is without a match or with a
+ * span outside it. */
 fun highlightMatch(context: android.content.Context, text: String, match: SearchMatch?): CharSequence {
     if (match == null || match.start >= match.end || match.end > text.length) return text
     return android.text.SpannableString(text).apply {
         setSpan(
-            android.text.style.ForegroundColorSpan(context.getColor(R.color.kid_accent)),
+            android.text.style.ForegroundColorSpan(context.getColor(R.color.kid_page_accent)),
             match.start, match.end, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
         )
     }
