@@ -3202,7 +3202,15 @@ still not run. The steps themselves are no result. Step 1 is the mechanism and
 Kalender (`docs/notes/launcher/ui-polish.md`, "The kid's look: Mørk or Lys"); the row in kid Settings exists in the
 **debug** build only.
 
-Setup: **`jelly36`** (§3), the debug launcher of branch `kid-look-1` as Device Owner (§4), enrolled, with §6w's
+**Brought to the design's revision 3 on 2026-11-11** (§12: a night and a light manifest activity per page, nothing
+asked of the system), for the pass of `kid-look-2`, with no emulator: the setup, the command block, A's create line,
+B.3, B.4, B.7, B.10 and B.12 reworded, a note before B.13, B.16 closed, B.17-B.20 new. None of the reworded or new
+steps has been seen running. The two runs at the end of this section were `kid-look-1`'s, under the old mechanism (the
+app's own night mode), and stay as they were written.
+
+Setup: **`jelly36`** (§3), the debug launcher of branch `kid-look-2` as Device Owner (§4) on a wiped AVD or a restored
+clean one - a launcher that ran `kid-look-1` left a night mode in the system's record of the package, and only a wipe
+or an uninstall takes it away (design §12.4) -, enrolled, with §6w's
 calendars: Kalender on Home, events today in two calendars with colours (§6w step 9), one in progress, an all-day one,
 one with a description and a place, the kid's own "Min kalender" (the "+"), and a reminder that can come up on the
 glance (§6w step 6). The phone in Norwegian. For the before pictures: main's debug APK built from the commit the
@@ -3217,7 +3225,8 @@ adb logcat -b events -d | grep -E "wm_on_create_called|wm_relaunch_activity|wm_d
 adb shell dumpsys activity recents | grep -c "\.day"                     # Kalender's task: 1, or 0 after a change
 adb shell settings put system font_scale 1.3                             # and 1.0 after
 adb shell dumpsys activity activities | grep -E "mLockTaskModeState|mLockTaskModeTasks"   # the kiosk and its tasks
-adb logcat -d -s Application | grep -E "The kid's look took|The launcher's language took|Unlocked setup"   # an unlocked start's cost
+adb logcat -d -s Application | grep -E "The launcher's language took|Unlocked setup"   # an unlocked start's cost
+adb logcat -d -s PageLook                                                # E: a page of the other look's class, a refused change
 adb shell cmd overlay enable-exclusive --category com.android.internal.systemui.navbar.threebutton   # .gestural back
 ```
 
@@ -3238,7 +3247,8 @@ Kalender, Home, Kalender). Then the four tile recordings once more with the syst
   from step 0**: on the cold open from Home's tile the icons stayed white for about 230 ms and then tinted over about
   95 ms; the user accepted it for now. Write down the frame count again for each of the eight; a longer or a new case
   is a finding, the known one is not a failure of the run.
-- [ ] The events log for each open: `wm_on_create_called` once for `DayActivity`, no `wm_relaunch_activity`.
+- [ ] The events log for each open: `wm_on_create_called` once for the look's class (`DayActivity` in Mørk,
+  `LightDayActivity` in Lys), no `wm_relaunch_activity`.
 - [ ] With Kalender open in each look: `cmd uimode night no`, then `yes`, then Battery Saver on and off
   (`adb shell cmd battery unplug`, `adb shell settings put global low_power 1`, `0`, `adb shell cmd battery reset`).
   The page keeps its look and the events log shows no relaunch and no new `wm_on_create_called`.
@@ -3250,20 +3260,21 @@ Kalender, Home, Kalender). Then the four tile recordings once more with the syst
    nothing else on kid Settings changes (compare with step 1's screenshot: only the control and the strip differ; no
    flash, no relaunch of kid Settings in the events log).
 3. `kid_look.xml`: `choice` and `applied` both `light`. `dumpsys activity recents | grep -c "\.day"` is 0, and the
-   events log has `wm_destroy_activity` for `DayActivity`. Recents shows no Kalender card. **With the kiosk on** (an
+   events log has `wm_destroy_activity` for the old look's class (`DayActivity` here, `LightDayActivity` on the way
+   back). Recents shows no Kalender card. **With the kiosk on** (an
    allowlist and kiosk in the policy; do steps 1-3 once so): `mLockTaskModeState=LOCKED` before the tap and after it,
    Home's task still in `mLockTaskModeTasks` and Kalender's no longer; kid Settings stays in front and nothing of the
    kiosk shows or drops (no "App is not available", Back and Home as before).
-4. Home, the Kalender tile: Kalender in Lys from its first frame (A), one `wm_on_create_called`.
+4. Home, the Kalender tile: Kalender in Lys from its first frame (A), one `wm_on_create_called`, for
+   `LightDayActivity`.
 5. The same back to **Mørk**. Then with an event page open in Kalender's task before going Home: both activities are
    destroyed at the tap, and the next open is the day view.
 6. Tap the look that is already applied: nothing is destroyed, Kalender's card stays in Recents.
 7. Tap Lys, then `adb reboot` within a few seconds. After the unlock: `kid_look.xml` says `light`, Kalender opens in
    Lys from its first frame. The same after `adb install -r` of the same APK (the process restarted). This shows that
-   the look survives a reboot and a process start, no more: it cannot be counted on to hit either window the unlocked
-   start's call is there for (a crash between a change's write and its system call is inside one turn of the main
-   thread, and nothing outside says whether the system had written its own value when the reboot came). Step 10 puts
-   the two values apart by hand instead.
+   the look survives a reboot and a process start, no more. Since revision 3 there is no value of the system's beside
+   the stored one; a process that dies between the tasks' removal and the write leaves the old look and no Kalender
+   task, which a reboot by hand cannot be timed to hit (`PageLookTest` holds the order).
 8. A phone that never ran this build (the update): install main's debug APK on a wiped `jelly36` with the system's
    dark theme **off**, provision, then `adb install -r` this build. `kid_look.xml` has `applied` = `dark` without any
    tap; Kalender opens with a night starting window (no light frame), although the system is light.
@@ -3273,26 +3284,31 @@ Kalender, Home, Kalender). Then the four tile recordings once more with the syst
    again and the PIN lock comes up. Unlock: the recents count is still 1, although the new process has no
    `DayActivity`. Kid Settings, tap the other look: the count is 0, and the next open from Home is a clean one in the
    new look (A), one `wm_on_create_called`.
-10. **The stored look repairs the system's value.** With Mørk applied and no Kalender task (right after a change),
+10. **A start names the stored look's class.** With Mørk applied and no Kalender task (right after a change),
    write `kid_look.xml` back with both values `light` and kill the process (`run-as me.vibb.launcher.debug sh -c 'cat >
    shared_prefs/kid_look.xml; kill -9 $(pidof me.vibb.launcher.debug)'`, the edited copy on its stdin). After the
    unlock Kalender's cold open from Home is Lys from the starting window on, although no change ran: the unlocked
-   start gave the system the stored look. Tap Mørk after.
+   start read the stored look and the tile's start names `LightDayActivity` (one `wm_on_create_called` for it, no
+   `E PageLook`). Tap Mørk after.
 11. **A change that waits, written by hand.** With Mørk applied and Kalender's task behind, write the file with
    `choice` = `light` and `applied` = `dark` and kill the process the same way. After the unlock, Home's resume runs
    the change once: both values `light`, the recents count 0, and Kalender opens in Lys. Go to kid Settings and Home
    again: the events log shows nothing destroyed and nothing closed (the resume has nothing left to run).
 12. **The unlocked start's cost.** After each process start above (the `install -r`, the reboot, the kills), read the
-   `Application` lines: `The kid's look took N ms` (one small prefs file and one binder call, on every
-   unlock-to-Home path) beside `Unlocked setup took N ms` (design 59's head, which does not include it). Write the
-   numbers down; one that isn't small beside the head's is a finding. Since the language fix's code QA (L2,
-   2026-11-11) the language's ask has its own line between the two, `The launcher's language took N ms` (the default
-   prefs file, at most one call to Telecom and one binder call): the same rule.
+   `Application` lines: `The launcher's language took N ms` (the default prefs file, at most one call to Telecom and
+   one binder call, on every unlock-to-Home path; the language fix's code QA, L2) beside `Unlocked setup took N ms`
+   (design 59's head, which does not include it). Write the numbers down; one that isn't small beside the head's is a
+   finding. `The kid's look took N ms` is gone with revision 3: the start only reads one small prefs file and makes no
+   call (the spike measured that read: 122 ms at the first start, 3 and 6 ms after; design §12.7.2).
 
 Steps 13-16 were written on 2026-11-11 with the language fix (design 78 §5.3, "The cause" and "Decision"), from
 Android 16's source and with no emulator: **none of them has been seen running**. They need the phone's own language
 to be English (`adb shell settings get system system_locales` reads `en-US`) and the launcher's `nb` from the policy
-(the PWA, the phone's language choice).
+(the PWA, the phone's language choice). (They were run since: "The second run of 2026-11-11".) **Since revision 3**
+the launcher sets no night mode, so on a wiped AVD the cause steps 13 and 14 were written for is gone - the spike read
+`nb` after both of its boots with the unlocked start's ask switched off (design §12.7, §12.7.2) - and what step 13 says of every second boot no longer applies. The
+language code stays as built (design §12.9 point 2), so steps 13-15 stay: 13 and 14 are expected to pass with no
+English frame, and 15's refusals have nothing to do with a night mode.
 
 ```
 adb shell cmd locale get-app-locales me.vibb.launcher.debug --user 0     # the launcher's languages in the system
@@ -3350,14 +3366,36 @@ adb shell aflags list | grep expedite_activity_launch_on_cold_start      # if th
    through at the Home resume right after the PIN lock (screen off, on, the code) or after `adb install -r`: write down
    each. Refused still after an unlock with the PIN lock is a finding; so is any screen in a mix of the two languages.
    A text half typed in a thread is gone when a refusal closed Meldinger's task, until step 2 keeps it: known.
-16. **Can a change of look be refused?** (the review's N1, inferred from the source.) Kalender in front, kill the
-   launcher's process as its own uid (step 9's line); unlock, go Home, kid Settings, tap the other look. Read the log
-   for `E PageLook: The app's night mode wasn't set` with `Can't change activity type once set`. With it: `kid_look.xml`
-   has the new look, and a recording of Kalender's cold open shows a starting window in the **old** look before the
-   page in the new one - the finding, seen; `adb install -r` (a process start) must put it right. Without it: the
-   change went through; do the second route too - reboot with the PIN lock up, change the language in the PWA while
-   locked, unlock (the switch at Home's resume while the PIN lock is being destroyed), then kid Settings and the other
-   look - and write down that neither refused. Either result goes to the design before step 2 shows the row.
+16. **Closed by revision 3** (2026-11-11). The step looked for `E PageLook: The app's night mode wasn't set` with
+   `Can't change activity type once set`, seen twice in the second run below. The launcher no longer asks the system
+   for a night mode (design §12.2 R1), so there is no call left to refuse and the code cannot print the line. What can
+   refuse a change now is step 20's.
+
+Steps 17-20 were written on 2026-11-11 from the code QA of `kid-look-2`, with no emulator: **none of them has been
+seen running**.
+
+17. **A page of the other look's class, as its task's root** (design §12.2 R6's check). With Mørk applied and
+   Kalender's card in Recents (open Kalender, go Home): write `kid_look.xml` with `choice` and `applied` both `light`
+   and kill the process (step 10's line). Unlock, open Recents and **tap Kalender's card** - a tap on the card, not
+   `am task focus`. Expected: one night starting window, `E PageLook: DayActivity was created in the light look: its
+   task is closed`, nothing of the page drawn, no crash (`adb logcat -d -b crash` is empty), no card (the recents count
+   is 0) and Home back in front; the next tap on Home's tile opens Kalender in Lys from its first frame (A), one
+   `wm_on_create_called` for `LightDayActivity`. If the overview has no card to tap after the kill - the spike saw the
+   task listed in `dumpsys activity recents` and no card for it (design §12.7.2) - try with the kiosk off, and only
+   then `adb shell am task focus <id>`; write down which route was run: the card's own tap is what has never been
+   seen. Tap Mørk after.
+18. **The same, not as the root.** With Mørk applied: Kalender, an event's page open over the day view, Home; then
+   step 17's file, kill, unlock and tap on the card. Expected: `E PageLook: EventActivity was created in the light
+   look: its task is closed`, both records gone (`dumpsys activity recents | grep -c "\.day"` is 0), Home in front,
+   and **no** `W PageLook: The other look's task didn't close as a task`. A day view that shows under the closing
+   event page, in either look, is a finding.
+19. **Under the kiosk.** Steps 17 and 18 once with the kiosk on, with step 3's checks: `mLockTaskModeState=LOCKED`
+   before the tap and after it, Home's task still in `mLockTaskModeTasks` and Kalender's no longer, no "App is not
+   available", Back and Home as before - both removals go through the lock-task controller.
+20. **A refused change.** Read `adb logcat -d -s PageLook` after every part of the pass: any `E PageLook: The look
+   stays dark: ...` or `The look stays light: ...` (`a page task is still there after its removal`, `the new look was
+   not written`) is a finding - write down the step, `kid_look.xml` and the recents count as they were. So is
+   `E Application: The kid's look wasn't read`.
 
 **The control on main** (a bug older than step 1, by the source; main's debug APK on a wiped `jelly36`, the phone in
 English, no look to choose): set the launcher's language to `nb` in the PWA - Home takes it (`Launcher language: nb`),

@@ -24,11 +24,13 @@ class PageLookScanTest {
 
     private val sources: Map<String, String> by lazy { sourcesOf(java) }
 
-    /** The main source set and the debug one, which a debug build compiles in. */
+    /** The main source set with the debug one and the release one - what either build compiles in. */
     private val shipped: Map<String, String> by lazy {
-        val debug = File(java, "../../debug/java")
-        assertTrue(debug.isDirectory)
-        sources + sourcesOf(debug).mapKeys { "debug:${it.key}" }
+        sources + listOf("debug", "release").flatMap { variant ->
+            val dir = File(java, "../../$variant/java")
+            assertTrue(variant, dir.isDirectory)
+            sourcesOf(dir).map { "$variant:${it.key}" to it.value }
+        }
     }
 
     @Test
@@ -112,7 +114,7 @@ class PageLookScanTest {
 
     @Test
     fun `every activity that is not a page is night as a constant, set before its base context`() {
-        // AppCompat follows the app's night mode unless told otherwise; a plain Activity has a framework theme
+        // AppCompat follows the phone's theme unless told otherwise; a plain Activity has a framework theme
         // (PageManifestTest). The three classes that extend AppCompatActivity directly:
         val direct = sources.filterValues { Regex(""":\s*AppCompatActivity\(\)""").containsMatchIn(it) }.keys
         val root = "com/kidslauncher/mdm"

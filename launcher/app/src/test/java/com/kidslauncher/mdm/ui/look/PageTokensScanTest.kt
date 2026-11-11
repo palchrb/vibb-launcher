@@ -114,7 +114,8 @@ class PageTokensScanTest {
     @Test
     fun `a page token is read through a page's context, never the application's`() {
         // Kotlin names a page colour only in Kalender's classes ...
-        val all = listOf("java", "../debug/java").map { File(main, it) }.flatMap { dir ->
+        val all = listOf("java", "../debug/java", "../release/java").map { File(main, it) }.flatMap { dir ->
+            assertTrue(dir.path, dir.isDirectory)
             dir.walkTopDown().filter { it.isFile && it.extension == "kt" }.toList()
         }
         assertTrue(all.size > 100)

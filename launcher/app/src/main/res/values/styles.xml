@@ -200,7 +200,8 @@
 
     <!-- The "link blocked" notice (PlayLinkBlockedActivity, a plain Activity; design 78 §5.3): a framework night
          theme of its own, as the boot cover's. It had the application's AppCompat DayNight theme, whose window
-         follows the app's night mode - light in Lys - before the notice's own night content. No preview, the
+         on a plain Activity follows the phone's theme - light on a phone whose dark theme is off - before the
+         notice's own night content. No preview, the
          fade, Nunito and the night text on a peach button as launcherBaseTheme gave it. -->
     <style name="PlayLinkBlockedTheme" parent="@android:style/Theme.Material.NoActionBar">
         <item name="android:windowBackground">@color/kid_ground</item>
