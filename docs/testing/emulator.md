@@ -3205,8 +3205,11 @@ Kalender (`docs/notes/launcher/ui-polish.md`, "The kid's look: Mørk or Lys"); t
 **Brought to the design's revision 3 on 2026-11-11** (§12: a night and a light manifest activity per page, nothing
 asked of the system), for the pass of `kid-look-2`, with no emulator: the setup, the command block, A's create line,
 B.3, B.4, B.7, B.10 and B.12 reworded, a note before B.13, B.16 closed, B.17-B.20 new. None of the reworded or new
-steps has been seen running. The two runs at the end of this section were `kid-look-1`'s, under the old mechanism (the
-app's own night mode), and stay as they were written.
+steps had been seen running when they were written. The first two runs at the end of this section were `kid-look-1`'s,
+under the old mechanism (the app's own night mode), and stay as they were written. **Run on 2026-11-11 on
+`jelly36`**: "The run of 2026-11-11 on `kid-look-2`", the last of the three, has every open path in both looks
+measured frame by frame (no frame of the other look), B.3-B.6, B.17-B.20, two findings under the kiosk after a process
+kill, and what was not run.
 
 Setup: **`jelly36`** (§3), the debug launcher of branch `kid-look-2` as Device Owner (§4) on a wiped AVD or a restored
 clean one - a launcher that ran `kid-look-1` left a night mode in the system's record of the package, and only a wipe
@@ -3372,7 +3375,7 @@ adb shell aflags list | grep expedite_activity_launch_on_cold_start      # if th
    refuse a change now is step 20's.
 
 Steps 17-20 were written on 2026-11-11 from the code QA of `kid-look-2`, with no emulator: **none of them has been
-seen running**.
+seen running**. (They were run since: "The run of 2026-11-11 on `kid-look-2`".)
 
 17. **A page of the other look's class, as its task's root** (design §12.2 R6's check). With Mørk applied and
    Kalender's card in Recents (open Kalender, go Home): write `kid_look.xml` with `choice` and `applied` both `light`
@@ -3785,6 +3788,153 @@ was not run (no release APK).
 **Not run**: TalkBack itself; Android's "make more apps dark" switch; L4's death between the write and the removal;
 L5; the phone book through a `tel:` link in another app (a new-task `DIAL` from the shell instead); the control on
 main on a wiped AVD; a release build; the channels' fix; anything on a phone. Pictures of the run are in the session's `scratchpad/kid-look-1/shots/`.
+
+### The run of 2026-11-11 on `kid-look-2` (`jelly36`): every open path in both looks, B.3-B.6, B.17-B.20
+
+`kid-look-2` at 1ae78e97, revision 3's mechanism (the debug APK from one gated `assembleDebug
+-PwarningsAsErrors=true`, the emulator down; 0.23.6-debug, code 116, SHA-256 `0ae6662e...df32a69`, the installed file
+the same), provisioned as Device Owner on `jelly36` put back from the clean copy taken before `kid-look-1`'s first run
+(22 files, SHA-256 identical, so no app night mode in the system's record; `dumpsys uimode` named none). The test
+server was the binary the earlier runs used (no cargo). System language en-US, the launcher's `nb` from the policy,
+the kiosk on unless said, gesture navigation, the launcher's own PIN lock, `-timezone Europe/Oslo` (the times below
+are the phone's). §6w's calendars with made-up names only. **A "reboot" is `adb shell reboot -p`, the memory gate read
+with the emulator down and a cold start**: 8046 MB at the first start, 7769 and 7758 MB at the two reboots; the
+emulator was never killed and went down by `reboot -p` at the end. `logcat -s PageLook` and the main and events logs
+were kept for the whole pass (11:38:05-13:14:49). Every boot on this host has ANRs in SystemUI and Google's apps and a
+"System UI isn't responding" dialog; none is the launcher's. Every line is **seen** or **measured** on `jelly36` unless
+it says **read** or **inferred**.
+
+**The measure.** 68 recordings with the device's own `screenrecord`, every frame stepped and sorted by the share of
+the page area that is the night ground (`0C0C14`) or the paper ground (`F6F2EF`): NF/LF a flat night/paper frame
+(97 % or more - a starting window), N/L mostly night/paper, X neither (a day view with its cards, or the overview
+shrinking), B black. Home itself is N: 78 % night, at most 1.3 % paper (its labels). An open in Mørk is clean with no
+L or LF frame and paper never above Home's 1.3 %; an open in Lys is clean with no NF or N frame after the first X, L or
+LF frame (the N frames before it are Home with the press; the X frames of a tile open are the system's cross-fade out
+of Home, night falling) and night at 0.1 % or less once the paper ground is up. In the table:
+the film's frames / the frames in the second after the first changed one, then the kinds that matter. "Cold" made
+the task, "warm" brought it forward.
+
+**No frame of the other look on any path, the starting window included.** No page was relaunched (0
+`wm_relaunch` lines for a `.day.` class in the whole events log), every cold open had one `wm_on_create_called` for
+the look's class, and the starting window's theme was the look's every time (`Checking theme of starting window`:
+`KidPageNightTheme` in Mørk, `KidPageLightTheme` in Lys, also for the snapshot windows of the warm opens).
+
+| Path | Mørk (largest paper share) | Lys (night once the paper ground is up) |
+|---|---|---|
+| Home's tile, cold, the phone's theme the other way | 90/19, N 29 NF 37, 1.2 %; again 51/14, 1.3 % | 67/15, N 6 X 1 L 23 LF 13, no NF; again 63/13, no NF |
+| Home's tile, warm, the same | 43/17, 1.2 %; 43/25, 1.3 % | 40/19; 40/16; no NF |
+| Home's tile, cold, the phone's theme the look's own | 53/16 and 65/24, NF 8-10, 1.3 % | 66/23 and 71/19, N 13-15 (Home) then X, L 4-5, LF 10-11, no NF, 0.1 % |
+| The PIN lock's glance, the reminder row and the code, cold | 85/32, 0.2 % | 86/29, 0.1 %; again 79/21 |
+| The same, warm | 79/33, 0.8 % | 71/34, no NF |
+| The time-rule screen's Kalender row, cold | 66/27, 0.8 % | 51/27, no NF |
+| The same, warm | 45/32, 0.3 % | 54/28, no NF |
+| Day view to an event | 69/29, 0.4 % | 70/31, 0.1 % |
+| The event to its edit page ("Endre") | 84/32, 0.7 % | 90/29, 0.0 % |
+| Back to the event | 56/27, 0.1 % | 53/6, 0.0 % |
+| Back to the day view | 18/13, 0.1 % | 19/12, 0.1 % |
+| The "+" (a new event) | 80/31, 0.5 % | 65/28, 0.1 % |
+| Back from it | 45/30, 0.1 % | 45/10, 0.1 % |
+| Home and the tile again, the event's page open | 89/18, 1.3 % | 91/20, no NF |
+| The Recents card, the process alive, the kiosk on (a tap on the card) | 47/17, X 1 N 32, 0.1 % | 51/23, X 4 L 35, 0.0 % |
+| After a process kill, the kiosk on: **no card**, `am task focus` | 86/31, N 32 NF 20, 0.2 %, `EventActivity` created | 50/29, X 6 L 22 LF 16, no NF, `LightEventActivity` created |
+| After a process kill, the kiosk on, Home's tile | 57/29, 1.3 % | 69/31, no NF |
+| After a process kill, the kiosk off: **the card's own tap** | 80/29, X 3 (the overview) N 38 NF 31, 0.2 % | 73/39, X 2 L 30 LF 31, 0.0 % in every frame |
+| After a reboot: **no task left**, Home's tile | 48/19, N 18 NF 8 X 9, 1.2 %, one create, `DayActivity` | 47/26, N 24 (Home) X 9 LF 9 L 1, no NF, one create, `LightDayActivity` |
+| The first open after a change of look | 49/14, 1.2 % | 57/13, no NF |
+| The first open after a change of language | 62/12, 1.2 % (`[nb]`) | 70/14, no NF (`[en]`) |
+| The first open after a forced other look (B.17-B.19, five) | 43/27 and 41/27, 1.2-1.3 % | 66/33, 44/24 and 60/29, no NF |
+
+"The glance's row, the reminder row" is one row on this build: the PIN lock's glance opens Kalender from its reminder
+row only; the other lock-side way in is the time-rule screen's Kalender row (the rule's `calendar_allowed` set in the
+test database for it). The PIN lock is a secure window and records black, so the glance's films show the page's
+window coming in over black (37-55 black frames, then the night ground rising in Mørk and the paper rising in Lys,
+the other ground's share as in the table); what the lock itself drew at the tap is not in them. The films of the two
+unlocks after the reboots: 26-27 black frames for the same reason, then Home; night at most 84.1 %, paper at most
+1.3 %, Home created once, no relaunch line.
+
+**After a reboot there is no card**: before each power-off Kalender's task (an event's page over the day view) was in
+`dumpsys activity recents`; after the boot no `.day` task was there, before the unlock or after it, in either look
+(the second run above saw the restored cards go when the kiosk starts). So every open after a boot is a cold one from
+Home or the lock. `get-app-locales` read `[]` at `sys.boot_completed`, with no launcher process yet, and `[nb]` at the
+first read with the launcher in front; `Launcher language: nb` once per boot (12:53:07.040, 13:01:25.166), no warning,
+the lock's texts Norwegian, `LOCKED` after both. Whether the stored record had kept the languages was not separated
+from the launcher's own ask.
+
+**B.3-B.6, a change of look with a page task alive: passed with Home as the kiosk's first task.** Three changes (to
+Lys from the day view's task; to Mørk and to Lys with an event's page in the task): the recents count 1 to 0 within
+0.3-0.4 s, both activities destroyed (`finish-and-remove-task`), kid Settings in front in every frame (films of
+39-47 frames, all N), `LOCKED` before with Home's and Kalender's tasks and after with Home's alone, no "App is not
+available", the next open the day view in the new look. B.6 in both looks: 0 destroy or finish events, 0 `PageLook`
+lines, the count stays 1.
+
+**Finding 1: under the kiosk, right after a launcher process kill with Kalender's task alive, a change of look drops
+kid Settings to Home.** The kill removes Home's task and the new process gets a new one, so Kalender's task is first
+in `mLockTaskModeTasks` - the lock task's root. Removing the root makes the system clear every locked task:
+`wm_destroy_activity [.., HomeActivity, finish-imm:clear-task-all]` and `wm_finish_activity [..,
+KidSettingsActivity, clear-task-all]` 1-64 ms after the page task's `finish-and-remove-task`, then a new Home task.
+Seen three times (12:17:11.706, 12:20:06.009, and recorded at 12:21:38.335: kid Settings gone and Home in front about
+1.3 s after the tap; 65 frames, N 62 X 1, none of a page). The look was stored right each time, `LOCKED` after with
+the new Home task alone, no crash, and no frame of the other look. B.3's "kid Settings stays in front" fails in this
+state only. The same clearing came in both forced runs under the kiosk below (Home created again). It is what
+revision 3's removal of a task adds to the older state of finding 2.
+
+**Finding 2: in the same state Back does not leave Kalender.** With Kalender's task the lock task's root, the Back key
+(three times) and the page's own back button (once) on the day view did nothing: `I ActivityTaskManager: Not finishing
+task in lock task mode` (12:48:32.313, 12:49:00.712, 12:49:04.856, 12:49:14.336). The Home key works and the tile
+brings the same task back; the overview shows no card for it (six tries in both looks). With Home as the root, Back on
+the day view finishes the task as it should. The state ends when the task is removed (a change of look, with finding
+1's effect) or at a reboot. **Inferred** older than design 78: main's manifest already gives the day view the task of
+its own (`taskAffinity` `.day`); main was not run for it.
+
+**A change of language with an event's page in front** (English, then Norwegian, saved in the PWA): nothing on the
+page for 6 s; at the Home key two `W LauncherLocales: Couldn't set the launcher language` (12:27:59.732 and .748;
+12:29:28.365 and .375, `Can't change activity type once set`), the page's task closed, and `Launcher language: en`
+12:28:01.753, `nb` 12:29:30.383 from the late ask - step 15's "refused twice, then set late". Home's
+`wm_on_resume_called` to the page's `wm_destroy_activity`: 587 ms and 455 ms, the late ask 2.0 s after the resume.
+Home was relaunched once each time (`wm_relaunch_resume_activity` 12:28:01.751, 12:29:30.380): 5 black and 4 flat
+night frames, then 3 black and 1 (films of 54 and 53 frames) - Home's own, night, no paper frame.
+
+**B.17-B.19, a page of the other look's class: the check closes it every time.** The file written by hand and the
+process killed as in the steps. In all five: one starting window of the task's own class for about a second (the old
+look's - the step's "one night starting window", and a light one where the task was Lys's), the `E PageLook` line,
+nothing of the page drawn, the crash buffer empty, the recents count 0, no `W PageLook`, Home in front, and the next
+open from Home's tile in the stored look from its first frame with one create (the table's last row).
+
+| Run | Kiosk | The route | The line | The film |
+|---|---|---|---|---|
+| Mørk's task, `light` stored, the day view the root | on | **no card after the kill**: `am task focus` | `DayActivity was created in the light look: its task is closed` 12:31:52.506 | 90/30, a night window, paper 1.3 % |
+| Lys's task, `dark` stored, an event's page over the day view | on | **no card**: `am task focus` | `LightEventActivity was created in the dark look: its task is closed` 12:33:49.346 | 96/40, LF 33 (the light window, about 0.9 s), then Home; no day view under it |
+| Mørk's task, `light` stored, the root (B.17) | off | **the card's own tap** | `DayActivity was created in the light look` 12:38:24.729 | 64/27, X 3 (the overview) N 29 NF 24, paper 1.2 % |
+| Lys's task, `dark` stored, an event's page | off | the card's own tap | `LightEventActivity was created in the dark look` 12:40:12.766 | 64/30, X 4 L 12 LF 24, then Home |
+| Mørk's task, `light` stored, an event's page (B.18) | off | the card's own tap | `EventActivity was created in the light look` 12:41:58.220 | 57/36, X 3 N 25 NF 19, paper 1.2 % |
+
+- B.17's card: with the kiosk on the overview has no card for Kalender after the kill (the task is in `dumpsys
+  activity recents`), so the card's own tap was run with the kiosk off, where the card shows - with the task's old
+  picture on it - and the tap is a real `input tap` on it.
+- B.18: both records gone each time (`LightDayActivity`/`DayActivity` destroyed `finish-and-remove-task`), no day view
+  under the closing event page in any frame.
+- B.19: `LOCKED` before and after in both kiosk runs, Kalender's task out of the list, no "App is not available". But
+  "Home's task still in `mLockTaskModeTasks`" holds only as a **new** Home task (finding 1's clearing: Home finished
+  `clear-task-all` 12:31:52.520 and 12:33:49.369, created again, `LOCKED` with the new task alone).
+- The kiosk off and on for these runs was `kiosk_desired` in the test database: off in 5 s (the system finished
+  Kalender's task, `clear-task-all`); on again after 25 s - the first `startLockTask` failed with an event's page in
+  front (`W HomeActivity: Lock task change failed - retried at the next resume`) and held at Home's next resume.
+
+**B.20: no refused change.** Over the whole kept log: `E PageLook` 5 lines, the five forced ones above; `The look
+stays` 0; `The kid's look wasn't read` 0; `W PageLook` 0. `Can't change activity type once set` 4, the two language
+changes' warnings. No crash and no ANR of the launcher (`am_crash` 0; 20 `ANR in`, none of `me.vibb`); the one `FATAL
+EXCEPTION` is the shell's own `uiautomator dump` timing out at 11:41:27, during the install's load. B.12's lines on
+the 16 process starts: the language 4-30 ms and the setup 146-547 ms after the kills, 8 and 1812 ms at the install,
+306 and 4765 ms after the first reboot, 10 and 547 ms after the second.
+
+**Not run**: the kid Settings row jumping back (B.20's refused change cannot be forced by hand); a Recents card after
+a reboot (no page task survives a boot) and the card's tap after a kill under the kiosk (no card shows; `am task
+focus` instead); finding 2 on main; A's status-bar icon frame counts and its theme and Battery Saver flips under an
+open page; B.7's reboot within seconds of the tap, B.8, B.10, B.11 and B.13-B.15 as written (a reboot in each look and
+one language change each way were run instead); C-F; a release build; anything on a phone. The pictures taken for the
+eye (Kalender's day view, an event and the edit page and kid Settings' "Utseende" in both looks, Home once) are in the
+session's `scratchpad/kid-look-2/shots/`; the pages' times are in the 12-hour form there ("8:30 a.m.": the emulator's
+en-US system, inferred), which is not the look's.
 
 ## 7. Reporting back
 
