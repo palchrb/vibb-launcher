@@ -24,8 +24,9 @@ mange forskjellige?" - and, to the direction below: "OK, det høres bra ut".
 6. A picture from a **contact** whose host is not on the list is kept unfetched ("Bilde kan ikke hentes", as today),
    and the phone reports the host - never the URL - in `sms_state.mmsc_unlisted`.
 7. The PWA's Calls page asks the parent **once per address** (per phone and SIM operator; an operator with several
-   addresses asks for each, at most 8): "Telefonen vil hente bilder fra X. Tillat?" - with who sent the picture and
-   when, and whether Android's list names that address for the operator. Stored in `device_mmsc_hosts` (0137).
+   addresses asks for each, at most 8): "Hente bilder fra X?" (shortened 2026-11-11, §"How the PWA shows it") - with
+   who sent the picture and when, and whether Android's list names that address for the operator. Stored in
+   `device_mmsc_hosts` (0137).
 8. "Tillat" reaches the phone as a policy change, the waiting picture is fetched by the existing re-fetch path, and
    the allow lasts until the parent removes it. "Ikke tillat" stays declined and never asks again.
 9. Nothing is fetched from a host that is neither unasked nor allowed; every mixed-version pair fails closed as
@@ -174,7 +175,8 @@ declined theirs, four at a time - no fetch, no data, the parent's time. They can
 without the parent's tap; raise anything as a non-contact; learn whether a prompt was shown. **If the parent allows
 an attacker's host**, every later crafted notification naming *any* contact on that SIM is fetched from it without a
 further question - pictures and text of the attacker's choosing in a contact's thread, the phone's User-Agent seen
-(design QA H3) - until "Fjern". That is why the prompt names the sender and the time and says that the allow lasts.
+(design QA H3) - until "Fjern". That is why the prompt names the sender and the time and says that the allow lasts
+(under "Mer" since 2026-11-11).
 
 **What the server keeps of a report.** A row is taken only when its `mccmnc` is in the same report's
 `sim_operators`, `host` is a valid entry, `from` is one of this phone's contacts, and the entry is neither unasked
@@ -194,19 +196,34 @@ page. Forms post to `/devices/{id}/calls/mmsc/{row}/allow#mmsc-{row}` (and `/dec
 **a save returns to its own row and never jumps to the top**, and a POST for a row that is gone or already decided
 lands on `notice` in place. An open row is counted wherever a held message is, and the device page's count row leads
 to `#mmsc` when no message is held (code QA). `allowed_on` is an allowed row whose account is gone (code QA L7). A
-prompt is `ask`, `about`, then `listed` when the entry is a hint for that MCC/MNC, else `unlisted` (or
-`unlisted_none`) and `warn`; then `lasts`.
+prompt's row is `ask`, `about`, and `warn` when the entry is not a hint for that MCC/MNC; under its buttons a closed
+fold `more` holds the list line - `listed` when the entry is a hint, else `unlisted` (or `unlisted_none`) - and
+`lasts`.
+
+**2026-11-11, fewer words (the user).** The first build showed five blocks on every question: `ask`, `about`, the list
+line, `warn` and `lasts`. The user asked for a shorter question. Since then the row asks ("Hente bilder fra {host}?"),
+names the picture ("Bildemelding fra {name} {time}.") and, only for an address Android's list does not have for the
+SIM - exactly the condition as before -, warns in orange: "Ukjent adresse for {operator}. Tillat bare hvis {name}
+virkelig sendte et bilde da." The list line (unchanged words) and `lasts` (shortened) moved behind "Mer", a real
+`<details>` under "Tillat" / "Ikke tillat", closed on every load. The warning means what it meant: the address is not
+the list's, allow only if the contact really sent a picture then; its second sentence ("En falsk melding kan be
+telefonen hente fra en fremmed adresse.") went, and it now names the operator, which the list line no longer says in
+the row. A SIM the phone gives no name for (or one out of the phone by now) has only its MCC/MNC: the warning is
+`warn_unnamed` then, "SIM-kortets operatør" in place of the digits, which the list line under "Mer" still has. `gone`
+and `full` stay in the row, where they were; the answered rows, the inbox and push texts and the phone are unchanged.
 
 | key (`device.calls.mmsc.`) | nb | en |
 |---|---|---|
 | `title` | Bildeadresser | Picture addresses |
-| `ask` | Telefonen vil hente bilder fra {host}. Tillat? | The phone wants to fetch pictures from {host}. Allow? |
-| `about` | Det gjelder en bildemelding fra {name} {time}. | This is about a picture message from {name} {time}. |
+| `ask` | Hente bilder fra {host}? | Fetch pictures from {host}? |
+| `about` | Bildemelding fra {name} {time}. | Picture message from {name} {time}. |
 | `listed` | Adressen står i Androids liste over MMS-adresser for SIM-kortets operatør ({operator}). | The address is in Android's list of MMS addresses for the SIM's operator ({operator}). |
 | `unlisted` | Adressen står ikke i Androids liste for SIM-kortets operatør ({operator}). Listen har: {hosts}. | The address is not in Android's list for the SIM's operator ({operator}). The list has: {hosts}. |
 | `unlisted_none` | Androids liste har ingen adresse for SIM-kortets operatør ({operator}). | Android's list has no address for the SIM's operator ({operator}). |
-| `warn` | Tillat bare hvis {name} virkelig sendte et bilde da. En falsk melding kan be telefonen hente fra en fremmed adresse. | Allow only if {name} really sent a picture then. A fake message can ask the phone to fetch from a stranger's address. |
-| `lasts` | Tillater du, hentes alle senere bilder fra adressen uten spørsmål, helt til du fjerner den. | If you allow, every later picture from the address is fetched without asking, until you remove it. |
+| `warn` | Ukjent adresse for {operator}. Tillat bare hvis {name} virkelig sendte et bilde da. | Unknown address for {operator}. Allow only if {name} really sent a picture then. |
+| `warn_unnamed` | Ukjent adresse for SIM-kortets operatør. Tillat bare hvis {name} virkelig sendte et bilde da. | Unknown address for the SIM's operator. Allow only if {name} really sent a picture then. |
+| `more` | Mer | More |
+| `lasts` | Tillater du, hentes senere bilder fra adressen uten spørsmål, til du fjerner den. | If you allow, later pictures from the address are fetched without asking, until you remove it. |
 | `full` | Åtte adresser er tillatt for dette SIM-kortet. Fjern én nederst på siden for å tillate denne. | Eight addresses are allowed for this SIM. Remove one at the foot of the page to allow this one. |
 | `allow` / `decline` | Tillat / Ikke tillat | Allow / Don't allow |
 | `allowed` + `remove` | Tillatt {date} av {parent} / Fjern | Allowed {date} by {parent} / Remove |
@@ -277,7 +294,8 @@ known-fields check. A launcher downgrade is covered by "the newest report decide
 - **Residuals, named.** (1) The unasked class stands on the gate's premise; step 0 (b) is its proof, not this note.
   (2) A hint is true and no more: the 351 dotted names and 14 public addresses are in the list, nobody has checked
   their owners, and brands behind some have closed (`virginmms.fr` 20823, `jazztelmms.com` 21403/21421). A spoofer
-  who names such a host gets the reassuring `listed` line; it still takes the parent's tap, `about` and `lasts`.
+  who names such a host gets the reassuring `listed` line (since 2026-11-11 under "Mer": the row has no warning
+  for it); it still takes the parent's tap, `about` and `lasts`.
   (3) With `"listed"`, should the owner choose it, the same hosts are fetched from with no question at all.
 
 ## 8. Steps and what can be shown

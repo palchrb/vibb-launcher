@@ -194,7 +194,14 @@ async fn allow_decline_and_take_back() {
         .await
         .text();
     assert!(page.contains(&format!("id=\"mmsc-{row}\"")), "{page}");
-    assert!(page.contains("mmsc.example.invalid. Allow?") && page.contains("from Mamma"));
+    // The short question (2026-11-11), and the warning naming the SIM's operator: 24299 is in no list.
+    for words in [
+        "Fetch pictures from mmsc.example.invalid?",
+        "Picture message from Mamma ",
+        "Unknown address for Eksempel Mobil. Allow only if Mamma really sent a picture then.",
+    ] {
+        assert!(page.contains(words), "{words}: {page}");
+    }
     // The device page counts the two questions and leads to them: no message is held.
     let summary = app
         .get_page(&format!("/devices/{id}"), &cookie)
@@ -258,6 +265,67 @@ async fn allow_decline_and_take_back() {
     .await;
     assert_eq!(res.location(), Some(row_anchor.as_str()));
     assert_eq!(mmsc_hosts(&app, &token).await, sent);
+}
+
+/// An open question's markup: what the row shows, and what is folded under "Mer" (from its `<details`).
+fn question(page: &str, row: i64) -> (&str, &str) {
+    let block = &page[page.find(&format!("id=\"mmsc-{row}\"")).unwrap()..];
+    block[..block.find("</details>").unwrap()]
+        .split_once("<details")
+        .unwrap()
+}
+
+/// The question is short (the user, 2026-11-11): the row asks, names the picture and warns only about an address
+/// Android's list doesn't have for the SIM; what the list says and how long an allow lasts are folded under "Mer",
+/// closed, in both languages. A SIM the phone gives no name for is "the SIM's operator" in the warning, never its
+/// MCC/MNC.
+#[tokio::test]
+async fn the_question_is_short_and_the_rest_is_under_more() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("Emma").await;
+    let tele2 = crate::mmsc_hosts::listed("24204").unwrap();
+    let hint = *tele2.unasked.iter().chain(&tele2.hints).next().unwrap();
+    let listed = stored(&app, id, "24204", hint, "open").await;
+    let unlisted = stored(&app, id, "24204", "mmsc.example.invalid", "open").await;
+    for (lang, more, list, lasts, warning) in [
+        (
+            "en",
+            ">More<",
+            "Android's list",
+            "until you remove it.",
+            "Unknown address for the SIM's operator. Allow only if",
+        ),
+        (
+            "nb",
+            ">Mer<",
+            "Androids liste",
+            "til du fjerner den.",
+            "Ukjent adresse for SIM-kortets operatør. Tillat bare hvis",
+        ),
+    ] {
+        let page = app
+            .get_page(&format!("/devices/{id}/calls?lang={lang}"), &cookie)
+            .await
+            .text()
+            .replace("&#39;", "'");
+        for (row, warned) in [(listed, false), (unlisted, true)] {
+            let (shown, folded) = question(&page, row);
+            assert_eq!(shown.contains("data-mmsc-warn"), warned, "{lang}: {shown}");
+            assert_eq!(shown.contains(warning), warned, "{lang}: {shown}");
+            assert!(
+                !shown.contains(list) && !shown.contains(lasts),
+                "{lang}: {shown}"
+            );
+            assert!(
+                folded.starts_with(" class=\"info cell\" data-mmsc-more>"),
+                "{lang}: {folded}"
+            );
+            for words in [more, list, lasts] {
+                assert!(folded.contains(words), "{lang}, {words}: {folded}");
+            }
+        }
+    }
 }
 
 /// Eight addresses are allowed for the SIM: the question says so in place of "Tillat", a ninth allow stores nothing

@@ -2567,13 +2567,16 @@ until a parent allows an address. Two ways onto the row, and each scenario uses 
     push with `sms_state.sim_operators` `[{"mccmnc":"310260","name":"T-Mobile"}]` and `mmsc_unlisted`
     `[{"at":...,"from":"+4790000001","host":"10.0.2.2","mccmnc":"310260"}]`, a `device_mmsc_hosts` row `open` and one
     `mmsc_host` event. The Calls page asks in `#mmsc`, right below `#held`, under its own heading "Bildeadresser" -
-    not under "Meldinger som venter", which is not on the page while no message is held: "Telefonen vil hente bilder
-    fra 10.0.2.2. Tillat?", "Det gjelder en bildemelding fra Mamma 07:39.", "Adressen står ikke i Androids liste for
-    SIM-kortets operatør (T-Mobile). Listen har:" and the five names, the warning "Tillat bare hvis Mamma virkelig
-    sendte et bilde da. En falsk melding kan be telefonen hente fra en fremmed adresse.", "Tillater du, hentes alle
-    senere bilder fra adressen uten spørsmål, helt til du fjerner den.", then "Tillat" and "Ikke tillat"
-    (`p1-question.png`). The inbox has "Testtelefon: et bilde fra Mamma venter" / "Telefonen vil hente det fra en
-    adresse du må godkjenne."; the device page's Meldinger row reads "1 melding venter".
+    not under "Meldinger som venter", which is not on the page while no message is held. The pass saw the first
+    build's five blocks (`p1-question.png`): the question, the picture, "Adressen står ikke i Androids liste for
+    SIM-kortets operatør (T-Mobile). Listen har:" and the five names, the warning and the allow's reach, then
+    "Tillat" and "Ikke tillat". **Since the same day's shortening (the user: fewer words) the question reads** "Hente
+    bilder fra 10.0.2.2?", "Bildemelding fra Mamma 07:39.", in orange "Ukjent adresse for T-Mobile. Tillat bare hvis
+    Mamma virkelig sendte et bilde da.", "Tillat" and "Ikke tillat", and a closed "Mer" holding the list line and
+    "Tillater du, hentes senere bilder fra adressen uten spørsmål, til du fjerner den." - the short form is the
+    server's tests' alone so far, not seen on an emulator. The inbox has "Testtelefon: et bilde fra Mamma venter" /
+    "Telefonen vil hente det fra en adresse du må godkjenne."; the device page's Meldinger row reads "1 melding
+    venter".
   - *Allow -> fetch* - seen. "Tillat" at 06:44:02.4 -> the page comes back at `/devices/1/calls?mmsc=1#mmsc-1`, the
     row in the opened "Bildeadresser" group at the foot: "10.0.2.2", "T-Mobile · Tillatt 11. nov. av <account>",
     "Fjern". The phone: `I/MmsDebug: stand-in download of http://10.0.2.2:8080/mms/131: result -1, http 200`,
@@ -2583,12 +2586,14 @@ until a parent allows an address. Two ways onto the row, and each scenario uses 
     and shown (`a3-thread.png`).
   - *The hint* - seen. Push 132 at `http://mms.tracfone.com/mms/132?to=...` -> a report 2.1 s later, its own row and
     event; the question has "Adressen står i Androids liste over MMS-adresser for SIM-kortets operatør (T-Mobile)."
-    in place of the list, and no warning line. "Ikke tillat" -> "mms.tracfone.com", "T-Mobile · Ikke tillatt",
+    in place of the list, and no warning line (in the short form: no orange line in the row, that sentence under
+    "Mer"). "Ikke tillat" -> "mms.tracfone.com", "T-Mobile · Ikke tillatt",
     "Tillat likevel" in "Bildeadresser", no GET. A second push there (134): kept, no new row, event or question.
     (Never "Tillat" this one on an AVD with internet: the name is a real operator's.)
   - *Another port* - seen. Push 133 at `http://10.0.2.2:8002/mms/133?to=...` while `10.0.2.2` was allowed: kept, a
     report 2.1 s later, its own `open` row and event, and a question naming `10.0.2.2:8002` with the not-in-the-list
-    text and the warning.
+    text and the warning (in the short form: the orange "Ukjent adresse for T-Mobile…" in the row, the list under
+    "Mer").
   - *A restart in between* - seen. The process killed between push 133 and the answer (a new pid, the stand-in set
     again, the store's row still `FAILED`/`mmsc_unknown`); "Tillat" on `10.0.2.2:8002` ->
     `stand-in download of http://10.0.2.2:8002/mms/133?to=%2B4790000020: result -1, http 200`, the GET at the 8002
