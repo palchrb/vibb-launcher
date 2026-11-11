@@ -10,9 +10,10 @@
     the `from`/`device` hidden inputs keep the inbox's query for its back link. -#}
 {% let tab = "" %}
 {% include "partials/tab_bar.html" %}
+{% import "partials/band.html" as band %}
 <main class="container">
-    <a class="nav-back" href="/notifications{{ query }}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ self.t("settings.notifications.title") }}</a>
-    <h1 class="page-title">{{ self.t("settings.notifications.settings_title") }}</h1>
+    {% call band::sub(self.t("settings.notifications.settings_title"), "/notifications" ~ query, self.t("settings.notifications.title")) %}{% endcall %}
+    <div class="sheet">
 
     {#- The server-level warning (§4.4): only while it applies. -#}
     {% if clock_warning %}
@@ -122,6 +123,7 @@
         </form>
         <p class="group-footer">{{ self.t("settings.notifications.events_footer") }}</p>
     </section>
+    </div>
 </main>
 {% if push_key.is_some() %}<script src="/static/notifications.js?v=5" defer></script>{% endif %}
 </body>

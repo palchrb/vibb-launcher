@@ -192,6 +192,8 @@ pub struct KidStatusLine {
 #[template(path = "device_calendar.html")]
 struct CalendarTemplate {
     lang: Lang,
+    /// The phone's small picture on the band (design 84, `band::phone`).
+    who: crate::handlers::devices::BandAvatar,
     title: String,
     device_id: i64,
     device_name: String,
@@ -672,10 +674,11 @@ pub async fn view_calendar(
             crate::caldav::accounts(&state.db).await?,
             crate::calendar_kid_events::marked_uid(&state.db, id).await?,
             crate::calendar_kid_events::status(&state.db, id, state.kid_writes.now()).await?,
+            crate::handlers::devices::BandAvatar::load(&state.db, id).await?,
         ))
     }
     .await;
-    let (switches, saved, rules, report, capabilities, links, accounts, marked, kid_status) =
+    let (switches, saved, rules, report, capabilities, links, accounts, marked, kid_status, who) =
         match loaded {
             Ok(found) => found,
             Err(err) => return read_failed(lang, err, "the calendar settings"),
@@ -844,6 +847,7 @@ pub async fn view_calendar(
         lang,
         CalendarTemplate {
             lang,
+            who,
             title: t(lang, "calendar.title").to_string(),
             device_id: id,
             device_name,

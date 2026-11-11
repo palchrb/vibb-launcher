@@ -276,6 +276,8 @@ impl AddView {
 #[template(path = "device_calls.html")]
 struct DeviceCallsTemplate {
     lang: Lang,
+    /// The phone's small picture on the band (design 84, `band::phone`).
+    who: crate::handlers::devices::BandAvatar,
     title: String,
     device: Device,
     /// Design 77 D2: the two channel rows, calls first.
@@ -1075,6 +1077,7 @@ async fn load_page(
         || shown.sms_notice.is_some();
     Ok(Some(DeviceCallsTemplate {
         lang,
+        who: crate::handlers::devices::BandAvatar::of(&device),
         title: format!("{} - {}", device.name, t(lang, "device.page.calls")),
         channels: vec![
             channel_row(

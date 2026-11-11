@@ -12,10 +12,20 @@ use super::{
     nav_current, tags,
 };
 
-/// The rule editor's sticky top bar (Save, and the save's flash or a refusal's reason).
+/// An editor's band (design 84): the back link, the title and Save, above the form.
 fn bar(html: &str) -> &str {
-    let at = html.find("data-bar=\"rule\"").expect("the top bar");
-    let end = html[at..].find("<h1").unwrap();
+    let at = html.find("<header class=\"band").expect("the band");
+    let end = html[at..].find("</header>").unwrap();
+    &html[at..at + end]
+}
+
+/// An editor's flash box, the form's first box in view (`.editor-flash`): the save's flash or a
+/// refusal's reason.
+fn flash_box(html: &str) -> &str {
+    let at = html
+        .find("<div class=\"editor-flash\">")
+        .expect("the flash box");
+    let end = html[at..].find("</div>").unwrap();
     &html[at..at + end]
 }
 
@@ -319,9 +329,10 @@ async fn the_rule_editor_is_one_form_with_a_confirm() {
     ] {
         assert_eq!(form_action_of(&html, name), Some(save.as_str()), "{name}");
     }
-    // Save sits at the top of the form, before the fields.
-    let form = &html[all[0].1..];
-    assert!(form.find("data-save=\"rule\"").unwrap() < form.find("name=\"name\"").unwrap());
+    // Save sits on the band, above the form, and submits it by its id.
+    assert!(bar(&html).contains("form=\"rule\" data-save=\"rule\">Save</button>"));
+    assert!(html.contains(&format!("<form method=\"post\" action=\"{save}\" id=\"rule\">")));
+    assert!(html.find("</header>").unwrap() < all[0].1);
     assert!(html.contains("<option value=\"school\" selected>School</option>"));
     assert_eq!(input_checked(&html, "calls_allowed", ""), Some(false));
     assert!(html.contains("name=\"d0_start\" value=\"08:15\""));
@@ -428,11 +439,11 @@ async fn a_refused_rule_renders_in_place_as_typed() {
     assert_eq!(d3.attr("value"), Some("09:00"));
     assert!(d3.has("autofocus") && d3.attr("aria-invalid") == Some("true"));
     assert!(html.contains("Thursday: give both times, or leave both empty."));
-    // The reason is also in the top bar beside Save, so it is in view wherever the page opens.
+    // The reason is also the form's first box, which stays in view wherever the page opens.
     assert!(
-        bar(&html).contains("Not saved. Thursday: give both times"),
+        flash_box(&html).contains("Not saved. Thursday: give both times"),
         "{}",
-        bar(&html)
+        flash_box(&html)
     );
     let name: String = sqlx::query_scalar("SELECT name FROM time_rules WHERE id = ?")
         .bind(rule)
@@ -468,8 +479,8 @@ async fn a_refused_rule_renders_in_place_as_typed() {
     let html = res.text();
     let exceptions = section(&html, "exceptions");
     assert!(exceptions.contains("<details class=\"cell disclosure\" open>"));
-    // In view: in the top bar, and right under the summary, above the 51 app rows (qa M2).
-    assert!(bar(&html).contains("Not saved. Pick at most 50 apps."));
+    // In view: in the flash box, and right under the summary, above the 51 app rows (qa M2).
+    assert!(flash_box(&html).contains("Not saved. Pick at most 50 apps."));
     let reason = exceptions.find("id=\"apps-error\"").unwrap();
     assert!(reason > exceptions.find("</summary>").unwrap());
     assert!(reason < exceptions.find("name=\"exempt_apps\"").unwrap());
@@ -1040,30 +1051,32 @@ async fn the_device_page_has_a_time_row() {
     assert!(!quick.contains(">Skole</option>"));
 }
 
-/// The editor's Save stays in reach (a sticky top bar) and a save's flash shows in that bar, so it
-/// is in view wherever the page returns (qa-31-s9-code L1); a phone's own rule saved while the
-/// phone follows everyone's says it isn't in force yet (N2).
+/// The editor's Save stays in reach (on the band, which stays in place - design 84) and a save's
+/// flash shows in the form's first box, which sticks under it, so it is in view wherever the page
+/// returns (qa-31-s9-code L1); a phone's own rule saved while the phone follows everyone's says it
+/// isn't in force yet (N2).
 #[tokio::test]
 async fn the_editor_bar_holds_save_and_its_flash() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("Anna").await;
     let css = std::fs::read_to_string("static/style.css").unwrap();
-    let rule_css = &css[css.find(".editor-bar {").expect("the bar's rule")..];
+    let rule_css = &css[css.find("\n.editor-flash {").expect("the flash's rule")..];
     assert!(rule_css[..rule_css.find('}').unwrap()].contains("position: sticky"));
     let global = add_rule(&app, None, "Skole", SCHOOL_DAYS).await;
     let html = app
         .get_page(&format!("/schedules/rules/{global}?saved=1"), &cookie)
         .await
         .text();
-    let top = bar(&html);
-    assert!(top.contains("data-save=\"rule\""));
+    assert!(bar(&html).contains("data-save=\"rule\""));
+    assert!(!bar(&html).contains("data-flash="), "the band");
+    let top = flash_box(&html);
     assert!(top.contains("data-flash=\"rule\""));
     assert!(top.contains("The phones get it within seconds when online."));
     assert_eq!(
         html.matches("data-flash=").count(),
         1,
-        "the flash only in the bar"
+        "the flash only in its box"
     );
     let own = add_rule(&app, Some(id), "Leggetid", SCHOOL_DAYS).await;
     let html = app
@@ -1071,7 +1084,7 @@ async fn the_editor_bar_holds_save_and_its_flash() {
         .await
         .text();
     // A phone's own rule applies at once (migration 0115) ...
-    assert!(bar(&html).contains("Saved. The phones get it within seconds when online."));
+    assert!(flash_box(&html).contains("Saved. The phones get it within seconds when online."));
     assert!(html.contains(&format!("href=\"/devices/{id}/time\"")));
     // ... unless it is switched off for the phone.
     sqlx::query("INSERT INTO device_rule_off (device_id, rule_id) VALUES (?, ?)")
@@ -1084,7 +1097,7 @@ async fn the_editor_bar_holds_save_and_its_flash() {
         .get_page(&format!("/schedules/rules/{own}?saved=added"), &cookie)
         .await
         .text();
-    assert!(bar(&html).contains("Rule added. Switched off for Anna, so not in use there."));
+    assert!(flash_box(&html).contains("Rule added. Switched off for Anna, so not in use there."));
 }
 
 /// An unreadable stored rule names what didn't read - it shows empty and a save writes it as
@@ -1274,8 +1287,8 @@ const BEDTIME_FORM: &[(&str, &str)] = &[
 
 /// Design 66 §2: the Bedtime page. A phone without one opens with both rows at 21:00-07:00, calls
 /// on and Add, nothing stored; Add and Save are one upsert back to the form (`#bedtime`, the
-/// flash in the top bar); a refusal renders the page (400) as typed with the reason under its
-/// row and in the bar; Remove lands on Device › Time's Bedtime group. Each is posted from the
+/// flash in the form's first box); a refusal renders the page (400) as typed with the reason under
+/// its row and in that box; Remove lands on Device › Time's Bedtime group. Each is posted from the
 /// rendered form and its landing checked (`assert_lands`); Device › Time and Settings › Time
 /// Rules say the bedtime.
 #[tokio::test]
@@ -1387,7 +1400,7 @@ async fn the_bedtime_page_adds_saves_refuses_and_removes_in_place() {
         "an empty row is no bedtime those nights"
     );
 
-    // A refusal: the page again as typed, the reason under its row and in the bar.
+    // A refusal: the page again as typed, the reason under its row and in the flash box.
     let res = app
         .request_form(
             Method::POST,

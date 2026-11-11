@@ -201,6 +201,22 @@ async fn an_uploaded_picture_is_served_and_shown_on_every_phone_row() {
         }
     }
 
+    // One of the phone's own pages: the picture, small, on the band - the same route, never spoken
+    // (design 84, O1 c).
+    let html = app
+        .get_page(&format!("/devices/{id}/calls"), &cookie)
+        .await
+        .text();
+    let band = &html[html.find("<header class=\"band").unwrap()..];
+    let band = &band[..band.find("</header>").unwrap()];
+    assert!(
+        band.contains(&format!(
+            "<span class=\"band-who\" aria-hidden=\"true\"><span class=\"avatar \">A\
+             <img class=\"avatar-img\" {src} alt=\"\" decoding=\"async\"></span></span>"
+        )),
+        "{band}"
+    );
+
     // Never sent to the phone.
     let policy = app
         .request(Method::GET, "/api/devices/policy", Some(&token), None)

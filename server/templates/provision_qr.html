@@ -7,11 +7,12 @@
 <div class="top-strip" aria-hidden="true"></div>
 {% let tab = "devices" %}
 {% include "partials/tab_bar.html" %}
+{% import "partials/band.html" as band %}
 <main class="container container-narrow">
     {#- Step 2 and 3 of Add Phone (design 31 §3.7): the two ways to connect, then the QR code here
         or the code on its own page. Also "Set Up with QR Code" on Advanced › Connection. -#}
-    <a class="nav-back" href="/devices/{{ device.id }}{% if enrolled %}/advanced#connection{% else %}#access{% endif %}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{% if enrolled %}{{ self.t("device.page.advanced") }}{% else %}{{ device.name }}{% endif %}</a>
-    <h1 class="page-title">{{ self.tp("devices.qr.title", [("name", device.name.as_str())]) }}</h1>
+    {% call band::sub(title, back_href, back_label) %}{% endcall %}
+    <div class="sheet">
 
     {% if enrolled %}
     <div class="attention attention-alarm" data-warning="replaces">
@@ -95,6 +96,7 @@
             <details class="info"><summary aria-label="{{ self.t("devices.qr.code_info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.tp("devices.qr.code_info", [("minutes", code_minutes.to_string().as_str())]) }}</p></div></details>
         </div>
     </section>
+    </div>
 </main>
 </body>
 </html>

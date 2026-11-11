@@ -7,9 +7,10 @@
 <div class="top-strip" aria-hidden="true"></div>
 {% let tab = "settings" %}
 {% include "partials/tab_bar.html" %}
+{% import "partials/band.html" as band %}
 <main class="container">
-    <a class="nav-back" href="/settings"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ self.t("nav.settings") }}</a>
-    <h1 class="page-title">{{ self.t("settings.time_rules.title") }}</h1>
+    {% call band::sub(self.t("settings.time_rules.title"), "/settings", self.t("nav.settings")) %}{% endcall %}
+    <div class="sheet">
 
     {#- Links only (design 31 §3.5): each rule and the daily limit open their own page, each phone
         its Time page. A delete lands back on #rules with its flash. -#}
@@ -54,6 +55,7 @@
         </div>
         <p class="group-footer">{{ self.t("device.time.emergency") }}</p>
     </section>
+    </div>
 </main>
 </body>
 </html>

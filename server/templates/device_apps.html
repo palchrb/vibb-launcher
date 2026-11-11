@@ -9,9 +9,10 @@
     (`?from=apps` or `app:<id>`), else Devices. -#}
 {% let tab = nav_tab.name() %}
 {% include "partials/tab_bar.html" %}
+{% import "partials/band.html" as band %}
 <main class="container">
-    <a class="nav-back" href="{{ back_href }}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ back_label }}</a>
-    <h1 class="page-title">{{ self.t("nav.apps") }}</h1>
+    {% call band::phone(self.t("nav.apps"), back_href, back_label, who) %}{% endcall %}
+    <div class="sheet">
 
     {#- Where the forms return (§5.1): a switch and a Name and icon save to the app's row
         (#app-<package>) - a switch moves the row to the other group, and the fragment finds it
@@ -87,6 +88,7 @@
     {% if installing %}
     <script src="/static/auto-reload.js?v=8" defer></script>
     {% endif %}
+    </div>
 </main>
 </body>
 </html>

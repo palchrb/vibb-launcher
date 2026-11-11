@@ -7,9 +7,10 @@
 <div class="top-strip" aria-hidden="true"></div>
 {% let tab = "devices" %}
 {% include "partials/tab_bar.html" %}
+{% import "partials/band.html" as band %}
 <main class="container">
-    <a class="nav-back" href="/devices/{{ device.id }}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ device.name }}</a>
-    <h1 class="page-title">{{ self.t("device.page.advanced") }}</h1>
+    {% call band::phone(self.t("device.page.advanced"), "/devices/" ~ device.id, device.name, who) %}{% endcall %}
+    <div class="sheet">
 
     {#- Restrictions: the 11 switches are one form (H1: a missing box is off), in groups so each
         can have its footer. -#}
@@ -343,6 +344,7 @@
             </details>
         </div>
     </section>
+    </div>
 </main>
 </body>
 </html>

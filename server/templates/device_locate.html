@@ -9,11 +9,10 @@
 {% import "partials/recent.html" as recent_group %}
 {% let tab = "locate" %}
 {% include "partials/tab_bar.html" %}
+{% import "partials/band.html" as band %}
 <main class="container">
-    <div class="title-bar">
-        {% include "partials/bell.html" %}
-    </div>
-    <h1 class="page-title">{{ self.t("nav.locate") }}</h1>
+    {% call band::tab(self.t("nav.locate"), tab) %}{% endcall %}
+    <div class="sheet">
 
     {%- if phones.is_empty() %}
     <p class="empty-state">{{ self.t("devices.list.empty") }}</p>
@@ -220,7 +219,7 @@
     </section>
 
     <script src="/static/leaflet/leaflet.js"></script>
-    <script src="/static/locate.js?v=5"></script>
+    <script src="/static/locate.js?v=6"></script>
     {%- else %}
     {#- Several phones, none chosen: each with its state, as on Devices. -#}
     <div class="group group-avatars" data-group="phones">
@@ -236,6 +235,7 @@
         {% endfor %}
     </div>
     {%- endif %}
+    </div>
 </main>
 </body>
 </html>

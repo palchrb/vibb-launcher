@@ -59,9 +59,15 @@ async fn the_header_says_whether_the_phone_is_connected() {
     };
     let html = page().await;
     let head = header(&html);
+    // The name is the band's title (design 84), escaped there and everywhere on the page.
+    assert!(
+        html.contains("<h1 class=\"page-title\">Anna &#60;b&#62;</h1>"),
+        "{html}"
+    );
+    assert!(!html.contains("Anna <b>"), "{html}");
     assert!(head.contains("Anna &#60;b&#62;"), "{head}");
+    assert!(!head.contains("<h1"), "{head}");
     assert!(!head.contains("seen seen"), "{head}");
-    assert!(!head.contains("Anna <b>"), "{head}");
     assert!(
         head.contains("<span class=\"state-offline\">Not seen yet</span></p>"),
         "{head}"

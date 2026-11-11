@@ -250,14 +250,16 @@
         }
 
         // A Locations row: the map into view (inside the page's scroller), that fix on it.
-        // The map's top goes to the top of <main>'s padding (under the status bar), by an offset
-        // in the scroll itself: scroll-margin-top needs Safari 14.1, the floor is 14.0.
+        // The map's top goes 8 px under the status bar's strip (.top-strip: <main> has no top padding
+        // since design 84, its band scrolls away with the page), by an offset in the scroll itself:
+        // scroll-margin-top needs Safari 14.1, the floor is 14.0.
         function mapIntoView() {
             var main = doc.querySelector("main");
             var style = main && win.getComputedStyle ? win.getComputedStyle(main) : null;
             if (style && (style.overflowY === "auto" || style.overflowY === "scroll")) {
-                main.scrollTop += box.getBoundingClientRect().top - main.getBoundingClientRect().top -
-                    (parseFloat(style.paddingTop) || 0);
+                var strip = doc.querySelector(".top-strip");
+                var under = (strip ? strip.getBoundingClientRect().height || 0 : 0) + 8;
+                main.scrollTop += box.getBoundingClientRect().top - main.getBoundingClientRect().top - under;
             } else if (box.scrollIntoView) {
                 box.scrollIntoView({ block: "start" });
             }

@@ -249,6 +249,34 @@ pub(crate) fn initial(name: &str) -> String {
         .unwrap_or_else(|| "?".to_string())
 }
 
+/// The phone's small picture on the band of its ten own pages (design 84, O1 c; `band::phone`): the list's and the
+/// summary's avatar - the letter, the grey of a phone not set up, the photo - with no status dot. It says whose page
+/// this is; the name itself is the back link's spoken word.
+pub(crate) struct BandAvatar {
+    pub initial: String,
+    pub avatar: &'static str,
+    pub photo: Option<String>,
+}
+
+impl BandAvatar {
+    pub(crate) fn of(device: &Device) -> Self {
+        BandAvatar {
+            initial: initial(&device.name),
+            avatar: avatar_class(device),
+            photo: avatar_photo(device),
+        }
+    }
+
+    /// For a page that reads no `Device` of its own (Device › Calendar).
+    pub(crate) async fn load(db: &sqlx::SqlitePool, id: i64) -> Result<Self, sqlx::Error> {
+        let device = sqlx::query_as::<_, Device>("SELECT * FROM devices WHERE id = ?")
+            .bind(id)
+            .fetch_one(db)
+            .await?;
+        Ok(Self::of(&device))
+    }
+}
+
 /// A phone's connection (design 31 §3.10) from the in-memory stream and last access, and the
 /// database's last report (which survives a restart).
 pub(crate) fn connection_of(

@@ -7,10 +7,11 @@
 <div class="top-strip" aria-hidden="true"></div>
 {% let tab = "settings" %}
 {% include "partials/tab_bar.html" %}
+{% import "partials/band.html" as band %}
 {% import "partials/group_flash.html" as group_flash %}
 <main class="container">
-    <a class="nav-back" href="/settings"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ self.t("nav.settings") }}</a>
-    <h1 class="page-title">{{ self.t("settings.backups.title") }}</h1>
+    {% call band::sub(self.t("settings.backups.title"), "/settings", self.t("nav.settings")) %}{% endcall %}
+    <div class="sheet">
 
     {#- Every form renders its answer in the POST's response, posting to its group's fragment, so
         the answer lands where the parent was (design 31 §5.1). Delete and Restore are <details>
@@ -137,6 +138,7 @@
         <p class="group-footer">{{ self.t("settings.backups.schedule_footer") }}</p>
         {% endif %}
     </section>
+    </div>
 </main>
 </body>
 </html>

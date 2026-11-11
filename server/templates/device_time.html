@@ -7,9 +7,10 @@
 <div class="top-strip" aria-hidden="true"></div>
 {% let tab = "devices" %}
 {% include "partials/tab_bar.html" %}
+{% import "partials/band.html" as band %}
 <main class="container">
-    <a class="nav-back" href="/devices/{{ device.id }}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ device.name }}</a>
-    <h1 class="page-title">{{ self.t("device.page.time") }}</h1>
+    {% call band::phone(self.t("device.page.time"), "/devices/" ~ device.id, device.name, who) %}{% endcall %}
+    <div class="sheet">
 
     {#- Tidsregler (2026-11-01): the rules alone. Extra time, Pause a Rule and the lifts are the
         summary's Quick actions, the history its Activity. Every form returns to its own group (the
@@ -117,6 +118,7 @@
         </div>
         <p class="group-footer">{% if own_limit %}{{ self.t("device.time.limit_footer") }}{% else %}{{ self.tp("device.time.limit_off_footer", [("name", device.name.as_str())]) }}{% endif %}</p>
     </section>
+    </div>
 </main>
 </body>
 </html>

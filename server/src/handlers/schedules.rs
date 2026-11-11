@@ -857,9 +857,9 @@ struct RuleTemplate {
     back_label: String,
     /// "Anna" for a phone's own rule, for the delete's sentence.
     device_name: Option<String>,
-    /// The flash in the top bar after a save: "Saved. The phones get it …".
+    /// The flash in the form's first box after a save: "Saved. The phones get it …".
     saved: Option<String>,
-    /// A refusal's reason, in the top bar beside Save (in view wherever the page opens).
+    /// A refusal's reason, in the same box (in view wherever the page opens).
     refusal: Option<String>,
     /// The stored rule doesn't read: which parts (they open empty and are saved as shown).
     corrupt: Option<String>,
@@ -1804,6 +1804,8 @@ pub async fn switch_device_rule(
 #[template(path = "device_time.html")]
 struct DeviceTimeTemplate {
     lang: Lang,
+    /// The phone's small picture on the band (design 84, `band::phone`).
+    who: crate::handlers::devices::BandAvatar,
     title: String,
     device: Device,
     /// Above the first group: Vibb too old, the record unreadable, incoming calls not blocked.
@@ -2011,6 +2013,7 @@ async fn render_device_time(
     render(
         DeviceTimeTemplate {
             lang,
+            who: crate::handlers::devices::BandAvatar::of(&device),
             title: format!("{} · {}", t(lang, "device.page.time"), device.name),
             warnings,
             lock,

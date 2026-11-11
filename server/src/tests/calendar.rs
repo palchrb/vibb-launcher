@@ -741,7 +741,7 @@ async fn a_rule_is_saved_refused_previewed_moved_and_deleted() {
     assert_eq!(rule_ids(&policy), [1, 2]);
     assert_eq!(policy["calendar"]["rules"][0]["action"], json!("prefix"));
 
-    // A refused rule: the editor again (400) as typed, the reason in the bar; nothing written, no settings_saved.
+    // A refused rule: the editor again (400) as typed, the reason in the flash box; nothing written, no settings_saved.
     let before = settings_saved(&app).await;
     let refused = post(
         format!("{page}/rules/1"),

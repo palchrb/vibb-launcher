@@ -5,7 +5,7 @@
 //! whatever the Own rules switch says.
 //!
 //! - `GET /devices/{id}/bedtime` (`device_bedtime.html`): one form shaped like the rule editor, Save
-//!   in the sticky top bar with the save's flash or a refusal's reason. A phone without one opens
+//!   on the band, the save's flash or a refusal's reason the form's first box. A phone without one opens
 //!   filled in (21:00-07:00 both rows, calls on, silent) with Add, nothing stored before that.
 //! - `POST /devices/{id}/bedtime`: one upsert (`ON CONFLICT` on the partial unique index, so two
 //!   saves of a new bedtime at once make one row), then `?saved=1#bedtime`; a refusal renders the
@@ -177,7 +177,7 @@ struct BedtimeTemplate {
     /// A bedtime is stored: Save and Remove Bedtime…, else Add.
     stored: bool,
     saved: bool,
-    /// A refusal's reason, in the top bar beside Save.
+    /// A refusal's reason, the form's first box (`.editor-flash`).
     refusal: Option<String>,
     /// The stored bedtime doesn't read: what shows empty and is saved as shown.
     corrupt: Option<String>,
@@ -367,7 +367,7 @@ pub async fn show_bedtime(
     )
 }
 
-/// A refused save: the page again (400) as typed, the reason under its row and in the top bar.
+/// A refused save: the page again (400) as typed, the reason under its row and in the form's first box.
 async fn refuse(
     state: &AppState,
     id: i64,

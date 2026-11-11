@@ -669,7 +669,7 @@ async fn the_settings_pages_speak_norwegian() {
             "<h1 class=\"page-title\">Varsler</h1>",
             "Ingenting ennå",
             "aria-label=\"Varselinnstillinger\"",
-            "</svg>Innstillinger</a>",
+            "<span class=\"visually-hidden\">Tilbake til Innstillinger</span></a>",
         ],
     );
     has(
@@ -1284,7 +1284,7 @@ async fn the_security_log_reads_as_labelled_rows() {
     for words in [
         r#"<html lang="nb">"#,
         "<title>Sikkerhetslogg · Vibb Phone</title>",
-        ">Innstillinger</a>",
+        ">Tilbake til Innstillinger</span></a>",
         ">Sperrede adresser</h2>",
         r#"aria-label="Opphev sperren av 192.0.2.44">Opphev</button>"#,
         "For mange feil passord sperrer en adresse en stund.",

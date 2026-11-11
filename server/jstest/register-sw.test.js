@@ -180,7 +180,8 @@ function node(tag) {
             child.parentNode = this;
             const at = before ? this.children.indexOf(before) : -1;
             if (at < 0) this.children.push(child); else this.children.splice(at, 0, child);
-            this.scrollHeight += 60;
+            // The page grows by the row's height wherever in it the row lands.
+            for (let up = this; up; up = up.parentNode) up.scrollHeight += 60;
             return child;
         },
         removeChild(child) { this.children.splice(this.children.indexOf(child), 1); child.parentNode = null; },
@@ -188,6 +189,7 @@ function node(tag) {
         click() { this.listeners.click(); },
         scrollTop: 0,
         scrollHeight: 1000,
+        get firstChild() { return this.children[0] || null; },
     };
     return el;
 }
@@ -203,16 +205,27 @@ function syncWindow({
     storageThrows = false,
     session = {},
     scrolled = 0,
+    editor = false,
 } = {}) {
     const log = [];
     const local = { "vibb.push-off": off };
     const main = node("main");
     main.scrollTop = scrolled;
-    const title = node("h1");
-    title.className = "page-title";
-    main.appendChild(title);
-    main.querySelector = (s) => (s === ".page-title" ? title : null);
-    const byId = () => main.children.find((c) => c.id === "push-banner") || null;
+    // A scrolling page (design 84): the band, then the sheet with the page's rows. An editor's band stands outside
+    // main, which has no sheet: its form is main's first child.
+    const sheet = node("div");
+    sheet.className = "sheet";
+    if (editor) {
+        main.appendChild(node("form"));
+    } else {
+        const band = node("header");
+        band.className = "band";
+        main.appendChild(band);
+        main.appendChild(sheet);
+        sheet.appendChild(node("section"));
+    }
+    main.querySelector = (s) => (s === ".sheet" && !editor ? sheet : null);
+    const byId = () => main.children.concat(sheet.children).find((c) => c.id === "push-banner") || null;
     const manager = {
         getSubscription: () => Promise.resolve(subscription),
         subscribe: (options) => {
@@ -251,7 +264,7 @@ function syncWindow({
             return Promise.resolve({ ok: true, json: () => Promise.resolve(next) });
         },
     };
-    return { win, log, local, session, main, banner: byId };
+    return { win, log, local, session, main, sheet, banner: byId };
 }
 
 const settled = () => new Promise((resolve) => setTimeout(resolve, 20));
@@ -317,7 +330,8 @@ test("a subscribe refused without a tap shows the banner; its Turn On subscribes
     await pushSync(w.win);
     const banner = w.banner();
     assert.ok(banner, "the banner");
-    assert.strictEqual(w.main.children.indexOf(banner), 1, "under the title");
+    assert.strictEqual(w.sheet.children.indexOf(banner), 0, "first in the sheet");
+    assert.strictEqual(w.main.children.indexOf(banner), -1, "never beside the band");
     assert.strictEqual(banner.className, "attention push-banner");
     assert.strictEqual(banner.attributes.role, "status");
     const [text, on, hide] = banner.children;
@@ -368,6 +382,21 @@ test("a scrolled page keeps its place when the banner comes", async () => {
     });
     await pushSync(w.win);
     assert.ok(w.banner());
+    assert.strictEqual(w.main.scrollTop, 360);
+});
+
+test("on an editor, which has no sheet, the banner is first in main, before the form", async () => {
+    const w = syncWindow({
+        editor: true,
+        scrolled: 300,
+        subscribe: () => Promise.reject(new Error("NotAllowedError")),
+        answers: [{ state: "none", key: SERVER_KEY, words: BANNER_WORDS }],
+    });
+    await pushSync(w.win);
+    const banner = w.banner();
+    assert.ok(banner, "the banner");
+    assert.strictEqual(w.main.children.indexOf(banner), 0);
+    assert.strictEqual(w.main.children[1].tagName, "form");
     assert.strictEqual(w.main.scrollTop, 360);
 });
 

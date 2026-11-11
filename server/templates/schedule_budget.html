@@ -7,9 +7,10 @@
 <div class="top-strip" aria-hidden="true"></div>
 {% let tab = "settings" %}
 {% include "partials/tab_bar.html" %}
+{% import "partials/band.html" as band %}
 <main class="container">
-    <a class="nav-back" href="/schedules"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ self.t("settings.time_rules.title") }}</a>
-    <h1 class="page-title">{{ self.t("device.time.limit") }}</h1>
+    {% call band::sub(self.t("device.time.limit"), "/schedules", self.t("settings.time_rules.title")) %}{% endcall %}
+    <div class="sheet">
 
     {#- One form (§5.6: the handler writes all 7 days). Save returns to #screen-time with the flash
         under it; a refusal renders this page again there, as typed. -#}
@@ -32,6 +33,7 @@
             </details>
         </div>
     </section>
+    </div>
 </main>
 </body>
 </html>
