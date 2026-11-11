@@ -7,12 +7,10 @@
 <div class="top-strip" aria-hidden="true"></div>
 {% let tab = "apps" %}
 {% include "partials/tab_bar.html" %}
+{% import "partials/band.html" as band %}
 <main class="container">
-    <div class="title-bar">
-        <a class="title-action title-add" href="/apps/tracked/new" aria-label="{{ self.t("apps.list.add_aria") }}"><svg viewBox="0 0 22 22" aria-hidden="true" focusable="false"><path d="M11 3v16M3 11h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></a>
-        {% include "partials/bell.html" %}
-    </div>
-    <h1 class="page-title">{{ self.t("nav.apps") }}</h1>
+    {% call band::tab(self.t("nav.apps"), tab) %}<a class="title-action title-add" href="/apps/tracked/new" aria-label="{{ self.t("apps.list.add_aria") }}"><svg viewBox="0 0 22 22" aria-hidden="true" focusable="false"><path d="M11 3v16M3 11h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></a>{% endcall %}
+    <div class="sheet">
 
     {% if !phones.is_empty() %}
     <h2 class="group-header">{{ self.t("apps.on_phones") }}</h2>
@@ -58,6 +56,7 @@
             <svg class="row-icon" viewBox="0 0 22 22" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="9" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M11 7v8M7 11h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
             <span class="row-label">{{ self.t("apps.add.title") }}</span>
         </a>
+    </div>
     </div>
 </main>
 </body>

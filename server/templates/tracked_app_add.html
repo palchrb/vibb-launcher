@@ -7,9 +7,10 @@
 <div class="top-strip" aria-hidden="true"></div>
 {% let tab = "apps" %}
 {% include "partials/tab_bar.html" %}
+{% import "partials/band.html" as band %}
 <main class="container container-narrow">
-    <a class="nav-back" href="/apps"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ self.t("nav.apps") }}</a>
-    <h1 class="page-title">{{ self.t("apps.add.title") }}</h1>
+    {% call band::sub(self.t("apps.add.title"), "/apps", self.t("nav.apps")) %}{% endcall %}
+    <div class="sheet">
 
     <form method="post" action="/apps/tracked/new">
         <div class="group form-group">
@@ -95,6 +96,7 @@
 
         <button type="submit" class="button-wide">{{ self.t("apps.add.title") }}</button>
     </form>
+    </div>
 </main>
 </body>
 </html>

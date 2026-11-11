@@ -7,9 +7,10 @@
 <div class="top-strip" aria-hidden="true"></div>
 {% let tab = "settings" %}
 {% include "partials/tab_bar.html" %}
+{% import "partials/band.html" as band %}
 <main class="container">
-    <a class="nav-back" href="/settings"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ self.t("nav.settings") }}</a>
-    <h1 class="page-title">{{ self.t("settings.updates.title") }}</h1>
+    {% call band::sub(self.t("settings.updates.title"), "/settings", self.t("nav.settings")) %}{% endcall %}
+    <div class="sheet">
 
     {#- Versions only (the user, 2026-11-04): the server never acts on its host, so the page has no
         buttons - it says what is installed, what is out, and how the owner updates it. The
@@ -65,6 +66,7 @@
         </div>
         <p class="group-footer">{{ self.t("settings.updates.timing_footer") }}</p>
     </section>
+    </div>
 </main>
 </body>
 </html>

@@ -251,20 +251,21 @@ test("a Locations row scrolls the map into view, then pans to its fix with its w
     assert.strictEqual(page.scrolled.length, 2);
 });
 
-// In the shell the map's top goes to the top of <main>'s padding (under the status bar) by an
-// offset in the scroll, not scroll-margin-top (Safari 14.1; the floor is 14.0).
-test("in the shell a Locations row scrolls <main> to put the map under its top padding", async () => {
+// In the shell the map's top goes 8 px under the status bar's strip (<main> has no top padding since
+// design 84) by an offset in the scroll, not scroll-margin-top (Safari 14.1; the floor is 14.0).
+test("in the shell a Locations row scrolls <main> to put the map under the status bar's strip", async () => {
     const page = fakePage({ box: { "data-list": "" }, fixes: [["1", "2", "t"]] });
     const main = { scrollTop: 900, getBoundingClientRect: () => ({ top: 0 }) };
     page.mapBox.getBoundingClientRect = () => ({ top: 60 - (main.scrollTop - 900) - 900 });
     const query = page.win.document.querySelector;
-    page.win.document.querySelector = (selector) => (selector === "main" ? main : query(selector));
-    page.win.getComputedStyle = () => ({ overflowY: "auto", paddingTop: "55px" });
+    const strip = { getBoundingClientRect: () => ({ height: 47 }) };
+    page.win.document.querySelector = (selector) => (selector === "main" ? main : selector === ".top-strip" ? strip : query(selector));
+    page.win.getComputedStyle = () => ({ overflowY: "auto", paddingTop: "0px" });
     install(page.win, fakeLeaflet());
     await settle();
     page.fixRows[0].listeners.click();
-    // The box was 840 px above the screen's top: it now sits 55 px down, at main's padding.
-    assert.strictEqual(main.scrollTop, 900 - 840 - 55);
+    // The box was 840 px above the screen's top: it now sits 55 px down, 8 px under the 47 px strip.
+    assert.strictEqual(main.scrollTop, 900 - 840 - 47 - 8);
     assert.deepStrictEqual(page.scrolled, [], "no scrollIntoView");
 });
 

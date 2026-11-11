@@ -1,0 +1,56 @@
+{#- The night band every page in the app shell opens on (design 84, F2b), and the page's only <h1>: the round Vibb
+    mark on a tab, a back chevron under one, the page's name, then the page's own actions (the call's body). No
+    template writes a back link or an <h1> of its own. `title` is the name as shown; `href` and `parent` are where the
+    chevron goes and that page's name, which is only spoken ("Back to Emma"). A title over 16 letters, or over 24,
+    marks the band (`band-long`, `band-xlong`): one line, smaller, then cut (style.css).
+
+    `tab`: a tab's landing page; the bell comes after the page's actions, so it is last by construction (needs `bell`;
+    `tab` is the page's own `{% let tab %}`). `sub`: a page under a tab. `phone`: one of a phone's own pages, with the
+    phone's small picture (`who`, `devices::BandAvatar`) at the right - it says whose page this is, as the back
+    link's word did. `editor`: a page with Save; its band is a child of <body> and stays in place. `bare`: a page
+    with no session (the mark, nothing to tap). -#}
+{% macro size(title) %}{% if title.chars().count() > 24 %} {{ "band-xlong" }}{% else if title.chars().count() > 16 %} {{ "band-long" }}{% endif %}{% endmacro %}
+
+{% macro back(href, parent) -%}
+<a class="nav-back" href="{{ href }}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="visually-hidden">{{ self.back_to(parent) }}</span></a>
+{%- endmacro %}
+
+{% macro tab(title, tab) -%}
+<header class="band band-tab">
+        <img class="band-mark" src="/static/icons/icon-192.png" width="36" height="36" alt="" decoding="async">
+        <h1 class="page-title">{{ title }}</h1>
+        <div class="band-actions">{{ caller() }}{% include "partials/bell.html" %}</div>
+    </header>
+{%- endmacro %}
+
+{% macro sub(title, href, parent) -%}
+<header class="band{% call size(title) %}{% endcall %}">
+        {% call back(href, parent) %}{% endcall %}
+        <h1 class="page-title">{{ title }}</h1>
+        <div class="band-actions">{{ caller() }}</div>
+    </header>
+{%- endmacro %}
+
+{% macro phone(title, href, parent, who) -%}
+<header class="band{% call size(title) %}{% endcall %}">
+        {% call back(href, parent) %}{% endcall %}
+        <h1 class="page-title">{{ title }}</h1>
+        <span class="band-who" aria-hidden="true"><span class="avatar {{ who.avatar }}">{{ who.initial }}{% if let Some(src) = who.photo %}<img class="avatar-img" src="{{ src }}" alt="" decoding="async">{% endif %}</span></span>
+        <div class="band-actions">{{ caller() }}</div>
+    </header>
+{%- endmacro %}
+
+{% macro editor(title, href, parent) -%}
+<header class="band band-fixed{% call size(title) %}{% endcall %}">
+    {% call back(href, parent) %}{% endcall %}
+    <h1 class="page-title">{{ title }}</h1>
+    <div class="band-actions">{{ caller() }}</div>
+</header>
+{%- endmacro %}
+
+{% macro bare(title) -%}
+<header class="band{% call size(title) %}{% endcall %}">
+        <img class="band-mark" src="/static/icons/icon-192.png" width="36" height="36" alt="" decoding="async">
+        <h1 class="page-title">{{ title }}</h1>
+    </header>
+{%- endmacro %}

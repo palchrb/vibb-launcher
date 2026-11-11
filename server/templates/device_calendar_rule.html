@@ -8,21 +8,21 @@
 <div class="top-strip" aria-hidden="true"></div>
 {% let tab = "devices" %}
 {% include "partials/tab_bar.html" %}
-<main class="container">
-    {#- Design 69 §3.3: one title rule. Save sits in the sticky top bar with a refusal's reason; a save goes back to the
-        rule's row on the Calendar page (#rule-<id>), a refusal renders this page again (400) as typed. The preview
-        fields are part of the form but never saved: static/calendar-preview.js posts the form to .../preview 400 ms
-        after typing stops and swaps only #preview-result; without JS the Preview button answers with this page. -#}
+{% import "partials/band.html" as band %}
+{#- Design 69 §3.3: one title rule. Save sits on the band, which stays in place (design 84), and submits the form by
+    its id; a refusal's reason is the form's first box, in view (.editor-flash). A save goes back to the
+    rule's row on the Calendar page (#rule-<id>), a refusal renders this page again (400) as typed. The preview
+    fields are part of the form but never saved: static/calendar-preview.js posts the form to .../preview 400 ms
+    after typing stops and swaps only #preview-result; without JS the Preview button answers with this page. -#}
+{% call band::editor(title, "/devices/" ~ device_id ~ "/calendar#rules", self.t("calendar.title")) %}<button type="submit" class="title-action" form="rule-form" data-save="rule">{% if rule_id.is_some() %}{{ self.t("common.save") }}{% else %}{{ self.t("common.add") }}{% endif %}</button>{% endcall %}
+<main class="container container-fixed">
     <form method="post" action="{{ self.action() }}" id="rule-form" data-preview-url="/devices/{{ device_id }}/calendar/rules/preview">
         {% if let Some(rule) = rule_id %}<input type="hidden" name="rule" value="{{ rule }}">{% endif %}
-        <div class="editor-bar" data-bar="rule">
-            <div class="title-bar title-bar-split">
-                <a class="nav-back" href="/devices/{{ device_id }}/calendar#rules"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ self.t("calendar.title") }}</a>
-                <button type="submit" class="title-action" data-save="rule">{% if rule_id.is_some() %}{{ self.t("common.save") }}{% else %}{{ self.t("common.add") }}{% endif %}</button>
-            </div>
-            {% if let Some(why) = refusal %}<p class="flash flash-error bar-flash" role="alert" data-flash="refused">{{ self.t("common.not_saved") }} {{ self.t(why) }}</p>{% endif %}
+        {% if let Some(why) = refusal %}
+        <div class="editor-flash">
+            <p class="flash flash-error bar-flash" role="alert" data-flash="refused">{{ self.t("common.not_saved") }} {{ self.t(why) }}</p>
         </div>
-        <h1 class="page-title">{{ title }}</h1>
+        {% endif %}
 
         <section id="rule-when" aria-label="{{ self.t("calendar.rule.when") }}">
             <div class="group">

@@ -8,9 +8,10 @@
 <div class="top-strip" aria-hidden="true"></div>
 {% let tab = "locate" %}
 {% include "partials/tab_bar.html" %}
+{% import "partials/band.html" as band %}
 <main class="container">
-    <a class="nav-back" href="/devices/locate?device={{ device.id }}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ self.t("nav.locate") }}</a>
-    <h1 class="page-title">{{ self.t("locate.locations.title") }}</h1>
+    {% call band::sub(self.t("locate.locations.title"), "/devices/locate?device=" ~ device.id, self.t("nav.locate")) %}{% endcall %}
+    <div class="sheet">
 
     {#- Design 44 §1.4: the map for the span, then every kept fix of it. Nothing posts here. The pick
         opens the page again with its span (static/locate.js remembers it); a row's tap brings the
@@ -51,7 +52,8 @@
     </section>
 
     <script src="/static/leaflet/leaflet.js"></script>
-    <script src="/static/locate.js?v=5"></script>
+    <script src="/static/locate.js?v=6"></script>
+    </div>
 </main>
 </body>
 </html>

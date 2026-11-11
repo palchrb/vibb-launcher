@@ -73,7 +73,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   the tab bar (sides, bottom `max(4px, inset + 6px)`), `.auth-page` (all four) and `.editor-bar` (sticky top, its side
   margins matching the container's). **dvh only after a vh fallback** (iOS 14, the floor, drops the `dvh` declaration):
   `.auth-page` is `min-height: 100vh; min-height: 100dvh` (`shell::every_dvh_follows_a_vh_fallback`). *Design 43
-  changed the bottom (16 px, the bar no longer covers the page) and the editor bar's top (below).*
+  changed the bottom (16 px, the bar no longer covers the page) and the editor bar's top (below). Design 84 moved
+  every one of `.container`'s insets to the band and the sheet inside it, and the editor bar is gone ("The night band on every page").*
 - **`static/tab-bar.js`** (a relayout of the fixed bar after an iOS resume) didn't hold on the iPhone and is deleted
   with its test: design 43's app shell replaced it (the next section).
 - **The Locate marker**: `L.Icon.Default.imagePath = '/static/leaflet/images/'` - Leaflet prepends it to its own file
@@ -92,6 +93,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   (below, "The vibb identity"); no `position: fixed` anywhere (`shell::the_app_shell_scrolls_main_not_the_document`).
   The bottom padding under the bar is `--tab-bar-room` + the home indicator's inset (`.tab-bar ~ .container`), 16 px +
   the inset on a page without it (`music_spotify_done`). The editor bar's `top: -8px` and `main`'s `padding-top: calc(8px + inset)` go together (the shell test pins both).
+  *Until design 84: `main` has no padding since; the pair that goes together now is `.editor-flash`'s `top: -15px` and
+  `.container-fixed`'s 15 px.*
 - **The auth pages opt out**: `<body class="auth-page">` (login, 2FA, change password) keeps the document scroll
   (`height: auto; overflow: visible`), so a card taller than the screen with the keyboard up stays reachable.
 - **Double-tap zoom off, pinch kept**: `touch-action: manipulation` on `main` and `.tab-bar` - a scroller resets an
@@ -99,7 +102,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   map), never `user-scalable=no`.
 - **`.editor-bar`** sticks inside `main`: a sticky offset counts from inside the scroller's padding (8 px + the status
   bar's inset), so `top: -8px` puts it right under the status bar as before; its side margins still reach the 720 px
-  column's edge (measured in Chromium at 390 and 1280 px).
+  column's edge (measured in Chromium at 390 and 1280 px). *Gone with design 84: Save is on the editor's band, a child
+  of `body` above `main`; what sticks inside `main` is the save's flash alone (`.editor-flash`).*
 - **The place on the page is `static/scroll-restore.js`'s** (a browser puts an inner scroller back only from the
   back-forward cache): `scrollerOf(win)` picks `main` when its computed `overflow-y` scrolls, else the window, at each
   use (the script runs from the head, before `main` exists). The form record's fragment maths uses the scroller's
@@ -169,7 +173,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - **Two sub-pages** (`src/handlers/device_pages.rs`, `device_about.html`, `device_advanced.html`), reached from two
   rows at the bottom of the device page ("About This Phone · Vibb One 0.23.6", "Advanced"). A rebuilt sub-page has the
   §3.0 header - a back link to the phone (`.nav-back`) and the large title - and includes `partials/tab_bar.html`
-  alone, without the brand bar (gone since step 15).
+  alone, without the brand bar (gone since step 15). *Since design 84 that header is the band (`band::phone`): the
+  chevron, the title and the phone's small picture.*
 - **About This Phone** (`GET /devices/{id}/about`, read-only): Connection (Status "Online since 08:12" from
   `connection_state`, Last contact, Last full report, Network from `limits::LastAccess`), Sound (`sound_mode::state`),
   Software (Vibb version, the music app's version from its versionCode, "Settings from server" = Applied or a
@@ -769,7 +774,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 
 ## The rest of Settings (design 31 step 14, `docs/design/31-pwa-redesign.md` §3.6)
 
-- **Sub-pages of Settings** (the sub-page header: "‹ Settings" and the large title, `partials/tab_bar.html` alone):
+- **Sub-pages of Settings** (the sub-page header: "‹ Settings" and the large title, `partials/tab_bar.html` alone;
+  *since design 84 the band, with "Back to Settings" only spoken*):
   Web Filter (`/dns`), Blocked Activity (`/dns/log`), Wallpapers, Phone Setup (`/settings/provisioning`), Account &
   Parents (`/account`; design 62 added its Name and Parents groups - `connectivity.md`, "Parent accounts"), Security Log (`/security`), Backups, Software Updates (`/updates`). No POST route changed.
 - **Software Updates shows versions only** (the user, 2026-11-04: the server never acts on its host): this server's
@@ -888,7 +894,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   logic (lockout, pending expiry, session cycling, epoch, CSRF) is unchanged.
 - **The tab pages** (Devices, Apps, Locate, Music, Settings) include `partials/tab_bar.html` alone and open on their
   large title under a 44px bar (`.title-bar`: "+" on Devices and Apps, Edit on Music; Settings and Locate start with
-  the title). `partials/app_header.html` is gone (the summary, step 10, has its back link); `shell::every_template_with_the_bar_sets_its_tab`
+  the title; *since design 84 on the band - the mark, the name, "+" and the bell - `band::tab`*). `partials/app_header.html` is gone (the summary, step 10, has its back link); `shell::every_template_with_the_bar_sets_its_tab`
   asserts no template names it. For a phone not set up, Back from Connect and the code page goes to the summary's
   Connect This Phone group (`/devices/{id}#access`).
 - Tests: `tests::provisioning` (the add flow's table from the rendered forms, a connected phone, the name and Wi-Fi
@@ -1076,7 +1082,8 @@ man er inne på en device". Branch `pwa-fixes-b`.
   over `main` (next bullet).
 - **Devices' brand row**: the Pust mark (the app icon itself since 2026-10-22, below; first an inline SVG on a night tile) and the "vibb" wordmark at the left
   of the page's `.title-bar` (`.vibb-brand`, the home page's alone - `shell::the_tab_pages_open_on_their_large_title`),
-  + and the bell at the right; the large title is Nunito 800, 30 px on every tab page.
+  + and the bell at the right; the large title is Nunito 800, 30 px on every tab page. *Design 84: the mark is on
+  every tab's band with the page's name beside it (24 px), and the wordmark is gone.*
 - **Avatars**: every set-up phone's initial is `#0C0C14` on peach `#F0A884` (Nunito 900, 46 px), a phone not set up
   stays grey (`devices::avatar_class_of(enrolled)`: `""` or `avatar-grey`); `AVATAR_COLOURS` now colour only the
   Apps tab's letter tiles.
@@ -1106,8 +1113,10 @@ man er inne på en device". Branch `pwa-fixes-b`.
   at 90 %) with `saturate(180%) blur(20px)`, else the solid `--bar`; the gaps are never blurred. `z-index: 10`; the
   Locate map stays under it (`.map-box` is its own stacking context). Devices' `.vibb-brand` is exactly 44 px high
   with no vertical margin (it was 54 px, pushing +, the bell and the title 10 px lower than on the other tabs), so
-  every tab page has the bar at y 8-52 and its `<h1>` at 56 (the shell test pins both rules).
-- **Devices' night band** (artboard E, 2026-10-22, `docs/testing/2026-10-22-pwa-identity-pass.md`, "Night band"):
+  every tab page has the bar at y 8-52 and its `<h1>` at 56 (the shell test pins both rules). *Gone with design 84:
+  the `<h1>` is on the band.*
+- **Devices' night band** (artboard E, 2026-10-22, `docs/testing/2026-10-22-pwa-identity-pass.md`, "Night band";
+  *since design 84 every page's, as `.band` - "The night band on every page" - with this `border-image` outset upward only*):
   the home page alone ("it should feel more like a front page") has its title bar on vibb's night `#0C0C14`, from the
   screen's very top - main's 8 px and the status bar's inset - to 6 px under the 44 px bar (flat right under it until
   2026-11-10; the user on the iOS lab: the band's edge was too close under the mark, with much air down to the title),
@@ -1197,7 +1206,8 @@ man er inne på en device". Branch `pwa-fixes-b`.
   so the strip exists and its colour counts when iOS reports a top inset of 0 under `default`; Android's installed app,
   desktops and Safari's tab keep the inset (0 - no strip, as before). Everything placed "below the status bar" counts
   from `--top-strip`: the auth pages' padding, the photo crop's padding, the Connecting bar and chip, the
-  pull-to-refresh arrow, the timing line and the lock page's centring; main's `padding-top` is
+  pull-to-refresh arrow, the timing line and the lock page's centring; main's `padding-top` (*since design 84 the
+  band's, `--band-top`, with 6 px for the 8*) is
   `max(calc(8px + env(safe-area-inset-top, 0px)), var(--top-strip))` (below, "On the device"). The veil (`html.locked`/`html.veiled`)
   hides every child of the body but the strip (a hidden box is skipped by WebKit). The auth pages scroll the document:
   the fixed strip stays at the top and the card scrolls under it. (B) The installed app's shell is
@@ -1234,7 +1244,8 @@ man er inne på en device". Branch `pwa-fixes-b`.
   strip on iOS 26's installed app and in a browser tab. The sticky editor bar keeps `top: -8px` and its own 8 px
   padding: stuck, its row sits where every page's title bar is in all three (on iOS 27 the strip covers the bar's
   padding alone). `.page-title`'s top margin is 12 px (was 4; the user: more air between the band and the title, the
-  same height on every page), and the title as main's first child 56 (44 + 12). Chromium at 393 px (measured): the
+  same height on every page), and the title as main's first child 56 (44 + 12). *Design 84 replaced the bar, the
+  sticky editor bar and the title under it with the band; the strip and `--top-strip` are as written here.* Chromium at 393 px (measured): the
   title's top at 64 in a tab, 123 with a 59 px inset, 68 on iOS 27's numbers, the same on every page shape.
   **Not known yet**: iOS 26 with `default` (why it keeps `black-translucent`); whether iOS reads the bar style only at
   Add to Home Screen; the 12 px band in iPhone landscape (the strip is 12 px there too, on iOS 26 as well since the
@@ -1246,6 +1257,7 @@ man er inne på en device". Branch `pwa-fixes-b`.
   the hand-drawn rings were "not the right icon"): Devices' `.vibb-mark` is `<img src="/static/icons/icon-192.png"
   width="34" height="34" alt="" decoding="async">` - the PWA's own icon, its night ground baked in, straight on the night
   band with no tile (`.vibb-mark` is only its box: `display: block`, 34 px); `--brand-tile` and the inline SVG are gone.
+  *Since design 84 it is `.band-mark`, 36 px, on every tab's band.*
   The icon's ground is `#0C0C14` with faint dither (at most 12 off per channel), so it blends into the band; its outer
   ring runs nearly to the icon's edge, so the rings are about 33 px across (the SVG's were 23). The wordmark stays 10 px
   to its right. The shell test pins the `<img>` on Devices alone, the rule, and that neither the token nor the old
@@ -1376,7 +1388,8 @@ man er inne på en device". Branch `pwa-fixes-b`.
 - **The zone's page** (`handlers::zones`, `device_zone.html`, tab Locate, `no_store_path` `["devices", _, "zones",
   ..]`): one form `#zone-form` with the time rule's sticky editor bar (`.nav-back` "Locate" to
   `/devices/locate?device={id}#zones`, **Add** / **Save** at the right, a refusal's "Not saved. …" in the bar), the
-  large title (the zone's stored name, "New Zone"), the map box (`data-zone-map`: centre, radius, the slider's range,
+  large title (the zone's stored name, "New Zone"; *since design 84 all of it on the editor's band, `band::editor`,
+  with the refusal in `.editor-flash` under it*), the map box (`data-zone-map`: centre, radius, the slider's range,
   the phone's newest fix), then Name, Latitude, Longitude (text, `inputmode="decimal"`, 6 decimals; a decimal comma
   reads as a point), Radius (`type=number`, 100-2000 step 10, " m"), the slider (`type=range`, no name, `hidden`
   until `zones.js` shows it), "Use Phone's Location" (`type=button`, only with a fix, `hidden` until the script), and
@@ -1788,3 +1801,86 @@ man er inne på en device". Branch `pwa-fixes-b`.
   server's - and goes to the phone blank, which names it by its kind (design 70 §7, slice 5; `time-rules.md`, "Wire").
   **No new
   user-facing word is hardcoded** (the user, 2026-10-26).
+
+## The night band on every page (design 84, 2026-11-11, `docs/design/84-pwa-night-band.md`)
+
+Every page in the app shell opens on one night band and holds everything else in a sheet with a rounded top (the
+user's pick F2b from a clickable lab). The older sections above describe the 44 px title bar, the large title under
+it, the sticky editor bar and the back link's visible word: all four are gone, and each of those places has a
+pointer here.
+
+- **One partial writes it**: `templates/partials/band.html`, imported after the tab bar's include
+  (`{% import "partials/band.html" as band %}`) and called once per page with the page's actions as the call's body.
+  It writes the page's only `<h1 class="page-title">`; no template writes an `<h1>` or a `.nav-back` itself
+  (`tests::shell::every_shell_page_opens_on_one_band`). Five kinds:
+
+  | Macro | Left of the name | Right of it | Pages |
+  |---|---|---|---|
+  | `band::tab(title, tab)` | the round Vibb mark (`.band-mark`, 36 px, the app icon's artwork) | the call's body ("+" on Devices and Apps), then the bell - last by construction | the 5 tab pages |
+  | `band::sub(title, href, parent)` | the back chevron | the call's body | 29 pages under a tab |
+  | `band::phone(title, href, parent, who)` | the back chevron | the phone's small picture, then the call's body | a phone's 10 pages |
+  | `band::editor(title, href, parent)` | the back chevron | the call's body: Save | the 4 editors |
+  | `band::bare(title)` | the mark | nothing | `music_spotify_done` (no session) |
+
+  49 templates; `login`, `lock`, `change_password`, `setup_2fa` and `verify_2fa` are outside the shell and have none
+  (the test names the five, so a new template takes a band or fails it).
+- **The back link** is the chevron alone, 46x44 px; where it goes is only spoken: `<span class="visually-hidden">`
+  with `Words::back_to(parent)`, `nav.back_to` ("Back to {name}" / "Tilbake til {name}"). `href` is an expression: a
+  literal, a field, or askama's `~` with a space on both sides (`"/devices/" ~ device.id`). `enroll_code` and
+  `provision_qr`, whose target depends on the phone's state, take `back_href`/`back_label` from their handlers. A
+  test that read the link's visible word reads the hidden span now.
+- **The name** is one line, never two: a title over 16 letters marks the band `band-long`, over 24 `band-xlong`
+  (counted in the partial on the translated string, so a page can differ between the languages); the type steps
+  down where the row is short of room and the rest is cut with an ellipsis (the user: a long phone name may be cut).
+  A 40-letter phone name is cut on its own summary, at 390 px too.
+- **A phone's ten pages** (`device_about`, `device_advanced`, `device_apps`, `device_calendar`, `device_calls`,
+  `device_filter`, `device_home`, `device_lock`, `device_music`, `device_time`) say whose page it is with the phone's
+  picture, since the name left the back link (the user's choice, "Enig i c!"): `devices::BandAvatar { initial,
+  avatar, photo }` from the functions the list and the summary use (`BandAvatar::of(&Device)`, from the
+  `Device` each handler reads once), drawn as `<span class="band-who" aria-hidden="true">` around the list's own `.avatar`
+  at 28 px, the photo with an empty `alt` - not spoken (the back link says the name), not a link. It stands between
+  the `<h1>` and the actions box and is always shown: the title gives way. Measured at 320 px: "Låseskjerm og
+  PIN-koder" reads "Låseskjerm og PIN-ko…", every other title in both languages is whole. The summary and the pages
+  under the ten (a rule, a zone, a calendar's sub pages) have no picture.
+- **The band's box** (`style.css`, "The night band"): `--band-top` is the status bar's room,
+  `max(calc(6px + env(safe-area-inset-top)), var(--top-strip))`, and `--band-h` 54 px more. `.band` is night in both
+  schemes with the page's column in its side paddings (16 px, the notch's insets, 720 px), a row of 44 px at least
+  (`min-height`, so a larger text size grows it), and 32 px under the row of which the last 22 lie under the next
+  box (`margin-bottom: -22px`) - what shows in that box's rounded corners is the band's foot. Its
+  `border-image` outset paints 100vh of night above it for iOS's pull-down bounce, as Devices' bar did. In a browser
+  tab the band is 82 px high and the sheet starts at 60.
+- **The sheet**: `<div class="sheet">` right after the band, to the end of `main`, on `--bg` with
+  `border-radius: 22px 22px 0 0` and a 1 px top border in `--band-edge` (transparent in light, `#34344A` in dark,
+  where band and ground are the same night). It has the paddings `main` had: `.container` itself has none since
+  this design, and the room for the tab bar is `.tab-bar ~ .container > .sheet`'s bottom padding. Top padding 15 px
+  beside the border: the first row is 16 px under the sheet's edge. A page's first header takes `margin-top: 10px`
+  in place of 24 (nine `.sheet > ... :first-child` selectors, plain lists: no `:is()` under the floor), 26 px under
+  the edge; the summary's head 4 px. `device_calls` opens on its Held section, which is empty without held
+  messages, so its first visible header keeps its 24 px.
+- **The four editors** (`schedule_rule`, `device_bedtime`, `device_zone`, `device_calendar_rule`): the band is a
+  child of `<body>` right before `main` (`.band-fixed`, `flex: none`) and does not scroll; `main` is
+  `.container.container-fixed` and is itself the sheet (the same edge and radius, its own paddings), scrolling
+  inside its rounded top. Save is a `<button type="submit" class="title-action" form="<the form's id>">` on the
+  band, outside the form (`tests::shell::every_editors_save_names_its_form` names each pair: `rule`, `bedtime`,
+  `zone-form`, `rule-form`). The save's flash - "Saved …" or "Not saved. …" - is `.editor-flash`, the form's first
+  box, rendered only with a flash: `position: sticky; top: -15px; margin-top: -15px; padding: 15px 0 8px` against
+  `.container-fixed`'s 15 px, so it sits right under the band and stays there while the page scrolls (change one
+  number, change the other; the shell test pins both). **`.container-fixed > form` is `display: flow-root`**:
+  without it the flash's negative margin collapses through the form and moves the form's top edge, which is what
+  `scroll-restore.js` puts back on the screen - a save came back 15 px off. A save never jumps: `main.scrollTop`
+  measured before and after a save on the rule, bedtime and zone editors is equal. A calendar title rule's
+  form posts to another path than its page, so there the browser lands on the form's top with the flash in view,
+  as before this design.
+- **The push banner** (`register-sw.js`, `?v=6`): first in the sheet when the sheet is `main`'s child, else first in
+  `main` before the form (an editor). `.push-banner + form > .editor-flash { margin-top: -8px }` starts a flash at
+  the banner's lower edge. `jstest/register-sw.test.js` has both places and the kept scroll.
+- **Locate's map into view** (`locate.js`, `?v=6`): `main` has no top padding now, so a Locations row puts the
+  map's top 8 px under `.top-strip`'s height by an offset in `main.scrollTop` (`scroll-margin-top` needs Safari
+  14.1). `.pull-refresh` comes down at `calc(var(--band-h) + 6px)`, over the sheet.
+- **Cache**: `style.css?v=93`.
+- **Tests**: the two shell tests above; `the_app_shell_scrolls_main_not_the_document` pins the band's, the
+  sheet's, `.container-fixed`'s and the flash's numbers and the form's `flow-root`;
+  `the_tab_pages_open_on_their_large_title` reads each tab's band (mark, name, the bell last);
+  `device_pages::about_this_phone_shows_the_last_reports_facts` and `avatars.rs` the phone's picture;
+  `time_pages.rs` reads Save on the band and the flash box. Measured in Chromium at 320 and 390 px, light and dark,
+  scripts on and off: design 84 §9. The iPhone walk is design 84 §8.

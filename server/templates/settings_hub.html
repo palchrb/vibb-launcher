@@ -7,11 +7,10 @@
 <div class="top-strip" aria-hidden="true"></div>
 {% let tab = "settings" %}
 {% include "partials/tab_bar.html" %}
+{% import "partials/band.html" as band %}
 <main class="container">
-    <div class="title-bar">
-        {% include "partials/bell.html" %}
-    </div>
-    <h1 class="page-title">{{ self.t("nav.settings") }}</h1>
+    {% call band::tab(self.t("nav.settings"), tab) %}{% endcall %}
+    <div class="sheet">
 
     <div class="group group-icons">
         <a class="row" href="/notifications/settings?from=settings" data-row="notifications">
@@ -87,6 +86,7 @@
         <input type="hidden" name="endpoint" value="">
         <button type="submit" class="row row-button row-danger">{{ self.t("settings.hub.sign_out") }}</button>
     </form>
+    </div>
 </main>
 </body>
 </html>

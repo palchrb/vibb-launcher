@@ -7,9 +7,10 @@
 <div class="top-strip" aria-hidden="true"></div>
 {% let tab = "devices" %}
 {% include "partials/tab_bar.html" %}
+{% import "partials/band.html" as band %}
 <main class="container">
-    <a class="nav-back" href="/devices/{{ device_id }}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ device_name }}</a>
-    <h1 class="page-title">{{ title }}</h1>
+    {% call band::phone(title, "/devices/" ~ device_id, device_name, who) %}{% endcall %}
+    <div class="sheet">
 
     {#- Design 69 §3. The switches and selects save on change (autosave.js) and return to their group (#dagen,
         #lock, #calendars); <noscript> Save without JS. The calendars are one form that writes exactly the rows it
@@ -225,6 +226,7 @@
         </div>
         <p class="group-footer">{{ self.t("calendar.rules.footer") }}</p>
     </section>
+    </div>
 </main>
 </body>
 </html>

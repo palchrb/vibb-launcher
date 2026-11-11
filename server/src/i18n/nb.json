@@ -345,7 +345,6 @@
   "error.csrf": "Avvist: dette skjemaet ble sendt fra et annet nettsted.",
 
   "account.title": "Konto og foreldre",
-  "account.back": "Innstillinger",
 
   "account.warning.live_title": "Feil tofaktorkoder",
   "account.warning.live.one": "{count} feil tofaktorkode er skrevet inn siden du sist logget inn. Den som skrev den inn, kan passordet ditt - bytt det nå (det opphever også sperren).",
@@ -957,6 +956,7 @@
   "nav.locate": "Finn",
   "nav.music": "Musikk",
   "nav.settings": "Innstillinger",
+  "nav.back_to": "Tilbake til {name}",
   "nav.bell": "Varsler",
   "nav.bell_unread.one": "Varsler, {count} ulest",
   "nav.bell_unread.other": "Varsler, {count} uleste",

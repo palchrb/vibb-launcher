@@ -7,9 +7,10 @@
 <div class="top-strip" aria-hidden="true"></div>
 {% let tab = "settings" %}
 {% include "partials/tab_bar.html" %}
+{% import "partials/band.html" as band %}
 <main class="container container-narrow">
-    <a class="nav-back" href="/settings"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ self.t("nav.settings") }}</a>
-    <h1 class="page-title">{{ self.t("settings.provisioning.title") }}</h1>
+    {% call band::sub(self.t("settings.provisioning.title"), "/settings", self.t("nav.settings")) %}{% endcall %}
+    <div class="sheet">
 
     {#- One form (§5.6: the handler writes every field). A refusal renders in the POST's answer at
         #setup; a save comes back to the flash under Save (#saved). -#}
@@ -72,6 +73,7 @@
         <p class="group-footer">{{ self.t("settings.provisioning.numbers_footer") }}</p>
         {% if country_code.saved %}<div class="group"><p class="flash" data-flash="country-code" role="status">{{ self.t("settings.provisioning.country_code_saved") }}</p></div>{% endif %}
     </section>
+    </div>
 </main>
 </body>
 </html>

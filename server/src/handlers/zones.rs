@@ -36,7 +36,7 @@ struct ZoneTemplate {
     stored_name: String,
     form: ZoneForm,
     errors: ZoneErrors,
-    /// Not saved: the reason in the bar (a refusal that is no one field's: the 11th zone).
+    /// Not saved: the reason in the form's first box (a refusal that is no one field's: the 11th zone).
     refusal: Option<String>,
     /// The phone's newest fix (6 decimals), for "Use Phone's Location"; `None` without one.
     phone_fix: Option<(String, String)>,

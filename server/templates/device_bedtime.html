@@ -7,20 +7,20 @@
 <div class="top-strip" aria-hidden="true"></div>
 {% let tab = "devices" %}
 {% include "partials/tab_bar.html" %}
-<main class="container">
-    {#- Design 66: one form shaped like the rule editor. Save sits in the sticky top bar with the
-        save's flash or a refusal's reason; a save returns to this form (#bedtime), a refusal
-        renders this page again (400) as typed, the reason also under its row. -#}
+{% import "partials/band.html" as band %}
+{#- Design 66: one form shaped like the rule editor. Save sits on the band, which stays in place (design 84), and
+    submits the form by its id; the save's flash or a refusal's reason is the form's first box and stays in view
+    (.editor-flash). A save returns to this form (#bedtime), a refusal renders this page again (400) as typed, the
+    reason also under its row. -#}
+{% call band::editor(self.t("device.bedtime.title"), "/devices/" ~ device_id ~ "/time", self.t("device.page.time")) %}<button type="submit" class="title-action" form="bedtime" data-save="bedtime">{% if stored %}{{ self.t("common.save") }}{% else %}{{ self.t("common.add") }}{% endif %}</button>{% endcall %}
+<main class="container container-fixed">
     <form method="post" action="/devices/{{ device_id }}/bedtime#bedtime" id="bedtime">
-        <div class="editor-bar" data-bar="bedtime">
-            <div class="title-bar title-bar-split">
-                <a class="nav-back" href="/devices/{{ device_id }}/time"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ self.t("device.page.time") }}</a>
-                <button type="submit" class="title-action" data-save="bedtime">{% if stored %}{{ self.t("common.save") }}{% else %}{{ self.t("common.add") }}{% endif %}</button>
-            </div>
+        {% if refusal.is_some() || saved %}
+        <div class="editor-flash">
             {% if let Some(why) = refusal %}<p class="flash flash-error bar-flash" role="alert" data-flash="refused">{{ self.t("common.not_saved") }} {{ why }}</p>{% endif %}
             {% if saved && refusal.is_none() %}<p class="flash bar-flash" role="status" data-flash="bedtime">{{ self.t("common.saved_online") }}</p>{% endif %}
         </div>
-        <h1 class="page-title">{{ self.t("device.bedtime.title") }}</h1>
+        {% endif %}
 
         {% if let Some(parts) = corrupt %}
         <div class="attention attention-alarm" data-warning="bedtime-corrupt"><div class="attention-text">{{ self.t("device.bedtime.corrupt") }}<div class="attention-sub">{{ self.tp("device.bedtime.corrupt_sub", [("parts", parts.as_str())]) }}</div></div></div>

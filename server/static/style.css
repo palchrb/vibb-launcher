@@ -94,13 +94,12 @@
     --tab-on-icon: #E8895E;
 
     /* vibb: Nunito for the headings (static/fonts/, never fetched elsewhere), a phone's initial on
-       peach (#0C0C14 on #F0A884 9.9:1). Devices' night band (artboard E) is night in both schemes,
+       peach (#0C0C14 on #F0A884 9.9:1). Every page's night band (design 84) is night in both schemes,
        and so is everything on it: the Pust mark is the app icon itself (its night ground blends
-       into the band, no tile), the wordmark white (19.0:1), + and the bell peach (9.9:1), their
-       hover pale peach. */
+       into the band, no tile), the page's name cream (16.2:1), the back chevron, the actions and
+       the bell peach (9.9:1), their hover pale peach. */
     --font-display: "Nunito", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
     --night: #0C0C14;
-    --brand-word: #FFFFFF;
     --night-action: #F0A884;
     --night-action-hover: #F6C4AA;
     /* Words on the night ground, both schemes (the lock screen): cream 16.2:1, the second line 8.4:1, a failure's pale
@@ -110,6 +109,13 @@
     --night-error: #F2B8B5;
     --avatar-bg: #F0A884;
     --avatar-text: #0C0C14;
+    /* The band (design 84): its top padding - 6 px under the status bar's inset, never less than the
+       night strip -, its visible height (a 44 px row and 10 px under it: 60 px in a browser tab,
+       66 px in the installed app on iOS 27), and the hairline along the sheet's top, drawn only
+       where the ground is the night itself (dark). */
+    --band-top: max(calc(6px + env(safe-area-inset-top, 0px)), var(--top-strip));
+    --band-h: calc(var(--band-top) + 54px);
+    --band-edge: transparent;
     /* The Locate map's trail (static/locate.js): on OSM's light tiles in both schemes. */
     --map-trail: #A64B25;
     /* A safe zone's circle (design 64, static/locate.js and zones.js): a calm outline on the same
@@ -181,6 +187,7 @@
 
         --switch-off: #34344A;
         --knob: #FFFFFF;
+        --band-edge: #34344A;
 
         --bar: #1B1B28;
         --bar-glass: rgba(27, 27, 40, 0.72);
@@ -377,17 +384,12 @@ input[type="radio"] {
     accent-color: var(--switch-on);
 }
 
-/* ---- Shell: brand bar, page, tab bar -------------------------------------------------------- */
+/* ---- Shell: page, band, sheet, tab bar -------------------------------------------------------- */
 
 /* The scroller: the full width (the scrollbar at the window's edge, the wheel working over the
-   margins, the same width on every page), the 720 px column (480 px narrow) from its padding.
-   viewport-fit=cover (head.html): every edge takes its safe-area inset - the status bar's above,
-   the notch's sides in landscape; the tab bar over its bottom clears the home indicator. The top
-   is 8 px under the inset and never less than the status bar's night strip (--top-strip): under
-   the `default` bar of iOS 27 the inset is 0 and the strip 12 px, so the page starts at the
-   strip's lower edge - 12 pt under the status bar, 4 more than iOS 26's 8 (the user's pick on the
-   iPhone, 2026-11-10; 8 px + the strip was 12 pt too tall). With the inset as the strip (iOS 26's
-   translucent bar) or neither (a browser tab) it is 8 px + the inset.
+   margins, the same width on every page) and no padding of its own (design 84): the band and the
+   sheet inside it take the column (720 px, 480 px narrow) and every safe-area inset from their
+   own paddings. An editor's main (.container-fixed) keeps the paddings itself.
    touch-action here, not on body: a scroller resets an inherited one, so the rows inside would
    keep double-tap zoom; pinch zoom stays, and Leaflet's own rules win on the map. */
 .container {
@@ -396,26 +398,15 @@ input[type="radio"] {
     overflow-y: auto;
     overscroll-behavior-y: contain;
     touch-action: manipulation;
-    padding: 8px 16px 16px;
-    padding-top: max(calc(8px + env(safe-area-inset-top, 0px)), var(--top-strip));
-    padding-right: max(16px, env(safe-area-inset-right, 0px), calc((100% - 720px) / 2 + 16px));
-    padding-left: max(16px, env(safe-area-inset-left, 0px), calc((100% - 720px) / 2 + 16px));
-    /* A page without the tab bar (music_spotify_done) reaches the home indicator itself. */
-    padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+    padding: 0;
 }
 
 /* With the floating bar (it comes first in the source) main runs to the screen's bottom edge and
-   scrolls behind the bar - the content shows in the gaps around it - and leaves room under its last
-   row so that row scrolls clear of the bar; a focused field or a row scrolled into view stops above
-   it too (scroll-padding). */
+   scrolls behind the bar - the content shows in the gaps around it - and the sheet (an editor's
+   main) leaves room under its last row so that row scrolls clear of the bar; a focused field or a
+   row scrolled into view stops above it too (scroll-padding). */
 .tab-bar ~ .container {
-    padding-bottom: calc(var(--tab-bar-room) + env(safe-area-inset-bottom, 0px));
     scroll-padding-bottom: calc(var(--tab-bar-room) + env(safe-area-inset-bottom, 0px));
-}
-
-.container-narrow {
-    padding-right: max(16px, env(safe-area-inset-right, 0px), calc((100% - 480px) / 2 + 16px));
-    padding-left: max(16px, env(safe-area-inset-left, 0px), calc((100% - 480px) / 2 + 16px));
 }
 
 /* A classic scrollbar (a desktop window) is always there, so the column has the same width on a
@@ -426,38 +417,220 @@ input[type="radio"] {
     }
 }
 
-.page-title {
-    font-family: var(--font-display);
-    font-size: 1.875rem;
-    font-weight: 800;
-    line-height: 1.15;
-    margin: 12px 0 20px;
-    word-break: break-word;
-    overflow-wrap: anywhere;
+/* The night band (design 84, F2b; templates/partials/band.html): every page in the shell opens on
+   it - the round mark (a tab) or the back chevron (a page under one), the page's name, which is
+   the page's only <h1>, and the page's actions. It is main's first child and scrolls away with
+   the page; an editor's (.band-fixed, a page with Save) is a child of the body right before main
+   and stays in place - a block in the screen-high body, never fixed or sticky (design 43).
+   Its box: the status bar's room (--band-top), the page's column at the sides (16 px, the notch's
+   insets, 720 px), a row of 44 px at least - a larger text size grows the band, never cuts it -
+   and 32 px under the row. 10 px of those are band; the last 22 px lie under the rounded top of
+   the next box (the sheet, or an editor's main), pulled up by the band's own negative margin, so
+   what shows in that box's two corners is the band's foot - on an editor too.
+   border-image's outset paints 100vh of night above the band without taking room or adding
+   scrollable overflow (ink overflow): it is what an iOS pull-down bounce shows over the band, and
+   it meets the status bar's night strip (.top-strip) without a seam. */
+.band {
+    display: flex;
+    align-items: center;
+    min-height: calc(var(--band-h) + 22px);
+    margin-bottom: -22px;
+    padding: var(--band-top) max(16px, env(safe-area-inset-right, 0px), calc((100% - 720px) / 2 + 16px)) 32px max(16px, env(safe-area-inset-left, 0px), calc((100% - 720px) / 2 + 16px));
+    background: var(--night);
+    color: var(--night-text);
+    border-image: linear-gradient(var(--night), var(--night)) fill 0 / 0 / 100vh 0 0;
 }
 
-/* The sub-page header (§3.0): a back link, then the large title. */
+/* An editor's band is the body's own child, beside main: it keeps its height, main takes the rest. */
+.band-fixed {
+    flex: none;
+}
+
+/* The app icon's own artwork (icons/icon-192.png, rings on plain night) straight on the band, no
+   tile. Under 300 px of width it leaves its room to the title. */
+.band-mark {
+    flex: none;
+    display: block;
+    width: 36px;
+    height: 36px;
+    margin-right: 10px;
+}
+
+@media (max-width: 299px) {
+    .band-mark {
+        display: none;
+    }
+}
+
+/* The back chevron: a 46 x 44 target from the screen's edge, the chevron on the content's 16 px
+   line; where it goes is spoken (.visually-hidden, "Back to Emma"), never drawn. */
 .nav-back {
-    display: inline-flex;
+    flex: none;
+    display: flex;
     align-items: center;
+    width: 46px;
     min-height: 44px;
-    color: var(--tint);
-    font-size: 1.0625rem;
-    text-decoration: none;
+    margin-left: -16px;
+    padding-left: 16px;
+    color: var(--night-action);
+}
+
+.nav-back:hover {
+    color: var(--night-action-hover);
 }
 
 .nav-back svg {
     width: 12px;
     height: 20px;
-    margin-right: 4px;
+}
+
+/* The ring is drawn inside the chevron's own box, so it never touches the title beside it. */
+.band .nav-back:focus {
+    outline-color: var(--night-action);
+    outline-offset: -4px;
+}
+
+/* The page's name: one line, never two. A long one (band.html counts the letters: over 16
+   `band-long`, over 24 `band-xlong`) is set smaller where the row is short of room, then cut with
+   an ellipsis; the actions beside it are never cut or pushed out. Each size is capped by the
+   window's width (vw), which is its rem value from 320 px up at the default text size: a doubled
+   text size grows the title by about a fifth, not to twice - the one text that doesn't double,
+   since one line cannot hold it. No fixed line height: a large text size is never cut. */
+.page-title {
+    flex: 0 1 auto;
+    min-width: 0;
+    margin: 0;
+    font-family: var(--font-display);
+    font-size: min(1.375rem, 6.9vw);
+    font-weight: 800;
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.band-tab > .page-title {
+    font-size: min(1.5rem, 7.5vw);
+}
+
+.band-xlong > .page-title {
+    font-size: min(1.1875rem, 6vw);
+}
+
+@media (max-width: 374px) {
+    .band-long > .page-title {
+        font-size: min(1.1875rem, 6vw);
+    }
+
+    .band-xlong > .page-title {
+        font-size: min(1.0625rem, 5.4vw);
+    }
+}
+
+/* The page's actions at the band's right, the bell last on a tab (it keeps its -11 px: the glyph
+   ends on the content's line). A page without one leaves the room to the title. */
+.band-actions {
+    flex: none;
+    display: flex;
+    align-items: center;
+    margin-left: auto;
+    padding-left: 8px;
+}
+
+.band-actions:empty {
+    display: none;
+}
+
+.band .title-action {
+    color: var(--night-action);
+}
+
+.band .title-action:hover {
+    color: var(--night-action-hover);
+}
+
+.band .title-action:focus {
+    outline-color: var(--night-action);
+}
+
+/* On a phone's own pages (band::phone): the phone's picture, small, at the band's right - the
+   summary's avatar, its photo or its initial on its colour, so a phone looks the same in both
+   places. It says whose page this is and is never spoken (the back link says the name) and never
+   a link. 28 px, 36 with its gap; the title gives way to it with its ellipsis. */
+.band-who {
+    flex: none;
+    margin-left: auto;
+    padding-left: 8px;
+}
+
+.band-who > .avatar {
+    width: 28px;
+    height: 28px;
+    font-size: 0.8125rem;
+}
+
+.band-who + .band-actions {
+    margin-left: 0;
+}
+
+/* The sheet: everything under the band, on the page's ground with its two top corners rounded
+   over the band's foot. Its paddings are the ones main had: the column at the sides, the home
+   indicator's room below (a page without the tab bar, music_spotify_done, reaches it itself). The
+   top is 15 px and the 1 px edge: 16 px from the sheet's edge to its first row. The edge is drawn
+   in the dark scheme only (--band-edge), where band and ground are the same night; a border, so
+   it follows the corners, needs no layer of its own and no scrolled row covers it. */
+.sheet {
+    padding: 15px max(16px, env(safe-area-inset-right, 0px), calc((100% - 720px) / 2 + 16px)) calc(16px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px), calc((100% - 720px) / 2 + 16px));
+    border-top: 1px solid var(--band-edge);
+    border-radius: 22px 22px 0 0;
+    background: var(--bg);
+}
+
+.tab-bar ~ .container > .sheet {
+    padding-bottom: calc(var(--tab-bar-room) + env(safe-area-inset-bottom, 0px));
+}
+
+.container-narrow > .band,
+.container-narrow > .sheet {
+    padding-right: max(16px, env(safe-area-inset-right, 0px), calc((100% - 480px) / 2 + 16px));
+    padding-left: max(16px, env(safe-area-inset-left, 0px), calc((100% - 480px) / 2 + 16px));
+}
+
+/* An editor's main (a page with Save on the band): the band stays above it, so main is the sheet
+   itself and scrolls inside its rounded top - rows pass under the curve, the edge never moves. */
+.container-fixed {
+    padding: 15px max(16px, env(safe-area-inset-right, 0px), calc((100% - 720px) / 2 + 16px)) calc(16px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px), calc((100% - 720px) / 2 + 16px));
+    border-top: 1px solid var(--band-edge);
+    border-radius: 22px 22px 0 0;
+    background: var(--bg);
+}
+
+.tab-bar ~ .container-fixed {
+    padding-bottom: calc(var(--tab-bar-room) + env(safe-area-inset-bottom, 0px));
+}
+
+/* The page's first header starts 26 px under the sheet's edge (10 px of its own 24): what used to
+   follow the large title starts the sheet. A page opening on its form, on a section or on a
+   hidden box (Devices' push offer) is listed too - no :is() under the browser floor. An editor
+   has no header first (its first section is named by aria-label), so main has no such list. */
+.sheet > .group-header:first-child,
+.sheet > .group-head:first-child,
+.sheet > [hidden]:first-child + .group-header,
+.sheet > form:first-child > .group-header:first-child,
+.sheet > form:first-child > .group-head:first-child,
+.sheet > section:first-child > .group-header:first-child,
+.sheet > section:first-child > .group-head:first-child,
+.sheet > section:first-child > section:first-child > .group-header:first-child,
+.sheet > section:first-child > section:first-child > section:first-child > .group-header:first-child {
+    margin-top: 10px;
 }
 
 /* A card floating over main's bottom (it comes first in the page's source), the content scrolling
    behind it and showing in the gaps: 12 px in from the sides (the notch's inset in landscape) and
    14 px above the home indicator, at most 560 px wide on a desktop. Absolute in the body - the body
    is exactly the screen and never scrolls, so this is the same place a flex child had, and nothing
-   is positioned against the viewport (design 43: no fixed box, no stale-viewport drift). main's
-   bottom padding (.tab-bar ~ .container) keeps the last row clear of it. The Locate map's panes
+   is positioned against the viewport (design 43: no fixed box, no stale-viewport drift). The sheet's
+   bottom padding (.tab-bar ~ .container > .sheet) keeps the last row clear of it. The Locate map's panes
    stay under it (.map-box is its own stacking context). */
 .tab-bar {
     position: absolute;
@@ -1874,7 +2047,8 @@ details.section[open] > summary .section-chev {
     font-size: 1.0625rem;
 }
 
-.container > form > .button-wide,
+.sheet > form > .button-wide,
+.container-fixed > form > .button-wide,
 .add-form > .button-wide {
     margin-bottom: 20px;
 }
@@ -2113,28 +2287,7 @@ details.edit[open] > summary .chev {
 
 /* ---- A tab's title action ("Edit"), a row that discloses a form, a switch in a form (design 31 step 12) ---- */
 
-.title-bar { display: flex; justify-content: flex-end; align-items: center; min-height: 44px; }
-/* The Devices page's brand row (vibb, direction D): the Pust mark - the app icon's own artwork
-   (icons/icon-192.png, rings on plain night), straight on the night band with no tile - and the
-   wordmark at the left of the title bar, its actions at the right. Exactly the bar's 44 px, never
-   taller (a larger text size only grows the word inside it), so + and the bell, and the large title
-   under them, sit at the same y as on every other tab (2026-10-22). */
-.vibb-brand { flex: none; display: flex; align-items: center; height: 44px; margin: 0 auto 0 0; }
-.vibb-mark { flex: none; display: block; width: 34px; height: 34px; }
-.vibb-word { margin-left: 10px; color: var(--brand-word); font-family: var(--font-display); font-size: 1.5rem; font-weight: 900; letter-spacing: -0.6px; line-height: 1; }
-/* Devices' night band (artboard E, 2026-10-22; the home page alone): its title bar on vibb's night
-   from the screen's very top - main's 8 px and the status bar's inset - to 6 px under the bar
-   (the user, 2026-11-10: the mark has 5 px of the bar under it, too close to the band's edge),
-   across main's whole width. border-image's outset paints it past the bar's box without taking
-   room or adding scrollable overflow (ink overflow, clipped at main's edges), so the bar, + and the
-   bell, and the large title under it sit exactly where every other tab has them. The band is main's
-   content like the bar, so it scrolls away with it, under the status bar's night strip
-   (.top-strip), which it meets without a seam; its 100vh above the top is what an iOS pull-down
-   bounce shows (night, not the grey ground). */
-.title-bar-night { border-image: linear-gradient(var(--night), var(--night)) fill 0 / 0 / 100vh 100vw 6px; }
-.title-bar-night .title-action { color: var(--night-action); }
-.title-bar-night .title-action:hover { color: var(--night-action-hover); }
-.title-bar-night .title-action:focus { outline-color: var(--night-action); }
+/* An action on the band (band.html's call body): a 44 px target; on the band it is peach (.band .title-action). */
 .title-action { display: inline-flex; align-items: center; min-height: 44px; padding: 0 4px; color: var(--tint); font-size: 1.0625rem; text-decoration: none; }
 .tile-orange { background: #C2410C; }
 details.disclosure > summary { list-style: none; cursor: pointer; }
@@ -2573,8 +2726,7 @@ input.row-input {
 
 /* ---- Design 31 step 9: Time Rules and Device › Time ---- */
 
-/* The rule editor's top bar: the back link on the left, Save on the right (the RuleEditor mockup). */
-.title-bar-split { justify-content: space-between; align-items: center; }
+/* Save on an editor's band (the RuleEditor mockup's navigation bar): a button that looks like the band's links. */
 button.title-action { margin: 0; border: 0; background: none; font: inherit; font-size: 1.0625rem; font-weight: 600; color: var(--tint); cursor: pointer; }
 /* A field that is the row's value (the rule's name), right-aligned like a value. */
 input.row-input-end { text-align: right; }
@@ -2597,25 +2749,37 @@ input.row-num { width: 6.5em; text-align: right; }
 /* A footer under the extra-time tiles (no group above it to tuck under). */
 .group-footer-after { margin-top: 0; }
 
-/* The rule editor's top bar stays in view while the form scrolls (qa-31-s9-code L1): Save in
-   reach after editing a lower field, and a save's flash or a refusal's reason under it. */
-/* It sticks inside <main> (design 43), and a sticky offset counts from inside the scroller's
-   padding (.container: 8px + the status bar's inset, at least the night strip): -8px puts the bar's
-   box right under the status bar and its own 8 px of padding back, so the back link and Save stay
-   exactly where they are before any scrolling. In the installed app on iOS 27 (no inset, a 12 px
-   strip) the box starts 4 px down and the strip covers its padding alone. Its side margins reach
-   the 720 px column's edge (main's wider padding outside it is page background). */
-.editor-bar { position: -webkit-sticky; position: sticky; top: -8px; z-index: 5; margin: -8px -16px 0; padding: 8px 16px 0; background: var(--bg); }
-/* The container's sides take the notch's inset in landscape: the bar's background reaches its edge too. */
-.editor-bar { margin-left: calc(-1 * max(16px, env(safe-area-inset-left, 0px))); margin-right: calc(-1 * max(16px, env(safe-area-inset-right, 0px))); padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
-.editor-bar > .bar-flash { margin: 0 0 8px; border-radius: 10px; }
+/* An editor's band stays in place (.band-fixed, design 84): Save in reach after editing a lower
+   field (qa-31-s9-code L1). The save's flash or a refusal's reason is the form's first box and
+   stays in view while the form scrolls: it sticks inside <main> (design 43), and a sticky offset
+   counts from inside the scroller's padding (.container-fixed: 15 px), so -15px puts the box
+   right under main's edge and its own 15 px of padding back - the line stays exactly where it is
+   before any scrolling. Change one, change the other. Nothing is drawn on the band. */
+.editor-flash {
+    position: -webkit-sticky;
+    position: sticky;
+    top: -15px;
+    z-index: 5;
+    margin-top: -15px;
+    padding: 15px 0 8px;
+    background: var(--bg);
+}
+.editor-flash > .bar-flash { border-radius: 10px; }
+/* The flash's negative margin must not move its form's own top edge (it would collapse through the
+   form): scroll-restore.js puts the form back where it was on the screen, so a save would come back
+   15 px off. The form keeps its margins to itself. */
+.container-fixed > form { display: flow-root; }
+/* The push banner (register-sw.js) is first in an editor's main, right before the form: the flash
+   starts at the banner's lower edge instead of over it, and sticks as without a banner. */
+.push-banner + form > .editor-flash { margin-top: -8px; }
 
 /* ---- Design 31 step 10: the phone's summary ---- */
 
 /* The header (the DeviceSummary mockup): the large avatar with its dot, the name, the state line,
    the lock badge and today's bar, centred. */
-/* Its top margin is .page-title's: the device page's header sits at the height of every other page's title. */
+/* The name is the band's title (design 84); as the sheet's first box the head starts 20 px under its edge. */
 .summary-head { display: flex; flex-direction: column; align-items: center; margin: 12px 0 20px; text-align: center; }
+.sheet > .summary-head:first-child { margin-top: 4px; }
 .avatar-large { width: 76px; height: 76px; font-size: 2.125rem; }
 .avatar-large .avatar-dot { width: 16px; height: 16px; border-width: 3px; right: 1px; bottom: 1px; border-color: var(--bg); }
 /* The header's avatar is the picture's picker (server round C): the file field is hidden but stays
@@ -2630,7 +2794,6 @@ input.row-num { width: 6.5em; text-align: right; }
 .avatar-remove:hover, .avatar-add:hover { color: var(--tint-hover); }
 .avatar-save { margin-top: 8px; }
 .avatar-error { margin: 4px 0 0; }
-.summary-name { margin: 10px 0 0; font-family: var(--font-display); font-size: 1.75rem; font-weight: 800; line-height: 1.2; word-break: break-word; overflow-wrap: anywhere; }
 .summary-state { margin: 3px 0 0; color: var(--label-2); font-size: 0.9375rem; line-height: 1.35; }
 .summary-link { display: inline-block; margin-top: 4px; padding: 10px 8px; font-size: 0.9375rem; text-decoration: none; }
 .summary-meter { width: 220px; max-width: 100%; height: 6px; margin-top: 14px; border-radius: 3px; }
@@ -2651,11 +2814,9 @@ a.act, a.act:hover { text-decoration: none; }
 .attention-steps li + li { margin-top: 4px; }
 .attention-steps a { color: inherit; text-decoration: underline; }
 
-/* ---- Design 31 step 15: Add Phone, sign-in, the tab pages without the brand bar ---- */
+/* ---- Design 31 step 15: Add Phone, sign-in, the tab pages ---- */
 
-/* A tab's landing page opens on its large title under a 44px bar (the mockups) that ends with the bell
-   (design 35) on every tab; Devices and Apps put their + before it. */
-.container > .page-title:first-child { margin-top: 56px; }
+/* A tab's band ends with the bell (design 35) on every tab; Devices and Apps put their + before it. */
 .title-add { justify-content: center; min-width: 44px; padding: 0; }
 .title-add svg { width: 22px; height: 22px; }
 /* Connect's two ways (QR code, Code): a large title with its one-line case under it. */
@@ -2769,7 +2930,7 @@ details.app-display[open] > summary .section-chev {
 
 /* Design 35 */
 
-/* The bell at the end of a tab page's bar, its glyph flush with the page's right edge on every tab, after
+/* The bell at the end of a tab page's band, its glyph flush with the page's right edge on every tab, after
    the page's own action; the unread count as a red pill on its corner. */
 .title-bell { position: relative; justify-content: center; min-width: 44px; margin-right: -11px; padding: 0; }
 .title-bell svg { width: 22px; height: 22px; }
@@ -2825,12 +2986,12 @@ details.app-display[open] > summary .section-chev {
 }
 
 /* ---- Pull down to refresh (static/pull-refresh.js, 2026-10-25): Devices and a phone's summary ---- */
-/* A small round arrow in the title bar's area, calm: the card's surface, the peach tint, the
+/* A small round arrow that comes out from under the band, over the sheet, calm: the card's surface, the peach tint, the
    Connecting chip's soft shadow; it never takes a tap. It follows the finger (the script sets the
    shift and the fade), turns over once a release would reload, and becomes a spinner then. Absolute
    in the body, as the chip (design 43: never fixed). main's overscroll-behavior-y: contain (.container)
    keeps the browser's own pull and chaining out. */
-.pull-refresh { position: absolute; z-index: 1900; top: calc(var(--top-strip) + 6px); left: 50%; width: 36px; height: 36px; margin-left: -18px; border-radius: 50%; background: var(--surface); color: var(--tint); box-shadow: 0 1px 8px rgba(0, 0, 0, 0.16); display: flex; align-items: center; justify-content: center; pointer-events: none; opacity: 0; transform: translateY(-20px); transition: opacity 0.15s ease, transform 0.15s ease; }
+.pull-refresh { position: absolute; z-index: 1900; top: calc(var(--band-h) + 6px); left: 50%; width: 36px; height: 36px; margin-left: -18px; border-radius: 50%; background: var(--surface); color: var(--tint); box-shadow: 0 1px 8px rgba(0, 0, 0, 0.16); display: flex; align-items: center; justify-content: center; pointer-events: none; opacity: 0; transform: translateY(-20px); transition: opacity 0.15s ease, transform 0.15s ease; }
 .pull-refresh.is-pulling { transition: none; }
 .pull-refresh svg { width: 20px; height: 20px; transition: transform 0.15s ease; }
 .pull-refresh.is-armed svg { transform: rotate(180deg); }

@@ -7,11 +7,12 @@
 <div class="top-strip" aria-hidden="true"></div>
 {% let tab = "devices" %}
 {% include "partials/tab_bar.html" %}
+{% import "partials/band.html" as band %}
 <main class="container container-narrow">
     {#- Back where New Setup Code was: Advanced › Connection for a connected phone (step 3), the
         summary's Connect This Phone group (#access, step 10) for one not set up yet. -#}
-    <a class="nav-back" href="/devices/{{ device.id }}{% if enrolled %}/advanced#connection{% else %}#access{% endif %}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{% if enrolled %}{{ self.t("device.page.advanced") }}{% else %}{{ device.name }}{% endif %}</a>
-    <h1 class="page-title">{{ self.t("devices.code.title") }}</h1>
+    {% call band::sub(self.t("devices.code.title"), back_href, back_label) %}{% endcall %}
+    <div class="sheet">
 
     {% if let Some(until) = paused_until %}
     <div class="attention attention-action" data-warning="typed-paused">
@@ -37,6 +38,7 @@
     </div>
     <div class="group-footer">{{ self.tp("devices.code.footer", [("name", device.name.as_str())]) }}
         <details class="info"><summary aria-label="{{ self.t("devices.code.info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("devices.code.info") }}</p></div></details>
+    </div>
     </div>
 </main>
 </body>

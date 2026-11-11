@@ -8,15 +8,12 @@
 {% import "partials/status_line.html" as status_line %}
 {% let tab = "devices" %}
 {% include "partials/tab_bar.html" %}
+{% import "partials/band.html" as band %}
 <main class="container">
-    {#- A tab's landing page opens on its large title (design 31 step 15), under the mockup's bar; Devices, the home
-        page, has vibb's brand row in it (the vibb identity, direction D), on the night band (artboard E). -#}
-    <div class="title-bar title-bar-night">
-        <span class="vibb-brand"><img class="vibb-mark" src="/static/icons/icon-192.png" width="34" height="34" alt="" decoding="async"><span class="vibb-word">vibb</span></span>
-        <a class="title-action title-add" href="/devices/new" aria-label="{{ self.t("devices.list.add_label") }}"><svg viewBox="0 0 22 22" aria-hidden="true" focusable="false"><path d="M11 3v16M3 11h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></a>
-        {% include "partials/bell.html" %}
-    </div>
-    <h1 class="page-title">{{ self.t("nav.devices") }}</h1>
+    {#- A tab's landing page opens on the night band (design 84): the Vibb mark, the tab's name, the page's own
+        action, then the bell - last on every tab. -#}
+    {% call band::tab(self.t("nav.devices"), tab) %}<a class="title-action title-add" href="/devices/new" aria-label="{{ self.t("devices.list.add_label") }}"><svg viewBox="0 0 22 22" aria-hidden="true" focusable="false"><path d="M11 3v16M3 11h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></a>{% endcall %}
+    <div class="sheet">
 
     {% include "partials/push_offer.html" %}
 
@@ -73,6 +70,7 @@
             <svg class="row-icon" viewBox="0 0 22 22" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="9" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M11 7v8M7 11h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
             <span class="row-label">{{ self.t("devices.list.add") }}</span>
         </a>
+    </div>
     </div>
 </main>
 {#- Pull down to refresh (2026-10-25): on the Devices list and a phone's summary only (static/pull-refresh.js), never a page with a map. -#}

@@ -9,8 +9,10 @@
 {% import "partials/status_line.html" as status_line %}
 {% let tab = "devices" %}
 {% include "partials/tab_bar.html" %}
+{% import "partials/band.html" as band %}
 <main class="container">
-    <a class="nav-back" href="/devices"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ self.t("nav.devices") }}</a>
+    {% call band::sub(device.name, "/devices", self.t("nav.devices")) %}{% endcall %}
+    <div class="sheet">
 
     {#- The phone's summary (design 31 §3.2): the header, Attention, the security warnings that need
         steps, Quick actions (with today's lifts and End now at its end), the blocked apps, the last
@@ -38,8 +40,7 @@
             {% endif %}
             {% if let Some(error) = avatar_error %}<p class="field-error avatar-error" id="avatar-error" role="alert">{{ error }}</p>{% endif %}
         </div>
-        <h1 class="summary-name">{{ device.name }}</h1>
-        {#- The lines under the name (the user's pick C, 2026-11-01, phone_status::header): the first fact that holds,
+        {#- The lines under the picture; the name is the band's title (design 84). The user's pick C, 2026-11-01 (phone_status::header): the first fact that holds,
             then the zone and the battery; a phone turned off or offline has the first alone. -#}
         {% for line in status %}<p class="summary-state"{% if loop.first %} data-status="{{ dot }}"{% endif %} data-line>{% call status_line::parts(line) %}{% endcall %}</p>
         {% endfor %}
@@ -397,6 +398,7 @@
     {% if relock.wait_for_phone %}
     <script src="/static/auto-reload.js?v=8" defer></script>
     {% endif %}
+    </div>
 </main>
 {#- Pull down to refresh (2026-10-25): on the Devices list and a phone's summary only (static/pull-refresh.js), never a page with a map. -#}
 <script src="/static/pull-refresh.js?v=4" defer></script>

@@ -8,23 +8,22 @@
 <div class="top-strip" aria-hidden="true"></div>
 {% let tab = "locate" %}
 {% include "partials/tab_bar.html" %}
-<main class="container">
-    {#- A zone (design 64 §3.5): one form, Add or Save in the sticky top bar as on a time rule's page,
-        so it is in reach after any field and a refusal shows in view. Without JS the fields are the
-        whole feature; static/zones.js adds the map (a tap places the centre, the marker drags, the
-        slider redraws the circle) and writes the fields, so Save posts what the map shows. A save
-        returns to the zone's row on Locate; a refusal renders this page again (400) at #zone-form,
-        as typed, the reason under its field. -#}
+{% import "partials/band.html" as band %}
+{#- A zone (design 64 §3.5): one form, Add or Save on the band, which stays in place as on a time rule's page
+    (design 84), so it is in reach after any field, and a refusal is the form's first box, in view (.editor-flash).
+    Without JS the fields are the whole feature; static/zones.js adds the map (a tap places the centre, the marker
+    drags, the slider redraws the circle) and writes the fields, so Save posts what the map shows. A save returns to
+    the zone's row on Locate; a refusal renders this page again (400) at #zone-form, as typed, the reason under its
+    field. -#}
+{% call band::editor(title, "/devices/locate?device=" ~ device.id ~ "#zones", self.t("nav.locate")) %}<button type="submit" class="title-action" form="zone-form" data-save="zone">{% if zone_id.is_some() %}{{ self.t("common.save") }}{% else %}{{ self.t("common.add") }}{% endif %}</button>{% endcall %}
+<main class="container container-fixed">
     <form method="post" action="{% if let Some(zid) = zone_id %}/devices/{{ device.id }}/zones/{{ zid }}{% else %}/devices/{{ device.id }}/zones{% endif %}#zone-form" id="zone-form">
-        <div class="editor-bar" data-bar="zone">
-            <div class="title-bar title-bar-split">
-                <a class="nav-back" href="/devices/locate?device={{ device.id }}#zones"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ self.t("nav.locate") }}</a>
-                <button type="submit" class="title-action" data-save="zone">{% if zone_id.is_some() %}{{ self.t("common.save") }}{% else %}{{ self.t("common.add") }}{% endif %}</button>
-            </div>
+        {% if refusal.is_some() || errors.any() %}
+        <div class="editor-flash">
             {% if let Some(why) = refusal %}<p class="flash flash-error bar-flash" role="alert" data-flash="refused">{{ self.t("common.not_saved") }} {{ why }}</p>
             {% else if errors.any() %}<p class="flash flash-error bar-flash" role="alert" data-flash="refused">{{ self.t("common.not_saved") }} {{ self.t("locate.zone.check_field") }}</p>{% endif %}
         </div>
-        <h1 class="page-title">{{ title }}</h1>
+        {% endif %}
 
         <section id="zone-map" aria-label="{{ self.t("locate.map_aria") }}">
             <div class="map-box" data-zone-map data-lat="{{ form.latitude }}" data-lng="{{ form.longitude }}" data-radius="{{ form.radius }}" data-min="{{ radius_min }}" data-max="{{ radius_max }}"{% if let Some((lat, lng)) = phone_fix %} data-phone-lat="{{ lat }}" data-phone-lng="{{ lng }}"{% endif %}><div id="map"></div></div>

@@ -237,8 +237,10 @@
         });
     }
 
-    // The app-wide quiet banner (an Attention row at its lowest level, under the page's title): what it says and
+    // The app-wide quiet banner (an Attention row at its lowest level, under the page's band): what it says and
     // Turn On, which subscribes first in the tap (Apple's rule), and Hide, which is a Turn Off in this browser.
+    // It is the sheet's first child (design 84: the band is main's first child, and nothing goes before it); an
+    // editor has no sheet - its band stands outside main - so there it is first in main, before the form.
     // Inserted without moving what the parent is looking at: a scrolled page keeps its place.
     function banner(win, reg, answer) {
         var doc = win.document;
@@ -263,11 +265,11 @@
         row.appendChild(text);
         row.appendChild(on);
         row.appendChild(hide);
-        var title = main.querySelector(".page-title");
+        var sheet = main.querySelector(".sheet");
+        var into = sheet && sheet.parentNode === main ? sheet : main;
         var before = main.scrollTop || 0;
         var height = main.scrollHeight || 0;
-        if (title && title.parentNode === main) main.insertBefore(row, title.nextSibling);
-        else main.insertBefore(row, main.firstChild);
+        into.insertBefore(row, into.firstChild);
         if (before > 0) main.scrollTop = before + ((main.scrollHeight || 0) - height);
         function gone() {
             if (row.parentNode) row.parentNode.removeChild(row);

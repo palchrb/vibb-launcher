@@ -66,6 +66,8 @@ async fn every_page_marks_its_own_tab() {
         assert!(order.windows(2).all(|w| w[0] < w[1]), "{page}: tab order");
         assert!(!html.contains("data-match="), "{page}: no path matcher");
         assert!(!html.contains("DNS/Filters"), "{page}: the old tab");
+        // The band's title is the page's only <h1> (design 84).
+        assert_eq!(html.matches("<h1").count(), 1, "{page}: one <h1>");
     }
     // The sign-in page has no tab bar.
     let login = app.get_page("/login", "").await.text();
@@ -73,7 +75,7 @@ async fn every_page_marks_its_own_tab() {
     assert!(login.contains("<h1 class=\"auth-title\">Vibb Phone</h1>"));
 }
 
-/// The tabs' landing pages: since step 15 they open on their large title, without the brand bar.
+/// The tabs' landing pages: they open on the tab's band (design 84) - the mark, the title, the bell.
 const LANDING_PAGES: [&str; 5] = [
     "devices_list.html",
     "apps_list.html",
@@ -84,7 +86,8 @@ const LANDING_PAGES: [&str; 5] = [
 
 /// Every template with the tab bar sets its tab right before including it, to one of the five
 /// (the template decides, not the path - §3.1). There is no brand bar any more (§3.0, steps 10 and
-/// 15): a landing page opens on its large title, every other page on its back link and large title.
+/// 15): a landing page opens on the tab's band, every other page on a sub page's, a phone's or an
+/// editor's (design 84, `partials/band.html`), which draws the back link - no template writes one.
 #[test]
 fn every_template_with_the_bar_sets_its_tab() {
     let mut with_bar = 0;
@@ -98,9 +101,20 @@ fn every_template_with_the_bar_sets_its_tab() {
         };
         let landing = LANDING_PAGES.contains(&file);
         assert_eq!(
-            text.contains("class=\"nav-back\""),
+            text.contains("{% call band::tab("),
+            landing,
+            "{file}: a landing page opens on the tab's band, no other page does"
+        );
+        assert_eq!(
+            ["sub", "phone", "editor"]
+                .iter()
+                .any(|kind| text.contains(&format!("{{% call band::{kind}("))),
             !landing,
-            "{file}: a sub-page has its back link, a landing page none"
+            "{file}: a sub-page's band has its back link, a landing page's none"
+        );
+        assert!(
+            !text.contains("class=\"nav-back\""),
+            "{file}: a back link of its own"
         );
         with_bar += 1;
         let before = text[..at].trim_end();
@@ -138,6 +152,93 @@ fn every_template_with_the_bar_sets_its_tab() {
     assert!(with_bar >= 36, "{with_bar} templates with the bar");
     let updates = std::fs::read_to_string("templates/updates.html").unwrap();
     assert!(updates.contains("{% let tab = \"settings\" %}"));
+}
+
+/// Design 84: every page in the shell opens on the night band, called once from
+/// `partials/band.html`, and the partial alone writes the page's `<h1>`. The five pages outside the
+/// shell (sign-in and the app lock) are named here: a new template has a band or the test fails.
+#[test]
+fn every_shell_page_opens_on_one_band() {
+    const NO_BAND: [&str; 5] = [
+        "change_password.html",
+        "lock.html",
+        "login.html",
+        "setup_2fa.html",
+        "verify_2fa.html",
+    ];
+    let mut with_band = 0;
+    let mut without = Vec::new();
+    for path in super::device_api::template_files() {
+        let text = std::fs::read_to_string(&path).unwrap();
+        let file = path.file_name().unwrap().to_str().unwrap().to_string();
+        let calls = text.matches("{% call band::").count();
+        if calls == 0 {
+            without.push(file);
+            continue;
+        }
+        assert_eq!(calls, 1, "{file}: one band");
+        assert!(!text.contains("<h1"), "{file}: the band writes the <h1>");
+        assert!(
+            text.contains("{% import \"partials/band.html\" as band %}"),
+            "{file}"
+        );
+        with_band += 1;
+    }
+    without.sort();
+    assert_eq!(without, NO_BAND, "the pages without a band");
+    assert!(with_band >= 49, "{with_band} templates with the band");
+    // The partial is the only file that writes the large title.
+    let mut dirs = vec![std::path::PathBuf::from("templates")];
+    while let Some(dir) = dirs.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                dirs.push(path);
+            } else if path.extension().is_some_and(|e| e == "html") {
+                let text = std::fs::read_to_string(&path).unwrap();
+                assert_eq!(
+                    text.contains("<h1 class=\"page-title\""),
+                    path.ends_with("partials/band.html"),
+                    "{}",
+                    path.display()
+                );
+            }
+        }
+    }
+}
+
+/// Design 84: an editor's Save stands on the band, outside its form, and submits it by the form's
+/// id - each pair named here, so a renamed id fails the test rather than the button.
+#[test]
+fn every_editors_save_names_its_form() {
+    for (file, id) in [
+        ("schedule_rule.html", "rule"),
+        ("device_bedtime.html", "bedtime"),
+        ("device_zone.html", "zone-form"),
+        ("device_calendar_rule.html", "rule-form"),
+    ] {
+        let text = std::fs::read_to_string(format!("templates/{file}")).unwrap();
+        let call = &text[text.find("{% call band::editor(").expect(file)..];
+        let call = &call[..call.find("{% endcall %}").unwrap()];
+        assert!(
+            call.contains(&format!(
+                "<button type=\"submit\" class=\"title-action\" form=\"{id}\" data-save="
+            )),
+            "{file}: Save on the band"
+        );
+        let named = format!(" id=\"{id}\"");
+        let form = text
+            .lines()
+            .find(|line| line.trim_start().starts_with("<form") && line.contains(&named))
+            .unwrap_or_else(|| panic!("{file}: no form with id {id}"));
+        assert!(form.contains("method=\"post\""), "{file}: {form}");
+        // The band comes right before main, and the form is inside it.
+        let band = text.find("{% call band::editor(").unwrap();
+        let main = text
+            .find("<main class=\"container container-fixed\">")
+            .expect(file);
+        assert!(band < main && main < text.find(form).unwrap(), "{file}");
+    }
 }
 
 /// Apps and Music are tabs of their own now: the Apps|Music switch is gone from both pages.
@@ -524,9 +625,9 @@ async fn the_settings_hub_makes_no_network_call() {
     assert!(app.fetch.calls.lock().unwrap().is_empty());
 }
 
-/// The tabs' landing pages open on their large title, as the mockups draw them (design 31 step 15):
-/// no brand bar and no back link; the title comes first, or after the 44px bar that holds the
-/// page's action (Devices and Apps: "+", Music: Edit).
+/// The tabs' landing pages open on the tab's band (design 84, F2b): main's first child, with the
+/// round mark, the page's name - its only `<h1>` - and the page's actions, the bell last (Devices
+/// and Apps: "+" before it). No brand bar, no brand row, no grey title bar and no back link.
 #[tokio::test]
 async fn the_tab_pages_open_on_their_large_title() {
     let app = TestApp::new().await;
@@ -545,51 +646,46 @@ async fn the_tab_pages_open_on_their_large_title() {
             "{page}: the brand bar"
         );
         assert!(!html.contains("class=\"brand\""), "{page}");
-        // vibb's brand row is the home page's alone (the vibb identity, direction D).
-        assert_eq!(
-            html.contains("class=\"vibb-brand\""),
-            page == "/devices",
-            "{page}"
-        );
-        // Its mark is the app icon itself (the user, 2026-10-22: the hand-drawn rings were "not the
-        // right icon"), its night ground straight on the band - no tile, no inline approximation.
-        assert_eq!(
-            html.contains(
-                "<img class=\"vibb-mark\" src=\"/static/icons/icon-192.png\" width=\"34\" height=\"34\" alt=\"\" decoding=\"async\">"
-            ),
-            page == "/devices",
-            "{page}: the brand mark"
-        );
+        // The old tops are gone from every tab: the grey title bar, Devices' brand row and its word.
+        for old in ["title-bar", "vibb-brand", "vibb-word", "vibb-mark"] {
+            assert!(!html.contains(old), "{page}: {old}");
+        }
         assert!(!html.contains("viewBox=\"-28 -28 56 56\""), "{page}");
         assert!(!html.contains("class=\"nav-back\""), "{page}");
+        // The band is main's first child, on every tab the same.
         let main = &html[html.find("<main class=\"container").unwrap()..];
         let main = &main[main.find('>').unwrap() + 1..];
-        let title_at = main
-            .find(&format!("<h1 class=\"page-title\">{title}</h1>"))
-            .unwrap_or_else(|| panic!("{page}: no large title"));
-        let before = &main[..title_at];
         assert!(
-            before.trim().is_empty() || before.trim_start().starts_with("<div class=\"title-bar"),
-            "{page}: something before the title: {before}"
+            main.trim_start()
+                .starts_with("<header class=\"band band-tab\">"),
+            "{page}: something before the band"
         );
-        // Devices' top is vibb's night (artboard E, 2026-10-22): its title bar is the night band;
-        // every other tab keeps the grey title bar. The status bar is night on every page, in both
-        // schemes (the user, 2026-10-22): one theme-color, and the installed iPhone app's status bar
-        // style is `default` (iOS 27, 2026-11-10) - an old Safari's is swapped in by the server
+        let band = &main[..main.find("</header>").unwrap()];
+        // Its mark is the app icon itself (the user, 2026-10-22: the hand-drawn rings were "not the
+        // right icon"), its night ground straight on the band - no tile, no inline approximation.
+        assert!(
+            band.contains(
+                "<img class=\"band-mark\" src=\"/static/icons/icon-192.png\" width=\"36\" height=\"36\" alt=\"\" decoding=\"async\">"
+            ),
+            "{page}: the mark"
+        );
+        assert!(
+            band.contains(&format!("<h1 class=\"page-title\">{title}</h1>")),
+            "{page}: no title on the band"
+        );
+        assert_eq!(html.matches("<h1").count(), 1, "{page}: one <h1>");
+        // The bell is the band's last action and the page's only bell (the user, 2026-10-20: it
+        // must not move between tabs; a page's own action goes before it).
+        let last = &band[band.rfind("class=\"title-action").expect("an action")..];
+        assert!(
+            last.starts_with("class=\"title-action title-bell\""),
+            "{page}: the bell is not last: {last}"
+        );
+        assert_eq!(html.matches("title-bell").count(), 1, "{page}: one bell");
+        // The status bar is night on every page, in both schemes (the user, 2026-10-22): one
+        // theme-color, and the installed iPhone app's status bar style is `default` (iOS 27,
+        // 2026-11-10) - an old Safari's is swapped in by the server
         // (`a_safari_26_gets_the_translucent_bar`).
-        let night = page == "/devices";
-        assert_eq!(
-            before
-                .trim_start()
-                .starts_with("<div class=\"title-bar title-bar-night\">"),
-            night,
-            "{page}: the night band"
-        );
-        assert_eq!(
-            html.matches("title-bar-night").count(),
-            usize::from(night),
-            "{page}"
-        );
         let themes: Vec<&str> = html
             .lines()
             .map(str::trim)
@@ -607,10 +703,9 @@ async fn the_tab_pages_open_on_their_large_title() {
             "{page}: the status bar"
         );
         if let Some(href) = add {
-            let bar = &before[before.find("title-bar").unwrap()..];
             assert!(
-                bar.contains(&format!("href=\"{href}\"")) && bar.contains("aria-label=\"Add "),
-                "{page}: the bar's +"
+                band.contains(&format!("href=\"{href}\"")) && band.contains("aria-label=\"Add "),
+                "{page}: the band's +"
             );
         }
     }
@@ -1180,24 +1275,61 @@ fn the_app_shell_scrolls_main_not_the_document() {
         !main.contains("max-width"),
         "the scroller spans the window: {main}"
     );
-    // Main's top: 8 px under the status bar's inset, never less than the night strip - 12 px in the
-    // installed app on iOS 27, where the inset is 0 (the user's pick on the iPhone, 2026-11-10).
-    // The editor bar sticks inside `main`, and a sticky offset counts from inside the scroller's
-    // padding: its `top: -8px` cancels exactly the 8 px in main's `padding-top` and its own 8 px
-    // of padding give them back, so its row never moves. Change one, change the other.
+    // Main has no padding of its own (design 84): the band and the sheet inside it take the column
+    // and every inset. The band is main's first child and scrolls away with the page; an editor's
+    // is the body's child beside main (.band-fixed keeps its height) - a block, never fixed or
+    // sticky. Its top is the status bar's room: 8 px under the inset, never less than the night
+    // strip - 12 px in the installed app on iOS 27, where the inset is 0 (the user's pick on the
+    // iPhone, 2026-11-10).
+    assert!(main.contains("padding: 0;"), "{main}");
+    let band = block(".band");
     assert!(
-        main.contains(
-            "padding-top: max(calc(8px + env(safe-area-inset-top, 0px)), var(--top-strip));"
-        ),
-        "{main}"
+        band.contains("padding: var(--band-top) ") && !band.contains("position"),
+        "{band}"
     );
-    // Every page's large title sits 12 px under its 44 px bar or back link (the user, 2026-11-10).
-    assert!(block(".page-title").contains("margin: 12px 0 20px;"));
-    let editor = block(".editor-bar");
-    assert!(editor.contains("top: -8px;"), "{editor}");
+    // The band paints 100vh of night above itself with border-image's outset alone (ink overflow:
+    // no room taken, no scrollable overflow): what a pull-down bounce shows, meeting the strip. It
+    // is the only border-image in the file.
+    assert!(
+        band.contains(
+            "border-image: linear-gradient(var(--night), var(--night)) fill 0 / 0 / 100vh 0 0;"
+        ),
+        "{band}"
+    );
+    assert_eq!(compact.matches("border-image:").count(), 1, "one band");
+    // Its last 22 px lie under the rounded top of the next box: the sheet, or an editor's main.
+    assert!(band.contains("margin-bottom: -22px;"), "{band}");
+    assert_eq!(block(".band-fixed"), "flex: none;");
+    for under in [".sheet", ".container-fixed"] {
+        let sheet = block(under);
+        for needle in [
+            "border-top: 1px solid var(--band-edge);",
+            "border-radius: 22px 22px 0 0;",
+            "background: var(--bg);",
+        ] {
+            assert!(sheet.contains(needle), "{under}: {needle} in {sheet}");
+        }
+        assert!(sheet.starts_with("padding: 15px "), "{under}: {sheet}");
+    }
+    // An editor's flash sticks inside `main`, and a sticky offset counts from inside the scroller's
+    // padding: its `top: -15px` cancels exactly the 15 px of .container-fixed's top padding and its
+    // own 15 px of padding give them back, so the line never moves. Change one, change the other.
+    let editor = block(".editor-flash");
+    for needle in [
+        "position: sticky;",
+        "top: -15px;",
+        "margin-top: -15px;",
+        "padding: 15px 0 8px;",
+    ] {
+        assert!(editor.contains(needle), "flash: {needle} in {editor}");
+    }
+    // The flash's negative margin stays inside its form: scroll-restore.js puts the form back at the
+    // screen top it had, and a margin collapsing through the form would move that top by 15 px.
+    assert_eq!(block(".container-fixed > form"), "display: flow-root;");
     // The bar floats over main's bottom (2026-10-22, the see-through bar): absolute in the body -
     // which is exactly the screen and never scrolls - never against the viewport, and main runs
-    // under it with room below its last row for the bar, its 14 px and 16 px clear.
+    // under it with room below its last row for the bar, its 14 px and 16 px clear - the room is
+    // the sheet's (an editor's main's) own bottom padding since design 84, and main's scroll-padding.
     assert!(
         body.contains("position: relative;"),
         "the bar's box: {body}"
@@ -1210,13 +1342,17 @@ fn the_app_shell_scrolls_main_not_the_document() {
     ] {
         assert!(bar.contains(needle), ".tab-bar: {needle} in {bar}");
     }
-    let under = block(".tab-bar ~ .container");
-    assert!(
-        under.contains(
-            "padding-bottom: calc(var(--tab-bar-room) + env(safe-area-inset-bottom, 0px));"
-        ),
-        "{under}"
+    let room = "calc(var(--tab-bar-room) + env(safe-area-inset-bottom, 0px));";
+    assert_eq!(
+        block(".tab-bar ~ .container"),
+        format!("scroll-padding-bottom: {room}")
     );
+    for under in [
+        ".tab-bar ~ .container > .sheet",
+        ".tab-bar ~ .container-fixed",
+    ] {
+        assert_eq!(block(under), format!("padding-bottom: {room}"), "{under}");
+    }
     let root = block(":root");
     // The bottom fade (2026-10-22, "like Nextcloud"): from 24 px above the bar's top to the ground
     // at the screen's edge, the whole width, absolute in the body between main and the bar, never
@@ -1241,28 +1377,16 @@ fn the_app_shell_scrolls_main_not_the_document() {
         ),
         "the fade comes with the bar"
     );
-    // Devices' brand row is exactly the title bar's 44 px, so its actions and its large title
-    // sit where every other tab has them.
-    assert!(block(".title-bar").contains("min-height: 44px;"));
-    let brand = block(".vibb-brand");
-    assert!(
-        brand.contains("height: 44px;") && brand.contains("margin: 0 auto 0 0;"),
-        "{brand}"
-    );
-    // The mark (the app icon) sits on the band with no tile behind it.
+    // The mark (the app icon) sits on the band with no tile behind it, the same on every tab.
     assert_eq!(
-        block(".vibb-mark"),
-        "flex: none; display: block; width: 34px; height: 34px;"
+        block(".band-mark"),
+        "flex: none; display: block; width: 36px; height: 36px; margin-right: 10px;"
     );
     assert!(!css.contains("--brand-tile"));
-    // Devices' night band paints past the bar's box - 6 px under it, so the mark has air below
-    // (the user, 2026-11-10) - with border-image's outset alone (ink
-    // overflow: no room taken, no scrollable overflow), so the bar stays at y 8-52 and the title
-    // at 56 as on every other tab - nothing that moves a box goes on the band.
-    assert_eq!(
-        block(".title-bar-night"),
-        "border-image: linear-gradient(var(--night), var(--night)) fill 0 / 0 / 100vh 100vw 6px;"
-    );
+    // The old tops have no rule left: the grey title bar, Devices' brand row, the editors' bar.
+    for old in [".title-bar", ".vibb-brand", ".vibb-mark", ".editor-bar"] {
+        assert!(!css.contains(old), "{old}: the old top");
+    }
     // Night behind the status bar on every page (the user, 2026-10-22; 2026-11-10): a real fixed
     // element - iOS takes the status area's colour and hides its top fade only from a fixed or
     // sticky box at the top edge, never a pseudo-element or an absolute box -, the top inset high,

@@ -145,6 +145,9 @@ struct ProvisionQrTemplate {
     device: Device,
     /// The phone has connected before: a new code cuts that connection off.
     enrolled: bool,
+    /// The band's back link and its spoken name (`devices::setup_back`).
+    back_href: String,
+    back_label: String,
     /// Empty until the form is sent (and when `missing_checksum` is set) - no QR is rendered then.
     qr_svg: String,
     missing_server_url: bool,
@@ -181,10 +184,13 @@ impl ProvisionQrTemplate {
     ) -> Self {
         let zone = Zone::load(&state.db, lang).await;
         let now = chrono::Utc::now();
+        let (back_href, back_label) = crate::handlers::devices::setup_back(lang, &device);
         ProvisionQrTemplate {
             lang,
             title: crate::i18n::t_params(lang, "devices.qr.title", &[("name", &device.name)]),
             enrolled: device.enrolled_at.is_some(),
+            back_href,
+            back_label,
             device,
             qr_svg: String::new(),
             missing_server_url: server_url(settings, &state.config).is_empty(),

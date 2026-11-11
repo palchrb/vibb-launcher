@@ -7,9 +7,10 @@
 <div class="top-strip" aria-hidden="true"></div>
 {% let tab = "settings" %}
 {% include "partials/tab_bar.html" %}
+{% import "partials/band.html" as band %}
 <main class="container">
-    <a class="nav-back" href="/settings"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ self.t("nav.settings") }}</a>
-    <h1 class="page-title">{{ self.t("settings.wallpapers.title") }}</h1>
+    {% call band::sub(self.t("settings.wallpapers.title"), "/settings", self.t("nav.settings")) %}{% endcall %}
+    <div class="sheet">
 
     {#- Every form returns to its own place (design 31 §5.1): an upload to the new photo's row (a
         refusal renders at #add), a photo's switch to its row, a delete to the list. -#}
@@ -77,6 +78,7 @@
         </div>
         <p class="group-footer">{{ self.t("settings.wallpapers.all_footer") }}</p>
     </section>
+    </div>
 </main>
 </body>
 </html>

@@ -7,9 +7,10 @@
 <div class="top-strip" aria-hidden="true"></div>
 {% let tab = "music" %}
 {% include "partials/tab_bar.html" %}
+{% import "partials/band.html" as band %}
 <main class="container">
-    <a class="nav-back" href="/music#spotify"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ self.t("nav.music") }}</a>
-    <h1 class="page-title">{{ self.t("music.spotify.title") }}</h1>
+    {% call band::sub(self.t("music.spotify.title"), "/music#spotify", self.t("nav.music")) %}{% endcall %}
+    <div class="sheet">
     {#- Design 47: the add form first; the setup (the app, the children's accounts) is a group of
         Music › Settings, behind the row at the end - and on top while it isn't done, the form
         disabled below it (as the Storytel shelf without a login). A refused add renders here with
@@ -78,6 +79,7 @@
         </a>
     </div>
     <p class="group-footer">{{ self.t("music.spotify.setup_footer") }}</p>
+    </div>
 </main>
 </body>
 </html>

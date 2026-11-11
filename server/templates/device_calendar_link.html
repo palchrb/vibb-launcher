@@ -7,9 +7,10 @@
 <div class="top-strip" aria-hidden="true"></div>
 {% let tab = "devices" %}
 {% include "partials/tab_bar.html" %}
+{% import "partials/band.html" as band %}
 <main class="container">
-    <a class="nav-back" href="/devices/{{ device_id }}/calendar#sources"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ self.t("calendar.title") }}</a>
-    <h1 class="page-title">{{ name }}</h1>
+    {% call band::sub(name, "/devices/" ~ device_id ~ "/calendar#sources", self.t("calendar.title")) %}{% endcall %}
+    <div class="sheet">
 
     {#- A calendar link's page (design 72, the look of 2026-11-01): the name saves on change and returns to #name, Fetch
         now to #fetch; Remove goes back to the Calendar page's #sources. The link itself is sealed on the server and never
@@ -59,6 +60,7 @@
             </details>
         </div>
     </section>
+    </div>
 </main>
 </body>
 </html>

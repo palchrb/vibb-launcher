@@ -67,6 +67,24 @@ async fn about_this_phone_shows_the_last_reports_facts() {
     assert!(html.contains(&format!("<a class=\"nav-back\" href=\"/devices/{id}\">")));
     assert!(html.contains("<h1 class=\"page-title\">About This Phone</h1>"));
     assert!(!html.contains("class=\"app-header\""));
+    // One of the phone's own pages (design 84, O1 c): the phone's letter, small, on the band after
+    // the title - never spoken, the back link says the name.
+    let band = &html[html.find("<header class=\"band").unwrap()..];
+    let band = &band[..band.find("</header>").unwrap()];
+    let who = "<span class=\"band-who\" aria-hidden=\"true\">\
+               <span class=\"avatar \">A</span></span>";
+    let at = band.find(who).expect("the phone's letter on the band");
+    let actions = band.find("<div class=\"band-actions\">").unwrap();
+    assert!(band.find("</h1>").unwrap() < at && at < actions, "{band}");
+    assert!(
+        band.contains("<span class=\"visually-hidden\">Back to Anna</span></a>"),
+        "{band}"
+    );
+    // The summary keeps its own head with the picture, and a page that is no phone's has none.
+    for outside in [device_page(id, Section::Summary), "/settings".to_string()] {
+        let other = app.get_page(&outside, &cookie).await.text();
+        assert!(!other.contains("band-who"), "{outside}");
+    }
 
     // Connection: the report was a contact a moment ago, with no stream: Away.
     assert!(
@@ -3244,7 +3262,8 @@ async fn the_music_pages_link_to_the_phones_music_page() {
     assert!(html.contains(&format!("id=\"music-entry-{a}\"")));
 }
 
-/// The `.nav-back` link: its address and its words.
+/// The band's `.nav-back` link: its address and its words - spoken only (the hidden span; the
+/// chevron alone is drawn, design 84).
 fn nav_back(html: &str) -> (String, String) {
     let at = html.find("class=\"nav-back\"").expect("a back link");
     let link = &html[at..at + html[at..].find("</a>").unwrap()];
@@ -3254,7 +3273,13 @@ fn nav_back(html: &str) -> (String, String) {
         .and_then(|rest| rest.split('"').next())
         .unwrap()
         .to_string();
-    (href, link.rsplit("</svg>").next().unwrap().to_string())
+    let words = link
+        .rsplit("</svg><span class=\"visually-hidden\">")
+        .next()
+        .and_then(|rest| rest.strip_suffix("</span>"))
+        .expect("the back link's words")
+        .to_string();
+    (href, words)
 }
 
 /// The user, 2026-10-24 ("på apps, om jeg går inn på feks Sverre sin tlf og så trykker tilbake -
@@ -3315,7 +3340,7 @@ async fn apps_from_the_apps_tab_go_back_there() {
         assert_eq!(nav_current(&html), "devices", "{query}");
         assert_eq!(
             nav_back(&html),
-            (format!("/devices/{id}"), "Anna".to_string()),
+            (format!("/devices/{id}"), "Back to Anna".to_string()),
             "{query}"
         );
         let froms = froms(&html);
@@ -3350,7 +3375,7 @@ async fn apps_from_the_apps_tab_go_back_there() {
         assert_eq!(nav_current(&html), "apps", "{query}");
         assert_eq!(
             nav_back(&html),
-            (back.clone(), label.to_string()),
+            (back.clone(), format!("Back to {label}")),
             "{query}"
         );
         assert!(froms(&html).iter().all(|f| *f == from), "{query}");

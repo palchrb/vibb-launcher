@@ -7,9 +7,10 @@
 <div class="top-strip" aria-hidden="true"></div>
 {% let tab = "settings" %}
 {% include "partials/tab_bar.html" %}
+{% import "partials/band.html" as band %}
 <main class="container">
-    <a class="nav-back" href="/settings"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ self.t("nav.settings") }}</a>
-    <h1 class="page-title">{{ self.t("settings.dns_log.title") }}</h1>
+    {% call band::sub(self.t("settings.dns_log.title"), "/settings", self.t("nav.settings")) %}{% endcall %}
+    <div class="sheet">
 
     {#- Each phone's log (its switch and the list) is on its Web Filter page (design 31 step 5);
         this page is the entrance. -#}
@@ -29,6 +30,7 @@
     </div>
     <p class="group-footer">{{ self.tc("settings.dns_log.footer", retention_days, []) }}</p>
     {% endif %}
+    </div>
 </main>
 </body>
 </html>

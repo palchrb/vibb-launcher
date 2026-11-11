@@ -8,9 +8,10 @@
 <div class="top-strip" aria-hidden="true"></div>
 {% let tab = "music" %}
 {% include "partials/tab_bar.html" %}
+{% import "partials/band.html" as band %}
 <main class="container">
-    <a class="nav-back" href="/music#entry-{{ entry.id }}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ self.t("nav.music") }}</a>
-    <h1 class="page-title">{{ entry.name }}</h1>
+    {% call band::sub(entry.name, "/music#entry-" ~ entry.id, self.t("nav.music")) %}{% endcall %}
+    <div class="sheet">
 
     <div class="group" id="cover">
         <div class="cover-row">
@@ -198,6 +199,7 @@
                 {% include "partials/confirm_cancel.html" %}
             </form>
         </details>
+    </div>
     </div>
 </main>
 </body>

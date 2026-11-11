@@ -192,6 +192,8 @@ pub struct KidStatusLine {
 #[template(path = "device_calendar.html")]
 struct CalendarTemplate {
     lang: Lang,
+    /// The phone's small picture on the band (design 84, `band::phone`).
+    who: crate::handlers::devices::BandAvatar,
     title: String,
     device_id: i64,
     device_name: String,
@@ -657,10 +659,23 @@ pub async fn view_calendar(
 ) -> Response {
     let notice = query.get("notice").map(String::as_str);
     let state = &state;
-    let device_name = match phone(state, lang, id).await {
-        Ok(name) => name,
-        Err(answer) => return *answer,
+    // The phone's row once: its name and the band's picture (a second read could answer 500 for a phone removed
+    // in between).
+    let device = match sqlx::query_as::<_, crate::models::Device>(
+        "SELECT d.* FROM devices d JOIN device_policy p ON p.device_id = d.id WHERE d.id = ?",
+    )
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await
+    {
+        Ok(Some(device)) => device,
+        Ok(None) => {
+            return (StatusCode::NOT_FOUND, t(lang, "calendar.error.no_phone")).into_response();
+        }
+        Err(err) => return read_failed(lang, err, "the device"),
     };
+    let who = crate::handlers::devices::BandAvatar::of(&device);
+    let device_name = device.name;
     let loaded = async {
         Ok::<_, sqlx::Error>((
             calendar::switches(&state.db, id).await?,
@@ -844,6 +859,7 @@ pub async fn view_calendar(
         lang,
         CalendarTemplate {
             lang,
+            who,
             title: t(lang, "calendar.title").to_string(),
             device_id: id,
             device_name,

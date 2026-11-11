@@ -393,6 +393,8 @@ pub struct CrashView {
 #[template(path = "device_about.html")]
 struct AboutTemplate {
     lang: Lang,
+    /// The phone's small picture on the band (design 84, `band::phone`).
+    who: crate::handlers::devices::BandAvatar,
     title: String,
     device: Device,
     connection: Vec<Row>,
@@ -800,6 +802,7 @@ pub async fn view_about(
     Html(
         AboutTemplate {
             lang,
+            who: crate::handlers::devices::BandAvatar::of(&device),
             title: t_params(lang, "device.about.title", &[("name", &device.name)]),
             device,
             connection: connection_rows,
@@ -819,6 +822,8 @@ pub async fn view_about(
 #[template(path = "device_advanced.html")]
 struct AdvancedTemplate {
     lang: Lang,
+    /// The phone's small picture on the band (design 84, `band::phone`).
+    who: crate::handlers::devices::BandAvatar,
     title: String,
     device: Device,
     hardening: Hardening,
@@ -918,6 +923,7 @@ pub async fn view_advanced(
     Html(
         AdvancedTemplate {
             lang,
+            who: crate::handlers::devices::BandAvatar::of(&device),
             title: format!("{} · {}", t(lang, "device.page.advanced"), device.name),
             hardening: policy.hardening.clone(),
             backup_service_enabled: latest.as_ref().and_then(|s| s.backup_service_enabled),
@@ -952,6 +958,8 @@ pub async fn view_advanced(
 #[template(path = "device_lock.html")]
 struct LockTemplate {
     lang: Lang,
+    /// The phone's small picture on the band (design 84, `band::phone`).
+    who: crate::handlers::devices::BandAvatar,
     title: String,
     device: Device,
     /// Child PIN: set or not, its length; the phone's lock as warnings (above the group) and rows.
@@ -1386,6 +1394,7 @@ async fn render_lock(
         passkey_reauth,
         passkey_only,
         lang,
+        who: crate::handlers::devices::BandAvatar::of(&device),
         title: format!("{} · {}", t(lang, "device.page.lock"), device.name),
         child_warnings,
         child_rows,
@@ -1485,6 +1494,8 @@ pub(crate) fn clock_format_note(
 #[template(path = "device_home.html")]
 struct HomeTemplate {
     lang: Lang,
+    /// The phone's small picture on the band (design 84, `band::phone`).
+    who: crate::handlers::devices::BandAvatar,
     title: String,
     device: Device,
     /// Above the first group: Vibb can't read notifications.
@@ -1539,6 +1550,7 @@ pub async fn view_home(State(state): State<AppState>, lang: Lang, Path(id): Path
     Html(
         HomeTemplate {
             lang,
+            who: crate::handlers::devices::BandAvatar::of(&device),
             title: format!("{} · {}", t(lang, "device.page.home"), device.name),
             notification_warning: notification_access_note(lang, latest.as_ref()),
             clock_warning: clock_format_note(lang, &policy, latest.as_ref()),
@@ -1585,6 +1597,8 @@ pub struct LogRow {
 #[template(path = "device_filter.html")]
 struct FilterTemplate {
     lang: Lang,
+    /// The phone's small picture on the band (design 84, `band::phone`).
+    who: crate::handlers::devices::BandAvatar,
     title: String,
     /// An allowed host the phone blocks anyway (`dns_filter::doh_allowed_notice`, design 67).
     doh_allowed: Option<String>,
@@ -1752,6 +1766,7 @@ pub async fn view_filter(
     Html(
         FilterTemplate {
             lang,
+            who: crate::handlers::devices::BandAvatar::of(&device),
             title: format!("{} · {}", t(lang, "device.page.filter"), device.name),
             refused,
             doh_allowed: crate::handlers::dns_filter::doh_allowed_notice(&query),
@@ -1932,6 +1947,8 @@ async fn apps_nav(
 #[template(path = "device_apps.html")]
 struct AppsTemplate {
     lang: Lang,
+    /// The phone's small picture on the band (design 84, `band::phone`).
+    who: crate::handlers::devices::BandAvatar,
     title: String,
     device: Device,
     /// Devices, or Apps when opened from the Apps tab (`AppsFrom`).
@@ -2236,6 +2253,7 @@ pub(crate) async fn render_apps(
     Html(
         AppsTemplate {
             lang,
+            who: crate::handlers::devices::BandAvatar::of(&device),
             title: format!("{} · {}", t(lang, "nav.apps"), device.name),
             nav_tab,
             back_href,
@@ -2269,6 +2287,8 @@ pub(crate) async fn render_apps(
 #[template(path = "device_music.html")]
 struct MusicTemplate {
     lang: Lang,
+    /// The phone's small picture on the band (design 84, `band::phone`).
+    who: crate::handlers::devices::BandAvatar,
     title: String,
     device: Device,
     music: crate::handlers::music::MusicCard,
@@ -2325,6 +2345,7 @@ pub async fn view_music(
     Html(
         MusicTemplate {
             lang,
+            who: crate::handlers::devices::BandAvatar::of(&device),
             title: t_params(lang, "device.music.title", &[("name", &device.name)]),
             music,
             reported,

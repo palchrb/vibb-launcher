@@ -7,9 +7,10 @@
 <div class="top-strip" aria-hidden="true"></div>
 {% let tab = "devices" %}
 {% include "partials/tab_bar.html" %}
+{% import "partials/band.html" as band %}
 <main class="container">
-    <a class="nav-back" href="/devices/{{ device.id }}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ device.name }}</a>
-    <h1 class="page-title">{{ self.t("device.page.calls") }}</h1>
+    {% call band::phone(self.t("device.page.calls"), "/devices/" ~ device.id, device.name, who) %}{% endcall %}
+    <div class="sheet">
 
     {#- Where the forms return (§5.1, design 80 D9): the channels to their group (#settings; scroll-restore keeps the
         place with JS); a contact's forms to its row, open (?open=<id>#contact-<id>), its Avansert open again when it
@@ -720,6 +721,7 @@
     {% if !contacts.is_empty() %}
     <script src="/static/photo-crop.js?v=3" defer></script>
     {% endif %}
+    </div>
 </main>
 {#- A contact photo's crop (static/photo-crop.js): a chosen photo, or "Adjust crop"'s kept original (or a photo
     from before migration 0123 its stored square), in the phone's circle; Save puts the chosen square into the

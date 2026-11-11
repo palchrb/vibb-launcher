@@ -9,8 +9,14 @@
 <body>
 <div class="top-strip" aria-hidden="true"></div>
 {% include "partials/js_words.html" %}
+{% import "partials/band.html" as band %}
 <main class="container">
+    {#- The band of the page it passes on to (design 84): the mark and the name, no bell and no way back - there is
+        no session here. -#}
+    {% call band::bare(self.t("music.settings.short")) %}{% endcall %}
+    <div class="sheet">
     <p>{{ self.t("music.spotify.done.before") }} <a href="{{ target }}">{{ self.t("music.spotify.done.link") }}</a>{{ self.t("music.spotify.done.after") }}</p>
+    </div>
 </main>
 </body>
 </html>

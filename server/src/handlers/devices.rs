@@ -249,6 +249,25 @@ pub(crate) fn initial(name: &str) -> String {
         .unwrap_or_else(|| "?".to_string())
 }
 
+/// The phone's small picture on the band of its ten own pages (design 84, O1 c; `band::phone`): the list's and the
+/// summary's avatar - the letter, the grey of a phone not set up, the photo - with no status dot. It says whose page
+/// this is; the name itself is the back link's spoken word.
+pub(crate) struct BandAvatar {
+    pub initial: String,
+    pub avatar: &'static str,
+    pub photo: Option<String>,
+}
+
+impl BandAvatar {
+    pub(crate) fn of(device: &Device) -> Self {
+        BandAvatar {
+            initial: initial(&device.name),
+            avatar: avatar_class(device),
+            photo: avatar_photo(device),
+        }
+    }
+}
+
 /// A phone's connection (design 31 §3.10) from the in-memory stream and last access, and the
 /// database's last report (which survives a restart).
 pub(crate) fn connection_of(
@@ -521,10 +540,30 @@ struct EnrollCodeTemplate {
     until: String,
     /// The phone is enrolled: using the code cuts the enrolled phone off (recovery).
     enrolled: bool,
+    /// The band's back link and its spoken name ([setup_back]).
+    back_href: String,
+    back_label: String,
     /// Until when typed codes are paused (local), when they are (too many wrong ones this hour).
     paused_until: Option<String>,
 }
 crate::i18n::words!(EnrollCodeTemplate);
+
+/// Where the two setup pages (the typed code's, the QR code's) go back to, and that page's name (design 84 §2):
+/// where the page was opened from - Advanced › Connection for a connected phone, the summary's Connect This Phone
+/// group (`#access`) for one not set up yet.
+pub(crate) fn setup_back(lang: Lang, device: &Device) -> (String, String) {
+    if device.enrolled_at.is_some() {
+        (
+            format!("/devices/{}/advanced#connection", device.id),
+            t(lang, "device.page.advanced").to_string(),
+        )
+    } else {
+        (
+            format!("/devices/{}#access", device.id),
+            device.name.clone(),
+        )
+    }
+}
 
 /// "New Setup Code" on Connect and Advanced › Connection (design 22 §3.1): a typed code (8
 /// characters, 15 minutes), shown on this response only - only its hash is stored, and the page is
@@ -573,8 +612,11 @@ pub async fn regenerate_code(
     .await;
     let zone = crate::display_time::Zone::load(&state.db, lang).await;
     let now = chrono::Utc::now();
+    let (back_href, back_label) = setup_back(lang, &device);
     let page = EnrollCodeTemplate {
         lang,
+        back_href,
+        back_label,
         title: t_params(lang, "devices.code.page_title", &[("name", &device.name)]),
         code: crate::enrollment::display(&code),
         until: zone.until_db(&expires_at, now),

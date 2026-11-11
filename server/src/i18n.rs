@@ -295,6 +295,12 @@ pub trait Words {
     fn tc(&self, key: &str, n: impl Count, params: &[(&str, &str)]) -> String {
         t_count(self.lang(), key, n.count(), params)
     }
+
+    /// The band's back link as it is spoken (design 84, `partials/band.html`): "Back to Emma". The parent page's
+    /// name is a catalog word on most pages and a field on others, so it is taken as anything that prints.
+    fn back_to(&self, name: impl std::fmt::Display) -> String {
+        t_params(self.lang(), "nav.back_to", &[("name", &name.to_string())])
+    }
 }
 
 /// A number [Words::tc] counts by: a template hands it a field's reference (`bell.unread`) or a length.
@@ -628,6 +634,7 @@ mod tests {
         "provision_qr.html",
         "partials/tab_bar.html",
         "partials/bell.html",
+        "partials/band.html",
         "partials/head.html",
         "partials/js_words.html",
         "partials/flash_note.html",
