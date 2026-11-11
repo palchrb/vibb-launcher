@@ -1,7 +1,14 @@
 # 84 - The PWA's top: one night band on every page (F2b)
 
 Status: design note by the architect, 2026-11-11, on `main` at 9227c709, branch `pwa-band`. Nothing built. Server
-only: templates, `style.css`, two scripts, tests. No API, no migration, no launcher or music change.
+only: templates, `style.css`, two scripts, two handlers' back fields and one helper, tests. No API, no migration, no
+launcher or music change.
+
+Revision 2 (after design QA, 2026-11-11). What moved: the back link's address is an expression, on two pages a
+handler's (§2); the first header's rule is the lab's five selectors (§4); the push banner has its spacing (§4, §5);
+the new tests count and render, `jstest/locate.test.js` is in, and there is a list of what runs before CI (§7, §9);
+the iPhone list is longer and starts with a before picture (§8); O1 has three options and measured widths and is
+still open, and O2 (a long name is cut) is new and decided (§10).
 
 The user, 2026-11-11, on the clickable lab's variant F2b: "Jeg liker f2b! Sett den i produksjon!"
 
@@ -22,6 +29,7 @@ not proven by either - most of them are things only an iPhone can show (§8).
 5. Dark scheme: band and sheet have the same colour, so a 1 px hairline (#34344A) marks the sheet's edge.
 6. What goes: the "vibb" wordmark, the large title under the bar, the back link's visible word, the editors' sticky
    bar. What stays untouched: the tab bar's pill, the status bar's night strip, every page's content.
+7. A title is one line. One that does not fit is cut with an ellipsis; none wraps (O2, decided by the user, §10).
 
 Measured in the lab at 390x844 (its `checks.json`, the five tabs): the first content starts at 88-92 px where it
 starts at 124.5 px today.
@@ -39,16 +47,36 @@ template writes a title bar, a back link or an `<h1>` of its own after this. It 
 | `band::editor(title, href, parent)` | the back chevron | the call's body (Save) | the four editors; adds `band-fixed` |
 | `band::bare(title)` | the mark | nothing | `music_spotify_done.html` |
 
-Inputs: `title` is the visible name, already translated, escaped by askama as any value. `href` is the back target
-exactly as today's `nav-back` has it. `parent` is the parent page's name, the word today's back link shows. `tab` is
-the page's `{% let tab %}` (the bell's `?from=`). The page's actions are the call's body (`{{ caller() }}` in the
-macro): today's `title-action` elements moved over unchanged. The bell is not an input: `tab` includes
-`partials/bell.html` after the body, so it is last by construction and a page cannot place it elsewhere.
+Inputs, each an expression (a macro's argument cannot be template text): `title` is the visible name, already
+translated, escaped by askama as any value. `href` is today's back target, `parent` the parent page's name - the word
+today's back link shows. `tab` is the page's `{% let tab %}` (the bell's `?from=`). The page's actions are the call's
+body (`{{ caller() }}` in the macro): today's `title-action` elements moved over unchanged. The bell is not an input:
+`tab` includes `partials/bell.html` after the body, so it is last by construction and a page cannot place it
+elsewhere.
+
+**The href.** Today's 43 back links are template text, 23 of them with `{{ }}` inside. As an argument:
+
+| Today's text | The argument | Templates |
+|---|---|---|
+| a literal (`/settings`, `/music#spotify`) | the string: `"/settings"` | 20 |
+| one value (`{{ back_href }}`, `{{ back.1 }}`) | the field | `device_apps`, `schedule_rule`, `notifications` |
+| text around a value (`/devices/{{ device.id }}`, `/devices/{{ device_id }}/calendar#sources`, `/devices/locate?device={{ device.id }}#zones`, `/music#entry-{{ entry.id }}`, `/notifications{{ query }}`) | askama's `~`: `"/devices/" ~ device.id`, `"/devices/" ~ device_id ~ "/calendar#sources"` | 18 |
+| an `{% if enrolled %}` inside the attribute, and a conditional word | two handler fields, `back_href` and `back_label`, as `device_apps` and `schedule_rule` have | `enroll_code` (`handlers/devices.rs`), `provision_qr` (`handlers/provisioning.rs`) |
+
+`~` is in askama 0.16.0's parser and generator (`Expr::Concat`, read in the source on the build machine) and in no
+template here: that it compiles in a macro call with an integer on one side is an *inference*, the first thing the
+spike shows (§9). If it does not, those 18 take a `back_href` field too. Askama 0.16 has no conditional expression, so
+the two conditional pages take handler fields either way: the handler has `enrolled`, the id and the name and writes
+the same two strings. The rendered `<a class="nav-back" href="…">` stays byte for byte: a `~` value is escaped as a
+whole where today only the `{{ }}` part is, askama's escaper touches `< > & " '` alone, none of the template text has
+one, and `query` and `back.1` are escaped as today. *(inference; §9's curl step checks the pinned strings)*
 
 How askama passes them. Read in `askama_derive` 0.16.0's source on the build machine (`generator/node.rs`,
-`helpers/macro_invocation.rs`): call bodies and `caller()` exist. No template here uses `caller()` yet, and no macro
-here reads a struct field (`bell`) or includes a partial, so that the four macros compile as written is an
-*inference*. The contract is what is fixed; if askama refuses the form, the fallback is a pair of macros per kind
+`helpers/macro_invocation.rs`): call bodies and `caller()` exist. A macro that calls `self.t(...)` exists here
+(`group_flash.html`'s `show`), so the hidden span's words are no risk. New here are three forms: `caller()` with a
+call body, composed arguments, and an `{% include %}` (`bell.html`, which reads `bell`) inside an imported macro -
+that the four macros compile as written is an *inference*, settled by the spike before anything else is written (§9).
+The contract is what is fixed; if askama refuses the form, the fallback is a pair of macros per kind
 (`tab_open(title)` / `tab_close(tab)`) with the actions between them - same output.
 
 The output (a tab, then a page under a tab):
@@ -74,11 +102,16 @@ The output (a tab, then a page under a tab):
 - **The back link's spoken name** is a `visually-hidden` span (the class exists), not an `aria-label`: the same
   accessible name, and the link's opening tag keeps its pinned form. New string `nav.back_to`: "Back to {name}" /
   "Tilbake til {name}". `account.back` (the one back word with a key of its own) goes; Account passes `nav.settings`.
+  `parent` arrives as a `&str` on most pages (`self.t(...)`) and as a `String` field on others (`device.name`,
+  `back_label`), and `tp` takes `&str` pairs alone: the macro calls a new helper beside `tp` in `i18n.rs`'s `Words`,
+  `back_to(&self, name: impl Display) -> String`, which takes both. The partial writes
+  `</svg><span class="visually-hidden">…</span></a>` with nothing between the tags (§7's `nav_back()`).
 - **The mark** is decorative (`alt=""`) and is not a link. Today's brand is a `<span>` that does nothing on a tap
   (read in `devices_list.html`); the band's mark does nothing either.
 - **Title size class** on the `<header>`, never on the `h1`: `band-long` for a title over 16 letters, `band-xlong`
   over 24 (the lab's two steps), counted in the macro (`title.chars().count()`; *inference* that askama takes the
-  call - else a helper beside `t()`).
+  call - else a helper beside `t()`). The letters are the translated string's: a page can be `band-long` in one
+  language and not in the other.
 - **Focus order** follows the source: the tab bar (first in the source, as today), the back link, the page's actions,
   the bell, then the content. On an editor: tab bar, back, Save, the form's fields - as today.
 - `<header>` inside `<main>` is no landmark; the editors' band, a child of `<body>`, is the page's banner. Accepted.
@@ -87,10 +120,14 @@ Where it goes. A scrolling page: `<main class="container">`, the band as its fir
 `<div class="sheet">` holding everything the page has today below its title. `<main>` stays the scroller - the
 scripts in §5 find it so. An editor: the band between the tab bar partial and `<main class="container
 container-fixed">`, a normal flex child of `<body>` - nothing fixed, nothing sticky; the form stays `main`'s child.
+`{% import "partials/band.html" as band %}` goes after the tab bar's include, where `group_flash`'s import is today -
+never between `{% let tab = … %}` and the include (`shell.rs` reads the line right before the include, §7).
 
 Save on the band: `<button type="submit" class="title-action" form="rule" data-save="rule">Lagre</button>` - today's
-button with one attribute more, `form`, naming the form's `id` (all four forms have one). A `form=` button that comes
-before its form is still that form's default button, so Enter in a field saves as today.
+button with one attribute more, `form`, naming the form's `id` (all four forms have one). The order is load-bearing:
+`form=` before `data-save`, which stays the last attribute (`time_pages.rs:1293` pins
+`data-save="bedtime">Add</button>`). A `form=` button that comes before its form is still that form's default button,
+so Enter in a field saves as today.
 
 ## 3. Every template
 
@@ -113,8 +150,8 @@ page exist as templates: errors are plain text, and `sw.js` caches nothing ("It 
 |---|---|---|---|
 | `schedule_rule` | `{{ title }}` (the rule's name, "Ny regel") | `{{ back_href }}` (`{{ back_label }}`) | `form="rule"`, `data-save="rule"`, Add when new |
 | `device_bedtime` | `device.bedtime.title` | `/devices/{id}/time` (`device.page.time`) | `form="bedtime"`, `data-save="bedtime"`, Add when not stored |
-| `device_zone` | `{{ title }}` (the zone's name, "Ny sone") | `/devices/locate?device={id}#zones` (`nav.locate`) | `form="zone-form"`, `data-save="zone"` |
-| `device_calendar_rule` | `{{ title }}` | `/devices/{id}/calendar#rules` (`calendar.title`) | `form="rule-form"`, `data-save="rule"` |
+| `device_zone` | `{{ title }}` (the zone's name, "Ny sone") | `/devices/locate?device={id}#zones` (`nav.locate`) | `form="zone-form"`, `data-save="zone"`, Add when new |
+| `device_calendar_rule` | `{{ title }}` | `/devices/{id}/calendar#rules` (`calendar.title`) | `form="rule-form"`, `data-save="rule"`, Add when new |
 
 **Pages under a tab** - `band::sub`, no action on the band unless said.
 
@@ -131,7 +168,7 @@ page exist as templates: errors are plain text, and `sw.js` caches nothing ("It 
 | `device_calendar_caldav` | `{{ username }}` | the same |
 | `device_calendar_link` | `{{ name }}` | the same |
 | `device_locations` | `locate.locations.title` | `/devices/locate?device={id}` (`nav.locate`) |
-| `enroll_code` | `devices.code.title` | `/devices/{id}/advanced#connection` (`device.page.advanced`) once enrolled, else `/devices/{id}#access` (the phone's name) |
+| `enroll_code` | `devices.code.title` | `{{ back_href }}` (`{{ back_label }}`), new handler fields (§2): `/devices/{id}/advanced#connection` (`device.page.advanced`) once enrolled, else `/devices/{id}#access` (the phone's name) |
 | `provision_qr` | `devices.qr.title` "Koble til Emma" | as `enroll_code` |
 | `device_add` | `devices.list.add` | `/devices` (`nav.devices`) |
 | `tracked_app_add` | `apps.add.title` | `/apps` (`nav.apps`) |
@@ -155,7 +192,9 @@ at the page's top today: it moves to the band, and the summary head keeps the pi
 | `login`, `verify_2fa`, `setup_2fa`, `change_password` | nothing new | `body.auth-page`: one centred card with its own `h1.auth-title`, no tab bar, the document scrolls (design 43 §1.4). There is no page name, action or bell to put on a band, and a band above a centred card is a second header. The night strip behind the status bar is on them already. |
 | `lock` | nothing new | The whole page is night with the breathing mark; the splash hands over to it without a change. |
 
-The lab said the same of these pages (its "Ikke med i mockupen" page): the user has not seen them with a band.
+Leaving these five without a band is the architect's choice, not the lab's: the lab did not have them, and its page
+for a missing page says "Utseendet øverst er det samme på alle sider". The coordinator has told the user so in a
+line.
 
 ## 4. The CSS
 
@@ -171,7 +210,9 @@ app on iOS 27, 60 px + the inset under the old translucent bar), `--band-edge: t
 - `.band`: `flex: none; display: flex; align-items: center; background: var(--night); color:
   var(--night-text)`, top padding `--band-top`, sides exactly `.container`'s side paddings of today (16 px, the safe-area insets, the 720 px column),
   `padding-bottom: 32px; margin-bottom: -22px` - 10 px of band under the row, then 22 px that the next box covers. The
-  row is `min-height: 44px`, so a larger text size grows the band instead of cutting it.
+  row is `min-height: 44px`, so a larger text size grows the band instead of cutting it. The overlap is the band's
+  own rule, so it holds for an editor's band as a child of `body` too: what shows behind `main`'s rounded corners
+  there is the band's foot. (The lab's `body` was night and hid the difference; the build's is `--bg`.)
 - `.band` also takes today's `.title-bar-night` trick, upward only: `border-image: linear-gradient(var(--night),
   var(--night)) fill 0 / 0 / 100vh 0 0`. Its comment in `style.css` says what it is for: the 100vh of night above
   the band is what an iOS pull-down bounce shows. The lab used a two-colour gradient on `main` instead; the design
@@ -200,16 +241,45 @@ app on iOS 27, 60 px + the inset under the old translucent bar), `--band-edge: t
   sticky bar's own arithmetic (an offset counts from inside the scroller's padding, 16 px here), so the line stays
   where it is before any scrolling. The flash is in view wherever the page comes back, as today, and nothing new is
   drawn on the night band.
+- The push banner (§5: `.attention.push-banner`, `margin: 0 0 8px`, its look unchanged). On a scrolling page it is
+  the sheet's first child, 16 px under the sheet's edge. The header after it is then no first child and keeps its
+  own 24 px, into which the banner's 8 px collapse: 24 px from banner to header (12 px to the summary head) - the
+  gap today's banner has under the title, with no new rule. On an editor it is first in `main`, right before the
+  form, and `.editor-flash`'s `margin-top: -16px` would lay the flash over the banner's margin and its lowest 8 px.
+  One rule: `.push-banner + form > .editor-flash { margin-top: -8px }` - the flash starts at the banner's lower
+  edge with its line 16 px under it, and once scrolled it sticks exactly as without a banner. *(that the margins
+  collapse through a first `<section>` or `<form>` is an inference; §9's Chromium pass has both cases)*
 
 **Rules that change.** `.container`: `padding: 0` (its top, side and bottom paddings move to the band and the sheet);
 `flex`, `min-height`, `overflow-y`, `overscroll-behavior-y`, `touch-action` and the desktop `overflow-y: scroll`
 stay. `.tab-bar ~ .container` keeps `scroll-padding-bottom`; its `padding-bottom` is now `.tab-bar ~ .container > .sheet`'s
 and `.tab-bar ~ .container-fixed`'s.
 `.container > form > .button-wide` becomes `.sheet > form > .button-wide, .container-fixed > form > .button-wide`.
-`.summary-head`: 4 px top margin. The first `.group-header` / `.group-head` in a sheet: 10 px top margin (written as
-two `:first-child` selectors). `.pull-refresh`: `top: calc(var(--band-h) + 6px)`, so the arrow comes down over the
+`.pull-refresh`: `top: calc(var(--band-h) + 6px)`, so the arrow comes down over the
 sheet, not over the title. `.net-progress`, `.net-chip`, `.timing-line` keep their places from `--top-strip`: they
 lie over the band's top as they lie over Devices' night bar today.
+
+The page's first header: `margin-top: 10px` in place of its 24 px, so it starts 26 px under the sheet's edge as in
+the lab (40 px without). The lab's five selectors (`lab-f2.css` l. 99-103) as a plain list, written for `.sheet` and
+once more, the same nine lines, for `.container-fixed`:
+
+```css
+.sheet > .group-header:first-child,
+.sheet > .group-head:first-child,
+.sheet > [hidden]:first-child + .group-header,
+.sheet > form:first-child > .group-header:first-child,
+.sheet > form:first-child > .group-head:first-child,
+.sheet > section:first-child > .group-header:first-child,
+.sheet > section:first-child > .group-head:first-child,
+.sheet > section:first-child > section:first-child > .group-header:first-child,
+.sheet > section:first-child > section:first-child > section:first-child > .group-header:first-child
+```
+
+The nine templates that open on a `<section>` with its header first (`device_about`, `device_advanced`,
+`device_lock`, `dns_filter`, `schedule_budget`, `schedules`, `security`, `updates`, `wallpapers`) take the sixth
+line, `devices_list` (the hidden push offer first) the third. `.sheet > .summary-head:first-child`: 4 px (the lab's
+l. 104). The four editors' first `<section>` has an `aria-label` and no header of its own (read in the four files),
+so a flash as the form's first child moves no header.
 
 **Rules that go.** `.title-bar`, `.title-bar-split`, `.title-bar-night` (and its three action rules), `.vibb-brand`,
 `.vibb-mark`, `.vibb-word` (and `--brand-word`, used by nothing else), the three `.editor-bar` rules,
@@ -247,8 +317,8 @@ one `position: fixed` box.
 
   The rem values, the two letter steps and the 374 px step are the lab's. The `vw` caps are not in the lab: each
   equals its rem value from 320 px up at 100 % text, so nothing the user saw changes. Widths count Nunito 800 at
-  about 0.56 em a letter - an estimate from the lab's screenshots ("Varselinnstillinger" fits at 320 px), not a
-  measurement of the font.
+  about 0.56 em a letter, a first estimate; the ten phone titles measured on the lab's screenshots since (§10, O1)
+  come to 0.49-0.53 em, so the table errs on the safe side.
 - *200 % text*: with the root size doubled the caps hold the title to 7.5vw / 6.9vw / 6vw of the width (29, 27 and
   23 px at 390 px), so it grows by about a fifth and still fits where it fitted; the band's actions do double
   ("Lagre" about 95 px wide) and take their room first. This is the one text in the PWA that does not double: a
@@ -266,8 +336,8 @@ Found by grep in `server/static/` for `page-title`, `nav-back`, `editor-bar`, `t
 
 | Script | What it reads today | After |
 |---|---|---|
-| `register-sw.js` `banner()` (l. 246-271) | `main.querySelector(".page-title")`; puts the push banner after the title when the title is `main`'s child, else first in `main` | **Changes.** The banner goes in as the first child of `main > .sheet`; on an editor (no sheet) first in `main`. Never before the band. The scroll compensation stays as written. `?v=5` -> 6. |
-| `locate.js` `mapIntoView()` (l. 255-264) | `main`'s computed `padding-top` as the map's offset under the status bar | **Changes.** `main`'s top padding is 0 now: the offset is the `.top-strip`'s height + 8 px. `?v=5` -> 6 (two templates and `locations.rs`'s pin). |
+| `register-sw.js` `banner()` (l. 246-271) | `main.querySelector(".page-title")`; puts the push banner after the title when the title is `main`'s child, else first in `main` | **Changes.** The banner goes in as the first child of `main > .sheet`; on an editor (no sheet) first in `main`, before the form. Never before the band. Its spacing in both places is §4's. The scroll compensation stays as written. `?v=5` -> 6. |
+| `locate.js` `mapIntoView()` (l. 255-264) | `main`'s computed `padding-top` as the map's offset under the status bar | **Changes.** `main`'s top padding is 0 now: the offset is the `.top-strip`'s height + 8 px. `?v=5` -> 6 (two templates and `locations.rs`'s pin). `jstest/locate.test.js` pins the old offset (§7). |
 | `register-sw.js` l. 29 | `[data-unread]` (the bell, or the inbox's gear) for the app badge; `[data-signed-in]` on the tab bar | Unchanged: both elements keep their attributes. |
 | `pull-refresh.js`, `scroll-restore.js`, `reconnect.js`, `auto-reload.js`, `music-cards.js`, `install-now.js` | `main` as the scroller (its `overflow-y`, `scrollTop`) | Unchanged: `main` is still the scroller and the band is inside it. |
 | `photo-crop.js` l. 293 | sets `inert` on `main` and `.tab-bar` (`device_calls`, a scrolling page) | Unchanged: the band is inside `main`. |
@@ -301,7 +371,7 @@ there; the lab builder's list was not used for this table.
 ## 7. Tests
 
 The server's test crate does not compile on the build machine; these run in CI only, so every change is a string
-swap or a moved slice.
+swap or a moved slice, and §9 lists what is run before CI.
 
 Pinned today, and what they pin after:
 
@@ -312,42 +382,64 @@ Pinned today, and what they pin after:
   declaration is `.band`'s; the bottom padding is `.tab-bar ~ .container > .sheet`'s. Kept as they are: one
   `position: fixed`, the strip first in every body, the veil rule, `--night`, the manifest.
 - `shell::every_template_with_the_bar_sets_its_tab`: "a landing page has no `class="nav-back"`" becomes "a landing
-  page calls `band::tab`, every other `band::sub` or `band::editor`".
+  page opens the tab's band, every other a sub page's or an editor's". The test takes the line right before the tab
+  bar's include and needs it to be `{% let tab = … %}`: the band's import goes after the include (§2).
 - `time_pages`: the helper `bar()` (from `data-bar` to `<h1`) reads the band (`<header class="band` to
   `</header>`); l. 324 (Save before the name field inside the form) becomes "Save has `form="rule"`";
   `the_editor_bar_holds_save_and_its_flash` pins `.editor-flash`'s `position: sticky` and that the flash is in it.
+  L. 1293 (`data-save="bedtime">Add</button>`) stays true only while `data-save` is Save's last attribute (§2).
 - `notifications.rs` l. 513: the bell is looked for from `<header class="band` to `</header>`.
-- `device_pages.rs`'s helper `nav_back()`: the words it returns are the hidden span's ("Back to ...").
-- `summary.rs`: the escaped name is checked in the band's `h1`, not in the summary head.
-- `locations.rs` l. 374: `locate.js?v=6`. `jstest/register-sw.test.js`: the banner lands first in the sheet.
+- `device_pages.rs`'s helper `nav_back()` (l. 3247-3258) returns what follows `</svg>` in the link: after the change
+  that is the hidden span, tags and all. The helper returns the span's text, and l. 3317 and l. 3352 expect
+  "Back to " and the name they expect today; the partial leaves no whitespace around the span (§2).
+- `summary.rs` l. 62-64: `header()`'s slice of the summary head no longer has the name. The escaped name is looked
+  for in `<h1 class="page-title">…</h1>`, the unescaped one in the whole page.
+- `locations.rs` l. 374: `locate.js?v=6`. `jstest/register-sw.test.js`: the banner lands first in the sheet, and on
+  a page without a sheet first in `main`.
+- `jstest/locate.test.js` l. 256-268 pins the fake `main`'s `paddingTop: "55px"` and `scrollTop == 900 - 840 - 55`:
+  the fake page gets a `.top-strip` with a height, and the expected place is `900 - 840 -` that height `- 8`.
 - Untouched: the roughly 45 `<a class="nav-back" href="...">` and `<h1 class="page-title">...</h1>` assertions, the
   auth and lock pages' tests, `every_form_on_every_page_lands_on_its_own_group`.
   `every_class_a_template_uses_is_in_style_css` passes once the new classes have their rules.
 
-New, three, scans of the template sources (no constants repeated):
+New, three. The first two are worded to hold whichever macro form the spike leaves (§2's fallback, §9):
 
-1. Every template with `<main class="container` calls exactly one `band::` macro and writes no `<h1` itself; the
-   partial is the only file with `<h1 class="page-title"`. (Every page has the band; exactly one `h1`.) The rendered
-   side is one line more in `every_page_marks_its_own_tab`'s loop: one `<h1` in the page.
-2. In the partial, `tab`'s actions box ends with the bell's include. (Bell last.)
-3. In each of the four editors the Save button's `form="..."` is the `id` of a `<form` in the same file.
+1. A source scan that counts. The templates that open a band are exactly all of `templates/*.html` less `login`,
+   `verify_2fa`, `setup_2fa`, `change_password` and `lock`, which the test names - 49 today, and a new template is
+   in the set or the test fails. Each of them opens one band and writes no `<h1` itself; the partial is the only
+   file with `<h1 class="page-title"`. The rendered side is one line more in `every_page_marks_its_own_tab`'s loop:
+   one `<h1` in the page.
+2. Rendered, in `shell.rs`'s loop over the five tabs: between `<header class="band` and `</header>` the last
+   `title-action` is the `title-bell`, and the page has exactly one `title-bell`. (Bell last, whatever the partial
+   looks like.)
+3. Named, not searched for: `schedule_rule.html` has `form="rule"`, `device_bedtime.html` `form="bedtime"`,
+   `device_zone.html` `form="zone-form"`, `device_calendar_rule.html` `form="rule-form"`, and each file has a
+   `<form` with that `id`.
 
 ## 8. What only the iPhone can show
 
 The lab ran in desktop Chromium. After the build, before any `server-v` tag, the build is served on the LAN as the
 lab was and the user's iPhone (iOS 27.2, `apple-mobile-web-app-status-bar-style: default`) goes through this list,
-in a Safari tab and installed, in both schemes:
+in a Safari tab and installed, in both schemes. First, before the build is served, a before picture: today's Devices
+(the one page with a night bar) and today's Settings, in a tab and installed - at rest, pulled down at the top,
+pulled up at the bottom. "As today" below means those pictures. The 320 px width and Android Chrome are not rows
+here: they belong to §9's Chromium pass.
 
 | What | How it is checked |
 |---|---|
 | The status bar's join | Installed, at rest on Devices and on Emma's page: no seam between the status area and the band. Scrolled: the strip stays night over the sheet. |
 | Standalone safe areas | Installed, upright and on its side: the row clears the status bar, the chevron and the bell clear the notch, the tab bar sits where it sat. |
-| WebKit's rubber band | Pull down at the top of Music and of Emma's page: night above the band, never a light gap. Pull up at the bottom: the ground. On a short page (Settings): no worse than Devices today. On an editor: the band does not move. |
-| Safari's moving toolbar | In a tab: the band sits right under the toolbar, the toolbar's tint agrees with it, and nothing jumps when the toolbar changes size. |
+| WebKit's rubber band | Pull down at the top of Music and of Emma's page: night above the band, never a light gap. Pull up at the bottom: the ground. On a short page (Settings): as Devices and Settings in the before pictures, or better. On an editor: the band does not move. |
+| Safari's moving toolbar | In a tab: the band sits right under the toolbar and nothing jumps when the toolbar changes size. The toolbar's tint is Safari's own choice and may differ from the band: accepted when it is as on Devices in the before picture. |
 | The tab bar's glass | A long page scrolled under the pill looks as today; in dark the hairline is only at the sheet's top. |
-| Real pull-to-refresh | Devices and Emma's page: the arrow comes down under the band, arms, reloads; the band does not jump. |
+| Real pull-to-refresh | Devices and Emma's page: the arrow comes down under the band, arms, reloads; the band does not jump. On an editor (no pull-to-refresh there): a pull at the top bounces the sheet inside its rounded top, the band stays, nothing reloads. |
 | Time and select fields | Bedtime's times, the rule's kind, a zone's fields: the pickers open and close with the band in place. |
-| The keyboard against the band | Rule editor: type in the top field and in the last one. The band may pan with the page as today's bar does; with the keyboard closed it is back at the top and "Lagre" works. Background the app for a while and repeat (design 43's stale viewport). |
+| The keyboard against the band | Rule editor: type in the top field and in the last one. The band may pan with the page as today's bar does; with the keyboard closed it is back at the top and "Lagre" works. Background the app for a while and repeat (design 43's stale viewport). The same once with the phone on its side: the field being typed in is in view, and "Lagre" is in reach when the keyboard closes. |
+| A save on each editor | In each of the four: scroll down, change a field, "Lagre". The page comes back where it was with "Lagret ..." in view under the band, and the line stays there while scrolling. A refused save the same with "Ikke lagret ...". |
+| The push banner | With notifications off on this iPhone: the banner on Devices sits in the sheet above the first header; on the rule editor above the form, and after a save there the flash does not cover it. |
+| Long names | A phone named with 40 letters and a rule with 60: one line with an ellipsis, the chevron and "Lagre" whole (O2). |
+| Landing in the middle, then Back | From the QR page, Back to Emma's page at `#access`: the group is in view, the band has scrolled away, the strip is night. Back again: Devices at its old place. |
+| iOS 26's translucent status bar | **Not checked**: the user's iPhone is on 27.2. `.top-strip` and `--band-top` keep the rules written for it; nothing of this design has been seen on iOS 26. |
 
 A finding here is a fix on the same branch, not a new design, unless it costs something the user can see.
 
@@ -360,28 +452,79 @@ part is small and separate enough for the code QA to read on its own:
 
 | Part | Files | Lines, about |
 |---|---|---|
-| The shell and the 45 scrolling pages | `partials/band.html` (new, ~45 lines), 45 templates (~6 lines each), `style.css` (+90/-45), `register-sw.js`, `locate.js`, `head.html`, `nb.json`, `en.json`, `shell.rs`, `notifications.rs`, `device_pages.rs`, `summary.rs`, `locations.rs`, `jstest/register-sw.test.js`, `docs/notes/server/pwa.md` | 59 files, ~750 |
+| The shell and the 45 scrolling pages | `partials/band.html` (new, ~45 lines), 45 templates (~6 lines each), `style.css` (+110/-45), `register-sw.js`, `locate.js`, `head.html`, `nb.json`, `en.json`, `i18n.rs` (`back_to`), `handlers/devices.rs` and `handlers/provisioning.rs` (the two back fields), `shell.rs`, `notifications.rs`, `device_pages.rs`, `summary.rs`, `locations.rs`, `jstest/register-sw.test.js`, `jstest/locate.test.js`, `docs/notes/server/pwa.md` | 63 files, ~820 |
 | The four editors: the band outside `main`, Save's `form=`, `.editor-flash` | 4 templates, `time_pages.rs`, in `style.css` +15 | 5 files more, ~150 |
 
-About 64 files and 900 lines, most of them the same six lines in every template.
+About 68 files and 970 lines, most of them the same six lines in every template.
 
-## 10. Open points for the user
+**Before CI.** The test crate cannot be compiled on the build machine, and three askama forms are new here (§2). So,
+in this order:
 
-One.
+1. A spike commit first: `band.html` and one page of each kind - a tab, a sub page with an id in its href, an
+   editor, `enroll_code`, `music_spotify_done` - and a plain local `cargo build -j 1` of the binary. It settles the
+   macro form and `~` before the other 44 templates are written.
+2. `node --test jstest/*.test.js` locally.
+3. A throwaway server, and `curl` with grep for the literals the tests pin: `<h1 class="page-title">…</h1>`,
+   `<a class="nav-back" href="…">`, `data-save="bedtime">Add</button>`, one `<h1` on every page.
+4. A Chromium pass at 320 and 390 px, light and dark, and once with JS off: a save's flash on each editor, the push
+   banner on a scrolling page and on an editor, a 40-letter phone name.
 
-**O1 - Which phone am I on?** Today ten of a phone's pages (Anrop og kontakter, Tidsregler, Nettfilter, Hjem-skjerm,
-Låseskjerm og PIN-koder, Musikk, Kalender, Apper, Om denne telefonen, Avansert) show the phone's name as the back
-link's word, "‹ Emma", above the title. In F2b the chevron stands alone and the name is only spoken. The lab had one
-phone, so it never showed the cost: with two phones nothing at the top of "Anrop og kontakter" says whose page it is.
-Should the phone's name be shown on those ten pages' band?
+Then CI by dispatch.
 
-Recommendation: **yes** - the name at the band's right end, in the band's quiet text (`--night-text-2`, 0.9375rem,
-one line), where these pages have no action. The chevron, the title and the band's height stay exactly as the lab
-shows them; the name gives way first (an ellipsis) and is not shown on a 374 px or narrower screen when the title is
-a long one. The alternative is the lab as shown: no name, and the parent remembers which phone they opened.
+## 10. Points for the user
 
-The build does not wait for the answer: the ten pages call `band::sub` with an empty body, and a yes is one `<span>`
-in each and three CSS rules.
+One open, one decided.
+
+**O1 - Which phone am I on? Open; the user is asked.** Today ten of a phone's pages (Anrop og kontakter, Tidsregler,
+Nettfilter, Hjem-skjerm, Låseskjerm og PIN-koder, Musikk, Kalender, Apper, Om denne telefonen, Avansert) show the
+phone's name as the back link's word, "‹ Emma", above the title. In F2b the chevron stands alone and the name is
+only spoken. The lab had one phone, so it never showed the cost: with two phones nothing at the top of "Anrop og
+kontakter" says whose page it is. Three ways:
+
+- **(a) As the lab: no name.** The parent remembers which phone they opened. Nothing more is built.
+- **(b) The name at the band's right, where it fits.** This is not the small addition revision 1 called it. The
+  actions box is `flex: none`, so a name inside it never gives way - the title would be cut for it. The name has to
+  be a flex item of its own between the title and the actions box (a fourth argument, or a macro of its own):
+  `.band-who { flex: 0 9999 auto; min-width: 0; margin-left: auto; padding-left: 12px; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis }`, 0.9375rem in `--night-text-2`, and `.band-who + .band-actions` gives
+  up its `margin-left: auto`. The title keeps `flex: 0 1 auto`, so the name takes the whole shortage before the title
+  loses a letter, and at 374 px and narrower it is not shown beside a `band-long` title. What fits:
+
+  | Title (nb) | Room right of the title, px, at 390 / 320 | Name letters that fit, at 390 / 320 |
+  |---|---|---|
+  | Apper | 264 / 194 | 31 / 22 |
+  | Musikk | 256 / 186 | 30 / 21 |
+  | Kalender | 236 / 166 | 28 / 19 |
+  | Avansert | 234 / 164 | 27 / 19 |
+  | Nettfilter | 232 / 162 | 27 / 18 |
+  | Tidsregler | 220 / 150 | 26 / 17 |
+  | Hjem-skjerm | 196 / 126 | 23 / 14 |
+  | Anrop og kontakter | 124 / 81 | 14 / not shown (8) |
+  | Om denne telefonen | 118 / 80 | 13 / not shown (8) |
+  | Låseskjerm og PIN-koder | 64 / 32 | 6 / not shown (2) |
+
+  The room is measured on the lab's light screenshots, from the title's last pixel to the band's 16 px side padding
+  (a 375 px screen has 15 px less than the 390 column). The letters are an estimate: a 12 px gap, then 8 px a letter
+  (0.52 em at 15 px; "Emma", with its wide letters, is about 42 px). The English titles were not measured. So at
+  390 px "Emma" is whole on all ten and a ten-letter name is cut to about six letters on "Låseskjerm og PIN-koder";
+  at 320 px the three long titles have no name at all. The name is there on most pages and short or gone exactly on
+  the longest titles.
+- **(c) The phone's small picture at the band's right.** The summary's avatar - the photo, or the initial on the
+  phone's colour - at 28 px. Its width is fixed (36 px with its gap), so it sits beside every title at 390 px and
+  beside nine at 320 px; "Låseskjerm og PIN-koder" has 32 px there and would lose its last letter or two. It says
+  which phone without words, as far as the pictures differ: two phones with no photo and the same initial differ by
+  the colour alone. It costs three values (`initial`, `avatar`, `photo`) in the ten pages' handlers; today the list
+  and the summary make them (`handlers/devices.rs`). *(the ten handlers were not read one by one)*
+
+The build may start before the answer: the ten pages call `band::sub` with an empty body, which is (a), and (b) or
+(c) is one element in each and a few CSS rules on top. But no release and no §8 walk before the answer.
+
+**O2 - A long name is cut. Decided.** The user, 2026-11-11: "Langt telefonnavn kan trygt kuttes, det er et
+kjempe-edge case". A title that does not fit its line is cut with an ellipsis, on every page; no title wraps to a
+second line, and the band has one height everywhere - what the lab's CSS does. What it means where today's titles
+wrap: a phone's name (up to 40 letters) is cut after about 30 at 390 px and about 27 at 320 px *(estimates, from
+0.52 em a letter)*, and the summary shows it in full nowhere else; a rule's and a music entry's name (60) and a
+zone's (40) are cut too and stay whole in their own name field on the same page.
 
 ## Where the build leaves the lab
 
@@ -393,7 +536,12 @@ The lab is the look; these are the places where its own code cannot be the build
 | `body { background: var(--night) }` | `body` stays `--bg` | It would turn the auth pages' ground night and changes what iOS shows around the page; the band's own outset does the job and is proven on Devices |
 | a two-colour gradient on `main` for the bounce | the band's 100vh outset upward | the same reason |
 | the title's `line-height: 44px` | unitless, the row `min-height: 44px` | a fixed line with `overflow: hidden` cuts a larger text size |
-| the letter count done by the lab's generator | counted in the macro | there is no generator in production |
+| the letter count done by the lab's generator, on Norwegian | counted in the macro, on the translated string | there is no generator in production; a title's step can differ between `nb` and `en` |
+| rem sizes for the title | each capped with a `vw` value (§4) | a one-line band cannot hold a doubled title: at 200 % text it grows by about a fifth - the one text that does not double; page zoom works as everywhere |
+| the mark's `border-radius: 50%` | not written | the icon's corners are its own night ground, the band's colour: nothing to see either way |
+| Save's padding `0 2px 0 8px` | today's `.title-action`, `0 4px` | one padding for every action on the band; "Lagre" ends 2 px further in, in line with the bell |
+| a focus ring of its own (offset 1 px, `border-radius: 8px`) | the PWA's ring (2 px, offset 2 px) in `--night-action`, the back link's inside (-4 px) | one focus look in the app |
+| `music_storytel`'s first footer keeps its inline `margin: -8px 4px 20px` | `margin: 0 4px 20px` | the -8 px closed up to a title that is now on the band; it would lift the text to 8 px under the sheet's edge |
 | the back link's `aria-label` | a hidden span in the link | the same spoken name; the link's tag keeps its form |
 | the dark hairline as an inset shadow and a `::after` | a 1 px top border | no extra layer, cannot be covered by scrolled rows |
 | the editors' flash lines: nowhere (forms were switched off) | `.editor-flash` (§4) | the lab never showed a save |
