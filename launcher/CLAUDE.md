@@ -77,7 +77,7 @@ Area notes, moved verbatim from this file on 2026-11-01; read only the ones your
 - `docs/notes/launcher/time-rules.md` - Time rules, screen time, lifts, location policy (handy step 6)
 - `docs/notes/launcher/push-and-play.md` - Push, battery and Play (handy step 7); FCM removed, SSE hardening (design 19)
 - `docs/notes/launcher/lock-and-glance.md` - Handy's own PIN lock and call screens (handy step 10); Android's own lock screen as the gate, the glance its face (design 59 steps 3-4); The lock's glance page (design 25)
-- `docs/notes/launcher/kiosk-escapes-and-updates.md` - Kiosk escapes: update fence, self-update window, notification rule (handy step 11); Install Now: the parent's one-time update (design 37); Catalog downloads: Wi-Fi only, resumable (design 13)
+- `docs/notes/launcher/kiosk-escapes-and-updates.md` - Kiosk escapes: update fence, self-update window, notification rule (handy step 11); Home stays the lock-task root after a process death (kiosk-root); Install Now: the parent's one-time update (design 37); Catalog downloads: Wi-Fi only, resumable (design 13)
 - `docs/notes/launcher/music-bridge.md` - Vibb music: the bridge, the courier, own files (design 21 step 3); Vibb music: episode pictures (design 27); Vibb music: media surfaces and time (design 21 step 4)
 - `docs/notes/launcher/dns-and-vpn.md` - Architecture change in progress; A custom DNS server with a parent-chosen backup (design 36 steps 1-3); The browsers' secure DNS (design 67, was inside Current status)
 - `docs/notes/launcher/zones-and-power.md` - The battery in the status report (design 35); The phone turned off and on (design 38); Safe zones on the phone (design 64 step 2)

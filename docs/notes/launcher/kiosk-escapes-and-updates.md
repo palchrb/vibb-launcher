@@ -15,6 +15,26 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
 - **Fix round (qa-11-code.md)**: (#1) with **no** record - lost, or corrupt (SharedPreferences swallows the parse error and loads an empty map) - process start and every `apply()` run the orphan sweep: every HOME candidate only a fence can have suspended (pure `orphanFenceTargets` = `fencePlan` without the already-suspended rule) that is suspended now is unsuspended (`last_release` "orphan"); cheap unless a non-controllable HOME is suspended. (#2) the window gate runs again inside `beforeCommit` (after the hash and the session copy); a wake or call there abandons the session and keeps the pending APK, no backoff (`InstallStart.DEFERRED`). (#3) screen-off time counts from the process start only before any screen event in this process (pure `screenOffForMs`). (#4) a commit that can't start and a transient failed result keep the verified APK (`recordFailed(keepPending)`, `deleteOnFailure = false`) and wait out the hour (`pendingCommitAllowed`); deterministic refusals - not ours, older, unparseable, a **wrong signer** (`GET_SIGNING_CERTIFICATES` of the archive vs ours must share a certificate, `signerMatches`), and INVALID/CONFLICT/INCOMPATIBLE/BLOCKED/PENDING_USER_ACTION results (`selfUpdateFailure`) - set `TrackedAppState.refusedTag`: never downloaded, fenced or tried again until the tag changes; PENDING_USER_ACTION abandons its session. (#5) the last fence's reason, refusals, ROLE_HOME and times live in their own prefs file `update_fence_last` (keys pinned) and go out as `update_fence.last_fenced_at_ms`/`last_released_at_ms` + `unsuspendable`/`last_release`/`home_role_held`. (#6) a group summary is cancelled only when every non-ongoing child would be (`groupSummaryCancellable` - NMS cancels the children with it). (#7) essentials also take the system receivers of `android.provider.action.SMS_EMERGENCY_CB_RECEIVED` (OEM alert apps).
 - **Not device-tested**: the A1-A5 and B1-B5 checks in the 11 doc and `docs/testing/emulator.md` §6d - in particular whether suspended quickstep breaks gesture Home/Recents during the tail (both nav modes, Pixel and Jelly Star), the frozen-vs-unknown HOME timing, the lock-task list after an update, session info after commit, ECBM detection, GMS's real channel ids.
 
+## Home stays the lock-task root after a process death (kiosk-root, 2026-11-11)
+
+- **The rule**: with the kiosk on, Home's task is `mLockTaskModeTasks[0]`, never a page task of our own affinity
+  (`.day` Kalender, `.messages` Meldinger, `.call`, `.pinlock` but for the lock's own fallback in `LockTaskRoot.kt`).
+  A root's last activity can't finish (AOSP `activityBlockedFromFinish`: Back does nothing, "Not finishing task in
+  lock task mode"), and removing the root clears every other locked task (`clearLockedTask`: `clear-task-all` on Home
+  and kid Settings).
+- **The cause it guards against** (§6ah's two findings): a launcher process death with Home in front - a kill, the
+  low-memory killer, a crash (the crash's own finish of Home is blocked while Home is the root). AOSP
+  `ActivityRecord.handleAppDied` removes an activity that has no saved state (`!mHaveState && !stateNotNeeded`); a
+  resumed or only paused Home has none (`wm_finish_activity [.., HomeActivity, proc died without state saved]`), so
+  Home's task went, the system started a new Home task, and it joined the running lock task **at the end**
+  (`realStartActivityLocked` -> `startLockTaskMode` appends). A page task left stopped behind Home keeps its saved state
+  and its place, and became the root.
+- **The fix**: `android:stateNotNeeded="true"` on `HomeActivity` (as AOSP's Launcher3; `HomeFrontTest` pins it). In
+  Android 16 only `handleAppDied` reads the flag: Home's record stays and is restarted in its own task
+  (`wm_restart_activity` on the same record), so the root never changes. `onSaveInstanceState` still runs (the client
+  never reads the flag). Left: AOSP still removes a record that is `finishing`, or not visible and launched 3 times in
+  the last minute (a crash loop) - then the old state can come back. Run: `docs/testing/emulator.md` §6ai.
+
 ## Install Now: the parent's one-time update (design 37, `docs/design/37-install-now.md`, at the monorepo root)
 
 - **What**: the server's launcher page has an Install Now button per phone; it queues the command `install_update`
