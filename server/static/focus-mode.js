@@ -8,11 +8,20 @@
 // Home, End, Page Up/Down, Space, Enter) when the focus is not in a field one types into - so a
 // parent who tapped a radio or a select and goes on with the arrow keys gets the ring back, while
 // typing in a tapped text field (an on-screen keyboard sends keys too) and moving its caret keep the
-// calm border. Without this script the ring shows as before. Loaded un-deferred from the head
-// partial (it only listens on the document). ES5. Tested with node (jstest/focus-mode.test.js).
+// calm border. Without this script the ring shows as before.
+//
+// A page opened at a #fragment (a back link to the row it came from, `/apps#phone-3`; a save's
+// group): the browser focuses the fragment's element when it can take focus (a row that is a link)
+// and counts that focus as :focus-visible - WebKit and Chromium both -, so the row wore the
+// keyboard's ring with no keyboard in sight (the user's iPhone, 2026-11-11). Such a load marks <html>
+// `fragment-focus` (style.css: no ring on the :target) until a key leaves pointer mode as above;
+// the focus itself stays, so Tab goes on from that row, and from the first key on the ring shows.
+// Loaded un-deferred from the head partial (it only listens on the document). ES5. Tested with node
+// (jstest/focus-mode.test.js).
 (function (root) {
     "use strict";
     var CLASS = "pointer-focus";
+    var FRAGMENT = "fragment-focus";
     var NAVIGATION = {
         ArrowUp: 1, ArrowDown: 1, ArrowLeft: 1, ArrowRight: 1, Up: 1, Down: 1, Left: 1, Right: 1,
         Home: 1, End: 1, PageUp: 1, PageDown: 1, " ": 1, Spacebar: 1, Enter: 1
@@ -43,6 +52,8 @@
     function install(doc) {
         var html = doc.documentElement;
         if (!html || !html.classList) return;
+        var hash = doc.location ? String(doc.location.hash || "") : "";
+        if (hash && hash !== "#") html.classList.add(FRAGMENT);
         function pressed() {
             html.classList.add(CLASS);
         }
@@ -50,11 +61,13 @@
         doc.addEventListener("touchstart", pressed, { capture: true, passive: true });
         doc.addEventListener("pointerdown", pressed, true);
         doc.addEventListener("keydown", function (e) {
-            if (leaves(e, doc.activeElement)) html.classList.remove(CLASS);
+            if (!leaves(e, doc.activeElement)) return;
+            html.classList.remove(CLASS);
+            html.classList.remove(FRAGMENT);
         }, true);
     }
 
-    var api = { install: install, leaves: leaves, CLASS: CLASS };
+    var api = { install: install, leaves: leaves, CLASS: CLASS, FRAGMENT: FRAGMENT };
     if (typeof module !== "undefined" && module.exports) {
         module.exports = api;
     } else if (root.document) {

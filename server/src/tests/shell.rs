@@ -1287,18 +1287,63 @@ fn the_app_shell_scrolls_main_not_the_document() {
         band.contains("padding: var(--band-top) ") && !band.contains("position"),
         "{band}"
     );
-    // The band paints 100vh of night above itself with border-image's outset alone (ink overflow:
-    // no room taken, no scrollable overflow): what a pull-down bounce shows, meeting the strip. It
-    // is the only border-image in the file.
-    assert!(
-        band.contains(
-            "border-image: linear-gradient(var(--night), var(--night)) fill 0 / 0 / 100vh 0 0;"
-        ),
-        "{band}"
+    // What an iOS bounce shows past the content's ends is the scroller's own ground, never the
+    // content's ink (the user's iPhone, 2026-11-11: the band's border-image outset painted nothing
+    // there, a light field showed): night in main's top half, the page's ground in its bottom half,
+    // and the sheet takes the rest of main's height, so nothing else ever shows it.
+    assert!(!compact.contains("border-image:"), "the old outset");
+    assert_eq!(
+        block(".container:not(.container-fixed)"),
+        "display: flex; flex-direction: column; \
+         background: linear-gradient(var(--night) 50%, var(--bg) 50%);"
     );
-    assert_eq!(compact.matches("border-image:").count(), 1, "one band");
+    assert_eq!(block(".container > .sheet"), "flex: 1 0 auto;");
+    // main always has 1 px to scroll, so a short page's bounce is main's, never the document's.
+    assert_eq!(
+        block(".container:not(.container-fixed)::after"),
+        "content: \"\"; flex: none; height: 1px;"
+    );
     // Its last 22 px lie under the rounded top of the next box: the sheet, or an editor's main.
     assert!(band.contains("margin-bottom: -22px;"), "{band}");
+    // A scrolling band lies over the sheet's top and the cap, night only outside the sheet's corners.
+    let over = block(".container > .band");
+    for needle in [
+        "position: relative;",
+        "z-index: 8;",
+        "pointer-events: none;",
+        "radial-gradient(circle at 100% 100%, transparent 22px, var(--night) 22.5px) left bottom / 22px 22px no-repeat,",
+        "radial-gradient(circle at 0 100%, transparent 22px, var(--night) 22.5px) right bottom / 22px 22px no-repeat,",
+        "linear-gradient(var(--night), var(--night)) left top / 100% calc(100% - 22px) no-repeat;",
+    ] {
+        assert!(over.contains(needle), "the band's foot: {needle} in {over}");
+    }
+    // Its contents take taps; the foot over the sheet's first box doesn't.
+    assert_eq!(block(".container > .band > *"), "pointer-events: auto;");
+    // The cap (the user's mockup, 2026-11-11): the sheet's rounded top stays under the status bar
+    // once the band has gone - sticky in main, a pseudo-element (never the status bar's colour),
+    // taking no room or tap, under the band. Not on an editor.
+    let cap = block(".container:not(.container-fixed)::before");
+    for needle in [
+        "position: sticky;",
+        "z-index: 7;",
+        "top: var(--top-strip);",
+        "box-sizing: border-box; height: 22px; margin-bottom: -22px;",
+        "border-top: 1px solid transparent; border-radius: 22px 22px 0 0;",
+        "box-shadow: 0 -50vh 0 50vh var(--night);",
+        "pointer-events: none;",
+    ] {
+        assert!(cap.contains(needle), "the cap: {needle} in {cap}");
+    }
+    // Its edge (dark's hairline) only once main has scrolled: never alone above a bounced band.
+    assert!(
+        compact.contains(
+            "@supports(animation-timeline:scroll()){.container:not(.container-fixed)::before{\
+             animation:cap-edgelinearboth;animation-timeline:scroll();animation-range:0px1px;}}"
+        ) && compact.contains("@keyframescap-edge{to{border-top-color:var(--band-edge);}}"),
+        "the cap's edge"
+    );
+    // A row a #fragment's load focused wears no ring until a key moves (static/focus-mode.js).
+    assert_eq!(block(".fragment-focus :target:focus"), "outline: none;");
     assert_eq!(block(".band-fixed"), "flex: none;");
     for under in [".sheet", ".container-fixed"] {
         let sheet = block(under);

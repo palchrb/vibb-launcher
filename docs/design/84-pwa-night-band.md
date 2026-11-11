@@ -18,6 +18,18 @@ on its ten pages (§2, §3, §10). An editor's form is `display: flow-root`, a f
 page (§4). The sheet's top is 15 px of padding beside a 1 px border (§4, the last table). §9 has the counts as they
 turned out and what was measured.
 
+Revision 4 (the fix round, 2026-11-11, branch `band-fix-1`; the user's iPhone on server 0.74.0). Four points, server
+only, no API change. (1) A pull-down at a page's top showed a light field between the status bar and the band: inside
+`main` iOS draws nothing of the band's `border-image` outset, only `main`'s own ground, which was clear. The outset is
+gone; the lab's two-colour gradient on `main` is the build's now (night in its top half, the ground in its bottom
+half), with the sheet growing to `main`'s bottom (§4, the table below). (2) The back link to a row (`/apps#phone-3`)
+landed with that row at the screen's top: a back link to the page the page came from now opens it where it was left
+(`scroll-restore.js`); a fresh load, a link opened directly or no JS still take the plain link. (3) That row wore the
+keyboard's ring: the browser focuses a fragment's focusable element and counts it as `:focus-visible`; `focus-mode.js`
+hides that ring until a key. (4) New, the user's mockup: the cap - once the band has scrolled away the sheet keeps its
+rounded top under the status bar and rows scroll under it (not on the editors). What was measured and how each is
+built: `docs/notes/server/pwa.md`, "The night band on every page", "The fix round".
+
 The user, 2026-11-11, on the clickable lab's variant F2b: "Jeg liker f2b! Sett den i produksjon!"
 
 What is read and what is inferred: everything below about today's code was read in this tree (templates, `style.css`,
@@ -240,6 +252,8 @@ app on iOS 27, 60 px + the inset under the old translucent bar), `--band-edge: t
   var(--night)) fill 0 / 0 / 100vh 0 0`. Its comment in `style.css` says what it is for: the 100vh of night above
   the band is what an iOS pull-down bounce shows. The lab used a two-colour gradient on `main` instead; the design
   keeps the mechanism that is on the user's iPhone today (Devices) and leaves `main`'s and `body`'s grounds alone.
+  *Revision 4: wrong - Devices' band was in the document then, the outset in `main` showed nothing on the iPhone; the
+  lab's gradient on `main` it is, and no `border-image` is left.*
 - `.band-mark`: `flex: none; width: 36px; height: 36px; margin-right: 10px`. Under 300 px of width it is not shown.
 - `.nav-back` (rewritten): `flex: none; display: flex; align-items: center; width: 46px; min-height: 44px;
   margin-left: -16px; padding-left: 16px; color: var(--night-action)` - a 46x44 target from the screen's edge; the
@@ -333,7 +347,7 @@ one `position: fixed` box.
   status area its colour on iOS 26 and later (the long comment above it in `style.css`), 12 px high at least in the
   installed app; in a browser tab it is 0 px and nothing is needed.
 - *iOS overscroll*: above the band, the band's own 100vh of night; under the last row, the ground (`body`'s `--bg`
-  through `main`, as today). On an editor the band does not move and `main` bounces inside its rounded top, showing
+  through `main`, as today). *Revision 4: `main`'s own ground in both places, night in its top half.* On an editor the band does not move and `main` bounces inside its rounded top, showing
   its own `--bg`. *(inference for all but the first, which Devices shows today)*
 - *Both schemes*: light - night band, `--bg` sheet, no line. Dark - band and sheet are both #0C0C14; the sheet's 1 px
   top border follows the corners. A border, not the lab's inset shadow and `::after`: it needs no layer of its own
@@ -612,7 +626,7 @@ The lab is the look; these are the places where its own code cannot be the build
 |---|---|---|
 | `:is()` in its selectors | plain selector lists | `:is()` needs Chrome 88; the floor is 80 |
 | `body { background: var(--night) }` | `body` stays `--bg` | It would turn the auth pages' ground night and changes what iOS shows around the page; the band's own outset does the job and is proven on Devices |
-| a two-colour gradient on `main` for the bounce | the band's 100vh outset upward | the same reason |
+| a two-colour gradient on `main` for the bounce | the band's 100vh outset upward; *since revision 4 the lab's gradient* | the same reason; *iOS drew no outset inside `main`* |
 | the title's `line-height: 44px` | unitless, the row `min-height: 44px` | a fixed line with `overflow: hidden` cuts a larger text size |
 | the letter count done by the lab's generator, on Norwegian | counted in the macro, on the translated string | there is no generator in production; a title's step can differ between `nb` and `en` |
 | rem sizes for the title | each capped with a `vw` value (§4) | a one-line band cannot hold a doubled title: at 200 % text it grows by about a fifth - the one text that does not double; page zoom works as everywhere |

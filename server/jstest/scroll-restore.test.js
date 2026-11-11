@@ -7,7 +7,7 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert");
-const { install, restoreTarget, scrollerOf, navigationType, KEY, NAME_PREFIX, MAX_AGE_MS, PLACE_KEY, MAX_PLACES } =
+const { install, restoreTarget, scrollerOf, navigationType, KEY, NAME_PREFIX, MAX_AGE_MS, PLACE_KEY, MAX_PLACES, FROM_KEY } =
     require("../static/scroll-restore.js");
 
 test("a record counts for 20 s (server/CLAUDE.md, design 31 §5.1); 50 places are kept", () => {
@@ -555,4 +555,173 @@ test("in the shell a window left offset is put back at 0; not on an auth page", 
     auth.listeners.focusout();
     auth.winListeners.pageshow({ persisted: false });
     assert.deepStrictEqual(auth.windowScrolls, []);
+});
+
+// The band's back link (design 84; the user's iPhone, 2026-11-11): Apps' "On phones" row opens a phone's
+// Apps page, whose chevron goes to `/apps#phone-3` - and landed with that row at the screen's top.
+const ORIGIN = "https://vibb.example";
+
+/** A page of this origin opened from `referrer` (a path, or a full address). */
+function opened(options, referrer) {
+    const w = fakeWindow(options);
+    w.win.location.origin = ORIGIN;
+    w.win.document.referrer = referrer === "" || referrer.startsWith("http") ? referrer : ORIGIN + referrer;
+    return w;
+}
+
+/** The band's chevron to `pathname` + `search`, and the tap's target: the drawn chevron inside it. */
+function chevron(pathname, search = "", className = "nav-back") {
+    const link = { tagName: "A", className, pathname, search, parentNode: null };
+    return { link, tap: { target: { tagName: "path", className: {}, parentNode: { tagName: "svg", className: {}, parentNode: link } } } };
+}
+
+const fromOf = (w) => JSON.parse(w.store.get(FROM_KEY) || "{}");
+
+test("a page opened by a link remembers the page it came from; its saves, a return to it, Back and reload keep that", () => {
+    const sub = opened({ path: "/devices/3/apps", search: "?from=list", navType: "navigate" }, "/apps");
+    install(sub.win, () => 10);
+    assert.deepStrictEqual(fromOf(sub), { "/devices/3/apps": { key: "/apps", t: 10 } });
+    const came = { "/devices/3/apps": { key: "/apps", t: 10 } };
+    // A save's answer comes from the page itself, with or without its query.
+    for (const referrer of ["/devices/3/apps?from=list", "/devices/3/apps"]) {
+        const saved = opened({ path: "/devices/3/apps", search: "?from=list", navType: "navigate" }, referrer);
+        saved.store.set(FROM_KEY, JSON.stringify(came));
+        install(saved.win, () => 20);
+        assert.deepStrictEqual(fromOf(saved), came, referrer);
+    }
+    // Back, Forward and a reload keep it.
+    for (const navType of ["back_forward", "reload"]) {
+        const w = opened({ path: "/devices/3/apps", navType }, "/x");
+        w.store.set(FROM_KEY, JSON.stringify(came));
+        install(w.win, () => 20);
+        assert.deepStrictEqual(fromOf(w), came, navType);
+    }
+    // A link load with no referrer of this origin (a notification, a typed address) forgets it (code QA L2).
+    for (const referrer of ["", "https://elsewhere.example/apps", "not an address"]) {
+        const w = opened({ path: "/devices/3/apps", navType: "navigate" }, referrer);
+        w.store.set(FROM_KEY, JSON.stringify(Object.assign({ "/apps": { key: "/devices", t: 1 } }, came)));
+        install(w.win, () => 20);
+        assert.deepStrictEqual(fromOf(w), { "/apps": { key: "/devices", t: 1 } }, referrer);
+    }
+    // Back on it by its own child's back link: it still came from Apps.
+    const returned = opened({
+        path: "/devices/3/apps", navType: "navigate",
+        stored: { path: "/devices/3/apps", href: "/devices/3/apps", y: 0, t: 15, back: true },
+    }, "/devices/3/apps/foo");
+    returned.store.set(FROM_KEY, JSON.stringify(came));
+    install(returned.win, () => 20);
+    assert.deepStrictEqual(fromOf(returned), came);
+});
+
+// Code QA M2: a save's answer on another path, and the one-shot words a save adds to an address.
+test("a save's answer on another path takes the form page's entry, never one naming itself", () => {
+    const froms = {
+        "/schedules/rules/new": { key: "/schedules", t: 1 },
+        "/devices/3/calendar/rules/7": { key: "/devices/3/calendar", t: 2 },
+        "/devices/3/calendar": { key: "/devices/3", t: 3 },
+    };
+    // An Add: `/new` posts and the answer is the rule's own page - it came from Time Rules too.
+    const added = opened({
+        path: "/schedules/rules/5", search: "?saved=1", navType: "navigate",
+        stored: { path: "/schedules/rules/new", y: 0, t: 15, tops: {} },
+    }, "/schedules/rules/new");
+    added.store.set(FROM_KEY, JSON.stringify(froms));
+    install(added.win, () => 20);
+    assert.deepStrictEqual(fromOf(added)["/schedules/rules/5"], { key: "/schedules", t: 20 });
+    // A child's Delete back to its parent: the parent keeps where it came from.
+    const deleted = opened({
+        path: "/devices/3/calendar", search: "?notice=deleted", hash: "#rules", navType: "navigate",
+        stored: { path: "/devices/3/calendar/rules/7", y: 0, t: 15, tops: {} },
+    }, "/devices/3/calendar/rules/7");
+    deleted.store.set(FROM_KEY, JSON.stringify(froms));
+    install(deleted.win, () => 20);
+    assert.deepStrictEqual(fromOf(deleted), froms);
+    // An old form record is no answer: the referrer counts.
+    const old = opened({
+        path: "/devices/3/calendar", navType: "navigate", stored: { path: "/devices/3/calendar/rules/7", y: 0, t: 0, tops: {} },
+    }, "/devices/3/calendar/rules/7");
+    install(old.win, () => MAX_AGE_MS);
+    assert.deepStrictEqual(fromOf(old)["/devices/3/calendar"], { key: "/devices/3/calendar/rules/7", t: MAX_AGE_MS });
+});
+
+test("pages are compared without a save's one-shot words (notice, app, saved)", () => {
+    // The parent was opened with a notice, left with it, and the child's back link names it bare.
+    const child = opened({ path: "/devices/3/calendar/link/abc", navType: "navigate" }, "/devices/3/calendar?notice=added&app=x&saved=1");
+    child.store.set(PLACE_KEY, JSON.stringify({ "/devices/3/calendar": { y: 260, t: 5 } }));
+    install(child.win, () => 10);
+    assert.deepStrictEqual(fromOf(child)["/devices/3/calendar/link/abc"], { key: "/devices/3/calendar", t: 10 });
+    child.listeners.click(chevron("/devices/3/calendar", "?saved=1").tap);
+    assert.deepStrictEqual(JSON.parse(child.store.get(KEY)),
+        { path: "/devices/3/calendar", href: "/devices/3/calendar", y: 260, t: 10, back: true });
+    // The parent's own place goes under the bare key, whatever words its address carried.
+    const parent = opened({ mode: "main", path: "/devices/3/calendar", search: "?notice=added&span=24", navType: "navigate", scrollY: 70 }, "");
+    install(parent.win, () => 30);
+    parent.winListeners.pagehide();
+    assert.deepStrictEqual(JSON.parse(parent.store.get(PLACE_KEY)), { "/devices/3/calendar?span=24": { y: 70, t: 30 } });
+});
+
+both("the back link to the page it came from carries that page's place, which wins over its #fragment", (mode) => {
+    const sub = opened({ mode, path: "/devices/3/apps", search: "?from=list", navType: "navigate" }, "/apps");
+    sub.store.set(PLACE_KEY, JSON.stringify({ "/apps": { y: 0, t: 5 }, "/music": { y: 900, t: 6 } }));
+    install(sub.win, () => 10);
+    const { tap } = chevron("/apps");
+    sub.listeners.click(tap);
+    const record = { path: "/apps", href: "/apps", y: 0, t: 10, back: true };
+    assert.deepStrictEqual(JSON.parse(sub.store.get(KEY)), record);
+    assert.deepStrictEqual(JSON.parse(sub.win.name.slice(NAME_PREFIX.length)), record, "the second carrier");
+    // Apps opens where it was left, the top, not at the row (900 px down) - and still came from wherever it did.
+    const apps = opened({ mode, path: "/apps", hash: "#phone-3", stored: record, navType: "navigate", elements: { "phone-3": 900 } },
+        "/devices/3/apps?from=list");
+    apps.store.set(FROM_KEY, JSON.stringify({ "/apps": { key: "/devices", t: 1 } }));
+    install(apps.win, () => 12);
+    assert.deepStrictEqual(apps.scrolls, [[0, 0]]);
+    apps.winListeners.load();
+    assert.deepStrictEqual(apps.scrolls, [[0, 0], [0, 0]]);
+    assert.deepStrictEqual(fromOf(apps), { "/apps": { key: "/devices", t: 1 } });
+    // A query on the parent is part of its place.
+    const zone = opened({ mode, path: "/devices/locate/zones/new", navType: "navigate" }, "/devices/locate?device=3");
+    zone.store.set(PLACE_KEY, JSON.stringify({ "/devices/locate?device=3": { y: 420, t: 5 } }));
+    install(zone.win, () => 10);
+    zone.listeners.click(chevron("/devices/locate", "?device=3").tap);
+    assert.strictEqual(JSON.parse(zone.store.get(KEY)).y, 420);
+});
+
+test("no place goes with a back link to another page, a parent never left, another link or a modified tap", () => {
+    const setUp = (places) => {
+        const w = opened({ mode: "main", path: "/devices/3/apps", navType: "navigate" }, "/apps");
+        w.store.set(PLACE_KEY, JSON.stringify(places));
+        install(w.win, () => 10);
+        return w;
+    };
+    const places = { "/apps": { y: 300, t: 5 }, "/devices/3": { y: 200, t: 6 } };
+    const cases = [
+        ["a back link to another page than it came from", places, chevron("/devices/3").tap],
+        ["the parent's query differs", places, chevron("/apps", "?x=1").tap],
+        ["a parent never left", { "/devices/3": { y: 200, t: 6 } }, chevron("/apps").tap],
+        ["another link", places, chevron("/apps", "", "row").tap],
+        ["a link inside nothing", places, { target: { tagName: "SPAN", className: "nav-back", parentNode: null } }],
+        ["a new tab", places, Object.assign({ metaKey: true }, chevron("/apps").tap)],
+        ["the middle button", places, Object.assign({ button: 1 }, chevron("/apps").tap)],
+        ["a tap another script handled", places, Object.assign({ defaultPrevented: true }, chevron("/apps").tap)],
+    ];
+    for (const [what, p, tap] of cases) {
+        const w = setUp(p);
+        w.listeners.click(tap);
+        assert.ok(!w.store.has(KEY), what);
+        assert.strictEqual(w.win.name, "", what);
+    }
+    // Opened directly (no referrer): the plain link.
+    const direct = opened({ mode: "main", path: "/devices/3/apps", navType: "navigate" }, "");
+    direct.store.set(PLACE_KEY, JSON.stringify(places));
+    install(direct.win, () => 10);
+    direct.listeners.click(chevron("/apps").tap);
+    assert.ok(!direct.store.has(KEY));
+});
+
+test("restoreTarget: a back record is the place over any #fragment, for 20 s", () => {
+    const back = { path: "/apps", y: 40, t: 0, back: true };
+    assert.strictEqual(restoreTarget(back, "/apps", "#phone-3", 5, () => null), 40);
+    assert.strictEqual(restoreTarget(back, "/apps", "", 5), 40);
+    assert.strictEqual(restoreTarget(back, "/apps", "#phone-3", MAX_AGE_MS, () => null), null);
+    assert.strictEqual(restoreTarget(back, "/music", "#phone-3", 5, () => null), null);
 });
