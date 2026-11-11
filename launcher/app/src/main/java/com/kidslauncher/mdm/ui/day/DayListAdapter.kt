@@ -79,7 +79,7 @@ class DayListAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
                 if (color != null) {
                     val at = line.length
                     line.append(DOT_PLACEHOLDER)
-                    line.setSpan(DotSpan(color.argb, (DOT_DP * density).toInt(), (DOT_GAP_DP * density).toInt()), at, at + 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    line.setSpan(DotSpan(color.argb(text.context), (DOT_DP * density).toInt(), (DOT_GAP_DP * density).toInt()), at, at + 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
                 }
                 line.append(entry.name)
             }
@@ -133,10 +133,10 @@ class DayListAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
             // The calendar's dot; without a colour the column stays (invisible), so the times keep one left edge.
             val color = row.color
             dot.visibility = if (color != null) View.VISIBLE else View.INVISIBLE
-            if (color != null) dot.backgroundTintList = ColorStateList.valueOf(color.argb)
+            if (color != null) dot.backgroundTintList = ColorStateList.valueOf(color.argb(context))
             start.text = from
             // Every timed start peach, the kid's own too: the dot and the key say the calendar (the user, 2026-11-09).
-            start.setTextColor(context.getColor(if (row.kind == RowKind.ALL_DAY) R.color.kid_core_dim else R.color.kid_accent))
+            start.setTextColor(context.getColor(if (row.kind == RowKind.ALL_DAY) R.color.kid_page_dim else R.color.kid_page_accent))
             end.text = until
             end.visibility = if (until.isEmpty()) View.GONE else View.VISIBLE
             title.text = row.title

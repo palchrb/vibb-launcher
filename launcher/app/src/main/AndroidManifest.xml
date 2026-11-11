@@ -134,7 +134,7 @@
         <activity
             android:name=".ui.HomeActivity"
             android:clearTaskOnLaunch="true"
-            android:configChanges="orientation|screenSize"
+            android:configChanges="orientation|screenSize|uiMode"
             android:excludeFromRecents="true"
             android:exported="true"
             android:launchMode="singleTask"
@@ -149,11 +149,11 @@
         </activity>
         <activity
             android:name=".ui.list.AppListActivity"
-            android:configChanges="orientation|screenSize"
+            android:configChanges="orientation|screenSize|uiMode"
             android:windowSoftInputMode="adjustResize" />
         <activity
             android:name=".ui.settings.SettingsActivity"
-            android:configChanges="orientation|screenSize"
+            android:configChanges="orientation|screenSize|uiMode"
             android:exported="true"
             android:windowSoftInputMode="adjustNothing">
             <intent-filter>
@@ -164,9 +164,11 @@
         </activity>
         <activity
             android:name=".ui.LegalInfoActivity"
+            android:configChanges="uiMode"
             android:exported="false" />
         <activity
             android:name=".ui.LockActivity"
+            android:configChanges="uiMode"
             android:excludeFromRecents="true"
             android:exported="false" />
         <!-- Handy's own PIN lock (step 10): its own task over everything, shown over the keyguard
@@ -192,6 +194,7 @@
              higher, and lower loses to a stock launcher before any preference is read. -->
         <activity
             android:name=".lock.BootCoverActivity"
+            android:configChanges="uiMode"
             android:directBootAware="true"
             android:enabled="false"
             android:excludeFromRecents="true"
@@ -211,6 +214,7 @@
              at the start; it sits on the PIN lock in its task and finishes itself. -->
         <activity
             android:name=".lock.VoipWakeActivity"
+            android:configChanges="uiMode"
             android:excludeFromRecents="true"
             android:exported="false"
             android:noHistory="true"
@@ -220,44 +224,71 @@
             android:turnScreenOn="true" />
         <!-- Dagen (design 69): the kid's day, an event's own page, the kid's own event. Not exported. A task of its
              own (2026-10-27), as any app's: in Home's task it had no Recents card, and Home/Back were an in-task
-             switch without Android's task-close animation. In Recents (no excludeFromRecents, no FLAG_SECURE). -->
+             switch without Android's task-close animation. In Recents (no excludeFromRecents, no FLAG_SECURE).
+             Each page is two entries, identical but for the theme (design 78 §12.2 R2; PageManifestTest): the
+             night class and its empty light twin, so the starting window Android draws from the entry is in the
+             kid's look. Only the launcher's own intent builders name them (ui/look/PageKind.kt): none is
+             exported, and nothing outside the process may hold a variant's name (R7). -->
         <activity
             android:name=".ui.day.DayActivity"
-            android:configChanges="orientation|screenSize"
+            android:configChanges="orientation|screenSize|uiMode"
             android:exported="false"
             android:launchMode="singleTop"
-            android:taskAffinity="${applicationId}.day" />
+            android:taskAffinity="${applicationId}.day"
+            android:theme="@style/KidPageNightTheme" />
+        <activity
+            android:name=".ui.day.LightDayActivity"
+            android:configChanges="orientation|screenSize|uiMode"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:taskAffinity="${applicationId}.day"
+            android:theme="@style/KidPageLightTheme" />
         <activity
             android:name=".ui.day.EventActivity"
-            android:configChanges="orientation|screenSize"
-            android:exported="false"
-            android:taskAffinity="${applicationId}.day" />
-        <activity
-            android:name=".ui.day.EventEditActivity"
-            android:configChanges="orientation|screenSize"
+            android:configChanges="orientation|screenSize|uiMode"
             android:exported="false"
             android:taskAffinity="${applicationId}.day"
+            android:theme="@style/KidPageNightTheme" />
+        <activity
+            android:name=".ui.day.LightEventActivity"
+            android:configChanges="orientation|screenSize|uiMode"
+            android:exported="false"
+            android:taskAffinity="${applicationId}.day"
+            android:theme="@style/KidPageLightTheme" />
+        <activity
+            android:name=".ui.day.EventEditActivity"
+            android:configChanges="orientation|screenSize|uiMode"
+            android:exported="false"
+            android:taskAffinity="${applicationId}.day"
+            android:theme="@style/KidPageNightTheme"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".ui.day.LightEventEditActivity"
+            android:configChanges="orientation|screenSize|uiMode"
+            android:exported="false"
+            android:taskAffinity="${applicationId}.day"
+            android:theme="@style/KidPageLightTheme"
             android:windowSoftInputMode="adjustResize" />
         <activity
             android:name=".ui.kidsettings.KidSettingsActivity"
-            android:configChanges="orientation|screenSize"
+            android:configChanges="orientation|screenSize|uiMode"
             android:excludeFromRecents="true"
             android:exported="false" />
         <!-- The kid's ringtone / message sound picker (2026-11-04): our own list, never the system picker; not
              exported, so only Kid Settings opens it, and as our own page it runs in the launcher's lock task. -->
         <activity
             android:name=".ui.kidsettings.KidSoundPickerActivity"
-            android:configChanges="orientation|screenSize"
+            android:configChanges="orientation|screenSize|uiMode"
             android:excludeFromRecents="true"
             android:exported="false" />
         <activity
             android:name=".ui.quickcontrols.WifiNetworksActivity"
-            android:configChanges="orientation|screenSize"
+            android:configChanges="orientation|screenSize|uiMode"
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />
         <activity
             android:name=".ui.quickcontrols.BluetoothDevicesActivity"
-            android:configChanges="orientation|screenSize"
+            android:configChanges="orientation|screenSize|uiMode"
             android:exported="false" />
 
         <!-- Calls. The dialer role needs a DIAL activity (plain and tel:) and an exported
@@ -273,7 +304,7 @@
              incidents in CLAUDE.md) and not the phone book. -->
         <activity
             android:name=".calls.PhoneBookActivity"
-            android:configChanges="orientation|screenSize"
+            android:configChanges="orientation|screenSize|uiMode"
             android:exported="true"
             android:launchMode="singleTop">
             <intent-filter>
@@ -338,7 +369,7 @@
         <activity
             android:name=".calls.InCallActivity"
             android:directBootAware="true"
-            android:configChanges="orientation|screenSize"
+            android:configChanges="orientation|screenSize|uiMode"
             android:excludeFromRecents="true"
             android:exported="false"
             android:launchMode="singleTask"
@@ -402,6 +433,7 @@
              [needs device test: QR provisioning on the Jelly Star; adb stays the fallback] -->
         <activity
             android:name=".server.ProvisioningModeActivity"
+            android:configChanges="uiMode"
             android:exported="true"
             android:excludeFromRecents="true"
             android:noHistory="true"
@@ -414,6 +446,7 @@
         </activity>
         <activity
             android:name=".server.PolicyComplianceActivity"
+            android:configChanges="uiMode"
             android:exported="true"
             android:excludeFromRecents="true"
             android:noHistory="true"
@@ -536,6 +569,7 @@
         </service>
         <activity
             android:name=".sms.ComposeActivity"
+            android:configChanges="uiMode"
             android:excludeFromRecents="true"
             android:exported="true"
             android:noHistory="true"
@@ -588,27 +622,27 @@
              "Meldinger", never destroyed with the lock's task. A thread follows the keyboard itself (edge to edge). -->
         <activity
             android:name=".ui.messages.MessagesActivity"
-            android:configChanges="orientation|screenSize"
+            android:configChanges="orientation|screenSize|uiMode"
             android:exported="false"
             android:launchMode="singleTop"
             android:taskAffinity="${applicationId}.messages" />
         <activity
             android:name=".ui.messages.ThreadActivity"
-            android:configChanges="orientation|screenSize"
+            android:configChanges="orientation|screenSize|uiMode"
             android:exported="false"
             android:launchMode="singleTop"
             android:taskAffinity="${applicationId}.messages"
             android:windowSoftInputMode="adjustResize" />
         <activity
             android:name=".ui.messages.PictureActivity"
-            android:configChanges="orientation|screenSize"
+            android:configChanges="orientation|screenSize|uiMode"
             android:exported="false"
             android:taskAffinity="${applicationId}.messages" />
         <!-- Design 79 §5.2: the kid's own picture of a contact (or of a contact request's draft) - the picker or the
              allowed camera, then the framing. Not exported; not a free screen for screen time. -->
         <activity
             android:name=".calls.KidPhotoActivity"
-            android:configChanges="orientation|screenSize"
+            android:configChanges="orientation|screenSize|uiMode"
             android:exported="false" />
         <!-- "Del" on a received picture (§6.7): a one-shot read grant on a copy in cacheDir/share/ (deleted after an
              hour) - not exported, only what share_paths.xml names. -->
@@ -626,9 +660,11 @@
              declares matching filters. Passes the link on to Play while Play isn't suspended. -->
         <activity
             android:name=".play.PlayLinkBlockedActivity"
+            android:configChanges="uiMode"
             android:excludeFromRecents="true"
             android:exported="true"
-            android:noHistory="true">
+            android:noHistory="true"
+            android:theme="@style/PlayLinkBlockedTheme">
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />

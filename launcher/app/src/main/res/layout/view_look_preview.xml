@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Kid Settings' preview of a look (design 78 §7): a strip in the page's ground with a received bubble and the
+     kid's own, decorative. Inflated through PageLook.wrap, so the page tokens resolve in the look it shows, whatever
+     the screen around it is. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/bg_look_preview"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingStart="10dp"
+    android:paddingEnd="10dp">
+
+    <!-- The received bubble keeps its own width and gives way (an ellipsis) on a narrow screen. -->
+    <FrameLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_look_preview_in"
+            android:ellipsize="end"
+            android:fontFamily="@font/nunito_bold"
+            android:maxLines="1"
+            android:paddingStart="10dp"
+            android:paddingTop="5dp"
+            android:paddingEnd="10dp"
+            android:paddingBottom="5dp"
+            android:text="@string/kid_settings_look_preview_in"
+            android:textColor="@color/kid_page_message_in_ink"
+            android:textSize="12sp" />
+    </FrameLayout>
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="8dp"
+        android:background="@drawable/bg_look_preview_out"
+        android:fontFamily="@font/nunito_bold"
+        android:maxLines="1"
+        android:paddingStart="10dp"
+        android:paddingTop="5dp"
+        android:paddingEnd="10dp"
+        android:paddingBottom="5dp"
+        android:text="@string/kid_settings_look_preview_out"
+        android:textColor="@color/kid_message_out_ink"
+        android:textSize="12sp" />
+</LinearLayout>

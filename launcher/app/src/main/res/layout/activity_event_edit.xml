@@ -5,7 +5,7 @@
     android:id="@+id/event_edit_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/kid_ground"
+    android:background="@color/kid_page_ground"
     android:fillViewport="true">
 
     <LinearLayout
@@ -103,7 +103,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
             android:fontFamily="@font/nunito_bold"
-            android:textColor="@color/kid_missed_text"
+            android:textColor="@color/kid_page_alert"
             android:textSize="14sp"
             android:visibility="gone" />
 
@@ -117,7 +117,7 @@
             android:minHeight="48dp"
             android:text="@string/event_save"
             android:textAllCaps="false"
-            android:textColor="@color/kid_ground"
+            android:textColor="@color/kid_on_accent"
             android:textSize="16sp" />
     </LinearLayout>
 </ScrollView>

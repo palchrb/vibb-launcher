@@ -45,7 +45,7 @@
             android:layout_height="wrap_content"
             android:fontFamily="@font/nunito_extrabold"
             android:maxLines="1"
-            android:textColor="@color/kid_accent"
+            android:textColor="@color/kid_page_accent"
             android:textSize="14sp" />
 
         <TextView
@@ -54,7 +54,7 @@
             android:layout_height="wrap_content"
             android:fontFamily="@font/nunito_bold"
             android:maxLines="1"
-            android:textColor="@color/kid_core_dim"
+            android:textColor="@color/kid_page_dim"
             android:textSize="12sp" />
     </LinearLayout>
 
@@ -73,7 +73,7 @@
             android:ellipsize="end"
             android:fontFamily="@font/nunito_extrabold"
             android:maxLines="2"
-            android:textColor="@color/kid_ink"
+            android:textColor="@color/kid_page_ink"
             android:textSize="15sp" />
 
         <TextView
@@ -83,7 +83,7 @@
             android:ellipsize="end"
             android:fontFamily="@font/nunito_semibold"
             android:maxLines="2"
-            android:textColor="@color/kid_core_dim"
+            android:textColor="@color/kid_page_dim"
             android:textSize="13sp"
             android:visibility="gone" />
     </LinearLayout>
@@ -97,7 +97,7 @@
         android:fontFamily="@font/nunito_bold"
         android:importantForAccessibility="no"
         android:text="@string/day_more"
-        android:textColor="@color/kid_core_dim"
+        android:textColor="@color/kid_page_dim"
         android:textSize="20sp"
         android:visibility="invisible" />
 </LinearLayout>

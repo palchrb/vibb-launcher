@@ -63,7 +63,10 @@ class SplashThemeTest {
                 val kept = base[name] ?: continue
                 val dropped = kept.second.keys - style.second.keys
                 assertTrue("${dir.name}/$name drops $dropped", dropped.isEmpty())
-                assertEquals("${dir.name}/$name changes its parent", kept.first, style.first)
+                // The one exception (design 78 §4.4): the pickers' dialog on a page in Lys is the framework's light
+                // dialog, so what the pickers draw that we don't name is light too.
+                val parent = if (dir.name == "values-notnight" && name == "VibbPickerDialog") "@android:style/Theme.Material.Light.Dialog" else kept.first
+                assertEquals("${dir.name}/$name changes its parent", parent, style.first)
             }
         }
     }
@@ -92,5 +95,44 @@ class SplashThemeTest {
         assertEquals("@drawable/splash_icon_none", resolve("PinLockTheme", "android:windowSplashScreenAnimatedIcon"))
         assertEquals("@color/kid_ground", resolve("launcherBaseTheme", "android:windowSplashScreenBackground"))
         assertEquals("@drawable/splash_icon_none", resolve("launcherBaseTheme", "android:windowSplashScreenAnimatedIcon"))
+    }
+
+    /** Every `<color>` in [dir]'s XML files. */
+    private fun colours(dir: File): Map<String, String> =
+        dir.listFiles { f -> f.extension == "xml" }.orEmpty().flatMap { file ->
+            parse(file).getElementsByTagName("color").let { n -> (0 until n.length).map { n.item(it) as Element } }
+        }.associate { it.getAttribute("name") to it.textContent.trim() }
+
+    /**
+     * Design 78 §12.2 R3: Android draws a page's starting window from its manifest theme under the phone's own night
+     * mode, before any code of ours. So each variant's theme says its look in values that have one form in every
+     * configuration: the two grounds a literal colour defined in `values/` alone, the three bar items plain booleans.
+     */
+    @Test
+    fun `a page's night and light theme carry the look in literals`() {
+        val qualified = res.listFiles { f -> f.isDirectory && f.name.startsWith("values-") }.orEmpty()
+        assertTrue(qualified.any { it.name == "values-notnight" })
+        for ((theme, ground, lightBars) in listOf(Triple("KidPageNightTheme", "kid_ground", false), Triple("KidPageLightTheme", "kid_paper", true))) {
+            val (parent, items) = base.getValue(theme)
+            assertEquals(theme, "KidPageTheme", parent)
+            assertEquals(
+                theme,
+                mapOf(
+                    "android:windowBackground" to "@color/$ground",
+                    "android:windowSplashScreenBackground" to "@color/$ground",
+                    "android:windowLightStatusBar" to "$lightBars",
+                    "android:windowLightNavigationBar" to "$lightBars",
+                    "android:enforceNavigationBarContrast" to "${!lightBars}",
+                ),
+                items,
+            )
+            assertTrue("$ground is a literal", colours(File(res, "values")).getValue(ground).startsWith("#"))
+            for (dir in qualified) {
+                assertTrue("${dir.name} has $ground", ground !in colours(dir))
+                assertTrue("${dir.name} has $theme", theme !in styles(dir))
+            }
+        }
+        // No splash icon over either ground: the plain one of every other screen.
+        assertEquals("@drawable/splash_icon_none", resolve("KidPageLightTheme", "android:windowSplashScreenAnimatedIcon"))
     }
 }

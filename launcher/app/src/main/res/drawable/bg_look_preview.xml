@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Kid Settings' preview of a look (design 78 §7): the page's ground, 12 dp corners. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="@color/kid_page_ground" />
+    <corners android:radius="12dp" />
+</shape>

@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The kid's pages in Mørk (design 78 §4.1): every value is today's token or today's literal, so a page on Mørk
+     and every screen pinned to night draw as before (KidPaletteTest pins each one). The day values are in
+     values-notnight/colors_kid_page.xml. Only pages name kid_page_* (PageTokensScanTest), with the resources they
+     share with a pinned screen (the header, Dagen's tiles and buttons). -->
+<resources>
+    <color name="kid_page_ground">@color/kid_ground</color>
+    <color name="kid_page_tile">@color/kid_music_tile</color>
+    <!-- A hairline round an input: none at night. -->
+    <color name="kid_page_edge">#00000000</color>
+    <color name="kid_page_lift">@color/kid_ground_lift</color>
+    <color name="kid_page_control">@color/kid_music_control</color>
+    <color name="kid_page_ink">@color/kid_ink</color>
+    <color name="kid_page_core">@color/kid_core</color>
+    <color name="kid_page_dim">@color/kid_core_dim</color>
+    <!-- Accent text, dots and rings; kid_page_accent_fill is a filled button under kid_on_accent. One peach at night. -->
+    <color name="kid_page_accent">@color/kid_accent</color>
+    <color name="kid_page_accent_fill">@color/kid_accent</color>
+    <color name="kid_page_selected_out">@color/kid_core</color>
+    <color name="kid_page_button">@color/kid_sheet_button</color>
+    <color name="kid_page_back">@color/kid_back_button</color>
+    <color name="kid_page_divider">@color/kid_divider</color>
+    <!-- Two ripples, so the rows' 12 % and the back disc's 20 % stay apart. -->
+    <color name="kid_page_ripple">#1FFFFFFF</color>
+    <color name="kid_page_ripple_strong">#33FFFFFF</color>
+    <color name="kid_page_message_in">@color/kid_message_in</color>
+    <color name="kid_page_message_in_ink">@color/kid_ink</color>
+    <color name="kid_page_message_in_dim">@color/kid_message_in_dim</color>
+    <color name="kid_page_alert">@color/kid_missed_text</color>
+    <color name="kid_page_danger">@color/kid_emergency_tonal</color>
+    <color name="kid_page_danger_text">#FF8A8A</color>
+</resources>

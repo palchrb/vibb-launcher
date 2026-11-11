@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The kid's pages in Lys, "Vibb dag" (design 78 §4.1): the warm paper ground with white tiles, the night ink, the
+     PWA's dark peach for accent text and its lighter peach for a filled button. Only a page resolves this file: every
+     other activity is pinned to night (design 78 §5.3). KidPaletteTest keeps every text pair at 4.5:1 or more and
+     every graphic at 3:1. -->
+<resources>
+    <color name="kid_page_ground">#F6F2EF</color>
+    <!-- 1.11:1 to the ground, a grouped list's white on grey; no edge. -->
+    <color name="kid_page_tile">#FFFFFF</color>
+    <color name="kid_page_edge">#24000000</color>
+    <color name="kid_page_lift">#FFFFFF</color>
+    <color name="kid_page_control">#FFFFFF</color>
+    <!-- 15.4:1 on the ground, 17.2:1 on a tile. -->
+    <color name="kid_page_ink">#1B1B1F</color>
+    <color name="kid_page_core">#1B1B1F</color>
+    <!-- 6.4:1 on the ground, 7.1:1 on a tile. -->
+    <color name="kid_page_dim">#5E5752</color>
+    <!-- The PWA's tint: 5.2:1 on the ground, 5.8:1 on a tile. Its fill: kid_on_accent on it 7.6:1. -->
+    <color name="kid_page_accent">#A64B25</color>
+    <color name="kid_page_accent_fill">#E8895E</color>
+    <color name="kid_page_selected_out">#1B1B1F</color>
+    <color name="kid_page_button">#12000000</color>
+    <color name="kid_page_back">#0F000000</color>
+    <color name="kid_page_divider">#1A000000</color>
+    <color name="kid_page_ripple">#14000000</color>
+    <color name="kid_page_ripple_strong">#1F000000</color>
+    <color name="kid_page_message_in">#E8E4EE</color>
+    <color name="kid_page_message_in_ink">#1B1B1F</color>
+    <color name="kid_page_message_in_dim">#5E5870</color>
+    <!-- 5.9:1 on the ground, 6.5:1 on a tile. -->
+    <color name="kid_page_alert">#B3261E</color>
+    <color name="kid_page_danger">#FBE3E1</color>
+    <color name="kid_page_danger_text">#A1241C</color>
+</resources>

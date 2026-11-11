@@ -126,7 +126,8 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
 - **`accentButton`** (`styles.xml`): the base theme's `android:buttonStyle` and, since qa-34-s5-code L1, AppCompat's
   `buttonStyle` (an XML `<Button>` inflates as `AppCompatButton`, which reads that one) - `Widget.AppCompat.Button.Colored`
   with `kid_ground` text. A button sits on `colorButtonNormal` = the accent, and the theme's white text was 1.9:1 on
-  peach (fine on the old blue). Today's only user is `PlayLinkBlockedActivity`'s framework OK.
+  peach (fine on the old blue). Its only user was `PlayLinkBlockedActivity`'s framework OK; since design 78 step 1 the notice
+  has a framework theme and `PlayLinkBlockedButton` (the framework's coloured button, the same text).
 - **Vibb One is never on its own list**: one condition in `AppFilter.kidListable` (`apps/AppFilter.kt`, MIT like the
   file - the existing palchrb-modified precedent): `packageName !in OWN_PACKAGES` (`me.vibb.launcher`,
   `me.vibb.launcher.debug` - both, so a debug build next to a release one lists neither). Home's own
@@ -325,3 +326,142 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
 - Test: `ui/VibbOneNameTest` (the label, the debug label, the notification title and the VPN session in en and nb,
   and no "Kids Launcher", "Kids Device MDM" or "Kid Phone Filter" left in `src/main`'s res, java and manifest or
   anywhere in `src/debug`).
+
+## The kid's look: Mørk or Lys (design 78 step 1, `docs/design/78-kid-light-mode.md`, at the monorepo root)
+
+The kid's own pages are drawn in one of two looks, Mørk (today's night) or Lys ("Vibb dag": warm paper, white tiles);
+every other screen is night as before. Step 1 is the mechanism, the tokens and Kalender's three screens; Meldinger, the
+phone book and kid Settings' lists join in step 2. **The row in kid Settings is shown in debug builds only in step 1**,
+so nothing on a release build can pick Lys. Built 2026-11-10 and seen on `jelly36` in two passes
+(`docs/testing/emulator.md` §6ah); **reworked 2026-11-11 to the design's revision 3** (§12) after its spike passed
+(§12.7.2): the launcher asks the system for no night mode of its own any more, and a page's look is in its class. The
+rework is unit-tested and **not yet seen running**.
+
+- **A page** is an activity that extends `ui/look/KidPageActivity`. One that tops a task of the launcher's own is
+  **two classes and two manifest entries** (design §12.2 R2): the night class - `DayActivity`, `EventActivity`,
+  `EventEditActivity`, each `open` for this alone - on `@style/KidPageNightTheme`, and its empty light twin
+  (`ui/day/LightPages.kt`: `LightDayActivity`, `LightEventActivity`, `LightEventEditActivity`) on
+  `@style/KidPageLightTheme`; the two entries are identical but for the theme, and all six declare `uiMode`
+  (`PageManifestTest`). Why two: Android draws an own-task page's starting window from the entry's theme under the
+  **phone's** night mode, before any code of ours, so the look has to be in the entry. The two themes set the five
+  window items as literals (the ground, the splash ground, the two bars' icons, the navigation contrast) over
+  `kid_ground` and `kid_paper` - the paper with one value in every configuration, equal to the day's
+  `kid_page_ground` (`SplashThemeTest`, `KidPaletteTest`); everything else is `KidPageTheme`'s, which stays qualified
+  for step 2's one-class pages in Home's task (R9; no entry names it yet).
+  The class sets AppCompat's local night mode to **its own class's look** in `attachBaseContext`, before `super`
+  (`UIObjectActivity.lookNightMode()` -> `PageLook.pageNightMode(javaClass)`; a page without a row in the table takes
+  the applied look), so a window and its content never disagree, the page's configuration is right from its first
+  `onCreate`, and the phone's theme or Battery Saver changing never recreates it. It lays `PageColors` over the
+  launcher's theme in `getTheme()` - after `UIObject.modifyTheme`, on every call - so `?android:attr/textColor*`,
+  `?colorAccent`, the control tints and `?selectableItemBackground`'s ripple are page colours; and it keeps
+  `PageLook`'s registry of live pages and its count of started activities of the page tasks.
+- **The table** (`ui/look/PageKind.kt`, R4/R5): each such page's night class and light twin. It is the only file that
+  names a page class as `::class`; the pages' intent builders (`DayActivity.intent`, `EventActivity.intent`,
+  `EventEditActivity.newIntent`/`editIntent`) ask `PageKind.X.current()` - the applied look's class - and are the
+  only way a page is started; `PageLook.closesTask` and `languageClosesTask` know Kalender's task by either root
+  (`PageKind.DAY.has`). A builder's intent goes straight into `startActivity`: none is kept, wrapped in a
+  `PendingIntent` or given to a notification, so no variant's name outlives its look outside the process (R7;
+  `PageLookScanTest`). A notification that opens a page (step 2) needs a look-less entry of its own.
+- **Page tokens**: `res/values/colors_kid_page.xml` (the night: each a reference to today's token, or today's literal)
+  and `res/values-notnight/colors_kid_page.xml` (the day, design §4.1 value by value) are the only qualified colours;
+  `bools_kid_page.xml` holds the bars per look: `kid_page_light_bars` (dark icons in Lys) and `kid_page_nav_contrast`
+  (`enforceNavigationBarContrast`: the system's scrim behind a 3-button navigation bar, on at night as Kalender had
+  it, off on the paper). A page's layouts, drawables, styles and classes name `kid_page_*` only, plus what is the same
+  in both looks: `kid_on_accent` (the night on a peach fill), `kid_on_accent_press` (the press on a peach fill) and
+  the kid's own bubble's three (`PageTokensScanTest`). Two white masks stay literal because they are only ever drawn
+  tinted: `bg_day_dot` (by the adapter, in the calendar's colour) and `ic_kid_back` (by the header's
+  `android:tint="@color/kid_page_ink"`).
+- **Shared with screens that are not pages**: the header (`include_kid_header`, `bg_kid_back_button`), `KidManageLink`
+  and the Kalender drawables Meldinger and the phone book also use (`bg_day_event`, `bg_day_add`, `bg_day_save`,
+  `ic_day_add`) are on page tokens already. A screen that is not a page is pinned to night, where every page token is
+  today's value, so those screens draw as before. The one way to get this wrong: a `kid_page_*` resolved through the
+  **application** context (or any context that is not a page's or `PageLook.wrap`'s) follows the phone's theme, not
+  the kid's look (design §12.3) - the day value on a phone whose dark theme is off, whatever the look
+  (`PageTokensScanTest`).
+- **A calendar's dot**: `CalendarColor` has two tables - `argb` (the night; the lock's glance reads it directly, and
+  the PWA's swatches are it) and `dayArgb` (the same hues at 3:1 or more on Lys's tile and ground). `argb(context)`
+  picks by the context's night bit and is the only way `ui/day/` reads a dot.
+- **Dialogs on a page**: `KidPageTheme`'s `alertDialogTheme` is `KidPageAlertDialog` (`KidAlertDialog` on page tokens,
+  the panel `bg_kid_page_dialog`). The date and time pickers' `VibbPickerDialog` is in page tokens, with a twin in
+  `values-notnight/styles.xml` on the framework's light dialog - the same items, since a qualified style replaces the
+  whole style (`SplashThemeTest`'s same-parent rule names this twin as its one exception). `VibbDatePicker` and
+  `VibbTimePicker` have no twin. The header and the selection are `kid_page_accent_fill` under `kid_on_accent`, the
+  buttons `kid_page_accent` (`PickerThemeTest`, both files).
+- **Every other activity is night as a constant** (`PageLookScanTest`, `PageManifestTest`):
+  `UIObjectActivity.attachBaseContext` sets `delegate.localNightMode = lookNightMode()`, which is `MODE_NIGHT_YES`
+  unless a page overrides it; `PinLockActivity` and `InCallActivity`, which extend `AppCompatActivity` directly, set
+  `MODE_NIGHT_YES` the same way; and every activity in the manifest, the pages included, declares `uiMode` in
+  `configChanges`, so the phone's theme (Battery Saver) relaunches none. `PlayLinkBlockedActivity`, the one plain
+  `Activity` that had the application's AppCompat DayNight theme, has the framework night theme
+  `PlayLinkBlockedTheme`. **What this changes on a release build** (design D2): on a phone whose system dark theme is
+  off, what AppCompat draws by itself on the night screens - `?selectableItemBackground`'s ripple,
+  `colorControlNormal`, unthemed switches and dividers, parent Settings' preference widgets - takes its night form;
+  with the system's dark theme on, nothing changes. Kalender's own theme adds no difference in Mørk (the code QA's
+  M1, 2026-11-10): the navigation bar's contrast scrim is on at night as before (`kid_page_nav_contrast`), and
+  `KidPageTheme`'s `windowBackground` and `windowSplashScreenBackground` are at night what `launcherBaseTheme` already
+  gave Kalender - the splash ground was `kid_ground`, and the window background was the framework's
+  `?android:attr/colorBackground`, which the base theme sets to `kid_ground` (AppCompat 1.7.1 adds no window
+  background of its own on API 21+). Read from the resources, not seen running.
+- **`PageLook`** (`ui/look/PageLook.kt`): the rules are the pure `LookState` over a `LookHost` (`PageLookTest` runs
+  its three entry points with a recording host); the object keeps the Android host and the registry of pages.
+  **Nothing is asked of the system**: no `setApplicationNightMode`, no `setDefaultNightMode`, in main or debug
+  (R1, `PageLookScanTest`). `nightValues(mode)` is the one place a look becomes a night constant - AppCompat's and a
+  configuration's. CE prefs `kid_look`: `choice` and `applied`, each `dark` or `light`, absent or unknown read as dark.
+  - *Every unlocked start* (`Application.initUnlocked` -> `atUnlockedStart`): the two stored values are read, and
+    `applied = dark` is written when it is absent. Nothing else. Nothing reads `kid_look` before the first unlock,
+    and `KidAppComponentFactory` runs the unlocked init before any page exists. A change that was waiting for Home
+    still waits after a process start.
+  - *The kid's tap* (`choose`): a tap on the look already applied stores the choice only. Otherwise, while no
+    activity of a page task is started (`mayChange`), the change runs in this order (R6): every live page finished;
+    Kalender's task removed (`ActivityManager.appTasks`, the one whose root is either of `PageKind.DAY`'s classes,
+    `finishAndRemoveTask`); `appTasks` read a second time; one `commit()` of `choice` and `applied`; the look in
+    memory last. So no task of the old look's class is left when a start can first name the new one, Kalender leaves
+    Recents at a change, and its next open is a fresh one in the new look.
+  - *Two refusals*, each one `E PageLook` line, the look left as it was and the tap lost (nothing retries): a page
+    task still there at the second read, and a `commit()` that returned false. Either way the choice goes back to
+    the applied look and both old values are written again, so a change that was waiting for Home does not run at
+    every resume.
+  - *A page of the other look's class* (`KidPageActivity.onCreate` -> `PageLook.closeIfOtherLook`): a class whose
+    look is not the applied one - a task the system restored from before a change, an intent built before one - logs
+    `E PageLook`, removes its task (`appTasks` by the task's id, since `Activity.finishAndRemoveTask` removes a
+    task only from its root; then the activity's own) and sets no content (each page's `onCreate` returns while
+    `isFinishing`). The kid lands on Home and the next open is the right class.
+  - *A change that had to wait*: with a page task started only the choice is stored, and Home's next `onResume` runs
+    the change (`onHomeResumed`, after the lock's dark return; not behind `mayChange` again, because the page the kid
+    just left is stopped only after Home has resumed). Kid Settings in front means no page is started, so this path is
+    a belt. A process death between the tasks' removal and the write leaves the old look stored and no page task: the
+    next open is a fresh page in the old look, and the tap is lost.
+- **The launcher's language** (design §5.3, 2026-11-11; `home-and-photos.md`, "Language"): the unlocked start's ask
+  (`LauncherLocales.atUnlockedStart`, with its log line `The launcher's language took N ms`), the repair at Home's
+  resume that closes Kalender's and Meldinger's tasks after a refusal, and the late retry were built when the look
+  was a night mode in the same per-package record as the languages. That reason is gone with revision 3 (§12.4); the
+  code **stays as built** until it is decided as its own item (§12.9 point 2). Its order against the look no longer
+  matters. **The notification channels** are named again in `Application.onConfigurationChanged` when the process's
+  languages change (2026-11-11, not seen running); that stays with the language fix.
+- **The row** (`activity_kid_settings.xml`'s `kid_settings_look_section`, `gone` in the layout; `KidSettingsActivity`
+  shows it and sets its listeners only `if (BuildConfig.DEBUG)`, and `renderLook` returns at once while it is gone):
+  the heading "Utseende" / "Appearance", a card with design 34 P9's segmented control (Mørk / Lys) and a 56 dp preview
+  strip (`view_look_preview`: a received bubble and the kid's own, inflated through `PageLook.wrap` so it shows the real
+  tokens of the chosen look although kid Settings stays night; hidden from TalkBack), and a caption. Six strings, en
+  and nb. The caption names Meldinger, the phone book and the Settings lists: it describes step 2, and is seen in
+  debug builds only until then.
+- **Not in step 1**: Meldinger's three screens, the picture viewer in the started count, the kept thread text, the
+  phone book, the Wi-Fi, Bluetooth and sound lists, `KidHeader`'s own tint, the row in release builds.
+- **Known, to look at in the pass**: step 0 saw the status bar's icons take their dark tint about 230 ms late on a
+  cold open from Home's tile in Lys (accepted by the user for now; cause not found). In Lys the framework date picker
+  draws today's number, while not selected, in `colorControlActivated` - the peach fill, 2.6:1 on the white panel.
+  The "+" disc (`kid_page_accent_fill`) is 2.3:1 to the paper ground; its glyph is what identifies it. A page's bar
+  colours on Android 14 (no enforced edge-to-edge there) and Android 16's "make more apps dark" are not checked.
+- Tests: `ui/look/PageLookTest` (the stored look; `mayChange` with a picture in front and a translucent activity over
+  a page; the table; what a change closes and in which order, with no system call; each refusal; the tap that stores
+  only; an unlocked start that only reads; a waiting change across a process start; Home's resume running it once),
+  `PageManifestTest` (a page's two entries identical but for the theme, neither reachable from outside, the twin an
+  empty subclass; `uiMode` on every activity), `PageTokensScanTest` (its layout list read from the layouts `ui/day/`
+  names, with what they include; no page token through the application's context), `PageLookScanTest` (who touches
+  `kid_look` and `PageLook`, none before the first unlock; the debug-only row and its listeners; a page's look by its
+  class, its forced `PageColors`, its four registry calls and the check in `KidPageActivity`; the three night pins set
+  before the base context; R1; a page class named in the table alone, and a builder's intent only inside a start),
+  `ui/SplashThemeTest` (the two variant themes' window items are literals with no qualified copy), `ui/KidPaletteTest`
+  (each night token today's; a day value for every page token and every pair of §4.1 in both looks; `PageColors`, the
+  page theme's bars per look and the page dialog; the paper equal to the day's ground; the dot table),
+  `day/PickerThemeTest` (both looks).

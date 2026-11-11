@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The look preview's own bubble (design 78 §7): bg_message_out's shape, the same peach in both looks. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="@color/kid_message_out" />
+    <corners
+        android:bottomLeftRadius="18dp"
+        android:bottomRightRadius="6dp"
+        android:topLeftRadius="18dp"
+        android:topRightRadius="18dp" />
+</shape>

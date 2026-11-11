@@ -20,7 +20,8 @@ import com.kidslauncher.mdm.day.kidEventMinutes
 import com.kidslauncher.mdm.ui.ClockFormat
 import com.kidslauncher.mdm.ui.KidHeader
 import com.kidslauncher.mdm.ui.KidInsets
-import com.kidslauncher.mdm.ui.UIObjectActivity
+import com.kidslauncher.mdm.ui.look.KidPageActivity
+import com.kidslauncher.mdm.ui.look.PageKind
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -31,9 +32,10 @@ import java.time.ZoneId
  * "Ny avtale" (design 69 step 3, mockup §1b): the kid's own event in the kid's calendar - what, the day (the shown
  * day), from, how long, an optional place; no guests, no recurrence, no reminder of its own. With [EXTRA_EVENT] it
  * changes one of the kid's own events (re-checked before the save: Vibb One's, in the kid's calendar). Every provider
- * write is [CalendarStore]'s, off the main thread. Not exported.
+ * write is [CalendarStore]'s, off the main thread. Not exported. `open` for its light twin alone
+ * (`LightEventEditActivity`, design 78 §12.2 R2).
  */
-class EventEditActivity : UIObjectActivity() {
+open class EventEditActivity : KidPageActivity() {
 
     private lateinit var binding: ActivityEventEditBinding
     private var eventId: Long? = null
@@ -52,6 +54,7 @@ class EventEditActivity : UIObjectActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (isFinishing) return // The other look's class: its task is closing (KidPageActivity).
         binding = ActivityEventEditBinding.inflate(layoutInflater)
         setContentView(binding.root)
         KidInsets.apply(binding.root)
@@ -242,9 +245,9 @@ class EventEditActivity : UIObjectActivity() {
         private const val STATE_TIMES_LENGTH = "times_length"
 
         fun newIntent(context: Context, day: LocalDate): Intent =
-            Intent(context, EventEditActivity::class.java).putExtra(DayActivity.EXTRA_DAY, day.toEpochDay())
+            Intent(context, PageKind.EVENT_EDIT.current()).putExtra(DayActivity.EXTRA_DAY, day.toEpochDay())
 
         fun editIntent(context: Context, eventId: Long): Intent =
-            Intent(context, EventEditActivity::class.java).putExtra(EXTRA_EVENT, eventId)
+            Intent(context, PageKind.EVENT_EDIT.current()).putExtra(EXTRA_EVENT, eventId)
     }
 }

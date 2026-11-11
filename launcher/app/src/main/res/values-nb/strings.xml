@@ -278,6 +278,12 @@
     <!-- Quick Controls -->
     <string name="kid_settings_background">Bakgrunn</string>
     <string name="kid_settings_background_caption">Bildene er valgt ut av mamma og pappa</string>
+    <string name="kid_settings_look">Utseende</string>
+    <string name="kid_settings_look_dark">Mørk</string>
+    <string name="kid_settings_look_light">Lys</string>
+    <string name="kid_settings_look_caption">Gjelder Meldinger, Kalender, Telefonbok og listene her i Innstillinger. Hjem og kontaktkortet er alltid som før.</string>
+    <string name="kid_settings_look_preview_in">Hei! Kommer du?</string>
+    <string name="kid_settings_look_preview_out">Ja, nå!</string>
     <string name="kid_settings_connection">Tilkobling, skjerm og lyd</string>
     <string name="kid_settings_not_owner">Bryterne virker når mamma og pappa har satt opp telefonen.</string>
     <string name="kid_settings_no_policy">Bryterne kommer med neste oppdatering fra mamma og pappa.</string>

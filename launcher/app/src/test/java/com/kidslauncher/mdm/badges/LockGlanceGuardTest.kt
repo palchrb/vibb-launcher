@@ -728,7 +728,7 @@ class LockGlanceGuardTest {
         assertTrue(opener.contains("activity.startActivity(com.kidslauncher.mdm.ui.day.DayActivity.intent(activity, day))"))
         // E5's H1: started from the lock's task without NEW_TASK, Dagen is destroyed with the lock. Since 2026-10-27 the
         // one intent (Home's tile too) carries the flag into Dagen's own task (DayTaskTest pins the affinity).
-        assertTrue(code("DayActivity.kt").contains("Intent(context, DayActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)"))
+        assertTrue(code("DayActivity.kt").contains("Intent(context, PageKind.DAY.current()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)"))
         assertTrue(code("PhoneBookActivity.kt").contains(".addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)"))
         assertTrue(opener.contains("activity.startActivity(PhoneBookActivity.missedCallsIntent(activity, number))"))
         assertTrue(opener.contains("activity.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))"))

@@ -12,5 +12,5 @@
     android:paddingTop="2dp"
     android:paddingEnd="14dp"
     android:paddingBottom="8dp"
-    android:textColor="@color/kid_core_dim"
+    android:textColor="@color/kid_page_dim"
     android:textSize="13sp" />

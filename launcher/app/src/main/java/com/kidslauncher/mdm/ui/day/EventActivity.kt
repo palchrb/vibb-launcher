@@ -17,7 +17,8 @@ import com.kidslauncher.mdm.day.eventDay
 import com.kidslauncher.mdm.ui.ClockFormat
 import com.kidslauncher.mdm.ui.KidHeader
 import com.kidslauncher.mdm.ui.KidInsets
-import com.kidslauncher.mdm.ui.UIObjectActivity
+import com.kidslauncher.mdm.ui.look.KidPageActivity
+import com.kidslauncher.mdm.ui.look.PageKind
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -27,9 +28,9 @@ import java.time.format.DateTimeFormatter
  * An event's own page (design 69 §2.3, mockup §5 "Hele teksten"): read again by id from the provider, the rules
  * applied to the title, the instance's time, the location, the calendar's name and the whole description (cleaned,
  * 2 000 code points) - a plain TextView, no links (kiosk). An event that is gone (or a rule now hides) says so and
- * goes back. Not exported.
+ * goes back. Not exported. `open` for its light twin alone (`LightEventActivity`, design 78 §12.2 R2).
  */
-class EventActivity : UIObjectActivity() {
+open class EventActivity : KidPageActivity() {
 
     private lateinit var binding: ActivityEventBinding
     private val main = Handler(Looper.getMainLooper())
@@ -39,6 +40,7 @@ class EventActivity : UIObjectActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (isFinishing) return // The other look's class: its task is closing (KidPageActivity).
         binding = ActivityEventBinding.inflate(layoutInflater)
         setContentView(binding.root)
         KidInsets.apply(binding.root)
@@ -156,7 +158,7 @@ class EventActivity : UIObjectActivity() {
         private const val GONE_BACK_MS = 2_000L
 
         fun intent(context: Context, row: DayRow): Intent =
-            Intent(context, EventActivity::class.java)
+            Intent(context, PageKind.EVENT.current())
                 .putExtra(EXTRA_EVENT, row.eventId)
                 .putExtra(EXTRA_BEGIN, row.begin)
                 .putExtra(EXTRA_END, row.end)

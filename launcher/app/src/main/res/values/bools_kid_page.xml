@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A page's status and navigation bar icons (design 78 §5.5): light icons on the night ground, dark ones in
+     values-notnight. Read by KidPageTheme, so the starting window has them too. And the system's contrast scrim behind
+     a 3-button navigation bar: on at night, the default Kalender had before the design (D2: Mørk is today), off on
+     the paper. -->
+<resources>
+    <bool name="kid_page_light_bars">false</bool>
+    <bool name="kid_page_nav_contrast">true</bool>
+</resources>

@@ -485,6 +485,8 @@ class HomeActivity : UIObjectActivity() {
         }
         startWork()
         PinLockRuntime.onHomeResumed(interactive())
+        // Design 78 §5.4: a change of look that had to wait for a page to leave the screen runs now.
+        com.kidslauncher.mdm.ui.look.PageLook.onHomeResumed(this)
         // Deliberately triggered here, not from Application.onCreate() - see TsnetClient's own
         // doc comment on the GrapheneOS hardened_malloc / native-crash risk this sidesteps by
         // waiting until the launcher has actually rendered instead of racing the very first UI
@@ -536,6 +538,8 @@ class HomeActivity : UIObjectActivity() {
         // Design 16e (qa-16e-code #2): anything over the mark - even translucent - ends the boot's
         // wait, unless Home is resumed again at once (a re-delivered HOME intent pauses it).
         PinLockRuntime.onHomePaused(isChangingConfigurations)
+        // A language retry that waits (design 78 §5.3) is for a Home still in front.
+        LauncherLocales.onHomePaused()
         resumedNow = false
         night?.stop()
         super.onPause()

@@ -248,6 +248,32 @@ class Application : android.app.Application() {
 
     private var unlockedInitDone = false
 
+    /** The languages the notification channels were last named in; null until the unlocked setup has named them. */
+    private var channelLocales: android.os.LocaleList? = null
+
+    /**
+     * Design 78 §5.3 (L3, the emulator pass of 2026-11-11): the channels are named from this context in the
+     * unlocked setup. On a boot whose stored record has lost the launcher's languages, and when the process was
+     * alive before the unlock, the languages `LauncherLocales.atUnlockedStart` asks for reach the process only
+     * after that - as a configuration change, not as `ACTION_LOCALE_CHANGED` (that is the phone's language) - and
+     * the names stayed in the phone's language until the next process start. Name them again when the languages
+     * differ from the ones they were read in; creating a channel again only updates its name. A change of the
+     * phone's language comes the same way. The night-mode and language calls are not touched.
+     */
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        val named = channelLocales ?: return
+        val now = newConfig.locales
+        if (now == named) return
+        channelLocales = now
+        try {
+            createNotificationChannels(this)
+            android.util.Log.i("Application", "Notification channels named again: ${now.toLanguageTags()}")
+        } catch (e: Exception) {
+            android.util.Log.w("Application", "The notification channels weren't named again", e)
+        }
+    }
+
     /** Design 59 F3: when the unlocked setup began (elapsed realtime) - the unlock reaching this process; `BootHome`
      * logs its Home start against it. */
     @Volatile
@@ -278,6 +304,29 @@ class Application : android.app.Application() {
         // Design 59 §3.9: the boot's first CE start (decide's boot-count test) stamps this boot's start with the
         // unlock, before the anchor's first sync can send it. Never throws.
         com.kidslauncher.mdm.server.PowerEvents.recordUnlock(this, com.kidslauncher.mdm.lock.AndroidLock.firstCeStartOfBoot)
+        // Design 78 §5.4 as §12 (revision 3) leaves it: the kid's look is read from its store at every unlocked
+        // start, the first run included - before any page of this process can open - and nothing is asked of the
+        // system (one small prefs file). Guarded on its own: with `kid_look` unreadable the pages stay night,
+        // nothing else.
+        try {
+            com.kidslauncher.mdm.ui.look.PageLook.atUnlockedStart(this)
+        } catch (e: Exception) {
+            android.util.Log.e("Application", "The kid's look wasn't read", e)
+        }
+        // Design 78 §5.3 (2026-11-11): the launcher's language is asked for again here. Built when the app had a
+        // night mode of its own, which made Android write the app's record to disk without the languages - a reboot
+        // then brought the launcher back in the phone's language. That night mode is gone (§12, revision 3); the ask
+        // stays as built until it is decided as its own item (§12.9 point 2). A refusal is caught inside and repaired
+        // at Home's resume. Nothing while a call is live (Home's resume asks then). Outside "Unlocked setup took"
+        // (the head that design 59 F3's recipe reads - LauncherPreferences.init and initRest), with a line of its
+        // own: the default prefs, at most one Telecom call and one binder call.
+        val languageStart = android.os.SystemClock.elapsedRealtime()
+        try {
+            com.kidslauncher.mdm.ui.LauncherLocales.atUnlockedStart(this)
+        } catch (e: Exception) {
+            android.util.Log.e("Application", "The launcher's language wasn't asked for", e)
+        }
+        android.util.Log.i("Application", "The launcher's language took ${android.os.SystemClock.elapsedRealtime() - languageStart} ms")
         val setupStart = android.os.SystemClock.elapsedRealtime()
         try {
             LauncherPreferences.init(PreferenceManager.getDefaultSharedPreferences(this), this.resources)
@@ -375,6 +424,8 @@ class Application : android.app.Application() {
         // phone the store is never suspended (QA M1).
         com.kidslauncher.mdm.server.WindowRelock.addListener { loadApps() }
 
+        // Design 78 §5.3 (L3): the languages these names were read in - see onConfigurationChanged.
+        channelLocales = resources.configuration.locales
         createNotificationChannels(this)
 
         // Time rules (handy step 6): the call path's lifts/override-aware answer, screen-time
