@@ -31,6 +31,14 @@ Meldinger, Kalender, Telefonbok og listene her i Innstillinger"). To settle in t
 card stays night by their answer 4, which was given while the phone book showed the wallpaper - over a Lys phone book it
 is a night card on a paper page; show both in step 0 before choosing.
 
+**Revision 3, 2026-11-11 - the mechanism changes (§12; proposed, nothing built, a spike first).** Step 1's two emulator
+passes showed what the per-app night mode costs: the launcher's language lost at reboots, a change of look the system
+refuses for a process's whole life, seconds on the main thread at boot. §12 replaces it: no per-app night mode at all;
+each page that can top a task of its own gets two manifest activities, a night one and a light one, and the launcher
+picks the class. D5, §5.3's first bullet and its "Decision", §5.4's steps 2 and 3, §5.5's first paragraph, §8's step 0
+and §9's first two risks are read with §12.8 from here on; the tokens, the pages' own AppCompat mode, the night pin and
+the kid Settings row stand.
+
 The user's words (2026-11-09):
 - On the own-bubble colour in the new message screens: "burde vi ha en mørk og en lys modus".
 - On who decides: "kan ikke barnet selv få bestemme mørk/lys/følge telefonen i barnets settings meny? men da må det gi
@@ -570,6 +578,13 @@ case); from the glance the ink is dark from the first light frame. No theme item
 | Pinning the other screens to the phone's own mode | No public reading of it once an app override exists (`Resources.getSystem()` carries the override on 13+), and it would let shared resources resolve day on night screens (QA H1) |
 | Recolouring views at runtime | Every adapter and drawable would need a second path; easy to miss one |
 | Keeping page tasks behind and relaunching them when shown | Android shows the task's snapshot (the old look) until the relaunch draws - one frame of the other look |
+| Revision 3, 2026-11-11: the per-app night mode kept, behind a gate - no call of the launcher's while an activity outside Home's task is alive in its process (§5.3, "The second pass") | It narrows the refusal and cannot close it: the launcher cannot see which activity the system has its process follow, a start can land between the check and the call, and one hit lasts for the process's life - the old look's starting window before every page. The record written without the languages, the two calls at every boot and Home created twice stay whatever the gate does (§12.5) |
+| Revision 3: naming the starting window's theme per launch (`ActivityOptions`' splash-screen theme) | Hidden API (`KEY_SPLASH_SCREEN_THEME` is `@hide`; its public door is `SplashScreen.setSplashScreenTheme`, two rows up), and read only at a start - not when a task is brought forward again (§12.3) |
+| Revision 3: one class per page on a translucent theme, so that no starting window is drawn at all | Read: a translucent theme gets no starting window. Inferred, not weighed further: the screen below stays visible and is not stopped while a page is up (Home or the lock keep running under Kalender, and §5.4's started count rests on `onStop`), and a slow open shows Home unchanged until the page's first frame instead of the look's ground at the tap. The one to look at if §12.7's spike fails |
+
+Revision 3, 2026-11-11: the first two rows reject **one** manifest entry per page - "the manifest theme is fixed" is
+true of an activity, not of a page. Two manifest activities per page, one per look, were not weighed in revisions 1
+and 2; §12 takes them and drops the per-app night mode.
 
 Android's own "force dark" doesn't touch a light page: it applies only while the configuration is night. Android 16's
 force-invert accessibility option ("make more apps dark") is documented in AOSP as ignoring an app's `uiMode` override;
@@ -743,3 +758,360 @@ one recording in each look.
 | N4 the strings | Dropped with Automatisk (the "døgnet" and "kl." strings are gone) |
 | N5 kid Settings refresh | Dropped with Automatisk: the row changes only at the kid's own tap, which redraws it |
 | N6 `values-v29` shadows Home's splash | Noted in §1 for the main session; §5.6's argument now rests on the PIN lock's black stand-in; §4.4 says a qualified style never merges |
+
+## 12. Revision 3: the mechanism after step 1's passes
+
+2026-11-11, by the architect, on `kid-look-1` at 67642f31 (branch `kid-look-mech`). Paper and source reading only:
+nothing was built or run for this revision. **Nothing below is built, and nothing is until §12.7's spike has passed.**
+Older sections are not rewritten; §12.8 says which of their lines this replaces.
+
+Where each claim comes from is marked:
+**(seen)** on `jelly36` in step 1's two passes (`docs/testing/emulator.md` §6ah, `docs/review/qa-78-step1-code.md`);
+**(code)** read in this branch's code; **(AOSP)** read in `frameworks/base` at tag `android-16.0.0_r1`;
+**(AndroidX)** read in `AppCompatDelegateImpl` on `androidx-main` - not the 1.7.1 tag the app builds with, whose sources
+were not at hand; **(inferred)** concluded from those and seen nowhere.
+
+### 12.1 Why
+
+The per-app night mode (`UiModeManager.setApplicationNightMode`, D5) was taken for one thing: the ground of a page's
+starting window (§5.3, first bullet). The two passes showed what else comes with it (§5.3, "The cause" and "The second
+pass"):
+
+1. With a night mode set, the package's record goes to disk without the launcher's languages at every boot's first
+   call (AOSP), and the language was gone after reboots (seen). The fix asks for the language again at every unlocked
+   start; it holds (seen), at the price of Home created twice on some boots (seen) and the channels named in the
+   phone's language (seen; its fix built, not seen running).
+2. Both calls are refused with `Can't change activity type once set` by the type of activity the process followed at
+   its last call that got through (AOSP; every sighting followed the model). On a natural route - a parent's change of
+   language set at the unlock with the PIN lock still followed - every later change of look was refused for the
+   process's life, and Kalender's starting window showed the old look for about 330 ms (seen, twice).
+3. The two calls ran on the main thread for up to 2.6 s and 1.7 s on loaded boots; one ANR (seen).
+
+Every one of them comes from sharing one system record, and one refusable call path, with the launcher's language. The
+starting window does not need that record.
+
+### 12.2 The decision
+
+**No per-app night mode. A page that can be the top of a task of the launcher's own has two manifest activities - a
+night one and a light one - and the launcher's own code picks the class.**
+
+- **R1. `setApplicationNightMode` is called nowhere.** `PageLookScanTest` holds it as a source scan over the whole main
+  source set. The launcher's state in the system is then exactly main's: a record with the languages alone.
+- **R2. Two activities per own-task page.** The class as it is (`DayActivity`, `EventActivity`, `EventEditActivity`)
+  is the night one; beside each a subclass with an empty body (`LightDayActivity`, `LightEventActivity`,
+  `LightEventEditActivity`) is the light one. The manifest entries of a pair are identical - launch mode, the `.day`
+  affinity, not exported, `windowSoftInputMode` - but for the theme. All three need a twin, not only the task's root:
+  any of them can be the top of the task when it is brought forward after the process died, and that window is drawn
+  from the top activity's theme (AOSP, §12.3). An `<activity-alias>` cannot do it: it has no theme of its own (the
+  manifest documentation; not re-read in the source).
+- **R3. Each variant's theme carries the window's items as literals.** `android:windowBackground`,
+  `android:windowSplashScreenBackground`, `android:windowLightStatusBar`, `android:windowLightNavigationBar` and
+  `android:enforceNavigationBarContrast` are set in a night theme and a light theme over a shared `KidPageTheme`, with
+  **unqualified** colours: `kid_ground` (#0C0C14, already unqualified - code) and a new unqualified paper colour equal
+  to `values-notnight`'s `kid_page_ground` (#F6F2EF; `KidPaletteTest` holds the two equal). Unqualified because the
+  system draws the starting window in the activity's configuration, which without an app night mode carries the
+  **phone's** night bit (AOSP, §12.3): a qualified colour there would follow the phone, not the look. Everything else
+  stays as built: the page tokens in `values/` and `values-notnight/`, reached through the page's own AppCompat mode.
+- **R4. A page's content follows its class.** `lookNightMode()` (the AppCompat local mode set in `attachBaseContext`,
+  §5.3's second bullet) comes from the variant the class is, not from the stored look, so a window and its content
+  can never disagree. One table in `ui/look/` pairs the classes; it answers "the class of this page in this look" and
+  "the look of this class", and it is the only place that names a light class (a scan test).
+- **R5. One chooser.** Every start of a page goes through the pages' own intent builders (`DayActivity.intent`,
+  `EventActivity.intent`, `EventEditActivity.newIntent` / `editIntent` - the only ones that name the classes, code),
+  which ask the table with the applied look. A start inside the task gets no starting window while the process runs
+  (AOSP) and still picks the variant, for R4.
+- **R6. A living page task is always of the stored look.** A change (§5.4's step 2) keeps what it does - finish the
+  live pages, remove the page tasks - and turns the order round: the tasks are removed **first**, the new look is
+  stored after. Step 1 stored first so that a process dying in between came back in the new look and the unlocked
+  start repaired the system's value; there is no system value any more, and a death between the two now leaves no page
+  task and the old look - the kid's tap lost, nothing mixed. It closes the leftover of step 1's code QA L4 (§5.4, "Fix
+  round": an old-look card after a death between the write and the removal). `closesTask` and `languageClosesTask`
+  name both roots of a pair, through the table. `KidPageActivity.onCreate` checks its class against the applied look
+  and, if they ever differ, logs and removes its task before any content is set: an assertion - by the order above no
+  such activity exists - not a route.
+- **R7. Nothing outside the launcher's process holds a variant's name.** A `PendingIntent`, an exported entry or a
+  persistent preferred activity that names a variant would be started - starting window first - in the look of the day
+  it was made. None exists today: no `PendingIntent` names a Dagen page, and no variant is exported (code). From step
+  2 on (`SmsNotifier.openIntent` names Meldinger's list and thread, code) such an intent names a **look-less entry**
+  instead - a translucent, `noHistory`, `excludeFromRecents` activity that starts the variant through R5, as
+  `sms.ComposeActivity` already is for `sms:` links (code); a translucent theme gets no starting window (AOSP). If
+  §12.7's leg C shows a frame of its own, the other sound means is to cancel and re-post at a change: a cancelled
+  `PendingIntent` cannot fire. `PageLookScanTest` and `PageManifestTest` hold R7 (no `PendingIntent` is built from a
+  page's intent builder; no variant is exported or named as a preferred activity).
+- **R8. Pages declare `uiMode`.** Without an app night mode the phone's own dark-theme switch (schedule, Battery
+  Saver) reaches every activity as a configuration change, and one that does not declare it is relaunched (AOSP,
+  `ActivityRecord.shouldRelaunchLocked`). A page declares it like every other activity and stays as it is: AppCompat
+  pins the resources to the local mode again and does not recreate an activity that handles `uiMode` (AndroidX; the
+  same client path was seen on the non-page activities at step 1's changes of look). `PageManifestTest`'s rule becomes
+  "every activity declares `uiMode`".
+- **R9. Pages in Home's task need one class.** An activity in Home's task is home-type and never gets a theme-drawn
+  starting window (AOSP, `getStartingWindowType`); its first frame is its own. Step 2's lists (Wi-Fi, Bluetooth, sound)
+  and the phone book opened from Home keep one manifest entry on the qualified `KidPageTheme` as step 1 built it, with
+  the AppCompat mode from the applied look. The phone book's other doors are §12.9's first open point.
+
+What does not change: D1-D4, D6, D7; the tokens (§4); the pages' AppCompat mode in `attachBaseContext` and one
+`onCreate` per open; `PageColors`; the dialogs and pickers; the night pin and `uiMode` of every non-page activity (its
+reason stands: `values-notnight` exists, and a non-page screen must never resolve it); `PlayLinkBlockedTheme`; where the
+choice lives (§6); the row and its strings (§7, en + nb as they are - this revision adds no string); the guard and the
+waiting change (§5.4's step 1); what finishing costs (§5.4's step 4).
+
+### 12.3 Is it sound - the cases, one by one
+
+**How a starting window comes to be** (AOSP: `ActivityRecord.showStartingWindow`, `getStartingWindowType`,
+`validateStartingWindowTheme`, `evaluateStartingWindowTheme`, `isSnapshotCompatible`; `Task.getStartingWindowInfo`;
+Shell's `SplashscreenContentDrawer`, `SplashscreenWindowCreator`, `AbsSplashWindowCreator`; `SnapshotDrawerUtils`):
+
+- Its theme is the launched activity's own manifest theme. Only two things replace it: a theme named in the start's
+  options (hidden API) and the package-wide `SplashScreen.setSplashScreenTheme` (never called here, code; §5.6).
+- A theme-drawn one ("splash") is made for a standard-type activity in a new task, with the process not running, or at
+  a switch of task to an activity not yet created. A switch to a task with a snapshot whose top component is this
+  activity shows the snapshot instead. None at all: a home-type activity; a start inside a task with the process
+  running; a translucent or floating theme; and `windowDisablePreview` (which `launcherBaseTheme` sets, code) - but
+  that last one is ignored when the start comes from the system, SystemUI or the home app, and the launcher is the
+  home app, which is why pages got starting windows in step 0 and step 1 (seen).
+- Its ground is the theme's `windowSplashScreenBackground` when set, read in a context of the package given the
+  **activity's configuration** (`Task.getStartingWindowInfo` copies it in; `SplashscreenContentDrawer.createContext`
+  re-creates the context when the night bits differ). The Shell's colour cache is keyed by the colour itself among
+  others, so two themes of one package do not share an entry.
+- Its bar ink is not the theme's `windowLightStatusBar`: the Shell sets light-bar appearance from the **lightness of
+  the ground** (`SplashscreenWindowCreator`). A snapshot's window copies the bar appearance of the window it pictured.
+
+A per-activity splash ground is nothing new in this app: the PIN lock's black stand-in (`PinLockTheme`, design 32) and
+Home's (`launcherHomeTheme`) are drawn the same way from their own manifest themes (code; their sightings are those
+designs', not re-checked here).
+
+**The four cases** (the starting window's columns inferred from the reads above; the content's is step 1 as built - and
+seen carrying a page alone: after the second pass's refused changes the pages drew in the stored look while the
+system held the other one):
+
+| Look | Phone's theme | Class, theme | Starting window's ground | Its bar ink | Content |
+|---|---|---|---|---|---|
+| Mørk | dark | `DayActivity`, night | `kid_ground`, a literal | white: the ground is dark | night |
+| Mørk | light | `DayActivity`, night | the same literal - the phone's bit has nothing to pick | white | night, AppCompat's YES over the phone's bit |
+| Lys | dark | `LightDayActivity`, light | the paper, a literal | dark: the ground is light | day, AppCompat's NO over the phone's bit |
+| Lys | light | `LightDayActivity`, light | the paper | dark | day |
+
+**The rest of the list:**
+
+- **The status bar's late tint in Lys** (white ink on the paper for 165-500 ms, seen with the process held, so before
+  any of our code). It is SystemUI's: `LightBarTransitionsController.setIconsDark` holds a change of tint while an app
+  transition is pending and then animates it from the transition's start over its length (AOSP). The starting window
+  already asks for dark ink under the kept mechanism; a light manifest theme asks for the same thing by the same route.
+  **Neither mechanism changes it** (inferred); the spike measures it against step 1's numbers.
+- **3-button navigation in Lys with the phone dark** (white buttons on the paper, seen; `mHasLightNavigationBar=true`,
+  `mForceDarkForScrim=true`). SystemUI's own: `LightBarControllerImpl` draws the buttons light whenever its scrim
+  forces dark, whatever the window asks (AOSP). The app's night mode never reached SystemUI and a manifest theme does
+  not either: **unchanged by both** (inferred). It stays the code QA's open bar point for step 2.
+- **Accessibility's force-invert.** `ViewRootImpl.determineForceDarkType` inverts a window whose own theme is light
+  with a light background, "ignoring all developer opt-outs", when the system's force-invert state is on (AOSP). It
+  reads the window context's theme, which is the same under both mechanisms: a Lys page is a light window either way.
+  The switch was not found on the image (seen: a hand-written settings key did nothing). Unchanged, still open.
+- **A page reopened from its Recents card, with a snapshot.** The snapshot is used only when its top component is the
+  activity coming forward (AOSP); by R6 a card that exists is of the stored look, so its snapshot is too. A phone-theme
+  flip does not make a snapshot stale - the page did not change with it.
+- **A card reopened after the process died or after a reboot.** No snapshot fits or none is kept; the system draws a
+  splash from the **top** activity's manifest theme (AOSP) - hence a twin for the event page and the editor (R2) - and
+  the activity is created again as the same class. Right by R6.
+- **After a change of look.** The page tasks are gone (R6; seen for Kalender in the pass: its card closed, the next
+  open clean), so there is no card and no snapshot of the old look to come back.
+- **Two classes, one affinity.** `NEW_TASK` to a class finds a task whose root is that class, or else one with the
+  same root affinity, and then puts the new activity **on top of it** (AOSP: `RootWindowContainer.FindTaskResult`,
+  `ActivityStarter`'s "place the new activity on top of the current task"). So there is one `.day` task and one
+  Recents card whatever the class - and a light class started while a night-rooted task lived would be stacked on it.
+  R6 is what excludes that; it is load-bearing, and the spike's leg A5 looks for exactly this. `singleTop` is per
+  class and works as today inside a variant; no page is `singleTask` or `singleInstance` (code).
+- **Starts inside a page** (day view -> event -> editor): no starting window with the process running (AOSP); the
+  variant comes from R5.
+- **Stale intents.** R7. Until step 2 there is none to go stale.
+- **Whatever names a page's class** (code, a grep over `launcher/`, `music/`, `server/src/`, `scripts/` and the
+  ProGuard files): the manifest; the intent builders; `closesTask` and `languageClosesTask` (both get the table);
+  tests (`PageManifestTest`, `PageLookScanTest`, `PageLookTest`, `LauncherLocaleTest`, `DayTaskTest`,
+  `LockGlanceGuardTest`, `TimeLockModelTest`). `KidAppComponentFactory` treats every class outside the direct-boot
+  list as needing the unlocked setup, so a new class is safe by default. No deep link, no music-bridge name, no keep
+  rule. An `is DayActivity` check still holds for a subclass.
+- **The phone's theme flips while a page is open or stopped.** New under this revision: the change now reaches pages.
+  R8: no relaunch (AOSP), resources pinned again (AndroidX), nothing redrawn in another look (inferred; leg A4).
+- **Dialogs and pickers on a page.** Built from the activity's context, which AppCompat pins: `KidPageAlertDialog` and
+  the day `VibbPickerDialog` resolve as built (code; seen in the pass). Unchanged.
+- **The application's context.** It follows the phone's theme, as on main. Under the kept mechanism it followed the
+  look. Page tokens must therefore only ever be read through a page's context or `PageLook.wrap`; today's Kotlin
+  reads are a view's context in `DayListAdapter` and the preview's `wrap` (code). `PageTokensScanTest` gets the rule.
+- **Step 2.** Meldinger's list and thread are own-task pages: twins, by R2. `PictureActivity` gets a twin only if it
+  is drawn in the look; a night-only picture keeps one class on a literal night theme. The lists: R9. The
+  notification: R7.
+
+### 12.4 What of step 1 stays, changes and goes
+
+| Part | Under revision 3 |
+|---|---|
+| Tokens and resources (`values/` and `values-notnight/` colours, `PageColors`, `KidPageAlertDialog`, the day picker) | Stay |
+| `KidPageTheme` | Changes: the look-neutral items stay; a night and a light theme over it carry R3's five window items as literals. One unqualified paper colour is added; the two `bools_kid_page.xml` go |
+| `KidPageActivity` | Stays (the AppCompat mode, `PageColors`, the registry and the started count); `lookNightMode()` reads the class (R4); the assertion (R6) |
+| `LookState` / `PageLook` | Stay: the store, `choose`, `mayChange`, the waiting change at Home's resume, `wrap`. Go: `LookHost.applyNightMode`, the system's value in `nightValues`, the unlocked start's call (it only reads the store now) and its timed log line. Changes: `change`'s order (R6); the table (R4) |
+| The manifest | Three more entries; `uiMode` on the six page entries |
+| The intent builders in `ui/day/` | One line each (R5) |
+| The kid Settings row and the preview | Stay, debug-only until step 2 |
+| The night pin and `uiMode` of the non-page activities, `PlayLinkBlockedTheme` | Stay |
+| The language fix (`LauncherLanguage`: the unlocked start's ask, the repair at Home's resume, the late retry) | **Leaves this design.** Its design-78 reason is gone: with no night mode the write record always holds the languages (AOSP: `updateFromImpl` fills it with the first of night mode, languages and gender it holds; seen: the clock app, with no night mode, kept its languages over the boot that took the launcher's). What is left is main's own, older and narrower (seen on main: a second change of language in one process life refused under another type of activity; read: a process alive before the unlock never gets the record's values). The code stays as built until that is decided as its own item (§12.9) |
+| The channels named again on a change of the process's languages | Stays with the language fix; it is the same "process without the record's values" case, which main has too |
+| Tests | `PageManifestTest` (pairs identical but for the theme; every activity declares `uiMode`), `PageLookScanTest` (R1, R5, R7; the "night mode before the language" order scan goes), `PageLookTest` (the order of a change, no system call; the table), `KidPaletteTest` (the literal paper equals the token), `SplashThemeTest` (each variant's splash ground and bar items are literals), `PageTokensScanTest` (no page token through the application's context), `DayTaskTest`, `LockGlanceGuardTest`, `TimeLockModelTest`, `LauncherLocaleTest` (the class names) |
+
+No clean-up code: `kid-look-1` is unmerged and no released build ever set a night mode. A test device that ran step 1
+carries one, and setting it back to "follow the phone" is not the same as never having set it - the record then holds
+a 0, which still goes into the write record first and alone (AOSP, `updateNightMode`). Such a device is wiped, or the
+package uninstalled (the record goes with it - AOSP, `onPackageUninstall`); the AVD is restored.
+
+Size, roughly: 18 files, about 300 lines added and 200 removed, more than half of it in the tests. Production code:
+about 90 added (three empty classes, three manifest entries, two small themes, the table) and 110 removed.
+
+### 12.5 The kept mechanism with the gate, and why not
+
+The implementer's proposal (§5.3, "The second pass"): no call of the launcher's - night mode or language - while an
+activity outside Home's task is alive in its process; Home's resume waits for the PIN lock or call screen just left to
+be destroyed and closes a page's task before it asks; the unlocked start's two calls wait for Home in a process
+started under such an activity.
+
+**It closes the route that was seen. It does not make a refused change of look impossible** (inferred from §5.3's
+cause, which is AOSP read and held in every sighting):
+
+- What decides is the activity the system has the process **follow** - the one added to it last that was not finishing
+  then. The launcher sees its activities through lifecycle callbacks, which come after the system has added the record
+  and before it has taken a finished one away (the pass saw a page destroyed about 350 ms after Home's resume).
+  `ActivityManager.appTasks` shows tasks, not the followed activity.
+- The check and the call are not one step. The PIN lock at a screen-off, the call screen at a ring, a notification's
+  tap can add a standard-type activity in between, from outside the main thread's control.
+- One miss is enough and lasts for the process's life: from then on every change is refused under Home, and every
+  page's starting window is the old look's. The launcher's process lives for days. The only cure is a new process,
+  and the launcher - the kiosk, the VPN, the calls - should not kill itself for a look.
+
+So the gate turns "refused on a natural route" into "refused on a race", with the same result for the kid when it
+hits and nothing the app can do about it. That is a weaker rule with a hole, not a fix.
+
+What it costs: in a process started under the PIN lock, a page or a call, both calls wait for Home - on a boot whose
+record lost the languages the PIN lock is in the phone's language again (the first pass's finding, back for that
+window), and a page reopened from its card in such a process is drawn before the mode has been asked for. A page's task is
+closed before every change of language at Home, not only after a refusal.
+
+What stays whatever the gate does: the record written without the languages at every boot's first call; two system
+calls on the main thread at every unlocked start (up to 2.6 s and 1.7 s, one ANR - seen); Home created twice on boots
+without the languages; the channels' names; and every later per-app setting (a language feature, say) tied to the
+look's call path.
+
+### 12.6 Risks of the decision
+
+- **A phone maker's Shell** (the Jelly Star's build) may draw starting windows otherwise. Shared with the kept
+  mechanism, whose step 0 on the Jelly Star was never run either (the code QA's open list). This route is the plainer
+  one - a literal `windowSplashScreenBackground` in a manifest theme is the documented splash API, and the app already
+  rests on it for the PIN lock and Home.
+- **Every door into an own-task page must go through the chooser.** Held by one table, the scans (R5, R7), the
+  assertion (R6) and by there being few doors: three intent builders today.
+- **Pages now get the phone's theme flips** (R8). Read in `androidx-main`, not in 1.7.1; leg A4 is its proof.
+- **Twice the manifest entries for own-task pages**: three more now, two or three more in step 2. `PageManifestTest`
+  holds each pair identical but for the theme, so they cannot drift.
+- **The phone book's doors from outside** (§12.9) are read, not seen.
+- **Two frames this revision does not improve**: the late status-bar tint and the white 3-button icons (§12.3). They
+  are no worse; they are not solved.
+
+### 12.7 The spike that must pass first
+
+A throwaway branch off `kid-look-1` (`spike-78-twins`, never merged), a debug build on `jelly36` (480x854, 240 dpi,
+Android 16) from a **restored clean AVD** - one that carries a night mode from the earlier passes proves nothing
+(§12.4's last paragraph). The
+launcher's language is set to the one the phone does not have.
+
+**Build, the smallest that answers** (about 100 lines):
+
+- the `setApplicationNightMode` call removed, and the unlocked start's language ask switched off (so that the boots
+  below show what the record alone keeps);
+- the three light classes (empty subclasses), their manifest entries, the night and the light theme with R3's
+  literals, `uiMode` on all six entries, R4, R5 and R6's order - no tests, no assertion;
+- leg B: `KidSoundPickerActivity` (in Home's task) on step 1's qualified `KidPageTheme`, its AppCompat mode from the
+  applied look - no tokens swapped, the window's ground is enough;
+- leg C: a debug-only notification whose `PendingIntent` names a look-less entry (translucent, `noHistory`,
+  `excludeFromRecents`) that starts `DayActivity.intent(...)`.
+
+**Leg A - the own-task page.** Every recording at 60 fps, stepped frame by frame; "the page's area" is everything
+under the status bar.
+
+- A1. Home's tile -> Kalender and the lock glance's row -> Kalender; with no `.day` task, and with the task behind
+  Home; in Mørk and Lys; with `cmd uimode night yes` and `no`: sixteen recordings. **Must show**: not one frame in
+  which the page's area has the other look's ground.
+- A2. With the launcher's process held (SIGSTOP right after the tap, as in §6ah), one open in each look and phone
+  theme: `dumpsys window windows` **must show** a `Splash Screen` window of type `APPLICATION_STARTING` on the
+  variant's record (`...LightDayActivity` in Lys, `...DayActivity` in Mørk), and the screenshot the look's ground
+  alone.
+- A3. The events log over A1: **exactly one** `wm_on_create_called` for the page per open that makes the task, none
+  on one that brings it forward, and **no** `wm_relaunch_activity` or `wm_relaunch_resume_activity`.
+- A4. With Kalender in front, then stopped behind Home, then with the event page in front: `cmd uimode night` flipped
+  both ways, and Battery Saver on and off. **Must show**: no relaunch line and no `wm_on_create_called` for a
+  page; screenshots before and after identical; a date picker opened after the flip in the page's look.
+- A5. A change of look in kid Settings with Kalender's task behind. **Must show**: `dumpsys activity recents` without
+  a `.day` task right after; after the next open one `.day` task whose root and only activity is the new look's class;
+  at no point both classes in one task or two `.day` cards.
+- A6. Reboot with Kalender's card in Recents and the event page on top of it, unlock, open the card - in each look.
+  **Must show**: no frame of the other look's ground; the record created is the same class.
+- A7. Four cold boots in a row, a change of look made between two of them. **Must show** after each unlock:
+  `cmd locale get-app-locales` for the debug package still the launcher's language, and Home's `wm_on_create_called`
+  once with no relaunch line after it. Noted for §12.9's point 2: the language of the PIN lock, Home and the channels
+  on a boot where the process was alive before the unlock - that is main's case, with the ask off.
+- A8. Logcat over the whole run: **no** `Can't change activity type once set`, no `E PageLook`.
+- Noted, not gating: the status bar's ink on the Lys starting window in milliseconds, against step 1's 165-498 ms
+  (worse is a finding); 3-button navigation in Lys with the phone dark; force-invert if a switch is found.
+
+**Leg B - a page in Home's task.** Lys with `cmd uimode night yes`, and Mørk with `no`: open the sound picker from kid
+Settings. **Must show**: no `Splash Screen` window for it in `dumpsys window windows`; in the recording, no frame in
+which its window has the other look's ground.
+
+**Leg C - an intent made in the other look.** Post the notification in Mørk, change to Lys, tap it; and the other way
+round. **Must show**: the variant created is the stored look's; no frame of the other look's ground; no black or
+empty frame from the entry itself; the entry not in Recents. Not a leg: the same tap with the launcher's process gone.
+The entry then shows nothing until the process is up (a translucent theme has no starting window - AOSP), where a
+direct intent would have shown the ground at once; the launcher's process is all but always alive, and if the case
+turns up in the run the time from the tap to the first frame is noted.
+
+**Pass**: every "must show" of A, B and C. A failed A1, A2, A5 or A6 means the alternative is not built; the recordings
+go to the user with what is left - §12.5's gate with its hole named, or §5.6's translucent row examined properly, or
+no light look. A failed leg C alone moves R7 to cancel-and-re-post. A failed leg B gives the lists twins too, with
+their own affinity question, and comes back to the architect.
+
+Still owed after the spike, as before it: the same A1 recordings on the Jelly Star test phone (never the kid's phone;
+it needs the user, §10), before step 2 shows the row in release builds.
+
+### 12.8 What this replaces
+
+| Where | Read it as |
+|---|---|
+| D5 (§3) | The mechanism is two manifest activities per own-task page plus the `values-notnight` tokens; every other screen pinned to night |
+| §0's and §5.3's hypothesis, §5.3's first bullet ("The app's night mode") | Gone (R1). The starting window's ground comes from the variant's manifest theme (R2, R3) |
+| §5.3's second bullet, "A page does **not** declare `uiMode`" | It does (R8); the mode comes from the class (R4). It is no longer a belt under a system call: it is the content's look |
+| §5.3's third bullet, "there is no reliable public reading ... once an app override exists" | No override exists now; the pin to night stays for the bullet's other reason, the shared resources |
+| §5.3, "Decision, 2026-11-11", "Open, for step 2" and the second pass's "Proposed, not built" | The look no longer takes part: the third way out named there, "not using the system's per-app night mode", without giving up the starting window. The language's lines stand as the record of what was built; §12.4 and §12.9 say where they go |
+| §5.4 step 2 ("then `setApplicationNightMode`", "`commit()` ... first") | R6: tasks first, the store after, no system call |
+| §5.4 step 3 | The unlocked start reads the store and writes `applied = dark` when absent; no call. "A system call that fails is caught" (Fix round) has nothing left to catch |
+| §5.5, "the icon ink comes from `kid_page_light_bars`" | From literal items in each variant's theme; the starting window's ink from its ground's lightness (§12.3) |
+| §5.6, rows 1 and 2 | The note under the table |
+| §8 step 0 | §12.7. §8 step 1's "the unlocked-start re-apply" and `PageManifestTest`'s "without `uiMode`" are replaced by §12.4's list, built as a rework of `kid-look-1` before it is merged |
+| §8 step 2 | Adds: twins for Meldinger's own-task pages, both roots in `closesTask`, `SmsNotifier`'s intent through R7, the lists and the phone book on one class (R9), §12.9's phone-book check. L5's line (a Home resume between an open and the page's creation) stands |
+| §9, "The starting window" and "OEM builds" | §12.6 |
+| §10 | One recording per look on the Jelly Star is still owed (§12.7) |
+
+### 12.9 Open points
+
+1. **The phone book's doors from outside (step 2).** Opened from Home it is in Home's task (R9). Read, not seen: a
+   `tel:` link in another app puts it in that app's task as standard-type, started by an application, so
+   `windowDisablePreview` holds and there is no starting window (AOSP, `validateStartingWindowTheme`); a missed-call
+   notification's tap and the call button come from SystemUI and the system with `NEW_TASK` and should land in Home's
+   task by affinity (inferred). Step 2's pass must show `dumpsys window windows` without a `Splash Screen` for both
+   doors with the look unlike the phone's theme. If one shows, that door gets R7's look-less entry - the persistent
+   preferred activity for `DIAL` would then name the entry.
+2. **The language fix, as its own item on main.** Decide there, not in this design: keep the unlocked start's ask
+   everywhere, or only in a process that was alive before the unlock (the one case main has; it would give back "the
+   first ask of a process's life always gets through" to every other process), and whether the close of Meldinger's
+   task at a refused change is worth its price without the look's need. A7 gives the facts.
+3. **The channels' names** in a process alive before the unlock: the fix is built and not seen running; it belongs to
+   point 2.
+4. **3-button navigation in Lys with the phone dark** and **the late status-bar tint**: SystemUI's (§12.3), open for
+   step 2 on a real phone. Whether `enforceNavigationBarContrast` helps the first is not read.
+5. **Force-invert**: no switch found on the image; unchanged.
+6. **AppCompat 1.7.1's own source** for R8: read the tag when the sources are at hand, or let A4 stand for it.
+7. **A release build and the Jelly Star**: as in the code QA's open list.
