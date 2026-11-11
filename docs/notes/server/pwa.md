@@ -111,7 +111,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   the page is hidden, `{y, t}` under path + search in one sessionStorage map `handy-place` (the newest 50); a
   `back_forward` or `reload` load (`PerformanceNavigationTiming`, else `performance.navigation.type` 2/1 on iOS 14)
   puts it back - over a `#fragment` too, since after a save the address carries the group's one; a `navigate` load
-  restores nothing (a link opens at its fragment or the top). The form record wins over the place record. On the
+  restores nothing (a link opens at its fragment or the top) - but the band's back link to the page it came from
+  (since design 84's fix round, "The night band on every page"). The form record wins over the place record. On the
   shell's pages a window iOS left offset (the keyboard's pan) is put back at 0 on `focusout`, `visualViewport`
   `resize` and `pageshow`.
 - `auto-reload.js`, `install-now.js` (their reload record) and `music-cards.js` (its scroll anchoring) read and scroll
@@ -1116,7 +1117,8 @@ man er inne på en device". Branch `pwa-fixes-b`.
   every tab page has the bar at y 8-52 and its `<h1>` at 56 (the shell test pins both rules). *Gone with design 84:
   the `<h1>` is on the band.*
 - **Devices' night band** (artboard E, 2026-10-22, `docs/testing/2026-10-22-pwa-identity-pass.md`, "Night band";
-  *since design 84 every page's, as `.band` - "The night band on every page" - with this `border-image` outset upward only*):
+  *since design 84 every page's, as `.band` - "The night band on every page" - with this `border-image` outset upward only;
+  since its fix round no outset at all: in `main` iOS drew nothing of it, and `main`'s own ground shows in the bounce*):
   the home page alone ("it should feel more like a front page") has its title bar on vibb's night `#0C0C14`, from the
   screen's very top - main's 8 px and the status bar's inset - to 6 px under the 44 px bar (flat right under it until
   2026-11-10; the user on the iOS lab: the band's edge was too close under the mark, with much air down to the title),
@@ -1484,7 +1486,7 @@ man er inne på en device". Branch `pwa-fixes-b`.
   ring**; the keyboard keeps the 2 px `outline`. **CSS alone can't tell those apart for a text field**: a browser
   counts every focus of a text field as `:focus-visible`, a tap too (the spec's heuristic: it takes typing), so the
   existing `:focus` / `:focus:not(:focus-visible)` pair - kept as it was, Safari before 15.4 still shows the ring from
-  `:focus` - can't drop the ring on a tap. `static/focus-mode.js` (`?v=2`, un-deferred in `head.html`, ES5) marks
+  `:focus` - can't drop the ring on a tap. `static/focus-mode.js` (`?v=3`, un-deferred in `head.html`, ES5) marks
   `<html>` `pointer-focus` from a press (mousedown, touchstart, pointerdown) until the keyboard moves, and
   `.pointer-focus input:focus` (and select, textarea) drops the outline. What clears the mark (code QA Q-2): Tab and
   Shift+Tab always; the navigation keys (arrows, Home, End, Page Up/Down, Space, Enter) when the focus is not in a
@@ -1494,8 +1496,9 @@ man er inne på en device". Branch `pwa-fixes-b`.
   (`.row-input`, `select.pick`) have no border to tint: any focus gives them a quiet tinted underline (`box-shadow:
   inset 0 -1.5px 0 var(--tint)`), a tap's only sign, the keyboard's ring on top (before, a tapped one showed only the
   caret). Without JS the ring shows as before; a page's `autofocus` on load (a refused save's field) has no press yet,
-  so it shows the ring. Tests: `jstest/focus-mode.test.js` (each press, pointer -> keyboard -> pointer, typing kept,
-  arrows after a radio or select), `shell::the_accent_rules_hold` (the tokens, the three filled rules and their hover
+  so it shows the ring. A page opened at a `#fragment` is marked `fragment-focus` too (design 84's fix round, "The
+  night band on every page"). Tests: `jstest/focus-mode.test.js` (each press, pointer -> keyboard -> pointer, typing
+  kept, arrows after a radio or select, the fragment's mark), `shell::the_accent_rules_hold` (the tokens, the three filled rules and their hover
   with night text, no `--strong`, the no-ring rule, the field's border and the borderless underline, the head's
   script).
 - **(3) Filled buttons** (the plain `button`, `.button-small`, the summary's `.act-strong` "Lock again"): `--tint-fill`
@@ -1846,9 +1849,9 @@ pointer here.
   `max(calc(6px + env(safe-area-inset-top)), var(--top-strip))`, and `--band-h` 54 px more. `.band` is night in both
   schemes with the page's column in its side paddings (16 px, the notch's insets, 720 px), a row of 44 px at least
   (`min-height`, so a larger text size grows it), and 32 px under the row of which the last 22 lie under the next
-  box (`margin-bottom: -22px`) - what shows in that box's rounded corners is the band's foot. Its
-  `border-image` outset paints 100vh of night above it for iOS's pull-down bounce, as Devices' bar did. In a browser
-  tab the band is 82 px high and the sheet starts at 60.
+  box (`margin-bottom: -22px`) - what shows in that box's rounded corners is the band's foot. In a browser
+  tab the band is 82 px high and the sheet starts at 60. *(Until the fix round below a `border-image` outset painted
+  100vh of night above it for the bounce, as Devices' bar did in the document; inside `main` iOS drew none of it.)*
 - **The sheet**: `<div class="sheet">` right after the band, to the end of `main`, on `--bg` with
   `border-radius: 22px 22px 0 0` and a 1 px top border in `--band-edge` (transparent in light, `#34344A` in dark,
   where band and ground are the same night). It has the paddings `main` had: `.container` itself has none since
@@ -1877,7 +1880,61 @@ pointer here.
 - **Locate's map into view** (`locate.js`, `?v=6`): `main` has no top padding now, so a Locations row puts the
   map's top 8 px under `.top-strip`'s height by an offset in `main.scrollTop` (`scroll-margin-top` needs Safari
   14.1). `.pull-refresh` comes down at `calc(var(--band-h) + 6px)`, over the sheet.
-- **Cache**: `style.css?v=93`.
+- **The fix round** (2026-11-11, the user's iPhone on server 0.74.0; branch `band-fix-1`, design 84 revision 4):
+  - *The bounce*: pulling a page down at its top showed a light field between the status bar and the band. iOS draws
+    nothing of the scrolled content beyond its ends in a scroller's bounce (the band's outset above it), only the
+    scroller's own ground - `main`'s was clear, so `body`'s `--bg` showed. `.container:not(.container-fixed)` is now a
+    column (`display: flex`) with `background: linear-gradient(var(--night) 50%, var(--bg) 50%)` - a scroller's
+    background stays with its box, so a pull at the top bares night, one at the bottom the sheet's ground - and
+    `.container > .sheet` grows (`flex: 1 0 auto`), so a short page's sheet still covers `main`'s lower half and the
+    ground shows nowhere else. The pull-to-refresh pages (Devices, a phone's summary) are the same `main`: before a
+    pull takes over the bounce shows night, and the arrow comes down over the sheet as before. An editor's `main` is
+    the sheet itself and bounces inside its rounded top on `--bg`, as before. Seen only in Chromium with the content
+    moved by hand (neither Chromium nor WebKit here has a rubber band): the iPhone has the last word.
+  - *The back link's place*: the band's back link is a plain link, often to the row it came from (`/apps#phone-3`,
+    `/apps/tracked/2#phone-3`, `/music#spotify`, `/music#entry-4`, `/account#passkey-only`,
+    `/devices/3/calendar#sources`, `/devices/locate?device=3#zones`, Advanced's `#connection`, the summary's
+    `#access`), and with the band scrolling away the fragment put that row at the screen's top. `scroll-restore.js`
+    (`?v=7`) now keeps where a page came from - `handy-from` in sessionStorage, its path -> the referrer's path +
+    search (same origin; the newest 50), set by a `navigate` load from another path, kept across the page's own saves
+    (the same path), a return by its child's back link, Back/Forward and reload - and a tap on `a.nav-back` whose
+    target is exactly that page leaves a record of the form record's shape with `back: true` and the parent's place
+    record (`{path, href, y, t, back}`, both carriers, 20 s); `restoreTarget` puts a back record's `y` back over any
+    `#fragment`. So the parent opens where it was left (Apps at its top: at its top), on every back link with or
+    without a fragment, after saves on the child page and through a child's child too. A parent not left in this
+    session, a back link to another page than the one it came from (the target depends on where the page was opened,
+    `apps_nav`), a page opened directly or no JS: the plain link, its fragment or the top, as before. Not
+    `history.back()`: after a save on the child the previous entry is the child itself.
+  - *The ring on the row*: WebKit and Chromium focus a fragment's element when it can take focus (a row that is a
+    link) and count that focus as `:focus-visible` (measured: the row is `document.activeElement` and matches
+    `:focus-visible` in both), so the row wore the keyboard's 2 px tint ring, clipped by its group's rounded corners.
+    No `:target` rule or script did it; the tab bar's links carry no fragment, so they never showed it.
+    `focus-mode.js` (`?v=3`) marks `<html>` `fragment-focus` when the page opens at a `#fragment`, until a key leaves
+    pointer mode (Tab, or the navigation keys outside a text field), and `.fragment-focus :target:focus { outline:
+    none }`. The focus stays on the row, so Tab goes on from it, and from the first such key every ring shows.
+  - *The cap* (the user's mockup): once the band has scrolled away the sheet keeps its rounded top right under the
+    status bar, and rows scroll under that edge. `.container:not(.container-fixed)::before`: sticky at `--top-strip`,
+    22 px high and taking no room (`margin-bottom: -22px`), the sheet's `border-radius: 22px 22px 0 0` and 1 px top
+    border, and `box-shadow: 0 -50vh 0 50vh var(--night)`: night all round the box - over the strip and into its two
+    corners - so nothing of a row shows outside the curve (in a browser tab, without an inset, the corners alone at
+    the top). A pseudo-element: WebKit never takes it for the status bar's colour (`.top-strip`). It takes no tap
+    (`pointer-events: none`), and its corners' night reaches 1 px into the 16 px column, so it covers no tap target.
+    Its z-index is 7 and a scrolling band lies over it (`.container > .band`: `position: relative; z-index: 8`),
+    with its 22 px foot drawn night only outside the sheet's two corners (two `radial-gradient`s under a
+    `linear-gradient` of the band's night): the sheet shows between them as before, and the foot covers the cap's
+    curve until the sheet's own edge has passed it, so the two hand over with no seam (seen with the sheet's top 10
+    px and 8 px under the strip, light and dark). The cap's edge (dark's hairline) is drawn only once `main` has
+    scrolled (`@supports (animation-timeline: scroll())`, `animation-range: 0px 1px`, `@keyframes cap-edge`): during
+    a pull-down bounce iOS may hold a sticky box where it is while the band moves down, and the line would hang alone
+    in the night; without scroll timelines (Safari before 26) there is no edge, and in dark the cap is night on
+    night. Not on the four editors (their band stays put, `main` is the sheet) nor the five pages outside the shell.
+    A save still keeps its place: `main.scrollTop` before and after a bedtime Save at 320 px and an Advanced switch's
+    auto-save is equal in Chromium and WebKit.
+  - Tests: `jstest/scroll-restore.test.js` (where a page came from and what keeps it; the back record over the
+    fragment, with a query; every case that carries nothing), `jstest/focus-mode.test.js` (the fragment's mark),
+    `shell::the_app_shell_scrolls_main_not_the_document` (`main`'s ground and column, the sheet's growth, the band's
+    foot and z-index, the cap and its edge, the no-ring rule, no `border-image` left).
+- **Cache**: `style.css?v=94`, `scroll-restore.js?v=7`, `focus-mode.js?v=3`.
 - **Tests**: the two shell tests above; `the_app_shell_scrolls_main_not_the_document` pins the band's, the
   sheet's, `.container-fixed`'s and the flash's numbers and the form's `flow-root`;
   `the_tab_pages_open_on_their_large_title` reads each tab's band (mark, name, the bell last);
