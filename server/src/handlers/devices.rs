@@ -266,15 +266,6 @@ impl BandAvatar {
             photo: avatar_photo(device),
         }
     }
-
-    /// For a page that reads no `Device` of its own (Device › Calendar).
-    pub(crate) async fn load(db: &sqlx::SqlitePool, id: i64) -> Result<Self, sqlx::Error> {
-        let device = sqlx::query_as::<_, Device>("SELECT * FROM devices WHERE id = ?")
-            .bind(id)
-            .fetch_one(db)
-            .await?;
-        Ok(Self::of(&device))
-    }
 }
 
 /// A phone's connection (design 31 §3.10) from the in-memory stream and last access, and the

@@ -1836,8 +1836,8 @@ pointer here.
 - **A phone's ten pages** (`device_about`, `device_advanced`, `device_apps`, `device_calendar`, `device_calls`,
   `device_filter`, `device_home`, `device_lock`, `device_music`, `device_time`) say whose page it is with the phone's
   picture, since the name left the back link (the user's choice, "Enig i c!"): `devices::BandAvatar { initial,
-  avatar, photo }` from the functions the list and the summary use (`BandAvatar::of(&Device)`, or
-  `BandAvatar::load(db, id)`), drawn as `<span class="band-who" aria-hidden="true">` around the list's own `.avatar`
+  avatar, photo }` from the functions the list and the summary use (`BandAvatar::of(&Device)`, from the
+  `Device` each handler reads once), drawn as `<span class="band-who" aria-hidden="true">` around the list's own `.avatar`
   at 28 px, the photo with an empty `alt` - not spoken (the back link says the name), not a link. It stands between
   the `<h1>` and the actions box and is always shown: the title gives way. Measured at 320 px: "Låseskjerm og
   PIN-koder" reads "Låseskjerm og PIN-ko…", every other title in both languages is whole. The summary and the pages

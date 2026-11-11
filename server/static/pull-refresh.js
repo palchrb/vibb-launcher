@@ -2,7 +2,7 @@
 // gestures for devices taben? Om man drar ned så refresher den ... Kunne også vært når man er inne på
 // en device"). Never on a page with a Leaflet map (its own drags), never elsewhere for now.
 // - With the page at its very top (main, the app shell's scroller, at 0), a downward touch drag shows
-//   a small round arrow at the top of the screen, in the title bar's area; past 70 px of finger
+//   a small round arrow at the top of the screen, just under the band; past 70 px of finger
 //   travel it turns over ("let go"), and a release there turns it into a spinner and reloads the page
 //   - through reconnect.js's reload in place (`window.handyReconnect.reload`): the thin bar, the
 //   "Connecting…" chip and the restart once the server answers, the scroll place kept, the entry

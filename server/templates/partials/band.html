@@ -9,7 +9,7 @@
     phone's small picture (`who`, `devices::BandAvatar`) at the right - it says whose page this is, as the back
     link's word did. `editor`: a page with Save; its band is a child of <body> and stays in place. `bare`: a page
     with no session (the mark, nothing to tap). -#}
-{% macro size(title) %}{% if title.chars().count() > 24 %} band-xlong{% else if title.chars().count() > 16 %} band-long{% endif %}{% endmacro %}
+{% macro size(title) %}{% if title.chars().count() > 24 %} {{ "band-xlong" }}{% else if title.chars().count() > 16 %} {{ "band-long" }}{% endif %}{% endmacro %}
 
 {% macro back(href, parent) -%}
 <a class="nav-back" href="{{ href }}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="visually-hidden">{{ self.back_to(parent) }}</span></a>

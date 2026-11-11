@@ -209,7 +209,7 @@ at the page's top today: it moves to the band, and the summary head keeps the pi
 
 | Template | Gets | Why |
 |---|---|---|
-| `music_spotify_done` | `band::bare`, title `music.spotify.title`, its sentence in the sheet | It is a `main.container` page (no session, no tab bar, no `h1` today) that passes on to the Spotify page at once. With the band it has the same top as the page it lands on, and the rule "every `main.container` opens on the band" has no exception. No bell and no back: it has no session and nowhere to go back to. |
+| `music_spotify_done` | `band::bare`, title `music.settings.short`, its sentence in the sheet | It is a `main.container` page (no session, no tab bar, no `h1` today) that passes on to Music Settings at once (`/music/settings?login=…#spotify-accounts`; the code QA, L3). With the band it has the same top as the page it lands on, and the rule "every `main.container` opens on the band" has no exception. No bell and no back: it has no session and nowhere to go back to. |
 | `login`, `verify_2fa`, `setup_2fa`, `change_password` | nothing new | `body.auth-page`: one centred card with its own `h1.auth-title`, no tab bar, the document scrolls (design 43 §1.4). There is no page name, action or bell to put on a band, and a band above a centred card is a second header. The night strip behind the status bar is on them already. |
 | `lock` | nothing new | The whole page is night with the breathing mark; the splash hands over to it without a change. |
 
@@ -588,8 +588,8 @@ kontakter" says whose page it is. Three ways:
 
 **(c) as built.** The ten pages call `band::phone(title, href, parent, who)`. `who` is `devices::BandAvatar`
 (`initial`, `avatar`, `photo`): the letter, the colour's class and the photo's address that the list and the summary
-show, made in `handlers/devices.rs` (`BandAvatar::of(&Device)`, and `BandAvatar::load(db, id)` for a handler without
-the phone's row at hand); the ten handlers were read one by one and each passes it. The picture is
+show, made in `handlers/devices.rs` (`BandAvatar::of(&Device)`; Device › Calendar reads the
+phone's row once for its name and the picture, the code QA's L1); the ten handlers were read one by one and each passes it. The picture is
 `<span class="band-who" aria-hidden="true">` around the list's own `.avatar`, 28 px, the photo with an empty `alt`:
 never spoken and never a link - the back link still says "Back to Emma". It stands between the title and the actions
 box; none of the ten pages has an action on the band. The summary has no picture on its band (its large one is right
