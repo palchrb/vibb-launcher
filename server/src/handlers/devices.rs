@@ -567,7 +567,10 @@ pub(crate) fn setup_back(lang: Lang, device: &Device) -> (String, String) {
             t(lang, "device.page.advanced").to_string(),
         )
     } else {
-        (format!("/devices/{}#access", device.id), device.name.clone())
+        (
+            format!("/devices/{}#access", device.id),
+            device.name.clone(),
+        )
     }
 }
 

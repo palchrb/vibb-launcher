@@ -1323,6 +1323,9 @@ fn the_app_shell_scrolls_main_not_the_document() {
     ] {
         assert!(editor.contains(needle), "flash: {needle} in {editor}");
     }
+    // The flash's negative margin stays inside its form: scroll-restore.js puts the form back at the
+    // screen top it had, and a margin collapsing through the form would move that top by 15 px.
+    assert_eq!(block(".container-fixed > form"), "display: flow-root;");
     // The bar floats over main's bottom (2026-10-22, the see-through bar): absolute in the body -
     // which is exactly the screen and never scrolls - never against the viewport, and main runs
     // under it with room below its last row for the bar, its 14 px and 16 px clear - the room is

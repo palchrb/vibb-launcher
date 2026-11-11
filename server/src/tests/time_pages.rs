@@ -331,7 +331,9 @@ async fn the_rule_editor_is_one_form_with_a_confirm() {
     }
     // Save sits on the band, above the form, and submits it by its id.
     assert!(bar(&html).contains("form=\"rule\" data-save=\"rule\">Save</button>"));
-    assert!(html.contains(&format!("<form method=\"post\" action=\"{save}\" id=\"rule\">")));
+    assert!(html.contains(&format!(
+        "<form method=\"post\" action=\"{save}\" id=\"rule\">"
+    )));
     assert!(html.find("</header>").unwrap() < all[0].1);
     assert!(html.contains("<option value=\"school\" selected>School</option>"));
     assert_eq!(input_checked(&html, "calls_allowed", ""), Some(false));

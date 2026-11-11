@@ -1,14 +1,22 @@
 # 84 - The PWA's top: one night band on every page (F2b)
 
-Status: design note by the architect, 2026-11-11, on `main` at 9227c709, branch `pwa-band`. Nothing built. Server
-only: templates, `style.css`, two scripts, two handlers' back fields and one helper, tests. No API, no migration, no
-launcher or music change.
+Status: design note by the architect, 2026-11-11, on `main` at 9227c709, branch `pwa-band`. Built on branch
+`pwa-band-1` (revision 3 below), not merged; the Rust tests have run nowhere yet (CI), and §8 is the user's. Server
+only: templates, `style.css`, two scripts, two handlers' back fields and one helper, the ten phone pages' picture,
+tests. No API, no migration, no launcher or music change.
 
 Revision 2 (after design QA, 2026-11-11). What moved: the back link's address is an expression, on two pages a
 handler's (§2); the first header's rule is the lab's five selectors (§4); the push banner has its spacing (§4, §5);
 the new tests count and render, `jstest/locate.test.js` is in, and there is a list of what runs before CI (§7, §9);
 the iPhone list is longer and starts with a before picture (§8); O1 has three options and measured widths and is
 still open, and O2 (a long name is cut) is new and decided (§10).
+
+Revision 3 (the build, 2026-11-11, branch `pwa-band-1`). Built as written; what differs is said in place. The three
+new askama forms compiled as written, so no fallback was taken (§2). O1 is decided, (c): the phone's small picture
+on its ten pages (§2, §3, §10). An editor's form is `display: flow-root`, a fault the Chromium pass found (§4).
+`device_calls` opens on its empty Held section, so its first header is 40 px under the sheet's edge, as on the lab's
+page (§4). The sheet's top is 15 px of padding beside a 1 px border (§4, the last table). §9 has the counts as they
+turned out and what was measured.
 
 The user, 2026-11-11, on the clickable lab's variant F2b: "Jeg liker f2b! Sett den i produksjon!"
 
@@ -44,6 +52,7 @@ template writes a title bar, a back link or an `<h1>` of its own after this. It 
 |---|---|---|---|
 | `band::tab(title, tab)` | the mark | the call's body, then the bell | the five tabs |
 | `band::sub(title, href, parent)` | the back chevron | the call's body | every page under a tab, the inbox |
+| `band::phone(title, href, parent, who)` | the back chevron | the phone's picture, then the call's body | the ten pages of a phone (O1 (c), §10); `who` is the handler's `devices::BandAvatar` |
 | `band::editor(title, href, parent)` | the back chevron | the call's body (Save) | the four editors; adds `band-fixed` |
 | `band::bare(title)` | the mark | nothing | `music_spotify_done.html` |
 
@@ -64,20 +73,22 @@ elsewhere.
 | an `{% if enrolled %}` inside the attribute, and a conditional word | two handler fields, `back_href` and `back_label`, as `device_apps` and `schedule_rule` have | `enroll_code` (`handlers/devices.rs`), `provision_qr` (`handlers/provisioning.rs`) |
 
 `~` is in askama 0.16.0's parser and generator (`Expr::Concat`, read in the source on the build machine) and in no
-template here: that it compiles in a macro call with an integer on one side is an *inference*, the first thing the
-spike shows (§9). If it does not, those 18 take a `back_href` field too. Askama 0.16 has no conditional expression, so
+template here before this. It compiles in a macro call with an integer on one side (the spike, §9), written with a
+space on both sides, which askama's parser wants (`"/devices/" ~ device.id`), so none of the 18 took a `back_href`
+field. Askama 0.16 has no conditional expression, so
 the two conditional pages take handler fields either way: the handler has `enrolled`, the id and the name and writes
 the same two strings. The rendered `<a class="nav-back" href="…">` stays byte for byte: a `~` value is escaped as a
 whole where today only the `{{ }}` part is, askama's escaper touches `< > & " '` alone, none of the template text has
-one, and `query` and `back.1` are escaped as today. *(inference; §9's curl step checks the pinned strings)*
+one, and `query` and `back.1` are escaped as today. (§9's curl step found every pinned string.)
 
 How askama passes them. Read in `askama_derive` 0.16.0's source on the build machine (`generator/node.rs`,
 `helpers/macro_invocation.rs`): call bodies and `caller()` exist. A macro that calls `self.t(...)` exists here
 (`group_flash.html`'s `show`), so the hidden span's words are no risk. New here are three forms: `caller()` with a
 call body, composed arguments, and an `{% include %}` (`bell.html`, which reads `bell`) inside an imported macro -
-that the four macros compile as written is an *inference*, settled by the spike before anything else is written (§9).
-The contract is what is fixed; if askama refuses the form, the fallback is a pair of macros per kind
-(`tab_open(title)` / `tab_close(tab)`) with the actions between them - same output.
+all three compiled as written in the spike (§9), and so did two forms the build added: a macro that calls its
+sibling macros by their bare names (`size`, `back`) from the imported file, and `{% if let Some(src) = who.photo %}`
+in `phone`. No fallback was taken; it would have been a pair of macros per kind (`tab_open(title)` /
+`tab_close(tab)`) with the actions between them.
 
 The output (a tab, then a page under a tab):
 
@@ -96,6 +107,14 @@ The output (a tab, then a page under a tab):
 </header>
 ```
 
+On the ten phone pages (`band::phone`) one element more stands between the `h1` and the actions box - the summary's
+avatar with the list's own classes, never spoken and never a link (§10, O1):
+
+```html
+    <span class="band-who" aria-hidden="true"><span class="avatar [avatar-grey]">E[<img class="avatar-img"
+        src="/phone-avatars/…" alt="" decoding="async">]</span></span>
+```
+
 - **Exactly one `h1`**, and it stays `<h1 class="page-title">X</h1>` with no other attribute; the back link stays
   `<a class="nav-back" href="X">`. The two class names are kept on purpose: about 45 test assertions spell exactly
   those two strings and stay true. Their CSS rules are rewritten (§4).
@@ -109,9 +128,9 @@ The output (a tab, then a page under a tab):
 - **The mark** is decorative (`alt=""`) and is not a link. Today's brand is a `<span>` that does nothing on a tap
   (read in `devices_list.html`); the band's mark does nothing either.
 - **Title size class** on the `<header>`, never on the `h1`: `band-long` for a title over 16 letters, `band-xlong`
-  over 24 (the lab's two steps), counted in the macro (`title.chars().count()`; *inference* that askama takes the
-  call - else a helper beside `t()`). The letters are the translated string's: a page can be `band-long` in one
-  language and not in the other.
+  over 24 (the lab's two steps), counted in the partial by a small macro of its own, `size(title)`
+  (`title.chars().count()`), which the other macros call; the back link is a second one, `back(href, parent)`. The
+  letters are the translated string's: a page can be `band-long` in one language and not in the other.
 - **Focus order** follows the source: the tab bar (first in the source, as today), the back link, the page's actions,
   the bell, then the content. On an editor: tab bar, back, Save, the form's fields - as today.
 - `<header>` inside `<main>` is no landmark; the editors' band, a child of `<body>`, is the page's banner. Accepted.
@@ -153,7 +172,9 @@ page exist as templates: errors are plain text, and `sw.js` caches nothing ("It 
 | `device_zone` | `{{ title }}` (the zone's name, "Ny sone") | `/devices/locate?device={id}#zones` (`nav.locate`) | `form="zone-form"`, `data-save="zone"`, Add when new |
 | `device_calendar_rule` | `{{ title }}` | `/devices/{id}/calendar#rules` (`calendar.title`) | `form="rule-form"`, `data-save="rule"`, Add when new |
 
-**Pages under a tab** - `band::sub`, no action on the band unless said.
+**Pages under a tab** - `band::sub`, no action on the band unless said. The ten pages of a phone - the three rows
+from `device_about` to `device_calendar`, and `device_apps` - call `band::phone` with their handler's `who` (O1 (c),
+§10); none of the ten has an action on the band.
 
 | Template | Title | Back to (spoken parent) |
 |---|---|---|
@@ -207,10 +228,12 @@ app on iOS 27, 60 px + the inset under the old translucent bar), `--band-edge: t
 
 **Rules that come.**
 
-- `.band`: `flex: none; display: flex; align-items: center; background: var(--night); color:
+- `.band`: `display: flex; align-items: center; background: var(--night); color:
   var(--night-text)`, top padding `--band-top`, sides exactly `.container`'s side paddings of today (16 px, the safe-area insets, the 720 px column),
   `padding-bottom: 32px; margin-bottom: -22px` - 10 px of band under the row, then 22 px that the next box covers. The
-  row is `min-height: 44px`, so a larger text size grows the band instead of cutting it. The overlap is the band's
+  row is 44 px at least (the band has no inner box, so the build writes it as the band's own `min-height:
+  calc(var(--band-h) + 22px)`), so a larger text size grows the band instead of cutting it. `flex: none` is
+  `.band-fixed`'s alone: only an editor's band is a flex child (of `body`); a scrolling page's is a block in `main`. The overlap is the band's
   own rule, so it holds for an editor's band as a child of `body` too: what shows behind `main`'s rounded corners
   there is the band's foot. (The lab's `body` was night and hid the difference; the build's is `--bg`.)
 - `.band` also takes today's `.title-bar-night` trick, upward only: `border-image: linear-gradient(var(--night),
@@ -228,27 +251,36 @@ app on iOS 27, 60 px + the inset under the old translucent bar), `--band-edge: t
   `.band .title-action` takes `--night-action`, hover `--night-action-hover`, focus `outline-color:
   var(--night-action)` (the three `.title-bar-night` rules, renamed); `.band .nav-back:focus` the same with
   `outline-offset: -4px`. `.title-add`, `.title-bell`, `.bell-count` and `button.title-action` stay as they are.
+  Two small rules the build added: `.band-actions:empty { display: none }` (a page with no action - most of them -
+  leaves the box's 8 px to the title) and `.nav-back:hover` in `--night-action-hover`, as the actions have.
 - `.sheet`: `background: var(--bg); border-top: 1px solid var(--band-edge); border-radius: 22px 22px 0 0`, top
-  padding 16 px, the sides as `.band`, bottom `calc(16px + env(safe-area-inset-bottom, 0px))`.
+  padding 15 px (the border is there in both schemes, transparent in light, and takes its pixel: 15 + 1 are the lab's
+  16 px from the sheet's edge to its first row), the sides as `.band`, bottom `calc(16px + env(safe-area-inset-bottom, 0px))`.
   `.tab-bar ~ .container > .sheet` takes today's tab-bar room as its bottom padding. `.container-narrow > .band` and
   `.container-narrow > .sheet` take the 480 px column.
-- `.container-fixed` (an editor's `main`): today's side and bottom paddings of `.container`, `padding-top: 16px`,
-  `background: var(--bg)`, the same border and radius as `.sheet`. It scrolls inside its rounded top, so rows pass
+- `.container-fixed` (an editor's `main`): today's side and bottom paddings of `.container`, `padding-top: 15px`
+  (and the 1 px border, as the sheet), `background: var(--bg)`, the same border and radius as `.sheet`. It scrolls inside its rounded top, so rows pass
   under the curve and the hairline never moves.
 - `.editor-flash`: the editors' "Ikke lagret ..." / "Lagret ..." lines, today inside the sticky bar. It is the form's
-  first child, rendered only when there is a flash, holding today's `.bar-flash` paragraphs in today's look:
-  `position: sticky; top: -16px; z-index: 5; margin-top: -16px; padding: 16px 0 8px; background: var(--bg)` - the
-  sticky bar's own arithmetic (an offset counts from inside the scroller's padding, 16 px here), so the line stays
+  first box - its first child but for the hidden fields that `schedule_rule` and `device_calendar_rule` start with -
+  rendered only when there is a flash, holding today's `.bar-flash` paragraphs in today's look:
+  `position: sticky; top: -15px; z-index: 5; margin-top: -15px; padding: 15px 0 8px; background: var(--bg)` - the
+  sticky bar's own arithmetic (an offset counts from inside the scroller's padding, 15 px here), so the line stays
   where it is before any scrolling. The flash is in view wherever the page comes back, as today, and nothing new is
-  drawn on the night band.
+  drawn on the night band. One rule more, found by the build's Chromium pass: `.container-fixed > form { display:
+  flow-root }`. Without it the flash's negative margin collapsed through the form and moved the form's own top edge
+  15 px up, and `scroll-restore.js` puts the form back at the screen top it had before the save - a save came back
+  15 px off (331 -> 316). With it a save comes back where it was (§9). `flow-root` is inside the floor (Chrome 58,
+  Safari 13).
 - The push banner (§5: `.attention.push-banner`, `margin: 0 0 8px`, its look unchanged). On a scrolling page it is
   the sheet's first child, 16 px under the sheet's edge. The header after it is then no first child and keeps its
   own 24 px, into which the banner's 8 px collapse: 24 px from banner to header (12 px to the summary head) - the
   gap today's banner has under the title, with no new rule. On an editor it is first in `main`, right before the
-  form, and `.editor-flash`'s `margin-top: -16px` would lay the flash over the banner's margin and its lowest 8 px.
+  form, and `.editor-flash`'s `margin-top: -15px` would lay the flash over the banner's margin and its lowest 7 px.
   One rule: `.push-banner + form > .editor-flash { margin-top: -8px }` - the flash starts at the banner's lower
-  edge with its line 16 px under it, and once scrolled it sticks exactly as without a banner. *(that the margins
-  collapse through a first `<section>` or `<form>` is an inference; §9's Chromium pass has both cases)*
+  edge with its line 15 px under it, and once scrolled it sticks exactly as without a banner. (Measured in §9's
+  Chromium pass, both cases: the banner at 76-139, a header 24 px under it, an editor's form 8 px under it, the
+  flash box from 139 with its line at 154 and, scrolled, back at 76.)
 
 **Rules that change.** `.container`: `padding: 0` (its top, side and bottom paddings move to the band and the sheet);
 `flex`, `min-height`, `overflow-y`, `overscroll-behavior-y`, `touch-action` and the desktop `overflow-y: scroll`
@@ -260,8 +292,8 @@ sheet, not over the title. `.net-progress`, `.net-chip`, `.timing-line` keep the
 lie over the band's top as they lie over Devices' night bar today.
 
 The page's first header: `margin-top: 10px` in place of its 24 px, so it starts 26 px under the sheet's edge as in
-the lab (40 px without). The lab's five selectors (`lab-f2.css` l. 99-103) as a plain list, written for `.sheet` and
-once more, the same nine lines, for `.container-fixed`:
+the lab (40 px without). The lab's five selectors (`lab-f2b.css` l. 99-103) as a plain list of nine, written for
+`.sheet` alone:
 
 ```css
 .sheet > .group-header:first-child,
@@ -275,11 +307,17 @@ once more, the same nine lines, for `.container-fixed`:
 .sheet > section:first-child > section:first-child > section:first-child > .group-header:first-child
 ```
 
-The nine templates that open on a `<section>` with its header first (`device_about`, `device_advanced`,
-`device_lock`, `dns_filter`, `schedule_budget`, `schedules`, `security`, `updates`, `wallpapers`) take the sixth
-line, `devices_list` (the hidden push offer first) the third. `.sheet > .summary-head:first-child`: 4 px (the lab's
-l. 104). The four editors' first `<section>` has an `aria-label` and no header of its own (read in the four files),
-so a flash as the form's first child moves no header.
+The eleven templates that open on a `<section>` with its header first (`device_about`, `device_advanced`,
+`device_calls`, `device_lock`, `device_time`, `dns_filter`, `schedule_budget`, `schedules`, `security`, `updates`,
+`wallpapers`) take the sixth line, `devices_list` (the hidden push offer first) the third. In `device_calls` and
+`device_time` the first node is a loop over the page's warnings: with none the section is the sheet's first child,
+with one the warning is, and the header under it keeps its 24 px. `device_calls` takes the line only while messages
+wait: its first section is Held, which is always there and empty without them, so the first header a parent sees is
+the next section's with its own 24 px - 40 px under the edge, as on the lab's calls page - or, with no request
+either, no header at all (the Samtaler group, 16 px under the edge). Measured: 26 px on the other ten and on
+`devices_list`, at 390 and 320 px. `.sheet > .summary-head:first-child`: 4 px (the lab's l. 104). The lab wrote the list for its editors' `main` too; the build does not write those nine lines for
+`.container-fixed`, because they would match nothing: the four editors' first `<section>` has an `aria-label` and no
+header of its own (read in the four files), so a flash as the form's first box moves no header either.
 
 **Rules that go.** `.title-bar`, `.title-bar-split`, `.title-bar-night` (and its three action rules), `.vibb-brand`,
 `.vibb-mark`, `.vibb-word` (and `--brand-word`, used by nothing else), the three `.editor-bar` rules,
@@ -398,6 +436,11 @@ Pinned today, and what they pin after:
   a page without a sheet first in `main`.
 - `jstest/locate.test.js` l. 256-268 pins the fake `main`'s `paddingTop: "55px"` and `scrollTop == 900 - 840 - 55`:
   the fake page gets a `.top-strip` with a height, and the expected place is `900 - 840 -` that height `- 8`.
+- Found by the build, outside this list: `settings_pages.rs` (two assertions on a Settings sub page's back link
+  spelled its visible word, `</svg>Innstillinger</a>`; they spell the hidden span, "Tilbake til Innstillinger").
+  New with O1 (c): `device_pages::about_this_phone_shows_the_last_reports_facts` finds the phone's letter with its
+  class on the band between the `h1` and the actions box, and no `band-who` on the summary or on Settings;
+  `avatars.rs` finds the photo on a phone page's band, from the route the summary uses.
 - Untouched: the roughly 45 `<a class="nav-back" href="...">` and `<h1 class="page-title">...</h1>` assertions, the
   auth and lock pages' tests, `every_form_on_every_page_lands_on_its_own_group`.
   `every_class_a_template_uses_is_in_style_css` passes once the new classes have their rules.
@@ -471,11 +514,41 @@ in this order:
 
 Then CI by dispatch.
 
+**As it turned out (2026-11-11, branch `pwa-band-1`).** Two commits and a third for the pass's fix and the notes: the
+spike (11 files, +119/-26; its sub page with an id in the href was `device_calendar_add`), then everything else (67
+files, +881/-378). 49 templates call the band - 5 tabs, 29 `sub`, 10 `phone`, 4 editors, 1 `bare` - and five have none
+(`login`, `lock`, `change_password`, `setup_2fa`, `verify_2fa`). The binary built without a warning, `cargo fmt
+--check` and clippy on the binary are clean, the 335 `jstest` tests pass. Not run: the Rust tests (the test crate is
+not compiled on the build machine; CI) and §8.
+
+- *curl and grep*, a throwaway server with a seeded family, signed in, `?lang=nb` and `?lang=en`: all 49 answer 200
+  with exactly one `<h1`, one band and, but for the editors, one sheet; every literal the tests pin was found.
+- *The sweep*, Chromium, 71 addresses at 390 and 320 px, light in both languages and dark: 426 loads, no sideways
+  scroll of the document, `body` or `main`, one band as wide as the screen, the title on one line, the back link
+  46x44 px, every action on the screen. The band is 82 px high in a browser tab (no inset) and the sheet or an
+  editor's `main` starts at 60; its edge is 1 px, transparent in light and `#34344A` in dark, radius 22 px.
+- *A long name*: the 40-letter phone's name on its own summary is 32 px too long at 390 px (19 px type) and 69 px at
+  320 px (17 px type): 36 and 31 of its letters would fit, less the ellipsis's own width, on one line. Beside the
+  picture at 320 px "Låseskjerm og PIN-koder" is 5 px too long and reads "Låseskjerm og PIN-ko…"; "Lock Screen &
+  PINs" and "Anrop og kontakter" are whole. Nothing else is cut.
+- *A save's place* (`main.scrollTop` before -> after, at 390x560 and 320x480): `schedule_rule` 331 -> 331 and
+  518 -> 518, `device_bedtime` 114 -> 114 and 424 -> 424, `device_zone` (a refused save) 275 -> 275 and 355 -> 355;
+  the flash at 76, right under the band, in each, and still there scrolled to the end. A zone's good save leaves for
+  Locate and lands on its row. `device_calendar_rule`'s refused save lands on the form's top with the refusal in
+  view: its form posts to another path than the page's, so `scroll-restore.js` has nothing to restore - as before
+  this design.
+- *Scripts off*: the band and the sheet the same; a save on the rule editor shows its flash at 76.
+- *The push banner* (the page's own script builds it in the place `register-sw.js` gives it): §4's numbers, and no
+  sideways scroll at either width.
+- *The landing* from the QR page's back link, `/devices/{id}#access`: the group at the top of the view, the band
+  scrolled away.
+
 ## 10. Points for the user
 
-One open, one decided.
+Both decided.
 
-**O1 - Which phone am I on? Open; the user is asked.** Today ten of a phone's pages (Anrop og kontakter, Tidsregler,
+**O1 - Which phone am I on? Decided: (c), the phone's small picture.** The user, 2026-11-11: "Enig i c!". What was
+built stands under the three options, which are kept as they were asked. Before this design ten of a phone's pages (Anrop og kontakter, Tidsregler,
 Nettfilter, Hjem-skjerm, Låseskjerm og PIN-koder, Musikk, Kalender, Apper, Om denne telefonen, Avansert) show the
 phone's name as the back link's word, "‹ Emma", above the title. In F2b the chevron stands alone and the name is
 only spoken. The lab had one phone, so it never showed the cost: with two phones nothing at the top of "Anrop og
@@ -510,14 +583,19 @@ kontakter" says whose page it is. Three ways:
   at 320 px the three long titles have no name at all. The name is there on most pages and short or gone exactly on
   the longest titles.
 - **(c) The phone's small picture at the band's right.** The summary's avatar - the photo, or the initial on the
-  phone's colour - at 28 px. Its width is fixed (36 px with its gap), so it sits beside every title at 390 px and
-  beside nine at 320 px; "Låseskjerm og PIN-koder" has 32 px there and would lose its last letter or two. It says
-  which phone without words, as far as the pictures differ: two phones with no photo and the same initial differ by
-  the colour alone. It costs three values (`initial`, `avatar`, `photo`) in the ten pages' handlers; today the list
-  and the summary make them (`handlers/devices.rs`). *(the ten handlers were not read one by one)*
+  phone's colour - at 28 px. Its width is fixed (36 px with its gap). It says which phone without words, as far as
+  the pictures differ: two phones with no photo and the same initial differ by the colour alone.
 
-The build may start before the answer: the ten pages call `band::sub` with an empty body, which is (a), and (b) or
-(c) is one element in each and a few CSS rules on top. But no release and no §8 walk before the answer.
+**(c) as built.** The ten pages call `band::phone(title, href, parent, who)`. `who` is `devices::BandAvatar`
+(`initial`, `avatar`, `photo`): the letter, the colour's class and the photo's address that the list and the summary
+show, made in `handlers/devices.rs` (`BandAvatar::of(&Device)`, and `BandAvatar::load(db, id)` for a handler without
+the phone's row at hand); the ten handlers were read one by one and each passes it. The picture is
+`<span class="band-who" aria-hidden="true">` around the list's own `.avatar`, 28 px, the photo with an empty `alt`:
+never spoken and never a link - the back link still says "Back to Emma". It stands between the title and the actions
+box; none of the ten pages has an action on the band. The summary has no picture on its band (its large one is right
+under it), and nothing of (b) is built. What it costs, measured: the picture is always shown and the title gives way.
+At 390 px all ten titles are whole in both languages; at 320 px "Låseskjerm og PIN-koder" is 5 px too long and reads
+"Låseskjerm og PIN-ko…", and every other Norwegian title and all ten English ones are whole.
 
 **O2 - A long name is cut. Decided.** The user, 2026-11-11: "Langt telefonnavn kan trygt kuttes, det er et
 kjempe-edge case". A title that does not fit its line is cut with an ellipsis, on every page; no title wraps to a
@@ -547,3 +625,6 @@ The lab is the look; these are the places where its own code cannot be the build
 | the editors' flash lines: nowhere (forms were switched off) | `.editor-flash` (§4) | the lab never showed a save |
 | the push banner, the map's scroll offset: not there (scripts were removed) | §5's two changes | the same |
 | `device_calendar_caldav`, `device_calendar_link`, an existing title rule, `enroll_code`, `password_sign_in`, `music_spotify_done`: not in the lab | §3's rows | they follow the same two macros as their neighbours |
+| the sheet's top padding 16 px, no border in light | 15 px and a 1 px border that is transparent in light | one box model in both schemes: the first row is 16 px under the sheet's edge either way |
+| the first-header list written for the editors' `main` too | for `.sheet` alone | no editor opens on a header (§4) |
+| a phone's ten pages: the chevron alone, no word of whose page it is | the phone's small picture at the band's right | O1 (c), the user's choice after the lab (§10) |

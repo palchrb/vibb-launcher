@@ -2765,6 +2765,10 @@ input.row-num { width: 6.5em; text-align: right; }
     background: var(--bg);
 }
 .editor-flash > .bar-flash { border-radius: 10px; }
+/* The flash's negative margin must not move its form's own top edge (it would collapse through the
+   form): scroll-restore.js puts the form back where it was on the screen, so a save would come back
+   15 px off. The form keeps its margins to itself. */
+.container-fixed > form { display: flow-root; }
 /* The push banner (register-sw.js) is first in an editor's main, right before the form: the flash
    starts at the banner's lower edge instead of over it, and sticks as without a banner. */
 .push-banner + form > .editor-flash { margin-top: -8px; }
