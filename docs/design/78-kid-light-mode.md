@@ -765,11 +765,20 @@ one recording in each look.
 nothing was built or run for this revision. **Nothing below is built, and nothing is until §12.7's spike has passed.**
 Older sections are not rewritten; §12.8 says which of their lines this replaces.
 
+**Revised 2026-11-11 after the design QA** (`docs/review/qa-78-design.md`, "Revision 3 (2026-11-11)": the mechanism
+holds against the sources; 0 High, 2 Medium, 5 Low, 3 Nit). Every finding is taken as the QA's smallest change and none
+is answered: M1, L2, L3 and L4 in §12.7 (the QA's S1-S4), with the spike as a run sheet in §12.7.1; M2 in R6; L1 in R4
+and R5; L5 in §12.4; N1 in the marks below, R8, §12.6 and §12.9; N2 in R2; N3 in R2, R9, §12.4 and leg A7. The decision
+is the same, and this round was paper too.
+
 Where each claim comes from is marked:
 **(seen)** on `jelly36` in step 1's two passes (`docs/testing/emulator.md` §6ah, `docs/review/qa-78-step1-code.md`);
-**(code)** read in this branch's code; **(AOSP)** read in `frameworks/base` at tag `android-16.0.0_r1`;
-**(AndroidX)** read in `AppCompatDelegateImpl` on `androidx-main` - not the 1.7.1 tag the app builds with, whose sources
-were not at hand; **(inferred)** concluded from those and seen nowhere.
+**(code)** read in this branch's code; **(AOSP)** read in `frameworks/base` at tag `android-16.0.0_r1` - by the
+architect, or by the design QA alone where it says "the QA's read";
+**(AndroidX)** read in `AppCompatDelegateImpl`: for the first writing on `androidx-main`, and since in the sources of
+AppCompat 1.7.1, the version the app builds with - by the design QA, and again by the architect for this revision;
+**(inferred)** concluded from those and seen nowhere; **(from memory)** a command or a behaviour neither read nor run.
+Nothing rests on one: §12.7 tries the commands first, and R6's rule holds either way.
 
 ### 12.1 Why
 
@@ -797,13 +806,17 @@ night one and a light one - and the launcher's own code picks the class.**
 
 - **R1. `setApplicationNightMode` is called nowhere.** `PageLookScanTest` holds it as a source scan over the whole main
   source set. The launcher's state in the system is then exactly main's: a record with the languages alone.
-- **R2. Two activities per own-task page.** The class as it is (`DayActivity`, `EventActivity`, `EventEditActivity`)
-  is the night one; beside each a subclass with an empty body (`LightDayActivity`, `LightEventActivity`,
-  `LightEventEditActivity`) is the light one. The manifest entries of a pair are identical - launch mode, the `.day`
-  affinity, not exported, `windowSoftInputMode` - but for the theme. All three need a twin, not only the task's root:
+- **R2. Two activities per own-task page.** The class as it is (`DayActivity`, `EventActivity`, `EventEditActivity`) is
+  the night one - and that choice is what makes an update from a released build safe: a phone on main has a `.day` card
+  rooted at `DayActivity` and no stored look, and an absent look is the dark one (code). Beside each a subclass with an
+  empty body (`LightDayActivity`, `LightEventActivity`, `LightEventEditActivity`) is the light one; the three classes
+  become `open` for it. The twins live in `ui/day/` beside them: `DayTaskTest` holds that no activity outside `.ui.day.`
+  has the `.day` affinity (code). The manifest entries of a pair are identical - launch mode, the `.day` affinity, not
+  exported, `windowSoftInputMode`, `configChanges` - but for the theme. All three need a twin, not only the task's root:
   any of them can be the top of the task when it is brought forward after the process died, and that window is drawn
-  from the top activity's theme (AOSP, §12.3). An `<activity-alias>` cannot do it: it has no theme of its own (the
-  manifest documentation; not re-read in the source).
+  from the top activity's theme (AOSP, §12.3). An `<activity-alias>` cannot do it: the parser reads an alias's own
+  attributes - no theme among them - and makes the rest from its target (AOSP, `ParsedActivityUtils.java:264-328`); and
+  an alias runs its target's class, so R4 could not read the look from it (inferred).
 - **R3. Each variant's theme carries the window's items as literals.** `android:windowBackground`,
   `android:windowSplashScreenBackground`, `android:windowLightStatusBar`, `android:windowLightNavigationBar` and
   `android:enforceNavigationBarContrast` are set in a night theme and a light theme over a shared `KidPageTheme`, with
@@ -813,22 +826,63 @@ night one and a light one - and the launcher's own code picks the class.**
   **phone's** night bit (AOSP, §12.3): a qualified colour there would follow the phone, not the look. Everything else
   stays as built: the page tokens in `values/` and `values-notnight/`, reached through the page's own AppCompat mode.
 - **R4. A page's content follows its class.** `lookNightMode()` (the AppCompat local mode set in `attachBaseContext`,
-  §5.3's second bullet) comes from the variant the class is, not from the stored look, so a window and its content
-  can never disagree. One table in `ui/look/` pairs the classes; it answers "the class of this page in this look" and
-  "the look of this class", and it is the only place that names a light class (a scan test).
+  §5.3's second bullet) comes from the variant the class is, not from the stored look, so a window and its content can
+  never disagree. One table in `ui/look/` pairs the classes; it answers "the class of this page in this look" and "the
+  look of this class", and it is the only place that names a page class, night or light, as `::class` (R5's scan).
 - **R5. One chooser.** Every start of a page goes through the pages' own intent builders (`DayActivity.intent`,
-  `EventActivity.intent`, `EventEditActivity.newIntent` / `editIntent` - the only ones that name the classes, code),
-  which ask the table with the applied look. A start inside the task gets no starting window while the process runs
-  (AOSP) and still picks the variant, for R4.
-- **R6. A living page task is always of the stored look.** A change (§5.4's step 2) keeps what it does - finish the
-  live pages, remove the page tasks - and turns the order round: the tasks are removed **first**, the new look is
-  stored after. Step 1 stored first so that a process dying in between came back in the new look and the unlocked
-  start repaired the system's value; there is no system value any more, and a death between the two now leaves no page
-  task and the old look - the kid's tap lost, nothing mixed. It closes the leftover of step 1's code QA L4 (§5.4, "Fix
-  round": an old-look card after a death between the write and the removal). `closesTask` and `languageClosesTask`
-  name both roots of a pair, through the table. `KidPageActivity.onCreate` checks its class against the applied look
-  and, if they ever differ, logs and removes its task before any content is set: an assertion - by the order above no
-  such activity exists - not a route.
+  `EventActivity.intent`, `EventEditActivity.newIntent` / `editIntent` - today the only ones that name the classes,
+  code), which ask the table with the applied look. `PageLookScanTest` holds it from the names' side: **no page class,
+  night or light, is named as `::class` anywhere in the main or the debug source set outside the table** - the builders,
+  `closesTask` and `languageClosesTask` get their classes from it. The night name is the dangerous one: a later
+  `Intent(this, EventActivity::class.java)` compiles, works in Mørk, and in Lys opens a night page that R6's check
+  closes at every tap - a door that never opens in one look, the one way this design can take a page from the kid
+  (inferred). An `is DayActivity` check stays allowed; it holds for a twin too. A start inside the task gets no starting
+  window while the process runs (AOSP) and still picks the variant, for R4.
+- **R6. A living page task is always of the stored look.** A change (§5.4's step 2) keeps what it does - finish the live
+  pages, remove the page tasks - and turns the order round: the tasks are removed **first**, the new look is stored
+  after. Step 1 stored first so that a process dying in between came back in the new look and the unlocked start
+  repaired the system's value; there is no system value any more, and a death between the two now leaves no page task
+  and the old look - the kid's tap lost, nothing mixed. It closes the leftover of step 1's code QA L4 (§5.4, "Fix
+  round": an old-look card after a death between the write and the removal). `closesTask` and `languageClosesTask` name
+  both roots of a pair, through the table.
+
+  Two refusals keep the rule by not changing:
+
+  - **The look is stored only when a second read of `ActivityManager.appTasks`, made after the removals, shows no page
+    task.** A removal that failed for another reason than "already gone" (`closePageTasks` catches a `RuntimeException`
+    per task and goes on - code) would otherwise leave an old-rooted task for the next open to stack the new class on
+    (§12.3, "Two classes, one affinity"), where no check sees it. A removal that worked is out of that list when its
+    call returns: `removeTask` takes the task out of the recent tasks in the same call, and `appTasks` is read from them
+    (AOSP, `ActivityTaskSupervisor.java:1766-1843`, `RecentTasks.java:928-946`; `AppTaskImpl` between them not read -
+    leg A5 shows it).
+  - **The look changes in memory only when `commit()` returned true** (`store` drops the result today - code). On false
+    the old values are committed again, so that the process's preferences object holds no look that `applied` and the
+    disk do not, for a later write to carry out (from memory: a failed commit leaves its values in the process's map;
+    `SharedPreferencesImpl` not read).
+
+  After either refusal nothing has changed but the page tasks that closed: `E PageLook`, the kid's tap is lost - the
+  choice goes back to the applied look, in the store too where a waiting one was written - the control shows the applied
+  look, and the next open is in the old look. Nothing tries again on its own; a refused change runs only at a new tap.
+  `PageLookTest` gets a row for each refusal.
+
+  `KidPageActivity.onCreate` checks its class against the applied look (a one-class page, R9, has no row in the table
+  and passes) and, if they differ, writes `E PageLook` and removes its task before any content is set. **That check is a
+  route, not only an assertion**: the order above does not exclude every way to a page of the other class. Two stay
+  reachable, both rare (inferred):
+
+  1. **Power lost** - not a clean shutdown - between the look's commit and the system's delete of the removed task's
+     file, which its writer does lazily, when its queue runs empty (AOSP, `TaskPersister.java:430-446`): the old card is
+     back after the boot, with the new look stored.
+  2. **L5's shape** (§8): a waiting change run by a Home resume between a page's start and its creation.
+
+  What the kid sees on them: one starting window in the other look - the system's, drawn before any code of ours, the
+  one frame the ground rule forbids - then the task closes and the screen below is back; the next tap makes a right
+  task. Nothing strands and nothing loops: after the removal there is nothing left to trigger it again. On the first
+  route opened from Home's tile instead of the card the kid gets the right page whichever way the system takes it: the
+  restored task is either not found by the start - a new task, and the old card leaves Recents as the older entry of its
+  affinity - or the new class is stacked on it, and the check closes the task when Back reaches the old page under it,
+  where Back was leaving Kalender anyway (inferred; which of the two was not read). Removing the task is the answer and
+  stays the only one: a softer one - a restart through the chooser - would hide the cause and is not added beside it.
 - **R7. Nothing outside the launcher's process holds a variant's name.** A `PendingIntent`, an exported entry or a
   persistent preferred activity that names a variant would be started - starting window first - in the look of the day
   it was made. None exists today: no `PendingIntent` names a Dagen page, and no variant is exported (code). From step
@@ -841,13 +895,17 @@ night one and a light one - and the launcher's own code picks the class.**
 - **R8. Pages declare `uiMode`.** Without an app night mode the phone's own dark-theme switch (schedule, Battery
   Saver) reaches every activity as a configuration change, and one that does not declare it is relaunched (AOSP,
   `ActivityRecord.shouldRelaunchLocked`). A page declares it like every other activity and stays as it is: AppCompat
-  pins the resources to the local mode again and does not recreate an activity that handles `uiMode` (AndroidX; the
-  same client path was seen on the non-page activities at step 1's changes of look). `PageManifestTest`'s rule becomes
-  "every activity declares `uiMode`".
+  pins the resources to the local mode again and does not recreate an activity that handles `uiMode` (AndroidX,
+  1.7.1's `AppCompatDelegateImpl.java:672-702, 2793-2815`; the same client path was seen on the non-page activities at
+  step 1's changes of look). It reads the declared flags for the host's own class (AndroidX, `2945-2970`), so a twin's
+  own manifest entry must declare `uiMode`: R2's "identical but for the theme" carries that. Not read: that the
+  framework keeps AppCompat's override when it updates the activity's resources (`ResourcesManager`) - inferred, and
+  leg A4's to show. `PageManifestTest`'s rule becomes "every activity declares `uiMode`".
 - **R9. Pages in Home's task need one class.** An activity in Home's task is home-type and never gets a theme-drawn
   starting window (AOSP, `getStartingWindowType`); its first frame is its own. Step 2's lists (Wi-Fi, Bluetooth, sound)
   and the phone book opened from Home keep one manifest entry on the qualified `KidPageTheme` as step 1 built it, with
-  the AppCompat mode from the applied look. The phone book's other doors are §12.9's first open point.
+  the AppCompat mode from the applied look. Such a page has no row in the table and passes R6's check by the applied
+  look. The phone book's other doors are §12.9's first open point.
 
 What does not change: D1-D4, D6, D7; the tokens (§4); the pages' AppCompat mode in `attachBaseContext` and one
 `onCreate` per open; `PageColors`; the dialogs and pickers; the night pin and `uiMode` of every non-page activity (its
@@ -907,19 +965,26 @@ system held the other one):
   reads the window context's theme, which is the same under both mechanisms: a Lys page is a light window either way.
   The switch was not found on the image (seen: a hand-written settings key did nothing). Unchanged, still open.
 - **A page reopened from its Recents card, with a snapshot.** The snapshot is used only when its top component is the
-  activity coming forward (AOSP); by R6 a card that exists is of the stored look, so its snapshot is too. A phone-theme
-  flip does not make a snapshot stale - the page did not change with it.
+  activity coming forward (AOSP); by R6 a card that exists is of the stored look - but for R6's two named routes - so
+  its snapshot is too. A phone-theme flip does not make a snapshot stale - the page did not change with it, and nothing
+  in the Shell's snapshot classes reads the snapshot's `uiMode` (AOSP, the QA's read).
 - **A card reopened after the process died or after a reboot.** No snapshot fits or none is kept; the system draws a
   splash from the **top** activity's manifest theme (AOSP) - hence a twin for the event page and the editor (R2) - and
-  the activity is created again as the same class. Right by R6.
+  the activity is created again as the same class. Right by R6, but for its two named routes. The branch taken is
+  "a switch of task to an activity not yet created", not "no process": the pages run in the launcher's main process,
+  with Home (code), which is up again before the kid can tap.
 - **After a change of look.** The page tasks are gone (R6; seen for Kalender in the pass: its card closed, the next
   open clean), so there is no card and no snapshot of the old look to come back.
 - **Two classes, one affinity.** `NEW_TASK` to a class finds a task whose root is that class, or else one with the
   same root affinity, and then puts the new activity **on top of it** (AOSP: `RootWindowContainer.FindTaskResult`,
   `ActivityStarter`'s "place the new activity on top of the current task"). So there is one `.day` task and one
   Recents card whatever the class - and a light class started while a night-rooted task lived would be stacked on it.
-  R6 is what excludes that; it is load-bearing, and the spike's leg A5 looks for exactly this. `singleTop` is per
-  class and works as today inside a variant; no page is `singleTask` or `singleInstance` (code).
+  R6 is what excludes that - its first refusal for the removal that fails; it is load-bearing, and the spike's leg A5
+  looks for exactly this. A task whose top activity is finishing is skipped by the search
+  (`RootWindowContainer.java:369-376`), so a start right after R6's removal makes a new task; and Recents cannot show
+  two `.day` cards, since adding a task removes the older entry of the same affinity (`RecentTasks.java:1662-1722`;
+  both AOSP, found by the QA). `singleTop` is per class and works as today inside a variant; no page is `singleTask`
+  or `singleInstance` (code).
 - **Starts inside a page** (day view -> event -> editor): no starting window with the process running (AOSP); the
   variant comes from R5.
 - **Stale intents.** R7. Until step 2 there is none to go stale.
@@ -945,24 +1010,29 @@ system held the other one):
 | Part | Under revision 3 |
 |---|---|
 | Tokens and resources (`values/` and `values-notnight/` colours, `PageColors`, `KidPageAlertDialog`, the day picker) | Stay |
-| `KidPageTheme` | Changes: the look-neutral items stay; a night and a light theme over it carry R3's five window items as literals. One unqualified paper colour is added; the two `bools_kid_page.xml` go |
-| `KidPageActivity` | Stays (the AppCompat mode, `PageColors`, the registry and the started count); `lookNightMode()` reads the class (R4); the assertion (R6) |
-| `LookState` / `PageLook` | Stay: the store, `choose`, `mayChange`, the waiting change at Home's resume, `wrap`. Go: `LookHost.applyNightMode`, the system's value in `nightValues`, the unlocked start's call (it only reads the store now) and its timed log line. Changes: `change`'s order (R6); the table (R4) |
+| `KidPageTheme` | Stays as built, qualified: R9's one-class pages use it as it is, the two `bools_kid_page.xml` with it. A night and a light theme over it set R3's five window items again, as literals, for the twins. One unqualified paper colour is added |
+| `KidPageActivity` | Stays (the AppCompat mode, `PageColors`, the registry and the started count); `lookNightMode()` reads the class (R4); R6's check |
+| `LookState` / `PageLook` | Stay: the store, `choose`, `mayChange`, the waiting change at Home's resume, `wrap`. Go: `LookHost.applyNightMode`, the system's value in `nightValues`, the unlocked start's call (it only reads the store now) and its timed log line. Changes: `change`'s order and its two refusals (R6), `store` handing back `commit()`'s result; the table (R4) |
 | The manifest | Three more entries; `uiMode` on the six page entries |
-| The intent builders in `ui/day/` | One line each (R5) |
+| The pages in `ui/day/` | The three classes `open`, their twins beside them (R2); the intent builders one line each (R5) |
 | The kid Settings row and the preview | Stay, debug-only until step 2 |
 | The night pin and `uiMode` of the non-page activities, `PlayLinkBlockedTheme` | Stay |
 | The language fix (`LauncherLanguage`: the unlocked start's ask, the repair at Home's resume, the late retry) | **Leaves this design.** Its design-78 reason is gone: with no night mode the write record always holds the languages (AOSP: `updateFromImpl` fills it with the first of night mode, languages and gender it holds; seen: the clock app, with no night mode, kept its languages over the boot that took the launcher's). What is left is main's own, older and narrower (seen on main: a second change of language in one process life refused under another type of activity; read: a process alive before the unlock never gets the record's values). The code stays as built until that is decided as its own item (§12.9) |
 | The channels named again on a change of the process's languages | Stays with the language fix; it is the same "process without the record's values" case, which main has too |
-| Tests | `PageManifestTest` (pairs identical but for the theme; every activity declares `uiMode`), `PageLookScanTest` (R1, R5, R7; the "night mode before the language" order scan goes), `PageLookTest` (the order of a change, no system call; the table), `KidPaletteTest` (the literal paper equals the token), `SplashThemeTest` (each variant's splash ground and bar items are literals), `PageTokensScanTest` (no page token through the application's context), `DayTaskTest`, `LockGlanceGuardTest`, `TimeLockModelTest`, `LauncherLocaleTest` (the class names) |
+| Tests | `PageManifestTest` (pairs identical but for the theme; every activity declares `uiMode`; its source check takes a twin's form, `: DayActivity()`, beside `: KidPageActivity()`), `PageLookScanTest` (R1; R5's scan over both names; R7; the "night mode before the language" order scan goes), `PageLookTest` (the order of a change, no system call; a row for each of R6's refusals; the table), `KidPaletteTest` (the literal paper equals the token), `SplashThemeTest` (each variant's splash ground and bar items are literals), `PageTokensScanTest` (no page token through the application's context), `DayTaskTest` (six names in `.ui.day.`; its "none outside `.ui.day.` has the affinity" stands because the twins live there), `LockGlanceGuardTest`, `TimeLockModelTest`, `LauncherLocaleTest` (the class names) |
 
 No clean-up code: `kid-look-1` is unmerged and no released build ever set a night mode. A test device that ran step 1
-carries one, and setting it back to "follow the phone" is not the same as never having set it - the record then holds
-a 0, which still goes into the write record first and alone (AOSP, `updateNightMode`). Such a device is wiped, or the
-package uninstalled (the record goes with it - AOSP, `onPackageUninstall`); the AVD is restored.
+carries one, and setting it back to "follow the phone" is not the same as never having set it **while the record
+lives**: the record then holds a reset night mode, which still goes into the write record first and alone (AOSP,
+`updateNightMode`). The record itself goes when the night mode is absent or reset, the languages are empty and the
+gender is unset (AOSP, the QA's read: `PackageConfigPersister.java:198-207`), so emptying the app's languages after a
+reset would clear it too (inferred). The step 1 build has no call that sets the mode back, so the plain instruction
+stands: such a device is wiped, or the package uninstalled (the record goes with it - AOSP, `onPackageUninstall`); the
+AVD is restored.
 
-Size, roughly: 18 files, about 300 lines added and 200 removed, more than half of it in the tests. Production code:
-about 90 added (three empty classes, three manifest entries, two small themes, the table) and 110 removed.
+Size, roughly: 18 files, about 330 lines added and 200 removed, more than half of it in the tests. Production code:
+about 105 added (three empty classes, three manifest entries, two small themes, the table, R6's two refusals) and 110
+removed.
 
 ### 12.5 The kept mechanism with the gate, and why not
 
@@ -1003,9 +1073,15 @@ look's call path.
   mechanism, whose step 0 on the Jelly Star was never run either (the code QA's open list). This route is the plainer
   one - a literal `windowSplashScreenBackground` in a manifest theme is the documented splash API, and the app already
   rests on it for the PIN lock and Home.
-- **Every door into an own-task page must go through the chooser.** Held by one table, the scans (R5, R7), the
-  assertion (R6) and by there being few doors: three intent builders today.
-- **Pages now get the phone's theme flips** (R8). Read in `androidx-main`, not in 1.7.1; leg A4 is its proof.
+- **Every door into an own-task page must go through the chooser.** Held by one table, the scans (R5's over both
+  names, R7) and by there being few doors: three intent builders today. A door that gets past them names a night
+  class, and R6's check then closes it in Lys at every tap - seen at once, never a night page left standing.
+- **R6's check is a route on two rare paths** (a power cut before the removed task's file is deleted; L5's shape): one
+  starting window in the other look, then the task closes. Named in R6, not closed.
+- **Pages now get the phone's theme flips** (R8). The client's side is read in AppCompat 1.7.1; the framework's -
+  that it keeps the override when it updates the activity's resources - is not. Leg A4 is the proof on the device.
+- **The spike's log lines rest on two commands from memory** (§12.7). Its first step tries them, and A2 carries the
+  proof where they do not print.
 - **Twice the manifest entries for own-task pages**: three more now, two or three more in step 2. `PageManifestTest`
   holds each pair identical but for the theme, so they cannot drift.
 - **The phone book's doors from outside** (§12.9) are read, not seen.
@@ -1016,66 +1092,217 @@ look's call path.
 
 A throwaway branch off `kid-look-1` (`spike-78-twins`, never merged), a debug build on `jelly36` (480x854, 240 dpi,
 Android 16) from a **restored clean AVD** - one that carries a night mode from the earlier passes proves nothing
-(§12.4's last paragraph). The
-launcher's language is set to the one the phone does not have.
+(§12.4's last paragraph). The launcher's language is set to the one the phone does not have. §12.7.1 is the same spike
+as a run sheet: this text gives the reasons, the sheet the order.
 
-**Build, the smallest that answers** (about 100 lines):
+**What carries the proof**, heaviest first:
 
-- the `setApplicationNightMode` call removed, and the unlocked start's language ask switched off (so that the boots
-  below show what the record alone keeps);
-- the three light classes (empty subclasses), their manifest entries, the night and the light theme with R3's
-  literals, `uiMode` on all six entries, R4, R5 and R6's order - no tests, no assertion;
+1. **The system's own lines about every starting window** (S1). Two debug log groups are on for the whole run. The
+   server's `WM_DEBUG_STARTING_WINDOW` prints "Checking theme of starting window: 0x%x", "Creating
+   SplashScreenStartingData" and "Creating SnapshotStartingData" (AOSP, the QA's read:
+   `ActivityRecord.java:2235, 2348, 2359`). The Shell's `WM_SHELL_STARTING_WINDOW` prints "addSplashScreen for package:
+   %s with theme: %s for task: %d, suggestType: %d", "addSplashScreen: creating context based on task Configuration %s"
+   and "getWindowAttrs: window attributes color: %s, replace icon: %b" - the theme and the colour as hex without a
+   prefix (AOSP, `SplashscreenContentDrawer.java:169-171, 198-200, 487-489`). The commands that switch them on are
+   **from memory**, the QA's and not read: `wm logging enable-text WM_DEBUG_STARTING_WINDOW`, and for the Shell
+   `dumpsys activity service SystemUIService WMShell protolog enable-text WM_SHELL_STARTING_WINDOW`. So the spike's
+   first step on the image is to try them.
+2. **The held process** (A2): the window the system drew, alone on the screen, with the launcher's process stopped.
+3. **The recordings** (A1): the eye's check, and no more. In Lys the wrong frame would be a dark flat one inside the
+   cross-fade out of dark Home, and an emulator's recording does not say which frames it missed (inferred) - so no row
+   rests on a recording alone.
+
+**If the image will not print the lines, A2 carries it.** The run then says so in its first line - both groups, one, or
+none - the must-show below is judged from what does print, and every open it would have judged (A5's first open after a
+change, each of A6's, leg C's two taps) is made once more under A2's rule: the launcher's process held where it is
+alive, `dumpsys window windows` and a screenshot taken while the starting window stands. The spike does not wait for a
+way to print them.
+
+**The must-show on the lines**, for every open of a page in A1, A2, A5, A6 and leg C:
+
+- an open that makes the task, or that opens a task whose activity is not created (after a reboot, after the process was
+  killed): a splash - the theme logged is the variant's, one of the two resource ids of the spike's night and light
+  theme read from the spike APK's resource table, and every colour logged for it is the look's literal, `ff0c0c14` in
+  Mørk and `fff6f2ef` in Lys;
+- an open that brings a living task forward: a snapshot - or, where the Shell has none, its solid-colour splash, with
+  the theme and the colour as above (AOSP, `PhoneStartingWindowTypeAlgorithm.java:88-96`);
+- never a snapshot where the task was not alive, and never the other variant's theme id or colour.
+
+**Build, the smallest that answers** (about 120 lines; §12.7.1's step 1 has it file by file):
+
+- the `setApplicationNightMode` call removed, and the unlocked start's language ask switched off (so that A7's boots
+  show what the record alone keeps);
+- the three light classes (empty subclasses), their manifest entries, the night and the light theme with R3's literals -
+  both still inheriting `windowDisablePreview` from `launcherBaseTheme`, as the real build will - `uiMode` on all six
+  entries, R4, R5, and R6's order with its second read;
+- R6's check **as its log line alone** (S3): a page whose class is not the applied look's writes `E PageLook` in
+  `onCreate` and does nothing else, so that A8's "no `E PageLook`" says over the whole run that no page of the wrong
+  class was ever created. Without the line nothing in this build writes that tag once `applyNightMode` is gone (code).
+  No tests;
 - leg B: `KidSoundPickerActivity` (in Home's task) on step 1's qualified `KidPageTheme`, its AppCompat mode from the
   applied look - no tokens swapped, the window's ground is enough;
 - leg C: a debug-only notification whose `PendingIntent` names a look-less entry (translucent, `noHistory`,
   `excludeFromRecents`) that starts `DayActivity.intent(...)`.
 
-**Leg A - the own-task page.** Every recording at 60 fps, stepped frame by frame; "the page's area" is everything
-under the status bar.
+**Leg A - the own-task page.** "The page's area" is everything under the status bar. An open "makes the task" when no
+`.day` task exists (right after a change of look, or the card swiped away) and "brings it forward" when the task is
+behind Home.
 
-- A1. Home's tile -> Kalender and the lock glance's row -> Kalender; with no `.day` task, and with the task behind
-  Home; in Mørk and Lys; with `cmd uimode night yes` and `no`: sixteen recordings. **Must show**: not one frame in
-  which the page's area has the other look's ground.
-- A2. With the launcher's process held (SIGSTOP right after the tap, as in §6ah), one open in each look and phone
-  theme: `dumpsys window windows` **must show** a `Splash Screen` window of type `APPLICATION_STARTING` on the
-  variant's record (`...LightDayActivity` in Lys, `...DayActivity` in Mørk), and the screenshot the look's ground
-  alone.
-- A3. The events log over A1: **exactly one** `wm_on_create_called` for the page per open that makes the task, none
-  on one that brings it forward, and **no** `wm_relaunch_activity` or `wm_relaunch_resume_activity`.
+- A2, **run first**. What must be true for a held process to mean anything, each checked and written down before the
+  first hold (L4): the debug launcher is the home app (`cmd package resolve-activity` for the HOME intent names it) -
+  where it is not, `windowDisablePreview` holds, a page gets no starting window at all, and every later leg passes
+  without testing anything (AOSP: the item is ignored only for a start from the system, SystemUI or the home process);
+  the spike's two themes inherit `windowDisablePreview`; the process held is the one that owns Home, by pid (the
+  launcher also has `:bootcover` and the isolated `:mmsparse` - code); the hold is short enough that no ANR dialog is in
+  the screenshot; and the events log shows no page created or resumed between the tap and the screenshot. Then, with the
+  process held (SIGSTOP right after the tap, as in §6ah), in each look and each phone theme (`cmd uimode night yes`,
+  `no`), one open that makes the task and one that brings it forward: eight holds. **Must show**:
+  `dumpsys window windows` has a window of type `APPLICATION_STARTING` on the variant's record (`...LightDayActivity` in
+  Lys, `...DayActivity` in Mørk) - titled `Splash Screen ...` where the task is made,
+  `SnapshotStartingWindow for taskId=...` or the splash's title where it is brought forward (AOSP,
+  `SplashscreenContentDrawer.java:274`, `TaskSnapshotWindow.java:65, 93`); and the screenshot's page area is the look's
+  ground alone, or the page in its look where a snapshot is shown. **A hold without that window, or with the other look
+  in it, stops the spike** before any recording is made.
+- A1, the eye's check. Recorded with the device's `screenrecord` and stepped frame by frame (§6k's rule). Home's tile ->
+  Kalender and the lock glance's row -> Kalender, in Mørk and Lys: the open that makes the task with
+  `cmd uimode night yes` and with `no` (eight recordings), and the open that brings it forward with the phone's theme
+  unlike the look (four) - a snapshot does not depend on the phone's theme unless the flip falls while the task is
+  behind, which is A4's row. Twelve recordings. Each row **states its real frame count**: the frames the file itself
+  holds (§6k's `-vsync 0`) in the second after the first frame that differs from the still before the tap; under thirty,
+  the row is recorded once more and both counts stand in it. **Must show**: not one frame in which the page's area has
+  the other look's ground; and the must-show on the lines for each of the twelve opens.
+- A3. The events log over A1: **exactly one** `wm_on_create_called` for the page per open that makes the task, none on
+  one that brings it forward, and **no** `wm_relaunch_activity` or `wm_relaunch_resume_activity`.
 - A4. With Kalender in front, then stopped behind Home, then with the event page in front: `cmd uimode night` flipped
-  both ways, and Battery Saver on and off. **Must show**: no relaunch line and no `wm_on_create_called` for a
-  page; screenshots before and after identical; a date picker opened after the flip in the page's look.
-- A5. A change of look in kid Settings with Kalender's task behind. **Must show**: `dumpsys activity recents` without
-  a `.day` task right after; after the next open one `.day` task whose root and only activity is the new look's class;
-  at no point both classes in one task or two `.day` cards.
-- A6. Reboot with Kalender's card in Recents and the event page on top of it, unlock, open the card - in each look.
-  **Must show**: no frame of the other look's ground; the record created is the same class.
-- A7. Four cold boots in a row, a change of look made between two of them. **Must show** after each unlock:
-  `cmd locale get-app-locales` for the debug package still the launcher's language, and Home's `wm_on_create_called`
-  once with no relaunch line after it. Noted for §12.9's point 2: the language of the PIN lock, Home and the channels
-  on a boot where the process was alive before the unlock - that is main's case, with the ask off.
-- A8. Logcat over the whole run: **no** `Can't change activity type once set`, no `E PageLook`.
-- Noted, not gating: the status bar's ink on the Lys starting window in milliseconds, against step 1's 165-498 ms
-  (worse is a finding); 3-button navigation in Lys with the phone dark; force-invert if a switch is found.
+  both ways, and Battery Saver on and off. **Must show**: no relaunch line and no `wm_on_create_called` for a page;
+  screenshots before and after identical - which shows only that nothing was relaunched, since a view keeps the colours
+  it was inflated with (L2). What tests the pin is what is resolved **after** the flip, and it must be in the page's
+  look: a date picker opened, another day opened, the list scrolled to rows not yet bound. And one **recording** per
+  look of the bring-forward of a task that was behind Home across the flip - the change of configuration is delivered
+  there - with no frame of the page's area in the phone's look.
+- A5. A change of look in kid Settings with Kalender's task behind. **Must show**: the look changed, with no
+  `E PageLook` (R6's second read found the removed task gone); `dumpsys activity recents` without a `.day` task right
+  after; after the next open one `.day` task whose root and only activity is the new look's class; at no point both
+  classes in one task or two `.day` cards; and on the lines a splash in the new variant's theme and colour for that
+  open, no snapshot.
+- A6. Reboot with Kalender's card in Recents and the event page on top of it, unlock, open the card - in each look. And
+  once more per look **with the launcher's process killed instead of a reboot** (S4): the event page on top, the task
+  behind Home, the process that owns Home killed with a signal, the way the hold stops it (`kill -9` on its pid; not
+  `am force-stop`, which takes the tasks with it - from memory), then opened from the card, and in a second go from
+  Home's tile. It is the nightly route on a real phone: the launcher's own update replaces the process under Kalender's
+  living card. **Must show**: no frame of the other look's ground; the record created is the look's class - from the
+  card the same class as before; and on the lines a splash in that class's theme and colour, no snapshot.
+- A7. Two cold boots, one before and one after a change of look - A6's two reboots serve. With R1 a change makes no
+  system call, so two boots say what four did (N3). **Must show** after each unlock: `cmd locale get-app-locales` for
+  the debug package still the launcher's language, and Home's `wm_on_create_called` once with no relaunch line after it.
+- A8. Logcat over the whole run: **no** `Can't change activity type once set`, and no `E PageLook` - which, with S3's
+  line in the build, says that no page of the wrong class was created and no change was refused.
+- Noted, not gating: the status bar's ink on the Lys starting window in milliseconds, against step 1's 165-498 ms (worse
+  is a finding); 3-button navigation in Lys with the phone dark; force-invert if a switch is found.
 
 **Leg B - a page in Home's task.** Lys with `cmd uimode night yes`, and Mørk with `no`: open the sound picker from kid
 Settings. **Must show**: no `Splash Screen` window for it in `dumpsys window windows`; in the recording, no frame in
 which its window has the other look's ground.
 
 **Leg C - an intent made in the other look.** Post the notification in Mørk, change to Lys, tap it; and the other way
-round. **Must show**: the variant created is the stored look's; no frame of the other look's ground; no black or
-empty frame from the entry itself; the entry not in Recents. Not a leg: the same tap with the launcher's process gone.
-The entry then shows nothing until the process is up (a translucent theme has no starting window - AOSP), where a
-direct intent would have shown the ground at once; the launcher's process is all but always alive, and if the case
-turns up in the run the time from the tap to the first frame is noted.
+round. **Must show**: the variant created is the stored look's; no frame of the other look's ground; no black or empty
+frame from the entry itself; the entry not in Recents; and on the lines the stored look's theme and colour for the
+page's starting window. Not a leg: the same tap with the launcher's process gone. The entry then shows nothing until the
+process is up (a translucent theme has no starting window - AOSP), where a direct intent would have shown the ground at
+once; the launcher's process is all but always alive, and if the case turns up in the run the time from the tap to the
+first frame is noted.
 
-**Pass**: every "must show" of A, B and C. A failed A1, A2, A5 or A6 means the alternative is not built; the recordings
-go to the user with what is left - §12.5's gate with its hole named, or §5.6's translucent row examined properly, or
-no light look. A failed leg C alone moves R7 to cancel-and-re-post. A failed leg B gives the lists twins too, with
-their own affinity question, and comes back to the architect.
+**Pass**: every "must show" of A and B. What a failure means:
 
-Still owed after the spike, as before it: the same A1 recordings on the Jelly Star test phone (never the kid's phone;
-it needs the user, §10), before step 2 shows the row in release builds.
+- A2, A1, A5 or A6 - a starting window of the other look, a mixed task, two cards: the alternative is not built. The
+  lines, dumps and recordings go to the user with what is left: §12.5's gate with its hole named, or §5.6's translucent
+  row examined properly, or no light look.
+- A3, A4, A7 or A8: the run is finished and comes back to the architect before any rework. A4 is R8's proof and A7 is
+  R1's promise about the language; a failure there is a finding about the mechanism, not a detail of the rework.
+- Leg B: the lists get twins too, with their own affinity question, and that comes back to the architect. It is step 2's
+  shape that changes; the rework of Dagen's pages does not wait for it.
+- Leg C is step 2's and does not gate (the design QA): a failed leg C moves R7 to cancel-and-re-post.
+- A precondition of A2 that is not met, or log commands that do nothing, are the set-up's and not the mechanism's: the
+  first is put right and the run starts again, the second falls under "A2 carries it".
+
+Still owed after the spike, as before it: the same A1 recordings on the Jelly Star test phone (never the kid's phone; it
+needs the user, §10), before step 2 shows the row in release builds.
+
+#### 12.7.1 The run sheet
+
+For whoever runs the spike; it needs nothing else from §12. `jelly36` only - no phone, and never the kid's. `P` is
+`me.vibb.launcher.debug`. Every result is written down as it is made, with the file it rests on (log, dump, screenshot,
+recording). No leg is made to pass by changing the build: a failed leg is the result.
+
+1. **The build.** Branch `spike-78-twins` off `kid-look-1` at 67642f31; never merged, never pushed to `main`; the debug
+   build only. Exactly this, and no test written, changed or run (several unit tests fail on it by design):
+   - `ui/look/PageLook.kt`: `applyNightMode` and every call of it gone, so `setApplicationNightMode` is called nowhere.
+     A table pairing `DayActivity`, `EventActivity`, `EventEditActivity` with `LightDayActivity`, `LightEventActivity`,
+     `LightEventEditActivity`: the class for a page in a look, the look of a class. `closesTask` true for both roots.
+     `change` in this order: finish the live pages; remove the page tasks; read `appTasks` again and, if a page task is
+     still there, `Log.e("PageLook", ...)` and return; store; then `applied = mode`.
+   - `ui/LauncherLocales.kt`: the unlocked start's language ask switched off (`atUnlockedStart` returns at once).
+     Nothing else of it touched.
+   - `ui/day/`: the three page classes `open`; the three light classes as empty subclasses beside them; the intent
+     builders (`DayActivity.intent`, `EventActivity.intent`, `EventEditActivity.newIntent`, `editIntent`) take the class
+     from the table with the applied look.
+   - `ui/look/KidPageActivity.kt`: `lookNightMode()` from the table by the activity's own class (no row: the applied
+     look); in `onCreate`, before any content, `Log.e("PageLook", ...)` when the class's look is not the applied one -
+     the line alone, no removal.
+   - `res/values/styles.xml`: `KidPageNightTheme` and `KidPageLightTheme`, both with `KidPageTheme` as parent (so
+     `windowDisablePreview` is still inherited), each setting `android:windowBackground`,
+     `android:windowSplashScreenBackground`, `android:windowLightStatusBar`, `android:windowLightNavigationBar` and
+     `android:enforceNavigationBarContrast` as literals: the night one on `@color/kid_ground` (#0C0C14), `false`,
+     `false`, `true`; the light one on a new colour in `values/` alone, #F6F2EF, `true`, `true`, `false`.
+   - `AndroidManifest.xml`: the three `.ui.day.` entries on `KidPageNightTheme`; a copy of each for its light class on
+     `KidPageLightTheme`; all six with `android:configChanges="orientation|screenSize|uiMode"`.
+   - Leg B: `KidSoundPickerActivity` made a `KidPageActivity` on `KidPageTheme` (its manifest entry otherwise as it is).
+   - Leg C, in the debug source set: an activity with a translucent theme, `noHistory`, `excludeFromRecents`, not
+     exported, that starts `DayActivity.intent(...)` and finishes; and a debug hook that posts one notification whose
+     `PendingIntent` names it.
+2. **The set-up.** Build, then stop Gradle's daemons before the emulator starts (the first pass ran out of memory with
+   both). Restore the clean `jelly36` AVD, install, provision as `docs/testing/emulator.md` does, set the launcher's
+   language to one the phone does not have. Write down: `cmd package resolve-activity` for HOME names `P` (**if not:
+   stop, it is the set-up**); the pid of the process that owns Home; the resource ids of the two themes (the build's
+   `R.txt`, or `aapt2 dump resources` on the APK - either from memory). Start a logcat and an events log to files that
+   run to the end, across the reboots.
+3. **The lines.** Run the two enabling commands of §12.7 (again after every reboot). Open Kalender once and look for
+   "Creating SplashScreenStartingData" and "addSplashScreen for package: " in logcat. Write down which print. Where one
+   does not, try no further: from here on "A2 carries it" holds - every open of steps 6, 7 and 10 is made a second time
+   with the process held (for a card in Recents: held before the tap) and judged as step 4 judges.
+4. **A2, eight holds** (each look, each phone theme, making the task and bringing it forward): tap, SIGSTOP the Home pid
+   at once (read it again after every reboot and kill), `dumpsys window windows`, a screenshot, SIGCONT. Pass: an
+   `APPLICATION_STARTING` window on the look's class, the page area in the look's ground (or the page in its look on a
+   snapshot), no page created or resumed in between, no ANR dialog. **One hold failing stops the spike here**; report
+   it.
+5. **A1 and A3, twelve recordings** (tile and glance row, Mørk and Lys: making the task with the phone dark and light;
+   bringing it forward with the phone's theme unlike the look). Pass per row: no frame of the other look's ground in the
+   page's area; the lines name the look's theme id and colour (`ff0c0c14` Mørk, `fff6f2ef` Lys), a snapshot only when
+   the task was alive; the events log has one `wm_on_create_called` when the task is made, none when it is brought
+   forward, no relaunch line. State each row's real frame count over the opening second; under thirty, record once more.
+6. **A5, a change of look** with Kalender's task behind, both ways. Pass: the look changed; no `.day` task in
+   `dumpsys activity recents` right after; the next open makes one `.day` task with the new look's class alone; the
+   lines show a splash in the new theme and colour; never two classes in a task, never two cards.
+7. **A6 and A7.** In each look, with the event page on top of Kalender's task: (a) reboot, unlock, open the card; (b)
+   with the task behind Home, `kill -9` the Home pid (not `am force-stop`), open the card; (c) the same, opened from
+   Home's tile. Pass: no frame of the other look's ground; the class created is the look's; the lines show a splash in
+   its theme and colour and no snapshot. After each of the two reboots (a change of look lies between them):
+   `cmd locale get-app-locales P` still the launcher's language, and Home created once with no relaunch line.
+8. **A4, the phone's flips.** Kalender in front, then behind Home, then the event page in front: `cmd uimode night no`
+   and `yes`, Battery Saver on and off. Pass: no create and no relaunch line for a page; a date picker, another day and
+   newly scrolled rows after the flip are in the page's look; a recording of the bring-forward after a flip made behind
+   Home has no frame in the phone's look.
+9. **Leg B.** Lys with the phone dark and Mørk with it light: the sound picker from kid Settings. Pass: no
+   `Splash Screen` window for it; no frame of the other look's ground.
+10. **Leg C.** The notification posted in one look and tapped in the other, both ways. Pass: the class created is the
+    stored look's; the lines name its theme and colour; no frame of the other look, no black or empty frame; the entry
+    not in Recents. Does not gate.
+11. **A8, over the whole logcat file.** Pass: no `Can't change activity type once set`, no `E PageLook`.
+12. **Noted, not judged**: the milliseconds of white ink on the Lys starting window (step 1: 165-498); 3-button
+    navigation in Lys with the phone dark; force-invert if a switch turns up.
+13. **The report**: one row per step - pass or fail, and the file it rests on - and the first line says which log groups
+    printed. What stops the spike on the way: step 2's home-app check and step 4. Everything else is run to the end and
+    reported whole; the verdict is §12.7's "Pass" list, and the architect's to draw.
 
 ### 12.8 What this replaces
 
@@ -1107,11 +1334,14 @@ it needs the user, §10), before step 2 shows the row in release builds.
 2. **The language fix, as its own item on main.** Decide there, not in this design: keep the unlocked start's ask
    everywhere, or only in a process that was alive before the unlock (the one case main has; it would give back "the
    first ask of a process's life always gets through" to every other process), and whether the close of Meldinger's
-   task at a refused change is worth its price without the look's need. A7 gives the facts.
+   task at a refused change is worth its price without the look's need. Its facts - the language of the PIN lock,
+   Home and the channels on a boot where the process was alive before the unlock - are main's to take, on main; the
+   spike's A7 no longer carries that note.
 3. **The channels' names** in a process alive before the unlock: the fix is built and not seen running; it belongs to
    point 2.
 4. **3-button navigation in Lys with the phone dark** and **the late status-bar tint**: SystemUI's (§12.3), open for
    step 2 on a real phone. Whether `enforceNavigationBarContrast` helps the first is not read.
 5. **Force-invert**: no switch found on the image; unchanged.
-6. **AppCompat 1.7.1's own source** for R8: read the tag when the sources are at hand, or let A4 stand for it.
+6. **AppCompat 1.7.1's own source** for R8: **closed** - read in AndroidX 1.7.1 by the design QA, and again for this
+   revision (R8's lines). A4 stays the proof on the device.
 7. **A release build and the Jelly Star**: as in the code QA's open list.
