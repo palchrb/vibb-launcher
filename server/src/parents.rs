@@ -450,6 +450,11 @@ impl Names {
             .flatten()
     }
 
+    /// An account's name by its id (an MMS address' "Allowed … by Mamma", design 83).
+    pub fn of_id(&self, id: i64) -> Option<&str> {
+        self.by_id.get(&id).map(String::as_str)
+    }
+
     /// A username as a "by" line shows it: its display name, else itself (a lift's `created_by`).
     pub fn of_username<'a>(&'a self, username: &'a str) -> &'a str {
         self.display.get(username).map_or(username, String::as_str)

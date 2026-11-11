@@ -7,6 +7,7 @@ pub mod calendar;
 pub mod calendar_sources;
 pub mod calls;
 pub mod calls_form;
+pub mod calls_mmsc;
 pub mod calls_sms;
 pub mod contact_requests;
 pub mod device_api;

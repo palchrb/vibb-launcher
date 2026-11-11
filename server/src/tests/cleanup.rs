@@ -365,6 +365,26 @@ async fn pruning_keeps_only_what_retention_allows() {
         .await
         .unwrap();
     }
+    // Design 83 §4 (code QA M4): only a question nobody answered goes, 30 days after a report last named it - an
+    // allowed or declined address is the parent's setting.
+    for (host, state, days) in [
+        ("old.mmsc.invalid", "open", 31),
+        ("allowed.mmsc.invalid", "allowed", 31),
+        ("declined.mmsc.invalid", "declined", 31),
+        ("new.mmsc.invalid", "open", 0),
+    ] {
+        sqlx::query(
+            "INSERT INTO device_mmsc_hosts (device_id, mccmnc, host, state, picture_from, picture_at, reported_at) \
+             VALUES (?1, '24299', ?2, ?3, '+4790000001', ?4, ?4)",
+        )
+        .bind(logged)
+        .bind(host)
+        .bind(state)
+        .bind(chrono::Utc::now().timestamp_millis() - days * 24 * 60 * 60 * 1000)
+        .execute(db)
+        .await
+        .unwrap();
+    }
 
     let pruned = crate::retention::prune(db).await;
     assert_eq!(
@@ -385,8 +405,23 @@ async fn pruning_keeps_only_what_retention_allows() {
             weather: 0,
             sms_held: 0,
             contact_requests: 0,
+            mmsc_hosts: 1,
             failed: vec![],
         }
+    );
+    let addresses: Vec<(String, String)> =
+        sqlx::query_as("SELECT host, state FROM device_mmsc_hosts ORDER BY id")
+            .fetch_all(db)
+            .await
+            .unwrap();
+    assert_eq!(
+        addresses,
+        [
+            ("allowed.mmsc.invalid", "allowed"),
+            ("declined.mmsc.invalid", "declined"),
+            ("new.mmsc.invalid", "open"),
+        ]
+        .map(|(host, state)| (host.to_string(), state.to_string()))
     );
     let commands: Vec<(String, bool)> = sqlx::query_as(
         "SELECT command, requested_at < datetime('now', '-30 days') FROM device_commands ORDER BY id",

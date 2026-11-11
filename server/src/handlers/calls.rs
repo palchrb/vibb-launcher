@@ -316,6 +316,12 @@ struct DeviceCallsTemplate {
     sms: crate::handlers::calls_sms::SmsPage,
     /// The waiting card's line (`?notice=`).
     held_notice: Option<&'static str>,
+    /// Design 83: the questions about MMS addresses under it, and the answered ones in "Bildeadresser" at the foot.
+    mmsc: crate::handlers::calls_mmsc::MmscPage,
+    /// The questions' line (`?notice=`).
+    mmsc_notice: Option<&'static str>,
+    /// "Bildeadresser" is drawn open (`?mmsc=1`: its forms and an answered question return there).
+    mmsc_open: bool,
     /// The names list is full (D17: 50): Add Name is not offered.
     names_full: bool,
     /// Add Name is open (a refusal), with what was typed and why.
@@ -601,6 +607,10 @@ pub(super) struct Shown<'a> {
     pub(super) requests_notice: Option<&'static str>,
     /// `?notice=` for "Meldinger som venter".
     pub(super) held_notice: Option<&'static str>,
+    /// `?notice=` for the questions about MMS addresses (design 83).
+    pub(super) mmsc_notice: Option<&'static str>,
+    /// `?mmsc=1`: "Bildeadresser" is drawn open.
+    pub(super) mmsc: bool,
     /// A refused SMS settings save.
     pub(super) sms: Option<crate::handlers::calls_sms::SmsRefusal<'a>>,
     /// A refused Add Name: what was typed and why.
@@ -665,6 +675,10 @@ pub async fn show_calls(
         held_notice: query
             .get("notice")
             .and_then(|code| crate::handlers::calls_sms::notice(lang, code)),
+        mmsc_notice: query
+            .get("notice")
+            .and_then(|code| crate::handlers::calls_mmsc::notice(lang, code)),
+        mmsc: query.get("mmsc").is_some_and(|v| v == "1"),
         // Design 77 "Opprett kontakt…": a held number, prefilled (the form's escaping and the link's encoding
         // carry it; the save normalises and checks it as any typed number).
         add_held: query
@@ -934,6 +948,7 @@ async fn load_page(
             .await?;
     let sms_page =
         crate::handlers::calls_sms::load(&state.db, id, &zone, now, &default_country_code).await?;
+    let mmsc = crate::handlers::calls_mmsc::load(&state.db, id, &zone, now).await?;
     let mut sms_page = sms_page;
     if let Some(refusal) = &shown.sms {
         // What the refused form sent, so nothing typed is lost.
@@ -1117,6 +1132,9 @@ async fn load_page(
         requests_notice: shown.requests_notice,
         sms: sms_page,
         held_notice: shown.held_notice,
+        mmsc,
+        mmsc_notice: shown.mmsc_notice,
+        mmsc_open: shown.mmsc,
         names_full,
         name_add_open,
         name_add_value,
@@ -1245,8 +1263,11 @@ pub(crate) enum Finding {
     SmsParseFailures {
         count: i64,
     },
-    /// This SIM's MMS server isn't on the list (D10): pictures aren't fetched.
-    MmsUnchecked,
+    /// This SIM has no MMS server the phone may fetch from (D10): pictures aren't fetched. `can_allow` (design 83
+    /// §5): the launcher reports its SIMs, so a contact's picture brings a question the parent can answer.
+    MmsUnchecked {
+        can_allow: bool,
+    },
     /// Pictures in messages need mobile data (D14).
     MmsNoData,
     /// The SIM in `slot` knows another own number (`sim`) than the parent typed (D12).
@@ -1292,7 +1313,7 @@ impl Finding {
             Finding::SmsNotOurs => CallProblem::SmsNotOurs,
             Finding::SmsHoldFull { .. } => CallProblem::SmsHoldFull,
             Finding::SmsParseFailures { .. } => CallProblem::SmsParseFailures,
-            Finding::MmsUnchecked => CallProblem::MmsUnchecked,
+            Finding::MmsUnchecked { .. } => CallProblem::MmsUnchecked,
             Finding::MmsNoData => CallProblem::MmsNoData,
             Finding::OwnNumberMismatch { .. } => CallProblem::OwnNumberMismatch,
             Finding::SmsRoleKept => CallProblem::SmsRoleKept,
@@ -1438,7 +1459,14 @@ impl Finding {
                 crate::i18n::t_count(lang, "device.calls.finding.parse_failures", *count, &[]),
                 None,
             ),
-            Finding::MmsUnchecked => (say("device.calls.finding.mms_unchecked"), None),
+            Finding::MmsUnchecked { can_allow } => {
+                let mut text = say("device.calls.finding.mms_unchecked");
+                if *can_allow {
+                    text.push(' ');
+                    text.push_str(t(lang, "device.calls.finding.mms_unchecked_allow"));
+                }
+                (text, None)
+            }
             Finding::MmsNoData => (say("device.calls.finding.mms_no_data"), None),
             Finding::OwnNumberMismatch { slot, sim } => (
                 t_params(
@@ -1752,7 +1780,9 @@ async fn sms_findings(
         findings.push(Finding::SmsParseFailures { count });
     }
     if flag("mmsc_known") == Some(false) {
-        findings.push(Finding::MmsUnchecked);
+        findings.push(Finding::MmsUnchecked {
+            can_allow: sms_state.get("sim_operators").is_some(),
+        });
     }
     if flag("mms_data_allowed") == Some(false) {
         findings.push(Finding::MmsNoData);
@@ -3346,7 +3376,8 @@ mod tests {
             Finding::SmsHoldFull { until: Some(later) },
             Finding::SmsHoldFull { until: None },
             Finding::SmsParseFailures { count: 2 },
-            Finding::MmsUnchecked,
+            Finding::MmsUnchecked { can_allow: false },
+            Finding::MmsUnchecked { can_allow: true },
             Finding::MmsNoData,
             Finding::OwnNumberMismatch {
                 slot: 1,
@@ -3367,7 +3398,7 @@ mod tests {
                     finding,
                     Finding::Waiting { .. }
                         | Finding::SmsParseFailures { .. }
-                        | Finding::MmsUnchecked
+                        | Finding::MmsUnchecked { .. }
                         | Finding::MmsNoData
                         | Finding::SmsRoleKept
                 )

@@ -11,10 +11,13 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Design 77 D10 (the sender and the host, before any fetch) and D12 (the group rule) - §10.1's `MmsGateTest`. The
- * hosts are fake (`.invalid`): no real carrier's server is named in a test. */
+/** Design 77 D10 (the sender and the host, before any fetch; the list's entries and ports by design 83) and D12 (the
+ * group rule) - §10.1's `MmsGateTest`. The hosts are fake (`.invalid`): no real carrier's server is named in a test. */
 class MmsGateTest {
-    private val table = listOf(MmscRule("24299", listOf("mmsc.carrier.invalid", "10.0.0.9")), MmscRule("24298", emptyList()))
+    private val table = listOf(
+        MmscRule("24299", listOf("mmsc.carrier.invalid", "10.0.0.9", "mmsc", "mms.carrier.invalid:8002")),
+        MmscRule("24298", emptyList()),
+    )
 
     private fun location(url: String, operator: String? = "24299") = MmsGate.location(url, operator, table)
 
@@ -30,17 +33,35 @@ class MmsGateTest {
     }
 
     @Test
-    fun `the content location must be the SIM's own MMS server`() {
+    fun `the content location must be an entry of the SIM's list`() {
         assertEquals(MmsGate.Location.Ok("mmsc.carrier.invalid"), location("http://mmsc.carrier.invalid/mms/abc"))
         assertEquals(MmsGate.Location.Ok("mmsc.carrier.invalid"), location("https://MMSC.Carrier.Invalid:443/x?y=1"))
         assertEquals(MmsGate.Location.Ok("mmsc.carrier.invalid"), location("http://mmsc.carrier.invalid.:8080/x"))
         assertEquals(MmsGate.Location.Ok("10.0.0.9"), location("http://10.0.0.9/mms"))
-        // Enea's "MMS Fingerprint": a push pointing anywhere else.
+        assertEquals("a single label", MmsGate.Location.Ok("mmsc"), location("http://mmsc/mms"))
+        // Design 83 §1: another port is part of the entry - only `host:port` matches it, and it matches nothing else.
+        assertEquals(MmsGate.Location.Ok("mms.carrier.invalid"), location("http://mms.carrier.invalid:8002/x"))
+        assertEquals(MmsGate.Location.Unlisted("mms.carrier.invalid"), location("http://mms.carrier.invalid/x"))
+        assertEquals(MmsGate.Location.Unlisted("mms.carrier.invalid:8003"), location("http://mms.carrier.invalid:8003/x"))
+        assertEquals(MmsGate.Location.Unlisted("mmsc.carrier.invalid:81"), location("http://mmsc.carrier.invalid:81/x"))
+        // Enea's "MMS Fingerprint", a push pointing anywhere else: the entry it names, no suffix matched.
+        assertEquals(MmsGate.Location.Unlisted("attacker.invalid"), location("http://attacker.invalid/mms"))
+        assertEquals(
+            MmsGate.Location.Unlisted("mmsc.carrier.invalid.attacker.invalid"),
+            location("http://mmsc.carrier.invalid.attacker.invalid/x"),
+        )
+        // Nor is a listed entry the end of another name or address.
+        assertEquals(MmsGate.Location.Unlisted("evil.mmsc.carrier.invalid"), location("http://evil.mmsc.carrier.invalid/x"))
+        assertEquals(MmsGate.Location.Unlisted("110.0.0.9"), location("http://110.0.0.9/x"))
+        assertEquals(MmsGate.Location.Unlisted("xmmsc"), location("http://xmmsc/x"))
+        // Not a plain http(s) URL to a host of the entry grammar: no entry, so nothing a parent could allow.
         for (bad in listOf(
-            "http://attacker.invalid/mms", "http://mmsc.carrier.invalid.attacker.invalid/x", "ftp://mmsc.carrier.invalid/x",
-            "http://user:pw@mmsc.carrier.invalid/x", "http://mmsc.carrier.invalid:81/x", "http://mmsc.carrier.invalid\r\nHost: x/",
+            "ftp://mmsc.carrier.invalid/x", "http://user:pw@mmsc.carrier.invalid/x", "http://mmsc.carrier.invalid\r\nHost: x/",
             "http://mmsc.carrier.invalid/a b", "http://mmsc.carrier.invalid\t/x", "mmsc.carrier.invalid/x", "http:mmsc", "",
-            "http://mmsc_carrier.invalid/x", "http://mmsc.carrier.invalid/é",
+            "http://mmsc_carrier.invalid/x", "http://mmsc.carrier.invalid/é", "http://[fd00::9]/x", "http://[::ffff:10.0.0.9]/x",
+            "http://010.0.0.9/x", "http://2130706433/x", "http://0x7f000001/x", "http://10.0.0.9.1/x", "http://mmsc.carrier.invalid:0/x",
+            // "This host", and the listed single label as an absolute name: another lookup than the entry `mmsc`.
+            "http://127.0.0.1/x", "http://0.0.0.0/x", "http://mmsc./x",
         )) {
             assertEquals(bad, MmsGate.Location.Bad, location(bad))
         }
@@ -48,11 +69,17 @@ class MmsGateTest {
 
     @Test
     fun `an unknown SIM operator fails closed, and a bad location is bad before that`() {
-        assertEquals(MmsGate.Location.UnknownOperator, location("http://mmsc.carrier.invalid/x", "24201"))
-        assertEquals(MmsGate.Location.UnknownOperator, location("http://mmsc.carrier.invalid/x", null))
-        assertEquals("a row without hosts", MmsGate.Location.UnknownOperator, location("http://mmsc.carrier.invalid/x", "24298"))
-        assertEquals(MmsGate.Location.UnknownOperator, MmsGate.location("http://mmsc.carrier.invalid/x", "24299", emptyList()))
+        val unlisted = MmsGate.Location.Unlisted("mmsc.carrier.invalid")
+        assertEquals(unlisted, location("http://mmsc.carrier.invalid/x", "24201"))
+        assertEquals(unlisted, location("http://mmsc.carrier.invalid/x", null))
+        assertEquals("a row without hosts", unlisted, location("http://mmsc.carrier.invalid/x", "24298"))
+        assertEquals(unlisted, MmsGate.location("http://mmsc.carrier.invalid/x", "24299", emptyList()))
         assertEquals(MmsGate.Location.Bad, location("http://user@x.invalid/", "24201"))
+        // Design 83 §7: the debug hook's host joins the SIM's own row - a second row for it would never be read.
+        val merged = MmsGate.merged(table, listOf(MmscRule("24299", listOf("10.0.2.2")), MmscRule("24201", listOf("10.0.2.2"))))
+        assertEquals(listOf("24299", "24298", "24201"), merged.map { it.mccmnc })
+        assertEquals(MmsGate.Location.Ok("10.0.2.2"), MmsGate.location("http://10.0.2.2:8080/x", "24299", merged))
+        assertEquals(MmsGate.Location.Ok("10.0.0.9"), MmsGate.location("http://10.0.0.9/x", "24299", merged))
         assertTrue(MmsGate.known("24299", table))
         assertFalse(MmsGate.known("24298", table))
         assertFalse(MmsGate.known(null, table))

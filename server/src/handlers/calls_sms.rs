@@ -632,13 +632,15 @@ pub(super) async fn load(
     })
 }
 
-/// The device page's row (§7): "2 meldinger venter · 3 blokkert denne uken", `None` when both are nought.
+/// The device page's row (§7): "2 meldinger venter · 3 blokkert denne uken" and the Calls page's anchor it leads to,
+/// `None` when both are nought. A picture waiting for the parent's word on its MMS address (design 83 §4) is a message
+/// waiting too, and with no message held the row leads to those questions (`mmsc`), not to an empty `held`.
 pub async fn summary_value(
     db: &sqlx::SqlitePool,
     device_id: i64,
     lang: Lang,
     now: DateTime<Utc>,
-) -> Result<Option<String>, sqlx::Error> {
+) -> Result<Option<(String, &'static str)>, sqlx::Error> {
     let now_ms = now.timestamp_millis();
     let (waiting, blocked): (i64, i64) = sqlx::query_as(
         "SELECT COALESCE(SUM(state = 'held' AND dropped_at IS NULL AND expires_at > ?), 0), \
@@ -649,6 +651,13 @@ pub async fn summary_value(
     .bind(device_id)
     .fetch_one(db)
     .await?;
+    let questions = super::calls_mmsc::open_count(db, device_id).await?;
+    let anchor = if waiting == 0 && questions > 0 {
+        "mmsc"
+    } else {
+        "held"
+    };
+    let waiting = waiting + questions;
     let mut parts = Vec::new();
     if waiting > 0 {
         parts.push(crate::i18n::t_count(
@@ -666,7 +675,7 @@ pub async fn summary_value(
             &[],
         ));
     }
-    Ok((!parts.is_empty()).then(|| parts.join(" · ")))
+    Ok((!parts.is_empty()).then(|| (parts.join(" · "), anchor)))
 }
 
 /// When a full hold pool frees a place (§7's "Ventelisten er full … før {time}"): the earliest end of the rows still

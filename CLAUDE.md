@@ -50,7 +50,11 @@ imported with full history (`git subtree`), so old commit hashes in the docs sti
   `music-splash.py` (the music app's launch splash drawables: the Vibb mark read from the launcher's Home splash, "vibb
   music" from Nunito's outlines; `--selftest`), `webauthn-rs256-vector.py` (the server's RS256 passkey vector
   `server/testdata/webauthn/rs256.json`, made once with a throwaway key - public data only; design 74), `emoji-list.py`
-  (the launcher's `assets/sms/emoji-16.0.txt` from Unicode's `emoji-test.txt` 16.0, its SHA-256 pinned; design 81).
+  (the launcher's `assets/sms/emoji-16.0.txt` from Unicode's `emoji-test.txt` 16.0, its SHA-256 pinned; design 81),
+  `mmsc-hosts.py` (the server's `server/testdata/mmsc_hosts.txt`, design 83 §3: each operator's MMS server hosts from
+  AOSP's `apns-full-conf.xml` at a pinned commit and SHA-256, in two classes - unasked and hints; its `UNASKED` stays
+  `"none"` until design 77's step 0; `--selftest`, no network, converts `scripts/mmsc-hosts-sample.xml` and checks the
+  committed list's lines against the SHA-256 the script holds; run by `server-ci.yml`'s always-run changes job).
 - `PLAN.md` - the plan and status, and the fix backlog ("Fix backlog": keep it current as items come in and are done).
 - `.github/` - CI for both parts (see below).
 - `kids-launcher-mdm/`, `kid-phone-server/` (gitignored, if present) - the old standalone clones.
@@ -214,8 +218,10 @@ D13), `migration` (D2's table: the old three switches to
 `calls_mode`/`sms_mode` - the server's migration 0130 and the launcher reading an older server), `modes` (each mode pair
 and the derived old keys an older launcher reads, failing closed), `policy` (a seeded `call_policy` with the SMS keys:
 the per-contact `sms_in`/`sms_out`/`mms`, `sms_names`, `own_numbers`, `mmsc_hosts`, `sms_held_drop`, design 80's
-`sms_groups`; `groups_off` the switch off), `report` (the exact `sms_state` with design 80's `own_learned` and design
-82's `has_history`, and `own_learned_conflict`), `held` (the exact `POST /api/devices/sms-held` body, its answers and a refusal), `clean` (the
+`sms_groups`; `groups_off` the switch off; design 83's `mmsc_hosts_row`, a SIM's row of entries), `report` (the exact
+`sms_state` with design 80's `own_learned`, design 82's `has_history` and design 83's `sim_operators` and
+`mmsc_unlisted`, and `own_learned_conflict`), `mmsc_entries` (design 83 §1: an MMSC entry, `host` or `host:port`, to
+valid or not - the server's `mmsc_hosts::valid_entry`, the launcher's `MmsGate.validEntry`), `held` (the exact `POST /api/devices/sms-held` body, its answers and a refusal), `clean` (the
 sender cleaned by its class before it leaves the phone), `intake` (the server's sender check), `names` and
 `name_matches` (D17's letter rule and fold), and `app` (design 82, Meldinger as an app: its `key`
 `me.vibb.builtin.messages`; `lock`, the server's stored choice and `sms_mode` to `lock_glance.sms` and the derived
@@ -254,7 +260,7 @@ reads each answer and policy row and runs the vectors through its own check; bot
   `server-ci.yml`'s build job also on the apps' `spotify_hosts.json` and `storytel_token_answers.json` copies and
   the launcher's `time_status_report.json`,
   `dns_upstream_status.json`, `power_report.json`, `zone_status_report.json`, `launcher_tag_codes.json`,
-  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json`, `server_url_vectors.json`, `restrictions_pause.json`, `server_tls_report.json`, `sms_contract.json` and `contact_request.json`, and the launcher's `assets/dns/doh_hosts.txt`;
+  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json`, `server_url_vectors.json`, `restrictions_pause.json`, `server_tls_report.json`, `sms_contract.json` and `contact_request.json`, and the launcher's `assets/dns/doh_hosts.txt`, and `scripts/mmsc-hosts.py` with its `scripts/mmsc-hosts-sample.xml` (the changes job runs its `--selftest` always);
   `server-ci.yml`'s
   `server-image` job only when `server/Dockerfile`, `server/.dockerignore`, `server/deploy/image-smoke.sh`, `server/deploy/distrusted-roots.txt` or
   the workflow changed). The server's Rust (`toolchain: 1.99.0`) is pinned in `server-ci.yml` and

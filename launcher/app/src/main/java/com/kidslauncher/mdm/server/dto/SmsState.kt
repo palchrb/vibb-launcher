@@ -30,7 +30,20 @@ data class SmsState(
     /** Design 82 W2 (capability `messages_app_v1`): there are conversations to read - Home's tile shows even while SMS
      * is not managed, so the server lists Meldinger's row for the parent's "On Home". */
     val hasHistory: Boolean,
+    /** Design 83 §3: the active SIMs' operators (at most 4) - the server sends `mmsc_hosts` rows only for these. */
+    val simOperators: List<SmsSimOperator>,
+    /** Design 83 §4: the contacts' pictures kept unfetched because their address isn't on the SIM's list (at most 4). */
+    val mmscUnlisted: List<SmsMmscUnlisted>,
 )
+
+/** A SIM's operator: its MCC/MNC and the name the SIM gives (may be empty). */
+@Serializable
+data class SmsSimOperator(val mccmnc: String, val name: String)
+
+/** Design 83 §4: [host] is the list's entry (`host` or `host:port`), never the URL; [from] the contact's number; [at]
+ * the notification's arrival (epoch ms). */
+@Serializable
+data class SmsMmscUnlisted(val mccmnc: String, val host: String, val from: String, val at: Long)
 
 /** Design 80 §4.4: [number] in use (`null` during a conflict), its teacher [from], when ([at], epoch ms), and
  * [conflict] - `[]` or the two numbers seen. */

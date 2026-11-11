@@ -298,6 +298,15 @@ async fn a_new_device_gets_element_x_by_the_trigger_and_a_delete_cascades() {
         .unwrap();
     assert_eq!(ticks(&app, page).await, [ELEMENT_X]);
 
+    // Design 83: an MMS address the parent allowed goes with the phone too.
+    sqlx::query(
+        "INSERT INTO device_mmsc_hosts (device_id, mccmnc, host, state, picture_from, picture_at, reported_at) \
+         VALUES (?, '24299', 'mmsc.example.invalid', 'allowed', '+4790000001', 0, 0)",
+    )
+    .bind(helper)
+    .execute(&app.db)
+    .await
+    .unwrap();
     let res = app
         .request_form(
             Method::POST,
@@ -308,6 +317,11 @@ async fn a_new_device_gets_element_x_by_the_trigger_and_a_delete_cascades() {
         .await;
     assert!(res.status.is_redirection(), "{}", res.text());
     assert!(ticks(&app, helper).await.is_empty());
+    let addresses: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_mmsc_hosts")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(addresses, 0);
     assert_eq!(messages(&app, helper).await, None);
     assert_eq!(ticks(&app, page).await, [ELEMENT_X]);
     assert_eq!(messages(&app, page).await, Some(false));

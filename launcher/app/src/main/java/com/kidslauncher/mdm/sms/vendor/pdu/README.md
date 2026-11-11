@@ -103,6 +103,6 @@ is the `parseContentType` length check (H4); the 2026 CVEs in design 77 §2.3 na
 
 **Done in step 3b** (branch `sms-mms`, `docs/notes/launcher/calls.md` "MMS pictures, step 3b"): D10's sender is
 `MmsGate.sender` on `plmnNumber`; the content location goes through `MmsGate.location` (printable ASCII without
-whitespace, `java.net.URI`, scheme, userinfo, port, the SIM's host); only `sms/parse/MmsParseService` calls the
-parsers (`MmsParseBoundaryTest`); a top-level `multipart/alternative` gives its first `text/plain` (the service's
+whitespace, `java.net.URI`, scheme, userinfo, and since design 83 the entry - host, or `host:port` - on the SIM's
+list); only `sms/parse/MmsParseService` calls the parsers (`MmsParseBoundaryTest`); a top-level `multipart/alternative` gives its first `text/plain` (the service's
 `texts`); a notification whose transaction id can't be answered is blocked as malformed (`MmsGate.answerableId`).

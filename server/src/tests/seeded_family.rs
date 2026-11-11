@@ -368,6 +368,8 @@ pub async fn seed(app: &TestApp, lang: crate::i18n::Lang) -> Family {
             "+4790000098",
             ago(121),
         ),
+        // Design 83: a contact's picture names an MMS address the parent must allow.
+        parent_events::mmsc_host(anna, &phone.name, 1, "Mormor", ago(122)),
     ];
     let kinds: std::collections::BTreeSet<&str> = events.iter().map(|e| e.kind.wire()).collect();
     assert_eq!(kinds.len(), parent_events::Kind::ALL.len(), "every kind");
@@ -404,6 +406,32 @@ pub async fn seed(app: &TestApp, lang: crate::i18n::Lang) -> Family {
     .execute(&app.db)
     .await
     .unwrap();
+
+    // Design 83: Anna's questions about an MMS address from Mormor's pictures - one Android's list names for the
+    // SIM, one it doesn't, one for an operator the list doesn't have - and an allowed and a declined address.
+    let listed = crate::mmsc_hosts::listed("24204").unwrap();
+    let listed = listed.unasked.iter().chain(&listed.hints).next().unwrap();
+    for (mccmnc, host, state) in [
+        ("24204", *listed, "open"),
+        ("24204", "mms.example.invalid:8002", "open"),
+        ("24299", "mms.example.invalid", "open"),
+        ("24299", "mmsc.example.invalid", "allowed"),
+        ("24299", "mmsc2.example.invalid", "declined"),
+    ] {
+        sqlx::query(
+            "INSERT INTO device_mmsc_hosts (device_id, mccmnc, host, state, picture_from, picture_at, reported_at, \
+             decided_at, decided_by) VALUES (?, ?, ?, ?, '+4790000055', ?, ?, datetime('now'), 1)",
+        )
+        .bind(anna)
+        .bind(mccmnc)
+        .bind(host)
+        .bind(state)
+        .bind(ago(122).timestamp_millis())
+        .bind(ago(122).timestamp_millis())
+        .execute(&app.db)
+        .await
+        .unwrap();
+    }
 
     // Ola: a Parent and a Child PIN through their forms (worded security lines), Android's lock chosen, and the
     // Child PIN's command answered with a refusal (Activity's line, the Lock page's row); Anna's sent one waits.

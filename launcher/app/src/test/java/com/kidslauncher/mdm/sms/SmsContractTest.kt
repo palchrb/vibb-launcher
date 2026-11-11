@@ -26,10 +26,13 @@ import com.kidslauncher.mdm.server.dto.SmsHeldAnswer
 import com.kidslauncher.mdm.server.dto.SmsHeldBody
 import com.kidslauncher.mdm.server.dto.SmsHeldRefusal
 import com.kidslauncher.mdm.server.dto.SmsHoldFull
+import com.kidslauncher.mdm.server.dto.SmsMmscUnlisted
 import com.kidslauncher.mdm.server.dto.SmsOwnLearned
 import com.kidslauncher.mdm.server.dto.SmsOwnNumber
+import com.kidslauncher.mdm.server.dto.SmsSimOperator
 import com.kidslauncher.mdm.server.dto.SmsState
 import com.kidslauncher.mdm.server.smsRestricted
+import com.kidslauncher.mdm.sms.engine.MmsGate
 import com.kidslauncher.mdm.sms.engine.SenderClean
 import com.kidslauncher.mdm.sms.engine.SenderKind
 import com.kidslauncher.mdm.sms.engine.SmsNames
@@ -133,7 +136,7 @@ class SmsContractTest {
         assertEquals(listOf(1 to "+4790000001"), callPolicy.ownNumbers.map { it.slot to it.number })
         assertEquals(listOf("00112233445566778899aabbccddeeff"), callPolicy.smsHeldDrop)
         assertEquals(
-            PolicyMmscHosts("24201", listOf("mmsc.example.invalid")),
+            PolicyMmscHosts("24299", listOf("mmsc", "mmsc.example.invalid", "mmsc.example.invalid:8002")),
             ServerJson.decodeFromString(PolicyMmscHosts.serializer(), policy["mmsc_hosts_row"].toString()),
         )
     }
@@ -147,6 +150,8 @@ class SmsContractTest {
             lastError = null, ownNumbers = listOf(SmsOwnNumber(1, "+4790000001"), SmsOwnNumber(2, null)), holdFull = SmsHoldFull(numbers = false, names = true),
             ownLearned = SmsOwnLearned("+4790000002", "+4791234567", 1762700000000, emptyList()),
             hasHistory = true,
+            simOperators = listOf(SmsSimOperator("24299", "Eksempel Mobil")),
+            mmscUnlisted = listOf(SmsMmscUnlisted("24299", "mms.example.invalid:8002", "+4791234567", 1762700000000)),
         )
         assertEquals(
             contract["report"]!!.jsonObject["sms_state"],
@@ -228,6 +233,14 @@ class SmsContractTest {
         assertEquals(SmsHeldAnswer(accepted = 5, capped = false), taken)
         assertEquals(SmsHeldAnswer(accepted = 0, capped = true), capped)
         assertEquals(SmsHeldRefusal(0, "sender"), ServerJson.decodeFromString(SmsHeldRefusal.serializer(), held["refusal"].toString()))
+    }
+
+    /** Design 83 §1: one grammar for a list entry on both sides, and every entry the policy sends is one. */
+    @Test
+    fun `an MMSC entry is a host or host and port`() {
+        for (row in rows("mmsc_entries")) {
+            assertEquals(row.toString(), row.bool("valid"), MmsGate.validEntry(row.str("entry")))
+        }
     }
 
     @Test

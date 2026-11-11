@@ -61,8 +61,9 @@ jobs:
           # the pause's length (2026-11-04, restrictions_pause.json; models::paused_at_tests compares it); and the
           # certificate check's contract (design 76, server_tls_report.json; tests::server_tls compares it); and the SMS
           # engine's contract (design 77, sms_contract.json; sms::tests compares it); and the kid's contact request (design
-          # 77 §14, contact_request.json; tests::contact_requests compares it).
-          if grep -qE '^(server/|\.github/workflows/server-ci\.yml$|(launcher|music)/app/src/test/resources/spotify_hosts\.json$|launcher/app/src/test/resources/(time_status_report|dns_upstream_status|power_report|zone_status_report|launcher_tag_codes|time_request|installed_apps_report|calendar_title_rules|calendar_status_report|calendar_feeds|emergency_numbers|calendar_kid_events|weather|leave_tailnet|server_url_vectors|restrictions_pause|server_tls_report|sms_contract|contact_request)\.json$|(launcher|music)/app/src/test/resources/storytel_token_answers\.json$|launcher/app/src/main/assets/dns/doh_hosts\.txt$)' <<<"$files"; then
+          # 77 §14, contact_request.json; tests::contact_requests compares it); and the MMS servers' generator and
+          # its sample (design 83, scripts/mmsc-hosts.py; its output server/testdata/mmsc_hosts.txt is compiled in).
+          if grep -qE '^(server/|\.github/workflows/server-ci\.yml$|(launcher|music)/app/src/test/resources/spotify_hosts\.json$|launcher/app/src/test/resources/(time_status_report|dns_upstream_status|power_report|zone_status_report|launcher_tag_codes|time_request|installed_apps_report|calendar_title_rules|calendar_status_report|calendar_feeds|emergency_numbers|calendar_kid_events|weather|leave_tailnet|server_url_vectors|restrictions_pause|server_tls_report|sms_contract|contact_request)\.json$|(launcher|music)/app/src/test/resources/storytel_token_answers\.json$|launcher/app/src/main/assets/dns/doh_hosts\.txt$|scripts/mmsc-hosts(\.py|-sample\.xml)$)' <<<"$files"; then
             changed=true
           else
             changed=false
@@ -77,6 +78,10 @@ jobs:
         echo "changed=$changed" >> "$GITHUB_OUTPUT"
         echo "image=$image" >> "$GITHUB_OUTPUT"
         echo "server changed: $changed, image: $image (base ${base:-none})"
+    - name: The MMS servers' generator self-test
+      # Cheap and always run: scripts/mmsc-hosts.py (design 83 §3) made server/testdata/mmsc_hosts.txt; a hand edit
+      # of the list, or a converter that no longer gives the sample's lines, fails here. No network.
+      run: python3 -I scripts/mmsc-hosts.py --selftest
 
   server-build:
     needs: server-changes

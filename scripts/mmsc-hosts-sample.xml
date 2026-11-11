@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later
+
+  The sample the selftest of `scripts/mmsc-hosts.py` converts (design 83 §3): our own rows in the shape of AOSP's
+  apns-full-conf.xml - no operator's - one for every class and every reason a row is left out. The lines each
+  UNASKED value makes of it are in the script (SAMPLE_EXPECT), with what is counted (SAMPLE_COUNTS).
+-->
+<apns version="8">
+
+  <!-- 99901: single-label names, one with a path and in upper case; the row without an mmsc is not read. -->
+  <apn carrier="Sample One" mcc="999" mnc="01" apn="mms" mmsc="http://mmsc" mmsproxy="proxy.operator.invalid" mmsport="8080" type="mms" />
+  <apn carrier="Sample One brand" mcc="999" mnc="01" apn="mms" mmsc="http://MM/" type="mms" mvno_type="spn" mvno_match_data="Brand" />
+  <apn carrier="Sample One internet" mcc="999" mnc="01" apn="internet" type="default,supl" />
+
+  <!-- 99902: public names, the union of an operator's rows and a brand's; a port outside 80, 443 and 8080 gives a
+       host:port entry beside the host's, 8080 only the host's. -->
+  <apn carrier="Sample Two" mcc="999" mnc="02" apn="mms" mmsc="http://mmsc.operator.invalid:8002" type="mms" />
+  <apn carrier="Sample Two brand" mcc="999" mnc="02" apn="mms" mmsc="http://mms.operator.invalid/servlets/mms" type="mms" mvno_type="gid" mvno_match_data="2A" />
+  <apn carrier="Sample Two old" mcc="999" mnc="02" apn="wap" mmsc="http://mmsc.operator.invalid:8080/mms" type="default,mms" />
+
+  <!-- 999003, a three-digit MNC: a private address with its port, a CGNAT address, a public address and a name. -->
+  <apn carrier="Sample Three" mcc="999" mnc="003" apn="mms" mmsc="http://10.0.0.9:38090/was" type="mms" />
+  <apn carrier="Sample Three" mcc="999" mnc="003" apn="mms2" mmsc="http://100.64.1.1" type="mms" />
+  <apn carrier="Sample Three" mcc="999" mnc="003" apn="mms3" mmsc="http://192.0.2.7/mms" type="mms" />
+  <apn carrier="Sample Three" mcc="999" mnc="003" apn="mms4" mmsc="http://mmsc.operator.invalid" type="mms" />
+
+  <!-- 99904: only a host skipped for its made-up last label - the MCC/MNC is left with nothing and gets no line. -->
+  <apn carrier="Sample Four" mcc="999" mnc="04" apn="mms" mmsc="http://mms.madeup" type="mms" />
+
+  <!-- 99905: the two malformed addresses skipped by name, beside a name that stays. -->
+  <apn carrier="Sample Five" mcc="999" mnc="05" apn="mms" mmsc="http://mmsc.brand.invalid" type="mms" />
+  <apn carrier="Sample Five" mcc="999" mnc="05" apn="mms2" mmsc="http://10.1.2.3.4" type="mms" />
+  <apn carrier="Sample Five" mcc="999" mnc="05" apn="mms3" mmsc="http://172.016.000.001" type="mms" />
+
+  <!-- A row with a carrier id and no MCC/MNC: skipped. -->
+  <apn carrier="Sample by id" carrier_id="9999" apn="mms" mmsc="http://mmsc.other.invalid" type="mms" />
+
+</apns>

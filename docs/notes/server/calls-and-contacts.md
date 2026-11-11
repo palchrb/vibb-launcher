@@ -118,7 +118,8 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
   (since design 82 derived from Meldinger's lock level, true only when `lock_glance.sms` is `text`;
   `docs/notes/server/hardening-and-pins.md`, "The lock's glance page"),
   `sms_names` (`device_sms_names`, by fold), `own_numbers` (`device_own_numbers`, `[{slot, number}]`), `mmsc_hosts`
-  (`mmsc_hosts.rs`, compiled in, empty until step 0) and `sms_held_drop` (`device_sms_held` ids with a `dropped_at` in
+  (`mmsc_hosts::policy`; since design 83 a row per reported SIM - "The MMSC list and the parent's allow" below) and
+  `sms_held_drop` (`device_sms_held` ids with a `dropped_at` in
   the last 24 h, still `held`/`dropped`, newest first, at most 100) - also with both channels unmanaged (then no
   contacts, as before). Per contact `sms_in` (never for an emergency number, `emergency::is_emergency` - R2-H1),
   `sms_out`, `mms` (`device_contacts`, backfilled from the call flags, on for a new contact).
@@ -204,9 +205,9 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
   til navn…" (`…/names`: `sms::valid_name` - 1-11 characters after the shared cleaner, a letter -, unique by
   `sms::fold`, at most `calls_sms::NAMES_MAX` 50; a refusal renders in place, 400, with what was typed), and D17's
   warning "En falsk avsender med samme navn kommer også gjennom." under the card and in every allow's confirm.
-- **The MMSC host table** stays `mmsc_hosts.rs`, compiled in and empty until step 0 (§7: not parent-editable in v1);
-  with no row every MMS fails closed, and the phone's `mmsc_known: false` shows as the row "MMS kan ikke sjekkes på
-  dette SIM-kortet".
+- **The MMSC list** is `mmsc_hosts.rs` (step 4 shipped it compiled in and empty; since design 83 it is generated and
+  the parent can allow an address - "The MMSC list and the parent's allow" below); with no row every MMS fails
+  closed, and the phone's `mmsc_known: false` shows as the row "MMS kan ikke sjekkes på dette SIM-kortet".
 - **The findings** (`calls::sms_findings`, from a launcher with the engine): while SMS is managed - "SMS-appen er
   ikke Vibb One - meldinger går tapt" (`role_held` false; not while a change is pending), "Ventelisten er full" with
   "Nye ukjente avsendere blir ikke holdt før {time}" (the earliest `expires_at` of the full pool's held rows), "Nummeret
@@ -215,7 +216,8 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
   fram uten mobildata": rows in the settings group, not Attention (`CallProblem::needs_attention`). While SMS isn't
   managed: "Vibb One er fortsatt SMS-appen" (code QA L3), a row.
 - **The device page's row** "Meldinger": "2 meldinger venter · 3 blokkert denne uken" (`calls_sms::summary_value`),
-  under Calls & Contacts while either isn't nought, to `#held`.
+  under Calls & Contacts while either isn't nought, to `#held` - or to `#mmsc` when no message is held and design 83's
+  address questions are what waits.
 - Every write is one transaction scoped to the phone, 500 on a database error, and nudges the phone (`calls::saved`:
   `command_notify`), so an allow reaches it with the policy within seconds while it is online. Tests: `tests::sms_page`
   (each allow path's defaults, the escaped prefill, Slett nå / Slett alle, the names' rule, the SMS settings, the
@@ -430,3 +432,67 @@ Steps 1 and 2: server and template only - no policy key, contract file, migratio
   table in `tests::calls::every_form_on_the_calls_page_returns_to_its_place`, `i18n_pages` (Avansert open, a held
   prefill, the seeded split Mormor), and the jstests `contact-form.test.js` and the D11 cases in `auto-reload`,
   `pull-refresh` and `reconnect`.
+
+## The MMSC list and the parent's allow (design 83, `docs/design/83-mmsc-hosts.md`; branch `mmsc-hosts`)
+
+A phone fetches a picture only from an entry in its SIM's row of `call_policy.mmsc_hosts` (design 77 D10). The row has
+two sources, and nothing else lets an address in:
+- **The generated list** `testdata/mmsc_hosts.txt` (`scripts/mmsc-hosts.py`, from AOSP's `apns-full-conf.xml` at a
+  pinned commit and SHA-256, Apache-2.0 - `NOTICE.md`; never edited by hand: the script holds the SHA-256 of its lines,
+  and `--selftest` - no network, in `server-ci.yml`'s always-run `server-changes` job - compares them and converts
+  `scripts/mmsc-hosts-sample.xml` under every `UNASKED` value). One line per MCC/MNC, `mccmnc unasked... | hints...`,
+  compiled in (`mmsc_hosts::listed`, `tests::the_list_is_well_formed`). An **unasked** entry is sent to a phone with
+  that SIM; a **hint** is only a line in the parent's question. The script's `UNASKED` is `"none"`: **every entry is
+  a hint, so no phone gets a row without a parent's allow** - until design 77's step 0 has shown on a real SIM which
+  network the platform fetches on (design 83 §3, the gate). Then `"internal"` (single-label names and private or CGNAT
+  addresses unasked) is that one line, the regenerated file and a server release.
+- **The parent's allow**, `device_mmsc_hosts` (0137: per phone, MCC/MNC and entry - `open`, `allowed`, `declined`).
+- **An entry** (`mmsc_hosts::valid_entry`, the launcher's `MmsGate.validEntry`, both over
+  `testdata/sms_contract.json`'s `mmsc_entries`): `host`, or `host:port` for a port other than 80, 443 and 8080 -
+  lower case, a last label that starts with a letter or exactly four decimal octets (the first never 0 or 127: a
+  parent is not asked about "this host"), matched exactly.
+- **The policy** (`mmsc_hosts::policy`): a row for each SIM operator in the newest status report that carries an
+  `sms_state` (`sms_state.sim_operators`, at most 4; `mmsc_hosts::Reported`) and has an unasked or an allowed entry.
+  `[]` without such a report or from a launcher that reports no operator - fail closed. A sync fetches the policy
+  before it reports, so `device_api::status` nudges the phone when a report's operators differ from the report before
+  it (a first report, a SIM swap): the next policy has the row.
+- **The report** (`sms::sanitize_state`): `sim_operators` `[{mccmnc, name}]` (5-6 digits; the name cleaned to 32
+  characters) and `mmsc_unlisted` `[{mccmnc, host, from, at}]` - an entry, never a URL; at most 4 of each, a
+  malformed row dropped alone.
+- **The intake** (`mmsc_hosts::intake`, at every status report, never failing it): an `mmsc_unlisted` row is kept
+  only when its MCC/MNC is one of that report's SIMs, its sender is one of this phone's contacts and the entry isn't
+  unasked for the SIM. A kept one becomes an `open` row - or moves the open one to this picture (`picture_from`,
+  `picture_at`, `reported_at`); an answered one changes nothing (a declined address is never asked about again), and
+  neither does a fifth open one (`OPEN_MAX` 4: a question a parent is reading never goes). A new row raises the
+  parent event `mmsc_host` once, keyed by the row's id, under `sms_held`'s switch (`push_sms_held`) and with no push
+  budget - four open rows are the cap -, to `/devices/{id}/calls#mmsc`. An open row goes 30 days after a report last named it (`retention::prune`,
+  `Pruned::mmsc_hosts`).
+- **The page** (`handlers::calls_mmsc`, `templates/device_calls.html`): the questions in `#mmsc`, right under
+  "Meldinger som venter" - "Telefonen vil hente bilder fra {host}. Tillat?", the picture it is about (the contact as
+  named now, and when), what Android's list says for the SIM's operator (`listed`; `unlisted` with the list's entries
+  and the warning to allow only if the contact really sent a picture then; `unlisted_none`), that an allow lasts, and
+  "Bildet er ikke lenger tilgjengelig…" once the phone no longer reports the picture. "Tillat" / "Ikke tillat" post
+  to `/devices/{id}/calls/mmsc/{row}/allow` and `/decline`. The answered ones are the folded "Bildeadresser"
+  (`#mmsc-decided`) at the foot: "Fjern" on an allowed row (declines it: out of the next policy, fetched pictures
+  stay), "Tillat likevel" on a declined one. At most `ALLOWED_MAX` 8 allowed per phone and MCC/MNC - a ninth is
+  refused (`?notice=mmsc_full`, and the row says so in place of its button) - and `DECLINED_MAX` 32 declined, the
+  oldest dropped. An answer is one transaction scoped to the phone, stores who and when, reads the row's event for
+  every parent and nudges the phone (`calls::saved`), so a waiting picture is fetched within seconds.
+- **Where a form lands** (a save never jumps to the top): a stored answer on `?mmsc=1#mmsc-{row}` ("Bildeadresser"
+  drawn open at the row); one that stored nothing (the row gone or answered already: `mmsc_gone`; `mmsc_full`) on the
+  notice of the group its form was in - `#mmsc` for a question, `?mmsc=1…#mmsc-decided` for "Bildeadresser", whose
+  forms post with `?decided=1` to say so.
+- The device page's "N meldinger venter" counts the open questions too (`calls_sms::summary_value`,
+  `calls_mmsc::open_count`), and leads to `#mmsc` when no message is held (code QA). An allowed row says "Tillatt
+  {date} av {parent}", or "Tillatt {date}" (`allowed_on`) when the account is gone. The finding "MMS kan ikke sjekkes
+  på dette SIM-kortet" stays beside the question (the standing state); its long text gains "Når en kontakt sender et
+  bilde, kan du tillate adressen her." while the newest `sms_state` has `sim_operators`.
+- Tests: `tests::mmsc_hosts` (the policy has exactly the reported SIMs' entries and never a hint; what the intake
+  keeps and drops, and that an answered address raises no second event; allow, decline and take back with each
+  form's landing, the device page's count and its link; the ninth allow and an allowed row with no account; the
+  oldest decline past the cap), `tests::cleanup::pruning_keeps_only_what_retention_allows` (only an open row goes
+  after 30 days), `tests::lock_glance`'s device delete (the rows go with the phone), `sms::tests` (the contract's
+  `mmsc_entries`, `report` and `policy`), `mmsc_hosts::tests::the_list_is_well_formed`, the seeded family's rows on
+  the nb page (`tests::i18n_pages::nb_pages_have_no_english`).
+- **Not shown by any of this:** what an operator's notification really names, and which network the platform fetches
+  on - design 77's step 0, on a real SIM. Until then "MMS works" means "the gate and the allow work".

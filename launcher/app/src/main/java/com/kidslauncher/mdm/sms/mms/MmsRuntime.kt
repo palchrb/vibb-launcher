@@ -106,7 +106,11 @@ object MmsRuntime {
             }
             if (outcome == null) continue
             when (outcome) {
-                is PushOutcome.Shown -> if (!outcome.fetch) SmsRuntime.notifyReceived(app, outcome.shown)
+                is PushOutcome.Shown -> {
+                    if (!outcome.fetch) SmsRuntime.notifyReceived(app, outcome.shown)
+                    // Design 83 §4: the parent is asked about the address while the picture's expiry runs.
+                    if (outcome.ask) SmsRuntime.requestHeldSyncSoon(app)
+                }
                 is PushOutcome.Held, is PushOutcome.Blocked -> SmsRuntime.requestHeldSyncSoon(app)
                 PushOutcome.Waiting, PushOutcome.Duplicate -> Unit
             }

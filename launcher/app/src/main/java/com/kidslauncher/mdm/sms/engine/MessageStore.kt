@@ -203,7 +203,7 @@ data class MmsRow(
         /** D14: five tries gave up - the bubble offers "Trykk for å prøve igjen". */
         const val RETRY = "retry"
 
-        /** D10: this SIM's MCC/MNC isn't on the MMSC list - nothing is fetched (fail closed). */
+        /** D10: the picture's address isn't on this SIM's MMSC list - nothing is fetched (fail closed). */
         const val MMSC_UNKNOWN = "mmsc_unknown"
     }
 }

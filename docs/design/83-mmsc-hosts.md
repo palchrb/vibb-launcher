@@ -85,8 +85,9 @@ class is dropped again and the hints alone stay.
 
 **An entry** is `host` or `host:port`, one grammar on both sides (`mmsc_entries`, §6): `host` is 1-253 bytes of
 `[a-z0-9.-]` in non-empty labels, and either its last label starts with a letter or it is exactly four decimal octets
-(0-255, no leading zeros); `port` is 1-65535 and never 80, 443 or 8080. An `xn--` label is kept and shown as written.
-The script writes the lower-cased host, and `host:port` too when the APN names another port.
+(0-255, no leading zeros; the first never 0 or 127 - "this host", code QA L4); `port` is 1-65535 and never 80, 443 or
+8080. An `xn--` label is kept and shown as written. The script writes the lower-cased host, and `host:port` too when
+the APN names another port.
 
 **The launcher's matcher** (`MmsGate.location`). It matches exactly and without case today, and accepts a listed
 single-label name or IPv4 literal; that stays. No suffix matching (it would need a public-suffix list). Changes:
@@ -95,7 +96,8 @@ single-label name or IPv4 literal; that stays. No suffix matching (it would need
 - **A third result.** `Ok(host)`; `Unlisted(entry)` - a plain http(s) URL whose host and port make an entry that is
   not on this SIM's list (today's `UnknownOperator` is this with an empty list); `Bad` - everything else (not
   http/https, userinfo, unparsable, an IPv6 literal, a host outside the grammar such as `010.0.0.1`, `2130706433` or
-  `0x7f000001`), blocked as `bad_location` with no prompt and no allow path, as today.
+  `0x7f000001`, and since code QA L3 a single label with a trailing dot: `mmsc.` is an absolute name, another lookup
+  than the entry `mmsc`), blocked as `bad_location` with no prompt and no allow path, as today.
 
 ## 2. MVNOs and several rows per MCC/MNC
 
@@ -122,11 +124,13 @@ The server sends one row per MCC/MNC (unasked and allowed merged), so the launch
   SIM's MMS network (through `mmsproxy` where set) and never falls back to Wi-Fi - there, `mmsc` or `10.0.0.9` is
   whoever answers on that network. That is read from the platform's source (`MmsService` asks for a network with the
   MMS capability and opens the connection on it), **not shown on a phone**. So the committed file is generated with
-  `"none"` until step 0 records, on the test phone with a real SIM: (a) with Wi-Fi on, a picture from a single-label
-  or private host is fetched (it resolved on the MMS network); (b) with that phone's debug launcher, a notification
-  naming a private address on the Wi-Fi network, where `fake-mmsc.py` listens, brings no request there, with mobile
-  data on and off. Then `"internal"` goes in as its own commit and server release. If (b) fails it never does - and
-  a parent's allow of such a name has the same weakness, which step 0 must then report to the owner before MMS ships.
+  `"none"` until step 0 records, on the test phone with a real SIM: (a) with Wi-Fi on, a picture at a single-label
+  or private address is fetched; (b) a notification naming a private address on the Wi-Fi network brings no request
+  there although the platform was asked, with mobile data on and off. The steps a person follows, with the control
+  that tells "the platform tried elsewhere" from "our own gate kept it", are design 77 §9's "Design 83's gate, step
+  by step" - the one full text. Then `"internal"` goes in as its own commit and server release. If (b) fails it
+  never does - and a parent's allow of such a name has the same weakness, which step 0 must then report to the owner
+  before MMS ships.
 - **`--selftest`, no network**: converts the vendored `scripts/mmsc-hosts-sample.xml` (our own rows, `.invalid`
   hosts, every class and every skip reason, under each `UNASKED` value) to exactly the lines kept in the script, and
   compares the committed output's body with the SHA-256 the script holds for it (as `yr-symbols.py` holds its
@@ -188,8 +192,10 @@ still shows its prompt, with `full` in place of "Tillat"), 32 `declined` (the ol
 section `#mmsc` whose anchor is always there; decided rows are a folded group "Bildeadresser" at the foot of the
 page. Forms post to `/devices/{id}/calls/mmsc/{row}/allow#mmsc-{row}` (and `/decline`), the `#held` forms' pattern:
 **a save returns to its own row and never jumps to the top**, and a POST for a row that is gone or already decided
-lands on `notice` in place. An open row is counted and linked wherever a held message is. A prompt is `ask`, `about`,
-then `listed` when the entry is a hint for that MCC/MNC, else `unlisted` (or `unlisted_none`) and `warn`; then `lasts`.
+lands on `notice` in place. An open row is counted wherever a held message is, and the device page's count row leads
+to `#mmsc` when no message is held (code QA). `allowed_on` is an allowed row whose account is gone (code QA L7). A
+prompt is `ask`, `about`, then `listed` when the entry is a hint for that MCC/MNC, else `unlisted` (or
+`unlisted_none`) and `warn`; then `lasts`.
 
 | key (`device.calls.mmsc.`) | nb | en |
 |---|---|---|
@@ -206,7 +212,8 @@ then `listed` when the entry is a hint for that MCC/MNC, else `unlisted` (or `un
 | `allowed` + `remove` | Tillatt {date} av {parent} / Fjern | Allowed {date} by {parent} / Remove |
 | `declined` + `allow_after` | Ikke tillatt / Tillat likevel | Not allowed / Allow after all |
 | `gone` | Bildet er ikke lenger tilgjengelig. Neste bilde hentes hvis du tillater adressen. | The picture is no longer available. The next one is fetched if you allow the address. |
-| `notice` | Denne adressen er allerede besvart. | This address has already been answered. |
+| `notice` | Noen har allerede svart på denne. | Someone has already answered this one. |
+| `allowed_on` | Tillatt {date} | Allowed {date} |
 
 `gone` shows on an open row the phone no longer reports. A new event kind `mmsc_host` (inbox and push, target
 `#mmsc`) is raised once, when a row is created: "Emma: et bilde fra Mamma venter" / "Telefonen vil hente det fra en

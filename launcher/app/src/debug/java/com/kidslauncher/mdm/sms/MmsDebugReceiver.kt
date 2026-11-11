@@ -8,12 +8,13 @@ import com.kidslauncher.mdm.calls.MmscRule
 
 /**
  * Debug build only (src/debug, design 77 step 3b; `checkReleaseHasNoDebugHook`, `DebugHookAbsentTest`): the emulator
- * can't receive an MMS push (its console's `sms pdu` delivers nothing on the AVD) and has no carrier MMS server on the
- * MMSC list (the server's table is empty until step 0). So:
+ * can't receive an MMS push (its console's `sms pdu` delivers nothing on the AVD) and reaches no MMS server its SIM's
+ * MMSC list names. So:
  * - `--es push_hex <m-notification-ind as hex>` commits that push exactly as `MmsPushReceiver` does (D7) - from there
  *   the real path runs: the isolated parse, D10's gate, the download;
- * - `--es mmsc_host <host> --es mccmnc <MCC/MNC>` puts a fake MMS server on this process's MMSC list (memory only,
- *   until the process dies) - `docs/testing/emulator.md` §6v's fake MMSC;
+ * - `--es mmsc_host <host or host:port> --es mccmnc <MCC/MNC>` puts a fake MMS server on this process's MMSC list,
+ *   in that SIM's own row (design 83 §7; memory only, until the process dies) - `docs/testing/emulator.md` §6v's
+ *   fake MMSC. Without it, the address is the parent's to allow on Device › Calls;
  * - `--es stand_in <the fake MMSC's send URL>` (or `off`) plays the platform's MMS service, which the AVD's carrier
  *   config switches off ([MmsDebug]).
  * Exported for `adb shell am broadcast -n ...`, guarded by DUMP (shell has it, apps don't).

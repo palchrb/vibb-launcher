@@ -1,0 +1,865 @@
+# The MMS servers AOSP's APN list names for each SIM operator (design 83), made by scripts/mmsc-hosts.py from
+# https://android.googlesource.com/device/sample/+/73f904fbeb872f5675cb5f18cd9dfb15856425a6/etc/apns-full-conf.xml
+# (SHA-256 9e44015793ec01d0773123103dca19b181fbc5fdd43cfc1b1d5cfacbda622726). Never edited by hand: the script's
+# --selftest compares the lines below with the SHA-256 it holds for them
+# (87f81870a64ce20b75c80a56b26a26fbca9bcf9c5b0fea027277344307751e8a).
+#
+# The source is Copyright 2006, The Android Open Source Project, licensed under the Apache License, Version 2.0
+# (http://www.apache.org/licenses/LICENSE-2.0; NOTICE.md). Changed here: reduced to the hosts of each MCC/MNC's `mmsc`
+# URLs, in two classes; the hosts in the script's SKIP are left out.
+#
+# UNASKED = "none"
+# One line per MCC/MNC: `mccmnc unasked... | hints...`, an entry `host` or `host:port`. An unasked entry is sent to
+# a phone with that SIM (`call_policy.mmsc_hosts`); a hint is only shown to the parent who is asked about an address.
+00101 | mms.vtext.com mmsc.mobile.att.net mmsc1.uscc.net
+001010 | mms.vtext.com
+20201 | mmsc.cosmote.gr mmsc.cosmote.gr:8002
+20205 | mms.vodafone.gr
+20209 | mms.myq.gr
+20210 | 192.168.200.95
+20404 | mms.hotmobile.co.il mms.sasktel.com mms.vtext.com mmsc mmsc.truphone.com mmsc.truphone.com:1981 pix.cspire.com
+20408 | mmsc.truphone.com mmsc.truphone.com:1981
+20433 | mmsc.truphone.com mmsc.truphone.com:1981
+20601 | mmc1 mms.ch.upcmobile.com mms.virginmobile.co.uk mms.virginmobile.co.uk:8002 mmsc.proximus.be mmsc.telenet.be
+20605 | mmsc.telenet.be
+20610 | mmsc.mobistar.be
+20620 | mms.virginmobile.co.uk mms.virginmobile.co.uk:8002 mmsc.base.be
+20801 | mms.coriolis.fr mms.monaco-telecom.mc mms.orange.fr
+20809 | mms.bealiv.com mms.coriolis.fr mms1 mmsc.truphone.com mmsc.truphone.com:1981
+20810 | mms.coriolis.fr mms1 mms65 mms66 mms68 mmsdebitel
+20812 | mmsc.truphone.com mmsc.truphone.com:1981
+20815 | mms.free.fr mms.free.gp mms.free.mq mms.free.re mms.freepro.fr mms.iliad.it mms.telco.re
+20817 | mms.bornsip.fr mms.bornsip.fr:8191
+20820 | mms.bouyguestelecom.fr
+20822 | mms
+20823 | virginmms.fr
+20826 | mmsnrj
+20827 | mms.coriolis.fr
+20828 | 100.101.102.103
+21210 | mms.monaco-telecom.mc
+21403 | jazztelmms.com mms.orange.es mms.racc.net
+21405 | mms.movistar.com mms.telecable.es
+21406 | mms.hitsmobile.es mms.lebaramobile.es mms.lowi.omv.es mms.pepephone.com
+21407 | mms.movistar.com
+21416 | mms.telecable.es
+21418 | mms.ono.com
+21419 | mms.orange.es
+21421 | jazztelmms.com
+21427 | mmsc.truphone.com mmsc.truphone.com:1981
+21601 | mmsc.pgsm.hu mmsc.telenor.hu
+21630 | mms.t-mobile.hu
+21670 | mms.vodafone.hu
+21671 | mms.hu.upcmobile.com
+21803 | mms.gprs.eronet.ba
+21805 | mmsc.mtel.ba
+21890 | mms.bhmobile.ba
+21901 | mms.bonbon.com.hr mms.t-mobile.hr
+21902 | mmsc.tele2.hr
+21910 | mms.a1.hr
+22001 | mms.telenor.rs
+22002 | mm.vor.telenor.me
+22003 | mms.mts064.telekom.rs
+22004 | 192.168.180.100
+22005 | mms.vipmobile.rs
+22201 | mms.coop.it mms.iusacell3g.com mms.kenamobile.it mms.tim.it
+22207 | mms.kenamobile.it
+22208 | mms.fastweb.it
+22210 | mms.postemobile.it mms.vodafone.it
+22233 | mms.postemobile.it
+22250 | mms.iliad.it
+22253 | mms.coop.it
+22288 | mms.windtre.it
+22299 | mms.fastweb.it mms.windtre.it
+22603 | mmsc1.mms.telekom.ro mmsc1.mms.telekom.ro:8002
+22605 | 10.10.3.133 10.10.3.133:8002
+22606 | mmsc1.mms.telekom.ro mmsc1.mms.telekom.ro:8002
+22610 | wap.mms.orange.ro wap.mms.orange.ro:8002
+23001 | mms
+23002 | mms.o2active.cz mms.o2active.cz:8002
+23003 | mms
+23101 | imms.orange.sk
+23102 | mmsc.telekom.sk
+23106 | mms.o2world.sk mms.o2world.sk:8002
+23201 | mmsc.a1.net
+23203 | mmsc.t-mobile.at
+23204 | mmsc.t-mobile.at
+23205 | mmsc
+23207 | mmsaut.at mmsc.t-mobile.at
+23210 | mmsc
+23211 | mmsc.bob.at
+23214 | mmsc
+23402 | mmsc.mms.o2.co.uk mmsc.mms.o2.co.uk:8002
+23405 | mms.spitfire.co.uk
+23408 | mmsc
+23410 | mmsc.mediamessaging.co.uk mmsc.mediamessaging.co.uk:8002 mmsc.mms.o2.co.uk mmsc.mms.o2.co.uk:8002
+23411 | mmsc.mms.02.co.uk mmsc.mms.02.co.uk:8002
+23415 | mms.ad.vodafone.co.uk mms.lebara.co.uk mms.talkmobile.co.uk mms.vodafone.co.uk
+23420 | mms.um.idmobile.co.uk mms.um.idmobile.co.uk:10021 mms.um.three.co.uk mms.um.three.co.uk:10021
+23425 | mmsc.truphone.com mmsc.truphone.com:1981
+23430 | mms mmsc
+23433 | mms
+23438 | mms.virginmobile.co.uk mms.virginmobile.co.uk:8002
+23439 | mms.gamma.co.uk mmsc.mobi
+23450 | mms.surfmail.com
+23455 | mmsc.gprs.cw.com
+23457 | 185.110.178.96 185.110.178.96:38090
+23458 | mms.manxpronto.net mms.manxpronto.net:8002
+23486 | mms
+23594 | mms.um.three.co.uk mms.um.three.co.uk:10021
+23801 | mmsc.tdc.dk mmsc.tdc.dk:8002
+23802 | mms.telenor.dk
+23806 | mms.3.dk
+23820 | mms.telia.dk
+23830 | mms.telia.dk
+23877 | mms.telenor.dk
+24001 | mmss
+24002 | mms.tre.se
+24004 | mms.tre.se
+24005 | mmsc.tele2.se
+24007 | 185.110.178.96 185.110.178.96:38090 mms.gamma.co.uk mmsc.mobi mmsc.tele2.no mmsc.tele2.se
+24008 | mms
+24010 | mms.springmobil.se
+24024 | mmsc.tele2.se
+24201 | mmsc
+24202 | mm
+24204 | mmsc.tele2.no
+24205 | mmsc
+24214 | mmsc
+24403 | mmsc.dna.fi
+24405 | mms.elisa.fi mms.saunalahti.fi mms.saunalahti.fi:8002
+24410 | mms.song.fi
+24412 | mmsc.dna.fi
+24413 | mmsc.dnafinland.fi
+24414 | mms.amt.aland.fi
+24421 | mms.saunalahti.fi mms.saunalahti.fi:8002
+24491 | mms
+24601 | mms.omnitel.net mms.omnitel.net:8002
+24602 | mmsc
+24603 | mmsc.tele2.lt
+24701 | mmsc.lmt.lv
+24702 | mmsc.tele2.lv
+24705 | mmsc
+24710 | mmsc.lmt.lv
+24801 | mms.emt.ee
+24802 | 194.204.2.10
+24803 | mmsc.tele2.ee
+25001 | mmsc
+25002 | mmsc mmsc:8002
+25011 | mmsc mmsc:8002
+25020 | mmsc.tele2.ru
+25027 | mmsc mmsc:8002
+25050 | mmsc
+25099 | mms
+25501 | mmsc mmsc:8002
+25502 | mms
+25503 | mms.kyivstar.net
+25506 | mms.life.com.ua
+25507 | 10.212.1.4
+25701 | mmsc
+25702 | mmsc
+25704 | mms.life.com.by
+25902 | mms.moldcell.md
+25905 | 10.32.15.68 10.32.15.68:38090
+26001 | mms.plusgsm.pl mms.plusgsm.pl:8002
+26002 | mms
+26003 | mms.orange.pl
+26006 | mmsc.play.pl
+26033 | mmsc.truphone.com mmsc.truphone.com:1981
+26044 | mmsc.rebtel.com
+26201 | mms.t-mobile.de
+26202 | 139.7.24.1
+26203 | 10.81.0.7 10.81.0.7:8002
+26206 | mms.t-mobile.de
+26207 | 10.81.0.7 10.81.0.7:8002
+26223 | mms.1und1-mobilfunk.de
+26242 | mmsc.truphone.com mmsc.truphone.com:1981
+26801 | mms.vodafone.pt
+26803 | mmsc mmsc:10021
+26806 | mmsc
+26889 | mms.vodafone.pt
+27001 | mmsc.pt.lu
+27077 | mms.tango.lu
+27099 | mms.orange.lu
+27201 | mms.postfone.ie www.vodafone.ie
+27202 | mms.three.ie
+27203 | mms.mymeteor.ie
+27205 | mms.um.3ireland.ie mms.um.3ireland.ie:10021
+27211 | mmc1
+27401 | mms.simi.is
+27402 | mmsc.vodafone.is
+27403 | mmsc.vodafone.is
+27411 | mmsc.nova.is
+27801 | mms.vodafone.com.mt
+28001 | mmsc.cyta.com.cy
+28010 | mms.mtn.com.cy
+28310 | mms
+28401 | mmsc
+28403 | mmsc.vivacom.bg
+28405 | mmsc
+28601 | mms.turkcell.com.tr
+28602 | 217.31.233.18 217.31.233.18:6001
+28603 | mms.avea.com.tr
+29001 | mms.tele.gl
+29003 | mms.mobile.tuullik.gl mms.mobile.tuullik.gl:8002
+29340 | mmc mms.hot.si
+29341 | mms.mobitel.si
+29364 | www.mms.t-2.net www.mms.t-2.net:8002
+29370 | mms.telemach.net mms.telemach.net:8002
+29401 | mms.t-mobile.com.mk
+29403 | mmsc.vipoperator.com.mk
+29502 | 192.168.151.3 192.168.151.3:8002
+29701 | mm.vor.telenor.me
+302220 | aliasredirect.net
+302270 | mmss.mobi.eastlink.ca
+302320 | mms.chatrwireless.com
+302370 | mms.fido.ca
+302490 | mms.freedommobile.ca
+302500 | media.videotron.com
+302610 | mms.bell.ca mms.luckymobile.ca
+302660 | mmsc2.mts.net
+302720 | mms.chatrwireless.com mms.gprs.rogers.com
+302780 | mms.lum.ca mms.sasktel.com
+310000 | 172.16.16.130 mms.blueunlimited.com mms.dst.com mms.mobipcs.com mms.mohavewireless.com mms.mymn3g.net mms.revol.us mms.vzwreseller.com mmsc.cccomm.csky.us mmsc.cleartalk.csky.us
+310004 | mms.vtext.com
+310020 | mms.unionwireless.com
+310028 | mms.vtext.com
+310035 | mmsi.etex.mobi
+310040 | mmsc.mta.dataonair.net
+310050 | mmsc1.acsalaska.net
+310066 | mmsc1.uscc.net
+310080 | mms.iot1.com
+310100 | mms
+310120 | mms.sprintpcs.com
+310130 | mms.cwwmms.com
+310160 | metropcs.mmsmvno.com
+310180 | mms.wcc.net
+310200 | metropcs.mmsmvno.com
+310210 | metropcs.mmsmvno.com
+310220 | metropcs.mmsmvno.com
+310230 | metropcs.mmsmvno.com
+310240 | metropcs.mmsmvno.com mmsc1.g-mms.com wholesale.mmsmvno.com
+310250 | metropcs.mmsmvno.com
+310260 | metropcs.mmsmvno.com mms.tracfone.com mmsc1.g-mms.com smpl.mms.msg.eng.t-mobile.com wholesale.mmsmvno.com
+310270 | metropcs.mmsmvno.com
+310280 | mmsc.mobile.att.net
+310300 | metropcs.mmsmvno.com mmsc.truphone.com mmsc.truphone.com:1981
+310310 | metropcs.mmsmvno.com
+310320 | mmsc.c1neaz.csky.us mmsc.c1neaz.csky.us:6672
+310330 | mms.alltel.com
+310360 | mms1.zsend.com
+310390 | mms.celloneet.com
+310410 | mmsc.mobile.att.net
+310420 | mms.gocbw.com mms.gocbw.com:8088
+310430 | mmsc.akdt.dataonair.net mmsc.akdt.dataonair.net:6672
+310450 | mms.viaero.com
+310470 | mms.ntelospcs.net
+310490 | metropcs.mmsmvno.com
+310530 | metropcs.mmsmvno.com
+310570 | mmsc.mtpcs.csky.us mmsc.mtpcs.csky.us:6672
+310580 | mms.inland3g.com
+310590 | metropcs.mmsmvno.com
+310600 | mms.cellcom.com
+310610 | mmsc.westlinkcom.com
+310640 | metropcs.mmsmvno.com
+310660 | metropcs.mmsmvno.com
+310690 | mms.limitless.csky.us mms.limitless.csky.us:6672 mmsc.truphone.com mmsc.truphone.com:1981
+310750 | mms.ekn.com
+310770 | mmsc.iwireless.dataonair.net mmsc.iwireless.dataonair.net:6672
+310800 | metropcs.mmsmvno.com
+310820 | mmsc.c1nepa.csky.us mmsc.c1nepa.csky.us:6672
+310840 | mms.edgemobile.net
+310880 | mms.iot1.com
+310900 | mmsc.midrivers.csky.us mmsc.midrivers.csky.us:6672
+310920 | m.iot1.com
+310930 | cvwmms.com
+310950 | mmsc.mobile.att.net
+310960 | mms.rinawireless.com
+311050 | mms.thumbcell.com
+311070 | mms.elementmobile.net
+311080 | 69.8.34.146
+311100 | mms.ntwls.net
+311140 | mms.sprocketwireless.com
+311180 | mmsc.mobile.att.net
+311190 | mms.cellular1.net
+311220 | mmsc1.uscc.net
+311221 | mmsc1.uscc.net
+311222 | mmsc1.uscc.net
+311223 | mmsc1.uscc.net
+311224 | mmsc1.uscc.net
+311225 | mmsc1.uscc.net
+311226 | mmsc1.uscc.net
+311227 | mmsc1.uscc.net
+311228 | mmsc1.uscc.net
+311229 | mmsc1.uscc.net
+311230 | pix.cspire.com
+311310 | 204.181.155.217
+311340 | mms.iot1.com
+311350 | mms.nemont.mobi
+311370 | mmsc.gci.net
+311390 | mms.vtext.com
+311410 | mmsc.hawkeyeswitch.net
+311420 | mms.nwmcell.com
+311430 | mmsc.hawkeyeswitch.net
+311440 | mms.iot1.com
+311450 | mmsc.ptci.net
+311480 | mms.vzwreseller.com
+311500 | mmsc.ctc.csky.us mmsc.ctc.csky.us:6672
+311530 | 172.16.16.103 mms2.mymobiletxt.net
+311580 | mmsc1.uscc.net
+311581 | mmsc1.uscc.net
+311582 | mmsc1.uscc.net
+311583 | mmsc1.uscc.net
+311584 | mmsc1.uscc.net
+311585 | mmsc1.uscc.net
+311586 | mmsc1.uscc.net
+311587 | mmsc1.uscc.net
+311588 | mmsc1.uscc.net
+311589 | mmsc1.uscc.net
+311590 | mmsc1.gscdata.com
+311600 | mms.cox.net
+311610 | mms.iot1.com
+311650 | mms.unitedwireless.com
+311670 | mmsc.pinebelt.net mmsc.pinebelt.net:6672
+311750 | mms.cleartalk.us
+311910 | mms.mymn3g.net
+311920 | mms.cvalley.net
+311930 | mms.rinawireless.com
+312040 | mms.rinawireless.com
+312160 | mms.chatmobility.com
+312420 | mms.ntwls.net
+330000 | mms.openmobilepr.com mms.openmobilepr.com:1981
+330110 | mmsg.claropr.com mmsg.claropr.com:10021
+334020 | mms.itelcel.com
+334030 | mms.movistar.mx
+334050 | mms.att.com.mx
+334090 | mms.att.com.mx
+33805 | mms.digicelgroup.com
+338050 | mms.digicelgroup.com
+338070 | mms.ideasclaro.com.jm
+33818 | mmsc
+338180 | mmsc
+34001 | 193.251.160.246
+34002 | mmsc.only.fr mmsc.only.fr:9091
+34004 | mms.free.mq
+34009 | mms.free.gp
+34020 | mmc.digicelfr.com
+342600 | mmsc
+344920 | mmsc
+346140 | mmsc
+34817 | mmsc
+348170 | mmsc
+34877 | mmc.digiceljamaica.com
+352110 | mmsc
+354860 | mmsc
+356110 | mmsc
+358110 | mmsc
+360110 | mmsc
+36269 | mms.digicelgroup.com
+36301 | mms.setar.aw
+36302 | mms.digicelgroup.com
+36449 | mms.bealiv.com
+365840 | mmsc
+366110 | mmsc
+36801 | mms.cubacel.cu
+37002 | mms.ideasclaro.com.do
+37004 | 10.200.16.4
+37202 | mmc.digicelhaiti.com
+37412 | 192.168.210.104
+374120 | 192.168.210.104
+374121 | 192.168.210.104
+374122 | 192.168.210.104
+374123 | 192.168.210.104
+374124 | 192.168.210.104
+374125 | 192.168.210.104
+374126 | 192.168.210.104
+374127 | 192.168.210.104
+374128 | 192.168.210.104
+374129 | 192.168.210.104
+37413 | mmc.digiceltt.com
+374130 | mmc.digiceltt.com
+376350 | mmsc
+40101 | mms.beeline.kz
+40102 | mms.kcell.kz
+40177 | mms.tele2.kz
+40401 | mms1.live.vodafone.in
+40402 | 100.1.201.171 100.1.201.171:10021
+40403 | 100.1.201.171 100.1.201.171:10021
+40404 | 10.4.42.21 10.4.42.21:8002
+40405 | mms1.live.vodafone.in
+40407 | 10.4.42.21 10.4.42.21:8002
+40409 | 10.239.221.47
+40410 | 100.1.201.171 100.1.201.171:10021
+40411 | mms1.live.vodafone.in
+40412 | 10.4.42.21 10.4.42.21:8002
+40413 | mms1.live.vodafone.in
+40414 | 10.11.12.180
+40415 | mms1.live.vodafone.in
+40416 | 100.1.201.171 100.1.201.171:10021
+40417 | 10.50.1.166
+40418 | 10.239.221.47
+40419 | 10.4.42.21 10.4.42.21:8002
+40420 | mms1.live.vodafone.in
+40422 | 10.4.42.21 10.4.42.21:8002
+40424 | 10.4.42.21 10.4.42.21:8002
+40425 | 10.50.1.166
+40427 | mms1.live.vodafone.in
+40428 | 10.50.1.166
+40429 | 10.50.1.166
+40430 | mms1.live.vodafone.in
+40431 | 100.1.201.171 100.1.201.171:10021
+40433 | 10.50.1.166
+40434 | bsnlmmsc.in bsnlmmsc.in:8514
+40435 | 10.50.1.166
+40436 | 10.239.221.47
+40437 | 10.50.1.166
+40438 | bsnlmmsc.in bsnlmmsc.in:8514
+40440 | 100.1.201.171 100.1.201.171:10021
+40441 | 172.17.83.67 mmsc
+40442 | mmsc
+40443 | mms1.live.vodafone.in
+40444 | 10.4.42.21 10.4.42.21:8002
+40445 | 100.1.201.171 100.1.201.171:10021
+40446 | mms1.live.vodafone.in
+40449 | 100.1.201.171 100.1.201.171:10021
+40450 | 10.239.221.47
+40451 | bsnlmmsc.in bsnlmmsc.in:8514
+40452 | 10.239.221.47
+40453 | bsnlmmsc.in bsnlmmsc.in:8514
+40454 | bsnlmmsc.in bsnlmmsc.in:8514
+40455 | bsnlmmsc.in bsnlmmsc.in:8514
+40456 | 10.4.42.21 10.4.42.21:8002
+40457 | bsnlmmsc.in bsnlmmsc.in:8514
+40458 | bsnlmmsc.in bsnlmmsc.in:8514
+40459 | bsnlmmsc.in bsnlmmsc.in:8514
+40460 | mms1.live.vodafone.in
+40462 | bsnlmmsc.in bsnlmmsc.in:8514
+40464 | bsnlmmsc.in bsnlmmsc.in:8514
+40466 | bsnlmmsc.in bsnlmmsc.in:8514
+40467 | 10.239.221.47
+40468 | mtnlmms
+40469 | mtnlmms
+40470 | 100.1.201.171 100.1.201.171:10021
+40471 | bsnlmmsc.in bsnlmmsc.in:8514
+40472 | bsnlmmsc.in bsnlmmsc.in:8514
+40473 | bsnlmmsc.in bsnlmmsc.in:8514
+40474 | bsnlmmsc.in bsnlmmsc.in:8514
+40475 | bsnlmmsc.in bsnlmmsc.in:8514
+40476 | bsnlmmsc.in bsnlmmsc.in:8514
+40477 | bsnlmmsc.in bsnlmmsc.in:8514
+40478 | 10.4.42.21 10.4.42.21:8002
+40479 | bsnlmmsc.in bsnlmmsc.in:8514
+40480 | bsnlmmsc.in bsnlmmsc.in:8514
+40481 | bsnlmmsc.in bsnlmmsc.in:8514
+40482 | 10.4.42.21 10.4.42.21:8002
+40483 | 10.239.221.47
+40484 | mms1.live.vodafone.in
+40485 | 10.239.221.47
+40486 | mms1.live.vodafone.in
+40487 | 10.4.42.21 10.4.42.21:8002
+40488 | mms1.live.vodafone.in
+40489 | 10.4.42.21 10.4.42.21:8002
+40490 | 100.1.201.171 100.1.201.171:10021
+40491 | 10.50.1.166
+40492 | 100.1.201.171 100.1.201.171:10021
+40493 | 100.1.201.171 100.1.201.171:10021
+40494 | 100.1.201.171 100.1.201.171:10021
+40495 | 100.1.201.171 100.1.201.171:10021
+40496 | 100.1.201.171 100.1.201.171:10021
+40497 | 100.1.201.171 100.1.201.171:10021
+40498 | 100.1.201.171 100.1.201.171:10021
+40501 | mmsc.rcom.co.in
+405025 | mmsc
+405026 | mmsc
+405027 | mmsc
+405028 | mmsc
+405029 | mmsc
+40503 | mmsc.rcom.co.in
+405030 | mmsc
+405031 | mmsc
+405032 | mmsc
+405033 | mmsc
+405034 | mmsc
+405035 | mmsc
+405036 | mmsc
+405037 | mmsc
+405038 | mmsc
+405039 | mmsc
+40504 | mmsc.rcom.co.in
+405040 | mmsc
+405041 | mmsc
+405042 | mmsc
+405043 | mmsc
+405044 | mmsc
+405045 | mmsc
+405046 | mmsc
+405047 | mmsc
+40505 | mmsc.rcom.co.in
+40506 | mmsc.rcom.co.in
+40507 | mmsc.rcom.co.in
+40508 | mmsc.rcom.co.in
+40509 | mmsc.rcom.co.in
+40510 | mmsc.rcom.co.in
+40511 | mmsc.rcom.co.in
+40512 | mmsc.rcom.co.in
+40513 | mmsc.rcom.co.in
+40514 | mmsc.rcom.co.in
+40515 | mmsc.rcom.co.in
+40517 | mmsc.rcom.co.in
+40518 | mmsc.rcom.co.in
+40519 | mmsc.rcom.co.in
+40520 | mmsc.rcom.co.in
+40521 | mmsc.rcom.co.in
+40522 | mmsc.rcom.co.in
+40523 | mmsc.rcom.co.in
+40551 | 100.1.201.171 100.1.201.171:10021
+40552 | 100.1.201.171 100.1.201.171:10021
+40553 | 100.1.201.171 100.1.201.171:10021
+40554 | 100.1.201.171 100.1.201.171:10021
+40555 | 100.1.201.171 100.1.201.171:10021
+40556 | 100.1.201.171 100.1.201.171:10021
+40566 | mms1.live.vodafone.in
+40567 | mms1.live.vodafone.in
+40570 | 10.4.42.21 10.4.42.21:8002
+405750 | mms1.live.vodafone.in
+405751 | mms1.live.vodafone.in
+405752 | mms1.live.vodafone.in
+405753 | mms1.live.vodafone.in
+405754 | mms1.live.vodafone.in
+405755 | mms1.live.vodafone.in
+405756 | mms1.live.vodafone.in
+405799 | 10.4.42.21 10.4.42.21:8002
+405800 | 10.50.1.166
+405801 | mmsc
+405802 | 10.50.1.166
+405803 | mmsc
+405804 | 10.50.1.166
+405805 | 10.50.1.166
+405806 | 10.50.1.166
+405807 | 10.50.1.166
+405808 | 10.50.1.166
+405809 | mmsc
+405810 | 10.50.1.166
+405811 | 10.50.1.166
+405812 | 10.50.1.166
+405813 | 10.58.2.120
+405814 | 10.58.2.120
+405815 | 10.58.2.120
+405816 | 10.58.2.120
+405817 | 10.58.2.120
+405818 | 10.58.2.120
+405819 | 10.58.2.120
+405820 | 10.58.2.120
+405821 | 10.58.2.120
+405822 | 10.58.2.120
+405823 | 10.202.4.119 10.202.4.119:10021
+405824 | 10.202.4.119 10.202.4.119:10021
+405825 | 10.202.4.119 10.202.4.119:10021
+405826 | 10.202.4.119 10.202.4.119:10021
+405827 | 10.202.4.119 10.202.4.119:10021
+405828 | 10.202.4.119 10.202.4.119:10021
+405829 | 10.202.4.119 10.202.4.119:10021
+405830 | 10.202.4.119 10.202.4.119:10021
+405831 | 10.202.4.119 10.202.4.119:10021
+405832 | 10.202.4.119 10.202.4.119:10021
+405833 | 10.202.4.119 10.202.4.119:10021
+405834 | 10.202.4.119 10.202.4.119:10021
+405835 | 10.202.4.119 10.202.4.119:10021
+405836 | 10.202.4.119 10.202.4.119:10021
+405837 | 10.202.4.119 10.202.4.119:10021
+405838 | 10.202.4.119 10.202.4.119:10021
+405839 | 10.202.4.119 10.202.4.119:10021
+405841 | 10.202.4.119 10.202.4.119:10021
+405842 | 10.202.4.119 10.202.4.119:10021
+405843 | 10.202.4.119 10.202.4.119:10021
+405844 | 10.58.2.120
+405845 | 10.4.42.21 10.4.42.21:8002
+405846 | 10.4.42.21 10.4.42.21:8002
+405847 | 10.4.42.21 10.4.42.21:8002
+405848 | 10.4.42.21 10.4.42.21:8002
+405849 | 10.4.42.21 10.4.42.21:8002
+405850 | 10.4.42.21 10.4.42.21:8002
+405851 | 10.4.42.21 10.4.42.21:8002
+405852 | 10.4.42.21 10.4.42.21:8002
+405853 | 10.4.42.21 10.4.42.21:8002
+405875 | 10.58.2.120
+405876 | 10.58.2.120
+405877 | 10.58.2.120
+405878 | 10.58.2.120
+405879 | 10.58.2.120
+405880 | 10.58.2.120
+405908 | 10.4.42.21 10.4.42.21:8002
+405909 | 10.4.42.21 10.4.42.21:8002
+405910 | 10.4.42.21 10.4.42.21:8002
+405911 | 10.4.42.21 10.4.42.21:8002
+405925 | 10.58.2.120
+405926 | 10.58.2.120
+405927 | 10.58.2.120
+405928 | 10.58.2.120
+405929 | 10.58.2.120
+405932 | 10.202.4.119 10.202.4.119:10021
+41001 | mms
+41003 | www.ufonemms.com
+41004 | 10.81.6.11
+41006 | mmstelenor
+41007 | 10.4.0.132
+41501 | mms.mic1.com.lb
+41503 | mms mms:8088
+41601 | mms.jo.zain.com
+41603 | mms.umniah.com
+41677 | 172.16.1.96
+41701 | mymms.syriatel.com
+41702 | mms
+41805 | mvas.asiacell.com
+41820 | mms mms:8002
+41830 | mms mms:8002
+41840 | mms.korektel.com
+41903 | action.ooredoo.com
+41904 | 172.16.128.80 172.16.128.80:38090
+42001 | mms.net.sa mms.net.sa:8002
+42003 | 10.3.3.133 10.3.3.133:9090
+42004 | 10.122.200.12 10.122.200.12:8002
+42101 | mms.sabafon.com
+42102 | 192.168.97.1
+42202 | mmsc.omanmobile.om mmsc.omanmobile.om:10021
+42203 | 10.128.240.16
+42402 | mms
+42403 | mms.du.ae mms.du.ae:8002
+42501 | 192.168.220.15
+42502 | mms.cellcom.co.il
+42503 | mmsu.pelephone.net.il
+42505 | mms.jawwal.ps
+42506 | mms.wataniya.ps
+42507 | mms.hotmobile.co.il
+42508 | mmsc.golantelecom.co.il
+42510 | 192.168.220.15
+42514 | 192.168.220.15
+42515 | 82.166.164.229 82.166.164.229:9000
+42516 | mmsu.pelephone.net.il
+42601 | 192.168.36.10
+42602 | 172.18.83.129
+42604 | mms.viva.com.bh mms.viva.com.bh:38090
+42701 | mmsr.ooredoomms.qa
+42702 | mms.vodafone.com.qa
+43211 | 192.168.193.134 192.168.193.134:38090
+43214 | 192.168.193.134
+43219 | 192.168.193.134
+43220 | 10.200.40.55 10.200.40.55:38090
+43235 | mms mms:8002
+43270 | 192.168.193.134 192.168.193.134:38090
+43293 | 192.168.193.134
+43404 | mms
+43405 | mmsc mmsc:8002
+43407 | mmsc
+44020 | mms-s
+45005 | omms.nate.com omms.nate.com:9082
+45006 | omammsc.uplus.co.kr omammsc.uplus.co.kr:9084
+45008 | mmsc.ktfwing.com mmsc.ktfwing.com:9082
+45201 | 203.162.21.114
+45202 | mms.vinaphone.com.vn
+45204 | mms.viettelmobile.com.vn
+45205 | 10.10.128.58
+45207 | mms
+45208 | 10.18.2.172 10.18.2.172:38090
+45400 | 192.168.58.171 192.168.58.171:8002 mmsc.truphone.com mmsc.truphone.com:1981
+45402 | 192.168.58.171 192.168.58.171:8002
+45403 | mms.um.three.com.hk mms.um.three.com.hk:10021
+45404 | mms.um.three.com.hk mms.um.three.com.hk:10021
+45405 | mms.um.three.com.hk mms.um.three.com.hk:10021
+45406 | mms.smartone.com
+45408 | mmsc.truphone.com mmsc.truphone.com:1981
+45410 | 192.168.58.171 192.168.58.171:8002
+45412 | mms.hk.chinamobile.com
+45413 | mms.hk.chinamobile.com
+45414 | mms.um.three.com.hk mms.um.three.com.hk:10021
+45415 | mms.smartone.com
+45416 | mms.hkcsl.com
+45417 | mms.smartone.com
+45418 | 192.168.58.171 192.168.58.171:8002
+45419 | mms.hkcsl.com
+45430 | mms.hk.chinamobile.com
+45500 | momms.smartone.com
+45501 | mms.wap.ctm.net mms.wap.ctm.net:8002
+45502 | mmsc.vnet.mobi
+45503 | mms.three.com.mo mms.three.com.mo:10021
+45504 | mms.wap.ctm.net mms.wap.ctm.net:8002
+45505 | mms.three.com.mo mms.three.com.mo:10021
+45507 | mmsc.vnet.mobi
+46000 | mmsc.monternet.com
+46001 | mmsc.myuni.com.cn
+46002 | mmsc.monternet.com
+46003 | mmsc.vnet.mobi
+46004 | mmsc.monternet.com
+46007 | mmsc.monternet.com
+46008 | mmsc.monternet.com
+46009 | mmsc.myuni.com.cn
+46011 | mmsc.vnet.mobi
+46013 | mmsc.monternet.com
+46015 | mmsc.monternet.com
+46060 | mmsc.monternet.com
+46601 | mms
+46602 | mms
+46689 | mms.vibo.net.tw
+46692 | mms.emome.net mms.emome.net:8002
+46697 | mms.catch.net.tw
+46699 | mms.catch.net.tw
+47001 | mms.gpsurf.net
+47202 | mms.ooredoo.mv
+50210 | mms.digi.com.my
+50212 | 172.16.74.100 172.16.74.100:10021
+50213 | mms.celcom.net.my
+502142 | 172.16.74.100 172.16.74.100:10021
+502143 | mms.digi.com.my
+502145 | mms.celcom.net.my
+502146 | mms.digi.com.my
+502147 | 172.16.74.100 172.16.74.100:10021
+502148 | mms.celcom.net.my
+50216 | mms.digi.com.my
+50217 | 172.16.74.100 172.16.74.100:10021
+50218 | 10.30.3.11
+50219 | mms.celcom.net.my
+50501 | mmsc.telstra.com mmsc.telstra.com:8002
+50502 | mmsc.optus.com.au mmsc.optus.com.au:8002
+50503 | pxt.vodafone.net.au
+50507 | pxt.vodafone.net.au
+50512 | mmsc.three.net.au mmsc.three.net.au:10021
+50538 | mmsc.truphone.com mmsc.truphone.com:1981
+50552 | mmsc.opti.tel
+50571 | mmsc.telstra.com mmsc.telstra.com:8002
+50572 | mmsc.telstra.com mmsc.telstra.com:8002
+50588 | mmsc.pivotel.com.au mmsc.pivotel.com.au:8002
+50590 | mmsc.optus.com.au mmsc.optus.com.au:8002
+51001 | mmsc.indosat.com
+51010 | mms.telkomsel.com
+51011 | mmc.xl.net.id
+51021 | mmsc.indosat.com
+51089 | mms.three.co.id
+51502 | 192.40.100.22 192.40.100.22:10021
+51503 | 10.102.61.238 10.102.61.238:8002
+51505 | mmscenter.suncellular.com.ph
+51518 | 10.102.61.193 10.102.61.193:8002
+52000 | mms.trueh.com mms.trueh.com:8002
+52001 | mms.mobilelife.co.th
+52003 | mms.mobilelife.co.th
+52004 | mms.trueh.com mms.trueh.com:8002
+52005 | mms2.dtac.co.th mms2.dtac.co.th:8002
+52015 | mms.tot3g.net mms.tot3g.net:8002
+52018 | mms.dtac.co.th mms.dtac.co.th:8002
+52047 | mms2.dtac.co.th mms2.dtac.co.th:8002
+52099 | mms.truelife.com mms.truelife.com:8002
+52501 | mms.singtel.com mms.singtel.com:10021
+52503 | mmsgw mmsgw:8002
+53001 | pxt.vodafone.net.nz
+53005 | lsmmsc.xtra.co.nz mms.mmsaccess.co.nz
+53024 | mms.2degreesmobile.net.nz mms.2degreesmobile.net.nz:48090
+53703 | mms.digicelpng.com mms.digicelpng.com:8990
+53988 | mms.digicelgroup.com
+54105 | mms.digicelgroup.com
+54202 | mms.digicelgroup.com
+60201 | 10.7.13.24 10.7.13.24:8002
+60202 | mms.vodafone.com.eg
+60203 | 10.71.131.7 10.71.131.7:38090
+60301 | 172.25.49.9
+60302 | 172.24.97.152 172.24.97.152:6021
+60303 | 10.10.111.1
+60401 | mms mms:8002
+60402 | mms.wana.ma mms.wana.ma:38090
+60501 | mms.orange.tn
+60502 | 192.168.0.3 192.168.0.3:19090
+60503 | mmsc.ooredoo.tn
+60600 | 62.240.62.180
+60801 | mmsalize
+61002 | 10.109.6.2
+61203 | 172.20.6.1
+61404 | 10.10.10.35 10.10.10.35:38090
+61701 | 10.2.1.20 10.2.1.20:8514
+62001 | 172.17.3.7
+62002 | mms.vodaphone.com.gh
+62003 | mms
+62006 | 100.1.201.171 100.1.201.171:10021
+62120 | 10.210.3.239 10.210.3.239:9800
+62130 | 10.199.212.8
+62150 | mms.gloworld.com
+62160 | 10.71.170.30 10.71.170.30:38090
+62402 | mms.orange.cm
+62701 | 192.168.17.34
+63001 | 172.24.97.1
+63902 | mms.gprs.safaricom.com
+63903 | mms.ke.airtel.com mms.ke.airtel.com:8002 mms.ke.celtel.com
+63905 | 10.4.16.22
+63907 | 10.36.16.5
+64004 | 10.154.0.12
+64114 | mms
+64700 | mms.orange.re
+64702 | mmsc.telcooi.re mmsc.telcooi.re:9091
+64703 | mms.free.re mms.telco.re
+64710 | mms mmscoriolis
+65101 | mmsc.vodacom4me.co.ls
+65202 | 10.0.0.242
+65501 | mmsc.vodacom4me.co.za
+65502 | mms.8ta.com mms.8ta.com:38090
+65507 | mms.cmobile.co.za mms.virginmobile.co.za
+65510 | mms.mtn.co.za
+70401 | 10.6.32.27
+70402 | mms
+70601 | 10.6.32.27
+70602 | 172.26.5.132
+70603 | mms
+708001 | 10.6.32.27
+70802 | mms
+708020 | mms
+71021 | 10.6.32.27
+71073 | 10.6.32.27
+71201 | mmsice
+71202 | mmsice
+71203 | mms.ideasclaro.com mms.ideasclaro.com:8002
+71401 | mms.zonamovil.com.pa
+71404 | mmc.digicelpanama.com
+71610 | claro
+71615 | 181.176.241.99
+72207 | mms.movistar.com.ar
+722310 | mms.claro.com.ar
+72234 | mms.personal.com
+722341 | mms.personal.com
+72402 | mms.tim.br
+72403 | mms.tim.br
+72404 | mms.tim.br
+72405 | mms.claro.com.br
+72406 | termnat.vivomms.com.br termnat.vivomms.com.br:8088
+72407 | mms.claro.com.br
+72410 | termnat.vivomms.com.br termnat.vivomms.com.br:8088
+72411 | termnat.vivomms.com.br termnat.vivomms.com.br:8088
+72415 | mms.claro.com.br
+72416 | 200.222.42.204 200.222.42.204:8002
+72419 | mms.telemigcelular.com.br
+72423 | termnat.vivomms.com.br termnat.vivomms.com.br:8088
+72424 | 200.222.42.204 200.222.42.204:8002
+72431 | 200.222.42.204 200.222.42.204:8002
+72432 | mms.ctbccelular.com.br
+72433 | mms.ctbccelular.com.br
+72434 | mms.ctbccelular.com.br
+72454 | mms.tim.br
+73003 | mms.clarochile.cl
+73008 | 192.168.94.162 192.168.94.162:19090
+732101 | www.comcel.com.co
+732103 | mms.ola.com.co
+732111 | mms.ola.com.co
+73212 | mms.movistar.com.co
+732123 | mms.movistar.com.co
+73401 | mms.412.com.ve
+73402 | mms.412.com.ve
+73403 | mms.412.com.ve
+73406 | mms2.movilnet.com.ve
+73601 | mmsgw.nuevatel.com mmsgw.nuevatel.com:1981
+73602 | mms.movil.com.bo
+73603 | mms
+73801 | mmc.digicelgy.com
+74000 | mms.movistar.com.ec mms.movistar.com.ec:8088
+74001 | iesmms.porta.com.ec
+74401 | mms.vox.com.py
+74402 | mms.claro.com.py
+74404 | mms
+74405 | mms
+74603 | mmc.digicelsr.com
+74801 | mmsc.mms.ancelutil.com.uy
+74807 | mmsc.movistar.com.uy
+74810 | mms.claro.com.uy
