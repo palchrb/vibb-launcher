@@ -107,7 +107,9 @@
         messages, each row #mmsc-<id>. Its forms return there: an answered row is in "Bildeadresser" at the foot by
         then, drawn open (?mmsc=1), and one that is gone or answered already lands on #mmsc's notice. Eight allowed
         addresses for the SIM: `full` in place of "Tillat". Always there (an empty #mmsc to land on), its words only
-        with rows. -#}
+        with rows. Since 2026-11-11 a question is short (the user: fewer words): what is asked, the picture it is
+        about, and the warning only for an address Android's list doesn't have for the SIM; what the list says and
+        how long an allow lasts are folded under "Mer", after the buttons. -#}
     <section id="mmsc"{% if !mmsc.open.is_empty() || (mmsc_notice.is_some() && !mmsc_open) %} aria-labelledby="mmsc-title"{% endif %}>
         {% if !mmsc.open.is_empty() || (mmsc_notice.is_some() && !mmsc_open) %}
         <h2 class="group-header" id="mmsc-title">{{ self.t("device.calls.mmsc.title") }}</h2>
@@ -119,7 +121,7 @@
             {% for row in mmsc.open %}
             <div class="cell" id="mmsc-{{ row.id }}" data-mmsc="{{ row.id }}">
                 <div class="row">
-                    <span class="row-label">{{ row.ask }}<span class="row-sub">{{ row.about }}</span><span class="row-sub">{{ row.list }}</span>{% if let Some(warn) = row.warn %}<span class="row-sub tone-orange">{{ warn }}</span>{% endif %}<span class="row-sub">{{ self.t("device.calls.mmsc.lasts") }}</span>{% if row.gone %}<span class="row-sub" data-mmsc-gone>{{ self.t("device.calls.mmsc.gone") }}</span>{% endif %}</span>
+                    <span class="row-label">{{ row.ask }}<span class="row-sub">{{ row.about }}</span>{% if let Some(warn) = row.warn %}<span class="row-sub tone-orange" data-mmsc-warn>{{ warn }}</span>{% endif %}{% if row.gone %}<span class="row-sub" data-mmsc-gone>{{ self.t("device.calls.mmsc.gone") }}</span>{% endif %}</span>
                 </div>
                 <div class="held-body">
                     {% if row.full %}
@@ -132,6 +134,10 @@
                     <form method="post" action="/devices/{{ device.id }}/calls/mmsc/{{ row.id }}/decline#mmsc-{{ row.id }}">
                         <button type="submit" class="row row-button row-danger" data-mmsc-action="decline">{{ self.t("device.calls.mmsc.decline") }}</button>
                     </form>
+                    <details class="info cell" data-mmsc-more>
+                        <summary class="row"><span class="row-label row-label-quiet">{{ self.t("device.calls.mmsc.more") }}</span><svg class="chev section-chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></summary>
+                        <div class="info-panel"><p>{{ row.list }}</p><p>{{ self.t("device.calls.mmsc.lasts") }}</p></div>
+                    </details>
                 </div>
             </div>
             {% endfor %}

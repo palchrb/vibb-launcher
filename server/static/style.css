@@ -3086,6 +3086,9 @@ html.veiled body { background: var(--night) url("vibb-rest.svg") center / var(--
 .add-switches { margin: 0 -16px 16px; }
 /* "Tillat avsendernavnet…" opens a confirm (D17's warning) but grants, not deletes: the tint, not the red. */
 details.confirm > summary.row.held-allow { color: var(--tint); font-weight: 400; }
+/* Design 83, 2026-11-11: a picture address's "Mer" under its buttons. Android's host names and the operator's name
+   wrap in its panel as they did in the row (320 px). */
+[data-mmsc] .info-panel { word-break: break-word; overflow-wrap: anywhere; }
 
 /* Design 80: a contact's "Avansert" inside its form, under the four plain choices - a tinted row that opens the
    one-way switches, the Message button and the Matrix ID on the page's grey, with small group words. Add Contact's

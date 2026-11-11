@@ -468,11 +468,16 @@ two sources, and nothing else lets an address in:
   budget - four open rows are the cap -, to `/devices/{id}/calls#mmsc`. An open row goes 30 days after a report last named it (`retention::prune`,
   `Pruned::mmsc_hosts`).
 - **The page** (`handlers::calls_mmsc`, `templates/device_calls.html`): the questions in `#mmsc`, right under
-  "Meldinger som venter" - "Telefonen vil hente bilder fra {host}. Tillat?", the picture it is about (the contact as
-  named now, and when), what Android's list says for the SIM's operator (`listed`; `unlisted` with the list's entries
-  and the warning to allow only if the contact really sent a picture then; `unlisted_none`), that an allow lasts, and
-  "Bildet er ikke lenger tilgjengelig…" once the phone no longer reports the picture. "Tillat" / "Ikke tillat" post
-  to `/devices/{id}/calls/mmsc/{row}/allow` and `/decline`. The answered ones are the folded "Bildeadresser"
+  "Meldinger som venter". Short since 2026-11-11 (the user: fewer words): the row has "Hente bilder fra {host}?",
+  the picture it is about ("Bildemelding fra {name} {time}.": the contact as named now, and when), only for an
+  address Android's list doesn't have for the SIM the orange warning "Ukjent adresse for {operator}. Tillat bare hvis
+  {name} virkelig sendte et bilde da." (`warn`; `warn_unnamed`, "SIM-kortets operatør", when the SIM gives no name and
+  `Reported::operator_name` has only the MCC/MNC), and "Bildet er ikke lenger tilgjengelig…" once the phone no longer
+  reports the picture. "Tillat" / "Ikke tillat" post to `/devices/{id}/calls/mmsc/{row}/allow` and `/decline`. Under
+  them a closed "Mer" (`<details class="info cell" data-mmsc-more>`, no script; `auto-reload.js` leaves an open one
+  alone) holds what Android's list says for the SIM's operator (`listed`; `unlisted` with the list's entries;
+  `unlisted_none`) and that an allow lasts; a long host wraps in its panel by `[data-mmsc] .info-panel` in
+  `style.css`. The answered ones are the folded "Bildeadresser"
   (`#mmsc-decided`) at the foot: "Fjern" on an allowed row (declines it: out of the next policy, fetched pictures
   stay), "Tillat likevel" on a declined one. At most `ALLOWED_MAX` 8 allowed per phone and MCC/MNC - a ninth is
   refused (`?notice=mmsc_full`, and the row says so in place of its button) - and `DECLINED_MAX` 32 declined, the
@@ -490,7 +495,9 @@ two sources, and nothing else lets an address in:
 - Tests: `tests::mmsc_hosts` (the policy has exactly the reported SIMs' entries and never a hint; what the intake
   keeps and drops, and that an answered address raises no second event; allow, decline and take back with each
   form's landing, the device page's count and its link; the ninth allow and an allowed row with no account; the
-  oldest decline past the cap), `tests::cleanup::pruning_keeps_only_what_retention_allows` (only an open row goes
+  oldest decline past the cap; `the_question_is_short_and_the_rest_is_under_more`: in both languages the list line
+  and the allow's reach are inside "Mer" and not in the row, the warning only on an address the list doesn't have),
+  `tests::cleanup::pruning_keeps_only_what_retention_allows` (only an open row goes
   after 30 days), `tests::lock_glance`'s device delete (the rows go with the phone), `sms::tests` (the contract's
   `mmsc_entries`, `report` and `policy`), `mmsc_hosts::tests::the_list_is_well_formed`, the seeded family's rows on
   the nb page (`tests::i18n_pages::nb_pages_have_no_english`).
