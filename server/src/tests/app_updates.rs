@@ -142,7 +142,7 @@ async fn a_report_with_the_new_release_raises_app_updated_once() {
     let app = TestApp::new().await;
     let (launcher, music) = catalog(&app).await;
     let (anna, anna_token) = app.enrolled_device("Anna").await;
-    let (_, ola_token) = app.enrolled_device("Ola").await;
+    let (_, emma_token) = app.enrolled_device("Emma").await;
     // A first report is no update, whatever it runs.
     report(&app, &anna_token, "0.36.0", 360_009, Some(60_009)).await;
     assert!(notices(&app).await.is_empty());
@@ -152,37 +152,40 @@ async fn a_report_with_the_new_release_raises_app_updated_once() {
     report(&app, &anna_token, "0.37.0-rc.1", 370_001, None).await;
     report(&app, &anna_token, "0.36.0", 360_009, Some(60_009)).await;
     assert!(notices(&app).await.is_empty(), "{:?}", notices(&app).await);
-    report(&app, &ola_token, "0.35.2", 350_029, Some(50_009)).await;
+    report(&app, &emma_token, "0.35.2", 350_029, Some(50_009)).await;
     // rc.1 of 0.36.0 isn't the stored release.
-    report(&app, &ola_token, "0.36.0-rc.1", 360_001, Some(50_009)).await;
+    report(&app, &emma_token, "0.36.0-rc.1", 360_001, Some(50_009)).await;
     assert!(notices(&app).await.is_empty());
     for _ in 0..2 {
-        report(&app, &ola_token, "0.36.0", 360_009, Some(60_009)).await;
+        report(&app, &emma_token, "0.36.0", 360_009, Some(60_009)).await;
     }
     let rows = notices(&app).await;
     assert_eq!(rows.len(), 2, "{rows:?}");
-    let ola: i64 = sqlx::query_scalar("SELECT id FROM devices WHERE name = 'Ola'")
+    let emma: i64 = sqlx::query_scalar("SELECT id FROM devices WHERE name = 'Emma'")
         .fetch_one(&app.db)
         .await
         .unwrap();
-    assert_ne!(ola, anna);
+    assert_ne!(emma, anna);
     assert_eq!(
         (rows[0].0, rows[0].1.as_str(), rows[0].2.clone()),
-        (Some(ola), "app_updated", format!("{launcher}:360009"))
+        (Some(emma), "app_updated", format!("{launcher}:360009"))
     );
     assert_eq!(rows[0].3["from"], "0.36.0-rc.1");
     assert_eq!(rows[0].3["to"], "0.36.0");
-    assert_eq!(rows[0].3["phone"], "Ola");
+    assert_eq!(rows[0].3["phone"], "Emma");
     assert_eq!(rows[1].2, format!("{music}:60009"));
     assert_eq!(rows[1].3["from"], "0.5.0");
     assert_eq!(rows[1].3["to"], "0.6.0");
-    // Activity on Ola's summary shows it without the row's own clock.
+    // Activity on Emma's summary shows it without the row's own clock.
     let cookie = app.admin_cookie().await;
     let html = app
-        .get_page(&format!("/devices/{ola}"), &cookie)
+        .get_page(&format!("/devices/{emma}"), &cookie)
         .await
         .text();
-    assert!(html.contains("Vibb One updated on Ola"), "{html}");
+    assert!(
+        html.contains("Vibb One updated on Emma&#39;s phone"),
+        "{html}"
+    );
 }
 
 /// "App updates" is off by default - for a parent with no Notify Me About row too -: the events

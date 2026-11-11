@@ -563,8 +563,8 @@ async fn a_push_carries_its_headers_and_an_encrypted_payload() {
     // Never `mutable`: iOS 26 displays nothing after the worker ran (0.29.4/0.29.5).
     assert!(message.get("mutable").is_none());
     let n = &message["notification"];
-    // The push's own short words (2026-10-25); the inbox keeps "An app may read the PIN on Anna".
-    assert_eq!(n["title"], "Anna: an app may read the PIN");
+    // The push's own short words (2026-10-25); the inbox keeps "An app may read the PIN on Anna's phone".
+    assert_eq!(n["title"], "Anna's phone: an app may read the PIN");
     assert!(n["body"].as_str().unwrap().ends_with(" · 1 app"), "{n}");
     assert_eq!(n["lang"], "en");
     assert_eq!(
@@ -804,10 +804,10 @@ async fn switches_the_emergency_call_and_a_burst() {
         "the emergency call first, on its own"
     );
     // An urgent kind is never folded (qa-35-s2-code L2): the lockout goes on its own, next.
-    assert_eq!(pushed[1].0, "Anna: parent PIN locked");
+    assert_eq!(pushed[1].0, "Anna's phone: parent PIN locked");
     let count = |title: &str| pushed.iter().filter(|(t, _)| t == title).count();
     assert_eq!(count("New notifications"), 1);
-    assert_eq!(count("Anna: parent PIN used"), 2);
+    assert_eq!(count("Anna's phone: parent PIN used"), 2);
     let summary = pushed
         .iter()
         .find(|(t, _)| t == "New notifications")
@@ -1144,14 +1144,14 @@ async fn a_push_is_worded_per_subscriber() {
         payload(request)["notification"].clone()
     };
     let nb = by_endpoint(ENDPOINT);
-    assert_eq!(nb["title"], "Anna: lite batteri");
+    assert_eq!(nb["title"], "Annas mobil: lite strøm");
     assert_eq!(nb["lang"], "nb");
     assert!(
         nb["body"].as_str().unwrap().ends_with(" · batteri 14 %"),
         "{nb}"
     );
     let en = by_endpoint(other);
-    assert_eq!(en["title"], "Anna: battery low");
+    assert_eq!(en["title"], "Anna's phone: battery low");
     assert_eq!(en["lang"], "en");
     assert!(
         en["body"].as_str().unwrap().ends_with(" · battery 14 %"),

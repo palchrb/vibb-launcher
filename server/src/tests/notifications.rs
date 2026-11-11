@@ -80,10 +80,10 @@ async fn each_kind_is_raised_once_from_its_real_input() {
         events(&app, id).await,
         [
             ("emergency_call", "Anna called an emergency number"),
-            ("unseen_boot", "Anna started without Vibb One"),
-            ("foreign_access", "An app may read the PIN on Anna"),
-            ("pin_used", "Parent PIN used on Anna"),
-            ("pin_lockout", "Parent PIN locked on Anna"),
+            ("unseen_boot", "Anna's phone started without Vibb One"),
+            ("foreign_access", "An app may read the PIN on Anna's phone"),
+            ("pin_used", "Parent PIN used on Anna's phone"),
+            ("pin_lockout", "Parent PIN locked on Anna's phone"),
         ]
         .map(|(k, t)| (k.to_string(), t.to_string()))
     );
@@ -117,18 +117,24 @@ async fn each_kind_is_raised_once_from_its_real_input() {
             "Anna ringte et nødnummer",
         ),
         (
-            "Anna started without Vibb One",
-            "Anna startet uten Vibb One",
+            "Anna&#39;s phone started without Vibb One",
+            "Annas mobil startet uten Vibb One",
         ),
         (
-            "An app may read the PIN on Anna",
-            "En app kan lese PIN-koden på Anna",
+            "An app may read the PIN on Anna&#39;s phone",
+            "En app kan lese PIN-koden på Annas mobil",
         ),
         ("1 app with device admin", "1 app med enhetsadministrator"),
         ("Device admin: Helper.", "Enhetsadministrator: Helper."),
-        ("Parent PIN used on Anna", "Foreldre-PIN brukt på Anna"),
+        (
+            "Parent PIN used on Anna&#39;s phone",
+            "Foreldre-PIN brukt på Annas mobil",
+        ),
         ("Time lock · ", "Tidslås · "),
-        ("Parent PIN locked on Anna", "Foreldre-PIN sperret på Anna"),
+        (
+            "Parent PIN locked on Anna&#39;s phone",
+            "Foreldre-PIN sperret på Annas mobil",
+        ),
         (
             "Too many wrong tries · until ",
             "For mange feil forsøk · til ",
@@ -174,20 +180,20 @@ async fn each_kind_is_raised_once_from_its_real_input() {
         pushed(crate::i18n::Lang::En),
         [
             "Anna: emergency call",
-            "Anna: started without Vibb One",
-            "Anna: an app may read the PIN",
-            "Anna: parent PIN used",
-            "Anna: parent PIN locked",
+            "Anna's phone: started without Vibb One",
+            "Anna's phone: an app may read the PIN",
+            "Anna's phone: parent PIN used",
+            "Anna's phone: parent PIN locked",
         ]
     );
     assert_eq!(
         pushed(crate::i18n::Lang::Nb),
         [
             "Anna: nødanrop",
-            "Anna: startet uten Vibb One",
-            "Anna: en app kan lese PIN-koden",
-            "Anna: foreldre-PIN brukt",
-            "Anna: foreldre-PIN sperret",
+            "Annas mobil: startet uten Vibb One",
+            "Annas mobil: en app kan lese PIN-koden",
+            "Annas mobil: foreldre-PIN brukt",
+            "Annas mobil: foreldre-PIN sperret",
         ]
     );
 
@@ -394,7 +400,7 @@ async fn the_battery_latches_once() {
         .find(|(kind, _)| kind == "low_battery")
         .unwrap()
         .1;
-    assert_eq!(title, "Battery low on Anna (14 %)");
+    assert_eq!(title, "Anna's phone is low on battery (14 %)");
     // Latched and on battery: the status lines lead with it (the user's pick C, 2026-11-01).
     let list = app.get_page("/devices?lang=nb", &cookie).await.text();
     assert_eq!(super::status_lines(&list), ["Lavt batteri, 14 %"]);
@@ -470,7 +476,7 @@ async fn many_events(app: &TestApp, n: i64) {
 /// Three unread events of two phones, newest first.
 async fn three_events(app: &TestApp) -> (i64, i64) {
     let (anna, anna_token) = app.enrolled_device("Anna").await;
-    let (ola, ola_token) = app.enrolled_device("Ola <b>").await;
+    let (ola, ola_token) = app.enrolled_device("Emma <b>").await;
     app.post_status(&anna_token, call_state(&ago(1))).await;
     app.post_status(&ola_token, call_state(&ago(1))).await;
     app.post_status(
@@ -579,7 +585,7 @@ async fn opening_the_inbox_reads_the_rows_it_shows() {
             .unwrap()
         }
     };
-    // Ola's phone only: its one row read, Anna's two still unread (the badge says 2).
+    // Emma's phone only: its one row read, Anna's two still unread (the badge says 2).
     let html = app
         .get_page(&format!("/notifications?from=music&device={ola}"), &cookie)
         .await
@@ -629,8 +635,11 @@ async fn opening_the_inbox_reads_the_rows_it_shows() {
     assert!(!html.contains("notifications.js"));
     // Newest first, the name escaped.
     let at = |text: &str| html.find(text).unwrap_or_else(|| panic!("{text}: {html}"));
-    assert!(at("Battery low on Anna (10 %)") < at("Ola &#60;b&#62; called an emergency number"));
-    assert!(at("Ola &#60;b&#62; called") < at("Anna called an emergency number"));
+    assert!(
+        at("Anna&#39;s phone is low on battery (10 %)")
+            < at("Emma &#60;b&#62; called an emergency number")
+    );
+    assert!(at("Emma &#60;b&#62; called") < at("Anna called an emergency number"));
     assert!(unread(&app).await.is_empty());
     // Back (a reload: the page is never stored) shows no dots - the rows are read, by design.
     let html = app
