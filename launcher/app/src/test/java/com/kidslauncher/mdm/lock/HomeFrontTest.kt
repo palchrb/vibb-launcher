@@ -73,6 +73,17 @@ class HomeFrontTest {
         assertTrue(init.indexOf("BootCover.init(app") in 0 until init.indexOf("BootHome.startIfDue"))
     }
 
+    /** kiosk-root (2026-11-11, §6ah's two findings): Home's record outlives a death of its process in front (AOSP
+     * `ActivityRecord.handleAppDied` keeps a record with `stateNotNeeded`), so Home's task stays the kiosk's lock-task
+     * root - never a page task of its own affinity left stopped behind it. */
+    @Test
+    fun `Home outlives its process' death, so its task stays the kiosk's root`() {
+        val doc = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }.newDocumentBuilder().parse(file("AndroidManifest.xml"))
+        val nodes = doc.getElementsByTagName("activity")
+        val home = (0 until nodes.length).map { nodes.item(it) as Element }.first { it.getAttributeNS(ns, "name") == ".ui.HomeActivity" }
+        assertEquals("true", home.getAttributeNS(ns, "stateNotNeeded"))
+    }
+
     @Test
     fun `the lock starts Home before it finishes`() {
         val text = code(file("java/com/kidslauncher/mdm/lock/PinLockActivity.kt"))

@@ -131,6 +131,12 @@
         tools:ignore="UnusedAttribute"
         tools:replace="android:appComponentFactory">
 
+        <!-- stateNotNeeded (kiosk-root, 2026-11-11): Home's record outlives its process' death even when it dies in
+             front with no saved state (AOSP ActivityRecord.handleAppDied), so Home's task stays the kiosk's lock-task
+             root. Without it the system removed Home's task at a kill or crash, started a new one at the END of the
+             locked tasks, and a page task of ours left stopped (Kalender, Meldinger) became the root: Back could not
+             leave it, and removing it cleared every locked task (kiosk-escapes-and-updates.md, "Home stays the
+             lock-task root"; HomeFrontTest). -->
         <activity
             android:name=".ui.HomeActivity"
             android:clearTaskOnLaunch="true"
@@ -138,6 +144,7 @@
             android:excludeFromRecents="true"
             android:exported="true"
             android:launchMode="singleTask"
+            android:stateNotNeeded="true"
             android:theme="@style/launcherHomeTheme">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
