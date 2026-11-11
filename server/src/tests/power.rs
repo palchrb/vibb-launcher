@@ -960,7 +960,7 @@ async fn a_report_after_the_shutdown_ends_off_since() {
     assert!(!page().await.contains("data-power-off"));
 }
 
-/// 2026-11-01 (Sverre, off at 20:35 and the list orange): the reports are weighed against the off's
+/// 2026-11-01 (Emma, off at 20:35 and the list orange): the reports are weighed against the off's
 /// arrival, not the phone's clock - a phone 3 min behind whose last report came 30 s after its off
 /// is still turned off, and its dot is grey at once.
 #[tokio::test]

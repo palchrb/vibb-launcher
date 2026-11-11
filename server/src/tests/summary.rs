@@ -789,7 +789,7 @@ async fn activity_mixes_commands_and_events_newest_first_with_the_clock() {
 async fn an_event_row_shows_its_clock_once() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
-    let (id, _) = app.enrolled_device("Sverre").await;
+    let (id, _) = app.enrolled_device("Emma").await;
     sqlx::query("UPDATE provisioning_settings SET time_zone = 'Europe/Oslo'")
         .execute(&app.db)
         .await
@@ -809,12 +809,12 @@ async fn an_event_row_shows_its_clock_once() {
     for (kind, title, summary) in [
         (
             "phone_on",
-            "Sverre was turned on",
+            "Emma was turned on",
             format!("{clock} · no shutdown seen · last report {earlier}, battery 10 %"),
         ),
         (
             "pin_used",
-            "Parent PIN used on Sverre",
+            "Parent PIN used on Emma",
             format!("Vibb One's Settings · {clock}"),
         ),
     ] {

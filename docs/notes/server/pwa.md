@@ -400,8 +400,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   repointed `app_display.rs`, `tracked_apps.rs` (downloads, the Wi-Fi switch, the tab's links and count),
   `catalog_pins.rs`, `play.rs`, `hardening.rs`, `window_relock.rs`, `device_api.rs`, `music.rs` (`back=music`);
   `app_downloads::tests` (the labels in Oslo time).
-- **Opened from the Apps tab** (2026-10-24, the user: "på apps, om jeg går inn på feks Sverre sin tlf og så trykker
-  tilbake - så kommer jeg til device taben for Sverre? Føltes unaturlig"): the Apps tab's phone rows link with
+- **Opened from the Apps tab** (2026-10-24, the user: "på apps, om jeg går inn på feks Emma sin tlf og så trykker
+  tilbake - så kommer jeg til device taben for Emma? Føltes unaturlig"): the Apps tab's phone rows link with
   `?from=apps`, a catalog app's phone rows and `phone-link`s with `?from=app:<tracked app id>` (before the
   `#app-<package>` fragment; `tracked_apps::phone_apps_href`). `device_pages::AppsFrom::parse` takes only those two
   shapes (the id a positive number in digits); with one the page lights the Apps tab and `.nav-back` goes to `/apps`
@@ -1579,7 +1579,7 @@ man er inne på en device". Branch `pwa-fixes-b`.
 
 ## Off or out of touch says so: dot and line agree (2026-11-01, branch `status-off`)
 
-- **Why**: Sverre was turned off at 20:35; the push came, but the Devices row showed an orange dot and no "Turned
+- **Why**: Emma was turned off at 20:35; the push came, but the Devices row showed an orange dot and no "Turned
   off" (the user: "Kanskje når den ikke er grønn burde det stå slått av kl xx eller mistet kontakten for x min
   siden"). The dot was the raw connection (orange = no stream, heard within 45 min - also for a phone turned off),
   and `offs_now` compared the off's `happened_at` (the phone's clock) with the reports (the server's), so a phone

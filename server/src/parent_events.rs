@@ -2330,7 +2330,7 @@ fn push_body(at: &str, number: Option<String>) -> String {
 }
 
 /// An event's words as shown (the inbox, Activity), made from its parameters at `now` in `zone`
-/// and its language ("Sverre arrived at Home" / "15:42", "Yesterday 21:14"; nb "I går 21:14"). A
+/// and its language ("Emma arrived at Home" / "15:42", "Yesterday 21:14"; nb "I går 21:14"). A
 /// row with stored words - every stored-words kind raised before design 70's slice 2 - keeps its
 /// `title` and `summary`. Parameters that don't read leave them too.
 pub fn told(

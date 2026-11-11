@@ -3282,8 +3282,8 @@ fn nav_back(html: &str) -> (String, String) {
     (href, words)
 }
 
-/// The user, 2026-10-24 ("på apps, om jeg går inn på feks Sverre sin tlf og så trykker tilbake -
-/// så kommer jeg til device taben for Sverre?"): opened from the Apps tab (`?from=apps`, or
+/// The user, 2026-10-24 ("på apps, om jeg går inn på feks Emma sin tlf og så trykker tilbake -
+/// så kommer jeg til device taben for Emma?"): opened from the Apps tab (`?from=apps`, or
 /// `?from=app:<id>` from a catalog app's page), Device › Apps lights the Apps tab and its back link
 /// goes back there, at the phone's row. From the phone's page, or with any other `from`, nothing
 /// changes; a catalog app deleted since is the list.
