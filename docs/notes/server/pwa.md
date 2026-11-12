@@ -1965,6 +1965,21 @@ pointer here.
   `device_pages::about_this_phone_shows_the_last_reports_facts` and `avatars.rs` the phone's picture;
   `time_pages.rs` reads Save on the band and the flash box. Measured in Chromium at 320 and 390 px, light and dark,
   scripts on and off: design 84 §9. The iPhone walk is design 84 §8.
+- **The status bar's grey after a resume** (2026-11-12, the user's iPhone 16, the installed app: now and then, back
+  from the background, a grey-to-night fade over the status bar above the band; killing and reopening cleared it). Not
+  our paint: it is iOS's scroll-edge pocket, tinted with the page's extended background - the canvas, which was the
+  body's light `--bg` (`html` had none) - and shown whenever WebKit stops taking `.top-strip` as the page's fixed top
+  edge; after a reload or a resume WebKit sends the edge colours only when they change. Two parts: (A) in the
+  installed iPhone app's block (`display-mode: standalone` + `-webkit-touch-callout`) `html:not(.doc-scroll)` is
+  night, so a lost edge falls back to night; the four sign-in pages (login, the two-step pages, Change Password)
+  scroll the document and mark `<html class="doc-scroll">` in their templates (no `:has()`, the iOS 14 floor), as
+  their bottom bounce would otherwise bare night; /lock is night itself and keeps the night canvas; `html.locked` and
+  `html.veiled` keep the body's ground. (B) `static/top-strip.js` (deferred from the head): on `pageshow` and on
+  `visibilitychange` to visible, `.top-strip.top-strip-nudge` (`#0C0C15`, one step off the night) for one painted
+  frame (two `requestAnimationFrame`s), so the edge's colour changes and WebKit sends it again. Cache:
+  `style.css?v=105`, `top-strip.js?v=1`. Tests: `shell::the_app_shell_scrolls_main_not_the_document` (the canvas rule,
+  the nudge's colour, which templates mark `doc-scroll`, the script in the head), `jstest/top-strip.test.js`. Not yet
+  seen on the iPhone.
 
 ## Every phone's own colour (design 85 step 1, 2026-11-12, branch `design-85`, migration `0138_device_avatar_tone.sql`)
 

@@ -1106,7 +1106,7 @@ async fn the_sign_in_pages_read_in_norwegian() {
     };
     let login = in_nb(Method::GET, "/login", "").await;
     for needle in [
-        r#"<html lang="nb">"#,
+        r#"<html lang="nb" class="doc-scroll">"#,
         "<title>Logg inn · Vibb Phone</title>",
         "<p class=\"auth-sub\">Logg inn for å passe på familiens telefoner.</p>",
         ">Brukernavn</label>",
@@ -1137,7 +1137,7 @@ async fn the_sign_in_pages_read_in_norwegian() {
     let cookie = cookie.unwrap();
     let page = app.get_page("/auth/change-password", &cookie).await.text();
     for needle in [
-        r#"<html lang="nb">"#,
+        r#"<html lang="nb" class="doc-scroll">"#,
         "<title>Nytt passord · Vibb Phone</title>",
         "<h1 class=\"auth-title\">Nytt passord</h1>",
         "Du logget inn med et generert passord. Velg ditt eget for å fortsette.",
@@ -1179,7 +1179,7 @@ async fn the_sign_in_pages_read_in_norwegian() {
     assert_eq!(res.location(), Some("/"));
     let page = app.get_page("/auth/setup-2fa", &cookie).await.text();
     for needle in [
-        r#"<html lang="nb">"#,
+        r#"<html lang="nb" class="doc-scroll">"#,
         "<h1 class=\"auth-title\">Tofaktorinnlogging</h1>",
         "Skann koden med en autentiseringsapp",
         r#"alt="QR-kode for autentiseringsappen""#,
@@ -1224,7 +1224,7 @@ async fn the_sign_in_pages_read_in_norwegian() {
         .await
         .text();
     for needle in [
-        r#"<html lang="nb">"#,
+        r#"<html lang="nb" class="doc-scroll">"#,
         "<title>Tofaktorkode · Vibb Phone</title>",
         "Skriv inn den sekssifrede koden fra autentiseringsappen.",
         ">Logg inn</button>",

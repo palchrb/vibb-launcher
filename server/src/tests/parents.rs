@@ -1989,9 +1989,15 @@ async fn the_env_default_language_comes_before_the_browsers() {
     // Before any account (the sign-in pages' language, and the CSRF refusal's, which asks `Lang::of_request` with no
     // account): English; `?lang=nb` still wins.
     let login = get_in(&app, "/login", "", nb).await.text();
-    assert!(login.contains(r#"<html lang="en">"#) && login.contains(">Sign In</button>"));
+    assert!(
+        login.contains(r#"<html lang="en" class="doc-scroll">"#)
+            && login.contains(">Sign In</button>")
+    );
     let login = get_in(&app, "/login?lang=nb", "", nb).await.text();
-    assert!(login.contains(r#"<html lang="nb">"#) && login.contains(">Logg inn</button>"));
+    assert!(
+        login.contains(r#"<html lang="nb" class="doc-scroll">"#)
+            && login.contains(">Logg inn</button>")
+    );
     let refused = |uri: &'static str| {
         let app = &app;
         async move {

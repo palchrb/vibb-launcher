@@ -285,6 +285,16 @@ body {
         :root {
             --top-strip: max(env(safe-area-inset-top, 0px), 12px);
         }
+        /* The page's canvas is night here too (the user's iPhone 16, 2026-11-12: now and then after a resume a
+           grey-to-night fade over the status bar, gone after a restart). That fade is iOS's scroll-edge pocket, not
+           our paint: when WebKit stops taking .top-strip for the fixed top edge (after a reload or a resume it sends
+           the edge colours only when they change), UIKit tints the pocket with the page's extended background - the
+           canvas, which was the body's light --bg. html's own background is the canvas, so a lost edge falls back to
+           night as well. Not on the pages that scroll the document (html.doc-scroll: login, the two-step pages,
+           Change Password): their bounce at the bottom would bare night under a light card. /lock is night anyway. */
+        html:not(.doc-scroll) {
+            background: var(--night);
+        }
     }
 }
 
@@ -297,6 +307,12 @@ body {
     height: var(--top-strip);
     background: var(--night);
     pointer-events: none;
+}
+
+/* static/top-strip.js's nudge: one frame a shade off the night (invisible) on every return to the page, so WebKit sees
+   the fixed top edge's colour change and sends it to the status area again. */
+.top-strip.top-strip-nudge {
+    background: #0C0C15;
 }
 
 a {
