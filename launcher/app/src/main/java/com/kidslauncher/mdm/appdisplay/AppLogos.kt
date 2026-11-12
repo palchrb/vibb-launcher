@@ -4,7 +4,6 @@ import android.content.Context
 import android.content.pm.ApplicationInfo
 import android.content.pm.LauncherApps
 import android.content.res.Configuration
-import android.content.res.Resources
 import android.graphics.Bitmap
 import android.graphics.drawable.Drawable
 import android.os.Build
@@ -62,8 +61,7 @@ object AppLogos {
             val apps = plan.index.apps.toMutableMap()
             val drawn = runWithin(plan.toDraw, LOGO_DRAW_BUDGET_MS, SystemClock::elapsedRealtime) { pkg ->
                 val source = bySource.getValue(pkg)
-                // `null`: a hidden app without a package context while the phone is in night mode - waits, no entry.
-                draw(context, source, dir)?.let { apps[pkg] = AppLogoEntry(current.getValue(pkg), it.hash) }
+                apps[pkg] = AppLogoEntry(current.getValue(pkg), draw(context, source, dir).hash)
             }
             val index = AppLogoIndex(apps)
             if (index != before) writeReplacing(indexFile) { it.write(encodeLogoIndex(index).toByteArray()) }
@@ -80,21 +78,26 @@ object AppLogos {
     private class Drawn(val hash: String?)
 
     /** Draws [source]'s logo and stores its file: [Drawn] with the hash, or without one when the draw failed or the
-     * PNG is too large (that key isn't drawn again); `null` when it must wait for a later sync. */
-    private fun draw(context: Context, source: Source, dir: File): Drawn? {
+     * PNG is too large (that key isn't drawn again). */
+    private fun draw(context: Context, source: Source, dir: File): Drawn {
         val drawable = try {
-            iconOf(context, source) ?: return null
+            iconOf(context, source) ?: return Drawn(null)
         } catch (e: Exception) {
             Log.w(LOG_TAG, "No icon for ${source.packageName}: ${e.javaClass.simpleName}")
             return Drawn(null)
         }
         return try {
-            val bitmap = KidAvatars.drawOwnLogo(context, drawable, APP_LOGO_SIZE_PX)
-            val png = ByteArrayOutputStream().use { out ->
-                bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
-                out.toByteArray()
+            val png = try {
+                val bitmap = KidAvatars.drawOwnLogo(context, drawable, APP_LOGO_SIZE_PX)
+                ByteArrayOutputStream().use { out ->
+                    bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+                    out.toByteArray()
+                }.also { bitmap.recycle() }
+            } catch (e: OutOfMemoryError) {
+                // A drawable too large to draw: no logo for this key, the sync goes on.
+                Log.w(LOG_TAG, "The logo of ${source.packageName} ran out of memory")
+                return Drawn(null)
             }
-            bitmap.recycle()
             val hash = logoHashOf(png)
             if (hash == null) {
                 Log.i(LOG_TAG, "The logo of ${source.packageName} is ${png.size} bytes, over $APP_LOGO_MAX_BYTES")
@@ -111,35 +114,26 @@ object AppLogos {
 
     /**
      * Home's drawable for the app (§2.1), in a fixed light configuration at 640 dpi (R2-M3): the launcher activity's
-     * icon resource, else the application's, loaded from the app's package context - so the phone's dark mode never
-     * changes the drawing. Without a package context (a hidden app), `LauncherApps`' icon or the application icon -
-     * only while the phone isn't in night mode, else `null` (a later sync).
+     * icon resource, else the application's, else Android's default app icon, loaded from the app's resources
+     * ([android.content.pm.PackageManager.getResourcesForApplication] with that configuration - no code of the app is
+     * loaded, and a hidden app's resources load the same) - so the phone's dark mode never changes the drawing.
      */
     private fun iconOf(context: Context, source: Source): Drawable? {
-        val launcherApps = context.getSystemService(LauncherApps::class.java)
         val activity = try {
-            launcherApps?.getActivityList(source.packageName, Process.myUserHandle())?.firstOrNull()
+            context.getSystemService(LauncherApps::class.java)
+                ?.getActivityList(source.packageName, Process.myUserHandle())?.firstOrNull()
         } catch (e: Exception) {
             null
         }
-        val res = activity?.activityInfo?.iconResource?.takeIf { it != 0 } ?: source.info.icon
-        try {
-            if (res != 0) {
-                val config = Configuration(context.resources.configuration).apply {
-                    uiMode = (uiMode and Configuration.UI_MODE_NIGHT_MASK.inv()) or Configuration.UI_MODE_NIGHT_NO
-                    densityDpi = DisplayMetrics.DENSITY_XXXHIGH
-                }
-                val appContext = context.createPackageContext(source.packageName, 0).createConfigurationContext(config)
-                ResourcesCompat.getDrawable(appContext.resources, res, null)?.let { return it }
-            }
-        } catch (e: Exception) {
-            // A hidden app has no package context: the fallback below.
+        val res = activity?.activityInfo?.iconResource?.takeIf { it != 0 }
+            ?: source.info.icon.takeIf { it != 0 }
+            ?: android.R.drawable.sym_def_app_icon
+        val config = Configuration(context.resources.configuration).apply {
+            uiMode = (uiMode and Configuration.UI_MODE_NIGHT_MASK.inv()) or Configuration.UI_MODE_NIGHT_NO
+            densityDpi = DisplayMetrics.DENSITY_XXXHIGH
         }
-        val night = Resources.getSystem().configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
-            Configuration.UI_MODE_NIGHT_YES
-        if (night) return null
-        return activity?.getIcon(DisplayMetrics.DENSITY_XXXHIGH)
-            ?: context.packageManager.getApplicationIcon(source.info)
+        val resources = context.packageManager.getResourcesForApplication(source.info, config)
+        return ResourcesCompat.getDrawable(resources, res, null)
     }
 
     private fun hashesOnDisk(dir: File): Set<String> =
@@ -160,9 +154,19 @@ object AppLogos {
             var answered = 0
             for (hash in plan) {
                 val timeout = uploadCallTimeoutMs(started, SystemClock.elapsedRealtime()) ?: break
-                val png = synchronized(lock) { File(dir, "$hash.png").takeIf { it.isFile }?.readBytes() }
-                // Gone since the plan, or not the bytes its name says: nothing to send.
-                if (png == null || logoHashOf(png) != hash) continue
+                // Gone since the plan: nothing to send. Not the bytes its name says: deleted, so the next refresh draws
+                // it again (its file is gone), and nothing is sent.
+                val png = synchronized(lock) {
+                    val file = File(dir, "$hash.png")
+                    val bytes = file.takeIf { it.isFile }?.readBytes()
+                    if (bytes != null && logoHashOf(bytes) != hash) {
+                        file.delete()
+                        Log.w(LOG_TAG, "Logo $hash didn't match its file: deleted, drawn again")
+                        null
+                    } else {
+                        bytes
+                    }
+                } ?: continue
                 val code = withTimeoutOrNull(timeout) {
                     try {
                         api.uploadAppLogo(hash, png.toRequestBody(PNG)).code()

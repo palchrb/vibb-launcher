@@ -5,6 +5,7 @@ import com.kidslauncher.mdm.appdisplay.LOGO_UPLOAD_CALL_MS
 import com.kidslauncher.mdm.appdisplay.WANTED_LOGOS_MAX_BODY
 import com.kidslauncher.mdm.appdisplay.logoHashOf
 import com.kidslauncher.mdm.appdisplay.logoUploadPlan
+import com.kidslauncher.mdm.appdisplay.readWantedLogosBody
 import com.kidslauncher.mdm.appdisplay.uploadCallTimeoutMs
 import com.kidslauncher.mdm.appdisplay.uploadGoesOn
 import com.kidslauncher.mdm.appdisplay.wantedLogosOf
@@ -115,6 +116,19 @@ class AppLogosTest {
     }
 
     @Test
+    fun `the answer's body is read only up to its bound`() {
+        val endless = object : java.io.InputStream() {
+            var read = 0L
+            override fun read(): Int { read++; return ' '.code }
+        }
+        assertEquals(WANTED_LOGOS_MAX_BODY + 1, readWantedLogosBody(endless).size)
+        assertTrue(endless.read <= WANTED_LOGOS_MAX_BODY + 1)
+        val answer = contract["answer"]!!.toString().toByteArray()
+        assertEquals(answer.toList(), readWantedLogosBody(answer.inputStream()).toList())
+        assertEquals(emptyList<String>(), wantedLogosOf(200, readWantedLogosBody(endless)))
+    }
+
+    @Test
     fun `only the phone's own drawn logos are uploaded, at most 40`() {
         val wanted = (1..41).map(::hash)
         assertEquals((1..40).map(::hash), logoUploadPlan(wanted, wanted.toSet()))
@@ -159,12 +173,16 @@ class AppLogosTest {
         val src = listOf("src", "app/src").map { java.io.File(it) }.first { java.io.File(it, "main/java").isDirectory }
         val sync = java.io.File(src, "main/java/com/kidslauncher/mdm/server/MdmSyncWorker.kt").readText()
         val body = sync.substringAfter("suspend fun performMdmSync(").substringBefore("\nconst val KIOSK_ESCAPES_CAPABILITY")
-        val order = listOf(
-            "api.sendStatus(", "wantedLogos = wantedLogosOf(", "CommandAnswers.flush(context, api)",
+        val anchors = listOf(
+            "api.sendStatus(", "wantedLogos = try {", "CommandAnswers.flush(context, api)",
             "reportBlockedDnsEvents(context, api)", "AppLogos.upload(context, api, wantedLogos)",
             "WeatherPull.afterSync(", "commitPendingSelfUpdateIfDue(context, api)",
-        ).map { body.indexOf(it) }
-        assertTrue("$order", order.all { it >= 0 } && order == order.sorted())
+        )
+        for (anchor in anchors) {
+            assertEquals("$anchor once in performMdmSync", 1, body.split(anchor).size - 1)
+        }
+        val order = anchors.map { body.indexOf(it) }
+        assertTrue("$order", order == order.sorted())
     }
 
     @Test

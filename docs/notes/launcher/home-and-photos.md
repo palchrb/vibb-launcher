@@ -106,10 +106,10 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   `app.display`), `HomeModelTest`, `SmsGlanceTest`, `PolicyResponseCompatTest`.
 - **The apps' real logos for the PWA** (design 87 step 2, `docs/design/87-app-logos.md`): `appdisplay/AppLogos.kt`
   draws each reported app's logo with `KidAvatars.drawOwnLogo` (now `internal`; one drawing, the "App logo" one) at
-  128 px as PNG, from the launcher activity's (else the application's) icon resource loaded through
-  `createPackageContext(...).createConfigurationContext` in a fixed light configuration at 640 dpi (R2-M3: dark mode
-  never changes a hash); a hidden app without a package context falls back to `LauncherApps`/`getApplicationIcon`
-  only outside night mode. The cache is `noBackupFilesDir/app_logos/` (`<hash>.png`, `index.json` written by temp
+  128 px as PNG, from the launcher activity's (else the application's, else Android's default) icon resource loaded
+  through `pm.getResourcesForApplication(info, config)` in a fixed light configuration at 640 dpi (R2-M3: dark mode
+  never changes a hash; no app code loaded, and a hidden app's resources load the same - no fallback path). An
+  `OutOfMemoryError` while drawing is a failed draw. The cache is `noBackupFilesDir/app_logos/` (`<hash>.png`, `index.json` written by temp
   file and rename): per package the key `(versionCode, lastUpdateTime, Build.FINGERPRINT, LOGO_RENDER_VERSION)` and
   the hash (SHA-256 hex of the PNG; none for a failed draw or a PNG over 80 KiB - not drawn again until the key
   changes). `collectInstalledApps` calls `AppLogos.refresh` just before the report (at most 1.5 s of drawing, the
@@ -119,7 +119,9 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   `sent.isSuccessful` is unchanged. `AppLogos.upload` runs after `reportBlockedDnsEvents`, before the weather pull
   and the self-update commit (R2-M4): of the list at most 40, only hashes in its own cache, one
   `POST /api/devices/app-logos/{hash}` each (raw `image/png`), 20 s in all and 10 s a call; any answer goes on, the
-  first network error or time out ends the step. The pure rules are `appdisplay/AppLogoPlan.kt` (`AppLogosTest`,
+  first network error or time out ends the step. A cached file whose bytes don't match its name is deleted at upload
+  and drawn again at the next refresh. The answer is `@Streaming` and read in its own `try` (a read failure is
+  nothing wanted, never a failed report). The pure rules are `appdisplay/AppLogoPlan.kt` (`AppLogosTest`,
   `AppLogosCacheTest`).
 - **Not device-tested**: the checks in the 14 doc ("Implementation status").
 

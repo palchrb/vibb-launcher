@@ -123,6 +123,10 @@ fun wantedLogosOf(code: Int, body: ByteArray?): List<String> {
     }
 }
 
+/** The status answer's body as [wantedLogosOf] takes it: at most [WANTED_LOGOS_MAX_BODY] + 1 bytes of [input] - a
+ * longer body shows as one byte over and is unreadable - never the rest. */
+fun readWantedLogosBody(input: java.io.InputStream): ByteArray = input.readNBytes(WANTED_LOGOS_MAX_BODY + 1)
+
 /** What is uploaded (§4.2): of the [wanted] list at most [APP_LOGOS_MAX_WANTED] entries, and of those only a valid
  * hash this phone has drawn ([cached]) - once each. A hostile server can make the phone send only its own logos. */
 fun logoUploadPlan(wanted: List<String>, cached: Set<String>): List<String> =

@@ -47,7 +47,8 @@ interface MdmApi {
 
     /** The raw answer (design 87 §4.2, R2-L7): to a report claiming `app_logos_v1` a `200` with the logos the server
      * wants ([com.kidslauncher.mdm.appdisplay.wantedLogosOf]), else `204`. The caller closes the body; every 2xx is
-     * "the server took the report". */
+     * "the server took the report". Streamed, so the caller's bound on what it reads is real. */
+    @Streaming
     @POST("api/devices/status")
     suspend fun sendStatus(@Body report: StatusReportRequest): Response<ResponseBody>
 

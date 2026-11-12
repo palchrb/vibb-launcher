@@ -1,5 +1,6 @@
 package com.kidslauncher.mdm.server
 
+import com.kidslauncher.mdm.appdisplay.readWantedLogosBody
 import com.kidslauncher.mdm.appdisplay.wantedLogosOf
 import com.kidslauncher.mdm.appdisplay.withLogos
 import com.kidslauncher.mdm.badges.BadgeStore
@@ -397,11 +398,16 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
                 ),
             )
         )
-        // Design 87 (R2-L7): read at once and closed; a 204, an empty or unreadable body is nothing wanted. A 200 is
-        // still a 2xx below - `sent.isSuccessful` is unchanged by the body.
-        wantedLogos = wantedLogosOf(sent.code(), sent.body()?.use { body ->
-            body.byteStream().use { it.readNBytes(com.kidslauncher.mdm.appdisplay.WANTED_LOGOS_MAX_BODY + 1) }
-        })
+        // Design 87 (R2-L7): read at once (bounded) and closed; a 204, an empty or unreadable body is nothing wanted. A
+        // 200 is still a 2xx below - `sent.isSuccessful` is unchanged by the body, and a body that fails to read never
+        // makes a taken report a failed one.
+        wantedLogos = try {
+            wantedLogosOf(sent.code(), sent.body()?.use { body -> body.byteStream().use(::readWantedLogosBody) })
+        } catch (e: Exception) {
+            // `use` closed the body.
+            Log.w(LOG_TAG, "The status answer's body didn't read: ${e.javaClass.simpleName}")
+            emptyList()
+        }
         if (sent.isSuccessful) ServerPinStore.reported(context, tlsSent, pinConnection(apiPath, sent.raw().handshake))
         // Design 64 step 2: what the server took leaves the queue; a report it didn't take leaves
         // its fix there for the next one.
