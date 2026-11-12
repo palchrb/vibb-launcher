@@ -98,6 +98,13 @@ waits for a device capture of the Play Protect / account-security channel ids.
   `REASON_CRASH_NATIVE` within `TSNET_DEATH_WINDOW_MS` (10 min)
   counts as a crash (`deathAfterConnectIsCrash`); a process that lived on ends the streak (`crashStreakAfter`); low
   memory, an update, a force stop or a reboot never count. Two within the 15-min streak skip a connect, as before.
+- **A fresh tsnet server after a failed connect** (ported from upstream siesta5787/kids-launcher-mdm 0d4201dab9,
+  2026-11-12; `TailnetKeyTest`): `connect`'s failure path closes the client (`discard()`: the proxy, the credential
+  and the global `Authenticator` go; `proxyChanged` fires once, at the end of `connect`), so the next attempt builds a
+  new tsnet.Server - one started before the network was up stays in "Starting" for good on Android (no netlink). The
+  close runs inside the crash guard's pending window, so a native crash there counts like any other. A first join (a
+  key in hand) waits 60 s for `Up` instead of 30 (`tailnetUpTimeoutSeconds`), since a registration cut off by the bound
+  starts again on a fresh server and the one-time key may be spent by then.
 - **S-L10, Leave Tailnet** (command `leave_tailnet`, Advanced › Connection on the server, behind a ticked box;
   contract `server/testdata/leave_tailnet.json`): `TsnetClient.leave` closes tsnet, removes `tsnet_node_joined`, any
   stored auth key and the crash guard's marks in one `commit()`, then deletes `files/tailscale` and drops the global

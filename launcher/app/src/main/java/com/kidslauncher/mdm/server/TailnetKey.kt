@@ -30,6 +30,17 @@ fun tailnetConnect(storedKey: String?, joined: Boolean, connected: Boolean): Tai
     else -> TailnetConnect.Nothing
 }
 
+/**
+ * How long one connect waits for tsnet's `Up` ([TsnetClient.connect]). A failed connect throws its tsnet.Server
+ * away (upstream 0d4201dab9), so a first join - a key in hand, no node yet - gets [TAILNET_FIRST_JOIN_UP_S]: a
+ * registration cut off mid-way by the bound would start again on a fresh server, and the one-time key (server/DEPLOY.md,
+ * "Tailscale keys for the phones") may be spent by then. A joined node comes up from its stored state in [TAILNET_UP_S].
+ */
+fun tailnetUpTimeoutSeconds(authKey: String): Long = if (authKey.isBlank()) TAILNET_UP_S else TAILNET_FIRST_JOIN_UP_S
+
+const val TAILNET_UP_S = 30L
+const val TAILNET_FIRST_JOIN_UP_S = 60L
+
 /** Whether the stored key goes now: the node is on the tailnet (tsnet won't read it again). */
 fun forgetTailnetKey(storedKey: String?, connected: Boolean): Boolean = connected && !storedKey.isNullOrBlank()
 
