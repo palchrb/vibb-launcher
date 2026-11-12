@@ -13,6 +13,7 @@ mod caldav;
 mod calendar;
 mod calendar_feeds;
 mod calendar_kid_events;
+mod catalog_holds;
 mod config;
 mod crashes;
 mod device_routes;
@@ -569,15 +570,18 @@ async fn main() {
     handlers::tracked_apps::ensure_launcher_row(&state).await;
     // Partial downloads a crash left behind - before the scheduled sync can start a new one.
     handlers::tracked_apps::remove_partial_downloads(&state.tracked_apps_dir).await;
+    // Design 90: release files neither served nor held, and held rows whose file is gone.
+    handlers::tracked_apps::remove_orphan_files(&state).await;
     // Cached F-Droid indexes no app's repo uses any more (qa-fdroid-source-code Q-8).
     handlers::tracked_apps::remove_unused_fdroid_indexes(&state).await;
-    // Hashes for cached files from before migration 0043 (design 13): the phones check them.
-    tokio::task::spawn(handlers::tracked_apps::backfill_release_hashes(
-        state.clone(),
-    ));
-    tokio::task::spawn(handlers::tracked_apps::run_scheduled_tracked_app_sync(
-        state.clone(),
-    ));
+    // Hashes for cached files from before migration 0043 (design 13): the phones check them; then
+    // the pins, versionCodes and (design 90) permissions - all before the hourly sync's first pass,
+    // so an app upgraded past 0141 has its accepted set before a release is judged (QA L1).
+    let catalog_state = state.clone();
+    tokio::task::spawn(async move {
+        handlers::tracked_apps::backfill_release_hashes(catalog_state.clone()).await;
+        handlers::tracked_apps::run_scheduled_tracked_app_sync(catalog_state).await;
+    });
     tokio::task::spawn(handlers::dns_filter::run_blocklist_refresh(state.clone()));
     // Blocked domains, location history and status history (src/retention.rs).
     tokio::task::spawn(retention::run_pruning(state.clone()));
@@ -1432,6 +1436,31 @@ pub fn build_admin_router(
         .route(
             "/apps/tracked/{id}/forget-package-name",
             post(handlers::tracked_apps::forget_package_name),
+        )
+        // Design 90: the held release's answers, Ask Again, Update Now, the wait and the switch.
+        .route(
+            "/apps/tracked/{id}/held/approve",
+            post(handlers::tracked_apps::approve_held),
+        )
+        .route(
+            "/apps/tracked/{id}/held/decline",
+            post(handlers::tracked_apps::decline_held),
+        )
+        .route(
+            "/apps/tracked/{id}/declined/ask-again",
+            post(handlers::tracked_apps::ask_again),
+        )
+        .route(
+            "/apps/tracked/{id}/update-now",
+            post(handlers::tracked_apps::update_now),
+        )
+        .route(
+            "/apps/tracked/{id}/release-wait",
+            post(handlers::tracked_apps::save_release_wait),
+        )
+        .route(
+            "/apps/tracked/{id}/always-ask",
+            post(handlers::tracked_apps::set_always_ask),
         )
         .route(
             "/apps/tracked/{id}/confirm-package",

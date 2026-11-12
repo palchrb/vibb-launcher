@@ -685,6 +685,21 @@ pub struct TrackedApp {
     /// phone reports once it runs the release (`tracked_apps::catalog_release_installed`). `None`
     /// before it is read or when the APK's can't be.
     pub latest_release_version_code: Option<i64>,
+    /// Design 90 (migrations/0141, `catalog_holds`): the stored release's declared permissions
+    /// (JSON array, `None` unread), the sensitive names the parent let through for the app (JSON
+    /// array, `None` unknown - counted as none), "Ask me before every update", the hours a new
+    /// GitHub or F-Droid release waits, the release waiting out that wait (its source's time and
+    /// the wait's anchor, UTC RFC 3339) and the release the parent declined.
+    pub latest_release_permissions: Option<String>,
+    pub accepted_permissions: Option<String>,
+    pub always_ask: bool,
+    pub release_wait_hours: i64,
+    pub waiting_release_tag: Option<String>,
+    pub waiting_release_asset_id: Option<i64>,
+    pub waiting_release_published_at: Option<String>,
+    pub waiting_release_since: Option<String>,
+    pub declined_release_tag: Option<String>,
+    pub declined_release_asset_id: Option<i64>,
 }
 
 impl TrackedApp {

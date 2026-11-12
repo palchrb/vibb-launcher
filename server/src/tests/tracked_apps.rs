@@ -1490,6 +1490,25 @@ async fn every_form_on_the_app_pages_returns_to_its_page() {
         .execute(&app.db)
         .await
         .unwrap();
+    // Design 90: a held, a waiting and a declined release, so the `#update` group's forms render.
+    sqlx::query(
+        "UPDATE tracked_apps SET waiting_release_tag = 'v3', waiting_release_asset_id = 3, \
+         waiting_release_since = '2026-11-12T10:00:00Z', declined_release_tag = 'v1.5', \
+         declined_release_asset_id = 2 WHERE id = ?",
+    )
+    .bind(github)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO tracked_app_held_releases (tracked_app_id, release_tag, asset_id, file_path, \
+         sha256, reason, new_permissions, held_at) VALUES (?, 'v2', 4, '/nowhere/v2-4.apk', \
+         'cc', 'permissions', '[\"android.permission.READ_CONTACTS\"]', '2026-11-12 10:00:00')",
+    )
+    .bind(github)
+    .execute(&app.db)
+    .await
+    .unwrap();
     let manual: i64 = sqlx::query_scalar(
         "INSERT INTO tracked_apps (name, package_name, github_repo, source_type) \
          VALUES ('Notater', '', '', 'manual') RETURNING id",
@@ -1574,8 +1593,14 @@ async fn every_form_on_the_app_pages_returns_to_its_page() {
             let (group, open) = match route {
                 "" => (Some("details"), Some("source")),
                 "/display" => (Some("display"), Some("display")),
-                "/enabled" | "/include-prereleases" | "/is-launcher" => {
-                    (Some("updates"), Some("source"))
+                "/enabled"
+                | "/include-prereleases"
+                | "/is-launcher"
+                | "/always-ask"
+                | "/release-wait" => (Some("updates"), Some("source")),
+                // Design 90: the update group's forms (a check runs here: each answers busy).
+                "/held/approve" | "/held/decline" | "/declined/ask-again" | "/update-now" => {
+                    (Some("update"), None)
                 }
                 "/forget-package-name" => (Some("release"), Some("source")),
                 "/upload" => (Some("upload"), None),
@@ -1592,6 +1617,11 @@ async fn every_form_on_the_app_pages_returns_to_its_page() {
                 "/enabled" => &[("enabled", "on")],
                 "/include-prereleases" => &[("include_prereleases", "on")],
                 "/confirm-package" => &[("package", "me.vibb.testfixture")],
+                "/always-ask" => &[("always_ask", "on")],
+                "/release-wait" => &[("release_wait_hours", "24")],
+                "/held/approve" | "/held/decline" => &[("tag", "v2"), ("asset_id", "4")],
+                "/declined/ask-again" => &[("tag", "v1.5"), ("asset_id", "2")],
+                "/update-now" => &[("tag", "v3"), ("asset_id", "3")],
                 _ => &[],
             };
             let res = if route == "/upload" {
@@ -1631,6 +1661,9 @@ async fn every_form_on_the_app_pages_returns_to_its_page() {
                     &format!("{page}?notice=package_confirmed"),
                     Some("release"),
                 ),
+                ("/held/approve" | "/held/decline" | "/declined/ask-again" | "/update-now", _) => {
+                    assert_redirect(&res, &format!("{page}?held=busy"), Some("update"))
+                }
                 (_, Some(open)) => {
                     assert_redirect(&res, &format!("{page}?open={open}"), group);
                     // The page comes back with that <details> open.
@@ -1651,6 +1684,12 @@ async fn every_form_on_the_app_pages_returns_to_its_page() {
         "/confirm-package",
         "/forget-package-name",
         "/check",
+        "/held/approve",
+        "/held/decline",
+        "/declined/ask-again",
+        "/update-now",
+        "/release-wait",
+        "/always-ask",
     ] {
         assert!(seen.contains(route), "{route} was never rendered");
     }
