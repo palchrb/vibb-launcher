@@ -1993,7 +1993,8 @@ pointer here.
 - **The user** chose mockup B (2026-11-11); O1-O3 decided 2026-11-12: fresh is "Here now"'s rule (twice the served
   interval under Regularly, an hour otherwise), and Update All skips Off, not set up and Disconnected.
 - **`/devices/locate`** with two phones or more and none chosen (or an unknown id) is the Alle view in place of the
-  old list: `<section id="all">` holds the map box (`.map-box.map-all`, `clamp(300px, 60vh, 520px)`,
+  old list: `<section id="all">` holds the map box (`.map-box.map-all`, `clamp(260px, 45vh, 420px)` - 60vh/520 until 2026-11-12, when the age row and Update Location
+  fell under the tab bar on an iPhone 15 -,
   `data-locate-all`), the chips over its top (`nav.map-chips`: "All" `aria-current`, then each phone a link to its
   view with its 26 px avatar - hollow, `.avatar-hollow`, without a position - and an `aria-label` carrying what its
   marker shows, "Emma, 2 min ago, within 12 m" / "Lily, location is off"; one light look in both schemes, one line
