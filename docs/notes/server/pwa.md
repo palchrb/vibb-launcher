@@ -373,7 +373,10 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   …"; its name field's placeholder stays the app's own; "On Home"'s explanation behind an ⓘ left of its switch,
   `.on-home`). Directly under Vibb One's row sits **Meldinger's** (design 82 D10: "Messages", "Part of Vibb One", no
   switch - only its Name and icon, saved to `#app-me.vibb.builtin.messages` like every row's;
-  `docs/notes/server/launcher-ui.md`, "Meldinger, a part of Vibb One"). The footer's ⓘ holds the keyboard and
+  `docs/notes/server/launcher-ui.md`, "Meldinger, a part of Vibb One"), and under it **Kalender's** (2026-11-12: Dagen,
+  "Calendar", "Part of Vibb One", the value "On Home" / "Not on Home" from `device_policy.calendar_on_home`, a link
+  to `/devices/{id}/calendar#dagen` where that switch lives - no switch, no Name and icon, `AppView::link`,
+  `#app-calendar`; `docs/notes/server/calendar.md`, "Kalender on Device › Apps"). The footer's ⓘ holds the keyboard and
   accessibility note. **Downloads**: "Download apps on Wi-Fi only" and the phone's network at its last report. No
   search field. While an app installs the page reloads every 3 s (`static/auto-reload.js`, pinned by
   `jstest/auto-reload.test.js`; Calls & Contacts and the phone's summary after Lock again or Unlock use it too): never once a save has started (a `submit`, a `change` on a `data-autosave`

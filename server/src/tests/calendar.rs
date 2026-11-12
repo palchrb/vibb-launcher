@@ -1300,3 +1300,89 @@ async fn every_calendar_route_needs_a_session() {
     assert_eq!(names, ["Skolen"]);
     assert_eq!(app.fetch.count(), calls, "no fetch without a session");
 }
+
+/// 2026-11-12: Kalender has a row on Device › Apps' allowed list, under Meldinger - "Part of Vibb One", whether it is
+/// on Home, a link to Device › Calendar - before the first report and for a Vibb One with Dagen, never for one without.
+#[tokio::test]
+async fn kalender_has_a_row_on_device_apps() {
+    use super::{Section, device_page};
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    let row = || async {
+        let html = app
+            .get_page(&device_page(id, Section::Apps), &cookie)
+            .await
+            .text();
+        let allowed = &html[html.find(r#"id="allowed""#).unwrap()..];
+        let allowed = &allowed[..allowed.find("</section>").unwrap()];
+        let at = allowed.find(r#"id="app-calendar""#)?;
+        let cell = &allowed[at..];
+        Some((
+            cell[..cell.find("</a>").expect("the link's end")].to_string(),
+            allowed.find(&format!(r#"id="app-{}""#, crate::builtin::MESSAGES)),
+            at,
+        ))
+    };
+    let report = |capabilities: Value| {
+        let token = token.clone();
+        let app = &app;
+        async move {
+            let res = app
+                .request(
+                    Method::POST,
+                    "/api/devices/status",
+                    Some(&token),
+                    Some(json!({
+                        "lock_reason": "NONE", "kiosk_engaged": true, "capabilities": capabilities,
+                    })),
+                )
+                .await;
+            assert!(res.status.is_success());
+        }
+    };
+
+    // Before the first report: the row, on Home, a link to the Calendar page's Kalender group, the calendar glyph on
+    // Dagen's blue tile - no switch, no Name and icon.
+    let (html, _, _) = row().await.expect("the row");
+    assert!(
+        html.contains(&format!(r##"href="/devices/{id}/calendar#dagen""##)),
+        "{html}"
+    );
+    assert!(
+        html.contains(r#"row-label">Calendar<span class="row-sub">Part of Vibb One<"#),
+        "{html}"
+    );
+    assert!(
+        html.contains(r#"<span class="row-value">On Home</span>"#),
+        "{html}"
+    );
+    assert!(
+        html.contains(r##"style="background: #496C9C" aria-hidden="true"><img src="/static/app-icons/calendar_month.svg""##),
+        "{html}"
+    );
+    for absent in ["<form", "<input", "apps/display"] {
+        assert!(!html.contains(absent), "{absent}: {html}");
+    }
+
+    // Off Home on the Calendar page: the row says so; under Meldinger while SMS is managed.
+    sqlx::query(
+        "UPDATE device_policy SET calendar_on_home = 0, sms_mode = 'managed' WHERE device_id = ?",
+    )
+    .bind(id)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let (html, messages, at) = row().await.expect("the row");
+    assert!(
+        html.contains(r#"<span class="row-value">Not on Home</span>"#),
+        "{html}"
+    );
+    assert!(messages.expect("Meldinger's row") < at);
+
+    // A Vibb One without Dagen: no row; one with it: the row again.
+    report(json!([])).await;
+    assert!(row().await.is_none());
+    report(json!([crate::calendar::CALENDAR_CAPABILITY])).await;
+    assert!(row().await.is_some());
+}

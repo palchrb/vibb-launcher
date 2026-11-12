@@ -1805,6 +1805,9 @@ pub struct AppView {
     /// Design 82 D10: a part of Vibb One (Meldinger), not an app on the phone - no switch, no permissions, only its
     /// row and Name and icon.
     pub builtin: bool,
+    /// A part of Vibb One whose settings live on a page of their own (Kalender, 2026-11-12: Device › Calendar): the
+    /// row is a link there, with its value (On Home or not) and no Name and icon.
+    pub link: Option<(String, &'static str)>,
     /// A refused switch, under the row (`toggle_app`'s `?notice=<code>&app=<row>`,
     /// `devices::toggle_refusal`).
     pub refused: Option<&'static str>,
@@ -2180,6 +2183,7 @@ pub(crate) async fn render_apps(
         };
         let view = AppView {
             builtin: false,
+            link: None,
             logo,
             perms,
             letter: crate::handlers::devices::initial(&row.label),
@@ -2255,6 +2259,7 @@ pub(crate) async fn render_apps(
             at,
             AppView {
                 builtin: true,
+                link: None,
                 logo: None,
                 perms: None,
                 letter: crate::handlers::devices::initial(&row.label),
@@ -2263,6 +2268,58 @@ pub(crate) async fn render_apps(
                 display: Some(form),
                 anchor,
                 row,
+            },
+        );
+    }
+    // 2026-11-12: Kalender (Dagen, design 69), under Meldinger - whether it is on Home, and a link to Device › Calendar
+    // where that and the rest are set. Only for a Vibb One with Dagen, or before the first report (a new phone gets
+    // one). It sends nothing new: no Name and icon (the phone reads none for Kalender).
+    if latest.is_none() || has_capability(latest.as_ref(), crate::calendar::CALENDAR_CAPABILITY) {
+        let on_home = match crate::calendar::switches(&state.db, id).await {
+            Ok(switches) => switches.map_or(crate::calendar::default_switches().0, |s| s.0),
+            Err(err) => return read_failed(lang, id, "the phone's calendar switches", err),
+        };
+        let name = t(lang, "calendar.summary.label");
+        let at = allowed
+            .iter()
+            .take_while(|app| app.row.is_launcher || app.builtin)
+            .count();
+        allowed.insert(
+            at,
+            AppView {
+                builtin: true,
+                link: Some((
+                    format!("/devices/{id}/calendar#dagen"),
+                    t(
+                        lang,
+                        if on_home {
+                            "apps.on_home"
+                        } else {
+                            "apps.builtin.off_home"
+                        },
+                    ),
+                )),
+                logo: None,
+                perms: None,
+                letter: crate::handlers::devices::initial(name),
+                refused: None,
+                icon: Some((display::DAY_LOOK.glyph.to_string(), display::DAY_LOOK.tile)),
+                display: None,
+                anchor: "app-calendar".to_string(),
+                row: crate::handlers::devices::UnifiedAppRow {
+                    status_label: t(lang, "apps.builtin.part_of_vibb").to_string(),
+                    own_label: None,
+                    label: name.to_string(),
+                    package_name: String::new(),
+                    tracked_app_id: None,
+                    is_launcher: false,
+                    checked: true,
+                    is_installing: false,
+                    install_failed: false,
+                    show_no_release_hint: false,
+                    access: None,
+                    third_party: false,
+                },
             },
         );
     }

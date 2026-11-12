@@ -1,11 +1,19 @@
 {#- One app on Device › Apps (`device_pages::AppView`, as `app`): its switch - its own auto-saving
     form -, a refused switch's reason, and an allowed app's Name and icon and Permissions (design 68) under it. The id is the
     anchor the switch, the name save, the blocked apps and the Apps tab return to. A part of Vibb One (design 82 D10,
-    `app.builtin`: Meldinger) has no switch, no permissions and no update line: its row and Name and icon. The tile
+    `app.builtin`: Meldinger) has no switch, no permissions and no update line: its row and Name and icon; one with
+    `app.link` (Kalender) is only a row to its own settings page. The tile
     (design 87 §8.1, revision 3): the app's real logo over its letter whatever the display choice, else a chosen glyph,
     else the letter; Name and icon's preview keeps what the phone shows. -#}
 <div class="cell" id="{{ app.anchor }}" data-app="{{ app.anchor }}">
-    {% if app.builtin %}
+    {% if let Some((href, value)) = app.link %}
+    <a class="row" href="{{ href }}" data-builtin-link>
+        {% if let Some((icon, colour)) = app.icon %}<span class="app-row-tile" style="background: {{ colour }}" aria-hidden="true"><img src="/static/app-icons/{{ icon }}.svg" alt=""></span>{% endif %}
+        <span class="row-label">{{ app.row.label }}<span class="row-sub">{{ app.row.status_label }}</span></span>
+        <span class="row-value">{{ value }}</span>
+        <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+    {% else if app.builtin %}
     <div class="row">
         {% if let Some((icon, colour)) = app.icon %}<span class="app-row-tile" style="background: {{ colour }}" aria-hidden="true"><img src="/static/app-icons/{{ icon }}.svg" alt=""></span>{% endif %}
         <span class="row-label">{{ app.row.label }}<span class="row-sub">{% if let Some(own) = app.row.own_label %}{{ own }} · {% endif %}{{ app.row.status_label }}</span></span>
