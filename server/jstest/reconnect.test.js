@@ -7,7 +7,7 @@ const rc = require("../static/reconnect.js");
 // The ten minutes are app-lock.js's (it runs first and picks the lock's `next` itself); reconnect.js reads them from
 // `window.handyLock.homeAfter`.
 const { HOME_AFTER } = require("../static/app-lock.js");
-const { install, navigationTarget, CHIP_AFTER, PING_EVERY, PING_TIMEOUT, OFFER_AFTER, AWAY_MS } = rc;
+const { install, navigationTarget, BAR_AFTER, CHIP_AFTER, PING_EVERY, PING_TIMEOUT, OFFER_AFTER, AWAY_MS } = rc;
 
 const HERE = "https://pi.example.ts.net/devices/1?tab=apps#apps";
 
@@ -219,15 +219,20 @@ async function answer(win, status = 204) {
     await settle();
 }
 
-test("a tap marks the link and shows the bar at once; nothing else while the page comes", async () => {
+test("a tap marks the link at once and shows the bar only after 400 ms; nothing else while the page comes", async () => {
     const win = fakeWindow();
     win.install();
     const tab = link("/apps");
     win.tap(tab);
     assert.ok(win.view.marked.has(tab));
-    assert.strictEqual(win.view.bar, true);
+    assert.strictEqual(win.view.bar, false, "no bar at once: a fast page change shows none");
+    assert.strictEqual(BAR_AFTER, 400);
+    win.advance(BAR_AFTER - 1);
+    assert.strictEqual(win.view.bar, false, "no bar before 400 ms");
+    win.advance(1);
+    assert.strictEqual(win.view.bar, true, "the bar once the load takes a while");
     assert.strictEqual(win.view.chip, false);
-    win.advance(CHIP_AFTER - 1);
+    win.advance(CHIP_AFTER - BAR_AFTER - 1);
     assert.strictEqual(win.view.chip, false, "no chip before 3 s");
     assert.strictEqual(win.pings.length, 0, "no ping before 3 s");
     assert.deepStrictEqual(win.assigned, [], "the browser's own navigation goes on");
@@ -330,7 +335,38 @@ test("a first pageshow (not from the cache) doesn't clear a tap made while the p
     win.install();
     win.tap(link("/apps"));
     win.fire("win", "pageshow", { persisted: false });
+    win.advance(BAR_AFTER);
     assert.strictEqual(win.view.bar, true);
+});
+
+test("the bar never shows once its wait has ended, and a pagehide holds it", () => {
+    // Ended before 400 ms (a save started, back from the back-forward cache): no bar after it.
+    for (const ending of [
+        (win) => win.fire("doc", "submit", { target: {} }),
+        (win) => win.fire("win", "pageshow", { persisted: true }),
+    ]) {
+        const win = fakeWindow();
+        win.install();
+        const tab = link("/apps");
+        win.tap(tab);
+        win.advance(BAR_AFTER - 100);
+        ending(win);
+        win.advance(60000);
+        assert.strictEqual(win.view.bar, false);
+        assert.ok(!win.view.marked.has(tab));
+    }
+    // The page left (pagehide stops the timers; a page that finished unloads with them): nothing shows meanwhile.
+    const left = fakeWindow();
+    left.install();
+    left.tap(link("/apps"));
+    left.advance(BAR_AFTER - 100);
+    left.fire("win", "pagehide");
+    left.advance(60000);
+    assert.strictEqual(left.view.bar, false, "no bar after the pagehide");
+    // Back while the load is still on its way: the bar, now that it has taken a while.
+    left.show();
+    left.advance(0);
+    assert.strictEqual(left.view.bar, true, "re-armed on the return, already due");
 });
 
 test("ignored clicks show nothing", () => {
@@ -479,6 +515,8 @@ test("back after long, the server not there yet: the chip after 3 s, the reload 
     win.advance(PING_EVERY - 1000); // the next ping, before its own timeout;
     await answer(win);
     assert.strictEqual(win.reloads, 1);
+    assert.strictEqual(win.view.bar, false, "not at once");
+    win.advance(BAR_AFTER);
     assert.strictEqual(win.view.bar, true, "the reload is a navigation on its way");
 });
 
@@ -517,7 +555,9 @@ test("handyReconnect: a reload asked for (pull-refresh.js) is the reload in plac
     assert.strictEqual(win.handyReconnect.mayReload(), true);
     assert.strictEqual(win.handyReconnect.reload(), true);
     assert.deepStrictEqual(win.steps, ["replace https://pi.example.ts.net/devices/1", "reload"]);
-    assert.strictEqual(win.view.bar, true, "the bar while it comes");
+    assert.strictEqual(win.view.bar, false, "no bar at once");
+    win.advance(BAR_AFTER);
+    assert.strictEqual(win.view.bar, true, "the bar while it comes, after 400 ms");
     assert.strictEqual(JSON.parse(win.stored["handy-scroll"]).y, 420, "the place kept");
     // Slow: the chip after 3 s, the ping, the same reload again once the server answers after a miss.
     win.advance(CHIP_AFTER);

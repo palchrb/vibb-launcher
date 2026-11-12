@@ -2,8 +2,10 @@
 // background a while, the network to the server (often over Tailscale) may not be up yet, and an
 // installed PWA shows no loading indicator of its own - a tapped tab looked dead until the app was
 // restarted. This script, loaded from the head partial on every page:
-// - marks a tapped same-origin link (the tab bar, an ordinary link) and shows a thin progress bar at
-//   the top at once - not for a download, a `target`, a modified click or a #fragment on this page;
+// - marks a tapped same-origin link (the tab bar, an ordinary link) at once and shows a thin progress
+//   bar at the top only if the page hasn't been left after 400 ms (BAR_AFTER; 2026-11-12: a fast page
+//   change flashed it, which could look like a fault) - not for a download, a `target`, a modified
+//   click or a #fragment on this page;
 // - if the page hasn't been left after 3 s, shows a small calm chip "Connecting…" (no alarm colour,
 //   no modal, the page stays usable) and heals by itself: it pings the server (`GET /ping`, 204
 //   with a session, a redirect to the login without one: any answer means the server is there) at
@@ -43,6 +45,11 @@
     "use strict";
 
     var CHIP_AFTER = 3000;
+    // The bar under the band only for a load that takes a while (the user, 2026-11-12: shown at once it was a needless
+    // flash that could look like a fault). 400 ms: a page from the server near by (LAN or Tailscale) is usually there
+    // well before, so a fast change shows nothing, and a real wait still gets its mark well under the second after
+    // which a tap feels unanswered. The tapped link's own mark stays immediate: it is the answer to the tap itself.
+    var BAR_AFTER = 400;
     var PING_EVERY = 5000;
     var PING_TIMEOUT = 4000;
     var OFFER_AFTER = 20000;
@@ -696,12 +703,20 @@
         }
 
         /**
-         * The wait's timers, from its start: the chip (and a navigation's first ping) at 3 s, "Try
+         * The wait's timers, from its start: a load's bar at 400 ms, the chip (and a navigation's first ping) at 3 s, "Try
          * again" at 20 s, a ping every 5 s from 8 s. Armed again when the page comes back after a
          * `pagehide` that stopped them (QA L5).
          */
         function arm(w) {
             var elapsed = now() - w.started;
+            // A load that finishes first unloads the page (its timers die with it): no bar ever.
+            if (w.kind === "load" && !w.barShown) {
+                w.timers.push(later(function () {
+                    if (wait !== w) return;
+                    w.barShown = true;
+                    view.bar(true);
+                }, Math.max(0, BAR_AFTER - elapsed)));
+            }
             if (!w.chipShown) {
                 w.timers.push(later(function () {
                     if (wait !== w) return;
@@ -743,6 +758,7 @@
                 failed: false,
                 slowRestarted: false,
                 asking: false,
+                barShown: false,
                 chipShown: false,
                 offered: false,
                 timers: []
@@ -751,7 +767,6 @@
             if (kind === "load") {
                 remember(href === null ? win.location.href : href);
                 view.mark(link, true);
-                view.bar(true);
             }
             arm(w);
             if (kind === "return") check(w);
@@ -825,7 +840,7 @@
 
         // The reload in place another script asks for (pull-refresh.js, 2026-10-25): the same rules
         // as the return's - no save on its way, no open <details>, nothing typed or picked - and the
-        // same way: the "load" wait (the bar, the chip after 3 s, the ping and the restart) over
+        // same way: the "load" wait (the bar after 400 ms, the chip after 3 s, the ping and the restart) over
         // go()'s kept place and GET entry. A POST's answer may be reloaded when asked: go() makes
         // the entry a GET first, so nothing is sent again.
         win.handyReconnect = {
@@ -862,6 +877,7 @@
         pathOf: pathOf,
         WANTED_MS: WANTED_MS,
         BOUNCE_MS: BOUNCE_MS,
+        BAR_AFTER: BAR_AFTER,
         CHIP_AFTER: CHIP_AFTER,
         PING_EVERY: PING_EVERY,
         PING_TIMEOUT: PING_TIMEOUT,
