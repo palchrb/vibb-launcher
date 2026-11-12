@@ -328,9 +328,10 @@ object KidAvatars {
      * The app's own logo (design 34 P1), never the monochrome layer, never tinted: an adaptive
      * icon's background and foreground layers in their original colours, 1.5x (108 dp layers with a
      * 72 dp safe zone) and centred; a legacy icon inset 1/8 on the light neutral disc
-     * (`kid_icon_fallback`). Clipped to the circle.
+     * (`kid_icon_fallback`). Clipped to the circle. Also the logo the status report names and uploads (design 87,
+     * [com.kidslauncher.mdm.appdisplay.AppLogos]) - one drawing, not a second.
      */
-    private fun drawOwnLogo(context: Context, drawable: Drawable, sizePx: Int): Bitmap {
+    internal fun drawOwnLogo(context: Context, drawable: Drawable, sizePx: Int): Bitmap {
         val bmp = createBitmap(sizePx, sizePx)
         val canvas = Canvas(bmp)
         val clip = Path().apply { addCircle(sizePx / 2f, sizePx / 2f, sizePx / 2f, Path.Direction.CW) }

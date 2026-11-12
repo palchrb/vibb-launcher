@@ -45,8 +45,16 @@ interface MdmApi {
     @GET("api/devices/policy")
     suspend fun getPolicy(): Response<ResponseBody>
 
+    /** The raw answer (design 87 §4.2, R2-L7): to a report claiming `app_logos_v1` a `200` with the logos the server
+     * wants ([com.kidslauncher.mdm.appdisplay.wantedLogosOf]), else `204`. The caller closes the body; every 2xx is
+     * "the server took the report". Streamed, so the caller's bound on what it reads is real. */
+    @Streaming
     @POST("api/devices/status")
-    suspend fun sendStatus(@Body report: StatusReportRequest): Response<Unit>
+    suspend fun sendStatus(@Body report: StatusReportRequest): Response<ResponseBody>
+
+    /** One wanted logo, the raw `image/png` (design 87 §4.3) - see [com.kidslauncher.mdm.appdisplay.AppLogos.upload]. */
+    @POST("api/devices/app-logos/{hash}")
+    suspend fun uploadAppLogo(@Path("hash") hash: String, @Body png: okhttp3.RequestBody): Response<Unit>
 
     @POST("api/devices/command-result")
     suspend fun sendCommandResult(@Body request: CommandResultRequest): Response<Unit>

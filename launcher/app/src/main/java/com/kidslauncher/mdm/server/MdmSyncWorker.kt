@@ -1,5 +1,8 @@
 package com.kidslauncher.mdm.server
 
+import com.kidslauncher.mdm.appdisplay.readWantedLogosBody
+import com.kidslauncher.mdm.appdisplay.wantedLogosOf
+import com.kidslauncher.mdm.appdisplay.withLogos
 import com.kidslauncher.mdm.badges.BadgeStore
 import com.kidslauncher.mdm.calls.ContactPhotos
 import com.kidslauncher.mdm.ui.LauncherLocales
@@ -307,6 +310,8 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
 
     // Best-effort - a failed report must never affect the lock decision above.
     var zoneQueueDone = false
+    // Design 87: the logos the report's answer asks for, uploaded among the cosmetic steps below (R2-M4).
+    var wantedLogos: List<String> = emptyList()
     try {
         // The current blocks and how many in all (design 24b fix, QA of cmd-expiry Low 2).
         val blocks = WindowRelock.reportBlocks(context)
@@ -393,6 +398,16 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
                 ),
             )
         )
+        // Design 87 (R2-L7): read at once (bounded) and closed; a 204, an empty or unreadable body is nothing wanted. A
+        // 200 is still a 2xx below - `sent.isSuccessful` is unchanged by the body, and a body that fails to read never
+        // makes a taken report a failed one.
+        wantedLogos = try {
+            wantedLogosOf(sent.code(), sent.body()?.use { body -> body.byteStream().use(::readWantedLogosBody) })
+        } catch (e: Exception) {
+            // `use` closed the body.
+            Log.w(LOG_TAG, "The status answer's body didn't read: ${e.javaClass.simpleName}")
+            emptyList()
+        }
         if (sent.isSuccessful) ServerPinStore.reported(context, tlsSent, pinConnection(apiPath, sent.raw().handshake))
         // Design 64 step 2: what the server took leaves the queue; a report it didn't take leaves
         // its fix there for the next one.
@@ -454,6 +469,9 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     }
 
     reportBlockedDnsEvents(context, api)
+    // Design 87 §4.4: the wanted app logos - cosmetic, after every time-critical step (R2-M4), at most 20 s in all;
+    // never fails a sync.
+    com.kidslauncher.mdm.appdisplay.AppLogos.upload(context, api, wantedLogos)
     // Design 75: the lock's weather - the policy's switch and location mode, then a pull when due (its own 15 s call
     // timeout and in-flight guard; never fails a sync). Before the self-update commit: nothing may run after it.
     com.kidslauncher.mdm.weather.WeatherPull.afterSync(context, decision.policy)
@@ -1157,7 +1175,8 @@ private suspend fun reportInstallFailure(api: MdmApi, trackedAppId: Long) {
  */
 private fun collectInstalledApps(context: Context): List<InstalledApp> {
     val pm = context.packageManager
-    return controllablePackages(pm)
+    val logoSources = mutableListOf<com.kidslauncher.mdm.appdisplay.AppLogos.Source>()
+    val apps = controllablePackages(pm)
         .filter { it != context.packageName }
         .mapNotNull { packageName ->
             try {
@@ -1181,12 +1200,18 @@ private fun collectInstalledApps(context: Context): List<InstalledApp> {
                     versionCode = pkg.longVersionCode,
                     versionName = com.kidslauncher.mdm.server.dto.installedVersionName(pkg.versionName),
                     access = AppAccessReader.report(context, pkg),
-                )
+                ).also {
+                    logoSources += com.kidslauncher.mdm.appdisplay.AppLogos.Source(
+                        packageName, pkg.longVersionCode, pkg.lastUpdateTime, info,
+                    )
+                }
             } catch (e: PackageManager.NameNotFoundException) {
                 null
             }
         }
         .distinctBy { it.packageName }
+    // Design 87 §3: each app's logo hash, drawn just before the report (at most 1.5 s; never throws).
+    return withLogos(apps, com.kidslauncher.mdm.appdisplay.AppLogos.refresh(context, logoSources.distinctBy { it.packageName }))
 }
 
 /** Who installed [packageName] (`com.android.vending` = Play), or `null` if unknown. */

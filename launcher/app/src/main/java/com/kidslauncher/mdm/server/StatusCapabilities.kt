@@ -62,6 +62,8 @@ val STATUS_CAPABILITIES: List<String> = listOf(
     // Design 82: Meldinger's lock level (`lock_glance.sms`), its `app_display` entry and `sms_state.has_history`.
     // Until a phone claims it the server's rows say "after Vibb One is updated".
     com.kidslauncher.mdm.sms.MESSAGES_APP_CAPABILITY,
+    // Design 87: `installed_apps[].logo` in every report, the answer's `wanted_logos` read and those logos uploaded.
+    com.kidslauncher.mdm.server.dto.APP_LOGOS_CAPABILITY,
 )
 
 /** A time rule's "Stille" switch (server migration 0121): `rules[].silent` is enforced. */
