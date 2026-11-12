@@ -288,6 +288,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     val location = currentLocationReport(
         context, dpm, admin, forceFreshLocation, preciseFix, zoneFix != null, zonesOn, locationPolicy, lowBatteryFix,
         staysOn = locationStaysOn(locationPolicy, hardeningForcesOn, zonesOn),
+        explicit = commandFix,
     )
     val locationOff = locationPolicy?.mode == "off"
     // Location Off, or no zones watched: the queue is emptied before the report, which carries no
@@ -719,7 +720,8 @@ private class LocationOutcome(
  * else the cached fix, no LocationManager call; every due call and fresh fix stamps the beat. A
  * crossing's sync ([crossing], [forceFresh] through `ZoneWatch.takeFreshWanted`) and
  * `locate` always fix - [precise] (`locate`, a crossing's confirm) GPS first, a
- * crossing's first fix and the heartbeat `FRESH_BALANCED`. The kept slot becomes the reported fix
+ * crossing's first fix and the heartbeat `FRESH_BALANCED`; [explicit] (`locate` alone) the fused
+ * provider first, up to a minute ([preciseFix]). The kept slot becomes the reported fix
  * only at a due `KEPT` or a crossing's sync (Q-1); the motion gate arms only after a genuinely
  * fresh fix (Q-6).
  */
@@ -734,6 +736,7 @@ private suspend fun currentLocationReport(
     policy: LocationPolicy?,
     lowBatteryFix: LowFix,
     staysOn: Boolean,
+    explicit: Boolean,
 ): LocationOutcome {
     if (!dpm.isDeviceOwnerApp(context.packageName)) return LocationOutcome(LocationAction.NONE, null, null, null)
     LocateCommands.restoreAfterDeadFix(context, dpm, admin, staysOn)
@@ -765,7 +768,11 @@ private suspend fun currentLocationReport(
     }
     // P-L3: a cached fix older than the interval is never reported - but the still heartbeat's re-send (Q-3).
     val still = reportStill(zonesOn, action, motion, now, lastFreshFix)
-    val location = LocateCommands.currentLocation(context, dpm, admin, action, staysOn, cachedFixMaxAgeMs(policy, still))
+    // The parent's `locate` waits up to EXPLICIT_FIX_BOUND_MS here, under the sync mutex: rare and asked for, and its
+    // fix goes into this report; every other fix keeps its 15 s (preciseFix).
+    val location = LocateCommands.currentLocation(
+        context, dpm, admin, action, staysOn, cachedFixMaxAgeMs(policy, still), explicit = explicit,
+    )
         ?: return LocationOutcome(action, null, null, null)
     // A genuinely fresh fix of our own (not the cached or an old last-known fallback): the motion
     // sensor counts "moved" from here (Q-6).

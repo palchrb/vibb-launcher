@@ -526,7 +526,7 @@ class ZonePlanTest {
         assertFalse(keep.contains("saveCachedFix"))
         // Only promoteKept and the own-fix save write the cached fix; clearCachedFix (location Off, P-L3) removes it.
         assertEquals(3, Regex("""keys\(\)\.cachedLocationJson\(\)""").findAll(locate).count())
-        assertTrue(locate.contains("requestFreshFix(context, lm)?.takeIf { ZoneWatch.accept(context, it) }"))
+        assertTrue(locate.contains("requestFreshFix(context, lm, preciseFix(explicit && action == LocationAction.FRESH))?.takeIf { ZoneWatch.accept(context, it) }"))
         assertTrue(locate.contains(".filter { ZoneWatch.accept(context, it) && reportable(it) }"))
     }
 }

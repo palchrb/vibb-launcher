@@ -155,6 +155,14 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   `locate` (not `ring` since security review P-L2) and a crossing's confirming fix; `FRESH_BALANCED` - `getCurrentLocation(FUSED_PROVIDER,
   QUALITY_BALANCED_POWER_ACCURACY, 15 s)`, GPS only when fused gives nothing - for the heartbeat and a crossing's first
   fix; the series' checks the balanced fix alone (`LocateCommands.seriesFix`, no GPS, no grant, no Location switch).
+- **`locate`'s own fix** (ported from upstream siesta5787/kids-launcher-mdm 619f2bfab6 + 395a926122, 2026-11-12;
+  pure `preciseFix`, `LocationPolicyTest`): the parent's `locate` (the sync's `commandFix`, `explicit`) takes the
+  precise path with the fused provider first at `QUALITY_HIGH_ACCURACY`, then GPS, then network, as a one-update
+  `requestLocationUpdates` (`setMaxUpdates(1)`) bounded at 60 s - upstream's GPS-only Pixel came back empty indoors
+  every time, and `getCurrentLocation` is capped at 30 s by the platform. It stays inside the sync under its mutex (the
+  fix goes into that report, and `restoreAfterDeadFix` relies on only the sync fixing): a rare, asked-for wait, at
+  most a minute, when nothing answers sooner. Every other path is unchanged - `FRESH` for a crossing's confirm and a
+  due interval without zones keeps GPS first, `getCurrentLocation`, 15 s; `FRESH_BALANCED` and the series' fix too.
 - **The moving series** (§4.5, `ZoneSeries`, pure `nextCheckDelay`/`seriesOnMotion`/`seriesEnd`/`seriesAfterCheck`/
   `checkVerdict`): while the watch is on `MotionGate` keeps the trigger armed (re-armed at each fire), and a fire
   starts a series (memory only) or tells the running one. Its checks (`ZoneCheckReceiver`, exact while-idle alarm,
