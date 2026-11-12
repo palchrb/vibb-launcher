@@ -794,7 +794,7 @@ async fn update_location_now_queues_locate() {
         .await;
     assert_eq!(
         res.location(),
-        Some(format!("/devices/locate?device={id}&requested=1#location").as_str())
+        Some(format!("/devices/locate?device={id}&requested=1#update-location").as_str())
     );
     assert_eq!(nudges.try_recv().ok(), Some(id));
     let p = app.policy(&token).await;
@@ -829,8 +829,13 @@ async fn update_location_now_queues_locate() {
     let page = app
         .get_page(&format!("/devices/locate?device={id}"), &cookie)
         .await;
-    assert!(page.text().contains(">just now<"), "{}", page.text());
-    assert!(page.text().contains("Within 12 m"), "{}", page.text());
+    // The marker's bubble (design 88 revision 2).
+    assert!(
+        page.text()
+            .contains("data-shown-text=\"just now · within 12 m\""),
+        "{}",
+        page.text()
+    );
 }
 
 #[tokio::test]

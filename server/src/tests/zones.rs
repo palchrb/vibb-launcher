@@ -818,10 +818,10 @@ async fn here_now_the_fix_badge_and_the_summary_line() {
         .get_page(&format!("/devices/locate?device={id}"), &cookie)
         .await
         .text();
-    assert!(html.contains("Within 20 m · At Home"), "{html}");
+    // The marker's bubble says it (design 88 revision 2: the age box went).
     assert!(
         html.contains("· within 20 m · at Home\""),
-        "the popup's words"
+        "the popup's words: {html}"
     );
     // Design 88: the Zones row says it, the Zones page's row too.
     assert!(html.contains("3 · Here now: Home"), "{html}");
@@ -1040,7 +1040,7 @@ async fn here_now_needs_the_newest_fix_to_agree_and_be_fresh() {
         app.get_page(&locate, &cookie)
             .await
             .text()
-            .contains("Within 20 m · At Home"),
+            .contains("· within 20 m · at Home\""),
         "the fix itself is still inside"
     );
     assert!(

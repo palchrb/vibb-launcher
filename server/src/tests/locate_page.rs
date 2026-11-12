@@ -243,11 +243,17 @@ async fn the_rows_and_their_pages() {
     let (id, _) = app.enrolled_device("Emma").await;
     let html = locate_page(&app, &cookie, &format!("?device={id}")).await;
     let rows = rows_of(&html);
-    // The four, in this order (`find` panics on a missing one).
+    // Update Location (revision 2) and the four, in this order (`find` panics on a missing one).
     let at = |row: &str| rows.find(&format!("data-row=\"{row}\"")).expect(row);
-    let order = ["locations", "zones", "find", "location-settings"];
+    let order = [
+        "update-location",
+        "locations",
+        "zones",
+        "find",
+        "location-settings",
+    ];
     assert!(order.windows(2).all(|w| at(w[0]) < at(w[1])), "{rows}");
-    assert_eq!(rows.matches("class=\"tile tile-").count(), 4, "{rows}");
+    assert_eq!(rows.matches("class=\"tile tile-").count(), 5, "{rows}");
     for href in [
         format!("/devices/{id}/locations?span=12"),
         format!("/devices/{id}/zones"),
@@ -709,7 +715,7 @@ async fn the_fix_and_the_answer_read_in_local_time() {
         .await
         .unwrap();
     let html = locate_page(&app, &cookie, &format!("?device={id}")).await;
-    assert!(html.contains(">2 Jan"), "{html}");
+    assert!(html.contains("data-shown-text=\"2 Jan"), "{html}");
 }
 
 /// The answer row (2026-10-25, PLAN "Locate: the \"Answer to Update Location\" row goes"): "Asking
