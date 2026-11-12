@@ -661,6 +661,7 @@ pub async fn backfill_release_hashes(state: AppState) {
         }
     }
     backfill_pins(&state).await;
+    backfill_version_codes(&state).await;
 }
 
 /// SHA-256 (lower-case hex) of a file, read in 64 KiB pieces. Blocking.
@@ -917,6 +918,49 @@ async fn backfill_pins(state: &AppState) {
                 store_pins(state, &app, &identity).await;
             }
             Err(err) => tracing::warn!(app_id = app.id, %err, "can't read the cached APK"),
+        }
+    }
+}
+
+/// Reads the versionCode of releases cached before migration 0139 from the cached file, so a
+/// phone that installs it is known to run it (`catalog_release_installed`). The row is only
+/// updated while it still names the read file. Run once at startup after the pins; best-effort.
+async fn backfill_version_codes(state: &AppState) {
+    let rows: Vec<(i64, String)> = match sqlx::query_as(
+        "SELECT id, latest_release_file_path FROM tracked_apps \
+         WHERE latest_release_file_path IS NOT NULL AND latest_release_version_code IS NULL",
+    )
+    .fetch_all(&state.db)
+    .await
+    {
+        Ok(rows) => rows,
+        Err(err) => {
+            tracing::warn!(%err, "can't list the cached files to read the versionCode of");
+            return;
+        }
+    };
+    for (id, path) in rows {
+        let code = match apk_identity(&path).await {
+            Ok(identity) => identity.version_code,
+            Err(err) => {
+                tracing::warn!(app_id = id, %err, "can't read the cached APK");
+                continue;
+            }
+        };
+        let Some(code) = code else {
+            continue;
+        };
+        if let Err(err) = sqlx::query(
+            "UPDATE tracked_apps SET latest_release_version_code = ? \
+             WHERE id = ? AND latest_release_file_path = ? AND latest_release_version_code IS NULL",
+        )
+        .bind(code)
+        .bind(id)
+        .bind(&path)
+        .execute(&state.db)
+        .await
+        {
+            tracing::warn!(app_id = id, %err, "can't store the cached APK's versionCode");
         }
     }
 }
@@ -1577,7 +1621,8 @@ async fn sync_release(
     let stored = sqlx::query(
         "UPDATE tracked_apps SET latest_release_tag = ?, latest_release_asset_id = ?, \
          latest_release_file_path = ?, latest_release_asset_name = ?, \
-         latest_release_asset_size = ?, latest_release_sha256 = ? WHERE id = ?",
+         latest_release_asset_size = ?, latest_release_sha256 = ?, \
+         latest_release_version_code = ? WHERE id = ?",
     )
     .bind(tag)
     .bind(asset.id)
@@ -1585,6 +1630,7 @@ async fn sync_release(
     .bind(&asset.name)
     .bind(i64::try_from(downloaded.size).unwrap_or(i64::MAX))
     .bind(&downloaded.sha256)
+    .bind(identity.version_code)
     .bind(app.id)
     .execute(&state.db)
     .await;
@@ -1692,14 +1738,19 @@ pub(crate) struct InstalledVersion {
 
 /// Whether a phone that runs a catalog app other than the launcher and the music app at `version`
 /// has the row's stored release installed: an F-Droid release by its versionCode (the row's asset
-/// id is it); any other by the reported versionName against the tag's version
-/// ([version_of], "v7.2.0" -> "7.2.0"), a leading "v" on the name ignored too.
+/// id is it); any other by the versionCode read from the release's APK (2026-11-12: a tag needn't
+/// be the versionName - Organic Maps' "2026.11.11-39-android" is "2026.11.11-39-Web"), else - no
+/// code read - by the reported versionName against the tag's version ([version_of], "v7.2.0" ->
+/// "7.2.0"), a leading "v" on the name ignored too.
 pub(crate) fn catalog_release_installed(app: &TrackedApp, version: &InstalledVersion) -> bool {
     let Some(tag) = app.latest_release_tag.as_deref() else {
         return false;
     };
     if app.source_type == "fdroid" {
         return app.latest_release_asset_id == Some(version.code);
+    }
+    if let Some(code) = app.latest_release_version_code {
+        return code == version.code;
     }
     let Some(name) = version
         .name
@@ -3042,13 +3093,14 @@ pub async fn upload_tracked_app_release(
         "UPDATE tracked_apps SET latest_release_tag = ?, latest_release_asset_id = NULL, \
          latest_release_file_path = ?, latest_release_asset_name = ?, \
          latest_release_asset_size = ?, latest_release_sha256 = ?, \
-         last_checked_at = datetime('now') WHERE id = ?",
+         latest_release_version_code = ?, last_checked_at = datetime('now') WHERE id = ?",
     )
     .bind(&release_label)
     .bind(&file_path)
     .bind(&apk_name)
     .bind(apk_bytes.len() as i64)
     .bind(&sha256)
+    .bind(identity.version_code)
     .bind(id)
     .execute(&state.db)
     .await
@@ -5274,6 +5326,7 @@ mod tests {
         assert_eq!(row.latest_release_tag.as_deref(), Some("v1.0.57"));
         assert_eq!(row.latest_release_asset_id, Some(57));
         assert_eq!(row.latest_release_sha256.as_deref(), Some(sha.as_str()));
+        assert_eq!(row.latest_release_version_code, Some(1), "the APK's own");
         assert_eq!(FakeRepo::count(&fake.api_gets), 0, "no API on this repo");
         // Unchanged: entry.json again, the index from the cache, no download.
         sync_one_app(&app.state, id, false).await.unwrap();

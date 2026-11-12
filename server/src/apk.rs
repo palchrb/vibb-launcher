@@ -1,7 +1,9 @@
-//! What an APK says it is (security review M10): its package name, from the binary
-//! `AndroidManifest.xml`, and the SHA-256 of its signing certificate, from the APK Signing Block
-//! (scheme v3, else v2). The catalog pins both from an app's first release and refuses a later
-//! release that differs (`handlers::tracked_apps`); the phones get them with the app list.
+//! What an APK says it is (security review M10): its package name and versionCode, from the
+//! binary `AndroidManifest.xml`, and the SHA-256 of its signing certificate, from the APK Signing
+//! Block (scheme v3, else v2). The catalog pins the package and the signer from an app's first
+//! release and refuses a later release that differs (`handlers::tracked_apps`); the phones get
+//! them with the app list. The versionCode is how a phone's report is known to run the stored
+//! release (`app_updated`).
 //!
 //! Read-only parsing of an untrusted file: every offset and length is checked, nothing panics, and
 //! the manifest and the signing block are capped in size. The digest is lower-case hex of the DER
@@ -25,12 +27,16 @@ const V3_BLOCK_ID: u32 = 0xf053_68c0;
 pub struct ApkIdentity {
     /// The manifest's `package`; `None` when the manifest couldn't be read.
     pub package: Option<String>,
+    /// The manifest's `android:versionCode`, with `android:versionCodeMajor` above it as Android's
+    /// `PackageInfo.getLongVersionCode` reads them; `None` when it couldn't be read (a reference,
+    /// not a number) or the manifest couldn't.
+    pub version_code: Option<i64>,
     /// SHA-256 (lower-case hex) of the first signer's certificate; `None` without a v2/v3
     /// signature (a v1-only APK) or when the block couldn't be read.
     pub signer_sha256: Option<String>,
 }
 
-/// Reads both facts; a file that isn't a zip at all is an error, a part that can't be read is
+/// Reads the facts; a file that isn't a zip at all is an error, a part that can't be read is
 /// `None`.
 pub fn read_identity(path: &Path) -> Result<ApkIdentity, String> {
     let mut file = std::fs::File::open(path).map_err(|err| format!("can't open the APK: {err}"))?;
@@ -40,7 +46,7 @@ pub fn read_identity(path: &Path) -> Result<ApkIdentity, String> {
         .map_err(|err| format!("can't read the APK: {err}"))?;
     let mut archive =
         zip::ZipArchive::new(file).map_err(|err| format!("the APK isn't a zip: {err}"))?;
-    let package = archive
+    let manifest = archive
         .by_name("AndroidManifest.xml")
         .ok()
         .and_then(|entry| {
@@ -49,10 +55,12 @@ pub fn read_identity(path: &Path) -> Result<ApkIdentity, String> {
                 .take(MAX_MANIFEST_BYTES)
                 .read_to_end(&mut bytes)
                 .ok()?;
-            manifest_package(&bytes)
-        });
+            read_manifest(&bytes)
+        })
+        .unwrap_or_default();
     Ok(ApkIdentity {
-        package,
+        package: manifest.package,
+        version_code: manifest.version_code,
         signer_sha256,
     })
 }
@@ -149,17 +157,33 @@ fn first_certificate(scheme_block: &[u8]) -> Option<Vec<u8>> {
 const RES_STRING_POOL_TYPE: u16 = 0x0001;
 const RES_XML_TYPE: u16 = 0x0003;
 const RES_XML_START_ELEMENT_TYPE: u16 = 0x0102;
+const RES_XML_RESOURCE_MAP_TYPE: u16 = 0x0180;
 const UTF8_FLAG: u32 = 1 << 8;
 const NO_INDEX: u32 = 0xffff_ffff;
 const TYPE_STRING: u8 = 0x03;
+const TYPE_INT_DEC: u8 = 0x10;
+const TYPE_INT_HEX: u8 = 0x11;
+/// `android.R.attr.versionCode` and `versionCodeMajor`.
+const ATTR_VERSION_CODE: u32 = 0x0101_021b;
+const ATTR_VERSION_CODE_MAJOR: u32 = 0x0101_0576;
 
-/// The `package` attribute of the binary manifest's first element (`<manifest>`).
-fn manifest_package(xml: &[u8]) -> Option<String> {
+/// What the binary manifest's first element (`<manifest>`) says.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct Manifest {
+    package: Option<String>,
+    version_code: Option<i64>,
+}
+
+/// The `package`, `android:versionCode` and `android:versionCodeMajor` attributes of the binary
+/// manifest's first element (`<manifest>`). An android attribute is known by its resource id (the
+/// resource map), else by its name.
+fn read_manifest(xml: &[u8]) -> Option<Manifest> {
     if u16_at(xml, 0)? != RES_XML_TYPE {
         return None;
     }
     let mut at = usize::from(u16_at(xml, 2)?);
     let mut strings: Option<&[u8]> = None;
+    let mut resource_ids: Option<&[u8]> = None;
     while at < xml.len() {
         let kind = u16_at(xml, at)?;
         let header_size = usize::from(u16_at(xml, at + 2)?);
@@ -170,6 +194,7 @@ fn manifest_package(xml: &[u8]) -> Option<String> {
         }
         match kind {
             RES_STRING_POOL_TYPE => strings = Some(chunk),
+            RES_XML_RESOURCE_MAP_TYPE => resource_ids = chunk.get(header_size..),
             RES_XML_START_ELEMENT_TYPE => {
                 let pool = strings?;
                 // ResXMLTree_attrExt follows the node header.
@@ -180,32 +205,60 @@ fn manifest_package(xml: &[u8]) -> Option<String> {
                 let attribute_start = usize::from(u16_at(ext, 8)?);
                 let attribute_size = usize::from(u16_at(ext, 10)?);
                 let count = usize::from(u16_at(ext, 12)?);
+                let mut manifest = Manifest::default();
+                let (mut code, mut major) = (None, None);
                 for index in 0..count {
                     let attribute = ext
                         .get(attribute_start.checked_add(index.checked_mul(attribute_size)?)?..)?;
                     let namespace = u32_at(attribute, 0)?;
-                    if namespace != NO_INDEX
-                        || pool_string(pool, u32_at(attribute, 4)?)? != "package"
-                    {
+                    let name = u32_at(attribute, 4)?;
+                    let named = |wanted: &str| pool_string(pool, name).as_deref() == Some(wanted);
+                    // A number: the typed value's data.
+                    let int = || match *attribute.get(15)? {
+                        TYPE_INT_DEC | TYPE_INT_HEX => u32_at(attribute, 16),
+                        _ => None,
+                    };
+                    if namespace == NO_INDEX {
+                        if !named("package") {
+                            continue;
+                        }
+                        let raw = u32_at(attribute, 8)?;
+                        let value = if raw != NO_INDEX {
+                            Some(raw)
+                        } else if *attribute.get(15)? == TYPE_STRING {
+                            u32_at(attribute, 16)
+                        } else {
+                            None
+                        };
+                        manifest.package = value
+                            .and_then(|value| pool_string(pool, value))
+                            .filter(|name| !name.is_empty());
                         continue;
                     }
-                    let raw = u32_at(attribute, 8)?;
-                    let value = if raw != NO_INDEX {
-                        raw
-                    } else if *attribute.get(15)? == TYPE_STRING {
-                        u32_at(attribute, 16)?
-                    } else {
-                        return None;
-                    };
-                    return pool_string(pool, value).filter(|name| !name.is_empty());
+                    let id =
+                        resource_ids.and_then(|ids| u32_at(ids, (name as usize).checked_mul(4)?));
+                    let is =
+                        |attr: u32, wanted: &str| id.map_or_else(|| named(wanted), |id| id == attr);
+                    if is(ATTR_VERSION_CODE, "versionCode") {
+                        code = int();
+                    } else if is(ATTR_VERSION_CODE_MAJOR, "versionCodeMajor") {
+                        major = int();
+                    }
                 }
-                return None;
+                manifest.version_code = code.and_then(|code| long_version_code(code, major));
+                return Some(manifest);
             }
             _ => {}
         }
         at = at.checked_add(size)?;
     }
     None
+}
+
+/// `PackageInfo.getLongVersionCode`: the major code in the high 32 bits, the code's 32 bits below;
+/// `None` past what an `i64` holds.
+fn long_version_code(code: u32, major: Option<u32>) -> Option<i64> {
+    i64::try_from((u64::from(major.unwrap_or(0)) << 32) | u64::from(code)).ok()
 }
 
 /// String `index` of a ResStringPool chunk (UTF-8 or UTF-16).
@@ -266,9 +319,11 @@ mod tests {
             read("fixture-key1.apk"),
             ApkIdentity {
                 package: Some("me.vibb.testfixture".to_string()),
+                version_code: Some(1),
                 signer_sha256: Some(KEY1.to_string()),
             }
         );
+        assert_eq!(read("fixture-key1-v2.apk").version_code, Some(2));
         assert_eq!(
             read("fixture-key2.apk").signer_sha256.as_deref(),
             Some(KEY2)
@@ -286,6 +341,7 @@ mod tests {
             read("fixture-key1-v1-only.apk"),
             ApkIdentity {
                 package: Some("me.vibb.testfixture".to_string()),
+                version_code: Some(1),
                 signer_sha256: None,
             }
         );
@@ -319,7 +375,12 @@ mod tests {
             std::fs::write(&path, junk).unwrap();
             assert!(read_identity(&path).is_err());
         }
-        assert_eq!(manifest_package(b""), None);
-        assert_eq!(manifest_package(&[3, 0, 8, 0, 8, 0, 0, 0]), None);
+        assert_eq!(read_manifest(b""), None);
+        assert_eq!(read_manifest(&[3, 0, 8, 0, 8, 0, 0, 0]), None);
+        // versionCodeMajor above the code, as Android reads them; the code's sign bit is a bit.
+        assert_eq!(long_version_code(26_111_139, None), Some(26_111_139));
+        assert_eq!(long_version_code(7, Some(1)), Some((1 << 32) + 7));
+        assert_eq!(long_version_code(u32::MAX, None), Some(0xffff_ffff));
+        assert_eq!(long_version_code(0, Some(u32::MAX)), None);
     }
 }

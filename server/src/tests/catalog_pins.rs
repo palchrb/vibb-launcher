@@ -254,6 +254,14 @@ async fn a_release_cached_before_the_update_is_pinned_from_its_file() {
     );
     assert_eq!(pins(&app, ids[0]).await.1.as_deref(), Some(KEY1));
     assert_eq!(pins(&app, ids[1]).await.1.as_deref(), Some(KEY1));
+    // The cached release's versionCode is read too (migration 0139).
+    let code: Option<i64> =
+        sqlx::query_scalar("SELECT latest_release_version_code FROM tracked_apps WHERE id = ?")
+            .bind(ids[1])
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(code, Some(1));
     // Another row is that package already: one app, one row (qa-fdroid-source-code Q-6).
     assert_eq!(
         pins(&app, ids[3]).await,
@@ -424,6 +432,7 @@ async fn a_pinned_app_refuses_what_it_cant_check() {
             .unwrap();
     let unreadable = crate::apk::ApkIdentity {
         package: None,
+        version_code: None,
         signer_sha256: Some(KEY1.to_string()),
     };
     let refused = crate::handlers::tracked_apps::check_pins(&pinned, &unreadable).unwrap_err();

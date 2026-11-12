@@ -494,10 +494,24 @@ push varsel ... kanskje man kan få valget". Branch `pwa-fixes-b`.
   `note_app_updates` raises `app_updated` (the same kind, key, words and target) for every catalog row checked for the
   phone (`device_tracked_apps`) other than the launcher's and the music app's (those keep their own paths) through the
   pure `listed_app_updates`: the listed code higher than the previous report's and the row's stored release installed
-  (`catalog_release_installed`: an F-Droid row by its asset id - the versionCode -, any other by the versionName, a
-  leading "v" ignored, against `version_of` the tag; the rest verbatim, so an app whose versionName spells an RC
-  differently from its tag - "1.2.0-rc1" against "v1.2.0-rc.1" - raises nothing, by design); `from` the previous
-  versionName. A previous report without codes (an older launcher) raises nothing, and neither does the same code again
+  (`catalog_release_installed`: an F-Droid row by its asset id - the versionCode -; any other by the reported code
+  against `latest_release_version_code`, the release APK's own versionCode; only a row without one by the versionName,
+  a leading "v" ignored, against `version_of` the tag; the rest verbatim, so an app whose versionName spells an RC
+  differently from its tag - "1.2.0-rc1" against "v1.2.0-rc.1" - raises nothing there, by design); `from` the
+  previous versionName.
+- **The release's own versionCode** (2026-11-12, migration `0139_tracked_app_version_code.sql`): the user's report -
+  Organic Maps (GitHub, `organicmaps/organicmaps`) showed "is available" and the phone installed it, but no "updated".
+  Its tag `2026.11.11-39-android` is never its versionName (`tools/unix/version.sh`'s `DATE-COUNT` plus the flavor's
+  `-Web`: "2026.11.11-39-Web"; the code is `yyMMddCC`, 26111139), so the name rule could never match. `apk::read_identity`
+  now also reads the manifest's `android:versionCode` (with `versionCodeMajor` above it, as
+  `PackageInfo.getLongVersionCode`; attributes known by their resource id, else their name; a reference is none), and
+  every stored release keeps it in `tracked_apps.latest_release_version_code` - `sync_release` (GitHub and F-Droid) and
+  a manual upload; a release cached before 0139 is read at startup (`backfill_version_codes`, after `backfill_pins`).
+  NULL when the APK's code can't be read: then the versionName rule above. F-Droid keeps its asset-id rule (the same
+  number); the launcher and the music app keep theirs. Tests: `apk::tests` (the fixtures' codes 1 and 2, the major's
+  arithmetic), `app_updates::a_release_whose_tag_isnt_its_version_name_is_known_by_its_code`, the backfill in
+  `catalog_pins::a_release_cached_before_the_update_is_pinned_from_its_file`, the sync in
+  `another_repo_syncs_by_the_index_alone`. A previous report without codes (an older launcher) raises nothing, and neither does the same code again
   or a lower one (`is.code <= was.code`: a phone already at the release when its launcher starts sending codes, a step
   back from a beta onto the release; qa-launcher-small-a-code Q-4). Test: `app_updates::every_checked_catalog_app_raises_app_updated_by_its_listed_code`
   and `an_app_already_at_the_release_or_going_back_to_it_raises_nothing`; the status body is the shared contract

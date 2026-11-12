@@ -394,7 +394,9 @@ async fn report_apps(app: &TestApp, token: &str, apps: Value) {
 }
 
 /// Every catalog app checked for the phone gets its `app_updated` from the listed versionCode: a
-/// GitHub app when the new versionName is the stored tag's version, an F-Droid app when the new
+/// GitHub app with no versionCode read from its release (a row from before migration 0139, an APK
+/// whose code can't be read) when the new versionName is the stored tag's version, an F-Droid app
+/// when the new
 /// code is the stored release's; once per version. An app not checked for the phone, a version
 /// that isn't the stored release, and an older launcher's entries without the fields raise
 /// nothing - and such a report is still taken.
@@ -508,6 +510,46 @@ async fn every_checked_catalog_app_raises_app_updated_by_its_listed_code() {
     );
     assert!(stored[1].get("version_code").is_none(), "{stored}");
     assert!(stored[1].get("version_name").is_none(), "{stored}");
+}
+
+/// 2026-11-12: a GitHub app whose tag isn't its versionName (Organic Maps: tag
+/// "2026.11.11-39-android", versionName "2026.11.11-39-Web") is known by the versionCode read from
+/// its release's APK - the name no longer counts once a code is stored.
+#[tokio::test]
+async fn a_release_whose_tag_isnt_its_version_name_is_known_by_its_code() {
+    let app = TestApp::new().await;
+    let (emma, token) = app.enrolled_device("Emma").await;
+    let id: i64 = sqlx::query_scalar(
+        "INSERT INTO tracked_apps (name, package_name, github_repo, source_type, \
+         latest_release_tag, latest_release_asset_id, latest_release_version_code) \
+         VALUES ('Organic Maps', 'app.organicmaps.web', 'organicmaps/organicmaps', 'github', \
+         '2026.11.11-39-android', 9, 26111139) RETURNING id",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO device_tracked_apps (device_id, tracked_app_id) VALUES (?, ?)")
+        .bind(emma)
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let listed = |code: i64, name: &str| {
+        json!([{"package_name": "app.organicmaps.web", "label": "Organic Maps",
+                "preinstalled": false, "version_code": code, "version_name": name}])
+    };
+    report_apps(&app, &token, listed(26_092_932, "2026.09.29-32-Web")).await;
+    // A name that is the tag's version but another code: not the release.
+    report_apps(&app, &token, listed(26_100_000, "2026.11.11-39-android")).await;
+    assert!(notices(&app).await.is_empty(), "{:?}", notices(&app).await);
+    report_apps(&app, &token, listed(26_111_139, "2026.11.11-39-Web")).await;
+    let rows = notices(&app).await;
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(
+        (rows[0].0, rows[0].1.as_str(), rows[0].2.clone()),
+        (Some(emma), "app_updated", format!("{id}:26111139"))
+    );
+    assert_eq!(rows[0].3["to"], "2026.11.11-39-android");
 }
 
 /// A catalog row for Signal on `v7.2.0`, checked for `device`; its id.
