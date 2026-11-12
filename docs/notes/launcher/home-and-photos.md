@@ -104,6 +104,23 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   row outside a pause or the offline override; messages still arrive and notify, and a thread opens from the
   notification, the lock's row and the phone book. Tests: `AppDisplayTest`, `SmsContractTest` (`sms_contract.json`'s
   `app.display`), `HomeModelTest`, `SmsGlanceTest`, `PolicyResponseCompatTest`.
+- **The apps' real logos for the PWA** (design 87 step 2, `docs/design/87-app-logos.md`): `appdisplay/AppLogos.kt`
+  draws each reported app's logo with `KidAvatars.drawOwnLogo` (now `internal`; one drawing, the "App logo" one) at
+  128 px as PNG, from the launcher activity's (else the application's) icon resource loaded through
+  `createPackageContext(...).createConfigurationContext` in a fixed light configuration at 640 dpi (R2-M3: dark mode
+  never changes a hash); a hidden app without a package context falls back to `LauncherApps`/`getApplicationIcon`
+  only outside night mode. The cache is `noBackupFilesDir/app_logos/` (`<hash>.png`, `index.json` written by temp
+  file and rename): per package the key `(versionCode, lastUpdateTime, Build.FINGERPRINT, LOGO_RENDER_VERSION)` and
+  the hash (SHA-256 hex of the PNG; none for a failed draw or a PNG over 80 KiB - not drawn again until the key
+  changes). `collectInstalledApps` calls `AppLogos.refresh` just before the report (at most 1.5 s of drawing, the
+  rest next sync; removed packages leave the index, unnamed files go) and sets `installed_apps[].logo` only for a
+  logo drawn under today's key whose file is there; `app_logos_v1` is in `STATUS_CAPABILITIES`. `sendStatus`
+  returns the raw body: `wantedLogosOf` reads at most 16 KiB of a `200` (`204`, empty or unreadable = nothing);
+  `sent.isSuccessful` is unchanged. `AppLogos.upload` runs after `reportBlockedDnsEvents`, before the weather pull
+  and the self-update commit (R2-M4): of the list at most 40, only hashes in its own cache, one
+  `POST /api/devices/app-logos/{hash}` each (raw `image/png`), 20 s in all and 10 s a call; any answer goes on, the
+  first network error or time out ends the step. The pure rules are `appdisplay/AppLogoPlan.kt` (`AppLogosTest`,
+  `AppLogosCacheTest`).
 - **Not device-tested**: the checks in the 14 doc ("Implementation status").
 
 ## The flashlight on Home (design 41, `docs/design/41-flashlight.md`, at the monorepo root)
