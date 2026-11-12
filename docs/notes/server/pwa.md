@@ -915,7 +915,15 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   No service-worker fetch handler was added (the network is never faked).
 - **The script** (ES5, deferred, from `partials/head.html` on every page, `?v=6` since the sign-in check below): a same-origin link tap (the tab bar,
   any link; not `download`, a `target` other than `_self`, a modified or handled click, a `#fragment` on this page, or
-  `data-no-wait`) marks the link (`.is-pending`, `aria-busy`) and shows a thin bar at the top (`.net-progress`) at once.
+  `data-no-wait`) marks the link (`.is-pending`, `aria-busy`) at once, and shows a thin bar at the top (`.net-progress`)
+  only once the page hasn't been left after **400 ms** (`BAR_AFTER`, 2026-11-12; the user: shown at once it was "et litt
+  unødvendig glimt som kan se ut som en feil"). The bar is a timer of the wait's own (`w.timers`, armed by `arm()`), so
+  `end()` (a save, back from the back-forward cache), `stop()` on `pagehide` and a page that arrives and unloads first
+  all leave it unshown; a wait re-armed after a `pagehide` shows it at once when its 400 ms have passed. Why 400 ms: a
+  page from the server near by (LAN, Tailscale) is usually there well before, so a fast change shows nothing, while a
+  real wait still gets its mark well under the second after which a tap feels unanswered. The link's mark stays
+  immediate: it is the tapped tab or row itself answering the tap, never a stray element. The reload in place (the
+  return's, pull-refresh.js's) gets the bar after the same 400 ms. `reconnect.js?v=13`.
   Not left after 3 s: a small calm chip "Connecting…" (`.net-chip`, `role=status`; no alarm colour, no modal, the page
   usable under it), a ping (`GET /ping`, 4 s timeout) then and every 5 s, on `online` and when the page is visible
   again; once the server answers (any status below 500 - a signed-out session gets the login's redirect, which counts)
@@ -952,7 +960,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   checked by the QA: the reload is then a GET), so a reload can never resend a form; that URL drops a shown
   `notice=` (it would show again).
   `pageshow` from the back-forward cache clears everything (a first `pageshow` doesn't, so a tap during the load
-  keeps its bar).
+  keeps its wait and its bar after 400 ms).
 - **The CSS** (`style.css?v=39`): the bar and the chip are `position: absolute`, never fixed (design 43's rule, pinned
   by `the_app_shell_scrolls_main_not_the_document`); the bar's sweep is still under reduced motion.
 - **`GET /ping`** (`main::ping`, behind `require_full_auth`): an empty 204, `Cache-Control: no-store`.
