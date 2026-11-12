@@ -467,8 +467,8 @@ input[type="radio"] {
     flex: none;
 }
 
-/* The app icon's own artwork (icons/icon-192.png, rings on plain night) straight on the band, no
-   tile. Under 300 px of width it leaves its room to the title. */
+/* The app icon's own artwork (icons/icon-192.png's rings, inline SVG: partials/band.html's mark) straight on
+   the band, no tile. Under 300 px of width it leaves its room to the title. */
 .band-mark {
     flex: none;
     display: block;
@@ -3514,7 +3514,8 @@ details.own-edit[open] {
 /* Design 85: Locate's Alle view (mockup B). The chips, markers, tags and bubble lie on OSM's tiles,
    which are light in both schemes, so they have one light look in both (as --map-trail). */
 /* Revision 3: the one-phone view's map (.map-one) has the same look and height. */
-.map-all, .map-one { height: clamp(300px, 60vh, 520px); }
+/* 2026-11-12, the user: 60vh put the age row and Update Location under the tab bar on an iPhone 15. */
+.map-all, .map-one { height: clamp(260px, 45vh, 420px); }
 /* Over the map's top (Leaflet's panes go up to 1000): one line that scrolls inside itself, its right
    end fading into the map - the page never scrolls sideways. */
 .map-chips { position: absolute; z-index: 1001; top: 0; right: 0; left: 0; display: flex; padding: 10px; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; -webkit-overflow-scrolling: touch; -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); }

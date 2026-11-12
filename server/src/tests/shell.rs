@@ -633,6 +633,7 @@ async fn the_tab_pages_open_on_their_large_title() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     app.enrolled_device("Anna").await;
+    let ring_start = regex::Regex::new(r#"<path d="(M[^l]+)l"#).unwrap();
     for (page, title, add) in [
         ("/devices", "Devices", Some("/devices/new")),
         ("/apps", "Apps", Some("/apps/tracked/new")),
@@ -650,7 +651,8 @@ async fn the_tab_pages_open_on_their_large_title() {
         for old in ["title-bar", "vibb-brand", "vibb-word", "vibb-mark"] {
             assert!(!html.contains(old), "{page}: {old}");
         }
-        assert!(!html.contains("viewBox=\"-28 -28 56 56\""), "{page}");
+        // Nor the old hand-drawn rings (perfect circles, not the art).
+        assert!(!html.contains("<circle r=\"25\""), "{page}");
         assert!(!html.contains("class=\"nav-back\""), "{page}");
         // The band is main's first child, on every tab the same.
         let main = &html[html.find("<main class=\"container").unwrap()..];
@@ -661,13 +663,38 @@ async fn the_tab_pages_open_on_their_large_title() {
             "{page}: something before the band"
         );
         let band = &main[..main.find("</header>").unwrap()];
-        // Its mark is the app icon itself (the user, 2026-10-22: the hand-drawn rings were "not the
-        // right icon"), its night ground straight on the band - no tile, no inline approximation.
+        // Its mark is the app icon's own art (the user, 2026-10-22: the hand-drawn rings were "not the
+        // right icon"): the lock screen's rings at rest in icon-192.png's frame, straight on the band - no
+        // tile. Inline, so it is in the first frame; an <img> blanked on every load (2026-11-12).
         assert!(
             band.contains(
-                "<img class=\"band-mark\" src=\"/static/icons/icon-192.png\" width=\"36\" height=\"36\" alt=\"\" decoding=\"async\">"
+                "<svg class=\"band-mark\" viewBox=\"-28 -28 56 56\" width=\"36\" height=\"36\" aria-hidden=\"true\" focusable=\"false\">"
             ),
             "{page}: the mark"
+        );
+        assert!(!band.contains("<img"), "{page}: an <img> on the band");
+        // The art's four rings (each starts at its radius on the right, as vibb_breath.html's) in its
+        // peach and the cream core, cut to a small part of the page (every other point, to 0.1).
+        let mark = &band[band.find("<svg class=\"band-mark\"").unwrap()..];
+        let mark = &mark[..mark.find("</svg>").unwrap()];
+        let starts: Vec<&str> = ring_start
+            .captures_iter(mark)
+            .map(|c| c.get(1).unwrap().as_str())
+            .collect();
+        assert_eq!(
+            starts,
+            ["M25.1 0", "M19.6 0", "M14.4 0", "M9.4 0"],
+            "{page}"
+        );
+        assert!(mark.contains("<g fill=\"none\" stroke=\"#f0a884\" stroke-width=\"2.6\">"));
+        assert!(
+            mark.ends_with("</g><circle r=\"4.3\" fill=\"#fbe4dc\"/>"),
+            "{page}"
+        );
+        assert!(
+            mark.len() < 3000,
+            "{page}: the mark is {} bytes",
+            mark.len()
         );
         assert!(
             band.contains(&format!("<h1 class=\"page-title\">{title}</h1>")),
