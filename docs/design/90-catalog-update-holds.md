@@ -462,18 +462,22 @@ The user, 2026-11-12, on the questions of §16:
 > at den holdes i to dager? Og om du vil ha den ASAP så trykker man på knappen? Fint om dette kan være konfigurerbart i
 > antall timer et sted kanskje.. Egne apk kan vel også gå med en gang akkurat som for f droid"
 
-and, later the same day, replacing the one global wait:
+then, replacing the one global wait:
 
 > "Lurer på om vi skal la det være konfigurerbart per pakke istedet; når vi legger til et nytt repo etc, så kan du
 > velge x timers delay? ... Som en del av gui? Så kan man selv velge hva man er mer eller mindre komfortabel med?"
 
+and last:
+
+> "Bare legg at 48h er standard forslag for alle repoet også fdroid"
+
 | # | Decided |
 |---|---|
 | D1 | **No new push switch, no new event kind.** A waiting or held release is told only through today's inbox events: `app_update_available` (worded for the wait or the hold, §17.3) and `app_updated` when a phone has it. Their push stays under today's "App updates" switch (off by default). §8's `app_update_held`, its switch `push_app_held` and §9.3 go. |
-| D2 | As recommended, now as the **default** of the per-app wait (D5): f-droid.org 0 hours, every other F-Droid repo 48. |
+| D2 | **Changed: no repo skips the wait by default.** 48 hours is the suggested wait for every source, f-droid.org included; the parent may set 0 for an app. |
 | D3 | As recommended: `INTERNET` newly asked for is held. |
 | D4 | As recommended: `QUERY_ALL_PACKAGES` isn't held. |
-| D5 | **Changed: the wait is per app, in hours** - chosen in the Add App form with a default by source (GitHub and other F-Droid repos 48, f-droid.org 0), changeable on the app's page under Updates, 0 = no wait, at most 336 (14 days). No global setting (§17.2). "Update Now" skips it. Manual uploads, Vibb One and Vibb music have none. |
+| D5 | **Changed: the wait is per app, in hours** - chosen in the Add App form, pre-filled with 48 for every source (D2), changeable on the app's page under Updates, 0 = no wait, at most 336 (14 days). No global setting (§17.2). "Update Now" skips it. Manual uploads, Vibb One and Vibb music have none. |
 | D6 | As recommended: "Update Now" never approves new permissions. |
 | D7 | As recommended: no in-between release served while one is held. |
 | D8 | As recommended: no arm64 hold. |
@@ -489,12 +493,13 @@ and, later the same day, replacing the one global wait:
   sensitive -> served (no second inbox row); something new -> held, one inbox row "Signal 7.3.0 asks for Contacts ·
   approve it on the app's page", the Apps tab badge "Waits for you", and the phones keep the old release until the
   parent taps Approve.
-- **f-droid.org**: the same, with a default wait of 0 hours (the parent may set one).
+- **f-droid.org**: the same - 48 hours suggested like every source (D2); the parent may set 0 for an app whose
+  F-Droid build they trust to arrive at once.
 - **Own uploads (a manual APK), Vibb One, Vibb music**: at once, as today - no wait and no hold. An upload is the
   parent's own act with the file in hand, and it widens the accepted set (§5).
-- **No global setting.** The per-source default the Add App form fills in is the one place a default lives
-  (`catalog_holds::default_wait_hours`); a server-wide "default wait" would be a second number the parent must keep in
-  mind and that changes nothing for the apps already added. If the user wants one later, it is one more row.
+- **No global setting.** The 48 the Add App form fills in (`catalog_holds::DEFAULT_WAIT_HOURS`) is the one place the
+  default lives; a server-wide "default wait" would be a second number the parent must keep in mind and that changes
+  nothing for the apps already added. If the user wants one later, it is one more row.
 
 ### 17.3 The findings and their fixes
 
@@ -533,30 +538,26 @@ and, later the same day, replacing the one global wait:
   moves its time later. An older release in the list without a source time is never ripe (only the newest one has a
   stored first sight); GitHub gives every published release a `published_at`, the index every version an `added`, so
   this is the damaged-answer case and fails towards waiting.
-- **M2 - Where the wait lives and how it is chosen** (the user's second message). `tracked_apps.release_wait_hours
-  INTEGER` with `CHECK (release_wait_hours IS NULL OR release_wait_hours BETWEEN 0 AND 336)`; **NULL = the source's
-  default** (`catalog_holds::default_wait_hours(app)`: 0 for an F-Droid row whose repo is f-droid.org - keyed on
-  `fdroid::Repo::api.is_some()`, the same `API_HOSTS` the sync uses, so the tests' in-process repo counts - 48 for
-  every other GitHub or F-Droid row; `None` for manual, Vibb One and Vibb music). NULL rather than a copied number so
-  that a repo changed from f-droid.org to IzzyOnDroid under Details picks up the 48 instead of keeping a 0 meant for
-  F-Droid's own builds; a number the parent typed stays. Existing rows: NULL at the migration, so their source's
-  default.
+- **M2 - Where the wait lives and how it is chosen** (the user's later messages). `tracked_apps.release_wait_hours
+  INTEGER NOT NULL DEFAULT 48 CHECK (release_wait_hours BETWEEN 0 AND 336)`, read only for a GitHub or F-Droid row
+  (`catalog_holds::wait_hours(app)` is `None` for manual, Vibb One and Vibb music, whatever the column holds). One
+  default for every source (D2), so a plain number, no "NULL = the source's default": a repo changed under Details
+  keeps the number the parent chose. Existing rows get 48 at the migration - f-droid.org's too, a change from today
+  (they took a new build within the hour); the build's notes say so.
   - **Add App** (`tracked_app_add.html`): one field **Wait before an update reaches the phones** / **Vent før en
-    oppdatering kommer til telefonene**, `type="number" inputmode="numeric" min="0" max="336" step="1"`, a suffix
-    "hours" / "timer", **left empty** with the placeholder "48" and the footer "Empty: 48 hours for GitHub and other
-    repos, none for f-droid.org (F-Droid builds the app itself). 0 = no wait." / "Tom: 48 timer for GitHub og andre
-    kilder, ingen for f-droid.org (F-Droid bygger appen selv). 0 = ingen venting." - the form has no JavaScript that
-    knows the source before the post, so empty means the source's default. Not shown for a manual upload's source.
+    oppdatering kommer til telefonene**, `type="number" inputmode="numeric" min="0" max="336" step="1"`, pre-filled
+    `48`, the suffix "hours" / "timer", the footer "New versions wait this long before the phones get them, so a broken
+    or hijacked release can be noticed and pulled first. 0 = at once." / "Nye versjoner venter så lenge før telefonene
+    får dem, så en ødelagt eller kapret versjon kan bli oppdaget og trukket først. 0 = med en gang." Not used for a
+    manual upload's source (the field is ignored, the column keeps its default).
   - **The app's page, Updates (`#updates`)**: a row **Wait before updates** / **Vent før oppdateringer** with the
-    same number field, empty = default, the sub-line "48 hours (default for GitHub)" / "48 timer (standard for GitHub)"
-    or "None (default for f-droid.org)" / "Ingen (standard for f-droid.org)" when empty; its own form `POST
-    /apps/tracked/{id}/release-wait` with a Save button (`button-small`; a number field doesn't autosave - a half-typed
-    "4" must not save as four hours), back to `/apps/tracked/{id}#updates`. Not on a manual, Vibb One or Vibb music
-    page.
-  - **Refused** (both forms): not a whole number, below 0 or above 336 - "Enter a whole number of hours from 0 to 336
-    (14 days)" / "Skriv et helt antall timer fra 0 til 336 (14 døgn)" (`apps.wait.refused`, `{max}` filled in): 400,
-    the page with the typed value, the error by the field, the field focused, at `#updates` (or the Add form's field) -
-    never the top.
+    same number field and suffix; its own form `POST /apps/tracked/{id}/release-wait` with a Save button
+    (`button-small`; a number field doesn't autosave - a half-typed "4" must not save as four hours), back to
+    `/apps/tracked/{id}#updates`. Not on a manual, Vibb One or Vibb music page.
+  - **Refused** (both forms): empty, not a whole number, below 0 or above 336 - "Enter a whole number of hours from 0
+    to 336 (14 days)" / "Skriv et helt antall timer fra 0 til 336 (14 døgn)" (`apps.wait.refused`, `{max}` filled in):
+    400, the page with the typed value, the error by the field, the field focused, at `#updates` (or the Add form's
+    field) - never the top.
   - **Security Log**: `catalog_release_wait_changed` "<app>: updates wait 24 hours (was 48)" / "...vent 24 timer (var
     48)" - shortening the wait is a security choice the other parent should be able to see.
 - **M3 - Approve must redo what a store does, against the row as it is now.** Between the hold and the tap the row can
@@ -605,8 +606,8 @@ and, later the same day, replacing the one global wait:
   ALTER TABLE tracked_apps ADD COLUMN latest_release_permissions TEXT;   -- JSON array or NULL (unread)
   ALTER TABLE tracked_apps ADD COLUMN accepted_permissions TEXT;         -- JSON array of sensitive names; NULL = unknown
   ALTER TABLE tracked_apps ADD COLUMN always_ask INTEGER NOT NULL DEFAULT 0;
-  ALTER TABLE tracked_apps ADD COLUMN release_wait_hours INTEGER
-      CHECK (release_wait_hours IS NULL OR release_wait_hours BETWEEN 0 AND 336); -- NULL = the source's default
+  ALTER TABLE tracked_apps ADD COLUMN release_wait_hours INTEGER NOT NULL DEFAULT 48
+      CHECK (release_wait_hours BETWEEN 0 AND 336);  -- read only for GitHub and F-Droid rows
   ALTER TABLE tracked_apps ADD COLUMN waiting_release_tag TEXT;
   ALTER TABLE tracked_apps ADD COLUMN waiting_release_asset_id INTEGER;
   ALTER TABLE tracked_apps ADD COLUMN waiting_release_published_at TEXT; -- the source's time, for the page; NULL = none
@@ -617,13 +618,13 @@ and, later the same day, replacing the one global wait:
   CREATE TABLE tracked_app_held_releases ( ... as §10 ... );
   ```
 
-  No `notification_prefs.push_app_held`. SQLite takes a CHECK on an added column with a NULL default.
+  No `notification_prefs.push_app_held`. SQLite takes `NOT NULL DEFAULT 48` with a CHECK on an added column (the
+  default passes it).
 
 **Low**
 
-- **L1 - The wait's default by source and the tests**: "f-droid.org" is decided by `Repo::api.is_some()`, not by a
-  host string in `catalog_holds` (M2), so `tracked_apps::tests`' in-process repo (an API host in tests) is the
-  f-droid.org case and an index-only repo the IzzyOnDroid case.
+- **L1 - f-droid.org in the tests**: no longer a special case for the wait (D2); `tracked_apps::tests` covers a
+  wait on the in-process F-Droid repo and an app set to 0 there.
 - **L2 - Element names** (§4): binary XML keeps an element's namespace apart from its name; Android's parser matches
   the name alone. So: an element counts by its name whatever its namespace - not "with or without a prefix".
 - **L3 - Typed and raw values** (§4): aapt2 writes both for a string; "agree" applies when both are present, else the
@@ -652,16 +653,17 @@ and, later the same day, replacing the one global wait:
 ### 17.4 What changes in the sections above
 
 - §1, the second bullet: the parent approves from the inbox row or the app's page - no push of its own (D1).
-- §2's table: the wait column is the **default** of the app's own wait (M2): GitHub 48, f-droid.org 0, other F-Droid
-  repos 48; manual, Vibb One and Vibb music - none, not settable.
+- §2's table: the wait column is the app's own wait (M2), 48 suggested for every GitHub and F-Droid row, f-droid.org
+  included (D2); manual, Vibb One and Vibb music - none, not settable. §2's f-droid.org reasoning stays as why a
+  parent may choose 0 there.
 - §6: "48 h, fixed" becomes the app's hours (M1, M2); the pick follows H2.
 - §7: "raises `app_update_held`" becomes the `:held` row of `app_update_available` (H1, M5); Approve follows M3; "no
   inbox row for an app on no phone" goes (M5).
 - §8 is replaced by H1 and M5; §9.1's waiting sub-line reads "Published Tue 14:02 · updates of this app wait 48 hours"
   / "Publisert tir. 14:02 · oppdateringer av denne appen venter 48 timer"; §9.2 follows L9; §9.3 goes; §10 by M6.
-- §13 (e): we take upstream's per-app wait after all, in hours, with a per-source default.
-- §14, Tests, add: the wait form's validation (empty = default, 0, 336, -1, 337, "4.5", "x") on both forms, each
-  refusal landing at its field (`assert_lands`); a repo changed from f-droid.org to another keeps NULL and gets 48; a
+- §13 (e): we take upstream's per-app wait after all, in hours, 48 suggested.
+- §14, Tests, add: the wait form's validation (0, 48, 336 saved; empty, -1, 337, "4.5", "x" refused) on both forms,
+  each refusal landing at its field (`assert_lands`); the Add form saves 48 untouched for an f-droid.org app; a
   changed wait re-times the waiting release; the Security Log line; H1's rows (found -> served raises nothing more;
   found -> held raises the `:held` row once over three sweeps; Approve raises nothing); H2's no-step-back cases; M3's
   Approve refused when the pins changed; `parent_events`: a 2026-10-25 row without `ready`/`held` reads as before,
@@ -671,7 +673,8 @@ and, later the same day, replacing the one global wait:
 
 ### 17.5 Left to the user
 
-Nothing blocks the build. Two choices made here the user may want to see: the wait's upper bound of 336 hours (14
+Nothing blocks the build. Note for the release notes: existing f-droid.org apps start waiting 48 hours (D2). Two
+choices made here the user may want to see: the wait's upper bound of 336 hours (14
 days; a longer wait mostly delays security fixes) and that a held release with "App updates" off reaches the parent
 only through the inbox and the Apps tab badge (D1 as decided - the phones are safe meanwhile, the app just stops
 updating until the parent looks).
