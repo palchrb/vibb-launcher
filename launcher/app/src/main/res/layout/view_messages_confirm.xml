@@ -22,7 +22,7 @@
         android:layout_height="wrap_content"
         android:focusable="true"
         android:fontFamily="@font/nunito_extrabold"
-        android:textColor="@color/kid_core"
+        android:textColor="@color/kid_page_core"
         android:textSize="17sp" />
 
     <TextView
@@ -31,7 +31,7 @@
         android:layout_marginTop="2dp"
         android:fontFamily="@font/nunito_semibold"
         android:text="@string/messages_delete_note"
-        android:textColor="@color/kid_core_dim"
+        android:textColor="@color/kid_page_dim"
         android:textSize="14sp" />
 
     <LinearLayout
@@ -51,7 +51,7 @@
             android:minHeight="48dp"
             android:text="@string/messages_cancel"
             android:textAllCaps="false"
-            android:textColor="@color/kid_core"
+            android:textColor="@color/kid_page_core"
             android:textSize="16sp" />
 
         <Button
@@ -65,7 +65,7 @@
             android:minHeight="48dp"
             android:text="@string/messages_delete"
             android:textAllCaps="false"
-            android:textColor="@color/kid_emergency_text"
+            android:textColor="@color/kid_page_danger_text"
             android:textSize="16sp" />
     </LinearLayout>
 </LinearLayout>

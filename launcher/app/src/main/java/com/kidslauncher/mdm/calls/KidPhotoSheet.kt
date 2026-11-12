@@ -6,6 +6,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.widget.TextView
 import com.kidslauncher.mdm.R
+import com.kidslauncher.mdm.ui.look.nightOver
 import com.kidslauncher.mdm.ui.pictures.PicturePick
 
 /**
@@ -30,8 +31,10 @@ object KidPhotoSheet {
         onRemove: (() -> Unit)?,
         removeWords: Int = R.string.kid_photo_remove,
     ): Dialog {
-        val view = LayoutInflater.from(activity).inflate(R.layout.sheet_kid_photo, null)
-        val dialog = Dialog(activity, R.style.KidSheetDialog)
+        // Night in both looks, also over the phone book's request form in Lys (design 78 §2).
+        val night = nightOver(activity)
+        val view = LayoutInflater.from(night).inflate(R.layout.sheet_kid_photo, null)
+        val dialog = Dialog(night, R.style.KidSheetDialog)
         dialog.setContentView(view)
         dialog.setUpKidSheet(view)
         view.findViewById<TextView>(R.id.kid_photo_sheet_title).text = title

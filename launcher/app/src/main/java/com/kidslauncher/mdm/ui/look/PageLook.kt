@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.ActivityManager
 import android.content.Context
 import android.content.res.Configuration
+import android.os.SystemClock
 import android.util.Log
 import android.view.ContextThemeWrapper
 import androidx.appcompat.app.AppCompatDelegate
@@ -67,9 +68,13 @@ internal interface LookHost {
 /** §5.4.1: the look may change only while no activity of a page task is started. */
 fun mayChange(pageTaskStarted: Int): Boolean = pageTaskStarted <= 0
 
-/** A task a change closes, by its root activity's class name: Kalender's, whichever of its two classes is the root
- * (step 1; Meldinger's joins in step 2). */
-fun closesTask(rootClassName: String?): Boolean = PageKind.DAY.has(rootClassName)
+/** How long a page's start that was asked for holds a waiting change back at most ([PageRegistry.startInFlight]): far
+ * longer than a page takes to be created, short enough that a start that never made one doesn't hold it for long. */
+const val START_IN_FLIGHT_MS = 5_000L
+
+/** A task a change closes, by its root activity's class name: Kalender's and Meldinger's, whichever of a page's two
+ * classes is the root. */
+fun closesTask(rootClassName: String?): Boolean = PageKind.DAY.has(rootClassName) || PageKind.MESSAGES.has(rootClassName)
 
 /** The kid's look as this process holds it, and the three moments it moves. Main thread. */
 internal class LookState(private val host: LookHost) {
@@ -110,10 +115,13 @@ internal class LookState(private val host: LookHost) {
     /**
      * Home resumed: a change that had to wait ([choose]) runs now, once. Not behind [mayChange] again - the page the
      * kid just left gets its `onStop` only after Home's `onResume`, so the count can still be one here; Home is in
-     * front, which is the rule itself.
+     * front, which is the rule itself. But not while a page's start is in flight ([startInFlight]: asked for, not yet
+     * created - an unlock's resume of Home on the way to a page the glance opened): the change would close the task
+     * just made and the page would come up in the old look's class only to close itself (step 1's code QA L5). It
+     * waits for the next resume then.
      */
-    fun onHomeResumed() {
-        if (choice != applied) change(choice)
+    fun onHomeResumed(startInFlight: Boolean) {
+        if (choice != applied && !startInFlight) change(choice)
     }
 
     /**
@@ -143,16 +151,29 @@ internal class LookState(private val host: LookHost) {
     }
 }
 
-/** The live pages (what a change finishes) and the count of started activities of the page tasks ([mayChange]). */
+/** The live pages (what a change finishes), the count of started activities of the page tasks ([mayChange]), and a
+ * page's start that was asked for and has not yet made its page ([startInFlight]). */
 internal class PageRegistry<P> {
     private val live = LinkedHashSet<P>()
 
     var started = 0
         private set
 
+    /** When a page's start was last asked for (elapsed ms), until a page is created; null when none waits. */
+    private var startAskedAt: Long? = null
+
     fun created(page: P) {
         live += page
+        startAskedAt = null
     }
+
+    fun startAsked(nowMs: Long) {
+        startAskedAt = nowMs
+    }
+
+    /** A start asked for less than [START_IN_FLIGHT_MS] ago whose page is not created yet. A start that never makes a
+     * page (refused, or a `singleTop` page brought back with a new intent) stops counting after that time. */
+    fun startInFlight(nowMs: Long): Boolean = startAskedAt?.let { nowMs - it in 0 until START_IN_FLIGHT_MS } == true
 
     fun destroyed(page: P) {
         live -= page
@@ -193,7 +214,10 @@ object PageLook {
     fun choose(context: Context, mode: LookMode) = state(context).choose(mode, pages.started)
 
     /** `HomeActivity.onResume`. */
-    fun onHomeResumed(context: Context) = state(context).onHomeResumed()
+    fun onHomeResumed(context: Context) = state(context).onHomeResumed(pages.startInFlight(SystemClock.elapsedRealtime()))
+
+    /** A page's start was asked for ([PageKind.current]): a waiting change holds back until the page exists. */
+    internal fun pageStartAsked() = pages.startAsked(SystemClock.elapsedRealtime())
 
     /** A page's AppCompat night mode ([KidPageActivity]): the look its class is the variant of, so a window and its
      * content never disagree (§12.2 R4); the applied look for a page with one class (R9). */
@@ -237,7 +261,7 @@ object PageLook {
     internal fun pageDestroyed(page: Activity) = pages.destroyed(page)
 
     /** An activity of a page task started or stopped. Public for the one that is no page but counts: the picture
-     * viewer in Meldinger's task (step 2). */
+     * viewer in Meldinger's task. */
     fun pageTaskStarted() = pages.started()
 
     fun pageTaskStopped() = pages.stopped()

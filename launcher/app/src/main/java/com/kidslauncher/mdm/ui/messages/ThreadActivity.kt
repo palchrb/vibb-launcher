@@ -49,7 +49,7 @@ import com.kidslauncher.mdm.sms.engine.SmsEngine
 import com.kidslauncher.mdm.ui.ClockFormat
 import com.kidslauncher.mdm.ui.KidHeader
 import com.kidslauncher.mdm.ui.NoTextActions
-import com.kidslauncher.mdm.ui.UIObjectActivity
+import com.kidslauncher.mdm.ui.look.KidPageActivity
 import com.kidslauncher.mdm.ui.pictures.PicturePick
 import com.kidslauncher.mdm.ui.day.LockWatch
 import com.kidslauncher.mdm.ui.home.KidAvatars
@@ -76,7 +76,7 @@ import java.util.UUID
  * melding", `smsto:`) - the first send makes the conversation. Reading it marks it read and clears its notification;
  * while it is in front its new messages get none ([SmsRuntime.threadInFront]).
  */
-class ThreadActivity : UIObjectActivity() {
+open class ThreadActivity : KidPageActivity() {
 
     private lateinit var binding: ActivityThreadBinding
     private val adapter = BubbleAdapter()
@@ -172,6 +172,7 @@ class ThreadActivity : UIObjectActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (isFinishing) return // The other look's class: its task is closing (KidPageActivity).
         binding = ActivityThreadBinding.inflate(layoutInflater)
         setContentView(binding.root)
         insets()
@@ -239,8 +240,9 @@ class ThreadActivity : UIObjectActivity() {
         load()
     }
 
-    /** The thread [intent] asks for, with its unsent draft and id from memory (a recreation keeps them: [keepDraft] ran
-     * in `onPause`; the field saves nothing in the instance state - code QA N4). */
+    /** The thread [intent] asks for, with its unsent draft and id as kept ([ThreadDrafts]: a recreation, a change of look
+     * and a process death keep them - [keepDraft] ran in `onPause`; the field saves nothing in the instance state - code
+     * QA N4). */
     private fun take(intent: Intent) {
         conversationId = intent.getStringExtra(EXTRA_CONVERSATION)
         number = intent.getStringExtra(EXTRA_NUMBER)
@@ -258,10 +260,10 @@ class ThreadActivity : UIObjectActivity() {
         hideReact()
         generation++
         // The conversation's draft, else the number's (verification L8: a thread opened by number may have moved it).
-        val kept = keptDraft(drafts, conversationId, number)
+        val kept = keptDraft(ThreadDrafts.all(this), conversationId, number)
         val draft = intent.getStringExtra(EXTRA_DRAFT)?.take(SmsEngine.SEND_MAX)
-        clientId = kept?.second ?: UUID.randomUUID().toString()
-        binding.threadField.setText(draft ?: kept?.first.orEmpty())
+        clientId = kept?.clientId ?: UUID.randomUUID().toString()
+        binding.threadField.setText(draft ?: kept?.text.orEmpty())
         // Read once: a draft is never sent again by a recreation.
         intent.removeExtra(EXTRA_DRAFT)
         picture = conversationId?.let { pictureDrafts[it] } ?: pictureDrafts[draftKeyOf(null, number)]
@@ -350,13 +352,14 @@ class ThreadActivity : UIObjectActivity() {
     private fun show(loaded: Loaded, markedRead: Boolean) {
         val found = loaded.conversation
         if (found == null && conversationId != null && number == null) {
-            // Deleted (here or elsewhere) and not a number to start again with: back to the list.
+            // Deleted (here or elsewhere) and not a number to start again with: back to the list, its text gone.
+            ThreadDrafts.drop(this, draftKey())
             finish()
             return
         }
         if (found != null) {
             if (conversationId != found.id.value) {
-                drafts.remove(draftKey())?.let { drafts[found.id.value] = it }
+                ThreadDrafts.move(this, draftKey(), found.id.value)
                 pictureDrafts.remove(draftKey())?.let { pictureDrafts[found.id.value] = it }
                 conversationId = found.id.value
                 // A rebuild of this screen finds the thread, and its draft, by the id now (verification L8).
@@ -557,6 +560,12 @@ class ThreadActivity : UIObjectActivity() {
         val before = compose
         compose = composeState(judge, targets)
         if (before != compose && adapter.itemCount > 0) adapter.notifyDataSetChanged()
+        // Design 78 §5.4.4: the kid may no longer text here - the unsent text goes, the kept one too. Judged only once
+        // the recipients are known: before its first read a thread opened by id has none (code QA H1).
+        if (threadDropsKeptText(compose, recipientsKnown = conversation != null || conversationId == null)) {
+            binding.threadField.text = null
+            ThreadDrafts.drop(this, draftKey())
+        }
         // Design 81 D7 (L5): the panel was for the rules it was opened under - a change closes it.
         if (before != compose && reacting != null) closeReact()
         // D11: the "+" only while every recipient's "Bilder i meldinger" is on; a picture picked before a rule took that
@@ -720,7 +729,9 @@ class ThreadActivity : UIObjectActivity() {
         SmsRuntime.ask(this, { SmsRuntime.send(app, command) }) { result ->
             when (result) {
                 is SendResult.Accepted -> {
-                    drafts.remove(key)
+                    // On the disk before anything else: a process death must not bring the sent text back with its
+                    // old id (code QA L2).
+                    ThreadDrafts.drop(app, key, sync = true)
                     if (sentPicture != null) pictureDrafts.remove(key)
                     if (isDestroyed) return@ask
                     if (command.clientId == clientId) clientId = UUID.randomUUID().toString()
@@ -769,11 +780,12 @@ class ThreadActivity : UIObjectActivity() {
 
     private fun draftKey(): String = draftKeyOf(conversationId, number)
 
-    /** The unsent text and its id stay in this process's memory while the kid looks elsewhere - never in the saved
-     * instance state, which the system may write to disk (the field has `saveEnabled="false"`, code QA N4). */
+    /** The unsent text and its id are kept while the kid looks elsewhere ([ThreadDrafts], design 78 §5.4.4: memory and
+     * the launcher's own CE prefs) - never in the saved instance state (the field has `saveEnabled="false"`, code QA
+     * N4). An empty field keeps nothing. */
     private fun keepDraft() {
-        val text = binding.threadField.text?.toString().orEmpty()
-        if (text.isBlank()) drafts.remove(draftKey()) else drafts[draftKey()] = text to clientId
+        if (!::binding.isInitialized) return
+        ThreadDrafts.keep(this, draftKey(), binding.threadField.text?.toString().orEmpty(), clientId)
     }
 
     // ---- D18: delete a message ----
@@ -856,7 +868,7 @@ class ThreadActivity : UIObjectActivity() {
     private fun cellView(m: Message, cell: ReactCell): View = TextView(this).apply {
         layoutParams = LinearLayout.LayoutParams(KidAvatars.dp(context, 56f), KidAvatars.dp(context, 56f))
         gravity = Gravity.CENTER
-        setTextColor(context.getColor(R.color.kid_core))
+        setTextColor(context.getColor(R.color.kid_page_core))
         when (cell) {
             is ReactCell.Pick -> {
                 text = if (drawable(cell.emoji)) cell.emoji else MISSING_GLYPH
@@ -1012,13 +1024,13 @@ class ThreadActivity : UIObjectActivity() {
                     setPadding(KidAvatars.dp(context, 8f), KidAvatars.dp(context, 12f), KidAvatars.dp(context, 8f), KidAvatars.dp(context, 4f))
                     textSize = 14f
                     typeface = androidx.core.content.res.ResourcesCompat.getFont(context, R.font.nunito_extrabold)
-                    setTextColor(context.getColor(R.color.kid_core_dim))
+                    setTextColor(context.getColor(R.color.kid_page_dim))
                     isAccessibilityHeading = true
                 } else {
                     layoutParams = RecyclerView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, KidAvatars.dp(context, 48f))
                     gravity = Gravity.CENTER
                     textSize = 28f
-                    setTextColor(context.getColor(R.color.kid_core))
+                    setTextColor(context.getColor(R.color.kid_page_core))
                     setBackgroundResource(R.drawable.bg_messages_react_cell)
                 }
             }
@@ -1082,7 +1094,7 @@ class ThreadActivity : UIObjectActivity() {
             (holder.frame.layoutParams as LinearLayout.LayoutParams).gravity = if (mine) Gravity.END else Gravity.START
             holder.bubble.setBackgroundResource(if (mine) R.drawable.bg_message_out else R.drawable.bg_message_in)
             // The user's colours (2026-11-09): dark ink on the peach bubble, white on the lilac-grey.
-            holder.text.setTextColor(context.getColor(if (mine) R.color.kid_message_out_ink else R.color.kid_ink))
+            holder.text.setTextColor(context.getColor(if (mine) R.color.kid_message_out_ink else R.color.kid_page_message_in_ink))
             val ring = if (mine) R.drawable.bg_message_selected_out else R.drawable.bg_message_selected_in
             val marked = m.id.value == selected || m.id == reacting?.id
             holder.bubble.foreground = if (marked) ContextCompat.getDrawable(context, ring) else null
@@ -1118,7 +1130,7 @@ class ThreadActivity : UIObjectActivity() {
             (holder.line.layoutParams as LinearLayout.LayoutParams).gravity = if (mine) Gravity.END else Gravity.START
             holder.line.gravity = if (mine) Gravity.END else Gravity.START
             val failed = item.delivery == DeliveryLine.NOT_SENT || item.delivery == DeliveryLine.MAYBE_NOT_SENT
-            holder.line.setTextColor(context.getColor(if (failed) R.color.kid_missed_text else R.color.kid_core_dim))
+            holder.line.setTextColor(context.getColor(if (failed) R.color.kid_page_alert else R.color.kid_page_dim))
             // The listener first: setOnClickListener makes a view clickable, also with null.
             holder.line.setOnClickListener(if (retry) View.OnClickListener { retry(m) } else null)
             holder.line.isClickable = retry
@@ -1162,7 +1174,7 @@ class ThreadActivity : UIObjectActivity() {
                     TextView(context).apply {
                         text = if (e.drawable) e.emoji else MISSING_GLYPH
                         textSize = 14f
-                        setTextColor(context.getColor(R.color.kid_ink))
+                        setTextColor(context.getColor(R.color.kid_page_message_in_ink))
                         val pad = KidAvatars.dp(context, 3f)
                         setPadding(pad, 0, pad, 0)
                         if (e.mine) setBackgroundResource(R.drawable.bg_message_reaction_mine)
@@ -1176,7 +1188,7 @@ class ThreadActivity : UIObjectActivity() {
                         text = getString(R.string.messages_reactions_more, chip.more)
                         textSize = 12f
                         typeface = androidx.core.content.res.ResourcesCompat.getFont(context, R.font.nunito_bold)
-                        setTextColor(context.getColor(R.color.kid_message_in_dim))
+                        setTextColor(context.getColor(R.color.kid_page_message_in_dim))
                         setPadding(KidAvatars.dp(context, 3f), 0, KidAvatars.dp(context, 3f), 0)
                     },
                 )
@@ -1235,7 +1247,7 @@ class ThreadActivity : UIObjectActivity() {
                         holder.parts.addView(
                             TextView(context).apply {
                                 this.text = text
-                                setTextColor(context.getColor(if (retry) R.color.kid_missed_text else dimOf(m)))
+                                setTextColor(context.getColor(if (retry) R.color.kid_page_alert else dimOf(m)))
                                 textSize = 14f
                                 typeface = androidx.core.content.res.ResourcesCompat.getFont(context, R.font.nunito_semibold)
                                 // D14: after five tries the kid may fetch it again; the tap answers once until the next read.
@@ -1292,7 +1304,7 @@ class ThreadActivity : UIObjectActivity() {
     }
 
     /** A bubble's second tone (a part's line, a picture's place): legible on its own surface. */
-    private fun dimOf(m: Message): Int = if (m.direction == Direction.OUT) R.color.kid_message_out_dim else R.color.kid_message_in_dim
+    private fun dimOf(m: Message): Int = if (m.direction == Direction.OUT) R.color.kid_message_out_dim else R.color.kid_page_message_in_dim
 
     private fun bubbleRoom(context: Context): Int =
         binding.threadList.width.takeIf { it > 0 } ?: (context.resources.displayMetrics.widthPixels - KidAvatars.dp(context, 32f))
@@ -1359,9 +1371,6 @@ class ThreadActivity : UIObjectActivity() {
         private fun drawable(emoji: String, paint: android.graphics.Paint): Boolean = GLYPHS.getOrPut(emoji) { paint.hasGlyph(emoji) }
         private const val TYPE_DAY = 0
         private const val TYPE_BUBBLE = 1
-
-        /** Unsent drafts by conversation (or number): text and `clientId`, in memory only. */
-        private val drafts = HashMap<String, Pair<String, String>>()
 
         /** D11: the picture picked for a draft, by the same key; in memory only (the JPEG itself is the engine's). */
         private val pictureDrafts = java.util.concurrent.ConcurrentHashMap<String, PicturePick.Prepared>()

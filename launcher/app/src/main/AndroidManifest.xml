@@ -287,16 +287,19 @@
             android:name=".ui.kidsettings.KidSoundPickerActivity"
             android:configChanges="orientation|screenSize|uiMode"
             android:excludeFromRecents="true"
-            android:exported="false" />
+            android:exported="false"
+            android:theme="@style/KidPageTheme" />
         <activity
             android:name=".ui.quickcontrols.WifiNetworksActivity"
             android:configChanges="orientation|screenSize|uiMode"
             android:exported="false"
-            android:windowSoftInputMode="adjustResize" />
+            android:windowSoftInputMode="adjustResize"
+            android:theme="@style/KidPageTheme" />
         <activity
             android:name=".ui.quickcontrols.BluetoothDevicesActivity"
             android:configChanges="orientation|screenSize|uiMode"
-            android:exported="false" />
+            android:exported="false"
+            android:theme="@style/KidPageTheme" />
 
         <!-- Calls. The dialer role needs a DIAL activity (plain and tel:) and an exported
              InCallService with IN_CALL_SERVICE_UI; without them setDefaultDialerApplication
@@ -313,7 +316,8 @@
             android:name=".calls.PhoneBookActivity"
             android:configChanges="orientation|screenSize|uiMode"
             android:exported="true"
-            android:launchMode="singleTop">
+            android:launchMode="singleTop"
+            android:theme="@style/KidPageTheme">
             <intent-filter>
                 <action android:name="android.intent.action.DIAL" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -627,19 +631,50 @@
         <!-- The kid's message screens (design 77 §6.7, step 2): the list, a thread and a received picture. Not exported
              (the role's ComposeActivity is the way in from other apps). A task of their own, as Dagen's: in Recents as
              "Meldinger", never destroyed with the lock's task. A thread follows the keyboard itself (edge to edge). -->
+        <!-- Design 78 step 2: the list and the thread are pages that top a task of their own, so each is two entries,
+             identical but for the theme (§12.2 R2): the night class and its light twin (ui/messages/LightPages.kt).
+             PageKind picks the class; the notification's tap goes through MessagesEntryActivity (R7). -->
         <activity
             android:name=".ui.messages.MessagesActivity"
             android:configChanges="orientation|screenSize|uiMode"
             android:exported="false"
             android:launchMode="singleTop"
-            android:taskAffinity="${applicationId}.messages" />
+            android:taskAffinity="${applicationId}.messages"
+            android:theme="@style/KidPageNightTheme" />
+        <activity
+            android:name=".ui.messages.LightMessagesActivity"
+            android:configChanges="orientation|screenSize|uiMode"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:taskAffinity="${applicationId}.messages"
+            android:theme="@style/KidPageLightTheme" />
         <activity
             android:name=".ui.messages.ThreadActivity"
             android:configChanges="orientation|screenSize|uiMode"
             android:exported="false"
             android:launchMode="singleTop"
             android:taskAffinity="${applicationId}.messages"
+            android:theme="@style/KidPageNightTheme"
             android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".ui.messages.LightThreadActivity"
+            android:configChanges="orientation|screenSize|uiMode"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:taskAffinity="${applicationId}.messages"
+            android:theme="@style/KidPageLightTheme"
+            android:windowSoftInputMode="adjustResize" />
+        <!-- The message notification's tap (design 78 §12.2 R7): no look of its own - translucent, so no starting
+             window; a task of its own (empty affinity), so nothing behind it is brought forward; gone from the back
+             stack and Recents at once. It starts the applied look's list and thread. -->
+        <activity
+            android:name=".ui.messages.MessagesEntryActivity"
+            android:configChanges="uiMode"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
         <activity
             android:name=".ui.messages.PictureActivity"
             android:configChanges="orientation|screenSize|uiMode"

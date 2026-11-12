@@ -1,7 +1,6 @@
 package com.kidslauncher.mdm.ui
 
 import com.kidslauncher.mdm.ui.look.PageKind
-import com.kidslauncher.mdm.ui.messages.MessagesActivity
 
 /*
  * The launcher's language (design 05-ui-photos-i18n.md) - pure, tested in LauncherLocaleTest.
@@ -33,13 +32,13 @@ fun applyLocaleNow(currentTags: String, desired: String, callActive: Boolean): B
 
 /**
  * A task a refused switch closes before it asks once more, by its root activity's class name: the launcher's own
- * tasks that stay alive behind Home - Kalender's (either look's class, `PageKind`) and Meldinger's. The system
+ * tasks that stay alive behind Home - Kalender's and Meldinger's (either look's class, `PageKind`). The system
  * refuses the call while the process's newest activity is of another kind of task than at the last call that got
  * through (design 78 §5.3, 2026-11-11), and a stopped page behind Home stays the newest for as long as its task
  * lives; the switch would have created its activities again anyway.
  */
 fun languageClosesTask(rootClassName: String?): Boolean =
-    PageKind.DAY.has(rootClassName) || rootClassName == MessagesActivity::class.java.name
+    PageKind.DAY.has(rootClassName) || PageKind.MESSAGES.has(rootClassName)
 
 /**
  * How long after a refused resume the language is asked for once more. The system refuses the call while the

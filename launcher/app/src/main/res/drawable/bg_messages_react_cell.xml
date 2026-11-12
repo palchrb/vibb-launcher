@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Design 81 D7, D13: a cell of the reaction panel's grid and of the picker - no surface of its own; the press shows as
      on the sheet's buttons. -->
-<ripple xmlns:android="http://schemas.android.com/apk/res/android" android:color="#1FFFFFFF">
+<ripple xmlns:android="http://schemas.android.com/apk/res/android" android:color="@color/kid_page_ripple">
     <item android:id="@android:id/mask">
         <shape android:shape="rectangle">
-            <solid android:color="#FFFFFFFF" />
+            <solid android:color="@color/kid_page_ink" />
             <corners android:radius="14dp" />
         </shape>
     </item>

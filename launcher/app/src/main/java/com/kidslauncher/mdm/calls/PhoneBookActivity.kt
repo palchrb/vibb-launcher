@@ -16,7 +16,9 @@ import com.kidslauncher.mdm.databinding.ActivityPhoneBookBinding
 import com.kidslauncher.mdm.sms.SmsHome
 import com.kidslauncher.mdm.ui.KidHeader
 import com.kidslauncher.mdm.ui.KidInsets
-import com.kidslauncher.mdm.ui.UIObjectActivity
+import com.kidslauncher.mdm.ui.look.KidPageActivity
+import com.kidslauncher.mdm.ui.look.nightOver
+import com.kidslauncher.mdm.ui.look.showNight
 import com.kidslauncher.mdm.ui.search.KidSearchField
 import com.kidslauncher.mdm.ui.search.PhoneBookBack
 import com.kidslauncher.mdm.ui.search.listCollator
@@ -49,7 +51,7 @@ import kotlinx.coroutines.withContext
  * notification opens it, with [EXTRA_MISSED_CONTACT] when the calls came from one contact (that contact's sheet opens,
  * once). Being opened clears the notification ([MissedCallNotifier.dismiss]).
  */
-class PhoneBookActivity : UIObjectActivity() {
+class PhoneBookActivity : KidPageActivity() {
 
     private lateinit var binding: ActivityPhoneBookBinding
     private lateinit var adapter: PhoneBookAdapter
@@ -534,14 +536,15 @@ class PhoneBookActivity : UIObjectActivity() {
             CallSystem.placeCall(this, contact.number)
             return
         }
-        AlertDialog.Builder(this, R.style.KidAlertDialog)
+        // An emergency number's confirm is night in both looks, as the emergency menu's (design 78 §2).
+        AlertDialog.Builder(nightOver(this), R.style.KidAlertDialog)
             .setTitle(getString(R.string.calls_confirm_title, contact.name))
             .setPositiveButton(R.string.calls_call) { _, _ ->
                 MissedCallsRepo.markSeen(this, contact.number)
                 CallSystem.placeCall(this, contact.number)
             }
             .setNegativeButton(R.string.calls_cancel, null)
-            .show()
+            .let(::showNight)
     }
 
     /** A row's Melding: our own thread, or the app the card would open - and the contact's missed calls are dealt

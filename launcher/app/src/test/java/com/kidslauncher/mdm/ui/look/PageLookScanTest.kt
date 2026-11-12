@@ -34,15 +34,21 @@ class PageLookScanTest {
     }
 
     @Test
-    fun `the look is touched only from the unlocked start, the pages, kid Settings and Home's resume`() {
+    fun `the look is touched only from the unlocked start, the pages, kid Settings, Home's resume and the picture viewer`() {
         val root = "com/kidslauncher/mdm"
         // The prefs file has one reader and writer.
         assertEquals(listOf("$root/ui/look/PageLook.kt"), sources.filterValues { it.contains("\"kid_look\"") }.keys.toList())
         val callers = sources.filterValues { Regex("""\b(PageLook|LookMode)\b""").containsMatchIn(it) }.keys
             .filterNot { it.startsWith("$root/ui/look/") }.toSet()
         // Home only runs a change that had to wait for a page to leave the screen (PageLook.onHomeResumed); it is
-        // not direct-boot-aware, so it exists only after the unlocked start.
-        assertEquals(setOf("$root/Application.kt", "$root/ui/kidsettings/KidSettingsActivity.kt", "$root/ui/HomeActivity.kt"), callers)
+        // not direct-boot-aware, so it exists only after the unlocked start. The picture viewer only counts itself
+        // among the started activities of Meldinger's task.
+        assertEquals(
+            setOf("$root/Application.kt", "$root/ui/kidsettings/KidSettingsActivity.kt", "$root/ui/HomeActivity.kt", "$root/ui/messages/PictureActivity.kt"),
+            callers,
+        )
+        val picture = sources.getValue("$root/ui/messages/PictureActivity.kt")
+        assertEquals(listOf("PageLook.pageTaskStarted()", "PageLook.pageTaskStopped()"), Regex("""PageLook\.\w+\(\)""").findAll(picture).map { it.value }.toList())
         // None of them runs before the first unlock.
         for (caller in callers + "$root/ui/look/PageLook.kt" + "$root/ui/look/KidPageActivity.kt") {
             val className = caller.removeSuffix(".kt").replace('/', '.')
@@ -63,20 +69,18 @@ class PageLookScanTest {
         assertEquals(1, Regex("""\bPageLook\b""").findAll(home).count())
         val resume = home.substringAfter("override fun onResume()").substringBefore("\n    }\n")
         assertTrue(resume.indexOf("if (darkUnderLock())") in 0 until resume.indexOf("PageLook.onHomeResumed(this)"))
-        // Kid Settings: the row is shown, and listens, in debug builds only (step 1); a release build draws nothing
-        // of it.
+        // Kid Settings: since step 2 the row is shown, and listens, in every build - in the layout as it is, never
+        // hidden or gated on the build type.
         val settings = sources.getValue("$root/ui/kidsettings/KidSettingsActivity.kt")
-        val debug = settings.substringAfter("if (BuildConfig.DEBUG) {", "").substringBefore("\n        }\n")
-        assertTrue(debug.trimStart().startsWith("binding.kidSettingsLookSection.visibility = View.VISIBLE"))
-        assertTrue(debug.contains("PageLook.choose(this, mode)"))
-        assertEquals(1, Regex("""kidSettingsLookSection\.visibility\s*=""").findAll(settings).count())
-        assertEquals(1, Regex("""PageLook\.choose\(""").findAll(settings).count())
-        val render = settings.substringAfter("private fun renderLook() {").substringBefore("\n    }\n")
-        assertTrue(render.trimStart().startsWith("if (binding.kidSettingsLookSection.visibility != View.VISIBLE) return"))
+        assertTrue(!settings.contains("BuildConfig.DEBUG"))
+        assertEquals(0, Regex("""kidSettingsLookSection\.visibility""").findAll(settings).count())
+        assertEquals(1, Regex("""PageLook\.choose\(this, mode\)""").findAll(settings).count())
+        val listen = settings.substringAfter("for ((button, mode) in lookButtons()) {", "").substringBefore("\n        }\n")
+        assertTrue(listen.contains("PageLook.choose(this, mode)"))
         val layout = listOf("src/main/res", "app/src/main/res").map(::File).first { it.isDirectory }
             .resolve("layout/activity_kid_settings.xml").readText()
         val section = layout.substringAfter("android:id=\"@+id/kid_settings_look_section\"").substringBefore(">")
-        assertTrue(section.contains("android:visibility=\"gone\""))
+        assertTrue(section.isNotEmpty() && !section.contains("android:visibility"))
     }
 
     @Test
@@ -87,12 +91,14 @@ class PageLookScanTest {
         // The page colours over the launcher's theme, forced: without `true` the theme's own night values stay.
         assertTrue(page.contains("override fun getTheme(): Resources.Theme? = super.getTheme()?.also { it.applyStyle(R.style.PageColors, true) }"))
         // The registry of live pages (what a change finishes) and the started count (when a change may run).
+        // A page in Home's task (R9) is live but not counted: it is no page task's.
         val calls = listOf(
             "onCreate(savedInstanceState: Bundle?)" to "PageLook.pageCreated(this)",
-            "onStart()" to "PageLook.pageTaskStarted()",
-            "onStop()" to "PageLook.pageTaskStopped()",
+            "onStart()" to "if (ownTask) PageLook.pageTaskStarted()",
+            "onStop()" to "if (ownTask) PageLook.pageTaskStopped()",
             "onDestroy()" to "PageLook.pageDestroyed(this)",
         )
+        assertTrue(page.contains("private val ownTask: Boolean get() = PageKind.lookOf(javaClass) != null"))
         for ((method, call) in calls) {
             val body = page.substringAfter("override fun $method {", "").substringBefore("\n    }\n")
             assertTrue("$method: $call", body.contains(call))
@@ -105,8 +111,8 @@ class PageLookScanTest {
         // once the activity exists, and each page's own onCreate stops there.
         val create = page.substringAfter("override fun onCreate(savedInstanceState: Bundle?) {").substringBefore("\n    }\n")
         assertTrue(create.indexOf("super.onCreate(savedInstanceState)") in 0 until create.indexOf("PageLook.closeIfOtherLook(this)"))
-        for (name in listOf("DayActivity", "EventActivity", "EventEditActivity")) {
-            val own = sources.getValue("com/kidslauncher/mdm/ui/day/$name.kt")
+        for (name in listOf("day/DayActivity", "day/EventActivity", "day/EventEditActivity", "messages/MessagesActivity", "messages/ThreadActivity")) {
+            val own = sources.getValue("com/kidslauncher/mdm/ui/$name.kt")
                 .substringAfter("override fun onCreate(savedInstanceState: Bundle?) {")
             assertTrue(name, own.trimStart().startsWith("super.onCreate(savedInstanceState)\n        if (isFinishing) return"))
         }
@@ -134,7 +140,15 @@ class PageLookScanTest {
         val overriding = sources.filterValues { it.contains("override fun lookNightMode()") }.keys
         assertEquals(setOf("$root/ui/look/KidPageActivity.kt"), overriding.toSet())
         val pages = sources.filterValues { Regex(""":\s*KidPageActivity\(\)""").containsMatchIn(it) }.keys
-        assertEquals(setOf("$root/ui/day/DayActivity.kt", "$root/ui/day/EventActivity.kt", "$root/ui/day/EventEditActivity.kt"), pages.toSet())
+        assertEquals(
+            setOf(
+                "$root/ui/day/DayActivity.kt", "$root/ui/day/EventActivity.kt", "$root/ui/day/EventEditActivity.kt",
+                "$root/ui/messages/MessagesActivity.kt", "$root/ui/messages/ThreadActivity.kt",
+                "$root/calls/PhoneBookActivity.kt", "$root/ui/quickcontrols/WifiNetworksActivity.kt",
+                "$root/ui/quickcontrols/BluetoothDevicesActivity.kt", "$root/ui/kidsettings/KidSoundPickerActivity.kt",
+            ),
+            pages.toSet(),
+        )
         // Nothing else sets a night mode: no setDefaultNightMode, and no night mode of the app's (§12.2 R1) - the
         // system keeps that one per package and writes it into the same record as the launcher's language.
         assertEquals(emptyList<String>(), shipped.filterValues { it.contains("setDefaultNightMode") || it.contains("setApplicationNightMode") }.keys.toList())
@@ -145,24 +159,29 @@ class PageLookScanTest {
         val root = "com/kidslauncher/mdm"
         // R5: neither a night class nor a twin as a class literal anywhere else - the intent builders and the two
         // task rules ask the table. (`is DayActivity` holds for a twin and stays allowed.)
-        val literal = Regex("""\b(Light)?(Day|Event|EventEdit)Activity::class""")
+        val literal = Regex("""\b(Light)?(Day|Event|EventEdit|Messages|Thread)Activity::class""")
         assertEquals(listOf("$root/ui/look/PageKind.kt"), shipped.filterValues { literal.containsMatchIn(it) }.keys.toList())
-        assertEquals(6, literal.findAll(shipped.getValue("$root/ui/look/PageKind.kt")).count())
-        // The table's users: the three builders, the look's own task rule and the language's.
+        assertEquals(10, literal.findAll(shipped.getValue("$root/ui/look/PageKind.kt")).count())
+        // The table's users: the five builders' files, the look's own task rule and the language's.
         val users = shipped.filterValues { Regex("""\bPageKind\b""").containsMatchIn(it) }.keys.filterNot { it.startsWith("$root/ui/look/") }
         assertEquals(
-            setOf("$root/ui/day/DayActivity.kt", "$root/ui/day/EventActivity.kt", "$root/ui/day/EventEditActivity.kt", "$root/ui/LauncherLocale.kt"),
+            setOf(
+                "$root/ui/day/DayActivity.kt", "$root/ui/day/EventActivity.kt", "$root/ui/day/EventEditActivity.kt",
+                "$root/ui/messages/MessagesScreens.kt", "$root/ui/LauncherLocale.kt",
+            ),
             users.toSet(),
         )
-        assertTrue(shipped.getValue("$root/ui/look/PageLook.kt").contains("fun closesTask(rootClassName: String?): Boolean = PageKind.DAY.has(rootClassName)"))
-        assertTrue(shipped.getValue("$root/ui/LauncherLocale.kt").contains("PageKind.DAY.has(rootClassName) || rootClassName == MessagesActivity::class.java.name"))
+        val bothTasks = "PageKind.DAY.has(rootClassName) || PageKind.MESSAGES.has(rootClassName)"
+        assertTrue(shipped.getValue("$root/ui/look/PageLook.kt").contains("fun closesTask(rootClassName: String?): Boolean = $bothTasks"))
+        assertTrue(shipped.getValue("$root/ui/LauncherLocale.kt").contains("fun languageClosesTask(rootClassName: String?): Boolean =\n    $bothTasks"))
         // One chooser: each builder names the applied look's class, and nothing else asks for one.
         val chosen = mapOf(
             "$root/ui/day/DayActivity.kt" to listOf("Intent(context, PageKind.DAY.current())"),
             "$root/ui/day/EventActivity.kt" to listOf("Intent(context, PageKind.EVENT.current())"),
             "$root/ui/day/EventEditActivity.kt" to listOf("Intent(context, PageKind.EVENT_EDIT.current())", "Intent(context, PageKind.EVENT_EDIT.current())"),
+            "$root/ui/messages/MessagesScreens.kt" to listOf("Intent(context, PageKind.MESSAGES.current())", "Intent(context, PageKind.THREAD.current())"),
         )
-        val uses = Regex("""Intent\(context, PageKind\.[A-Z_]+\.current\(\)\)|PageKind\.DAY\.has\(rootClassName\)|import com\.kidslauncher\.mdm\.ui\.look\.PageKind\n""")
+        val uses = Regex("""Intent\(context, PageKind\.[A-Z_]+\.current\(\)\)|PageKind\.[A-Z]+\.has\(rootClassName\)|import com\.kidslauncher\.mdm\.ui\.look\.PageKind\n""")
         for ((file, text) in shipped.filterKeys { !it.startsWith("$root/ui/look/") }) {
             assertEquals(file, chosen[file].orEmpty(), uses.findAll(text).map { it.value }.filter { it.startsWith("Intent(") }.toList())
             assertTrue(file, "PageKind" !in uses.replace(text, ""))
@@ -179,5 +198,25 @@ class PageLookScanTest {
             starts += started
         }
         assertEquals(6, starts)
+        // Meldinger's builders (listIntent, threadIntent, listUnder) too: into a start, or into startThread's two
+        // starts - and never into a PendingIntent. The notification names the look-less entry (R7), which builds
+        // them when it is tapped.
+        val messages = Regex("""\bMessagesScreens\.(listIntent|threadIntent|listUnder)\(""")
+        for ((file, text) in shipped) {
+            if (!text.contains("PendingIntent")) continue
+            assertTrue(file, !messages.containsMatchIn(text) && !text.contains("PageKind"))
+        }
+        for ((file, text) in shipped) {
+            for (use in messages.findAll(text)) {
+                val line = text.substring(text.lastIndexOf('\n', use.range.first) + 1, text.indexOf('\n', use.range.first))
+                assertTrue("$file: $line", line.contains("startActivity(") || line.contains("startActivities("))
+            }
+        }
+        val notifier = shipped.getValue("$root/sms/SmsNotifier.kt")
+        assertTrue(notifier.contains("PendingIntent.getActivity(\n        context, 0, MessagesEntryActivity.intent(context, conversationId),"))
+        val screens = shipped.getValue("$root/ui/messages/MessagesScreens.kt")
+        assertTrue(screens.contains("context.startActivities(arrayOf(listUnder(context), threadIntent(context, conversationId, number, draft)))"))
+        val entry = shipped.getValue("$root/ui/messages/MessagesEntryActivity.kt")
+        assertTrue(entry.contains("MessagesScreens.startThread(this, conversationId, null)"))
     }
 }

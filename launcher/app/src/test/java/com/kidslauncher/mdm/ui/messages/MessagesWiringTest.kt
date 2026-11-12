@@ -56,9 +56,11 @@ class MessagesWiringTest {
             Regex("NotificationCompat\\.Builder\\(").findAll(notifier).count() - 1, // the public version shows only "Ny melding"
             Regex("\\.setAllowSystemGeneratedContextualActions\\(false\\)").findAll(notifier).count(),
         )
-        val open = body(notifier, "private fun openIntent(")
-        assertTrue(open.contains("MessagesScreens.threadIntent(context, conversationId, null).setIdentifier(conversationId)"))
-        assertTrue(open.contains("PendingIntent.getActivities(") && open.contains("FLAG_IMMUTABLE"))
+        // Through the look-less entry (design 78 §12.2 R7), one PendingIntent per conversation by the entry's identifier.
+        val open = notifier.substringAfter("private fun openIntent(").substringBefore("\n    )\n")
+        assertTrue(open.contains("PendingIntent.getActivity(") && open.contains("MessagesEntryActivity.intent(context, conversationId)") && open.contains("FLAG_IMMUTABLE"))
+        val entry = code("ui/messages/MessagesEntryActivity.kt")
+        assertTrue(entry.contains("Intent(context, MessagesEntryActivity::class.java).putExtra(EXTRA_CONVERSATION, conversationId).setIdentifier(conversationId)"))
         val runtime = code("sms/SmsRuntime.kt")
         assertTrue(body(runtime, "private fun notifyShown(").contains("if (shown.conversation.id == threadInFront) return"))
     }
@@ -80,7 +82,7 @@ class MessagesWiringTest {
         val thread = code("ui/messages/ThreadActivity.kt")
         assertTrue(body(thread, "private fun show(").contains("intent.putExtra(EXTRA_CONVERSATION, found.id.value)"))
         assertTrue(body(thread, "private fun take(").contains("generation++"))
-        assertTrue(body(thread, "private fun take(").contains("keptDraft(drafts, conversationId, number)"))
+        assertTrue(body(thread, "private fun take(").contains("keptDraft(ThreadDrafts.all(this), conversationId, number)"))
         assertTrue(body(thread, "private fun loadNow(").contains("forThread != generation"))
     }
 

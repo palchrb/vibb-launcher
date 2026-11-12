@@ -22,9 +22,9 @@ import com.kidslauncher.mdm.sms.SmsRuntime
 import com.kidslauncher.mdm.sms.engine.Message
 import com.kidslauncher.mdm.ui.KidHeader
 import com.kidslauncher.mdm.ui.KidInsets
-import com.kidslauncher.mdm.ui.UIObjectActivity
 import com.kidslauncher.mdm.ui.day.LockWatch
 import com.kidslauncher.mdm.calls.SEARCH_MIN_ROWS
+import com.kidslauncher.mdm.ui.look.KidPageActivity
 import com.kidslauncher.mdm.ui.search.KidSearchField
 import com.kidslauncher.mdm.ui.search.MessagesBack
 import com.kidslauncher.mdm.ui.search.SearchMatch
@@ -49,7 +49,7 @@ import java.time.ZoneId
  * Everything it reads comes from the engine thread ([SmsRuntime.ask]); the engine's events and every rule change
  * ([SmsHome]) read it again.
  */
-class MessagesActivity : UIObjectActivity() {
+open class MessagesActivity : KidPageActivity() {
 
     private lateinit var binding: ActivityMessagesBinding
     private val adapter = RowsAdapter()
@@ -103,6 +103,7 @@ class MessagesActivity : UIObjectActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (isFinishing) return // The other look's class: its task is closing (KidPageActivity).
         labelTask()
         binding = ActivityMessagesBinding.inflate(layoutInflater)
         setContentView(binding.root)
@@ -142,7 +143,7 @@ class MessagesActivity : UIObjectActivity() {
         SmsHome.removeListener(homeListener)
         events?.cancel()
         // Design 79 §4.1 (code QA N3): the query is kept across a rotation only.
-        if (!isChangingConfigurations) search.clear()
+        if (!isChangingConfigurations && ::search.isInitialized) search.clear()
         super.onStop()
     }
 
@@ -159,9 +160,20 @@ class MessagesActivity : UIObjectActivity() {
             done()
             if (isDestroyed) return@ask
             rows = listRows(entries.orEmpty(), MessagesScreens.rules())
+            dropKeptTexts(entries.orEmpty().associate { (c, _) -> c.id.value to c.participants.map { it.address } })
             if (deleting != null && rows.none { it.conversation.id == deleting?.conversation?.id }) cancelDelete()
             render()
         }
+    }
+
+    /** Design 78 §5.4.4: a kept text goes once the kid may no longer text there ([keptTextsToDrop]) - also for a
+     * thread not opened again, a new thread's for a number, and a conversation gone. All of them go with SMS off or the
+     * phone unmanaged ([ThreadDrafts.all]). [conversations]: every conversation's id and recipients. */
+    private fun dropKeptTexts(conversations: Map<String, List<String>>) {
+        val kept = ThreadDrafts.all(this)
+        if (kept.isEmpty()) return
+        val judge = SmsRuntime.judge(this)
+        for (key in keptTextsToDrop(kept.keys, conversations) { keptTextDropped(composeState(judge, it)) }) ThreadDrafts.drop(this, key)
     }
 
     /** Whether the kid may start a conversation now: "Styrt av Vibb", the role ours, the gate not shut by a time rule
@@ -283,6 +295,8 @@ class MessagesActivity : UIObjectActivity() {
         ) {
             val id = row.conversation.id
             cancelDelete()
+            // Its unsent text goes with it (design 78 §5.4.4).
+            ThreadDrafts.drop(this, id.value)
             SmsRuntime.ask(this, { engine -> MessageActions.delete(engine, DeleteTarget.WholeConversation(id)) }) {
                 SmsNotifier.cancel(applicationContext, id.value)
                 load()

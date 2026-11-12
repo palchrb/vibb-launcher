@@ -29,7 +29,7 @@
             android:layout_height="18dp"
             android:importantForAccessibility="no"
             android:src="@drawable/ic_kid_search"
-            android:tint="@color/kid_core_dim" />
+            android:tint="@color/kid_page_dim" />
 
         <EditText
             android:id="@+id/kid_search_field"
@@ -44,8 +44,8 @@
             android:inputType="text|textNoSuggestions"
             android:maxLength="40"
             android:maxLines="1"
-            android:textColor="@color/kid_ink"
-            android:textColorHint="@color/kid_core_dim"
+            android:textColor="@color/kid_page_ink"
+            android:textColorHint="@color/kid_page_dim"
             android:textCursorDrawable="@drawable/kid_search_cursor"
             android:textSize="16sp" />
 
@@ -58,7 +58,7 @@
             android:padding="13dp"
             android:scaleType="fitCenter"
             android:src="@drawable/ic_kid_search_clear"
-            android:tint="@color/kid_core_dim"
+            android:tint="@color/kid_page_dim"
             android:visibility="gone" />
     </LinearLayout>
 
@@ -70,7 +70,7 @@
         android:accessibilityLiveRegion="polite"
         android:fontFamily="@font/nunito_bold"
         android:paddingStart="14dp"
-        android:textColor="@color/kid_ink_dim"
+        android:textColor="@color/kid_page_ink_dim"
         android:textSize="12sp"
         android:visibility="gone" />
 </LinearLayout>

@@ -29,4 +29,13 @@
     <color name="kid_page_alert">@color/kid_missed_text</color>
     <color name="kid_page_danger">@color/kid_emergency_tonal</color>
     <color name="kid_page_danger_text">#FF8A8A</color>
+    <!-- Step 2 (Meldinger, the phone book and kid Settings' lists): the lists' second ink, a card's surface, the
+         phone book's Ring glyph, a search field's focus ring, an open request's and a missing photo's peach edge, and
+         an input's edge on a raised surface. -->
+    <color name="kid_page_ink_dim">@color/kid_ink_dim</color>
+    <color name="kid_page_card">#14FFFFFF</color>
+    <color name="kid_page_call_glyph">@color/kid_call_glyph</color>
+    <color name="kid_page_focus">#80F0A884</color>
+    <color name="kid_page_accent_edge">#73F0A884</color>
+    <color name="kid_page_field_edge">@color/kid_sheet_button</color>
 </resources>

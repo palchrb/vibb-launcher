@@ -17,7 +17,7 @@ import com.kidslauncher.mdm.server.cachedPolicy
 import com.kidslauncher.mdm.ui.KidHeader
 import com.kidslauncher.mdm.ui.KidInsets
 import com.kidslauncher.mdm.ui.LockActivity
-import com.kidslauncher.mdm.ui.UIObjectActivity
+import com.kidslauncher.mdm.ui.look.KidPageActivity
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
@@ -29,7 +29,7 @@ import kotlinx.coroutines.launch
  * our own page in the launcher's lock task; it leaves when the parent's sound bit goes or the app-op is gone, and a
  * lock comes first.
  */
-class KidSoundPickerActivity : UIObjectActivity() {
+class KidSoundPickerActivity : KidPageActivity() {
     private lateinit var binding: ActivityKidSoundPickerBinding
     private lateinit var kind: SoundKind
     private lateinit var preview: KidSounds.Preview

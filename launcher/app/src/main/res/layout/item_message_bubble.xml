@@ -39,7 +39,7 @@
                 android:fontFamily="@font/nunito_extrabold"
                 android:importantForAccessibility="no"
                 android:maxLines="1"
-                android:textColor="@color/kid_message_in_dim"
+                android:textColor="@color/kid_page_message_in_dim"
                 android:textSize="13sp"
                 android:visibility="gone" />
 
@@ -50,7 +50,7 @@
                 android:fontFamily="@font/nunito_extrabold"
                 android:importantForAccessibility="no"
                 android:text="@string/messages_unknown"
-                android:textColor="@color/kid_accent"
+                android:textColor="@color/kid_page_accent"
                 android:textSize="13sp"
                 android:visibility="gone" />
 
@@ -68,7 +68,7 @@
                 android:layout_height="wrap_content"
                 android:fontFamily="@font/nunito_semibold"
                 android:importantForAccessibility="no"
-                android:textColor="@color/kid_ink"
+                android:textColor="@color/kid_page_message_in_ink"
                 android:textIsSelectable="false"
                 android:textSize="16sp" />
         </LinearLayout>
@@ -102,7 +102,7 @@
         android:minHeight="24dp"
         android:paddingStart="4dp"
         android:paddingEnd="4dp"
-        android:textColor="@color/kid_core_dim"
+        android:textColor="@color/kid_page_dim"
         android:textSize="12sp"
         android:visibility="gone" />
 </LinearLayout>

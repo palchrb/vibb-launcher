@@ -110,7 +110,8 @@ class LockFontScaleTest {
     @Test
     fun `the lock's 112 confirm is Vibb night like the phone book's`() {
         val emergency = src("calls/EmergencyCall.kt")
-        assertTrue("AlertDialog.Builder(activity, R.style.KidAlertDialog)" in emergency)
+        // Built from the night also over a page in Lys (design 78 step 2, nightOver).
+        assertTrue("AlertDialog.Builder(nightOver(activity), R.style.KidAlertDialog)" in emergency)
         assertFalse("AlertDialogCustom" in emergency)
         // Both of the PIN lock's pills (keypad and ring card) and the time-rule screen use it.
         assertEquals(2, Regex("""EmergencyCall\.confirm\(this, locked = true\)""").findAll(src("lock/PinLockActivity.kt")).count())

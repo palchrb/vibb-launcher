@@ -18,6 +18,7 @@ import com.kidslauncher.mdm.ui.ClockFormat
 import com.kidslauncher.mdm.ui.LockActivity
 import com.kidslauncher.mdm.ui.day.DayActivity
 import com.kidslauncher.mdm.ui.home.KidAvatars
+import com.kidslauncher.mdm.ui.look.PageKind
 import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
 
@@ -129,9 +130,10 @@ object MessagesScreens {
     }
 
     /** The messages task's way in (Home's tile, the time-rule screen's row): a task of its own, as Dagen's - in Recents
-     * as "Meldinger", and never destroyed with the lock's task. */
+     * as "Meldinger", and never destroyed with the lock's task. The list's class in the applied look (design 78 §12.2
+     * R5); an intent from here goes straight into a start, never into a `PendingIntent` ([MessagesEntryActivity]). */
     fun listIntent(context: Context): Intent =
-        Intent(context, MessagesActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        Intent(context, PageKind.MESSAGES.current()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 
     /**
      * A thread: [conversationId] when it exists, else the (normalised) [number] it would be with - a contact's Message
@@ -139,7 +141,7 @@ object MessagesScreens {
      * messages task.
      */
     fun threadIntent(context: Context, conversationId: String?, number: String?, draft: String? = null): Intent =
-        Intent(context, ThreadActivity::class.java).apply {
+        Intent(context, PageKind.THREAD.current()).apply {
             conversationId?.let { putExtra(ThreadActivity.EXTRA_CONVERSATION, it) }
             number?.let { putExtra(ThreadActivity.EXTRA_NUMBER, it) }
             draft?.let { putExtra(ThreadActivity.EXTRA_DRAFT, it) }

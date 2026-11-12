@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- A picture's place in a bubble (rounded, the control tone) - under the thumbnail, and alone while there is none. -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
-    <solid android:color="@color/kid_music_control" />
+    <solid android:color="@color/kid_page_control" />
     <corners android:radius="14dp" />
 </shape>
