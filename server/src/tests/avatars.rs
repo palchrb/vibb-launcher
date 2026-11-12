@@ -772,8 +772,11 @@ fn the_tones_agree_with_the_stylesheet_and_carry_the_letter() {
     let letter = luminance("#0C0C14");
 
     let css = std::fs::read_to_string("static/style.css").unwrap();
+    // The status words' `.tone-green` and the like share the prefix; only the avatar's set `--avatar-bg`.
     assert_eq!(
-        css.matches("\n.tone-").count(),
+        css.lines()
+            .filter(|l| l.starts_with(".tone-") && l.contains("--avatar-bg"))
+            .count(),
         AVATAR_TONES.len(),
         "a tone in style.css that AVATAR_TONES doesn't have"
     );
