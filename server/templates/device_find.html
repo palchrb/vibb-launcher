@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="{{ lang.code() }}">
+<head>
+{% include "partials/head.html" %}
+</head>
+<body>
+<div class="top-strip" aria-hidden="true"></div>
+{% let tab = "locate" %}
+{% include "partials/tab_bar.html" %}
+{% import "partials/band.html" as band %}
+{% import "partials/recent.html" as recent_group %}
+<main class="container">
+    {% call band::phone(self.t("locate.find.title"), "/devices/locate?device=" ~ device.id, self.t("nav.locate"), who) %}{% endcall %}
+    <div class="sheet">
+
+    {% if wipe_not_ready %}
+    <div class="attention attention-action" data-warning="wipe-not-ready">
+        <span class="attention-text">{{ self.t("locate.wipe_not_ready.title") }}<span class="attention-sub">{{ self.t("locate.wipe_not_ready.sub") }}</span></span>
+    </div>
+    {% endif %}
+
+    {#- Design 88: one tap each (§5.6: they protect the phone); each returns here (#actions), with
+        the newest requests right under it. -#}
+    <section id="actions" aria-label="{{ self.t("locate.actions_aria") }}">
+        <div class="act-grid">
+            <form method="post" action="/devices/{{ device.id }}/command/ring#actions">
+                <button type="submit" class="act"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 17V11a6 6 0 0 1 12 0v6l1.5 2h-15z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M10 21h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span class="act-label">{{ self.t("locate.command.ring") }}</span></button>
+            </form>
+            <form method="post" action="/devices/{{ device.id }}/command/stop-ring#actions">
+                <button type="submit" class="act"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 17V11a6 6 0 0 1 12 0v6l1.5 2h-15z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M10 21h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M4 4l16 16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span class="act-label">{{ self.t("locate.command.stop_ring") }}</span></button>
+            </form>
+            <form method="post" action="/devices/{{ device.id }}/command/lock#actions">
+                <button type="submit" class="act"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="5" y="10.5" width="14" height="10" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5" fill="none" stroke="currentColor" stroke-width="1.8"/></svg><span class="act-label">{{ self.t("locate.command.lock") }}</span></button>
+            </form>
+        </div>
+    </section>
+
+    {#- The newest requests in flight or just gone wrong (design 48 §1.4), at most three, the newest
+        highlighted; every command of the phone is in its summary's Activity. Shown while it has a
+        row or the line after a Cancel, so a Cancel never lands on a hidden group. -#}
+    {% if !recent.rows.is_empty() || recent.flash.is_some() %}
+    <section id="recent" aria-labelledby="recent-title">
+        <h2 class="group-header" id="recent-title">{{ self.t("locate.find.recent") }}</h2>
+        <div class="group group-newest" data-group="recent">
+            {% for c in recent.rows %}
+            {% call recent_group::row(c, recent.device_id, "find", "recent") %}{% endcall %}
+            {% endfor %}
+            {% if let Some((text, refused)) = recent.flash %}
+            <p class="flash{% if refused %} flash-error{% endif %}" role="status" data-flash="recent">{{ text }}</p>
+            {% endif %}
+            <a class="row" href="/devices/{{ device.id }}#activity" data-row="activity">
+                <span class="row-label">{{ self.t("locate.find.all") }}</span>
+                <span class="row-value">{{ self.t("locate.find.activity") }}</span>
+                <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </a>
+        </div>
+    </section>
+    {% endif %}
+
+    {#- Erase Phone… alone at the bottom: the type-the-name confirm; a wrong name renders this page
+        with it open (#erase). -#}
+    <section id="erase-phone" aria-label="{{ self.t("locate.command.wipe") }}">
+        <div class="group">
+            <details class="confirm cell" id="erase"{% if erase_refused %} open{% endif %}>
+                <summary class="row row-button row-danger">{{ self.t("locate.command.wipe") }}&hellip;</summary>
+                <form method="post" action="/devices/{{ device.id }}/command/wipe#erase" class="confirm-body">
+                    <p>{{ self.tp("locate.erase.question", [("name", device.name.as_str())]) }}</p>
+                    <label class="field-label" for="confirm_wipe">{{ self.tp("locate.erase.type", [("name", device.name.as_str())]) }}</label>
+                    <input type="text" id="confirm_wipe" name="confirm_name" autocomplete="off" required{% if erase_refused %} aria-invalid="true" aria-describedby="confirm_wipe-error"{% endif %}>
+                    {% if erase_refused %}<p class="field-error" id="confirm_wipe-error" data-flash="erase">{{ self.t("locate.erase.refused") }}</p>{% endif %}
+                    <button type="submit" class="button-destructive">{{ self.tp("locate.erase.button", [("name", device.name.as_str())]) }}</button>
+                    {% include "partials/confirm_cancel.html" %}
+                </form>
+            </details>
+        </div>
+        <div class="group-footer">{{ self.t("locate.actions.footer") }}
+            <details class="info">
+                <summary aria-label="{{ self.t("locate.lock_info.aria") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    <p>{{ self.t("locate.lock_info.no_pin") }}</p>
+                    {% if android_lock %}
+                    <p data-note="android-lock">{{ self.t("locate.lock_info.android") }}</p>
+                    {% endif %}
+                </div>
+            </details>
+        </div>
+    </section>
+
+    </div>
+</main>
+</body>
+</html>

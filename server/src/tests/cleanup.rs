@@ -513,7 +513,7 @@ async fn location_retention_is_chosen_per_phone_and_applied_at_once() {
 
     let cookie = app.admin_cookie().await;
     let page = app
-        .get_page(&format!("/devices/locate?device={id}"), &cookie)
+        .get_page(&format!("/devices/{id}/location-settings"), &cookie)
         .await;
     assert!(
         page.text()
@@ -540,14 +540,14 @@ async fn location_retention_is_chosen_per_phone_and_applied_at_once() {
         .await;
     assert_eq!(
         res.location(),
-        Some(format!("/devices/locate?device={id}#location-settings").as_str())
+        Some(format!("/devices/{id}/location-settings#location-settings").as_str())
     );
     assert_eq!(
         count(&app.db, "SELECT COUNT(*) FROM device_locations").await,
         1
     );
     let page = app
-        .get_page(&format!("/devices/locate?device={id}"), &cookie)
+        .get_page(&format!("/devices/{id}/location-settings"), &cookie)
         .await;
     assert!(
         page.text()
@@ -953,7 +953,7 @@ async fn off_erases_every_fix_and_on_keeps_the_last_known() {
         .await;
     assert_eq!(
         res.location(),
-        Some(format!("/devices/locate?device={off}#location-settings").as_str())
+        Some(format!("/devices/{off}/location-settings#location-settings").as_str())
     );
     assert!(left(off).await.unwrap().is_empty());
     assert_eq!(left(on).await.unwrap(), ["2026-09-02T10:00:00.000Z"]);

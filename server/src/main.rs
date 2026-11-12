@@ -1339,9 +1339,18 @@ pub fn build_admin_router(
             "/devices/{id}/locate-result.json",
             get(handlers::locate::locate_result_json),
         )
-        // Design 64: a phone's zones (the list is the Locate page's #zones).
+        // Design 64: a phone's zones (the list is the Zones page since design 88).
         .route("/devices/{id}/zones.json", get(handlers::zones::zones_json))
-        .route("/devices/{id}/zones", post(handlers::zones::create_zone))
+        .route(
+            "/devices/{id}/zones",
+            get(handlers::locate::show_zones).post(handlers::zones::create_zone),
+        )
+        // Design 88: Locate's Find Phone and Location Settings pages.
+        .route("/devices/{id}/find", get(handlers::locate::show_find))
+        .route(
+            "/devices/{id}/location-settings",
+            get(handlers::locate::show_location_settings),
+        )
         .route("/devices/{id}/zones/new", get(handlers::zones::new_zone))
         .route(
             "/devices/{id}/zones/{zone_id}",

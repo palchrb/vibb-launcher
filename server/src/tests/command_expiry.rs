@@ -1,6 +1,6 @@
 //! Command expiry and cancel (the user's decision, 2026-10-12): a lock or a wipe waits for the phone
 //! however long it takes; a pause, a ring, its stop or a location update expires when the phone
-//! doesn't fetch it within an hour; a command still waiting can be cancelled on the Locate page.
+//! doesn't fetch it within an hour; a command still waiting can be cancelled on Find Phone.
 //! A cancelled or expired command never reaches the phone - first, again (L12) or after an
 //! enrollment.
 
@@ -48,13 +48,13 @@ async fn cancel(app: &TestApp, cookie: &str, device: i64, command: i64) -> Optio
     res.location().map(str::to_string)
 }
 
-async fn locate_page(app: &TestApp, cookie: &str, device: i64) -> String {
-    app.get_page(&format!("/devices/locate?device={device}"), cookie)
+async fn find_page(app: &TestApp, cookie: &str, device: i64) -> String {
+    app.get_page(&format!("/devices/{device}/find"), cookie)
         .await
         .text()
 }
 
-/// `command`'s newest row in the Locate page's Requests or the summary's Activity.
+/// `command`'s newest row in Find Phone's requests or the summary's Activity.
 fn row<'a>(page: &'a str, command: &str) -> &'a str {
     super::locate_page::recent_row(page, command)
 }
@@ -112,7 +112,7 @@ async fn an_expiring_command_is_never_sent_again_past_its_hour() {
     );
     assert!(app.policy(&token).await["pending_command"].is_null());
     let cookie = app.admin_cookie().await;
-    let page = locate_page(&app, &cookie, device).await;
+    let page = find_page(&app, &cookie, device).await;
     assert!(
         row(&page, "ring").contains("Not confirmed"),
         "{}",
@@ -128,7 +128,7 @@ async fn a_cancelled_command_never_reaches_the_phone() {
     report_receipts(&app, &token).await;
     let wipe = insert(&app, device, "wipe", "datetime('now', '-1 minutes')").await;
     let lock = insert(&app, device, "lock", "datetime('now')").await;
-    let page = locate_page(&app, &cookie, device).await;
+    let page = find_page(&app, &cookie, device).await;
     for id in [wipe, lock] {
         assert!(
             page.contains(&format!("/devices/{device}/commands/{id}/cancel")),
@@ -137,7 +137,7 @@ async fn a_cancelled_command_never_reaches_the_phone() {
     }
     assert_eq!(
         cancel(&app, &cookie, device, wipe).await.as_deref(),
-        Some(format!("/devices/locate?device={device}&cancel=done#recent").as_str()),
+        Some(format!("/devices/{device}/find?cancel=done#recent").as_str()),
         "back to Recent, where the line says it was cancelled"
     );
     // The newer lock still goes; the cancelled wipe never, also once time has passed.
@@ -151,10 +151,7 @@ async fn a_cancelled_command_never_reaches_the_phone() {
     .unwrap();
     assert!(app.policy(&token).await["pending_command"].is_null());
     let page = app
-        .get_page(
-            &format!("/devices/locate?device={device}&cancel=done"),
-            &cookie,
-        )
+        .get_page(&format!("/devices/{device}/find?cancel=done"), &cookie)
         .await
         .text();
     assert!(page.contains("Cancelled. The phone will never get it."));
@@ -204,9 +201,7 @@ async fn too_late_to_cancel() {
     report_receipts(&app, &token).await;
     let lock = insert(&app, device, "lock", "datetime('now')").await;
     assert_eq!(app.policy(&token).await["pending_command"]["id"], lock);
-    let too_late = Some(format!(
-        "/devices/locate?device={device}&cancel=too_late#recent"
-    ));
+    let too_late = Some(format!("/devices/{device}/find?cancel=too_late#recent"));
     assert_eq!(cancel(&app, &cookie, device, lock).await, too_late);
     // Still offered again after the gap: L12 goes on for what the phone may have lost.
     sqlx::query(
@@ -221,10 +216,7 @@ async fn too_late_to_cancel() {
     let expired = insert(&app, device, "ring", "datetime('now', '-2 hours')").await;
     assert_eq!(cancel(&app, &cookie, device, expired).await, too_late);
     let page = app
-        .get_page(
-            &format!("/devices/locate?device={device}&cancel=too_late"),
-            &cookie,
-        )
+        .get_page(&format!("/devices/{device}/find?cancel=too_late"), &cookie)
         .await
         .text();
     assert!(page.contains("Too late to cancel"));
@@ -232,9 +224,7 @@ async fn too_late_to_cancel() {
     let wipe = insert(&app, device, "wipe", "datetime('now')").await;
     assert_eq!(
         cancel(&app, &cookie, other, wipe).await,
-        Some(format!(
-            "/devices/locate?device={other}&cancel=too_late#recent"
-        )),
+        Some(format!("/devices/{other}/find?cancel=too_late#recent")),
         "another phone's path can't cancel it"
     );
     let cancelled: Option<String> =
@@ -246,17 +236,17 @@ async fn too_late_to_cancel() {
     assert_eq!(cancelled, None);
 }
 
-/// The Locate page's states: waiting (with when an expiring one expires) and its Cancel, expired
+/// Find Phone's states: waiting (with when an expiring one expires) and its Cancel, expired
 /// (no Cancel), cancelled by an enrollment.
 #[tokio::test]
-async fn the_locate_page_shows_waiting_expired_and_cancelled() {
+async fn find_phone_shows_waiting_expired_and_cancelled() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (device, _) = app.enrolled_device("phone").await;
     let ring = insert(&app, device, "ring", "datetime('now', '-2 hours')").await;
     let fresh = insert(&app, device, "locate", "datetime('now', '-5 minutes')").await;
     let lock = insert(&app, device, "lock", "datetime('now', '-3 days')").await;
-    let page = locate_page(&app, &cookie, device).await;
+    let page = find_page(&app, &cookie, device).await;
     assert!(row(&page, "ring").contains(">Expired<"));
     assert!(
         row(&page, "ring").contains("Never sent: the phone wasn&#39;t back within an hour."),
@@ -298,7 +288,7 @@ async fn the_locate_page_shows_waiting_expired_and_cancelled() {
     assert_eq!(res.status, StatusCode::OK);
     let token = res.json()["device_token"].as_str().unwrap().to_string();
     assert!(app.policy(&token).await["pending_command"].is_null());
-    let page = locate_page(&app, &cookie, device).await;
+    let page = find_page(&app, &cookie, device).await;
     assert!(
         row(&page, "lock").contains("Never sent: the phone was set up again."),
         "{}",
@@ -409,7 +399,7 @@ async fn a_waiting_wipe_is_never_replaced() {
         replaced[0].starts_with("1 waiting ring/stop_ring replaced by a new stop_ring"),
         "{replaced:?}"
     );
-    let page = locate_page(&app, &cookie, device).await;
+    let page = find_page(&app, &cookie, device).await;
     assert!(
         row(&page, "ring").contains(">Replaced<"),
         "{}",
@@ -464,7 +454,7 @@ async fn an_enrollment_or_a_restart_ends_what_could_expire() {
         Some("enrolled"),
         "cancelled, so a clock running behind can't revive it"
     );
-    let page = locate_page(&app, &cookie, device).await;
+    let page = find_page(&app, &cookie, device).await;
     assert!(
         row(&page, "ring").contains("Expired"),
         "{}",
@@ -475,7 +465,7 @@ async fn an_enrollment_or_a_restart_ends_what_could_expire() {
     let wipe = insert(&app, device, "wipe", "datetime('now')").await;
     crate::handlers::device_api::end_expiring_at_start(&app.db).await;
     assert_eq!(app.policy(&token).await["pending_command"]["id"], wipe);
-    // Not in Locate's Requests (no bucket of design 48 §1.4 holds it): the summary's Activity.
+    // Not in Find Phone's requests (no bucket of design 48 §1.4 holds it): the summary's Activity.
     let page = app
         .get_page(&format!("/devices/{device}"), &cookie)
         .await

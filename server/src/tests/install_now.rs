@@ -535,7 +535,7 @@ async fn a_server_start_keeps_it_and_a_confirmed_one_works_for_25_hours() {
         "not at 11 minutes"
     );
     let locate = app
-        .get_page(&format!("/devices/locate?device={phone}"), &cookie)
+        .get_page(&format!("/devices/{phone}/find"), &cookie)
         .await
         .text();
     assert!(!locate.contains("data-command=\"install_update\""));

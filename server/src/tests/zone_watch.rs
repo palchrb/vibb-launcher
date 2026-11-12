@@ -340,7 +340,7 @@ async fn here_now_counts_the_served_interval_and_a_still_re_send() {
     let home_fix = fix(NEAR, &at(45));
     post(&app, &token, json!({"location": home_fix.clone()})).await;
     let page = || async {
-        app.get_page(&format!("/devices/locate?device={id}"), &cookie)
+        app.get_page(&format!("/devices/{id}/zones"), &cookie)
             .await
             .text()
     };
@@ -629,10 +629,18 @@ async fn the_locate_page_tells_the_floor_the_watch_and_the_mock_count() {
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("Anna").await;
     set_location(&app, id, "interval", 10).await;
+    // Design 88: the mock count is Locate's, the watch line the Zones page's, the note Location
+    // Settings' - read as one.
     let page = || async {
-        app.get_page(&format!("/devices/locate?device={id}"), &cookie)
-            .await
-            .text()
+        let mut html = String::new();
+        for url in [
+            format!("/devices/locate?device={id}"),
+            format!("/devices/{id}/zones"),
+            format!("/devices/{id}/location-settings"),
+        ] {
+            html.push_str(&app.get_page(&url, &cookie).await.text());
+        }
+        html
     };
     // No zones, no watch: the parent's 10 min, no note, no line.
     let html = page().await;

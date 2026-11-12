@@ -1455,7 +1455,12 @@ async fn the_phones_locate_answer_is_shown() {
         .await
         .text();
     assert!(text.contains("Location is off on the phone"), "{text}");
-    assert!(text.contains("<option value=\"off\">Off</option>"));
+    assert!(
+        app.get_page(&format!("/devices/{id}/location-settings"), &cookie)
+            .await
+            .text()
+            .contains("<option value=\"off\">Off</option>")
+    );
 }
 
 /// Security review L5: a rule's name never lands inside script - it goes into a `data-` attribute

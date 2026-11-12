@@ -289,7 +289,12 @@ async fn the_shutdowns_last_position_is_on_locate() {
     // Q-5: as the status lines' "Turned off", nothing while the off's push is still held.
     let page = app.get_page(&path, &cookie).await.text();
     assert!(!page.contains("data-fix-before-off"), "held");
-    assert!(page.contains("a sudden power loss or airplane mode leaves nothing"));
+    assert!(
+        app.get_page(&format!("/devices/{id}/location-settings"), &cookie)
+            .await
+            .text()
+            .contains("a sudden power loss or airplane mode leaves nothing")
+    );
     sqlx::query("UPDATE parent_events SET created_at = datetime('now', '-6 minutes') WHERE kind = 'phone_off'")
         .execute(&app.db)
         .await

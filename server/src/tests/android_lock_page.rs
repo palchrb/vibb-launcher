@@ -167,8 +167,8 @@ async fn the_switch_saves_queues_and_cancels() {
     // The time lock asks for no code since 2026-11-01 (PWA only): the PIN lifts no rule there.
     assert!(!html.contains("lifts the rules for up to two hours"));
     assert!(html.contains("the wait ends once the phone checks in"));
-    // Locate says what waits for the PIN after a restart.
-    let locate = format!("/devices/locate?device={id}");
+    // Find Phone says what waits for the PIN after a restart.
+    let locate = format!("/devices/{id}/find");
     assert!(
         app.get_page(&locate, &cookie)
             .await

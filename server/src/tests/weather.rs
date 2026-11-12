@@ -1172,7 +1172,7 @@ async fn the_weather_group_saves_on_its_anchors() {
     // No zones yet: the row says so and links to Locate's zones.
     let html = group(&app.get_page(&page(id), &cookie).await.text());
     assert!(html.contains("This phone has no zones yet."), "{html}");
-    assert!(html.contains(&format!("/devices/locate?device={id}#zones")));
+    assert!(html.contains(&format!("href=\"/devices/{id}/zones\"")));
     let home = zone(&app, id, "Hjemme", 59.9399, 10.7601).await;
     let html = group(&app.get_page(&page(id), &cookie).await.text());
     assert!(

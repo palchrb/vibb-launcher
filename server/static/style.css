@@ -2479,6 +2479,8 @@ details.category-block[open] > summary .section-chev { -webkit-transform: rotate
 .act-label { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; max-width: 100%; overflow: hidden; white-space: normal; overflow-wrap: break-word; }
 .act:hover { background: var(--row-active); color: var(--tint); }
 .act svg { width: 24px; height: 24px; margin-bottom: 5px; }
+/* Find Phone's newest request (design 88): its row stands out from the two before it. */
+.group-newest > .row[data-command]:first-child { background: var(--row-active); }
 .tone-green { color: var(--green); font-weight: 600; }
 .tone-orange { color: var(--orange); font-weight: 600; }
 .tone-red { color: var(--red-text); font-weight: 600; }

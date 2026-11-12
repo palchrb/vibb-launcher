@@ -689,6 +689,10 @@ mod tests {
         "device_locate.html",
         "device_locations.html",
         "device_zone.html",
+        // Design 88: Locate's rows' pages.
+        "device_zones.html",
+        "device_find.html",
+        "device_location_settings.html",
         // 3d: Music.
         "music.html",
         "music_categories.html",

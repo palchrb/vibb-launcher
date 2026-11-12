@@ -1,7 +1,7 @@
-//! The Locate tab (design 31 step 13, §3.6): the phone switcher as links, the fix as age and
-//! accuracy in local time, the actions and Erase Phone…'s confirm, Location Settings, Requests with
-//! labels instead of command ids (design 48 §1.4), and §5.1's redirect table for every form on the
-//! page.
+//! The Locate tab (design 31 step 13, §3.6): the fix as age and accuracy in local time, the rows
+//! under the map and their pages (design 88) - Zones, Find Phone with the actions, Erase Phone…'s
+//! confirm and the requests with labels instead of command ids (design 48 §1.4), Location
+//! Settings -, and §5.1's redirect table for every form on them.
 
 use axum::http::{Method, StatusCode};
 
@@ -21,6 +21,15 @@ async fn locate_page(app: &TestApp, cookie: &str, query: &str) -> String {
         .get_page(&format!("/devices/locate{query}"), cookie)
         .await;
     assert_eq!(res.status, StatusCode::OK, "{query}: {}", res.text());
+    res.text()
+}
+
+/// One of a phone's pages under Locate (design 88): `zones`, `find`, `location-settings`, with
+/// `query`.
+async fn phone_page(app: &TestApp, cookie: &str, id: i64, page: &str, query: &str) -> String {
+    let path = format!("/devices/{id}/{page}{query}");
+    let res = app.get_page(&path, cookie).await;
+    assert_eq!(res.status, StatusCode::OK, "{path}: {}", res.text());
     res.text()
 }
 
@@ -75,20 +84,28 @@ fn check_forms(html: &str) {
     super::settings_pages::check_forms("/devices/locate", html);
 }
 
-/// §5.1's redirect table for the Locate tab, built from the rendered forms: each lands back on
-/// the page - Update Location at the map (`#location`, where the wait shows), Ring, Stop Ringing,
-/// Lock and Erase at their group (`#actions`, Requests right under it), Cancel at Requests where its
-/// line is, the two pickers at Location Settings (the last group of a long page: a `<noscript>`
-/// Save, or a save from a refused erase's page, must not land at the top - qa-31-s13-code M1).
+/// The rows under a chosen phone's map (design 88): their group.
+fn rows_of(html: &str) -> &str {
+    html.split("data-group=\"locate-rows\"")
+        .nth(1)
+        .and_then(|rest| rest.split("</div>\n").next())
+        .expect("the rows")
+}
+
+/// §5.1's redirect table for the Locate tab's pages (design 88), built from the rendered forms:
+/// each lands back on its page - Update Location at Locate's map (`#location`, where the wait
+/// shows), Locate Regularly at Zones (`#zones`), Ring, Stop Ringing, Lock and Erase at Find Phone's
+/// tiles (`#actions`, the requests right under them), Cancel at the requests where its line is,
+/// the two pickers at Location Settings (`#location-settings`: a save never lands at the top).
 /// Every form has a fragment, so none lands at the top. A form the table has no row for fails.
 #[tokio::test]
-async fn every_form_on_the_locate_page_returns_to_its_group() {
+async fn every_form_on_the_locate_pages_returns_to_its_group() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("Anna").await;
     app.enrolled_device("Emil").await;
-    // A zone with the phone in Only when asked (design 64, code QA Q-3): #zones' Locate Regularly
-    // is on the page too.
+    // A zone with the phone in Only when asked (design 64, code QA Q-3): Zones' Locate Regularly
+    // is on its page.
     sqlx::query(
         "INSERT INTO device_zones (device_id, name, latitude, longitude, radius_m) \
          VALUES (?, 'Home', 59.9139, 10.7522, 150)",
@@ -98,60 +115,81 @@ async fn every_form_on_the_locate_page_returns_to_its_group() {
     .await
     .unwrap();
     let lock = waiting(&app, id, "lock", "datetime('now', '-1 minutes')").await;
-    let html = locate_page(&app, &cookie, &format!("?device={id}")).await;
-    check_forms(&html);
-    let page = format!("/devices/locate?device={id}");
+    let mut found = Vec::new();
+    for (path, html) in [
+        (
+            format!("/devices/locate?device={id}"),
+            locate_page(&app, &cookie, &format!("?device={id}")).await,
+        ),
+        (
+            format!("/devices/{id}/zones"),
+            phone_page(&app, &cookie, id, "zones", "").await,
+        ),
+        (
+            format!("/devices/{id}/find"),
+            phone_page(&app, &cookie, id, "find", "").await,
+        ),
+        (
+            format!("/devices/{id}/location-settings"),
+            phone_page(&app, &cookie, id, "location-settings", "").await,
+        ),
+    ] {
+        super::settings_pages::check_forms(&path, &html);
+        found.extend(forms(&html));
+    }
+    let locate = format!("/devices/locate?device={id}");
+    let find = format!("/devices/{id}/find");
+    let settings = format!("/devices/{id}/location-settings");
     // (action as rendered, the fields a parent sends, the expected Location).
     type Row<'a> = (String, &'a [(&'a str, &'a str)], (String, Option<&'a str>));
     let table: [Row; 9] = [
         (
             format!("/devices/{id}/command/locate#location"),
             &[],
-            (format!("{page}&requested=1"), Some("location")),
+            (format!("{locate}&requested=1"), Some("location")),
         ),
         // Locate Regularly (its `mode` and `back=zones` are the form's own hidden fields).
         (
             format!("/devices/{id}/location-policy#zones"),
             &[],
-            (page.clone(), Some("zones")),
+            (format!("/devices/{id}/zones"), Some("zones")),
         ),
         (
             format!("/devices/{id}/command/ring#actions"),
             &[],
-            (page.clone(), Some("actions")),
+            (find.clone(), Some("actions")),
         ),
         (
             format!("/devices/{id}/command/stop-ring#actions"),
             &[],
-            (page.clone(), Some("actions")),
+            (find.clone(), Some("actions")),
         ),
         (
             format!("/devices/{id}/command/lock#actions"),
             &[],
-            (page.clone(), Some("actions")),
-        ),
-        (
-            format!("/devices/{id}/command/wipe#erase"),
-            &[("confirm_name", "Anna")],
-            (page.clone(), Some("actions")),
+            (find.clone(), Some("actions")),
         ),
         (
             format!("/devices/{id}/commands/{lock}/cancel#recent"),
             &[],
-            (format!("{page}&cancel=done"), Some("recent")),
+            (format!("{find}?cancel=done"), Some("recent")),
+        ),
+        (
+            format!("/devices/{id}/command/wipe#erase"),
+            &[("confirm_name", "Anna")],
+            (find.clone(), Some("actions")),
         ),
         (
             format!("/devices/{id}/location-policy#location-settings"),
             &[("mode", "interval"), ("interval_minutes", "60")],
-            (page.clone(), Some("location-settings")),
+            (settings.clone(), Some("location-settings")),
         ),
         (
             format!("/devices/{id}/location-retention#location-settings"),
             &[("days", "14")],
-            (page.clone(), Some("location-settings")),
+            (settings.clone(), Some("location-settings")),
         ),
     ];
-    let found = forms(&html);
     assert!(
         table.iter().all(|(_, _, (_, fragment))| fragment.is_some()),
         "every form lands on its group, also without JS"
@@ -159,7 +197,7 @@ async fn every_form_on_the_locate_page_returns_to_its_group() {
     assert_eq!(
         found.iter().map(|(a, _)| a.as_str()).collect::<Vec<_>>(),
         table.iter().map(|(a, _, _)| a.as_str()).collect::<Vec<_>>(),
-        "every form on the Locate page is in the table, in page order"
+        "every form on the four pages is in the table, in page order"
     );
     for ((action, hidden), (_, fields, (path, fragment))) in found.iter().zip(table.iter()) {
         let mut sent: Vec<(&str, &str)> = hidden
@@ -192,6 +230,181 @@ async fn every_form_on_the_locate_page_returns_to_its_group() {
     assert_eq!((interval, days), (60, 14));
 }
 
+/// Design 88: a chosen phone's Locate page ends in one group of four rows - Locations, Zones,
+/// Find Phone, Location Settings - with their values, each to its page; the zone list, the tiles,
+/// the requests and the pickers are on those pages, each with the phone band (back to Locate, the
+/// phone's avatar) and no bell. A command lands on Find Phone with its request shown, the newest
+/// highlighted, at most three, then Show all to the summary's Activity.
+#[tokio::test]
+async fn the_rows_and_their_pages() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("Emma").await;
+    let html = locate_page(&app, &cookie, &format!("?device={id}")).await;
+    let rows = rows_of(&html);
+    // The four, in this order (`find` panics on a missing one).
+    let at = |row: &str| rows.find(&format!("data-row=\"{row}\"")).expect(row);
+    let order = ["locations", "zones", "find", "location-settings"];
+    assert!(order.windows(2).all(|w| at(w[0]) < at(w[1])), "{rows}");
+    assert_eq!(rows.matches("class=\"tile tile-").count(), 4, "{rows}");
+    for href in [
+        format!("/devices/{id}/locations?span=12"),
+        format!("/devices/{id}/zones"),
+        format!("/devices/{id}/find"),
+        format!("/devices/{id}/location-settings"),
+    ] {
+        assert!(rows.contains(&format!("href=\"{href}\"")), "{href}");
+    }
+    // Their values: no zones yet, Only when asked; Ring, lock, erase under Find Phone.
+    let zones_row = rows.split("data-row=\"zones\"").nth(1).unwrap();
+    let zones_row = zones_row.split("</a>").next().unwrap();
+    assert!(zones_row.contains(">None yet</span>"), "{zones_row}");
+    assert!(rows.contains(">Only when asked</span>"), "{rows}");
+    assert!(rows.contains("Find Phone<span class=\"row-sub\">Ring, lock, erase</span>"));
+    // None of what moved.
+    for gone in [
+        "id=\"zones\"",
+        "id=\"actions\"",
+        "id=\"erase\"",
+        "id=\"recent\"",
+        "id=\"location-settings\"",
+        "/command/ring",
+        "data-autosave",
+        "data-row=\"add-zone\"",
+        "The map shows the span picked above",
+    ] {
+        assert!(!html.contains(gone), "{gone} on Locate");
+    }
+    // The setting's words: Every 15 min, every hour, Off.
+    for (mode, minutes, words) in [
+        ("interval", 15, "Every 15 min"),
+        ("interval", 60, "Every hour"),
+        ("interval", 240, "Every 4 hours"),
+        ("off", 30, "Off"),
+    ] {
+        sqlx::query(
+            "UPDATE device_policy SET location_mode = ?, location_interval_minutes = ? \
+             WHERE device_id = ?",
+        )
+        .bind(mode)
+        .bind(minutes)
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+        let html = locate_page(&app, &cookie, &format!("?device={id}")).await;
+        assert!(
+            rows_of(&html).contains(&format!(">{words}</span>")),
+            "{words}"
+        );
+    }
+    let nb = locate_page(&app, &cookie, &format!("?device={id}&lang=nb")).await;
+    assert!(rows_of(&nb).contains(">Av</span>"));
+    assert!(rows_of(&nb).contains("Finn telefonen<span class=\"row-sub\">Ring, lås, slett</span>"));
+
+    // The three pages: the phone band, back to this phone's Locate, no bell.
+    for (page, title) in [
+        ("zones", "Zones"),
+        ("find", "Find Phone"),
+        ("location-settings", "Location Settings"),
+    ] {
+        let html = phone_page(&app, &cookie, id, page, "").await;
+        assert!(
+            html.contains(&format!("<h1 class=\"page-title\">{title}</h1>")),
+            "{page}"
+        );
+        assert!(
+            html.contains("class=\"band-who\""),
+            "{page}: the phone's avatar"
+        );
+        assert!(
+            html.contains(&format!(
+                "class=\"nav-back\" href=\"/devices/locate?device={id}\""
+            )),
+            "{page}"
+        );
+        assert!(!html.contains("title-bell"), "{page}: a page under the tab");
+    }
+    let zones = phone_page(&app, &cookie, id, "zones", "").await;
+    assert!(zones.contains("data-row=\"add-zone\""));
+    let settings = phone_page(&app, &cookie, id, "location-settings", "").await;
+    assert!(autosaves(&settings, "mode") && autosaves(&settings, "days"));
+
+    // A command lands on Find Phone with its request shown and highlighted; four, then three.
+    let find = phone_page(&app, &cookie, id, "find", "").await;
+    assert!(find.contains("id=\"actions\"") && find.contains("id=\"erase\""));
+    assert!(recent_of(&find).is_none(), "nothing asked yet");
+    for path in ["ring", "lock", "stop-ring", "lock"] {
+        let res = app
+            .request_form(
+                Method::POST,
+                &format!("/devices/{id}/command/{path}"),
+                Some(&cookie),
+                &[],
+            )
+            .await;
+        assert_redirect(&res, &format!("/devices/{id}/find"), Some("actions"));
+        let find = app.get_page(res.location().unwrap(), &cookie).await.text();
+        let recent = recent_of(&find).expect("the request is shown");
+        assert!(recent.contains(">Recent Requests</h2>"), "{recent}");
+        assert!(
+            recent.contains("class=\"group group-newest\""),
+            "the newest highlighted"
+        );
+        assert!(recent.matches("data-command=").count() <= 3, "{recent}");
+        let newest = recent.split("data-command=\"").nth(1).unwrap();
+        let kind = path.replace('-', "_");
+        assert!(newest.starts_with(&format!("{kind}\"")), "{path}: {recent}");
+        assert!(recent.contains(&format!("href=\"/devices/{id}#activity\"")));
+        assert!(recent.contains(">Show all</span>") && recent.contains(">Activity</span>"));
+    }
+    // Ring, Lock, Stop Ringing (it replaced the ring, kept as history), Lock: three shown.
+    let recent = phone_page(&app, &cookie, id, "find", "").await;
+    assert_eq!(
+        recent_of(&recent).unwrap().matches("data-command=").count(),
+        3
+    );
+}
+
+/// Design 88: the links that led to Locate's groups lead to the pages now - Lock Screen's
+/// weather notes, a zone's back chevron - and resolve.
+#[tokio::test]
+async fn links_to_the_moved_groups_resolve() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("Emma").await;
+    let lock = std::fs::read_to_string("templates/device_lock.html").unwrap();
+    let zone = std::fs::read_to_string("templates/device_zone.html").unwrap();
+    for template in [&lock, &zone] {
+        assert!(!template.contains("devices/locate?device="), "{template}");
+    }
+    assert!(lock.contains("href=\"/devices/{{ device.id }}/location-settings\""));
+    assert!(lock.contains("href=\"/devices/{{ device.id }}/zones\""));
+    assert!(zone.contains("\"/devices/\" ~ device.id ~ \"/zones\""));
+    let new_zone = app
+        .get_page(&format!("/devices/{id}/zones/new"), &cookie)
+        .await
+        .text();
+    assert!(new_zone.contains(&format!("class=\"nav-back\" href=\"/devices/{id}/zones\"")));
+    for path in [
+        format!("/devices/{id}/zones"),
+        format!("/devices/{id}/location-settings"),
+        format!("/devices/{id}/find"),
+    ] {
+        assert_eq!(
+            app.get_page(&path, &cookie).await.status,
+            StatusCode::OK,
+            "{path}"
+        );
+        let unknown = path.replace(&format!("/{id}/"), "/999/");
+        assert_eq!(
+            app.get_page(&unknown, &cookie).await.status,
+            StatusCode::NOT_FOUND,
+            "{unknown}"
+        );
+    }
+}
+
 /// A name that doesn't match erases nothing: the page comes back in the POST's answer with the
 /// confirm open and the refusal in it, where the form's `#erase` lands.
 #[tokio::test]
@@ -199,7 +412,7 @@ async fn a_wrong_name_opens_the_erase_confirm_with_the_refusal() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("Anna").await;
-    let html = locate_page(&app, &cookie, &format!("?device={id}")).await;
+    let html = phone_page(&app, &cookie, id, "find", "").await;
     let confirm = html
         .split("<details class=\"confirm cell\" id=\"erase\"")
         .nth(1)
@@ -231,6 +444,7 @@ async fn a_wrong_name_opens_the_erase_confirm_with_the_refusal() {
         );
         assert!(page.contains("data-flash=\"erase\""));
         assert!(page.contains("aria-invalid=\"true\""));
+        assert!(page.contains("<h1 class=\"page-title\">Find Phone</h1>"));
     }
     assert!(commands(&app, id).await.is_empty(), "nothing erased");
 }
@@ -442,12 +656,14 @@ async fn the_fix_and_the_answer_read_in_local_time() {
         answer.contains("title=\"location is off for this device\">Location is off on the phone<"),
         "{answer}"
     );
-    // The row in Requests says the same, with its word (failed within the day).
-    let row = recent_row(&html, "locate");
+    assert!(!html.contains("UTC"), "local times, no UTC");
+    // The row in Find Phone's requests says the same, with its word (failed within the day).
+    let find = phone_page(&app, &cookie, id, "find", "").await;
+    let row = recent_row(&find, "locate");
     assert!(row.contains("Update Location"), "{row}");
     assert!(row.contains("Failed"), "{row}");
     assert!(row.contains("Location is off on the phone"), "{row}");
-    assert!(!html.contains("UTC"), "local times, no UTC");
+    assert!(!find.contains("UTC"), "local times, no UTC");
     let json = app
         .get_page(&format!("/devices/{id}/locate-result.json"), &cookie)
         .await
@@ -570,8 +786,8 @@ async fn the_answer_row_shows_only_while_it_says_something() {
     assert!(!template.contains("Answer to"));
 }
 
-/// Requests: labels for every command, never its id; times local; Cancel only while it waits; the
-/// line after a Cancel in the group.
+/// Find Phone's requests: labels for every command, never its id; times local; Cancel only while
+/// it waits; the line after a Cancel in the group.
 #[tokio::test]
 async fn recent_names_each_command_and_cancels_what_waits() {
     let app = TestApp::new().await;
@@ -580,7 +796,7 @@ async fn recent_names_each_command_and_cancels_what_waits() {
     for command in ["stop_ring", "wipe"] {
         waiting(&app, id, command, "datetime('now', '-2 minutes')").await;
     }
-    let html = locate_page(&app, &cookie, &format!("?device={id}")).await;
+    let html = phone_page(&app, &cookie, id, "find", "").await;
     for (command, label) in [("stop_ring", "Stop Ringing"), ("wipe", "Erase Phone")] {
         let row = recent_row(&html, command);
         assert!(row.contains(&format!(">{label}<")), "{command}: {row}");
@@ -591,10 +807,10 @@ async fn recent_names_each_command_and_cancels_what_waits() {
     assert!(!html.contains("UTC"));
     assert!(html.contains("aria-label=\"Cancel Erase Phone asked for at "));
 
-    let html = locate_page(&app, &cookie, &format!("?device={id}&cancel=done")).await;
+    let html = phone_page(&app, &cookie, id, "find", "?cancel=done").await;
     let recent = html.split("id=\"recent\"").nth(1).unwrap();
     assert!(recent.contains("data-flash=\"recent\">Cancelled. The phone will never get it."));
-    let html = locate_page(&app, &cookie, &format!("?device={id}&cancel=bogus")).await;
+    let html = phone_page(&app, &cookie, id, "find", "?cancel=bogus").await;
     assert!(!html.contains("data-flash=\"recent\""));
 
     // An erase the phone answered while the system went down reads as a confirmed one
@@ -607,13 +823,14 @@ async fn recent_names_each_command_and_cancels_what_waits() {
     .execute(&app.db)
     .await
     .unwrap();
-    let html = locate_page(&app, &cookie, &format!("?device={id}")).await;
+    let html = phone_page(&app, &cookie, id, "find", "").await;
     let row = recent_row(&html, "wipe");
     assert!(row.contains(">Erasing<"), "{row}");
     assert!(row.contains("An erased phone stops reporting."), "{row}");
 }
 
-/// The two warnings are orange rows above the actions; the mode picker saves its form.
+/// Location off is an orange row above Locate's rows, erasing not ready one on Find Phone; the
+/// mode picker saves its form on Location Settings.
 #[tokio::test]
 async fn warnings_and_location_settings() {
     let app = TestApp::new().await;
@@ -621,6 +838,8 @@ async fn warnings_and_location_settings() {
     let (id, _) = app.enrolled_device("Anna").await;
     let html = locate_page(&app, &cookie, &format!("?device={id}")).await;
     assert!(!html.contains("data-warning"));
+    let settings = || phone_page(&app, &cookie, id, "location-settings", "");
+    let html = settings().await;
     assert!(autosaves(&html, "mode"));
     assert!(autosaves(&html, "days"));
     assert!(
@@ -634,14 +853,18 @@ async fn warnings_and_location_settings() {
         .unwrap();
     let html = locate_page(&app, &cookie, &format!("?device={id}")).await;
     let warning = html.find("data-warning=\"location-off\"").unwrap();
-    assert!(warning < html.find("id=\"actions\"").unwrap());
-    assert!(html.contains("<option value=\"off\" selected>Off</option>"));
+    assert!(warning < html.find("data-group=\"locate-rows\"").unwrap());
+    assert!(
+        settings()
+            .await
+            .contains("<option value=\"off\" selected>Off</option>")
+    );
     sqlx::query("UPDATE device_policy SET location_mode = 'interval' WHERE device_id = ?")
         .bind(id)
         .execute(&app.db)
         .await
         .unwrap();
-    let html = locate_page(&app, &cookie, &format!("?device={id}")).await;
+    let html = settings().await;
     assert!(autosaves(&html, "interval_minutes"));
     assert!(html.contains("<option value=\"30\" selected>30 min</option>"));
     assert!(html.contains("<option value=\"60\">1 hour</option>"));
@@ -679,18 +902,22 @@ async fn unknown_phones_and_failed_reads() {
         .get_page(&format!("/devices/locate?device={id}"), &cookie)
         .await;
     assert_eq!(res.status, StatusCode::INTERNAL_SERVER_ERROR);
-    let res = app
-        .get_page(&format!("/devices/{id}/locations.json"), &cookie)
-        .await;
-    assert_eq!(res.status, StatusCode::INTERNAL_SERVER_ERROR);
+    for path in ["locations.json", "zones"] {
+        let res = app
+            .get_page(&format!("/devices/{id}/{path}"), &cookie)
+            .await;
+        assert_eq!(res.status, StatusCode::INTERNAL_SERVER_ERROR, "{path}");
+    }
     sqlx::query("ALTER TABLE device_commands RENAME TO device_commands_gone")
         .execute(&app.db)
         .await
         .unwrap();
-    let res = app
-        .get_page(&format!("/devices/{id}/locate-result.json"), &cookie)
-        .await;
-    assert_eq!(res.status, StatusCode::INTERNAL_SERVER_ERROR);
+    for path in ["locate-result.json", "find"] {
+        let res = app
+            .get_page(&format!("/devices/{id}/{path}"), &cookie)
+            .await;
+        assert_eq!(res.status, StatusCode::INTERNAL_SERVER_ERROR, "{path}");
+    }
 }
 
 /// Leaflet's `Icon.Default` prepends `imagePath` to its icon file names: an `iconUrl` of our own
@@ -740,33 +967,33 @@ fn recent_of(html: &str) -> Option<&str> {
     Some(&html[start..end])
 }
 
-/// Locate's Requests lists the page's own commands; the summary's Activity every command of the
+/// Find Phone's requests list Locate's own commands; the summary's Activity every command of the
 /// phone, its Cancel back there (design 44 §1.1, design 48 §1.2, §1.5); an unknown `back` goes to
-/// Locate.
+/// Find Phone (design 88).
 #[tokio::test]
 async fn requests_list_this_pages_commands_and_activity_every_one() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("Anna").await;
-    // Nothing yet: no Requests (nor Activity).
-    let html = locate_page(&app, &cookie, &format!("?device={id}")).await;
+    // Nothing yet: no requests (nor Activity).
+    let html = phone_page(&app, &cookie, id, "find", "").await;
     assert!(recent_of(&html).is_none(), "{html}");
 
     for command in ["locate", "install_update"] {
         waiting(&app, id, command, "datetime('now', '-3 minutes')").await;
     }
     let lock_again = waiting(&app, id, "end_windows", "datetime('now', '-2 minutes')").await;
-    let html = locate_page(&app, &cookie, &format!("?device={id}")).await;
+    let html = phone_page(&app, &cookie, id, "find", "").await;
     let locate = recent_of(&html).unwrap();
-    assert!(locate.contains(">Requests</h2>"), "{locate}");
+    assert!(locate.contains(">Recent Requests</h2>"), "{locate}");
     assert!(locate.contains("data-command=\"locate\""), "{locate}");
     for other in ["end_windows", "install_update"] {
         assert!(
             !locate.contains(&format!("data-command=\"{other}\"")),
-            "{other} on Locate"
+            "{other} on Find Phone"
         );
     }
-    assert!(locate.contains("<input type=\"hidden\" name=\"back\" value=\"locate\">"));
+    assert!(locate.contains("<input type=\"hidden\" name=\"back\" value=\"find\">"));
 
     let summary = app
         .get_page(&format!("/devices/{id}"), &cookie)
@@ -790,14 +1017,14 @@ async fn requests_list_this_pages_commands_and_activity_every_one() {
         &format!("/devices/{id}?cancel=done"),
         Some("activity"),
     );
-    // Too late now; a `back` that isn't known (or none) goes to Locate.
+    // Too late now; a `back` that isn't known (or none) goes to Find Phone.
     for fields in [&[("back", "https://evil.example")][..], &[][..]] {
         let res = app
             .request_form(Method::POST, &cancel, Some(&cookie), fields)
             .await;
         assert_redirect(
             &res,
-            &format!("/devices/locate?device={id}&cancel=too_late"),
+            &format!("/devices/{id}/find?cancel=too_late"),
             Some("recent"),
         );
     }
@@ -805,8 +1032,8 @@ async fn requests_list_this_pages_commands_and_activity_every_one() {
 
 /// Requests' buckets (design 48 §1.4): in flight at any age; failed, expired or never confirmed
 /// for a day; the newest Ring, Stop Ringing, Lock and Erase whatever became of it; never what the
-/// parent cancelled, never a finished Update Location. Cancelling the last waiting one leaves the
-/// group for its line.
+/// parent cancelled, never a finished Update Location. Find Phone shows the newest three of them
+/// (design 88). Cancelling the last waiting one leaves the group for its line.
 #[tokio::test]
 async fn requests_show_what_is_in_flight_or_just_went_wrong() {
     let app = TestApp::new().await;
@@ -865,7 +1092,13 @@ async fn requests_show_what_is_in_flight_or_just_went_wrong() {
         }
         ids.push(row);
     }
-    let html = locate_page(&app, &cookie, &format!("?device={id}")).await;
+    // Every bucket, from `requests` itself: Find Phone lists only its first three.
+    let zone = crate::display_time::Zone::load(&app.db, crate::i18n::Lang::En).await;
+    let now = chrono::Utc::now();
+    let all = crate::handlers::locate::requests(&app.state, id, None, &zone, now)
+        .await
+        .unwrap();
+    let html = phone_page(&app, &cookie, id, "find", "").await;
     let requests = recent_of(&html).unwrap();
     for ((command, age, _, shown), row) in rows.iter().zip(&ids) {
         let exact: String =
@@ -874,14 +1107,19 @@ async fn requests_show_what_is_in_flight_or_just_went_wrong() {
                 .fetch_one(&app.db)
                 .await
                 .unwrap();
+        let title = format!("{exact} UTC");
+        let at = all.rows.iter().position(|r| r.asked_exact == title);
+        assert_eq!(at.is_some(), *shown, "{command} {age}");
         assert_eq!(
-            requests.contains(&format!("title=\"{exact} UTC\"")),
-            *shown,
+            requests.contains(&format!("title=\"{title}\"")),
+            at.is_some_and(|at| at < 3),
             "{command} {age}: {requests}"
         );
     }
-    assert_eq!(requests.matches("data-command=").count(), 6, "{requests}");
-    assert!(requests.contains(&format!("/commands/{}/cancel#recent", ids[0])));
+    assert_eq!(all.rows.len(), 6);
+    assert_eq!(requests.matches("data-command=").count(), 3, "{requests}");
+    // The lock waiting three days still has its Cancel.
+    assert!(all.rows.iter().any(|r| r.cancel_id == Some(ids[0])));
 
     // Cancelling the last waiting one: the group stays for its line.
     let (emil, _) = app.enrolled_device("Emil").await;
@@ -891,16 +1129,16 @@ async fn requests_show_what_is_in_flight_or_just_went_wrong() {
             Method::POST,
             &format!("/devices/{emil}/commands/{only}/cancel"),
             Some(&cookie),
-            &[("back", "locate")],
+            &[("back", "find")],
         )
         .await;
     assert_redirect(
         &res,
-        &format!("/devices/locate?device={emil}&cancel=done"),
+        &format!("/devices/{emil}/find?cancel=done"),
         Some("recent"),
     );
     app.assert_lands(&res, &cookie).await;
-    let html = locate_page(&app, &cookie, &format!("?device={emil}&cancel=done")).await;
+    let html = phone_page(&app, &cookie, emil, "find", "?cancel=done").await;
     let requests = recent_of(&html).expect("Requests for its line");
     assert!(
         requests.contains("data-flash=\"recent\">Cancelled."),
@@ -1159,20 +1397,29 @@ async fn the_locate_tab_speaks_norwegian() {
         "<h1 class=\"page-title\">Finn</h1>",
         "Posisjonsinnstillinger",
         "Oppdater posisjon</button>",
-        "Forespørsler",
+        "Finn telefonen",
         "0 de siste 12 timene · nyeste ",
         "data-w-in-24=\"{count} de siste 24 timene\"",
         "data-w-newest=\"Nyeste posisjon\"",
         "data-lang=\"nb\"",
         "Posisjon er av på telefonen",
-        "<option value=\"interval\">Jevnlig</option>",
     ] {
         assert!(html.contains(words), "{words}");
     }
-    let row = recent_row(&html, "ring");
+    assert!(!html.contains("Location Settings") && !html.contains("Find Phone"));
+    // Design 88's pages.
+    let find = phone_page(&app, &cookie, id, "find", "?lang=nb").await;
+    assert!(find.contains(">Siste forespørsler</h2>") && find.contains(">Vis alle</span>"));
+    let row = recent_row(&find, "ring");
     assert!(row.contains(">Ring<") && row.contains("Venter"), "{row}");
-    assert!(!html.contains("Location Settings") && !html.contains("Requests"));
     let _ = ring;
+    let settings = phone_page(&app, &cookie, id, "location-settings", "?lang=nb").await;
+    assert!(settings.contains("<option value=\"interval\">Jevnlig</option>"));
+    assert!(settings.contains("<h1 class=\"page-title\">Posisjonsinnstillinger</h1>"));
+    let zones = phone_page(&app, &cookie, id, "zones", "?lang=nb").await;
+    assert!(
+        zones.contains("<h1 class=\"page-title\">Soner</h1>") && zones.contains("Legg til sone")
+    );
 
     // English stays as it was.
     let en = locate_page(&app, &cookie, &format!("?device={id}&lang=en")).await;

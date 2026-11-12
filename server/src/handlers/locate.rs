@@ -1,7 +1,8 @@
-//! The Locate tab (`/devices/locate`, `templates/device_locate.html`; design 31 §3.6, step 13): a
-//! the phones' chips (design 85), the map (Leaflet against public OSM tiles, design 33), the last fix as age and
-//! accuracy, Update Location, Ring, Stop Ringing, Lock and Erase Phone…, the location settings and
-//! the requests in flight. Commands are queued into `device_commands`, the phone is nudged over its
+//! The Locate tab (`/devices/locate`, `templates/device_locate.html`; design 31 §3.6, step 13):
+//! the phones' chips (design 85), the map (Leaflet against public OSM tiles, design 33), the last
+//! fix as age and accuracy, Update Location, then one group of rows (design 88), each to a page of
+//! the phone's: Locations, Zones ([show_zones]), Find Phone ([show_find]: Ring, Stop Ringing,
+//! Lock, the requests in flight, Erase Phone…) and Location Settings ([show_location_settings]). Commands are queued into `device_commands`, the phone is nudged over its
 //! push channel and fetches them with its policy (see `handlers::device_api::policy`) - within
 //! seconds while it's online, otherwise when it's back. The location policy (off / on request /
 //! every N minutes, handy step 6) decides when the phone takes a fix on its own.
@@ -83,31 +84,73 @@ struct Locate {
     waiting_for_fix: bool,
     /// The location policy is off: the phone switches location off and never takes a fix.
     location_off: bool,
+    /// Design 64 step 2 (decision 14): "3 made-up locations ignored" - the phone's running count
+    /// of mock fixes a release build ignored; `None` at 0 or without a watch.
+    mock_ignored: Option<String>,
+    /// The phone has zones: the map draws them (`data-zones`).
+    has_zones: bool,
+    /// Design 88: the rows' values - Zones ("3 · Here now: School") and Location Settings
+    /// ("Every 15 min").
+    zones_value: String,
+    settings_value: String,
+}
+
+/// The Zones page (design 88; design 64 §3.5): the phone's zones, each to its page.
+#[derive(Template)]
+#[template(path = "device_zones.html")]
+struct ZonesTemplate {
+    lang: Lang,
+    title: String,
+    device: Device,
+    who: crate::handlers::devices::BandAvatar,
+    zones: ZonesView,
+}
+crate::i18n::words!(ZonesTemplate);
+
+/// The Find Phone page (design 88): Ring, Stop Ringing, Lock, the newest requests and Erase Phone….
+#[derive(Template)]
+#[template(path = "device_find.html")]
+struct FindTemplate {
+    lang: Lang,
+    title: String,
+    device: Device,
+    who: crate::handlers::devices::BandAvatar,
+    /// The newest [FIND_REQUESTS] of [requests]; the first is highlighted.
+    recent: Recent,
     /// The phone's last report said it can't erase itself yet (QA of the launcher wave, Low 4).
     wipe_not_ready: bool,
     /// Design 59 §2.3: Android's lock is chosen - after a restart the actions wait for the PIN.
     android_lock: bool,
     /// The name typed into Erase Phone… didn't match: the confirm is open with the refusal.
     erase_refused: bool,
+}
+crate::i18n::words!(FindTemplate);
+
+/// How many requests the Find Phone page lists; Show all leads to the summary's Activity.
+const FIND_REQUESTS: usize = 3;
+
+/// The Location Settings page (design 88): When to locate, Every, Keep history for.
+#[derive(Template)]
+#[template(path = "device_location_settings.html")]
+struct LocationSettingsTemplate {
+    lang: Lang,
+    title: String,
+    device: Device,
+    who: crate::handlers::devices::BandAvatar,
     location_mode: String,
     location_interval: i64,
     location_retention: i64,
     modes: [(&'static str, &'static str); 3],
     intervals: Vec<(i64, String)>,
     retention_choices: Vec<(i64, String)>,
-    recent: Recent,
-    /// Design 64: the phone's zones (`#zones`).
-    zones: ZonesView,
     /// Design 64 step 2 (the user's decision 3): under "Every", while the phone has zones and
     /// watches them - "30 min while the phone has zones" (the served interval, never written).
     interval_note: Option<String>,
-    /// Design 64 step 2 (decision 14): "3 made-up locations ignored" - the phone's running count
-    /// of mock fixes a release build ignored; `None` at 0 or without a watch.
-    mock_ignored: Option<String>,
 }
+crate::i18n::words!(LocationSettingsTemplate);
 
-/// The Locate page's `#zones` (design 64 §3.5, §3.6): a row per zone, Add Zone, the line after a
-/// save or a delete, what the location settings mean for the zones.
+/// The Zones page's `#zones` (design 64 §3.5, §3.6; design 88): a row per zone, Add Zone, the line
+/// after a save or a delete, what the location settings mean for the zones.
 struct ZonesView {
     rows: Vec<ZoneRow>,
     /// 10 zones: Add Zone is replaced by a note, "10 zones is the most".
@@ -324,7 +367,7 @@ struct MapData {
     span: i64,
 }
 
-/// The Locate page's Requests (`partials/recent.html`, design 48 §1.4), `#recent`.
+/// Find Phone's requests (`partials/recent.html`'s rows, design 48 §1.4, design 88), `#recent`.
 pub(crate) struct Recent {
     pub(crate) device_id: i64,
     pub(crate) rows: Vec<CommandRow>,
@@ -574,7 +617,7 @@ fn answer_view(
     })
 }
 
-/// A command's row (Locate's Requests, the summary's Activity, Install Now's): "Lock · 10:58 ·
+/// A command's row (Find Phone's requests, the summary's Activity, Install Now's): "Lock · 10:58 ·
 /// Done", what happened under the label, Cancel while it waits.
 pub(crate) struct CommandRow {
     /// The stored command (`ring`, ...): a `data-` hook for tests, never shown.
@@ -1352,7 +1395,7 @@ pub async fn locate_result_json(
     }
 }
 
-/// Locate's Requests for `device` (design 48 §1.4), newest first, with the line after a Cancel
+/// Find Phone's requests for `device` (design 48 §1.4), newest first, with the line after a Cancel
 /// (`cancel`, the page's `?cancel=`): every request still in flight, at any age; one that went
 /// wrong (failed, expired, never confirmed, no answer) for [REQUESTS_HOURS]; and the newest Ring,
 /// Stop Ringing, Lock and Erase whatever became of it. Never a request the parent cancelled (the
@@ -1501,24 +1544,17 @@ fn interval_label(lang: Lang, minutes: i64) -> String {
 
 /// What the request asks the Locate page to show besides the phone.
 struct Asked<'a> {
-    /// The name typed into Erase Phone… didn't match.
-    erase_refused: bool,
     /// Just pressed Update Location (`?requested=1`).
     waiting_for_fix: bool,
-    /// `?cancel=`, the line in Recent.
-    cancel: Option<&'a str>,
     /// `?span=` ([span_of]).
     span: i64,
-    /// `?zone=added|saved|deleted` and `?zone_id=`: the line after a zone's save (design 64).
-    zone: Option<&'a str>,
-    zone_id: Option<i64>,
     /// After Update All (`?requested=all&at=`): the press's instant as the address has it.
     all_at: Option<&'a str>,
 }
 
 /// The page. With one phone it is shown at once; with several and none (or an unknown one)
 /// chosen, the Alle view (design 85). Every read that fails is a 500, never a default (an "Off"
-/// or an empty Recent that isn't true).
+/// that isn't true).
 async fn render_locate_page(
     state: &AppState,
     admin_id: i64,
@@ -1563,6 +1599,135 @@ async fn render_locate_page(
     ))
 }
 
+/// A phone's location settings and locks as the Locate pages read them. A phone always has its
+/// policy row (`insert_device_with_policy`); a missing one reads as the defaults a new phone gets.
+struct LocationPolicy {
+    mode: String,
+    interval: i64,
+    retention: i64,
+    /// Design 59 §2.3: Android's lock with a child PIN.
+    android_lock: bool,
+    /// "Keep location on".
+    locked: bool,
+}
+
+async fn location_policy(state: &AppState, id: i64) -> Result<LocationPolicy, sqlx::Error> {
+    let row: Option<(String, i64, i64, bool, bool)> = sqlx::query_as(
+        "SELECT location_mode, location_interval_minutes, location_retention_days, \
+         kid_keyguard = ? AND kid_pin_hash IS NOT NULL, lock_location \
+         FROM device_policy WHERE device_id = ?",
+    )
+    .bind(crate::kid_lock::KEYGUARD_ANDROID)
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await?;
+    let (mode, interval, retention, android_lock, locked) = row.unwrap_or_else(|| {
+        (
+            "on_request".to_string(),
+            30,
+            crate::retention::DEFAULT_LOCATION_RETENTION_DAYS,
+            false,
+            true,
+        )
+    });
+    Ok(LocationPolicy {
+        mode,
+        interval,
+        retention,
+        android_lock,
+        locked,
+    })
+}
+
+/// A phone's zones, its latest zone watch and the interval it is served (design 64 step 2: the
+/// 30-min floor while it has zones and watches them).
+struct PhoneZones {
+    list: Vec<crate::zones::Zone>,
+    watch: Option<crate::zones::ZoneWatch>,
+    served_interval: i64,
+}
+
+async fn phone_zones(
+    state: &AppState,
+    id: i64,
+    policy: &LocationPolicy,
+) -> Result<PhoneZones, sqlx::Error> {
+    let list = crate::zones::list(&state.db, id).await?;
+    let watch = crate::zones::last_zone_watch(&state.db, id).await?;
+    let served_interval = crate::zones::served_interval(
+        &policy.mode,
+        policy.interval,
+        list.len(),
+        crate::zones::watching(watch.as_ref()),
+    );
+    Ok(PhoneZones {
+        list,
+        watch,
+        served_interval,
+    })
+}
+
+/// The Zones part for `zones` ([zones_view]) with the newest fix's times; `flash` is `?zone=`,
+/// `flash_zone` `?zone_id=`.
+fn zones_of(
+    zones: &PhoneZones,
+    policy: &LocationPolicy,
+    newest: Option<&DeviceLocation>,
+    flash: Option<&str>,
+    flash_zone: Option<i64>,
+    zone: &Zone,
+    now: DateTime<Utc>,
+) -> ZonesView {
+    zones_view(
+        &zones.list,
+        &policy.mode,
+        zones.served_interval,
+        policy.locked,
+        flash,
+        flash_zone,
+        newest.and_then(|l| parse_db_utc(&l.captured_at)),
+        newest.and_then(DeviceLocation::seen_at),
+        zones.watch.as_ref(),
+        zone,
+        now,
+    )
+}
+
+/// The Zones row's value (design 88): "None yet", "3", "3 · Here now: School" (the first zone the
+/// phone is in now).
+fn zones_value(lang: Lang, view: &ZonesView) -> String {
+    let count = view.rows.len();
+    if count == 0 {
+        return t(lang, "locate.rows.zones_none").to_string();
+    }
+    match view.rows.iter().find(|z| z.presence.here()) {
+        Some(here) => t_params(
+            lang,
+            "locate.rows.zones_here",
+            &[("count", &count.to_string()), ("zone", &here.name)],
+        ),
+        None => count.to_string(),
+    }
+}
+
+/// The Location Settings row's value (design 88): "Off", "Only when asked", "Every 15 min" - the
+/// setting, not the interval the zones serve.
+fn settings_value(lang: Lang, mode: &str, interval: i64) -> String {
+    match mode {
+        "off" => t(lang, "common.off").to_string(),
+        "interval" => match interval {
+            m if m < 60 => t_params(lang, "locate.rows.every_min", &[("n", &m.to_string())]),
+            60 => t(lang, "locate.rows.every_hour").to_string(),
+            m => t_params(
+                lang,
+                "locate.rows.every_hours",
+                &[("n", &(m / 60).to_string())],
+            ),
+        },
+        _ => t(lang, "locate.settings.on_request").to_string(),
+    }
+}
+
 async fn locate_view(
     state: &AppState,
     device: Device,
@@ -1572,17 +1737,12 @@ async fn locate_view(
     asked: Asked<'_>,
 ) -> Result<Locate, sqlx::Error> {
     let Asked {
-        erase_refused,
         waiting_for_fix,
-        cancel,
         span,
-        zone: zone_flash,
-        zone_id: flash_zone,
         all_at: _,
     } = asked;
     let id = device.id;
     let lang = zone.lang();
-    let recent = requests(state, id, cancel, zone, now).await?;
     let marker = rows
         .iter()
         .find(|p| p.id == id)
@@ -1597,45 +1757,15 @@ async fn locate_view(
         });
     let chips = if rows.len() >= 2 { rows } else { Vec::new() };
 
-    // A phone always has its policy row (`insert_device_with_policy`); a missing one reads as
-    // the defaults a new phone gets.
-    let (location_mode, location_interval, location_retention, android_lock, location_locked): (
-        String,
-        i64,
-        i64,
-        bool,
-        bool,
-    ) = sqlx::query_as(
-        "SELECT location_mode, location_interval_minutes, location_retention_days, \
-         kid_keyguard = ? AND kid_pin_hash IS NOT NULL, lock_location \
-         FROM device_policy WHERE device_id = ?",
-    )
-    .bind(crate::kid_lock::KEYGUARD_ANDROID)
-    .bind(id)
-    .fetch_optional(&state.db)
-    .await?
-    .unwrap_or_else(|| {
-        (
-            "on_request".to_string(),
-            30,
-            crate::retention::DEFAULT_LOCATION_RETENTION_DAYS,
-            false,
-            true,
-        )
-    });
-    let zone_list = crate::zones::list(&state.db, id).await?;
-    // Design 64 step 2: the phone's watch and the interval it is served (the 30-min floor).
-    let watch = crate::zones::last_zone_watch(&state.db, id).await?;
-    let served_interval = crate::zones::served_interval(
-        &location_mode,
-        location_interval,
-        zone_list.len(),
-        crate::zones::watching(watch.as_ref()),
-    );
+    let policy = location_policy(state, id).await?;
+    let phone_zones = phone_zones(state, id, &policy).await?;
+    let served_interval = phone_zones.served_interval;
 
     let (newest, mut map) = map_data(state, id, span, zone, now).await?;
     // The newest fix's badge (design 64 §3.5): the zones that fix is surely in.
-    let badge = newest.as_ref().and_then(|l| fix_badge(lang, &zone_list, l));
+    let badge = newest
+        .as_ref()
+        .and_then(|l| fix_badge(lang, &phone_zones.list, l));
     let fix_before_off = match &newest {
         Some(l) => fix_before_off(state, id, l, now).await?,
         None => false,
@@ -1643,7 +1773,7 @@ async fn locate_view(
     // Design 85 §4.7: fresh or old by the Alle view's rule, and the still re-send's age.
     let seen = newest
         .clone()
-        .and_then(|l| Seen::of(l, &location_mode, served_interval, now));
+        .and_then(|l| Seen::of(l, &policy.mode, served_interval, now));
     let fix = newest.as_ref().map(|l| {
         // Its age, title and "Last seen 9 days ago" from the later of the fix and its re-send.
         let fix = Fix::seen(l);
@@ -1664,7 +1794,7 @@ async fn locate_view(
             aged: fix
                 .at
                 .map(|at| (now - at).num_days())
-                .filter(|days| *days >= location_retention.max(1))
+                .filter(|days| *days >= policy.retention.max(1))
                 .map(|days| t_count(lang, "locate.fix.aged", days, &[])),
             seen_class,
             seen_word,
@@ -1701,47 +1831,30 @@ async fn locate_view(
         }
         None => None,
     };
-    let wipe_not_ready = sqlx::query_scalar::<_, Option<bool>>(
-        "SELECT remote_wipe_ready FROM device_status WHERE device_id = ? \
-         ORDER BY reported_at DESC, id DESC LIMIT 1",
-    )
-    .bind(id)
-    .fetch_optional(&state.db)
-    .await?
-    .flatten()
-        == Some(false);
 
-    let zones = zones_view(
-        &zone_list,
-        &location_mode,
-        served_interval,
-        location_locked,
-        zone_flash,
-        flash_zone,
-        newest.as_ref().and_then(|l| parse_db_utc(&l.captured_at)),
-        newest.as_ref().and_then(DeviceLocation::seen_at),
-        watch.as_ref(),
+    let zones = zones_of(
+        &phone_zones,
+        &policy,
+        newest.as_ref(),
+        None,
+        None,
         zone,
         now,
     );
-    let interval_note = (served_interval != location_interval).then(|| {
-        t_params(
-            lang,
-            "locate.settings.interval_note",
-            &[("interval", &interval_label(lang, served_interval))],
-        )
-    });
     // Q-9: with when the count last rose.
     let mock_at = crate::zones::mock_logged_at(&state.db, id).await?;
-    let mock_ignored = watch.filter(|w| w.mock_ignored > 0).map(|w| match mock_at {
-        Some(at) => t_count(
-            lang,
-            "locate.mock.ignored_last",
-            w.mock_ignored,
-            &[("at", &zone.at(at, now))],
-        ),
-        None => t_count(lang, "locate.mock.ignored", w.mock_ignored, &[]),
-    });
+    let mock_ignored = phone_zones
+        .watch
+        .filter(|w| w.mock_ignored > 0)
+        .map(|w| match mock_at {
+            Some(at) => t_count(
+                lang,
+                "locate.mock.ignored_last",
+                w.mock_ignored,
+                &[("at", &zone.at(at, now))],
+            ),
+            None => t_count(lang, "locate.mock.ignored", w.mock_ignored, &[]),
+        });
     Ok(Locate {
         device,
         chips,
@@ -1752,31 +1865,193 @@ async fn locate_view(
         locations_value,
         answer,
         waiting_for_fix,
-        location_off: location_mode == "off",
-        wipe_not_ready,
-        android_lock,
-        erase_refused,
-        location_mode,
-        location_interval,
-        location_retention,
-        modes: [
-            ("off", t(lang, "common.off")),
-            ("on_request", t(lang, "locate.settings.on_request")),
-            ("interval", t(lang, "locate.settings.interval")),
-        ],
-        intervals: crate::time_rules::LOCATION_INTERVALS
-            .iter()
-            .map(|m| (*m, interval_label(lang, *m)))
-            .collect(),
-        retention_choices: crate::retention::LOCATION_RETENTION_DAYS
-            .iter()
-            .map(|d| (*d, t_count(lang, "locate.days", *d, &[])))
-            .collect(),
-        recent,
-        zones,
-        interval_note,
+        location_off: policy.mode == "off",
         mock_ignored,
+        has_zones: !zones.rows.is_empty(),
+        zones_value: zones_value(lang, &zones),
+        settings_value: settings_value(lang, &policy.mode, policy.interval),
     })
+}
+
+/// The phone for one of its Locate pages: 404 for an unknown one, 500 when the read fails.
+async fn phone_or_error(state: &AppState, id: i64, lang: Lang) -> Result<Device, Box<Response>> {
+    match sqlx::query_as::<_, Device>("SELECT * FROM devices WHERE id = ?")
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await
+    {
+        Ok(Some(device)) => Ok(device),
+        Ok(None) => Err(Box::new(crate::i18n::error(
+            lang,
+            StatusCode::NOT_FOUND,
+            "error.device_not_found",
+        ))),
+        Err(err) => Err(Box::new(db_error(id, err, lang))),
+    }
+}
+
+/// `GET /devices/{id}/zones` (design 88; no-store, as every zones path): the phone's zones, each
+/// to its page, Locate Regularly when asked, Add Zone. A zone's save lands on its row
+/// (`?zone=added|saved&zone_id=N#zone-N`) with its line, a delete and Locate Regularly on `#zones`.
+pub async fn show_zones(
+    State(state): State<AppState>,
+    lang: Lang,
+    Path(id): Path<i64>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Response {
+    let device = match phone_or_error(&state, id, lang).await {
+        Ok(device) => device,
+        Err(answer) => return *answer,
+    };
+    let flash = params.get("zone").map(String::as_str);
+    let flash_zone = params.get("zone_id").and_then(|s| s.parse::<i64>().ok());
+    let zone = Zone::load(&state.db, lang).await;
+    let now = Utc::now();
+    let view = async {
+        let policy = location_policy(&state, id).await?;
+        let zones = phone_zones(&state, id, &policy).await?;
+        let newest = newest_fix(&state, id).await?;
+        Ok::<_, sqlx::Error>(zones_of(
+            &zones,
+            &policy,
+            newest.as_ref(),
+            flash,
+            flash_zone,
+            &zone,
+            now,
+        ))
+    };
+    let zones = match view.await {
+        Ok(zones) => zones,
+        Err(err) => return db_error(id, err, lang),
+    };
+    Html(
+        ZonesTemplate {
+            lang,
+            title: t(lang, "locate.zones.title").to_string(),
+            who: crate::handlers::devices::BandAvatar::of(&device),
+            device,
+            zones,
+        }
+        .render()
+        .unwrap(),
+    )
+    .into_response()
+}
+
+/// The Find Phone page for `device`; `erase_refused` = a wrong name was typed into Erase Phone….
+async fn render_find_page(
+    state: &AppState,
+    device: Device,
+    cancel: Option<&str>,
+    erase_refused: bool,
+    lang: Lang,
+) -> Result<Html<String>, sqlx::Error> {
+    let id = device.id;
+    let zone = Zone::load(&state.db, lang).await;
+    let now = Utc::now();
+    let mut recent = requests(state, id, cancel, &zone, now).await?;
+    recent.rows.truncate(FIND_REQUESTS);
+    let policy = location_policy(state, id).await?;
+    let wipe_not_ready = sqlx::query_scalar::<_, Option<bool>>(
+        "SELECT remote_wipe_ready FROM device_status WHERE device_id = ? \
+         ORDER BY reported_at DESC, id DESC LIMIT 1",
+    )
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await?
+    .flatten()
+        == Some(false);
+    Ok(Html(
+        FindTemplate {
+            lang,
+            title: t(lang, "locate.find.title").to_string(),
+            who: crate::handlers::devices::BandAvatar::of(&device),
+            device,
+            recent,
+            wipe_not_ready,
+            android_lock: policy.android_lock,
+            erase_refused,
+        }
+        .render()
+        .unwrap(),
+    ))
+}
+
+/// `GET /devices/{id}/find` (design 88): Ring, Stop Ringing and Lock as tiles, the newest
+/// requests right under them (`?cancel=` the line after a Cancel), Erase Phone… at the bottom.
+pub async fn show_find(
+    State(state): State<AppState>,
+    lang: Lang,
+    Path(id): Path<i64>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Response {
+    let device = match phone_or_error(&state, id, lang).await {
+        Ok(device) => device,
+        Err(answer) => return *answer,
+    };
+    let cancel = params.get("cancel").map(String::as_str);
+    match render_find_page(&state, device, cancel, false, lang).await {
+        Ok(page) => page.into_response(),
+        Err(err) => db_error(id, err, lang),
+    }
+}
+
+/// `GET /devices/{id}/location-settings` (design 88): When to locate, Every and Keep history
+/// for, each saving on change and landing back here (`#location-settings`).
+pub async fn show_location_settings(
+    State(state): State<AppState>,
+    lang: Lang,
+    Path(id): Path<i64>,
+) -> Response {
+    let device = match phone_or_error(&state, id, lang).await {
+        Ok(device) => device,
+        Err(answer) => return *answer,
+    };
+    let read = async {
+        let policy = location_policy(&state, id).await?;
+        let zones = phone_zones(&state, id, &policy).await?;
+        Ok::<_, sqlx::Error>((policy, zones.served_interval))
+    };
+    let (policy, served_interval) = match read.await {
+        Ok(read) => read,
+        Err(err) => return db_error(id, err, lang),
+    };
+    let interval_note = (served_interval != policy.interval).then(|| {
+        t_params(
+            lang,
+            "locate.settings.interval_note",
+            &[("interval", &interval_label(lang, served_interval))],
+        )
+    });
+    Html(
+        LocationSettingsTemplate {
+            lang,
+            title: t(lang, "locate.settings.title").to_string(),
+            who: crate::handlers::devices::BandAvatar::of(&device),
+            device,
+            location_mode: policy.mode,
+            location_interval: policy.interval,
+            location_retention: policy.retention,
+            modes: [
+                ("off", t(lang, "common.off")),
+                ("on_request", t(lang, "locate.settings.on_request")),
+                ("interval", t(lang, "locate.settings.interval")),
+            ],
+            intervals: crate::time_rules::LOCATION_INTERVALS
+                .iter()
+                .map(|m| (*m, interval_label(lang, *m)))
+                .collect(),
+            retention_choices: crate::retention::LOCATION_RETENTION_DAYS
+                .iter()
+                .map(|d| (*d, t_count(lang, "locate.days", *d, &[])))
+                .collect(),
+            interval_note,
+        }
+        .render()
+        .unwrap(),
+    )
+    .into_response()
 }
 
 /// The newest fix row's title (design 64 step 2, migration 0093): its exact time, then the phone's
@@ -1865,21 +2140,14 @@ pub async fn show_locate(
         .get("at")
         .map(String::as_str)
         .filter(|_| requested == Some("all"));
-    let cancel = params.get("cancel").map(String::as_str);
     let span = span_of(params.get("span"));
-    let zone = params.get("zone").map(String::as_str);
-    let zone_id = params.get("zone_id").and_then(|s| s.parse::<i64>().ok());
     match render_locate_page(
         &state,
         admin.id,
         selected_id,
         Asked {
-            erase_refused: false,
             waiting_for_fix: waiting,
-            cancel,
             span,
-            zone,
-            zone_id,
             all_at,
         },
         lang,
@@ -1897,7 +2165,7 @@ pub async fn show_locate(
 /// pop skips `cancelled_at`), and one the phone just fetched can't be cancelled (`too_late`, as is
 /// an expired one, or another phone's). Logged in the security log. Back to the group it came
 /// from, where the line says what happened: `back` = `summary` is the phone's summary page's
-/// Activity (`#activity`, design 48 §1.5), anything else the Locate page's Requests (`#recent`).
+/// Activity (`#activity`, design 48 §1.5), anything else Find Phone's requests (`#recent`, design 88).
 pub async fn cancel_command(
     State(state): State<AppState>,
     lang: Lang,
@@ -1919,12 +2187,12 @@ pub async fn cancel_command(
     };
     let back = match form.get("back").map(String::as_str) {
         Some("summary") => format!("/devices/{id}?cancel={outcome}#activity"),
-        _ => format!("/devices/locate?device={id}&cancel={outcome}#recent"),
+        _ => format!("/devices/{id}/find?cancel={outcome}#recent"),
     };
     Redirect::to(&back).into_response()
 }
 
-/// Cancels a command the phone hasn't fetched (the Locate page's Cancel, Install Now's - design
+/// Cancels a command the phone hasn't fetched (Find Phone's Cancel, Install Now's - design
 /// 37 -, which passes `only` = its kind): one statement, so it races the policy's pop cleanly -
 /// whichever comes first wins. `Ok(false)` = too late (fetched, expired, cancelled, another
 /// phone's, another kind). Logged `device_command_cancelled`.
@@ -2304,10 +2572,10 @@ async fn send(
     }
 }
 
-/// Ring, Stop Ringing and Lock return to their group (`#actions`): Recent, right under it, shows
-/// the new row, with and without JS.
+/// Ring, Stop Ringing, Lock and Erase return to their group on Find Phone (`#actions`, design 88):
+/// the requests, right under it, show the new row, with and without JS.
 fn back_to_actions(id: i64) -> String {
-    format!("/devices/locate?device={id}#actions")
+    format!("/devices/{id}/find#actions")
 }
 
 pub async fn ring(
@@ -2446,8 +2714,8 @@ pub async fn locate_all(
 /// deleted at once - the newest one stays while location is on - and by the hourly pruning from
 /// then on.
 /// 400 for another value, 404 for an unknown device; nothing is sent to the phone. Back to
-/// Location Settings (`#location-settings`): the last group of a long page, so a `<noscript>` Save
-/// or a save after a refused erase doesn't land at the top (qa-31-s13-code M1).
+/// the Location Settings page (`#location-settings`, design 88), so a `<noscript>` Save doesn't
+/// land at the top (qa-31-s13-code M1).
 pub async fn update_location_retention(
     State(state): State<AppState>,
     lang: Lang,
@@ -2491,7 +2759,10 @@ pub async fn update_location_retention(
             .await;
             // A failing table is logged by the pass itself (security review L9).
             crate::retention::prune(&state.db).await;
-            Redirect::to(&format!("/devices/locate?device={id}#location-settings")).into_response()
+            Redirect::to(&format!(
+                "/devices/{id}/location-settings#location-settings"
+            ))
+            .into_response()
         }
         Err(err) => {
             tracing::error!(device_id = id, %err, "failed to save the location retention");
@@ -2509,8 +2780,9 @@ pub async fn update_location_retention(
 /// "Regularly"). 400 on an unknown value, 404 for an unknown device; nudges the phone. Off erases
 /// the phone's every fix and shutdown position at once (the pruning pass; security review P1, the
 /// owner's decision on M1 of round S3) - the hourly pass again if this one fails. Back to
-/// `#location-settings`, as the history - or to `#zones` for the zones' Locate Regularly
-/// (`back=zones`, design 64 §3.6; anything else is the settings).
+/// the Location Settings page (`#location-settings`), as the history - or to the Zones page
+/// (`#zones`) for the zones' Locate Regularly (`back=zones`, design 64 §3.6, design 88; anything
+/// else is the settings).
 pub async fn update_location_policy(
     State(state): State<AppState>,
     lang: Lang,
@@ -2595,11 +2867,11 @@ pub async fn update_location_policy(
                 }
             }
             let _ = state.command_notify.send(id);
-            let group = match form.get("back").map(String::as_str) {
-                Some("zones") => "zones",
-                _ => "location-settings",
+            let back = match form.get("back").map(String::as_str) {
+                Some("zones") => format!("/devices/{id}/zones#zones"),
+                _ => format!("/devices/{id}/location-settings#location-settings"),
             };
-            Redirect::to(&format!("/devices/locate?device={id}#{group}")).into_response()
+            Redirect::to(&back).into_response()
         }
         Err(err) => {
             tracing::error!(device_id = id, %err, "failed to save the location policy");
@@ -2615,7 +2887,7 @@ pub async fn update_location_policy(
 /// Erase Phone…: gated the same way backup restore/delete are (`templates/backups.html`) - the
 /// parent types the phone's exact name before anything is queued. An erase is irreversible and a
 /// phone that erases never answers, so this confirmation is the only safety net there is. A name
-/// that doesn't match renders the page with the confirm open and the refusal in it (the form's
+/// that doesn't match renders Find Phone with the confirm open and the refusal in it (the form's
 /// action ends in `#erase`, so the answer lands there); 404 for an unknown phone.
 pub async fn wipe(
     State(state): State<AppState>,
@@ -2624,37 +2896,14 @@ pub async fn wipe(
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
-    let device = match sqlx::query_as::<_, Device>("SELECT * FROM devices WHERE id = ?")
-        .bind(id)
-        .fetch_optional(&state.db)
-        .await
-    {
-        Ok(Some(device)) => device,
-        Ok(None) => {
-            return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.device_not_found");
-        }
-        Err(err) => return db_error(id, err, lang),
+    let device = match phone_or_error(&state, id, lang).await {
+        Ok(device) => device,
+        Err(answer) => return *answer,
     };
 
     let confirm = form.get("confirm_name").map(|s| s.trim()).unwrap_or("");
     if confirm != device.name {
-        return match render_locate_page(
-            &state,
-            admin.id,
-            Some(id),
-            Asked {
-                erase_refused: true,
-                waiting_for_fix: false,
-                cancel: None,
-                span: SPANS[0].0,
-                zone: None,
-                zone_id: None,
-                all_at: None,
-            },
-            lang,
-        )
-        .await
-        {
+        return match render_find_page(&state, device, None, true, lang).await {
             Ok(page) => page.into_response(),
             Err(err) => db_error(id, err, lang),
         };

@@ -306,7 +306,7 @@ async fn a_moved_zone_forgets_its_side_and_a_rename_keeps_it() {
                 .await;
             assert_redirect(
                 &res,
-                &format!("/devices/locate?device={id}&zone=saved&zone_id={home}"),
+                &format!("/devices/{id}/zones?zone=saved&zone_id={home}"),
                 Some(&format!("zone-{home}")),
             );
             app.assert_lands(&res, &cookie).await;
@@ -526,13 +526,13 @@ async fn the_zone_page_adds_saves_and_deletes_landing_on_its_row() {
     let home: i64 = count(&app, "SELECT MAX(id) FROM device_zones").await;
     assert_redirect(
         &res,
-        &format!("/devices/locate?device={id}&zone=added&zone_id={home}"),
+        &format!("/devices/{id}/zones?zone=added&zone_id={home}"),
         Some(&format!("zone-{home}")),
     );
     app.assert_lands(&res, &cookie).await;
-    let locate = app.get_page(res.location().unwrap(), &cookie).await.text();
-    assert!(locate.contains("data-flash=\"zone\">Added."));
-    assert!(locate.contains("150 m · arrive and leave"));
+    let zones = app.get_page(res.location().unwrap(), &cookie).await.text();
+    assert!(zones.contains("data-flash=\"zone\">Added."));
+    assert!(zones.contains("150 m · arrive and leave"));
     // Its page, the delete confirm; another phone's path to it is a 404.
     let html = app
         .get_page(&format!("/devices/{id}/zones/{home}"), &cookie)
@@ -591,7 +591,7 @@ async fn the_zone_page_adds_saves_and_deletes_landing_on_its_row() {
         .await;
     assert_redirect(
         &res,
-        &format!("/devices/locate?device={id}&zone=deleted"),
+        &format!("/devices/{id}/zones?zone=deleted"),
         Some("zones"),
     );
     app.assert_lands(&res, &cookie).await;
@@ -703,24 +703,29 @@ async fn every_refusal_comes_back_at_the_form_with_nothing_written() {
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
     assert!(res.text().contains("10 zones is the most for one phone"));
     assert_eq!(count(&app, "SELECT COUNT(*) FROM device_zones").await, 10);
-    let locate = app
-        .get_page(&format!("/devices/locate?device={id}"), &cookie)
+    let zones = app
+        .get_page(&format!("/devices/{id}/zones"), &cookie)
         .await
         .text();
-    assert!(locate.contains("data-row=\"zones-full\""));
-    assert!(!locate.contains("data-row=\"add-zone\""));
+    assert!(zones.contains("data-row=\"zones-full\""));
+    assert!(!zones.contains("data-row=\"add-zone\""));
     // Another phone may have its own Home.
     let (emil, _) = app.enrolled_device("Emil").await;
     add_home(&app, &cookie, emil).await;
 }
 
 #[tokio::test]
-async fn the_locate_page_says_what_the_location_setting_means_for_zones() {
+async fn the_zones_page_says_what_the_location_setting_means_for_zones() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("Anna").await;
-    let page = || async {
+    let locate = || async {
         app.get_page(&format!("/devices/locate?device={id}"), &cookie)
+            .await
+            .text()
+    };
+    let page = || async {
+        app.get_page(&format!("/devices/{id}/zones"), &cookie)
             .await
             .text()
     };
@@ -729,12 +734,15 @@ async fn the_locate_page_says_what_the_location_setting_means_for_zones() {
     assert!(html.contains("id=\"zones\""));
     assert!(html.contains("data-row=\"add-zone\""));
     assert!(!html.contains("data-warning=\"zones-need-regularly\""));
-    assert!(!html.contains(" data-zones"));
+    assert!(!locate().await.contains(" data-zones"));
     add_home(&app, &cookie, id).await;
     // Only when asked (a new phone's default): the orange row and Locate Regularly.
     let html = page().await;
     assert!(html.contains("data-warning=\"zones-need-regularly\""));
-    assert!(html.contains(" data-zones"), "the map asks for the circles");
+    assert!(
+        locate().await.contains(" data-zones"),
+        "the map asks for the circles"
+    );
     let action = format!("/devices/{id}/location-policy#zones");
     assert!(html.contains(&format!("action=\"{action}\"")));
     let res = app
@@ -745,7 +753,7 @@ async fn the_locate_page_says_what_the_location_setting_means_for_zones() {
             &[("mode", "interval"), ("back", "zones")],
         )
         .await;
-    assert_redirect(&res, &format!("/devices/locate?device={id}"), Some("zones"));
+    assert_redirect(&res, &format!("/devices/{id}/zones"), Some("zones"));
     app.assert_lands(&res, &cookie).await;
     let mode: (String, i64) = sqlx::query_as(
         "SELECT location_mode, location_interval_minutes FROM device_policy WHERE device_id = ?",
@@ -769,14 +777,17 @@ async fn the_locate_page_says_what_the_location_setting_means_for_zones() {
         .await
         .unwrap();
     assert!(page().await.contains("data-note=\"location-unlocked\""));
-    // Off: the location-off row says the zones see nothing.
+    // Off: Locate's location-off row says the zones see nothing.
     sqlx::query("UPDATE device_policy SET location_mode = 'off'")
         .execute(&app.db)
         .await
         .unwrap();
-    let html = page().await;
-    assert!(html.contains("Zones can&#39;t see where the phone is."));
-    assert!(!html.contains("data-note=\"location-unlocked\""));
+    assert!(
+        locate()
+            .await
+            .contains("Zones can&#39;t see where the phone is.")
+    );
+    assert!(!page().await.contains("data-note=\"location-unlocked\""));
 }
 
 #[tokio::test]
@@ -797,7 +808,14 @@ async fn here_now_the_fix_badge_and_the_summary_line() {
         html.contains("· within 20 m · at Home\""),
         "the popup's words"
     );
-    assert!(html.contains("data-here>Here now"));
+    // Design 88: the Zones row says it, the Zones page's row too.
+    assert!(html.contains("1 · Here now: Home"), "{html}");
+    assert!(
+        app.get_page(&format!("/devices/{id}/zones"), &cookie)
+            .await
+            .text()
+            .contains("data-here>Here now")
+    );
     let summary = app
         .get_page(&format!("/devices/{id}"), &cookie)
         .await
@@ -966,9 +984,10 @@ async fn here_now_needs_the_newest_fix_to_agree_and_be_fresh() {
     report(&app, &token, NEAR, &at(30)).await;
     report(&app, &token, NEAR, &at(25)).await;
     let locate = format!("/devices/locate?device={id}");
+    let zones = format!("/devices/{id}/zones");
     let summary = format!("/devices/{id}");
     assert!(
-        app.get_page(&locate, &cookie)
+        app.get_page(&zones, &cookie)
             .await
             .text()
             .contains("data-here>Here now")
@@ -979,6 +998,8 @@ async fn here_now_needs_the_newest_fix_to_agree_and_be_fresh() {
     let html = app.get_page(&locate, &cookie).await.text();
     assert!(!html.contains("At Home"), "no badge for a fix outside");
     assert!(!html.contains("at Home\""), "nor in the popup");
+    assert!(!html.contains("Here now"), "nor in the Zones row");
+    let html = app.get_page(&zones, &cookie).await.text();
     assert!(!html.contains("data-here"));
     assert!(!html.contains("data-last-seen"));
     let page = app.get_page(&summary, &cookie).await.text();
@@ -997,11 +1018,14 @@ async fn here_now_needs_the_newest_fix_to_agree_and_be_fresh() {
     .execute(&app.db)
     .await
     .unwrap();
-    let html = app.get_page(&locate, &cookie).await.text();
+    let html = app.get_page(&zones, &cookie).await.text();
     assert!(!html.contains("data-here"));
     assert!(html.contains("data-last-seen>Last seen at Home "), "{html}");
     assert!(
-        html.contains("Within 20 m · At Home"),
+        app.get_page(&locate, &cookie)
+            .await
+            .text()
+            .contains("Within 20 m · At Home"),
         "the fix itself is still inside"
     );
     assert!(
@@ -1018,7 +1042,7 @@ async fn here_now_needs_the_newest_fix_to_agree_and_be_fresh() {
     .await
     .unwrap();
     assert!(
-        app.get_page(&locate, &cookie)
+        app.get_page(&zones, &cookie)
             .await
             .text()
             .contains("data-here>Here now")
