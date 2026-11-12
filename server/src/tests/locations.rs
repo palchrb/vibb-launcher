@@ -203,6 +203,12 @@ async fn the_locate_page_builds_no_html_from_stored_values() {
     let escaped = "&#60;img src=x onerror=alert(1)&#62;";
     let answer = page.split("data-row=\"locate-answer\"").nth(1).unwrap();
     assert!(answer.contains(escaped), "{answer}");
+    // The requests are Find Phone's (design 88).
+    let page = app
+        .get_page(&format!("/devices/{id}/find"), &cookie)
+        .await
+        .text();
+    assert!(!page.contains("<img src=x"), "a phone's answer as HTML");
     let lock = super::locate_page::recent_row(&page, "lock");
     assert!(lock.contains(escaped), "{lock}");
     let wipe = super::locate_page::recent_row(&page, "wipe");
@@ -292,8 +298,10 @@ async fn a_delivered_command_is_not_shown_as_done() {
         .await
         .unwrap();
     }
+    // Find Phone (design 88): what is in flight - the waiting ring, the lock not confirmed yet,
+    // the wipe that can't confirm; the stop, possibly lost, is in the summary's Activity below.
     let page = app
-        .get_page(&format!("/devices/locate?device={id}"), &cookie)
+        .get_page(&format!("/devices/{id}/find"), &cookie)
         .await
         .text();
     let row = |command: &str| super::locate_page::recent_row(&page, command).to_string();
@@ -303,12 +311,7 @@ async fn a_delivered_command_is_not_shown_as_done() {
         "{}",
         row("lock")
     );
-    assert!(
-        row("stop_ring").contains(">Not confirmed<"),
-        "{}",
-        row("stop_ring")
-    );
-    assert!(row("stop_ring").contains("Send it again."));
+    assert!(!page.contains("data-command=\"stop_ring\""), "{page}");
     assert!(
         row("wipe").contains("can&#39;t confirm an erase"),
         "{}",
@@ -323,6 +326,12 @@ async fn a_delivered_command_is_not_shown_as_done() {
         .text();
     let row = |command: &str| super::locate_page::recent_row(&page, command).to_string();
     assert!(row("locate").contains(">Done<"), "{}", row("locate"));
+    assert!(
+        row("stop_ring").contains(">Not confirmed<"),
+        "{}",
+        row("stop_ring")
+    );
+    assert!(row("stop_ring").contains("Send it again."));
     // The server's own "ok" (no message from the phone) is no line: the word says it
     // (qa-31-s13-code L3).
     assert!(!row("locate").contains("row-sub"), "{}", row("locate"));

@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="{{ lang.code() }}">
+<head>
+{% include "partials/head.html" %}
+</head>
+<body>
+<div class="top-strip" aria-hidden="true"></div>
+{% let tab = "locate" %}
+{% include "partials/tab_bar.html" %}
+{% import "partials/band.html" as band %}
+<main class="container">
+    {% call band::phone(self.t("locate.settings.title"), "/devices/locate?device=" ~ device.id, self.t("nav.locate"), who) %}{% endcall %}
+    <div class="sheet">
+
+    {#- Design 88: Location Settings on its own page. The pickers save on change (autosave.js) and
+        return here (#location-settings), in place, as without JS a <noscript> Save does. Mode and
+        interval are one form: location-policy needs the mode on every post (§5.6, H1). -#}
+    <section id="location-settings" aria-label="{{ self.t("locate.settings.title") }}">
+        <div class="group">
+            <form method="post" action="/devices/{{ device.id }}/location-policy#location-settings" class="cell">
+                <label class="row">
+                    <span class="row-label">{{ self.t("locate.settings.mode") }}</span>
+                    <select class="pick" name="mode" data-autosave>
+                        {% for (value, label) in modes %}
+                        <option value="{{ value }}"{% if *value == location_mode %} selected{% endif %}>{{ label }}</option>
+                        {% endfor %}
+                    </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </label>
+                {% if location_mode == "interval" %}
+                <label class="row">
+                    <span class="row-label">{{ self.t("locate.settings.every") }}{% if let Some(note) = interval_note %}<span class="row-sub" data-interval-note>{{ note }}</span>{% endif %}</span>
+                    <select class="pick" name="interval_minutes" data-autosave>
+                        {% for (minutes, label) in intervals %}
+                        <option value="{{ minutes }}"{% if *minutes == location_interval %} selected{% endif %}>{{ label }}</option>
+                        {% endfor %}
+                    </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </label>
+                {% endif %}
+                <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
+            </form>
+            <form method="post" action="/devices/{{ device.id }}/location-retention#location-settings" class="cell">
+                <label class="row">
+                    <span class="row-label">{{ self.t("locate.settings.keep") }}</span>
+                    <select class="pick" name="days" data-autosave>
+                        {% for (days, label) in retention_choices %}
+                        <option value="{{ days }}"{% if *days == location_retention %} selected{% endif %}>{{ label }}</option>
+                        {% endfor %}
+                    </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </label>
+                <noscript><button type="submit" class="row row-button">{{ self.t("locate.settings.save_history") }}</button></noscript>
+            </form>
+        </div>
+        <p class="group-footer">{{ self.t("locate.settings.footer") }} <span data-note="last-position">{{ self.t("locate.settings.last_position") }}</span></p>
+    </section>
+
+    </div>
+</main>
+</body>
+</html>

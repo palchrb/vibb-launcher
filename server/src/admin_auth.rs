@@ -1187,6 +1187,8 @@ mod tests {
             "/devices/3/locations",
             "/devices/3/locate-result.json",
             "/devices/3/zones.json",
+            // Design 88: the Zones page.
+            "/devices/3/zones",
             "/devices/3/zones/new",
             "/devices/3/zones/7",
             // Show Child PIN's answer (design 59 §2.2), and so the page it is rendered into.

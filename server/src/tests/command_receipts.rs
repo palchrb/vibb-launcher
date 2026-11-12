@@ -201,7 +201,7 @@ async fn a_new_command_stops_an_unconfirmed_one_coming_again() {
 }
 
 #[tokio::test]
-async fn the_locate_page_reads_receipts_and_failures() {
+async fn find_phone_reads_receipts_and_failures() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (device, token) = app.enrolled_device("phone").await;
@@ -269,22 +269,18 @@ async fn the_locate_page_reads_receipts_and_failures() {
         .await
         .unwrap();
     }
-    let page = app
-        .get_page(&format!("/devices/locate?device={device}"), &cookie)
-        .await
-        .text();
+    // Find Phone lists what is in flight first, the newest others up to three in all (design 88):
+    // the erasing wipe, the ring offered again and the fresh locate; without them, the lock and
+    // the stop.
+    let find = format!("/devices/{device}/find");
+    let page = app.get_page(&find, &cookie).await.text();
     let line = |command: &str| super::locate_page::recent_row(&page, command).to_string();
+    assert!(!page.contains("data-command=\"lock\""), "{page}");
     assert!(line("wipe").contains(">Erasing<"), "{}", line("wipe"));
     assert!(
         line("wipe").contains("An erased phone stops reporting."),
         "{}",
         line("wipe")
-    );
-    assert!(line("lock").contains(">No answer<"), "{}", line("lock"));
-    assert!(
-        line("lock").contains("never said it finished"),
-        "{}",
-        line("lock")
     );
     assert!(
         line("ring").contains("sent again when the phone is back"),
@@ -292,15 +288,27 @@ async fn the_locate_page_reads_receipts_and_failures() {
         line("ring")
     );
     assert!(
+        line("locate").contains("Not confirmed yet."),
+        "{}",
+        line("locate")
+    );
+    sqlx::query("DELETE FROM device_commands WHERE command IN ('locate', 'wipe', 'ring')")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let page = app.get_page(&find, &cookie).await.text();
+    let line = |command: &str| super::locate_page::recent_row(&page, command).to_string();
+    assert!(
         line("stop_ring").contains("Send it again."),
         "{}",
         line("stop_ring")
     );
     assert!(line("stop_ring").contains(">Not confirmed<"));
+    assert!(line("lock").contains(">No answer<"), "{}", line("lock"));
     assert!(
-        line("locate").contains("Not confirmed yet."),
+        line("lock").contains("never said it finished"),
         "{}",
-        line("locate")
+        line("lock")
     );
     // A failure: its word, the phone's answer reworded, its own words in `title` - on the
     // summary's Recent, where Lock again is pressed (design 44). Two days old, so Today's answer
@@ -628,9 +636,9 @@ async fn an_answer_counts_only_for_the_command_it_names() {
 }
 
 /// QA Low 4: the phone reports whether it can wipe itself yet (Android 14 grants the new wipe
-/// policy at the next restart); the Locate page says so while it can't.
+/// policy at the next restart); Find Phone says so while it can't.
 #[tokio::test]
-async fn the_locate_page_says_when_a_wipe_would_be_refused() {
+async fn find_phone_says_when_a_wipe_would_be_refused() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (device, token) = app.enrolled_device("phone").await;
@@ -658,7 +666,7 @@ async fn the_locate_page_says_when_a_wipe_would_be_refused() {
         .unwrap();
         assert_eq!(stored, ready);
         let page = app
-            .get_page(&format!("/devices/locate?device={device}"), &cookie)
+            .get_page(&format!("/devices/{device}/find"), &cookie)
             .await
             .text();
         assert_eq!(page.contains(warning), shown, "{ready:?}");

@@ -2096,3 +2096,33 @@ pointer here.
   `the_pages_show_the_logos`), `app_logos::tests` (the decode's limits, the budget and refusals),
   `intake_limits::the_field_tables_keep_every_contract_key` (`report`'s keys),
   `listeners::the_device_router_serves_nothing_but_the_device_api` (`/app-logos/`); the launcher's `AppLogosTest`.
+
+## Locate's lower half as rows (design 88, 2026-11-12, branch `locate-rows`, `docs/design/88-locate-rows.md`)
+
+- **The user** approved the mockup on 2026-11-12, with Location Settings in the same group as the other rows.
+- **A chosen phone's Locate page** ends after the age group (Update Location) and the "Location is off" warning in one
+  `group group-icons` (`data-group="locate-rows"`) of four tile rows: **Locations** (the span's count, as before) ›
+  `/devices/{id}/locations`; **Zones** ("3 · Here now: School", "3", "None yet": `locate::zones_value`) ›
+  `/devices/{id}/zones`; **Find Phone** ("Ring, lock, erase") › `/devices/{id}/find`; **Location Settings** ("Off",
+  "Only when asked", "Every 15 min" / "Hvert 15. min", the setting, not the zones' served interval:
+  `locate::settings_value`) › `/devices/{id}/location-settings`. The old map footer is gone. The Alle view is unchanged.
+- **The three pages** (`locate::show_zones`, `show_find`, `show_location_settings`; `device_zones.html`,
+  `device_find.html`, `device_location_settings.html`) open on the phone band (`band::phone`: back to
+  `/devices/locate?device={id}`, the phone's avatar right), no bell (pages under the tab, as Locations); 404 for an
+  unknown phone, 500 on a failed read. Zones is no-store (`["devices", _, "zones", ..]`).
+- **Find Phone**: the wipe-not-ready warning, the three tiles (`#actions`), "Recent Requests" (`#recent`):
+  `locate::requests` through `find_rows` - every one still in flight (`locate::in_flight`, as Requests calls it), then the newest others up to
+  `FIND_REQUESTS` (3) in all, so nothing in flight is hidden (code QA L2) -, the newest highlighted
+  (`.group-newest > .row[data-command]:first-child`), then Show all › Activity (`/devices/{id}#activity`, or plain
+  `/devices/{id}` while the summary's Activity is empty and so not on the page - code QA L1); Erase Phone… alone at the bottom (`row-button row-danger`) with
+  the offline footer and ⓘ (`#erase`). A wrong name renders this page (200) with the confirm open.
+- **Where the forms land now**: Ring, Stop Ringing, Lock, Erase → `/devices/{id}/find#actions`; Cancel (any `back`
+  but `summary`; the rows post `find`) → `/devices/{id}/find?cancel=…#recent`; the pickers →
+  `/devices/{id}/location-settings#location-settings`; Locate Regularly (`back=zones`) → `/devices/{id}/zones#zones`;
+  a zone's add/save → `/devices/{id}/zones?zone=…&zone_id=N#zone-N`, delete → `/devices/{id}/zones?zone=deleted#zones`;
+  Update Location unchanged. The zone editor's back goes to Zones; Lock Screen's weather links to the two pages.
+  `/devices/locate` ignores the old `?cancel=` and `?zone=`.
+- **Tests**: `locate_page::every_form_on_the_locate_pages_returns_to_its_group` (the table over the four pages),
+  `the_rows_and_their_pages`, `links_to_the_moved_groups_resolve`; the tests that read the zones, the requests, the
+  warnings or the pickers off Locate read the new pages (`zones`, `zone_watch`, `command_expiry`, `command_receipts`,
+  `locations`, `cleanup`, `power`, `time_rules`, `weather`, `android_lock_page`, `install_now`, `parents`, `shell`).

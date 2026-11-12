@@ -1493,8 +1493,8 @@ async fn held_request_of_a_removed_actor_changes_nothing() {
 
 // ---- Step 4: "by <name>" (design 62 §6) -------------------------------------------------------
 
-/// A command says who asked for it once the family has two accounts, on Locate's Requests and the
-/// summary's Activity; never with one, and never in the phone's policy.
+/// A command says who asked for it once the family has two accounts, on Find Phone's requests and
+/// the summary's Activity; never with one, and never in the phone's policy.
 #[tokio::test]
 async fn command_by_shows_with_two_accounts() {
     let app = TestApp::new().await;
@@ -1503,7 +1503,7 @@ async fn command_by_shows_with_two_accounts() {
     let ring = format!("/devices/{id}/command/ring");
     app.request_form(Method::POST, &ring, Some(&mamma), &[])
         .await;
-    let locate = format!("/devices/locate?device={id}");
+    let locate = format!("/devices/{id}/find");
     let row = |html: &str| part(html, "data-command=\"ring\"", "</div>").to_string();
     let one = app.get_page(&locate, &mamma).await.text();
     assert!(!row(&one).contains(" · parent"), "{}", row(&one));

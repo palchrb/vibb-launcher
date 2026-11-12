@@ -15,7 +15,7 @@
     drags, the slider redraws the circle) and writes the fields, so Save posts what the map shows. A save returns to
     the zone's row on Locate; a refusal renders this page again (400) at #zone-form, as typed, the reason under its
     field. -#}
-{% call band::editor(title, "/devices/locate?device=" ~ device.id ~ "#zones", self.t("nav.locate")) %}<button type="submit" class="title-action" form="zone-form" data-save="zone">{% if zone_id.is_some() %}{{ self.t("common.save") }}{% else %}{{ self.t("common.add") }}{% endif %}</button>{% endcall %}
+{% call band::editor(title, "/devices/" ~ device.id ~ "/zones", self.t("locate.zones.title")) %}<button type="submit" class="title-action" form="zone-form" data-save="zone">{% if zone_id.is_some() %}{{ self.t("common.save") }}{% else %}{{ self.t("common.add") }}{% endif %}</button>{% endcall %}
 <main class="container container-fixed">
     <form method="post" action="{% if let Some(zid) = zone_id %}/devices/{{ device.id }}/zones/{{ zid }}{% else %}/devices/{{ device.id }}/zones{% endif %}#zone-form" id="zone-form">
         {% if refusal.is_some() || errors.any() %}

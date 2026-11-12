@@ -240,7 +240,7 @@
         <h2 class="group-header" id="weather-title">{{ self.t("device.page.weather") }}</h2>
         {% if weather.needs_position %}
         <div class="attention attention-action" data-warning="needs-position">
-            <div class="attention-text">{{ self.t("device.weather.needs_position") }}<div class="attention-sub"><a href="/devices/locate?device={{ device.id }}#location-settings">{{ self.t("device.weather.needs_position_link") }}</a></div></div>
+            <div class="attention-text">{{ self.t("device.weather.needs_position") }}<div class="attention-sub"><a href="/devices/{{ device.id }}/location-settings">{{ self.t("device.weather.needs_position_link") }}</a></div></div>
         </div>
         {% endif %}
         {% if weather.needs_update %}
@@ -259,7 +259,7 @@
             {% if weather.on %}
             {% if weather.zones.is_empty() %}
             <div class="row" id="weather-zone" data-row="weather-zone-empty">
-                <span class="row-label">{{ self.t("device.weather.zone") }}<span class="row-sub">{{ self.t("device.weather.zone_empty") }} <a href="/devices/locate?device={{ device.id }}#zones">{{ self.t("device.weather.zone_empty_link") }}</a></span></span>
+                <span class="row-label">{{ self.t("device.weather.zone") }}<span class="row-sub">{{ self.t("device.weather.zone_empty") }} <a href="/devices/{{ device.id }}/zones">{{ self.t("device.weather.zone_empty_link") }}</a></span></span>
             </div>
             {% else %}
             <form method="post" action="/devices/{{ device.id }}/weather/zone#weather-zone" class="cell" id="weather-zone">

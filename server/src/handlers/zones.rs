@@ -1,11 +1,12 @@
 //! A phone's zones (design 64 §3.5, step 1): the zone's page (`/devices/{id}/zones/new`,
 //! `/devices/{id}/zones/{zone_id}`, `templates/device_zone.html`, tab Locate) with one form -
 //! name, centre, radius, the two switches - and Delete Zone…, their posts, and `zones.json` for
-//! the Locate map's circles. The list is the Locate page's `#zones` (`handlers::locate`).
+//! the Locate map's circles. The list is the Zones page (`/devices/{id}/zones`,
+//! `handlers::locate::show_zones`, design 88).
 //!
 //! Without JS the form is the whole feature (the numbers typed, or kept from the phone's newest
 //! fix); `static/zones.js` adds the map: a tap places the centre, the marker drags, the slider
-//! redraws the circle, every change writes the fields. A save returns to the zone's row on Locate
+//! redraws the circle, every change writes the fields. A save returns to the zone's row on Zones
 //! (`?zone=added|saved&zone_id=N#zone-N`), a delete to `#zones`; a refusal renders this page again
 //! (400) at `#zone-form` as typed, the field marked, nothing written. Zones are the family's;
 //! every change is in the security log by the phone's and the zone's names, never coordinates.
@@ -501,8 +502,7 @@ pub async fn create_zone(
                     ("radius", &input.radius_m.to_string()),
                 ],
             );
-            let back =
-                format!("/devices/locate?device={id}&zone=added&zone_id={zone_id}#zone-{zone_id}");
+            let back = format!("/devices/{id}/zones?zone=added&zone_id={zone_id}#zone-{zone_id}");
             saved(&state, &admin, &device, "zone_added", detail, back).await
         }
         Ok(Outcome::Full) => {
@@ -626,8 +626,7 @@ pub async fn save_zone(
     };
     match written.await {
         Ok((Outcome::Written(_), changed)) => {
-            let back =
-                format!("/devices/locate?device={id}&zone=saved&zone_id={zone_id}#zone-{zone_id}");
+            let back = format!("/devices/{id}/zones?zone=saved&zone_id={zone_id}#zone-{zone_id}");
             if changed.is_empty() {
                 return Redirect::to(&back).into_response();
             }
@@ -691,7 +690,7 @@ pub async fn delete_zone(
     .await;
     match deleted {
         Ok(Some(name)) => {
-            let back = format!("/devices/locate?device={id}&zone=deleted#zones");
+            let back = format!("/devices/{id}/zones?zone=deleted#zones");
             let detail = security::Detail::words(
                 "security.detail.zone.deleted",
                 &[

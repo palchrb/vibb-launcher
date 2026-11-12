@@ -1042,6 +1042,10 @@ async fn every_form_on_every_page_lands_on_its_own_group() {
         "/apps/tracked/1".to_string(),
         "/devices/locate".to_string(),
         format!("/devices/locate?device={id}"),
+        // Design 88: Locate's rows' pages.
+        format!("/devices/{id}/zones"),
+        format!("/devices/{id}/find"),
+        format!("/devices/{id}/location-settings"),
         "/music".to_string(),
         "/music?edit=1".to_string(),
         format!("/music/entries/{entry}"),
@@ -1105,11 +1109,11 @@ async fn every_form_on_every_page_lands_on_its_own_group() {
         let html = app.get_page(&page, &cookie).await.text();
         assert!(html.contains(&part), "{page} has no {part}");
     }
-    let locate = app
-        .get_page(&format!("/devices/locate?device={id}"), &cookie)
+    let zones = app
+        .get_page(&format!("/devices/{id}/zones"), &cookie)
         .await
         .text();
-    assert!(locate.contains(&format!("action=\"/devices/{id}/location-policy#zones\"")));
+    assert!(zones.contains(&format!("action=\"/devices/{id}/location-policy#zones\"")));
     let mut forms = 0;
     for page in pages {
         let res = app.get_page(&page, &cookie).await;
