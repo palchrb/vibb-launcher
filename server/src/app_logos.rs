@@ -152,6 +152,13 @@ pub fn path_for(dir: &Path, hash: &str) -> Option<PathBuf> {
     is_valid_hash(hash).then(|| dir.join(format!("{hash}.png")))
 }
 
+/// Whether a logo is stored at `path`: a file with bytes (an empty one - a crash's leftover - is missing).
+async fn is_stored(path: &Path) -> bool {
+    tokio::fs::metadata(path)
+        .await
+        .is_ok_and(|meta| meta.is_file() && meta.len() > 0)
+}
+
 /// The URL the PWA shows a stored logo at.
 pub fn src_of(hash: &str) -> String {
     format!("{ROUTE}/{hash}")
@@ -289,7 +296,7 @@ async fn wanted(state: &AppState, device_id: i64, logos: &[(String, String)]) ->
         let Some(path) = path_for(&state.app_logo_dir, hash) else {
             continue;
         };
-        if !tokio::fs::try_exists(&path).await.unwrap_or(false) {
+        if !is_stored(&path).await {
             candidates.push(hash.clone());
         }
     }
@@ -308,7 +315,17 @@ async fn room(state: &AppState, device_id: i64, now: Instant) -> usize {
     if budget == 0 {
         return 0;
     }
-    let (files, bytes) = store_usage(&state.app_logo_dir).await;
+    budget.min(caps_room(state, device_id, now).await)
+}
+
+/// How many more files the store's caps and this phone's share leave; 0 on a read error.
+async fn caps_room(state: &AppState, device_id: i64, now: Instant) -> usize {
+    let Some((files, bytes)) = store_usage(&state.app_logo_dir).await else {
+        if state.app_logos.log_due(None, now) {
+            tracing::warn!("app_logos_full: can't read the app logo store, counted as full");
+        }
+        return 0;
+    };
     if files >= MAX_LOGO_FILES || bytes >= MAX_LOGO_BYTES {
         if state.app_logos.log_due(None, now) {
             tracing::warn!(files, bytes, "app_logos_full: the app logo store is full");
@@ -333,26 +350,27 @@ async fn room(state: &AppState, device_id: i64, now: Instant) -> usize {
         }
         return 0;
     }
-    budget
-        .min(MAX_LOGO_FILES - files)
-        .min(MAX_LOGOS_PER_PHONE - phone_files)
+    (MAX_LOGO_FILES - files).min(MAX_LOGOS_PER_PHONE - phone_files)
 }
 
-/// The stored logos: how many files and their bytes.
-async fn store_usage(dir: &Path) -> (usize, u64) {
+/// The stored logos: how many files and their bytes. `None` when the directory can't be read (anything but its
+/// absence, which is an empty store): the caller counts it as full (fail closed). A directory listing is at most
+/// [MAX_LOGO_FILES] entries, so it is read each time rather than kept in memory, where a file removed by hand or a
+/// restore would leave the count wrong.
+async fn store_usage(dir: &Path) -> Option<(usize, u64)> {
     let (mut files, mut bytes) = (0, 0);
-    let Ok(mut entries) = tokio::fs::read_dir(dir).await else {
-        return (files, bytes);
+    let mut entries = match tokio::fs::read_dir(dir).await {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Some((0, 0)),
+        Err(_) => return None,
     };
-    while let Ok(Some(entry)) = entries.next_entry().await {
-        if entry.file_name().to_string_lossy().ends_with(".png")
-            && let Ok(meta) = entry.metadata().await
-        {
+    while let Some(entry) = entries.next_entry().await.ok()? {
+        if entry.file_name().to_string_lossy().ends_with(".png") {
             files += 1;
-            bytes += meta.len();
+            bytes += entry.metadata().await.ok()?.len();
         }
     }
-    (files, bytes)
+    Some((files, bytes))
 }
 
 /// The stored files this phone's rows name: how many and their bytes.
@@ -419,10 +437,14 @@ pub async fn upload(
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     }
-    if tokio::fs::try_exists(&path).await.unwrap_or(false) {
+    if is_stored(&path).await {
         return StatusCode::NO_CONTENT.into_response();
     }
+    // Refused within the day: refused again at once, nothing decoded or charged.
     let now = Instant::now();
+    if state.app_logos.is_refused(&hash, now) {
+        return StatusCode::UNPROCESSABLE_ENTITY.into_response();
+    }
     if room(&state, device.id, now).await == 0 || !state.app_logos.charge(device.id, now) {
         return StatusCode::CONFLICT.into_response();
     }
@@ -453,6 +475,11 @@ pub async fn upload(
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     }
+    // The caps again, under the lock: parallel uploads write one at a time, so none passes a cap another has
+    // just filled (the budget was charged above).
+    if !is_stored(&path).await && caps_room(&state, device.id, now).await == 0 {
+        return StatusCode::CONFLICT.into_response();
+    }
     match write(&state.app_logo_dir, &hash, &path, &encoded).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(err) => {
@@ -462,14 +489,19 @@ pub async fn upload(
     }
 }
 
-/// A temp file, then a rename (a reader never sees half a file); an existing file is left alone.
+/// A temp file, synced to disk, then a rename (a reader never sees half a file, a power cut no empty one); a stored
+/// file is left alone.
 async fn write(dir: &Path, hash: &str, path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    if tokio::fs::try_exists(path).await.unwrap_or(false) {
+    use tokio::io::AsyncWriteExt as _;
+    if is_stored(path).await {
         return Ok(());
     }
     tokio::fs::create_dir_all(dir).await?;
     let tmp = dir.join(format!(".{hash}.tmp"));
-    tokio::fs::write(&tmp, bytes).await?;
+    let mut file = tokio::fs::File::create(&tmp).await?;
+    file.write_all(bytes).await?;
+    file.sync_all().await?;
+    drop(file);
     tokio::fs::rename(&tmp, path).await
 }
 
@@ -481,11 +513,7 @@ pub(crate) fn reencode(bytes: &[u8]) -> Option<Vec<u8>> {
     if !bytes.starts_with(&PNG_SIGNATURE) {
         return None;
     }
-    let mut limits = Limits::default();
-    limits.max_image_width = Some(SIZE_PX);
-    limits.max_image_height = Some(SIZE_PX);
-    limits.max_alloc = Some(MAX_DECODE_ALLOC);
-    let decoder = PngDecoder::with_limits(Cursor::new(bytes), limits).ok()?;
+    let decoder = PngDecoder::with_limits(Cursor::new(bytes), decode_limits()).ok()?;
     if decoder.dimensions() != (SIZE_PX, SIZE_PX) {
         return None;
     }
@@ -495,6 +523,15 @@ pub(crate) fn reencode(bytes: &[u8]) -> Option<Vec<u8>> {
         .write_image(rgba.as_raw(), SIZE_PX, SIZE_PX, ExtendedColorType::Rgba8)
         .ok()?;
     Some(out)
+}
+
+/// The decoder's limits: [SIZE_PX] a side (checked against the IHDR before any buffer) and [MAX_DECODE_ALLOC].
+fn decode_limits() -> Limits {
+    let mut limits = Limits::default();
+    limits.max_image_width = Some(SIZE_PX);
+    limits.max_image_height = Some(SIZE_PX);
+    limits.max_alloc = Some(MAX_DECODE_ALLOC);
+    limits
 }
 
 /// Deletes the files of `hashes` no row names any more. Best effort: a failure is logged.
@@ -595,7 +632,7 @@ pub async fn view(State(state): State<AppState>, UrlPath(hash): UrlPath<String>)
         return StatusCode::NOT_FOUND.into_response();
     }
     match tokio::fs::read(&path).await {
-        Ok(bytes) => (
+        Ok(bytes) if !bytes.is_empty() => (
             [
                 (header::CONTENT_TYPE, "image/png"),
                 (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
@@ -607,7 +644,7 @@ pub async fn view(State(state): State<AppState>, UrlPath(hash): UrlPath<String>)
             bytes,
         )
             .into_response(),
-        Err(_) => StatusCode::NOT_FOUND.into_response(),
+        _ => StatusCode::NOT_FOUND.into_response(),
     }
 }
 
@@ -624,7 +661,7 @@ pub async fn phone_logos(
     let mut logos = HashMap::new();
     for (package, hash) in rows {
         if let Some(path) = path_for(&state.app_logo_dir, &hash)
-            && tokio::fs::try_exists(&path).await.unwrap_or(false)
+            && is_stored(&path).await
         {
             logos.insert(package, src_of(&hash));
         }
@@ -648,7 +685,7 @@ pub async fn catalog_logos(state: &AppState) -> Result<HashMap<String, String>, 
             continue;
         }
         if let Some(path) = path_for(&state.app_logo_dir, &hash)
-            && tokio::fs::try_exists(&path).await.unwrap_or(false)
+            && is_stored(&path).await
         {
             logos.insert(package, src_of(&hash));
         }
@@ -687,6 +724,108 @@ mod tests {
         !crc
     }
 
+    fn chunk(kind: &[u8], data: &[u8]) -> Vec<u8> {
+        let mut body = kind.to_vec();
+        body.extend_from_slice(data);
+        let mut out = (data.len() as u32).to_be_bytes().to_vec();
+        out.extend_from_slice(&body);
+        out.extend_from_slice(&crc32(&body).to_be_bytes());
+        out
+    }
+
+    /// A [SIZE_PX] px 8-bit PNG built chunk by chunk: its colour type and interlace method, the chunks between IHDR
+    /// and IDAT, and the filtered scanlines (deflated here).
+    fn raw_png(
+        color_type: u8,
+        interlace: u8,
+        before_idat: &[Vec<u8>],
+        scanlines: &[u8],
+    ) -> Vec<u8> {
+        use std::io::Write as _;
+        let mut ihdr = SIZE_PX.to_be_bytes().to_vec();
+        ihdr.extend_from_slice(&SIZE_PX.to_be_bytes());
+        ihdr.extend_from_slice(&[8, color_type, 0, 0, interlace]);
+        let mut zlib = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        zlib.write_all(scanlines).unwrap();
+        let mut out = PNG_SIGNATURE.to_vec();
+        out.extend(chunk(b"IHDR", &ihdr));
+        for extra in before_idat {
+            out.extend_from_slice(extra);
+        }
+        out.extend(chunk(b"IDAT", &zlib.finish().unwrap()));
+        out.extend(chunk(b"IEND", &[]));
+        out
+    }
+
+    /// `rows` rows of `width` copies of `pixel`, each with filter byte 0.
+    fn scanlines(rows: u32, width: u32, pixel: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        for _ in 0..rows {
+            out.push(0);
+            out.extend(pixel.repeat(width as usize));
+        }
+        out
+    }
+
+    /// The re-encoded logo's top-left pixel, after checking it is a 128 px 8-bit RGBA PNG.
+    fn first_pixel(out: &[u8]) -> [u8; 4] {
+        let image = image::load_from_memory_with_format(out, image::ImageFormat::Png).unwrap();
+        assert_eq!((image.width(), image.height()), (SIZE_PX, SIZE_PX));
+        assert_eq!(image.color(), image::ColorType::Rgba8);
+        image.to_rgba8().get_pixel(0, 0).0
+    }
+
+    #[test]
+    fn palette_interlaced_and_animated_logos_become_one_rgba_image() {
+        // A palette PNG with a transparent entry: RGBA with that alpha.
+        let palette = raw_png(
+            3,
+            0,
+            &[chunk(b"PLTE", &[0x10, 0x20, 0x30]), chunk(b"tRNS", &[0x80])],
+            &scanlines(SIZE_PX, SIZE_PX, &[0]),
+        );
+        assert_eq!(
+            first_pixel(&reencode(&palette).unwrap()),
+            [0x10, 0x20, 0x30, 0x80]
+        );
+
+        // Adam7: the seven passes' rows.
+        let pixel = [0x11, 0x22, 0x33, 0xFF];
+        let mut passes = Vec::new();
+        for (x0, y0, dx, dy) in [
+            (0, 0, 8, 8),
+            (4, 0, 8, 8),
+            (0, 4, 4, 8),
+            (2, 0, 4, 4),
+            (0, 2, 2, 4),
+            (1, 0, 2, 2),
+            (0, 1, 1, 2),
+        ] {
+            let (w, h) = ((SIZE_PX - x0).div_ceil(dx), (SIZE_PX - y0).div_ceil(dy));
+            passes.extend(scanlines(h, w, &pixel));
+        }
+        let interlaced = raw_png(6, 1, &[], &passes);
+        assert_eq!(first_pixel(&reencode(&interlaced).unwrap()), pixel);
+
+        // An APNG: its default image only, stored as a plain PNG (no animation chunks).
+        let mut actl = 1u32.to_be_bytes().to_vec();
+        actl.extend_from_slice(&0u32.to_be_bytes());
+        let mut fctl = 0u32.to_be_bytes().to_vec();
+        for value in [SIZE_PX, SIZE_PX, 0, 0] {
+            fctl.extend_from_slice(&value.to_be_bytes());
+        }
+        fctl.extend_from_slice(&[0, 1, 0, 10, 0, 0]);
+        let apng = raw_png(
+            6,
+            0,
+            &[chunk(b"acTL", &actl), chunk(b"fcTL", &fctl)],
+            &scanlines(SIZE_PX, SIZE_PX, &pixel),
+        );
+        let out = reencode(&apng).unwrap();
+        assert_eq!(first_pixel(&out), pixel);
+        assert!(!out.windows(4).any(|w| w == b"acTL" || w == b"fcTL"));
+    }
+
     /// A PNG that is only a signature and an IHDR saying `width` x `height` (8-bit RGBA), then IEND.
     fn header_only(width: u32, height: u32) -> Vec<u8> {
         let mut out = PNG_SIGNATURE.to_vec();
@@ -715,6 +854,11 @@ mod tests {
         // Another size, a huge IHDR (refused before any buffer), no signature, another format.
         assert_eq!(reencode(&png(64, ExtendedColorType::Rgba8)), None);
         assert_eq!(reencode(&header_only(10_000, 10_000)), None);
+        // ...refused by the decoder's own limits, from the IHDR alone.
+        assert!(matches!(
+            PngDecoder::with_limits(Cursor::new(header_only(10_000, 10_000)), decode_limits()),
+            Err(image::ImageError::Limits(_))
+        ));
         assert_eq!(reencode(b"not a png at all"), None);
         assert_eq!(reencode(&png(SIZE_PX, ExtendedColorType::Rgba8)[8..]), None);
         // Bytes after IEND don't survive.

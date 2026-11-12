@@ -315,6 +315,55 @@ async fn a_full_phone_is_asked_for_nothing_more() {
     );
 }
 
+/// R2-M2: a phone whose rows name 12 MB of stored files is asked for nothing more.
+#[tokio::test]
+async fn a_phone_over_its_bytes_is_asked_for_nothing_more() {
+    let app = TestApp::new().await;
+    let (full, token) = app.enrolled_device("Jack").await;
+    std::fs::create_dir_all(&*app.state.app_logo_dir).unwrap();
+    let big = sha(b"a big one");
+    let size = usize::try_from(crate::app_logos::MAX_LOGO_BYTES_PER_PHONE).unwrap();
+    std::fs::write(file(&app, &big), vec![1u8; size]).unwrap();
+    sqlx::query(
+        "INSERT INTO device_app_logos (device_id, package_name, logo_hash, updated_at) \
+         VALUES (?, 'org.example.big', ?, datetime('now'))",
+    )
+    .bind(full)
+    .bind(&big)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let apps = json!([
+        app_row("org.example.big", "Big", None),
+        app_row("org.example.new", "New", Some(&sha(b"new"))),
+    ]);
+    assert_eq!(wanted(&app, &token, status_body(apps)).await, json!([]));
+}
+
+/// §4.2: the allowed apps' logos are asked for first, then the rest by package name.
+#[tokio::test]
+async fn allowed_apps_are_asked_for_first() {
+    let app = TestApp::new().await;
+    let (id, token) = app.enrolled_device("Lily").await;
+    sqlx::query(
+        "UPDATE device_policy SET allowlist_json = '[\"org.example.zeta\"]' WHERE device_id = ?",
+    )
+    .bind(id)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let (alpha, beta, zeta) = (sha(b"alpha"), sha(b"beta"), sha(b"zeta"));
+    let apps = json!([
+        app_row("org.example.beta", "Beta", Some(&beta)),
+        app_row("org.example.zeta", "Zeta", Some(&zeta)),
+        app_row("org.example.alpha", "Alpha", Some(&alpha)),
+    ]);
+    assert_eq!(
+        wanted(&app, &token, status_body(apps)).await,
+        json!([zeta, alpha, beta])
+    );
+}
+
 /// §6: only a valid hash some phone names, behind the session, cached for good (the phones' port: `listeners`).
 #[tokio::test]
 async fn only_a_named_logo_is_served_behind_the_session() {

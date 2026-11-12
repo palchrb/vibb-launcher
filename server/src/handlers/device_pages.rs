@@ -2058,7 +2058,7 @@ pub(crate) async fn render_apps(
         Ok(apps) => apps,
         Err(err) => return read_failed(lang, id, "the phone's lock-screen media apps", err),
     };
-    // Design 87: the apps' logos this phone sent (a failed read: letter tiles, never a wrong logo).
+    // Design 87: the apps' logos this phone sent; a failed read is the page's read error, like the reads above.
     let logos = match crate::app_logos::phone_logos(state, id).await {
         Ok(logos) => logos,
         Err(err) => return read_failed(lang, id, "the phone's app logos", err),
