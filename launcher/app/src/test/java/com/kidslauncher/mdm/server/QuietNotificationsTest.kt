@@ -199,7 +199,7 @@ class QuietNotificationsTest {
         // The stop: the state first; the revoke posts to main.
         assertEquals("val fd = state.stop()", statements(body(vpn, "private fun stopSelfCleanly()"))[0])
         val revoke = body(vpn, "override fun onRevoke()")
-        assertTrue(Regex("""main\.post \{\s*stopSelfCleanly\(\)\s*stopSelf\(\)\s*\}""").containsMatchIn(revoke))
+        assertTrue(Regex("""main\.post \{\s*stopSelfCleanly\(\)\s*if \(vpnStopsNow\(created, foregroundStartsPending\.get\(\)\)\) stopSelf\(\)\s*\}""").containsMatchIn(revoke))
         assertTrue(statements(revoke).none { it.startsWith("super.onRevoke(") })
     }
 
@@ -263,9 +263,11 @@ class QuietNotificationsTest {
         // The queued start stops itself once answered, before any tunnel.
         val command = statements(body(service, "override fun onStartCommand("))
         val answered = command.indexOf("enterForeground()")
-        val check = command.indexOf("if (!filterWanted()) {")
+        val check = command.indexOf("if (!filterWanted() || state.stopped) {")
         assertTrue(answered in 0 until check)
         assertTrue(check < command.indexOf("if (state.tunnel == null) startVpn()"))
         assertTrue("if (filterWanted()) startVpn()" in body(service, "override fun onCreate()"))
+        // Code QA L1: a revoke's stopSelf() waits for an unanswered start the same way.
+        assertTrue("if (vpnStopsNow(created, foregroundStartsPending.get())) stopSelf()" in body(service, "override fun onRevoke()"))
     }
 }

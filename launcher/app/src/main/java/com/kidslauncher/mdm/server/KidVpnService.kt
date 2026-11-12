@@ -126,10 +126,10 @@ class KidVpnService : VpnService() {
             enterForeground()
             foregroundStartsPending.updateAndGet { maxOf(it - 1, 0) }
         }
-        // The stop that [stop] left to a queued start ([vpnStopsNow]): the start is answered above
-        // (or by onCreate), so stopping now can't crash us.
-        if (!filterWanted()) {
-            Log.i(LOG_TAG, "Filter off since this start was queued: stopping")
+        // The stop that [stop] or [onRevoke] left to a queued start ([vpnStopsNow]): the start is
+        // answered above (or by onCreate), so stopping now can't crash us.
+        if (!filterWanted() || state.stopped) {
+            Log.i(LOG_TAG, "Filter off or revoked since this start was queued: stopping")
             stopSelf(startId)
             return START_NOT_STICKY
         }
@@ -433,9 +433,11 @@ class KidVpnService : VpnService() {
         // cleanly rather than leaving a dangling foreground service with a dead tunnel. Called on a
         // binder thread (VpnService.Callback): the state changes on main, as everywhere else
         // (qa-lfix-notifs-code #3); super.onRevoke() is only stopSelf().
+        // A stopSelf() with a foreground start still unanswered would crash us like stop() can (code QA L1 of the
+        // upstream port, [vpnStopsNow]): then that start's onStartCommand stops the service, the state being stopped.
         main.post {
             stopSelfCleanly()
-            stopSelf()
+            if (vpnStopsNow(created, foregroundStartsPending.get())) stopSelf()
         }
     }
 
