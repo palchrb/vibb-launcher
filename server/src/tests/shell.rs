@@ -633,15 +633,7 @@ async fn the_tab_pages_open_on_their_large_title() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     app.enrolled_device("Anna").await;
-    let rings = |svg: &str| -> Vec<String> {
-        regex::Regex::new(r#"\sd="([^"]+)""#)
-            .unwrap()
-            .captures_iter(svg)
-            .map(|c| c[1].to_string())
-            .collect()
-    };
-    let art = rings(&std::fs::read_to_string("templates/partials/vibb_breath.html").unwrap());
-    assert_eq!(art.len(), 4);
+    let ring_start = regex::Regex::new(r#"<path d="(M[^l]+)l"#).unwrap();
     for (page, title, add) in [
         ("/devices", "Devices", Some("/devices/new")),
         ("/apps", "Apps", Some("/apps/tracked/new")),
@@ -681,11 +673,28 @@ async fn the_tab_pages_open_on_their_large_title() {
             "{page}: the mark"
         );
         assert!(!band.contains("<img"), "{page}: an <img> on the band");
+        // The art's four rings (each starts at its radius on the right, as vibb_breath.html's) in its
+        // peach and the cream core, cut to a small part of the page (every other point, to 0.1).
         let mark = &band[band.find("<svg class=\"band-mark\"").unwrap()..];
+        let mark = &mark[..mark.find("</svg>").unwrap()];
+        let starts: Vec<&str> = ring_start
+            .captures_iter(mark)
+            .map(|c| c.get(1).unwrap().as_str())
+            .collect();
         assert_eq!(
-            rings(&mark[..mark.find("</svg>").unwrap()]),
-            art,
-            "{page}: the mark's rings"
+            starts,
+            ["M25.1 0", "M19.6 0", "M14.4 0", "M9.4 0"],
+            "{page}"
+        );
+        assert!(mark.contains("<g fill=\"none\" stroke=\"#f0a884\" stroke-width=\"2.6\">"));
+        assert!(
+            mark.ends_with("</g><circle r=\"4.3\" fill=\"#fbe4dc\"/>"),
+            "{page}"
+        );
+        assert!(
+            mark.len() < 3000,
+            "{page}: the mark is {} bytes",
+            mark.len()
         );
         assert!(
             band.contains(&format!("<h1 class=\"page-title\">{title}</h1>")),
