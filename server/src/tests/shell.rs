@@ -633,6 +633,15 @@ async fn the_tab_pages_open_on_their_large_title() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     app.enrolled_device("Anna").await;
+    let rings = |svg: &str| -> Vec<String> {
+        regex::Regex::new(r#"\sd="([^"]+)""#)
+            .unwrap()
+            .captures_iter(svg)
+            .map(|c| c[1].to_string())
+            .collect()
+    };
+    let art = rings(&std::fs::read_to_string("templates/partials/vibb_breath.html").unwrap());
+    assert_eq!(art.len(), 4);
     for (page, title, add) in [
         ("/devices", "Devices", Some("/devices/new")),
         ("/apps", "Apps", Some("/apps/tracked/new")),
@@ -650,7 +659,8 @@ async fn the_tab_pages_open_on_their_large_title() {
         for old in ["title-bar", "vibb-brand", "vibb-word", "vibb-mark"] {
             assert!(!html.contains(old), "{page}: {old}");
         }
-        assert!(!html.contains("viewBox=\"-28 -28 56 56\""), "{page}");
+        // Nor the old hand-drawn rings (perfect circles, not the art).
+        assert!(!html.contains("<circle r=\"25\""), "{page}");
         assert!(!html.contains("class=\"nav-back\""), "{page}");
         // The band is main's first child, on every tab the same.
         let main = &html[html.find("<main class=\"container").unwrap()..];
@@ -661,13 +671,21 @@ async fn the_tab_pages_open_on_their_large_title() {
             "{page}: something before the band"
         );
         let band = &main[..main.find("</header>").unwrap()];
-        // Its mark is the app icon itself (the user, 2026-10-22: the hand-drawn rings were "not the
-        // right icon"), its night ground straight on the band - no tile, no inline approximation.
+        // Its mark is the app icon's own art (the user, 2026-10-22: the hand-drawn rings were "not the
+        // right icon"): the lock screen's rings at rest in icon-192.png's frame, straight on the band - no
+        // tile. Inline, so it is in the first frame; an <img> blanked on every load (2026-11-12).
         assert!(
             band.contains(
-                "<img class=\"band-mark\" src=\"/static/icons/icon-192.png\" width=\"36\" height=\"36\" alt=\"\" decoding=\"async\">"
+                "<svg class=\"band-mark\" viewBox=\"-28 -28 56 56\" width=\"36\" height=\"36\" aria-hidden=\"true\" focusable=\"false\">"
             ),
             "{page}: the mark"
+        );
+        assert!(!band.contains("<img"), "{page}: an <img> on the band");
+        let mark = &band[band.find("<svg class=\"band-mark\"").unwrap()..];
+        assert_eq!(
+            rings(&mark[..mark.find("</svg>").unwrap()]),
+            art,
+            "{page}: the mark's rings"
         );
         assert!(
             band.contains(&format!("<h1 class=\"page-title\">{title}</h1>")),

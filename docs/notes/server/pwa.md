@@ -1828,6 +1828,12 @@ pointer here.
   | `band::editor(title, href, parent)` | the back chevron | the call's body: Save | the 4 editors |
   | `band::bare(title)` | the mark | nothing | `music_spotify_done` (no session) |
 
+- **The mark is drawn inline** (2026-11-12, the user: pull-to-refresh on Devices made the logo blink): `band::mark()`,
+  an `<svg class="band-mark">` of `partials/vibb_breath.html`'s four rings and core at rest (full colour) in
+  `icon-192.png`'s frame (`viewBox="-28 -28 56 56"`, measured against the PNG), not the icon as an `<img>` - that was
+  painted only once the PNG had decoded, a blank frame on every load. The PNGs stay for the manifest, the favicon and
+  push; `the_tab_pages_open_on_their_large_title` pins the `<svg>`, no `<img>` on the band, and the rings' path data.
+
   49 templates; `login`, `lock`, `change_password`, `setup_2fa` and `verify_2fa` are outside the shell and have none
   (the test names the five, so a new template takes a band or fails it).
 - **The back link** is the chevron alone, 46x44 px; where it goes is only spoken: `<span class="visually-hidden">`

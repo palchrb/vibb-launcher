@@ -467,8 +467,8 @@ input[type="radio"] {
     flex: none;
 }
 
-/* The app icon's own artwork (icons/icon-192.png, rings on plain night) straight on the band, no
-   tile. Under 300 px of width it leaves its room to the title. */
+/* The app icon's own artwork (icons/icon-192.png's rings, inline SVG: partials/band.html's mark) straight on
+   the band, no tile. Under 300 px of width it leaves its room to the title. */
 .band-mark {
     flex: none;
     display: block;
