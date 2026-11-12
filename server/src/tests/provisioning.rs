@@ -126,6 +126,11 @@ fn provision_payload_uses_configured_values() {
         payload["android.app.extra.PROVISIONING_WIFI_SECURITY_TYPE"],
         "WPA"
     );
+    // QR setup leaves the phone's own apps enabled, as adb setup does (AOSP's default disables them).
+    assert_eq!(
+        payload["android.app.extra.PROVISIONING_LEAVE_ALL_SYSTEM_APPS_ENABLED"],
+        true
+    );
     let extras = &payload["android.app.extra.PROVISIONING_ADMIN_EXTRAS_BUNDLE"];
     assert_eq!(extras["server_url"], "https://pi.example.ts.net");
     assert_eq!(extras["tailscale_auth_key"], "tskey-auth-x");
@@ -418,10 +423,15 @@ async fn every_form_in_the_add_flow_lands_where_it_should() {
     assert!(!html.contains("data-warning=\"replaces\""));
     let qr_action = format!("/devices/{id}/provision#qr");
     let code_action = format!("/devices/{id}/regenerate-code");
-    let actions: Vec<String> = settings_pages::forms(&html)
+    let mut actions: Vec<String> = settings_pages::forms(&html)
         .into_iter()
         .map(|(action, _)| action)
         .collect();
+    // Design 86: the launcher check's Check Again comes first (tested on its own below).
+    assert_eq!(
+        actions.remove(0),
+        "/settings/provisioning/launcher-check#launcher"
+    );
     assert_eq!(actions, [qr_action.clone(), code_action.clone()]);
     let form_at = html.find(&format!("action=\"{qr_action}\"")).unwrap();
     assert!(settings_pages::encloses(&html, "qr", form_at));
@@ -703,7 +713,7 @@ async fn server_setup_needed_is_one_row_with_its_detail_behind_info() {
 }
 
 /// The Wi-Fi limits at their edges (qa-31-s15-code L2, L3): the name is 32 *bytes* (æ, ø, å count as
-/// two), a WPA password 8-63 characters or the raw 64-hex-digit key.
+/// two), a WPA password 8-63 characters; never a raw 64-hex-digit key (AOSP quotes it as a passphrase).
 #[test]
 fn wifi_fields_are_judged_at_their_edges() {
     let refused = |ssid: &str, password: &str| {
@@ -721,8 +731,20 @@ fn wifi_fields_are_judged_at_their_edges() {
     assert_eq!(refused("Hjemme", &"p".repeat(63)), None);
     assert_eq!(
         refused("Hjemme", &"0123456789abcdef".repeat(4)),
-        None,
-        "a raw key"
+        Some("wifi_password"),
+        "a raw key: the phone would quote it as a passphrase"
+    );
+    assert_eq!(
+        provisioning::wifi_refusal(
+            crate::i18n::Lang::En,
+            "Hjemme",
+            &"0123456789abcdef".repeat(4)
+        )
+        .map(|r| r.1),
+        Some(crate::i18n::t(
+            crate::i18n::Lang::En,
+            "devices.qr.password_raw_key"
+        ))
     );
     assert_eq!(refused("Hjemme", &"p".repeat(64)), Some("wifi_password"));
     assert_eq!(
@@ -885,4 +907,136 @@ async fn the_env_server_url_loses_to_the_saved_one() {
             .await
             .contains("data-source=")
     );
+}
+
+/// Design 86: `state` with the setup QR's launcher check answered `verdict` (as version 0.34.0).
+fn with_check(state: &AppState, verdict: crate::launcher_check::Verdict) -> AppState {
+    let mut state = state.clone();
+    state.launcher_check = Default::default();
+    state.launcher_check.set(
+        &state.config,
+        crate::launcher_check::Checked {
+            verdict,
+            version: Some("0.34.0".to_string()),
+            published: None,
+            min_sdk: None,
+        },
+    );
+    state
+}
+
+/// Design 86: a launcher a phone would refuse shows the warning in place of the QR, and makes no
+/// code; an older one shows the QR with the warning; a good one says what new phones get.
+#[tokio::test]
+async fn the_launcher_check_decides_the_qr() {
+    use crate::launcher_check::Verdict;
+    let app = TestApp::new().await;
+    let (id, _) = app.create_device("Emma").await;
+
+    let page = provision_page(app.state.clone(), id).await;
+    assert!(page.contains("data-launcher=\"works\""), "{page}");
+    assert!(page.contains("New phones get Vibb One 0.39.0"), "{page}");
+    assert!(page.contains("data-row=\"qr\""));
+
+    let older = with_check(
+        &app.state,
+        Verdict::Older {
+            newest: "0.39.0-rc.6".to_string(),
+        },
+    );
+    let page = provision_page(older, id).await;
+    assert!(page.contains("data-launcher=\"older\""), "{page}");
+    assert!(
+        page.contains("installs Vibb One 0.34.0 - older than 0.39.0-rc.6"),
+        "{page}"
+    );
+    assert!(page.contains("data-row=\"qr\""), "older still makes the QR");
+
+    for verdict in [
+        Verdict::WrongSigner,
+        Verdict::WrongPackage {
+            package: "me.vibb.otherfixture".to_string(),
+        },
+        Verdict::NotAnApk,
+        Verdict::Unreachable,
+    ] {
+        let before = code_hash(&app, id).await;
+        let page = provision_page(with_check(&app.state, verdict.clone()), id).await;
+        assert!(page.contains("data-launcher=\"refused\""), "{verdict:?}");
+        assert!(page.contains("data-row=\"needs-launcher\""), "{verdict:?}");
+        assert!(!page.contains("data-row=\"qr\""), "{verdict:?}: a QR");
+        assert_eq!(code_hash(&app, id).await, before, "{verdict:?}: a code");
+    }
+    let page = provision_page(with_check(&app.state, Verdict::WrongSigner), id).await;
+    assert!(
+        page.contains("signature checksum doesn&#39;t match the launcher"),
+        "{page}"
+    );
+
+    // No check has ended: Checking, and no QR and no code (fail closed). A fresh check each time
+    // (its address is refused at once, so a reused one would have ended).
+    let checking = || {
+        let mut checking = app.state.clone();
+        checking.launcher_check = Default::default();
+        let mut config = (*checking.config).clone();
+        config.launcher_apk_url = "http://127.0.0.1:9/kids-launcher-mdm.apk".to_string();
+        checking.config = Arc::new(config);
+        checking
+    };
+    let before = code_hash(&app, id).await;
+    let page = provision_page(checking(), id).await;
+    assert!(page.contains("data-launcher=\"checking\""), "{page}");
+    assert!(!page.contains("data-row=\"qr\""));
+    assert_eq!(code_hash(&app, id).await, before, "checking: a code");
+    // A POST's answer never reloads itself (it would send the form again): Check Again is its way on.
+    assert!(!page.contains("auto-reload.js"));
+    assert!(page.contains("data-row=\"launcher-again\""), "{page}");
+    // The page a GET drew reloads itself until the check ends.
+    let response = provisioning::provision_form(State(checking()), crate::i18n::Lang::En, Path(id))
+        .await
+        .into_response();
+    let page = read_response(response).await.text();
+    assert!(page.contains("data-launcher=\"checking\""), "{page}");
+    assert!(page.contains("auto-reload.js"), "{page}");
+    assert!(!page.contains("data-row=\"launcher-again\""), "{page}");
+}
+
+/// Design 86: Phone Setup shows the row; Check Again checks at once and comes back to it, or to
+/// the phone's Connect page.
+#[tokio::test]
+async fn check_again_comes_back_to_the_row() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let page = app.get_page("/settings/provisioning", &cookie).await.text();
+    assert!(page.contains("New phones get Vibb One 0.39.0"), "{page}");
+    // The APK's minSdkVersion 34.
+    assert!(
+        page.contains("A new phone needs Android 14 or newer"),
+        "{page}"
+    );
+    let at = page.find("data-row=\"launcher-again\"").unwrap();
+    assert!(settings_pages::encloses(&page, "launcher", at));
+
+    // An address refused at once, so the check ends within the wait.
+    let mut state = app.state.clone();
+    let mut config = (*state.config).clone();
+    config.launcher_apk_url = "http://127.0.0.1:9/kids-launcher-mdm.apk".to_string();
+    state.config = Arc::new(config);
+    let back =
+        crate::launcher_check::check_again(State(state.clone()), Form(Default::default())).await;
+    let res = read_response(back).await;
+    assert_redirect(&res, "/settings/provisioning", Some("launcher"));
+    assert_eq!(
+        crate::launcher_check::seen(&state),
+        crate::launcher_check::Seen::Done(crate::launcher_check::Checked {
+            verdict: crate::launcher_check::Verdict::Unreachable,
+            version: None,
+            published: None,
+            min_sdk: None,
+        })
+    );
+    let form = std::collections::HashMap::from([("device".to_string(), "7".to_string())]);
+    let res =
+        read_response(crate::launcher_check::check_again(State(state), Form(form)).await).await;
+    assert_redirect(&res, "/devices/7/provision", Some("launcher"));
 }

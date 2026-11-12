@@ -81,6 +81,8 @@ struct ProvisioningSettingsTemplate {
     /// A refused save: the field ("server_url", "locale" or "time_zone") and the key of why.
     error: Option<(&'static str, &'static str)>,
     country_code: CountryCode,
+    /// The setup QR's launcher check (design 86, `#launcher`); `None` without a checksum.
+    launcher: Option<crate::launcher_check::Line>,
 }
 crate::i18n::words!(ProvisioningSettingsTemplate);
 
@@ -170,8 +172,12 @@ fn render(
     } else {
         crate::handlers::provisioning::plain_http_warning(lang, shown)
     };
+    let zone = crate::display_time::Zone::from_setting(&settings.time_zone).in_lang(lang);
+    // A refused save's answer (400) never reloads itself: that would send the POST again.
+    let launcher = crate::launcher_check::line(state, lang, &zone, None, status == StatusCode::OK);
     let page = ProvisioningSettingsTemplate {
         lang,
+        launcher,
         title: t(lang, "settings.provisioning.title").to_string(),
         url_warning,
         entered,

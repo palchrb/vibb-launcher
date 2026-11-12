@@ -101,6 +101,13 @@ struct ProvisioningPayload {
         skip_serializing_if = "Option::is_none"
     )]
     time_zone: Option<String>,
+    /// `DevicePolicyManager.EXTRA_PROVISIONING_LEAVE_ALL_SYSTEM_APPS_ENABLED`, always true. AOSP's
+    /// ManagedProvisioning defaults it to false, and then QR setup disables every system app with a
+    /// launcher icon that isn't on its required list (the dialer, Messages, the camera...) - unlike
+    /// `adb shell dpm set-device-owner`, which disables nothing. The launcher decides what the kid
+    /// sees; the phone's own apps must stay installed and enabled for it to allow them.
+    #[serde(rename = "android.app.extra.PROVISIONING_LEAVE_ALL_SYSTEM_APPS_ENABLED")]
+    leave_all_system_apps_enabled: bool,
     #[serde(rename = "android.app.extra.PROVISIONING_ADMIN_EXTRAS_BUNDLE")]
     admin_extras: AdminExtras,
 }
@@ -130,8 +137,10 @@ pub(crate) fn valid_time_zone(zone: &str) -> bool {
 }
 
 /// The longest Wi-Fi network name (32 bytes, IEEE 802.11) and the WPA passphrase's length (8-63
-/// characters; or the raw key as 64 hex digits, which Android's provisioning takes as the PSK): a
-/// field outside them can't be a real network, and could overflow the QR code.
+/// characters): a field outside them can't be a real network, and could overflow the QR code. A raw
+/// 64-hex-digit key is refused too: AOSP's ManagedProvisioning always quotes the password
+/// (`WifiConfigurationProvider`: `preSharedKey = "\"" + password + "\""`), so the phone would take
+/// the key as a 64-character passphrase and never join.
 const MAX_SSID_BYTES: usize = 32;
 const MIN_WIFI_PASSWORD_CHARS: usize = 8;
 const MAX_WIFI_PASSWORD_CHARS: usize = 63;
@@ -157,6 +166,11 @@ struct ProvisionQrTemplate {
     /// `LAUNCHER_SIGNATURE_CHECKSUM` isn't configured: "Server setup needed" instead of a QR code,
     /// rather than falling back to any built-in (upstream's) checksum.
     missing_checksum: bool,
+    /// The setup QR's launcher check (design 86): the row above the QR; `None` without a checksum.
+    launcher: Option<crate::launcher_check::Line>,
+    /// A phone would refuse the launcher the QR names, or the check hasn't ended: no QR is made
+    /// (fail closed, like `missing_checksum`).
+    launcher_blocks: bool,
     wifi_ssid: String,
     /// When the code in the QR expires (local, `Zone::until`), once it is made.
     until: Option<String>,
@@ -181,10 +195,13 @@ impl ProvisionQrTemplate {
         lang: Lang,
         device: Device,
         settings: &ProvisioningSettings,
+        auto_reload: bool,
     ) -> Self {
         let zone = Zone::load(&state.db, lang).await;
         let now = chrono::Utc::now();
         let (back_href, back_label) = crate::handlers::devices::setup_back(lang, &device);
+        let launcher =
+            crate::launcher_check::line(state, lang, &zone, Some(device.id), auto_reload);
         ProvisionQrTemplate {
             lang,
             title: crate::i18n::t_params(lang, "devices.qr.title", &[("name", &device.name)]),
@@ -196,6 +213,8 @@ impl ProvisionQrTemplate {
             missing_server_url: server_url(settings, &state.config).is_empty(),
             url_warning: plain_http_warning(lang, server_url(settings, &state.config)),
             missing_checksum: state.config.launcher_signature_checksum.is_none(),
+            launcher_blocks: launcher.as_ref().is_some_and(|line| line.blocks_qr()),
+            launcher,
             wifi_ssid: String::new(),
             until: None,
             paused_until: state
@@ -266,7 +285,7 @@ pub async fn provision_form(
         Ok(loaded) => loaded,
         Err(status) => return status.into_response(),
     };
-    ProvisionQrTemplate::new(&state, lang, device, &settings)
+    ProvisionQrTemplate::new(&state, lang, device, &settings, true)
         .await
         .page(StatusCode::OK)
 }
@@ -282,11 +301,14 @@ pub(crate) fn wifi_refusal(
         return Some(("wifi_ssid", t("devices.qr.ssid_long")));
     }
     let raw_key = password.len() == 64 && password.chars().all(|c| c.is_ascii_hexdigit());
+    if raw_key {
+        return Some(("wifi_password", t("devices.qr.password_raw_key")));
+    }
     let chars = password.chars().count();
-    if !password.is_empty() && !raw_key && chars < MIN_WIFI_PASSWORD_CHARS {
+    if !password.is_empty() && chars < MIN_WIFI_PASSWORD_CHARS {
         return Some(("wifi_password", t("devices.qr.password_short")));
     }
-    if !raw_key && chars > MAX_WIFI_PASSWORD_CHARS {
+    if chars > MAX_WIFI_PASSWORD_CHARS {
         return Some(("wifi_password", t("devices.qr.password_long")));
     }
     if ssid.is_empty() && !password.is_empty() {
@@ -313,7 +335,7 @@ pub async fn provision_qr(
     };
     let ssid = form.wifi_ssid.trim();
     let password = form.wifi_password.trim();
-    let mut page = ProvisionQrTemplate::new(&state, lang, device, &settings).await;
+    let mut page = ProvisionQrTemplate::new(&state, lang, device, &settings, false).await;
 
     if let Some((field, why)) = wifi_refusal(lang, ssid, password) {
         page.error_field = field;
@@ -324,8 +346,9 @@ pub async fn provision_qr(
         return page.page(StatusCode::BAD_REQUEST);
     }
     page.wifi_ssid = ssid.to_string();
-    // No code at all without a checksum: there would be no QR code to carry it.
-    if page.missing_checksum {
+    // No code at all without a checksum: there would be no QR code to carry it. Nor while the
+    // launcher the QR names would be refused, or isn't checked yet (design 86).
+    if page.missing_checksum || page.launcher_blocks {
         return page.page(StatusCode::OK);
     }
     let wifi = (!ssid.is_empty()).then(|| (ssid.to_string(), password.to_string()));
@@ -461,6 +484,7 @@ pub(crate) fn provisioning_payload(
         wifi_password,
         locale: valid_locale(locale).then(|| locale.to_string()),
         time_zone: valid_time_zone(time_zone).then(|| time_zone.to_string()),
+        leave_all_system_apps_enabled: true,
         admin_extras,
     };
     Some(serde_json::to_value(&payload).expect("provisioning payload always serializes"))

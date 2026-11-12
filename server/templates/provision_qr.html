@@ -38,6 +38,8 @@
     </div>
     {% endif %}
 
+    {% if let Some(launcher) = launcher %}{% include "partials/launcher_check.html" %}{% endif %}
+
     {#- The QR code renders in the POST's answer, in this group: the form posts to #qr, so the
         answer lands on it with or without JS. The Wi-Fi password is never stored or shown again. -#}
     <section id="qr" aria-labelledby="qr-title">
@@ -45,6 +47,8 @@
         <div class="group">
             {% if missing_checksum %}
             <p class="row row-note">{{ self.t("devices.qr.needs_setup") }}</p>
+            {% else if launcher_blocks %}
+            <p class="row row-note" data-row="needs-launcher">{{ self.t("devices.qr.needs_launcher") }}</p>
             {% else %}
             {% if !qr_svg.is_empty() %}
             <div class="cell qr-code" data-row="qr">{{ qr_svg|safe }}</div>

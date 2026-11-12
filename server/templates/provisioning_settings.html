@@ -12,6 +12,8 @@
     {% call band::sub(self.t("settings.provisioning.title"), "/settings", self.t("nav.settings")) %}{% endcall %}
     <div class="sheet">
 
+    {% if let Some(launcher) = launcher %}{% include "partials/launcher_check.html" %}{% endif %}
+
     {#- One form (§5.6: the handler writes every field). A refusal renders in the POST's answer at
         #setup; a save comes back to the flash under Save (#saved). -#}
     <form method="post" action="/settings/provisioning#setup" id="setup">

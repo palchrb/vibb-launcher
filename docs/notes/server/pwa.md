@@ -886,7 +886,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   **Done** → the phone's page for a phone not set up; for a connected phone both go back to Advanced › Connection and
   warn that a new code cuts it off. "Server setup needed" (no `LAUNCHER_SIGNATURE_CHECKSUM` - no QR form then -, no
   server address) is one red row with the env var / Phone Setup behind its ⓘ.
-- **Refusals before any code**: a Wi-Fi name over 32 bytes, a password under 8 or over 63 characters (a 64-hex-digit raw key passes), or a password without a
+- **Refusals before any code**: a Wi-Fi name over 32 bytes, a password under 8 or over 63 characters, a 64-hex-digit raw key (since 2026-11-12, `devices.qr.password_raw_key`: AOSP quotes the password, so the phone would take the key as a passphrase), or a password without a
   name renders Connect again (400) with the reason under the field, never the password; nothing was made (the QR
   code's capacity can't be overflowed by a form). A payload too long for a QR code (a huge server address or key)
   is a 500 with a reason, checked before the code is made (the live code survives), never a panic; Connect's and the

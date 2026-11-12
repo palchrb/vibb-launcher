@@ -31,6 +31,7 @@ mod keys;
 mod kid_lock;
 mod kid_pin;
 mod kiosk_escapes;
+mod launcher_check;
 mod limits;
 mod lock;
 mod lock_glance;
@@ -191,6 +192,9 @@ pub struct AppState {
     /// The newest server release, read from GitHub off the request path
     /// (`handlers::system_update::ServerRelease`).
     pub server_release: std::sync::Arc<handlers::system_update::ServerRelease>,
+    /// The setup QR's launcher check (design 86), read off the request path
+    /// (`launcher_check::LauncherCheck`).
+    pub launcher_check: std::sync::Arc<launcher_check::LauncherCheck>,
     /// MET's requests (design 75 §3.3): their own `music_net::HttpSource` behind their own gate, never the music
     /// fetch's (a card's nowcast must not queue behind a 120 s feed); canned in the tests.
     pub weather_fetch: std::sync::Arc<dyn music_net::Source>,
@@ -520,6 +524,7 @@ async fn main() {
         ),
         kid_writes: Default::default(),
         server_release: Default::default(),
+        launcher_check: Default::default(),
         weather_fetch: std::sync::Arc::new(music_net::Gated::new(
             std::sync::Arc::new(music_net::HttpSource::new()),
             music_net::REQUEST_SPACING,
@@ -547,6 +552,10 @@ async fn main() {
     tokio::task::spawn(async move {
         handlers::system_update::refresh_release(&release_state).await;
     });
+    // The setup QR's launcher check (design 86), so Phone Setup and Connect rarely say "Checking":
+    // a crash's temp file swept first (awaited, before any listener), then the check in the
+    // background.
+    launcher_check::start(&state).await;
     // The launcher's catalog row, so its self-updates need nothing added under Apps - before
     // the scheduled sync's first pass.
     handlers::tracked_apps::ensure_launcher_row(&state).await;
@@ -1632,6 +1641,10 @@ pub fn build_admin_router(
             "/settings/provisioning",
             get(handlers::settings::provisioning_settings_form)
                 .post(handlers::settings::update_provisioning_settings),
+        )
+        .route(
+            "/settings/provisioning/launcher-check",
+            post(launcher_check::check_again),
         )
         .route("/backups", get(handlers::backups::list_backups))
         .route("/backups/create", post(handlers::backups::create_backup))

@@ -261,6 +261,7 @@ impl TestApp {
             )),
             kid_writes: Default::default(),
             server_release: Default::default(),
+            launcher_check: Default::default(),
             // MET through its own real gate, answered by the canned fetch; a short wait so a slow fetch's test takes
             // no 6 s.
             weather_fetch: std::sync::Arc::new(crate::music_net::Gated::new(
@@ -276,6 +277,18 @@ impl TestApp {
                 std::sync::Arc::new(weather)
             },
         };
+
+        // The setup QR's launcher check as if it had just passed (design 86): no test downloads
+        // the real launcher; `launcher_check::tests` and `tests::provisioning` set other results.
+        state.launcher_check.set(
+            &state.config,
+            crate::launcher_check::Checked {
+                verdict: crate::launcher_check::Verdict::Works,
+                version: Some("0.39.0".to_string()),
+                published: None,
+                min_sdk: Some(34),
+            },
+        );
 
         TestApp {
             router: build_admin_router(state.clone(), session_layer),

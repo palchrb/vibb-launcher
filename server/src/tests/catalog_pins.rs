@@ -433,6 +433,8 @@ async fn a_pinned_app_refuses_what_it_cant_check() {
     let unreadable = crate::apk::ApkIdentity {
         package: None,
         version_code: None,
+        version_name: None,
+        min_sdk: None,
         signer_sha256: Some(KEY1.to_string()),
     };
     let refused = crate::handlers::tracked_apps::check_pins(&pinned, &unreadable).unwrap_err();
