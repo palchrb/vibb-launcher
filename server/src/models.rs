@@ -681,6 +681,10 @@ pub struct TrackedApp {
     /// `None` on GitHub and manual rows.
     pub fdroid_repo: Option<String>,
     pub fdroid_package: Option<String>,
+    /// The stored release's own versionCode, from its APK's manifest (migrations/0139): what a
+    /// phone reports once it runs the release (`tracked_apps::catalog_release_installed`). `None`
+    /// before it is read or when the APK's can't be.
+    pub latest_release_version_code: Option<i64>,
 }
 
 impl TrackedApp {
