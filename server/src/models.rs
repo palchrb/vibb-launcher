@@ -95,6 +95,10 @@ pub struct Device {
     /// phone isn't charging (`phone_status`).
     #[sqlx(default)]
     pub battery_low_since: Option<String>,
+    /// The phone's own avatar colour (design 85 §5, migration 0138): an index into
+    /// `handlers::devices::AVATAR_TONES`, chosen once when the phone is added.
+    #[sqlx(default)]
+    pub avatar_tone: i64,
 }
 
 #[derive(sqlx::FromRow, Clone, Default)]

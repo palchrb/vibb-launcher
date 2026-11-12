@@ -72,7 +72,7 @@ async fn about_this_phone_shows_the_last_reports_facts() {
     let band = &html[html.find("<header class=\"band").unwrap()..];
     let band = &band[..band.find("</header>").unwrap()];
     let who = "<span class=\"band-who\" aria-hidden=\"true\">\
-               <span class=\"avatar \">A</span></span>";
+               <span class=\"avatar tone-peach\">A</span></span>";
     let at = band.find(who).expect("the phone's letter on the band");
     let actions = band.find("<div class=\"band-actions\">").unwrap();
     assert!(band.find("</h1>").unwrap() < at && at < actions, "{band}");

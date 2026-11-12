@@ -1087,7 +1087,8 @@ man er inne på en device". Branch `pwa-fixes-b`.
   every tab's band with the page's name beside it (24 px), and the wordmark is gone.*
 - **Avatars**: every set-up phone's initial is `#0C0C14` on peach `#F0A884` (Nunito 900, 46 px), a phone not set up
   stays grey (`devices::avatar_class_of(enrolled)`: `""` or `avatar-grey`); `AVATAR_COLOURS` now colour only the
-  Apps tab's letter tiles.
+  Apps tab's letter tiles. *Design 85 step 1: each phone has its own colour, peach the first (below, "Every phone's
+  own colour").*
 - **Nunito is served from here** (no font service; `static/fonts/nunito-latin-wght.woff2`, preloaded by `head.html`,
   `font-display: swap`): google/fonts `ofl/nunito/Nunito[wght].ttf` at commit `8b0a1d0f`, cut with fonttools to
   `wght=700:900` (`fonttools varLib.instancer --update-name-table`, so it names itself Nunito Bold, not ExtraLight) and Latin + Latin Extended-A (`pyftsubset --flavor=woff2`, about 31 KB);
@@ -1953,3 +1954,27 @@ pointer here.
   `device_pages::about_this_phone_shows_the_last_reports_facts` and `avatars.rs` the phone's picture;
   `time_pages.rs` reads Save on the band and the flash box. Measured in Chromium at 320 and 390 px, light and dark,
   scripts on and off: design 84 §9. The iPhone walk is design 84 §8.
+
+## Every phone's own colour (design 85 step 1, 2026-11-12, branch `design-85`, migration `0138_device_avatar_tone.sql`)
+
+- **The user** (2026-11-11): "forskjellige farger generelt som avatar frem til man setter et bilde ville jo vært god
+  skikk"; the seven colours and their order decided 2026-11-12 (design 85 §10, O2).
+- **The palette**: `devices::AVATAR_TONES` - `tone-peach`, `tone-sky`, `tone-butter`, `tone-lilac`, `tone-sage`,
+  `tone-teal`, `tone-rose`, in the order they are handed out. In `style.css` each class sets only `--avatar-bg`
+  (`#F0A884`, `#9CC3EC`, `#EBD27F`, `#D7AEDB`, `#B5D098`, `#7FCBC8`, `#EFA3AF`), so `.avatar` keeps its one rule; the
+  night letter is 9.7:1 or more on each, the same in both schemes.
+- **Stored, not derived**: `devices.avatar_tone`, an index into the list. A new phone's own `INSERT`
+  (`devices::insert_device_sql`, with `next_tone`'s scalar subquery) takes the first tone no phone has, past seven
+  the one the fewest have (the lowest on a tie) - one statement, no read before the write. A removed phone's tone is
+  free for the next new one; nobody else's moves. The migration numbered the phones there by id: the oldest kept peach.
+  `TestApp::create_device` inserts through the same SQL.
+- **Where it shows**: `devices::avatar_class(device)` gives the tone's class for a set-up phone
+  (`avatar_class_of(enrolled, tone)`, the tone taken `rem_euclid` the list's length, so a stored value out of range
+  still maps to one), `avatar-grey` for one not set up - every page that used it changes with no template edit:
+  Devices, the summary, the band's picture, Apps' "On phones" and an app's page, Schedules, Music, Locate, and the
+  inbox (`notifications::ROW_COLUMNS` reads `d.avatar_tone`; a catalog event stays grey). Not changed: a contact's
+  letter on Calls & Contacts (peach), the Apps tab's app tiles, Web Push (a picture or the app's icon). A picture
+  covers the colour as before.
+- **Tests**: `tests::avatars` - the tone handed out, freed and shared past seven, the migration, the class on every
+  surface, a tone out of range, and `AVATAR_TONES`/`next_tone`/`style.css` agreeing with each colour's contrast
+  against the letter computed.

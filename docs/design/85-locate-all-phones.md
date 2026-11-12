@@ -1,6 +1,8 @@
 # 85 - Locate: every phone on one map, and a colour of its own for every phone
 
-Status: design note by the architect, 2026-11-11, on `main` at 7f3262ec, branch `design-85`. Not built. Server/PWA
+Status: design note by the architect, 2026-11-11, on `main` at 7f3262ec, branch `design-85`. O1-O3 decided by the
+user 2026-11-12, as proposed (§10). Step 1 (the colours) built on `design-85`, 2026-11-12, as §5 and §9 say, migration
+0138; step 2 not built. Server/PWA
 only: one migration, `devices.rs`'s avatar helpers, Locate's handler and template, one new script, `style.css`,
 i18n, tests. No API change, no policy key, no launcher or music change (§9 says why none is needed).
 
@@ -488,8 +490,14 @@ avatar colour lives only in the PWA (the launcher shows no picture of itself).
 
 ## 10. Points for the user
 
-O1, O2 and O3 are the user's to decide; the design QA's leaning is given with each. O4-O6 are the architect's and
-the QA's together, said here so the user can overrule them.
+**Decided, 2026-11-12** (the user, O1-O3 exactly as proposed):
+
+- **O1: 1 hour.** Fresh outside "Jevnlig" stays 1 hour, "Her nå"'s number (§3.2); nothing changes in `zones.rs`.
+- **O2: the seven colours as listed**, in this order: peach `#F0A884`, sky `#9CC3EC`, butter `#EBD27F`, lilac
+  `#D7AEDB`, sage `#B5D098`, teal `#7FCBC8`, rose `#EFA3AF`; the oldest phone keeps peach (§5).
+- **O3: Oppdater alle skips** a phone under Av, one not set up and one Disconnected, each named with why (§4.6).
+
+O4-O6 stand as the architect's and the QA's below; the user may still overrule them. The points as they were put:
 
 - **O1 - Fresh outside "Jevnlig": 1 hour or 30 minutes?** The rule is "Her nå"'s (§3), and under "Bare når du spør"
   its number is 1 hour. The user's example was 15 minutes. The QA leans to keeping 1 hour; if shorter, **30
