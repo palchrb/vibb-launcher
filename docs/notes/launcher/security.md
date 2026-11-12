@@ -102,9 +102,10 @@ waits for a device capture of the Play Protect / account-security channel ids.
   2026-11-12; `TailnetKeyTest`): `connect`'s failure path closes the client (`discard()`: the proxy, the credential
   and the global `Authenticator` go; `proxyChanged` fires once, at the end of `connect`), so the next attempt builds a
   new tsnet.Server - one started before the network was up stays in "Starting" for good on Android (no netlink). The
-  close runs inside the crash guard's pending window, so a native crash there counts like any other. A first join (a
-  key in hand) waits 60 s for `Up` instead of 30 (`tailnetUpTimeoutSeconds`), since a registration cut off by the bound
-  starts again on a fresh server and the one-time key may be spent by then.
+  close runs inside the crash guard's pending window, so a native crash there counts like any other. Only a node
+  already on the tailnet (no key in hand) is thrown away (`tailnetFreshAfterFailure`; code QA M): a first join keeps
+  its server as before, since control may have taken the one-time key before the node key was stored, and a fresh
+  server would ask with a spent key. `Up`'s bound stays 30 s.
 - **S-L10, Leave Tailnet** (command `leave_tailnet`, Advanced › Connection on the server, behind a ticked box;
   contract `server/testdata/leave_tailnet.json`): `TsnetClient.leave` closes tsnet, removes `tsnet_node_joined`, any
   stored auth key and the crash guard's marks in one `commit()`, then deletes `files/tailscale` and drops the global

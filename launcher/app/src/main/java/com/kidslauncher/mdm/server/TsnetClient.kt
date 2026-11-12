@@ -98,7 +98,7 @@ object TsnetClient {
         hostname: String,
         authKey: String,
         stateDir: String,
-        timeoutSeconds: Long? = null,
+        timeoutSeconds: Long = 30,
     ): String? {
         val before = proxyAddress
         val ip = try {
@@ -113,7 +113,7 @@ object TsnetClient {
                 client = it
                 clientParams = params
             }
-            val ip = c.up(timeoutSeconds ?: tailnetUpTimeoutSeconds(authKey))
+            val ip = c.up(timeoutSeconds)
             val addr = c.startProxy()
             val cred = c.proxyCredential()
             proxyAddress = addr
@@ -122,12 +122,13 @@ object TsnetClient {
             ip
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Failed to connect to tailnet", e)
-            // Upstream siesta5787/kids-launcher-mdm 0d4201dab9: never retry on the same tsnet.Server. On Android it
-            // can't watch for network changes (netlink is SELinux-blocked for apps), so one started before the network
-            // was up stays in "Starting" for good - seen live upstream at LOCKED_BOOT_COMPLETED, ~2 s before Wi-Fi. The
-            // next attempt builds a fresh one on whatever network exists by then; the node state in [stateDir] stays.
-            // proxyChanged fires once, below.
-            discard()
+            // Upstream siesta5787/kids-launcher-mdm 0d4201dab9: a joined node never retries on the same tsnet.Server.
+            // On Android it can't watch for network changes (netlink is SELinux-blocked for apps), so one started
+            // before the network was up stays in "Starting" for good - seen live upstream at LOCKED_BOOT_COMPLETED,
+            // ~2 s before Wi-Fi. The next attempt builds a fresh one on whatever network exists by then, from the node
+            // state in [stateDir]. A first join keeps its server ([tailnetFreshAfterFailure]). proxyChanged fires
+            // once, below.
+            if (tailnetFreshAfterFailure(authKey)) discard()
             null
         } catch (e: LinkageError) {
             // Security review S-L10: the aar is arm64-only - a missing or bad `.so` (UnsatisfiedLinkError,
@@ -182,8 +183,8 @@ object TsnetClient {
      * Synchronized (QA of the launcher wave, Low 5): Home's resume, the sync and the QR setup call
      * it from different threads, and two first joins at once would build two tsnet servers on one
      * state directory, registering with the one key - the loser's state could win, and the key is
-     * deleted after the first success. A second caller waits (up to the connect's bound,
-     * [tailnetUpTimeoutSeconds]) and then sees [connected]. Every caller is off the main thread.
+     * deleted after the first success. A second caller waits (up to the 30 s connect) and then sees
+     * [connected]. Every caller is off the main thread.
      */
     @Synchronized
     fun connectFromPreferences(context: Context): String? {
