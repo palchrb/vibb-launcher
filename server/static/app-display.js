@@ -5,7 +5,9 @@
 // chosen (the logo has no tile; a disabled fieldset posts nothing, which the server reads as auto).
 // A part of Vibb One (design 82 D9: Meldinger) says its own look on the form (`data-auto-glyph`,
 // `data-auto-tile`): "Automatic" previews as that glyph on that tile, and a chosen glyph keeps the tile
-// until a colour is chosen (the colour's own `data-tile`). The form works without this.
+// until a colour is chosen (the colour's own `data-tile`). Design 87: where a phone has sent the app's real logo
+// (the form's `data-logo`), "App logo" previews as that image filling the tile (`data-preview-logo`); "Automatic"
+// keeps "Vibb style", as the phone draws it (R2-M6). The form works without this.
 (function () {
     "use strict";
 
@@ -28,11 +30,14 @@
         var input = form.querySelector('input[name="label"]');
         var icon = form.querySelector('input[name="icon"]:checked');
         var color = form.querySelector('input[name="color"]:checked');
+        var logoImg = form.querySelector("[data-preview-logo]");
         if (!tile || !glyph || !own || !label) return;
         var key = icon ? icon.value : "";
         var logo = key === "own";
         var autoGlyph = form.getAttribute("data-auto-glyph");
         if (colors) colors.disabled = logo;
+        var showLogo = !!(logo && logoImg && form.getAttribute("data-logo"));
+        if (logoImg) logoImg.hidden = !showLogo;
         if (key && !logo) {
             tile.style.background = (color && color.getAttribute("data-tile")) || AUTO_PREVIEW;
             glyph.src = "/static/app-icons/" + key + ".svg";
@@ -48,7 +53,7 @@
             tile.style.background = OWN_PREVIEW;
             own.textContent = w(own, logo ? "own" : "vibb");
             glyph.hidden = true;
-            own.hidden = false;
+            own.hidden = showLogo;
         }
         var text = input ? input.value.trim() : "";
         label.textContent = text || (input ? input.getAttribute("data-app-label") : "") || "";

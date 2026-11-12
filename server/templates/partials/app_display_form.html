@@ -1,7 +1,7 @@
-{# "Name and icon" for one app (design 14; the three icon states of design 34 P1): under its row on Device › Apps (design 31 step 6) and on the catalog app's page. Reads `form` (app_display::AppDisplayForm). static/app-display.js updates the preview and turns the colours off for "The app's own logo"; the form works without it. A part of Vibb One (design 82 D9, `form.builtin`: Meldinger) has no "App logo", and its "Automatic" previews as its own glyph on its own tile (`data-auto-glyph`, `data-auto-tile`). #}
+{# "Name and icon" for one app (design 14; the three icon states of design 34 P1): under its row on Device › Apps (design 31 step 6) and on the catalog app's page. Reads `form` (app_display::AppDisplayForm). static/app-display.js updates the preview and turns the colours off for "The app's own logo"; the form works without it. A part of Vibb One (design 82 D9, `form.builtin`: Meldinger) has no "App logo", and its "Automatic" previews as its own glyph on its own tile (`data-auto-glyph`, `data-auto-tile`). Design 87: when a phone has sent the app's real logo (`form.logo`, the form's `data-logo`), "App logo" previews as that image filling the tile (`data-preview-logo`); "Automatic" keeps "Vibb style" (R2-M6). #}
 <details class="app-display" id="{{ form.anchor }}"{% if form.open %} open{% endif %}>
     <summary class="row"><span class="row-label">{{ self.t("apps.display.title") }}<span class="row-sub">{{ form.summary }}</span></span><svg class="chev section-chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></summary>
-    <form method="post" action="{{ form.action }}" class="app-display-form"{% if let Some(look) = form.builtin %} data-auto-glyph="{{ look.glyph }}" data-auto-tile="{{ look.tile }}"{% endif %}>
+    <form method="post" action="{{ form.action }}" class="app-display-form"{% if let Some(look) = form.builtin %} data-auto-glyph="{{ look.glyph }}" data-auto-tile="{{ look.tile }}"{% endif %}{% if let Some(src) = form.logo %} data-logo="{{ src }}"{% endif %}>
         {% if !form.package_name.is_empty() %}
         <input type="hidden" name="package_name" value="{{ form.package_name }}">
         {% endif %}
@@ -13,8 +13,9 @@
                 <span class="app-tile-own" data-preview-own data-w-own="{{ self.t("apps.display.preview_own") }}" data-w-vibb="{{ self.t("apps.display.vibb_style") }}" hidden>{{ self.t(form.preview_text()) }}</span>
                 {% else %}
                 <img data-preview-glyph alt="" hidden>
-                <span class="app-tile-own" data-preview-own data-w-own="{{ self.t("apps.display.preview_own") }}" data-w-vibb="{{ self.t("apps.display.vibb_style") }}">{{ self.t(form.preview_text()) }}</span>
+                <span class="app-tile-own" data-preview-own data-w-own="{{ self.t("apps.display.preview_own") }}" data-w-vibb="{{ self.t("apps.display.vibb_style") }}"{% if form.logo.is_some() && form.own_checked() %} hidden{% endif %}>{{ self.t(form.preview_text()) }}</span>
                 {% endif %}
+                {% if let Some(src) = form.logo %}<img class="app-tile-logo" data-preview-logo src="{{ src }}" alt="" decoding="async"{% if !form.own_checked() %} hidden{% endif %}>{% endif %}
             </span>
             <span data-preview-label>{{ form.preview_label() }}</span>
         </div>

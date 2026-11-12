@@ -29,6 +29,10 @@ data class InstalledApp(
      * `manage_media`, `exact_alarm`, `write_settings`, `usage_access`, `full_screen` (`granted` | `denied` |
      * `unknown`). `null` (left out) when there is nothing to say. */
     val access: Map<String, String>? = null,
+    /** Design 87: the SHA-256 (64 lowercase hex) of the app's logo as the phone draws it, a [APP_LOGO_SIZE_PX] px
+     * PNG; the server asks for the file in the report's answer ([WantedLogos]). `null` (left out) when there is
+     * nothing to say this time - never "no logo". An older server ignores it. */
+    val logo: String? = null,
 )
 
 /** The longest versionName a report carries (the server clips to the same). */

@@ -2009,6 +2009,9 @@ struct AppTile {
     colour: &'static str,
     /// The icon key (`/static/app-icons/<key>.svg`) and the tile's colour.
     icon: Option<(String, &'static str)>,
+    /// Design 87 §8.1: without a catalog glyph, the app's real logo (its URL) as most phones sent it; the
+    /// launcher's row the server's Vibb mark.
+    logo: Option<String>,
 }
 
 /// One app on the Apps tab's catalog (design 31 §3.3).
@@ -2076,9 +2079,14 @@ fn capitalised(text: &str) -> String {
     }
 }
 
-fn app_tile(app: &TrackedApp, label: &str) -> AppTile {
+fn app_tile(app: &TrackedApp, label: &str, logos: &HashMap<String, String>) -> AppTile {
     let colours = crate::handlers::devices::AVATAR_COLOURS;
     AppTile {
+        logo: if app.is_launcher {
+            Some(crate::app_logos::VIBB_MARK.to_string())
+        } else {
+            logos.get(&app.package_name).cloned()
+        },
         letter: crate::handlers::devices::initial(label),
         colour: colours[app.id.rem_euclid(colours.len() as i64) as usize],
         icon: app
@@ -2101,6 +2109,7 @@ fn catalog_row(
     app: &TrackedApp,
     phones: i64,
     set_up: i64,
+    logos: &HashMap<String, String>,
     lang: Lang,
 ) -> CatalogRow {
     let label = app
@@ -2130,7 +2139,7 @@ fn catalog_row(
     };
     CatalogRow {
         id: app.id,
-        tile: app_tile(app, &label),
+        tile: app_tile(app, &label, logos),
         label,
         sub: capitalised(&sub.join(" · ")),
         version: app
@@ -2257,6 +2266,13 @@ pub async fn list_apps(
     .unwrap_or_default()
     .into_iter()
     .collect();
+    // Design 87: the apps' real logos the phones sent; a failed read leaves the letters.
+    let logos = crate::app_logos::catalog_logos(&state)
+        .await
+        .unwrap_or_else(|err| {
+            tracing::error!(%err, "can't read the apps' logos");
+            HashMap::new()
+        });
     let mut apps: Vec<CatalogRow> = tracked
         .iter()
         .map(|app| {
@@ -2265,6 +2281,7 @@ pub async fn list_apps(
                 app,
                 counts.get(&app.id).copied().unwrap_or(0),
                 set_up,
+                &logos,
                 lang,
             )
         })
@@ -2790,6 +2807,13 @@ async fn render_detail_full(
         display.as_ref(),
     );
     form.open |= open == Some("display");
+    // Design 87 §8.2: "App logo" previews as the logo most phones sent (a failed read: the words, as before).
+    if !app.package_name.is_empty() {
+        form.logo = crate::app_logos::catalog_logos(state)
+            .await
+            .ok()
+            .and_then(|logos| logos.get(&app.package_name).cloned());
+    }
     // The phones with the app ticked; the launcher is on every phone that is set up. A DB error
     // is a 500, never an empty list (design 37 §2.1).
     let devices: Result<Vec<crate::models::Device>, sqlx::Error> = if app.is_launcher {

@@ -1175,6 +1175,15 @@ pub struct InstalledApp {
         deserialize_with = "crate::app_permissions::lenient_access"
     )]
     pub access: Option<crate::app_permissions::AppAccess>,
+    /// Design 87: the SHA-256 of the app's logo as the phone drew it (128 px PNG), 64 lowercase hex - anything else
+    /// is none (`device_api::cap_installed_apps`), never a refused report (R2-M5). Absent = nothing to say this time.
+    /// Taken out before the list is stored (`app_logos::take_logos`): it lives in `device_app_logos`.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "lenient_text"
+    )]
+    pub logo: Option<String>,
 }
 
 // ---------------------------------------------------------------------

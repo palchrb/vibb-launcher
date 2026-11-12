@@ -568,6 +568,8 @@ pub async fn run_pruning(state: AppState) {
     loop {
         interval.tick().await;
         let pruned = prune(&state.db).await;
+        // Design 87: every app logo no phone names, and a crash's stray temp file.
+        crate::app_logos::prune_all(&state).await;
         if pruned != Pruned::default() {
             tracing::info!(?pruned, "Pruned old data");
         }

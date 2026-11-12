@@ -3,6 +3,7 @@ mod apk;
 mod app_display;
 mod app_downloads;
 mod app_icons;
+mod app_logos;
 mod app_permissions;
 mod attention;
 mod audit;
@@ -131,6 +132,11 @@ pub struct AppState {
     /// The phones' own pictures (`data/device_avatars`; a temp dir in tests) - its own store,
     /// `photos::DEVICE_AVATARS`, backed up like the contact photos.
     pub avatar_dir: std::sync::Arc<std::path::PathBuf>,
+    /// The apps' real logos the phones drew (`data/app_logos`; a temp dir in tests, design 87): shared by every
+    /// phone, never backed up - `app_logos`.
+    pub app_logo_dir: std::sync::Arc<std::path::PathBuf>,
+    /// The app logos' refusals, upload budgets and full-store log lines, in memory only (`app_logos::Memory`).
+    pub app_logos: std::sync::Arc<app_logos::Memory>,
     /// Which phones hold the SSE command stream open right now, in memory only (design 19 Q1):
     /// the device page's "Instant changes" line. See `streams`.
     pub command_streams: std::sync::Arc<streams::CommandStreams>,
@@ -489,6 +495,8 @@ async fn main() {
         dns_feed_dir: std::sync::Arc::new(std::path::PathBuf::from("data/dns_feeds")),
         wallpaper_dir: std::sync::Arc::new(std::path::PathBuf::from("data/wallpapers")),
         avatar_dir: std::sync::Arc::new(std::path::PathBuf::from("data/device_avatars")),
+        app_logo_dir: std::sync::Arc::new(std::path::PathBuf::from("data/app_logos")),
+        app_logos: Default::default(),
         command_streams: Default::default(),
         app_syncs: Default::default(),
         tracked_apps_dir: std::sync::Arc::new(std::path::PathBuf::from(
@@ -1274,6 +1282,9 @@ pub fn build_admin_router(
             "/contact-photos/original/{hash}",
             get(handlers::calls::view_photo_original),
         )
+        // Design 87: the apps' real logos the phones drew, behind the session like every page (no push uses one),
+        // only a hash some phone names - never on the phones' routes.
+        .route("/app-logos/{hash}", get(app_logos::view))
         // The phone's own picture (server round C), from its summary's header.
         .route(
             "/devices/{id}/avatar",

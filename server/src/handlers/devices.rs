@@ -3379,6 +3379,8 @@ pub async fn delete_device(
     Path(id): Path<i64>,
     Extension(_admin): Extension<CurrentAdmin>,
 ) -> impl IntoResponse {
+    // Design 87: the logos its rows name, read before the rows go with it.
+    let logos = crate::app_logos::hashes_of(&state.db, id).await;
     sqlx::query("DELETE FROM devices WHERE id = ?")
         .bind(id)
         .execute(&state.db)
@@ -3403,6 +3405,7 @@ pub async fn delete_device(
     crate::photos::DEVICE_AVATARS
         .prune(&state.db, &state.avatar_dir)
         .await;
+    crate::app_logos::prune_hashes(&state, &logos).await;
 
     Redirect::to("/devices")
 }

@@ -1,0 +1,72 @@
+{
+  "capability": "app_logos_v1",
+  "size_px": 128,
+  "max_bytes": 81920,
+  "max_per_phone": 300,
+  "max_wanted": 40,
+  "png_base64": "iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAYAAADDPmHLAAAAJ3RFWHRDb21tZW50AGEgcGxhaW4gZGlzYyBkcmF3biBmb3IgdGhlIHRlc3Rmuko1AAABfUlEQVR42u3bQRHAIBAEQZQhLRKwDCLygmmqzsBOP5MxPM/znn1zffvPWTASGgzRYRAcCOFBEB0G4UEQHgTxIRAeBOFBEB8C8SEQHgTxIRAfAvEhEB8C8SEQHwLxIRA/jUCIMAIB4giMHwZg+DACg4cRGDqOwMhhAAaOIzBuGIBhwwgMGkdgzDAAQ8YRGDEMwIBxBMYDwIBVAIaLIzBaGIDB4giMBYDBAHBJAIaKIzASAIaqAjBQHIFxADAQAA4AB4CLATBMHIFRADAMAA4AB4ADwAHgAHAAOAAcAA4AB4ADwAHgfBPgfBHkAHAAOAAcAM7/gc7fwQ4Adz8ACOLxAQAAAACMlQYAQTw+AABAUI8PAAAA1AFAEI8PAAAQ1OMDAAAE9fgQiA8AABDk4wMAAAT1+BCID4H4AAAAgfgQiA+B+BCID4H4EIgPgfgQiA+B+BCID4LwEIgPgfggCA+C8BCID4LwZQiKBjEoF4WgVAyEEkEMFo/AsKDnee++A+pq/4Y2I/TVAAAAAElFTkSuQmCC",
+  "png_sha256": "22b7bf389f88ecc028ba0c936f2cec4cbb2224bee865cbbc9de456ade05ce28d",
+  "report": {
+    "lock_reason": "NONE",
+    "kiosk_engaged": true,
+    "installed_apps": [
+      {
+        "package_name": "org.example.drawing",
+        "label": "Drawing",
+        "preinstalled": false,
+        "logo": "22b7bf389f88ecc028ba0c936f2cec4cbb2224bee865cbbc9de456ade05ce28d"
+      },
+      {
+        "package_name": "org.example.notes",
+        "label": "Notes",
+        "preinstalled": true
+      }
+    ],
+    "capabilities": [
+      "app_logos_v1"
+    ]
+  },
+  "answer": {
+    "wanted_logos": [
+      "22b7bf389f88ecc028ba0c936f2cec4cbb2224bee865cbbc9de456ade05ce28d"
+    ]
+  },
+  "upload": {
+    "path": "/api/devices/app-logos/22b7bf389f88ecc028ba0c936f2cec4cbb2224bee865cbbc9de456ade05ce28d",
+    "content_type": "image/png"
+  },
+  "answers": [
+    {
+      "case": "stored",
+      "status": 204
+    },
+    {
+      "case": "bad_hash",
+      "status": 400
+    },
+    {
+      "case": "mismatch",
+      "status": 400
+    },
+    {
+      "case": "type",
+      "status": 415
+    },
+    {
+      "case": "too_large",
+      "status": 413
+    },
+    {
+      "case": "not_reported",
+      "status": 409
+    },
+    {
+      "case": "wrong_size",
+      "status": 422
+    },
+    {
+      "case": "not_png",
+      "status": 422
+    }
+  ]
+}
