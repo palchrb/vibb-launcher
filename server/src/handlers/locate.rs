@@ -810,6 +810,18 @@ fn skip_reason(
     }
 }
 
+/// The phone's location mode. A phone always has its policy row; a missing one reads as a new
+/// phone's.
+async fn location_mode(state: &AppState, device_id: i64) -> Result<String, sqlx::Error> {
+    Ok(
+        sqlx::query_scalar("SELECT location_mode FROM device_policy WHERE device_id = ?")
+            .bind(device_id)
+            .fetch_optional(&state.db)
+            .await?
+            .unwrap_or_else(|| "on_request".to_string()),
+    )
+}
+
 /// The phone's newest fix.
 async fn newest_fix(
     state: &AppState,
@@ -2421,13 +2433,7 @@ pub async fn locate_all(
             .fetch_all(&state.db)
             .await?;
         for device in &devices {
-            // A phone always has its policy row; a missing one reads as a new phone's.
-            let mode: String =
-                sqlx::query_scalar("SELECT location_mode FROM device_policy WHERE device_id = ?")
-                    .bind(device.id)
-                    .fetch_optional(&state.db)
-                    .await?
-                    .unwrap_or_else(|| "on_request".to_string());
+            let mode = location_mode(&state, device.id).await?;
             if skip_reason(&state, device, &mode, now).is_some()
                 || !queue_command(&state, device.id, "locate", &admin).await?
             {
