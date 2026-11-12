@@ -1,9 +1,10 @@
-//! What an APK says it is (security review M10): its package name and versionCode, from the
-//! binary `AndroidManifest.xml`, and the SHA-256 of its signing certificate, from the APK Signing
+//! What an APK says it is (security review M10): its package name, versionCode and versionName, from
+//! the binary `AndroidManifest.xml`, and the SHA-256 of its signing certificate, from the APK Signing
 //! Block (scheme v3, else v2). The catalog pins the package and the signer from an app's first
 //! release and refuses a later release that differs (`handlers::tracked_apps`); the phones get
 //! them with the app list. The versionCode is how a phone's report is known to run the stored
-//! release (`app_updated`).
+//! release (`app_updated`). The versionName is what the setup QR's check shows (design 86,
+//! `launcher_check`).
 //!
 //! Read-only parsing of an untrusted file: every offset and length is checked, nothing panics, and
 //! the manifest and the signing block are capped in size. The digest is lower-case hex of the DER
@@ -31,6 +32,9 @@ pub struct ApkIdentity {
     /// `PackageInfo.getLongVersionCode` reads them; `None` when it couldn't be read (a reference,
     /// not a number) or the manifest couldn't.
     pub version_code: Option<i64>,
+    /// The manifest's `android:versionName` as a plain string ("0.39.0-rc.6"); `None` when it is a
+    /// reference, empty or unread.
+    pub version_name: Option<String>,
     /// SHA-256 (lower-case hex) of the first signer's certificate; `None` without a v2/v3
     /// signature (a v1-only APK) or when the block couldn't be read.
     pub signer_sha256: Option<String>,
@@ -61,6 +65,7 @@ pub fn read_identity(path: &Path) -> Result<ApkIdentity, String> {
     Ok(ApkIdentity {
         package: manifest.package,
         version_code: manifest.version_code,
+        version_name: manifest.version_name,
         signer_sha256,
     })
 }
@@ -163,8 +168,9 @@ const NO_INDEX: u32 = 0xffff_ffff;
 const TYPE_STRING: u8 = 0x03;
 const TYPE_INT_DEC: u8 = 0x10;
 const TYPE_INT_HEX: u8 = 0x11;
-/// `android.R.attr.versionCode` and `versionCodeMajor`.
+/// `android.R.attr.versionCode`, `versionName` and `versionCodeMajor`.
 const ATTR_VERSION_CODE: u32 = 0x0101_021b;
+const ATTR_VERSION_NAME: u32 = 0x0101_021c;
 const ATTR_VERSION_CODE_MAJOR: u32 = 0x0101_0576;
 
 /// What the binary manifest's first element (`<manifest>`) says.
@@ -172,9 +178,10 @@ const ATTR_VERSION_CODE_MAJOR: u32 = 0x0101_0576;
 struct Manifest {
     package: Option<String>,
     version_code: Option<i64>,
+    version_name: Option<String>,
 }
 
-/// The `package`, `android:versionCode` and `android:versionCodeMajor` attributes of the binary
+/// The `package`, `android:versionCode`, `android:versionName` and `android:versionCodeMajor` attributes of the binary
 /// manifest's first element (`<manifest>`). An android attribute is known by its resource id (the
 /// resource map), else by its name.
 fn read_manifest(xml: &[u8]) -> Option<Manifest> {
@@ -235,7 +242,7 @@ fn read_manifest(xml: &[u8]) -> Option<Manifest> {
                         };
                         if attribute_name == "package" && !package_seen {
                             package_seen = true;
-                            manifest.package = package_value(pool, attribute);
+                            manifest.package = string_value(pool, attribute);
                         }
                         continue;
                     }
@@ -247,6 +254,8 @@ fn read_manifest(xml: &[u8]) -> Option<Manifest> {
                         code = int();
                     } else if is(ATTR_VERSION_CODE_MAJOR, "versionCodeMajor") {
                         major = int();
+                    } else if is(ATTR_VERSION_NAME, "versionName") {
+                        manifest.version_name = string_value(pool, attribute);
                     }
                 }
                 manifest.version_code = code.and_then(|code| long_version_code(code, major));
@@ -259,9 +268,9 @@ fn read_manifest(xml: &[u8]) -> Option<Manifest> {
     None
 }
 
-/// The `package` attribute's value: its raw string, else a typed string; `None` otherwise or
-/// when empty.
-fn package_value(pool: &[u8], attribute: &[u8]) -> Option<String> {
+/// A string attribute's value (`package`, `android:versionName`): its raw string, else a typed
+/// string; `None` otherwise (a reference) or when empty.
+fn string_value(pool: &[u8], attribute: &[u8]) -> Option<String> {
     let raw = u32_at(attribute, 8)?;
     let value = if raw != NO_INDEX {
         raw
@@ -339,10 +348,15 @@ mod tests {
             ApkIdentity {
                 package: Some("me.vibb.testfixture".to_string()),
                 version_code: Some(1),
+                version_name: Some("1".to_string()),
                 signer_sha256: Some(KEY1.to_string()),
             }
         );
         assert_eq!(read("fixture-key1-v2.apk").version_code, Some(2));
+        assert_eq!(
+            read("fixture-key1-v2.apk").version_name.as_deref(),
+            Some("2")
+        );
         assert_eq!(
             read("fixture-key2.apk").signer_sha256.as_deref(),
             Some(KEY2)
@@ -361,6 +375,7 @@ mod tests {
             ApkIdentity {
                 package: Some("me.vibb.testfixture".to_string()),
                 version_code: Some(1),
+                version_name: Some("1".to_string()),
                 signer_sha256: None,
             }
         );
@@ -447,6 +462,7 @@ mod tests {
             Some(Manifest {
                 package: Some("me.vibb.testfixture".to_string()),
                 version_code: Some((1 << 32) + 7),
+                version_name: None,
             })
         );
         assert_eq!(
@@ -454,6 +470,7 @@ mod tests {
             Some(Manifest {
                 package: Some("me.vibb.testfixture".to_string()),
                 version_code: None,
+                version_name: None,
             }),
             "a versionCode outside the android namespace isn't the code"
         );

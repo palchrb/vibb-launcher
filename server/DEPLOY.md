@@ -563,6 +563,26 @@ apksigner verify --print-certs kids-launcher-mdm.apk | sed -n 's/.*SHA-256 diges
 
 An invalid value (wrong length, `+`/`/`/`=` characters) is logged at startup and ignored.
 
+**The server checks what the QR names** (design 86): it downloads the APK at `LAUNCHER_APK_URL` (at start, then at
+most once an hour when Phone Setup or a phone's Connect page is opened; "Check Again" on either page checks at once),
+reads its package, version and signing certificate, and shows the result under Settings > Phone Setup, "Launcher for
+new phones": "New phones get Vibb One X", or what is wrong. A signer that isn't `LAUNCHER_SIGNATURE_CHECKSUM`'s, another
+package than `LAUNCHER_ADMIN_COMPONENT`'s, or an address that gives no APK means a phone would stop at "Can't set up
+device": the Connect page then shows the warning instead of a QR code. The file is deleted as soon as it is read.
+
+`releases/latest` only ever serves a stable launcher release, so while the newer launchers are release candidates
+(prereleases) the QR installs an older one, and the page says so ("The setup QR code installs Vibb One 0.34.0 from
+21 Oct - older than 0.39.0-rc.6"). To set phones up with a specific release - a release candidate too - point the QR
+at that release's own asset and restart the service:
+
+```
+LAUNCHER_APK_URL=https://github.com/palchrb/vibb-launcher/releases/download/launcher-v0.39.0-rc.6/kids-launcher-mdm.apk
+```
+
+The signer check still guards it: an APK signed with another key shows the warning and no QR code. Remember to move it
+on (or remove the line, back to `releases/latest`) when a newer release should be the one new phones get - the page
+says when it is older than the newest launcher release.
+
 ### The launcher's own self-update
 
 The launcher updates itself through the Apps catalog, like any other app. **Nothing to add**: since 2026-10-15 the

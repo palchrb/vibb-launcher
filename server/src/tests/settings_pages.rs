@@ -339,6 +339,13 @@ async fn every_form_on_the_settings_pages_returns_to_its_group() {
     check(
         "/settings/provisioning",
         vec![
+            // Design 86: Check Again (not posted here - it would fetch the real launcher;
+            // `tests::provisioning::check_again_comes_back_to_the_row`).
+            (
+                "/settings/provisioning/launcher-check#launcher".to_string(),
+                vec![],
+                None,
+            ),
             (
                 "/settings/provisioning#setup".to_string(),
                 vec![

@@ -111,6 +111,21 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   before it) is never put in a QR (`provisioning::server_url`) and Phone Setup says so under the field, with how to
   fix the phones already set up with it - they stop reaching the server once Vibb One is updated (QA L-e;
   `provisioning::the_server_address_is_judged_on_save_and_shown`).
+  The setup QR's preflight (design 86, `launcher_check.rs`): the server downloads the APK `LAUNCHER_APK_URL` names
+  (the catalog's redirect rule, size cap and stall timeout, `tracked_apps::stream_to_file`, into
+  `data/launcher-check.<random>.apk`, deleted once read; a crash's leftover is removed at start), reads it
+  (`apk::read_identity`, which reads `android:versionName` too) and judges it: `Works`, `Older` (a newer
+  `launcher-v*` versionCode in the launcher row's stored release or its GitHub repo's list, **prereleases included**,
+  `install_now::launcher_tag_version_code`), `WrongSigner` (no v2/v3 signer, or not the checksum - the checksum's
+  URL-safe base64 and apk.rs's hex are both decoded to the 32 bytes, `checksum_matches`), `WrongPackage`, `NotAnApk`,
+  `Unreachable`. In memory (`AppState.launcher_check`, keyed by the address and the checksum; an hour, 5 minutes after
+  `Unreachable`), started at boot and by a page that finds it due, never awaited by a page. Phone Setup and the
+  Connect page show it in `partials/launcher_check.html` (`#launcher`, Check Again: `POST
+  /settings/provisioning/launcher-check`, waits up to 10 s, back to `#launcher`); the Connect page makes no QR and no
+  code while it checks or for a refusing verdict (`launcher_blocks`), and shows the QR with the warning for `Older`.
+  A page a GET drew reloads itself while it checks (`auto-reload.js`). Tests: `launcher_check::tests` (a fake GitHub on
+  loopback serving `testdata/apk/`), `provisioning::the_launcher_check_decides_the_qr`,
+  `check_again_comes_back_to_the_row`; `TestApp` sets `Works` for its own config, so no test downloads anything.
   `security_events` pruned after 180 days, a phone's own lines sooner (`retention::prune`, `retention-and-crashes.md`). The TOTP secret stays in the DB (QA b, DEPLOY.md).
 - **Docker and startup** (D1, `src/startup.rs`, `Dockerfile`, `deploy/image-smoke.sh`): `DEPLOY_KIND` (`NetConfig`,
   systemd default, the image sets docker). Startup for every kind: `check_data_writable` ("data/ is not writable by

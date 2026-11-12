@@ -1,0 +1,24 @@
+{#- The setup QR's launcher check (design 86, `launcher_check::Line`, as `launcher`): the Vibb One a new
+    phone gets, Checking, or - above the group - what a phone would refuse (red) or that it is older
+    (orange), with what to do. Check again comes back here (#launcher); the page reloads itself while
+    it checks (only one a GET drew). -#}
+<section id="launcher" aria-labelledby="launcher-title">
+    <h2 class="group-header" id="launcher-title">{{ self.t("settings.provisioning.launcher.title") }}</h2>
+    {% if launcher.state == "refused" || launcher.state == "older" %}
+    <div class="attention {% if launcher.state == "refused" %}attention-alarm{% else %}attention-action{% endif %}" data-launcher="{{ launcher.state }}" role="status">
+        <span class="attention-text">{{ launcher.text }}{% if let Some(sub) = launcher.sub %}<span class="attention-sub">{{ sub }}</span>{% endif %}</span>
+    </div>
+    {% endif %}
+    <div class="group">
+        {% if launcher.state == "works" || launcher.state == "checking" %}
+        <p class="row" data-launcher="{{ launcher.state }}" role="status"><span class="row-label">{{ launcher.text }}</span></p>
+        {% endif %}
+        {% if launcher.state != "checking" %}
+        <form method="post" action="/settings/provisioning/launcher-check#launcher" class="cell">
+            {% if let Some(id) = launcher.device_id %}<input type="hidden" name="device" value="{{ id }}">{% endif %}
+            <button type="submit" class="row row-button" data-row="launcher-again">{{ self.t("settings.provisioning.launcher.again") }}</button>
+        </form>
+        {% endif %}
+    </div>
+    {% if launcher.state == "checking" && launcher.auto_reload %}<script src="/static/auto-reload.js?v=8" defer></script>{% endif %}
+</section>

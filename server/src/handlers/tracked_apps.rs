@@ -36,7 +36,7 @@ pub const TRACKED_APPS_DIR: &str = "data/tracked_apps";
 /// one without a listed size is stopped once it gets there.
 const MAX_ASSET_BYTES: u64 = 1_000_000_000;
 /// A download that delivers no data for this long fails...
-const DOWNLOAD_STALL_TIMEOUT: Duration = Duration::from_secs(60);
+pub(crate) const DOWNLOAD_STALL_TIMEOUT: Duration = Duration::from_secs(60);
 /// ...and so does one still running after this, however steadily it trickles.
 const DOWNLOAD_TOTAL_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
@@ -340,7 +340,7 @@ fn newest_matching_release(
 
 /// One chunk of a download at a time, `None` at the end: the GitHub response, or canned chunks
 /// in the tests.
-trait ChunkSource {
+pub(crate) trait ChunkSource {
     async fn next_chunk(&mut self) -> Result<Option<Bytes>, String>;
 }
 
@@ -378,7 +378,7 @@ impl Drop for TempDownload {
 
 /// A finished download: its size and SHA-256 (lower-case hex).
 #[derive(Debug, PartialEq, Eq)]
-struct Downloaded {
+pub(crate) struct Downloaded {
     size: u64,
     sha256: String,
 }
@@ -395,8 +395,9 @@ fn hex_digest(digest: impl AsRef<[u8]>) -> String {
 /// and nothing is kept. A
 /// chunk that takes longer than `stall` fails the download. Nothing is held in memory beyond one
 /// chunk. Returns the bytes written and their SHA-256, which the phones check the whole file
-/// against (design 13 QA #2).
-async fn stream_to_file(
+/// against (design 13 QA #2). The setup QR's check (`launcher_check`) streams the QR's APK through
+/// it too.
+pub(crate) async fn stream_to_file(
     source: &mut impl ChunkSource,
     final_path: &str,
     expected_size: u64,

@@ -157,6 +157,11 @@ struct ProvisionQrTemplate {
     /// `LAUNCHER_SIGNATURE_CHECKSUM` isn't configured: "Server setup needed" instead of a QR code,
     /// rather than falling back to any built-in (upstream's) checksum.
     missing_checksum: bool,
+    /// The setup QR's launcher check (design 86): the row above the QR; `None` without a checksum.
+    launcher: Option<crate::launcher_check::Line>,
+    /// A phone would refuse the launcher the QR names, or the check hasn't ended: no QR is made
+    /// (fail closed, like `missing_checksum`).
+    launcher_blocks: bool,
     wifi_ssid: String,
     /// When the code in the QR expires (local, `Zone::until`), once it is made.
     until: Option<String>,
@@ -181,10 +186,13 @@ impl ProvisionQrTemplate {
         lang: Lang,
         device: Device,
         settings: &ProvisioningSettings,
+        auto_reload: bool,
     ) -> Self {
         let zone = Zone::load(&state.db, lang).await;
         let now = chrono::Utc::now();
         let (back_href, back_label) = crate::handlers::devices::setup_back(lang, &device);
+        let launcher =
+            crate::launcher_check::line(state, lang, &zone, Some(device.id), auto_reload);
         ProvisionQrTemplate {
             lang,
             title: crate::i18n::t_params(lang, "devices.qr.title", &[("name", &device.name)]),
@@ -196,6 +204,8 @@ impl ProvisionQrTemplate {
             missing_server_url: server_url(settings, &state.config).is_empty(),
             url_warning: plain_http_warning(lang, server_url(settings, &state.config)),
             missing_checksum: state.config.launcher_signature_checksum.is_none(),
+            launcher_blocks: launcher.as_ref().is_some_and(|line| line.blocks_qr()),
+            launcher,
             wifi_ssid: String::new(),
             until: None,
             paused_until: state
@@ -266,7 +276,7 @@ pub async fn provision_form(
         Ok(loaded) => loaded,
         Err(status) => return status.into_response(),
     };
-    ProvisionQrTemplate::new(&state, lang, device, &settings)
+    ProvisionQrTemplate::new(&state, lang, device, &settings, true)
         .await
         .page(StatusCode::OK)
 }
@@ -313,7 +323,7 @@ pub async fn provision_qr(
     };
     let ssid = form.wifi_ssid.trim();
     let password = form.wifi_password.trim();
-    let mut page = ProvisionQrTemplate::new(&state, lang, device, &settings).await;
+    let mut page = ProvisionQrTemplate::new(&state, lang, device, &settings, false).await;
 
     if let Some((field, why)) = wifi_refusal(lang, ssid, password) {
         page.error_field = field;
@@ -324,8 +334,9 @@ pub async fn provision_qr(
         return page.page(StatusCode::BAD_REQUEST);
     }
     page.wifi_ssid = ssid.to_string();
-    // No code at all without a checksum: there would be no QR code to carry it.
-    if page.missing_checksum {
+    // No code at all without a checksum: there would be no QR code to carry it. Nor while the
+    // launcher the QR names would be refused, or isn't checked yet (design 86).
+    if page.missing_checksum || page.launcher_blocks {
         return page.page(StatusCode::OK);
     }
     let wifi = (!ssid.is_empty()).then(|| (ssid.to_string(), password.to_string()));
