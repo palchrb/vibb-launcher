@@ -1,7 +1,8 @@
 # Design 90: catalog update holds - a two-day wait, and a release that asks for more waits for the parent
 
-Status: design, 2026-11-12. Server only (§11). Migration `0141_catalog_update_holds.sql` (the next free number on
-`main` at `af2c1521`; no open branch takes 0141 - recheck at merge).
+Status: design, 2026-11-12; **revision 2 the same day** (the design QA and the user's decisions, §17) - where §17 and
+an earlier section differ, §17 is the design. Server only (§11). Migration `0141_catalog_update_holds.sql` (the next
+free number on `main` at `68f5e4b7`; no local branch takes 0141 - recheck at merge).
 
 ## 1. What and why
 
@@ -434,6 +435,9 @@ No launcher or music release needed.
 
 ## 16. Decisions for the user
 
+The questions as first put. **The user's answers (2026-11-12) are in §17.1**; D1 and D5 went another way than
+recommended here.
+
 | # | Question | Recommendation |
 |---|---|---|
 | D1 | The push for a held update: its own switch, on by default - or the existing "App updates" (off by default), or always pushed? | **Its own switch, on.** With "App updates" off by default nobody would hear of a hold, and the app would quietly stop getting fixes. |
@@ -446,3 +450,228 @@ No launcher or music release needed.
 | D8 | Hold a release with no arm64 build (upstream did)? | **No, not in this design.** Our phones are all arm64 and Android refuses the install; F-Droid's per-ABI pick waits for its first app as planned. |
 | D9 | The per-app "Ask me before every update" switch: build it now? | **Yes** - cheap (one column, one switch), and the one answer for an app the parent trusts less. |
 | D10 | The first release of a new app: hold it too? | **No.** It reaches no phone until the parent ticks it, and the page shows what it asks for first. |
+
+## 17. Revision 2: the design QA and the user's decisions (2026-11-12)
+
+### 17.1 The user's decisions
+
+The user, 2026-11-12, on the questions of §16:
+
+> "På app oppdateringer, ønsker ikke andre varsel enn det som er i dag når en oppdatering venter. I dag kommer det et
+> varsel i innboks om oppdatering for app x, og så kommer det et likt et når den er oppdatert. Forskjellen nå er bare
+> at den holdes i to dager? Og om du vil ha den ASAP så trykker man på knappen? Fint om dette kan være konfigurerbart i
+> antall timer et sted kanskje.. Egne apk kan vel også gå med en gang akkurat som for f droid"
+
+and, later the same day, replacing the one global wait:
+
+> "Lurer på om vi skal la det være konfigurerbart per pakke istedet; når vi legger til et nytt repo etc, så kan du
+> velge x timers delay? ... Som en del av gui? Så kan man selv velge hva man er mer eller mindre komfortabel med?"
+
+| # | Decided |
+|---|---|
+| D1 | **No new push switch, no new event kind.** A waiting or held release is told only through today's inbox events: `app_update_available` (worded for the wait or the hold, §17.3) and `app_updated` when a phone has it. Their push stays under today's "App updates" switch (off by default). §8's `app_update_held`, its switch `push_app_held` and §9.3 go. |
+| D2 | As recommended, now as the **default** of the per-app wait (D5): f-droid.org 0 hours, every other F-Droid repo 48. |
+| D3 | As recommended: `INTERNET` newly asked for is held. |
+| D4 | As recommended: `QUERY_ALL_PACKAGES` isn't held. |
+| D5 | **Changed: the wait is per app, in hours** - chosen in the Add App form with a default by source (GitHub and other F-Droid repos 48, f-droid.org 0), changeable on the app's page under Updates, 0 = no wait, at most 336 (14 days). No global setting (§17.2). "Update Now" skips it. Manual uploads, Vibb One and Vibb music have none. |
+| D6 | As recommended: "Update Now" never approves new permissions. |
+| D7 | As recommended: no in-between release served while one is held. |
+| D8 | As recommended: no arm64 hold. |
+| D9 | As recommended: "Ask me before every update" is built. |
+| D10 | As recommended: the first release isn't held. |
+| - | **Own uploads go at once**, like f-droid.org's releases: no wait, no hold (§2's table, made plain in §17.2). |
+
+### 17.2 What the design is now, in short
+
+- **GitHub app, F-Droid app from another repo**: a new release waits the app's hours (default 48) from when the source
+  published it; the inbox tells of it when the server finds it ("Signal 7.3.0 is available · reaches the phones Thu
+  14:02"); "Update Now" on the app's page sends it at once. When it ripens it is downloaded and read: nothing new
+  sensitive -> served (no second inbox row); something new -> held, one inbox row "Signal 7.3.0 asks for Contacts ·
+  approve it on the app's page", the Apps tab badge "Waits for you", and the phones keep the old release until the
+  parent taps Approve.
+- **f-droid.org**: the same, with a default wait of 0 hours (the parent may set one).
+- **Own uploads (a manual APK), Vibb One, Vibb music**: at once, as today - no wait and no hold. An upload is the
+  parent's own act with the file in hand, and it widens the accepted set (§5).
+- **No global setting.** The per-source default the Add App form fills in is the one place a default lives
+  (`catalog_holds::default_wait_hours`); a server-wide "default wait" would be a second number the parent must keep in
+  mind and that changes nothing for the apps already added. If the user wants one later, it is one more row.
+
+### 17.3 The findings and their fixes
+
+**High**
+
+- **H1 - The held release would never reach the inbox (dedup collision).** With D1 the waiting release raises
+  today's `app_update_available` under today's key `<app id>:<tag>@<asset id>` (`parent_events::raise` is `ON CONFLICT
+  DO NOTHING` on `idx_parent_events_catalog`). The same release is judged only when it ripens; if it is held then, an
+  event with the same key is dropped - the one case the parent must act on would be silent. **Fix**: the hold is told
+  by the same kind under its own key, `<app id>:<tag>@<asset id>:held`. So per release: one row when found (or when
+  served, for an app with no wait), and one more only if it is held; the release served after its wait raises nothing
+  (same key as the found row); Approve raises nothing (the parent just acted); a newer held release replacing an older
+  one gets its own `:held` row. A sweep or Check Now that finds the same release again raises nothing (both keys).
+- **H2 - The ripe pick would step back, and "waiting" would show a release already on the phones.** Today
+  `sync_release` stores any `(tag, asset id)` that differs from the served one (GitHub has no older-version guard;
+  `release_ahead` decides only the event), and F-Droid's hourly sync refuses a lower versionCode as `OlderVersion`.
+  After "Update Now" (or an Approve) the served release is the newest, unripe one; the next hourly sync's newest *ripe*
+  release is older - GitHub would store it over the newer one (and the phones can't even install a downgrade), F-Droid
+  would show "Update failed" every hour. §6's "the `OlderVersion` guard and `release_ahead` are unchanged" is wrong.
+  **Fix** (`catalog_holds::pick`, pure): the candidates are the matching releases newest first; one that isn't
+  `ahead` of the served release (`release_ahead`, generalised to `ahead(source, prefix, tag, asset, of_tag, of_asset)`
+  so it can compare with the held and the declined one too) is **nothing to do** while the served release is still
+  in the list - only when the served release is gone from the list (pulled, prereleases turned off) does today's
+  behaviour stay (GitHub takes the newest ripe; F-Droid's `OlderVersion` guard, Check Now past it). The **waiting**
+  release is the newest one that is ahead of the served, the held and the declined release and not ripe; none -> the
+  waiting columns are cleared. Tests: Update Now then three sweeps keep the served release and show no waiting row and
+  no failure, on GitHub and IzzyOnDroid.
+
+**Medium**
+
+- **M1 - The wait per app (the user's D5) changes the clock's storage.** §6 stored `waiting_release_ready_at` =
+  anchor + 48 h; with a per-app number the parent can change, the stored ready time would be stale. **Fix**: store the
+  anchor, compute the ripeness: `waiting_release_since` (the source's time per §6, or the first sight when it has none;
+  kept while the same `(tag, asset id)` is seen again) and `ready = since + the app's hours`, read at every sync and
+  every page render. Lowering the wait ripens a waiting release at the next hourly sync (or Check Now); raising it
+  moves its time later. An older release in the list without a source time is never ripe (only the newest one has a
+  stored first sight); GitHub gives every published release a `published_at`, the index every version an `added`, so
+  this is the damaged-answer case and fails towards waiting.
+- **M2 - Where the wait lives and how it is chosen** (the user's second message). `tracked_apps.release_wait_hours
+  INTEGER` with `CHECK (release_wait_hours IS NULL OR release_wait_hours BETWEEN 0 AND 336)`; **NULL = the source's
+  default** (`catalog_holds::default_wait_hours(app)`: 0 for an F-Droid row whose repo is f-droid.org - keyed on
+  `fdroid::Repo::api.is_some()`, the same `API_HOSTS` the sync uses, so the tests' in-process repo counts - 48 for
+  every other GitHub or F-Droid row; `None` for manual, Vibb One and Vibb music). NULL rather than a copied number so
+  that a repo changed from f-droid.org to IzzyOnDroid under Details picks up the 48 instead of keeping a 0 meant for
+  F-Droid's own builds; a number the parent typed stays. Existing rows: NULL at the migration, so their source's
+  default.
+  - **Add App** (`tracked_app_add.html`): one field **Wait before an update reaches the phones** / **Vent før en
+    oppdatering kommer til telefonene**, `type="number" inputmode="numeric" min="0" max="336" step="1"`, a suffix
+    "hours" / "timer", **left empty** with the placeholder "48" and the footer "Empty: 48 hours for GitHub and other
+    repos, none for f-droid.org (F-Droid builds the app itself). 0 = no wait." / "Tom: 48 timer for GitHub og andre
+    kilder, ingen for f-droid.org (F-Droid bygger appen selv). 0 = ingen venting." - the form has no JavaScript that
+    knows the source before the post, so empty means the source's default. Not shown for a manual upload's source.
+  - **The app's page, Updates (`#updates`)**: a row **Wait before updates** / **Vent før oppdateringer** with the
+    same number field, empty = default, the sub-line "48 hours (default for GitHub)" / "48 timer (standard for GitHub)"
+    or "None (default for f-droid.org)" / "Ingen (standard for f-droid.org)" when empty; its own form `POST
+    /apps/tracked/{id}/release-wait` with a Save button (`button-small`; a number field doesn't autosave - a half-typed
+    "4" must not save as four hours), back to `/apps/tracked/{id}#updates`. Not on a manual, Vibb One or Vibb music
+    page.
+  - **Refused** (both forms): not a whole number, below 0 or above 336 - "Enter a whole number of hours from 0 to 336
+    (14 days)" / "Skriv et helt antall timer fra 0 til 336 (14 døgn)" (`apps.wait.refused`, `{max}` filled in): 400,
+    the page with the typed value, the error by the field, the field focused, at `#updates` (or the Add form's field) -
+    never the top.
+  - **Security Log**: `catalog_release_wait_changed` "<app>: updates wait 24 hours (was 48)" / "...vent 24 timer (var
+    48)" - shortening the wait is a security choice the other parent should be able to see.
+- **M3 - Approve must redo what a store does, against the row as it is now.** Between the hold and the tap the row can
+  change (a phone ticked with a foreign app of that package - `check_new_package`; the pins first stored by an
+  upload). **Fix**: Approve, under the guard, reads the held file's identity again (`apk_identity`), runs
+  `check_pins` and `check_new_package`, checks the file's SHA-256 against the held row's, and only then moves it into
+  `latest_release_*` (with `latest_release_version_code` and `latest_release_permissions`), then `store_pins`,
+  `set_refused(None)`, `replace_cached_file`, the nudge - in `sync_release`'s order. A failure: the held row and file
+  go, the flash names the sync's failure, nothing served. The UPDATE matching no row (the app deleted meanwhile)
+  removes the held file, as `replace_cached_file(false, …)` does.
+- **M4 - "Forget Package and Key…" and the accepted set.** §5 said the next "first release" seeds the set again, but
+  Forget keeps the served release (`forget_package_name` clears only the pins), so there is no first release after it.
+  **Fix, worded plainly**: Forget clears the set to NULL; the next release with any sensitive permission is held
+  ("asks for Contacts, Camera and 2 more") - right for its use, a developer's changed key: a new key is a new trust, the
+  parent sees the whole list once. The ⓘ of Forget's confirm says so: "The next update that asks for anything sensitive
+  waits for your approval." / "Neste oppdatering som ber om noe sensitivt venter på godkjenningen din."
+- **M5 - The inbox words for the wait and the hold, on the existing kind.** `AppUpdateParams` gains two optional
+  fields, `#[serde(default, skip_serializing_if = "Option::is_none")]` so the rows raised since 2026-10-25 read as
+  before: `ready` (RFC 3339; the waiting release's ready time when found) and `held` (`{reason: "permissions" |
+  "unreadable" | "always_ask", groups: [key]}`). `app_update_told` words them:
+
+  | | en | nb |
+  |---|---|---|
+  | inbox title (found, as today) | Signal 7.3.0 is available | Signal 7.3.0 er tilgjengelig |
+  | inbox line, waiting | 14:02 · 7.2.0 → 7.3.0 · reaches the phones Thu 14:02 | 14:02 · 7.2.0 → 7.3.0 · kommer til telefonene tor. 14:02 |
+  | inbox title, held | Signal 7.3.0 waits for your approval | Signal 7.3.0 venter på godkjenningen din |
+  | inbox line, held | 14:02 · asks for Contacts and Location · approve it on the app's page | 14:02 · ber om tilgang til kontakter og posisjon · godkjenn på appens side |
+  | line, held unreadable | 14:02 · couldn't read what it asks for · approve it on the app's page | 14:02 · fikk ikke lest hva den ber om · godkjenn på appens side |
+  | line, held always ask | 14:02 · 7.2.0 → 7.3.0 · approve it on the app's page | 14:02 · 7.2.0 → 7.3.0 · godkjenn på appens side |
+  | push title, held (only with "App updates" on) | Signal 7.3.0 asks for Contacts (and 2 more) | Signal 7.3.0 ber om tilgang til kontakter (og 2 til) |
+  | push body, held | Approve it or keep 7.2.0 | Godkjenn eller behold 7.2.0 |
+
+  The waiting line's time is the one known when it was found (a later "Update Now" or a changed wait leaves the row's
+  words as they were; the row leads to the app's page, which is the truth). Target `/apps/tracked/{id}#update` for
+  both. **A held release without a push** (D1): it reaches the parent through the inbox row (counted on the bell like
+  every unread row), the app's page and the Apps tab badge "Waits for you", ranked first among the badges after
+  "Off". The phones stay safe meanwhile (they keep the release they have); the cost of a parent who never looks is an
+  app that stops getting updates, which the badge and the inbox make visible. Raised for every catalog app as today's
+  `app_update_available` is (§7's "no inbox row for an app on no phone" goes: one rule for both rows; the launcher and
+  the music app are never held anyway).
+- **M6 - The data model, revised** (migration 0141; replaces §10's block):
+
+  ```sql
+  -- Design 90: the served release's declared permissions, the set the parent accepted, the per-app ask switch and
+  -- wait, the release waiting out its wait, and the one the parent declined.
+  ALTER TABLE tracked_apps ADD COLUMN latest_release_permissions TEXT;   -- JSON array or NULL (unread)
+  ALTER TABLE tracked_apps ADD COLUMN accepted_permissions TEXT;         -- JSON array of sensitive names; NULL = unknown
+  ALTER TABLE tracked_apps ADD COLUMN always_ask INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE tracked_apps ADD COLUMN release_wait_hours INTEGER
+      CHECK (release_wait_hours IS NULL OR release_wait_hours BETWEEN 0 AND 336); -- NULL = the source's default
+  ALTER TABLE tracked_apps ADD COLUMN waiting_release_tag TEXT;
+  ALTER TABLE tracked_apps ADD COLUMN waiting_release_asset_id INTEGER;
+  ALTER TABLE tracked_apps ADD COLUMN waiting_release_published_at TEXT; -- the source's time, for the page; NULL = none
+  ALTER TABLE tracked_apps ADD COLUMN waiting_release_since TEXT;        -- the wait's anchor, UTC RFC 3339
+  ALTER TABLE tracked_apps ADD COLUMN declined_release_tag TEXT;
+  ALTER TABLE tracked_apps ADD COLUMN declined_release_asset_id INTEGER;
+
+  CREATE TABLE tracked_app_held_releases ( ... as §10 ... );
+  ```
+
+  No `notification_prefs.push_app_held`. SQLite takes a CHECK on an added column with a NULL default.
+
+**Low**
+
+- **L1 - The wait's default by source and the tests**: "f-droid.org" is decided by `Repo::api.is_some()`, not by a
+  host string in `catalog_holds` (M2), so `tracked_apps::tests`' in-process repo (an API host in tests) is the
+  f-droid.org case and an index-only repo the IzzyOnDroid case.
+- **L2 - Element names** (§4): binary XML keeps an element's namespace apart from its name; Android's parser matches
+  the name alone. So: an element counts by its name whatever its namespace - not "with or without a prefix".
+- **L3 - Typed and raw values** (§4): aapt2 writes both for a string; "agree" applies when both are present, else the
+  one present is read (a typed non-string - a reference - is still `None`).
+- **L4 - The bind marks' form** (§4): stored as `bind:android.permission.BIND_ACCESSIBILITY_SERVICE` (a component's
+  `android:permission`), so a meaningless `<uses-permission>` of a BIND name (signature-level, never granted) can't
+  be mistaken for the component mark; `SENSITIVE` lists the `bind:` forms for the five groups.
+- **L5 - Missing from `SENSITIVE`**: `bind:…BIND_AUTOFILL_SERVICE` and `bind:…BIND_CREDENTIAL_PROVIDER_SERVICE` (a
+  password filler sees what is typed into forms: group `keyboard`, worded "A keyboard or password filler" / "Tastatur
+  eller passordutfyller"), and Android 16's `android.permission.health.*` (by prefix, group `body`: Android 16 moved
+  the body sensors there).
+- **L6 - §3's "Not sensitive" paragraph**: it gives design 68's special accesses as gated in the pause, but
+  `PACKAGE_USAGE_STATS` (design 68's `usage_access`) is in the table. Reworded: "the other four of design 68's special
+  accesses (`manage_media`, `exact_alarm`, `write_settings`, `full_screen`) are approved per app in the pause"; usage
+  stays sensitive (what the kid does all day).
+- **L7 - The orphan sweep at startup** (§10): "any `.apk` in an app's directory named by neither
+  `latest_release_file_path` nor its held row" is removed - the served file is never touched, and a row whose held file
+  is missing is deleted (logged; the next sync downloads it again).
+- **L8 - An upload while a release is held**: the upload is served and widens the set; the held release stays held
+  (no re-judge) until answered or superseded. Approve's re-check (M3) still runs.
+- **L9 - The Apps tab badge order**: "Off" first (a disabled app reaches no phone, its hold isn't urgent), then
+  "Waits for you", then "Update failed", then "No release".
+- **L10 - Decline's comparison**: the sync skips a release that isn't `ahead` of the declined `(tag, asset id)` (H2's
+  generalised `ahead`), so the declined release isn't downloaded again hourly; a release ahead of it is judged afresh.
+
+### 17.4 What changes in the sections above
+
+- §1, the second bullet: the parent approves from the inbox row or the app's page - no push of its own (D1).
+- §2's table: the wait column is the **default** of the app's own wait (M2): GitHub 48, f-droid.org 0, other F-Droid
+  repos 48; manual, Vibb One and Vibb music - none, not settable.
+- §6: "48 h, fixed" becomes the app's hours (M1, M2); the pick follows H2.
+- §7: "raises `app_update_held`" becomes the `:held` row of `app_update_available` (H1, M5); Approve follows M3; "no
+  inbox row for an app on no phone" goes (M5).
+- §8 is replaced by H1 and M5; §9.1's waiting sub-line reads "Published Tue 14:02 · updates of this app wait 48 hours"
+  / "Publisert tir. 14:02 · oppdateringer av denne appen venter 48 timer"; §9.2 follows L9; §9.3 goes; §10 by M6.
+- §13 (e): we take upstream's per-app wait after all, in hours, with a per-source default.
+- §14, Tests, add: the wait form's validation (empty = default, 0, 336, -1, 337, "4.5", "x") on both forms, each
+  refusal landing at its field (`assert_lands`); a repo changed from f-droid.org to another keeps NULL and gets 48; a
+  changed wait re-times the waiting release; the Security Log line; H1's rows (found -> served raises nothing more;
+  found -> held raises the `:held` row once over three sweeps; Approve raises nothing); H2's no-step-back cases; M3's
+  Approve refused when the pins changed; `parent_events`: a 2026-10-25 row without `ready`/`held` reads as before,
+  each new line in both languages. Gone: `push_app_held` and `app_update_held`.
+- §15's step 4: the `:held` row and the words instead of a new kind and switch; the wait's field on Add App and the
+  app's page.
+
+### 17.5 Left to the user
+
+Nothing blocks the build. Two choices made here the user may want to see: the wait's upper bound of 336 hours (14
+days; a longer wait mostly delays security fixes) and that a held release with "App updates" off reaches the parent
+only through the inbox and the Apps tab badge (D1 as decided - the phones are safe meanwhile, the app just stops
+updating until the parent looks).
