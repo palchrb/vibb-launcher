@@ -235,14 +235,19 @@ pub(crate) const AVATAR_TONES: [&str; 7] = [
 /// the first one no phone has; past [AVATAR_TONES]' length, the one the fewest have (the lowest on a
 /// tie). One statement, no read before the write, so two phones added at once can't both take the
 /// same free tone.
+///
+/// A stored tone counts by the class it shows ([avatar_class_of]'s `rem_euclid`), so a value out of
+/// range (9) holds butter like a 2.
 pub(crate) fn next_tone() -> String {
-    let tones = (0..AVATAR_TONES.len())
+    let count = AVATAR_TONES.len();
+    let tones = (0..count)
         .map(|n| format!("({n})"))
         .collect::<Vec<_>>()
         .join(", ");
     format!(
         "(WITH tones(n) AS (VALUES {tones}) \
-         SELECT t.n FROM tones t LEFT JOIN devices d ON d.avatar_tone = t.n \
+         SELECT t.n FROM tones t \
+         LEFT JOIN devices d ON ((d.avatar_tone % {count}) + {count}) % {count} = t.n \
          GROUP BY t.n ORDER BY COUNT(d.id), t.n LIMIT 1)"
     )
 }

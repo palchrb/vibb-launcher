@@ -1965,7 +1965,8 @@ pointer here.
   night letter is 9.7:1 or more on each, the same in both schemes.
 - **Stored, not derived**: `devices.avatar_tone`, an index into the list. A new phone's own `INSERT`
   (`devices::insert_device_sql`, with `next_tone`'s scalar subquery) takes the first tone no phone has, past seven
-  the one the fewest have (the lowest on a tie) - one statement, no read before the write. A removed phone's tone is
+  the one the fewest have (the lowest on a tie; a stored tone counts by the class it shows, so an out-of-range 9 holds
+  butter) - one statement, no read before the write. A removed phone's tone is
   free for the next new one; nobody else's moves. The migration numbered the phones there by id: the oldest kept peach.
   `TestApp::create_device` inserts through the same SQL.
 - **Where it shows**: `devices::avatar_class(device)` gives the tone's class for a set-up phone

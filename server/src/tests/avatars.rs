@@ -706,6 +706,14 @@ async fn a_phones_tone_is_on_every_avatar() {
         let html = app.get_page(&path, &cookie).await.text();
         let tiles = tiles(&html);
         assert!(tiles.iter().any(|(_, l)| *l == 'J'), "{path}: {tiles:?}");
+        if path == "/devices" {
+            for letter in ['E', 'L'] {
+                assert!(
+                    tiles.iter().any(|(_, l)| *l == letter),
+                    "{letter}: {tiles:?}"
+                );
+            }
+        }
         for (classes, letter) in &tiles {
             let classes: Vec<&str> = classes.split(' ').collect();
             match letter {
@@ -742,7 +750,7 @@ fn a_tone_out_of_range_still_has_a_class() {
 
 /// `AVATAR_TONES`, the new phone's `INSERT` and `style.css` agree: one `--avatar-bg` rule per tone
 /// and no other, as many `VALUES` rows as tones, and every colour under the night letter (`#0C0C14`)
-/// at 7:1 or more (design 85 §5.1).
+/// at 9.7:1 or more - the decided palette's floor, rose's 9.76 (design 85 §5.1).
 #[test]
 fn the_tones_agree_with_the_stylesheet_and_carry_the_letter() {
     use crate::handlers::devices::{AVATAR_TONES, next_tone};
@@ -776,6 +784,6 @@ fn the_tones_agree_with_the_stylesheet_and_carry_the_letter() {
         let hex = &css[at..at + 7];
         assert_eq!(&css[at + 7..at + 10], "; }", "{class}");
         let ratio = (luminance(hex) + 0.05) / (letter + 0.05);
-        assert!(ratio >= 7.0, "{class} {hex}: {ratio:.2}");
+        assert!(ratio >= 9.7, "{class} {hex}: {ratio:.2}");
     }
 }
