@@ -3482,3 +3482,64 @@ details.own-edit[open] {
     color: var(--tint);
     white-space: nowrap;
 }
+
+/* Design 85: Locate's Alle view (mockup B). The chips, markers, tags and bubble lie on OSM's tiles,
+   which are light in both schemes, so they have one light look in both (as --map-trail). */
+.map-all { height: clamp(300px, 60vh, 520px); }
+/* Over the map's top (Leaflet's panes go up to 1000): one line that scrolls inside itself, its right
+   end fading into the map - the page never scrolls sideways. */
+.map-chips { position: absolute; z-index: 1001; top: 0; right: 0; left: 0; display: flex; padding: 10px; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; -webkit-overflow-scrolling: touch; -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); }
+.map-chips::-webkit-scrollbar { display: none; }
+.map-chip { flex: none; display: flex; align-items: center; box-sizing: border-box; min-height: 44px; margin-right: 8px; padding: 0 14px 0 9px; border-radius: 22px; background: #FFFFFF; color: #1C1C1E; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18); font-size: 0.9375rem; font-weight: 600; text-decoration: none; }
+.map-chip[aria-current="true"] { padding: 0 16px; background: var(--night); color: var(--night-text); }
+.map-chip .avatar { width: 26px; height: 26px; margin-right: 6px; font-size: 0.75rem; }
+.map-chip-name { max-width: 10em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A phone without a position: a dashed ring, its letter from what it sits on. */
+.avatar-hollow { box-sizing: border-box; border: 2px dashed var(--dot-grey); background: transparent; color: inherit; }
+/* Fresh and old, the legend's two dots and the one-phone view's age line (not --dot-green, which is "online"). */
+.seen-dot { display: inline-block; width: 8px; height: 8px; margin: 0 6px 0 0; border-radius: 50%; vertical-align: 0.15em; }
+.seen-fresh { background: #1E7A35; }
+.seen-old { background: #C9C4BF; }
+.map-legend { display: flex; flex-wrap: wrap; margin: -4px 16px 14px; color: var(--label-2); font-size: 0.8125rem; }
+.map-legend > span { margin-right: 16px; }
+/* A marker: the avatar with a white ring, the time tag under it; a group's avatars overlap. */
+.all-icon { background: none; border: 0; }
+.all-mk { position: relative; display: flex; justify-content: center; }
+.all-mk .avatar { box-sizing: border-box; width: 40px; height: 40px; border: 3px solid #FFFFFF; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3); font-size: 1rem; }
+.all-mk .avatar + .avatar { margin-left: -14px; }
+.all-mk .all-av-old { background: #C9C4BF; color: #48484A; }
+.all-av-old .avatar-img { filter: grayscale(1); }
+.all-mk .all-more { background: #FFFFFF; color: #1C1C1E; font-family: inherit; font-size: 0.8125rem; font-weight: 700; }
+.all-tag { position: absolute; top: 35px; left: 50%; transform: translateX(-50%); padding: 1px 6px; border-radius: 9px; background: #1E7A35; color: #FFFFFF; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25); font-size: 0.6875rem; font-weight: 700; line-height: 1.4; white-space: nowrap; }
+.all-tag-old { background: #FFFFFF; color: #636366; }
+.all-tag-old::before { content: ""; display: inline-block; width: 9px; height: 9px; margin-right: 3px; vertical-align: -1px; background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Ccircle cx='5' cy='5' r='4.2' fill='none' stroke='%23636366' stroke-width='1.4'/%3E%3Cpath d='M5 2.8V5l1.5 1' fill='none' stroke='%23636366' stroke-width='1.4' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat center / contain; }
+/* The bubble keeps Leaflet's white popup; "Show …" in the light scheme's tint (5.8:1 on white). */
+.all-popup .leaflet-popup-content { margin: 12px 14px; color: #636366; font-size: 0.875rem; line-height: 1.35; }
+.all-part + .all-part { margin-top: 10px; padding-top: 10px; border-top: 1px solid #E5E5EA; }
+.all-name { display: block; color: #1C1C1E; font-size: 0.9375rem; font-weight: 700; }
+.all-show { display: block; margin-top: 8px; padding-top: 8px; border-top: 0.5px solid #D1D1D6; color: #A64B25; font-weight: 600; text-decoration: none; }
+.all-popup .leaflet-popup-content a.all-show { color: #A64B25; }
+.all-show::after { content: " \203A"; }
+/* Fit-all, above Leaflet's zoom at the bottom right. */
+.all-fit { display: flex; align-items: center; justify-content: center; width: 34px; height: 34px; margin: 0; padding: 0; border: 2px solid rgba(0, 0, 0, 0.2); border-radius: 4px; background: #FFFFFF; background-clip: padding-box; color: #1C1C1E; cursor: pointer; }
+.all-fit svg { width: 18px; height: 18px; }
+.all-fit[hidden] { display: none; }
+
+/* Design 85 §4.8: the map at full screen (static/map-full.js), on the Alle view and the one-phone
+   view. Fixed under the status bar's strip, over the band and the tab bar (main has no stacking
+   context of its own), the page behind not scrolling; the chips stay at the top, leaving room for
+   ✕ at the right; the legend a strip at the bottom left, zoom and fit-all at the bottom right,
+   above the attribution; every edge clear of the safe areas. */
+.map-tool { position: absolute; z-index: 1002; display: flex; align-items: center; justify-content: center; box-sizing: border-box; margin: 0; padding: 0; border: 0; background: #FFFFFF; color: #1C1C1E; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3); cursor: pointer; }
+.map-tool[hidden] { display: none; }
+.map-tool svg { width: 18px; height: 18px; }
+.map-tool-open { bottom: 10px; left: 10px; width: 36px; height: 36px; border-radius: 8px; }
+.map-tool-close { top: 0; right: max(0px, env(safe-area-inset-right, 0px)); width: 44px; height: 44px; margin: 10px 8px 0 0; border-radius: 22px; }
+.map-box.map-full { position: fixed; z-index: 3000; top: var(--top-strip); right: 0; bottom: 0; left: 0; height: auto; margin: 0; border-radius: 0; }
+.map-fullscreen .container { overflow: hidden; }
+.map-full .map-chips { right: calc(60px + env(safe-area-inset-right, 0px)); padding-left: max(10px, env(safe-area-inset-left, 0px)); }
+.map-full .leaflet-bottom { bottom: env(safe-area-inset-bottom, 0px); }
+.map-full .leaflet-right { right: env(safe-area-inset-right, 0px); }
+.map-legend-over { display: none; }
+.map-full .map-legend-over { position: absolute; z-index: 1001; bottom: calc(10px + env(safe-area-inset-bottom, 0px)); left: max(10px, env(safe-area-inset-left, 0px)); display: flex; margin: 0; padding: 6px 12px; border-radius: 16px; background: #FFFFFF; color: #636366; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2); }
+.map-legend-over > span:last-child { margin-right: 0; }

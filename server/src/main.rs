@@ -1068,6 +1068,8 @@ pub fn build_admin_router(
             "/devices/{id}/command/locate",
             post(handlers::locate::locate),
         )
+        // Design 85: Update All, every phone's Update Location.
+        .route("/devices/locate/all", post(handlers::locate::locate_all))
         .route(
             "/devices/new",
             get(handlers::devices::new_device_form).post(handlers::devices::create_device),
@@ -1312,6 +1314,10 @@ pub fn build_admin_router(
             post(handlers::settings::save_country_code),
         )
         .route("/devices/locate", get(handlers::locate::show_locate))
+        .route(
+            "/devices/locate/phones.json",
+            get(handlers::locate::phones_json),
+        )
         .route(
             "/devices/{id}/locations.json",
             get(handlers::locate::locations_json),

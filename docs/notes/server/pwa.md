@@ -671,7 +671,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 ## The Locate tab (design 31 step 13, `docs/design/31-pwa-redesign.md` §3.6)
 
 - **`/devices/locate`** (`handlers::locate::show_locate`, `device_locate.html`; the route is unchanged): the large
-  title, then with several phones and none chosen (or an unknown id) the phones as rows ("Online · last seen 13:05" ›, "seen 3 min ago" until 2026-11-01;
+  title, then with several phones and none chosen (or an unknown id) the phones as rows (*since design 85 step 2 the
+  Alle view, the section Locate's "Alle" view below*; "Online · last seen 13:05" ›, "seen 3 min ago" until 2026-11-01;
   as on Devices); one phone is shown at once. A chosen phone: the **phone switcher** (plain links to `?device=`, the
   state as a dot and in each `aria-label`, "Anna, online" (since 2026-11-01 the Devices dot and word, "Off or out
   of touch says so"); the chosen one `aria-current="true"` - the tab bar has the
@@ -1979,3 +1980,50 @@ pointer here.
 - **Tests**: `tests::avatars` - the tone handed out, freed and shared past seven, the migration, the class on every
   surface, a tone out of range, and `AVATAR_TONES`/`next_tone`/`style.css` agreeing with each colour's contrast
   against the letter computed.
+
+## Locate's "Alle" view (design 85 step 2, 2026-11-12, branch `design-85-step2`)
+
+- **The user** chose mockup B (2026-11-11); O1-O3 decided 2026-11-12: fresh is "Here now"'s rule (twice the served
+  interval under Regularly, an hour otherwise), and Update All skips Off, not set up and Disconnected.
+- **`/devices/locate`** with two phones or more and none chosen (or an unknown id) is the Alle view in place of the
+  old list: `<section id="all">` holds the map box (`.map-box.map-all`, `clamp(300px, 60vh, 520px)`,
+  `data-locate-all`), the chips over its top (`nav.map-chips`: "All" `aria-current`, then each phone a link to its
+  view with its 26 px avatar - hollow, `.avatar-hollow`, without a position - and an `aria-label` carrying what its
+  marker shows, "Emma, 2 min ago, within 12 m" / "Lily, location is off"; one light look in both schemes, one line
+  scrolling inside itself), the legend (`.seen-dot.seen-fresh` `#1E7A35`, `.seen-old` `#C9C4BF`), "No position"
+  (`data-group="no-position"`: each phone without one and why - not set up, location is off, no position yet),
+  **Update All** and its wait, and the footer. One phone is still shown at once; none keeps the empty state. The
+  chips, the rows and Update All work without JS.
+- **`locate::Seen`** is the only place either view says fresh or old: the newest fix, the later of its own time and
+  its still re-send (`resent_at`), `zones::fresh` under the phone's mode and served interval
+  (`zones::freshness_inputs`). The one-phone view's age line gets the legend's dot and its hidden word, the re-send's
+  age and "Hasn't moved since 11:40" (`data-fix-still`); its switcher gets "All" first with two phones or more.
+- **`GET /devices/locate/phones.json`** (`locate::phones_json`, no-store: `admin_auth::no_store_path`'s arm
+  `["devices", "locate", "phones.json"]`): a row per phone in the page's order - `id`, `name`, `initial`, `tone`,
+  `photo`, `href`, `label`, `show` ("Show Emma") and with a position `lat`, `lng`, `accuracy_m`, `fresh`, `at`,
+  `tag` ("now", "2 min", "3 h", "2 d") and `lines` (the bubble's: "Last seen …", "Within 60 m · At School", "Hasn't
+  moved since …", "Last position before the phone went off"), else `none` (`not_set_up`, `off`, `no_fix`). With
+  `?at=` a phone asked since then also has `answered`: its newest `locate` since `at` left Asking
+  (`locate::answer_state`), never judged by fix times.
+- **`POST /devices/locate/all`** (`locate::locate_all`, full auth, `settings_log::NOT_SAVES`): `queue_command`
+  "locate" for each phone `skip_reason` lets through, each logged `device_command_queued`, then
+  `/devices/locate?requested=all&at=<the press's second>#all`. The wait shows while `at` reads and is under 2 minutes
+  old: "Asking 3 phones …" (`role="status"`), each phone not asked named with why ("Jack: not set up"), or "No phone
+  can be asked" without a wait.
+- **`static/locate-all.js`** (ES5, `?v=1`): markers as `L.divIcon`s of DOM nodes (avatar, ring, tag; old ones grey),
+  accuracy circles (solid `--map-trail`, old dashed grey), joined into a group under 40 px (`groups`, regrouped on
+  `zoomend`), a bubble per marker with a part per phone; `fitPlan` (one at 15, all at most 16, the far-old exception
+  below zoom 11, fit-all without it); zoom and fit-all at the bottom right. A refresh every 60 s while visible and on
+  becoming visible; after Update All every 5 s for a minute, then `history.replaceState` to `/devices/locate#all` and
+  one fit unless the parent moved the map. Markers are kept by phone id and updated in place, so a refresh or a
+  regroup never closes the open bubble or drops the focus. Every word comes from the server; text only.
+- **Full screen** (§4.8, the user's decision of 2026-11-12): `static/map-full.js` (`?v=1`) on both map views - ⤢
+  (`data-full-open`, bottom left) puts `.map-full` on the box (`data-map-full`: fixed under `--top-strip`, z-index
+  3000 over the band and the tab bar) and `map-fullscreen` on the body (main stops scrolling); ✕ (`data-full-close`,
+  44 px, top right) and Escape close; a window `resize` after each change makes Leaflet `invalidateSize` with the
+  centre kept. The Alle view's legend shows as a strip over the map (`.map-legend-over`, `aria-hidden`).
+- **Tests**: `locate_page::the_phone_switcher_and_the_alle_view`, `phones_json_tells_each_phone_fresh_or_old_by_its_own_setting`,
+  `update_all_asks_every_phone_that_can_answer`, `the_wait_after_update_all_counts_the_answers`,
+  `the_age_line_says_fresh_or_old`, `the_switcher_says_no_contact_in_the_readers_language`,
+  `both_map_views_offer_full_screen`;
+  `admin_auth::tests::no_store_paths`; `jstest/locate-all.test.js`, `jstest/map-full.test.js`.

@@ -238,59 +238,101 @@ async fn a_wrong_name_opens_the_erase_confirm_with_the_refusal() {
 /// The phone switcher (§3.6, §5.4): links, the state in each `aria-label`, the chosen one marked;
 /// with several phones and none chosen the page lists them; one phone is shown at once.
 #[tokio::test]
-async fn the_phone_switcher_and_the_list() {
+async fn the_phone_switcher_and_the_alle_view() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let html = locate_page(&app, &cookie, "").await;
     assert!(html.contains("No phones yet."));
     assert!(!html.contains("id=\"map\""));
 
-    let (anna, _) = app.enrolled_device("Anna").await;
-    // One phone: shown at once, the switcher holds it.
+    let (emma, _) = app.enrolled_device("Emma").await;
+    // One phone: shown at once, the switcher holds it and no "All".
     let html = locate_page(&app, &cookie, "").await;
     assert!(html.contains("id=\"map\""));
-    assert!(html.contains(&format!("/devices/{anna}/command/ring")));
+    assert!(html.contains(&format!("/devices/{emma}/command/ring")));
+    assert!(!html.contains("data-all") && !html.contains("data-locate-all"));
 
-    let (emil, _) = app.create_device("<b>Emil</b>").await;
-    // Two phones, none chosen (or one that doesn't exist): the list, no map, no actions.
+    fix(&app, emma, 59.9, 2).await;
+    let (jack, _) = app.create_device("<b>Jack</b>").await;
+    let (lily, _) = app.enrolled_device("Lily").await;
+    sqlx::query("UPDATE device_policy SET location_mode = 'off' WHERE device_id = ?")
+        .bind(lily)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    // Several phones, none chosen (or one that doesn't exist): the Alle view, no actions, no list.
     for query in ["", "?device=999", "?device=x"] {
         let html = locate_page(&app, &cookie, query).await;
-        assert!(!html.contains("id=\"map\""), "{query}");
+        assert!(html.contains("<section id=\"all\""), "{query}");
+        assert!(html.contains("data-locate-all"), "{query}");
+        assert!(html.contains("/static/locate-all.js?v=1"), "{query}");
         assert!(!html.contains("/command/"), "{query}");
-        for id in [anna, emil] {
-            assert!(
-                html.contains(&format!("href=\"/devices/locate?device={id}\"")),
-                "{query}"
-            );
-        }
-        assert!(html.contains("Not seen yet"));
-        assert!(html.contains("Not set up"));
+        assert!(!html.contains("data-group=\"phones\""), "{query}");
+        check_forms(&html);
+        let chips = html
+            .split("<nav class=\"map-chips\" aria-label=\"Phones\">")
+            .nth(1)
+            .and_then(|rest| rest.split("</nav>").next())
+            .expect("the chips");
+        let links = tags(chips, "a");
+        assert_eq!(links.len(), 4, "{chips}");
+        assert_eq!(links[0].attr("href"), Some("/devices/locate"));
+        assert_eq!(links[0].attr("aria-current"), Some("true"));
+        let label = |id: i64| {
+            links
+                .iter()
+                .find(|a| a.attr("href") == Some(&format!("/devices/locate?device={id}")))
+                .and_then(|a| a.attr("aria-label"))
+                .unwrap()
+                .to_string()
+        };
+        assert_eq!(label(emma), "Emma, 2 min ago, within 25 m");
+        assert_eq!(label(jack), "&#60;b&#62;Jack&#60;/b&#62;, not set up");
+        assert_eq!(label(lily), "Lily, location is off");
+        // The legend, the phones without a position with why, Update All.
+        assert!(html.contains(">Recent</span>") && html.contains(">Older position</span>"));
+        let none = html
+            .split("data-group=\"no-position\"")
+            .nth(1)
+            .and_then(|rest| rest.split("</div>").next())
+            .expect("the phones without a position");
+        assert!(none.contains(&format!("data-none=\"{jack}\"")) && none.contains("Not set up"));
+        assert!(
+            none.contains(&format!("data-none=\"{lily}\"")) && none.contains("Location is off")
+        );
+        assert!(!none.contains(&format!("data-none=\"{emma}\"")));
+        assert!(html.contains("action=\"/devices/locate/all#all\""));
+        assert!(html.contains(">Update All</button>"));
+        assert!(!html.contains("<b>Jack</b>"), "names are escaped");
     }
 
-    let html = locate_page(&app, &cookie, &format!("?device={anna}")).await;
+    let html = locate_page(&app, &cookie, &format!("?device={emma}")).await;
     let switch = html
         .split("<nav class=\"phone-switch\"")
         .nth(1)
         .and_then(|rest| rest.split("</nav>").next())
         .expect("the switcher");
     let links = tags(switch, "a");
-    assert_eq!(links.len(), 2);
-    let anna_link = links
+    assert_eq!(links.len(), 4);
+    // "All" first, back to every phone on one map.
+    assert_eq!(links[0].attr("href"), Some("/devices/locate"));
+    assert!(switch.contains(">All</a>"));
+    let emma_link = links
         .iter()
-        .find(|a| a.attr("href") == Some(&format!("/devices/locate?device={anna}")))
+        .find(|a| a.attr("href") == Some(&format!("/devices/locate?device={emma}")))
         .unwrap();
-    assert_eq!(anna_link.attr("aria-label"), Some("Anna, not seen yet"));
-    assert_eq!(anna_link.attr("aria-current"), Some("true"));
-    let emil_link = links
+    assert_eq!(emma_link.attr("aria-label"), Some("Emma, not seen yet"));
+    assert_eq!(emma_link.attr("aria-current"), Some("true"));
+    let jack_link = links
         .iter()
-        .find(|a| a.attr("href") == Some(&format!("/devices/locate?device={emil}")))
+        .find(|a| a.attr("href") == Some(&format!("/devices/locate?device={jack}")))
         .unwrap();
     assert_eq!(
-        emil_link.attr("aria-label"),
-        Some("&#60;b&#62;Emil&#60;/b&#62;, not set up")
+        jack_link.attr("aria-label"),
+        Some("&#60;b&#62;Jack&#60;/b&#62;, not set up")
     );
-    assert!(!emil_link.has("aria-current"));
-    assert!(!html.contains("<b>Emil</b>"), "names are escaped");
+    assert!(!jack_link.has("aria-current"));
+    assert!(!html.contains("<b>Jack</b>"), "names are escaped");
     // No inline script picks the phone (the old select needed JS).
     assert!(!html.contains("onchange"));
 }
@@ -1031,42 +1073,26 @@ async fn the_locations_page_pages_every_fix_once() {
     );
 }
 
-/// 2026-11-01 (status-off): the list's dots and words are the Devices row's - away 20 min is orange
-/// "No contact" with "last seen", access removed says so - in the reader's language, the
-/// switcher's `aria-label` too.
+/// 2026-11-01 (status-off): the switcher's dots and words are the Devices row's - away 20 min is
+/// orange "No contact" - in the reader's language, its `aria-label` too.
 #[tokio::test]
-async fn the_list_says_no_contact_and_last_heard_in_the_readers_language() {
+async fn the_switcher_says_no_contact_in_the_readers_language() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
-    let (frida, _) = app.enrolled_device("Frida").await;
+    let (emma, _) = app.enrolled_device("Emma").await;
     sqlx::query("UPDATE devices SET last_seen_at = datetime('now', '-20 minutes') WHERE id = ?")
-        .bind(frida)
+        .bind(emma)
         .execute(&app.db)
         .await
         .unwrap();
-    let (otto, _) = app.enrolled_device("Otto").await;
-    sqlx::query("UPDATE devices SET token_hash = NULL WHERE id = ?")
-        .bind(otto)
-        .execute(&app.db)
-        .await
-        .unwrap();
-    let html = locate_page(&app, &cookie, "?lang=nb").await;
-    assert!(html.contains("avatar-dot dot-away"), "{html}");
+    app.enrolled_device("Jack").await;
+    let html = locate_page(&app, &cookie, &format!("?device={emma}&lang=nb")).await;
+    assert!(html.contains("class=\"dot dot-away\""), "{html}");
     assert!(
-        html.contains("<span class=\"state-away\">Ingen kontakt</span> · <span title="),
+        html.contains("aria-label=\"Emma, ingen kontakt\""),
         "{html}"
     );
-    assert!(html.contains("\">sist sett "), "{html}");
-    assert!(!html.contains(">seen "), "{html}");
-    assert!(
-        html.contains("Frakoblet</span> · tilgangen er fjernet"),
-        "{html}"
-    );
-    let html = locate_page(&app, &cookie, &format!("?device={frida}&lang=nb")).await;
-    assert!(
-        html.contains("aria-label=\"Frida, ingen kontakt\""),
-        "{html}"
-    );
+    assert!(html.contains(">Alle</a>"), "{html}");
 }
 
 /// Design 70 §5.1, slice 3c: the Locate tab in Norwegian - the page, its zone page and the
@@ -1150,4 +1176,434 @@ async fn the_locate_tab_speaks_norwegian() {
         .await;
     assert_eq!(missing.status, StatusCode::NOT_FOUND);
     assert_eq!(missing.text(), "Fant ikke enheten");
+}
+
+// ---- Design 85: the Alle view ----
+
+/// The phone's only fix: captured `minutes_ago`, re-sent as still current `resent_ago` minutes ago,
+/// at School's centre within 25 m.
+async fn only_fix(app: &TestApp, device: i64, minutes_ago: i64, resent_ago: Option<i64>) {
+    let at = |m: i64| crate::zones::instant(chrono::Utc::now() - chrono::Duration::minutes(m));
+    sqlx::query("DELETE FROM device_locations WHERE device_id = ?")
+        .bind(device)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO device_locations (device_id, latitude, longitude, accuracy_meters, captured_at, \
+         resent_at) VALUES (?, 59.9139, 10.7522, 25, ?, ?)",
+    )
+    .bind(device)
+    .bind(at(minutes_ago))
+    .bind(resent_ago.map(at))
+    .execute(&app.db)
+    .await
+    .unwrap();
+}
+
+async fn set_location(app: &TestApp, device: i64, mode: &str, interval: i64) {
+    sqlx::query(
+        "UPDATE device_policy SET location_mode = ?, location_interval_minutes = ? \
+         WHERE device_id = ?",
+    )
+    .bind(mode)
+    .bind(interval)
+    .bind(device)
+    .execute(&app.db)
+    .await
+    .unwrap();
+}
+
+/// `phones.json`'s row for `device`.
+async fn phone_row(app: &TestApp, cookie: &str, query: &str, device: i64) -> serde_json::Value {
+    let res = app
+        .get_page(&format!("/devices/locate/phones.json{query}"), cookie)
+        .await;
+    assert_eq!(res.status, StatusCode::OK);
+    res.json()
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["id"] == device)
+        .cloned()
+        .unwrap()
+}
+
+/// Design 85 §4.6, §3.2: `phones.json`'s rows, fresh by the phone's own setting at its edges
+/// (`zones::fresh`, "Here now"'s rule), a still re-send counting, the tags and the zone word, why a
+/// phone has none, in the reader's language; no-store, and signed out the login's redirect.
+#[tokio::test]
+async fn phones_json_tells_each_phone_fresh_or_old_by_its_own_setting() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (emma, token) = app.enrolled_device("Emma").await;
+    let (jack, _) = app.create_device("Jack").await;
+    let (lily, _) = app.enrolled_device("Lily").await;
+    set_location(&app, lily, "off", 30).await;
+
+    let res = app.get_page("/devices/locate/phones.json", &cookie).await;
+    assert_eq!(
+        res.headers.get(axum::http::header::CACHE_CONTROL).unwrap(),
+        "no-store"
+    );
+    let rows = res.json();
+    let ids: Vec<i64> = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["id"].as_i64().unwrap())
+        .collect();
+    assert_eq!(ids, [emma, jack, lily], "the page's order");
+    for (id, none) in [(emma, "no_fix"), (jack, "not_set_up"), (lily, "off")] {
+        let row = phone_row(&app, &cookie, "", id).await;
+        assert_eq!(row["none"], none, "{row}");
+        assert!(
+            row.get("lat").is_none() && row.get("answered").is_none(),
+            "{row}"
+        );
+    }
+    let row = phone_row(&app, &cookie, "", jack).await;
+    assert_eq!(row["tone"], "avatar-grey");
+    assert_eq!(row["href"], format!("/devices/locate?device={jack}"));
+    assert_eq!(row["label"], "Jack, not set up");
+    assert_eq!(row["show"], "Show Jack");
+
+    // Regularly every 15 min: fresh while younger than 30.
+    set_location(&app, emma, "interval", 15).await;
+    only_fix(&app, emma, 29, None).await;
+    let row = phone_row(&app, &cookie, "", emma).await;
+    for key in ["id", "name", "initial", "tone", "href", "label", "show"] {
+        assert!(row.get(key).is_some(), "{key}: {row}");
+    }
+    assert_eq!(row["fresh"], true);
+    assert_eq!(
+        (row["lat"].as_f64(), row["lng"].as_f64()),
+        (Some(59.9139), Some(10.7522))
+    );
+    assert_eq!(row["accuracy_m"], 25);
+    assert_eq!(row["tag"], "29 min");
+    assert_eq!(row["label"], "Emma, 29 min ago, within 25 m");
+    assert_eq!(
+        row["lines"],
+        serde_json::json!(["Last seen 29 min ago", "Within 25 m"])
+    );
+    assert!(row.get("none").is_none());
+    only_fix(&app, emma, 31, None).await;
+    assert_eq!(phone_row(&app, &cookie, "", emma).await["fresh"], false);
+    // A zone the phone watches: served 30 min, fresh while younger than an hour; the zone word.
+    sqlx::query(
+        "INSERT INTO device_zones (device_id, name, latitude, longitude, radius_m) \
+         VALUES (?, 'Skolen', 59.9139, 10.7522, 150)",
+    )
+    .bind(emma)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    app.post_status(
+        &token,
+        serde_json::json!({"capabilities": ["zones_v1"], "zone_watch": {"fences": 1,
+            "motion_sensor": true, "location_on": true, "background_location": true,
+            "mock_ignored": 0}}),
+    )
+    .await;
+    only_fix(&app, emma, 59, None).await;
+    let row = phone_row(&app, &cookie, "?lang=nb", emma).await;
+    assert_eq!(row["fresh"], true);
+    assert_eq!(row["lines"][1], "Innenfor 25 m · I sonen Skolen");
+    assert_eq!(row["lines"][0], "Sist sett for 59 min siden");
+    // Only when asked: an hour.
+    set_location(&app, emma, "on_request", 15).await;
+    only_fix(&app, emma, 59, None).await;
+    assert_eq!(phone_row(&app, &cookie, "", emma).await["fresh"], true);
+    only_fix(&app, emma, 61, None).await;
+    let row = phone_row(&app, &cookie, "?lang=nb", emma).await;
+    assert_eq!(row["fresh"], false);
+    assert_eq!(row["tag"], "1 t");
+    // A still re-send newer than the fix counts from the re-send and says since when.
+    only_fix(&app, emma, 3 * 60, Some(2)).await;
+    let row = phone_row(&app, &cookie, "?lang=nb", emma).await;
+    assert_eq!(row["fresh"], true);
+    assert_eq!(row["tag"], "2 min");
+    assert!(
+        row["lines"][2]
+            .as_str()
+            .unwrap()
+            .starts_with("Har ikke flyttet seg siden "),
+        "{row}"
+    );
+    // The tags.
+    for (minutes, tag) in [
+        (0, "nå"),
+        (2, "2 min"),
+        (3 * 60, "3 t"),
+        (2 * 24 * 60 + 5, "2 d"),
+    ] {
+        only_fix(&app, emma, minutes, None).await;
+        assert_eq!(phone_row(&app, &cookie, "?lang=nb", emma).await["tag"], tag);
+    }
+    // Switched to Off: every fix pruned, so no position.
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{emma}/location-policy"),
+            Some(&cookie),
+            &[("mode", "off")],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER);
+    let row = phone_row(&app, &cookie, "?lang=nb", emma).await;
+    assert_eq!(row["none"], "off");
+    assert_eq!(row["label"], "Emma, posisjon er slått av");
+
+    // Signed out: the login.
+    let res = app
+        .request(Method::GET, "/devices/locate/phones.json", None, None)
+        .await;
+    assert_eq!(res.location(), Some("/login"));
+}
+
+/// Design 85 §4.6 (O3): Update All asks every phone that is set up, not disconnected and not Off -
+/// each logged, a waiting one replaced - and names the others with why under the wait; a command,
+/// not a settings save; a GET is 405, signed out the login.
+#[tokio::test]
+async fn update_all_asks_every_phone_that_can_answer() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (emma, _) = app.enrolled_device("Emma").await;
+    let (jack, _) = app.create_device("Jack").await;
+    let (lily, _) = app.enrolled_device("Lily").await;
+    set_location(&app, lily, "off", 30).await;
+    let (pappa, _) = app.enrolled_device("Pappa").await;
+    sqlx::query("UPDATE devices SET token_hash = NULL WHERE id = ?")
+        .bind(pappa)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let old = waiting(&app, emma, "locate", "datetime('now', '-1 minute')").await;
+
+    let res = app
+        .request_form(Method::POST, "/devices/locate/all", None, &[])
+        .await;
+    assert_eq!(res.location(), Some("/login"));
+    assert_eq!(commands(&app, emma).await, ["locate"]);
+    assert_eq!(
+        app.get_page("/devices/locate/all", &cookie).await.status,
+        StatusCode::METHOD_NOT_ALLOWED
+    );
+
+    let res = app
+        .request_form(Method::POST, "/devices/locate/all", Some(&cookie), &[])
+        .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER);
+    let back = res.location().unwrap().to_string();
+    assert!(
+        back.starts_with("/devices/locate?requested=all&at=") && back.ends_with("#all"),
+        "{back}"
+    );
+    assert_eq!(commands(&app, emma).await, ["locate", "locate"]);
+    let replaced: Option<String> =
+        sqlx::query_scalar("SELECT cancel_reason FROM device_commands WHERE id = ?")
+            .bind(old)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(replaced.as_deref(), Some("replaced"));
+    for id in [jack, lily, pappa] {
+        assert!(commands(&app, id).await.is_empty());
+    }
+    let queued: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM security_events WHERE event_type = 'device_command_queued'",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(queued, 1);
+    let saves: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM security_events WHERE event_type = 'settings_saved'",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(saves, 0);
+
+    // The wait, with who wasn't asked and why.
+    let page = locate_page(
+        &app,
+        &cookie,
+        back.split('#')
+            .next()
+            .unwrap()
+            .trim_start_matches("/devices/locate"),
+    )
+    .await;
+    assert!(page.contains("data-waiting"), "{page}");
+    assert!(page.contains("role=\"status\" data-w-answered=\"{done} of {count} have answered\""));
+    assert!(page.contains(">Asking 1 phone …</p>"), "{page}");
+    for note in [
+        "Jack: not set up",
+        "Lily: location is off",
+        "Pappa: access removed",
+    ] {
+        assert!(page.contains(&format!("data-skipped>{note}</p>")), "{note}");
+    }
+}
+
+/// Design 85 §4.6: the wait shows only while `at` is under two minutes old and reads; a phone has
+/// answered once its newest locate since `at` left Asking - a fix or a failure, never a fix that
+/// came without one; with no phone to ask, no wait.
+#[tokio::test]
+async fn the_wait_after_update_all_counts_the_answers() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (emma, emma_token) = app.enrolled_device("Emma").await;
+    let (mamma, mamma_token) = app.enrolled_device("Mamma").await;
+    let at = |minutes: i64| {
+        (chrono::Utc::now() - chrono::Duration::minutes(minutes))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string()
+    };
+    for stale in [at(3), "x".to_string()] {
+        let page = locate_page(&app, &cookie, &format!("?requested=all&at={stale}")).await;
+        assert!(!page.contains("all_wait"), "{stale}");
+    }
+    // Nothing asked since: no phone could be asked, no wait.
+    let page = locate_page(&app, &cookie, &format!("?requested=all&at={}", at(1))).await;
+    assert!(page.contains(">No phone can be asked</p>") && !page.contains("data-waiting"));
+
+    let res = app
+        .request_form(Method::POST, "/devices/locate/all", Some(&cookie), &[])
+        .await;
+    let start = res
+        .location()
+        .unwrap()
+        .split("at=")
+        .nth(1)
+        .unwrap()
+        .split('#')
+        .next()
+        .unwrap()
+        .to_string();
+    let page = locate_page(&app, &cookie, &format!("?requested=all&at={start}")).await;
+    assert!(page.contains(">Asking 2 phones …</p>"), "{page}");
+    let query = format!("?at={start}");
+    for id in [emma, mamma] {
+        assert_eq!(
+            phone_row(&app, &cookie, &query, id).await["answered"],
+            false
+        );
+    }
+    // A fix without an answer (a regular one, a re-send) is no answer.
+    only_fix(&app, emma, 0, None).await;
+    assert_eq!(
+        phone_row(&app, &cookie, &query, emma).await["answered"],
+        false
+    );
+    // A found fix and a failure are answers.
+    for (token, success, message) in [
+        (&emma_token, true, "fix ±12 m, 3 s old"),
+        (&mamma_token, false, "location is off for this device"),
+    ] {
+        let id = app.policy(token).await["pending_command"]["id"]
+            .as_i64()
+            .unwrap();
+        app.request(
+            Method::POST,
+            "/api/devices/command-result",
+            Some(token),
+            Some(serde_json::json!({"command_id": id, "success": success, "message": message})),
+        )
+        .await;
+    }
+    for id in [emma, mamma] {
+        assert_eq!(phone_row(&app, &cookie, &query, id).await["answered"], true);
+    }
+    // Without `at`, no answers at all.
+    assert!(
+        phone_row(&app, &cookie, "", emma)
+            .await
+            .get("answered")
+            .is_none()
+    );
+}
+
+/// Design 85 §4.7: the one-phone view's age line says fresh or old with the legend's dot (not the
+/// online dot) and its hidden word, and since when a still phone hasn't moved.
+#[tokio::test]
+async fn the_age_line_says_fresh_or_old() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (emma, _) = app.enrolled_device("Emma").await;
+    set_location(&app, emma, "interval", 15).await;
+    let age = |html: &str| {
+        html.split("<span class=\"fix-age\"")
+            .nth(1)
+            .and_then(|rest| rest.split("<span class=\"row-sub\">").next())
+            .unwrap()
+            .to_string()
+    };
+    only_fix(&app, emma, 10, None).await;
+    let html = locate_page(&app, &cookie, "").await;
+    let line = age(&html);
+    assert!(
+        line.contains("<span class=\"seen-dot seen-fresh\" aria-hidden=\"true\"></span>10 min ago"),
+        "{line}"
+    );
+    assert!(
+        line.contains("<span class=\"visually-hidden\"> Recent</span>"),
+        "{line}"
+    );
+    assert!(!line.contains("dot-online"));
+    assert!(!html.contains("data-fix-still"));
+    only_fix(&app, emma, 40, None).await;
+    let line = age(&locate_page(&app, &cookie, "").await);
+    assert!(
+        line.contains("seen-dot seen-old") && line.contains("> Older position</span>"),
+        "{line}"
+    );
+    // A still re-send: its age, and since when.
+    only_fix(&app, emma, 3 * 60, Some(2)).await;
+    let html = locate_page(&app, &cookie, "").await;
+    assert!(
+        age(&html).contains("seen-fresh\" aria-hidden=\"true\"></span>2 min ago"),
+        "{html}"
+    );
+    assert!(
+        html.contains("data-fix-still>Hasn&#39;t moved since "),
+        "{html}"
+    );
+}
+
+/// Design 85 §4.8 (the user's decision of 2026-11-12): both map views carry the full-screen
+/// controls, hidden until the script, with their words in the reader's language.
+#[tokio::test]
+async fn both_map_views_offer_full_screen() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (emma, _) = app.enrolled_device("Emma").await;
+    app.enrolled_device("Jack").await;
+    for (lang, open, close) in [
+        ("en", "Full screen", "Close full screen"),
+        ("nb", "Fullskjerm", "Lukk fullskjerm"),
+    ] {
+        for query in [
+            format!("?lang={lang}"),
+            format!("?device={emma}&lang={lang}"),
+        ] {
+            let html = locate_page(&app, &cookie, &query).await;
+            assert_eq!(html.matches("data-map-full").count(), 1, "{query}");
+            let buttons = tags(&html, "button");
+            let open_button = buttons.iter().find(|b| b.has("data-full-open")).expect("⤢");
+            assert_eq!(open_button.attr("aria-label"), Some(open), "{query}");
+            assert!(open_button.has("hidden"));
+            let close_button = buttons
+                .iter()
+                .find(|b| b.has("data-full-close"))
+                .expect("✕");
+            assert_eq!(close_button.attr("aria-label"), Some(close), "{query}");
+            assert!(html.contains("<script src=\"/static/map-full.js?v=1\"></script>"));
+        }
+    }
+    // The Alle view's legend strip for full screen, the eye's only.
+    let html = locate_page(&app, &cookie, "").await;
+    assert!(html.contains("<p class=\"map-legend map-legend-over\" aria-hidden=\"true\">"));
 }

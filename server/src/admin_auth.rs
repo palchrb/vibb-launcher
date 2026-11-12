@@ -880,6 +880,8 @@ pub fn no_store_path(path: &str) -> bool {
     matches!(
         segments.as_slice(),
         ["devices", _, "locations.json"]
+            // Design 85: every phone's last position in one answer.
+            | ["devices", "locate", "phones.json"]
             | ["devices", _, "locations"]
             | ["devices", _, "locate-result.json"]
             // Design 64: a zone's centre is a child's home or school.
@@ -1180,6 +1182,7 @@ mod tests {
     fn no_store_paths() {
         for path in [
             "/devices/3/locations.json",
+            "/devices/locate/phones.json",
             // Every kept fix (design 44 §1.4).
             "/devices/3/locations",
             "/devices/3/locate-result.json",

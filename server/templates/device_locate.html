@@ -23,6 +23,8 @@
 
     {#- The phone switcher (§3.6): plain links, the state as a dot and in the aria-label. -#}
     <nav class="phone-switch" aria-label="{{ self.t("devices.list.phones") }}">
+        {#- Design 85 §4.7: back to every phone on one map, with two or more. -#}
+        {% if phones.len() >= 2 %}<a href="/devices/locate" data-all>{{ self.t("locate.all.chip") }}</a>{% endif %}
         {% for p in phones %}
         <a href="/devices/locate?device={{ p.id }}" aria-label="{{ p.aria }}"{% if p.current %} aria-current="true"{% endif %}><span class="dot dot-{{ p.dot }}" aria-hidden="true"></span><span class="phone-switch-name">{{ p.name }}</span></a>
         {% endfor %}
@@ -38,11 +40,11 @@
             <a role="radio" href="/devices/locate?device={{ view.device.id }}&amp;span={{ hours }}#location" data-span="{{ hours }}" aria-checked="{% if hours == view.span %}true{% else %}false{% endif %}">{{ self.t(words) }}</a>
             {% endfor %}
         </div>
-        <div class="map-box" data-locate="{{ view.map.device_id }}" data-shown="{{ view.map.shown }}" data-shown-text="{{ view.map.shown_text }}" data-newest-age="{{ view.map.newest_age }}" data-span="{{ view.map.span }}" data-lang="{{ lang.code() }}" data-w-newest="{{ self.t("locate.fix.newest") }}"{% if view.waiting_for_fix %} data-waiting{% endif %}{% if !view.zones.rows.is_empty() %} data-zones{% endif %}><div id="map"></div></div>
+        <div class="map-box" data-locate="{{ view.map.device_id }}" data-shown="{{ view.map.shown }}" data-shown-text="{{ view.map.shown_text }}" data-newest-age="{{ view.map.newest_age }}" data-span="{{ view.map.span }}" data-lang="{{ lang.code() }}" data-w-newest="{{ self.t("locate.fix.newest") }}"{% if view.waiting_for_fix %} data-waiting{% endif %}{% if !view.zones.rows.is_empty() %} data-zones{% endif %} data-map-full><div id="map"></div><button type="button" class="map-tool map-tool-open" data-full-open hidden aria-label="{{ self.t("locate.map.full") }}" title="{{ self.t("locate.map.full") }}"><svg viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M12 3h5v5M17 3l-5.5 5.5M8 17H3v-5M3 17l5.5-5.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button><button type="button" class="map-tool map-tool-close" data-full-close hidden aria-label="{{ self.t("locate.map.full_close") }}" title="{{ self.t("locate.map.full_close") }}"><svg viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M5 5l10 10M15 5L5 15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button></div>
         <div class="group">
             {% if let Some(fix) = view.fix %}
             <div class="row" data-row="fix">
-                <span class="row-label"><span class="fix-age" title="{{ fix.exact }}">{{ fix.age }}</span><span class="row-sub">{{ fix.accuracy }}</span>{% if let Some(aged) = fix.aged %}<span class="row-sub" data-fix-aged>{{ aged }}</span>{% endif %}{% if fix.before_off %}<span class="row-sub" data-fix-before-off>{{ self.t("locate.fix.before_off") }}</span>{% endif %}</span>
+                <span class="row-label"><span class="fix-age" title="{{ fix.exact }}">{% if !fix.seen_class.is_empty() %}<span class="seen-dot {{ fix.seen_class }}" aria-hidden="true"></span>{% endif %}{{ fix.age }}{% if !fix.seen_word.is_empty() %}<span class="visually-hidden"> {{ fix.seen_word }}</span>{% endif %}</span><span class="row-sub">{{ fix.accuracy }}</span>{% if let Some(still) = fix.still %}<span class="row-sub" data-fix-still>{{ still }}</span>{% endif %}{% if let Some(aged) = fix.aged %}<span class="row-sub" data-fix-aged>{{ aged }}</span>{% endif %}{% if fix.before_off %}<span class="row-sub" data-fix-before-off>{{ self.t("locate.fix.before_off") }}</span>{% endif %}</span>
             </div>
             {% else %}
             <p class="row row-note" data-row="fix">{% if view.location_off %}{{ self.t("locate.fix.none_off") }}{% else %}{{ self.t("locate.fix.none") }}{% endif %}</p>
@@ -220,20 +222,59 @@
 
     <script src="/static/leaflet/leaflet.js"></script>
     <script src="/static/locate.js?v=6"></script>
-    {%- else %}
-    {#- Several phones, none chosen: each with its state, as on Devices. -#}
-    <div class="group group-avatars" data-group="phones">
-        {% for p in phones %}
-        <a class="row device-row" href="/devices/locate?device={{ p.id }}">
-            <span class="avatar {{ p.avatar }}" aria-hidden="true">{{ p.initial }}{% if let Some(src) = p.photo %}<img class="avatar-img" src="{{ src }}" alt="" decoding="async">{% endif %}<span class="avatar-dot dot-{{ p.dot }}"></span></span>
-            <span class="row-label">
-                <span class="device-row-name">{{ p.name }}</span>
-                <span class="row-sub device-line"><span class="state-{{ p.dot }}">{{ p.word }}</span>{% if let Some(seen) = p.seen %} · {% if let Some(exact) = p.seen_exact %}<span title="{{ exact }}">{{ seen }}</span>{% else %}{{ seen }}{% endif %}{% endif %}</span>
-            </span>
-            <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </a>
-        {% endfor %}
-    </div>
+    <script src="/static/map-full.js?v=1"></script>
+    {%- else if let Some(all) = all %}
+
+    {#- Design 85 §4 (mockup B): every phone on one map. The chips are the view's accessible list and
+        work without JS (each its phone's view, the facts in its aria-label); the map, its markers and
+        bubbles are static/locate-all.js's, from phones.json. Update All returns here (#all), where
+        its wait shows. -#}
+    <section id="all" aria-label="{{ self.t("locate.location_aria") }}">
+        <div class="map-box map-all" data-map-full data-locate-all data-lang="{{ lang.code() }}"{% if let Some(wait) = all.wait %}{% if let Some(at) = wait.at %} data-waiting data-at="{{ at }}"{% endif %}{% endif %}>
+            <nav class="map-chips" aria-label="{{ self.t("locate.all.phones_aria") }}">
+                <a class="map-chip" href="/devices/locate" aria-current="true">{{ self.t("locate.all.chip") }}</a>
+                {% for p in all.phones %}
+                <a class="map-chip" href="{{ p.href }}" aria-label="{{ p.label }}"><span class="avatar {{ p.tone }}{% if p.position.is_none() %} avatar-hollow{% endif %}" aria-hidden="true">{{ p.initial }}{% if let Some(src) = p.photo %}<img class="avatar-img" src="{{ src }}" alt="" decoding="async">{% endif %}</span><span class="map-chip-name">{{ p.name }}</span></a>
+                {% endfor %}
+            </nav>
+            <div id="map"></div>
+            {#- Full screen (design 85 §4.8): the legend as a strip over the map, for the eye only (the one under the map is read). -#}
+            <p class="map-legend map-legend-over" aria-hidden="true"><span><span class="seen-dot seen-fresh"></span>{{ self.t("locate.all.fresh") }}</span><span><span class="seen-dot seen-old"></span>{{ self.t("locate.all.old") }}</span></p>
+            <button type="button" class="map-tool map-tool-open" data-full-open hidden aria-label="{{ self.t("locate.map.full") }}" title="{{ self.t("locate.map.full") }}"><svg viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M12 3h5v5M17 3l-5.5 5.5M8 17H3v-5M3 17l5.5-5.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button><button type="button" class="map-tool map-tool-close" data-full-close hidden aria-label="{{ self.t("locate.map.full_close") }}" title="{{ self.t("locate.map.full_close") }}"><svg viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M5 5l10 10M15 5L5 15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>
+            <button type="button" class="all-fit" data-fit hidden aria-label="{{ self.t("locate.all.fit") }}" title="{{ self.t("locate.all.fit") }}"><svg viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M3 7V3h4M13 3h4v4M17 13v4h-4M7 17H3v-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="10" cy="10" r="2" fill="currentColor"/></svg></button>
+        </div>
+        <p class="map-legend"><span><span class="seen-dot seen-fresh" aria-hidden="true"></span>{{ self.t("locate.all.fresh") }}</span><span><span class="seen-dot seen-old" aria-hidden="true"></span>{{ self.t("locate.all.old") }}</span></p>
+
+        {% if all.has_none() %}
+        <h2 class="group-header">{{ self.t("locate.all.none_title") }}</h2>
+        <div class="group group-small" data-group="no-position">
+            {% for p in all.phones %}{% if let Some(none) = p.none %}
+            <a class="row device-row" href="{{ p.href }}" data-none="{{ p.id }}">
+                <span class="avatar avatar-small {{ p.tone }} avatar-hollow" aria-hidden="true">{{ p.initial }}{% if let Some(src) = p.photo %}<img class="avatar-img" src="{{ src }}" alt="" decoding="async">{% endif %}</span>
+                <span class="row-label">{{ p.name }}<span class="row-sub">{{ none.words(self.lang) }}</span></span>
+                <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </a>
+            {% endif %}{% endfor %}
+        </div>
+        {% endif %}
+
+        <div class="group">
+            <form method="post" action="/devices/locate/all#all" class="cell">
+                <button type="submit" class="row row-button">{{ self.t("locate.all.update") }}</button>
+            </form>
+            {% if let Some(wait) = all.wait %}
+            <p id="all_wait" class="row row-note" role="status" data-w-answered="{{ self.t("locate.all.answered") }}" data-w-answered-end="{{ self.t("locate.all.answered_end") }}">{{ wait.line }}</p>
+            {% for note in wait.skipped %}
+            <p class="row row-note" data-skipped>{{ note }}</p>
+            {% endfor %}
+            {% endif %}
+        </div>
+        <p class="group-footer">{{ self.t("locate.all.footer") }}</p>
+    </section>
+
+    <script src="/static/leaflet/leaflet.js"></script>
+    <script src="/static/locate-all.js?v=1"></script>
+    <script src="/static/map-full.js?v=1"></script>
     {%- endif %}
     </div>
 </main>
