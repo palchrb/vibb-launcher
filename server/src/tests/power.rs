@@ -429,7 +429,7 @@ async fn a_known_restart_says_no_last_position() {
         .get_page(&format!("/devices/locate?device={id}"), &cookie)
         .await
         .text();
-    assert!(page.contains("data-row=\"fix\""), "{page}");
+    assert!(page.contains(" data-fix-title=\""), "{page}");
     assert!(!page.contains("data-fix-before-off"), "a known restart");
 }
 

@@ -93,8 +93,8 @@ fn rows_of(html: &str) -> &str {
 }
 
 /// §5.1's redirect table for the Locate tab's pages (design 88), built from the rendered forms:
-/// each lands back on its page - Update Location at Locate's map (`#location`, where the wait
-/// shows), Locate Regularly at Zones (`#zones`), Ring, Stop Ringing, Lock and Erase at Find Phone's
+/// each lands back on its page - Update Location at its row (`#update-location`, where the wait
+/// shows; design 88 revision 2), Locate Regularly at Zones (`#zones`), Ring, Stop Ringing, Lock and Erase at Find Phone's
 /// tiles (`#actions`, the requests right under them), Cancel at the requests where its line is,
 /// the two pickers at Location Settings (`#location-settings`: a save never lands at the top).
 /// Every form has a fragment, so none lands at the top. A form the table has no row for fails.
@@ -144,9 +144,9 @@ async fn every_form_on_the_locate_pages_returns_to_its_group() {
     type Row<'a> = (String, &'a [(&'a str, &'a str)], (String, Option<&'a str>));
     let table: [Row; 9] = [
         (
-            format!("/devices/{id}/command/locate#location"),
+            format!("/devices/{id}/command/locate#update-location"),
             &[],
-            (format!("{locate}&requested=1"), Some("location")),
+            (format!("{locate}&requested=1"), Some("update-location")),
         ),
         // Locate Regularly (its `mode` and `back=zones` are the form's own hidden fields).
         (
@@ -499,7 +499,7 @@ async fn the_chips_and_the_alle_view() {
     assert!(!html.contains("data-marker-tag"), "no position, no tag");
     assert!(html.contains("<p class=\"map-legend\"><span>"));
     assert!(html.contains("<p class=\"map-legend map-legend-over\" aria-hidden=\"true\">"));
-    assert!(html.contains("<script src=\"/static/map-marker.js?v=1\"></script>\n    <script src=\"/static/locate.js?v=8\"></script>"));
+    assert!(html.contains("<script src=\"/static/map-marker.js?v=1\"></script>\n    <script src=\"/static/locate.js?v=9\"></script>"));
 
     fix(&app, emma, 59.9, 2).await;
     let (jack, _) = app.create_device("<b>Jack</b>").await;
@@ -612,8 +612,9 @@ async fn the_chips_and_the_alle_view() {
     assert!(!html.contains("onchange"));
 }
 
-/// The fix as age and accuracy, in the Phone Setup zone, the exact time in `title`; the phone's
-/// answer to Update Location in plain words with when it came; the map's popup in the same words.
+/// The fix as age and accuracy, in the Phone Setup zone, the exact time in the bubble's last line
+/// (design 88 revision 2); the phone's answer to Update Location in plain words with when it came,
+/// under Update Location; the map's popup in the same words.
 #[tokio::test]
 async fn the_fix_and_the_answer_read_in_local_time() {
     let app = TestApp::new().await;
@@ -640,7 +641,7 @@ async fn the_fix_and_the_answer_read_in_local_time() {
     .unwrap();
     let html = locate_page(&app, &cookie, &format!("?device={id}")).await;
     assert!(
-        html.contains("<span class=\"row-sub\" data-fix-aged>Last seen 9 days ago</span>"),
+        html.contains(" data-fix-aged=\"Last seen 9 days ago\""),
         "{html}"
     );
 
@@ -664,19 +665,20 @@ async fn the_fix_and_the_answer_read_in_local_time() {
     .await
     .unwrap();
     let html = locate_page(&app, &cookie, &format!("?device={id}")).await;
-    let fix = html
-        .split("data-row=\"fix\"")
+    let title = html
+        .split(" data-fix-title=\"")
         .nth(1)
-        .and_then(|rest| rest.split("</div>").next())
+        .and_then(|rest| rest.split('"').next())
         .unwrap();
-    assert!(fix.contains(">10 min ago<"), "{fix}");
-    assert!(fix.contains("Within 40 m"), "{fix}");
-    assert!(fix.contains(" JST\""), "the exact time in title: {fix}");
+    assert!(
+        title.ends_with(" JST"),
+        "the exact time in the bubble: {title}"
+    );
     assert!(html.contains("data-shown-text=\"10 min ago · within 40 m\""));
     let answer = html
         .split("data-row=\"locate-answer\"")
         .nth(1)
-        .and_then(|rest| rest.split("</div>").next())
+        .and_then(|rest| rest.split("</button>").next())
         .unwrap();
     assert!(
         answer.contains("title=\"location is off for this device\">Location is off on the phone<"),
@@ -721,7 +723,7 @@ async fn the_answer_row_shows_only_while_it_says_something() {
     let row = |html: &str| {
         html.split("data-row=\"locate-answer\"")
             .nth(1)
-            .and_then(|rest| rest.split("</div>").next())
+            .and_then(|rest| rest.split("</button>").next())
             .map(str::to_string)
     };
     let page = format!("?device={id}");
@@ -768,7 +770,7 @@ async fn the_answer_row_shows_only_while_it_says_something() {
     let found = row(&locate_page(&app, &cookie, &page).await).expect("the found row");
     assert!(found.contains("data-state=\"found\""), "{found}");
     assert!(found.contains(">Found within 5 m<"), "{found}");
-    assert!(found.contains("class=\"row-value\""), "its time: {found}");
+    assert!(found.contains(" data-answer-when>"), "its time: {found}");
 
     sqlx::query(
         "UPDATE device_commands SET acknowledged_at = datetime('now', '-11 minutes') WHERE id = ?",
@@ -1445,7 +1447,7 @@ async fn the_locate_tab_speaks_norwegian() {
     for words in [
         "<h1 class=\"page-title\">Finn</h1>",
         "Posisjonsinnstillinger",
-        "Oppdater posisjon</button>",
+        "Oppdater posisjon<",
         "Finn telefonen",
         "0 de siste 12 timene · nyeste ",
         "data-w-in-24=\"{count} de siste 24 timene\"",
@@ -1858,49 +1860,30 @@ async fn the_wait_after_update_all_counts_the_answers() {
     );
 }
 
-/// Design 85 §4.7: the one-phone view's age line says fresh or old with the legend's dot (not the
-/// online dot) and its hidden word, and since when a still phone hasn't moved.
+/// Design 85 §4.7, design 88 revision 2: the one-phone view's bubble says fresh or old (the
+/// legend's word, hidden for screen readers) and since when a still phone hasn't moved - from the
+/// map box's `data-fix-*`, the box under the map gone.
 #[tokio::test]
-async fn the_age_line_says_fresh_or_old() {
+async fn the_bubble_says_fresh_or_old() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (emma, _) = app.enrolled_device("Emma").await;
     set_location(&app, emma, "interval", 15).await;
-    let age = |html: &str| {
-        html.split("<span class=\"fix-age\"")
-            .nth(1)
-            .and_then(|rest| rest.split("<span class=\"row-sub\">").next())
-            .unwrap()
-            .to_string()
-    };
     only_fix(&app, emma, 10, None).await;
     let html = locate_page(&app, &cookie, "").await;
-    let line = age(&html);
-    assert!(
-        line.contains("<span class=\"seen-dot seen-fresh\" aria-hidden=\"true\"></span>10 min ago"),
-        "{line}"
-    );
-    assert!(
-        line.contains("<span class=\"visually-hidden\"> Recent</span>"),
-        "{line}"
-    );
-    assert!(!line.contains("dot-online"));
+    assert!(html.contains(" data-fix-seen=\"Recent\""), "{html}");
+    assert!(html.contains("data-shown-text=\"10 min ago · "), "{html}");
     assert!(!html.contains("data-fix-still"));
     only_fix(&app, emma, 40, None).await;
-    let line = age(&locate_page(&app, &cookie, "").await);
-    assert!(
-        line.contains("seen-dot seen-old") && line.contains("> Older position</span>"),
-        "{line}"
-    );
+    let html = locate_page(&app, &cookie, "").await;
+    assert!(html.contains(" data-fix-seen=\"Older position\""), "{html}");
     // A still re-send: its age, and since when.
     only_fix(&app, emma, 3 * 60, Some(2)).await;
     let html = locate_page(&app, &cookie, "").await;
+    assert!(html.contains("data-shown-text=\"2 min ago · "), "{html}");
+    assert!(html.contains(" data-fix-seen=\"Recent\""), "{html}");
     assert!(
-        age(&html).contains("seen-fresh\" aria-hidden=\"true\"></span>2 min ago"),
-        "{html}"
-    );
-    assert!(
-        html.contains("data-fix-still>Hasn&#39;t moved since "),
+        html.contains(" data-fix-still=\"Hasn&#39;t moved since "),
         "{html}"
     );
     // Still for 25 h with a day's history (code QA M1): one age for the fix on the whole page - no
@@ -1912,14 +1895,103 @@ async fn the_age_line_says_fresh_or_old() {
         .unwrap();
     only_fix(&app, emma, 25 * 60, Some(2)).await;
     let html = locate_page(&app, &cookie, "").await;
-    assert!(age(&html).contains("</span>2 min ago"), "{html}");
+    assert!(html.contains("data-shown-text=\"2 min ago · "), "{html}");
     assert!(!html.contains("data-fix-aged"), "{html}");
     assert!(html.contains("data-newest-age=\"2 min ago\""), "{html}");
     assert!(!html.contains("1 day ago"), "{html}");
     // The one other time is the still line's own, since when it hasn't moved.
     assert!(
-        html.contains("data-fix-still>Hasn&#39;t moved since yesterday "),
+        html.contains(" data-fix-still=\"Hasn&#39;t moved since yesterday "),
         "{html}"
+    );
+}
+
+/// Design 88 revision 2 (the user, 2026-11-12): no box under the map - the age, the accuracy and
+/// the zone are the marker's; Update Location is the rows' first, its wait in that row, its
+/// redirect on that row; the "Location is off" warning above the rows, and without a position the
+/// row says why.
+#[tokio::test]
+async fn update_location_is_the_first_row_and_the_map_has_no_box() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("Anna").await;
+    sqlx::query(
+        "INSERT INTO device_zones (device_id, name, latitude, longitude, radius_m) \
+         VALUES (?, 'School', 59.9, 10.7, 500)",
+    )
+    .bind(id)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    fix(&app, id, 59.9, 10).await;
+    let html = locate_page(&app, &cookie, &format!("?device={id}")).await;
+    for gone in ["fix-age", "data-row=\"fix\"", "data-fix-still>"] {
+        assert!(!html.contains(gone), "{gone}");
+    }
+    // The section ends with the legend: no group under the map.
+    let section = html.split("<section id=\"location\"").nth(1).unwrap();
+    let section = section.split("</section>").next().unwrap();
+    assert!(!section.contains("class=\"group"), "{section}");
+    assert!(!section.contains("<form"), "{section}");
+    // The zone the fix is in is the bubble's.
+    assert!(html.contains("data-shown-text=\"10 min ago · "), "{html}");
+    assert!(html.contains(" · at School\""), "{html}");
+    // Update Location first in the rows, a tile row like the others, returning to itself.
+    let rows = html
+        .split("data-group=\"locate-rows\">")
+        .nth(1)
+        .unwrap()
+        .trim_start();
+    assert!(
+        rows.starts_with(&format!(
+            "<form method=\"post\" action=\"/devices/{id}/command/locate#update-location\" id=\"update-location\" class=\"cell\">"
+        )),
+        "{rows}"
+    );
+    let row = rows.split("</form>").next().unwrap();
+    assert!(row.contains("<button type=\"submit\" class=\"row\" data-row=\"update-location\">"));
+    assert!(row.contains("<span class=\"tile tile-blue\">"));
+    assert!(row.contains(">Update Location<"), "{row}");
+    assert!(!row.contains("fix_wait"), "no wait before a press");
+    assert!(rows.find("data-row=\"update-location\"") < rows.find("data-row=\"locations\""));
+    // Its redirect (`#update-location`) is the forms table's row above.
+    let pressed = locate_page(&app, &cookie, &format!("?device={id}&requested=1")).await;
+    let row = pressed
+        .split("data-row=\"update-location\"")
+        .nth(1)
+        .and_then(|rest| rest.split("</button>").next())
+        .unwrap();
+    assert!(
+        row.contains("<span id=\"fix_wait\" class=\"row-sub\" role=\"status\""),
+        "{row}"
+    );
+    assert!(
+        row.contains(">Waiting for a fresh fix&hellip;</span>"),
+        "{row}"
+    );
+    assert!(pressed.contains(" data-waiting"), "locate.js waits");
+
+    // Location off: the warning above the rows, and the row says why no position comes.
+    set_location(&app, id, "off", 15).await;
+    sqlx::query("DELETE FROM device_locations WHERE device_id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let html = locate_page(&app, &cookie, &format!("?device={id}")).await;
+    let warning = html.find("data-warning=\"location-off\"").unwrap();
+    let rows = html.find("data-group=\"locate-rows\"").unwrap();
+    assert!(warning < rows);
+    let row = html
+        .split("data-row=\"update-location\"")
+        .nth(1)
+        .and_then(|rest| rest.split("</button>").next())
+        .unwrap();
+    assert!(
+        row.contains(
+            "<span class=\"row-sub\" data-fix-none>No position kept while location is off.</span>"
+        ),
+        "{row}"
     );
 }
 

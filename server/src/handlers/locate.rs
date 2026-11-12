@@ -395,19 +395,19 @@ pub(crate) struct Recent {
     pub(crate) flash: Option<(&'static str, bool)>,
 }
 
-/// The newest fix: "10 min ago", "Within 40 m", the exact time for `title`.
+/// The newest fix's words besides `MapData::shown_text` ("10 min ago · within 40 m · at School"),
+/// the further lines of the marker's bubble (design 88 revision 2: the box under the map went; the
+/// map box's `data-fix-*`, set as text by `static/locate.js`).
 struct FixView {
-    age: String,
-    accuracy: String,
+    /// The exact time, then the provider and "test location" ([fix_title]).
     exact: String,
     /// "Last position before the phone went off" ([before_off]).
     before_off: bool,
     /// "Last seen 9 days ago": the newest fix kept past the location window (the owner's decision
     /// on M1 of round S3), `None` inside it.
     aged: Option<String>,
-    /// Design 85 §4.7: the dot before the age, `seen-fresh` or `seen-old` ([Seen]), and its
-    /// legend word for screen readers; empty for a time that doesn't read.
-    seen_class: &'static str,
+    /// Design 85 §4.7: the legend's word for the fix, "Recent" or "Older position", for screen
+    /// readers ([Seen]); empty for a time that doesn't read.
     seen_word: &'static str,
     /// "Hasn't moved since 11:40" ([Seen::still_line]).
     still: Option<String>,
@@ -1817,20 +1817,14 @@ async fn locate_view(
         .clone()
         .and_then(|l| Seen::of(l, &policy.mode, served_interval, now));
     let fix = newest.as_ref().map(|l| {
-        // Its age, title and "Last seen 9 days ago" from the later of the fix and its re-send.
+        // Its title and "Last seen 9 days ago" from the later of the fix and its re-send.
         let fix = Fix::seen(l);
-        let accuracy = match &badge {
-            Some(badge) => format!("{} · {badge}", fix.accuracy(lang)),
-            None => fix.accuracy(lang),
-        };
-        let (seen_class, seen_word) = match &seen {
-            Some(s) if s.fresh => ("seen-fresh", t(lang, "locate.all.fresh")),
-            Some(_) => ("seen-old", t(lang, "locate.all.old")),
-            None => ("", ""),
+        let seen_word = match &seen {
+            Some(s) if s.fresh => t(lang, "locate.all.fresh"),
+            Some(_) => t(lang, "locate.all.old"),
+            None => "",
         };
         FixView {
-            age: fix.age(zone, now),
-            accuracy,
             exact: fix_title(lang, fix.at.map(|at| zone.exact(at)).unwrap_or_default(), l),
             before_off: fix_before_off,
             aged: fix
@@ -1838,7 +1832,6 @@ async fn locate_view(
                 .map(|at| (now - at).num_days())
                 .filter(|days| *days >= policy.retention.max(1))
                 .map(|days| t_count(lang, "locate.fix.aged", days, &[])),
-            seen_class,
             seen_word,
             still: seen.as_ref().and_then(|s| s.still_line(zone, now)),
         }
@@ -2671,14 +2664,14 @@ pub async fn lock(
 
 /// Update Location: queues `locate`, which makes the phone take a fresh fix (bypassing its own
 /// throttle and the location policy's interval) and report it; the page then waits for it, at
-/// the map (`#location`).
+/// its row (`#update-location`, design 88 revision 2: the wait's line is there).
 pub async fn locate(
     State(state): State<AppState>,
     lang: Lang,
     Path(id): Path<i64>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> Response {
-    let back = format!("/devices/locate?device={id}&requested=1#location");
+    let back = format!("/devices/locate?device={id}&requested=1#update-location");
     let event = ("device_command_queued", "locate");
     send(&state, id, &admin, "locate", event, back, lang).await
 }
