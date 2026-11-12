@@ -270,7 +270,9 @@ async fn the_rows_and_their_pages() {
         "id=\"recent\"",
         "id=\"location-settings\"",
         "/command/ring",
-        "data-autosave",
+        // The pickers (head.html's comment names `data-autosave`, so the pickers themselves).
+        "name=\"mode\"",
+        "name=\"days\"",
         "data-row=\"add-zone\"",
         "The map shows the span picked above",
     ] {
@@ -489,7 +491,7 @@ async fn the_chips_and_the_alle_view() {
     // legend under the map and as the full screen's strip.
     let html = locate_page(&app, &cookie, "").await;
     assert!(html.contains("id=\"map\""));
-    assert!(html.contains(&format!("/devices/{emma}/command/ring")));
+    assert!(html.contains(&format!("/devices/{emma}/command/locate")));
     assert!(!html.contains("data-locate-all"));
     assert!(!html.contains("<nav class=\"phone-switch\""));
     assert!(!html.contains("map-chips") && !html.contains("data-chips"));
