@@ -25,8 +25,8 @@ use crate::i18n::{Lang, t, t_params};
 /// failed.
 const RESULT_MAX_AGE: Duration = Duration::from_secs(60 * 60);
 const RETRY_AFTER: Duration = Duration::from_secs(5 * 60);
-/// The whole check - the download and the release list - at most.
-const CHECK_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+/// The whole check - the download and the release list - at most: the catalog's download limit.
+const CHECK_TIMEOUT: Duration = crate::handlers::tracked_apps::DOWNLOAD_TOTAL_TIMEOUT;
 /// How long "Check again" waits for the answer before it goes back to the page.
 const CHECK_AGAIN_WAIT: Duration = Duration::from_secs(10);
 /// The temp file's name under `data/`: `launcher-check.<random>.apk`, gone once read.
@@ -43,10 +43,12 @@ pub enum Verdict {
     WrongSigner,
     /// Another app's package (`package`): the phone refuses it.
     WrongPackage { package: String },
-    /// A file came, but not an APK with a manifest.
+    /// A file came, but not an APK with a manifest - or no ZIP at all (a web page at the address).
     NotAnApk,
-    /// Nothing came: DNS, refused, an HTTP error, a timeout, a stall, over the size cap, no ZIP.
+    /// Nothing came: DNS, refused, an HTTP error, a stall, over the size cap.
     Unreachable,
+    /// The whole check took longer than [CHECK_TIMEOUT]: a download that trickles.
+    TimedOut,
 }
 
 impl Verdict {
@@ -110,12 +112,12 @@ impl LauncherCheck {
         (check.result.clone(), start)
     }
 
-    /// Stores a finished check's result for `key`, unless the key changed meanwhile.
+    /// Stores a finished check's result for `key`, unless the key changed meanwhile. `running` is
+    /// cleared by [run]'s [ClearRunning] alone, so it is cleared once, however the check ends.
     fn store(&self, key: &Key, checked: Checked) {
         let mut check = self.0.lock().unwrap();
-        check.running = false;
         if check.key.as_ref() == Some(key) {
-            let wait = if checked.verdict == Verdict::Unreachable {
+            let wait = if matches!(checked.verdict, Verdict::Unreachable | Verdict::TimedOut) {
                 RETRY_AFTER
             } else {
                 RESULT_MAX_AGE
@@ -167,7 +169,8 @@ pub fn seen(state: &AppState) -> Seen {
     }
 }
 
-/// At start: removes a temp file a crash left behind, and starts the first check.
+/// At start, before anything can start a check: removes a temp file a crash left behind, then
+/// starts the first check (in the background).
 pub async fn start(state: &AppState) {
     if let Ok(mut files) = tokio::fs::read_dir(state.data_dir.as_ref()).await {
         while let Ok(Some(file)) = files.next_entry().await {
@@ -181,6 +184,7 @@ pub async fn start(state: &AppState) {
 
 /// Runs a check for `key` and stores its result.
 async fn run(state: &AppState, key: Key) {
+    let _running = ClearRunning(state.launcher_check.clone());
     let checked = tokio::time::timeout(CHECK_TIMEOUT, check(state, &key.0, &key.1))
         .await
         .unwrap_or_else(|_| {
@@ -189,13 +193,28 @@ async fn run(state: &AppState, key: Key) {
                 CHECK_TIMEOUT.as_secs()
             );
             Checked {
-                verdict: Verdict::Unreachable,
+                verdict: Verdict::TimedOut,
                 version: None,
                 published: None,
                 min_sdk: None,
             }
         });
     state.launcher_check.store(&key, checked);
+}
+
+/// Clears `running` when a check ends any way - a panic or a dropped task too - so the pages never
+/// say "Checking" for good; the next look starts a check again.
+struct ClearRunning(std::sync::Arc<LauncherCheck>);
+
+impl Drop for ClearRunning {
+    fn drop(&mut self) {
+        let mut check = self
+            .0
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        check.running = false;
+    }
 }
 
 /// Downloads the APK at `url`, reads it and judges it against `checksum` and the admin component.
@@ -219,6 +238,12 @@ async fn check(state: &AppState, url: &str, checksum: &str) -> Checked {
     let file = crate::handlers::tracked_apps::TempDownload::new(path.to_string_lossy().into());
     if let Err(err) = download(url, &file.path).await {
         tracing::warn!("the setup QR's launcher check couldn't download {url}: {err}");
+        if err == crate::handlers::tracked_apps::NOT_A_ZIP {
+            return Checked {
+                verdict: Verdict::NotAnApk,
+                ..unreachable
+            };
+        }
         return unreachable;
     }
     let read = std::path::PathBuf::from(&file.path);
@@ -266,10 +291,17 @@ async fn download(url: &str, path: &str) -> Result<(), String> {
         .map_err(|_| "no answer".to_string())?
         .and_then(reqwest::Response::error_for_status)
         .map_err(|err| err.to_string())?;
+    // A ZIP-less body keeps the bare reason, [check] tells it from the rest by it.
     stream_to_file(&mut response, path, 0, None, DOWNLOAD_STALL_TIMEOUT)
         .await
         .map(|_| ())
-        .map_err(|err| err.to_string())
+        .map_err(|err| {
+            if err.detail == crate::handlers::tracked_apps::NOT_A_ZIP {
+                err.detail
+            } else {
+                err.to_string()
+            }
+        })
 }
 
 /// The launcher releases the server knows: the newest (its version and versionCode) and each
@@ -613,6 +645,15 @@ fn words(
                 &[("url", url)],
             )),
         ),
+        Verdict::TimedOut => (
+            "refused",
+            t(lang, "settings.provisioning.launcher.timed_out").to_string(),
+            Some(t_params(
+                lang,
+                "settings.provisioning.launcher.address_sub",
+                &[("url", url)],
+            )),
+        ),
         Verdict::Unreachable => (
             "refused",
             t(lang, "settings.provisioning.launcher.unreachable").to_string(),
@@ -808,8 +849,8 @@ mod tests {
         );
         assert_eq!(
             verdict(checked("page.apk", KEY1_CHECKSUM, None).await),
-            Verdict::Unreachable,
-            "a page is no APK: the download refuses it"
+            Verdict::NotAnApk,
+            "a page at the address is no APK, not an unreachable address"
         );
     }
 

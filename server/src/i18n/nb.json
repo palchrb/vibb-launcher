@@ -3237,6 +3237,7 @@
   "settings.provisioning.launcher.wrong_package_sub": "En telefon ville avvist den. Sjekk LAUNCHER_APK_URL og LAUNCHER_ADMIN_COMPONENT i serverens .env (DEPLOY.md). Ingen QR-kode før det er launcheren.",
   "settings.provisioning.launcher.not_an_apk": "Nedlastingsadressen i QR-koden for oppsett gir ingen app",
   "settings.provisioning.launcher.unreachable": "Serveren når ikke nedlastingsadressen i QR-koden for oppsett",
+  "settings.provisioning.launcher.timed_out": "Nedlastingen fra adressen i QR-koden for oppsett tok for lang tid",
   "settings.provisioning.launcher.address_sub": "Fra denne serveren: {url}. En telefon ville stoppet ved «Can't set up device». Sjekk LAUNCHER_APK_URL i serverens .env (DEPLOY.md) og serverens internettforbindelse, og trykk så Sjekk på nytt. Ingen QR-kode før da.",
   "settings.provisioning.launcher.again": "Sjekk på nytt",
   "settings.provisioning.launcher.needs_android": "En ny telefon må ha Android {version} eller nyere: oppdater den før tilbakestillingen.",

@@ -118,12 +118,14 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `launcher-v*` versionCode in the launcher row's stored release or its GitHub repo's list, **prereleases included**,
   `install_now::launcher_tag_version_code`), `WrongSigner` (no v2/v3 signer, or not the checksum - the checksum's
   URL-safe base64 and apk.rs's hex are both decoded to the 32 bytes, `checksum_matches`), `WrongPackage`, `NotAnApk`,
-  `Unreachable`. In memory (`AppState.launcher_check`, keyed by the address and the checksum; an hour, 5 minutes after
-  `Unreachable`), started at boot and by a page that finds it due, never awaited by a page. Phone Setup and the
+  `Unreachable`, `TimedOut` (past the catalog's 30-minute `DOWNLOAD_TOTAL_TIMEOUT`; a page with no ZIP header is
+  `NotAnApk`, `tracked_apps::NOT_A_ZIP`). In memory (`AppState.launcher_check`, keyed by the address and the checksum;
+  an hour, 5 minutes after `Unreachable`/`TimedOut`; `running` cleared by a drop guard, so a panic never leaves
+  Checking), started at boot after the leftover sweep, before any listener and by a page that finds it due, never awaited by a page. Phone Setup and the
   Connect page show it in `partials/launcher_check.html` (`#launcher`, Check Again: `POST
   /settings/provisioning/launcher-check`, waits up to 10 s, back to `#launcher`); the Connect page makes no QR and no
   code while it checks or for a refusing verdict (`launcher_blocks`), and shows the QR with the warning for `Older`.
-  A page a GET drew reloads itself while it checks (`auto-reload.js`). Tests: `launcher_check::tests` (a fake GitHub on
+  A page a GET drew reloads itself while it checks (`auto-reload.js`); one a POST drew shows Check Again instead. Tests: `launcher_check::tests` (a fake GitHub on
   loopback serving `testdata/apk/`), `provisioning::the_launcher_check_decides_the_qr`,
   `check_again_comes_back_to_the_row`; `TestApp` sets `Works` for its own config, so no test downloads anything.
   For a launcher a phone would take the row adds the Android it needs, from the APK's `<uses-sdk minSdkVersion>`

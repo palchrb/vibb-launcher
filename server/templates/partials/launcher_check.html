@@ -14,7 +14,9 @@
         <p class="row" data-launcher="{{ launcher.state }}" role="status"><span class="row-label">{{ launcher.text }}</span></p>
         {% endif %}
         {% if let Some(needs) = launcher.needs %}<p class="row row-note" data-row="launcher-needs">{{ needs }}</p>{% endif %}
-        {% if launcher.state != "checking" %}
+        {#- While it checks, a page a GET drew reloads itself; one a POST drew (that can't) keeps
+            Check Again as its way on. -#}
+        {% if launcher.state != "checking" || !launcher.auto_reload %}
         <form method="post" action="/settings/provisioning/launcher-check#launcher" class="cell">
             {% if let Some(id) = launcher.device_id %}<input type="hidden" name="device" value="{{ id }}">{% endif %}
             <button type="submit" class="row row-button" data-row="launcher-again">{{ self.t("settings.provisioning.launcher.again") }}</button>

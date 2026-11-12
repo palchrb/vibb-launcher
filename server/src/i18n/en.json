@@ -3237,6 +3237,7 @@
   "settings.provisioning.launcher.wrong_package_sub": "A phone would refuse it. Check LAUNCHER_APK_URL and LAUNCHER_ADMIN_COMPONENT in the server's .env (DEPLOY.md). No QR code until it is the launcher.",
   "settings.provisioning.launcher.not_an_apk": "The setup QR code's download address gives no app",
   "settings.provisioning.launcher.unreachable": "The setup QR code's download address can't be reached",
+  "settings.provisioning.launcher.timed_out": "The download from the setup QR code's address took too long",
   "settings.provisioning.launcher.address_sub": "From this server: {url}. A phone would stop at “Can't set up device”. Check LAUNCHER_APK_URL in the server's .env (DEPLOY.md) and this server's internet connection, then Check Again. No QR code until then.",
   "settings.provisioning.launcher.again": "Check Again",
   "settings.provisioning.launcher.needs_android": "A new phone needs Android {version} or newer: update it before the factory reset.",

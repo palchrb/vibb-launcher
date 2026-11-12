@@ -16,16 +16,17 @@ a phone set up today would start on a launcher weeks old.
 ## The decision
 
 1. **The server fetches the APK the QR names** (redirects followed: at most 5, never away from https -
-   `tracked_apps::https_redirects`; the catalog's size cap and stall timeout, `tracked_apps::stream_to_file`; 10
-   minutes at most in all), into a temp file under `data/` that is deleted as soon as it is read.
+   `tracked_apps::https_redirects`; the catalog's size cap and stall timeout, `tracked_apps::stream_to_file`; 30
+   minutes at most in all - the catalog's `DOWNLOAD_TOTAL_TIMEOUT`), into a temp file under `data/` that is deleted as soon as it is read.
 2. **It reads the APK** (`apk::read_identity`, which now also reads `android:versionName`) and judges it:
-   - not an APK, or no manifest package: **not an APK**;
+   - not a ZIP at all (a web page at the address), not an APK, or no manifest package: **not an APK**;
    - the package isn't `LAUNCHER_ADMIN_COMPONENT`'s: **wrong package**;
    - no v2/v3 signer, or its SHA-256 isn't the checksum: **wrong signer**. The checksum is URL-safe base64 of the
      certificate's SHA-256 (no padding), `apk.rs` gives lower-case hex: both are decoded to the 32 bytes and compared
      (`launcher_check::checksum_matches`), never compared as text;
    - else it **works**, and is **older** when a newer launcher release is known.
-   - Nothing came (DNS, refused, an HTTP error, a timeout, a stall, over the cap, not a zip): **unreachable**.
+   - Nothing came (DNS, refused, an HTTP error, a stall, over the cap): **unreachable**; the whole check past 30
+     minutes: **timed out** (worded on its own). Either is checked again after 5 minutes.
 3. **"Newer" is judged by versionCode** (`install_now::launcher_tag_version_code`, both rules): the newest of the
    launcher catalog row's stored release and, read once per check, the `launcher-v*` releases in the row's GitHub
    repo (else `LAUNCHER_APK_URL`'s), **prereleases included** - the point is to say that a newer build exists, not

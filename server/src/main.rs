@@ -552,9 +552,10 @@ async fn main() {
     tokio::task::spawn(async move {
         handlers::system_update::refresh_release(&release_state).await;
     });
-    // The setup QR's launcher check (design 86), so Phone Setup and Connect rarely say "Checking".
-    let check_state = state.clone();
-    tokio::task::spawn(async move { launcher_check::start(&check_state).await });
+    // The setup QR's launcher check (design 86), so Phone Setup and Connect rarely say "Checking":
+    // a crash's temp file swept first (awaited, before any listener), then the check in the
+    // background.
+    launcher_check::start(&state).await;
     // The launcher's catalog row, so its self-updates need nothing added under Apps - before
     // the scheduled sync's first pass.
     handlers::tracked_apps::ensure_launcher_row(&state).await;

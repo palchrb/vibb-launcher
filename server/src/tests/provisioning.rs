@@ -973,17 +973,32 @@ async fn the_launcher_check_decides_the_qr() {
         "{page}"
     );
 
-    // No check has ended: Checking, and no QR (fail closed). The address is refused at once.
-    let mut checking = app.state.clone();
-    checking.launcher_check = Default::default();
-    let mut config = (*checking.config).clone();
-    config.launcher_apk_url = "http://127.0.0.1:9/kids-launcher-mdm.apk".to_string();
-    checking.config = Arc::new(config);
-    let page = provision_page(checking, id).await;
+    // No check has ended: Checking, and no QR and no code (fail closed). A fresh check each time
+    // (its address is refused at once, so a reused one would have ended).
+    let checking = || {
+        let mut checking = app.state.clone();
+        checking.launcher_check = Default::default();
+        let mut config = (*checking.config).clone();
+        config.launcher_apk_url = "http://127.0.0.1:9/kids-launcher-mdm.apk".to_string();
+        checking.config = Arc::new(config);
+        checking
+    };
+    let before = code_hash(&app, id).await;
+    let page = provision_page(checking(), id).await;
     assert!(page.contains("data-launcher=\"checking\""), "{page}");
     assert!(!page.contains("data-row=\"qr\""));
-    // A POST's answer never reloads itself (it would send the form again).
+    assert_eq!(code_hash(&app, id).await, before, "checking: a code");
+    // A POST's answer never reloads itself (it would send the form again): Check Again is its way on.
     assert!(!page.contains("auto-reload.js"));
+    assert!(page.contains("data-row=\"launcher-again\""), "{page}");
+    // The page a GET drew reloads itself until the check ends.
+    let response = provisioning::provision_form(State(checking()), crate::i18n::Lang::En, Path(id))
+        .await
+        .into_response();
+    let page = read_response(response).await.text();
+    assert!(page.contains("data-launcher=\"checking\""), "{page}");
+    assert!(page.contains("auto-reload.js"), "{page}");
+    assert!(!page.contains("data-row=\"launcher-again\""), "{page}");
 }
 
 /// Design 86: Phone Setup shows the row; Check Again checks at once and comes back to it, or to

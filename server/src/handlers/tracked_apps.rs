@@ -38,7 +38,7 @@ const MAX_ASSET_BYTES: u64 = 1_000_000_000;
 /// A download that delivers no data for this long fails...
 pub(crate) const DOWNLOAD_STALL_TIMEOUT: Duration = Duration::from_secs(60);
 /// ...and so does one still running after this, however steadily it trickles.
-const DOWNLOAD_TOTAL_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+pub(crate) const DOWNLOAD_TOTAL_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
 /// A release's APK: a GitHub release asset as its API lists it, or an F-Droid repo's APK
 /// (`sync_fdroid`: the id is the versionCode).
@@ -77,9 +77,13 @@ fn github_digest<'de, D: serde::Deserializer<'de>>(de: D) -> Result<Option<Strin
 /// An APK is a ZIP file: anything else (an HTML error page, a truncated download) must never be
 /// cached and offered to the phones. `head` is the download's first bytes (at least 4 when there
 /// were that many), `len` its length, `expected_size` GitHub's asset size (0 = unknown).
+/// [check_apk_download]'s answer for a download that isn't a ZIP at all (the setup QR's check
+/// tells it from a network failure by it, `launcher_check`).
+pub(crate) const NOT_A_ZIP: &str = "downloaded asset is not an APK (no ZIP header)";
+
 fn check_apk_download(head: &[u8], len: u64, expected_size: u64) -> Result<(), String> {
     if !head.starts_with(b"PK\x03\x04") {
-        return Err("downloaded asset is not an APK (no ZIP header)".to_string());
+        return Err(NOT_A_ZIP.to_string());
     }
     if expected_size != 0 && len != expected_size {
         return Err(format!(
