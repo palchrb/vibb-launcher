@@ -55,28 +55,21 @@ struct LocateTemplate {
     /// Every phone: the switcher above the chosen one, or the list when none is chosen.
     phones: Vec<PhoneLink>,
     selected: Option<Locate>,
+    /// Two phones or more, none chosen: the Alle view (design 85).
+    all: Option<AllView>,
     bell: crate::parent_events::Bell,
 }
 crate::i18n::words!(LocateTemplate);
 
-/// A phone in the switcher (or the list): its state as a dot and, for screen readers, in its
-/// `aria-label` ("Anna, online", §5.4) - the dot and the word as on Devices (`phone_status::dot`).
+/// A phone in the switcher: its state as a dot and, for screen readers, in its `aria-label`
+/// ("Emma, online", §5.4) - the dot and the word as on Devices (`phone_status::dot`).
 struct PhoneLink {
     id: i64,
     name: String,
-    initial: String,
-    avatar: &'static str,
-    photo: Option<String>,
     /// The dot's class suffix (`online`, `away`, `offline`).
     dot: &'static str,
-    /// "Online", "No contact", "Offline", "Turned off 20:35", in the reader's language.
-    word: String,
-    /// "Anna, online", "Anna, no contact", "Anna, turned off 20:35".
+    /// "Emma, online", "Emma, no contact", "Emma, turned off 20:35".
     aria: String,
-    /// "last seen 13:05", "access removed" (the list's line, in the reader's language), and the exact
-    /// last contact.
-    seen: Option<String>,
-    seen_exact: Option<String>,
     current: bool,
 }
 
@@ -356,6 +349,12 @@ struct FixView {
     /// "Last seen 9 days ago": the newest fix kept past the location window (the owner's decision
     /// on M1 of round S3), `None` inside it.
     aged: Option<String>,
+    /// Design 85 §4.7: the dot before the age, `seen-fresh` or `seen-old` ([Seen]), and its
+    /// legend word for screen readers; empty for a time that doesn't read.
+    seen_class: &'static str,
+    seen_word: &'static str,
+    /// "Hasn't moved since 11:40" ([Seen::still_line]).
+    still: Option<String>,
 }
 
 /// How long after a shutdown a report may come and its fix still be the last before the phone went
@@ -398,6 +397,45 @@ fn before_off(
     }) && last_report.is_none_or(|report| {
         report <= arrived + chrono::Duration::seconds(BEFORE_OFF_SLACK_SECONDS)
     })
+}
+
+/// [before_off] for the phone's newest fix `newest`: its shutdown, the phone's last report and the
+/// off's event, read only for a fix that is a shutdown's.
+async fn fix_before_off(
+    state: &AppState,
+    id: i64,
+    newest: &DeviceLocation,
+    now: DateTime<Utc>,
+) -> Result<bool, sqlx::Error> {
+    let Some(off) = newest.shutdown_at.as_deref().and_then(parse_db_utc) else {
+        return Ok(false);
+    };
+    let last_report = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT MAX(reported_at) FROM device_status WHERE device_id = ?",
+    )
+    .bind(id)
+    .fetch_one(&state.db)
+    .await?
+    .as_deref()
+    .and_then(parse_db_utc);
+    // The off's event by its key (the shutdown's instant, as `shutdown_at` is stored).
+    let off_row = sqlx::query_as::<_, (String, Option<String>, String)>(
+        "SELECT title, params, created_at FROM parent_events WHERE device_id = ? \
+         AND kind = 'phone_off' AND dedup_key = ?",
+    )
+    .bind(id)
+    .bind(crate::zones::instant(off))
+    .fetch_optional(&state.db)
+    .await?
+    .and_then(|(title, params, created)| Some((title, params, parse_db_utc(&created)?)));
+    Ok(before_off(
+        Some(off),
+        last_report,
+        off_row
+            .as_ref()
+            .map(|(title, params, at)| (title.as_str(), params.as_deref(), *at)),
+        now,
+    ))
 }
 
 /// The newest Update Location's row under the fix (2026-10-25, PLAN "Locate: the \"Answer to
@@ -582,6 +620,15 @@ impl Fix {
         }
     }
 
+    /// The fix as the phone last vouched for it (design 85 QA M1): its time the later of its own
+    /// and its still re-send's ([DeviceLocation::seen_at]), so one page never tells two ages for it.
+    pub(crate) fn seen(location: &DeviceLocation) -> Fix {
+        Fix {
+            at: location.seen_at(),
+            ..Fix::of(&location.captured_at, location.accuracy_meters)
+        }
+    }
+
     /// "10 min ago", "yesterday 21:40", "12 Oct" (`Zone::relative`).
     pub(crate) fn age(&self, zone: &Zone, now: DateTime<Utc>) -> String {
         match self.at {
@@ -597,6 +644,362 @@ impl Fix {
             None => t(lang, "locate.fix.accuracy_unknown").to_string(),
         }
     }
+}
+
+/// A phone's newest position as both Locate views tell it (design 85 §3.4): the fix, when the
+/// phone last vouched for it (its own time, or a still re-send's - `resent_at`, design 64 Q-3), and
+/// fresh by `zones::fresh` at `now` - the rule "Here now" uses, so the page never says two things.
+/// The only place either view decides fresh or old.
+pub(crate) struct Seen {
+    fix: DeviceLocation,
+    at: DateTime<Utc>,
+    fresh: bool,
+    /// The fix's own time while a re-send is newer: "Hasn't moved since 11:40".
+    still_since: Option<DateTime<Utc>>,
+}
+
+impl Seen {
+    /// The newest `fix` under the phone's location `mode` and served `interval` (as
+    /// `zones::freshness_inputs` reads them); `None` for a stored time that doesn't read.
+    fn of(fix: DeviceLocation, mode: &str, interval: i64, now: DateTime<Utc>) -> Option<Seen> {
+        let captured = parse_db_utc(&fix.captured_at)?;
+        let at = fix.seen_at().unwrap_or(captured);
+        Some(Seen {
+            fresh: crate::zones::fresh(Some(at), mode, interval, now),
+            still_since: (at > captured).then_some(captured),
+            at,
+            fix,
+        })
+    }
+
+    /// "Hasn't moved since 11:40", while a still re-send is newer than the fix.
+    fn still_line(&self, zone: &Zone, now: DateTime<Utc>) -> Option<String> {
+        self.still_since.map(|since| {
+            t_params(
+                zone.lang(),
+                "locate.all.still",
+                &[("at", &zone.since(since, now))],
+            )
+        })
+    }
+}
+
+/// The Alle view's marker tag (design 85 §4.2): "now", "2 min", "3 h", "2 d" since `at`.
+fn age_tag(lang: Lang, at: DateTime<Utc>, now: DateTime<Utc>) -> String {
+    let minutes = (now - at).num_minutes().max(0);
+    let (key, n) = match minutes {
+        0 => return t(lang, "locate.all.tag_now").to_string(),
+        m if m < 60 => ("locate.all.tag_min", m),
+        m if m < 24 * 60 => ("locate.all.tag_h", m / 60),
+        m => ("locate.all.tag_d", m / (24 * 60)),
+    };
+    t_params(lang, key, &[("n", &n.to_string())])
+}
+
+/// Locate's "Alle" view (design 85 §4, mockup B): every phone's chip over one map, the phones
+/// without a position under it, Update All and its wait.
+struct AllView {
+    phones: Vec<AllPhone>,
+    wait: Option<AllWait>,
+}
+
+impl AllView {
+    fn has_none(&self) -> bool {
+        self.phones.iter().any(|p| p.position.is_none())
+    }
+}
+
+/// A phone of the Alle view: its chip and, as `phones.json`'s row, what `static/locate-all.js`
+/// places - every word the server's (§4.6), the script only sets text.
+#[derive(serde::Serialize)]
+struct AllPhone {
+    id: i64,
+    name: String,
+    initial: String,
+    /// Its avatar class (`devices::avatar_class`).
+    tone: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    photo: Option<String>,
+    href: String,
+    /// The chip's `aria-label`, the marker's too: "Emma, 2 min ago, within 12 m".
+    label: String,
+    /// "Show Emma", the bubble's link.
+    show: String,
+    #[serde(flatten)]
+    position: Option<AllPosition>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    none: Option<NoPosition>,
+    /// While a wait runs, for a phone asked since its start: whether its newest `locate` since
+    /// then left Asking.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    answered: Option<bool>,
+    /// Why Update All doesn't ask it (a key: not set up, access removed, location off).
+    #[serde(skip)]
+    skipped: Option<&'static str>,
+}
+
+/// A phone's marker (§4.2) and bubble (§4.3).
+#[derive(serde::Serialize)]
+struct AllPosition {
+    lat: f64,
+    lng: f64,
+    accuracy_m: Option<i64>,
+    fresh: bool,
+    /// The seen instant (RFC 3339).
+    at: String,
+    /// "2 min".
+    tag: String,
+    /// The bubble's lines after the name: "Last seen 3 h ago", "Within 60 m · At School", and when
+    /// they apply "Hasn't moved since 11:40", "Last position before the phone went off".
+    lines: Vec<String>,
+}
+
+/// Why a phone has no marker (§1.4): its row under the map says it.
+#[derive(serde::Serialize, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+enum NoPosition {
+    NotSetUp,
+    Off,
+    NoFix,
+}
+
+impl NoPosition {
+    /// `lang` by reference: the template passes its own.
+    fn words(self, lang: &Lang) -> &'static str {
+        t(
+            *lang,
+            match self {
+                NoPosition::NotSetUp => "devices.status.not_set_up",
+                NoPosition::Off => "locate.all.off",
+                NoPosition::NoFix => "locate.all.none_yet",
+            },
+        )
+    }
+}
+
+/// The line under Update All after a press (§4.6), and who it didn't ask and why.
+struct AllWait {
+    line: String,
+    /// The press's instant as `phones.json` takes it; `None` when no phone could be asked.
+    at: Option<String>,
+    skipped: Vec<String>,
+}
+
+/// How long after Update All the page still waits (a reload later shows the plain page).
+const ALL_WAIT_MINUTES: i64 = 2;
+
+/// Why Update All skips `device` (design 85 O3), as a key: not set up, access removed (it can't
+/// come back by itself), location off (no fix ever). `None` = it is asked.
+fn skip_reason(
+    state: &AppState,
+    device: &Device,
+    mode: &str,
+    now: DateTime<Utc>,
+) -> Option<&'static str> {
+    if device.enrolled_at.is_none() {
+        Some("devices.status.not_set_up")
+    } else if matches!(
+        crate::handlers::devices::connection_of(state, device, now),
+        crate::streams::ConnectionState::Disconnected
+    ) {
+        Some("device.about.access_removed")
+    } else if mode == "off" {
+        Some("locate.all.off")
+    } else {
+        None
+    }
+}
+
+/// The phone's location mode. A phone always has its policy row; a missing one reads as a new
+/// phone's.
+async fn location_mode(state: &AppState, device_id: i64) -> Result<String, sqlx::Error> {
+    Ok(
+        sqlx::query_scalar("SELECT location_mode FROM device_policy WHERE device_id = ?")
+            .bind(device_id)
+            .fetch_optional(&state.db)
+            .await?
+            .unwrap_or_else(|| "on_request".to_string()),
+    )
+}
+
+/// The phone's newest fix.
+async fn newest_fix(
+    state: &AppState,
+    device_id: i64,
+) -> Result<Option<DeviceLocation>, sqlx::Error> {
+    sqlx::query_as::<_, DeviceLocation>(
+        "SELECT * FROM device_locations WHERE device_id = ? ORDER BY captured_at DESC, id DESC \
+         LIMIT 1",
+    )
+    .bind(device_id)
+    .fetch_optional(&state.db)
+    .await
+}
+
+/// `device` as the Alle view tells it at `now`; `wait_at` = the start of a wait after Update All.
+async fn all_phone(
+    state: &AppState,
+    device: &Device,
+    zone: &Zone,
+    now: DateTime<Utc>,
+    wait_at: Option<DateTime<Utc>>,
+) -> Result<AllPhone, sqlx::Error> {
+    use crate::handlers::devices::{avatar_class, avatar_photo, initial};
+    let lang = zone.lang();
+    let id = device.id;
+    let (_, mode, interval) = crate::zones::freshness_inputs(&state.db, id).await?;
+    let seen = newest_fix(state, id)
+        .await?
+        .and_then(|fix| Seen::of(fix, &mode, interval, now));
+    let (position, none, label) = match seen {
+        Some(seen) => {
+            let zones = crate::zones::list(&state.db, id).await?;
+            let fix = Fix::of(&seen.fix.captured_at, seen.fix.accuracy_meters);
+            let accuracy = match fix_badge(lang, &zones, &seen.fix) {
+                Some(badge) => format!("{} · {badge}", fix.accuracy(lang)),
+                None => fix.accuracy(lang),
+            };
+            let age = zone.relative(seen.at, now);
+            let label = format!(
+                "{}, {age}, {}",
+                device.name,
+                lowercase_first(&fix.accuracy(lang))
+            );
+            let mut lines = vec![
+                t_params(lang, "locate.all.seen", &[("age", &age)]),
+                accuracy,
+            ];
+            lines.extend(seen.still_line(zone, now));
+            if fix_before_off(state, id, &seen.fix, now).await? {
+                lines.push(t(lang, "locate.fix.before_off").to_string());
+            }
+            let position = AllPosition {
+                lat: seen.fix.latitude,
+                lng: seen.fix.longitude,
+                accuracy_m: fix.accuracy_m,
+                fresh: seen.fresh,
+                at: crate::zones::instant(seen.at),
+                tag: age_tag(lang, seen.at, now),
+                lines,
+            };
+            (Some(position), None, label)
+        }
+        None => {
+            let why = if device.enrolled_at.is_none() {
+                NoPosition::NotSetUp
+            } else if mode == "off" {
+                NoPosition::Off
+            } else {
+                NoPosition::NoFix
+            };
+            let label = format!("{}, {}", device.name, why.words(&lang).to_lowercase());
+            (None, Some(why), label)
+        }
+    };
+    let answered = match wait_at {
+        Some(at) => answered_since(state, id, at, now).await?,
+        None => None,
+    };
+    Ok(AllPhone {
+        id,
+        name: device.name.clone(),
+        initial: initial(&device.name),
+        tone: avatar_class(device),
+        photo: avatar_photo(device),
+        href: format!("/devices/locate?device={id}"),
+        label,
+        show: t_params(lang, "locate.all.show", &[("name", &device.name)]),
+        position,
+        none,
+        answered,
+        skipped: skip_reason(state, device, &mode, now),
+    })
+}
+
+/// Whether the phone answered Update All (design 85 §4.6): its newest `locate` queued at or after
+/// `at` has left Asking - a fix came, a failure, or it expired. Fix times are not compared, so a
+/// still re-send or a regular fix never counts. `None`: nothing was asked of it since `at`.
+async fn answered_since(
+    state: &AppState,
+    device_id: i64,
+    at: DateTime<Utc>,
+    now: DateTime<Utc>,
+) -> Result<Option<bool>, sqlx::Error> {
+    let command = sqlx::query_as::<_, DeviceCommand>(
+        "SELECT * FROM device_commands WHERE device_id = ? AND command = 'locate' \
+         AND requested_at >= ? ORDER BY requested_at DESC, id DESC LIMIT 1",
+    )
+    .bind(device_id)
+    .bind(at.format("%Y-%m-%d %H:%M:%S").to_string())
+    .fetch_optional(&state.db)
+    .await?;
+    let Some(command) = command else {
+        return Ok(None);
+    };
+    let receipts =
+        crate::handlers::device_api::sends_command_receipts(&state.db, device_id).await?;
+    let status = command.status(now.naive_utc(), receipts);
+    Ok(Some(!matches!(
+        answer_state(Lang::En, &command, &status, None, now),
+        Some(AnswerState::Asking)
+    )))
+}
+
+/// Every phone as the Alle view tells it, in the page's order.
+async fn all_phones(
+    state: &AppState,
+    devices: &[Device],
+    zone: &Zone,
+    now: DateTime<Utc>,
+    wait_at: Option<DateTime<Utc>>,
+) -> Result<Vec<AllPhone>, sqlx::Error> {
+    let mut phones = Vec::with_capacity(devices.len());
+    for device in devices {
+        phones.push(all_phone(state, device, zone, now, wait_at).await?);
+    }
+    Ok(phones)
+}
+
+/// The Alle view; `requested_at` is the address's `at` after Update All - a wait only while it
+/// reads and is under [ALL_WAIT_MINUTES] old (a reload, Back or a bookmark later shows the plain
+/// page).
+async fn all_view(
+    state: &AppState,
+    devices: &[Device],
+    zone: &Zone,
+    now: DateTime<Utc>,
+    requested_at: Option<&str>,
+) -> Result<AllView, sqlx::Error> {
+    let lang = zone.lang();
+    let wait_at = requested_at.and_then(parse_db_utc).filter(|at| {
+        let age = now - *at;
+        age > -chrono::Duration::minutes(1) && age < chrono::Duration::minutes(ALL_WAIT_MINUTES)
+    });
+    let phones = all_phones(state, devices, zone, now, wait_at).await?;
+    let wait = wait_at.map(|at| {
+        let asked = phones.iter().filter(|p| p.answered.is_some()).count() as i64;
+        let skipped = phones
+            .iter()
+            .filter_map(|p| {
+                let why = lowercase_first(t(lang, p.skipped?));
+                Some(t_params(
+                    lang,
+                    "locate.all.skipped",
+                    &[("name", &p.name), ("why", &why)],
+                ))
+            })
+            .collect();
+        AllWait {
+            line: if asked == 0 {
+                t(lang, "locate.all.none_to_ask").to_string()
+            } else {
+                t_count(lang, "locate.all.asking", asked, &[])
+            },
+            at: (asked > 0).then(|| crate::zones::instant(at)),
+            skipped,
+        }
+    });
+    Ok(AllView { phones, wait })
 }
 
 /// A phone's answer to a command (`device_commands.result`, the launcher's words) in plain words.
@@ -1086,7 +1489,7 @@ fn phone_links(
     zone: &Zone,
     now: DateTime<Utc>,
 ) -> Vec<PhoneLink> {
-    use crate::handlers::devices::{avatar_class, avatar_photo, connection_of, initial};
+    use crate::handlers::devices::connection_of;
     use crate::phone_status::Dot;
     use crate::streams::ConnectionState;
     let lang = zone.lang();
@@ -1115,35 +1518,11 @@ fn phone_links(
                 )
                 .to_string(),
             };
-            let (seen, seen_exact) = match connection {
-                ConnectionState::Disconnected => (
-                    Some(crate::i18n::t(lang, "device.about.access_removed").to_string()),
-                    None,
-                ),
-                // "last seen 13:05", as the Devices row says it.
-                c => match c.last_contact() {
-                    Some(at) => (
-                        Some(crate::i18n::t_params(
-                            lang,
-                            "devices.status.last_heard",
-                            &[("at", &zone.since(at, now))],
-                        )),
-                        Some(zone.exact(at)),
-                    ),
-                    None => (None, None),
-                },
-            };
             PhoneLink {
                 id: device.id,
                 name: device.name.clone(),
-                initial: initial(&device.name),
-                avatar: avatar_class(device),
-                photo: avatar_photo(device),
                 aria: format!("{}, {}", device.name, word.to_lowercase()),
                 dot: dot.css(),
-                word,
-                seen,
-                seen_exact,
                 current: selected == Some(device.id),
             }
         })
@@ -1163,11 +1542,13 @@ struct Asked<'a> {
     /// `?zone=added|saved|deleted` and `?zone_id=`: the line after a zone's save (design 64).
     zone: Option<&'a str>,
     zone_id: Option<i64>,
+    /// After Update All (`?requested=all&at=`): the press's instant as the address has it.
+    all_at: Option<&'a str>,
 }
 
 /// The page. With one phone it is shown at once; with several and none (or an unknown one)
-/// chosen, the page lists them. Every read that fails is a 500, never a default (an "Off" or an
-/// empty Recent that isn't true).
+/// chosen, the Alle view (design 85). Every read that fails is a 500, never a default (an "Off"
+/// or an empty Recent that isn't true).
 async fn render_locate_page(
     state: &AppState,
     admin_id: i64,
@@ -1200,6 +1581,12 @@ async fn render_locate_page(
         &zone,
         now,
     );
+    let all = match device {
+        None if devices.len() >= 2 => {
+            Some(all_view(state, &devices, &zone, now, asked.all_at).await?)
+        }
+        _ => None,
+    };
     let selected = match device {
         Some(device) => Some(locate_view(state, device, &zone, now, asked).await?),
         None => None,
@@ -1210,6 +1597,7 @@ async fn render_locate_page(
             title: t(lang, "nav.locate").to_string(),
             phones,
             selected,
+            all,
             bell: crate::parent_events::Bell::load(&state.db, admin_id).await,
         }
         .render()
@@ -1231,6 +1619,7 @@ async fn locate_view(
         span,
         zone: zone_flash,
         zone_id: flash_zone,
+        all_at: _,
     } = asked;
     let id = device.id;
     let lang = zone.lang();
@@ -1275,47 +1664,25 @@ async fn locate_view(
     let (newest, mut map) = map_data(state, id, span, zone, now).await?;
     // The newest fix's badge (design 64 §3.5): the zones that fix is surely in.
     let badge = newest.as_ref().and_then(|l| fix_badge(lang, &zone_list, l));
-    let shutdown_at = newest
-        .as_ref()
-        .and_then(|l| l.shutdown_at.as_deref())
-        .and_then(parse_db_utc);
-    let (last_report, off_row) = match shutdown_at {
-        Some(off) => {
-            let last = sqlx::query_scalar::<_, Option<String>>(
-                "SELECT MAX(reported_at) FROM device_status WHERE device_id = ?",
-            )
-            .bind(id)
-            .fetch_one(&state.db)
-            .await?
-            .as_deref()
-            .and_then(parse_db_utc);
-            // The off's event by its key (the shutdown's instant, as `shutdown_at` is stored).
-            let row = sqlx::query_as::<_, (String, Option<String>, String)>(
-                "SELECT title, params, created_at FROM parent_events WHERE device_id = ? \
-                 AND kind = 'phone_off' AND dedup_key = ?",
-            )
-            .bind(id)
-            .bind(crate::zones::instant(off))
-            .fetch_optional(&state.db)
-            .await?
-            .and_then(|(title, params, created)| Some((title, params, parse_db_utc(&created)?)));
-            (last, row)
-        }
-        None => (None, None),
+    let fix_before_off = match &newest {
+        Some(l) => fix_before_off(state, id, l, now).await?,
+        None => false,
     };
-    let fix_before_off = before_off(
-        shutdown_at,
-        last_report,
-        off_row
-            .as_ref()
-            .map(|(title, params, at)| (title.as_str(), params.as_deref(), *at)),
-        now,
-    );
+    // Design 85 §4.7: fresh or old by the Alle view's rule, and the still re-send's age.
+    let seen = newest
+        .clone()
+        .and_then(|l| Seen::of(l, &location_mode, served_interval, now));
     let fix = newest.as_ref().map(|l| {
-        let fix = Fix::of(&l.captured_at, l.accuracy_meters);
+        // Its age, title and "Last seen 9 days ago" from the later of the fix and its re-send.
+        let fix = Fix::seen(l);
         let accuracy = match &badge {
             Some(badge) => format!("{} · {badge}", fix.accuracy(lang)),
             None => fix.accuracy(lang),
+        };
+        let (seen_class, seen_word) = match &seen {
+            Some(s) if s.fresh => ("seen-fresh", t(lang, "locate.all.fresh")),
+            Some(_) => ("seen-old", t(lang, "locate.all.old")),
+            None => ("", ""),
         };
         FixView {
             age: fix.age(zone, now),
@@ -1327,6 +1694,9 @@ async fn locate_view(
                 .map(|at| (now - at).num_days())
                 .filter(|days| *days >= location_retention.max(1))
                 .map(|days| t_count(lang, "locate.fix.aged", days, &[])),
+            seen_class,
+            seen_word,
+            still: seen.as_ref().and_then(|s| s.still_line(zone, now)),
         }
     });
     if let Some(badge) = badge.as_ref().filter(|_| newest.is_some()) {
@@ -1470,16 +1840,8 @@ async fn map_data(
     zone: &Zone,
     now: DateTime<Utc>,
 ) -> Result<(Option<DeviceLocation>, MapData), sqlx::Error> {
-    let newest = sqlx::query_as::<_, DeviceLocation>(
-        "SELECT * FROM device_locations WHERE device_id = ? ORDER BY captured_at DESC, id DESC \
-         LIMIT 1",
-    )
-    .bind(device_id)
-    .fetch_optional(&state.db)
-    .await?;
-    let fix = newest
-        .as_ref()
-        .map(|l| Fix::of(&l.captured_at, l.accuracy_meters));
+    let newest = newest_fix(state, device_id).await?;
+    let fix = newest.as_ref().map(Fix::seen);
     let newest_age = fix.as_ref().map(|f| f.age(zone, now)).unwrap_or_default();
     let map = MapData {
         device_id,
@@ -1522,7 +1884,13 @@ pub async fn show_locate(
     Query(params): Query<HashMap<String, String>>,
 ) -> Response {
     let selected_id = params.get("device").and_then(|s| s.parse::<i64>().ok());
-    let waiting = params.contains_key("requested");
+    // Update Location's `requested=1`; Update All's `requested=all` waits in the Alle view.
+    let requested = params.get("requested").map(String::as_str);
+    let waiting = requested.is_some_and(|r| r != "all");
+    let all_at = params
+        .get("at")
+        .map(String::as_str)
+        .filter(|_| requested == Some("all"));
     let cancel = params.get("cancel").map(String::as_str);
     let span = span_of(params.get("span"));
     let zone = params.get("zone").map(String::as_str);
@@ -1538,6 +1906,7 @@ pub async fn show_locate(
             span,
             zone,
             zone_id,
+            all_at,
         },
         lang,
     )
@@ -2020,6 +2389,84 @@ pub async fn locate(
     send(&state, id, &admin, "locate", event, back, lang).await
 }
 
+/// `GET /devices/locate/phones.json[?at=<instant>]` (no-store: every phone's last position;
+/// design 85 §4.6): the Alle view's rows in the page's order, every word the server's, in the
+/// reader's language (`?lang=`). With `at` (Update All's press), each phone asked since then also
+/// says whether it answered. A failed read is a 500.
+pub async fn phones_json(
+    State(state): State<AppState>,
+    lang: Lang,
+    Query(params): Query<HashMap<String, String>>,
+) -> Response {
+    let wait_at = params.get("at").and_then(|at| parse_db_utc(at));
+    let zone = Zone::load(&state.db, lang).await;
+    let now = Utc::now();
+    let rows = async {
+        let devices = sqlx::query_as::<_, Device>("SELECT * FROM devices ORDER BY name, id")
+            .fetch_all(&state.db)
+            .await?;
+        all_phones(&state, &devices, &zone, now, wait_at).await
+    };
+    match rows.await {
+        Ok(rows) => Json(rows).into_response(),
+        Err(err) => {
+            tracing::error!(%err, "can't read the phones' positions");
+            crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.read_phone")
+        }
+    }
+}
+
+/// `POST /devices/locate/all` (design 85 §4.6): Update Location for every phone that can answer -
+/// set up, its access not removed, location not Off ([skip_reason], O3) - each queued and logged
+/// as the one-phone Update Location is (a waiting one replaced). A command, not a settings save
+/// (`settings_log::NOT_SAVES`). Back to the map, `#all`, where the wait shows: `at` is the press's
+/// second, so every command queued here counts as at or after it.
+pub async fn locate_all(
+    State(state): State<AppState>,
+    lang: Lang,
+    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
+) -> Response {
+    let now = Utc::now();
+    let at = DateTime::from_timestamp(now.timestamp(), 0).unwrap_or(now);
+    let asked = async {
+        let devices = sqlx::query_as::<_, Device>("SELECT * FROM devices ORDER BY name, id")
+            .fetch_all(&state.db)
+            .await?;
+        for device in &devices {
+            let mode = location_mode(&state, device.id).await?;
+            if skip_reason(&state, device, &mode, now).is_some()
+                || !queue_command(&state, device.id, "locate", &admin).await?
+            {
+                continue;
+            }
+            security::record_security_event(
+                &state.db,
+                "device_command_queued",
+                Some(&admin.username),
+                None,
+                Some(security::Detail::facts("locate")),
+            )
+            .await;
+        }
+        Ok::<_, sqlx::Error>(())
+    };
+    match asked.await {
+        Ok(()) => Redirect::to(&format!(
+            "/devices/locate?requested=all&at={}#all",
+            at.format("%Y-%m-%dT%H:%M:%SZ")
+        ))
+        .into_response(),
+        Err(err) => {
+            tracing::error!(%err, "can't queue Update All");
+            crate::i18n::error(
+                lang,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "error.command_send",
+            )
+        }
+    }
+}
+
 /// How long this phone's location history is kept (`POST /devices/{id}/location-retention`,
 /// `days` = one of `retention::LOCATION_RETENTION_DAYS`; cleanup 2026-10-06). Older fixes are
 /// deleted at once - the newest one stays while location is on - and by the hourly pruning from
@@ -2228,6 +2675,7 @@ pub async fn wipe(
                 span: SPANS[0].0,
                 zone: None,
                 zone_id: None,
+                all_at: None,
             },
             lang,
         )

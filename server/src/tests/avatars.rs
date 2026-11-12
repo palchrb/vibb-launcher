@@ -87,7 +87,7 @@ async fn an_uploaded_picture_is_served_and_shown_on_every_phone_row() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("Anna").await;
-    // A second phone, so Locate lists the phones.
+    // A second phone, so Locate shows every phone's chip (design 85).
     app.enrolled_device("Emil").await;
 
     // Before: the letter tile, and the header is the picker (saves itself, a <noscript> Save).
@@ -192,7 +192,8 @@ async fn an_uploaded_picture_is_served_and_shown_on_every_phone_row() {
         let tile = &html[html[..at].rfind("<span class=\"avatar").unwrap()..];
         let tile = &tile[..tile.find("</span>").unwrap()];
         assert!(tile.contains(&src), "{path}: {tile}");
-        if matches!(path, "/devices" | "/devices/locate") {
+        // Locate's chips name the phone; its state is on Devices (design 85 §4.1).
+        if path == "/devices" {
             let after = &html[at..];
             assert!(
                 after[..after.find("</span></span>").unwrap()].contains("avatar-dot"),

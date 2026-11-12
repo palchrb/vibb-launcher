@@ -29,6 +29,8 @@ const MAX_DETAIL: usize = 1000;
 /// `every_skipped_route_is_a_route` keeps the list to real routes.
 const NOT_SAVES: &[&str] = &[
     "/devices/{id}/command/locate",
+    // Update All (design 85): a command per phone, logged as each one's own.
+    "/devices/locate/all",
     "/devices/{id}/command/ring",
     "/devices/{id}/command/stop-ring",
     "/devices/{id}/command/lock",
