@@ -332,6 +332,7 @@
   "apps.on_home_sub": "Av: appen er fortsatt tillatt og kjører, men barnet ser den ikke på Hjem eller i applisten, unntatt i en pause - for en synkapp som ICSx5 eller DAVx5.",
   "apps.on_home_info_label": "Om På Hjem",
   "apps.not_on_home": "ikke på Hjem",
+  "apps.builtin.off_home": "Ikke på Hjem",
   "apps.builtin.part_of_vibb": "En del av Vibb One",
   "apps.builtin.sms_unmanaged": "SMS er ikke styrt av Vibb",
   "apps.builtin.update_note": "Vises på telefonen når Vibb One er oppdatert",

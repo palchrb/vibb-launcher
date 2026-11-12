@@ -149,6 +149,17 @@ else the calendar's name (mockup §1b shows the name always; the place is the mo
 false). The launcher keeps such an app (a sync app) off Home and the drawer except during a pause or the override; it
 stays allowed, and a time rule never suspends ICSx5 or DAVx5 while allowed.
 
+## Kalender on Device › Apps (2026-11-12, asked)
+
+Device › Apps' allowed list has a row for Kalender under Meldinger's (`device_pages::render_apps`, `#app-calendar`):
+"Calendar" / "Kalender", "Part of Vibb One", the calendar glyph on Dagen's blue (`app_display::DAY_LOOK`,
+`calendar_month` on `#496C9C`, the launcher's `kid_day_tile`), the value "On Home" / "Not on Home" from
+`calendar_on_home` (the Calendar page's switch; the defaults before a row), a link to `/devices/{id}/calendar#dagen`.
+Server-only: nothing new is sent, and it has no Name and icon - the phone reads no `app_display` entry for Kalender (a
+key for it would be a launcher change). It shows for a Vibb One whose last report has `calendar_v1`, and before the
+first report (a new phone gets a Vibb One with Dagen); never for an older one. Test:
+`tests::calendar::kalender_has_a_row_on_device_apps`.
+
 ## Words
 
 Every word of these pages goes through `src/i18n.rs` (`docs/notes/server/pwa.md`, "Words"): the page's language (the

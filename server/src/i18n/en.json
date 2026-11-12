@@ -332,6 +332,7 @@
   "apps.on_home_sub": "Off: the app stays allowed and runs, but the kid doesn't see it on Home or in the app list, except during a pause - for a sync app such as ICSx5 or DAVx5.",
   "apps.on_home_info_label": "About On Home",
   "apps.not_on_home": "not on Home",
+  "apps.builtin.off_home": "Not on Home",
   "apps.builtin.part_of_vibb": "Part of Vibb One",
   "apps.builtin.sms_unmanaged": "SMS is not managed by Vibb",
   "apps.builtin.update_note": "Shows on the phone after Vibb One is updated",

@@ -46,6 +46,13 @@ pub const MESSAGES_LOOK: BuiltinLook = BuiltinLook {
     tile: "#347470",
 };
 
+/// Kalender's (Dagen): the calendar glyph on the launcher's `kid_day_tile`. Device › Apps' row only - the phone takes
+/// no Name and icon for it.
+pub const DAY_LOOK: BuiltinLook = BuiltinLook {
+    glyph: "calendar_month",
+    tile: "#496C9C",
+};
+
 impl BuiltinLook {
     /// The tile the phone draws for `values`: a chosen glyph on its colour, else the built-in's own. A colour
     /// applies only with a chosen glyph, as for every app.
@@ -741,6 +748,7 @@ mod tests {
         };
         let own = (MESSAGES_LOOK.glyph, MESSAGES_LOOK.tile);
         assert!(icon_known(own.0));
+        assert!(icon_known(DAY_LOOK.glyph));
         assert_eq!(MESSAGES_LOOK.shown(None), own);
         assert_eq!(MESSAGES_LOOK.shown(Some(&values(None, "plum"))), own);
         assert_eq!(MESSAGES_LOOK.shown(Some(&values(Some(OWN), AUTO))), own);
