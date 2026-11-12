@@ -1479,10 +1479,31 @@ fn the_app_shell_scrolls_main_not_the_document() {
         compact.contains(":root{--top-strip:env(safe-area-inset-top,0px);}")
             && compact.contains(
                 "@media(display-mode:standalone){@supports(-webkit-touch-callout:none){\
-                 :root{--top-strip:max(env(safe-area-inset-top,0px),12px);}}}"
+                 :root{--top-strip:max(env(safe-area-inset-top,0px),12px);}\
+                 html:not(.doc-scroll){background:var(--night);}}}"
             ),
-        "the strip's height"
+        "the strip's height and the canvas"
     );
+    // The installed iPhone app's canvas is night (2026-11-12): when WebKit loses the strip as the fixed top edge
+    // (after a resume) iOS tints the status area's pocket with the canvas, which was the body's light ground. Not on
+    // the pages that scroll the document - exactly the auth pages but /lock (night itself) mark their html
+    // `doc-scroll`, with no `:has()` (iOS 14). And one frame off the night on a return (`static/top-strip.js`), so
+    // WebKit sends the edge's colour again.
+    assert_eq!(block(".top-strip.top-strip-nudge"), "background: #0C0C15;");
+    assert!(!css.contains(":has("), "no :has() on the browser floor");
+    let head = std::fs::read_to_string("templates/partials/head.html").unwrap();
+    assert!(head.contains("<script src=\"/static/top-strip.js?v=1\" defer></script>"));
+    for path in super::device_api::template_files() {
+        let text = std::fs::read_to_string(&path).unwrap();
+        let auth = text.contains("<body class=\"auth-page");
+        let lock = text.contains("<body class=\"auth-page lock-page\">");
+        assert_eq!(
+            text.contains("<html lang=\"{{ lang.code() }}\" class=\"doc-scroll\">"),
+            auth && !lock,
+            "{}: html.doc-scroll",
+            path.display()
+        );
+    }
     // The installed app's shell is the layout viewport plus the inset: the screen under the
     // translucent bar (which iOS 26 reports the layout viewport short by), the page below the
     // `default` bar (where 100vh is still the screen) - never the strip's 12 px.

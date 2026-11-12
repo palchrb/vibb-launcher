@@ -3,7 +3,7 @@
 {#- The lock screen (design 74 §6.5) has no title of its own: the head says only "Vibb". #}
 <title>{% if title.is_empty() %}Vibb{% else %}{{ title }} · Vibb Phone{% endif %}</title>
 <meta name="color-scheme" content="light dark">
-<link rel="stylesheet" href="/static/style.css?v=104">
+<link rel="stylesheet" href="/static/style.css?v=105">
 <!-- The headings' Nunito, from this server only (style.css's @font-face). -->
 <link rel="preload" href="/static/fonts/nunito-latin-wght.woff2" as="font" type="font/woff2" crossorigin>
 
@@ -65,3 +65,6 @@
 <script src="/static/nav-timing.js?v=3" defer></script>
 <!-- A confirm's Cancel closes its <details> (partials/confirm_cancel.html, hidden without JS). -->
 <script src="/static/confirm.js?v=1" defer></script>
+<!-- The status bar's night after a return (2026-11-12): the strip one frame off the night on pageshow and on
+     visible, so WebKit sends the fixed top edge's colour again (style.css, `.top-strip-nudge`). -->
+<script src="/static/top-strip.js?v=1" defer></script>
