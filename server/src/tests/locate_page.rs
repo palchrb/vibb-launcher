@@ -234,7 +234,7 @@ async fn every_form_on_the_locate_pages_returns_to_its_group() {
 /// Find Phone, Location Settings - with their values, each to its page; the zone list, the tiles,
 /// the requests and the pickers are on those pages, each with the phone band (back to Locate, the
 /// phone's avatar) and no bell. A command lands on Find Phone with its request shown, the newest
-/// highlighted, every one that can be cancelled and the others up to three in all, then Show all
+/// highlighted, every one in flight and the others up to three in all, then Show all
 /// to the summary's Activity.
 #[tokio::test]
 async fn the_rows_and_their_pages() {
@@ -1127,20 +1127,20 @@ async fn requests_show_what_is_in_flight_or_just_went_wrong() {
         }
         ids.push(row);
     }
-    // Every bucket, from `requests` itself. Find Phone lists every one that can be cancelled,
-    // then the newest others up to three in all (design 88, code QA L2).
+    // Every bucket, from `requests` itself. Find Phone lists every one in flight, then the newest
+    // others up to three in all (design 88, code QA L2).
     let zone = crate::display_time::Zone::load(&app.db, crate::i18n::Lang::En).await;
     let now = chrono::Utc::now();
     let all = crate::handlers::locate::requests(&app.state, id, None, &zone, now)
         .await
         .unwrap();
-    let cancellable = all.rows.iter().filter(|r| r.cancel_id.is_some()).count();
+    let in_flight = all.rows.iter().filter(|r| r.in_flight).count();
     let on_find: Vec<&str> = all
         .rows
         .iter()
-        .filter(|r| r.cancel_id.is_none())
-        .take(3 - cancellable)
-        .chain(all.rows.iter().filter(|r| r.cancel_id.is_some()))
+        .filter(|r| !r.in_flight)
+        .take(3 - in_flight)
+        .chain(all.rows.iter().filter(|r| r.in_flight))
         .map(|r| r.asked_exact.as_str())
         .collect();
     let html = phone_page(&app, &cookie, id, "find", "").await;
@@ -1167,7 +1167,7 @@ async fn requests_show_what_is_in_flight_or_just_went_wrong() {
     assert_eq!(all.rows.len(), 6);
     assert_eq!(requests.matches("data-command=").count(), 3, "{requests}");
     // The lock waiting three days, fourth by age, is never hidden: its Cancel is on Find Phone.
-    assert_eq!(cancellable, 1);
+    assert_eq!(in_flight, 1);
     assert!(requests.contains(&format!("/commands/{}/cancel#recent", ids[0])));
 
     // Cancelling the last waiting one: the group stays for its line.

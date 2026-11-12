@@ -2075,7 +2075,7 @@ pointer here.
   `/devices/locate?device={id}`, the phone's avatar right), no bell (pages under the tab, as Locations); 404 for an
   unknown phone, 500 on a failed read. Zones is no-store (`["devices", _, "zones", ..]`).
 - **Find Phone**: the wipe-not-ready warning, the three tiles (`#actions`), "Recent Requests" (`#recent`):
-  `locate::requests` through `find_rows` - every one that can still be cancelled, then the newest others up to
+  `locate::requests` through `find_rows` - every one still in flight (`locate::in_flight`, as Requests calls it), then the newest others up to
   `FIND_REQUESTS` (3) in all, so nothing in flight is hidden (code QA L2) -, the newest highlighted
   (`.group-newest > .row[data-command]:first-child`), then Show all › Activity (`/devices/{id}#activity`, or plain
   `/devices/{id}` while the summary's Activity is empty and so not on the page - code QA L1); Erase Phone… alone at the bottom (`row-button row-danger`) with

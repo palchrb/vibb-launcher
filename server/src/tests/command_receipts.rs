@@ -269,39 +269,41 @@ async fn find_phone_reads_receipts_and_failures() {
         .await
         .unwrap();
     }
-    // Find Phone lists the three newest when none can be cancelled any more (design 88): the
-    // locate, the stop and the ring first; without them, the lock and the wipe.
+    // Find Phone lists what is in flight first, the newest others up to three in all (design 88):
+    // the erasing wipe, the ring offered again and the fresh locate; without them, the lock and
+    // the stop.
     let find = format!("/devices/{device}/find");
     let page = app.get_page(&find, &cookie).await.text();
     let line = |command: &str| super::locate_page::recent_row(&page, command).to_string();
-    assert!(
-        line("ring").contains("sent again when the phone is back"),
-        "{}",
-        line("ring")
-    );
-    assert!(
-        line("stop_ring").contains("Send it again."),
-        "{}",
-        line("stop_ring")
-    );
-    assert!(line("stop_ring").contains(">Not confirmed<"));
-    assert!(
-        line("locate").contains("Not confirmed yet."),
-        "{}",
-        line("locate")
-    );
-    sqlx::query("DELETE FROM device_commands WHERE command IN ('locate', 'stop_ring', 'ring')")
-        .execute(&app.db)
-        .await
-        .unwrap();
-    let page = app.get_page(&find, &cookie).await.text();
-    let line = |command: &str| super::locate_page::recent_row(&page, command).to_string();
+    assert!(!page.contains("data-command=\"lock\""), "{page}");
     assert!(line("wipe").contains(">Erasing<"), "{}", line("wipe"));
     assert!(
         line("wipe").contains("An erased phone stops reporting."),
         "{}",
         line("wipe")
     );
+    assert!(
+        line("ring").contains("sent again when the phone is back"),
+        "{}",
+        line("ring")
+    );
+    assert!(
+        line("locate").contains("Not confirmed yet."),
+        "{}",
+        line("locate")
+    );
+    sqlx::query("DELETE FROM device_commands WHERE command IN ('locate', 'wipe', 'ring')")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let page = app.get_page(&find, &cookie).await.text();
+    let line = |command: &str| super::locate_page::recent_row(&page, command).to_string();
+    assert!(
+        line("stop_ring").contains("Send it again."),
+        "{}",
+        line("stop_ring")
+    );
+    assert!(line("stop_ring").contains(">Not confirmed<"));
     assert!(line("lock").contains(">No answer<"), "{}", line("lock"));
     assert!(
         line("lock").contains("never said it finished"),

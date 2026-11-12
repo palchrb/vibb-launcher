@@ -129,18 +129,18 @@ struct FindTemplate {
 }
 crate::i18n::words!(FindTemplate);
 
-/// How many requests the Find Phone page lists at most besides the ones that can still be
-/// cancelled; Show all leads to the summary's Activity.
+/// How many requests the Find Phone page lists at most besides the ones still in flight; Show all
+/// leads to the summary's Activity.
 const FIND_REQUESTS: usize = 3;
 
-/// Find Phone's rows of [requests] (design 88, code QA L2): every one that can still be
-/// cancelled, never hidden while in flight, then the newest others up to [FIND_REQUESTS] in all,
-/// in their order.
+/// Find Phone's rows of [requests] (design 88, code QA L2): every one still in flight (waiting,
+/// sent and not yet confirmed, erasing - never hidden), then the newest others up to
+/// [FIND_REQUESTS] in all, in their order.
 fn find_rows(rows: &mut Vec<CommandRow>) {
-    let cancellable = rows.iter().filter(|r| r.cancel_id.is_some()).count();
-    let mut room = FIND_REQUESTS.saturating_sub(cancellable);
+    let in_flight = rows.iter().filter(|r| r.in_flight).count();
+    let mut room = FIND_REQUESTS.saturating_sub(in_flight);
     rows.retain(|r| {
-        if r.cancel_id.is_some() {
+        if r.in_flight {
             return true;
         }
         let kept = room > 0;
@@ -655,6 +655,8 @@ pub(crate) struct CommandRow {
     pub(crate) cancel_id: Option<i64>,
     /// Who asked for it, in a family of more than one parent (design 62 §6).
     pub(crate) by: Option<String>,
+    /// Still in flight ([in_flight]): Find Phone never leaves it out (design 88).
+    pub(crate) in_flight: bool,
 }
 
 /// A fix as the parent reads it (design 31 step 13, M5): its age from the server's clock and
@@ -1376,6 +1378,7 @@ pub(crate) fn command_row(
         detail_title,
         cancel_id: command.cancellable(naive_now).then_some(command.id),
         by: names.requester(command.requested_by),
+        in_flight: in_flight(&status),
     }
 }
 
@@ -1471,31 +1474,50 @@ pub(crate) async fn requests(
     })
 }
 
+/// A request still in flight (design 48 §1.4), at any age: waiting, sent and not yet confirmed
+/// (or one that can't be), received and not overdue, erasing.
+fn in_flight(status: &CommandStatus) -> bool {
+    matches!(
+        status,
+        CommandStatus::Waiting { .. }
+            | CommandStatus::Erasing { .. }
+            | CommandStatus::Received { overdue: false, .. }
+            | CommandStatus::Sent {
+                unconfirmed: Unconfirmed::NotYet
+                    | Unconfirmed::OfferedAgain
+                    | Unconfirmed::CantConfirm,
+                ..
+            }
+    )
+}
+
 /// Whether a request is a row of Requests (design 48 §1.4): `lately` = asked within
 /// [REQUESTS_HOURS], `newest` = the newest Ring, Stop Ringing, Lock or Erase.
 fn in_requests(status: &CommandStatus, lately: bool, newest: bool) -> bool {
-    match status {
+    if matches!(
+        status,
         CommandStatus::Cancelled {
             by: CancelledBy::Parent,
             ..
-        } => false,
-        CommandStatus::Waiting { .. }
-        | CommandStatus::Erasing { .. }
-        | CommandStatus::Received { overdue: false, .. }
-        | CommandStatus::Sent {
-            unconfirmed: Unconfirmed::NotYet | Unconfirmed::OfferedAgain | Unconfirmed::CantConfirm,
-            ..
-        } => true,
-        _ if newest => true,
-        CommandStatus::Failed { .. }
-        | CommandStatus::Expired
-        | CommandStatus::Sent {
-            unconfirmed: Unconfirmed::Lost,
-            ..
         }
-        | CommandStatus::Received { overdue: true, .. } => lately,
-        CommandStatus::Done { .. } | CommandStatus::Cancelled { .. } => false,
+    ) {
+        return false;
     }
+    if in_flight(status) || newest {
+        return true;
+    }
+    // Gone wrong: shown for a day; done or cancelled otherwise: never.
+    lately
+        && matches!(
+            status,
+            CommandStatus::Failed { .. }
+                | CommandStatus::Expired
+                | CommandStatus::Sent {
+                    unconfirmed: Unconfirmed::Lost,
+                    ..
+                }
+                | CommandStatus::Received { overdue: true, .. }
+        )
 }
 
 /// The span in `?span=` / `?since=`-style text: one of [SPANS]' hours, else the default.

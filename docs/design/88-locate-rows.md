@@ -30,7 +30,7 @@ PWA's usual grouped list with coloured tiles (as Settings).
    page), "Keep location on" off, Add Zone (or "10 zones is the most"), today's footer. No-store, as every zones path.
 3. **Find Phone** (`GET /devices/{id}/find`, `locate::show_find`): the phone band; the wipe-not-ready warning; Ring,
    Stop Ringing, Lock as tiles (`#actions`); **Recent Requests** right under them (`#recent`): today's Requests rows -
-   every one that can still be cancelled, then the newest others up to 3 in all -, the newest highlighted
+   every one still in flight (waiting, sent and not confirmed, erasing), then the newest others up to 3 in all -, the newest highlighted
    (`group-newest`), then **Show all › Activity** to the summary's `#activity` (the summary itself while its Activity
    is empty); then
    Erase Phone… alone in its group at the bottom with today's offline footer and ⓘ (`#erase`).
