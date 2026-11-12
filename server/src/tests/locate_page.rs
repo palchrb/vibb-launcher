@@ -1583,8 +1583,10 @@ async fn the_age_line_says_fresh_or_old() {
     assert!(age(&html).contains("</span>2 min ago"), "{html}");
     assert!(!html.contains("data-fix-aged"), "{html}");
     assert!(html.contains("data-newest-age=\"2 min ago\""), "{html}");
+    assert!(!html.contains("1 day ago"), "{html}");
+    // The one other time is the still line's own, since when it hasn't moved.
     assert!(
-        !html.contains("1 day ago") && !html.contains("yesterday"),
+        html.contains("data-fix-still>Hasn&#39;t moved since yesterday "),
         "{html}"
     );
 }
