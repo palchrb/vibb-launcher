@@ -3214,10 +3214,11 @@ pub async fn create_tracked_app(
 
     // Design 90: a GitHub or F-Droid app's wait; an upload's is never read (the column keeps its
     // default).
-    let wait = if source_type == "manual" {
-        Ok(crate::catalog_holds::DEFAULT_WAIT_HOURS)
-    } else {
-        crate::catalog_holds::parse_wait(lang, &field("release_wait_hours"))
+    // A post without the field (a form from before it, a script) takes the suggested 48; a field
+    // sent is checked.
+    let wait = match fields.get("release_wait_hours") {
+        Some(typed) if source_type != "manual" => crate::catalog_holds::parse_wait(lang, typed),
+        _ => Ok(crate::catalog_holds::DEFAULT_WAIT_HOURS),
     };
 
     // A refused save shows the form again with everything as entered (400, nothing written).
@@ -3249,7 +3250,10 @@ pub async fn create_tracked_app(
             fdroid_repo: field("fdroid_repo"),
             fdroid_package: field("fdroid_package"),
             error_field,
-            release_wait_hours: field("release_wait_hours"),
+            release_wait_hours: fields
+                .get("release_wait_hours")
+                .cloned()
+                .unwrap_or_else(|| crate::catalog_holds::DEFAULT_WAIT_HOURS.to_string()),
             first_waits: crate::catalog_holds::FIRST_RELEASE_WAITS,
         };
         return (StatusCode::BAD_REQUEST, Html(page.render().unwrap())).into_response();

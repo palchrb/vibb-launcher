@@ -359,6 +359,26 @@ async fn the_wait_takes_whole_hours_and_the_switch_saves() {
         .request_form(Method::POST, "/apps/tracked/new", Some(&cookie), &add("48"))
         .await;
     assert!(res.status.is_redirection());
+    // A post without the field (an older form) takes the suggested 48 too.
+    let res = app
+        .request_form(
+            Method::POST,
+            "/apps/tracked/new",
+            Some(&cookie),
+            &[
+                ("name", "Older"),
+                ("source_type", "github"),
+                ("github_repo", "o/older"),
+            ],
+        )
+        .await;
+    assert!(res.status.is_redirection());
+    let older: i64 =
+        sqlx::query_scalar("SELECT release_wait_hours FROM tracked_apps WHERE name = 'Older'")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(older, 48);
     let hours: i64 =
         sqlx::query_scalar("SELECT release_wait_hours FROM tracked_apps WHERE name = 'Etar'")
             .fetch_one(&app.db)
