@@ -207,11 +207,22 @@ fn read_manifest(xml: &[u8]) -> Option<Manifest> {
                 let count = usize::from(u16_at(ext, 12)?);
                 let mut manifest = Manifest::default();
                 let (mut code, mut major) = (None, None);
+                let mut package_seen = false;
                 for index in 0..count {
-                    let attribute = ext
-                        .get(attribute_start.checked_add(index.checked_mul(attribute_size)?)?..)?;
-                    let namespace = u32_at(attribute, 0)?;
-                    let name = u32_at(attribute, 4)?;
+                    // A short or damaged attribute ends the reading; what was read stays (the
+                    // package reads as it always did: the first `package`, or none).
+                    let Some(attribute) = index
+                        .checked_mul(attribute_size)
+                        .and_then(|offset| attribute_start.checked_add(offset))
+                        .and_then(|start| ext.get(start..))
+                    else {
+                        break;
+                    };
+                    let (Some(namespace), Some(name)) =
+                        (u32_at(attribute, 0), u32_at(attribute, 4))
+                    else {
+                        break;
+                    };
                     let named = |wanted: &str| pool_string(pool, name).as_deref() == Some(wanted);
                     // A number: the typed value's data.
                     let int = || match *attribute.get(15)? {
@@ -219,20 +230,13 @@ fn read_manifest(xml: &[u8]) -> Option<Manifest> {
                         _ => None,
                     };
                     if namespace == NO_INDEX {
-                        if !named("package") {
-                            continue;
-                        }
-                        let raw = u32_at(attribute, 8)?;
-                        let value = if raw != NO_INDEX {
-                            Some(raw)
-                        } else if *attribute.get(15)? == TYPE_STRING {
-                            u32_at(attribute, 16)
-                        } else {
-                            None
+                        let Some(attribute_name) = pool_string(pool, name) else {
+                            break;
                         };
-                        manifest.package = value
-                            .and_then(|value| pool_string(pool, value))
-                            .filter(|name| !name.is_empty());
+                        if attribute_name == "package" && !package_seen {
+                            package_seen = true;
+                            manifest.package = package_value(pool, attribute);
+                        }
                         continue;
                     }
                     let id =
@@ -255,8 +259,23 @@ fn read_manifest(xml: &[u8]) -> Option<Manifest> {
     None
 }
 
+/// The `package` attribute's value: its raw string, else a typed string; `None` otherwise or
+/// when empty.
+fn package_value(pool: &[u8], attribute: &[u8]) -> Option<String> {
+    let raw = u32_at(attribute, 8)?;
+    let value = if raw != NO_INDEX {
+        raw
+    } else if *attribute.get(15)? == TYPE_STRING {
+        u32_at(attribute, 16)?
+    } else {
+        return None;
+    };
+    pool_string(pool, value).filter(|name| !name.is_empty())
+}
+
 /// `PackageInfo.getLongVersionCode`: the major code in the high 32 bits, the code's 32 bits below;
-/// `None` past what an `i64` holds.
+/// `None` past what an `i64` holds - a negative versionCodeMajor, so the row falls back to the
+/// versionName (`tracked_apps::catalog_release_installed`).
 fn long_version_code(code: u32, major: Option<u32>) -> Option<i64> {
     i64::try_from((u64::from(major.unwrap_or(0)) << 32) | u64::from(code)).ok()
 }
@@ -344,6 +363,104 @@ mod tests {
                 version_code: Some(1),
                 signer_sha256: None,
             }
+        );
+    }
+
+    /// A binary manifest by hand: a UTF-8 string pool (no resource map) and the `<manifest>`
+    /// element claiming `count` attributes, each `[namespace, name, raw, type, data]`.
+    fn manifest_xml(attributes: &[[u32; 5]], count: u16) -> Vec<u8> {
+        const STRINGS: [&str; 6] = [
+            "manifest",
+            "package",
+            "me.vibb.testfixture",
+            "versionCode",
+            "versionCodeMajor",
+            "http://schemas.android.com/apk/res/android",
+        ];
+        let mut data = Vec::new();
+        let mut offsets = Vec::new();
+        for text in STRINGS {
+            offsets.extend((data.len() as u32).to_le_bytes());
+            data.extend([text.len() as u8, text.len() as u8]);
+            data.extend(text.as_bytes());
+            data.push(0);
+        }
+        while data.len() % 4 != 0 {
+            data.push(0);
+        }
+        let mut pool = Vec::new();
+        pool.extend(RES_STRING_POOL_TYPE.to_le_bytes());
+        pool.extend(28u16.to_le_bytes());
+        pool.extend(((28 + offsets.len() + data.len()) as u32).to_le_bytes());
+        for word in [
+            STRINGS.len() as u32,
+            0,
+            UTF8_FLAG,
+            28 + offsets.len() as u32,
+            0,
+        ] {
+            pool.extend(word.to_le_bytes());
+        }
+        pool.extend(offsets);
+        pool.extend(data);
+
+        let mut element = Vec::new();
+        element.extend(RES_XML_START_ELEMENT_TYPE.to_le_bytes());
+        element.extend(16u16.to_le_bytes());
+        element.extend(((36 + 20 * attributes.len()) as u32).to_le_bytes());
+        element.extend(
+            [0u32, NO_INDEX, NO_INDEX, 0]
+                .iter()
+                .flat_map(|w| w.to_le_bytes()),
+        );
+        for half in [20u16, 20, count, 0, 0, 0] {
+            element.extend(half.to_le_bytes());
+        }
+        for [namespace, name, raw, kind, value] in attributes {
+            for word in [namespace, name, raw] {
+                element.extend(word.to_le_bytes());
+            }
+            element.extend([8, 0, 0, *kind as u8]);
+            element.extend(value.to_le_bytes());
+        }
+
+        let mut xml = Vec::new();
+        xml.extend(RES_XML_TYPE.to_le_bytes());
+        xml.extend(8u16.to_le_bytes());
+        xml.extend(((8 + pool.len() + element.len()) as u32).to_le_bytes());
+        xml.extend(pool);
+        xml.extend(element);
+        xml
+    }
+
+    /// Without a resource map an attribute is known by its name, and only in the android
+    /// namespace; a hex code and the major above it; a short attribute after the package keeps it.
+    #[test]
+    fn the_codes_by_name_in_the_android_namespace() {
+        const ANDROID: u32 = 5;
+        let package = [NO_INDEX, 1, 2, u32::from(TYPE_STRING), 2];
+        let code = |namespace| [namespace, 3, NO_INDEX, u32::from(TYPE_INT_HEX), 7];
+        let major = [ANDROID, 4, NO_INDEX, u32::from(TYPE_INT_DEC), 1];
+        let read = |attributes: &[[u32; 5]], count| read_manifest(&manifest_xml(attributes, count));
+        assert_eq!(
+            read(&[package, code(ANDROID), major], 3),
+            Some(Manifest {
+                package: Some("me.vibb.testfixture".to_string()),
+                version_code: Some((1 << 32) + 7),
+            })
+        );
+        assert_eq!(
+            read(&[package, code(NO_INDEX)], 2),
+            Some(Manifest {
+                package: Some("me.vibb.testfixture".to_string()),
+                version_code: None,
+            }),
+            "a versionCode outside the android namespace isn't the code"
+        );
+        assert_eq!(
+            read(&[package, code(ANDROID)], 4).and_then(|m| m.package),
+            Some("me.vibb.testfixture".to_string()),
+            "attributes past the element's end end the reading, the package kept"
         );
     }
 
