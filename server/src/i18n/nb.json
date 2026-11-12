@@ -1883,7 +1883,8 @@
 
   "devices.qr.ssid_long": "For langt for et Wi-Fi-nettverk: gjør navnet kortere (høyst 32 byte; æ, ø og å teller som to). Ingenting ble laget.",
   "devices.qr.password_short": "Et Wi-Fi-passord har minst 8 tegn. Ingenting ble laget.",
-  "devices.qr.password_long": "Et Wi-Fi-passord har høyst 63 tegn (eller er en nøkkel på 64 sifre). Ingenting ble laget.",
+  "devices.qr.password_long": "Et Wi-Fi-passord har høyst 63 tegn. Ingenting ble laget.",
+  "devices.qr.password_raw_key": "En nøkkel på 64 sifre virker ikke i QR-koden for oppsett: bruk passordet til nettverket (8-63 tegn). Ingenting ble laget.",
   "devices.qr.ssid_missing": "Legg til navnet på nettverket, eller la passordet stå tomt. Ingenting ble laget.",
   "devices.qr.too_long": "Oppsettet er for langt for en QR-kode - sjekk serveradressen og Tailscale-nøkkelen under Innstillinger › Telefonoppsett. Ingenting ble endret.",
 
@@ -3238,6 +3239,8 @@
   "settings.provisioning.launcher.unreachable": "Serveren når ikke nedlastingsadressen i QR-koden for oppsett",
   "settings.provisioning.launcher.address_sub": "Fra denne serveren: {url}. En telefon ville stoppet ved «Can't set up device». Sjekk LAUNCHER_APK_URL i serverens .env (DEPLOY.md) og serverens internettforbindelse, og trykk så Sjekk på nytt. Ingen QR-kode før da.",
   "settings.provisioning.launcher.again": "Sjekk på nytt",
+  "settings.provisioning.launcher.needs_android": "En ny telefon må ha Android {version} eller nyere: oppdater den før tilbakestillingen.",
+  "settings.provisioning.launcher.needs_api": "En ny telefon må ha Android API-nivå {level} eller nyere: oppdater den før tilbakestillingen.",
   "settings.provisioning.country_code_refused": "Bruk 1 til 3 sifre, som 47. Ingenting ble lagret.",
   "error.read_phone_setup": "Kunne ikke lese telefonoppsettet - sjekk serverloggen.",
   "settings.updates.over_ssh": "Over SSH på serveren (innstillingene og dataene dine beholdes, og databasen sikkerhetskopieres først):",

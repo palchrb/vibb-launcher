@@ -63,6 +63,8 @@ pub struct Checked {
     pub verdict: Verdict,
     pub version: Option<String>,
     pub published: Option<DateTime<Utc>>,
+    /// The APK's minSdkVersion: the oldest Android a new phone may run.
+    pub min_sdk: Option<u32>,
 }
 
 /// The address and the checksum a result was made for.
@@ -190,6 +192,7 @@ async fn run(state: &AppState, key: Key) {
                 verdict: Verdict::Unreachable,
                 version: None,
                 published: None,
+                min_sdk: None,
             }
         });
     state.launcher_check.store(&key, checked);
@@ -201,6 +204,7 @@ async fn check(state: &AppState, url: &str, checksum: &str) -> Checked {
         verdict: Verdict::Unreachable,
         version: None,
         published: None,
+        min_sdk: None,
     };
     let dir = state.data_dir.as_ref();
     if let Err(err) = tokio::fs::create_dir_all(dir).await {
@@ -231,6 +235,7 @@ async fn check(state: &AppState, url: &str, checksum: &str) -> Checked {
                 verdict: Verdict::NotAnApk,
                 version: None,
                 published: None,
+                min_sdk: None,
             };
         }
     };
@@ -398,6 +403,7 @@ pub(crate) fn judge(
             verdict: Verdict::NotAnApk,
             version: None,
             published: None,
+            min_sdk: None,
         };
     };
     let version = identity
@@ -437,6 +443,7 @@ pub(crate) fn judge(
         verdict,
         version,
         published,
+        min_sdk: identity.min_sdk,
     }
 }
 
@@ -447,6 +454,9 @@ pub struct Line {
     pub text: String,
     /// What to do, under the row.
     pub sub: Option<String>,
+    /// The oldest Android a new phone may run ("A new phone needs Android 14 or newer..."), from
+    /// the APK's minSdkVersion, for a launcher a phone would take.
+    pub needs: Option<String>,
     /// Check again comes back to this phone's Connect page; `None` = Phone Setup.
     pub device_id: Option<i64>,
     /// The page reloads itself while it checks - only a page a GET drew (a reload would send a
@@ -469,6 +479,7 @@ pub fn line(
     device_id: Option<i64>,
     auto_reload: bool,
 ) -> Option<Line> {
+    let mut seen_min_sdk = None;
     let (state_word, text, sub) = match seen(state) {
         Seen::Off => return None,
         Seen::Checking => (
@@ -476,15 +487,59 @@ pub fn line(
             t(lang, "settings.provisioning.launcher.checking").to_string(),
             None,
         ),
-        Seen::Done(checked) => words(lang, zone, &checked, &state.config.launcher_apk_url),
+        Seen::Done(checked) => {
+            seen_min_sdk = checked.min_sdk;
+            words(lang, zone, &checked, &state.config.launcher_apk_url)
+        }
+    };
+    let needs = match seen_min_sdk {
+        Some(api) if matches!(state_word, "works" | "older") => Some(needs_android(lang, api)),
+        _ => None,
     };
     Some(Line {
         state: state_word,
         text,
         sub,
+        needs,
         device_id,
         auto_reload,
     })
+}
+
+/// The Android release of API level `api` (34 = "14"); `None` past the ones known here.
+fn android_release(api: u32) -> Option<&'static str> {
+    Some(match api {
+        21 | 22 => "5",
+        23 => "6",
+        24 | 25 => "7",
+        26 | 27 => "8",
+        28 => "9",
+        29 => "10",
+        30 => "11",
+        31 | 32 => "12",
+        33 => "13",
+        34 => "14",
+        35 => "15",
+        36 => "16",
+        _ => return None,
+    })
+}
+
+/// "A new phone needs Android 14 or newer", in `lang`; an API level past [android_release] by its
+/// number.
+fn needs_android(lang: Lang, api: u32) -> String {
+    match android_release(api) {
+        Some(release) => t_params(
+            lang,
+            "settings.provisioning.launcher.needs_android",
+            &[("version", release)],
+        ),
+        None => t_params(
+            lang,
+            "settings.provisioning.launcher.needs_api",
+            &[("level", &api.to_string())],
+        ),
+    }
 }
 
 /// A result's state, row and what to do, in `lang`.
@@ -716,6 +771,7 @@ mod tests {
                 verdict: Verdict::Works,
                 version: Some("2".to_string()),
                 published: published("2026-11-10T10:00:00Z"),
+                min_sdk: Some(26),
             }
         );
         // Older than the prerelease the list names (a draft and the server's release don't count).
@@ -727,6 +783,7 @@ mod tests {
                 },
                 version: Some("1".to_string()),
                 published: published("2026-10-21T10:00:00Z"),
+                min_sdk: Some(26),
             }
         );
         let verdict = |c: Checked| c.verdict;
@@ -754,6 +811,16 @@ mod tests {
             Verdict::Unreachable,
             "a page is no APK: the download refuses it"
         );
+    }
+
+    #[test]
+    fn the_android_a_new_phone_needs() {
+        assert_eq!(
+            needs_android(Lang::En, 34),
+            "A new phone needs Android 14 or newer: update it before the factory reset."
+        );
+        assert_eq!(android_release(36), Some("16"));
+        assert!(needs_android(Lang::En, 40).contains("API level 40"));
     }
 
     /// Without the release list, the catalog row's stored release still counts: a stored

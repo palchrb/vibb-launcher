@@ -35,6 +35,9 @@ pub struct ApkIdentity {
     /// The manifest's `android:versionName` as a plain string ("0.39.0-rc.6"); `None` when it is a
     /// reference, empty or unread.
     pub version_name: Option<String>,
+    /// `<uses-sdk android:minSdkVersion>`: the oldest Android API level the app installs on (34 =
+    /// Android 14); `None` when it is a codename or unread.
+    pub min_sdk: Option<u32>,
     /// SHA-256 (lower-case hex) of the first signer's certificate; `None` without a v2/v3
     /// signature (a v1-only APK) or when the block couldn't be read.
     pub signer_sha256: Option<String>,
@@ -66,6 +69,7 @@ pub fn read_identity(path: &Path) -> Result<ApkIdentity, String> {
         package: manifest.package,
         version_code: manifest.version_code,
         version_name: manifest.version_name,
+        min_sdk: manifest.min_sdk,
         signer_sha256,
     })
 }
@@ -171,6 +175,8 @@ const TYPE_INT_HEX: u8 = 0x11;
 /// `android.R.attr.versionCode`, `versionName` and `versionCodeMajor`.
 const ATTR_VERSION_CODE: u32 = 0x0101_021b;
 const ATTR_VERSION_NAME: u32 = 0x0101_021c;
+/// `android.R.attr.minSdkVersion`, on `<uses-sdk>`.
+const ATTR_MIN_SDK_VERSION: u32 = 0x0101_020c;
 const ATTR_VERSION_CODE_MAJOR: u32 = 0x0101_0576;
 
 /// What the binary manifest's first element (`<manifest>`) says.
@@ -179,12 +185,23 @@ struct Manifest {
     package: Option<String>,
     version_code: Option<i64>,
     version_name: Option<String>,
+    /// `<uses-sdk android:minSdkVersion>` when it is a number.
+    min_sdk: Option<u32>,
 }
 
 /// The `package`, `android:versionCode`, `android:versionName` and `android:versionCodeMajor` attributes of the binary
 /// manifest's first element (`<manifest>`). An android attribute is known by its resource id (the
 /// resource map), else by its name.
 fn read_manifest(xml: &[u8]) -> Option<Manifest> {
+    let mut found = None;
+    let _ = walk_manifest(xml, &mut found);
+    found
+}
+
+/// [read_manifest]'s walk: `found` is the `<manifest>` element once read, and its `<uses-sdk>`'s
+/// `android:minSdkVersion` is added when that element follows. A damaged chunk after `<manifest>`
+/// ends the walk; what was read stays.
+fn walk_manifest(xml: &[u8], found: &mut Option<Manifest>) -> Option<()> {
     if u16_at(xml, 0)? != RES_XML_TYPE {
         return None;
     }
@@ -206,7 +223,22 @@ fn read_manifest(xml: &[u8]) -> Option<Manifest> {
                 let pool = strings?;
                 // ResXMLTree_attrExt follows the node header.
                 let ext = chunk.get(header_size..)?;
-                if pool_string(pool, u32_at(ext, 4)?)? != "manifest" {
+                let element = pool_string(pool, u32_at(ext, 4)?)?;
+                if let Some(manifest) = found {
+                    if element == "uses-sdk" {
+                        manifest.min_sdk = int_attribute(
+                            pool,
+                            resource_ids,
+                            ext,
+                            ATTR_MIN_SDK_VERSION,
+                            "minSdkVersion",
+                        );
+                        return Some(());
+                    }
+                    at = at.checked_add(size)?;
+                    continue;
+                }
+                if element != "manifest" {
                     return None;
                 }
                 let attribute_start = usize::from(u16_at(ext, 8)?);
@@ -259,11 +291,45 @@ fn read_manifest(xml: &[u8]) -> Option<Manifest> {
                     }
                 }
                 manifest.version_code = code.and_then(|code| long_version_code(code, major));
-                return Some(manifest);
+                *found = Some(manifest);
             }
             _ => {}
         }
         at = at.checked_add(size)?;
+    }
+    Some(())
+}
+
+/// The `android:` attribute `attr` (by its resource id, else by `name`) of a start element's
+/// ResXMLTree_attrExt as a number; `None` when it isn't there, isn't a number, or can't be read.
+fn int_attribute(
+    pool: &[u8],
+    resource_ids: Option<&[u8]>,
+    ext: &[u8],
+    attr: u32,
+    name: &str,
+) -> Option<u32> {
+    let attribute_start = usize::from(u16_at(ext, 8)?);
+    let attribute_size = usize::from(u16_at(ext, 10)?);
+    let count = usize::from(u16_at(ext, 12)?);
+    for index in 0..count {
+        let start = attribute_start.checked_add(index.checked_mul(attribute_size)?)?;
+        let attribute = ext.get(start..)?;
+        let (namespace, name_index) = (u32_at(attribute, 0)?, u32_at(attribute, 4)?);
+        if namespace == NO_INDEX {
+            continue;
+        }
+        let id = resource_ids.and_then(|ids| u32_at(ids, (name_index as usize).checked_mul(4)?));
+        let matches = match id {
+            Some(id) => id == attr,
+            None => pool_string(pool, name_index).as_deref() == Some(name),
+        };
+        if matches {
+            return match *attribute.get(15)? {
+                TYPE_INT_DEC | TYPE_INT_HEX => u32_at(attribute, 16),
+                _ => None,
+            };
+        }
     }
     None
 }
@@ -349,6 +415,7 @@ mod tests {
                 package: Some("me.vibb.testfixture".to_string()),
                 version_code: Some(1),
                 version_name: Some("1".to_string()),
+                min_sdk: Some(26),
                 signer_sha256: Some(KEY1.to_string()),
             }
         );
@@ -376,6 +443,7 @@ mod tests {
                 package: Some("me.vibb.testfixture".to_string()),
                 version_code: Some(1),
                 version_name: Some("1".to_string()),
+                min_sdk: Some(26),
                 signer_sha256: None,
             }
         );
@@ -463,6 +531,7 @@ mod tests {
                 package: Some("me.vibb.testfixture".to_string()),
                 version_code: Some((1 << 32) + 7),
                 version_name: None,
+                min_sdk: None,
             })
         );
         assert_eq!(
@@ -471,6 +540,7 @@ mod tests {
                 package: Some("me.vibb.testfixture".to_string()),
                 version_code: None,
                 version_name: None,
+                min_sdk: None,
             }),
             "a versionCode outside the android namespace isn't the code"
         );

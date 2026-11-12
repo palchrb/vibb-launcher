@@ -126,6 +126,11 @@ fn provision_payload_uses_configured_values() {
         payload["android.app.extra.PROVISIONING_WIFI_SECURITY_TYPE"],
         "WPA"
     );
+    // QR setup leaves the phone's own apps enabled, as adb setup does (AOSP's default disables them).
+    assert_eq!(
+        payload["android.app.extra.PROVISIONING_LEAVE_ALL_SYSTEM_APPS_ENABLED"],
+        true
+    );
     let extras = &payload["android.app.extra.PROVISIONING_ADMIN_EXTRAS_BUNDLE"];
     assert_eq!(extras["server_url"], "https://pi.example.ts.net");
     assert_eq!(extras["tailscale_auth_key"], "tskey-auth-x");
@@ -708,7 +713,7 @@ async fn server_setup_needed_is_one_row_with_its_detail_behind_info() {
 }
 
 /// The Wi-Fi limits at their edges (qa-31-s15-code L2, L3): the name is 32 *bytes* (æ, ø, å count as
-/// two), a WPA password 8-63 characters or the raw 64-hex-digit key.
+/// two), a WPA password 8-63 characters; never a raw 64-hex-digit key (AOSP quotes it as a passphrase).
 #[test]
 fn wifi_fields_are_judged_at_their_edges() {
     let refused = |ssid: &str, password: &str| {
@@ -726,8 +731,20 @@ fn wifi_fields_are_judged_at_their_edges() {
     assert_eq!(refused("Hjemme", &"p".repeat(63)), None);
     assert_eq!(
         refused("Hjemme", &"0123456789abcdef".repeat(4)),
-        None,
-        "a raw key"
+        Some("wifi_password"),
+        "a raw key: the phone would quote it as a passphrase"
+    );
+    assert_eq!(
+        provisioning::wifi_refusal(
+            crate::i18n::Lang::En,
+            "Hjemme",
+            &"0123456789abcdef".repeat(4)
+        )
+        .map(|r| r.1),
+        Some(crate::i18n::t(
+            crate::i18n::Lang::En,
+            "devices.qr.password_raw_key"
+        ))
     );
     assert_eq!(refused("Hjemme", &"p".repeat(64)), Some("wifi_password"));
     assert_eq!(
@@ -902,6 +919,7 @@ fn with_check(state: &AppState, verdict: crate::launcher_check::Verdict) -> AppS
             verdict,
             version: Some("0.34.0".to_string()),
             published: None,
+            min_sdk: None,
         },
     );
     state
@@ -976,6 +994,11 @@ async fn check_again_comes_back_to_the_row() {
     let cookie = app.admin_cookie().await;
     let page = app.get_page("/settings/provisioning", &cookie).await.text();
     assert!(page.contains("New phones get Vibb One 0.39.0"), "{page}");
+    // The APK's minSdkVersion 34.
+    assert!(
+        page.contains("A new phone needs Android 14 or newer"),
+        "{page}"
+    );
     let at = page.find("data-row=\"launcher-again\"").unwrap();
     assert!(settings_pages::encloses(&page, "launcher", at));
 
@@ -994,6 +1017,7 @@ async fn check_again_comes_back_to_the_row() {
             verdict: crate::launcher_check::Verdict::Unreachable,
             version: None,
             published: None,
+            min_sdk: None,
         })
     );
     let form = std::collections::HashMap::from([("device".to_string(), "7".to_string())]);

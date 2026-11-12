@@ -126,6 +126,11 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   A page a GET drew reloads itself while it checks (`auto-reload.js`). Tests: `launcher_check::tests` (a fake GitHub on
   loopback serving `testdata/apk/`), `provisioning::the_launcher_check_decides_the_qr`,
   `check_again_comes_back_to_the_row`; `TestApp` sets `Works` for its own config, so no test downloads anything.
+  For a launcher a phone would take the row adds the Android it needs, from the APK's `<uses-sdk minSdkVersion>`
+  (`apk::ApkIdentity::min_sdk`, `launcher_check::android_release`). The QR also carries
+  `PROVISIONING_LEAVE_ALL_SYSTEM_APPS_ENABLED: true` (AOSP's default false disables the phone's own apps with a
+  launcher icon at QR setup; adb setup disables none), and the Connect form refuses a raw 64-hex Wi-Fi key (AOSP
+  quotes the password, so the key would be read as a passphrase).
   `security_events` pruned after 180 days, a phone's own lines sooner (`retention::prune`, `retention-and-crashes.md`). The TOTP secret stays in the DB (QA b, DEPLOY.md).
 - **Docker and startup** (D1, `src/startup.rs`, `Dockerfile`, `deploy/image-smoke.sh`): `DEPLOY_KIND` (`NetConfig`,
   systemd default, the image sets docker). Startup for every kind: `check_data_writable` ("data/ is not writable by

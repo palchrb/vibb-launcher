@@ -1883,7 +1883,8 @@
 
   "devices.qr.ssid_long": "Too long for a Wi-Fi network: shorten the name (at most 32 bytes; æ, ø and å count as two). Nothing was made.",
   "devices.qr.password_short": "A Wi-Fi password has at least 8 characters. Nothing was made.",
-  "devices.qr.password_long": "A Wi-Fi password has at most 63 characters (or is a 64-digit key). Nothing was made.",
+  "devices.qr.password_long": "A Wi-Fi password has at most 63 characters. Nothing was made.",
+  "devices.qr.password_raw_key": "A 64-digit key doesn't work in the setup QR code: use the network's password (8-63 characters). Nothing was made.",
   "devices.qr.ssid_missing": "Add the network's name, or leave the password empty. Nothing was made.",
   "devices.qr.too_long": "The setup details are too long for a QR code - check the server address and Tailscale key in Settings › Phone Setup. Nothing was changed.",
 
@@ -3238,6 +3239,8 @@
   "settings.provisioning.launcher.unreachable": "The setup QR code's download address can't be reached",
   "settings.provisioning.launcher.address_sub": "From this server: {url}. A phone would stop at “Can't set up device”. Check LAUNCHER_APK_URL in the server's .env (DEPLOY.md) and this server's internet connection, then Check Again. No QR code until then.",
   "settings.provisioning.launcher.again": "Check Again",
+  "settings.provisioning.launcher.needs_android": "A new phone needs Android {version} or newer: update it before the factory reset.",
+  "settings.provisioning.launcher.needs_api": "A new phone needs Android API level {level} or newer: update it before the factory reset.",
   "settings.provisioning.country_code_refused": "Use 1 to 3 digits, like 47. Nothing was saved.",
   "error.read_phone_setup": "Couldn't read Phone Setup - check the server log.",
   "settings.updates.over_ssh": "Over SSH on the server (it keeps your settings and data, and backs up the database first):",

@@ -286,6 +286,7 @@ impl TestApp {
                 verdict: crate::launcher_check::Verdict::Works,
                 version: Some("0.39.0".to_string()),
                 published: None,
+                min_sdk: Some(34),
             },
         );
 

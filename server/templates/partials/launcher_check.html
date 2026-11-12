@@ -13,6 +13,7 @@
         {% if launcher.state == "works" || launcher.state == "checking" %}
         <p class="row" data-launcher="{{ launcher.state }}" role="status"><span class="row-label">{{ launcher.text }}</span></p>
         {% endif %}
+        {% if let Some(needs) = launcher.needs %}<p class="row row-note" data-row="launcher-needs">{{ needs }}</p>{% endif %}
         {% if launcher.state != "checking" %}
         <form method="post" action="/settings/provisioning/launcher-check#launcher" class="cell">
             {% if let Some(id) = launcher.device_id %}<input type="hidden" name="device" value="{{ id }}">{% endif %}

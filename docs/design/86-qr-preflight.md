@@ -54,6 +54,18 @@ a phone set up today would start on a launcher weeks old.
    `.env`. Pointing the QR at a prerelease is the owner's `.env` edit (DEPLOY.md, "Launcher provisioning settings"),
    and the signer check still guards it.
 
+## Also in this round (the coordinator's research in AOSP ManagedProvisioning, 2026-11-12)
+
+8. **The Android a new phone needs.** `apk.rs` also reads `<uses-sdk android:minSdkVersion>`; for a launcher a phone
+   would take, the row says "A new phone needs Android 14 or newer: update it before the factory reset." (the launcher's
+   minSdk is 34 - a Jelly Star needs its Android 16 OTA first). Nothing when the APK names a codename.
+9. **`PROVISIONING_LEAVE_ALL_SYSTEM_APPS_ENABLED: true` in the QR.** AOSP's default is false, and QR setup then
+   disables every system app with a launcher icon that isn't on its required list (dialer, Messages, camera...);
+   `adb shell dpm set-device-owner` disables nothing. The launcher decides what the kid sees.
+10. **No raw 64-hex Wi-Fi key.** AOSP's `WifiConfigurationProvider` always quotes the password
+    (`preSharedKey = "\"" + password + "\""`), so a 64-hex key is taken as a passphrase and the phone never joins: the
+    Connect form refuses it (`devices.qr.password_raw_key`), as it refuses a password under 8 or over 63 characters.
+
 ## Not done
 
 - The server does not serve the APK itself (part two of the round, if wanted): the QR still names GitHub.
