@@ -161,7 +161,7 @@ band::tab("Finn")
   group-footer  what "Nylig" means (§7)
 ```
 
-- **The map box**: `height: clamp(260px, 45vh, 420px)` - about 380 px on a 393x852 iPhone 15, 260 px on a 320x568
+- **The map box**: `height: clamp(280px, 55vh, 480px)` (since the age box went, design 88 revision 2; 45vh/420 for a day before) - about 470 px on a 393x852 iPhone, 312 px on a 320x568
   one; full screen shows the rest. *(Was `clamp(300px, 60vh, 520px)` until 2026-11-12, when the user found the age
   row and Update Location under the tab bar on an iPhone 15.)* Leaflet's zoom control moves to the bottom right (the chips have the top), the fit-all button
   is an `L.Control` above it, OSM's attribution under both as today.
@@ -582,7 +582,7 @@ phone or several. This replaces §1.9 and §4.7's switcher and O6's pin; §4.8 n
   link to `/devices/locate`), then each phone with its avatar, name and label, the chosen one dark
   (`aria-current="true"`). With one phone there is no chip row and no switcher. The switcher's online dot goes with
   it: the phone's state is on Devices and the phone's summary, as the Alle view's chips already decided (§4.1).
-- **The map box** takes the Alle view's height (`clamp(260px, 45vh, 420px)` since 2026-11-12) and its zoom at the bottom right (the
+- **The map box** takes the Alle view's height (`clamp(280px, 55vh, 480px)` since the age box went) and its zoom at the bottom right (the
   chips have the top); the fit keeps 64 px clear at the top while the chips are there.
 - **The legend** ("● Nylig ● Eldre posisjon") is under the map in the one-phone view too, and the strip over the map
   at full screen (§4.8).
