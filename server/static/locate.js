@@ -17,7 +17,15 @@
 // `--map-zone` with their names as tooltips (text nodes). Its words come from the page (design 70
 // §5.3): the Locations count's `data-w-*`, the map box's `data-w-newest`, the wait line's
 // `data-w-answered`/`data-w-no-answer`, set with textContent; `locate-result.json` is asked in the
-// page's language (`data-lang`). ES5. Run its tests: node --test jstest/locate.test.js
+// page's language (`data-lang`).
+//
+// On the Locate page the newest fix is the Alle view's marker (design 85 revision 3,
+// static/map-marker.js, loaded first): the phone's avatar in its tone, the time tag, fresh or old
+// as the server judged the fix shown, the accuracy circle; the box's `data-marker-*` carry the
+// phone's row (`tone`, `initial`, `photo`, `tag`, `fresh`, `label`), `data-chips` while the
+// phones' chips lie over the map's top. A newer fix than the one shown is drawn fresh, without a
+// tag (the server hasn't worded it). The Locations page keeps Leaflet's pin. ES5. Run its tests:
+// node --test jstest/locate.test.js
 (function (root) {
     "use strict";
 
@@ -30,6 +38,8 @@
     var ZONE = "#2F6F62";
     var WAIT_EVERY_MS = 5000;
     var WAIT_TRIES = 12;
+    // The marker's look, shared with the Alle view.
+    var Mk = root.HandyMapMarker || (typeof require === "function" ? require("./map-marker.js") : null);
 
     // A word the page gives an element (`data-w-<name>`); a missing one shows its name.
     function w(el, name) {
@@ -146,7 +156,19 @@
             return null;
         }
 
-        var map = L.map(box.querySelector("#map"), { preferCanvas: true });
+        // The phone's own marker (the Locate page), else Leaflet's pin (the Locations page).
+        var mark = Mk && box.hasAttribute("data-marker-tone") ? {
+            tone: box.getAttribute("data-marker-tone"),
+            initial: box.getAttribute("data-marker-initial") || "",
+            photo: box.getAttribute("data-marker-photo") || "",
+            tag: box.getAttribute("data-marker-tag") || "",
+            fresh: box.hasAttribute("data-marker-fresh"),
+            label: box.getAttribute("data-marker-label") || ""
+        } : null;
+        // The chips have the map's top: the zoom goes to the bottom right, the fit keeps clear.
+        var chips = box.hasAttribute("data-chips");
+        var map = L.map(box.querySelector("#map"), mark ? { preferCanvas: true, zoomControl: false } : { preferCanvas: true });
+        if (mark) L.control.zoom({ position: "bottomright" }).addTo(map);
         // OSM refuses tile requests without a Referer, and the page's own Referrer-Policy is
         // same-origin: the tiles alone send our origin (no path) - design 33.
         L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -200,10 +222,48 @@
             // server's words for the fix shown on the page, else (a newer one came since) none.
             var popup = doc.createElement("span");
             popup.textContent = last.captured_at === shown ? shownText : w(box, "newest");
-            var marker = L.marker([last.latitude, last.longitude]).addTo(layer).bindPopup(popup);
-            map.fitBounds(all, { maxZoom: 16, padding: [30, 30] });
-            // After the view is set: a map without one opens no popup.
-            marker.openPopup();
+            if (!mark) {
+                var marker = L.marker([last.latitude, last.longitude]).addTo(layer).bindPopup(popup);
+                map.fitBounds(all, { maxZoom: 16, padding: [30, 30] });
+                // After the view is set: a map without one opens no popup.
+                marker.openPopup();
+                return;
+            }
+            drawMark(last, popup, colour);
+            map.fitBounds(all, chips
+                ? { maxZoom: 16, paddingTopLeft: [30, 64], paddingBottomRight: [30, 30] }
+                : { maxZoom: 16, padding: [30, 30] });
+        }
+
+        // The newest fix as the Alle view draws a phone: its accuracy circle, its avatar and tag;
+        // its words in the white bubble, opened by a tap (the tag says the age at a glance).
+        function drawMark(last, popup, colour) {
+            var shownFix = last.captured_at === shown;
+            var row = {
+                tone: mark.tone,
+                initial: mark.initial,
+                photo: mark.photo,
+                fresh: shownFix ? mark.fresh : true,
+                tag: shownFix ? mark.tag : ""
+            };
+            if (typeof last.accuracy_meters === "number") {
+                var options = Mk.circleStyle(row, colour);
+                options.radius = last.accuracy_meters;
+                L.circle([last.latitude, last.longitude], options).addTo(layer);
+            }
+            var made = Mk.icon(L, doc, [row]);
+            var marker = L.marker([last.latitude, last.longitude], { icon: made.icon, keyboard: true, zIndexOffset: 1000 });
+            // Its element exists only once the map has a view (Leaflet adds a layer when the map is
+            // ready): spoken at its "add", and at once when it is there already.
+            var speak = function () {
+                var el = marker.getElement ? marker.getElement() : null;
+                if (!el) return;
+                el.setAttribute("role", "button");
+                el.setAttribute("aria-label", shownFix && mark.label ? mark.label : popup.textContent);
+            };
+            marker.on("add", speak);
+            marker.addTo(layer).bindPopup(popup, { className: "all-popup", autoPanPaddingTopLeft: [10, chips ? 64 : 10] });
+            speak();
         }
 
         function load(span) {

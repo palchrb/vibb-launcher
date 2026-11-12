@@ -235,10 +235,11 @@ async fn a_wrong_name_opens_the_erase_confirm_with_the_refusal() {
     assert!(commands(&app, id).await.is_empty(), "nothing erased");
 }
 
-/// The phone switcher (§3.6, §5.4): links, the state in each `aria-label`, the chosen one marked;
-/// with several phones and none chosen the page lists them; one phone is shown at once.
+/// Design 85 revision 3: one look for one phone or several. One phone is shown at once with no
+/// switcher and no chips; several and none chosen is the Alle view; a chosen one has the Alle view's
+/// chips over its map ("All" first, it current), its marker's data and the legend.
 #[tokio::test]
-async fn the_phone_switcher_and_the_alle_view() {
+async fn the_chips_and_the_alle_view() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let html = locate_page(&app, &cookie, "").await;
@@ -246,11 +247,19 @@ async fn the_phone_switcher_and_the_alle_view() {
     assert!(!html.contains("id=\"map\""));
 
     let (emma, _) = app.enrolled_device("Emma").await;
-    // One phone: shown at once, the switcher holds it and no "All".
+    // One phone: shown at once, no switcher, no chips and no "All"; the marker in its tone, and the
+    // legend under the map and as the full screen's strip.
     let html = locate_page(&app, &cookie, "").await;
     assert!(html.contains("id=\"map\""));
     assert!(html.contains(&format!("/devices/{emma}/command/ring")));
-    assert!(!html.contains("data-all") && !html.contains("data-locate-all"));
+    assert!(!html.contains("data-locate-all"));
+    assert!(!html.contains("<nav class=\"phone-switch\""));
+    assert!(!html.contains("map-chips") && !html.contains("data-chips"));
+    assert!(html.contains("data-marker-tone=\"tone-peach\" data-marker-initial=\"E\""));
+    assert!(!html.contains("data-marker-tag"), "no position, no tag");
+    assert!(html.contains("<p class=\"map-legend\"><span>"));
+    assert!(html.contains("<p class=\"map-legend map-legend-over\" aria-hidden=\"true\">"));
+    assert!(html.contains("<script src=\"/static/map-marker.js?v=1\"></script>\n    <script src=\"/static/locate.js?v=8\"></script>"));
 
     fix(&app, emma, 59.9, 2).await;
     let (jack, _) = app.create_device("<b>Jack</b>").await;
@@ -265,7 +274,7 @@ async fn the_phone_switcher_and_the_alle_view() {
         let html = locate_page(&app, &cookie, query).await;
         assert!(html.contains("<section id=\"all\""), "{query}");
         assert!(html.contains("data-locate-all"), "{query}");
-        assert!(html.contains("/static/locate-all.js?v=2"), "{query}");
+        assert!(html.contains("/static/locate-all.js?v=4"), "{query}");
         assert!(!html.contains("/command/"), "{query}");
         assert!(!html.contains("data-group=\"phones\""), "{query}");
         check_forms(&html);
@@ -307,21 +316,30 @@ async fn the_phone_switcher_and_the_alle_view() {
     }
 
     let html = locate_page(&app, &cookie, &format!("?device={emma}")).await;
-    let switch = html
-        .split("<nav class=\"phone-switch\"")
+    assert!(
+        !html.contains("<nav class=\"phone-switch\""),
+        "the chips replace the switcher"
+    );
+    assert!(!html.contains("data-locate-all"));
+    let chips = html
+        .split("<nav class=\"map-chips\" aria-label=\"Phones\">")
         .nth(1)
         .and_then(|rest| rest.split("</nav>").next())
-        .expect("the switcher");
-    let links = tags(switch, "a");
+        .expect("the chips over the map");
+    let links = tags(chips, "a");
     assert_eq!(links.len(), 4);
-    // "All" first, back to every phone on one map.
+    // "All" first, back to every phone on one map; the chosen phone current.
     assert_eq!(links[0].attr("href"), Some("/devices/locate"));
-    assert!(switch.contains(">All</a>"));
+    assert!(!links[0].has("aria-current"));
+    assert!(chips.contains(">All</a>"));
     let emma_link = links
         .iter()
         .find(|a| a.attr("href") == Some(&format!("/devices/locate?device={emma}")))
         .unwrap();
-    assert_eq!(emma_link.attr("aria-label"), Some("Emma, not seen yet"));
+    assert_eq!(
+        emma_link.attr("aria-label"),
+        Some("Emma, 2 min ago, within 25 m")
+    );
     assert_eq!(emma_link.attr("aria-current"), Some("true"));
     let jack_link = links
         .iter()
@@ -332,6 +350,23 @@ async fn the_phone_switcher_and_the_alle_view() {
         Some("&#60;b&#62;Jack&#60;/b&#62;, not set up")
     );
     assert!(!jack_link.has("aria-current"));
+    assert!(
+        chips.contains("avatar avatar-grey avatar-hollow"),
+        "{chips}"
+    );
+    // The marker: Emma's tone, her tag, fresh, her label; the map box carries the chips.
+    let boxed = tags(&html, "div")
+        .into_iter()
+        .find(|d| d.has("data-locate"))
+        .expect("the map box");
+    assert_eq!(boxed.attr("data-marker-tone"), Some("tone-peach"));
+    assert_eq!(boxed.attr("data-marker-tag"), Some("2 min"));
+    assert!(boxed.has("data-marker-fresh") && boxed.has("data-chips"));
+    assert_eq!(
+        boxed.attr("data-marker-label"),
+        Some("Emma, 2 min ago, within 25 m")
+    );
+    assert!(html.contains("<p class=\"map-legend\"><span>"));
     assert!(!html.contains("<b>Jack</b>"), "names are escaped");
     // No inline script picks the phone (the old select needed JS).
     assert!(!html.contains("onchange"));
@@ -1073,26 +1108,27 @@ async fn the_locations_page_pages_every_fix_once() {
     );
 }
 
-/// 2026-11-01 (status-off): the switcher's dots and words are the Devices row's - away 20 min is
-/// orange "No contact" - in the reader's language, its `aria-label` too.
+/// Design 85 revision 3: a chosen phone's chips are the Alle view's, in the reader's language - "Alle",
+/// "Telefoner", each phone's label as its marker tells it; no switcher and no online dot (the phone's
+/// state is on Devices and its summary).
 #[tokio::test]
-async fn the_switcher_says_no_contact_in_the_readers_language() {
+async fn the_chips_speak_the_readers_language() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (emma, _) = app.enrolled_device("Emma").await;
-    sqlx::query("UPDATE devices SET last_seen_at = datetime('now', '-20 minutes') WHERE id = ?")
-        .bind(emma)
-        .execute(&app.db)
-        .await
-        .unwrap();
     app.enrolled_device("Jack").await;
     let html = locate_page(&app, &cookie, &format!("?device={emma}&lang=nb")).await;
-    assert!(html.contains("class=\"dot dot-away\""), "{html}");
     assert!(
-        html.contains("aria-label=\"Emma, ingen kontakt\""),
+        html.contains("<nav class=\"map-chips\" aria-label=\"Telefoner\">"),
         "{html}"
     );
     assert!(html.contains(">Alle</a>"), "{html}");
+    assert!(
+        html.contains("aria-label=\"Emma, ingen posisjon ennå\" aria-current=\"true\""),
+        "{html}"
+    );
+    assert!(html.contains(">Nylig</span>") && html.contains(">Eldre posisjon</span>"));
+    assert!(!html.contains("class=\"dot dot-"), "{html}");
 }
 
 /// Design 70 §5.1, slice 3c: the Locate tab in Norwegian - the page, its zone page and the
@@ -1621,7 +1657,12 @@ async fn both_map_views_offer_full_screen() {
             assert!(html.contains("<script src=\"/static/map-full.js?v=2\"></script>"));
         }
     }
-    // The Alle view's legend strip for full screen, the eye's only.
-    let html = locate_page(&app, &cookie, "").await;
-    assert!(html.contains("<p class=\"map-legend map-legend-over\" aria-hidden=\"true\">"));
+    // The legend strip for full screen, the eye's only - on both views (revision 3).
+    for query in [String::new(), format!("?device={emma}")] {
+        let html = locate_page(&app, &cookie, &query).await;
+        assert!(
+            html.contains("<p class=\"map-legend map-legend-over\" aria-hidden=\"true\">"),
+            "{query}"
+        );
+    }
 }

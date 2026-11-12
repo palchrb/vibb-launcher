@@ -2,7 +2,8 @@
 
 Status: design note by the architect, 2026-11-11, on `main` at 7f3262ec, branch `design-85`. O1-O3 decided by the
 user 2026-11-12, as proposed (§10). Step 1 (the colours) built on `design-85`, 2026-11-12, as §5 and §9 say, migration
-0138; step 2 (the Alle view) built on `design-85-step2`, 2026-11-12. Server/PWA
+0138; step 2 (the Alle view) built on `design-85-step2`, 2026-11-12; revision 3 (one look for one phone) built on
+`locate-one-look`, 2026-11-12. Server/PWA
 only: one migration, `devices.rs`'s avatar helpers, Locate's handler and template, one new script, `style.css`,
 i18n, tests. No API change, no policy key, no launcher or music change (§9 says why none is needed).
 
@@ -316,8 +317,8 @@ positioned against the viewport, which drifts in an iOS home-screen app), under 
 night band and the tab bar, every edge clear of the safe areas - not the Fullscreen API, which iPhone Safari lacks
 for elements. The
 chips stay at the top, their row ending short of a 44 px ✕ at the top right ("Close full screen" / "Lukk
-fullskjerm"); Escape closes too - an open bubble first, then full screen. The Alle view's legend ("● Nylig ● Eldre
-posisjon") is a strip at the bottom left over the map, above OSM's attribution line, fit-all and zoom at the bottom
+fullskjerm"); Escape closes too - an open bubble first, then full screen. The legend ("● Nylig ● Eldre
+posisjon"; on both views since revision 3) is a strip at the bottom left over the map, above OSM's attribution line, fit-all and zoom at the bottom
 right above it. The page behind doesn't scroll while it is open, and Tab goes round inside the box. The map keeps its view: Leaflet re-measures on the window's `resize` (`trackResize`, `invalidateSize`
 keeping the centre), which the script sends on entering and leaving. `static/map-full.js`, shared by both views;
 without JS both buttons stay hidden. Tests: `locate_page::both_map_views_offer_full_screen`,
@@ -529,7 +530,7 @@ O4-O6 stand as the architect's and the QA's below; the user may still overrule t
 - **O5 - The parent picks a colour**: later; the stored tone makes it a small step (a row of seven swatches under
   the summary's picture).
 - **O6 - The one-phone map's marker**: Leaflet's pin for now; the avatar marker of §4.2 could replace it later so
-  both views look alike.
+  both views look alike. *Decided by the user, 2026-11-12: alike - revision 3.*
 
 ## Revision 2: the design QA, finding by finding
 
@@ -558,3 +559,35 @@ No High.
   (§4.7). The bubble keeps Leaflet's white popup in both schemes, "Vis … ›" in `#A64B25` (§4.3). Chips at least 44
   px high (§4.1). Rose is 9.76:1, so "9.7:1 or more" (§1.7, §5.1). O1 says "Bare når du spør" (§10). Web Push is
   unaffected (§5.4).
+
+## Revision 3: one look for one phone (the user, 2026-11-12)
+
+On server 0.75.0 with one phone the user saw the old one-phone page - Leaflet's blue pin, a lone segmented switcher
+button above the map, the age row - and said: "ja selvsagt skal det se likt ut!". Locate looks the same with one
+phone or several. This replaces §1.9 and §4.7's switcher and O6's pin; §4.8 now covers the legend on both views.
+
+- **The marker** of the one-phone view (one phone in the family, or `?device=N`) is §4.2's: the avatar in the phone's
+  tone (its picture when set), the time tag, fresh or old by `Seen` (§3.4), the accuracy circle in the Alle view's
+  style (solid in `--map-trail` when fresh, grey dashed when old, none when the accuracy is unknown). The trail, its
+  dots and the span stay as they are; the newest point is the marker. One script piece draws it for both views:
+  `static/map-marker.js` (the avatar, the marker's node and tag, its icon, the circle's style), loaded before
+  `locate-all.js` and `locate.js`.
+- **Its data** is the phone's own `phones.json` row, rendered as `data-marker-*` on the map box (tone, initial,
+  picture, tag, fresh, the chip's label) - no API change. The tag and fresh are the fix the page shows; a newer fix
+  that comes while the page is open (the trail redrawn by the span pick) is drawn fresh without a tag, as its popup
+  already says only "Newest location". The marker's popup keeps today's words ("10 min ago · within 40 m") in the
+  Alle view's white bubble, opened by a tap, no longer by itself: the tag says the age at a glance, as on Alle.
+- **The chips replace the switcher.** With two or more phones, §4.1's chip row lies over the map's top: "Alle" (a
+  link to `/devices/locate`), then each phone with its avatar, name and label, the chosen one dark
+  (`aria-current="true"`). With one phone there is no chip row and no switcher. The switcher's online dot goes with
+  it: the phone's state is on Devices and the phone's summary, as the Alle view's chips already decided (§4.1).
+- **The map box** takes the Alle view's height (`clamp(300px, 60vh, 520px)`) and its zoom at the bottom right (the
+  chips have the top); the fit keeps 64 px clear at the top while the chips are there.
+- **The legend** ("● Nylig ● Eldre posisjon") is under the map in the one-phone view too, and the strip over the map
+  at full screen (§4.8).
+- Unchanged: 12 t / 24 t / 7 d / All kept, the age row (dot, age, within), Update Location and its wait, Locations,
+  Zones, the actions, the settings. The Locations page keeps its pin (its map is a list's, not a phone's place).
+
+Tests: `locate_page` - with one phone no switcher and no chips, with two the chips (All, the chosen one current), the
+marker's tone, tag and fresh on the box, the legend and its strip on both views; `jstest/locate.test.js` - the
+avatar marker, its tag and circle, the pin kept without marker data; `jstest/locate-all.test.js` as it stands.

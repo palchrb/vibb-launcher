@@ -2451,17 +2451,14 @@ details.category-block[open] > summary .section-chev { -webkit-transform: rotate
 .st-books { list-style: none; padding: 0; margin: 0; }
 .st-books li { overflow-wrap: anywhere; padding: 2px 0; }
 
-/* ---- The Locate tab (design 31 step 13): the phone switcher, the map, the fix, the actions, Recent ---- */
+/* ---- The Locate tab (design 31 step 13): the span pick, the map, the fix, the actions, Recent ---- */
 
-/* One link per phone, its state as a dot (and in its aria-label); wraps on a narrow screen. */
+/* A segmented control (the span pick): one link per choice; wraps on a narrow screen. */
 .phone-switch { display: flex; flex-wrap: wrap; margin: 0 0 14px; padding: 2px; border-radius: 9px; background: var(--grey-bg); }
 .phone-switch a { flex: 1 1 30%; display: flex; align-items: center; justify-content: center; min-width: 0; min-height: 44px; margin: 0; padding: 0 8px; border-radius: 7px; color: var(--label); font-size: 0.9375rem; font-weight: 600; text-decoration: none; }
-.phone-switch a[aria-current="true"] { background: var(--surface); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); }
-.phone-switch .dot { width: 8px; height: 8px; margin-right: 6px; }
-.phone-switch-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Its own stacking context: Leaflet's panes (z-index up to 1000) stay under the tab bar. */
 .map-box { position: relative; z-index: 0; overflow: hidden; height: 300px; margin: 0 0 12px; border-radius: 14px; background: var(--grey-bg); }
-/* The trail's span (design 44 §1.5): the phone switcher's segmented look, four in one line. */
+/* The trail's span (design 44 §1.5): the segmented look, four in one line. */
 .span-pick a { flex: 1 1 0; padding: 0 4px; font-size: 0.875rem; }
 .span-pick a[aria-checked="true"] { background: var(--surface); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); }
 /* A Locations row shows its fix on the map (static/locate.js makes it a button). */
@@ -3485,7 +3482,8 @@ details.own-edit[open] {
 
 /* Design 85: Locate's Alle view (mockup B). The chips, markers, tags and bubble lie on OSM's tiles,
    which are light in both schemes, so they have one light look in both (as --map-trail). */
-.map-all { height: clamp(300px, 60vh, 520px); }
+/* Revision 3: the one-phone view's map (.map-one) has the same look and height. */
+.map-all, .map-one { height: clamp(300px, 60vh, 520px); }
 /* Over the map's top (Leaflet's panes go up to 1000): one line that scrolls inside itself, its right
    end fading into the map - the page never scrolls sideways. */
 .map-chips { position: absolute; z-index: 1001; top: 0; right: 0; left: 0; display: flex; padding: 10px; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; -webkit-overflow-scrolling: touch; -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); }

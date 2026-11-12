@@ -14,17 +14,13 @@
 // phone id (a group by its members' sorted ids) and updated in place; only a group whose members
 // change is a new marker, and its bubble and focus move to the marker now holding that phone. The
 // view is set once at load and once at the end of a wait, never while the parent has moved the map.
+// The marker itself (avatar, tag, circle) is static/map-marker.js's, the one-phone view's too.
 // ES5. Run its tests: node --test jstest/locate-all.test.js
 (function (root) {
     "use strict";
 
     // Markers whose centres are closer than this (one avatar) are one group.
     var JOIN_PX = 40;
-    // A group shows at most this many avatars, then "+N".
-    var SHOWN = 3;
-    // An avatar is 40 px; a group's overlap by 14.
-    var AVATAR_PX = 40;
-    var OVERLAP_PX = 14;
     // A fit that needs a zoom below this (wider than a region) shows the fresh phones only.
     var FAR_ZOOM = 11;
     var PAD_TOP_LEFT = [40, 64];
@@ -32,9 +28,11 @@
     var REFRESH_MS = 60000;
     var WAIT_EVERY_MS = 5000;
     var WAIT_TRIES = 12;
-    // The accuracy circle when the page names no `--map-trail`; an old one's grey.
+    // The accuracy circle when the page names no `--map-trail`.
     var TRAIL = "#A64B25";
-    var OLD = "#8E8E93";
+    // The marker's look, shared with the one-phone view (static/map-marker.js, loaded first).
+    var Mk = root.HandyMapMarker || (typeof require === "function" ? require("./map-marker.js") : null);
+    var fillMarker = Mk.fillMarker;
 
     function w(el, name) {
         return (el && el.getAttribute && el.getAttribute("data-w-" + name)) || name;
@@ -126,42 +124,6 @@
             if (value && value.trim()) return value.trim();
         } catch (e) {}
         return fallback;
-    }
-
-    // An avatar as the chips draw it: the phone's letter on its tone, its picture over it.
-    function avatar(doc, row, extra) {
-        var el = doc.createElement("span");
-        el.className = "avatar " + (row.tone || "") + (extra ? " " + extra : "");
-        el.setAttribute("aria-hidden", "true");
-        el.textContent = row.initial || "";
-        if (row.photo) {
-            var img = doc.createElement("img");
-            img.className = "avatar-img";
-            img.setAttribute("src", row.photo);
-            img.setAttribute("alt", "");
-            el.appendChild(img);
-        }
-        return el;
-    }
-
-    /** Fills a marker's node with `members`' avatars (each in its own fresh/old look) and the leader's tag. */
-    function fillMarker(doc, node, members) {
-        while (node.firstChild) node.removeChild(node.firstChild);
-        for (var i = 0; i < members.length && i < SHOWN; i++) {
-            node.appendChild(avatar(doc, members[i], members[i].fresh ? "" : "all-av-old"));
-        }
-        if (members.length > SHOWN) {
-            var more = doc.createElement("span");
-            more.className = "avatar all-more";
-            more.setAttribute("aria-hidden", "true");
-            more.textContent = "+" + (members.length - SHOWN);
-            node.appendChild(more);
-        }
-        var tag = doc.createElement("span");
-        tag.className = members[0].fresh ? "all-tag" : "all-tag all-tag-old";
-        tag.textContent = members[0].tag || "";
-        node.appendChild(tag);
-        return node;
     }
 
     /** A bubble: a part per phone (freshest first) - its name, its lines, a hairline and "Show …". */
@@ -269,9 +231,7 @@
         }
 
         function circleStyle(row) {
-            return row.fresh
-                ? { color: trail, weight: 1.5, fillColor: trail, fillOpacity: 0.1, dashArray: null, interactive: false }
-                : { color: OLD, weight: 1.5, fillColor: OLD, fillOpacity: 0.06, dashArray: "4 4", interactive: false };
+            return Mk.circleStyle(row, trail);
         }
 
         // Each phone's accuracy circle at its own true point; none when the accuracy is unknown.
@@ -321,12 +281,10 @@
         }
 
         function create(group) {
-            var n = Math.min(group.members.length, SHOWN) + (group.members.length > SHOWN ? 1 : 0);
-            var width = AVATAR_PX + (n - 1) * (AVATAR_PX - OVERLAP_PX);
-            var node = fillMarker(doc, doc.createElement("span"), group.members);
-            node.className = "all-mk";
+            var made = Mk.icon(L, doc, group.members);
+            var node = made.node;
             var marker = L.marker([group.lat, group.lng], {
-                icon: L.divIcon({ className: "all-icon", html: node, iconSize: [width, AVATAR_PX], iconAnchor: [width / 2, AVATAR_PX / 2] }),
+                icon: made.icon,
                 keyboard: true,
                 zIndexOffset: group.members[0].fresh ? 1000 : 0
             }).addTo(map);

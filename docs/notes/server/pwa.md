@@ -673,7 +673,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - **`/devices/locate`** (`handlers::locate::show_locate`, `device_locate.html`; the route is unchanged): the large
   title, then with several phones and none chosen (or an unknown id) the phones as rows (*since design 85 step 2 the
   Alle view, the section Locate's "Alle" view below*; "Online · last seen 13:05" ›, "seen 3 min ago" until 2026-11-01;
-  as on Devices); one phone is shown at once. A chosen phone: the **phone switcher** (plain links to `?device=`, the
+  as on Devices); one phone is shown at once. A chosen phone: (*since design 85 revision 3 the Alle view's chips over
+  the map, no switcher - "Locate's one-phone view" below*) the **phone switcher** (plain links to `?device=`, the
   state as a dot and in each `aria-label`, "Anna, online" (since 2026-11-01 the Devices dot and word, "Off or out
   of touch says so"); the chosen one `aria-current="true"` - the tab bar has the
   page's one `"page"`), the **map** (Leaflet, OSM tiles with design 33's origin-only Referer, unchanged) with the
@@ -1598,9 +1599,9 @@ man er inne på en device". Branch `pwa-fixes-b`.
   access removed, not seen yet - grey. The header without contact: line 1 "No contact · last seen …", line 2 the
   row's rest with the screen time named, no zone (where it was then isn't where it is now).
 - **Where**: the Devices row (`DeviceListRow.dot`, also its line's `data-status`), the summary's header
-  (`DeviceDetailTemplate.dot`), and Locate's switcher and list (`PhoneLink.dot`/`word`; `render_locate_page` reads
-  `offs_now(db, None)` once, a failure is the page's 500; the word in the reader's language - "Online", "No
-  contact", "Offline", "Turned off 20:35" - and in the `aria-label`, "Anna, no contact"). `ConnectionState::word` is
+  (`DeviceDetailTemplate.dot`), and until design 85 revision 3 Locate's switcher and list (`PhoneLink.dot`/`word`,
+  gone with the switcher; the word in the reader's language - "Online", "No contact", "Offline", "Turned off 20:35" -
+  and in the `aria-label`, "Anna, no contact"). `ConnectionState::word` is
   the tests' alone now.
 - **The off by the server's clock**: `parent_events::offs_now` weighs the reports against the off's arrival
   (`created_at`, `datetime('now')` text like `reported_at`, both through `datetime()`) + 60 s, not `happened_at`;
@@ -2028,3 +2029,24 @@ pointer here.
   `the_age_line_says_fresh_or_old`, `the_switcher_says_no_contact_in_the_readers_language`,
   `both_map_views_offer_full_screen`;
   `admin_auth::tests::no_store_paths`; `jstest/locate-all.test.js`, `jstest/map-full.test.js`.
+
+## Locate's one-phone view: the Alle view's look (design 85 revision 3, 2026-11-12, branch `locate-one-look`)
+
+- **The user** (on 0.75.0 with one phone, 2026-11-12): "ja selvsagt skal det se likt ut!" - one look with one phone
+  or several.
+- **No switcher.** With two phones or more the chosen phone's map has the Alle view's chips over its top
+  (`nav.map-chips`: "All" to `/devices/locate`, then each phone with its avatar and label, the chosen one
+  `aria-current="true"`, dark); with one phone no chips at all. `render_locate_page` reads every phone's Alle row
+  (`all_phones`, no wait) for the chips and the marker; the online dot and `PhoneLink` are gone.
+- **The marker** is the Alle view's: the box (`.map-box.map-one`, the Alle height) carries the phone's row as
+  `data-marker-tone`/`-initial`/`-photo`/`-tag`/`-fresh`/`-label` (`locate::Marker`, from `AllPhone::marker`),
+  `data-chips` while the chips are there; `static/locate.js` (`?v=8`) draws the avatar and tag, the accuracy circle
+  (`accuracy_meters` of the newest point) and the popup's words in the white bubble on a tap (no longer opened by
+  itself), the zoom at the bottom right, the fit 64 px clear of the chips. A fix newer than the one rendered is drawn
+  fresh without a tag. The Locations page (no `data-marker-*`) keeps Leaflet's pin.
+- **`static/map-marker.js`** (`HandyMapMarker`, `?v=1`, loaded before `locate-all.js` `?v=4` and `locate.js`): the
+  avatar, the marker's node and tag (none for a row without one), its `divIcon`, the circle's style - shared by both
+  views.
+- **The legend** is under the map and the full screen's strip on the one-phone view too.
+- **Tests**: `locate_page::the_chips_and_the_alle_view`, `the_chips_speak_the_readers_language`,
+  `both_map_views_offer_full_screen`; `jstest/locate.test.js` (the avatar marker, its tag and circle, a newer fix).
