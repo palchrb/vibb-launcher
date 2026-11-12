@@ -1828,6 +1828,15 @@ pointer here.
   | `band::editor(title, href, parent)` | the back chevron | the call's body: Save | the 4 editors |
   | `band::bare(title)` | the mark | nothing | `music_spotify_done` (no session) |
 
+- **The mark is drawn inline** (2026-11-12, the user: pull-to-refresh on Devices made the logo blink): `band::mark()`,
+  an `<svg class="band-mark">` of `partials/vibb_breath.html`'s four rings and core at rest (full colour) in
+  `icon-192.png`'s frame (`viewBox="-28 -28 56 56"`, measured against the PNG), not the icon as an `<img>` - that was
+  painted only once the PNG had decoded, a blank frame on every load. Its paths keep every other point, to 0.1 and
+  relative: 2.3 KB on every page in place of 7.9, and against `icon-192.png` at 36 px no worse than the full paths
+  (PIL, mean difference 4.2/255 against 4.3). The PNGs stay for the manifest, the favicon and push;
+  `the_tab_pages_open_on_their_large_title` pins the `<svg>`, no `<img>` on the band, the four rings' starts, the
+  colours and that the mark stays under 3 KB.
+
   49 templates; `login`, `lock`, `change_password`, `setup_2fa` and `verify_2fa` are outside the shell and have none
   (the test names the five, so a new template takes a band or fails it).
 - **The back link** is the chevron alone, 46x44 px; where it goes is only spoken: `<span class="visually-hidden">`
@@ -1987,7 +1996,8 @@ pointer here.
 - **The user** chose mockup B (2026-11-11); O1-O3 decided 2026-11-12: fresh is "Here now"'s rule (twice the served
   interval under Regularly, an hour otherwise), and Update All skips Off, not set up and Disconnected.
 - **`/devices/locate`** with two phones or more and none chosen (or an unknown id) is the Alle view in place of the
-  old list: `<section id="all">` holds the map box (`.map-box.map-all`, `clamp(300px, 60vh, 520px)`,
+  old list: `<section id="all">` holds the map box (`.map-box.map-all`, `clamp(260px, 45vh, 420px)` - 60vh/520 until 2026-11-12, when the age row and Update Location
+  fell under the tab bar on an iPhone 15 -,
   `data-locate-all`), the chips over its top (`nav.map-chips`: "All" `aria-current`, then each phone a link to its
   view with its 26 px avatar - hollow, `.avatar-hollow`, without a position - and an `aria-label` carrying what its
   marker shows, "Emma, 2 min ago, within 12 m" / "Lily, location is off"; one light look in both schemes, one line
