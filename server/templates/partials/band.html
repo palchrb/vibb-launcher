@@ -11,13 +11,22 @@
     with no session (the mark, nothing to tap). -#}
 {% macro size(title) %}{% if title.chars().count() > 24 %} {{ "band-xlong" }}{% else if title.chars().count() > 16 %} {{ "band-long" }}{% endif %}{% endmacro %}
 
+{#- The round Vibb mark, drawn inline so it is there in the page's first frame (an <img> of the app icon painted
+    only once the PNG had decoded: a blank frame on every load, pull-to-refresh included). The rings and the core are
+    the app icon's own art, vibb_breath.html's rings at rest in icon-192.png's frame (-28..28), every other point
+    kept, to 0.1 and relative (2.3 KB in place of 7.9; at 36 px no difference shows): the icon's night ground is the
+    band's. -#}
+{% macro mark() -%}
+<svg class="band-mark" viewBox="-28 -28 56 56" width="36" height="36" aria-hidden="true" focusable="false"><g fill="none" stroke="#f0a884" stroke-width="2.6"><path d="M25.1 0l-.1 2-.2 1.9-.4 2-.5 1.9-.7 1.8-.8 1.8-1 1.7-1.2 1.6-1.2 1.5-1.4 1.4-1.5 1.3-1.5 1.2-1.6 1.1-1.7 .9-1.8 .9-1.8 .7-1.9 .5-1.9 .5-1.9 .2-2 .1-2-.1-1.9-.2-1.9-.5-1.9-.6-1.8-.7-1.7-.9-1.7-1-1.6-1.1-1.5-1.1-1.5-1.3-1.3-1.4-1.3-1.5-1.2-1.5-1.1-1.7-.9-1.8-.8-1.8-.6-1.9-.4-1.9-.3-2 0-2 .1-2 .2-2 .5-1.9 .6-1.9 .7-1.8 .9-1.8 1-1.7 1.1-1.7 1.2-1.5 1.4-1.4 1.5-1.3 1.5-1.2 1.7-1 1.7-.9 1.8-.7 1.9-.6 1.9-.5 1.9-.3 1.9-.2 1.9 0 1.9 0 1.9 .2 2 .2 1.8 .5 1.9 .5 1.9 .7 1.7 .9 1.7 1 1.6 1.1 1.5 1.4 1.4 1.4 1.2 1.6 1.1 1.7 .9 1.7 .8 1.9 .6 1.8 .5 1.9 .4 2 .2 1.9z"/><path d="M19.6 0l-.1 1.5-.2 1.6-.3 1.5-.5 1.4-.5 1.4-.7 1.4-.7 1.3-.9 1.3-.9 1.2-1 1.2-1.2 1-1.1 1-1.3 .9-1.3 .8-1.4 .7-1.4 .5-1.5 .4-1.5 .3-1.6 .2-1.5 0-1.5-.1-1.5-.2-1.6-.3-1.4-.5-1.5-.5-1.4-.6-1.4-.7-1.3-.7-1.3-1-1.1-1-1.2-1.1-1-1.2-.8-1.3-.8-1.3-.6-1.5-.5-1.5-.3-1.5-.3-1.5-.1-1.6 .1-1.5 .1-1.5 .2-1.5 .3-1.5 .5-1.5 .5-1.4 .6-1.4 .8-1.3 .8-1.3 1-1.2 1-1.1 1.1-1 1.2-.9 1.3-.9 1.3-.7 1.4-.7 1.4-.5 1.5-.5 1.4-.4 1.6-.3 1.5-.1 1.6-.1 1.5 .1 1.6 .3 1.5 .3 1.5 .6 1.4 .7 1.3 .8 1.3 .9 1.2 1 1.1 1.1 1 1.2 .8 1.3 .9 1.3 .7 1.3 .6 1.4 .5 1.5 .5 1.4 .3 1.6 .2 1.5z"/><path d="M14.4 0l-.1 1.1-.1 1.1-.3 1.2-.3 1-.3 1.1-.5 1-.5 1-.6 1-.7 .9-.8 .8-.8 .8-.9 .8-.9 .6-1 .5-1.1 .5-1 .3-1.1 .3-1.2 .2-1.1 .2-1.1 0-1.1 0-1.2-.2-1.1-.1-1.1-.3-1.1-.4-1-.4-1-.6-1-.6-.9-.7-.8-.8-.7-.9-.6-.9-.6-1-.5-1-.4-1.1-.4-1-.2-1.1-.3-1.1-.1-1.1-.1-1.1 .1-1.1 .1-1.1 .1-1.1 .3-1.1 .4-1.1 .4-1 .6-1 .6-.9 .6-1 .8-.8 .8-.8 .9-.7 .9-.7 1-.6 1-.5 1.1-.4 1.1-.4 1.1-.2 1.1-.2 1.2 0 1.2 .1 1.1 .2 1.1 .3 1.1 .3 1 .5 1 .5 .9 .7 .9 .6 .9 .7 .8 .8 .8 .8 .7 .9 .6 .9 .6 .9 .5 1 .4 1.1 .4 1 .2 1.2 .1 1.1z"/><path d="M9.4 0l0 .7-.1 .8-.1 .7-.2 .7-.2 .7-.4 .7-.3 .7-.4 .6-.5 .6-.5 .5-.6 .5-.6 .4-.6 .4-.6 .4-.7 .2-.7 .3-.7 .2-.7 .2-.8 .1-.7 0-.7 0-.8-.1-.7-.1-.7-.2-.7-.3-.7-.3-.6-.4-.6-.5-.5-.4-.5-.6-.5-.5-.5-.6-.4-.6-.3-.6-.4-.6-.3-.7-.2-.7-.2-.7-.1-.8-.1-.7 0-.7 .1-.8 .1-.7 .2-.7 .3-.7 .3-.7 .4-.7 .4-.6 .5-.6 .5-.5 .5-.5 .6-.5 .6-.4 .7-.4 .7-.3 .7-.2 .7-.2 .7-.1 .8 0 .7 0 .7 .1 .7 .1 .7 .2 .7 .2 .7 .2 .7 .3 .6 .3 .7 .4 .6 .4 .5 .5 .6 .5 .4 .5 .5 .7 .3 .6 .4 .7 .2 .7 .2 .7 .1 .7 .1 .8z"/></g><circle r="4.3" fill="#fbe4dc"/></svg>
+{%- endmacro %}
+
 {% macro back(href, parent) -%}
 <a class="nav-back" href="{{ href }}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="visually-hidden">{{ self.back_to(parent) }}</span></a>
 {%- endmacro %}
 
 {% macro tab(title, tab) -%}
 <header class="band band-tab">
-        <img class="band-mark" src="/static/icons/icon-192.png" width="36" height="36" alt="" decoding="async">
+        {% call mark() %}{% endcall %}
         <h1 class="page-title">{{ title }}</h1>
         <div class="band-actions">{{ caller() }}{% include "partials/bell.html" %}</div>
     </header>
@@ -50,7 +59,7 @@
 
 {% macro bare(title) -%}
 <header class="band{% call size(title) %}{% endcall %}">
-        <img class="band-mark" src="/static/icons/icon-192.png" width="36" height="36" alt="" decoding="async">
+        {% call mark() %}{% endcall %}
         <h1 class="page-title">{{ title }}</h1>
     </header>
 {%- endmacro %}
