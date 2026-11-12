@@ -1751,8 +1751,8 @@ th {
     height: 22px;
 }
 
-/* The phone's initial on vibb's peach; decorative (aria-hidden), the name is beside it. A phone
-   not set up is grey (.avatar-grey). */
+/* The phone's initial on its own colour (.tone-*, below; peach without one); decorative
+   (aria-hidden), the name is beside it. A phone not set up is grey (.avatar-grey). */
 .avatar {
     flex: none;
     position: relative;
@@ -1769,6 +1769,17 @@ th {
     font-weight: 900;
     line-height: 1;
 }
+
+/* Every phone's own colour (design 85 §5.1, `devices::AVATAR_TONES`, in the order they are handed
+   out): calm pastels of one lightness under the night letter (9.7:1 or more), the same in both
+   schemes. Each sets only the variable, so .avatar keeps one rule. */
+.tone-peach { --avatar-bg: #F0A884; }
+.tone-sky { --avatar-bg: #9CC3EC; }
+.tone-butter { --avatar-bg: #EBD27F; }
+.tone-lilac { --avatar-bg: #D7AEDB; }
+.tone-sage { --avatar-bg: #B5D098; }
+.tone-teal { --avatar-bg: #7FCBC8; }
+.tone-rose { --avatar-bg: #EFA3AF; }
 
 /* The app tiles' colours (white text 4.5:1 or more on each); the grey is also a phone's not set up. */
 .avatar-indigo { background: #5E5CE6; }

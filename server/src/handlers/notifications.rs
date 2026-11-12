@@ -195,9 +195,9 @@ fn notice_of(lang: Lang, code: Option<&str>) -> Option<(bool, &'static str, bool
 }
 
 /// An event as the inbox reads it ([ROW_COLUMNS]): id, phone, title, summary, detail,
-/// `happened_at`, unread, the phone's name and `enrolled_at`, the kind and its parameters, and the
-/// phone's own picture (migration 0100). The phone and its name are `None` for a catalog event
-/// (`app_update_available`, migration 0099).
+/// `happened_at`, unread, the phone's name and `enrolled_at`, the kind and its parameters, the
+/// phone's own picture (migration 0100) and its tone (design 85, migration 0138). The phone, its
+/// name and its tone are `None` for a catalog event (`app_update_available`, migration 0099).
 pub(crate) type Row = (
     i64,
     Option<i64>,
@@ -211,11 +211,12 @@ pub(crate) type Row = (
     String,
     Option<String>,
     Option<String>,
+    Option<i64>,
 );
 
 /// [Row]'s columns, of [row_from]'s tables.
 pub(crate) const ROW_COLUMNS: &str = "e.id, e.device_id, e.title, e.summary, e.detail, \
-     e.happened_at, r.event_id IS NULL, d.name, d.enrolled_at, e.kind, e.params, d.avatar_hash";
+     e.happened_at, r.event_id IS NULL, d.name, d.enrolled_at, e.kind, e.params, d.avatar_hash, d.avatar_tone";
 
 /// [ROW_COLUMNS]' tables, unread for the admin bound as `?{admin}` (design 62 §5: each parent
 /// reads for themselves).
@@ -248,6 +249,7 @@ pub(crate) fn inbox_row(
         kind,
         params,
         avatar_hash,
+        tone,
     ) = raw;
     // Told from its parameters in the reader's language (design 64's zones, every kind since
     // design 70 §4); a row raised before that keeps its stored words.
@@ -257,11 +259,11 @@ pub(crate) fn inbox_row(
     // A catalog event has no phone: a grey avatar with the app's letter (its title starts with it).
     let (avatar, initial) = match &name {
         Some(name) => (
-            crate::handlers::devices::avatar_class_of(enrolled.is_some()),
+            crate::handlers::devices::avatar_class_of(enrolled.is_some(), tone.unwrap_or(0)),
             crate::handlers::devices::initial(name),
         ),
         None => (
-            crate::handlers::devices::avatar_class_of(false),
+            crate::handlers::devices::avatar_class_of(false, 0),
             crate::handlers::devices::initial(&title),
         ),
     };

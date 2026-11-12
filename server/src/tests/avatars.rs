@@ -211,7 +211,7 @@ async fn an_uploaded_picture_is_served_and_shown_on_every_phone_row() {
     let band = &band[..band.find("</header>").unwrap()];
     assert!(
         band.contains(&format!(
-            "<span class=\"band-who\" aria-hidden=\"true\"><span class=\"avatar \">A\
+            "<span class=\"band-who\" aria-hidden=\"true\"><span class=\"avatar tone-peach\">A\
              <img class=\"avatar-img\" {src} alt=\"\" decoding=\"async\"></span></span>"
         )),
         "{band}"
@@ -525,4 +525,268 @@ async fn the_picture_route_is_behind_the_admin_gate() {
         )
         .await;
     assert_eq!(res.status, StatusCode::FORBIDDEN);
+}
+
+/// Every phone avatar on a page as `(its classes, its letter)` - the letter tiles of design 85's
+/// tones (`<span class="avatar …">E`), not their dots or pictures.
+fn tiles(html: &str) -> Vec<(String, char)> {
+    html.match_indices("<span class=\"")
+        .filter_map(|(at, open)| {
+            let rest = &html[at + open.len()..];
+            let classes = &rest[..rest.find('"')?];
+            if classes.split(' ').next() != Some("avatar") {
+                return None;
+            }
+            let letter = rest[rest.find('>')? + 1..].chars().next()?;
+            Some((classes.to_string(), letter))
+        })
+        .collect()
+}
+
+async fn tone(app: &TestApp, device: i64) -> i64 {
+    sqlx::query_scalar("SELECT avatar_tone FROM devices WHERE id = ?")
+        .bind(device)
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+}
+
+/// Add Phone's "Next", returning the new phone's id.
+async fn add_phone(app: &TestApp, cookie: &str, name: &str) -> i64 {
+    let res = app
+        .request_form(
+            Method::POST,
+            "/devices/new",
+            Some(cookie),
+            &[("name", name)],
+        )
+        .await;
+    let location = res.location().expect("on to Connect");
+    location
+        .strip_prefix("/devices/")
+        .and_then(|rest| rest.strip_suffix("/provision"))
+        .and_then(|id| id.parse().ok())
+        .unwrap_or_else(|| panic!("{location}"))
+}
+
+/// Design 85 §5.2: a new phone takes the first tone no phone has; a removed phone's tone goes to
+/// the next new one; past seven, the one the fewest phones have (the lowest on a tie). Stored, so
+/// the others never move.
+#[tokio::test]
+async fn a_new_phone_takes_the_first_free_tone() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let mut ids = Vec::new();
+    for name in ["Emma", "Jack", "Lily", "Mamma", "Pappa", "Emma 2", "Jack 2"] {
+        ids.push(add_phone(&app, &cookie, name).await);
+    }
+    for (n, id) in ids.iter().enumerate() {
+        assert_eq!(tone(&app, *id).await, n as i64, "phone {n}");
+    }
+
+    // Lily (butter) goes: the next new phone takes butter; nobody else moves.
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{}/delete", ids[2]),
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    assert!(res.status.is_redirection());
+    let next = add_phone(&app, &cookie, "Lily 2").await;
+    assert_eq!(tone(&app, next).await, 2);
+    assert_eq!(tone(&app, ids[1]).await, 1);
+    assert_eq!(tone(&app, ids[6]).await, 6);
+
+    // Seven phones, every tone once: the eighth takes peach, the ninth sky.
+    let eighth = add_phone(&app, &cookie, "Emma 3").await;
+    assert_eq!(tone(&app, eighth).await, 0);
+    let ninth = add_phone(&app, &cookie, "Jack 3").await;
+    assert_eq!(tone(&app, ninth).await, 1);
+}
+
+/// Migration 0138 numbers the phones there by id: the oldest keeps peach, past seven it starts over.
+#[tokio::test]
+async fn the_migration_numbers_the_phones_by_id() {
+    let (db, _dir) = super::cleanup::migrated_before(138).await;
+    for (id, name) in [
+        (3, "Emma"),
+        (5, "Jack"),
+        (6, "Lily"),
+        (9, "Mamma"),
+        (10, "Pappa"),
+        (11, "Emma 2"),
+        (12, "Jack 2"),
+        (20, "Lily 2"),
+        (21, "Mamma 2"),
+    ] {
+        sqlx::query("INSERT INTO devices (id, name) VALUES (?, ?)")
+            .bind(id)
+            .bind(name)
+            .execute(&db)
+            .await
+            .unwrap();
+    }
+    super::cleanup::finish(&db).await;
+    let tones: Vec<(i64, i64)> = sqlx::query_as("SELECT id, avatar_tone FROM devices ORDER BY id")
+        .fetch_all(&db)
+        .await
+        .unwrap();
+    assert_eq!(
+        tones,
+        [
+            (3, 0),
+            (5, 1),
+            (6, 2),
+            (9, 3),
+            (10, 4),
+            (11, 5),
+            (12, 6),
+            (20, 0),
+            (21, 1)
+        ]
+    );
+}
+
+/// Design 85 §5.4: the phone's tone is on every phone avatar - Devices, the summary, a phone page's
+/// band, Apps' "On phones" and an app's page, Schedules, Music, Locate and the inbox; a phone not set
+/// up stays grey, and a picture still covers the tile.
+#[tokio::test]
+async fn a_phones_tone_is_on_every_avatar() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    app.enrolled_device("Emma").await;
+    let (jack, _) = app.enrolled_device("Jack").await;
+    app.create_device("Lily").await;
+
+    let phone = crate::parent_events::Phone::load(&app.db, jack)
+        .await
+        .unwrap();
+    let battery = crate::models::BatteryReport {
+        level: 9,
+        charging: false,
+        low: true,
+    };
+    crate::parent_events::raise_logged(&app.state, &phone.low_battery(&battery, phone.now)).await;
+    let res = app
+        .request_form(
+            Method::POST,
+            "/apps/tracked/new",
+            Some(&cookie),
+            &[("name", "Notes"), ("source_type", "manual")],
+        )
+        .await;
+    let app_page = res
+        .location()
+        .expect("the new app's page")
+        .split(['#', '?'])
+        .next()
+        .unwrap()
+        .to_string();
+    let app_id: i64 = app_page.rsplit('/').next().unwrap().parse().unwrap();
+    sqlx::query("INSERT INTO device_tracked_apps (device_id, tracked_app_id) VALUES (?, ?)")
+        .bind(jack)
+        .bind(app_id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+
+    for path in [
+        "/devices".to_string(),
+        format!("/devices/{jack}"),
+        format!("/devices/{jack}/calls"),
+        "/apps".to_string(),
+        app_page,
+        "/schedules".to_string(),
+        "/music".to_string(),
+        "/devices/locate".to_string(),
+        "/notifications".to_string(),
+    ] {
+        let html = app.get_page(&path, &cookie).await.text();
+        let tiles = tiles(&html);
+        assert!(tiles.iter().any(|(_, l)| *l == 'J'), "{path}: {tiles:?}");
+        if path == "/devices" {
+            for letter in ['E', 'L'] {
+                assert!(
+                    tiles.iter().any(|(_, l)| *l == letter),
+                    "{letter}: {tiles:?}"
+                );
+            }
+        }
+        for (classes, letter) in &tiles {
+            let classes: Vec<&str> = classes.split(' ').collect();
+            match letter {
+                'E' => assert!(classes.contains(&"tone-peach"), "{path}: {classes:?}"),
+                'J' => assert!(classes.contains(&"tone-sky"), "{path}: {classes:?}"),
+                'L' => {
+                    assert!(classes.contains(&"avatar-grey"), "{path}: {classes:?}");
+                    assert!(!classes.iter().any(|c| c.starts_with("tone-")), "{path}");
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // A picture covers the tone as before: the tile keeps its class, the picture over the letter.
+    upload(&app, &cookie, jack, &png()).await;
+    let hash = avatar_hash(&app, jack).await.unwrap();
+    let html = app.get_page("/devices", &cookie).await.text();
+    assert!(html.contains(&format!(
+        "<span class=\"avatar tone-sky\" aria-hidden=\"true\">J<img class=\"avatar-img\" \
+         src=\"/phone-avatars/{hash}\""
+    )));
+}
+
+/// A stored tone out of range (a hand-edited row, a later shorter palette) still maps to a tone.
+#[test]
+fn a_tone_out_of_range_still_has_a_class() {
+    use crate::handlers::devices::{AVATAR_TONES, avatar_class_of};
+    assert_eq!(avatar_class_of(true, 0), "tone-peach");
+    assert_eq!(avatar_class_of(true, 9), AVATAR_TONES[2]);
+    assert_eq!(avatar_class_of(true, -1), AVATAR_TONES[6]);
+    assert_eq!(avatar_class_of(false, 3), "avatar-grey");
+}
+
+/// `AVATAR_TONES`, the new phone's `INSERT` and `style.css` agree: one `--avatar-bg` rule per tone
+/// and no other, as many `VALUES` rows as tones, and every colour under the night letter (`#0C0C14`)
+/// at 9.7:1 or more - the decided palette's floor, rose's 9.76 (design 85 §5.1).
+#[test]
+fn the_tones_agree_with_the_stylesheet_and_carry_the_letter() {
+    use crate::handlers::devices::{AVATAR_TONES, next_tone};
+    let sql = next_tone();
+    let values = &sql[sql.find("VALUES ").unwrap()..sql.find(" SELECT").unwrap()];
+    assert_eq!(values.matches('(').count(), AVATAR_TONES.len(), "{values}");
+
+    fn luminance(hex: &str) -> f64 {
+        let channel = |i: usize| {
+            let c = u8::from_str_radix(&hex[i..i + 2], 16).unwrap() as f64 / 255.0;
+            if c <= 0.04045 {
+                c / 12.92
+            } else {
+                ((c + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * channel(1) + 0.7152 * channel(3) + 0.0722 * channel(5)
+    }
+    let letter = luminance("#0C0C14");
+
+    let css = std::fs::read_to_string("static/style.css").unwrap();
+    // The status words' `.tone-green` and the like share the prefix; only the avatar's set `--avatar-bg`.
+    assert_eq!(
+        css.lines()
+            .filter(|l| l.starts_with(".tone-") && l.contains("--avatar-bg"))
+            .count(),
+        AVATAR_TONES.len(),
+        "a tone in style.css that AVATAR_TONES doesn't have"
+    );
+    for class in AVATAR_TONES {
+        let open = format!("\n.{class} {{ --avatar-bg: #");
+        assert_eq!(css.matches(&open).count(), 1, "{class}");
+        let at = css.find(&open).unwrap() + open.len() - 1;
+        let hex = &css[at..at + 7];
+        assert_eq!(&css[at + 7..at + 10], "; }", "{class}");
+        let ratio = (luminance(hex) + 0.05) / (letter + 0.05);
+        assert!(ratio >= 9.7, "{class} {hex}: {ratio:.2}");
+    }
 }

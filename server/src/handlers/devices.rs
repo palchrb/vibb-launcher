@@ -218,10 +218,52 @@ pub(crate) fn meter_of(
     screen.filter(|_| said).and_then(|s| s.percent())
 }
 
+/// The phones' own avatar colours (design 85 §5.1), in the order they are handed out: each class
+/// sets `.avatar`'s `--avatar-bg` in `style.css`, every one under the night letter at 9.7:1 or
+/// more. `devices.avatar_tone` is an index into it (migration 0138).
+pub(crate) const AVATAR_TONES: [&str; 7] = [
+    "tone-peach",
+    "tone-sky",
+    "tone-butter",
+    "tone-lilac",
+    "tone-sage",
+    "tone-teal",
+    "tone-rose",
+];
+
+/// The tone a new phone takes, as a scalar subquery for the device's own `INSERT` (design 85 §5.2):
+/// the first one no phone has; past [AVATAR_TONES]' length, the one the fewest have (the lowest on a
+/// tie). One statement, no read before the write, so two phones added at once can't both take the
+/// same free tone.
+///
+/// A stored tone counts by the class it shows ([avatar_class_of]'s `rem_euclid`), so a value out of
+/// range (9) holds butter like a 2.
+pub(crate) fn next_tone() -> String {
+    let count = AVATAR_TONES.len();
+    let tones = (0..count)
+        .map(|n| format!("({n})"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "(WITH tones(n) AS (VALUES {tones}) \
+         SELECT t.n FROM tones t \
+         LEFT JOIN devices d ON ((d.avatar_tone % {count}) + {count}) % {count} = t.n \
+         GROUP BY t.n ORDER BY COUNT(d.id), t.n LIMIT 1)"
+    )
+}
+
+/// The `INSERT` of a new phone by its name (bound once), with its tone ([next_tone]), answering its id.
+pub(crate) fn insert_device_sql() -> String {
+    format!(
+        "INSERT INTO devices (name, avatar_tone) VALUES (?, {}) RETURNING id",
+        next_tone()
+    )
+}
+
 /// A phone's avatar class beside `avatar` (also on the Apps tab): grey until it is set up, else
-/// none - every set-up phone has `.avatar`'s peach.
+/// its own tone (design 85 §5.4).
 pub(crate) fn avatar_class(device: &Device) -> &'static str {
-    avatar_class_of(device.enrolled_at.is_some())
+    avatar_class_of(device.enrolled_at.is_some(), device.avatar_tone)
 }
 
 /// The phone's own picture's URL over its letter tile (server round C), `None` without one.
@@ -229,9 +271,14 @@ pub(crate) fn avatar_photo(device: &Device) -> Option<String> {
     crate::handlers::device_avatar::src_of(device.avatar_hash.as_deref())
 }
 
-/// [avatar_class] from whether the phone is set up (the inbox's rows).
-pub(crate) fn avatar_class_of(enrolled: bool) -> &'static str {
-    if enrolled { "" } else { "avatar-grey" }
+/// [avatar_class] from whether the phone is set up and its stored tone (the inbox's rows). A tone
+/// out of range (a hand-edited row, a later shorter palette) still maps to one, never a panic.
+pub(crate) fn avatar_class_of(enrolled: bool, tone: i64) -> &'static str {
+    if enrolled {
+        AVATAR_TONES[tone.rem_euclid(AVATAR_TONES.len() as i64) as usize]
+    } else {
+        "avatar-grey"
+    }
 }
 
 /// The avatar's letter: the name's first letter or digit, upper-cased when that gives one
@@ -503,7 +550,7 @@ pub async fn create_device(
 /// (design 22 §3.1) - a code made here could never be shown again.
 async fn insert_device_with_policy(state: &AppState, name: &str) -> Result<i64, sqlx::Error> {
     let mut tx = state.db.begin().await?;
-    let id: i64 = sqlx::query_scalar("INSERT INTO devices (name) VALUES (?) RETURNING id")
+    let id: i64 = sqlx::query_scalar(&insert_device_sql())
         .bind(name)
         .fetch_one(&mut *tx)
         .await?;

@@ -537,11 +537,11 @@ impl TestApp {
         }
     }
 
-    /// Inserts a device the way `handlers::devices::create_device` does (kiosk on, policy row
-    /// present) and gives it a setup-QR enrollment code (design 22: stored hashed, valid 30
-    /// minutes), returning `(device_id, enrollment_code)`.
+    /// Inserts a device the way `handlers::devices::create_device` does (its own tone, kiosk on,
+    /// policy row present) and gives it a setup-QR enrollment code (design 22: stored hashed, valid
+    /// 30 minutes), returning `(device_id, enrollment_code)`.
     pub async fn create_device(&self, name: &str) -> (i64, String) {
-        let id: i64 = sqlx::query_scalar("INSERT INTO devices (name) VALUES (?) RETURNING id")
+        let id: i64 = sqlx::query_scalar(&crate::handlers::devices::insert_device_sql())
             .bind(name)
             .fetch_one(&self.db)
             .await
