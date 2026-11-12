@@ -394,6 +394,22 @@ test("the wait asks for the answer in the page's language and words it with the 
 // Design 85 revision 3: the Locate page draws the newest fix as the Alle view's marker.
 function markerLeaflet() {
     const L = fakeLeaflet();
+    // As Leaflet 1.9: a marker's element exists only once the map has a view, then its "add" fires.
+    let ready = false;
+    const waiting = [];
+    const map = L.map;
+    L.map = (el, options) => {
+        const m = map(el, options);
+        const view = () => {
+            ready = true;
+            while (waiting.length) waiting.shift()();
+        };
+        const fitBounds = m.fitBounds;
+        m.fitBounds = (all, fitOptions) => { fitBounds(all); L.calls.push(["fitOptions", fitOptions]); view(); };
+        const setView = m.setView;
+        m.setView = (at, zoom) => { setView(at, zoom); view(); return m; };
+        return m;
+    };
     L.control = { zoom: (options) => ({ addTo: () => L.calls.push(["zoom", options.position]) }) };
     L.divIcon = (options) => ({ options });
     L.circle = (at, options) => {
@@ -402,8 +418,15 @@ function markerLeaflet() {
     };
     L.marker = (at, options) => {
         const el = fakeAttrs({});
+        const handlers = {};
         L.calls.push(["marker", at, options && options.icon ? options.icon.options.html : null]);
-        const m = { addTo: () => m, getElement: () => el, el };
+        const m = { getElement: () => (ready ? el : undefined), el };
+        m.on = (type, fn) => { handlers[type] = fn; return m; };
+        m.addTo = () => {
+            const added = () => { if (handlers.add) handlers.add(); };
+            if (ready) added(); else waiting.push(added);
+            return m;
+        };
         m.bindPopup = (node, popupOptions) => { L.calls.push(["popup", node.textContent, popupOptions && popupOptions.className]); return m; };
         m.openPopup = () => { L.calls.push(["open"]); return m; };
         L.last = m;
@@ -451,6 +474,9 @@ test("the Locate page's newest fix is the phone's avatar with its tag and accura
     assert.strictEqual(tag.textContent, "10 min");
     assert.deepStrictEqual(L.calls.find((c) => c[0] === "popup"), ["popup", "10 min ago · within 40 m", "all-popup"]);
     assert.ok(!L.calls.some((c) => c[0] === "open"), "the tag says the age; the bubble waits for a tap");
+    // The chips have the top: the fit keeps 64 px clear there.
+    assert.deepStrictEqual(L.calls.find((c) => c[0] === "fitOptions")[1], { maxZoom: 16, paddingTopLeft: [30, 64], paddingBottomRight: [30, 30] });
+    // The first draw is spoken once the map has its view (the element comes with it).
     assert.strictEqual(L.last.el.getAttribute("role"), "button");
     assert.strictEqual(L.last.el.getAttribute("aria-label"), "Emma, 10 min ago, within 40 m");
 });
@@ -469,6 +495,9 @@ test("an old fix is the grey avatar with the clock tag and a dashed circle; a ne
     assert.strictEqual(av.className, "avatar tone-sky all-av-old");
     assert.strictEqual(av.children[0].attrs.src, "/phone-avatars/abc");
     assert.strictEqual(tag.className, "all-tag all-tag-old");
+    // Without chips: the plain padding.
+    assert.deepStrictEqual(L.calls.find((c) => c[0] === "fitOptions")[1], { maxZoom: 16, padding: [30, 30] });
+    assert.strictEqual(L.last.el.getAttribute("aria-label"), "Emma, 10 min ago, within 40 m");
     // A fix newer than the one the page shows: fresh, no tag; no circle without an accuracy.
     const L2 = markerLeaflet();
     const newer = fakePage({ box: { ...MARK }, answers: { "/devices/3/locations.json?since=12": [point(4, "later")] } });

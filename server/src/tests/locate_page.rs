@@ -259,7 +259,7 @@ async fn the_chips_and_the_alle_view() {
     assert!(!html.contains("data-marker-tag"), "no position, no tag");
     assert!(html.contains("<p class=\"map-legend\"><span>"));
     assert!(html.contains("<p class=\"map-legend map-legend-over\" aria-hidden=\"true\">"));
-    assert!(html.contains("<script src=\"/static/map-marker.js?v=1\"></script>\n    <script src=\"/static/locate.js?v=7\"></script>"));
+    assert!(html.contains("<script src=\"/static/map-marker.js?v=1\"></script>\n    <script src=\"/static/locate.js?v=8\"></script>"));
 
     fix(&app, emma, 59.9, 2).await;
     let (jack, _) = app.create_device("<b>Jack</b>").await;
@@ -274,7 +274,7 @@ async fn the_chips_and_the_alle_view() {
         let html = locate_page(&app, &cookie, query).await;
         assert!(html.contains("<section id=\"all\""), "{query}");
         assert!(html.contains("data-locate-all"), "{query}");
-        assert!(html.contains("/static/locate-all.js?v=3"), "{query}");
+        assert!(html.contains("/static/locate-all.js?v=4"), "{query}");
         assert!(!html.contains("/command/"), "{query}");
         assert!(!html.contains("data-group=\"phones\""), "{query}");
         check_forms(&html);

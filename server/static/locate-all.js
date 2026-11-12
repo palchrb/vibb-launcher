@@ -31,7 +31,7 @@
     // The accuracy circle when the page names no `--map-trail`.
     var TRAIL = "#A64B25";
     // The marker's look, shared with the one-phone view (static/map-marker.js, loaded first).
-    var Mk = root.HandyMapMarker || require("./map-marker.js");
+    var Mk = root.HandyMapMarker || (typeof require === "function" ? require("./map-marker.js") : null);
     var fillMarker = Mk.fillMarker;
 
     function w(el, name) {

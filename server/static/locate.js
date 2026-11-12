@@ -252,14 +252,18 @@
                 L.circle([last.latitude, last.longitude], options).addTo(layer);
             }
             var made = Mk.icon(L, doc, [row]);
-            var marker = L.marker([last.latitude, last.longitude], { icon: made.icon, keyboard: true, zIndexOffset: 1000 })
-                .addTo(layer)
-                .bindPopup(popup, { className: "all-popup", autoPanPaddingTopLeft: [10, chips ? 64 : 10] });
-            var el = marker.getElement ? marker.getElement() : null;
-            if (el) {
+            var marker = L.marker([last.latitude, last.longitude], { icon: made.icon, keyboard: true, zIndexOffset: 1000 });
+            // Its element exists only once the map has a view (Leaflet adds a layer when the map is
+            // ready): spoken at its "add", and at once when it is there already.
+            var speak = function () {
+                var el = marker.getElement ? marker.getElement() : null;
+                if (!el) return;
                 el.setAttribute("role", "button");
                 el.setAttribute("aria-label", shownFix && mark.label ? mark.label : popup.textContent);
-            }
+            };
+            marker.on("add", speak);
+            marker.addTo(layer).bindPopup(popup, { className: "all-popup", autoPanPaddingTopLeft: [10, chips ? 64 : 10] });
+            speak();
         }
 
         function load(span) {

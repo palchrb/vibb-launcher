@@ -2040,11 +2040,11 @@ pointer here.
   (`all_phones`, no wait) for the chips and the marker; the online dot and `PhoneLink` are gone.
 - **The marker** is the Alle view's: the box (`.map-box.map-one`, the Alle height) carries the phone's row as
   `data-marker-tone`/`-initial`/`-photo`/`-tag`/`-fresh`/`-label` (`locate::Marker`, from `AllPhone::marker`),
-  `data-chips` while the chips are there; `static/locate.js` (`?v=7`) draws the avatar and tag, the accuracy circle
+  `data-chips` while the chips are there; `static/locate.js` (`?v=8`) draws the avatar and tag, the accuracy circle
   (`accuracy_meters` of the newest point) and the popup's words in the white bubble on a tap (no longer opened by
   itself), the zoom at the bottom right, the fit 64 px clear of the chips. A fix newer than the one rendered is drawn
   fresh without a tag. The Locations page (no `data-marker-*`) keeps Leaflet's pin.
-- **`static/map-marker.js`** (`HandyMapMarker`, `?v=1`, loaded before `locate-all.js` `?v=3` and `locate.js`): the
+- **`static/map-marker.js`** (`HandyMapMarker`, `?v=1`, loaded before `locate-all.js` `?v=4` and `locate.js`): the
   avatar, the marker's node and tag (none for a row without one), its `divIcon`, the circle's style - shared by both
   views.
 - **The legend** is under the map and the full screen's strip on the one-phone view too.
