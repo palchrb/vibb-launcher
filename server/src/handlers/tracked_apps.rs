@@ -2009,7 +2009,7 @@ struct AppTile {
     colour: &'static str,
     /// The icon key (`/static/app-icons/<key>.svg`) and the tile's colour.
     icon: Option<(String, &'static str)>,
-    /// Design 87 §8.1: without a catalog glyph, the app's real logo (its URL) as most phones sent it; the
+    /// Design 87 §8.1 (revision 3): the app's real logo (its URL) as most phones sent it, over a catalog glyph; the
     /// launcher's row the server's Vibb mark.
     logo: Option<String>,
 }

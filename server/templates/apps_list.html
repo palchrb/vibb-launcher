@@ -33,10 +33,10 @@
     <div class="group group-avatars group-small" data-group="catalog">
         {% for a in apps %}
         <a class="row app-row" href="/apps/tracked/{{ a.id }}" data-app="{{ a.id }}">
-            {% if let Some((icon, colour)) = a.tile.icon %}
-            <span class="app-row-tile" style="background: {{ colour }}" aria-hidden="true"><img src="/static/app-icons/{{ icon }}.svg" alt=""></span>
-            {% else if let Some(src) = a.tile.logo %}
+            {% if let Some(src) = a.tile.logo %}
             <span class="app-row-tile app-row-logo {{ a.tile.colour }}" aria-hidden="true">{{ a.tile.letter }}<img src="{{ src }}" alt="" decoding="async"></span>
+            {% else if let Some((icon, colour)) = a.tile.icon %}
+            <span class="app-row-tile" style="background: {{ colour }}" aria-hidden="true"><img src="/static/app-icons/{{ icon }}.svg" alt=""></span>
             {% else %}
             <span class="app-row-tile {{ a.tile.colour }}" aria-hidden="true">{{ a.tile.letter }}</span>
             {% endif %}

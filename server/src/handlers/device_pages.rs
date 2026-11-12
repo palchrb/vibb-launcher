@@ -1793,11 +1793,11 @@ pub async fn view_filter(
 pub struct AppView {
     pub row: crate::handlers::devices::UnifiedAppRow,
     pub anchor: String,
-    /// The tile: the icon this phone shows for it (its own choice, else the catalog's) on that
+    /// The tile without a logo: the icon this phone shows for it (its own choice, else the catalog's) on that
     /// colour, else the name's first letter.
     pub icon: Option<(String, &'static str)>,
-    /// Design 87 §8.1: without a chosen glyph, the app's real logo this phone sent (its URL; Vibb One's row the
-    /// server's Vibb mark) over the letter, which shows if it doesn't load.
+    /// Design 87 §8.1 (revision 3): the app's real logo this phone sent (its URL; Vibb One's row the server's Vibb
+    /// mark) over the letter, which shows if it doesn't load - the row's tile whatever glyph was chosen.
     pub logo: Option<String>,
     pub letter: String,
     /// Name and icon: every allowed app with a package name but Vibb (design 14).
