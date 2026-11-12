@@ -64,8 +64,8 @@ pub const MIN_VIEW_SIDE: u32 = 228;
 /// How far, in the original's pixels, a view may miss (the cropper works on its own copy's pixels).
 const VIEW_SLACK: f64 = 2.0;
 
-/// One photo is decoded at a time: a Pi has little memory and uploads are rare.
-static PROCESSING: Semaphore = Semaphore::const_new(1);
+/// One photo is decoded at a time: a Pi has little memory and uploads are rare. The apps' logos (design 87) share it.
+pub(crate) static PROCESSING: Semaphore = Semaphore::const_new(1);
 
 /// Serialises everything that writes photo files or changes which ones are referenced:
 /// store + `photo_hash` commit, [prune], [recover_missing]. Without it a prune running between

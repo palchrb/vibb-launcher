@@ -2060,3 +2060,39 @@ pointer here.
 - **The legend** is under the map and the full screen's strip on the one-phone view too.
 - **Tests**: `locate_page::the_chips_and_the_alle_view`, `the_chips_speak_the_readers_language`,
   `both_map_views_offer_full_screen`; `jstest/locate.test.js` (the avatar marker, its tag and circle, a newer fix).
+
+## The apps' own logos (design 87 step 1, 2026-11-12, branch `app-logos`)
+
+- **The user** (2026-11-12): "de ekte logoene til apk vi legger til (og helst egentlig også de standard google appene
+  som er pre-installed)". The launcher draws each installed app's own icon (its "App logo" render, 128 px PNG, design
+  87 step 2), reports the SHA-256 per app in `installed_apps[].logo` and uploads only what the report's answer asks
+  for. Step 1 is the server and the contract alone: no launcher sends `logo` yet, so every page looks as before.
+- **`app_logos.rs`**: the intake (`take_logos` strips the logos from the stored snapshot, `intake` moves
+  `device_app_logos` - 0140 - and prunes the files only the removed or replaced rows named), the answer (`answer`:
+  `200 {"wanted_logos"}` to a launcher claiming `app_logos_v1`, at most 40, allowed apps first, then by package; 204
+  otherwise), the upload (`upload`: the table of design 87 §4.3 in its order; `reencode` decodes under limits - the
+  PNG signature, `PngDecoder::with_limits` at 128 x 128 and 1 MiB, exactly 128 square - and writes 8-bit RGBA with
+  the server's own encoder; under `photos::PROCESSING`), the caps (4,000 files and 64 MB in all, 300 files and 12 MB
+  named by one phone's rows, 300 uploads a phone a day charged before the decode, a refused hash not asked for again
+  for a day - `app_logos::Memory`, in memory only; `app_logos_full`/`app_logos_phone_full` logged once a day), the
+  prune (after a report, after a phone's delete with the hashes read before it, and `prune_all` in the retention pass
+  with stray temp files), and serving (`view`, `GET /app-logos/{hash}` behind the session, only a hash a row names,
+  `private, max-age=31536000, immutable`, `nosniff`; never on the phones' port).
+- **Not backed up**: `data/app_logos/` is no store of the backup zip. After a restore the rows name files that aren't
+  there, the next report wants them again, and the pages show the letter until they come.
+- **The tiles** (§8.1): a chosen glyph wins (the phone's Name and icon row as a whole, else the catalog default);
+  else the logo (for "App logo" and for "Automatic", Q1); else the letter. Device › Apps uses this phone's own logo
+  only (Q3, `phone_logos`), Vibb One's row the server's Vibb mark (`app_logos::VIBB_MARK`), Meldinger its glyph; the
+  Apps tab's catalog rows the hash most phones name, a tie to the newest (`catalog_logos`, R2-L4). The logo is
+  `<span class="app-row-tile app-row-logo">K<img src="/app-logos/<hash>" alt="" decoding="async"></span>`: the image
+  over the letter, which shows if it doesn't load; the hairline ring is `--sep`. Every app tile in the lists is round
+  now (`.app-row-tile`, `border-radius: 50%`, Q2).
+- **The Name and icon preview** (Device › Apps and an app's page): with a logo known, the form carries `data-logo` and
+  the tile an `<img data-preview-logo>` shown only for "App logo" (`static/app-display.js` `?v=6`; server-rendered for
+  a page without JS); "Automatic" keeps "Vibb style" (R2-M6). No new words, no new form or save (nothing can move the
+  page), the header untouched.
+- **Tests**: `tests::app_logos` (`the_contract`, `the_rows_follow_the_reports_and_the_files_follow_the_rows`,
+  `a_full_phone_is_asked_for_nothing_more`, `only_a_named_logo_is_served_behind_the_session`,
+  `the_pages_show_the_logos`), `app_logos::tests` (the decode's limits, the budget and refusals),
+  `intake_limits::the_field_tables_keep_every_contract_key` (`report`'s keys),
+  `listeners::the_device_router_serves_nothing_but_the_device_api` (`/app-logos/`); the launcher's `AppLogosTest`.

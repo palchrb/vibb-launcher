@@ -6,6 +6,7 @@ mod admin_auth;
 mod android_lock_page;
 mod app_display;
 mod app_lock;
+mod app_logos;
 mod app_updates;
 mod attention;
 mod avatars;
@@ -219,6 +220,8 @@ impl TestApp {
             dns_feed_dir: std::sync::Arc::new(dir.path().join("dns_feeds")),
             wallpaper_dir: std::sync::Arc::new(dir.path().join("wallpapers")),
             avatar_dir: std::sync::Arc::new(dir.path().join("device_avatars")),
+            app_logo_dir: std::sync::Arc::new(dir.path().join("app_logos")),
+            app_logos: Default::default(),
             command_streams: Default::default(),
             app_syncs: Default::default(),
             tracked_apps_dir: std::sync::Arc::new(dir.path().join("tracked_apps")),

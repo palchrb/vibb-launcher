@@ -133,6 +133,12 @@ pub fn device_routes(state: AppState) -> Router<AppState> {
                 handlers::music_api::STORYTEL_TOKEN_BODY_LIMIT,
             )),
         )
+        // Design 87 §4.3: a logo the status report's answer asked for, raw `image/png`.
+        .route(
+            "/api/devices/app-logos/{hash}",
+            post(crate::app_logos::upload)
+                .layer(DefaultBodyLimit::max(crate::app_logos::MAX_BYTES)),
+        )
         // Design 75 §3.4: the lock glance's weather and the card's nowcast line.
         .route("/api/devices/weather", get(handlers::weather::forecast))
         .route("/api/devices/weather/now", get(handlers::weather::now))

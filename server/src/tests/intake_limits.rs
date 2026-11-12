@@ -412,6 +412,19 @@ fn the_field_tables_keep_every_contract_key() {
             );
             checked += 1;
         }
+        // Design 87: a report's installed apps (`app_logos.json`'s `report`, with `logo`), every key kept.
+        if let Some(apps) = json.get("report").and_then(|r| r.get("installed_apps")) {
+            let parsed: Vec<crate::models::InstalledApp> =
+                serde_json::from_value(apps.clone()).unwrap();
+            let kept = crate::handlers::device_api::cap_installed_apps(parsed);
+            assert_eq!(
+                &serde_json::to_value(&kept).unwrap(),
+                apps,
+                "{}'s installed apps",
+                path.display()
+            );
+            checked += 1;
+        }
     }
     assert!(checked >= 1, "time_status_report.json carries a time_state");
 }

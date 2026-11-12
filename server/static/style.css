@@ -1888,6 +1888,20 @@ th {
     height: 55%;
 }
 
+/* Design 87: "App logo"'s preview, the app's real logo filling the round tile. */
+.app-tile {
+    position: relative;
+    overflow: hidden;
+}
+
+.app-tile .app-tile-logo {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+}
+
 .app-tile-own {
     font-size: 0.75rem;
     text-align: center;
@@ -2047,15 +2061,18 @@ th {
     font-size: 1rem;
 }
 
-/* A catalog app's tile: its catalog icon on its colour, else its first letter (decorative). */
+/* A catalog app's tile: its catalog icon on its colour, else its real logo (design 87), else its first letter
+   (decorative). Round like the phone's and the Name and icon preview's (design 87 Q2). */
 .app-row-tile {
+    position: relative;
+    overflow: hidden;
     flex: none;
     display: flex;
     align-items: center;
     justify-content: center;
     width: 36px;
     height: 36px;
-    border-radius: 9px;
+    border-radius: 50%;
     background: #636366;
     color: #FFFFFF;
     font-size: 1rem;
@@ -2066,6 +2083,20 @@ th {
 .app-row-tile img {
     width: 22px;
     height: 22px;
+}
+
+/* Design 87: the app's real logo fills the tile over its letter (which shows if the image doesn't load); the
+   hairline ring keeps a white logo on the white card, and a dark one at night. */
+.app-row-logo {
+    box-shadow: 0 0 0 1px var(--sep);
+}
+
+.app-row-tile.app-row-logo img {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
 }
 
 .row > .badge {

@@ -813,9 +813,9 @@ pub(crate) const MAX_APP_VERSION_NAME_CHARS: usize = 60;
 /// The installed-apps list within limits (security review M7): entries without a real package
 /// name are dropped, and so are duplicates and every name under the prefix reserved for Vibb One's built-ins
 /// (design 82 D1: such a package never reaches the Apps page, the allowlist or a lock row); labels are clipped, an
-/// installer that isn't a package name is dropped, a versionName is trimmed and clipped (a blank one is none), and
-/// at most [MAX_INSTALLED_APPS] are kept.
-fn cap_installed_apps(apps: Vec<InstalledApp>) -> Vec<InstalledApp> {
+/// installer that isn't a package name is dropped, a versionName is trimmed and clipped (a blank one is none), a
+/// logo that isn't 64 lowercase hex is none (design 87), and at most [MAX_INSTALLED_APPS] are kept.
+pub(crate) fn cap_installed_apps(apps: Vec<InstalledApp>) -> Vec<InstalledApp> {
     let reported = apps.len();
     let mut seen = std::collections::HashSet::new();
     let capped: Vec<InstalledApp> = apps
@@ -832,6 +832,8 @@ fn cap_installed_apps(apps: Vec<InstalledApp>) -> Vec<InstalledApp> {
                 .as_deref()
                 .map(|name| crate::audit::clip(name.trim(), MAX_APP_VERSION_NAME_CHARS).to_string())
                 .filter(|name| !name.is_empty()),
+            // Design 87 (R2-M5): set here, never carried through unchecked by `..app`.
+            logo: app.logo.filter(|hash| crate::photos::is_valid_hash(hash)),
             ..app
         })
         .collect();
@@ -1236,6 +1238,8 @@ pub async fn status(
     // limits - at most MAX_INSTALLED_APPS apps with real package names, short labels, and short
     // free-text fields. Everything below works on the capped report.
     report.installed_apps = report.installed_apps.take().map(cap_installed_apps);
+    // Design 87: the apps' logos go to `device_app_logos`, never into the stored snapshot.
+    let reported_logos = crate::app_logos::take_logos(report.installed_apps.as_mut());
     report.lock_reason = crate::audit::clip(&report.lock_reason, 32).to_string();
     report.app_version = report
         .app_version
@@ -1449,6 +1453,10 @@ pub async fn status(
     .ok();
     // Design 69 §4.2: which calendars the phone has (its own sanitizer), never an event.
     crate::calendar::store_report(&state.db, device.id, report.calendar.as_ref()).await;
+    // Design 87: which logo each app has on this phone; a package gone from the report loses its row.
+    if let Some(apps) = &report.installed_apps {
+        crate::app_logos::intake(&state, device.id, apps, &reported_logos).await;
+    }
     // Design 76: the certificate check's sightings move this phone's state (receive time); an outside one is pushed.
     crate::server_tls::intake(&state, device.id, report.server_tls.as_ref()).await;
     // Design 83: a contact's picture whose address the parent must allow becomes a question; and a phone with
@@ -1719,7 +1727,8 @@ pub async fn status(
         .and_then(|loc| crate::models::checked_location(loc).map(|at| (loc, at)));
     crate::zones::intake(&state, device.id, &fixes, resent.as_ref()).await;
 
-    StatusCode::NO_CONTENT
+    // Design 87 §4.2: a launcher claiming `app_logos_v1` gets the logos the server wants (200), any other 204.
+    crate::app_logos::answer(&state, device.id, &report.capabilities, &reported_logos).await
 }
 
 /// The phone's report before this one, as the intake compares with it.

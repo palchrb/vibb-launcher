@@ -1796,6 +1796,9 @@ pub struct AppView {
     /// The tile: the icon this phone shows for it (its own choice, else the catalog's) on that
     /// colour, else the name's first letter.
     pub icon: Option<(String, &'static str)>,
+    /// Design 87 §8.1: without a chosen glyph, the app's real logo this phone sent (its URL; Vibb One's row the
+    /// server's Vibb mark) over the letter, which shows if it doesn't load.
+    pub logo: Option<String>,
     pub letter: String,
     /// Name and icon: every allowed app with a package name but Vibb (design 14).
     pub display: Option<crate::app_display::AppDisplayForm>,
@@ -2055,6 +2058,11 @@ pub(crate) async fn render_apps(
         Ok(apps) => apps,
         Err(err) => return read_failed(lang, id, "the phone's lock-screen media apps", err),
     };
+    // Design 87: the apps' logos this phone sent; a failed read is the page's read error, like the reads above.
+    let logos = match crate::app_logos::phone_logos(state, id).await {
+        Ok(logos) => logos,
+        Err(err) => return read_failed(lang, id, "the phone's app logos", err),
+    };
     // Design 82 W2: the phone still has threads to read, so Meldinger may be on Home while SMS is not managed.
     let messages_history = match crate::sms::reported_history(&state.db, id).await {
         Ok(history) => history,
@@ -2121,6 +2129,7 @@ pub(crate) async fn render_apps(
                         .map(|(_, e)| e),
                 );
                 form.catalog_default = default.map(|values| values.describe(lang));
+                form.logo = logos.get(&package).cloned();
                 form.own_row = phone_row.is_some() || off_home.contains(&package);
                 form.from = from.clone();
                 form.on_home = Some(!off_home.contains(&package));
@@ -2164,8 +2173,14 @@ pub(crate) async fn render_apps(
                 )
             })
             .flatten();
+        let logo = if row.is_launcher {
+            Some(crate::app_logos::VIBB_MARK.to_string())
+        } else {
+            logos.get(&package).cloned()
+        };
         let view = AppView {
             builtin: false,
+            logo,
             perms,
             letter: crate::handlers::devices::initial(&row.label),
             refused: refused
@@ -2240,6 +2255,7 @@ pub(crate) async fn render_apps(
             at,
             AppView {
                 builtin: true,
+                logo: None,
                 perms: None,
                 letter: crate::handlers::devices::initial(&row.label),
                 refused: None,

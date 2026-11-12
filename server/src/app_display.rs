@@ -444,6 +444,9 @@ pub struct AppDisplayForm {
     pub builtin: Option<BuiltinLook>,
     /// A line over the fields, in the page's language (design 82 D10: an older Vibb One doesn't show the choice yet).
     pub note: Option<&'static str>,
+    /// Design 87 §8.2: the app's real logo (its URL), which the preview shows for "App logo"; "Automatic" keeps
+    /// "Vibb style" (R2-M6). `None` while no phone has sent one.
+    pub logo: Option<String>,
 }
 
 /// What a refused save sends back to the form: the entered values and the error.
@@ -534,6 +537,7 @@ impl AppDisplayForm {
             on_home_words: None,
             builtin: None,
             note: None,
+            logo: None,
         }
     }
 
