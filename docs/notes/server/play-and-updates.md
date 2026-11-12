@@ -390,3 +390,92 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   launcher switch and the upload, the ABI line, the cached index going with its repo's last app, the phones'
   catalog), `tests::tracked_apps::every_form_on_the_app_pages_returns_to_its_page` (an F-Droid row too),
   `music_spotify::migrations_73_to_95_in_order`. QA: `docs/review/qa-fdroid-source-code.md` (Q-1..Q-9 fixed).
+
+## Update holds and the per-app wait (design 90, `docs/design/90-catalog-update-holds.md` - §17 its revision 2, migration `0141_catalog_update_holds.sql`)
+
+The user (2026-11-12): auto-update stays for a release that keeps the package and the key and asks for nothing new
+sensitive; one that asks for more waits for the parent; every GitHub and F-Droid release first waits the app's own
+hours. Server only - the phones see only `latest_release_*` (`device_api::scoped_apps`, the download, `X-Release-Tag`,
+Install Now), so a held or waiting release never reaches them and no contract changes.
+
+- **What an APK asks for** (`apk.rs`): `ApkIdentity.permissions` - every `<uses-permission>`,
+  `<uses-permission-sdk-23>`, `<uses-permission-sdk-m>` anywhere (an element counts by its name whatever its namespace;
+  one whose `android:maxSdkVersion` is below `catalog_holds::PHONE_MIN_SDK`, 34 = the launcher's `minSdk`, a test reads
+  `launcher/app/build.gradle.kts`, left out) and any element's `android:permission` that is one of
+  `apk::BIND_PERMISSIONS` (notification listener, accessibility, device admin, VPN, keyboard, autofill, credential
+  provider) as `bind:<name>`; sorted, deduplicated. **All or nothing**: the walk now goes to the document's end (the
+  package, codes and `min_sdk` keep their lenient reading); the list is `Some` only when every chunk parsed, the walk
+  ended at the declared size, and every counted attribute was found **by resource id** (`android:name` `0x01010003`,
+  `android:permission` `0x01010006`, `maxSdkVersion` `0x01010271` - never by the name fallback, a parser differential),
+  once, a string (typed and raw agreeing when both are there), a numeric `maxSdkVersion`, at most 500 names of at most
+  200 bytes. Anything else is `None` - never "no permissions". Fixtures `testdata/apk/perms-key3-v1.apk` (INTERNET,
+  POST_NOTIFICATIONS) and `perms-key3-v2.apk` (READ_CONTACTS, a `maxSdkVersion="32"` WRITE_EXTERNAL_STORAGE, an sdk-23
+  ACCESS_FINE_LOCATION, another app's permission, a service with BIND_ACCESSIBILITY_SERVICE, a receiver with
+  BIND_DEVICE_ADMIN): aapt2 + apksigner (v2+v3) with a third throwaway key, made 2026-11-12 and discarded.
+- **What is sensitive** (`catalog_holds::SENSITIVE`, one row per exact name with its group; `GROUPS` the order and the
+  words, `apps.holds.group.*` as a list item, `apps.holds.group_in.*` in a sentence): the design's §3 table - SMS,
+  contacts, call log, phone, location (and background), photo locations, camera, microphone, body sensors (and Android
+  16's `android.permission.health.*` by prefix), calendar, nearby devices, media, all files, overlay, installing apps,
+  usage data, the five `bind:` marks plus autofill and credential provider (keyboard), and `INTERNET` (D3: only an app
+  that had none). Not: `QUERY_ALL_PACKAGES` (D4), notifications, the other special accesses, anything outside
+  `android.permission.`. An unknown permission is not sensitive.
+- **The accepted set** (`tracked_apps.accepted_permissions`, sensitive names as JSON; NULL = unknown, counted as none):
+  grows only by the parent - the app's **first release** seeds it (never held: it reaches no phone until ticked; an
+  unreadable list leaves `[]`), **Approve** and a **manual upload** add what they ask for. `latest_release_permissions`
+  is the served release's whole list (every store, Approve, an upload). `backfill_release_permissions` at startup
+  (after `backfill_version_codes`) reads the cached file of a row from before 0141 and seeds the set; an unreadable file
+  leaves both NULL, so the next sensitive release is held (fail closed). "Forget Package and Key…" clears the set to
+  NULL (§17.3 M4: a new key is a new trust) with the held, waiting and declined releases (`forget_holds`); a changed
+  repo or package under Details clears those three.
+- **The verdict** (`catalog_holds::judge`, pure): ours (`ours`: `is_launcher`, or a package in
+  `music::MUSIC_PACKAGES` - never by tag or repo) and a manual row are never judged (`holds_apply`); an unreadable list
+  holds (`unreadable`); sensitive names outside the set hold (`permissions`, the new names kept); "Ask me before every
+  update" (`always_ask`, D9) holds the rest (`always_ask`); else served. The pins are checked before (a release with
+  another key is still refused, never offered for approval).
+- **The wait** (`tracked_apps.release_wait_hours`, 0-336, 48 for every GitHub and F-Droid row - f-droid.org's too, a
+  change from before (D2) - read only through `catalog_holds::wait_hours`, `None` for manual rows and ours). It counts
+  from the source's time (`catalog_holds::anchor`): GitHub's later of the release's `published_at` and the asset's
+  `updated_at` (a swapped APK waits from the swap); an F-Droid index version's `added` (ms, `fdroid::IndexVersion.added`,
+  read leniently: a non-number is no time). A release without a time waits from this server's first sight
+  (`waiting_release_since`, kept while the same `(tag, asset id)` is seen again); an older one without a time is never
+  ripe. Ready = anchor + the app's hours, computed at every sync and page (§17.3 M1: a changed wait re-times it).
+- **The pick** (`catalog_holds::pick`, pure; `sync_listed`): the source's matching releases newest first
+  (`fetch_releases`/`matching_releases` for GitHub; `fdroid_releases` for F-Droid: the API's or the index's newest, then
+  every older stable version, the stored release under its stored tag). The newest **ripe** one is synced - unless it
+  isn't ahead of the served release while that is still listed (§17.3 H2: no step back after an Update Now; a served
+  release gone from the list keeps today's rule, F-Droid's `OlderVersion` guard included), is the held one or behind it,
+  or is at or behind the declined one (`ahead`, `release_ahead`'s rule against any release). The newest unripe one ahead
+  of all three is noted as waiting (`waiting_release_*`, `note_waiting`) - listed, never downloaded, Check Now
+  included; none clears the columns (a pulled release simply goes).
+- **The hold** (`sync_release`): after the download and every check, a `Hold` verdict writes
+  `tracked_app_held_releases` (one per app, `INSERT ... ON CONFLICT DO UPDATE`, only while the app exists) instead of
+  `latest_release_*`; the previous held file goes, nothing is nudged, the release isn't remembered as refused, and the
+  same `(tag, asset id)` is "nothing to do" (never downloaded again). A newer release served supersedes a held one
+  behind it (row and file go); a newer one held replaces it. Its file lives next to the served one
+  (`<tag>-<asset>.apk`); `remove_orphan_files` at startup removes any `.apk` in an app's directory neither names (by
+  file name; the served file is never touched) and a held row whose file is gone.
+- **The answers** (each under the app's sync guard - a running check answers `busy` - and only for the exact
+  `(tag, asset_id)` the form posts, else `stale`; every one back to `?held=<word>#update`): **Approve**
+  (`approve_held`, §17.3 M3) reads the held file again - pins, `check_new_package`, its SHA-256 - and moves it into
+  `latest_release_*` with the set widened and the held row deleted in one transaction, then the old file, the pins, the
+  nudge; a failed check drops the held release and shows as the sync's failure; Security Log
+  `catalog_release_approved`, no inbox row. **Keep** (`decline_held`) drops it and stores `declined_release_*`
+  (`catalog_release_declined`); **Ask Again** (`ask_again`) clears that and starts a check as Check Now does. **Update
+  Now** (`update_now`, D6) lists the source again and syncs that exact release with the wait skipped - still judged, so
+  one asking for more is held (`waits`); not listed any more: `gone`. A long download goes on after the answer.
+- **The page** (`tracked_app_detail.html`): the `#update` group after Check Now (held: "2.0 waits for you", what it
+  asks for, Approve and Keep, an ⓘ with the new groups, the ones it had and every name; waiting: "reaches the phones
+  Thu 14:02", published or found and the app's hours, Update Now; declined: "Kept 1.0 · 2.0 declined", Ask Again);
+  Source & Signing › Release's "Asks for" row (the served release's groups, every name behind its ⓘ); Updates' "Ask me
+  before every update" switch and the wait's own number form (`release-wait`: no autosave, a refusal at its field with
+  what was typed; Security Log `catalog_release_wait_changed`). Add App asks for the wait too (not for uploads,
+  `.synced-only`). The Apps tab's badge "Waits for you" ranks after "Off".
+- **The inbox**: `notifications.md`, "App update notices" - no new kind and no new switch (D1).
+- Tests: `apk::tests` (the fixtures' lists; by name only, a reference, a duplicate, typed and raw disagreeing, a
+  damaged chunk, a short document - `None`), `catalog_holds::tests` (the words, the verdict table, the order and the
+  push's short form, the anchors, the pick's ripe/waiting split, the H2, held and declined cases, first sight, the
+  field, `PHONE_MIN_SDK`), `handlers::tracked_apps::tests` (`a_release_waits_the_apps_hours_then_is_served`,
+  `update_now_sends_the_exact_release_and_the_sync_never_steps_back`,
+  `a_release_asking_for_more_is_held_until_superseded`), `tests::catalog_holds` (Approve, its refusal, Keep and Ask
+  Again, the wait and the switch, the upload, the backfill, migration 0141), the redirect table in
+  `tests::tracked_apps::every_form_on_the_app_pages_returns_to_its_page`.

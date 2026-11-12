@@ -518,6 +518,19 @@ push varsel ... kanskje man kan få valget". Branch `pwa-fixes-b`.
   `testdata/installed_apps_report.json` (byte-identical in the launcher's test resources: its `SyncScheduleTest`
   encodes exactly it, `the_installed_apps_contract_raises_app_updated` posts it, both compare the copies; the code QA's
   Q-5).
+- **A release that waits or is held** (design 90 §17.3 H1/M5, `play-and-updates.md`, "Update holds and the per-app
+  wait"): no new kind and no new switch (the user's D1). `AppUpdateParams` gained `ready` (RFC 3339) and `held`
+  (`HeldParams {reason, groups}`), both `skip_serializing_if` none, so a row from before reads as before. A release found
+  waiting is told once when found (`app_update_waiting`, the release's own key `<app id>:<tag>@<asset id>` - so when it
+  ripens and is served it raises nothing more): "Signal 7.3.0 is available" / "14:02 · 7.2.0 → 7.3.0 · reaches the
+  phones Thu 14:02" (the time as known when found). A held release gets one more row under `<app id>:<tag>@<asset
+  id>:held` (`app_update_held`; else the found row's key would swallow it): "Signal 7.3.0 waits for your approval" /
+  "14:02 · asks for Contacts and Location · approve it on the app's page" (unreadable: "couldn't read what it asks for";
+  always ask: the version step), pushed - only with "App updates" on - as "Signal 7.3.0 asks for Contacts and 2 more" /
+  "Approve it or keep 7.2.0" (`app_update_held_told`). Approve raises nothing; a newer held release its own row. Both
+  target `/apps/tracked/{id}#update`. With "App updates" off (the default) a held release reaches the parent through
+  the inbox row, the app's page and the Apps tab badge - the phones keep their release meanwhile. Test:
+  `parent_events::tests::a_waiting_and_a_held_release_are_told`.
 - **The switch** "App updates" (`push_app_updates`, `parent_events::APP_UPDATES_SWITCH`, one for both kinds) is the one
   switch **off by default**: 0099's `DEFAULT 0` for every existing row, and `Kind::switch_default` for a parent with no
   row - `push::queue`'s `COALESCE(p.<switch>, <default>)` and Notify Me About's `read_switches`. Always in the inbox;

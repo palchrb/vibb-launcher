@@ -1932,6 +1932,23 @@ pub struct AppUpdateParams {
     pub at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub phone: Option<String>,
+    /// Design 90 (§17.3 M5): a release found waiting out the app's wait - when it reaches the
+    /// phones (RFC 3339), as known when it was found. Rows from before it have none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ready: Option<String>,
+    /// Design 90: the release is held for the parent's approval - why and the groups it newly asks
+    /// for (`catalog_holds::GROUPS`' keys).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub held: Option<HeldParams>,
+}
+
+/// Why a release waits for the parent (`catalog_holds::Reason::key`) and the groups it newly asks
+/// for, in their order.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct HeldParams {
+    pub reason: String,
+    #[serde(default)]
+    pub groups: Vec<String>,
 }
 
 /// A version is kept to this many characters in the parameters, an app's name to this many.
@@ -1954,6 +1971,8 @@ fn app_update_params(
         to: clip(to, VERSION_MAX),
         at: instant(at),
         phone: phone.map(str::to_string),
+        ready: None,
+        held: None,
     };
     serde_json::to_string(&params).expect("strings serialize")
 }
@@ -1984,6 +2003,51 @@ pub fn app_update_available(
         push: Push::Now,
         budget_key: None,
     }
+}
+
+/// Design 90 (§17.3 H1, M5): a new release found waiting out the app's wait - the same key as
+/// [app_update_available], so the release served when it ripens raises nothing more; its words say
+/// when it reaches the phones (`ready`).
+pub fn app_update_waiting(
+    app_id: i64,
+    app: &str,
+    release: &str,
+    from: Option<&str>,
+    to: &str,
+    ready: DateTime<Utc>,
+    at: DateTime<Utc>,
+) -> NewEvent {
+    let mut event = app_update_available(app_id, app, release, from, to, at);
+    event.target = format!("/apps/tracked/{app_id}#update");
+    event.params = event.params.map(|params| {
+        let mut params: AppUpdateParams = serde_json::from_str(&params).expect("just written");
+        params.ready = Some(instant(ready));
+        serde_json::to_string(&params).expect("strings serialize")
+    });
+    event
+}
+
+/// Design 90 (§17.3 H1): a release held for the parent's approval - the same kind under its own
+/// key `<app id>:<release>:held`, so it is told even when the release was told as found; one row
+/// per held release. Target: the app's update group.
+pub fn app_update_held(
+    app_id: i64,
+    app: &str,
+    release: &str,
+    from: Option<&str>,
+    to: &str,
+    held: HeldParams,
+    at: DateTime<Utc>,
+) -> NewEvent {
+    let mut event = app_update_available(app_id, app, release, from, to, at);
+    event.dedup_key = format!("{app_id}:{release}:held");
+    event.target = format!("/apps/tracked/{app_id}#update");
+    event.params = event.params.map(|params| {
+        let mut params: AppUpdateParams = serde_json::from_str(&params).expect("just written");
+        params.held = Some(held);
+        serde_json::to_string(&params).expect("strings serialize")
+    });
+    event
 }
 
 /// A phone's report shows a catalog app's release installed (2026-10-25): key `<app id>:<the
@@ -2032,6 +2096,9 @@ fn app_update_told(
     let lang = zone.lang();
     let (app, to) = (p.app.as_str(), p.to.as_str());
     let phone = p.phone.as_deref().unwrap_or("");
+    if let (Kind::AppUpdateAvailable, Some(held)) = (kind, &p.held) {
+        return app_update_held_told(form, p, held, &at, lang);
+    }
     let key = format!("events.{}.{}.title", kind.wire(), form.key());
     // The catalog app's name is cut for a new release, the phone's for an installed one.
     let title = match kind {
@@ -2042,6 +2109,18 @@ fn app_update_told(
             t_params(lang, &key, &[("phone", &phone_of(lang, n)), ("app", app)])
         }),
     };
+    // Design 90: a release found waiting says when it reaches the phones.
+    let reaches = p
+        .ready
+        .as_deref()
+        .and_then(crate::display_time::parse_db_utc)
+        .map(|ready| {
+            t_params(
+                lang,
+                "events.app_update.reaches",
+                &[("when", &zone.until(ready, now))],
+            )
+        });
     let body = match form {
         Form::Inbox => push_body(&at, p.from.as_ref().map(|from| format!("{from} → {to}"))),
         Form::Push => push_body(
@@ -2049,7 +2128,89 @@ fn app_update_told(
             Some(t_params(lang, "events.app_update.version", &[("to", to)])),
         ),
     };
+    let body = match reaches {
+        Some(reaches) if body.is_empty() => reaches,
+        Some(reaches) => format!("{body} · {reaches}"),
+        None => body,
+    };
     (crate::audit::clip(&title, TITLE_MAX).to_string(), body)
+}
+
+/// A held release's words (design 90 §17.3 M5): the inbox's "Signal 7.3.0 waits for your
+/// approval" / "14:02 · asks for Contacts and Location · approve it on the app's page", the push's
+/// "Signal 7.3.0 asks for Contacts and 2 more" / "Approve it or keep 7.2.0".
+fn app_update_held_told(
+    form: Form,
+    p: &AppUpdateParams,
+    held: &HeldParams,
+    at: &str,
+    lang: Lang,
+) -> (String, String) {
+    let (app, to) = (p.app.as_str(), p.to.as_str());
+    let groups: Vec<&str> = held.groups.iter().map(String::as_str).collect();
+    let asks = held.reason == "permissions" && !groups.is_empty();
+    match form {
+        Form::Inbox => {
+            let title = fit_name(app, TITLE_MAX, |a| {
+                t_params(
+                    lang,
+                    "events.app_update_held.inbox.title",
+                    &[("app", a), ("to", to)],
+                )
+            });
+            let what = match held.reason.as_str() {
+                _ if asks => Some(t_params(
+                    lang,
+                    "events.app_update.asks",
+                    &[(
+                        "groups",
+                        &crate::catalog_holds::groups_sentence(lang, &groups),
+                    )],
+                )),
+                "unreadable" => Some(t(lang, "events.app_update.unreadable").to_string()),
+                _ => p.from.as_ref().map(|from| format!("{from} → {to}")),
+            };
+            let line = [
+                what,
+                Some(t(lang, "events.app_update.approve_on_page").to_string()),
+            ]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" · ");
+            (
+                crate::audit::clip(&title, TITLE_MAX).to_string(),
+                push_body(at, Some(line)),
+            )
+        }
+        Form::Push => {
+            let title = if asks {
+                let groups = crate::catalog_holds::groups_short(lang, &groups);
+                fit_name(app, TITLE_MAX, |a| {
+                    t_params(
+                        lang,
+                        "events.app_update_held.push.title",
+                        &[("app", a), ("to", to), ("groups", &groups)],
+                    )
+                })
+            } else {
+                fit_name(app, TITLE_MAX, |a| {
+                    t_params(
+                        lang,
+                        "events.app_update_held.inbox.title",
+                        &[("app", a), ("to", to)],
+                    )
+                })
+            };
+            let body = match &p.from {
+                Some(from) => {
+                    t_params(lang, "events.app_update.approve_or_keep", &[("from", from)])
+                }
+                None => t(lang, "events.app_update.approve").to_string(),
+            };
+            (crate::audit::clip(&title, TITLE_MAX).to_string(), body)
+        }
+    }
 }
 
 /// A passkey added (design 74 D1.2): the parent's name and the passkey's as they were, and when.
@@ -4064,6 +4225,115 @@ mod tests {
         assert!(
             title.starts_with("Vibb One updated on Anna") && title.ends_with("…'s phone"),
             "{title}"
+        );
+    }
+
+    /// Design 90 (§17.3 M5): a release found waiting says when it reaches the phones, a held one
+    /// waits for the parent under its own key; a row from before it reads as before.
+    #[test]
+    fn a_waiting_and_a_held_release_are_told() {
+        let phone = anna();
+        let two = utc("2026-10-18 12:02:00");
+        let thursday = utc("2026-10-22 12:02:00");
+        let told_in = |lang: Lang, form: Form, event: &NewEvent| {
+            told_as(
+                form,
+                event.kind.wire(),
+                event.title.clone(),
+                event.summary.clone(),
+                event.params.as_deref(),
+                &phone.zone.in_lang(lang),
+                two,
+            )
+        };
+        let waiting = app_update_waiting(
+            9,
+            "Signal",
+            "v7.3.0@42",
+            Some("7.2.0"),
+            "7.3.0",
+            thursday,
+            two,
+        );
+        assert_eq!(
+            waiting.dedup_key, "9:v7.3.0@42",
+            "the found row's key: served raises nothing"
+        );
+        let (title, line) = told_in(Lang::En, Form::Inbox, &waiting);
+        assert_eq!(title, "Signal 7.3.0 is available");
+        assert!(
+            line.starts_with("14:02 · 7.2.0 → 7.3.0 · reaches the phones Thu"),
+            "{line}"
+        );
+        let (_, line) = told_in(Lang::Nb, Form::Inbox, &waiting);
+        assert!(line.contains("kommer til telefonene"), "{line}");
+
+        let held = |reason: &str, groups: &[&str]| {
+            app_update_held(
+                9,
+                "Signal",
+                "v7.3.0@42",
+                Some("7.2.0"),
+                "7.3.0",
+                HeldParams {
+                    reason: reason.to_string(),
+                    groups: groups.iter().map(|g| g.to_string()).collect(),
+                },
+                two,
+            )
+        };
+        let asks = held("permissions", &["contacts", "location", "camera"]);
+        assert_eq!(asks.dedup_key, "9:v7.3.0@42:held");
+        assert_eq!(asks.target, "/apps/tracked/9#update");
+        assert_eq!(
+            told_in(Lang::En, Form::Inbox, &asks),
+            (
+                "Signal 7.3.0 waits for your approval".to_string(),
+                "14:02 · asks for Contacts, Location and Camera · approve it on the app's page"
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            told_in(Lang::Nb, Form::Inbox, &asks).1,
+            "14:02 · ber om tilgang til kontakter, posisjon og kamera · godkjenn på appens side"
+        );
+        assert_eq!(
+            told_in(Lang::En, Form::Push, &asks),
+            (
+                "Signal 7.3.0 asks for Contacts and 2 more".to_string(),
+                "Approve it or keep 7.2.0".to_string()
+            )
+        );
+        assert_eq!(
+            told_in(Lang::Nb, Form::Push, &asks),
+            (
+                "Signal 7.3.0 ber om tilgang til kontakter og 2 til".to_string(),
+                "Godkjenn eller behold 7.2.0".to_string()
+            )
+        );
+        assert_eq!(
+            told_in(Lang::En, Form::Inbox, &held("unreadable", &[])).1,
+            "14:02 · couldn't read what it asks for · approve it on the app's page"
+        );
+        assert_eq!(
+            told_in(Lang::Nb, Form::Inbox, &held("always_ask", &[])).1,
+            "14:02 · 7.2.0 → 7.3.0 · godkjenn på appens side"
+        );
+        // A row raised on 2026-10-25 (no `ready`, no `held`) reads as before.
+        let old = r#"{"app_id":9,"app":"Signal","from":"7.1.4","to":"7.2.0","at":"2026-10-18T12:02:00Z"}"#;
+        assert_eq!(
+            told(
+                "app_update_available",
+                String::new(),
+                String::new(),
+                Some(old),
+                &phone.zone,
+                two
+            ),
+            (
+                "Signal 7.2.0 is available".to_string(),
+                "14:02 · 7.1.4 → 7.2.0".to_string()
+            )
         );
     }
 
