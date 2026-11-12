@@ -757,7 +757,7 @@ async fn a_fix_keeps_its_provider_and_mock_flag_in_the_title_only() {
         .get_page(&format!("/devices/locate?device={id}"), &cookie)
         .await
         .text();
-    assert!(html.contains(" · fused · test location\">"), "{html}");
+    assert!(html.contains(" · fused · test location\" "), "{html}");
     assert_eq!(html.matches("test location").count(), 1, "the title only");
     for (given, kept) in [
         (Some("gps"), Some("gps")),

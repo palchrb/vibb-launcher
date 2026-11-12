@@ -2014,8 +2014,8 @@ pointer here.
 - **The user** chose mockup B (2026-11-11); O1-O3 decided 2026-11-12: fresh is "Here now"'s rule (twice the served
   interval under Regularly, an hour otherwise), and Update All skips Off, not set up and Disconnected.
 - **`/devices/locate`** with two phones or more and none chosen (or an unknown id) is the Alle view in place of the
-  old list: `<section id="all">` holds the map box (`.map-box.map-all`, `clamp(260px, 45vh, 420px)` - 60vh/520 until 2026-11-12, when the age row and Update Location
-  fell under the tab bar on an iPhone 15 -,
+  old list: `<section id="all">` holds the map box (`.map-box.map-all`, `clamp(280px, 55vh, 480px)` since the age box went (design 88 revision 2; 45vh/420 for a day before, 60vh/520 until 2026-11-12, when the age row and Update Location
+  fell under the tab bar on an iPhone 15) -,
   `data-locate-all`), the chips over its top (`nav.map-chips`: "All" `aria-current`, then each phone a link to its
   view with its 26 px avatar - hollow, `.avatar-hollow`, without a position - and an `aria-label` carrying what its
   marker shows, "Emma, 2 min ago, within 12 m" / "Lily, location is off"; one light look in both schemes, one line
@@ -2146,3 +2146,12 @@ pointer here.
   `the_rows_and_their_pages`, `links_to_the_moved_groups_resolve`; the tests that read the zones, the requests, the
   warnings or the pickers off Locate read the new pages (`zones`, `zone_watch`, `command_expiry`, `command_receipts`,
   `locations`, `cleanup`, `power`, `time_rules`, `weather`, `android_lock_page`, `install_now`, `parents`, `shell`).
+- **Revision 2** (the user, 2026-11-12, "Do it!"): the box under the map (the age row and Update Location) is gone.
+  The marker's bubble carries its lines - `data-shown-text` (age · accuracy · the zone), then the map box's
+  `data-fix-seen` (hidden), `-still`, `-aged`, `-before-off`, `-title` (exact time · provider · "test location"),
+  built as text by `static/locate.js`'s `bubble` (`?v=9`). Update Location is the first row of `locate-rows`
+  (`#update-location`, its redirect's fragment), with "No position yet." (`data-fix-none`), the phone's answer
+  (`data-row="locate-answer"`) and the wait's `#fix_wait` under its name; the mock count is a row after it. The map box
+  keeps ` data-waiting`; a new fix still reloads at `#location`. Tests:
+  `locate_page::update_location_is_the_first_row_and_the_map_has_no_box`, `the_bubble_says_fresh_or_old`,
+  `jstest/locate.test.js`.

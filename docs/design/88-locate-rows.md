@@ -51,7 +51,7 @@ the three are pages under it, like Locations, with no bell.
 | Locate Regularly (`back=zones`) | `/devices/locate?device={id}#zones` | `/devices/{id}/zones#zones` |
 | A zone's add / save | `/devices/locate?device={id}&zone=…&zone_id=N#zone-N` | `/devices/{id}/zones?zone=…&zone_id=N#zone-N` |
 | A zone's delete | `/devices/locate?device={id}&zone=deleted#zones` | `/devices/{id}/zones?zone=deleted#zones` |
-| Update Location | `?device={id}&requested=1#location` | unchanged |
+| Update Location | `?device={id}&requested=1#location` | unchanged; since revision 2 `…#update-location` |
 
 A save never lands at the top: every redirect carries its group's fragment, the pickers autosave through
 `form.submit()` with `scroll-restore.js` as every editor. The zone editor's back chevron goes to the Zones page.
@@ -73,3 +73,30 @@ Every {n} hours / Hver {n}. time. Zones and Location Settings keep their titles 
 the redirect table is now built from the three pages' forms; the two new pages render with the phone band; a
 command lands on Find Phone with its request shown; the settings save lands at `#location-settings`; the repointed
 links resolve. Existing tests that read those parts off the Locate page now read the new pages.
+
+## Revision 2: no box under the map (the user, 2026-11-12)
+
+The user approved ("Do it!"): the white box under the map - the age row ("● 1 h ago / Within 100 m") and Update
+Location - goes; the avatar marker's time tag and its bubble already say the age and the accuracy.
+
+- **The bubble says what only the box said.** Its first line stays `data-shown-text` ("10 min ago · within 40 m · at
+  School": the zone the fix is in, `locate.fix.at_zone`, was already there). After it, each when it applies, from the
+  map box's `data-fix-*` (`locate::FixView`, set as text by `static/locate.js`'s `bubble`, `?v=9`): the legend's word
+  ("Recent" / "Older position", `data-fix-seen`, hidden for screen readers after the first line), "Hasn't moved since
+  14:02" (`data-fix-still`), "Last seen 9 days ago" (`data-fix-aged`), "Last position before the phone went off"
+  (`data-fix-before-off`), and the exact time with the provider and "test location" (`data-fix-title`, until now only
+  the age's tooltip, now a line of its own). A fix newer than the one rendered keeps its one line ("Newest location").
+- **Update Location is the rows' first** (`data-row="update-location"`, a blue tile, the same row look as the others;
+  `<form id="update-location">`). Its redirect is `?device={id}&requested=1#update-location`, so the press lands on
+  the row, never the top. Under its name: "No position yet." / "No position kept while location is off."
+  (`data-fix-none`, the old empty age row's words - with location Off the row still presses, as the button did, and
+  says why no position comes), the phone's answer (`data-row="locate-answer"`, its time after a " · ") and, after a
+  press, the wait's line (`#fix_wait`, `role="status"`, its `data-w-*` as before). The map box keeps ` data-waiting`
+  and a new fix still reloads at the map (`#location`).
+- **"N made-up locations ignored"** (design 64 step 2) had no place but the box: it is a row of its own right after
+  Update Location (graphite tile, no chevron), shown only while the count is above 0.
+- The "Location is off" warning keeps its place above the rows. The Alle view is unchanged.
+
+Tests: `locate_page::update_location_is_the_first_row_and_the_map_has_no_box`, `the_bubble_says_fresh_or_old` (was
+`the_age_line_says_fresh_or_old`), the forms table's `#update-location`; `jstest/locate.test.js` (the bubble's lines,
+their text-only build, the marker opening it).
