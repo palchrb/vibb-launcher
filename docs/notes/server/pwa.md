@@ -2095,8 +2095,10 @@ pointer here.
   `private, max-age=31536000, immutable`, `nosniff`; never on the phones' port).
 - **Not backed up**: `data/app_logos/` is no store of the backup zip. After a restore the rows name files that aren't
   there, the next report wants them again, and the pages show the letter until they come.
-- **The tiles** (§8.1): a chosen glyph wins (the phone's Name and icon row as a whole, else the catalog default);
-  else the logo (for "App logo" and for "Automatic", Q1); else the letter. Device › Apps uses this phone's own logo
+- **The tiles** (§8.1, revision 3 - the user, 2026-11-12: "jeg trodde vi bestemte originale ikoner?"): in the lists
+  the app's real logo wins whatever the Name and icon choice; else a chosen glyph (the phone's Name and icon row as a
+  whole, else the catalog default); else the letter. Only the tile's order in `partials/device_app_row.html` and
+  `apps_list.html` decides it; Name and icon's preview and its sub-line keep what the phone shows. Device › Apps uses this phone's own logo
   only (Q3, `phone_logos`), Vibb One's row the server's Vibb mark (`app_logos::VIBB_MARK`), Meldinger its glyph; the
   Apps tab's catalog rows the hash most phones name, a tie to the newest (`catalog_logos`, R2-L4). The logo is
   `<span class="app-row-tile app-row-logo">K<img src="/app-logos/<hash>" alt="" decoding="async"></span>`: the image

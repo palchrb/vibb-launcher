@@ -320,6 +320,15 @@ For a catalog app outside one phone (the Apps tab's Katalog rows, the app's page
 wins; else the logo **most `device_app_logos` rows for its package name** (any phone; a tie goes to the most recently
 updated, R2-L4) whose file exists; else the letter. A catalog app no phone has installed keeps its letter (the mockup's "Ordspill").
 
+**Revision 3 (the user, 2026-11-12): the lists always show the real logo.** "apper jeg har gitt egne ikoner vises
+med egne ikoner og ikke originale? jeg trodde vi bestemte originale ikoner?" In the PWA's app lists - Device › Apps'
+rows, allowed and not allowed, and the Apps tab's Katalog rows - the app's real logo now comes first, whatever the
+parent chose under Name and icon: this phone's own logo on a phone's rows, the logo most phones name on the catalog
+rows; a chosen glyph shows only where there is no logo, then the letter. Rule 1 above and R2-L5's ordering no longer
+decide a list's tile. "Name and icon" is unchanged: its preview shows what the phone shows (the chosen glyph, Vibb
+style, App logo) and its row sub-line still says what the phone uses. Vibb One keeps the Vibb mark, Meldinger its
+glyph.
+
 ### 8.2 The places
 
 - **Device › Apps** (`partials/device_app_row.html`): every row's tile - allowed, not allowed (the parent sees what

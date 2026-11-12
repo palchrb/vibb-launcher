@@ -419,9 +419,8 @@ async fn only_a_named_logo_is_served_behind_the_session() {
     assert!(!res.body.starts_with(b"\x89PNG"));
 }
 
-/// §8: Device › Apps shows each phone's own logo (Q3), the letter without one, a chosen glyph over it - a phone
-/// row with "App logo" over a catalog glyph (R2-L5); the Apps tab takes the hash most phones name (R2-L4); a
-/// deleted phone's only logos go.
+/// §8: Device › Apps shows each phone's own logo (Q3), the letter without one; revision 3: the lists keep the real
+/// logo over a chosen glyph, which shows only without one; the Apps tab takes the hash most phones name (R2-L4); a deleted phone's only logos go.
 #[tokio::test]
 async fn the_pages_show_the_logos() {
     let app = TestApp::new().await;
@@ -469,23 +468,25 @@ async fn the_pages_show_the_logos() {
     assert!(apps_tab.contains(&tile(&sha(&common))), "{apps_tab}");
     assert!(!apps_tab.contains(&tile(&sha(&own))));
 
-    // A catalog glyph wins on the Apps tab and on a phone without a row of its own; Emma's row with "App logo"
-    // beats it.
+    // Revision 3: a catalog glyph leaves the real logo in the lists - on the Apps tab and on a phone's row; a glyph
+    // shows in a list only without a logo.
+    let row_glyph = "<img src=\"/static/app-icons/chat.svg\"";
     sqlx::query("UPDATE tracked_apps SET display_icon = 'chat' WHERE id = ?")
         .bind(catalog)
         .execute(&app.db)
         .await
         .unwrap();
     let apps_tab = app.get_page("/apps", &cookie).await.text();
-    assert!(!apps_tab.contains(&tile(&sha(&common))));
+    assert!(apps_tab.contains(&tile(&sha(&common))), "{apps_tab}");
+    assert!(!apps_tab.contains(row_glyph));
     let lily_page = app
         .get_page(&device_page(lily, Section::Apps), &cookie)
         .await
         .text();
-    assert!(!lily_page.contains(&tile(&sha(&own))));
-    assert!(lily_page.contains("/static/app-icons/chat.svg"));
+    assert!(lily_page.contains(&tile(&sha(&own))), "{lily_page}");
+    assert!(!lily_page.contains(row_glyph));
     sqlx::query(
-        "INSERT INTO device_app_display (device_id, package_name, icon_key) VALUES (?, 'org.example.drawing', 'own')",
+        "INSERT INTO device_app_display (device_id, package_name, icon_key) VALUES (?, 'org.example.notes', 'chat')",
     )
     .bind(emma)
     .execute(&app.db)
@@ -496,6 +497,8 @@ async fn the_pages_show_the_logos() {
         .await
         .text();
     assert!(emma_page.contains(&tile(&sha(&common))), "{emma_page}");
+    assert!(emma_page.contains(row_glyph), "{emma_page}");
+    assert!(!emma_page.contains("<span class=\"app-row-tile\" aria-hidden=\"true\">N</span>"));
 
     // Deleting Lily's phone deletes the logo only it named.
     let res = app
