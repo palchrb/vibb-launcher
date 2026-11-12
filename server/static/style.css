@@ -3526,20 +3526,23 @@ details.own-edit[open] {
 .all-fit[hidden] { display: none; }
 
 /* Design 85 §4.8: the map at full screen (static/map-full.js), on the Alle view and the one-phone
-   view. Fixed under the status bar's strip, over the band and the tab bar (main has no stacking
-   context of its own), the page behind not scrolling; the chips stay at the top, leaving room for
-   ✕ at the right; the legend a strip at the bottom left, zoom and fit-all at the bottom right,
-   above the attribution; every edge clear of the safe areas. */
+   view. Absolute in the body, as the tab bar is (design 43: nothing positioned against the viewport;
+   nothing between the box and the body is positioned, and main has no stacking context), under
+   the status bar's strip and over the band and the tab bar, the page behind not scrolling; the chips
+   stay at the top, leaving room for ✕ at the right; the legend a strip at the bottom left above
+   OSM's attribution line, zoom and fit-all at the bottom right above it; every edge clear of the
+   safe areas. */
 .map-tool { position: absolute; z-index: 1002; display: flex; align-items: center; justify-content: center; box-sizing: border-box; margin: 0; padding: 0; border: 0; background: #FFFFFF; color: #1C1C1E; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3); cursor: pointer; }
 .map-tool[hidden] { display: none; }
 .map-tool svg { width: 18px; height: 18px; }
 .map-tool-open { bottom: 10px; left: 10px; width: 36px; height: 36px; border-radius: 8px; }
 .map-tool-close { top: 0; right: max(0px, env(safe-area-inset-right, 0px)); width: 44px; height: 44px; margin: 10px 8px 0 0; border-radius: 22px; }
-.map-box.map-full { position: fixed; z-index: 3000; top: var(--top-strip); right: 0; bottom: 0; left: 0; height: auto; margin: 0; border-radius: 0; }
+.map-box.map-full { position: absolute; z-index: 3000; top: var(--top-strip); right: 0; bottom: 0; left: 0; height: auto; margin: 0; border-radius: 0; }
 .map-fullscreen .container { overflow: hidden; }
 .map-full .map-chips { right: calc(60px + env(safe-area-inset-right, 0px)); padding-left: max(10px, env(safe-area-inset-left, 0px)); }
 .map-full .leaflet-bottom { bottom: env(safe-area-inset-bottom, 0px); }
 .map-full .leaflet-right { right: env(safe-area-inset-right, 0px); }
+.map-full .leaflet-left { left: env(safe-area-inset-left, 0px); }
 .map-legend-over { display: none; }
-.map-full .map-legend-over { position: absolute; z-index: 1001; bottom: calc(10px + env(safe-area-inset-bottom, 0px)); left: max(10px, env(safe-area-inset-left, 0px)); display: flex; margin: 0; padding: 6px 12px; border-radius: 16px; background: #FFFFFF; color: #636366; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2); }
+.map-full .map-legend-over { position: absolute; z-index: 1001; bottom: calc(26px + env(safe-area-inset-bottom, 0px)); left: max(10px, env(safe-area-inset-left, 0px)); display: flex; margin: 0; padding: 6px 12px; border-radius: 16px; background: #FFFFFF; color: #636366; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2); }
 .map-legend-over > span:last-child { margin-right: 0; }

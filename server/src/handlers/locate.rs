@@ -620,6 +620,15 @@ impl Fix {
         }
     }
 
+    /// The fix as the phone last vouched for it (design 85 QA M1): its time the later of its own
+    /// and its still re-send's ([DeviceLocation::seen_at]), so one page never tells two ages for it.
+    pub(crate) fn seen(location: &DeviceLocation) -> Fix {
+        Fix {
+            at: location.seen_at(),
+            ..Fix::of(&location.captured_at, location.accuracy_meters)
+        }
+    }
+
     /// "10 min ago", "yesterday 21:40", "12 Oct" (`Zone::relative`).
     pub(crate) fn age(&self, zone: &Zone, now: DateTime<Utc>) -> String {
         match self.at {
@@ -1652,7 +1661,8 @@ async fn locate_view(
         .clone()
         .and_then(|l| Seen::of(l, &location_mode, served_interval, now));
     let fix = newest.as_ref().map(|l| {
-        let fix = Fix::of(&l.captured_at, l.accuracy_meters);
+        // Its age, title and "Last seen 9 days ago" from the later of the fix and its re-send.
+        let fix = Fix::seen(l);
         let accuracy = match &badge {
             Some(badge) => format!("{} · {badge}", fix.accuracy(lang)),
             None => fix.accuracy(lang),
@@ -1663,10 +1673,7 @@ async fn locate_view(
             None => ("", ""),
         };
         FixView {
-            age: match &seen {
-                Some(s) if s.still_since.is_some() => zone.relative(s.at, now),
-                _ => fix.age(zone, now),
-            },
+            age: fix.age(zone, now),
             accuracy,
             exact: fix_title(lang, fix.at.map(|at| zone.exact(at)).unwrap_or_default(), l),
             before_off: fix_before_off,
@@ -1822,9 +1829,7 @@ async fn map_data(
     now: DateTime<Utc>,
 ) -> Result<(Option<DeviceLocation>, MapData), sqlx::Error> {
     let newest = newest_fix(state, device_id).await?;
-    let fix = newest
-        .as_ref()
-        .map(|l| Fix::of(&l.captured_at, l.accuracy_meters));
+    let fix = newest.as_ref().map(Fix::seen);
     let newest_age = fix.as_ref().map(|f| f.age(zone, now)).unwrap_or_default();
     let map = MapData {
         device_id,

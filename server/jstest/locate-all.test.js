@@ -128,7 +128,7 @@ function fakePage({ box = {}, answers = [], visibility = "visible" } = {}) {
         getComputedStyle: () => ({ getPropertyValue: () => "#A64B25" }),
         fetch: (url) => {
             fetched.push(url);
-            const rows = answers[Math.min(answer++, answers.length - 1)] || [];
+            const rows = answers.length ? answers[Math.min(answer++, answers.length - 1)] : [];
             return Promise.resolve({ ok: true, json: () => Promise.resolve(JSON.parse(JSON.stringify(rows))) });
         },
         setInterval: (fn, ms) => { timers.push({ fn, ms, cleared: false }); return timers.length; },
@@ -333,4 +333,27 @@ test("a wait ends early when every phone answered, and the parent's moved map is
     assert.strictEqual(page.line.textContent, "2 av 2 svarte");
     assert.deepStrictEqual(page.replaced, ["/devices/locate#all"]);
     assert.strictEqual(page.L.calls.filter((c) => c[0] === "fitBounds").length, 1);
+});
+
+test("a hidden page neither asks nor counts a try; a failed last ask still ends with the last counts", async () => {
+    const asking = [row(1, 59.9, { answered: false }), row(2, 59.0, { answered: false })];
+    const one = [row(1, 59.9, { answered: true }), row(2, 59.0, { answered: false })];
+    // The load, the first try, then every later ask fails (an answer that isn't a list).
+    const page = fakePage({ box: { "data-waiting": "", "data-at": "2026-11-12T10:00:00.000Z" }, answers: [asking, one, null] });
+    const api = install(page.win, page.L);
+    await api.loaded;
+    const wait = page.timers.find((t) => t.ms === 5000);
+    page.doc.visibilityState = "hidden";
+    for (let i = 0; i < 20; i++) await tick(wait);
+    assert.strictEqual(page.fetched.length, 1);
+    assert.ok(!wait.cleared);
+    page.doc.visibilityState = "visible";
+    await tick(wait);
+    assert.strictEqual(page.line.textContent, "1 av 2 har svart");
+    for (let i = 2; i <= 11; i++) await tick(wait);
+    assert.strictEqual(page.line.textContent, "1 av 2 har svart", "a failed ask leaves the line");
+    await tick(wait);
+    assert.ok(wait.cleared);
+    assert.strictEqual(page.line.textContent, "1 av 2 svarte");
+    assert.deepStrictEqual(page.replaced, ["/devices/locate#all"]);
 });

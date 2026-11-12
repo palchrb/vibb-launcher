@@ -265,7 +265,7 @@ async fn the_phone_switcher_and_the_alle_view() {
         let html = locate_page(&app, &cookie, query).await;
         assert!(html.contains("<section id=\"all\""), "{query}");
         assert!(html.contains("data-locate-all"), "{query}");
-        assert!(html.contains("/static/locate-all.js?v=1"), "{query}");
+        assert!(html.contains("/static/locate-all.js?v=2"), "{query}");
         assert!(!html.contains("/command/"), "{query}");
         assert!(!html.contains("data-group=\"phones\""), "{query}");
         check_forms(&html);
@@ -1571,6 +1571,22 @@ async fn the_age_line_says_fresh_or_old() {
         html.contains("data-fix-still>Hasn&#39;t moved since "),
         "{html}"
     );
+    // Still for 25 h with a day's history (code QA M1): one age for the fix on the whole page - no
+    // "Last seen 1 day ago" under "2 min ago", the map's and the Locations row's age the same.
+    sqlx::query("UPDATE device_policy SET location_retention_days = 1 WHERE device_id = ?")
+        .bind(emma)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    only_fix(&app, emma, 25 * 60, Some(2)).await;
+    let html = locate_page(&app, &cookie, "").await;
+    assert!(age(&html).contains("</span>2 min ago"), "{html}");
+    assert!(!html.contains("data-fix-aged"), "{html}");
+    assert!(html.contains("data-newest-age=\"2 min ago\""), "{html}");
+    assert!(
+        !html.contains("1 day ago") && !html.contains("yesterday"),
+        "{html}"
+    );
 }
 
 /// Design 85 §4.8 (the user's decision of 2026-11-12): both map views carry the full-screen
@@ -1600,7 +1616,7 @@ async fn both_map_views_offer_full_screen() {
                 .find(|b| b.has("data-full-close"))
                 .expect("✕");
             assert_eq!(close_button.attr("aria-label"), Some(close), "{query}");
-            assert!(html.contains("<script src=\"/static/map-full.js?v=1\"></script>"));
+            assert!(html.contains("<script src=\"/static/map-full.js?v=2\"></script>"));
         }
     }
     // The Alle view's legend strip for full screen, the eye's only.

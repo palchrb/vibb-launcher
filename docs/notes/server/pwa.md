@@ -2018,9 +2018,10 @@ pointer here.
   one fit unless the parent moved the map. Markers are kept by phone id and updated in place, so a refresh or a
   regroup never closes the open bubble or drops the focus. Every word comes from the server; text only.
 - **Full screen** (§4.8, the user's decision of 2026-11-12): `static/map-full.js` (`?v=1`) on both map views - ⤢
-  (`data-full-open`, bottom left) puts `.map-full` on the box (`data-map-full`: fixed under `--top-strip`, z-index
-  3000 over the band and the tab bar) and `map-fullscreen` on the body (main stops scrolling); ✕ (`data-full-close`,
-  44 px, top right) and Escape close; a window `resize` after each change makes Leaflet `invalidateSize` with the
+  (`data-full-open`, bottom left) puts `.map-full` on the box (`data-map-full`: absolute in the body under
+  `--top-strip`, as the tab bar is - never fixed -, z-index 3000 over the band and the tab bar) and `map-fullscreen` on
+  the body (main stops scrolling); ✕ (`data-full-close`, 44 px, top right) and Escape close (Escape closes an open
+  bubble first); Tab goes round inside the box; a window `resize` after each change makes Leaflet `invalidateSize` with the
   centre kept. The Alle view's legend shows as a strip over the map (`.map-legend-over`, `aria-hidden`).
 - **Tests**: `locate_page::the_phone_switcher_and_the_alle_view`, `phones_json_tells_each_phone_fresh_or_old_by_its_own_setting`,
   `update_all_asks_every_phone_that_can_answer`, `the_wait_after_update_all_counts_the_answers`,

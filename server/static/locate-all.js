@@ -413,22 +413,27 @@
 
         // After Update All: every 5 s for a minute, "2 of 3 have answered", then the end's words,
         // the address without the wait, and one fit unless the parent moved the map.
+        // A hidden page neither asks nor counts a try (code QA L5); the end's words come from the
+        // last answer read, even when the last ask failed.
         function waitForAnswers() {
             var tries = 0;
+            var counted = null;
             var line = doc.getElementById("all_wait");
             var timer = win.setInterval(function () {
+                if (!visible()) return;
                 tries += 1;
                 load().then(function (answer) {
                     if (!timer) return;
-                    var asked = 0;
-                    var done = 0;
-                    for (var i = 0; answer && i < answer.length; i++) {
-                        if (typeof answer[i].answered !== "boolean") continue;
-                        asked += 1;
-                        if (answer[i].answered) done += 1;
+                    if (answer) {
+                        counted = { done: 0, count: 0 };
+                        for (var i = 0; i < answer.length; i++) {
+                            if (typeof answer[i].answered !== "boolean") continue;
+                            counted.count += 1;
+                            if (answer[i].answered) counted.done += 1;
+                        }
                     }
-                    var over = tries >= WAIT_TRIES || (asked > 0 && done === asked);
-                    if (line && answer) line.textContent = fill(w(line, over ? "answered-end" : "answered"), { done: done, count: asked });
+                    var over = tries >= WAIT_TRIES || (!!answer && counted.count > 0 && counted.done === counted.count);
+                    if (line && counted && (answer || over)) line.textContent = fill(w(line, over ? "answered-end" : "answered"), counted);
                     if (!over) return;
                     win.clearInterval(timer);
                     timer = null;

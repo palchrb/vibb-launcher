@@ -311,12 +311,14 @@ load and after Oppdater alle; a redraw while the parent has panned or zoomed kee
 ### 4.8 Full screen (decided by the user, 2026-11-12)
 
 On the Alle view and the one-phone view, a ⤢ button on the map (bottom left, "Full screen" / "Fullskjerm") makes
-the map box fill the screen by CSS - `position: fixed` under the status bar's strip, over the night band and the
-tab bar, every edge clear of the safe areas - not the Fullscreen API, which iPhone Safari lacks for elements. The
+the map box fill the screen by CSS - `position: absolute` in the body, as the tab bar is (design 43: no box
+positioned against the viewport, which drifts in an iOS home-screen app), under the status bar's strip, over the
+night band and the tab bar, every edge clear of the safe areas - not the Fullscreen API, which iPhone Safari lacks
+for elements. The
 chips stay at the top, their row ending short of a 44 px ✕ at the top right ("Close full screen" / "Lukk
-fullskjerm"); Escape closes too. The Alle view's legend ("● Nylig ● Eldre posisjon") is a strip at the bottom left
-over the map, fit-all and zoom at the bottom right above OSM's attribution. The page behind doesn't scroll while it
-is open. The map keeps its view: Leaflet re-measures on the window's `resize` (`trackResize`, `invalidateSize`
+fullskjerm"); Escape closes too - an open bubble first, then full screen. The Alle view's legend ("● Nylig ● Eldre
+posisjon") is a strip at the bottom left over the map, above OSM's attribution line, fit-all and zoom at the bottom
+right above it. The page behind doesn't scroll while it is open, and Tab goes round inside the box. The map keeps its view: Leaflet re-measures on the window's `resize` (`trackResize`, `invalidateSize`
 keeping the centre), which the script sends on entering and leaving. `static/map-full.js`, shared by both views;
 without JS both buttons stay hidden. Tests: `locate_page::both_map_views_offer_full_screen`,
 `jstest/map-full.test.js`.
