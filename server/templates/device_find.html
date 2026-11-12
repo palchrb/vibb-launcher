@@ -35,9 +35,10 @@
         </div>
     </section>
 
-    {#- The newest requests in flight or just gone wrong (design 48 §1.4), at most three, the newest
-        highlighted; every command of the phone is in its summary's Activity. Shown while it has a
-        row or the line after a Cancel, so a Cancel never lands on a hidden group. -#}
+    {#- The requests in flight or just gone wrong (design 48 §1.4): every one that can be cancelled,
+        the newest others up to three in all, the newest highlighted; every command of the phone is
+        in its summary's Activity (Show all: #activity, or the summary when it has none). Shown
+        while it has a row or the line after a Cancel, so a Cancel never lands on a hidden group. -#}
     {% if !recent.rows.is_empty() || recent.flash.is_some() %}
     <section id="recent" aria-labelledby="recent-title">
         <h2 class="group-header" id="recent-title">{{ self.t("locate.find.recent") }}</h2>
@@ -48,7 +49,7 @@
             {% if let Some((text, refused)) = recent.flash %}
             <p class="flash{% if refused %} flash-error{% endif %}" role="status" data-flash="recent">{{ text }}</p>
             {% endif %}
-            <a class="row" href="/devices/{{ device.id }}#activity" data-row="activity">
+            <a class="row" href="{{ activity_href }}" data-row="activity">
                 <span class="row-label">{{ self.t("locate.find.all") }}</span>
                 <span class="row-value">{{ self.t("locate.find.activity") }}</span>
                 <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>

@@ -399,7 +399,14 @@ async fn a_waiting_wipe_is_never_replaced() {
         replaced[0].starts_with("1 waiting ring/stop_ring replaced by a new stop_ring"),
         "{replaced:?}"
     );
+    // Find Phone keeps the waiting wipe and lock and the newest other; the replaced ring is in the
+    // summary's Activity (design 88).
     let page = find_page(&app, &cookie, device).await;
+    assert!(page.contains("data-command=\"wipe\""), "{page}");
+    let page = app
+        .get_page(&format!("/devices/{device}"), &cookie)
+        .await
+        .text();
     assert!(
         row(&page, "ring").contains(">Replaced<"),
         "{}",

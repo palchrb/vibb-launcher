@@ -269,8 +269,8 @@ async fn find_phone_reads_receipts_and_failures() {
         .await
         .unwrap();
     }
-    // Find Phone lists the three newest (design 88): the locate, the stop and the ring first;
-    // without them, the lock and the wipe.
+    // Find Phone lists the three newest when none can be cancelled any more (design 88): the
+    // locate, the stop and the ring first; without them, the lock and the wipe.
     let find = format!("/devices/{device}/find");
     let page = app.get_page(&find, &cookie).await.text();
     let line = |command: &str| super::locate_page::recent_row(&page, command).to_string();

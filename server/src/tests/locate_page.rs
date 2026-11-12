@@ -234,7 +234,8 @@ async fn every_form_on_the_locate_pages_returns_to_its_group() {
 /// Find Phone, Location Settings - with their values, each to its page; the zone list, the tiles,
 /// the requests and the pickers are on those pages, each with the phone band (back to Locate, the
 /// phone's avatar) and no bell. A command lands on Find Phone with its request shown, the newest
-/// highlighted, at most three, then Show all to the summary's Activity.
+/// highlighted, every one that can be cancelled and the others up to three in all, then Show all
+/// to the summary's Activity.
 #[tokio::test]
 async fn the_rows_and_their_pages() {
     let app = TestApp::new().await;
@@ -330,7 +331,7 @@ async fn the_rows_and_their_pages() {
     let settings = phone_page(&app, &cookie, id, "location-settings", "").await;
     assert!(autosaves(&settings, "mode") && autosaves(&settings, "days"));
 
-    // A command lands on Find Phone with its request shown and highlighted; four, then three.
+    // A command lands on Find Phone with its request shown and highlighted.
     let find = phone_page(&app, &cookie, id, "find", "").await;
     assert!(find.contains("id=\"actions\"") && find.contains("id=\"erase\""));
     assert!(recent_of(&find).is_none(), "nothing asked yet");
@@ -358,7 +359,7 @@ async fn the_rows_and_their_pages() {
         assert!(recent.contains(&format!("href=\"/devices/{id}#activity\"")));
         assert!(recent.contains(">Show all</span>") && recent.contains(">Activity</span>"));
     }
-    // Ring, Lock, Stop Ringing (it replaced the ring, kept as history), Lock: three shown.
+    // Lock, Stop Ringing, Lock wait (each with its Cancel): the replaced Ring is left out.
     let recent = phone_page(&app, &cookie, id, "find", "").await;
     assert_eq!(
         recent_of(&recent).unwrap().matches("data-command=").count(),
@@ -381,6 +382,29 @@ async fn links_to_the_moved_groups_resolve() {
     assert!(lock.contains("href=\"/devices/{{ device.id }}/location-settings\""));
     assert!(lock.contains("href=\"/devices/{{ device.id }}/zones\""));
     assert!(zone.contains("\"/devices/\" ~ device.id ~ \"/zones\""));
+    // Show all goes to the summary's Activity - or to the summary itself while its Activity is
+    // empty (code QA L1): a done ring eight days old is still Find Phone's newest Ring.
+    let (lily, _) = app.create_device("Lily").await;
+    sqlx::query(
+        "INSERT INTO device_commands (device_id, command, requested_at, delivered_at, \
+         acknowledged_at, result) VALUES (?, 'ring', datetime('now', '-8 days'), \
+         datetime('now', '-8 days'), datetime('now', '-8 days'), 'ok')",
+    )
+    .bind(lily)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let find = phone_page(&app, &cookie, lily, "find", "").await;
+    assert!(find.contains("data-command=\"ring\""), "{find}");
+    assert!(
+        find.contains(&format!("href=\"/devices/{lily}\" data-row=\"activity\"")),
+        "{find}"
+    );
+    let summary = app
+        .get_page(&format!("/devices/{lily}"), &cookie)
+        .await
+        .text();
+    assert!(!summary.contains("id=\"activity\""), "{summary}");
     let new_zone = app
         .get_page(&format!("/devices/{id}/zones/new"), &cookie)
         .await
@@ -918,6 +942,15 @@ async fn unknown_phones_and_failed_reads() {
             .await;
         assert_eq!(res.status, StatusCode::INTERNAL_SERVER_ERROR, "{path}");
     }
+    // Location Settings reads the zones (the interval they serve).
+    sqlx::query("ALTER TABLE device_zones RENAME TO device_zones_gone")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let res = app
+        .get_page(&format!("/devices/{id}/location-settings"), &cookie)
+        .await;
+    assert_eq!(res.status, StatusCode::INTERNAL_SERVER_ERROR);
 }
 
 /// Leaflet's `Icon.Default` prepends `imagePath` to its icon file names: an `iconUrl` of our own
@@ -1092,12 +1125,22 @@ async fn requests_show_what_is_in_flight_or_just_went_wrong() {
         }
         ids.push(row);
     }
-    // Every bucket, from `requests` itself: Find Phone lists only its first three.
+    // Every bucket, from `requests` itself. Find Phone lists every one that can be cancelled,
+    // then the newest others up to three in all (design 88, code QA L2).
     let zone = crate::display_time::Zone::load(&app.db, crate::i18n::Lang::En).await;
     let now = chrono::Utc::now();
     let all = crate::handlers::locate::requests(&app.state, id, None, &zone, now)
         .await
         .unwrap();
+    let cancellable = all.rows.iter().filter(|r| r.cancel_id.is_some()).count();
+    let on_find: Vec<&str> = all
+        .rows
+        .iter()
+        .filter(|r| r.cancel_id.is_none())
+        .take(3 - cancellable)
+        .chain(all.rows.iter().filter(|r| r.cancel_id.is_some()))
+        .map(|r| r.asked_exact.as_str())
+        .collect();
     let html = phone_page(&app, &cookie, id, "find", "").await;
     let requests = recent_of(&html).unwrap();
     for ((command, age, _, shown), row) in rows.iter().zip(&ids) {
@@ -1108,18 +1151,22 @@ async fn requests_show_what_is_in_flight_or_just_went_wrong() {
                 .await
                 .unwrap();
         let title = format!("{exact} UTC");
-        let at = all.rows.iter().position(|r| r.asked_exact == title);
-        assert_eq!(at.is_some(), *shown, "{command} {age}");
+        assert_eq!(
+            all.rows.iter().any(|r| r.asked_exact == title),
+            *shown,
+            "{command} {age}"
+        );
         assert_eq!(
             requests.contains(&format!("title=\"{title}\"")),
-            at.is_some_and(|at| at < 3),
+            on_find.contains(&title.as_str()),
             "{command} {age}: {requests}"
         );
     }
     assert_eq!(all.rows.len(), 6);
     assert_eq!(requests.matches("data-command=").count(), 3, "{requests}");
-    // The lock waiting three days still has its Cancel.
-    assert!(all.rows.iter().any(|r| r.cancel_id == Some(ids[0])));
+    // The lock waiting three days, fourth by age, is never hidden: its Cancel is on Find Phone.
+    assert_eq!(cancellable, 1);
+    assert!(requests.contains(&format!("/commands/{}/cancel#recent", ids[0])));
 
     // Cancelling the last waiting one: the group stays for its line.
     let (emil, _) = app.enrolled_device("Emil").await;

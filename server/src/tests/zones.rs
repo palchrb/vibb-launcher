@@ -796,6 +796,21 @@ async fn here_now_the_fix_badge_and_the_summary_line() {
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("Anna").await;
     let home = add_home(&app, &cookie, id).await;
+    // Two zones far away: the Zones row counts all three (design 88).
+    for (name, latitude) in [("Park", "60.5"), ("School", "61.0")] {
+        add_zone(
+            &app,
+            &cookie,
+            id,
+            &[
+                ("name", name),
+                ("latitude", latitude),
+                ("longitude", "10.7522"),
+                ("radius_m", "150"),
+            ],
+        )
+        .await;
+    }
     report(&app, &token, NEAR, &at(20)).await;
     report(&app, &token, NEAR, &at(10)).await;
     assert_eq!(side(&app, home).await.as_deref(), Some("inside"));
@@ -809,7 +824,7 @@ async fn here_now_the_fix_badge_and_the_summary_line() {
         "the popup's words"
     );
     // Design 88: the Zones row says it, the Zones page's row too.
-    assert!(html.contains("1 · Here now: Home"), "{html}");
+    assert!(html.contains("3 · Here now: Home"), "{html}");
     assert!(
         app.get_page(&format!("/devices/{id}/zones"), &cookie)
             .await

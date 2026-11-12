@@ -115,8 +115,11 @@ struct FindTemplate {
     title: String,
     device: Device,
     who: crate::handlers::devices::BandAvatar,
-    /// The newest [FIND_REQUESTS] of [requests]; the first is highlighted.
+    /// [requests] as Find Phone lists them ([find_rows]); the first is highlighted.
     recent: Recent,
+    /// Show all's target: the summary's `#activity`, or the summary itself when its Activity is
+    /// empty (it is then not on the page, and the link mustn't land at the top).
+    activity_href: String,
     /// The phone's last report said it can't erase itself yet (QA of the launcher wave, Low 4).
     wipe_not_ready: bool,
     /// Design 59 §2.3: Android's lock is chosen - after a restart the actions wait for the PIN.
@@ -126,8 +129,25 @@ struct FindTemplate {
 }
 crate::i18n::words!(FindTemplate);
 
-/// How many requests the Find Phone page lists; Show all leads to the summary's Activity.
+/// How many requests the Find Phone page lists at most besides the ones that can still be
+/// cancelled; Show all leads to the summary's Activity.
 const FIND_REQUESTS: usize = 3;
+
+/// Find Phone's rows of [requests] (design 88, code QA L2): every one that can still be
+/// cancelled, never hidden while in flight, then the newest others up to [FIND_REQUESTS] in all,
+/// in their order.
+fn find_rows(rows: &mut Vec<CommandRow>) {
+    let cancellable = rows.iter().filter(|r| r.cancel_id.is_some()).count();
+    let mut room = FIND_REQUESTS.saturating_sub(cancellable);
+    rows.retain(|r| {
+        if r.cancel_id.is_some() {
+            return true;
+        }
+        let kept = room > 0;
+        room = room.saturating_sub(1);
+        kept
+    });
+}
 
 /// The Location Settings page (design 88): When to locate, Every, Keep history for.
 #[derive(Template)]
@@ -1939,9 +1959,11 @@ pub async fn show_zones(
     .into_response()
 }
 
-/// The Find Phone page for `device`; `erase_refused` = a wrong name was typed into Erase Phone….
+/// The Find Phone page for `device` as `admin_id` reads it; `erase_refused` = a wrong name was
+/// typed into Erase Phone….
 async fn render_find_page(
     state: &AppState,
+    admin_id: i64,
     device: Device,
     cancel: Option<&str>,
     erase_refused: bool,
@@ -1951,7 +1973,13 @@ async fn render_find_page(
     let zone = Zone::load(&state.db, lang).await;
     let now = Utc::now();
     let mut recent = requests(state, id, cancel, &zone, now).await?;
-    recent.rows.truncate(FIND_REQUESTS);
+    find_rows(&mut recent.rows);
+    let activity = crate::handlers::activity::rows(state, admin_id, id, None, &zone, now).await?;
+    let activity_href = if activity.rows.is_empty() {
+        format!("/devices/{id}")
+    } else {
+        format!("/devices/{id}#activity")
+    };
     let policy = location_policy(state, id).await?;
     let wipe_not_ready = sqlx::query_scalar::<_, Option<bool>>(
         "SELECT remote_wipe_ready FROM device_status WHERE device_id = ? \
@@ -1969,6 +1997,7 @@ async fn render_find_page(
             who: crate::handlers::devices::BandAvatar::of(&device),
             device,
             recent,
+            activity_href,
             wipe_not_ready,
             android_lock: policy.android_lock,
             erase_refused,
@@ -1983,6 +2012,7 @@ async fn render_find_page(
 pub async fn show_find(
     State(state): State<AppState>,
     lang: Lang,
+    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Path(id): Path<i64>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Response {
@@ -1991,7 +2021,7 @@ pub async fn show_find(
         Err(answer) => return *answer,
     };
     let cancel = params.get("cancel").map(String::as_str);
-    match render_find_page(&state, device, cancel, false, lang).await {
+    match render_find_page(&state, admin.id, device, cancel, false, lang).await {
         Ok(page) => page.into_response(),
         Err(err) => db_error(id, err, lang),
     }
@@ -2903,7 +2933,7 @@ pub async fn wipe(
 
     let confirm = form.get("confirm_name").map(|s| s.trim()).unwrap_or("");
     if confirm != device.name {
-        return match render_find_page(&state, device, None, true, lang).await {
+        return match render_find_page(&state, admin.id, device, None, true, lang).await {
             Ok(page) => page.into_response(),
             Err(err) => db_error(id, err, lang),
         };

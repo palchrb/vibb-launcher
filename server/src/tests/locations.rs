@@ -298,19 +298,15 @@ async fn a_delivered_command_is_not_shown_as_done() {
         .await
         .unwrap();
     }
-    // Find Phone lists the three newest requests (design 88); the ring, the oldest, is in the
-    // summary's Activity below.
+    // Find Phone (design 88): the waiting ring, which can be cancelled, and the two newest others;
+    // the lock is in the summary's Activity below.
     let page = app
         .get_page(&format!("/devices/{id}/find"), &cookie)
         .await
         .text();
     let row = |command: &str| super::locate_page::recent_row(&page, command).to_string();
-    assert!(!page.contains("data-command=\"ring\""), "{page}");
-    assert!(
-        row("lock").contains("Not confirmed yet."),
-        "{}",
-        row("lock")
-    );
+    assert!(row("ring").contains(">Waiting<"), "{}", row("ring"));
+    assert!(!page.contains("data-command=\"lock\""), "{page}");
     assert!(
         row("stop_ring").contains(">Not confirmed<"),
         "{}",
@@ -331,7 +327,11 @@ async fn a_delivered_command_is_not_shown_as_done() {
         .text();
     let row = |command: &str| super::locate_page::recent_row(&page, command).to_string();
     assert!(row("locate").contains(">Done<"), "{}", row("locate"));
-    assert!(row("ring").contains(">Waiting<"), "{}", row("ring"));
+    assert!(
+        row("lock").contains("Not confirmed yet."),
+        "{}",
+        row("lock")
+    );
     // The server's own "ok" (no message from the phone) is no line: the word says it
     // (qa-31-s13-code L3).
     assert!(!row("locate").contains("row-sub"), "{}", row("locate"));
