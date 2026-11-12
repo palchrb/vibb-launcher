@@ -109,17 +109,30 @@ class KidVpnService : VpnService() {
         // only in settleForeground, once the filter is up and always-on.
         startForeground(VPN_FILTER_NOTIFICATION_ID, buildNotification())
         state.enteredForeground()
+        created = true
         running = state
         live = this
         DnsFilterEngine.loadFromDisk(applicationContext)
-        startVpn()
+        // A stop() that came before this onCreate left the stop to us ([vpnStopsNow]):
+        // onStartCommand stops, no tunnel meanwhile.
+        if (filterWanted()) startVpn()
     }
 
     override fun onStartCommand(intent: android.content.Intent?, flags: Int, startId: Int): Int {
         // A startForegroundService start must be answered with startForeground, also when we had
         // dropped it (ForegroundServiceDidNotStartInTimeException otherwise). The system's
         // always-on start and start()'s plain one carry no extra.
-        if (intent?.getBooleanExtra(EXTRA_FOREGROUND, false) == true) enterForeground()
+        if (intent?.getBooleanExtra(EXTRA_FOREGROUND, false) == true) {
+            enterForeground()
+            foregroundStartsPending.updateAndGet { maxOf(it - 1, 0) }
+        }
+        // The stop that [stop] or [onRevoke] left to a queued start ([vpnStopsNow]): the start is
+        // answered above (or by onCreate), so stopping now can't crash us.
+        if (!filterWanted() || state.stopped) {
+            Log.i(LOG_TAG, "Filter off or revoked since this start was queued: stopping")
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
         if (state.tunnel == null) startVpn()
         settleForeground()
         return START_STICKY
@@ -420,13 +433,23 @@ class KidVpnService : VpnService() {
         // cleanly rather than leaving a dangling foreground service with a dead tunnel. Called on a
         // binder thread (VpnService.Callback): the state changes on main, as everywhere else
         // (qa-lfix-notifs-code #3); super.onRevoke() is only stopSelf().
+        // A stopSelf() with a foreground start still unanswered would crash us like stop() can (code QA L1 of the
+        // upstream port, [vpnStopsNow]): then that start's onStartCommand stops the service, the state being stopped.
         main.post {
             stopSelfCleanly()
-            stopSelf()
+            if (vpnStopsNow(created, foregroundStartsPending.get())) stopSelf()
         }
     }
 
+    /** The cached `vpnFilterEnabled` ([AppEnforcer.applyVpnRestrictions] writes it before every
+     * start and stop); a failed read counts as on - the filter never drops on a doubt. */
+    private fun filterWanted(): Boolean = runCatching { LauncherPreferences.mdm().vpnFilterEnabled() }.getOrDefault(true)
+
     override fun onDestroy() {
+        created = false
+        // Starts not delivered by now never will be (a destroyed service drops them): the count
+        // never outlives its instance, so a lost one can't hold every later stop back.
+        foregroundStartsPending.set(0)
         stopSelfCleanly()
         super.onDestroy()
     }
@@ -465,6 +488,14 @@ class KidVpnService : VpnService() {
     companion object {
         /** A `startForegroundService` start: onStartCommand calls startForeground first. */
         const val EXTRA_FOREGROUND = "com.kidslauncher.mdm.vpn.FOREGROUND"
+
+        /** Between [onCreate]'s startForeground and [onDestroy] ([vpnStopsNow]): written on the main
+         * thread, read on whichever [AppEnforcer.apply] runs on. */
+        @Volatile
+        private var created = false
+
+        /** `startForegroundService` calls whose [onStartCommand] hasn't run yet ([vpnStopsNow]). */
+        private val foregroundStartsPending = java.util.concurrent.atomic.AtomicInteger()
 
         /** The running instance's state, `null` when none ([vpnStartKind]). */
         @Volatile
@@ -507,13 +538,30 @@ class KidVpnService : VpnService() {
                     Log.w(LOG_TAG, "Plain VPN start refused, starting foreground: ${e.javaClass.simpleName}")
                 }
             }
-            ContextCompat.startForegroundService(context, intent.putExtra(EXTRA_FOREGROUND, true))
+            foregroundStartsPending.incrementAndGet()
+            try {
+                ContextCompat.startForegroundService(context, intent.putExtra(EXTRA_FOREGROUND, true))
+            } catch (e: Exception) {
+                foregroundStartsPending.updateAndGet { maxOf(it - 1, 0) }
+                throw e
+            }
         }
 
-        /** Stops the service if running - safe to call whether or not it's currently up. Used by
-         * [AppEnforcer.applyVpnRestrictions] when a parent turns filtering off for this device. */
+        /**
+         * Stops the service if running - safe to call whether or not it's currently up, also right
+         * after a [start] that hasn't been answered yet. Used by [AppEnforcer.applyVpnRestrictions]
+         * when a parent turns filtering off for this device, or the pause / offline override does;
+         * it has cleared the cached `vpnFilterEnabled` first. `stopService` only when [vpnStopsNow]
+         * (upstream c88216cfe0: a stop before the start's startForeground crashes the launcher with
+         * `ForegroundServiceDidNotStartInTimeException`); otherwise the queued start's
+         * [onStartCommand] stops the service.
+         */
         fun stop(context: Context) {
-            context.stopService(Intent(context, KidVpnService::class.java))
+            if (vpnStopsNow(created, foregroundStartsPending.get())) {
+                context.stopService(Intent(context, KidVpnService::class.java))
+            } else {
+                Log.i(LOG_TAG, "VPN stop left to the queued start")
+            }
         }
     }
 }

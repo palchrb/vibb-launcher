@@ -172,7 +172,7 @@ class QuietNotificationsTest {
         assertEquals(listOf("try {", "startForeground(VPN_FILTER_NOTIFICATION_ID, buildNotification())", "state.enteredForeground()"), enter.take(3))
         // onStartCommand: the extra answered first, settled last.
         val onStart = statements(body(vpn, "override fun onStartCommand("))
-        assertEquals("if (intent?.getBooleanExtra(EXTRA_FOREGROUND, false) == true) enterForeground()", onStart[0])
+        assertEquals(listOf("if (intent?.getBooleanExtra(EXTRA_FOREGROUND, false) == true) {", "enterForeground()"), onStart.take(2))
         assertEquals(listOf("settleForeground()", "return START_STICKY"), onStart.takeLast(2))
         // establish() records the tunnel in the state; nothing else holds it.
         assertTrue("state.established(established, SystemClock.elapsedRealtime())" in body(vpn, "private fun startVpn()"))
@@ -199,7 +199,7 @@ class QuietNotificationsTest {
         // The stop: the state first; the revoke posts to main.
         assertEquals("val fd = state.stop()", statements(body(vpn, "private fun stopSelfCleanly()"))[0])
         val revoke = body(vpn, "override fun onRevoke()")
-        assertTrue(Regex("""main\.post \{\s*stopSelfCleanly\(\)\s*stopSelf\(\)\s*\}""").containsMatchIn(revoke))
+        assertTrue(Regex("""main\.post \{\s*stopSelfCleanly\(\)\s*if \(vpnStopsNow\(created, foregroundStartsPending\.get\(\)\)\) stopSelf\(\)\s*\}""").containsMatchIn(revoke))
         assertTrue(statements(revoke).none { it.startsWith("super.onRevoke(") })
     }
 
@@ -248,5 +248,26 @@ class QuietNotificationsTest {
         val build = source("KidVpnService.kt").substringAfter("private fun buildNotification() =").substringBefore(".build()")
         assertTrue(".setContentTitle(getString(R.string.notification_vpn_filter_title))" in build)
         assertFalse("setContentText" in build)
+    }
+
+    @Test
+    fun `a stop before the start is answered is left to the queued start`() {
+        // Upstream c88216cfe0: stopService before startForeground crashes the launcher.
+        assertFalse("not created yet", vpnStopsNow(created = false, foregroundStartsPending = 1))
+        assertFalse("a foreground start into a running instance, unanswered", vpnStopsNow(created = true, foregroundStartsPending = 1))
+        assertTrue(vpnStopsNow(created = true, foregroundStartsPending = 0))
+        assertFalse("nothing runs, nothing queued", vpnStopsNow(created = false, foregroundStartsPending = 0))
+        val service = source("KidVpnService.kt")
+        val stop = body(service, "fun stop(context: Context)")
+        assertTrue("if (vpnStopsNow(created, foregroundStartsPending.get())) {" in stop)
+        // The queued start stops itself once answered, before any tunnel.
+        val command = statements(body(service, "override fun onStartCommand("))
+        val answered = command.indexOf("enterForeground()")
+        val check = command.indexOf("if (!filterWanted() || state.stopped) {")
+        assertTrue(answered in 0 until check)
+        assertTrue(check < command.indexOf("if (state.tunnel == null) startVpn()"))
+        assertTrue("if (filterWanted()) startVpn()" in body(service, "override fun onCreate()"))
+        // Code QA L1: a revoke's stopSelf() waits for an unanswered start the same way.
+        assertTrue("if (vpnStopsNow(created, foregroundStartsPending.get())) stopSelf()" in body(service, "override fun onRevoke()"))
     }
 }

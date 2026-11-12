@@ -1,7 +1,10 @@
 package com.kidslauncher.mdm.server
 
 import com.kidslauncher.mdm.server.dto.LocationPolicy
+import android.location.LocationManager
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class LocationPolicyTest {
@@ -54,5 +57,21 @@ class LocationPolicyTest {
         assertEquals(true, systemLocationTarget(LocationPolicy("on_request", 30), hardeningForcesOn = true))
         assertEquals(null, systemLocationTarget(LocationPolicy("interval", 30), hardeningForcesOn = false))
         assertEquals(true, systemLocationTarget(null, hardeningForcesOn = true))
+    }
+
+    /** Upstream 619f2bfab6 + 395a926122: the parent's `locate` asks fused first and waits longer; the rest is design 64's. */
+    @Test
+    fun `locate's fix is fused first and longer, the sync's own fixes keep GPS first and 15 s`() {
+        val locate = preciseFix(explicit = true)
+        assertEquals(
+            listOf(LocationManager.FUSED_PROVIDER, LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER),
+            locate.providers,
+        )
+        assertTrue("past getCurrentLocation's 30 s cap: one update instead", locate.oneUpdate && locate.boundMs > 30_000L)
+        assertEquals(60_000L, locate.boundMs)
+        val own = preciseFix(explicit = false)
+        assertEquals(listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER), own.providers)
+        assertEquals(15_000L, own.boundMs)
+        assertFalse(own.oneUpdate)
     }
 }

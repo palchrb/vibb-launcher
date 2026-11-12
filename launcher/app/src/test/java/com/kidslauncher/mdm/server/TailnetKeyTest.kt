@@ -47,4 +47,18 @@ class TailnetKeyTest {
         assertTrue("only while connected", "if (!connected) return" in forget)
         assertTrue("the key and the mark in one commit", "edit.remove(LauncherPreferences.mdm().keys().tailscaleAuthKey())" in forget && "edit.commit()" in forget)
     }
+
+    /** Upstream 0d4201dab9: a failed connect builds a fresh tsnet.Server next time - but never on a first join. */
+    @Test
+    fun `a failed connect drops its server only once joined`() {
+        assertTrue("joined: from the stored state, a fresh server", tailnetFreshAfterFailure(""))
+        assertFalse("a first join keeps its server: the one-time key may be spent", tailnetFreshAfterFailure(key))
+        val src = listOf("src", "app/src").map(::File).first { File(it, "main/java").isDirectory }
+        val client = File(src, "main/java/com/kidslauncher/mdm/server/TsnetClient.kt").readText()
+        val failure = client.substringAfter("Log.w(LOG_TAG, \"Failed to connect to tailnet\", e)").substringBefore("} catch (e: LinkageError)")
+        assertTrue("if (tailnetFreshAfterFailure(authKey)) discard()" in failure)
+        // Once: connect's own proxyChanged(before) tells the listener, discard() doesn't.
+        val discard = client.substringAfter("private fun discard() {").substringBefore("\n    }\n")
+        assertFalse("proxyChanged" in discard)
+    }
 }

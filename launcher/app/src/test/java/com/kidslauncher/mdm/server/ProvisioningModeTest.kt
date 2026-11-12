@@ -49,9 +49,21 @@ class ProvisioningModeTest {
             .map(::File).first { it.exists() }.readText()
         val body = text.substringAfter("suspend fun applyProvisioningExtras(").replace(Regex("//[^\\n]*"), "")
         assertTrue(body, body.contains(
-            "return Enrollment.enroll(context, extras.serverUrl, extras.enrollmentCode)\n" +
+            "return Enrollment.enroll(context, extras.serverUrl, extras.enrollmentCode, connectTailnet = false)\n" +
                 "        .onSuccess { com.kidslauncher.mdm.push.SyncRunner.request(context, \"enrolled\") }",
         ))
         assertEquals("only on success", 1, Regex("SyncRunner\\.request\\(").findAll(body).count())
+    }
+
+    /** Code QA L2 of the upstream port: the QR flow tries the tailnet once - the provisioning receiver's goAsync holds
+     * one connect, not two. Settings and the lock's re-enrol still connect inside enroll. */
+    @Test
+    fun `a QR enrolment connects the tailnet once`() {
+        fun read(name: String) = listOf("src/main/java/com/kidslauncher/mdm/server/$name", "app/src/main/java/com/kidslauncher/mdm/server/$name")
+            .map(::File).first { it.exists() }.readText()
+        val body = read("Provisioning.kt").substringAfter("suspend fun applyProvisioningExtras(").replace(Regex("//[^\\n]*"), "")
+        assertEquals(1, Regex("TsnetClient\\.connectFromPreferences\\(").findAll(body).count())
+        assertTrue("connectTailnet = false)" in body)
+        assertTrue("if (connectTailnet) TsnetClient.connectFromPreferences(context)" in read("Enrollment.kt"))
     }
 }

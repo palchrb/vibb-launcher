@@ -7,7 +7,9 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.location.Location
+import android.location.LocationListener
 import android.location.LocationManager
+import android.location.LocationRequest
 import android.media.AudioAttributes
 import android.media.AudioManager
 import android.media.MediaPlayer
@@ -33,6 +35,7 @@ import kotlinx.serialization.Serializable
 
 private const val LOG_TAG = "LocateCommands"
 private const val RING_DURATION_MS = 30_000L
+// The balanced path's wait (design 64 §4.4); the precise path's are [preciseFix]'s.
 private const val FRESH_LOCATION_TIMEOUT_MS = 15_000L
 
 // An active fetch (requestFreshFix) shows Android's location-in-use indicator and visibly slows
@@ -85,7 +88,8 @@ object LocateCommands {
      * Location toggle fundamentally controls). Security review P-L2: like the WiFi picker, a fix
      * that had to switch Location on switches it back off afterwards, unless the policy needs it on
      * ([staysOn], [locationStaysOn]). P-L3: a cached or last-known fix older than [maxCachedAgeMs]
-     * is never reported ([cachedFixMaxAgeMs]; `null` = any age).
+     * is never reported ([cachedFixMaxAgeMs]; `null` = any age). [explicit]: the parent's `locate` - a
+     * [LocationAction.FRESH] fix then takes [preciseFix]'s longer, fused-first path.
      */
     suspend fun currentLocation(
         context: Context,
@@ -94,6 +98,7 @@ object LocateCommands {
         action: LocationAction,
         staysOn: Boolean,
         maxCachedAgeMs: Long?,
+        explicit: Boolean = false,
     ): Location? {
         // Off: no permission grants, no Location toggle, no LocationManager - nothing at all.
         if (action == LocationAction.NONE) return null
@@ -136,7 +141,7 @@ object LocateCommands {
             QuickControls.setLocationEnabled(dpm, admin, true)
         }
         try {
-            return freshOrLastKnown(context, action, ::reportable)
+            return freshOrLastKnown(context, action, explicit, ::reportable)
         } finally {
             if (locationBackOff(switchedOn, staysOn)) {
                 Log.i(LOG_TAG, "Location back off after the fix")
@@ -168,7 +173,12 @@ object LocateCommands {
 
     /** [currentLocation]'s fix with Location on: a fresh one, else the newest last-known, else the cached one - the
      * last two only when [reportable]. A fresh or last-known fix becomes the cached one. */
-    private suspend fun freshOrLastKnown(context: Context, action: LocationAction, reportable: (Location) -> Boolean): Location? {
+    private suspend fun freshOrLastKnown(
+        context: Context,
+        action: LocationAction,
+        explicit: Boolean,
+        reportable: (Location) -> Boolean,
+    ): Location? {
         val lm = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
 
         // getLastKnownLocation is purely passive - it only ever returns a location if something
@@ -189,7 +199,7 @@ object LocateCommands {
         // Design 64 §4.4: the heartbeat and a crossing's first fix ask the fused provider at
         // balanced power first (Wi-Fi/cell, no GPS on a GMS phone); GPS when it gives nothing.
         val balanced = if (action == LocationAction.FRESH_BALANCED) requestBalancedFix(context, lm)?.takeIf { ZoneWatch.accept(context, it) } else null
-        val fresh = balanced ?: requestFreshFix(context, lm)?.takeIf { ZoneWatch.accept(context, it) } ?: try {
+        val fresh = balanced ?: requestFreshFix(context, lm, preciseFix(explicit && action == LocationAction.FRESH))?.takeIf { ZoneWatch.accept(context, it) } ?: try {
             val providers = mutableListOf(LocationManager.NETWORK_PROVIDER, LocationManager.GPS_PROVIDER)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 providers.add(LocationManager.FUSED_PROVIDER)
@@ -398,30 +408,55 @@ object LocateCommands {
     }
 
     /**
-     * Actively requests a fresh fix via the modern one-shot [LocationManager.getCurrentLocation]
-     * API (no Google Play Services needed, unlike `FusedLocationProviderClient`), bridged into a
-     * suspend call since [MdmSyncWorker] already runs in a coroutine. Bounded by
-     * [FRESH_LOCATION_TIMEOUT_MS] so a GPS fix that can't be acquired (e.g. deep indoors) can never
-     * stall a sync cycle - `getCurrentLocation` is documented to call back with `null` on its own
-     * internal timeout, but this is a second, app-level bound just in case that's ever longer.
+     * Actively requests a fresh fix, bridged into a suspend call since [MdmSyncWorker] already runs in
+     * a coroutine - plain [LocationManager], no Google Play Services. [plan] ([preciseFix]) picks the
+     * first enabled provider in its order and bounds the wait, so a fix that can't be acquired (e.g.
+     * deep indoors) never stalls a sync for longer. The sync's own fixes use the one-shot
+     * [LocationManager.getCurrentLocation] (GPS first, 15 s, design 64's precise path); the parent's
+     * `locate` a one-update `requestLocationUpdates` with the fused provider first at high accuracy
+     * (upstream 619f2bfab6 + 395a926122), since `getCurrentLocation` is capped at 30 s.
      */
-    private suspend fun requestFreshFix(context: Context, lm: LocationManager): Location? {
-        val provider = when {
-            lm.isProviderEnabled(LocationManager.GPS_PROVIDER) -> LocationManager.GPS_PROVIDER
-            lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER) -> LocationManager.NETWORK_PROVIDER
-            else -> return null
-        }
-        return withTimeoutOrNull(FRESH_LOCATION_TIMEOUT_MS) {
+    private suspend fun requestFreshFix(context: Context, lm: LocationManager, plan: PreciseFix): Location? {
+        val provider = plan.providers.firstOrNull { provider ->
+            try {
+                lm.isProviderEnabled(provider)
+            } catch (e: Exception) {
+                false
+            }
+        } ?: return null
+        return withTimeoutOrNull(plan.boundMs) {
             suspendCancellableCoroutine { cont ->
-                val cancellationSignal = CancellationSignal()
-                cont.invokeOnCancellation { cancellationSignal.cancel() }
-                try {
-                    lm.getCurrentLocation(provider, cancellationSignal, context.mainExecutor) { location ->
-                        if (cont.isActive) cont.resume(location)
+                if (plan.oneUpdate) {
+                    val listener = object : LocationListener {
+                        override fun onLocationChanged(location: Location) {
+                            lm.removeUpdates(this)
+                            if (cont.isActive) cont.resume(location)
+                        }
                     }
-                } catch (e: Exception) {
-                    Log.w(LOG_TAG, "Failed to request fresh location fix", e)
-                    if (cont.isActive) cont.resume(null)
+                    cont.invokeOnCancellation { lm.removeUpdates(listener) }
+                    val request = LocationRequest.Builder(1_000L)
+                        .setQuality(LocationRequest.QUALITY_HIGH_ACCURACY)
+                        .setDurationMillis(plan.boundMs)
+                        .setMaxUpdates(1)
+                        .build()
+                    try {
+                        lm.requestLocationUpdates(provider, request, context.mainExecutor, listener)
+                    } catch (e: Exception) {
+                        Log.w(LOG_TAG, "Failed to request a fresh fix from $provider", e)
+                        lm.removeUpdates(listener)
+                        if (cont.isActive) cont.resume(null)
+                    }
+                } else {
+                    val cancellationSignal = CancellationSignal()
+                    cont.invokeOnCancellation { cancellationSignal.cancel() }
+                    try {
+                        lm.getCurrentLocation(provider, cancellationSignal, context.mainExecutor) { location ->
+                            if (cont.isActive) cont.resume(location)
+                        }
+                    } catch (e: Exception) {
+                        Log.w(LOG_TAG, "Failed to request fresh location fix", e)
+                        if (cont.isActive) cont.resume(null)
+                    }
                 }
             }
         }
