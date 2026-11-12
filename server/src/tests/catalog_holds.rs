@@ -500,3 +500,65 @@ async fn migration_0141_keeps_the_catalog() {
         .await;
     assert!(refused.is_err(), "the CHECK holds the wait to 14 days");
 }
+
+/// QA L2: a held release no longer ahead of the served one (an upload meanwhile) isn't approved -
+/// Keep still answers it.
+#[tokio::test]
+async fn a_held_release_behind_the_served_one_is_not_approved() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _, _) = held_app(&app).await;
+    sqlx::query("UPDATE tracked_apps SET latest_release_tag = 'v3', latest_release_asset_id = 3 WHERE id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let page = format!("/apps/tracked/{id}");
+    let exact = [("tag", "v2"), ("asset_id", "2")];
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("{page}/held/approve"),
+            Some(&cookie),
+            &exact,
+        )
+        .await;
+    assert_redirect(&res, &format!("{page}?held=stale"), Some("update"));
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("{page}/held/decline"),
+            Some(&cookie),
+            &exact,
+        )
+        .await;
+    assert_redirect(&res, &format!("{page}?held=declined"), Some("update"));
+}
+
+/// The first release waits too (for now, `catalog_holds::FIRST_RELEASE_WAITS`): the Apps tab, the
+/// app's page and Add App say when it reaches the phones and that Update Now sends it - never "No
+/// release".
+#[tokio::test]
+async fn a_waiting_first_release_says_when_it_comes() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let id: i64 = sqlx::query_scalar(
+        "INSERT INTO tracked_apps (name, package_name, github_repo, waiting_release_tag, \
+         waiting_release_asset_id, waiting_release_since) VALUES ('Signal', '', 'o/r', 'v7.3.0', \
+         3, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')) RETURNING id",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    let apps = app.get_page("/apps", &cookie).await.text();
+    assert!(apps.contains("First release reaches the phones"), "{apps}");
+    let page = app
+        .get_page(&format!("/apps/tracked/{id}"), &cookie)
+        .await
+        .text();
+    assert!(page.contains("First release reaches the phones"), "{page}");
+    assert!(page.contains("- or Update Now"));
+    assert!(page.contains("/update-now#update"));
+    let add = app.get_page("/apps/tracked/new", &cookie).await.text();
+    assert!(add.contains("The first release waits too"));
+}

@@ -27,3 +27,13 @@ CREATE TABLE tracked_app_held_releases (
     new_permissions TEXT NOT NULL DEFAULT '[]',
     held_at TEXT NOT NULL
 );
+
+-- QA M1: when this server first saw each listed release - the wait counts from the later of the source's time and
+-- this (a self-hosted repo's `added` can be backdated). Rows of releases no longer listed go at the next sync.
+CREATE TABLE tracked_app_seen_releases (
+    tracked_app_id INTEGER NOT NULL REFERENCES tracked_apps(id) ON DELETE CASCADE,
+    release_tag TEXT NOT NULL,
+    asset_id INTEGER NOT NULL,
+    first_seen TEXT NOT NULL,                -- UTC RFC 3339
+    PRIMARY KEY (tracked_app_id, release_tag, asset_id)
+);

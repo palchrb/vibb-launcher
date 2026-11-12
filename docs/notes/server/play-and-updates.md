@@ -408,7 +408,10 @@ Install Now), so a held or waiting release never reaches them and no contract ch
   ended at the declared size, and every counted attribute was found **by resource id** (`android:name` `0x01010003`,
   `android:permission` `0x01010006`, `maxSdkVersion` `0x01010271` - never by the name fallback, a parser differential),
   once, a string (typed and raw agreeing when both are there), a numeric `maxSdkVersion`, at most 500 names of at most
-  200 bytes. Anything else is `None` - never "no permissions". Fixtures `testdata/apk/perms-key3-v1.apk` (INTERNET,
+  200 bytes, no NUL or control character in an element's name or a permission (code QA H2: Android's string reader
+  stops at a NUL). A string pool or resource map after the first XML node makes it `None` and is never used (code QA
+  H1: `ResXMLTree::setTo` takes them only before the first node - the last there - and `nextNode` skips any other
+  chunk; so a later pool can't rename the package either). Anything else is `None` - never "no permissions". Fixtures `testdata/apk/perms-key3-v1.apk` (INTERNET,
   POST_NOTIFICATIONS) and `perms-key3-v2.apk` (READ_CONTACTS, a `maxSdkVersion="32"` WRITE_EXTERNAL_STORAGE, an sdk-23
   ACCESS_FINE_LOCATION, another app's permission, a service with BIND_ACCESSIBILITY_SERVICE, a receiver with
   BIND_DEVICE_ADMIN): aapt2 + apksigner (v2+v3) with a third throwaway key, made 2026-11-12 and discarded.
@@ -423,12 +426,15 @@ Install Now), so a held or waiting release never reaches them and no contract ch
   grows only by the parent - the app's **first release** seeds it (never held: it reaches no phone until ticked; an
   unreadable list leaves `[]`), **Approve** and a **manual upload** add what they ask for. `latest_release_permissions`
   is the served release's whole list (every store, Approve, an upload). `backfill_release_permissions` at startup
-  (after `backfill_version_codes`) reads the cached file of a row from before 0141 and seeds the set; an unreadable file
-  leaves both NULL, so the next sensitive release is held (fail closed). "Forget Package and Key…" clears the set to
-  NULL (§17.3 M4: a new key is a new trust) with the held, waiting and declined releases (`forget_holds`); a changed
-  repo or package under Details clears those three.
-- **The verdict** (`catalog_holds::judge`, pure): ours (`ours`: `is_launcher`, or a package in
-  `music::MUSIC_PACKAGES` - never by tag or repo) and a manual row are never judged (`holds_apply`); an unreadable list
+  (after `backfill_version_codes`, all of them before the hourly sync's first pass - code QA L1) reads the cached file
+  of a row from before 0141 and seeds the set; an unreadable file leaves both NULL, so the next sensitive release is
+  held (fail closed). "Forget Package and Key…" clears the set to
+  NULL (§17.3 M4: a new key is a new trust) with the held, waiting and declined releases (`forget_holds`, under the
+  app's sync guard, waited for up to 10 s); a changed repo, package, file name filter, tag prefix or "Include
+  prereleases" clears those three.
+- **The verdict** (`catalog_holds::judge`, pure): ours (`ours`, by the row - code QA L4: `is_launcher`, or the music
+  app's row: a package in `music::MUSIC_PACKAGES`, `music-v` releases, from this server's own repo -
+  `SERVER_RELEASE_REPO` or `LAUNCHER_APK_URL`'s, `tracked_apps::our_repos`) and a manual row are never judged (`holds_apply`); an unreadable list
   holds (`unreadable`); sensitive names outside the set hold (`permissions`, the new names kept); "Ask me before every
   update" (`always_ask`, D9) holds the rest (`always_ask`); else served. The pins are checked before (a release with
   another key is still refused, never offered for approval).
@@ -436,9 +442,14 @@ Install Now), so a held or waiting release never reaches them and no contract ch
   change from before (D2) - read only through `catalog_holds::wait_hours`, `None` for manual rows and ours). It counts
   from the source's time (`catalog_holds::anchor`): GitHub's later of the release's `published_at` and the asset's
   `updated_at` (a swapped APK waits from the swap); an F-Droid index version's `added` (ms, `fdroid::IndexVersion.added`,
-  read leniently: a non-number is no time). A release without a time waits from this server's first sight
-  (`waiting_release_since`, kept while the same `(tag, asset id)` is seen again); an older one without a time is never
-  ripe. Ready = anchor + the app's hours, computed at every sync and page (§17.3 M1: a changed wait re-times it).
+  read leniently: a non-number is no time) - and never earlier than this server's **first sight** of the release
+  (code QA M1: a self-hosted repo's developer can backdate `added`): every listed release's first sight is kept in
+  `tracked_app_seen_releases` (`note_seen`; a release no longer listed is forgotten), and the anchor is the later of
+  the two (`waiting_release_since` stores it for the page). Ready = anchor + the app's hours, computed at every sync and
+  page (§17.3 M1: a changed wait re-times it). So after the upgrade every release waits 48 h from its first sight.
+- **The first release waits too** (the user hasn't decided; `catalog_holds::FIRST_RELEASE_WAITS`, one line to send it
+  at once): an app with no served release shows "First release reaches the phones Thu 14:02 - or Update Now" in the
+  Apps tab's badge and the page's Version row, never "No release yet"; Add App's wait footer says Update Now sends it.
 - **The pick** (`catalog_holds::pick`, pure; `sync_listed`): the source's matching releases newest first
   (`fetch_releases`/`matching_releases` for GitHub; `fdroid_releases` for F-Droid: the API's or the index's newest, then
   every older stable version, the stored release under its stored tag). The newest **ripe** one is synced - unless it
@@ -448,7 +459,8 @@ Install Now), so a held or waiting release never reaches them and no contract ch
   of all three is noted as waiting (`waiting_release_*`, `note_waiting`) - listed, never downloaded, Check Now
   included; none clears the columns (a pulled release simply goes).
 - **The hold** (`sync_release`): after the download and every check, a `Hold` verdict writes
-  `tracked_app_held_releases` (one per app, `INSERT ... ON CONFLICT DO UPDATE`, only while the app exists) instead of
+  `tracked_app_held_releases` (one per app, `INSERT ... ON CONFLICT DO UPDATE`, only while the row still has the
+  source, filter, prefix, prereleases switch and key the release came from - code QA L2) instead of
   `latest_release_*`; the previous held file goes, nothing is nudged, the release isn't remembered as refused, and the
   same `(tag, asset id)` is "nothing to do" (never downloaded again). A newer release served supersedes a held one
   behind it (row and file go); a newer one held replaces it. Its file lives next to the served one
@@ -458,11 +470,11 @@ Install Now), so a held or waiting release never reaches them and no contract ch
   `(tag, asset_id)` the form posts, else `stale`; every one back to `?held=<word>#update`): **Approve**
   (`approve_held`, §17.3 M3) reads the held file again - pins, `check_new_package`, its SHA-256 - and moves it into
   `latest_release_*` with the set widened and the held row deleted in one transaction, then the old file, the pins, the
-  nudge; a failed check drops the held release and shows as the sync's failure; Security Log
+  nudge (a held release no longer ahead of the served one is `stale` - Keep still answers it); a failed check drops the held release and shows as the sync's failure; Security Log
   `catalog_release_approved`, no inbox row. **Keep** (`decline_held`) drops it and stores `declined_release_*`
   (`catalog_release_declined`); **Ask Again** (`ask_again`) clears that and starts a check as Check Now does. **Update
   Now** (`update_now`, D6) lists the source again and syncs that exact release with the wait skipped - still judged, so
-  one asking for more is held (`waits`); not listed any more: `gone`. A long download goes on after the answer.
+  one asking for more is held (`waits`); not listed any more: `gone`; not ahead of the served one: `stale`. A long download goes on after the answer.
 - **The page** (`tracked_app_detail.html`): the `#update` group after Check Now (held: "2.0 waits for you", what it
   asks for, Approve and Keep, an ⓘ with the new groups, the ones it had and every name; waiting: "reaches the phones
   Thu 14:02", published or found and the app's hours, Update Now; declined: "Kept 1.0 · 2.0 declined", Ask Again);

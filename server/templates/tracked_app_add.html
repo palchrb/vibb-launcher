@@ -102,7 +102,7 @@
                     </label>
                     {% if error_field == "release_wait_hours" %}{% if let Some(e) = error %}<p class="flash flash-error" id="release_wait_hours-error" data-flash="release_wait_hours">{{ e }}</p>{% endif %}{% endif %}
                 </div>
-                <p class="group-footer">{{ self.t("apps.wait.footer") }}</p>
+                <p class="group-footer">{{ self.t("apps.wait.footer") }}{% if first_waits %} {{ self.t("apps.wait.first_footer") }}{% endif %}</p>
             </div>
         </div>
 

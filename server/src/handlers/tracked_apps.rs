@@ -1452,17 +1452,13 @@ async fn sync_listed(
     let held = held_release(state, app.id)
         .await
         .map_err(|e| Failure::new(SyncProblem::Server, e.to_string()))?;
-    let since = app
-        .waiting_release_since
-        .as_deref()
-        .and_then(crate::display_time::parse_db_utc);
-    let seen = match (
-        &app.waiting_release_tag,
-        app.waiting_release_asset_id,
-        since,
-    ) {
-        (Some(tag), Some(asset), Some(since)) => Some(((tag.as_str(), asset), since)),
-        _ => None,
+    let now = chrono::Utc::now();
+    let wait_hours = crate::catalog_holds::sync_wait(app, &our_repos(state));
+    let seen = match wait_hours {
+        Some(_) => note_seen(state, app.id, listed, now)
+            .await
+            .map_err(|e| Failure::new(SyncProblem::Server, e.to_string()))?,
+        None => HashMap::new(),
     };
     let candidates: Vec<Candidate> = listed
         .iter()
@@ -1470,15 +1466,15 @@ async fn sync_listed(
             tag: l.tag.clone(),
             asset_id: l.asset.id,
             published: l.published,
+            first_seen: seen.get(&(l.tag.clone(), l.asset.id)).copied(),
         })
         .collect();
     let context = Context {
-        wait_hours: crate::catalog_holds::wait_hours(app),
-        now: chrono::Utc::now(),
+        wait_hours,
+        now,
         served: served_of(app),
         held: held.as_ref().map(|h| (h.release_tag.as_str(), h.asset_id)),
         declined: declined_of(app),
-        seen,
     };
     let picked = pick(&candidates, &context, |tag, asset, of| {
         ahead(app, tag, asset, of)
@@ -1512,6 +1508,76 @@ async fn sync_listed(
         ));
     }
     sync_release(state, app, &release.tag, &release.asset, forced).await
+}
+
+/// This server's own release repos (QA L4: what makes the music app's row ours): the server's
+/// releases' repo and the launcher's.
+fn our_repos(state: &AppState) -> Vec<String> {
+    let mut repos = vec![state.config.server_release_repo.clone()];
+    repos.extend(launcher_repo_from_url(&state.config.launcher_apk_url));
+    repos
+}
+
+/// The app's wait (`catalog_holds::wait_hours` with [our_repos]).
+fn app_wait(state: &AppState, app: &TrackedApp) -> Option<i64> {
+    crate::catalog_holds::wait_hours(app, &our_repos(state))
+}
+
+/// When this server first saw each of `listed` (design 90 QA M1, `tracked_app_seen_releases`):
+/// a release listed for the first time is seen `now`; one no longer listed is forgotten.
+async fn note_seen(
+    state: &AppState,
+    id: i64,
+    listed: &[Listed],
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<HashMap<(String, i64), chrono::DateTime<chrono::Utc>>, sqlx::Error> {
+    let mut tx = state.db.begin().await?;
+    let stored: Vec<(String, i64, String)> = sqlx::query_as(
+        "SELECT release_tag, asset_id, first_seen FROM tracked_app_seen_releases \
+         WHERE tracked_app_id = ?",
+    )
+    .bind(id)
+    .fetch_all(&mut *tx)
+    .await?;
+    let mut seen = HashMap::new();
+    for (tag, asset, at) in stored {
+        let listed_now = listed.iter().any(|l| l.tag == tag && l.asset.id == asset);
+        match crate::display_time::parse_db_utc(&at).filter(|_| listed_now) {
+            Some(at) => {
+                seen.insert((tag, asset), at);
+            }
+            None => {
+                sqlx::query(
+                    "DELETE FROM tracked_app_seen_releases WHERE tracked_app_id = ? \
+                     AND release_tag = ? AND asset_id = ?",
+                )
+                .bind(id)
+                .bind(&tag)
+                .bind(asset)
+                .execute(&mut *tx)
+                .await?;
+            }
+        }
+    }
+    for release in listed {
+        let key = (release.tag.clone(), release.asset.id);
+        if seen.contains_key(&key) {
+            continue;
+        }
+        sqlx::query(
+            "INSERT OR IGNORE INTO tracked_app_seen_releases (tracked_app_id, release_tag, \
+             asset_id, first_seen) VALUES (?, ?, ?, ?)",
+        )
+        .bind(id)
+        .bind(&release.tag)
+        .bind(release.asset.id)
+        .bind(rfc3339(now))
+        .execute(&mut *tx)
+        .await?;
+        seen.insert(key, now);
+    }
+    tx.commit().await?;
+    Ok(seen)
 }
 
 /// The stored release as `(tag, asset id)`; `None` before the first or for an upload (no asset id).
@@ -1925,7 +1991,7 @@ async fn sync_release(
     // it reaches no phone until the parent ticks the app, and its page shows what it asks for.
     let first = app.latest_release_tag.is_none();
     let accepted = crate::catalog_holds::read_names(app.accepted_permissions.as_deref());
-    let verdict = if first || !crate::catalog_holds::holds_apply(app) {
+    let verdict = if first || app_wait(state, app).is_none() {
         crate::catalog_holds::Verdict::Serve
     } else {
         crate::catalog_holds::judge(
@@ -2107,7 +2173,10 @@ async fn hold_release(
         "INSERT INTO tracked_app_held_releases (tracked_app_id, release_tag, asset_id, file_path, \
          asset_name, asset_size, sha256, version_code, permissions, reason, new_permissions, \
          held_at) SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12 \
-         WHERE EXISTS (SELECT 1 FROM tracked_apps WHERE id = ?1) \
+         WHERE EXISTS (SELECT 1 FROM tracked_apps WHERE id = ?1 AND source_type = ?13 \
+         AND github_repo = ?14 AND fdroid_repo IS ?15 AND fdroid_package IS ?16 \
+         AND asset_pattern IS ?17 AND release_tag_prefix IS ?18 AND include_prereleases = ?19 \
+         AND signer_sha256 IS ?20) \
          ON CONFLICT(tracked_app_id) DO UPDATE SET release_tag = excluded.release_tag, \
          asset_id = excluded.asset_id, file_path = excluded.file_path, \
          asset_name = excluded.asset_name, asset_size = excluded.asset_size, \
@@ -2127,6 +2196,16 @@ async fn hold_release(
     .bind(&release.reason)
     .bind(&release.new_permissions)
     .bind(&release.held_at)
+    // Held only while the row still has the source the release came from (QA L2): a source or
+    // key changed meanwhile ([forget_holds]) makes it another app's.
+    .bind(&app.source_type)
+    .bind(&app.github_repo)
+    .bind(&app.fdroid_repo)
+    .bind(&app.fdroid_package)
+    .bind(&app.asset_pattern)
+    .bind(&app.release_tag_prefix)
+    .bind(app.include_prereleases)
+    .bind(&app.signer_sha256)
     .execute(&state.db)
     .await;
     match written {
@@ -2135,7 +2214,7 @@ async fn hold_release(
             tokio::fs::remove_file(&release.file_path).await.ok();
             return Err(Failure::new(
                 SyncProblem::Removed,
-                "the app was removed during the download",
+                "the app was removed, or its source or key changed, during the download",
             ));
         }
         Err(err) => {
@@ -2252,10 +2331,8 @@ async fn note_waiting(
     if same {
         return;
     }
-    let (Some(old_tag), Some(wait)) = (
-        app.latest_release_tag.as_deref(),
-        crate::catalog_holds::wait_hours(app),
-    ) else {
+    let (Some(old_tag), Some(wait)) = (app.latest_release_tag.as_deref(), app_wait(state, app))
+    else {
         return;
     };
     let prefix = app.release_tag_prefix.as_deref();
@@ -2641,8 +2718,9 @@ struct CatalogRow {
     sub: String,
     /// "26.10.1", from the release tag.
     version: Option<String>,
-    /// Instead of the version: "Off", "Update failed", "No release yet", and the badge's class.
-    badge: Option<(&'static str, &'static str)>,
+    /// Instead of the version: "Off", "Update failed", "No release yet" (or when the first
+    /// release reaches the phones, design 90), and the badge's class.
+    badge: Option<(String, &'static str)>,
     tile: AppTile,
 }
 
@@ -2729,6 +2807,7 @@ fn catalog_row(
     phones: i64,
     set_up: i64,
     held: bool,
+    first_release: Option<String>,
     logos: &HashMap<String, String>,
     lang: Lang,
 ) -> CatalogRow {
@@ -2749,13 +2828,19 @@ fn catalog_row(
         (false, _) => phones_text(lang, phones),
     });
     let badge = if !app.enabled {
-        Some((t(lang, "common.off"), "badge"))
+        Some((t(lang, "common.off").to_string(), "badge"))
     } else if held {
-        Some((t(lang, "apps.list.waits"), "badge badge-warn"))
+        Some((t(lang, "apps.list.waits").to_string(), "badge badge-warn"))
     } else if state.app_syncs.status(app.id).last_error.is_some() {
-        Some((t(lang, "apps.list.update_failed"), "badge badge-red"))
+        Some((
+            t(lang, "apps.list.update_failed").to_string(),
+            "badge badge-red",
+        ))
     } else if app.latest_release_tag.is_none() {
-        Some((t(lang, "device.apps.no_release"), "badge"))
+        Some((
+            first_release.unwrap_or_else(|| t(lang, "device.apps.no_release").to_string()),
+            "badge",
+        ))
     } else {
         None
     };
@@ -2903,6 +2988,8 @@ pub async fn list_apps(
             .unwrap_or_default()
             .into_iter()
             .collect();
+    let zone = crate::display_time::Zone::load(&state.db, lang).await;
+    let now = chrono::Utc::now();
     let mut apps: Vec<CatalogRow> = tracked
         .iter()
         .map(|app| {
@@ -2912,6 +2999,7 @@ pub async fn list_apps(
                 counts.get(&app.id).copied().unwrap_or(0),
                 set_up,
                 held.contains(&app.id),
+                first_release_text(app, app_wait(&state, app), &zone, now, lang),
                 &logos,
                 lang,
             )
@@ -2958,6 +3046,8 @@ struct TrackedAppAddTemplate {
     error_field: &'static str,
     /// Design 90: the hours a new release waits, as typed (48 suggested).
     release_wait_hours: String,
+    /// The first release waits too ([crate::catalog_holds::FIRST_RELEASE_WAITS]): the footer says so.
+    first_waits: bool,
 }
 crate::i18n::words!(TrackedAppAddTemplate);
 
@@ -2989,6 +3079,7 @@ pub async fn new_tracked_app_form(lang: Lang) -> impl IntoResponse {
             fdroid_package: String::new(),
             error_field: "",
             release_wait_hours: crate::catalog_holds::DEFAULT_WAIT_HOURS.to_string(),
+            first_waits: crate::catalog_holds::FIRST_RELEASE_WAITS,
         }
         .render()
         .unwrap(),
@@ -3159,6 +3250,7 @@ pub async fn create_tracked_app(
             fdroid_package: field("fdroid_package"),
             error_field,
             release_wait_hours: field("release_wait_hours"),
+            first_waits: crate::catalog_holds::FIRST_RELEASE_WAITS,
         };
         return (StatusCode::BAD_REQUEST, Html(page.render().unwrap())).into_response();
     }
@@ -3239,6 +3331,8 @@ struct TrackedAppDetailTemplate {
     update: Option<UpdateGroup>,
     asks: Option<AsksRow>,
     wait: Option<WaitField>,
+    /// "First release reaches the phones … - or Update Now" in place of "No release yet".
+    first_release: Option<String>,
 }
 crate::i18n::words!(TrackedAppDetailTemplate);
 
@@ -3570,9 +3664,18 @@ async fn render_detail_full(
         Ok(held) => held,
         Err(err) => return page_read_failed(id, err, lang),
     };
-    let update = update_group(&app, held.as_ref(), extras.held_flash, &zone, now, lang);
+    let update = update_group(
+        &app,
+        app_wait(state, &app),
+        held.as_ref(),
+        extras.held_flash,
+        &zone,
+        now,
+        lang,
+    );
     let asks = asks_row(&app, lang);
-    let wait = crate::catalog_holds::wait_hours(&app).map(|hours| match extras.wait_refused {
+    let first_release = first_release_text(&app, app_wait(state, &app), &zone, now, lang);
+    let wait = app_wait(state, &app).map(|hours| match extras.wait_refused {
         Some((typed, error)) => WaitField {
             value: typed,
             error: Some(error),
@@ -3627,6 +3730,7 @@ async fn render_detail_full(
             update,
             asks,
             wait,
+            first_release,
         }
         .render()
         .unwrap(),
@@ -3709,17 +3813,41 @@ fn asks_row(app: &TrackedApp, lang: Lang) -> Option<AsksRow> {
     Some(AsksRow { value, names })
 }
 
+/// "First release reaches the phones Thu 14:02 - or Update Now" (design 90, the coordinator's QA):
+/// an app with no served release whose first release waits; `None` otherwise.
+fn first_release_text(
+    app: &TrackedApp,
+    wait: Option<i64>,
+    zone: &crate::display_time::Zone,
+    now: chrono::DateTime<chrono::Utc>,
+    lang: Lang,
+) -> Option<String> {
+    if app.latest_release_tag.is_some() || !crate::catalog_holds::FIRST_RELEASE_WAITS {
+        return None;
+    }
+    app.waiting_release_tag.as_ref()?;
+    let since = crate::display_time::parse_db_utc(app.waiting_release_since.as_deref()?)?;
+    let ready = crate::catalog_holds::ready_at(since, wait?);
+    Some(t_params(
+        lang,
+        "apps.first_release",
+        &[("when", &zone.until(ready, now))],
+    ))
+}
+
 /// The `#update` group's content; `None` when nothing is held, waiting or declined and no answer
 /// is shown - and always for an app with no wait and no hold (ours, a manual one).
+#[allow(clippy::too_many_arguments)]
 fn update_group(
     app: &TrackedApp,
+    wait: Option<i64>,
     held: Option<&HeldRelease>,
     flash: Option<(String, bool)>,
     zone: &crate::display_time::Zone,
     now: chrono::DateTime<chrono::Utc>,
     lang: Lang,
 ) -> Option<UpdateGroup> {
-    let wait = crate::catalog_holds::wait_hours(app)?;
+    let wait = wait?;
     let prefix = app.release_tag_prefix.as_deref();
     let served = app
         .latest_release_tag
@@ -4308,6 +4436,8 @@ pub async fn update_tracked_app(
     if github_repo != app.github_repo
         || fdroid_repo != app.fdroid_repo
         || fdroid_package != app.fdroid_package
+        || asset_pattern != app.asset_pattern
+        || tag_prefix != app.release_tag_prefix
     {
         forget_holds(&state, id, false).await;
     }
@@ -4725,12 +4855,20 @@ pub async fn set_include_prereleases(
     Form(form): Form<HashMap<String, String>>,
 ) -> impl IntoResponse {
     let include_prereleases = form.contains_key("include_prereleases");
-    sqlx::query("UPDATE tracked_apps SET include_prereleases = ? WHERE id = ?")
-        .bind(include_prereleases)
-        .bind(id)
-        .execute(&state.db)
-        .await
-        .ok();
+    let changed = sqlx::query(
+        "UPDATE tracked_apps SET include_prereleases = ? WHERE id = ? AND include_prereleases != ?",
+    )
+    .bind(include_prereleases)
+    .bind(id)
+    .bind(include_prereleases)
+    .execute(&state.db)
+    .await
+    .is_ok_and(|result| result.rows_affected() > 0);
+    // Design 90 QA L2: other releases are listed - the held, waiting and declined ones were the
+    // old list's.
+    if changed {
+        forget_holds(&state, id, false).await;
+    }
 
     Redirect::to(&format!("/apps/tracked/{id}?open=source#updates"))
 }
@@ -4833,6 +4971,11 @@ pub async fn approve_held(
         Ok(None) => return held_answer(id, "stale"),
         Err(err) => return page_read_failed(id, err, lang),
     };
+    // Not ahead of the served release any more (an upload meanwhile): never a step back (QA L2);
+    // Keep still answers it.
+    if app.latest_release_tag.is_some() && !release_ahead(&app, &held.release_tag, held.asset_id) {
+        return held_answer(id, "stale");
+    }
     match approve(&state, &app, &held).await {
         Ok(identity) => {
             drop(guard);
@@ -5111,7 +5254,7 @@ async fn update_now_sync(
     form: &ReleaseForm,
 ) -> Result<Option<&'static str>, Failure> {
     let app = read_app(state, id).await?;
-    if crate::catalog_holds::wait_hours(&app).is_none() {
+    if app_wait(state, &app).is_none() {
         return Ok(None);
     }
     let listed = list_releases(state, &app, false, false)
@@ -5123,6 +5266,10 @@ async fn update_now_sync(
     else {
         return Ok(None);
     };
+    // Never a step back (QA L3): a release not ahead of the served one isn't sent.
+    if app.latest_release_tag.is_some() && !release_ahead(&app, &release.tag, release.asset.id) {
+        return Ok(Some("stale"));
+    }
     sync_release(state, &app, &release.tag, &release.asset, true).await?;
     let held = held_release(state, id)
         .await
@@ -5151,7 +5298,7 @@ pub async fn save_release_wait(
         Ok(app) => app,
         Err(_) => return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.app_not_found"),
     };
-    let Some(was) = crate::catalog_holds::wait_hours(&app) else {
+    let Some(was) = app_wait(&state, &app) else {
         return Redirect::to(&format!("/apps/tracked/{id}?open=source#updates")).into_response();
     };
     let typed = fields
@@ -5231,6 +5378,14 @@ pub async fn set_always_ask(
 /// cause"); with `accepted` also the accepted set (Forget, §17.3 M4: the next sensitive release
 /// waits for the parent).
 async fn forget_holds(state: &AppState, id: i64, accepted: bool) {
+    // Under the app's sync guard (QA L2), waited for up to Check Now's 10 s; a long download still
+    // running then finds the row changed and holds nothing ([hold_release]).
+    let mut guard = state.app_syncs.start(id);
+    let waited = tokio::time::Instant::now();
+    while guard.is_none() && waited.elapsed() < CHECK_NOW_WAIT {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        guard = state.app_syncs.start(id);
+    }
     if let Ok(Some(held)) = held_release(state, id).await {
         drop_held(state, id, &held).await;
     }
@@ -5247,6 +5402,7 @@ async fn forget_holds(state: &AppState, id: i64, accepted: bool) {
     if let Err(err) = sqlx::query(sql).bind(id).execute(&state.db).await {
         tracing::error!(app_id = id, %err, "can't forget the app's held and waiting releases");
     }
+    drop(guard);
 }
 
 #[cfg(test)]
@@ -6508,10 +6664,12 @@ mod tests {
         );
     }
 
+    /// An F-Droid row without a wait (design 90: the wait's own tests set theirs).
     async fn fdroid_row(app: &crate::tests::TestApp, repo: &str, package: &str) -> i64 {
         sqlx::query_scalar(
             "INSERT INTO tracked_apps (name, package_name, source_type, github_repo, fdroid_repo, \
-             fdroid_package) VALUES ('Etar', '', 'fdroid', '', ?, ?) RETURNING id",
+             fdroid_package, release_wait_hours) VALUES ('Etar', '', 'fdroid', '', ?, ?, 0) \
+             RETURNING id",
         )
         .bind(repo)
         .bind(package)
@@ -7257,8 +7415,8 @@ mod tests {
         added_now(&fake, "me.vibb.testfixture", &sha);
         let id = fdroid_row(&app, &repo, "me.vibb.testfixture").await;
         sqlx::query(
-            "UPDATE tracked_apps SET latest_release_tag = 'v1.0.56', latest_release_asset_id = 56 \
-             WHERE id = ?",
+            "UPDATE tracked_apps SET latest_release_tag = 'v1.0.56', latest_release_asset_id = 56, \
+             release_wait_hours = 48 WHERE id = ?",
         )
         .bind(id)
         .execute(&app.db)
@@ -7268,7 +7426,6 @@ mod tests {
         sync_one_app(&app.state, id, false).await.unwrap();
         sync_one_app(&app.state, id, true).await.unwrap();
         let row = row_of(&app, id).await;
-        assert_eq!(row.release_wait_hours, 48, "the default, f-droid.org's too");
         assert_eq!(row.latest_release_tag.as_deref(), Some("v1.0.56"));
         assert_eq!(
             (
@@ -7278,7 +7435,8 @@ mod tests {
             (Some("v1.0.57"), Some(57))
         );
         assert!(row.waiting_release_published_at.is_some());
-        assert_eq!(row.waiting_release_since, row.waiting_release_published_at);
+        // From the later of the index's time and this server's first sight (QA M1).
+        assert!(row.waiting_release_since >= row.waiting_release_published_at);
         assert_eq!(
             FakeRepo::count(&fake.file_gets),
             0,
@@ -7318,8 +7476,8 @@ mod tests {
         added_now(&fake, "me.vibb.testfixture", &sha);
         let id = fdroid_row(&app, &repo, "me.vibb.testfixture").await;
         sqlx::query(
-            "UPDATE tracked_apps SET latest_release_tag = 'v1.0.56', latest_release_asset_id = 56 \
-             WHERE id = ?",
+            "UPDATE tracked_apps SET latest_release_tag = 'v1.0.56', latest_release_asset_id = 56, \
+             release_wait_hours = 48 WHERE id = ?",
         )
         .bind(id)
         .execute(&app.db)
@@ -7330,6 +7488,15 @@ mod tests {
             row_of(&app, id).await.waiting_release_tag.as_deref(),
             Some("v1.0.57")
         );
+        // 1.0.56 seen long ago: ripe, so the sweeps below would step back to it without H2's rule.
+        sqlx::query(
+            "UPDATE tracked_app_seen_releases SET first_seen = '2020-01-01T00:00:00Z' \
+             WHERE tracked_app_id = ? AND asset_id = 56",
+        )
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
 
         let exact = ReleaseForm {
             tag: "v1.0.57".to_string(),
@@ -7350,6 +7517,72 @@ mod tests {
             asset_id: 99,
         };
         assert_eq!(update_now_sync(&app.state, id, &gone).await.unwrap(), None);
+        // QA L3: a listed release behind the served one isn't sent.
+        let back = ReleaseForm {
+            tag: "v1.0.56".to_string(),
+            asset_id: 56,
+        };
+        assert_eq!(
+            update_now_sync(&app.state, id, &back).await.unwrap(),
+            Some("stale")
+        );
+        assert_eq!(
+            row_of(&app, id).await.latest_release_tag.as_deref(),
+            Some("v1.0.57")
+        );
+    }
+
+    /// §17.3 H2 on GitHub's rule (`ahead` by the versions): after an Update Now the newest is
+    /// served - the older ripe release isn't taken and nothing waits; with the served release gone
+    /// from the list, the newest ripe one is.
+    #[tokio::test]
+    async fn the_github_pick_never_steps_back() {
+        use crate::catalog_holds::{Candidate, Context, Pick, pick};
+        let app = crate::tests::TestApp::new().await;
+        let id: i64 = sqlx::query_scalar(
+            "INSERT INTO tracked_apps (name, package_name, github_repo, latest_release_tag, \
+             latest_release_asset_id) VALUES ('Signal', '', 'o/r', 'v7.3.0', 300) RETURNING id",
+        )
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+        let row = row_of(&app, id).await;
+        let now = chrono::Utc::now();
+        let ago = |h| Some(now - chrono::Duration::hours(h));
+        let candidates = [
+            Candidate {
+                tag: "v7.3.0".to_string(),
+                asset_id: 300,
+                published: ago(1),
+                first_seen: ago(1),
+            },
+            Candidate {
+                tag: "v7.2.0".to_string(),
+                asset_id: 200,
+                published: ago(100),
+                first_seen: ago(100),
+            },
+        ];
+        let context = |served| Context {
+            wait_hours: Some(48),
+            now,
+            served,
+            held: None,
+            declined: None,
+        };
+        let picked = |served| {
+            pick(&candidates, &context(served), |tag, asset, of| {
+                ahead(&row, tag, asset, of)
+            })
+        };
+        assert_eq!(
+            picked(served_of(&row)),
+            Pick {
+                take: None,
+                waiting: None
+            }
+        );
+        assert_eq!(picked(Some(("v7.1.0", 100))).take, Some(1));
     }
 
     /// Design 90 §5, §7: the first release seeds the accepted set and is served; one that asks for

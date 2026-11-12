@@ -174,6 +174,9 @@ fn first_certificate(scheme_block: &[u8]) -> Option<Vec<u8>> {
 const RES_STRING_POOL_TYPE: u16 = 0x0001;
 const RES_XML_TYPE: u16 = 0x0003;
 const RES_XML_START_ELEMENT_TYPE: u16 = 0x0102;
+/// `RES_XML_FIRST_CHUNK_TYPE`..=`RES_XML_LAST_CHUNK_TYPE`: the XML tree's nodes.
+const RES_XML_FIRST_NODE_TYPE: u16 = 0x0100;
+const RES_XML_LAST_NODE_TYPE: u16 = 0x017f;
 const TYPE_NULL: u8 = 0x00;
 const RES_XML_RESOURCE_MAP_TYPE: u16 = 0x0180;
 const UTF8_FLAG: u32 = 1 << 8;
@@ -262,6 +265,11 @@ fn walk_manifest(
     let mut at = usize::from(u16_at(xml, 2)?);
     let mut strings: Option<&[u8]> = None;
     let mut resource_ids: Option<&[u8]> = None;
+    // Android's `ResXMLTree::setTo` takes the string pool and the resource map only before the
+    // first XML node (the last of each there); `nextNode` skips any chunk after it. So a pool or
+    // map after the first node is never ours either - and, since a reader that took it would see
+    // other names than Android, the permission list is unreadable (design 90 QA H1).
+    let mut in_nodes = false;
     while at < xml.len() {
         let kind = u16_at(xml, at)?;
         let header_size = usize::from(u16_at(xml, at + 2)?);
@@ -271,89 +279,94 @@ fn walk_manifest(
             return None;
         }
         match kind {
+            RES_STRING_POOL_TYPE | RES_XML_RESOURCE_MAP_TYPE if in_nodes => *permissions = None,
             RES_STRING_POOL_TYPE => strings = Some(chunk),
             RES_XML_RESOURCE_MAP_TYPE => resource_ids = chunk.get(header_size..),
-            RES_XML_START_ELEMENT_TYPE => {
-                let pool = strings?;
-                // ResXMLTree_attrExt follows the node header.
-                let ext = chunk.get(header_size..)?;
-                let element = pool_string(pool, u32_at(ext, 4)?)?;
-                if let Some(manifest) = found {
-                    if element == "uses-sdk" && manifest.min_sdk.is_none() {
-                        manifest.min_sdk = int_attribute(
-                            pool,
-                            resource_ids,
-                            ext,
-                            ATTR_MIN_SDK_VERSION,
-                            "minSdkVersion",
-                        );
+            RES_XML_FIRST_NODE_TYPE..=RES_XML_LAST_NODE_TYPE => in_nodes = true,
+            _ => {}
+        }
+        if kind == RES_XML_START_ELEMENT_TYPE {
+            let pool = strings?;
+            // ResXMLTree_attrExt follows the node header.
+            let ext = chunk.get(header_size..)?;
+            let element = pool_string(pool, u32_at(ext, 4)?)?;
+            if let Some(manifest) = found {
+                if element == "uses-sdk" && manifest.min_sdk.is_none() {
+                    manifest.min_sdk = int_attribute(
+                        pool,
+                        resource_ids,
+                        ext,
+                        ATTR_MIN_SDK_VERSION,
+                        "minSdkVersion",
+                    );
+                }
+                // Android's string reader stops at a NUL: a name with one (or any control
+                // character) may read differently there - unreadable (QA H2).
+                if element.chars().any(char::is_control) {
+                    *permissions = None;
+                }
+                if let Some(names) = permissions {
+                    match permission_of(pool, resource_ids, ext, &element) {
+                        Some(Some(name)) if names.len() < MAX_PERMISSIONS => names.push(name),
+                        Some(None) => {}
+                        _ => *permissions = None,
                     }
-                    if let Some(names) = permissions {
-                        match permission_of(pool, resource_ids, ext, &element) {
-                            Some(Some(name)) if names.len() < MAX_PERMISSIONS => names.push(name),
-                            Some(None) => {}
-                            _ => *permissions = None,
-                        }
+                }
+                at = at.checked_add(size)?;
+                continue;
+            }
+            if element != "manifest" {
+                return None;
+            }
+            let attribute_start = usize::from(u16_at(ext, 8)?);
+            let attribute_size = usize::from(u16_at(ext, 10)?);
+            let count = usize::from(u16_at(ext, 12)?);
+            let mut manifest = Manifest::default();
+            let (mut code, mut major) = (None, None);
+            let mut package_seen = false;
+            for index in 0..count {
+                // A short or damaged attribute ends the reading; what was read stays (the
+                // package reads as it always did: the first `package`, or none).
+                let Some(attribute) = index
+                    .checked_mul(attribute_size)
+                    .and_then(|offset| attribute_start.checked_add(offset))
+                    .and_then(|start| ext.get(start..))
+                else {
+                    break;
+                };
+                let (Some(namespace), Some(name)) = (u32_at(attribute, 0), u32_at(attribute, 4))
+                else {
+                    break;
+                };
+                let named = |wanted: &str| pool_string(pool, name).as_deref() == Some(wanted);
+                // A number: the typed value's data.
+                let int = || match *attribute.get(15)? {
+                    TYPE_INT_DEC | TYPE_INT_HEX => u32_at(attribute, 16),
+                    _ => None,
+                };
+                if namespace == NO_INDEX {
+                    let Some(attribute_name) = pool_string(pool, name) else {
+                        break;
+                    };
+                    if attribute_name == "package" && !package_seen {
+                        package_seen = true;
+                        manifest.package = string_value(pool, attribute);
                     }
-                    at = at.checked_add(size)?;
                     continue;
                 }
-                if element != "manifest" {
-                    return None;
+                let id = resource_ids.and_then(|ids| u32_at(ids, (name as usize).checked_mul(4)?));
+                let is =
+                    |attr: u32, wanted: &str| id.map_or_else(|| named(wanted), |id| id == attr);
+                if is(ATTR_VERSION_CODE, "versionCode") {
+                    code = int();
+                } else if is(ATTR_VERSION_CODE_MAJOR, "versionCodeMajor") {
+                    major = int();
+                } else if is(ATTR_VERSION_NAME, "versionName") {
+                    manifest.version_name = string_value(pool, attribute);
                 }
-                let attribute_start = usize::from(u16_at(ext, 8)?);
-                let attribute_size = usize::from(u16_at(ext, 10)?);
-                let count = usize::from(u16_at(ext, 12)?);
-                let mut manifest = Manifest::default();
-                let (mut code, mut major) = (None, None);
-                let mut package_seen = false;
-                for index in 0..count {
-                    // A short or damaged attribute ends the reading; what was read stays (the
-                    // package reads as it always did: the first `package`, or none).
-                    let Some(attribute) = index
-                        .checked_mul(attribute_size)
-                        .and_then(|offset| attribute_start.checked_add(offset))
-                        .and_then(|start| ext.get(start..))
-                    else {
-                        break;
-                    };
-                    let (Some(namespace), Some(name)) =
-                        (u32_at(attribute, 0), u32_at(attribute, 4))
-                    else {
-                        break;
-                    };
-                    let named = |wanted: &str| pool_string(pool, name).as_deref() == Some(wanted);
-                    // A number: the typed value's data.
-                    let int = || match *attribute.get(15)? {
-                        TYPE_INT_DEC | TYPE_INT_HEX => u32_at(attribute, 16),
-                        _ => None,
-                    };
-                    if namespace == NO_INDEX {
-                        let Some(attribute_name) = pool_string(pool, name) else {
-                            break;
-                        };
-                        if attribute_name == "package" && !package_seen {
-                            package_seen = true;
-                            manifest.package = string_value(pool, attribute);
-                        }
-                        continue;
-                    }
-                    let id =
-                        resource_ids.and_then(|ids| u32_at(ids, (name as usize).checked_mul(4)?));
-                    let is =
-                        |attr: u32, wanted: &str| id.map_or_else(|| named(wanted), |id| id == attr);
-                    if is(ATTR_VERSION_CODE, "versionCode") {
-                        code = int();
-                    } else if is(ATTR_VERSION_CODE_MAJOR, "versionCodeMajor") {
-                        major = int();
-                    } else if is(ATTR_VERSION_NAME, "versionName") {
-                        manifest.version_name = string_value(pool, attribute);
-                    }
-                }
-                manifest.version_code = code.and_then(|code| long_version_code(code, major));
-                *found = Some(manifest);
             }
-            _ => {}
+            manifest.version_code = code.and_then(|code| long_version_code(code, major));
+            *found = Some(manifest);
         }
         at = at.checked_add(size)?;
     }
@@ -439,7 +452,12 @@ fn attribute_string(pool: &[u8], attribute: &[u8]) -> Option<String> {
         TYPE_NULL => raw??,
         _ => return None,
     };
-    (!value.is_empty() && value.len() <= MAX_PERMISSION_BYTES).then_some(value)
+    // A NUL ends a string for Android's reader (QA H2): a value with one, or any control
+    // character, would read differently there.
+    (!value.is_empty()
+        && value.len() <= MAX_PERMISSION_BYTES
+        && !value.chars().any(char::is_control))
+    .then_some(value)
 }
 
 /// The `android:` attribute `attr` (by its resource id, else by `name`) of a start element's
@@ -614,6 +632,18 @@ mod tests {
     /// first `ids.len()` strings those ids (none when empty), then one start element per
     /// `(name string, attributes, claimed count)`.
     fn xml_doc(strings: &[&str], ids: &[u32], elements: &[(u32, Vec<[u32; 5]>, u16)]) -> Vec<u8> {
+        let mut chunks = vec![pool_chunk(strings)];
+        if !ids.is_empty() {
+            chunks.push(map_chunk(ids));
+        }
+        for (name, attributes, count) in elements {
+            chunks.push(element_chunk(*name, attributes, *count));
+        }
+        document(&chunks)
+    }
+
+    /// A UTF-8 string pool of `strings` (each under 128 bytes).
+    fn pool_chunk(strings: &[&str]) -> Vec<u8> {
         let mut data = Vec::new();
         let mut offsets = Vec::new();
         for text in strings {
@@ -640,37 +670,61 @@ mod tests {
         }
         pool.extend(offsets);
         pool.extend(data);
+        pool
+    }
 
-        let mut body = pool;
-        if !ids.is_empty() {
-            body.extend(RES_XML_RESOURCE_MAP_TYPE.to_le_bytes());
-            body.extend(8u16.to_le_bytes());
-            body.extend(((8 + 4 * ids.len()) as u32).to_le_bytes());
-            for id in ids {
-                body.extend(id.to_le_bytes());
-            }
+    /// A resource map giving the first strings `ids`.
+    fn map_chunk(ids: &[u32]) -> Vec<u8> {
+        let mut map = Vec::new();
+        map.extend(RES_XML_RESOURCE_MAP_TYPE.to_le_bytes());
+        map.extend(8u16.to_le_bytes());
+        map.extend(((8 + 4 * ids.len()) as u32).to_le_bytes());
+        for id in ids {
+            map.extend(id.to_le_bytes());
         }
-        for (name, attributes, count) in elements {
-            body.extend(RES_XML_START_ELEMENT_TYPE.to_le_bytes());
-            body.extend(16u16.to_le_bytes());
-            body.extend(((36 + 20 * attributes.len()) as u32).to_le_bytes());
-            body.extend(
-                [0u32, NO_INDEX, NO_INDEX, *name]
-                    .iter()
-                    .flat_map(|w| w.to_le_bytes()),
-            );
-            for half in [20u16, 20, *count, 0, 0, 0] {
-                body.extend(half.to_le_bytes());
-            }
-            for [namespace, name, raw, kind, value] in attributes {
-                for word in [namespace, name, raw] {
-                    body.extend(word.to_le_bytes());
-                }
-                body.extend([8, 0, 0, *kind as u8]);
-                body.extend(value.to_le_bytes());
-            }
-        }
+        map
+    }
 
+    /// A start element named by string `name` claiming `count` attributes, each `[namespace,
+    /// name, raw, type, data]`.
+    fn element_chunk(name: u32, attributes: &[[u32; 5]], count: u16) -> Vec<u8> {
+        let mut element = Vec::new();
+        element.extend(RES_XML_START_ELEMENT_TYPE.to_le_bytes());
+        element.extend(16u16.to_le_bytes());
+        element.extend(((36 + 20 * attributes.len()) as u32).to_le_bytes());
+        element.extend(
+            [0u32, NO_INDEX, NO_INDEX, name]
+                .iter()
+                .flat_map(|w| w.to_le_bytes()),
+        );
+        for half in [20u16, 20, count, 0, 0, 0] {
+            element.extend(half.to_le_bytes());
+        }
+        for [namespace, name, raw, kind, value] in attributes {
+            for word in [namespace, name, raw] {
+                element.extend(word.to_le_bytes());
+            }
+            element.extend([8, 0, 0, *kind as u8]);
+            element.extend(value.to_le_bytes());
+        }
+        element
+    }
+
+    /// A namespace start node (`RES_XML_START_NAMESPACE_TYPE`) for prefix and uri strings.
+    fn namespace_chunk(prefix: u32, uri: u32) -> Vec<u8> {
+        let mut node = Vec::new();
+        node.extend(0x0100u16.to_le_bytes());
+        node.extend(16u16.to_le_bytes());
+        node.extend(24u32.to_le_bytes());
+        for word in [0u32, NO_INDEX, prefix, uri] {
+            node.extend(word.to_le_bytes());
+        }
+        node
+    }
+
+    /// The document of `chunks`, its size in its header.
+    fn document(chunks: &[Vec<u8>]) -> Vec<u8> {
+        let body: Vec<u8> = chunks.concat();
         let mut xml = Vec::new();
         xml.extend(RES_XML_TYPE.to_le_bytes());
         xml.extend(8u16.to_le_bytes());
@@ -838,6 +892,73 @@ mod tests {
         let size = xml.len() as u32 + 8;
         xml[4..8].copy_from_slice(&size.to_le_bytes());
         assert_eq!(read_manifest(&xml).unwrap().permissions, None);
+    }
+
+    /// Design 90 QA H1, H2, L5: Android takes the string pool and resource map only before the
+    /// first node, so a later one makes the list unreadable and never renames the package; a NUL
+    /// or control character in an element's name or a permission is unreadable; `-sdk-23` counts;
+    /// over 500 names is unreadable.
+    #[test]
+    fn what_android_reads_otherwise_is_unreadable() {
+        let strings = [
+            "name",
+            "manifest",
+            "package",
+            "me.vibb.testfixture",
+            "uses-permission",
+            "android.permission.READ_CONTACTS",
+            "uses-permission-sdk-23",
+            "android.permission.CAMERA\0",
+            "uses-permission\0x",
+            "android",
+            "http://schemas.android.com/apk/res/android",
+        ];
+        let ids = [ATTR_NAME];
+        let manifest = element_chunk(1, &[[NO_INDEX, 2, 3, u32::from(TYPE_STRING), 3]], 1);
+        let uses = |element: u32, value: u32| {
+            element_chunk(element, &[[9, 0, value, u32::from(TYPE_STRING), value]], 1)
+        };
+        let read = |chunks: Vec<Vec<u8>>| read_manifest(&document(&chunks)).unwrap();
+        let base = || vec![pool_chunk(&strings), map_chunk(&ids), manifest.clone()];
+
+        let mut sdk23 = base();
+        sdk23.push(uses(6, 5));
+        assert_eq!(
+            read(sdk23).permissions,
+            Some(vec!["android.permission.READ_CONTACTS".to_string()])
+        );
+        // A second pool (or map) after the first node: Android ignores it, we can't follow.
+        for late in [pool_chunk(&strings), map_chunk(&ids)] {
+            let mut chunks = base();
+            chunks.push(late);
+            chunks.push(uses(4, 5));
+            let read = read(chunks);
+            assert_eq!(read.permissions, None);
+            assert_eq!(read.package.as_deref(), Some("me.vibb.testfixture"));
+        }
+        // A pool between the namespace node and <manifest> doesn't rename the package.
+        let other = ["name", "manifest", "package", "org.example.other"];
+        let renamed = read(vec![
+            pool_chunk(&strings),
+            map_chunk(&ids),
+            namespace_chunk(9, 10),
+            pool_chunk(&other),
+            manifest.clone(),
+        ]);
+        assert_eq!(renamed.package.as_deref(), Some("me.vibb.testfixture"));
+        assert_eq!(renamed.permissions, None);
+        // A NUL in a permission's value, or in an element's name.
+        for (element, value) in [(4, 7), (8, 5)] {
+            let mut chunks = base();
+            chunks.push(uses(element, value));
+            assert_eq!(read(chunks).permissions, None, "{element} {value}");
+        }
+        // 500 names read, 501 don't.
+        for (count, readable) in [(500, true), (501, false)] {
+            let mut chunks = base();
+            chunks.extend((0..count).map(|_| uses(4, 5)));
+            assert_eq!(read(chunks).permissions.is_some(), readable, "{count}");
+        }
     }
 
     #[test]

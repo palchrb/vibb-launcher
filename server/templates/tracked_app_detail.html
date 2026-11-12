@@ -15,7 +15,7 @@
     <div class="group" id="check">
         <div class="row" data-row="version">
             <span class="row-label">{{ self.t("apps.app.version") }}</span>
-            <span class="row-value">{% if let Some(v) = version %}{{ v }}{% else %}{{ self.t("device.apps.no_release") }}{% endif %}</span>
+            <span class="row-value">{% if let Some(v) = version %}{{ v }}{% else if let Some(first) = first_release %}{{ first }}{% else %}{{ self.t("device.apps.no_release") }}{% endif %}</span>
         </div>
         {% if let Some(checked) = last_checked %}
         <div class="row" data-row="last-checked">

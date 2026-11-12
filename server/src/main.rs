@@ -574,13 +574,14 @@ async fn main() {
     handlers::tracked_apps::remove_orphan_files(&state).await;
     // Cached F-Droid indexes no app's repo uses any more (qa-fdroid-source-code Q-8).
     handlers::tracked_apps::remove_unused_fdroid_indexes(&state).await;
-    // Hashes for cached files from before migration 0043 (design 13): the phones check them.
-    tokio::task::spawn(handlers::tracked_apps::backfill_release_hashes(
-        state.clone(),
-    ));
-    tokio::task::spawn(handlers::tracked_apps::run_scheduled_tracked_app_sync(
-        state.clone(),
-    ));
+    // Hashes for cached files from before migration 0043 (design 13): the phones check them; then
+    // the pins, versionCodes and (design 90) permissions - all before the hourly sync's first pass,
+    // so an app upgraded past 0141 has its accepted set before a release is judged (QA L1).
+    let catalog_state = state.clone();
+    tokio::task::spawn(async move {
+        handlers::tracked_apps::backfill_release_hashes(catalog_state.clone()).await;
+        handlers::tracked_apps::run_scheduled_tracked_app_sync(catalog_state).await;
+    });
     tokio::task::spawn(handlers::dns_filter::run_blocklist_refresh(state.clone()));
     // Blocked domains, location history and status history (src/retention.rs).
     tokio::task::spawn(retention::run_pruning(state.clone()));

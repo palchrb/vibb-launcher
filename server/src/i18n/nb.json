@@ -2291,6 +2291,8 @@
   "apps.wait.hours": "timer",
   "apps.wait.footer": "Nye versjoner venter så lenge før telefonene får dem, så en ødelagt eller kapret versjon kan bli oppdaget og trukket først. 0 = med en gang.",
   "apps.list.waits": "Venter på deg",
+  "apps.first_release": "Første versjon kommer til telefonene {when} - eller Oppdater nå",
+  "apps.wait.first_footer": "Første versjon venter også - Oppdater nå på appens side sender den med en gang.",
   "apps.list.update_failed": "Oppdatering feilet",
   "apps.add.title": "Legg til app",
   "apps.add.name_example": "f.eks. Tailscale",

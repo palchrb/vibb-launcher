@@ -2291,6 +2291,8 @@
   "apps.wait.hours": "hours",
   "apps.wait.footer": "New versions wait this long before the phones get them, so a broken or hijacked release can be noticed and pulled first. 0 = at once.",
   "apps.list.waits": "Waits for you",
+  "apps.first_release": "First release reaches the phones {when} - or Update Now",
+  "apps.wait.first_footer": "The first release waits too - Update Now on the app's page sends it at once.",
   "apps.list.update_failed": "Update failed",
   "apps.add.title": "Add App",
   "apps.add.name_example": "e.g. Tailscale",

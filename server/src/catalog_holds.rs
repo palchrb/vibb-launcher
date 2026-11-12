@@ -354,23 +354,32 @@ pub fn judge(
     Verdict::Serve
 }
 
-/// Ours (§2): the launcher's row, or a row pinned to the music app's package - never by its tag
-/// or repo.
-pub fn ours(app: &TrackedApp) -> bool {
-    app.is_launcher || crate::music::MUSIC_PACKAGES.contains(&app.package_name.as_str())
+/// Ours (§2, QA L4), by the row: the launcher's row, or the music app's - pinned to its package,
+/// taking `music-v*` releases from one of `our_repos` (this server's configured release repos);
+/// a row named after the music app's package on another repo is not ours.
+pub fn ours(app: &TrackedApp, our_repos: &[String]) -> bool {
+    app.is_launcher
+        || (crate::music::MUSIC_PACKAGES.contains(&app.package_name.as_str())
+            && app.source_type == "github"
+            && app.release_tag_prefix.as_deref() == Some(crate::config::MUSIC_RELEASE_TAG_PREFIX)
+            && our_repos.contains(&app.github_repo))
 }
 
 /// The app's wait in hours (§17.3 M2): its column for a GitHub or F-Droid row, `None` (no wait,
 /// no hold) for a manual row and ours.
-pub fn wait_hours(app: &TrackedApp) -> Option<i64> {
+pub fn wait_hours(app: &TrackedApp, our_repos: &[String]) -> Option<i64> {
     let synced = matches!(app.source_type.as_str(), "github" | "fdroid");
-    (synced && !ours(app)).then_some(app.release_wait_hours.clamp(0, MAX_WAIT_HOURS))
+    (synced && !ours(app, our_repos)).then_some(app.release_wait_hours.clamp(0, MAX_WAIT_HOURS))
 }
 
-/// Whether the app's releases are judged ([judge] with `exempt` false): every GitHub and F-Droid
-/// row that isn't ours.
-pub fn holds_apply(app: &TrackedApp) -> bool {
-    wait_hours(app).is_some()
+/// Whether an app's first release waits too (the user hasn't decided, 2026-11-12: it does for
+/// now). `false` sends a new app's first release at once - the one line to change.
+pub const FIRST_RELEASE_WAITS: bool = true;
+
+/// The wait the sync applies to the app's next release: [wait_hours], none for a first release
+/// unless [FIRST_RELEASE_WAITS].
+pub fn sync_wait(app: &TrackedApp, our_repos: &[String]) -> Option<i64> {
+    wait_hours(app, our_repos).filter(|_| FIRST_RELEASE_WAITS || app.latest_release_tag.is_some())
 }
 
 /// A JSON array of names as stored (`accepted_permissions`, `latest_release_permissions`);
@@ -386,7 +395,8 @@ pub fn names_json(names: &[String]) -> String {
 
 /// When a release became public at its source (§6): the later of GitHub's `published_at` and the
 /// chosen asset's `updated_at` (a swapped asset on an old release restarts the clock); `None`
-/// when neither reads.
+/// when neither reads. The wait counts from the later of this and the server's first sight
+/// ([pick]).
 pub fn anchor(published_at: Option<&str>, asset_updated_at: Option<&str>) -> Option<DateTime<Utc>> {
     let parse = |text: Option<&str>| {
         DateTime::parse_from_rfc3339(text?)
@@ -411,6 +421,8 @@ pub struct Candidate {
     pub asset_id: i64,
     /// The source's time ([anchor], [anchor_ms]); `None` when it gave none.
     pub published: Option<DateTime<Utc>>,
+    /// When this server first saw the release (`tracked_app_seen_releases`); `None` = now.
+    pub first_seen: Option<DateTime<Utc>>,
 }
 
 /// A release named by `(tag, asset id)`.
@@ -434,9 +446,6 @@ pub struct Context<'a> {
     pub served: Option<Named<'a>>,
     pub held: Option<Named<'a>>,
     pub declined: Option<Named<'a>>,
-    /// The stored waiting release and its anchor (`waiting_release_since`): a release the source
-    /// gives no time for waits from when this server first saw it, kept while it is seen again.
-    pub seen: Option<(Named<'a>, DateTime<Utc>)>,
 }
 
 /// Which release of `candidates` (newest first) a sync takes, and which waits (§6, §17.3 H2):
@@ -452,19 +461,17 @@ pub fn pick(
     let same = |c: &Candidate, named: Option<Named>| {
         named.is_some_and(|(tag, asset)| c.tag == tag && c.asset_id == asset)
     };
+    // The wait's anchor (QA M1): the later of the source's time and this server's first sight -
+    // a source's time can be backdated (a self-hosted repo's `added`), first sight can't.
     let since = |c: &Candidate| {
-        c.published.or_else(|| {
-            context
-                .seen
-                .filter(|(named, _)| same(c, Some(*named)))
-                .map(|(_, at)| at)
-        })
+        let seen = c.first_seen.unwrap_or(context.now);
+        c.published.map_or(seen, |published| published.max(seen))
     };
     let wait = context.wait_hours.map(chrono::Duration::hours);
     let ripe = |c: &Candidate| match wait {
         None => true,
         Some(wait) if wait.is_zero() => true,
-        Some(wait) => since(c).is_some_and(|at| at + wait <= context.now),
+        Some(wait) => since(c) + wait <= context.now,
     };
     let beyond =
         |c: &Candidate, of: Option<Named>| of.is_none_or(|of| ahead(&c.tag, c.asset_id, of));
@@ -488,7 +495,7 @@ pub fn pick(
                 && !same(c, context.declined)
                 && beyond(c, context.declined)
         })
-        .map(|index| (index, since(&candidates[index]).unwrap_or(context.now)));
+        .map(|index| (index, since(&candidates[index])));
     Pick { take, waiting }
 }
 
@@ -660,6 +667,8 @@ mod tests {
                 tag: format!("v{n}"),
                 asset_id: *n,
                 published: age.map(|h| now - chrono::Duration::hours(h)),
+                // Seen by this server long ago: the source's time decides.
+                first_seen: Some(now - chrono::Duration::hours(1000)),
             })
             .collect()
     }
@@ -673,7 +682,6 @@ mod tests {
             served,
             held: None,
             declined: None,
-            seen: None,
         };
         // A project releasing every day: the release two days old is served, today's waits.
         let daily = list(
@@ -731,49 +739,44 @@ mod tests {
         assert_eq!(pick_of(&declined).waiting.map(|(i, _)| i), Some(0));
     }
 
+    /// QA M1: the wait counts from the later of the source's time and this server's first sight -
+    /// a backdated `added` doesn't shorten it; a release without a time waits from first sight.
     #[test]
-    fn a_release_without_a_time_waits_from_first_sight() {
+    fn the_wait_counts_from_first_sight_too() {
         let now: DateTime<Utc> = "2026-11-12T12:00:00Z".parse().unwrap();
-        let candidates = list(now, &[(3, None), (2, None)]);
-        let first = pick(
-            &candidates,
-            &Context {
-                wait_hours: Some(48),
-                now,
-                served: Some(("v1", 1)),
-                held: None,
-                declined: None,
-                seen: None,
-            },
-            by_version,
-        );
+        let hours = |h| now - chrono::Duration::hours(h);
+        let candidate = |n: i64, published: Option<i64>, seen: Option<i64>| Candidate {
+            tag: format!("v{n}"),
+            asset_id: n,
+            published: published.map(hours),
+            first_seen: seen.map(hours),
+        };
+        let context = Context {
+            wait_hours: Some(48),
+            now,
+            served: Some(("v1", 1)),
+            held: None,
+            declined: None,
+        };
+        // "Published" a year ago, first seen now: waits from now.
         assert_eq!(
-            first,
+            pick(&[candidate(3, Some(8760), None)], &context, by_version),
             Pick {
                 take: None,
                 waiting: Some((0, now))
             }
         );
-        // Seen 49 hours ago and kept: ripe now; the older one without a time never is.
-        let seen_at = now - chrono::Duration::hours(49);
-        let later = pick(
-            &candidates,
-            &Context {
-                wait_hours: Some(48),
-                now,
-                served: Some(("v1", 1)),
-                held: None,
-                declined: None,
-                seen: Some((("v3", 3), seen_at)),
-            },
-            by_version,
-        );
+        // Seen 49 hours ago: ripe, whether the source gave a time or not.
+        for published in [Some(8760), None] {
+            assert_eq!(
+                pick(&[candidate(3, published, Some(49))], &context, by_version).take,
+                Some(0)
+            );
+        }
+        // Published an hour ago, seen two days ago (a clock ahead): the source's time is later.
         assert_eq!(
-            later,
-            Pick {
-                take: Some(0),
-                waiting: None
-            }
+            pick(&[candidate(3, Some(1), Some(49))], &context, by_version).waiting,
+            Some((0, hours(1)))
         );
     }
 
