@@ -3485,7 +3485,8 @@ details.own-edit[open] {
 
 /* Design 85: Locate's Alle view (mockup B). The chips, markers, tags and bubble lie on OSM's tiles,
    which are light in both schemes, so they have one light look in both (as --map-trail). */
-.map-all { height: clamp(300px, 60vh, 520px); }
+/* Revision 3: the one-phone view's map (.map-one) has the same look and height. */
+.map-all, .map-one { height: clamp(300px, 60vh, 520px); }
 /* Over the map's top (Leaflet's panes go up to 1000): one line that scrolls inside itself, its right
    end fading into the map - the page never scrolls sideways. */
 .map-chips { position: absolute; z-index: 1001; top: 0; right: 0; left: 0; display: flex; padding: 10px; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; -webkit-overflow-scrolling: touch; -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); }

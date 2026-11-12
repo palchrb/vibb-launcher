@@ -1,5 +1,5 @@
 //! The Locate tab (`/devices/locate`, `templates/device_locate.html`; design 31 §3.6, step 13): a
-//! phone switcher, the map (Leaflet against public OSM tiles, design 33), the last fix as age and
+//! the phones' chips (design 85), the map (Leaflet against public OSM tiles, design 33), the last fix as age and
 //! accuracy, Update Location, Ring, Stop Ringing, Lock and Erase Phone…, the location settings and
 //! the requests in flight. Commands are queued into `device_commands`, the phone is nudged over its
 //! push channel and fetches them with its policy (see `handlers::device_api::policy`) - within
@@ -52,8 +52,8 @@ const FIXES_PER_PAGE: usize = 200;
 struct LocateTemplate {
     lang: Lang,
     title: String,
-    /// Every phone: the switcher above the chosen one, or the list when none is chosen.
-    phones: Vec<PhoneLink>,
+    /// No phone yet: the empty state and Add Phone.
+    no_phones: bool,
     selected: Option<Locate>,
     /// Two phones or more, none chosen: the Alle view (design 85).
     all: Option<AllView>,
@@ -61,21 +61,14 @@ struct LocateTemplate {
 }
 crate::i18n::words!(LocateTemplate);
 
-/// A phone in the switcher: its state as a dot and, for screen readers, in its `aria-label`
-/// ("Emma, online", §5.4) - the dot and the word as on Devices (`phone_status::dot`).
-struct PhoneLink {
-    id: i64,
-    name: String,
-    /// The dot's class suffix (`online`, `away`, `offline`).
-    dot: &'static str,
-    /// "Emma, online", "Emma, no contact", "Emma, turned off 20:35".
-    aria: String,
-    current: bool,
-}
-
 /// The chosen phone's part of the page.
 struct Locate {
     device: Device,
+    /// Design 85 revision 3: every phone's chip over the map ("All" first, this one current), as
+    /// the Alle view's; empty with one phone - no chips at all.
+    chips: Vec<AllPhone>,
+    /// The map's marker for the newest fix: this phone's Alle row as `data-marker-*`.
+    marker: Marker,
     fix: Option<FixView>,
     /// The map's `data-` attributes for `static/locate.js` (Askama escapes them; the script reads
     /// them as text - security review H2).
@@ -752,6 +745,32 @@ struct AllPosition {
     /// The bubble's lines after the name: "Last seen 3 h ago", "Within 60 m · At School", and when
     /// they apply "Hasn't moved since 11:40", "Last position before the phone went off".
     lines: Vec<String>,
+}
+
+/// The one-phone map's marker (design 85 revision 3): the Alle view's avatar, tag and fresh for the
+/// fix the page shows, from the phone's own row; `static/locate.js` reads them as text.
+struct Marker {
+    tone: &'static str,
+    initial: String,
+    photo: Option<String>,
+    /// "10 min"; `None` without a position.
+    tag: Option<String>,
+    fresh: bool,
+    /// The chip's label: "Emma, 10 min ago, within 40 m".
+    label: String,
+}
+
+impl AllPhone {
+    fn marker(&self) -> Marker {
+        Marker {
+            tone: self.tone,
+            initial: self.initial.clone(),
+            photo: self.photo.clone(),
+            tag: self.position.as_ref().map(|p| p.tag.clone()),
+            fresh: self.position.as_ref().is_some_and(|p| p.fresh),
+            label: self.label.clone(),
+        }
+    }
 }
 
 /// Why a phone has no marker (§1.4): its row under the map says it.
@@ -1480,55 +1499,6 @@ fn interval_label(lang: Lang, minutes: i64) -> String {
     }
 }
 
-/// The phone switcher's entries, the chosen one marked.
-fn phone_links(
-    state: &AppState,
-    devices: &[Device],
-    selected: Option<i64>,
-    offs: &HashMap<i64, crate::parent_events::OffSince>,
-    zone: &Zone,
-    now: DateTime<Utc>,
-) -> Vec<PhoneLink> {
-    use crate::handlers::devices::connection_of;
-    use crate::phone_status::Dot;
-    use crate::streams::ConnectionState;
-    let lang = zone.lang();
-    devices
-        .iter()
-        .map(|device| {
-            let connection = connection_of(state, device, now);
-            let off = offs
-                .get(&device.id)
-                .filter(|_| device.enrolled_at.is_some());
-            let dot = crate::phone_status::dot(&connection, off.is_some(), now);
-            let word = match (off, dot, connection) {
-                (Some(off), _, _) => off.lead(zone, now),
-                (None, Dot::Green, _) => crate::i18n::t(lang, "devices.status.online").to_string(),
-                (None, Dot::Orange, _) => {
-                    crate::i18n::t(lang, "devices.status.no_contact").to_string()
-                }
-                (None, Dot::Grey, state) => crate::i18n::t(
-                    lang,
-                    match state {
-                        ConnectionState::NotSetUp => "devices.status.not_set_up",
-                        ConnectionState::Disconnected => "device.about.disconnected",
-                        ConnectionState::NotSeenYet => "devices.status.not_seen_yet",
-                        _ => "devices.status.offline",
-                    },
-                )
-                .to_string(),
-            };
-            PhoneLink {
-                id: device.id,
-                name: device.name.clone(),
-                aria: format!("{}, {}", device.name, word.to_lowercase()),
-                dot: dot.css(),
-                current: selected == Some(device.id),
-            }
-        })
-        .collect()
-}
-
 /// What the request asks the Locate page to show besides the phone.
 struct Asked<'a> {
     /// The name typed into Erase Phone… didn't match.
@@ -1565,22 +1535,6 @@ async fn render_locate_page(
         .and_then(|id| devices.iter().find(|d| d.id == id))
         .or_else(|| (devices.len() == 1).then(|| &devices[0]))
         .cloned();
-    // Which phones are turned off, for the dots (one read; a failure is the page's error, as on
-    // Devices - read as "none is off" it would show a turned-off phone as reachable).
-    let offs: HashMap<i64, crate::parent_events::OffSince> =
-        crate::parent_events::offs_now(&state.db, None)
-            .await?
-            .iter()
-            .filter_map(|row| Some((row.0, crate::parent_events::off_since_of(row, now)?)))
-            .collect();
-    let phones = phone_links(
-        state,
-        &devices,
-        device.as_ref().map(|d| d.id),
-        &offs,
-        &zone,
-        now,
-    );
     let all = match device {
         None if devices.len() >= 2 => {
             Some(all_view(state, &devices, &zone, now, asked.all_at).await?)
@@ -1588,14 +1542,18 @@ async fn render_locate_page(
         _ => None,
     };
     let selected = match device {
-        Some(device) => Some(locate_view(state, device, &zone, now, asked).await?),
+        Some(device) => {
+            // Design 85 revision 3: the chips and the marker as the Alle view draws them.
+            let rows = all_phones(state, &devices, &zone, now, None).await?;
+            Some(locate_view(state, device, rows, &zone, now, asked).await?)
+        }
         None => None,
     };
     Ok(Html(
         LocateTemplate {
             lang,
             title: t(lang, "nav.locate").to_string(),
-            phones,
+            no_phones: devices.is_empty(),
             selected,
             all,
             bell: crate::parent_events::Bell::load(&state.db, admin_id).await,
@@ -1608,6 +1566,7 @@ async fn render_locate_page(
 async fn locate_view(
     state: &AppState,
     device: Device,
+    rows: Vec<AllPhone>,
     zone: &Zone,
     now: DateTime<Utc>,
     asked: Asked<'_>,
@@ -1624,6 +1583,19 @@ async fn locate_view(
     let id = device.id;
     let lang = zone.lang();
     let recent = requests(state, id, cancel, zone, now).await?;
+    let marker = rows
+        .iter()
+        .find(|p| p.id == id)
+        .map(AllPhone::marker)
+        .unwrap_or_else(|| Marker {
+            tone: crate::handlers::devices::avatar_class(&device),
+            initial: crate::handlers::devices::initial(&device.name),
+            photo: crate::handlers::devices::avatar_photo(&device),
+            tag: None,
+            fresh: false,
+            label: device.name.clone(),
+        });
+    let chips = if rows.len() >= 2 { rows } else { Vec::new() };
 
     // A phone always has its policy row (`insert_device_with_policy`); a missing one reads as
     // the defaults a new phone gets.
@@ -1772,6 +1744,8 @@ async fn locate_view(
     });
     Ok(Locate {
         device,
+        chips,
+        marker,
         fix,
         map,
         span,
