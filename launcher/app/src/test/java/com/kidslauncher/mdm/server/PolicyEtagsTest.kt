@@ -98,9 +98,18 @@ class PolicyEtagsTest {
     }
 
     @Test
-    fun `only an accepted body with an ETag and without a command is kept`() {
-        assertTrue(keepable("W/\"abc\"", hasPendingCommand = false))
-        assertFalse(keepable("W/\"abc\"", hasPendingCommand = true))
-        assertFalse(keepable(null, hasPendingCommand = false))
+    fun `only an accepted 200 with an ETag and without a command is kept`() {
+        val plain = (decodeFresh(body) as FreshDecode.Ok).policy
+        val withPin = """{"allowlist": [], "pending_command": {"id": 7, "command": "set_kid_pin", "pin": "1234"}}"""
+        val command = (decodeFresh(withPin) as FreshDecode.Ok).policy
+        assertEquals("1234", command.pendingCommand?.pin)
+
+        assertEquals(KeptBodyStep.Keep("W/\"abc\"", body), keptBodyStep(ServedPolicy(body, "W/\"abc\"", false), plain))
+        // The Child PIN's command (design 59 §1), and any other, is never kept - whatever was kept goes.
+        assertEquals(KeptBodyStep.Drop, keptBodyStep(ServedPolicy(withPin, "W/\"abc\"", false), command))
+        // An older server's 200 has no ETag.
+        assertEquals(KeptBodyStep.Drop, keptBodyStep(ServedPolicy(body, null, false), plain))
+        // A 304 is the kept body already.
+        assertEquals(KeptBodyStep.Leave, keptBodyStep(ServedPolicy(body, "W/\"abc\"", true), plain))
     }
 }

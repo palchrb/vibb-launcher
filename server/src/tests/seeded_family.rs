@@ -15,6 +15,8 @@ pub struct Family {
     pub cookie: String,
     /// The phone with the rich report.
     pub anna: i64,
+    /// Anna's device token (her policy is the fullest one: `tests::policy_etag`).
+    pub anna_token: String,
     /// The phone with the other problems.
     pub ola: i64,
     /// Enrolled never: Connect This Phone.
@@ -533,6 +535,7 @@ pub async fn seed(app: &TestApp, lang: crate::i18n::Lang) -> Family {
     Family {
         cookie,
         anna,
+        anna_token,
         ola,
         liv,
         rule,

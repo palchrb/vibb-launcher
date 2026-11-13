@@ -744,7 +744,8 @@ The PWA's footer says this, and says that the dual-SIM case is "nesten null".
    ETag/304 and the shared client; the gzip of the non-secret answers was left out and can ride along with 95-T2).
    Decided in the build: the kept body is never one with a `pending_command` (one-shot, and `set_kid_pin`'s carries
    the Child PIN); the server never answers `If-None-Match: *` with a 304; a dead shared connection is covered by
-   evicting the pool's idle connections when the stream drops, not a `pingInterval`. Notes:
+   evicting the pool's idle connections when the stream drops, and (code QA M1) a GET or the status report that timed
+   out on a reused connection sent once more on a fresh one, not a `pingInterval`; the shutdown's POST has its own pool. Notes:
    `docs/notes/launcher/push-and-play.md` and `docs/notes/server/architecture.md`.
    - Server: the policy's ETag/304 and a page-less test of the pop-then-hash order. Gzip on the non-secret device
      answers (§3.3, a `Compressible`-style predicate; never the policy, token answers, enroll, SSE, images or audio).

@@ -15,6 +15,7 @@ import okhttp3.Dns
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
+import okhttp3.Request
 
 /*
  * How every server client reaches the server (security review S-M1): the API (`createMdmApi`), the command stream
@@ -235,6 +236,54 @@ object ServerClients {
         val client = synchronized(this) { slot?.client }
         client?.connectionPool?.evictAll()
     }
+}
+
+/** OkHttp 4.12's wait for the pong of the ping a timed-out HTTP/2 stream sends (`DEGRADED_PONG_TIMEOUT_NS`, 1 s), and a
+ * margin: past it an unanswered ping marks the connection unhealthy and the pool never hands it out again. */
+const val STALE_RETRY_PAUSE_MS = 1_200L
+
+/** The requests [retryOnStaleConnection] may send twice: every GET, and the status report (a second copy of a report
+ * is one more `device_status` row, as a report sent twice in a minute today). */
+fun staleRetryable(request: Request): Boolean =
+    request.method == "GET" || (request.method == "POST" && request.url.encodedPath.endsWith("/api/devices/status"))
+
+/**
+ * Design 95 §3.5 (code QA M1): a request that timed out reading on a **reused** connection is sent once more on a
+ * fresh one. The shared pool's connection can be dead without anyone knowing - behind HTTP/2 it is the command
+ * stream's, busy and never evicted, which a NAT or a Wi-Fi without a way out can drop silently; the stream only
+ * notices after its read timeout (5 min). So: the pool's idle connections are evicted, the retry waits out
+ * [STALE_RETRY_PAUSE_MS] (OkHttp's ping on the timed-out HTTP/2 connection goes unanswered and the connection is
+ * dropped from the pool), and the request goes again. Only [retryable] requests, only once, and never one that
+ * opened its own connection (a server that is just slow isn't asked twice). Costs nothing on the line, unlike a
+ * `pingInterval`. Added last, after the bearer: the retry repeats only what comes after it (OkHttp's own chain).
+ */
+fun OkHttpClient.Builder.retryOnStaleConnection(
+    pool: () -> okhttp3.ConnectionPool,
+    retryable: (Request) -> Boolean = ::staleRetryable,
+    pause: () -> Unit = { Thread.sleep(STALE_RETRY_PAUSE_MS) },
+    log: (String) -> Unit = { Log.w("ServerTransport", it) },
+): OkHttpClient.Builder {
+    val connected: MutableMap<okhttp3.Call, Boolean> = Collections.synchronizedMap(WeakHashMap())
+    eventListenerFactory { call ->
+        object : okhttp3.EventListener() {
+            override fun connectStart(call: okhttp3.Call, inetSocketAddress: java.net.InetSocketAddress, proxy: Proxy) {
+                connected[call] = true
+            }
+        }
+    }
+    addInterceptor(Interceptor { chain ->
+        val request = chain.request()
+        try {
+            chain.proceed(request)
+        } catch (e: java.net.SocketTimeoutException) {
+            if (!retryable(request) || connected[chain.call()] == true || chain.call().isCanceled()) throw e
+            log("A reused connection timed out - once more on a fresh one")
+            pool().evictAll()
+            pause()
+            chain.proceed(request)
+        }
+    })
+    return this
 }
 
 /** The [ServerPath.Direct] client (design 76 §3), in this order: the origin fence, the refusal catch, the pinner once

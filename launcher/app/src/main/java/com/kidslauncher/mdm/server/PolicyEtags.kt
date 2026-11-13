@@ -2,6 +2,7 @@ package com.kidslauncher.mdm.server
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.kidslauncher.mdm.server.dto.PolicyResponse
 import kotlinx.serialization.Serializable
 import okhttp3.ResponseBody
 import retrofit2.Response
@@ -16,7 +17,7 @@ import java.security.MessageDigest
  * The kept body is not the policy cache (`kidModePolicy` is re-encoded by the DTOs, unknown keys dropped, and the PIN
  * hashes redacted): it holds the parent PIN's and the kid lock's hashes, so it is sealed ([SealedPrefs], AAD
  * [AAD]) in credential-encrypted prefs of its own. It is kept only for an accepted policy without a pending command
- * ([keepable]: a command's body is one-shot, and `set_kid_pin`'s carries the Child PIN, which goes no further than
+ * ([keptBodyStep]: a command's body is one-shot, and `set_kid_pin`'s carries the Child PIN, which goes no further than
  * its command - design 59 §1), and only while its versionCode (a newer launcher must see keys an older DTO dropped),
  * server address and device token (a re-enrollment gives a new one) are the phone's now ([KeptPolicy.matches]).
  * Anything else - a mismatch, a blob that doesn't open or decode - drops it, and the next GET goes without the header.
@@ -113,9 +114,13 @@ suspend fun fetchRevalidated(
                 onServed(ServedPolicy(body, kept?.etag, notModified = true))
                 return decoded
             }
-            log("Policy 304 without a usable kept body - asking again without it")
             store.drop()
-            if (kept == null) return null
+            if (kept == null) {
+                // Code QA L4: our server never sends this; a middlebox might. No policy this time, nothing changed.
+                log("Policy 304 to a request without If-None-Match - not from our server, keeping the current policy")
+                return null
+            }
+            log("Policy 304 without a usable kept body - asking again without it")
             kept = null
             return@repeat
         }
@@ -131,8 +136,29 @@ suspend fun fetchRevalidated(
     return null
 }
 
-/** Whether an accepted 200 may be kept: it has an ETag and no pending command (see [PolicyEtagStore]). */
-fun keepable(etag: String?, hasPendingCommand: Boolean): Boolean = !etag.isNullOrBlank() && !hasPendingCommand
+/** What the sync does with the kept body after accepting a policy. */
+sealed interface KeptBodyStep {
+    data class Keep(val etag: String, val body: String) : KeptBodyStep {
+        override fun toString() = "Keep(etag=$etag, <redacted>)"
+    }
+
+    /** A 200 that may not be kept: whatever was kept goes, and the next GET has no `If-None-Match`. */
+    data object Drop : KeptBodyStep
+
+    /** A 304: the kept body is the one just applied. */
+    data object Leave : KeptBodyStep
+}
+
+/**
+ * The kept body after [accepted] - the policy as accepted, **before** `cacheablePolicy` - arrived as [served]
+ * (code QA L1): a 200 is kept only with an ETag (an older server sends none) and without a `pending_command` (one-shot,
+ * and `set_kid_pin`'s carries the Child PIN, which goes no further than its command - design 59 §1); a 304 leaves it.
+ */
+fun keptBodyStep(served: ServedPolicy?, accepted: PolicyResponse): KeptBodyStep {
+    if (served == null || served.notModified) return KeptBodyStep.Leave
+    val etag = served.etag
+    return if (!etag.isNullOrBlank() && accepted.pendingCommand == null) KeptBodyStep.Keep(etag, served.body) else KeptBodyStep.Drop
+}
 
 private fun decodeKept(plain: String): KeptPolicy? = try {
     ServerJson.decodeFromString(KeptPolicy.serializer(), plain)

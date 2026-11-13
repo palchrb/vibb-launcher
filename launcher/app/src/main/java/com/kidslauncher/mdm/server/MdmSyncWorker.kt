@@ -90,6 +90,8 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     val serverUrl = mdm.serverUrl()
     val deviceToken = DeviceToken.get()
     if (serverUrl.isNullOrBlank() || deviceToken.isNullOrBlank()) {
+        // Design 95 code QA L3: not enrolled - no kept policy body (its PIN hashes) stays behind.
+        PolicyEtagStore.of(context).drop()
         return false
     }
 
@@ -150,8 +152,10 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         storeAcceptedPolicy(context, freshPolicy)
         // Design 95 §3.5: an accepted 200 is kept with its ETag (a 304's body is the kept one already); one with a
         // command is not (its Child PIN stays out of storage, design 59 §1), nor one without an ETag (an older server).
-        served?.takeIf { !it.notModified }?.let { body ->
-            if (keepable(body.etag, freshPolicy.pendingCommand != null)) etags.keep(owner, body.etag!!, body.body) else etags.drop()
+        when (val step = keptBodyStep(served, freshPolicy)) {
+            is KeptBodyStep.Keep -> etags.keep(owner, step.etag, step.body)
+            KeptBodyStep.Drop -> etags.drop()
+            KeptBodyStep.Leave -> Unit
         }
         // Design 76 D2: the certificate check's flag - from this fresh policy over its own connection only, never from
         // the cache (R-5): on only through the built-in set, off only through it or the tailnet.

@@ -168,11 +168,13 @@ fun createMdmApi(
     token: String? = null,
     callTimeoutMs: Long? = null,
     path: ServerPath = serverPathNow(baseUrl),
+    ownPool: Boolean = false,
 ): MdmApi {
     // Design 95 §3.5: a child of the shared base client (one pool, one TLS context). The base is [toServer]'s:
     // a closed path refuses before any other interceptor sees the request; on the direct path the origin fence and
     // the certificate check come first (design 76); the bearer below is added after them.
-    val clientBuilder = ServerClients.base(path).newBuilder()
+    val base = ServerClients.base(path)
+    val clientBuilder = base.newBuilder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(10, TimeUnit.SECONDS)
         .writeTimeout(10, TimeUnit.SECONDS)
@@ -183,6 +185,14 @@ fun createMdmApi(
 
     // Only to the server's own host (security review L8), never to an absolute URL elsewhere.
     if (token != null) clientBuilder.addInterceptor(bearerInterceptor(normalizedBaseUrl, token))
+    if (ownPool) {
+        // Design 95 code QA M1: the shutdown's POST has 3 s in all - no time to wait out a dead shared connection and
+        // retry, so it opens its own (as before design 95; TLS still resumes from the platform's session cache).
+        clientBuilder.connectionPool(okhttp3.ConnectionPool())
+    } else {
+        // Last: a GET or the status report that timed out on a reused connection goes once more on a fresh one.
+        clientBuilder.retryOnStaleConnection({ base.connectionPool })
+    }
 
     return Retrofit.Builder()
         .baseUrl(normalizedBaseUrl)

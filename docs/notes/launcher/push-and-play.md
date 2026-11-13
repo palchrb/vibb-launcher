@@ -86,7 +86,8 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   else in the sync's fresh block run exactly as for a 200, and the sync counts as having reached the server. A 304 the
   kept body can't answer drops it and asks once more without the header. Kept only after `ACCEPT`, and never a body
   with a `pending_command` (`keepable`: one-shot, and `set_kid_pin`'s carries the Child PIN, design 59 §1); a rejected
-  or undecodable 200 drops it. An older server sends no ETag: nothing is kept, no header is sent.
+  or undecodable 200 drops it (the pure `keptBodyStep`). An older server sends no ETag: nothing is kept, no header is
+  sent. Enrollment, and a sync that finds no URL or token, drop it too.
 - **One shared client** (`ServerClients` in `server/ServerTransport.kt`): one base `OkHttpClient` built by
   `toServer(path, pinning)`, kept while the path (base URL, `ServerPath`, tsnet's proxy) and the certificate check's
   flag and pins are the same, built again otherwise (the old pool's idle connections closed). `createMdmApi` (so the
@@ -94,6 +95,12 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   `createMusicServer` are `newBuilder()` children with their own timeouts and interceptors, after the base's (the
   closed path's refusal, the origin fence and the pinner stay first). Behind Caddy's HTTP/2 a sync rides the stream's
   connection; on HTTP/1.1 it resumes TLS. A dropped stream evicts the pool's idle connections
-  (`ServerClients.streamDropped`), so a sync never waits on a dead one; no `pingInterval` (it would cost line bytes).
+  (`ServerClients.streamDropped`). That can't reach the stream's own busy HTTP/2 connection, which a NAT can drop
+  silently (code QA M1), so `retryOnStaleConnection` (on `createMdmApi`'s and the music client's children, last) sends
+  a GET or the status report once more when it timed out on a **reused** connection: it evicts the idle connections,
+  waits `STALE_RETRY_PAUSE_MS` (OkHttp's degraded ping on the timed-out h2 connection goes unanswered, so the pool
+  drops it) and proceeds again. A request that opened its own connection is never retried (a slow server), nor any
+  other POST. The shutdown's POST (`PowerEvents`, 3 s in all) has no time for that and gets its own pool
+  (`createMdmApi(ownPool = true)`, a fresh connection as before design 95). No `pingInterval` (it would cost line bytes).
   The DNS filter's DoH/DoT clients stay separate builders (`buildDohClient`). `ServerTransportTest` checks the reuse
   and that no server client builds its own.

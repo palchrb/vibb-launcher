@@ -85,3 +85,36 @@ async fn an_unchanged_policy_answers_304_and_a_changed_one_200() {
     assert_eq!(old.status, StatusCode::OK);
     assert_ne!(etag(&old), tag);
 }
+
+/// QA L5: a list naming the tag among others matches; a populated policy (the seeded family's Anna: rules, zones,
+/// contacts, calendars, music) serializes to the same bytes twice, so its tag is stable.
+#[tokio::test]
+async fn a_full_policy_has_a_stable_tag_and_a_list_matches() {
+    let app = TestApp::new().await;
+    let family = super::seeded_family::seed(&app, crate::i18n::Lang::En).await;
+    let token = &family.anna_token;
+    // The first answer pops Anna's waiting command; the ones after it are the plain policy.
+    let popped = get_policy(&app, token, None).await;
+    assert_eq!(popped.status, StatusCode::OK, "{}", popped.text());
+
+    let first = get_policy(&app, token, None).await;
+    assert_eq!(first.status, StatusCode::OK, "{}", first.text());
+    let tag = etag(&first);
+    let again = get_policy(&app, token, None).await;
+    assert_eq!(
+        again.body, first.body,
+        "a populated policy must serialize deterministically"
+    );
+    assert_eq!(etag(&again), tag);
+
+    let list = format!("\"other\", {tag}");
+    let listed = get_policy(&app, token, Some(&list)).await;
+    assert_eq!(listed.status, StatusCode::NOT_MODIFIED);
+    assert!(listed.body.is_empty());
+    assert_eq!(
+        get_policy(&app, token, Some("\"other\", W/\"another\""))
+            .await
+            .status,
+        StatusCode::OK
+    );
+}
