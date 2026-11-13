@@ -199,9 +199,9 @@ async fn the_header_shows_the_lock_and_todays_screen_time() {
     assert!(!head.contains("meter"), "{head}");
 }
 
-/// §3.2 item 3: the tiles, Pause a rule… only with rules that apply, Unlock for 2 h… behind its
-/// confirm only for a launcher that takes it, Locate a link; no auto-saving form on the page but
-/// the header's picture (server round C).
+/// §3.2 item 3, design 93: the three tiles (the rule tiles only with rules that apply), each a link
+/// to its sheet; no Unlock (the Avansert page's row now) and no Locate (Finn has its own tab); no
+/// auto-saving form on the page but the header's picture (server round C).
 #[tokio::test]
 async fn the_quick_actions_follow_the_phone() {
     let app = TestApp::new().await;
@@ -212,20 +212,10 @@ async fn the_quick_actions_follow_the_phone() {
         .await
         .text();
     let quick = group(&html, "quick");
-    for label in ["+15 min", "+30 min", "+1 h"] {
-        assert!(
-            quick.contains(&format!(
-                "</svg><span class=\"act-label\">{label}</span></button>"
-            )),
-            "{label}: {quick}"
-        );
-    }
-    assert!(
-        quick.contains(&format!("href=\"/devices/locate?device={id}\"")),
-        "{quick}"
-    );
-    assert!(!quick.contains("pause-rule"), "no rule applies: {quick}");
-    assert!(!quick.contains("start-pause"), "no report yet: {quick}");
+    assert!(quick.contains(">Screen time</span>"), "{quick}");
+    assert!(!quick.contains("open=rules"), "no rule applies: {quick}");
+    assert!(!quick.contains("start-pause"), "{quick}");
+    assert!(!quick.contains("/devices/locate"), "{quick}");
     // The header's picture picker saves itself (server round C, `tests::avatars`); nothing else.
     let main = &html[html.find("<main").unwrap()..];
     assert_eq!(main.matches("data-autosave").count(), 1, "{main}");
@@ -242,18 +232,15 @@ async fn the_quick_actions_follow_the_phone() {
         .await
         .text();
     let quick = group(&html, "quick");
-    let sheet = &quick[quick
-        .find("<details class=\"act-sheet\" id=\"pause-rule\">")
-        .expect("the sheet")..];
+    for tile in ["open=rules&amp;mode=pause", "open=rules&amp;mode=on"] {
+        assert!(
+            quick.contains(&format!("href=\"/devices/{id}?{tile}#quick\"")),
+            "{tile}: {quick}"
+        );
+    }
+    let sheet = &quick[quick.find("id=\"rules-sheet\"").expect("the sheet")..];
     assert!(sheet.contains(">Skole &#60;i&#62;</option>"), "{sheet}");
-    assert!(
-        sheet.contains("<option value=\"all\">All rules</option>"),
-        "{sheet}"
-    );
-    assert!(
-        quick.contains("<details class=\"act-sheet confirm\" id=\"unlock\">"),
-        "{quick}"
-    );
+    assert!(sheet.contains(">All rules</option>"), "{sheet}");
     assert!(!quick.contains("end-windows"), "{quick}");
 }
 
@@ -266,8 +253,9 @@ async fn every_form_on_the_summary_returns_to_its_group() {
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("Anna").await;
     let rule = add_rule(&app, "Skole").await;
-    // A pause running (End now), a launcher that takes the commands with Play install mode open
-    // (Lock again and Unlock), and a blocked app (Allow these apps…).
+    // A pause running (End now in the Regler sheet and in Today), a launcher that takes the commands
+    // with Play install mode open (Lås igjen in the row above Quick actions), and a blocked app
+    // (Allow these apps…).
     sqlx::query(
         "INSERT INTO time_lifts (device_id, target, rule_id, rule_name, minutes, expires_at) \
          VALUES (?, 'rule', ?, 'Skole', 30, datetime('now', '+30 minutes'))",
@@ -290,45 +278,33 @@ async fn every_form_on_the_summary_returns_to_its_group() {
     type Row<'a> = (String, Vec<(&'a str, &'a str)>, String, &'a str);
     let table: Vec<Row> = vec![
         (
-            format!("/devices/{id}/lifts#quick"),
-            vec![],
-            format!("{summary}?done=extra"),
-            "quick",
-        ),
-        (
-            format!("/devices/{id}/lifts#quick"),
-            vec![],
-            format!("{summary}?done=extra"),
-            "quick",
-        ),
-        (
-            format!("/devices/{id}/lifts#quick"),
-            vec![],
-            format!("{summary}?done=extra"),
-            "quick",
-        ),
-        (
-            format!("/devices/{id}/lifts#quick"),
-            vec![("rule", "all"), ("minutes", "15")],
-            format!("{summary}?done=pause"),
-            "quick",
-        ),
-        (
             format!("/devices/{id}/end-windows#quick"),
             vec![],
             format!("{summary}?notice=end_windows_sent"),
             "quick",
         ),
         (
-            format!("/devices/{id}/start-pause#quick"),
-            vec![],
-            format!("{summary}?notice=start_pause_sent"),
+            format!("/devices/{id}/lifts#quick"),
+            vec![("minutes", "15")],
+            format!("{summary}?done=extra"),
             "quick",
         ),
         (
             format!("/devices/{id}/lifts/1/end#quick"),
             vec![],
             format!("{summary}?done=ended"),
+            "quick",
+        ),
+        (
+            format!("/devices/{id}/rules-now#quick"),
+            vec![("mode", "pause"), ("rule", "all"), ("pause_minutes", "15")],
+            format!("{summary}?done=pause"),
+            "quick",
+        ),
+        (
+            format!("/devices/{id}/lifts/1/end#quick"),
+            vec![],
+            format!("{summary}?done=over"),
             "quick",
         ),
         (

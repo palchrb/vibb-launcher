@@ -37,6 +37,7 @@ mod launcher_check;
 mod limits;
 mod lock;
 mod lock_glance;
+mod lock_now;
 mod mmsc_hosts;
 mod models;
 mod music;
@@ -1076,6 +1077,18 @@ pub fn build_admin_router(
         .route(
             "/devices/{id}/lifts/{lift_id}/end",
             post(handlers::lifts::end_lift),
+        )
+        .route(
+            "/devices/{id}/rules-now",
+            post(handlers::rules_now::rules_now),
+        )
+        .route(
+            "/devices/{id}/lock-now/{lock_id}",
+            post(handlers::rules_now::change_lock),
+        )
+        .route(
+            "/devices/{id}/lock-now/{lock_id}/end",
+            post(handlers::rules_now::end_lock),
         )
         .route(
             "/devices/{id}/location-policy",

@@ -29,6 +29,8 @@ pub mod parent_pin;
 pub mod parents;
 pub mod passkeys;
 pub mod provisioning;
+pub mod quick_actions;
+pub mod rules_now;
 pub mod schedules;
 pub mod settings;
 pub mod settings_hub;

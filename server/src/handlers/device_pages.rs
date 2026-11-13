@@ -739,12 +739,8 @@ pub async fn view_about(
                 });
             // The active rule by its id, as the schedules page words it (design 70 §7).
             let report = if report.locking() && report.active_rule_id.is_some() {
-                let rules = crate::time_rules::effective_rule_rows(&state.db, id)
-                    .await
-                    .unwrap_or_else(|err| {
-                        tracing::error!(device_id = id, %err, "can't read the phone's rules");
-                        Vec::new()
-                    });
+                // Design 93 §4.5: the served rows, a rule turned on now named by its rule.
+                let rules = crate::lock_now::badge_rows(&state.db, id, chrono::Utc::now()).await;
                 report.named_by(&rules, lang)
             } else {
                 report
@@ -842,6 +838,8 @@ struct AdvancedTemplate {
     spotify_diag: Option<SpotifyDiagCard>,
     /// Design 76: the certificate check's group; `None` until the phone's last report has `server_pin_v1`.
     server_tls: Option<crate::server_tls::Card>,
+    /// Design 93 §6.6: "Åpne for oppsett", the first row (a `window_relock_v1` phone only).
+    setup: Option<crate::handlers::quick_actions::SetupCard>,
 }
 crate::i18n::words!(AdvancedTemplate);
 
@@ -913,6 +911,19 @@ pub async fn view_advanced(
         } else {
             None
         };
+    let setup = match crate::handlers::quick_actions::setup_card(
+        &state.db,
+        &device,
+        latest.as_ref(),
+        query.get("notice").map(String::as_str),
+        &zone,
+        now,
+    )
+    .await
+    {
+        Ok(setup) => setup,
+        Err(err) => return read_failed(lang, id, "the opening for setup", err),
+    };
     let escapes = escapes_card(&policy, latest.as_ref(), now_ms);
     let (escape_warnings, escape_rows): (Vec<Note>, Vec<Note>) = escapes
         .notes
@@ -946,6 +957,7 @@ pub async fn view_advanced(
             },
             spotify_diag: spotify_diag_card(&policy, &zone, now),
             server_tls,
+            setup,
             device,
         }
         .render()

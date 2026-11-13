@@ -241,7 +241,15 @@ class LockActivity : UIObjectActivity() {
             null
         }
         val lock = snap?.lock
-        val rule = lock?.rules?.firstOrNull()
+        // Design 93 §9.2: the rule the card names - a turned-on rule with a certain end ahead of the kind order - and
+        // its end (design r13 D2: the certain end only, as the glance card's).
+        val pick = try {
+            snap?.let { com.kidslauncher.mdm.lock.cardPick(it) }
+        } catch (e: Exception) {
+            Log.w("LockActivity", "Couldn't work out the rule's end: ${e.javaClass.simpleName}")
+            null
+        }
+        val rule = pick?.rule ?: lock?.rules?.firstOrNull()
         clockFace.bindAlarm()
         // Emergency call is shown in every state (QA step 4 #1, qa-34-s7-code L1): set on every render,
         // and the only line that touches its visibility (TimeLockModelTest).
@@ -263,14 +271,8 @@ class LockActivity : UIObjectActivity() {
         } else if (callsManaged) {
             sentences += getString(R.string.lock_calls_allowed)
         }
-        // Design r13 D2: the certain end only, as the glance card's (`lockEnd`) - never an end the next rule, the budget
-        // or the clock would break.
-        val end = try {
-            snap?.let { com.kidslauncher.mdm.lock.lockEndOf(it) }
-        } catch (e: Exception) {
-            Log.w("LockActivity", "Couldn't work out the rule's end: ${e.javaClass.simpleName}")
-            null
-        }
+        // Design r13 D2: the certain end only (`lockEnd`) - never an end the next rule, the budget or the clock would break.
+        val end = pick?.end
         // The glance's card (L6): design r13 D1's title (one rule, `ruleLabel`), the kind's glyph, the certain end, and
         // what still works; shown on every render, whatever the rule.
         RuleCardView.bind(

@@ -6,7 +6,7 @@
 // - once a save has started: a switch saves on `change` (autosave.js calls form.submit(), which
 //   fires no `submit` event), a form with a button on `submit` - a reload would cancel the POST on
 //   its way (qa-31-s6-code M1);
-// - while a <details> is open (a Name and icon or a contact's form, Add Contact, a confirm, an ⓘ
+// - while a Quick Actions sheet is shown (design 93), or a <details> is open (a Name and icon or a contact's form, Add Contact, a confirm, an ⓘ
 //   panel): what was typed or opened would be lost;
 // - while a text field has the focus or any field differs from what the page came with (design 80's
 //   code QA V1: the Calls page's Avansert drawn open from ?advanced=1 doesn't count as open, its
@@ -54,6 +54,12 @@
             if (shown) return true;
         }
         return false;
+    }
+
+    // Design 93 §6.1: a Quick Actions sheet shown (the summary's tiles open them without a <details>) holds what was
+    // picked in it.
+    function sheetShown(doc) {
+        return !!(doc.querySelector && doc.querySelector(".qa-sheet:not([hidden])"));
     }
 
     // Code QA V1 of design 80: what a reload would lose - a text field with the focus, or any field that differs from
@@ -123,7 +129,7 @@
                 lock.lock();
                 return;
             }
-            if (shownOpen(doc) || typing(doc)) {
+            if (shownOpen(doc) || sheetShown(doc) || typing(doc)) {
                 win.setTimeout(tick, DELAY);
                 return;
             }
@@ -153,7 +159,7 @@
         win.setTimeout(tick, DELAY);
     }
 
-    var api = { install: install, DELAY: DELAY, shownOpen: shownOpen, typing: typing };
+    var api = { install: install, DELAY: DELAY, shownOpen: shownOpen, sheetShown: sheetShown, typing: typing };
     if (typeof module !== "undefined" && module.exports) {
         module.exports = api;
     } else if (root.document) {

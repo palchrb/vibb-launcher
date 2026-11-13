@@ -2699,7 +2699,7 @@ async fn a_refused_name_save_never_reloads() {
         .await
         .text();
     assert!(page.contains("Installing 40%"));
-    assert!(page.contains("<script src=\"/static/auto-reload.js?v=8\" defer></script>"));
+    assert!(page.contains("<script src=\"/static/auto-reload.js?v=9\" defer></script>"));
     let res = app
         .request_form(
             Method::POST,

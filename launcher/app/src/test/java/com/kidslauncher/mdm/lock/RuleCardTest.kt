@@ -184,4 +184,15 @@ class RuleCardTest {
         assertTrue(recheck, listeners in 0 until relearn)
         assertTrue(recheck.indexOf("reevaluateLockReasonFromCache(context, snap)") in 0 until listeners)
     }
+
+    /** Design 93 §9.2: [lockEnd] tests the end it is given - a later rule's own end - not only the lock's. */
+    @Test
+    fun `the end to test is a parameter`() {
+        val evening = rule(2, "custom", everyDay(minutes(8), minutes(18)))
+        val p = policy(school, evening)
+        val at = monday.atTime(10, 0)
+        val lock = lockAt(p, at)
+        assertNull("Skole's 14:30 is no unlock", lockEnd(p, lock, RuleLifts(), null, monday, oslo, at))
+        assertEquals(monday.atTime(18, 0), lockEnd(p, lock, RuleLifts(), null, monday, oslo, at, monday.atTime(18, 0)))
+    }
 }

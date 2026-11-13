@@ -12,6 +12,46 @@
     {% call band::phone(self.t("device.page.advanced"), "/devices/" ~ device.id, device.name, who) %}{% endcall %}
     <div class="sheet">
 
+    {#- Design 93 §6.6: "Åpne for oppsett" (was the summary's "Unlock 2 h…"), the page's first row, for a phone that
+        takes the command. It opens the sheet under the row; Lukk closes it (confirm.js; hidden without JS, the row
+        closes it then). Both forms carry back=advanced and land here, #setup, with the flash in the group. -#}
+    {% if let Some(s) = setup %}
+    <section id="setup" aria-label="{{ self.t("device.advanced.setup.title") }}">
+        <div class="group group-icons">
+            <details class="act-sheet row-sheet" id="setup-sheet">
+                <summary class="row">
+                    <span class="tile tile-graphite"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><rect x="3" y="7.2" width="11" height="7.6" rx="1.7" fill="currentColor"/><path d="M5.4 7.2V5.3a3.1 3.1 0 0 1 6-1.1" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></span>
+                    <span class="row-label">{{ self.t("device.advanced.setup.title") }}</span>
+                    {% if let Some(value) = s.value %}<span class="row-value">{{ value }}</span>{% endif %}
+                    <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </summary>
+                <div class="row-sheet-body">
+                    <div class="row qa-head">
+                        <span class="tile tile-graphite"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><rect x="3" y="7.2" width="11" height="7.6" rx="1.7" fill="currentColor"/><path d="M5.4 7.2V5.3a3.1 3.1 0 0 1 6-1.1" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></span>
+                        <span class="row-label">{{ self.t("device.advanced.setup.title") }}</span>
+                        <button type="button" class="row-action" data-confirm-cancel hidden>{{ self.t("device.summary.qa.close") }}</button>
+                    </div>
+                    {% if s.open %}
+                    <p class="row row-note">{{ s.open_text }}</p>
+                    <form method="post" action="/devices/{{ device.id }}/end-windows#setup" class="cell">
+                        <input type="hidden" name="back" value="advanced">
+                        <button type="submit" class="row row-button">{{ self.t("device.summary.lock_again") }}</button>
+                    </form>
+                    {% else %}
+                    <p class="row row-note">{{ s.note }}</p>
+                    {% if let Some(line) = s.on_lock %}<p class="row row-note qa-warn">{{ line }}</p>{% endif %}
+                    <form method="post" action="/devices/{{ device.id }}/start-pause#setup" class="cell">
+                        <input type="hidden" name="back" value="advanced">
+                        <button type="submit" class="row row-button qa-danger">{{ self.t("device.advanced.setup.button") }}</button>
+                    </form>
+                    {% endif %}
+                </div>
+            </details>
+            {% if let Some(key) = s.flash %}<p class="flash" role="status" data-flash="setup">{{ self.t(key) }}</p>{% endif %}
+        </div>
+    </section>
+    {% endif %}
+
     {#- Restrictions: the 11 switches are one form (H1: a missing box is off), in groups so each
         can have its footer. -#}
     <section id="restrictions" aria-labelledby="restrictions-title">
@@ -344,6 +384,8 @@
             </details>
         </div>
     </section>
+    {#- "Åpne for oppsett" or "Lås igjen" waits for the phone, as on the summary (window_relock::waiting_for_phone). -#}
+    {% if let Some(s) = setup %}{% if s.wait_for_phone %}<script src="/static/auto-reload.js?v=9" defer></script>{% endif %}{% endif %}
     </div>
 </main>
 </body>

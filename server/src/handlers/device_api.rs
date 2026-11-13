@@ -606,7 +606,7 @@ pub(crate) async fn pop_command(
 }
 
 /// The device's effective rules (`time_rules::effective_rule_rows`: everyone's and its own, each
-/// unless switched off for it, then its bedtime) and budget (its own while
+/// unless switched off for it, then its bedtime; a rule turned on now as one more, design 93) and budget (its own while
 /// `custom_schedule_enabled` - the Own limit switch since migration 0115 -, else the global one)
 /// and the lifts still to deliver. Anything stored that doesn't validate is an error (500): the
 /// phone keeps its cached rules instead of getting fewer.
@@ -615,12 +615,10 @@ async fn build_time_policy(
     policy: &DevicePolicy,
     global: Option<&GlobalSchedule>,
 ) -> Result<TimePolicy, PolicyError> {
-    let rules = crate::time_rules::effective_rule_rows(&state.db, policy.device_id)
-        .await?
-        .iter()
-        .map(|row| row.to_policy())
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(PolicyError::CorruptTimePolicy)?;
+    // Design 93 §4.5: a rule turned on now is one more rule, a copy with its own `until_ms`.
+    let served =
+        crate::lock_now::served_rule_rows(&state.db, policy.device_id, chrono::Utc::now()).await?;
+    let rules = served.policy().map_err(PolicyError::CorruptTimePolicy)?;
     let budget_json = if policy.custom_schedule_enabled {
         policy.daily_budget_json.as_str()
     } else {
@@ -630,7 +628,9 @@ async fn build_time_policy(
     };
     let daily_budget_minutes =
         crate::time_rules::parse_budget(budget_json).map_err(PolicyError::CorruptTimePolicy)?;
-    let lifts = crate::time_rules::deliverable_lifts(&state.db, policy.device_id).await?;
+    // Design 93 §4.3: a pause of the turned-on rule lifts its copy too (its twin).
+    let lifts =
+        served.with_twins(crate::time_rules::deliverable_lifts(&state.db, policy.device_id).await?);
     Ok(TimePolicy {
         rules,
         daily_budget_minutes,

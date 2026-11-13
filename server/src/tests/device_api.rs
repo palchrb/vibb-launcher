@@ -502,7 +502,8 @@ async fn policy_json_keys_snapshot() {
     assert_eq!(time_keys, ["daily_budget_minutes", "lifts", "rules"]);
     // The launcher's TimeRule DTO: a rule's keys (`calendar_allowed` since 0119, Kalender usable
     // during the rule - the launcher's default is false, so an older server keeps it closed;
-    // `silent` since 0121, the phone's own Do Not Disturb during the rule - also false by default).
+    // `silent` since 0121, the phone's own Do Not Disturb during the rule - also false by default;
+    // design 93's `until_ms` and `card_first`, a rule turned on now's end and card choice).
     sqlx::query(
         "INSERT INTO time_rules (name, kind, calls_allowed, exempt_apps_json, calendar_allowed, \
          silent, days_json) VALUES ('Skole', 'school', 0, '[]', 1, 1, \
@@ -523,14 +524,19 @@ async fn policy_json_keys_snapshot() {
         [
             "calendar_allowed",
             "calls_allowed",
+            "card_first",
             "days",
             "exempt_apps",
             "id",
             "kind",
             "name",
-            "silent"
+            "silent",
+            "until_ms"
         ]
     );
+    // Design 93 §9.3: a scheduled rule's absolute end and card choice, always explicit.
+    assert_eq!(rule["until_ms"], serde_json::Value::Null);
+    assert_eq!(rule["card_first"], serde_json::json!(false));
     assert_eq!(rule["calendar_allowed"], serde_json::json!(true));
     assert_eq!(rule["silent"], serde_json::json!(true));
     assert_eq!(

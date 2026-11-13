@@ -92,3 +92,26 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
 - **Location policy** (`server/LocationPolicies.kt`, `LocationPolicyTest`): `PolicyResponse.locationPolicy` off / on_request / interval (>= 10 min); `null` (older server) keeps the old 10-minute throttle. Off never touches LocationManager or the permissions; a `locate` command (Update Location on the server's Locate tab) takes a fresh fix and is answered after the status report with the fix's accuracy and age. Security review P-L2/P-L3 (round L4b): only `locate` forces a fix, never `ring`; a fix that had to switch system Location on switches it back off afterwards (in a `finally`; a mark committed before the switch - `location_switched_on_by_fix` - lets the next sync switch it off when the process died mid-fix, `restoreAfterDeadFix`, QA L2) unless the CONFIG_LOCATION hardening switch or the zone watch needs it on (`locationStaysOn`, `locationBackOff`); a cached or last-known fix older than the policy's interval (at least 10 min; "on_request" has its 30 min default) is never reported (`cachedFixMaxAgeMs`, `cachedFixReportable` - the zone watch's still re-send excepted, design 64 Q-3); mode "off" deletes the cached and the kept fix (`LocateCommands.clearCachedFix`). The server already stores an identical re-sent fix once (`zones::store_fix`: no row when one with the same `captured_at` and coordinates exists).
 - **Fix round (qa-step6-code.md)**: screen time counts whenever the screen is on and unlocked except while one of our free screens (`FREE_SCREENS`: lock screen, phone book, our in-call screen, Settings - not Home) is in front and not sharing the screen; calls elsewhere count (pure `screenTimeCounts`). `DISALLOW_CREATE_WINDOWS` while a budget is set (`EnforcementPlan.restrictCreateWindows`, lifted by override). Date/time stay locked and automatic time zone is forced whenever the time policy has any rule or budget, override or not, calls managed or not. An unreadable ledger fails closed (`unreadableLedger`: today used up, delivered budget lifts counted as applied, `time_state.ledger_unreadable`). Location "off" switches system location off (`systemLocationTarget`; CONFIG_LOCATION then keeps it off). `callsBlockedFor` is the pure per-source call-path answer (`TimeRulesStoreTest`).
 - **Not device-tested**: exact-alarm delivery in Doze, audio-mode call detection on the Jelly Star, the BFU call block (checklist in 06-time-rules.md).
+
+## A rule turned on now: `until_ms` and `card_first` (design 93, `docs/design/93-lock-now-quick-actions.md` §9)
+
+- **What the server sends**: a rule the parent turns on now ("Slå på nå") is one more entry in `time_policy.rules`, a
+  copy of the rule with one window on today's weekday, a negative `id`, `until_ms` (its end as epoch ms) and
+  `card_first: true`; every scheduled rule carries `until_ms: null` and `card_first: false`. A pause of that rule comes
+  with a twin lift for the copy (`rule_id` the copy's). `TimeRule.untilMs` / `cardFirst`; the cache keeps them
+  (`PolicyGate` drops only the lifts). Contract: `server/testdata/lock_now.json`, `LockNowTest`.
+- **`TimePolicy.inForceAt(nowMs)`** (`TimeRules.kt`): the policy without the rules whose `untilMs` is at or before now.
+  `TimeRulesRuntime` applies it where it takes the policy for a decision - `snapshot()` (so `decideTimeLock`, the card,
+  the silence, the suspension and the report all see the same rules), `callsBlockedNow()` and `nextBoundary()`, which
+  also takes every future `untilMs` as a boundary (`untilInstants`): the lock is decided again at that instant even when
+  the window's local end moved with a zone change. A copy cached a week offline never locks again. The phone's wall
+  clock decides, as for every window. The boot call blocks keep the copy's window (stricter, only before the first
+  unlock after a reboot).
+- **`cardRule`** (`lock/RuleCard.kt`): among the lock's rules, the first with `cardFirst` whose own occurrence end is a
+  certain unlock by `lockEnd` (which now takes the end to test, `end`, defaulting to `lock.until`); else the strongest
+  rule with the lock's end, as before. `cardPick(snap)` feeds the glance's card (`ruleCardOf`), the time-rule screen's
+  title and end (`LockActivity`) and the report's `active_rule_id`/`active_rule_name` (`timeStateOf`), so the card, the
+  screen and the PWA's badge name the same rule. The lock itself - which rules, their intersection, the `LockReason`,
+  calls, usable apps, Kalender, silence - is `decideTimeLock`'s, unchanged.
+- **`lock_now_v1`** in `STATUS_CAPABILITIES`: the server shows its rc.8 warning ("Skole gjelder allerede til 14:30")
+  only to a phone without it. Nothing is served differently.

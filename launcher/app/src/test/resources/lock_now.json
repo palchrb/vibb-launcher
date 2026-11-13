@@ -1,0 +1,336 @@
+{
+  "capability": "lock_now_v1",
+  "policy": {
+    "rules": [
+      {
+        "id": -1,
+        "name": "",
+        "kind": "bedtime",
+        "calls_allowed": true,
+        "exempt_apps": [
+          "me.vibb.music"
+        ],
+        "calendar_allowed": false,
+        "silent": true,
+        "days": [
+          {
+            "start": 720,
+            "end": 1080
+          },
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "until_ms": 1794848400000,
+        "card_first": true
+      },
+      {
+        "id": 1,
+        "name": "Skole",
+        "kind": "school",
+        "calls_allowed": false,
+        "exempt_apps": [
+          "org.fossify.clock"
+        ],
+        "calendar_allowed": true,
+        "silent": false,
+        "days": [
+          {
+            "start": 495,
+            "end": 870
+          },
+          {
+            "start": 495,
+            "end": 870
+          },
+          {
+            "start": 495,
+            "end": 870
+          },
+          {
+            "start": 495,
+            "end": 870
+          },
+          {
+            "start": 495,
+            "end": 870
+          },
+          null,
+          null
+        ],
+        "until_ms": null,
+        "card_first": false
+      },
+      {
+        "id": 2,
+        "name": "",
+        "kind": "bedtime",
+        "calls_allowed": true,
+        "exempt_apps": [
+          "me.vibb.music"
+        ],
+        "calendar_allowed": false,
+        "silent": true,
+        "days": [
+          {
+            "start": 1260,
+            "end": 420
+          },
+          {
+            "start": 1260,
+            "end": 420
+          },
+          {
+            "start": 1260,
+            "end": 420
+          },
+          {
+            "start": 1260,
+            "end": 420
+          },
+          {
+            "start": 1320,
+            "end": 480
+          },
+          {
+            "start": 1320,
+            "end": 480
+          },
+          {
+            "start": 1260,
+            "end": 420
+          }
+        ],
+        "until_ms": null,
+        "card_first": false
+      }
+    ],
+    "daily_budget_minutes": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "lifts": [
+      {
+        "id": 5,
+        "target": "rule",
+        "rule_id": 2,
+        "minutes": 30,
+        "expires_at_ms": 1794828600000
+      },
+      {
+        "id": -5,
+        "target": "rule",
+        "rule_id": -1,
+        "minutes": 30,
+        "expires_at_ms": 1794828600000
+      }
+    ]
+  },
+  "policy_end_locked": {
+    "rules": [
+      {
+        "id": -1,
+        "name": "",
+        "kind": "bedtime",
+        "calls_allowed": true,
+        "exempt_apps": [
+          "me.vibb.music"
+        ],
+        "calendar_allowed": false,
+        "silent": true,
+        "days": [
+          {
+            "start": 720,
+            "end": 1080
+          },
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "until_ms": 1794848400000,
+        "card_first": true
+      },
+      {
+        "id": 1,
+        "name": "Skole",
+        "kind": "school",
+        "calls_allowed": false,
+        "exempt_apps": [
+          "org.fossify.clock"
+        ],
+        "calendar_allowed": true,
+        "silent": false,
+        "days": [
+          {
+            "start": 495,
+            "end": 870
+          },
+          {
+            "start": 495,
+            "end": 870
+          },
+          {
+            "start": 495,
+            "end": 870
+          },
+          {
+            "start": 495,
+            "end": 870
+          },
+          {
+            "start": 495,
+            "end": 870
+          },
+          null,
+          null
+        ],
+        "until_ms": null,
+        "card_first": false
+      },
+      {
+        "id": 3,
+        "name": "Middag",
+        "kind": "custom",
+        "calls_allowed": true,
+        "exempt_apps": [],
+        "calendar_allowed": false,
+        "silent": false,
+        "days": [
+          {
+            "start": 1080,
+            "end": 1110
+          },
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "until_ms": null,
+        "card_first": false
+      },
+      {
+        "id": 2,
+        "name": "",
+        "kind": "bedtime",
+        "calls_allowed": true,
+        "exempt_apps": [
+          "me.vibb.music"
+        ],
+        "calendar_allowed": false,
+        "silent": true,
+        "days": [
+          {
+            "start": 1260,
+            "end": 420
+          },
+          {
+            "start": 1260,
+            "end": 420
+          },
+          {
+            "start": 1260,
+            "end": 420
+          },
+          {
+            "start": 1260,
+            "end": 420
+          },
+          {
+            "start": 1320,
+            "end": 480
+          },
+          {
+            "start": 1320,
+            "end": 480
+          },
+          {
+            "start": 1260,
+            "end": 420
+          }
+        ],
+        "until_ms": null,
+        "card_first": false
+      }
+    ],
+    "daily_budget_minutes": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "lifts": [
+      {
+        "id": 5,
+        "target": "rule",
+        "rule_id": 2,
+        "minutes": 30,
+        "expires_at_ms": 1794828600000
+      },
+      {
+        "id": -5,
+        "target": "rule",
+        "rule_id": -1,
+        "minutes": 30,
+        "expires_at_ms": 1794828600000
+      }
+    ]
+  },
+  "cases": [
+    {
+      "policy": "policy",
+      "at": "2026-11-16T13:00",
+      "zone": "Europe/Oslo",
+      "locked": true,
+      "card_rule": -1,
+      "card_until": "2026-11-16T18:00"
+    },
+    {
+      "policy": "policy",
+      "at": "2026-11-16T15:00",
+      "zone": "Europe/Oslo",
+      "locked": true,
+      "card_rule": -1,
+      "card_until": "2026-11-16T18:00"
+    },
+    {
+      "policy": "policy",
+      "at": "2026-11-16T18:00",
+      "zone": "Europe/Oslo",
+      "locked": false,
+      "card_rule": null,
+      "card_until": null
+    },
+    {
+      "policy": "policy",
+      "at": "2026-11-23T15:00",
+      "zone": "Europe/Oslo",
+      "locked": false,
+      "card_rule": null,
+      "card_until": null
+    },
+    {
+      "policy": "policy_end_locked",
+      "at": "2026-11-16T13:00",
+      "zone": "Europe/Oslo",
+      "locked": true,
+      "card_rule": 1,
+      "card_until": null
+    }
+  ]
+}

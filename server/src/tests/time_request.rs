@@ -382,7 +382,7 @@ async fn the_summary_shows_the_open_request_until_a_lift() {
         "{quick}"
     );
     assert!(
-        quick.find("data-asked").unwrap() < quick.find("act-grid").unwrap(),
+        quick.find("data-asked").unwrap() < quick.find("qa-grid").unwrap(),
         "above the buttons"
     );
     let time = app.get_page(&format!("{page}/time"), &cookie).await.text();

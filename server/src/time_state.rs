@@ -403,7 +403,7 @@ fn provable_end(
 /// `[start, end)` on its day; `start > end` ends the next day, `start == end` lasts 24 h. A rule
 /// whose days aren't 7 entries is always on (the launcher's fail-closed rule): it covers
 /// everything and ends never, which refuses any end.
-fn covering_ends(days: &[Option<DayWindow>], at: NaiveDateTime) -> Vec<NaiveDateTime> {
+pub(crate) fn covering_ends(days: &[Option<DayWindow>], at: NaiveDateTime) -> Vec<NaiveDateTime> {
     if days.len() != 7 {
         return vec![NaiveDateTime::MAX];
     }

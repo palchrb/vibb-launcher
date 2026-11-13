@@ -1191,6 +1191,16 @@ class PolicyResponseCompatTest {
         assertEquals(true, time.rules[0].silent)
         val notSilent = (decodeCached(withTime.replace(" \"silent\": true,", "")) as CachedPolicy.Ok).policy
         assertEquals(false, notSilent.timePolicy!!.rules[0].silent)
+        // Design 93 §9.3: a rule's `until_ms` and `card_first`; an older server's rule without them never ends and
+        // isn't the card's first.
+        assertNull(time.rules[0].untilMs)
+        assertEquals(false, time.rules[0].cardFirst)
+        val turnedOn = (decodeCached(
+            withTime.replace("\"silent\": true,", "\"silent\": true, \"until_ms\": 1794848400000, \"card_first\": true,"),
+        ) as CachedPolicy.Ok).policy
+        assertEquals(1794848400000L, turnedOn.timePolicy!!.rules[0].untilMs)
+        assertEquals(true, turnedOn.timePolicy!!.rules[0].cardFirst)
+        assertEquals(CachedPolicy.Ok(turnedOn), decodeCached(ServerJson.encodeToString(PolicyResponse.serializer(), turnedOn)))
         assertEquals(com.kidslauncher.mdm.timerules.TimeWindow(495, 840), time.rules[0].days[0])
         assertNull(time.rules[0].days[5])
         assertEquals(listOf(60, 60, 60, 60, 60, 120, null), time.dailyBudgetMinutes)

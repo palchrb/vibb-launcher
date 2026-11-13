@@ -382,9 +382,8 @@ pub(crate) async fn time_glance(
     // locks the phone. A rule whose days don't read is kept as "always on" (no end).
     let mut rules = Vec::new();
     if report.active_rule_id.is_some() && report.locking() {
-        rules = crate::time_rules::effective_rule_rows(&state.db, device_id)
-            .await
-            .unwrap_or_default();
+        // Design 93 §4.5: the served rows, so a rule turned on now is named and can show its end.
+        rules = crate::lock_now::badge_rows(&state.db, device_id, now).await;
     }
     let (lock, screen) = badge_and_screen(
         &report,
@@ -1058,16 +1057,14 @@ struct DeviceDetailTemplate {
     relock: crate::handlers::window_relock::RelockCard,
     /// Activity (design 48): the phone's commands and events, with Cancel back here.
     activity: crate::handlers::activity::Activity,
-    /// Pause a rule…'s rules (the phone's effective ones); empty: no tile.
-    pause_rules: Vec<(i64, String)>,
+    /// Design 93: Quick Actions' three tiles, their sheets and the row while the phone is open for setup.
+    qa: crate::handlers::quick_actions::QuickActions,
     /// "17:21": the kid's request for more time still open (design r13 §2.7), above the tiles
     /// until a lift or the day's end; a request's push opens `#quick`.
     asked: Option<String>,
-    /// A lift form's flash (`?done=`): the summary group ("quick"), text, refused.
-    done: Option<(&'static str, &'static str, bool)>,
-    /// The last report has the phone's restrictions paused: said at the top of Quick actions,
-    /// where the Attention row lands (qa-31-s10-code M1).
-    paused: bool,
+    /// A lift form's or the Regler sheet's flash (`?done=`): the summary group ("quick"), its words
+    /// (a rule turned on now's name and end filled in, design 93), refused.
+    done: Option<(&'static str, String, bool)>,
     /// Managed without a Parent PIN: a phone not set up says so (it has no Attention rows,
     /// qa-31-s10-code L1).
     no_parent_pin: bool,
@@ -1101,15 +1098,16 @@ crate::i18n::words!(DeviceDetailTemplate);
 impl DeviceDetailTemplate {
     /// The flash of summary group [group]: a command's (`?notice=`) or a lift's (`?done=`), worded, and
     /// whether it is a refusal.
-    fn flash(&self, group: &str) -> Option<(&'static str, bool)> {
+    fn flash(&self, group: &str) -> Option<(String, bool)> {
         self.relock
             .flash_in(group)
-            .map(|key| (key, false))
-            .or(self
-                .done
-                .filter(|(g, _, _)| *g == group)
-                .map(|(_, key, refused)| (key, refused)))
-            .map(|(key, refused)| (t(self.lang, key), refused))
+            .map(|key| (t(self.lang, key).to_string(), false))
+            .or_else(|| {
+                self.done
+                    .as_ref()
+                    .filter(|(g, _, _)| *g == group)
+                    .map(|(_, text, refused)| (text.clone(), *refused))
+            })
     }
 
     /// Access removed: the header says so and links to Advanced › Connection (L2).
@@ -2221,10 +2219,12 @@ async fn render_device(
         .and_then(|s| time_report(&s.reported_at, &s.lock_reason, s.time_state_json.as_deref()))
     {
         Some((reported_at, report)) if device.enrolled_at.is_some() => {
+            // Design 93 §4.5: the badge reads the served rows (a rule turned on now among them).
+            let served = crate::lock_now::badge_rows(&state.db, id, now).await;
             let (badge, screen) = badge_and_screen(
                 &report,
                 reported_at,
-                time_rules.as_deref().unwrap_or(&[]),
+                &served,
                 &connection,
                 facts.calls_enforced,
                 &zone,
@@ -2272,9 +2272,6 @@ async fn render_device(
             return crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.read_phone");
         }
     };
-    let paused = latest
-        .as_ref()
-        .is_some_and(|s| s.paused_at(now.timestamp_millis()));
     let asked = match crate::parent_events::open_extra_time_request(&state.db, id, &zone, now).await
     {
         Ok(asked) => asked.map(|at| zone.clock(at)),
@@ -2283,10 +2280,71 @@ async fn render_device(
             return crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.read_phone");
         }
     };
+    // Design 93: a rule turned on now's flash names its rule and end (the newest on-lock's).
+    let newest_lock = match crate::lock_now::newest(&state.db, id).await {
+        Ok(lock) => lock,
+        Err(err) => {
+            tracing::error!(device_id = id, %err, "can't read the rule turned on now");
+            return crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.read_phone");
+        }
+    };
     let done = query
         .get("done")
         .and_then(|code| crate::handlers::lifts::done_flash(code))
-        .map(|(group, key, refused)| (crate::handlers::lifts::summary_group(group), key, refused));
+        .map(|(group, key, refused)| {
+            let (rule, at) = newest_lock.as_ref().map_or_else(Default::default, |l| {
+                (
+                    crate::time_rules::shown_name(lang, &l.rule_name),
+                    crate::lock_now::end_words(lang, l.end_minute),
+                )
+            });
+            let text = t_params(
+                lang,
+                key,
+                &[("rule", &rule), ("at", &at), ("name", &device.name)],
+            );
+            (crate::handlers::lifts::summary_group(group), text, refused)
+        });
+    // Design 93: a refusal from the Regler sheet shows in the sheet it reopens; otherwise in Today's group.
+    let refusal = done
+        .as_ref()
+        .filter(|(_, _, refused)| *refused)
+        .map(|(_, text, _)| text.clone());
+    let qa = match crate::handlers::quick_actions::build(
+        &state.db,
+        crate::handlers::quick_actions::Inputs {
+            device_id: id,
+            latest: latest.as_ref(),
+            rules: time_rules.as_deref().unwrap_or(&[]),
+            query,
+            rule_in_force: lock
+                .as_ref()
+                .filter(|b| {
+                    b.at_last_report.is_none()
+                        && b.name_key != Some("devices.status.lock.screen_time")
+                })
+                .map(|b| {
+                    b.name_key
+                        .map(|key| t(lang, key).to_string())
+                        .unwrap_or_else(|| b.name.clone())
+                }),
+            screen: screen_time.as_ref(),
+            lock_again: relock.lock_again,
+            relock_capable: crate::handlers::window_relock::takes_commands(latest.as_ref()),
+            refusal,
+            zone: &zone,
+            now,
+        },
+    )
+    .await
+    {
+        Ok(qa) => qa,
+        Err(err) => {
+            tracing::error!(device_id = id, %err, "can't read the quick actions");
+            return crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.read_phone");
+        }
+    };
+    let done = if qa.sheet_flash.is_some() { None } else { done };
     Html(
         DeviceDetailTemplate {
             lang,
@@ -2303,16 +2361,10 @@ async fn render_device(
             status,
             meter,
             attention,
-            pause_rules: time_rules
-                .as_deref()
-                .unwrap_or(&[])
-                .iter()
-                .map(|r| (r.id, crate::time_rules::shown_name(lang, &r.name)))
-                .collect(),
+            qa,
             asked,
             done,
             lifts,
-            paused,
             no_parent_pin: managed_without_pin(&policy),
             relock,
             activity,
