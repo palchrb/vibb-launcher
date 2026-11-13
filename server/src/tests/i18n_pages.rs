@@ -47,9 +47,15 @@ fn seen_text(html: &str) -> String {
                 .iter()
                 .any(|(n, v)| n == "type" && (v == "submit" || v == "button"));
         let mut kept = String::from(" ");
+        // A script's sentence keeps its `{name}` slots (design 93's `data-w-on`): the script fills them, the reader
+        // never sees them.
+        static SLOT: std::sync::LazyLock<regex::Regex> =
+            std::sync::LazyLock::new(|| regex::Regex::new(r"\{[a-z_]+\}").unwrap());
         for (n, v) in &attributes {
-            if ["title", "aria-label", "placeholder", "alt"].contains(&n.as_str())
-                || n.starts_with("data-w-")
+            if n.starts_with("data-w-") {
+                kept.push_str(&SLOT.replace_all(v, " "));
+                kept.push(' ');
+            } else if ["title", "aria-label", "placeholder", "alt"].contains(&n.as_str())
                 || (button && n == "value")
             {
                 kept.push_str(v);

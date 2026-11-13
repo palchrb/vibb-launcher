@@ -450,6 +450,11 @@ async fn the_state_lines_and_the_badge() {
         quick(&html)
     );
     let lock = count(&app, "SELECT id FROM time_lock_now").await;
+    // The report below comes after the start (a report from the same second still waits).
+    sqlx::query("UPDATE time_lock_now SET created_at = datetime('now', '-1 minute')")
+        .execute(&app.db)
+        .await
+        .unwrap();
     let report = json!({
         "lock_reason": "SCHOOL",
         "capabilities": ["time_rules_v1", "window_relock_v1"],

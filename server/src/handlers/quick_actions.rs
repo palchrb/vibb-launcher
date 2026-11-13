@@ -249,11 +249,7 @@ pub(crate) async fn build(
             t_params(lang, "device.summary.qa.phone_time", &[("at", &clock)])
         }
     };
-    let reported_after = |stamp: &str| {
-        input
-            .latest
-            .is_some_and(|s| s.reported_at.as_str() >= stamp)
-    };
+    let reported_after = |stamp: &str| input.latest.is_some_and(|s| s.reported_at.as_str() > stamp);
 
     // The running pauses (rule lifts the server still sends), latest-ending first.
     let pause_rows: Vec<(i64, Option<i64>, Option<String>, String)> = sqlx::query_as(
