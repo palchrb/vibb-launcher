@@ -4209,6 +4209,146 @@ nothing else.
 The Jelly Star's build (step 0's recording there is still owed before release), a real SIM's MMS, an Android 14
 phone's bars under a Lys page, TalkBack where the kiosk blocks it.
 
+## 6ak. Mobilnett: Bare Vibb, the roaming lock and the mobile-network settings lock (designs 94/95) (2026-11-13)
+
+**Steps, written with the build on 2026-11-13 (branch `mobilnett`); not run yet.** Design 95 revision 3: the VPN's
+three shapes (filter on Wi-Fi, the sink for Bare Vibb on cellular, the pass shape standing ready when the filter is
+off), one owner of always-on and lockdown, design 94's `DISALLOW_DATA_ROAMING` with its relock, and
+`DISALLOW_CONFIG_MOBILE_NETWORKS`. The PWA's page is Device › Mobilnett (`/devices/{id}/mobile`).
+
+Setup: **`jelly36`** (§3), the debug launcher of `mobilnett` as Device Owner, enrolled to a local server of the same
+branch, the kiosk on. Wi-Fi on at the start. For the roaming steps (D) the stock AVD reads `roaming=false` under
+`gsm data roaming` (the SIM and the network share MCC 310 and the name, `isSameNamedOperators`): use design 95 §1.1's
+private image copy with a Norwegian SIM (`-sysdir`, `CIMI 242010000000000`) and its APN (the probe added one with
+`addOverrideApn`; the launcher doesn't - add it through a throwaway DO-less step or Settings › APNs during Åpne for
+oppsett). A second app to test with: any allowed browser, or `me.vibb.probe.other` from the d95 scratchpad, fetching
+`https://1.1.1.1/cdn-cgi/trace` (an IP literal: TCP) and `https://www.google.com/generate_204` (a name: DNS).
+
+```
+adb logcat -s KidVpnService MobileNetwork AppEnforcer          # "Tunnel: sink", "Always-on: ... lockdown true (sink)"
+adb shell dumpsys connectivity | grep -iE "VPN|lockdown|always"  # the VPN network, its routes; lockdown
+adb shell settings get secure always_on_vpn_lockdown             # 1 only while the sink holds
+adb shell dumpsys user | grep -E "no_config_vpn|no_data_roaming|no_config_mobile_networks"
+adb shell run-as me.vibb.launcher.debug cat shared_prefs/*.xml | grep -E "vpn_inputs|vpn_shape"
+```
+
+### A. The filter still works on Wi-Fi (Mobildata: På)
+
+1. Wi-Fi on, Mobildata "På". `Tunnel: filter`; lockdown off; a blocked domain in the other app's browser is blocked as
+   before; an allowed one loads.
+2. The launcher is outside the VPN now in every shape: `adb shell dumpsys connectivity` lists the VPN's UID ranges
+   without the launcher's uid; a sync (`adb shell am broadcast` of the debug sync, or the PWA's nudge) works, and the
+   server's name resolves through the network's resolver (the server's log shows the request).
+3. **Split-horizon check** (design 95 §2.2): if the server's name only resolves through the parent's own DNS server
+   (design 36), note whether the sync still works; report it either way.
+
+### B. The sink on cellular, and the switch both ways
+
+1. PWA: Mobilnett › Mobildata › **Bare Vibb**. The page lands on `#mobile-data`, never at the top; the phone's state
+   line shows nothing new while on Wi-Fi.
+2. `adb shell svc wifi disable`. Within a second: `Tunnel: sink`, then `Always-on: ... lockdown true (sink)`
+   (the tunnel first, then lockdown). The other app: the IP literal fails at once (`ConnectException`, ~1 ms), the
+   name fails at once (`UnknownHostException`); nothing hangs for seconds.
+3. The launcher works: a PWA nudge (change a harmless setting) reaches the phone within seconds; Finn telefonen
+   answers (GPS only: the emulator's fix is fake anyway). The summary in the PWA shows "Mobildata: bare Vibb".
+4. **SSE and a sync survive the switch:** with the stream open (`adb logcat -s CommandListener`), switch Wi-Fi ->
+   cellular -> Wi-Fi twice; the stream is never reopened because of the switch (no "stream closed" at the switch),
+   and a sync started a moment before a switch completes.
+5. `adb shell svc wifi enable`: lockdown off first (`Always-on: ... lockdown false (filter)`), then `Tunnel: filter`;
+   the other app loads again.
+6. **Lockdown is never off while sinking:** during step 2-4, run a few syncs (`adb shell am broadcast ...` or wait for
+   the backstop) and a launcher process restart (`adb shell am crash me.vibb.launcher.debug` is refused for a DO; use
+   `adb shell am kill` while it is in the background, or a reboot): `always_on_vpn_lockdown` stays `1` the whole
+   time on cellular, and every `Always-on:` line on cellular says `lockdown true`.
+7. Filter off (Nettfilter off in the PWA) with Bare Vibb on: on Wi-Fi `Tunnel: pass` (no DNS filtering - a blocked
+   domain loads), on cellular `Tunnel: sink`. Check the pass shape doesn't break name resolution for other apps on
+   Wi-Fi (design 95's pass shape has no DNS server: Android must use the network's; **report if names fail**).
+8. Settings › Network › VPN: the VPN's settings are disabled by the admin while any shape runs.
+
+### C. The pause lifts it
+
+1. Bare Vibb on, cellular, sink up. Start "Åpne for oppsett" (PWA or the phone's parent PIN): the sink goes
+   (`Tunnel: filter` or the VPN stops when the filter is off), lockdown off, other apps get cellular, the VPN settings
+   unlock. The Mobilnett page says "Opphevet mens telefonen er åpnet for oppsett".
+2. End the pause: the sink comes back at once on cellular.
+
+### D. The roaming lock (design 94)
+
+1. Default "Av (låst)": `no_data_roaming` set; Settings › SIM › Roaming greyed out "controlled by admin";
+   `gsm data roaming` + `gsm voice roaming`: no data comes up. The PWA's page: "Av og låst på telefonen", and the
+   summary's header ends with "Roamer (US)" (or the country the image reads).
+2. The lingering session: start a pause, turn roaming on in Settings, let data come up on the roaming network, end the
+   pause. `no_data_roaming` is set again, `settings get global data_roaming` reads `0`, data stays up (Android's gap,
+   §2.4.1) - and now **the sink holds it** (`Tunnel: sink`, reason `roaming` in the report's `mobile_data.sink`): the
+   other app fails at once, the launcher still syncs. The PWA shows "Bare Vibb bruker roamingdata fra før låsen".
+   `gsm data home` then `roaming` (a re-evaluation) tears the session down; the sink goes with it.
+3. "Telefonens valg": the restriction is cleared and roaming is **not** turned on by us
+   (`settings get global data_roaming` unchanged). The page says "Telefonens valg: av".
+4. Single-SIM emulator: the relock (§2.4.2) isn't seen here; `adb logcat -s MobileNetwork` shows no "relocking" line.
+
+### E. The mobile-network settings lock
+
+1. Default on: `no_config_mobile_networks` set. Settings › Network & internet › SIMs is disabled "by the admin"; the
+   Quick Settings Internet tile's dialog has no mobile-data toggle.
+2. Start "Åpne for oppsett": both are back; turn **Mobildata off** in Settings. End the pause: the lock is back, data
+   stays off. The PWA's summary shows "Mobildata er slått av på telefonen" and the Mobilnett row "Mobildata av"
+   within a sync (on Wi-Fi). On cellular nothing reaches the server (true zero) until Wi-Fi.
+3. Switch "Lås mobilnett-innstillingene" off in the PWA: the restriction goes at the next sync; on again: back.
+
+### F. The update line
+
+1. With a launcher from `main` (before this round) reporting: the Mobilnett page's choices are disabled with "Virker
+   etter at Vibb One er oppdatert"; nothing is enforced on the phone.
+
+### The run of 2026-11-13 (`jelly36`, branch `mobilnett` at 1d0d4a9c, after the code QA fixes)
+
+Setup: `jelly36` wiped (a copy kept and put back afterwards), the debug launcher as Device Owner over adb, enrolled to
+a local server of the same commit, the PWA driven with form posts as the signed-in admin. The other app was
+`me.vibb.probe.other` (design 95's probe, let out with Allow these apps and ticked). Phase 1 on the stock image;
+phase 2 (D, M2) with a private `-sysdir` whose `iccprofile_for_sim0.xml` reads `CIMI 242010000000000` and `EF_AD` MNC
+length 2 (the AVD's own `modem_simulator/` copy is overwritten from the sysdir at every boot - edit the sysdir's), and
+an APN for 24201 added from the shell (`content insert --uri content://telephony/carriers ...`, allowed to the shell
+user; no device-owner override needed).
+
+| Check | Result |
+|---|---|
+| A.1 filter on Wi-Fi | **Passed.** `Tunnel: filter`, lockdown 0; a device-blocked `example.org` fails `UnknownHostException` in 7 ms, `generate_204` loads |
+| A.2 launcher outside the VPN | **Passed.** The VPN's `Uids: <{0-10216, 10218-...}>`, the launcher is 10217; syncs and reports go on |
+| A.3 split-horizon | Not run (no custom DNS server on the test server) |
+| B.2 the sink on cellular | **Passed.** `svc wifi disable` -> `Tunnel: sink` in 385 ms, lockdown on 19 ms later; the other app: IP literal `ConnectException` in 1 ms, a name `UnknownHostException` in 4 ms. Bytes in the gap not measured (QA 4) |
+| B.3 the launcher works on the sink | **Passed.** A PWA save reached the phone and its report was stored within 1 s; the summary shows "Mobildata: bare Vibb" |
+| B.4 SSE across shape switches | **Passed.** Four filter <-> sink switches on cellular (Bare Vibb off/on): the same stream thread, no reconnect, the server saw no new open. Note: `apply()` writes the sink's lockdown 4-30 ms before the service's tunnel (L2, fail closed) |
+| B.5 back to Wi-Fi | **Passed.** Lockdown off first, then `Tunnel: filter`; the other app loads |
+| B.6 lockdown never off while sinking / QA 2 (M1) | **Passed.** 20 Wi-Fi <-> cellular switches: every cellular read `lockdown=1 sink`, every Wi-Fi read `lockdown=0 filter`; no "Failed to establish VPN" (the 20 "read failed" lines are the old tunnels' loops ending); the launcher's threads 58 -> 57. A process kill while sinking: lockdown stayed 1 every second through the restart, `vpn_shape` sink, the other app refused |
+| B.7 / QA 5 the pass shape's DNS | **Passed.** Filter off + Bare Vibb: `Tunnel: pass`, the VPN has `DnsAddresses: [ ]`, and the other app resolves names (`generate_204` 204, `example.org` 200 - unfiltered, as the filter is off). Wi-Fi off: sink at once, lockdown on |
+| B.8 VPN settings locked | **Passed.** Settings › VPN: "Blocked by work policy" |
+| QA 6 (L1) hardening "Blokker VPN-innstillinger" off, sink up | **Passed - Android protects it anyway.** Without `no_config_vpn` the VPN page opens, but "Always-on VPN" and "Block connections without VPN" read "Controlled by admin" and a tap answers "Blocked by work policy": a user can't change a device owner's always-on or lockdown on Android 16 |
+| C.1 / C.2 the pause | **Passed.** Åpne for oppsett from the PWA: `Always-on: none, lockdown false (none)` (QA 8: the `NONE` write succeeds, no "Couldn't set always-on"), the other app gets cellular, `no_data_roaming` and `no_config_mobile_networks` lifted, the page says "Opphevet mens telefonen er åpnet for oppsett" / "Låst opp ...". Ending it: lockdown and the sink back within 1 s. (`no_config_vpn` stays: it was the hardening switch's, which only the server lifts) |
+| QA 1 (H1) reboot with no network | **Passed.** Bare Vibb, Wi-Fi off, `svc data disable`, reboot: from the first read after boot `lockdown=1`, `vpn_shape=sink`, `Tunnel: sink`. `svc data enable`: the other app's first five requests (one a second from the moment data came on) were all refused in 1-4 ms. Airplane mode + a process kill + airplane off: the same, 6 of 6 refused |
+| D.1 roaming locked | **Passed.** `gsm data roaming`: data goes down and stays down, `data_roaming` 0; the report `roaming: true, country: "us", network: "311740"`; the summary's header ends "Roaming (US)" in orange |
+| D.2 the lingering session | **Passed.** In a pause `data_roaming 1`, roaming data up; ending the pause: `data_roaming` 0 again, the roaming network stays up (Android's gap) and the sink holds it with Bare Vibb off (`mobile_data.sink: "roaming"`, `data_active: true`): the other app refused, the launcher reports. The page: "Bare Vibb bruker roamingdata fra før låsen". `gsm data home` -> `roaming` tears the session down |
+| QA 3 (M2) | **Passed.** Filter off, Bare Vibb off, the lock on, the lingering session up: Wi-Fi on -> `Tunnel: pass` (the cellular session stays up in the background); Wi-Fi off -> `Tunnel: sink`, lockdown 1, the other app refused on the lingering network |
+| D.3 Telefonens valg | **Passed.** The restriction goes, `data_roaming` stays 0 (nothing turned on), the page says "Telefonens valg: av" |
+| QA 7 (L6) | **Passed.** Telefonens valg, then Av and the page read at once: "Ikke på plass på telefonen ennå..." (`pending`), never "Låst opp mens ..."; after the sync "Av og låst på telefonen" |
+| E.1 the settings lock | **Passed.** Network & internet: "SIMs - Controlled by admin"; the Internet panel has no mobile-data toggle (`mobile_toggle` absent) |
+| E.2 data off, true zero | **Passed.** During the pause the toggle is back; "Turn off mobile data"; the pause ended: the lock is back, `mobile_data` 0, on Wi-Fi off "Active default network: none" and the other app gets nothing. The report `enabled: false`; the summary "Mobildata er slått av på telefonen" and the row "Only Vibb · Mobile data off" |
+| E.3 the switch | **Passed.** Off: `no_config_mobile_networks` gone at the sync; on: back |
+| F the update line | Not run (no older launcher installed; the page tests cover it) |
+
+**Found, open (not caused by the shapes, but felt more with them):** after the network the SSE stream ran on went
+away (cellular data switched off, or the roaming session torn down), the phone kept the dead stream until its 5-minute
+read timeout: twice the PWA's nudges were not heard for ~5 minutes although Wi-Fi was up and the server had a stream
+"open". Reports went on at syncs. Hypothesis: on the emulator the cellular interface keeps its address when data goes
+off, so netd destroys no sockets; on a phone the address goes and the socket with it - **[needs device test]**. Either
+way the stream should reconnect on a change of the default network (design 95 §3.5's ping interval, 95-T1's
+`ServerClients`). Once (D.1) the sink also held ~55 s after Wi-Fi came back before the watcher saw Wi-Fi as best -
+fail closed, but worth a look with the stream fix.
+
+### What `jelly36` can't show
+
+The Jelly Star's dual-SIM relock (design 94 §2.4.2), VoLTE/MMS/Wi-Fi calling under lockdown and a real locate indoors
+with the sink (design 95 §2.4): [needs device test].
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:

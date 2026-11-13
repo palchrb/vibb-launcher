@@ -159,6 +159,13 @@ data class LastEnforcedPlan(
     val screenTimeoutSeconds: Int? = null,
     /** "App updates only on Wi-Fi" (design 13), so an unusable cache doesn't spend mobile data. */
     val appUpdatesWifiOnly: Boolean? = null,
+    /** Design 94 §3: the parent's roaming choice. An older record without it reads `"off"` (fail closed, like the
+     * rest of the fallback); an older server's `null` stays `null` (the phone's choice). */
+    val dataRoaming: String? = "off",
+    /** Design 95 rev. 3: Bare Vibb (`"vibb"`) or not; an older record or server reads as on. */
+    val appsMobile: String? = null,
+    /** Design 95 rev. 3 item 3: the mobile-network settings lock; an older record reads locked (fail closed). */
+    val mobileSettingsLocked: Boolean? = true,
 ) {
     fun toPolicy(): PolicyResponse = PolicyResponse(
         allowlist = allowlist,
@@ -175,6 +182,9 @@ data class LastEnforcedPlan(
         blockActivityStart = blockActivityStart,
         screenTimeoutSeconds = screenTimeoutSeconds,
         appUpdatesWifiOnly = appUpdatesWifiOnly,
+        dataRoaming = dataRoaming,
+        appsMobile = appsMobile,
+        mobileSettingsLocked = mobileSettingsLocked,
     )
 
     companion object {
@@ -193,6 +203,9 @@ data class LastEnforcedPlan(
             blockActivityStart = policy.blockActivityStart,
             screenTimeoutSeconds = policy.screenTimeoutSeconds,
             appUpdatesWifiOnly = policy.appUpdatesWifiOnly,
+            dataRoaming = policy.dataRoaming,
+            appsMobile = policy.appsMobile,
+            mobileSettingsLocked = policy.mobileSettingsLocked,
         )
 
         /** `null` if missing or unreadable. */

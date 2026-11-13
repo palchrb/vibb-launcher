@@ -517,7 +517,11 @@ class Application : android.app.Application() {
                 // doc comment. Gated on the cached vpnFilterEnabled preference (PolicyResponse.vpnFilterEnabled,
                 // see AppEnforcer.applyVpnRestrictions) so a device a parent has turned filtering off for
                 // doesn't flash it back on for a moment on every launch before the first sync corrects it.
-                if (LauncherPreferences.mdm().vpnFilterEnabled()) {
+                // Design 95 rev. 3: the shape the last apply() decided - the sink and the pass shape start it too.
+                if (com.kidslauncher.mdm.server.MobileNetworkRuntime.storedShape()
+                        ?.let { it != com.kidslauncher.mdm.server.VpnShape.NONE }
+                        ?: LauncherPreferences.mdm().vpnFilterEnabled()
+                ) {
                     KidVpnService.start(this)
                 }
             } catch (e: Exception) {

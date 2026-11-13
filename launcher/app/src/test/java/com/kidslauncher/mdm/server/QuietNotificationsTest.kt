@@ -175,7 +175,7 @@ class QuietNotificationsTest {
         assertEquals(listOf("if (intent?.getBooleanExtra(EXTRA_FOREGROUND, false) == true) {", "enterForeground()"), onStart.take(2))
         assertEquals(listOf("settleForeground()", "return START_STICKY"), onStart.takeLast(2))
         // establish() records the tunnel in the state; nothing else holds it.
-        assertTrue("state.established(established, SystemClock.elapsedRealtime())" in body(vpn, "private fun startVpn()"))
+        assertTrue("state.established(established, SystemClock.elapsedRealtime())" in body(vpn, "private fun establish("))
         assertFalse(Regex("""\bpfd\b""").containsMatchIn(vpn))
         // The read loop: a thrown read and an end of stream both post tunnelLost(fd).
         val loop = body(vpn, "private fun readLoop(")
@@ -263,10 +263,10 @@ class QuietNotificationsTest {
         // The queued start stops itself once answered, before any tunnel.
         val command = statements(body(service, "override fun onStartCommand("))
         val answered = command.indexOf("enterForeground()")
-        val check = command.indexOf("if (!filterWanted() || state.stopped) {")
+        val check = command.indexOf("if (wantedShape() == VpnShape.NONE || state.stopped) {")
         assertTrue(answered in 0 until check)
-        assertTrue(check < command.indexOf("if (state.tunnel == null) startVpn()"))
-        assertTrue("if (filterWanted()) startVpn()" in body(service, "override fun onCreate()"))
+        assertTrue(check < command.indexOf("if (state.tunnel == null) startVpn() else reshape()"))
+        assertTrue("if (wantedShape() != VpnShape.NONE) startVpn()" in body(service, "override fun onCreate()"))
         // Code QA L1: a revoke's stopSelf() waits for an unanswered start the same way.
         assertTrue("if (vpnStopsNow(created, foregroundStartsPending.get())) stopSelf()" in body(service, "override fun onRevoke()"))
     }

@@ -241,3 +241,41 @@ parent's switch) and claimed together as capability `dns_bypass_v1` (`DNS_BYPASS
   tunnel is design 67's non-goal.
 - Tests: `DnsFilterEngineTest` (the file's lines, hits and misses, the order, the load before the early return),
   `NxdomainTest`, `BrowserDohTest`, `SyncScheduleTest` (the capability), `CustomDnsGuardsTest` (the canary before the lists).
+
+## Three shapes, one owner of always-on (design 95 revision 3, "Bare Vibb", 2026-11-13)
+
+`KidVpnService` has three `Builder` shapes, decided by the pure `vpnShape` (`MobileNetwork.kt`) from the inputs
+`apply()` stores (`vpn_inputs`: the filter switch, the parent's Bare Vibb, the roaming lock - each with the lifts
+applied) and the best non-VPN network the service's watcher sees:
+
+- **filter** - today's DNS filter (the one route to `192.0.2.2`), lockdown off;
+- **sink** - `0.0.0.0/0` and `::/0` into the tunnel (a ULA `/128` for v6), DNS answered `REFUSED`, TCP answered with
+  RST+ACK, the rest dropped (`SinkPackets`, synchronous in the read loop, outside the DNS path's admission limit);
+  lockdown on. Wanted on cellular while the parent's Bare Vibb holds, or while a roaming session outlived the roaming
+  lock (design 95 §6 item 2 (d));
+- **pass** - no routes and no DNS server: nothing changes for apps, but the service and its watcher stay up so the sink
+  starts the moment Wi-Fi drops (the filter off, with Bare Vibb on or the roaming lock on - code QA M2, so a roaming
+  session that outlived the lock and survives a stay on Wi-Fi is sunk when Wi-Fi drops).
+
+**The launcher is excluded in every shape** (`addDisallowedApplication(packageName)`), so tsnet too: none of its
+sockets move at a switch, the SSE stream and a sync survive it, and the launcher's own lookups (the server's name)
+now use the network's resolver instead of the filter - a dead filter upstream no longer takes the sync with it. A
+server name only the parent's own DNS server resolves (split-horizon) would need a look.
+
+**One owner of always-on** (`MobileNetworkRuntime.writeAlwaysOn`, `alwaysOnFor`): `apply()`, the service's switch and
+the cold start write exactly what the decided shape needs, recorded first (`vpn_shape`), only on a change. Lockdown
+only in the sink. To the sink: the tunnel first, then lockdown; away from it: lockdown off first. `apply()` never
+writes lockdown off on a doubt about the network (`applyShape`: no network seen and the last shape the sink keeps
+it); a network lost in the watcher keeps the shape too (a Wi-Fi -> cellular switch passes through "none" for ~60 ms).
+While the sink is wanted, the launcher's own downloads (catalog APKs, the self-update, the music files it fetches)
+wait for Wi-Fi (`downloadGate`'s `mobileHeld`); Install Now still goes.
+
+Code QA fixes (2026-11-13, `docs/review/qa-95-mobilnett-code.md`): the service decides with `apply()`'s rule
+(`serviceShape` = `applyShape` with its watcher's network), so a start with no network yet (a boot, airplane mode)
+keeps the recorded sink and its lockdown instead of writing them off (H1). Every switch goes through `switchTo`: a
+failed `establish()` toward the sink still writes the sink's lockdown (other apps cut, fail closed) and is retried,
+5 s doubling to 5 min (M1). Two writers of always-on remain (`apply()` and the service, L2): `apply()` always ends in
+`KidVpnService.start`, whose `reshape()` writes the service's own decision last - keep that start. The parent's
+explicit hardening switch "Blokker VPN-innstillinger" off (`disallow_config_vpn: false`) still wins over the sink's
+`DISALLOW_CONFIG_VPN` (L1, kept by design): a restriction the parent lifted stays lifted, so in that combination Bare
+Vibb is not tamper-proof against Settings › VPN.

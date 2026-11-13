@@ -191,7 +191,11 @@ object MusicFileDownloads {
     private fun gate(app: Context, file: LibraryFile): DownloadGate {
         val partial = MusicStore.partialFile(app, file.id)
         val have = if (partial.isFile) partial.length() else 0L
-        return ownFileGate(AppDownloads.currentCaps(app), MusicSync.cachedMusicPolicy(), System.currentTimeMillis(), have, file.size, allocatable(app))
+        // Design 95 §2.4: the launcher fetches these outside the sink - under Bare Vibb they wait for Wi-Fi too.
+        return ownFileGate(
+            AppDownloads.currentCaps(app), MusicSync.cachedMusicPolicy(), System.currentTimeMillis(), have, file.size, allocatable(app),
+            mobileHeld = com.kidslauncher.mdm.server.MobileNetworkRuntime.sinkWanted(app),
+        )
     }
 
     private fun runLoop(app: Context) {

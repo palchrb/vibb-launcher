@@ -408,6 +408,13 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
                     Log.w(LOG_TAG, "SMS report failed", e)
                     null
                 },
+                dataRoaming = MobileNetworkRuntime.dataRoamingReport(context),
+                mobileData = try {
+                    MobileNetworkRuntime.mobileDataReport(context)
+                } catch (e: Exception) {
+                    Log.w(LOG_TAG, "Mobile data report failed: ${e.javaClass.simpleName}")
+                    null
+                },
                 serverTls = ServerTlsReport(
                     enforcing = ServerPinStore.enforce(context),
                     seen = seenOf(policyHandshake, ServerPinStore.network(context), System.currentTimeMillis()),

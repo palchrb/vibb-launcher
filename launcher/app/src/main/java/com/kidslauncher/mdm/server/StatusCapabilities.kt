@@ -67,6 +67,11 @@ val STATUS_CAPABILITIES: List<String> = listOf(
     // Design 93: a rule's `until_ms` (gone from that instant) and `card_first` (the card names it while its end is a
     // real unlock). The server shows its rc.8 warning ("Skole gjelder allerede…") only without it.
     com.kidslauncher.mdm.timerules.LOCK_NOW_CAPABILITY,
+    // Design 94: the policy's `data_roaming` (DISALLOW_DATA_ROAMING, the relock) and `data_roaming` in every report.
+    DATA_ROAMING_CAPABILITY,
+    // Design 95 rev. 3: the policy's `apps_mobile` (Bare Vibb, the VPN's sink) and `mobile_settings_locked`
+    // (DISALLOW_CONFIG_MOBILE_NETWORKS), and `mobile_data` in every report. The server's Mobilnett page waits for it.
+    MOBILE_DATA_CAPABILITY,
 )
 
 /** A time rule's "Stille" switch (server migration 0121): `rules[].silent` is enforced. */

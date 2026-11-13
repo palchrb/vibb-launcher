@@ -600,6 +600,9 @@ pub(crate) async fn build_policy(
         calendar,
         app_permissions,
         lock_media_apps,
+        data_roaming: crate::mobile_network::roaming_choice(&policy.data_roaming).to_string(),
+        apps_mobile: crate::mobile_network::apps_choice(&policy.apps_mobile).to_string(),
+        mobile_settings_locked: policy.mobile_settings_locked,
         server_tls,
     })
 }
@@ -1404,6 +1407,15 @@ pub async fn status(
         .dns_upstream
         .as_ref()
         .and_then(|value| crate::dns_server::sanitize_dns_upstream(value, arrived_ms));
+    // Design 94 §5 and design 95 rev. 3: the roaming lock and Bare Vibb, cleaned field by field.
+    let data_roaming_json = report
+        .data_roaming
+        .as_ref()
+        .and_then(crate::mobile_network::clean_roaming);
+    let mobile_data_json = report
+        .mobile_data
+        .as_ref()
+        .and_then(crate::mobile_network::clean_mobile);
     // Design 64 step 2: the phone's zone watch, known keys only.
     let zone_watch_json = report
         .zone_watch
@@ -1440,8 +1452,9 @@ pub async fn status(
           battery_optimization_exempt, relock_json, unseen_boots_count, unseen_boots_last_at_ms, \
           foreign_access_json, remote_wipe_ready, admin_policies_pending_json, relock_blocks_json, \
           relock_blocks_total, clock_format_applied, battery_level, battery_charging, dns_upstream_json, \
-          write_settings_granted, zone_watch_json, tailnet_joined, sms_state_json) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          write_settings_granted, zone_watch_json, tailnet_joined, sms_state_json, data_roaming_json, \
+          mobile_data_json) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(device.id)
     .bind(&report.lock_reason)
@@ -1499,6 +1512,8 @@ pub async fn status(
     .bind(&zone_watch_json)
     .bind(report.tailnet_joined)
     .bind(&sms_state_json)
+    .bind(&data_roaming_json)
+    .bind(&mobile_data_json)
     .execute(&state.db)
     .await
     .ok();

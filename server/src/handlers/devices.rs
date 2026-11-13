@@ -1091,6 +1091,11 @@ struct DeviceDetailTemplate {
     lock_value: &'static str,
     home_value: String,
     filter_value: &'static str,
+    /// Device › Mobilnett's row (design 95 rev. 3): its value only when it says something ("Bare Vibb · Roaming på").
+    mobile_value: Option<String>,
+    /// Design 95 rev. 3: Mobilnett's lines on the summary - only when they say something (mobile data off on the phone,
+    /// only Vibb on cellular now, a roaming warning), each leading to the page.
+    mobile_lines: Vec<crate::mobile_network::Line>,
     about_value: Option<String>,
 }
 crate::i18n::words!(DeviceDetailTemplate);
@@ -2236,22 +2241,28 @@ async fn render_device(
     };
     let off = power_off.as_ref().filter(|_| device.enrolled_at.is_some());
     let dot = crate::phone_status::dot(&connection, off.is_some(), now).css();
-    let status = crate::phone_status::header(
-        &crate::phone_status::Facts {
-            connection: &connection,
-            off,
-            lock: lock.as_ref(),
-            battery: latest.as_ref().and_then(|s| {
-                crate::phone_status::Battery::of(s.battery_level, s.battery_charging)
-            }),
-            low_latched: device.battery_low_since.is_some(),
-            screen: screen_time.as_ref(),
-            zone_now: zone_now
-                .as_ref()
-                .map(|(names, since)| (names.as_str(), *since)),
-        },
+    let header_facts = crate::phone_status::Facts {
+        connection: &connection,
+        off,
+        lock: lock.as_ref(),
+        battery: latest
+            .as_ref()
+            .and_then(|s| crate::phone_status::Battery::of(s.battery_level, s.battery_charging)),
+        low_latched: device.battery_low_since.is_some(),
+        screen: screen_time.as_ref(),
+        zone_now: zone_now
+            .as_ref()
+            .map(|(names, since)| (names.as_str(), *since)),
+    };
+    // Design 94 §6.2: "Roamer i Sverige" last on the second line, while the phone is in touch.
+    let status = crate::phone_status::with_roaming(
+        crate::phone_status::header(&header_facts, &zone, now),
+        &header_facts,
         &zone,
         now,
+        latest
+            .as_ref()
+            .and_then(|s| crate::mobile_network::summary_roaming(lang, s)),
     );
     let meter = meter_of(screen_time.as_ref(), &status);
 
@@ -2415,6 +2426,8 @@ async fn render_device(
                     "common.off"
                 },
             ),
+            mobile_value: crate::mobile_network::row_value(lang, &policy, latest.as_ref()),
+            mobile_lines: crate::mobile_network::summary_lines(lang, &policy, latest.as_ref()),
             device,
         }
         .render()

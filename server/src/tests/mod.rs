@@ -48,6 +48,7 @@ mod locations;
 mod lock_glance;
 mod lock_now;
 mod mmsc_hosts;
+mod mobile_network;
 pub(crate) mod music;
 mod music_art;
 pub(crate) mod music_spotify;
