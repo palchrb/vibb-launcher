@@ -135,3 +135,21 @@ class SyncCoalescer {
 
     val isRunning: Boolean get() = running
 }
+
+/** The default network has to settle this long before the command stream follows it (a Wi-Fi -> cellular switch
+ * passes through "none" for ~60 ms): one reconnect per change, never a storm. */
+const val SSE_NETWORK_SETTLE_MS = 1_500L
+
+/**
+ * Whether the command stream reconnects now after the default network changed (the emulator run of 2026-11-13, design
+ * 95 §6ak: a stream on a network that went away - cellular off, a roaming session torn down - sat deaf until its 5-min
+ * read timeout and the parent's nudges were lost). The launcher is outside the VPN, so the default network is the one
+ * the stream's socket is on. [streamExists]: a stream open or connecting; [streamNetwork]: the default network when
+ * it was opened (`networkHandle`, `null` = none then); [defaultNetwork]: the default network now, settled.
+ *
+ * - a stream on another network than the default now (or the default lost): reconnect;
+ * - no stream (waiting out its back-off) and a network now: reconnect at once instead of at the back-off's end;
+ * - otherwise nothing (the same network, or no network and no stream).
+ */
+fun sseReconnectOnNetwork(streamExists: Boolean, streamNetwork: Long?, defaultNetwork: Long?): Boolean =
+    if (streamExists) streamNetwork != defaultNetwork else defaultNetwork != null
