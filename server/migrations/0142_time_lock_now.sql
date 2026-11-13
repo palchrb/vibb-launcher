@@ -20,3 +20,12 @@ CREATE TABLE time_lock_now (
     CHECK (end_minute > start_minute)
 );
 CREATE INDEX idx_time_lock_now_device ON time_lock_now(device_id, ends_at);
+-- A rule switched off for the phone ends its on-lock at once, as a deleted rule does (design 93 §3): the copy is no
+-- longer served, so the page must not show it running, nor revive it when the rule is switched on again. `ended_by`
+-- stays NULL, which Activity reads as "switched off" (an Avslutt nå always names its parent).
+CREATE TRIGGER time_lock_now_rule_off AFTER INSERT ON device_rule_off
+BEGIN
+    UPDATE time_lock_now SET ended_early_at = datetime('now')
+     WHERE device_id = NEW.device_id AND rule_id = NEW.rule_id
+       AND ended_early_at IS NULL AND ends_at > datetime('now');
+END;

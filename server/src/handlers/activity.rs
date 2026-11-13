@@ -167,7 +167,7 @@ pub(crate) async fn rows(
 }
 
 /// A rule turned on now in Activity (design 93 §8), as a lift's row: "Skole slått på 16:30-18:30",
-/// "16:30 · Mamma · Sluttet 18:30" / "Avsluttet 17:10" / "Regelen ble fjernet". Its id is the copy's,
+/// "16:30 · Mamma · Sluttet 18:30" / "Avsluttet 17:10" / "Regelen ble fjernet" / "Regelen ble slått av". Its id is the copy's,
 /// negative, so it never meets a lift's.
 fn lock_row(
     lock: &crate::lock_now::LockNowRow,
@@ -190,6 +190,10 @@ fn lock_row(
     );
     let early = lock.ended_early_at.as_deref().and_then(parse_db_utc);
     let word = match (early, lock.rule_id) {
+        // Ended with no parent named: the rule was switched off for the phone (migration 0142's trigger).
+        (Some(_), _) if lock.ended_by.is_none() => {
+            t(lang, "device.activity.lock_now.switched_off").to_string()
+        }
         (Some(at), _) => t_params(
             lang,
             "device.activity.lock_now.ended_early",

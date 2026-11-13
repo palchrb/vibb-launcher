@@ -320,7 +320,22 @@ async fn the_copy_follows_its_pause_its_end_and_its_rule() {
         copies(&app, &token).await.is_empty(),
         "a rule switched off isn't served"
     );
+    // ...and its lock is over, with no parent named (Activity's "switched off"): switched on
+    // again, it doesn't come back.
     sqlx::query("DELETE FROM device_rule_off")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert!(copies(&app, &token).await.is_empty(), "not revived");
+    assert_eq!(
+        count(
+            &app,
+            "SELECT COUNT(*) FROM time_lock_now WHERE ended_early_at IS NOT NULL AND ended_by IS NULL"
+        )
+        .await,
+        1
+    );
+    sqlx::query("UPDATE time_lock_now SET ended_early_at = NULL")
         .execute(&app.db)
         .await
         .unwrap();

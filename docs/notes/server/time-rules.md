@@ -177,7 +177,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   the summary's header, Device › About, Device › Time Rules - never by the counts or the Settings lists): the effective
   rows plus a copy of the rule (`copy_row`: its name, kind, calls, exempt apps, Kalender and silence read live) with
   one window on the lock's weekday and `id` `-(lock id)`. A rule deleted or switched off for the phone is no longer
-  served. The copy goes **first** in `rules[]` unless a rule of its kind has an occurrence that overlaps its window and
+  served, and its lock is over (a switch-off ends it, 0142's trigger on `device_rule_off`, `ended_by` NULL: Activity's
+  "switched off"; switched on again, it doesn't come back). The copy goes **first** in `rules[]` unless a rule of its kind has an occurrence that overlaps its window and
   ends after it (`copy_first`, yesterday's past-midnight one included): rc.8's card sorts by kind, then index. A pause
   of the turned-on rule is served with a **twin** for the copy (`twin_lifts`: `-(lift id)`, `rule_id` `-(lock id)`, the
   same expiry); "Alle regler" needs none.
