@@ -76,10 +76,11 @@
     --bar-glass: rgba(238, 236, 234, 0.72);
     --bar-shadow: inset 0 0 0 1px rgba(12, 12, 20, 0.08), 0 4px 18px rgba(12, 12, 20, 0.14);
     /* The floating bar's own height (.tab-bar: 8 px padding, a tab's 6 px padding, the 24 px icon
-       and its 3 px, the label's line at 0.75rem x 1.2) and the room main leaves under its last row:
+       and its 3 px, the label's line at --tab-label x 1.2) and the room main leaves under its last row:
        the bar, the 14 px under it, and above it the bottom fade's 24 px (.tab-fade), so the last row
        scrolls fully clear of the fade; the home indicator's inset is added there. */
-    --tab-bar-h: calc(55px + 0.9rem);
+    --tab-label: min(0.75rem, 3.5vw, 21px);
+    --tab-bar-h: calc(55px + 1.2 * var(--tab-label));
     --tab-fade-above: 24px;
     --tab-bar-room: calc(var(--tab-bar-h) + 14px + var(--tab-fade-above));
     /* The ground at 0 % (the fade's start): a transparent of the ground's own colour, never
@@ -232,6 +233,9 @@ body {
     background: var(--bg);
     color: var(--label);
     line-height: 1.5;
+    /* A word longer than its line ("Tofaktorinnlogging" at 200 % text on a 320 px screen) breaks rather than
+       reach past the screen: no page scrolls sideways at any text size. */
+    overflow-wrap: break-word;
     height: 100vh;
     height: 100dvh;
     overflow: hidden;
@@ -799,7 +803,9 @@ input[type="radio"] {
     border-radius: 16px;
     color: var(--tab-off);
     text-decoration: none;
-    font-size: 0.75rem;
+    /* Never wider than its tab at any text size (the longest, "Innstillinger", is about 5.1 em): a fifth of the bar
+       (the screen less 24 px, at most 560 px) holds the label at 3.5vw, at most 21 px. */
+    font-size: var(--tab-label);
     font-weight: 500;
     line-height: 1.2;
 }
@@ -1120,6 +1126,8 @@ select.pick {
     appearance: none;
     flex: 0 1 auto;
     width: auto;
+    /* Its longest choice is its least width (a flex item's own), held to 60 % of the row: never past the screen at any
+       text size, and the label gives way first - the choice shown is never cut at 100 % text. */
     max-width: 60%;
     margin: 0;
     padding: 4px 0;
@@ -1156,7 +1164,10 @@ select.pick {
 }
 
 .row-stacked > select.pick {
-    flex: 1 1 0%;
+    /* Its own line less the arrows' 16 px: wide enough never to share the label's line, and at large text never
+       wider than the row (min-width 0: its longest choice is cut by the picker itself). */
+    flex: 1 1 calc(100% - 16px);
+    min-width: 0;
     max-width: none;
     margin: 4px 0 0;
     text-align: left;
@@ -1198,6 +1209,8 @@ details.info > summary:not(.row) {
 }
 
 .info-panel {
+    /* A long link or address breaks rather than reach past the screen (the RCS form's link at 200 % text). */
+    overflow-wrap: anywhere;
     background: var(--info-bg);
     color: var(--info-text);
     border-radius: 10px;
@@ -1424,6 +1437,10 @@ div.attention {
 details.confirm > summary.row {
     justify-content: center;
     color: var(--red);
+    /* Its words are a bare text in the flex row: a long one may break, centred ("Tilbakestill tofaktorinnlogging"
+       at 200 % text). */
+    text-align: center;
+    overflow-wrap: anywhere;
 }
 
 .confirm-body {
@@ -2507,7 +2524,8 @@ details.category-block[open] > summary .section-chev { -webkit-transform: rotate
 /* Its own stacking context: Leaflet's panes (z-index up to 1000) stay under the tab bar. */
 .map-box { position: relative; z-index: 0; overflow: hidden; height: 300px; margin: 0 0 12px; border-radius: 14px; background: var(--grey-bg); }
 /* The trail's span (design 44 §1.5): the segmented look, four in one line. */
-.span-pick a { flex: 1 1 0; padding: 0 4px; font-size: 0.875rem; }
+/* Never narrower than its longest word: at large text the four wrap onto two lines rather than run into each other. */
+.span-pick a { flex: 1 1 0; min-width: min-content; padding: 0 4px; font-size: 0.875rem; text-align: center; }
 .span-pick a[aria-checked="true"] { background: var(--surface); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); }
 /* A Locations row shows its fix on the map (static/locate.js makes it a button). */
 .row[data-fix][role="button"] { cursor: pointer; }
@@ -2592,7 +2610,8 @@ input.row-input {
    min-content items of E9 L8 made a ragged grid). Columns of at least 84px share the row equally - as many as the old
    76px items with their 4px margins fitted - and the label is 0.75rem, so the longest built-in word ("Kveldshimmel",
    ~75px at 12px in Arial's metrics, ~81px at 13px) fits a column's 80px or more and wraps between words only (E9 L8:
-   "Kveldshimm / el"). Only a single word longer than its column (a long uploaded name) still breaks (break-word).
+   "Kveldshimm / el"). Only a single word longer than its column (a long uploaded name, or any at 200 % text) still
+   breaks: `anywhere`, so the centred label's own width never passes its column's.
    No grid gap needed: the items' own margins (no flex gap: Safari 14.0). */
 .wallpaper-grid {
     display: grid;
@@ -2609,7 +2628,7 @@ input.row-input {
     font-size: 0.75rem;
     font-weight: 400;
     text-align: center;
-    overflow-wrap: break-word;
+    overflow-wrap: anywhere;
     cursor: pointer;
 }
 
@@ -2898,9 +2917,16 @@ input.row-num {
     background: var(--field-bg);
     font-size: 1rem;
 }
-input.row-num { width: 6.5em; text-align: right; }
-.row > .day-dash { margin-left: 6px; color: var(--label-2); }
-.row > .day-dash + input.row-time { margin-left: 6px; }
+/* At most a third of a narrow screen: at 200 % text 6.5em pushed the unit past a 320 px screen. */
+input.row-num { width: min(6.5em, 34vw); text-align: right; }
+/* A day's row: the day, then its from and until together - under the day when the row can't hold them (large text). */
+.day-row { flex-wrap: wrap; }
+/* Wraps only when its longest word and the times can't share the line. */
+.day-row > .row-label { flex: 1 1 0%; min-width: auto; word-break: normal; overflow-wrap: normal; }
+.day-times { display: flex; align-items: center; min-width: 0; max-width: 100%; margin-left: auto; }
+.day-times > input.row-time { flex: 0 1 auto; min-width: 0; }
+.day-times > .day-dash { margin-left: 6px; color: var(--label-2); }
+.day-times > .day-dash + input.row-time { margin-left: 6px; }
 .row-unit { flex: none; color: var(--label-2); font-size: 1rem; }
 /* A footer under the extra-time tiles (no group above it to tuck under). */
 .group-footer-after { margin-top: 0; }

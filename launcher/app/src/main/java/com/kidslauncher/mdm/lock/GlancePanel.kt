@@ -177,7 +177,9 @@ class GlancePanel(
     private val clock = ClockLockPanel(activity, glance) { clockDirty = true; tileChanges.request() }
 
     /** The weather by the date and its day's card (design 75 §5.5): its own glue, as the tiles have theirs. */
-    private val weather = WeatherLockPanel(activity, glance, clockFace, { rowsHeld() }) { guarded("weather") { weatherChanged() } }
+    /** The layout listeners' work, run after the layout pass, not in it (E6 L1). */
+    private val afterLayout = AfterLayout(glance.root)
+    private val weather = WeatherLockPanel(activity, glance, clockFace, afterLayout, { rowsHeld() }) { guarded("weather") { weatherChanged() } }
     private var started = false
 
     /** The stage (memory only). */
@@ -262,7 +264,7 @@ class GlancePanel(
         // code) - a way to see the rest. It is no row: never dismissable, nothing captured.
         glance.lockGlanceMore.setOnClickListener { tapMore() }
         // Design 69 §5.1: the "Neste" line yields when the laid-out page leaves the third row too little room.
-        glance.lockGlanceTop.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> guarded("next") { fitNext() } }
+        glance.lockGlanceTop.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> afterLayout.add("next") { guarded("next") { fitNext() } } }
         openAction(glance.lockGlanceMore, activity.getString(R.string.lock_media_unlock))
         glance.lockTimerStop.setOnClickListener { ClockActions.stop(activity, ClockReader.stopIntent) }
         openAction(glance.lockTimerTile)
@@ -272,7 +274,7 @@ class GlancePanel(
         // system bars' padding (r9 §1: edge-to-edge, the bars arrive as padding at the same height - at the screen-on
         // of a lock started dark, a gesture <-> 3-button switch, QA Low 4; the bars move the profile's clock, r11 §1.2).
         glance.root.addOnLayoutChangeListener { _, _, top, _, bottom, _, _, _, _ ->
-            if (bottom - top > 0 && available(bottom - top) != placedFor) guarded("layout") { layoutNow() }
+            if (bottom - top > 0 && available(bottom - top) != placedFor) afterLayout.add("layout") { guarded("layout") { layoutNow() } }
         }
         // Bug 25b-B/C: a layout that changed the page skips the frame it was made in - the first frame
         // drawn is the laid-out page, never the clock and tile settling a moment later.

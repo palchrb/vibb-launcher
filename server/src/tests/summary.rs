@@ -428,10 +428,12 @@ async fn quick_actions_list_running_pauses_in_local_time() {
         .unwrap();
         ids.push(lift);
     }
+    let before = chrono::Utc::now();
     let html = app
         .get_page(&format!("/devices/{id}"), &cookie)
         .await
         .text();
+    let after = chrono::Utc::now();
     let quick = group(&html, "quick");
     let oslo = made.with_timezone(&chrono_tz::Europe::Oslo);
     assert!(
@@ -439,12 +441,15 @@ async fn quick_actions_list_running_pauses_in_local_time() {
         "{quick}"
     );
     assert!(quick.contains("Skole paused for 15 min"), "{quick}");
+    // Its clock, or "yesterday 23:59" just after local midnight: the zone's own words at the
+    // page's `now`, which lies between `before` and `after` (never the wall clock's day).
+    let zone = crate::display_time::Zone::from_setting("Europe/Oslo");
     assert!(
-        quick.contains(&format!(
+        [before, after].iter().any(|now| quick.contains(&format!(
             "title=\"{}\">{} · parent</span>",
             oslo.format("%Y-%m-%d %H:%M:%S %Z"),
-            oslo.format("%H:%M")
-        )),
+            zone.when(made, *now)
+        ))),
         "{quick}"
     );
     // The pause that is over and the screen time: Activity's (2026-11-02), not Quick's; the running
@@ -833,10 +838,16 @@ async fn an_event_row_shows_its_clock_once() {
         .unwrap();
         ids.push(event);
     }
+    let before = Utc::now();
     let html = app
         .get_page(&format!("/devices/{id}"), &cookie)
         .await
         .text();
+    let after = Utc::now();
+    // The row's `when` is the zone's words at the page's `now` (between `before` and `after`):
+    // "23:59", or "yesterday 23:59" just after local midnight - never the wall clock's day.
+    let zone = crate::display_time::Zone::from_setting("Europe/Oslo");
+    let whens = [zone.at(happened, before), zone.at(happened, after)];
     let activity = group(&html, "activity");
     let row = |event: i64| {
         let start = at(activity, &format!("data-event=\"{event}\""));
@@ -858,7 +869,12 @@ async fn an_event_row_shows_its_clock_once() {
         // Once in the text; the exact time in `title=` ("… 18:56:00 CEST") is not shown.
         let exact = row.matches(&format!("{clock}:00")).count();
         assert_eq!(row.matches(&clock).count() - exact, 1, "{row}");
-        assert!(row.contains(&format!(">{clock}</span>")), "{row}");
+        assert!(
+            whens
+                .iter()
+                .any(|when| row.contains(&format!(">{when}</span>"))),
+            "{row}"
+        );
     }
 }
 
