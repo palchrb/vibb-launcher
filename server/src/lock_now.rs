@@ -53,11 +53,6 @@ impl LockNowRow {
         crate::display_time::parse_db_utc(&self.ends_at).map(|t| t.timestamp_millis())
     }
 
-    /// The local end on the phone's wall clock: 1439 is the next day's midnight.
-    pub fn local_end(&self) -> Option<NaiveDateTime> {
-        Some(local_at(self.date()?, self.end_minute))
-    }
-
     /// The days the copy is served with: its window on its weekday, nothing on the others.
     pub fn days(&self) -> Option<Vec<Option<DayWindow>>> {
         let weekday = self.date()?.weekday().num_days_from_monday() as usize;
@@ -248,7 +243,8 @@ pub fn db_time(now: DateTime<Utc>) -> String {
     now.format("%Y-%m-%d %H:%M:%S").to_string()
 }
 
-/// The phone's running lock at `now`, if any.
+/// The phone's running lock at `now`, if any: not ended early, its end ahead, and its rule not
+/// deleted (a deleted rule ends it, §3).
 pub async fn running(
     db: &SqlitePool,
     device_id: i64,
@@ -256,7 +252,7 @@ pub async fn running(
 ) -> Result<Option<LockNowRow>, sqlx::Error> {
     sqlx::query_as::<_, LockNowRow>(
         "SELECT * FROM time_lock_now WHERE device_id = ? AND ended_early_at IS NULL \
-         AND ends_at > ? ORDER BY id DESC LIMIT 1",
+         AND rule_id IS NOT NULL AND ends_at > ? ORDER BY id DESC LIMIT 1",
     )
     .bind(device_id)
     .bind(db_time(now))

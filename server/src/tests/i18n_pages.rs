@@ -201,7 +201,21 @@ async fn nb_pages_have_no_english() {
     }
 
     let (anna, ola, liv) = (family.anna, family.ola, family.liv);
+    // Design 93: a rule turned on now, and the summary with each sheet open.
+    sqlx::query(
+        "INSERT INTO time_lock_now (device_id, rule_id, rule_name, zone, local_date, start_minute, \
+         end_minute, ends_at) VALUES (?, ?, 'Skole', 'Europe/Oslo', '2026-11-13', 600, 1439, \
+         datetime('now', '+1 hour'))",
+    )
+    .bind(anna)
+    .bind(family.rule)
+    .execute(&app.db)
+    .await
+    .unwrap();
     let mut pages = vec![
+        format!("/devices/{anna}?open=rules&mode=on"),
+        format!("/devices/{anna}?open=rules&mode=pause"),
+        format!("/devices/{anna}?open=time"),
         "/devices".to_string(),
         "/devices/new".to_string(),
         "/devices/locate".to_string(),

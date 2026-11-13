@@ -1057,17 +1057,14 @@ struct DeviceDetailTemplate {
     relock: crate::handlers::window_relock::RelockCard,
     /// Activity (design 48): the phone's commands and events, with Cancel back here.
     activity: crate::handlers::activity::Activity,
-    /// Pause a rule…'s rules (the phone's effective ones); empty: no tile.
-    pause_rules: Vec<(i64, String)>,
+    /// Design 93: Quick Actions' three tiles, their sheets and the row while the phone is open for setup.
+    qa: crate::handlers::quick_actions::QuickActions,
     /// "17:21": the kid's request for more time still open (design r13 §2.7), above the tiles
     /// until a lift or the day's end; a request's push opens `#quick`.
     asked: Option<String>,
     /// A lift form's or the Regler sheet's flash (`?done=`): the summary group ("quick"), its words
     /// (a rule turned on now's name and end filled in, design 93), refused.
     done: Option<(&'static str, String, bool)>,
-    /// The last report has the phone's restrictions paused: said at the top of Quick actions,
-    /// where the Attention row lands (qa-31-s10-code M1).
-    paused: bool,
     /// Managed without a Parent PIN: a phone not set up says so (it has no Attention rows,
     /// qa-31-s10-code L1).
     no_parent_pin: bool,
@@ -2275,9 +2272,6 @@ async fn render_device(
             return crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.read_phone");
         }
     };
-    let paused = latest
-        .as_ref()
-        .is_some_and(|s| s.paused_at(now.timestamp_millis()));
     let asked = match crate::parent_events::open_extra_time_request(&state.db, id, &zone, now).await
     {
         Ok(asked) => asked.map(|at| zone.clock(at)),
@@ -2311,6 +2305,46 @@ async fn render_device(
             );
             (crate::handlers::lifts::summary_group(group), text, refused)
         });
+    // Design 93: a refusal from the Regler sheet shows in the sheet it reopens; otherwise in Today's group.
+    let refusal = done
+        .as_ref()
+        .filter(|(_, _, refused)| *refused)
+        .map(|(_, text, _)| text.clone());
+    let qa = match crate::handlers::quick_actions::build(
+        &state.db,
+        crate::handlers::quick_actions::Inputs {
+            device_id: id,
+            latest: latest.as_ref(),
+            rules: time_rules.as_deref().unwrap_or(&[]),
+            query,
+            rule_in_force: lock
+                .as_ref()
+                .filter(|b| {
+                    b.at_last_report.is_none()
+                        && b.name_key != Some("devices.status.lock.screen_time")
+                })
+                .map(|b| {
+                    b.name_key
+                        .map(|key| t(lang, key).to_string())
+                        .unwrap_or_else(|| b.name.clone())
+                }),
+            screen: screen_time.as_ref(),
+            lock_again: relock.lock_again,
+            relock_capable: crate::handlers::window_relock::takes_commands(latest.as_ref()),
+            refusal,
+            zone: &zone,
+            now,
+        },
+    )
+    .await
+    {
+        Ok(qa) => qa,
+        Err(err) => {
+            tracing::error!(device_id = id, %err, "can't read the quick actions");
+            return crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.read_phone");
+        }
+    };
+    let done = if qa.sheet_flash.is_some() { None } else { done };
     Html(
         DeviceDetailTemplate {
             lang,
@@ -2327,16 +2361,10 @@ async fn render_device(
             status,
             meter,
             attention,
-            pause_rules: time_rules
-                .as_deref()
-                .unwrap_or(&[])
-                .iter()
-                .map(|r| (r.id, crate::time_rules::shown_name(lang, &r.name)))
-                .collect(),
+            qa,
             asked,
             done,
             lifts,
-            paused,
             no_parent_pin: managed_without_pin(&policy),
             relock,
             activity,

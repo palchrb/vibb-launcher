@@ -25,8 +25,6 @@ pub struct RelockCard {
     /// "Lock again": the launcher takes the commands (`window_relock_v1`) and a pause or Play
     /// install mode is open at the last report.
     pub lock_again: bool,
-    /// "Unlock for 2 h…": the launcher takes the commands and no pause is on at the last report.
-    pub pause_button: bool,
     /// The page reloads itself (`static/auto-reload.js`) while the phone hasn't shown what Lock
     /// again or Unlock 2 h… did, for at most 2 minutes ([window_relock::waiting_for_phone]).
     pub wait_for_phone: bool,
@@ -152,7 +150,6 @@ pub async fn card(
     let waited = window_relock::waited_for(&answers, paused, open, now_ms);
     Ok(RelockCard {
         lock_again: capable && open,
-        pause_button: capable && !paused,
         wait_for_phone: window_relock::waiting_for_phone(&answers, paused, open, now_ms),
         // While it waits, the "Sent." line stays on every reload (Q-2).
         notice: notice
@@ -272,6 +269,7 @@ async fn queue_own_command(
     Ok(true)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn queue(
     state: &AppState,
     lang: Lang,
@@ -280,6 +278,7 @@ async fn queue(
     command: &str,
     notice: &str,
     allow: Option<&[AllowedBlock]>,
+    back: Option<&str>,
 ) -> Response {
     let payload = allow.and_then(|a| serde_json::to_string(a).ok());
     match queue_own_command(state, id, command, payload.as_deref(), admin.id).await {
@@ -304,6 +303,11 @@ async fn queue(
             .await;
             // To the summary group the form is in, where the flash is (design 31 §3.0, §5.1): the
             // quick actions, or the blocked apps for "Allow these apps…".
+            // Design 93 §6.6: from the Avansert page's "Åpne for oppsett" row, back there.
+            if back == Some("advanced") {
+                return Redirect::to(&format!("/devices/{id}/advanced?notice={notice}#setup"))
+                    .into_response();
+            }
             let group = window_relock::flash(notice).map_or("quick", |(group, _)| group);
             Redirect::to(&format!("/devices/{id}?notice={notice}#{group}")).into_response()
         }
@@ -319,6 +323,14 @@ async fn queue(
     }
 }
 
+/// Where "Lock again" and "Unlock 2 h" return: `back=advanced` is the Avansert page's row (design 93
+/// §6.6); anything else, or none, the summary.
+#[derive(serde::Deserialize, Default)]
+pub struct BackForm {
+    #[serde(default)]
+    pub back: String,
+}
+
 /// `POST /devices/{id}/end-windows` (full auth): "Lock again" - the phone ends a
 /// pause or an override and Play install mode, and locks again.
 pub async fn end_windows(
@@ -326,7 +338,9 @@ pub async fn end_windows(
     Path(id): Path<i64>,
     lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
+    form: Result<Form<BackForm>, axum::extract::rejection::FormRejection>,
 ) -> Response {
+    let back = form.map(|Form(f)| f.back).unwrap_or_default();
     queue(
         &state,
         lang,
@@ -335,6 +349,7 @@ pub async fn end_windows(
         END_WINDOWS,
         "end_windows_sent",
         None,
+        Some(back.as_str()),
     )
     .await
 }
@@ -368,6 +383,7 @@ pub async fn allow_blocked(
         ALLOW_BLOCKED,
         "allow_blocked_sent",
         Some(&allow),
+        None,
     )
     .await
 }
@@ -380,7 +396,9 @@ pub async fn start_pause(
     Path(id): Path<i64>,
     lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
+    form: Result<Form<BackForm>, axum::extract::rejection::FormRejection>,
 ) -> Response {
+    let back = form.map(|Form(f)| f.back).unwrap_or_default();
     queue(
         &state,
         lang,
@@ -389,6 +407,7 @@ pub async fn start_pause(
         START_PAUSE,
         "start_pause_sent",
         None,
+        Some(back.as_str()),
     )
     .await
 }

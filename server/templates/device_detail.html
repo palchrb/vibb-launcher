@@ -117,80 +117,186 @@
     </section>
     {% endif %}
 
-    {#- +15/+30/+1 h, Lock again and Locate are one tap (§5.6: they protect the phone or can be
-        undone); Pause a rule… is a sheet, Unlock for 2 h… a confirm (M6). An open sheet spans the
-        grid's width. -#}
-    <section id="quick" aria-labelledby="quick-title">
-        <h2 class="group-header" id="quick-title">{{ self.t("device.summary.quick") }}</h2>
-        {#- Where the "Restrictions paused" alarm lands: how the pause ends, for an older launcher too
-            (qa-31-s10-code M1). One line, no alarm colour: the Attention row above is the one red
-            alert (the user, 2026-10-26). -#}
-        {% if paused %}
-        <p class="quick-note" data-warning="restrictions-paused">{% if relock.lock_again %}{{ self.t("device.summary.pause_ends") }}{% else %}{{ self.t("device.summary.pause_ends_old") }}{% endif %}</p>
+    {#- Design 93: Quick Actions as three tiles - Skjermtid, Pause regler, Slå på regel - each a link that opens its
+        sheet below the row (?open=, quick-sheets.js opens it in place), state lines only when they say something
+        (§7). Above the header, while the phone is open for setup, one row with Lås igjen (§6.1 item 1); "Åpne for
+        oppsett" itself is the Avansert page's first row (§6.6). The sheets' words for JS are this section's data-w-*. -#}
+    <section id="quick" aria-labelledby="quick-title" data-now-minute="{{ qa.now_minute }}" data-w-on="{{ self.t("device.summary.qa.js_on") }}" data-w-pause="{{ self.t("device.summary.qa.js_pause") }}" data-w-pause-all="{{ self.t("device.summary.qa.js_pause_all") }}" data-w-extra="{{ self.t("device.summary.qa.js_extra") }}" data-w-midnight="{{ self.t("device.summary.rules_now.midnight") }}">
+        {% if let Some(s) = qa.setup %}
+        <div class="group" id="setup-open" data-warning="restrictions-paused">
+            <div class="row">
+                <span class="tile tile-graphite qa-row-tile"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><rect x="3" y="7.2" width="11" height="7.6" rx="1.7" fill="currentColor"/><path d="M5.4 7.2V5.3a3.1 3.1 0 0 1 6-1.1" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></span>
+                <span class="row-label">{{ s.text }}<span class="row-sub">{{ s.sub }}</span></span>
+                {% if s.lock_again %}
+                <form method="post" action="/devices/{{ device.id }}/end-windows#quick" class="row-end">
+                    <button type="submit" class="row-action">{{ self.t("device.summary.lock_again") }}</button>
+                </form>
+                {% endif %}
+            </div>
+        </div>
         {% endif %}
-        {#- The pause above (or none) is the phone's word at its newest report: an old one says so (QA of
-            pause-end-report M1). -#}
+        <h2 class="group-header" id="quick-title">{{ self.t("device.summary.quick") }}</h2>
+        {#- What the tiles say is the phone's word at its newest report: an old one says so (QA of pause-end-report M1). -#}
         {% if let Some(age) = relock.report_age %}<p class="quick-note" data-report-age>{{ self.tp("device.summary.report_age", [("age", age.as_str())]) }}</p>{% endif %}
         {#- Design r13 §2.7: the kid's "Be om mer tid" still open (until a lift or the day's end); its push lands here. -#}
         {% if let Some(at) = asked %}<p class="quick-note" data-asked>{{ self.tp("device.summary.asked", [("at", at.as_str())]) }}</p>{% endif %}
-        <div class="act-grid">
-            {% for minutes in [15, 30, 60] %}
-            <form method="post" action="/devices/{{ device.id }}/lifts#quick">
+        <div class="qa-grid">
+            <a class="qa{% if qa.open == Some("time") %} qa-chosen{% endif %}" href="/devices/{{ device.id }}?open=time#quick" data-sheet="time-sheet" aria-controls="time-sheet" aria-expanded="{% if qa.open == Some("time") %}true{% else %}false{% endif %}">
+                <span class="tile tile-teal"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><circle cx="8.5" cy="8.5" r="6.3" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8.5 5.4v6.2M5.4 8.5h6.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></span>
+                <span><span class="qa-label">{{ self.t("device.summary.qa.time") }}</span><span class="qa-sub">{% if let Some(line) = qa.time_line %}{{ line }}{% else %}&nbsp;{% endif %}</span></span>
+            </a>
+            {% if !qa.rules.is_empty() %}
+            <a class="qa{% if qa.open == Some("rules") && !qa.mode_on %} qa-chosen{% endif %}{% if qa.pause_line.is_some() && !qa.pauses.is_empty() %} qa-on{% endif %}" href="/devices/{{ device.id }}?open=rules&amp;mode=pause#quick" data-sheet="rules-sheet" data-mode="pause" aria-controls="rules-sheet" aria-expanded="{% if qa.open == Some("rules") && !qa.mode_on %}true{% else %}false{% endif %}">
+                <span class="tile tile-indigo"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><rect x="4" y="3.5" width="3" height="10" rx="1" fill="currentColor"/><rect x="10" y="3.5" width="3" height="10" rx="1" fill="currentColor"/></svg></span>
+                <span><span class="qa-label">{{ self.t("device.summary.qa.pause") }}</span><span class="qa-sub">{% if let Some(line) = qa.pause_line %}{{ line }}{% else %}&nbsp;{% endif %}</span></span>
+            </a>
+            <a class="qa{% if qa.open == Some("rules") && qa.mode_on %} qa-chosen{% endif %}{% if qa.on_line.is_some() %} qa-on{% endif %}" href="/devices/{{ device.id }}?open=rules&amp;mode=on#quick" data-sheet="rules-sheet" data-mode="on" aria-controls="rules-sheet" aria-expanded="{% if qa.open == Some("rules") && qa.mode_on %}true{% else %}false{% endif %}">
+                <span class="tile tile-indigo"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><rect x="3" y="7.2" width="11" height="7.6" rx="1.7" fill="currentColor"/><path d="M5.4 7.2V5.3a3.1 3.1 0 0 1 6.2 0v1.9" fill="none" stroke="currentColor" stroke-width="1.7"/></svg></span>
+                <span><span class="qa-label">{{ self.t("device.summary.qa.on") }}</span><span class="qa-sub">{% if let Some(line) = qa.on_line %}{{ line }}{% else %}&nbsp;{% endif %}</span></span>
+            </a>
+            {% endif %}
+        </div>
+
+        {#- Skjermtid (§6.3): extra time for today, posted to /lifts as before. -#}
+        <div class="group qa-sheet" id="time-sheet" role="region" aria-labelledby="time-sheet-title"{% if qa.open != Some("time") %} hidden{% endif %}>
+            <div class="row qa-head">
+                <span class="tile tile-teal"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><circle cx="8.5" cy="8.5" r="6.3" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8.5 5.4v6.2M5.4 8.5h6.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></span>
+                <span class="row-label" id="time-sheet-title" tabindex="-1">{{ self.t("device.summary.qa.time") }}</span>
+                <a class="row-action" href="/devices/{{ device.id }}#quick" data-qa-close>{{ self.t("device.summary.qa.close") }}</a>
+            </div>
+            <form method="post" action="/devices/{{ device.id }}/lifts#quick" class="cell">
                 <input type="hidden" name="target" value="budget">
-                <input type="hidden" name="minutes" value="{{ minutes }}">
                 <input type="hidden" name="back" value="summary">
-                <button type="submit" class="act"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 8.5v7M8.5 12h7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span class="act-label">{% if *minutes == 60 %}{{ self.t("device.summary.plus_hour") }}{% else %}{{ self.tp("device.summary.plus_minutes", [("minutes", minutes.to_string().as_str())]) }}{% endif %}</span></button>
+                <div class="row row-stacked">
+                    <span class="row-label" id="qa-much">{{ self.t("device.summary.qa.how_much") }}</span>
+                    <div class="segmented" role="radiogroup" aria-labelledby="qa-much">
+                        {% for minutes in [15, 30, 60] %}
+                        <label class="segment"><input type="radio" name="minutes" value="{{ minutes }}"{% if *minutes == 30 %} checked{% endif %}><span class="segment-face">{% if *minutes == 60 %}{{ self.tp("common.n_h", [("n", "1")]) }}{% else %}{{ self.tp("common.n_min", [("n", minutes.to_string().as_str())]) }}{% endif %}</span></label>
+                        {% endfor %}
+                    </div>
+                </div>
+                <p class="row row-note">{{ qa.extra_note }}</p>
+                <button type="submit" class="row row-button" data-qa-button="extra">{{ self.t("device.summary.qa.give_extra") }}</button>
             </form>
-            {% endfor %}
-            {% if !pause_rules.is_empty() %}
-            <details class="act-sheet" id="pause-rule">
-                <summary class="act"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M10 9v6M14 9v6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span class="act-label">{{ self.t("device.summary.pause_rule") }}&hellip;</span></summary>
-                <form method="post" action="/devices/{{ device.id }}/lifts#quick" class="group act-sheet-body">
-                    <input type="hidden" name="target" value="rule">
-                    <input type="hidden" name="back" value="summary">
+        </div>
+
+        {#- Regler (§6.2): what runs, then one form for both rule tiles, its mode radios hoisted as the form's first
+            children so the panels switch with sibling selectors (no JS needed). -#}
+        {% if !qa.rules.is_empty() %}
+        <div class="qa-sheet" id="rules-sheet" role="region" aria-labelledby="rules-sheet-title"{% if qa.open != Some("rules") %} hidden{% endif %}>
+            {% let busy = qa.running.is_some() || !qa.pauses.is_empty() %}
+            {% if busy %}
+            <div class="group" data-qa-running>
+                <div class="row qa-head">
+                    <span class="tile tile-indigo"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><circle cx="8.5" cy="8.5" r="6.3" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8.5 5v3.7l2.5 1.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></span>
+                    <span class="row-label" id="rules-sheet-title" tabindex="-1">{{ self.t("device.summary.qa.rules") }}</span>
+                    <a class="row-action" href="/devices/{{ device.id }}#quick" data-qa-close>{{ self.t("device.summary.qa.close") }}</a>
+                </div>
+                {% if let Some(text) = qa.sheet_flash %}<p class="flash flash-error" role="status" data-flash="rules-sheet">{{ text }}</p>{% endif %}
+                {% if let Some(r) = qa.running %}
+                <div class="row" data-lock-now="{{ r.id }}">
+                    <span class="row-label">{{ r.what }}<span class="row-sub">{{ r.sub }}</span></span>
+                    <form method="post" action="/devices/{{ device.id }}/lock-now/{{ r.id }}/end#quick" class="row-end">
+                        <button type="submit" class="row-action qa-danger">{{ self.t("device.summary.qa.end_now") }}</button>
+                    </form>
+                </div>
+                <form method="post" action="/devices/{{ device.id }}/lock-now/{{ r.id }}#quick" class="cell">
+                    <input type="hidden" name="seen" value="{{ r.seen }}">
+                    <div class="row row-stacked">
+                        <span class="row-label" id="qa-extend">{{ self.t("device.summary.qa.extend") }}</span>
+                        <div class="segmented" role="radiogroup" aria-labelledby="qa-extend">
+                            <label class="segment"><input type="radio" name="add" value="30"{% if !r.add_offered[0] %} disabled{% endif %}><span class="segment-face">+{{ self.tp("common.n_min", [("n", "30")]) }}</span></label>
+                            <label class="segment"><input type="radio" name="add" value="60"{% if !r.add_offered[1] %} disabled{% endif %}><span class="segment-face">+{{ self.tp("common.n_h", [("n", "1")]) }}</span></label>
+                            <label class="segment"><input type="radio" name="add" value="day"><span class="segment-face">{{ self.t("device.summary.qa.rest_of_day") }}</span></label>
+                        </div>
+                    </div>
                     <label class="row">
-                        <span class="row-label">{{ self.t("device.summary.rule") }}</span>
-                        <select class="pick" name="rule">
-                            <option value="all">{{ self.t("device.summary.all_rules") }}</option>
-                            {% for (id, name) in pause_rules %}
-                            <option value="{{ id }}">{{ name }}</option>
+                        <span class="row-label">{{ self.t("device.summary.qa.until") }}<span class="row-sub">{{ self.t("device.summary.qa.until_sub") }}</span></span>
+                        <input type="time" class="row-time" name="til" placeholder="{{ r.end_clock }}" data-qa-til>
+                    </label>
+                    <button type="submit" class="row row-button">{{ self.t("device.summary.qa.save_time") }}</button>
+                </form>
+                {% endif %}
+                {% for (lift, words) in qa.pauses %}
+                <div class="row" data-qa-pause="{{ lift }}">
+                    <span class="row-label">{{ words }}</span>
+                    <form method="post" action="/devices/{{ device.id }}/lifts/{{ lift }}/end#quick" class="row-end">
+                        <input type="hidden" name="back" value="summary">
+                        <button type="submit" class="row-action qa-danger">{{ self.t("device.summary.qa.end_now") }}</button>
+                    </form>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+            <div class="group">
+                <div class="row qa-head">
+                    <span class="tile tile-indigo"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><circle cx="8.5" cy="8.5" r="6.3" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8.5 5v3.7l2.5 1.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></span>
+                    {% if busy %}<span class="row-label">{{ self.t("device.summary.qa.something_else") }}</span>{% else %}<span class="row-label" id="rules-sheet-title" tabindex="-1">{{ self.t("device.summary.qa.rules") }}</span>{% endif %}
+                    <a class="row-action" href="/devices/{{ device.id }}#quick" data-qa-close>{{ self.t("device.summary.qa.close") }}</a>
+                </div>
+                {% if !busy %}{% if let Some(text) = qa.sheet_flash %}<p class="flash flash-error" role="status" data-flash="rules-sheet">{{ text }}</p>{% endif %}{% endif %}
+                <form method="post" action="/devices/{{ device.id }}/rules-now#quick" class="cell qa-form">
+                    <input type="radio" class="qa-mode" name="mode" value="on" id="m-on"{% if qa.mode_on %} checked{% endif %}{% if qa.on_disabled.is_some() %} disabled{% endif %}>
+                    <input type="radio" class="qa-mode" name="mode" value="pause" id="m-pause"{% if !qa.mode_on %} checked{% endif %}>
+                    <label class="row">
+                        <span class="row-label">{{ self.t("device.summary.qa.rule") }}</span>
+                        <select class="pick" name="rule" data-qa-rule>
+                            <option value="all" data-all{% if qa.selected == "all" %} selected{% endif %}>{{ self.t("device.summary.qa.all_rules") }}</option>
+                            {% for r in qa.rules %}
+                            <option value="{{ r.id }}"{% if r.school %} data-school{% endif %} data-line="{{ r.mode_line }}" data-warn="{{ r.warnings_joined() }}"{% if qa.selected_is(*r.id) %} selected{% endif %}>{{ r.name }}</option>
                             {% endfor %}
                         </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
                     </label>
-                    <label class="row">
-                        <span class="row-label">{{ self.t("device.summary.for") }}</span>
-                        <select class="pick" name="minutes">
-                            <option value="15">{{ self.tp("common.n_min", [("n", "15")]) }}</option>
-                            <option value="30" selected>{{ self.tp("common.n_min", [("n", "30")]) }}</option>
-                            <option value="60">{{ self.tp("common.n_h", [("n", "1")]) }}</option>
-                            <option value="120">{{ self.tp("common.n_h", [("n", "2")]) }}</option>
-                        </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    <div class="row row-stacked qa-hva">
+                        <span class="row-label" id="qa-hva">{{ self.t("device.summary.qa.what") }}</span>
+                        <div class="segmented" role="radiogroup" aria-labelledby="qa-hva">
+                            <label class="segment" for="m-on"><span class="segment-face face-on">{{ self.t("device.summary.qa.turn_on_now") }}</span></label>
+                            <label class="segment" for="m-pause"><span class="segment-face face-pause">{{ self.t("device.summary.qa.pause_it") }}</span></label>
+                        </div>
+                        {% if let Some(why) = qa.on_disabled %}<span class="row-sub segmented-sub" data-qa-on-off>{{ why }}</span>{% endif %}
+                    </div>
+                    <div class="row row-stacked when-on">
+                        <span class="row-label" id="qa-len">{{ self.t("device.summary.qa.how_long") }}</span>
+                        <div class="segmented" role="radiogroup" aria-labelledby="qa-len">
+                            {% for (value, hours, offered) in qa.length_options() %}
+                            <label class="segment"><input type="radio" name="on_len" value="{{ value }}" data-minutes="{{ value }}"{% if qa.length == value %} checked{% endif %}{% if !offered %} disabled{% endif %}><span class="segment-face">{{ self.tp("common.n_h", [("n", hours)]) }}</span></label>
+                            {% endfor %}
+                            <label class="segment"><input type="radio" name="on_len" value="day"{% if qa.length == "day" %} checked{% endif %}><span class="segment-face">{{ self.t("device.summary.qa.rest_of_day") }}</span></label>
+                        </div>
+                    </div>
+                    <label class="row when-on">
+                        <span class="row-label">{{ self.t("device.summary.qa.until") }}<span class="row-sub">{{ self.t("device.summary.qa.until_sub") }}</span></span>
+                        <input type="time" class="row-time" name="til" data-qa-til>
                     </label>
-                    <button type="submit" class="row row-button">{{ self.t("device.summary.pause") }}</button>
+                    <div class="row row-stacked when-pause">
+                        <span class="row-label" id="qa-pause-len">{{ self.t("device.summary.qa.how_long") }}</span>
+                        <div class="segmented" role="radiogroup" aria-labelledby="qa-pause-len">
+                            {% for minutes in [15, 30, 60, 120] %}
+                            <label class="segment"><input type="radio" name="pause_minutes" value="{{ minutes }}"{% if *minutes == 60 %} checked{% endif %}><span class="segment-face">{% if *minutes >= 60 %}{{ self.tp("common.n_h", [("n", (minutes / 60).to_string().as_str())]) }}{% else %}{{ self.tp("common.n_min", [("n", minutes.to_string().as_str())]) }}{% endif %}</span></label>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    <p class="row row-note when-on" data-qa-line>{{ qa.selected_mode_line() }}</p>
+                    {% for w in qa.selected_warnings() %}<p class="row row-note qa-warn when-on" data-qa-warn>{{ w }}</p>{% endfor %}
+                    <p class="row row-note when-pause">{{ self.t("device.summary.qa.pause_note") }}</p>
+                    <button type="submit" class="row row-button when-on" data-qa-button="on">{{ self.t("device.summary.qa.turn_on") }}</button>
+                    <button type="submit" class="row row-button when-pause" data-qa-button="pause">{{ self.t("device.summary.qa.pause_it") }}</button>
                 </form>
-            </details>
-            {% endif %}
-            {% if relock.lock_again %}
-            <form method="post" action="/devices/{{ device.id }}/end-windows#quick">
-                <button type="submit" class="act act-strong"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="5" y="10.5" width="14" height="10" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5" fill="none" stroke="currentColor" stroke-width="1.8"/></svg><span class="act-label">{{ self.t("device.summary.lock_again") }}</span></button>
-            </form>
-            {% endif %}
-            {% if relock.pause_button %}
-            <details class="act-sheet confirm" id="unlock">
-                <summary class="act"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="5" y="10.5" width="14" height="10" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 6.8-1.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span class="act-label">{{ self.t("device.summary.unlock_2h") }}&hellip;</span></summary>
-                <form method="post" action="/devices/{{ device.id }}/start-pause#quick" class="confirm-body act-sheet-body">
-                    <p>{{ self.tp("device.summary.unlock_confirm", [("name", device.name.as_str())]) }}</p>
-                    <button type="submit" class="button-destructive">{{ self.t("device.summary.unlock") }}</button>
-                    {% include "partials/confirm_cancel.html" %}
-                </form>
-            </details>
-            {% endif %}
-            <a class="act" href="/devices/locate?device={{ device.id }}"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><circle cx="12" cy="10" r="2.3" fill="none" stroke="currentColor" stroke-width="1.8"/></svg><span class="act-label">{{ self.t("nav.locate") }}</span></a>
+            </div>
         </div>
-        {#- Today's lifts and the pauses still running, with End now (back here, #quick): the end of
-            Quick actions since Now went (the user, 2026-10-20); the flash below them. -#}
-        {% if !lifts.is_empty() || self.flash("quick").is_some() %}
+        {% endif %}
+
+        {#- Today's running pauses and the rule turned on now, with End now (back here, #quick), and the flash. -#}
+        {% if !lifts.is_empty() || qa.running.is_some() || self.flash("quick").is_some() %}
         <div class="group">
+            {% if let Some(r) = qa.running %}
+            <div class="row" data-today-lock="{{ r.id }}">
+                <span class="row-label">{{ r.what }}<span class="row-sub">{{ r.sub }}</span></span>
+                <form method="post" action="/devices/{{ device.id }}/lock-now/{{ r.id }}/end#quick" class="row-end">
+                    <button type="submit" class="row-action">{{ self.t("device.summary.end_now") }}</button>
+                </form>
+            </div>
+            {% endif %}
             {% for l in lifts %}
             <div class="row" data-lift="{{ l.id }}">
                 <span class="row-label">{{ l.what }}<span class="row-sub"{% if !l.exact.is_empty() %} title="{{ l.exact }}"{% endif %}>{{ l.when }}{% if !l.by.is_empty() %} · {{ l.by }}{% endif %}</span></span>
@@ -396,8 +502,9 @@
     {#- Lock again or Unlock 2 h… waits for the phone: reload every 3 s until the newest report
         shows it, at most 2 minutes after the press (window_relock::waiting_for_phone). -#}
     {% if relock.wait_for_phone %}
-    <script src="/static/auto-reload.js?v=8" defer></script>
+    <script src="/static/auto-reload.js?v=9" defer></script>
     {% endif %}
+    <script src="/static/quick-sheets.js?v=1" defer></script>
     </div>
 </main>
 {#- Pull down to refresh (2026-10-25): on the Devices list and a phone's summary only (static/pull-refresh.js), never a page with a map. -#}

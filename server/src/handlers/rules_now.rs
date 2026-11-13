@@ -181,7 +181,8 @@ async fn turn_on(
             "INSERT INTO time_lock_now (device_id, rule_id, rule_name, zone, local_date, \
              start_minute, end_minute, ends_at, created_by) \
              SELECT ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM time_lock_now \
-             WHERE device_id = ? AND ended_early_at IS NULL AND ends_at > datetime('now'))",
+             WHERE device_id = ? AND ended_early_at IS NULL AND rule_id IS NOT NULL \
+             AND ends_at > datetime('now'))",
         )
         .bind(id)
         .bind(rule_row.id)

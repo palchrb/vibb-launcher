@@ -331,3 +331,145 @@ async fn the_copy_follows_its_pause_its_end_and_its_rule() {
         .unwrap();
     assert!(copies(&app, &token).await.is_empty(), "over at its end");
 }
+
+/// `<section id="quick">` to its end.
+fn quick(html: &str) -> &str {
+    let start = html.find("<section id=\"quick\"").expect("#quick");
+    let end = html[start..]
+        .find("</section>")
+        .map_or(html.len(), |e| start + e);
+    &html[start..end]
+}
+
+/// §6.1, §6.2, §6.5: three tiles, the rule tiles only with rules; a tile's link opens its sheet with
+/// its mode and rule; a refusal reopens it with the reason in it.
+#[tokio::test]
+async fn the_tiles_open_their_sheets() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("Emma").await;
+    let page = |q: &str| format!("/devices/{id}{q}");
+    let html = app.get_page(&page(""), &cookie).await.text();
+    let q = quick(&html);
+    assert!(
+        q.contains(&format!("href=\"/devices/{id}?open=time#quick\"")),
+        "{q}"
+    );
+    assert!(!q.contains("open=rules"), "no rule, no rule tiles: {q}");
+    assert!(
+        q.contains("id=\"time-sheet\" role=\"region\" aria-labelledby=\"time-sheet-title\" hidden")
+    );
+
+    let (app, cookie, id, _, skole) = emma(json!({})).await;
+    let page = |q: &str| format!("/devices/{id}{q}");
+    let html = app
+        .get_page(&page("?open=rules&mode=pause"), &cookie)
+        .await
+        .text();
+    let q = quick(&html);
+    assert!(
+        q.contains("id=\"rules-sheet\" role=\"region\" aria-labelledby=\"rules-sheet-title\">"),
+        "{q}"
+    );
+    assert!(q.contains("id=\"m-pause\" checked"), "{q}");
+    assert!(
+        q.contains("<option value=\"all\" data-all selected>All rules</option>"),
+        "{q}"
+    );
+    let html = app
+        .get_page(&page("?open=rules&mode=on"), &cookie)
+        .await
+        .text();
+    let q = quick(&html);
+    assert!(q.contains("id=\"m-on\" checked"), "{q}");
+    assert!(
+        q.contains(&format!("<option value=\"{skole}\" data-school")),
+        "{q}"
+    );
+    assert!(q.contains(" selected>Skole</option>"), "{q}");
+    assert!(
+        q.contains("The phone locks as in Skole: org.fossify.clock work."),
+        "{q}"
+    );
+
+    let res = post(
+        &app,
+        &cookie,
+        &format!("/devices/{id}/rules-now"),
+        &[("mode", "on"), ("rule", "all"), ("on_len", "day")],
+    )
+    .await;
+    let back = res
+        .location()
+        .unwrap()
+        .split('#')
+        .next()
+        .unwrap()
+        .to_string();
+    let html = app.get_page(&back, &cookie).await.text();
+    let q = quick(&html);
+    let sheet = &q[q.find("id=\"rules-sheet\"").unwrap()..];
+    assert!(
+        sheet.contains("data-flash=\"rules-sheet\">Pick one rule to turn on.</p>"),
+        "{q}"
+    );
+    assert!(sheet.contains("id=\"m-on\" checked"), "{q}");
+}
+
+/// §7: Pause regler says the rule in force only from a fresh report; Slå på regel says only a rule
+/// turned on, "· waiting" until a report after it; the badge names the copy by its rule and its end.
+#[tokio::test]
+async fn the_state_lines_and_the_badge() {
+    let (app, cookie, id, token, skole) = emma(json!({})).await;
+    let zone = roomy_zone();
+    sqlx::query("UPDATE provisioning_settings SET time_zone = ?")
+        .bind(zone)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let today = chrono::Utc::now()
+        .with_timezone(&zone.parse::<chrono_tz::Tz>().unwrap())
+        .format("%Y-%m-%d")
+        .to_string();
+    let summary = format!("/devices/{id}");
+    post(
+        &app,
+        &cookie,
+        &format!("/devices/{id}/rules-now"),
+        &[
+            ("mode", "on"),
+            ("rule", &skole.to_string()),
+            ("on_len", "day"),
+        ],
+    )
+    .await;
+    let html = app.get_page(&summary, &cookie).await.text();
+    assert!(
+        quick(&html).contains("Skole on until midnight · waiting"),
+        "{}",
+        quick(&html)
+    );
+    let lock = count(&app, "SELECT id FROM time_lock_now").await;
+    let report = json!({
+        "lock_reason": "SCHOOL",
+        "capabilities": ["time_rules_v1", "window_relock_v1"],
+        "time_state": {"day": today, "used_minutes": 0, "lock_reason": "SCHOOL", "active_rule_id": -lock,
+                       "active_rule_name": "Skole", "lifts_active": [], "zone": zone}
+    });
+    app.post_status(&token, report).await;
+    let html = app.get_page(&summary, &cookie).await.text();
+    let q = quick(&html);
+    assert!(q.contains("Skole is on now"), "{q}");
+    assert!(q.contains(">Skole on until midnight<"), "{q}");
+    assert!(
+        html.contains("Skole until 00:00 tomorrow"),
+        "the badge names the copy by its rule: {html}"
+    );
+    // A stale report says nothing of the rule in force.
+    sqlx::query("UPDATE device_status SET reported_at = datetime('now', '-2 days')")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let html = app.get_page(&summary, &cookie).await.text();
+    assert!(!quick(&html).contains("is on now"), "{}", quick(&html));
+}

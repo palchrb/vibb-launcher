@@ -103,6 +103,17 @@ pub(crate) async fn rows(
     .bind(MAX_ROWS as i64)
     .fetch_all(&state.db)
     .await?;
+    // Design 93 §8: every rule turned on now that is no longer running (the running one is Quick actions').
+    let locks: Vec<crate::lock_now::LockNowRow> = sqlx::query_as(
+        "SELECT * FROM time_lock_now WHERE device_id = ?1 AND created_at >= ?2 \
+           AND NOT (ended_early_at IS NULL AND rule_id IS NOT NULL AND ends_at > datetime('now')) \
+         ORDER BY created_at DESC, id DESC LIMIT ?3",
+    )
+    .bind(device_id)
+    .bind(since.format("%Y-%m-%d %H:%M:%S").to_string())
+    .bind(MAX_ROWS as i64)
+    .fetch_all(&state.db)
+    .await?;
     let receipts =
         crate::handlers::device_api::sends_command_receipts(&state.db, device_id).await?;
     let names = crate::parents::Names::load(&state.db).await?;
@@ -132,6 +143,14 @@ pub(crate) async fn rows(
             ActivityRow::Lift(lift_row(lift, &names, zone, now)),
         ));
     }
+    for lock in &locks {
+        let at = parse_db_utc(&lock.created_at);
+        all.push((
+            at,
+            false,
+            ActivityRow::Lift(lock_row(lock, &names, zone, now)),
+        ));
+    }
     // Newest first; a time that doesn't read goes last. Stable, so each table keeps its order.
     all.sort_by_key(|(at, _, _)| std::cmp::Reverse(*at));
     let mut capped = 0;
@@ -145,6 +164,54 @@ pub(crate) async fn rows(
         rows: all.into_iter().map(|(_, _, row)| row).collect(),
         flash: cancel_flash(zone.lang(), cancel),
     })
+}
+
+/// A rule turned on now in Activity (design 93 §8), as a lift's row: "Skole slått på 16:30-18:30",
+/// "16:30 · Mamma · Sluttet 18:30" / "Avsluttet 17:10" / "Regelen ble fjernet". Its id is the copy's,
+/// negative, so it never meets a lift's.
+fn lock_row(
+    lock: &crate::lock_now::LockNowRow,
+    names: &crate::parents::Names,
+    zone: &Zone,
+    now: DateTime<Utc>,
+) -> LiftRow {
+    let lang = zone.lang();
+    let what = t_params(
+        lang,
+        "device.activity.lock_now",
+        &[
+            (
+                "rule",
+                &crate::time_rules::shown_name(lang, &lock.rule_name),
+            ),
+            ("from", &crate::lock_now::end_words(lang, lock.start_minute)),
+            ("to", &crate::lock_now::end_words(lang, lock.end_minute)),
+        ],
+    );
+    let early = lock.ended_early_at.as_deref().and_then(parse_db_utc);
+    let word = match (early, lock.rule_id) {
+        (Some(at), _) => t_params(
+            lang,
+            "device.activity.lock_now.ended_early",
+            &[("at", &zone.at(at, now))],
+        ),
+        (None, None) => t(lang, "device.activity.lock_now.removed").to_string(),
+        (None, Some(_)) => t_params(
+            lang,
+            "device.activity.lock_now.over",
+            &[("at", &crate::lock_now::end_words(lang, lock.end_minute))],
+        ),
+    };
+    let made = parse_db_utc(&lock.created_at);
+    LiftRow {
+        id: -lock.id,
+        what,
+        when: made.map(|t| zone.at(t, now)).unwrap_or_default(),
+        exact: made.map(|t| zone.exact(t)).unwrap_or_default(),
+        by: names.granter(lock.created_by.as_deref()),
+        word,
+        tone: "grey",
+    }
 }
 
 /// A lift's row in the reader's language: what it was, when and by whom it was granted, how it went.

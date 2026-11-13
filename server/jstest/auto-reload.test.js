@@ -229,3 +229,15 @@ test("a closed contact holding an open Avansert doesn't stop the reload; an open
         assert.strictEqual(win.reloads, rowOpen ? 0 : 1, `row open: ${rowOpen}`);
     }
 });
+
+test("a shown Quick Actions sheet pauses the reload until it is closed (design 93)", () => {
+    const win = fakeWindow();
+    let sheet = true;
+    win.document.querySelector = (selector) => (selector === ".qa-sheet:not([hidden])" && sheet ? {} : null);
+    install(win);
+    win.advance();
+    assert.strictEqual(win.reloads, 0);
+    sheet = false;
+    win.advance();
+    assert.strictEqual(win.reloads, 1);
+});

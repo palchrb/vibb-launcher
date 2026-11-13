@@ -209,14 +209,13 @@ async fn a_blocked_app_with_another_key_than_the_catalogs_is_called_out() {
 }
 
 /// QA of pause-end-report (M1, L2): Quick actions shows the pause as of the newest report - its age once it is old, and
-/// no pause (no Lock again, Unlock offered) once the report is older than the longest pause.
+/// no pause (no Lock again, no open-for-setup row) once the report is older than the longest pause.
 #[tokio::test]
 async fn an_old_reports_pause_says_its_age_and_ends_by_the_clock() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;
     let lock_again = format!("action=\"/devices/{id}/end-windows#quick\"");
-    let unlock = format!("action=\"/devices/{id}/start-pause#quick\"");
     let quick = || async {
         let html = app
             .get_page(&format!("/devices/{id}"), &cookie)
@@ -246,7 +245,7 @@ async fn an_old_reports_pause_says_its_age_and_ends_by_the_clock() {
     age(121).await.unwrap();
     let over = quick().await;
     assert!(
-        !over.contains(&lock_again) && over.contains(&unlock),
+        !over.contains(&lock_again) && !over.contains("id=\"setup-open\""),
         "{over}"
     );
     assert!(
@@ -279,12 +278,12 @@ async fn lock_again_follows_the_status_and_the_capability() {
     let html = page(&app, id, &cookie).await;
     let quick = group(&html, "quick");
     assert!(quick.contains(&button), "{html}");
+    // Design 93 §6.1: the row right under the header says the phone is open, with Lås igjen.
     assert!(
-        quick.contains(&format!(
-            "<p class=\"quick-note\" {paused}>The pause ends by itself, or tap Lock again to end it now.</p>"
-        )),
+        quick.contains(&format!("<div class=\"group\" id=\"setup-open\" {paused}>")),
         "{quick}"
     );
+    assert!(quick.contains("Apps and Play Store are open"), "{quick}");
     assert!(!quick.contains("attention-alarm"), "{quick}");
     assert!(
         html.contains(&format!(
@@ -776,35 +775,78 @@ async fn the_phones_answers_show_and_an_answered_allow_hides_its_button() {
     assert!(!html.contains("blocked app waits"), "{html}");
 }
 
+/// Design 93 §6.6: "Åpne for oppsett" is the Avansert page's first row: its sheet opens the phone
+/// (`start_pause`, back here) while no pause is on, and holds Lås igjen while one is; the summary has
+/// no Unlock any more.
 #[tokio::test]
-async fn the_pause_button_shows_while_no_pause_is_on() {
+async fn open_for_setup_is_the_advanced_pages_first_row() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;
-    let button = format!("action=\"/devices/{id}/start-pause#quick\"");
+    let advanced = format!("/devices/{id}/advanced");
+    let button = format!("action=\"/devices/{id}/start-pause#setup\"");
     post_status(&app, &token, json!({})).await;
-    let html = app
+    let html = app.get_page(&advanced, &cookie).await.text();
+    let setup = group(&html, "setup");
+    assert!(
+        html.find("<section id=\"setup\"").unwrap()
+            < html.find("<section id=\"restrictions\"").unwrap()
+    );
+    assert!(setup.contains(&button), "{setup}");
+    assert!(setup.contains("<input type=\"hidden\" name=\"back\" value=\"advanced\">"));
+    assert!(
+        setup.contains("Apps, Settings and Play Store open on phone&#39;s phone for 2 hours"),
+        "{setup}"
+    );
+    let summary = app
         .get_page(&format!("/devices/{id}"), &cookie)
         .await
         .text();
-    // Behind a confirm (M6) that says what opens.
-    let quick = group(&html, "quick");
-    let confirm = quick
-        .find("<details class=\"act-sheet confirm\" id=\"unlock\">")
-        .expect("the confirm");
-    assert!(quick[confirm..].contains(&button), "{quick}");
     assert!(
-        quick.contains(
-            "Unlock phone&#39;s phone for 2 hours? Apps, Settings and the Play Store open."
-        ),
+        !summary.contains("start-pause"),
+        "the summary has no Unlock"
+    );
+
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/start-pause"),
+            Some(&cookie),
+            &[("back", "advanced")],
+        )
+        .await;
+    assert_eq!(
+        res.location(),
+        Some(format!("{advanced}?notice=start_pause_sent#setup").as_str())
+    );
+    let html = app
+        .get_page(&format!("{advanced}?notice=start_pause_sent"), &cookie)
+        .await
+        .text();
+    assert!(
+        group(&html, "setup").contains("data-flash=\"setup\""),
+        "{html}"
+    );
+
+    post_status(&app, &token, json!({ "restrictions_paused": true })).await;
+    let html = app.get_page(&advanced, &cookie).await.text();
+    let setup = group(&html, "setup");
+    assert!(!setup.contains(&button));
+    assert!(
+        setup.contains(&format!("action=\"/devices/{id}/end-windows#setup\"")),
+        "{setup}"
+    );
+    // The summary's row right under the header, with Lås igjen.
+    let summary = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    let quick = group(&summary, "quick");
+    assert!(
+        quick.find("id=\"setup-open\"").unwrap() < quick.find("id=\"quick-title\"").unwrap(),
         "{quick}"
     );
-    post_status(&app, &token, json!({ "restrictions_paused": true })).await;
-    let html = app
-        .get_page(&format!("/devices/{id}"), &cookie)
-        .await
-        .text();
-    assert!(!html.contains(&button));
+    assert!(quick.contains(&format!("action=\"/devices/{id}/end-windows#quick\"")));
 }
 
 #[tokio::test]
@@ -1016,7 +1058,7 @@ async fn answer_newest(app: &TestApp, token: &str, id: i64, success: bool) {
 /// not reported yet - and never 2 minutes after the press; with nothing pending it loads nothing.
 #[tokio::test]
 async fn the_summary_reloads_until_the_phone_shows_lock_again_or_unlock() {
-    const SCRIPT: &str = "<script src=\"/static/auto-reload.js?v=8\" defer></script>";
+    const SCRIPT: &str = "<script src=\"/static/auto-reload.js?v=9\" defer></script>";
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;
