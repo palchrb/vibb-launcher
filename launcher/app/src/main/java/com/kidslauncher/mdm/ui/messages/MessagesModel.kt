@@ -461,6 +461,19 @@ fun threadAtEnd(lastBottom: Int?, listEnd: Int, slop: Int): Boolean = lastBottom
 fun threadEndGap(following: Boolean, lastBottom: Int?, listEnd: Int): Int =
     if (following && lastBottom != null) (lastBottom - listEnd).coerceAtLeast(0) else 0
 
+/** A row of the thread's list as it is laid out on screen: its adapter position once the list coming in is applied
+ * (-1, `RecyclerView.NO_POSITION`, for a row that goes) and its top and bottom edges. */
+data class LaidRow(val position: Int, val top: Int, val bottom: Int)
+
+/**
+ * Where a thread the kid scrolled up in keeps its place ([threadAnchor]; "scrolled up stays put"): the topmost row that
+ * stays in the list and still shows below the list's top edge [listTop] - its new position and its top's offset from
+ * [listTop]; `null` with none. The list stacks from its end, so without a pin a layout keeps its lowest row's bottom
+ * where it was, and a row that grows or shrinks moves every row above it.
+ */
+fun threadAnchor(rows: List<LaidRow>, listTop: Int): Pair<Int, Int>? =
+    rows.filter { it.position >= 0 && it.bottom > listTop }.minByOrNull { it.top }?.let { it.position to it.top - listTop }
+
 /** How a part shows in its bubble (§6.7, D11, D14; an SMS has none). */
 sealed interface PartView {
     /** Our own JPEG, ready: a rounded thumbnail (its shape from [width] and [height]), a tap opens it. */
