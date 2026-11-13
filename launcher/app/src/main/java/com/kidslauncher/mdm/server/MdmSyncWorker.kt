@@ -90,6 +90,8 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     val serverUrl = mdm.serverUrl()
     val deviceToken = DeviceToken.get()
     if (serverUrl.isNullOrBlank() || deviceToken.isNullOrBlank()) {
+        // Design 95 code QA L3: not enrolled - no kept policy body (its PIN hashes) stays behind.
+        PolicyEtagStore.of(context).drop()
         return false
     }
 
@@ -118,10 +120,16 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     var ranCommand: PendingCommand? = null
     // Design 76: the policy response's own handshake (`null` without TLS) - the certificate check's flag and `seen`.
     var policyHandshake: okhttp3.Handshake? = null
-    val freshOutcome = when (val fetched = fetchPolicy(api) { policyHandshake = it.handshake }) {
+    // Design 95 §3.5: the raw body kept for this build, server and token (null: none, and the GET goes without
+    // `If-None-Match`); a 304 hands it back as if it had just arrived, a 200 is kept below once accepted.
+    val etags = PolicyEtagStore.of(context)
+    val owner = PolicyOwner.of(BuildConfig.VERSION_CODE, serverUrl, deviceToken)
+    var served: ServedPolicy? = null
+    val freshOutcome = when (val fetched = fetchPolicy(api, etags, owner, { served = it }) { policyHandshake = it.handshake }) {
         null -> FreshOutcome.UNREACHABLE
         is FreshDecode.Failed -> if (fetched === POLICY_SERVER_ERROR) FreshOutcome.SERVER_ERROR else {
             Log.w(LOG_TAG, "Server policy doesn't decode, keeping the current one: ${fetched.error}")
+            etags.drop()
             FreshOutcome.DECODE_FAILED
         }
         is FreshDecode.Ok -> when (
@@ -129,6 +137,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         ) {
             FreshVerdict.REJECT_SUSPECT -> {
                 Log.w(LOG_TAG, "Ignoring a server policy without an allowlist, call_policy, time_policy or channel modes on a managed phone")
+                etags.drop()
                 FreshOutcome.REJECTED_SUSPECT
             }
             FreshVerdict.ACCEPT -> {
@@ -141,6 +150,13 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
 
     if (freshPolicy != null) {
         storeAcceptedPolicy(context, freshPolicy)
+        // Design 95 §3.5: an accepted 200 is kept with its ETag (a 304's body is the kept one already); one with a
+        // command is not (its Child PIN stays out of storage, design 59 §1), nor one without an ETag (an older server).
+        when (val step = keptBodyStep(served, freshPolicy)) {
+            is KeptBodyStep.Keep -> etags.keep(owner, step.etag, step.body)
+            KeptBodyStep.Drop -> etags.drop()
+            KeptBodyStep.Leave -> Unit
+        }
         // Design 76 D2: the certificate check's flag - from this fresh policy over its own connection only, never from
         // the cache (R-5): on only through the built-in set, off only through it or the tailnet.
         val pinnedBefore = ServerPinStore.enforce(context)
@@ -1253,17 +1269,17 @@ private val POLICY_SERVER_ERROR = FreshDecode.Failed("server error")
 
 /** `null` when the server couldn't be reached (or answered a non-5xx error), [POLICY_SERVER_ERROR]
  * (compared by identity) on a 5xx, otherwise the decoded body or why it didn't decode. Doesn't
- * cache anything - only an accepted policy is cached, see [storeAcceptedPolicy]. */
-private suspend fun fetchPolicy(api: MdmApi, onResponse: (okhttp3.Response) -> Unit = {}): FreshDecode? {
+ * cache anything - only an accepted policy is cached, see [storeAcceptedPolicy]. Design 95 §3.5: a `304` for the
+ * kept body is that body ([fetchRevalidated]); [onServed] gets the body that was decoded. */
+private suspend fun fetchPolicy(
+    api: MdmApi,
+    etags: PolicyEtagStore,
+    owner: PolicyOwner,
+    onServed: (ServedPolicy) -> Unit,
+    onResponse: (okhttp3.Response) -> Unit = {},
+): FreshDecode? {
     return try {
-        val response = api.getPolicy()
-        onResponse(response.raw())
-        if (!response.isSuccessful) {
-            Log.w(LOG_TAG, "Policy fetch returned HTTP ${response.code()}, keeping the current policy")
-            response.errorBody()?.close()
-            return if (response.code() >= 500) POLICY_SERVER_ERROR else null
-        }
-        decodeFresh(response.body()?.use { it.string() })
+        fetchRevalidated({ api.getPolicy(it) }, etags, owner, POLICY_SERVER_ERROR, { Log.w(LOG_TAG, it) }, onServed, onResponse)
     } catch (e: Exception) {
         Log.w(LOG_TAG, "Policy fetch failed, falling back to cache", e)
         null

@@ -74,3 +74,33 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
 - **Leftovers**: design 19's one-shot cleanup of the FCM era's data (`FirebaseCleanup`) ran on every phone and was deleted in round 0b (2026-10-26); a phone may still hold its marker prefs `firebase_cleanup`, which nothing reads.
 - **SSE hardening** (`CommandListenerService`, pure parts in `push/SyncSchedule.kt`, `SyncScheduleTest`, `SseLastByteTest`): (hole 1) `push/SseLastByte.kt`'s `LastByteInterceptor` (network interceptor) stamps elapsed realtime for the headers and every body read - okhttp-sse never shows keepalive comments to the listener; its wrapped body keeps `contentType()` (okhttp-sse 4.12 refuses anything but `text/event-stream`). `checkStream` runs on every sync request (the backstop's included) and at screen-on/unlock (`PinLockRuntime`'s receiver, `CommandListenerService.checkStream`): a stream that is down reconnects now (screen events leave an in-flight attempt alone); one silent for `SSE_STALE_MS` (480 s, ~2 keepalives) is marked down first (`markDown`, like any drop) and reconnected. (hole 3) The up -> down edge takes a 30 s partial wake lock (`kidslauncher:sse_reconnect`, at most every 10 min, released at the next open), so the 5 s/10 s retries run in deep sleep after a server restart. (hole 2, qa-19-code #2) `syncOnSseReopen(sinceLastReopenSyncMs, sinceLastByteMs)`: every reopen after a drop syncs - a nudge sent while no stream was subscribed is lost (a ring right after a server restart) - at most once per 10 min (`SSE_REOPEN_SYNC_EVERY_MS`, so a flapping stream can't loop), and always when the old stream's last byte is >= 300 s ago (every read timeout and staleness drop).
 - **Not device-tested**: the 19 doc's Jelly Star run - a ring's latency in Doze, after a server restart and after a Wi-Fi/mobile switch (tsnet gets no network callbacks), and battery at keepalive 120 s vs 240 s; the emulator check is `docs/testing/emulator.md` §5b (`kill -STOP` the server > 300 s).
+
+## The policy's 304 and one shared client (design 95 step 95-T1, `docs/design/95-connectivity-control.md` §3.5)
+
+- **ETag and 304** (`server/PolicyEtags.kt`, `PolicyEtagsTest`): the sync sends `If-None-Match` with the ETag of the
+  kept **raw 200 body** (`PolicyEtagStore`: its own prefs file `policy_etag`, one blob sealed under AAD
+  `policy_etag/kept` - it holds the PIN hashes), only while its versionCode, server address and device token's SHA-256
+  are the phone's now (`KeptPolicy.matches`; a mismatch, a blob that doesn't open or decode drops it). It is not the
+  policy cache: `kidModePolicy` is re-encoded and redacted. `fetchRevalidated` decodes a `304` as the 200 it repeats,
+  so `judgeFresh`, the PIN vault, `storeAcceptedPolicy`, design 76's flag (from the 304's own handshake) and everything
+  else in the sync's fresh block run exactly as for a 200, and the sync counts as having reached the server. A 304 the
+  kept body can't answer drops it and asks once more without the header. Kept only after `ACCEPT`, and never a body
+  with a `pending_command` (`keepable`: one-shot, and `set_kid_pin`'s carries the Child PIN, design 59 §1); a rejected
+  or undecodable 200 drops it (the pure `keptBodyStep`). An older server sends no ETag: nothing is kept, no header is
+  sent. Enrollment, and a sync that finds no URL or token, drop it too.
+- **One shared client** (`ServerClients` in `server/ServerTransport.kt`): one base `OkHttpClient` built by
+  `toServer(path, pinning)`, kept while the path (base URL, `ServerPath`, tsnet's proxy) and the certificate check's
+  flag and pins are the same, built again otherwise (the old pool's idle connections closed). `createMdmApi` (so the
+  sync, `PowerEvents`' prepared client, the weather, downloads), `CommandListenerService`'s stream and
+  `createMusicServer` are `newBuilder()` children with their own timeouts and interceptors, after the base's (the
+  closed path's refusal, the origin fence and the pinner stay first). Behind Caddy's HTTP/2 a sync rides the stream's
+  connection; on HTTP/1.1 it resumes TLS. A dropped stream evicts the pool's idle connections
+  (`ServerClients.streamDropped`). That can't reach the stream's own busy HTTP/2 connection, which a NAT can drop
+  silently (code QA M1), so `retryOnStaleConnection` (on `createMdmApi`'s and the music client's children, last) sends
+  a GET or the status report once more when it timed out on a **reused** connection: it evicts the idle connections,
+  waits `STALE_RETRY_PAUSE_MS` (OkHttp's degraded ping on the timed-out h2 connection goes unanswered, so the pool
+  drops it) and proceeds again. A request that opened its own connection is never retried (a slow server), nor any
+  other POST. The shutdown's POST (`PowerEvents`, 3 s in all) has no time for that and gets its own pool
+  (`createMdmApi(ownPool = true)`, a fresh connection as before design 95). No `pingInterval` (it would cost line bytes).
+  The DNS filter's DoH/DoT clients stay separate builders (`buildDohClient`). `ServerTransportTest` checks the reuse
+  and that no server client builds its own.

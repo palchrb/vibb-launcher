@@ -233,7 +233,7 @@ class ServerPinsTest {
         assertTrue(fresh.substringBefore("CallPolicyStore.refresh(context)").contains(
             "nextFlag(ServerPinStore.enforce(context), enforceOf(freshPolicy.serverTls), pinConnection(apiPath, policyHandshake))",
         ))
-        assertTrue(sync.contains("fetchPolicy(api) { policyHandshake = it.handshake }"))
+        assertTrue(sync.contains("fetchPolicy(api, etags, owner, { served = it }) { policyHandshake = it.handshake }"))
         // The cached policy's readers never set the flag.
         for (name in listOf("cachedPolicy", "currentPolicyDecision", "reevaluateLockReasonFromCache")) {
             val body = sync.substringAfter("fun $name(", "").substringBefore("\nfun ").substringBefore("\nprivate fun ")

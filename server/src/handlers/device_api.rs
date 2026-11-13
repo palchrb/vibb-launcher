@@ -221,19 +221,70 @@ impl From<sqlx::Error> for PolicyError {
 /// `DevicePolicy::default()` (kiosk off, no allowlist), which the launcher applied as "no
 /// restrictions". The launcher treats any non-2xx as "no fresh policy" and keeps enforcing its
 /// cached one.
+///
+/// Design 95 §3.5 (step 95-T1): the answer carries a weak `ETag` over the exact bytes served -
+/// hashed after [build_policy], so after its `pop_command` and every time-dependent part - and an
+/// `If-None-Match` naming it gets a `304` with no body. The request still counts as the phone's
+/// last access and the pop still happens; the body would only repeat one the phone holds. Never
+/// gzip'd (the PIN hashes, design 95 §3.3) and `no-store` as before. An older launcher sends no
+/// `If-None-Match` and always gets the 200.
 pub async fn policy(
     State(state): State<AppState>,
     Extension(AuthedDevice(device)): Extension<AuthedDevice>,
+    headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
-    match build_policy(&state, device.id).await {
-        // `no-store`, as every device answer without its own (`limits`): also the one with the
-        // Child PIN in it (design 59 §2.1).
-        Ok(policy) => Json(policy).into_response(),
+    let policy = match build_policy(&state, device.id).await {
+        Ok(policy) => policy,
         Err(err) => {
             tracing::error!(device_id = device.id, %err, "failed to build device policy");
-            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
+    };
+    let body = match serde_json::to_vec(&policy) {
+        Ok(body) => body,
+        Err(err) => {
+            tracing::error!(device_id = device.id, %err, "failed to encode device policy");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
+    let etag = policy_etag(&body);
+    // `no-store`, as every device answer without its own (`limits`): also the one with the
+    // Child PIN in it (design 59 §2.1). Set here, so the ETag doesn't turn it into `no-cache`.
+    let cache = [
+        (header::ETAG, etag.clone()),
+        (header::CACHE_CONTROL, "no-store".to_string()),
+    ];
+    if policy_etag_matches(&headers, &etag) {
+        return (StatusCode::NOT_MODIFIED, cache).into_response();
     }
+    (
+        cache,
+        [(header::CONTENT_TYPE, "application/json".to_string())],
+        body,
+    )
+        .into_response()
+}
+
+/// The policy answer's weak ETag (design 95 §3.5): the first 128 bits of the served bytes'
+/// SHA-256, as hex.
+pub(crate) fn policy_etag(body: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(body);
+    format!("W/\"{}\"", hex::encode(&digest[..16]))
+}
+
+/// Whether `If-None-Match` names exactly `etag` (weak comparison, a list read). Never `*`: the
+/// phone sends only a tag it holds the body of, and a `304` to anything else would leave it
+/// without the policy it was told it has.
+pub(crate) fn policy_etag_matches(headers: &axum::http::HeaderMap, etag: &str) -> bool {
+    let ours = etag.trim_start_matches("W/");
+    headers
+        .get_all(header::IF_NONE_MATCH)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(','))
+        .map(|tag| tag.trim().trim_start_matches("W/"))
+        .any(|tag| tag == ours)
 }
 
 /// `DevicePolicyManager.LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_IN_TASK`.
