@@ -1,7 +1,42 @@
 # Design 94: data roaming from the PWA - off and locked, or the phone's choice
 
-Status: design, 2026-11-13. Both directories (§9). Migration `0143_data_roaming.sql` (design 93 takes 0142 on
-`design-93`; recheck at merge). Built **after design 93 merges** (§9.1 lists the rebase points). Size **S**.
+Status: design, revision 2 (design QA), 2026-11-13. Both directories (§9). Migration `0143_data_roaming.sql` (design
+93 takes 0142 on `design-93`; recheck at merge). Built **after design 93 merges** (§9.1 lists the rebase points). Size
+**S**.
+
+**Revision 2 (design QA, 2026-11-13), checked against android15-release (frameworks/base, opt/telephony,
+packages/apps/Settings, SettingsProvider, DevicePolicyManagerService, UserManagerService):**
+
+- **§2.4.2 relock fixed (high):** clear-then-add back to back does nothing. A device owner's restriction is global
+  (`USER_ALL`), and `UserManagerService.setUserRestrictionInner` only *posts* `applyUserRestrictionsForAllUsersLR` to
+  its handler. When both posts run, the restriction is already back, so the two bundles are equal and nothing is
+  written. The relock now waits for `ACTION_USER_RESTRICTIONS_CHANGED` after the clear, then adds the restriction
+  back, and runs at most once per subscription per boot.
+- **§2.4.2 subscriptions read without `READ_PHONE_STATE` (high):** the launcher holds `READ_PHONE_STATE` only while
+  calls are managed (`OWN_CALL_PERMISSIONS`). `getActiveSubscriptionInfoList` needs it. The slots are now read with
+  `getActiveModemCount()` and `SubscriptionManager.getSubscriptionId(slot)`, which need no permission.
+- **§2.4.2 scoped:** telephony reads the per-SIM key only when `getSimCount() > 1` (`GlobalSettingsHelper.getSettingName`).
+  A single-SIM phone reads the bare `data_roaming`, which the restriction sets to `0`, so there is no gap there.
+- **§2.4.1 corrected (medium):** a cell or TAC change does **not** end the session. `EVENT_TAC_CHANGED` re-evaluates
+  only unsatisfied requests, and `shouldReevaluateDataNetworks` looks at the RAT, the roaming flag, NTN and VoPS. The
+  session ends at the end of a call, a RAT change, a lost and regained registration, a SIM change, airplane mode or a
+  restart. A phone sitting still can keep it for days.
+- **§6.1 warning (medium):** the hardening switch `disallow_airplane_mode` (never lifted by the pause) can block
+  airplane mode, so the words now offer a restart as well.
+- **§2.5, §5, §6.2 ship networks (medium):** `getNetworkCountryIso` is not always empty on MCC 901. `LocaleTracker`
+  falls back to the MCC of nearby cells, so a ferry can read "dk", and the 901 check therefore goes first.
+  `network` is now also sent for a 901 network that is *not* flagged roaming (carrier config can mark one as home).
+  Then the lock does not cover it, and the PWA says so.
+- **§6.2 i18n (medium):** nb's preposition depends on the country ("i Sverige", "på Island", "på Malta",
+  "på Kypros"), so the catalog holds the whole phrase for each country, not a name for a `{land}` slot.
+- **§3 `LastEnforcedPlan` (low):** the field is `String? = "off"`. `of()` copies the policy's value (an older
+  server's `null` stays `null`) and `toPolicy()` passes it on.
+- **§6.1 (low):** the ⓘ says where roaming is turned on under "Telefonens valg" (Android's Settings, during "Åpne for
+  oppsett" if Settings isn't allowed). It also names the group header in nb/en.
+- **§2.1 (low):** the cited set at ~l.292 is `..._PARENT_LOCAL_RESTRICTIONS` (~l.276), not `..._PARENT_GLOBAL_...`.
+- **§5 (low):** `data_active` needs a cellular flag that `NetCaps` doesn't have yet.
+- **§9.1 (low):** `settings_log.rs`, `main.rs` and `handlers/mod.rs` added to the rebase points.
+- **§11:** Q4 added (closing §2.4.1 harder).
 
 ## 1. What and why
 
@@ -37,8 +72,11 @@ Read in `android14-release` and `android15-release`. They are the same where it 
   the parent. **Set by a device owner, it applies globally.**
 - `services/core/java/com/android/server/pm/UserRestrictionsUtils.java` (15): the restriction is in
   `MAIN_USER_ONLY_RESTRICTIONS` (~l.179), so a profile owner can set it on the main user only (`canProfileOwnerChange`
-  ~l.502). It is in `PROFILE_OWNER_ORGANIZATION_OWNED_PARENT_GLOBAL_RESTRICTIONS` (~l.292). `isGlobal` (~l.565) makes
-  a device owner's setting global. We are the device owner, so our setting applies to the whole phone.
+  ~l.502). It is also in `DEVICE_OWNER_ONLY_RESTRICTIONS` (~l.200) and `PROFILE_OWNER_ORGANIZATION_OWNED_PARENT_LOCAL_RESTRICTIONS`
+  (~l.276). `isGlobal` (~l.565) makes a device owner's setting global. DPMS
+  `setBackwardCompatibleUserRestrictionLocked` (~l.13543) then calls `setGlobalUserRestrictionInternal`, and the policy
+  engine passes it to `UserManagerInternal.setUserRestriction(USER_ALL, ...)`. We are the device owner, so our
+  setting applies to the whole phone.
 
 ### 2.2 What setting it does, and what clearing it does
 
@@ -49,7 +87,11 @@ the switch gives the reason: "we don't know the original value". So a lift unloc
 user's rule holds by Android's own design, and we add nothing for it.
 
 `applyUserRestriction` runs only when the restriction **changes** (`applyUserRestrictions` compares the old and new
-bundles). Setting it again while it is already set does nothing.
+bundles). Setting it again while it is already set does nothing. **The comparison is asynchronous.** For a global
+restriction, `UserManagerService.setUserRestrictionInner` (15 ~l.3238) updates the bundle and only *posts*
+`applyUserRestrictionsForAllUsersLR` (~l.3584) to its handler. When that runs, it compares the effective
+restrictions *at that moment* with the last applied ones (`mAppliedUserRestrictions`). A clear followed at once by an
+add is therefore usually **nothing at all**: both posts see the restriction set. §2.4.2 relies on this.
 
 ### 2.3 The lock: nobody can turn it back on while it is set
 
@@ -76,25 +118,45 @@ bundles). Setting it again while it is already set does nothing.
      `TelephonyManager.setDataRoamingEnabled`). The restriction's direct Settings write never fires it
      (`DataNetworkController.java` ~l.955, ~l.2047).
    - A **new** data network is refused at once: its setup reads the setting (`evaluateNetworkRequest`, ~l.1662). An
-     existing one goes at its next re-evaluation: a service-state or TAC change, a RAT change, the end of a voice
-     call, a retry, or SIM loaded (`DataEvaluationReason`).
+     existing one goes only at a re-evaluation of the *existing* networks (`EVENT_REEVALUATE_EXISTING_DATA_NETWORKS`).
+     That comes from a service-state change that `shouldReevaluateDataNetworks` (~l.3734) accepts: the RAT, the
+     roaming flag, NTN or VoPS changed, which includes service lost and found again. It also comes from the end of a
+     voice call, a SIM removal, a data-profile or config change, a handover, or the end of an emergency call.
+     **A cell or TAC change alone does not** (`EVENT_TAC_CHANGED` re-evaluates only unsatisfied requests, ~l.1185).
    - No public device-owner API forces it sooner. `TelephonyManager.setDataRoamingEnabled` needs
-     `MODIFY_PHONE_STATE`. `DevicePolicyManager.setGlobalSetting(DATA_ROAMING)` is on the allow list (DPMS ~l.707),
-     but it is the same Settings write.
-   - So: with "Av" set before the trip (the default) no roaming session ever starts. The gap is only a session that
-     started while unlocked (a pause, or "Telefonens valg") and is still running when the lock comes back. It ends at
-     the first cell or area change. A phone sitting still in one hotel room can keep it for a while. **The report
-     shows it** (§5: `locked` with `data_active`), and the PWA says how to end it now: airplane mode on and off. We
-     state this gap; we do not hide it. To check on the emulator (§8).
-2. **A SIM put in after the lock was set has no `DATA_ROAMING<subId>` key.**
-   - `GlobalSettingsHelper.getBoolean(..., default)` (`telephony/GlobalSettingsHelper.java` ~l.43) then reads the
-     carrier's default (`isDefaultDataRoamingEnabled`: `ro.com.android.dataroaming` or carrier config). Some carriers
-     default it to **on**.
-   - Telephony's own attempt to write that default is refused (§2.3). But the absent key still *reads* as on.
-   - **Fix:** on every `apply()` while the lock should be on, the launcher reads `isDataRoamingEnabled` for each
-     active subscription. If any reads `true` (possible only from an absent key), it **clears and re-adds** the
-     restriction. The re-add runs `applyUserRestriction` again, which writes `"0"` for every active SIM. Nothing can
-     turn roaming on between the two calls: the clear writes nothing. Pure decision `dataRoamingRelock(...)`.
+     `MODIFY_PHONE_STATE`. `DevicePolicyManager.setGlobalSetting(DATA_ROAMING)` is on the allow list (DPMS ~l.707,
+     exact names only), but it is the same Settings write.
+   - So: with "Av" set before the trip (the default), no roaming session ever starts. A home session crossing the
+     border is re-evaluated by the roaming flag's change and torn down. The gap is only a session that started while
+     unlocked (a pause, or "Telefonens valg") and is still running when the lock comes back. A phone sitting still on
+     one RAT can keep it **for hours or days**. A call that ends, airplane mode or a restart ends it. **The report shows
+     it** (§5: `locked` with `data_active`), and the PWA says how to end it now (§6.1). We state this gap; we do not
+     hide it. Q4 has the stronger options. To check on the emulator (§8).
+2. **A SIM put in after the lock was set has no `DATA_ROAMING<subId>` key** (a dual-SIM or eSIM phone only).
+   - `GlobalSettingsHelper.getSettingName` (~l.86) uses the per-SIM key only when `getSimCount() > 1`. A single-SIM
+     phone reads the bare `data_roaming`, which the restriction set to `"0"`, so there is no gap there.
+   - On a multi-SIM phone, `getBoolean(..., default)` (~l.43) then reads the carrier's default
+     (`DataSettingsManager.isDefaultDataRoamingEnabled` ~l.571: `ro.com.android.dataroaming` or carrier config).
+     Some carriers default it to **on**. (AOSP's configs for Telenor, Telia and Ice set nothing; vendor configs may.)
+   - Telephony's own attempt to write that default (`setDefaultDataRoamingEnabled` ~l.581) is refused (§2.3), but the
+     absent key still *reads* as on. Its callback even fires, because `setInt` counts the refused write as a change.
+   - **Fix (the relock):** on every `apply()` while the lock should be on, the launcher reads `isDataRoamingEnabled`
+     for each SIM. The SIMs come from the slots `0 until getActiveModemCount()` with
+     `SubscriptionManager.getSubscriptionId(slot)`, skipping `INVALID_SUBSCRIPTION_ID`. Neither call needs a
+     permission. `getActiveSubscriptionInfoList` needs `READ_PHONE_STATE`, which the launcher holds only while calls
+     are managed.
+   - If any SIM reads `true` (possible only from an absent key), the launcher **clears** the restriction and
+     **waits** for `ACTION_USER_RESTRICTIONS_CHANGED`. That is a registered receiver on a background handler, with
+     at most 5 s and a latch; `apply()` runs off the main thread. Only then does it **add the restriction back**,
+     and Android runs `applyUserRestriction(true)` again, which writes `"0"` for every active SIM.
+   - Without the wait, both posts usually see the restriction set and write nothing (§2.2). Nothing turns roaming
+     on in between: the clear writes nothing, and the Settings switch is unlocked for well under a second.
+   - At most **once per subscription id per boot** (in memory): a SIM that still reads on afterwards is left to the
+     report (`locked` with `enabled: true`) and is not cleared again on every `apply()`. A wait that times out adds the
+     restriction back all the same.
+   - Pure decision `dataRoamingRelock(locked, readings, alreadyRelocked): Set<Int>` (the subscriptions to relock for).
+   - The check runs at the next `apply()` (a sync, a policy, the pause's end). Between the SIM going in and that
+     check, the carrier default rules (§10).
 
 ### 2.5 What the phone can read, and the permissions
 
@@ -102,11 +164,16 @@ All of these are in `TelephonyManager` (15), on `createForSubscriptionId(Subscri
 
 - `isNetworkRoaming()`, `getNetworkCountryIso()` (lowercase ISO-3166 alpha-2 or `""`) and `getNetworkOperator()`
   (MCC+MNC): no permission.
-- `isDataRoamingEnabled()`: `ACCESS_NETWORK_STATE`, `READ_PHONE_STATE` or `READ_BASIC_PHONE_STATE`. The manifest has
-  the first two.
+- `isDataRoamingEnabled()`: `ACCESS_NETWORK_STATE`, `READ_PHONE_STATE` or `READ_BASIC_PHONE_STATE`.
+  `ACCESS_NETWORK_STATE` is a normal permission in the manifest, which is enough. `READ_PHONE_STATE` is **not relied
+  on**: it is self-granted only while calls are managed.
+- `SubscriptionManager.getDefaultDataSubscriptionId()`, `getSubscriptionId(slot)` and
+  `TelephonyManager.getActiveModemCount()`: no permission (§2.4.2).
 - `getServiceState()` needs location as well, so it is **not used**.
-- MCC 901 has no row in `MccTable` (its table ends at 750), so the country is `""` on a ship or plane network. The
-  server reads 901 from `network` (§6.2).
+- MCC 901 has no row in `MccTable` (its table ends at 750). `LocaleTracker.updateLocale` (~l.493) then falls back
+  to the most common MCC of the nearby cells. So on a ship or plane network the country is `""` at sea, but **a
+  coastal country** near land (a ferry can read "dk"). The 901 prefix of `network` therefore decides before the
+  country (§6.2).
 
 ## 3. The policy
 
@@ -129,8 +196,10 @@ Top-level `data_roaming`, **always sent**: `"off"` (Av, låst) or `"phone"` (Tel
   phone, and roaming costs money on a calls-only phone too.
 - `AppEnforcer.apply()` sets it with `setRestriction(..., UserManager.DISALLOW_DATA_ROAMING, locked)` next to
   `DISALLOW_BLUETOOTH_SHARING`, then the relock check of §2.4.2.
-- `LastEnforcedPlan` gains `dataRoaming: String = "off"`. A fallback keeps the lock, and an older record without the
-  field fails closed, like the rest of the fallback.
+- `LastEnforcedPlan` gains `dataRoaming: String? = "off"`. `of()` copies `policy.dataRoaming`, so an older server's
+  `null` stays `null` (`ServerJson` writes a non-default `null` out), and `toPolicy()` passes it on. A fallback keeps
+  the parent's choice. An older record without the field, and `NOTHING_ALLOWED_FALLBACK`, read `"off"` and fail
+  closed, like the rest of the fallback. `Apply(null)` (a phone that has never had a policy) is the phone's choice.
 - **No server-side lift.** `overrideActive` (`OfflineOverride.isActive() || RestrictionsPause.isActive()`) is the one
   lift. That includes the pause the parent starts from the PWA ("Åpne for oppsett" since design 93).
 
@@ -150,11 +219,14 @@ says the phone does not do this yet (§6.1). An older launcher ignores the polic
 
 - `locked`: `UserManager.hasUserRestriction(DISALLOW_DATA_ROAMING)`, as Android has it now.
 - `roaming`: `isNetworkRoaming()` on the default data SIM. `false` with no SIM or no service.
-- `country`, `network`: the network's country and MCC+MNC, **only while `roaming`**, otherwise `null`. No home
+- `country`, `network`: the network's country and MCC+MNC, **only while `roaming`**, otherwise `null`. One
+  exception: `network` is also sent when it starts with `901`, even if Android doesn't flag it as roaming (carrier
+  config can list a maritime network as home). Then the lock does not cover it, and the PWA says so (§6.2). No home
   location leaves the phone this way, and `""` becomes `null`.
 - `enabled`: the data SIM's `isDataRoamingEnabled()`, or `null` when it can't be read (no SIM, an exception).
-- `data_active`: the default network is cellular and not `NET_CAPABILITY_NOT_ROAMING`, which is the
-  `AppDownloads.kt` read. This means roaming data is in use now. With `locked` it is §2.4.1's gap.
+- `data_active`: the default network has `TRANSPORT_CELLULAR` and lacks `NET_CAPABILITY_NOT_ROAMING`. This is
+  `AppDownloads.currentCaps`, whose VPN capabilities carry the underlying network's; `NetCaps` gains a `cellular`
+  flag for it. It means roaming data is in use now. With `locked`, it is §2.4.1's gap.
 
 **Server**: `data_roaming::Report::clean`, re-serialised field by field:
 
@@ -171,7 +243,8 @@ says the phone does not do this yet (§6.1). An older launcher ignores the polic
 The device's Innstillinger list has no network page. The Wi-Fi and Bluetooth rows on Home Screen › Quick Controls are
 the kid's own buttons. Advanced › Restrictions holds the hardening switches that **only the server lifts**, and this
 one is lifted by the pause. So it gets **its own section on Advanced, `#data-roaming`, right after `#restrictions`**
-(after design 93's `#setup`), with its own form, footer and flash. (Open question 2 has the alternative.)
+(after design 93's `#setup`), with its own form, footer and flash. Its group header is **"Mobilnett"** / "Mobile
+network". (Open question 2 has the alternative.)
 
 - **Row "Dataroaming"** / "Data roaming": a `select.pick` with `data-autosave` (the `device_home.html` pattern). The
   options are **"Av (låst)" / "Telefonens valg"** (en "Off (locked)" / "Phone's choice").
@@ -191,13 +264,18 @@ one is lifted by the pause. So it gets **its own section on Advanced, `#data-roa
   | choice `off`, not `locked` (a pause) | Låst opp mens telefonen er åpnet for oppsett | Unlocked while the phone is open for setup |
   | choice `phone`, `enabled` true / false | Telefonens valg: på / av | Phone's choice: on / off |
   | `roaming` (an extra row) | Roamer i Sverige | Roaming in Sweden |
-  | `locked` and `data_active` (warning, §2.4.1) | Bruker fortsatt roamingdata fra før låsen. Slå flymodus på og av for å stoppe det. | Still using roaming data from before the lock. Turn airplane mode on and off to stop it. |
+  | `locked` and `data_active` (warning, §2.4.1) | Bruker fortsatt roamingdata fra før låsen. Slå flymodus på og av, eller start telefonen på nytt, for å stoppe det. | Still using roaming data from before the lock. Turn airplane mode on and off, or restart the phone, to stop it. |
+  | the same, with the hardening switch `disallow_airplane_mode` on | Bruker fortsatt roamingdata fra før låsen. Start telefonen på nytt for å stoppe det. | Still using roaming data from before the lock. Restart the phone to stop it. |
+  | `locked` and `enabled` true (§2.4.2's relock didn't take) | Roaming er fortsatt på for et SIM-kort. Sjekk i Androids innstillinger. | Roaming is still on for a SIM card. Check Android's settings. |
 
 - **Footer**: "Av slår av dataroaming og låser Androids bryter. Skips- og flynett er alltid roaming og kan koste mye,
   også i EØS." / "Off turns data roaming off and locks Android's switch. Ship and plane networks are always roaming
   and can cost a lot, even in the EEA."
-- **ⓘ**: Åpne for oppsett lifts the lock and does not turn roaming on. Calls and SMS abroad are not affected. An MMS
-  waits for Wi-Fi or home (design 77's engine retries it).
+- **ⓘ**: Åpne for oppsett lifts the lock and does not turn roaming on. Neither does "Telefonens valg": roaming is
+  turned on in Android's Settings › Network › SIM › Roaming, and the kid reaches that only if Settings is allowed;
+  otherwise it is done during "Åpne for oppsett". Calls and SMS abroad are not affected: IMS is unmetered by default,
+  so `ROAMING_DISABLED`, a soft reason, doesn't stop it. An MMS waits for Wi-Fi or home (design 77's engine retries
+  it). The words are in en and nb like the rest.
 
 ### 6.2 "Roamer i Sverige": the words and where they show
 
@@ -205,14 +283,18 @@ one is lifted by the pause. So it gets **its own section on Advanced, `#data-roa
 
 | Case | nb | en | Tone |
 |---|---|---|---|
-| `network` starts with `901` | Roamer på et skips- eller flynett | Roaming on a ship or plane network | Warn |
-| `country` in `data_roaming::NAMED` | Roamer i {land} | Roaming in {country} | Plain inside the EEA, Warn outside |
+| `network` starts with `901`, `roaming` | Roamer på et skips- eller flynett | Roaming on a ship or plane network | Warn |
+| `network` starts with `901`, not `roaming` | På et skips- eller flynett, som ikke regnes som roaming: låsen dekker det ikke | On a ship or plane network that isn't counted as roaming: the lock doesn't cover it | Warn |
+| `country` in `data_roaming::NAMED` | Roamer i Sverige / Roamer på Island | Roaming in Sweden / Roaming in the Netherlands | Plain inside the EEA, Warn outside |
 | any other `country` | Roamer (US) | Roaming (US) | Warn |
 | `roaming`, no country | Roamer | Roaming | Warn |
 
-- `NAMED` holds the EEA (EU 27, IS, LI, NO) plus `gb` and `ch`. Their names are in the catalogs as
-  `data_roaming.country.<cc>`, en and nb. A code outside the list is shown in upper case. There is no country table to
-  maintain beyond the 32 rows.
+- The 901 rows go first: near land the country can be a coastal one (§2.5).
+- `NAMED` holds the EEA (EU 27, IS, LI, NO) plus `gb` and `ch`. Each has one catalog key per language for the
+  **whole phrase**, `data_roaming.in.<cc>` (nb "Roamer i Sverige", "Roamer på Island", "Roamer på Malta", "Roamer på
+  Kypros"; en "Roaming in Sweden", "Roaming in the Netherlands", "Roaming in the UK"). Norwegian's preposition
+  depends on the country and English needs "the" for some, so a `{land}` slot can't be filled. A code outside the
+  list is shown in upper case. There is no country table to maintain beyond the 32 rows.
 - **The summary's header** (`phone_status::header`): the second line gains this part last ("Test siden 22:19 · 80 % ·
   Roamer i Sverige"), from `Facts::roaming`. It shows only on the in-touch lines; a phone that is off, offline or
   without contact keeps its first line alone (a stale place is not a fact). The Devices row stays as it is.
@@ -224,7 +306,7 @@ one is lifted by the pause. So it gets **its own section on Advanced, `#data-roa
 |---|---|---|
 | `"off"`, no pause or override | set | off on every SIM, greyed out, re-locked if a new SIM reads on (§2.4.2) |
 | `"off"`, pause or override running | cleared | as it was (off). The kid or parent may turn it on in Settings during the pause |
-| pause or override ends | set again | `"0"` written again. A session started in the pause runs until the next re-evaluation (§2.4.1) |
+| pause or override ends | set again | `"0"` written again (the clear was applied long before, so the add is a real change). A session started in the pause runs until the next re-evaluation (§2.4.1) |
 | `"phone"` | cleared | as it was; never turned on by us |
 | older server (key absent) | cleared | as it was |
 | a value this build doesn't know | set (fail closed) | off |
@@ -268,22 +350,28 @@ one is lifted by the pause. So it gets **its own section on Advanced, `#data-roa
 
 - **Snapshots**: `policy_json_keys_snapshot` and `PolicyResponseCompatTest` gain `data_roaming`.
 - **Launcher unit tests**:
-  - `dataRoamingRelock` has three rows: locked with one SIM reading on means relock; locked and all off means no
-    relock; unlocked means never.
-  - `LastEnforcedPlan` round trip: one assert that it keeps `dataRoaming`, and that an old record reads `"off"`.
-- **Server unit tests** (`data_roaming::tests`): §6.2's four word cases, the EEA tone, and the `901` prefix.
-- **Server page tests**: the Advanced group's state rows (no capability, locked, unlocked in a pause, the warning), the
-  summary part, and the redirect row for `#data-roaming`.
+  - `dataRoamingRelock` has four rows: locked with one SIM reading on means relock that SIM; the same SIM already
+    relocked this boot means none; locked and all off means none; unlocked means never.
+  - `LastEnforcedPlan` round trip: one assert that it keeps `dataRoaming` (`null` included), and that an old record
+    reads `"off"`.
+- **Server unit tests** (`data_roaming::tests`): §6.2's word cases, the EEA tone, the `901` prefix before a coastal
+  country, and that every `NAMED` code has a `data_roaming.in.<cc>` key in en and nb.
+- **Server page tests**: the Advanced group's state rows (no capability, locked, unlocked in a pause, the warning with
+  and without `disallow_airplane_mode`), the summary part, and the redirect row for `#data-roaming`.
 
 ### 8.3 On the emulator and the phone
 
 - **Emulator** (`docs/testing/emulator.md`; the console's `gsm data roaming` / `gsm voice roaming`):
   - with "Av" set: Settings' switch is greyed out and data stays down;
   - start a pause, turn roaming on, end the pause: check §2.4.1's gap, with `dumpsys telephony` showing the data
-    network until a re-evaluation;
+    network until a re-evaluation (`gsm data home` and back to `roaming` flips the roaming flag; a call that ends
+    should do it too);
+  - `settings get global data_roaming` reads `0` after the pause's end. The emulator is single-SIM, so §2.4.2 is not
+    seen there;
   - check that the report and the summary line read right.
-- **Jelly Star**: the switch shows "controlled by admin". Also check the second-SIM case (§2.4.2) if an eSIM is to
-  hand; otherwise mark it "[needs device test]".
+- **Jelly Star**: the switch shows "controlled by admin". Also check the second-SIM case (§2.4.2) and the relock's
+  log line (the wait for `ACTION_USER_RESTRICTIONS_CHANGED`, then `data_roaming<subId>` reads `0`) if a second SIM
+  is to hand; otherwise mark it "[needs device test]".
 
 ## 9. Steps
 
@@ -308,15 +396,19 @@ one is lifted by the pause. So it gets **its own section on Advanced, `#data-roa
 - **`device_advanced.html`**: 93 puts `#setup` first; our section goes after `#restrictions`.
 - **`device_detail.html` and `tests::summary`**: 93 rewrites the summary. Our change is in `phone_status::header`,
   plus whatever field 93's template reads.
-- **i18n `en.json`/`nb.json`, `CLAUDE.md`, `launcher.yml`, `server-ci.yml`**: both add lines; keep both.
+- **i18n `en.json`/`nb.json`, `CLAUDE.md`, `launcher.yml`, `server-ci.yml`, `settings_log.rs`, `main.rs` (routes),
+  `handlers/mod.rs`**: both add lines; keep both.
 - **Wording**: 93 renames the pause "Åpne for oppsett", and §6.1's words use that name.
 
 ## 10. Risks
 
 - **§2.4.1**: a roaming session started while unlocked can outlive the relock. We show it and give the fix (airplane
   on and off); we don't claim a cut that Android doesn't make.
-- **§2.4.2**: a new SIM's absent key. Handled by the relock check at the next `apply()` (sync, the pause's end, a
-  policy). Between the SIM going in and that check, the carrier default rules.
+- **§2.4.2**: a new SIM's absent key, on a multi-SIM phone only. It is handled by the relock check at the next
+  `apply()` (a sync, the pause's end, a policy). Between the SIM going in and that check, the carrier default rules.
+  The relock's wait is up to 5 s inside `apply()`, and only in that rare case.
+- **A 901 network flagged as home** by carrier config isn't covered by the restriction at all. The report and the
+  PWA name it (§6.2); nothing on the phone can block it short of mobile data off.
 - **The roaming flag is the carrier's**: carrier config can mark a national-roaming partner as home, or the other way
   round. `getNetworkCountryIso` comes from `LocaleTracker` and can lag a border crossing. The words are "at the last
   report".
@@ -334,3 +426,12 @@ one is lifted by the pause. So it gets **its own section on Advanced, `#data-roa
    Wi-Fi and Bluetooth (seen more often, but that group is the kid's buttons).
 3. **A push when the phone starts roaming** (or attaches to a 901 network)? Not asked for. Recommended: not now; the
    summary line is enough.
+4. **Closing §2.4.1 harder.** A session started in a pause can outlive the lock for days on a phone that sits still.
+   The options:
+   - **(a)** The warning and the advice only (this note).
+   - **(b)** A "Start telefonen på nytt" button in the warning: a new command, `DevicePolicyManager.reboot`, which
+     Android refuses during a call.
+   - **(c)** While `locked` and `data_active`, the filter's DNS answers nothing over the roaming network. That is
+     partial: apps with cached addresses or their own DNS go on.
+
+   Recommended: (a) now. Consider (b) if the emulator or a trip shows the gap in practice.
