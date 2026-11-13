@@ -393,13 +393,19 @@ pub fn card(lang: Lang, policy: &DevicePolicy, latest: Option<&DeviceStatus>) ->
                 false,
             ));
         } else if data_roaming == "off" {
-            roaming_lines.push(Line::new(
-                lang,
-                "unlocked",
-                "mobile.state.roaming_unlocked",
-                None,
-                false,
-            ));
+            // Code QA L6: "unlocked for setup" only while a pause runs; otherwise the lock just hasn't reached the
+            // phone yet (a choice changed since its report, or a launcher that couldn't set it).
+            roaming_lines.push(if paused {
+                Line::new(
+                    lang,
+                    "unlocked",
+                    "mobile.state.roaming_unlocked",
+                    None,
+                    false,
+                )
+            } else {
+                Line::new(lang, "pending", "mobile.state.pending", None, false)
+            });
         } else if let Some(enabled) = report.enabled {
             let key = if enabled {
                 "mobile.state.phone_on"
@@ -428,15 +434,13 @@ pub fn card(lang: Lang, policy: &DevicePolicy, latest: Option<&DeviceStatus>) ->
     if let Some(m) = &mobile
         && policy.mobile_settings_locked
         && !m.settings_locked
-        && paused
     {
-        lock_lines.push(Line::new(
-            lang,
-            "lifted",
-            "mobile.state.lifted",
-            None,
-            false,
-        ));
+        // Code QA L6: lifted by a pause, or not in place yet.
+        lock_lines.push(if paused {
+            Line::new(lang, "lifted", "mobile.state.lifted", None, false)
+        } else {
+            Line::new(lang, "pending", "mobile.state.pending", None, false)
+        });
     }
 
     Card {
@@ -507,5 +511,43 @@ mod tests {
             }
         }
         assert_eq!(NAMED.len(), 32);
+    }
+
+    /// Code QA L6: "unlocked for setup" only while a pause runs; otherwise "not in place yet" - for the roaming lock
+    /// and the settings lock alike.
+    #[test]
+    fn unlocked_without_a_pause_is_pending() {
+        let policy = DevicePolicy {
+            data_roaming: "off".into(),
+            mobile_settings_locked: true,
+            ..Default::default()
+        };
+        let mut status = DeviceStatus {
+            capabilities_json: Some(format!(
+                "[\"{ROAMING_CAPABILITY}\",\"{MOBILE_CAPABILITY}\"]"
+            )),
+            data_roaming_json: Some(
+                r#"{"locked":false,"roaming":false,"data_active":false}"#.into(),
+            ),
+            mobile_data_json: Some(
+                r#"{"enabled":true,"sink":"off","settings_locked":false}"#.into(),
+            ),
+            ..Default::default()
+        };
+        let keys = |card: &Card| {
+            (
+                card.roaming_lines.iter().map(|l| l.key).collect::<Vec<_>>(),
+                card.lock_lines.iter().map(|l| l.key).collect::<Vec<_>>(),
+            )
+        };
+        assert_eq!(
+            keys(&card(Lang::En, &policy, Some(&status))),
+            (vec!["pending"], vec!["pending"])
+        );
+        status.restrictions_paused = true;
+        assert_eq!(
+            keys(&card(Lang::En, &policy, Some(&status))),
+            (vec!["unlocked"], vec!["lifted"])
+        );
     }
 }

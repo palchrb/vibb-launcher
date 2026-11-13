@@ -181,17 +181,40 @@ class KidVpnService : VpnService() {
     }
 
     /** The shape the inputs `apply()` stored and the last network seen ask for ([vpnShape]). */
-    private fun wantedShape(): VpnShape =
-        vpnShape(MobileNetworkRuntime.storedInputs(), lastBest ?: MobileNetworkRuntime.bestNet(this))
+    /** [serviceShape]: `apply()`'s rule, with this service's view of the network - never lockdown off on a doubt. */
+    private fun wantedShape(): VpnShape = serviceShape(
+        MobileNetworkRuntime.storedInputs(), lastBest, MobileNetworkRuntime.bestNet(this), MobileNetworkRuntime.storedShape(),
+    )
+
+    /** Code QA M1: the retry of a failed switch to the sink (the tunnel may be up in another shape, so the read loop's
+     * retry chain doesn't run); main thread only. */
+    private val reshapeRetry = Runnable { reshape() }
+    private var reshapeRetryMs = 5_000L
+
+    /** One switch to [wanted] in order: lockdown off first unless it is the sink; the tunnel; the sink's lockdown
+     * whether or not its tunnel came up, then a retry until it does. `true` when established. */
+    private fun switchTo(wanted: VpnShape): Boolean {
+        alwaysOnBeforeEstablish(wanted)?.let { MobileNetworkRuntime.writeAlwaysOn(this, it) }
+        val established = establish(wanted)
+        alwaysOnAfterEstablish(wanted)?.let { MobileNetworkRuntime.writeAlwaysOn(this, it) }
+        if (retriesFailedEstablish(wanted, established)) {
+            Log.w(LOG_TAG, "The sink's tunnel failed: lockdown holds, retrying in $reshapeRetryMs ms")
+            main.removeCallbacks(reshapeRetry)
+            main.postDelayed(reshapeRetry, reshapeRetryMs)
+            reshapeRetryMs = minOf(reshapeRetryMs * 2, 5 * 60_000L)
+        } else if (established) {
+            main.removeCallbacks(reshapeRetry)
+            reshapeRetryMs = 5_000L
+        }
+        return established
+    }
 
     private fun startVpn() {
         if (state.stopped) return
         val wanted = wantedShape()
         if (wanted == VpnShape.NONE) return
         // Going to the sink: the tunnel first, then lockdown. To anything else: lockdown off first (design 95 §2.2).
-        if (wanted != VpnShape.SINK) MobileNetworkRuntime.writeAlwaysOn(this, wanted)
-        if (!establish(wanted)) return
-        if (wanted == VpnShape.SINK) MobileNetworkRuntime.writeAlwaysOn(this, wanted)
+        if (!switchTo(wanted)) return
         DnsFilterEngine.onCustomChanged = ::syncCustom
         syncCustom()
         watchNetwork()
@@ -278,9 +301,9 @@ class KidVpnService : VpnService() {
             MobileNetworkRuntime.writeAlwaysOn(this, wanted)
             return
         }
-        if (wanted != VpnShape.SINK) MobileNetworkRuntime.writeAlwaysOn(this, wanted)
-        // If the new shape can't be established the old one stays: from the sink that fails closed, never open.
-        if (establish(wanted) && wanted == VpnShape.SINK) MobileNetworkRuntime.writeAlwaysOn(this, wanted)
+        // If the new shape can't be established the old one stays: leaving the sink its routes still cut other apps;
+        // entering it, lockdown is set anyway and the switch retried (code QA M1) - fail closed both ways.
+        switchTo(wanted)
         settleForeground()
     }
 

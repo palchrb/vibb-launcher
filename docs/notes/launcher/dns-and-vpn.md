@@ -254,7 +254,8 @@ applied) and the best non-VPN network the service's watcher sees:
   lockdown on. Wanted on cellular while the parent's Bare Vibb holds, or while a roaming session outlived the roaming
   lock (design 95 §6 item 2 (d));
 - **pass** - no routes and no DNS server: nothing changes for apps, but the service and its watcher stay up so the sink
-  starts the moment Wi-Fi drops (the filter off, Bare Vibb on).
+  starts the moment Wi-Fi drops (the filter off, with Bare Vibb on or the roaming lock on - code QA M2, so a roaming
+  session that outlived the lock and survives a stay on Wi-Fi is sunk when Wi-Fi drops).
 
 **The launcher is excluded in every shape** (`addDisallowedApplication(packageName)`), so tsnet too: none of its
 sockets move at a switch, the SSE stream and a sync survive it, and the launcher's own lookups (the server's name)
@@ -267,6 +268,14 @@ only in the sink. To the sink: the tunnel first, then lockdown; away from it: lo
 writes lockdown off on a doubt about the network (`applyShape`: no network seen and the last shape the sink keeps
 it); a network lost in the watcher keeps the shape too (a Wi-Fi -> cellular switch passes through "none" for ~60 ms).
 While the sink is wanted, the launcher's own downloads (catalog APKs, the self-update, the music files it fetches)
-wait for Wi-Fi (`downloadGate`'s `mobileHeld`); Install Now still goes. Limit: with the filter off, a roaming sink
-that ended on Wi-Fi stops the service; a cellular roaming session still up when Wi-Fi drops again is sunk only at
-the next `apply()`.
+wait for Wi-Fi (`downloadGate`'s `mobileHeld`); Install Now still goes.
+
+Code QA fixes (2026-11-13, `docs/review/qa-95-mobilnett-code.md`): the service decides with `apply()`'s rule
+(`serviceShape` = `applyShape` with its watcher's network), so a start with no network yet (a boot, airplane mode)
+keeps the recorded sink and its lockdown instead of writing them off (H1). Every switch goes through `switchTo`: a
+failed `establish()` toward the sink still writes the sink's lockdown (other apps cut, fail closed) and is retried,
+5 s doubling to 5 min (M1). Two writers of always-on remain (`apply()` and the service, L2): `apply()` always ends in
+`KidVpnService.start`, whose `reshape()` writes the service's own decision last - keep that start. The parent's
+explicit hardening switch "Blokker VPN-innstillinger" off (`disallow_config_vpn: false`) still wins over the sink's
+`DISALLOW_CONFIG_VPN` (L1, kept by design): a restriction the parent lifted stays lifted, so in that combination Bare
+Vibb is not tamper-proof against Settings › VPN.

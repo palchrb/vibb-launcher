@@ -28,6 +28,8 @@
     {"filter": false, "apps_mobile": "vibb", "data_roaming": "phone", "override": false, "cellular": true, "roaming": false, "shape": "sink", "sink": "parent", "lockdown": true},
     {"filter": false, "apps_mobile": "on", "data_roaming": "phone", "override": false, "cellular": true, "roaming": true, "shape": "none", "sink": "off", "lockdown": false},
     {"filter": false, "apps_mobile": "on", "data_roaming": "off", "override": false, "cellular": true, "roaming": true, "shape": "sink", "sink": "roaming", "lockdown": true},
+    {"filter": false, "apps_mobile": "on", "data_roaming": "off", "override": false, "cellular": false, "roaming": false, "shape": "pass", "sink": "off", "lockdown": false},
+    {"filter": false, "apps_mobile": "on", "data_roaming": "off", "override": true, "cellular": false, "roaming": false, "shape": "none", "sink": "off", "lockdown": false},
     {"filter": true, "apps_mobile": "on", "data_roaming": "off", "override": false, "cellular": true, "roaming": true, "shape": "sink", "sink": "roaming", "lockdown": true},
     {"filter": true, "apps_mobile": "on", "data_roaming": "off", "override": true, "cellular": true, "roaming": true, "shape": "none", "sink": "off", "lockdown": false},
     {"filter": true, "apps_mobile": "later", "data_roaming": "phone", "override": false, "cellular": true, "roaming": false, "shape": "sink", "sink": "parent", "lockdown": true},

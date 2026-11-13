@@ -65,4 +65,35 @@ class SinkPacketsTest {
         assertNull(SinkPackets.answer(quic))
         assertNull(SinkPackets.answer(ByteArray(3)))
     }
+
+    /** Code QA L4: short, malformed and fragment packets are dropped, never answered with garbage, never thrown. */
+    @Test
+    fun `short, malformed and later-fragment packets are dropped`() {
+        assertNull(SinkPackets.answer(syn4.copyOf().also { it[0] = 0x44 })) // IHL 4
+        assertNull(SinkPackets.answer(syn4.copyOf().also { it[6] = 0x00; it[7] = 0x10 })) // fragment offset 16
+        assertNotNull(SinkPackets.answer(syn4.copyOf().also { it[6] = 0x20 })) // MF on the first fragment: answered
+        for (length in listOf(0, 1, 19, 20, 39)) assertNull("v4 $length", SinkPackets.answer(syn4, length))
+        for (length in listOf(39, 40, 59)) assertNull("v6 $length", SinkPackets.answer(data6, length))
+        assertNull(SinkPackets.answer(syn4.copyOf().also { it[0] = 0x75 })) // version 7
+        // A DNS query whose UDP length points past the packet.
+        val dns = hex("4500 0028 0002 0000 4011 0000 0a00 020f c000 0202 14e9 0035 00ff 0000 1234 0100 0000 0000 0000 0000")
+        assertNull(SinkPackets.answer(dns))
+    }
+
+    @Test
+    fun `a v6 DNS query is refused with a valid UDP checksum`() {
+        // fd00::2:5353 -> 2001:4860:4860::8888:53, a 12-byte DNS header (id 0xbeef).
+        val q = hex(
+            "6000 0000 0014 1140 fd00 0000 0000 0000 0000 0000 0000 0002 2001 4860 4860 0000 0000 0000 0000 8888" +
+                "14e9 0035 0014 0000 beef 0100 0000 0000 0000 0000",
+        )
+        val r = SinkPackets.answer(q)!!
+        assertEquals(60, r.size)
+        assertEquals(listOf(53, 5353), listOf(u16(r, 40), u16(r, 42)))
+        var pseudo = 0L
+        for (i in 8 until 40 step 2) pseudo += u16(r, i)
+        assertEquals(0, SinkPackets.checksum(r, 40, 20, pseudo + 17 + 20))
+        assertEquals(0xbeef, u16(r, 48))
+        assertEquals(5, r[51].toInt() and 0x0f)
+    }
 }

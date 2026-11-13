@@ -1132,6 +1132,7 @@
   "mobile.state.data_off_sub": "Bare Wi-Fi, også for Vibb.",
   "mobile.state.only_vibb": "Mobildata: bare Vibb",
   "mobile.state.only_vibb_sub": "Apper får bare data på Wi-Fi.",
+  "mobile.state.pending": "Ikke på plass på telefonen ennå - kommer når telefonen henter innstillingene",
   "mobile.state.lifted": "Opphevet mens telefonen er åpnet for oppsett",
   "mobile.state.roaming_locked": "Av og låst på telefonen",
   "mobile.state.roaming_unlocked": "Låst opp mens telefonen er åpnet for oppsett",

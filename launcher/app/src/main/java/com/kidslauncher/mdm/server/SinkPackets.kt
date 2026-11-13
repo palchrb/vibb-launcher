@@ -5,7 +5,8 @@ package com.kidslauncher.mdm.server
  * answered at once in the read loop, so the app fails in a millisecond and backs off instead of hanging until its own
  * timeout - a DNS query with `REFUSED`, a TCP segment (anything but a RST) with RST+ACK, the rest (UDP, QUIC, ICMP)
  * dropped. Synchronous and outside the DNS path's admission limit: no coroutine per packet. Pure, `SinkPacketsTest`
- * (v4 and v6 checksums). IPv6 without extension headers only; anything else is dropped.
+ * (v4 and v6 checksums). IPv4 with a real header (IHL >= 5) and not a later fragment; IPv6 without extension headers;
+ * anything else is dropped. DNS over IPv6 (an app's own v6 resolver) is refused too (code QA L4).
  */
 object SinkPackets {
     private const val PROTO_TCP = 6
@@ -23,15 +24,44 @@ object SinkPackets {
     }
 
     private fun protocol(b: ByteArray, n: Int): Int? = when (version(b, n)) {
-        4 -> if (n >= 20) u8(b, 9) else null
+        // Code QA L4: an IHL under 5 isn't a header, and a later fragment carries no transport header.
+        4 -> if (n >= 20 && (u8(b, 0) and 15) >= 5 && (u16(b, 6) and 0x1fff) == 0) u8(b, 9) else null
         6 -> if (n >= 40) u8(b, 6) else null
         else -> null
     }
 
     private fun version(b: ByteArray, n: Int): Int? = if (n < 1) null else u8(b, 0) shr 4
 
+    /** An IPv6 UDP query to port 53 answered `REFUSED`; the UDP checksum is mandatory over IPv6. */
+    private fun dnsRefused6(b: ByteArray, n: Int): ByteArray? {
+        if (n < 40 + 8 + 12 || u16(b, 42) != 53) return null
+        val udpLength = u16(b, 44)
+        if (udpLength < 8 + 12 || 40 + udpLength > n) return null
+        val payload = b.copyOfRange(48, 40 + udpLength)
+        payload[2] = (payload[2].toInt() or 0x80).toByte()
+        payload[3] = ((payload[3].toInt() and 0xf0) or 5).toByte()
+        val out = ByteArray(40 + 8 + payload.size)
+        out[0] = 0x60
+        p16(out, 4, 8 + payload.size)
+        out[6] = PROTO_UDP.toByte()
+        out[7] = 64
+        b.copyInto(out, 8, 24, 40)
+        b.copyInto(out, 24, 8, 24)
+        p16(out, 40, u16(b, 42))
+        p16(out, 42, u16(b, 40))
+        p16(out, 44, 8 + payload.size)
+        payload.copyInto(out, 48)
+        var pseudo = 0L
+        for (i in 8 until 40 step 2) pseudo += u16(out, i)
+        pseudo += PROTO_UDP + 8 + payload.size
+        val sum = checksum(out, 40, 8 + payload.size, pseudo)
+        p16(out, 46, if (sum == 0) 0xffff else sum)
+        return out
+    }
+
     /** An IPv4 UDP query to port 53 answered `REFUSED`: the query's own bytes with QR set and RCODE 5. */
     private fun dnsRefused(b: ByteArray, n: Int): ByteArray? {
+        if (version(b, n) == 6) return dnsRefused6(b, n)
         if (version(b, n) != 4) return null
         val ihl = (u8(b, 0) and 15) * 4
         if (n < ihl + 8 + 12 || u16(b, ihl + 2) != 53) return null

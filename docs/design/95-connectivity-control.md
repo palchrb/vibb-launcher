@@ -55,6 +55,12 @@ everything below it where they disagree; the rest stays as the record of what wa
   claims its capability; before that the group says the phone needs a newer Vibb One. An older launcher ignores the
   new keys (`ignoreUnknownKeys`): nothing is enforced on it, and the page says so instead of pretending.
 
+- **Code QA (2026-11-13, `docs/review/qa-95-mobilnett-code.md`):** H1, M1, M2 and L2-L7 fixed on the branch. L1 kept
+  by design: the parent's explicit hardening switch "Blokker VPN-innstillinger" off still wins over the sink's
+  `DISALLOW_CONFIG_VPN` - a restriction the parent lifted stays lifted. M2 restores revision 2's rule: the pass shape
+  for either sink reason when the filter is off, so with the default "Av" every filter-off phone keeps a VPN in the
+  pass shape (no routes, no DNS server).
+
 ### Revision 3, item 3: "Lås mobilnett-innstillingene" (`UserManager.DISALLOW_CONFIG_MOBILE_NETWORKS`)
 
 **The user's "helt av".** The parent turns Android's own mobile-data switch off on the phone during Åpne for oppsett

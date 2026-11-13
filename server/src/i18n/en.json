@@ -1132,6 +1132,7 @@
   "mobile.state.data_off_sub": "Wi-Fi only, for Vibb too.",
   "mobile.state.only_vibb": "Mobile data: only Vibb",
   "mobile.state.only_vibb_sub": "Apps get data on Wi-Fi only.",
+  "mobile.state.pending": "Not in place on the phone yet - it follows when the phone fetches its settings",
   "mobile.state.lifted": "Lifted while the phone is open for setup",
   "mobile.state.roaming_locked": "Off and locked on the phone",
   "mobile.state.roaming_unlocked": "Unlocked while the phone is open for setup",

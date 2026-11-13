@@ -73,6 +73,46 @@ class MobileNetworkTest {
         assertEquals(VpnShape.NONE, applyShape(lifted, net = null, persisted = VpnShape.SINK))
     }
 
+    /** Code QA H1/T1: the service decides with the same rule - a start with no network yet (a boot, airplane mode)
+     * keeps the recorded sink, and its watcher's last network wins over a fresh read. */
+    @Test
+    fun `the service's start keeps the recorded sink when it sees no network`() {
+        val bareVibb = VpnInputs(filterOn = true, parentSink = true, roamingLocked = true)
+        assertEquals(VpnShape.SINK, serviceShape(bareVibb, watched = null, live = null, persisted = VpnShape.SINK))
+        val wifi = BestNet(cellular = false, roaming = false)
+        val cell = BestNet(cellular = true, roaming = false)
+        assertEquals(VpnShape.FILTER, serviceShape(bareVibb, watched = wifi, live = cell, persisted = VpnShape.SINK))
+        assertEquals(VpnShape.SINK, serviceShape(bareVibb, watched = null, live = cell, persisted = VpnShape.FILTER))
+        // The roaming reason alone with the filter off (code QA M2): the pass shape keeps the watcher, not NONE.
+        val roamingOnly = VpnInputs(filterOn = false, parentSink = false, roamingLocked = true)
+        assertEquals(VpnShape.PASS, serviceShape(roamingOnly, watched = wifi, live = wifi, persisted = VpnShape.SINK))
+    }
+
+    /** Code QA M1/T2: a switch to the sink writes lockdown after the tunnel, whether or not it came up, and retries a
+     * failure; a switch away writes lockdown off first. */
+    @Test
+    fun `a failed switch to the sink fails closed and retries`() {
+        assertEquals(null, alwaysOnBeforeEstablish(VpnShape.SINK))
+        assertEquals(VpnShape.SINK, alwaysOnAfterEstablish(VpnShape.SINK))
+        assertTrue(alwaysOnFor(alwaysOnAfterEstablish(VpnShape.SINK)!!).lockdown)
+        assertTrue(retriesFailedEstablish(VpnShape.SINK, established = false))
+        assertFalse(retriesFailedEstablish(VpnShape.SINK, established = true))
+        for (shape in listOf(VpnShape.FILTER, VpnShape.PASS)) {
+            assertEquals(shape, alwaysOnBeforeEstablish(shape))
+            assertEquals(null, alwaysOnAfterEstablish(shape))
+            assertFalse(retriesFailedEstablish(shape, established = false))
+        }
+    }
+
+    /** Code QA L7: with no network seen the held sink still names its reason. */
+    @Test
+    fun `the report names the held sink`() {
+        val roaming = VpnInputs(filterOn = true, parentSink = false, roamingLocked = true)
+        assertEquals(SinkReason.ROAMING, reportedSink(roaming, net = null, persisted = VpnShape.SINK))
+        assertEquals(SinkReason.OFF, reportedSink(roaming, net = null, persisted = VpnShape.FILTER))
+        assertEquals(SinkReason.PARENT, reportedSink(roaming.copy(parentSink = true), net = null, persisted = VpnShape.SINK))
+    }
+
     @Test
     fun `the stored inputs round trip and a bad record reads as none`() {
         val inputs = VpnInputs(filterOn = true, parentSink = false, roamingLocked = true)
@@ -82,11 +122,12 @@ class MobileNetworkTest {
     }
 
     @Test
-    fun `the relock takes a SIM reading on once per boot, never unlocked`() {
-        assertEquals(setOf(2), dataRoamingRelock(true, mapOf(1 to false, 2 to true), emptySet()))
-        assertEquals(emptySet<Int>(), dataRoamingRelock(true, mapOf(1 to false, 2 to true), setOf(2)))
-        assertEquals(emptySet<Int>(), dataRoamingRelock(true, mapOf(1 to false, 2 to null), emptySet()))
-        assertEquals(emptySet<Int>(), dataRoamingRelock(false, mapOf(2 to true), emptySet()))
+    fun `the relock takes a SIM reading on at most twice per process, never unlocked`() {
+        assertEquals(setOf(2), dataRoamingRelock(true, mapOf(1 to false, 2 to true), emptyMap()))
+        assertEquals(setOf(2), dataRoamingRelock(true, mapOf(1 to false, 2 to true), mapOf(2 to 1)))
+        assertEquals(emptySet<Int>(), dataRoamingRelock(true, mapOf(1 to false, 2 to true), mapOf(2 to RELOCK_TRIES)))
+        assertEquals(emptySet<Int>(), dataRoamingRelock(true, mapOf(1 to false, 2 to null), emptyMap()))
+        assertEquals(emptySet<Int>(), dataRoamingRelock(false, mapOf(2 to true), emptyMap()))
     }
 
     @Test
@@ -122,6 +163,19 @@ class MobileNetworkTest {
         assertEquals(Triple(null, "vibb", false), Triple(kept.dataRoaming, kept.appsMobile, kept.mobileSettingsLocked))
         val old = LastEnforcedPlan.decode("{}")!!.toPolicy()
         assertEquals(Triple("off", null, true), Triple(old.dataRoaming, old.appsMobile, old.mobileSettingsLocked))
+    }
+
+    @Test
+    fun `the service decides with serviceShape and switches with the pure steps`() {
+        val vpn = listOf(java.io.File("src/main/java/com/kidslauncher/mdm/server/KidVpnService.kt"), java.io.File("app/src/main/java/com/kidslauncher/mdm/server/KidVpnService.kt"))
+            .first { it.exists() }.readText()
+        val wanted = vpn.substringAfter("private fun wantedShape(): VpnShape =").substringBefore("\n\n")
+        assertTrue(wanted, "serviceShape(" in wanted && "storedShape()" in wanted)
+        val switch = vpn.substringAfter("private fun switchTo(wanted: VpnShape): Boolean {").substringBefore("\n    }\n")
+        assertTrue(switch.indexOf("alwaysOnBeforeEstablish(wanted)") in 0 until switch.indexOf("establish(wanted)"))
+        assertTrue(switch.indexOf("val established = establish(wanted)") < switch.indexOf("alwaysOnAfterEstablish(wanted)"))
+        // Every establish goes through switchTo.
+        assertEquals(1, Regex("""\bestablish\(wanted\)""").findAll(vpn).count())
     }
 
     @Test

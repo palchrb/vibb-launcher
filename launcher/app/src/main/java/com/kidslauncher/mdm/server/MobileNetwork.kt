@@ -97,7 +97,9 @@ fun sinkReason(inputs: VpnInputs, net: BestNet?): SinkReason = when {
 fun vpnShape(inputs: VpnInputs, net: BestNet?): VpnShape = when {
     sinkReason(inputs, net) != SinkReason.OFF -> VpnShape.SINK
     inputs.filterOn -> VpnShape.FILTER
-    inputs.parentSink -> VpnShape.PASS
+    // Code QA M2 (design 95 rev. 2's rule): either sink reason keeps the watcher up - a roaming session that outlived
+    // the lock survives a stay on Wi-Fi ("mobile data always active") and is sunk the moment Wi-Fi drops.
+    inputs.parentSink || inputs.roamingLocked -> VpnShape.PASS
     else -> VpnShape.NONE
 }
 
@@ -113,6 +115,36 @@ fun applyShape(inputs: VpnInputs, net: BestNet?, persisted: VpnShape?): VpnShape
     } else {
         vpnShape(inputs, net)
     }
+
+/**
+ * [KidVpnService]'s decision (code QA H1): the same rule as `apply()`'s ([applyShape]), with the network its watcher saw
+ * last ([watched]) or, before the first callback, the one it reads now ([live]). So a start with no network yet (a
+ * boot, airplane mode) keeps the sink [persisted] by the last decision instead of writing lockdown off.
+ */
+fun serviceShape(inputs: VpnInputs, watched: BestNet?, live: BestNet?, persisted: VpnShape?): VpnShape =
+    applyShape(inputs, watched ?: live, persisted)
+
+/** The always-on decision written before `establish(wanted)`: lockdown off first when leaving for a non-sink shape;
+ * nothing before the sink's tunnel (design 95 §2.2). */
+fun alwaysOnBeforeEstablish(wanted: VpnShape): VpnShape? = wanted.takeIf { it != VpnShape.SINK }
+
+/** The always-on decision written after `establish(wanted)`: the sink's lockdown whether or not its tunnel came up -
+ * code QA M1: a failed switch to the sink fails closed (lockdown over the old tunnel or none cuts every other app), and
+ * the decision `sink` is recorded for every later reader. */
+fun alwaysOnAfterEstablish(wanted: VpnShape): VpnShape? = wanted.takeIf { it == VpnShape.SINK }
+
+/** A failed `establish()` toward the sink is retried by the service itself (5 s doubling to 5 min). */
+fun retriesFailedEstablish(wanted: VpnShape, established: Boolean): Boolean = !established && wanted == VpnShape.SINK
+
+/**
+ * The report's `mobile_data.sink` (code QA L7): with no network seen, a sink that the last decision holds ([persisted])
+ * names its configured reason - the parent's first; otherwise [sinkReason].
+ */
+fun reportedSink(inputs: VpnInputs, net: BestNet?, persisted: VpnShape?): SinkReason = when {
+    net == null && persisted == VpnShape.SINK && inputs.parentSink -> SinkReason.PARENT
+    net == null && persisted == VpnShape.SINK && inputs.roamingLocked -> SinkReason.ROAMING
+    else -> sinkReason(inputs, net)
+}
 
 /** What `setAlwaysOnVpnPackage` is given: our package or none, and lockdown. The lockdown allow list stays empty (D4:
  * neither the music app nor Play services goes around the sink); the VPN's owner is exempt by itself. */
@@ -134,13 +166,16 @@ fun alwaysOnFor(shape: VpnShape): AlwaysOn = when (shape) {
  * shape that stands ready for it - so Settings can't switch lockdown off or disconnect the VPN. */
 fun vpnConfigLocked(shape: VpnShape): Boolean = shape != VpnShape.NONE
 
+/** How often one subscription is relocked per process at most (code QA L5: a wait that timed out may try once more). */
+const val RELOCK_TRIES = 2
+
 /**
  * Design 94 §2.4.2, the relock: the subscriptions to clear and set the roaming restriction again for - those that
- * read roaming on while it should be locked (only an absent per-SIM key can, on a multi-SIM phone), at most once per
- * subscription per boot ([alreadyRelocked]).
+ * read roaming on while it should be locked (only an absent per-SIM key can, on a multi-SIM phone), each at most
+ * [RELOCK_TRIES] times per process ([tries]; a relock whose clear was applied in time counts as all of them).
  */
-fun dataRoamingRelock(locked: Boolean, readings: Map<Int, Boolean?>, alreadyRelocked: Set<Int>): Set<Int> =
-    if (!locked) emptySet() else readings.filter { (sub, on) -> on == true && sub !in alreadyRelocked }.keys
+fun dataRoamingRelock(locked: Boolean, readings: Map<Int, Boolean?>, tries: Map<Int, Int>): Set<Int> =
+    if (!locked) emptySet() else readings.filter { (sub, on) -> on == true && (tries[sub] ?: 0) < RELOCK_TRIES }.keys
 
 /** Design 94 §5: `data_roaming` in every report of a launcher with [DATA_ROAMING_CAPABILITY]. */
 @Serializable

@@ -16,7 +16,6 @@ import android.telephony.TelephonyManager
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.kidslauncher.mdm.preferences.LauncherPreferences
-import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 private const val LOG_TAG = "MobileNetwork"
@@ -34,9 +33,9 @@ private const val RELOCK_WAIT_MS = 5_000L
  * report's two objects. The rules are [MobileNetwork]'s.
  */
 object MobileNetworkRuntime {
-    /** Subscriptions relocked since this process started (design 94 §2.4.2: at most once per subscription per boot -
-     * a process restart may relock once more, which costs a fraction of a second). */
-    private val relocked = mutableSetOf<Int>()
+    /** Relocks tried per subscription since this process started (design 94 §2.4.2, [dataRoamingRelock]) - a process
+     * restart may relock once more, which costs a fraction of a second. */
+    private val relockTries = mutableMapOf<Int, Int>()
 
     // ---- the VPN's inputs and shape ------------------------------------------------------------------------------
 
@@ -125,26 +124,49 @@ object MobileNetworkRuntime {
             Log.w(LOG_TAG, "Couldn't read the SIMs' roaming: ${e.javaClass.simpleName}")
             return
         }
-        val subs = synchronized(relocked) { dataRoamingRelock(true, readings, relocked).also { relocked.addAll(it) } }
+        val subs = synchronized(relockTries) {
+            dataRoamingRelock(true, readings, relockTries).onEach { relockTries[it] = (relockTries[it] ?: 0) + 1 }
+        }
         if (subs.isEmpty()) return
         Log.i(LOG_TAG, "Roaming still on for ${subs.size} SIM(s) under the lock: relocking")
-        val applied = CountDownLatch(1)
+        // Two waits: for the clear to be applied (else the add is no change and writes nothing), then for the add, so
+        // the SIMs can be read back (code QA L5).
+        val changes = java.util.concurrent.LinkedBlockingQueue<Unit>()
         val thread = HandlerThread("roaming-relock").apply { start() }
         val receiver = object : BroadcastReceiver() {
-            override fun onReceive(context: Context, intent: Intent) = applied.countDown()
+            override fun onReceive(context: Context, intent: Intent) {
+                changes.offer(Unit)
+            }
         }
+        var cleared = false
         try {
             ContextCompat.registerReceiver(
                 context, receiver, IntentFilter(ACTION_USER_RESTRICTIONS_CHANGED), null,
                 Handler(thread.looper), ContextCompat.RECEIVER_NOT_EXPORTED,
             )
             setRestriction(dpm, admin, UserManager.DISALLOW_DATA_ROAMING, false)
-            if (!applied.await(RELOCK_WAIT_MS, TimeUnit.MILLISECONDS)) Log.w(LOG_TAG, "The clear wasn't applied in time")
+            cleared = changes.poll(RELOCK_WAIT_MS, TimeUnit.MILLISECONDS) != null
+            if (!cleared) Log.w(LOG_TAG, "The clear wasn't applied in time")
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Relock wait failed: ${e.javaClass.simpleName}")
         } finally {
             // Set again whatever happened: the lock never stays off.
             setRestriction(dpm, admin, UserManager.DISALLOW_DATA_ROAMING, true)
+        }
+        try {
+            if (cleared && changes.poll(RELOCK_WAIT_MS, TimeUnit.MILLISECONDS) != null) {
+                // Applied in time: done for this process, whatever the read says (the report shows a SIM still on).
+                synchronized(relockTries) { subs.forEach { relockTries[it] = RELOCK_TRIES } }
+            }
+            val still = runCatching { roamingReadings(context) }.getOrNull()?.filter { (sub, on) -> sub in subs && on == true }
+            if (still.isNullOrEmpty()) {
+                Log.i(LOG_TAG, "Relocked: roaming reads off on every SIM")
+            } else {
+                Log.w(LOG_TAG, "Roaming still reads on for ${still.size} SIM(s) after the relock")
+            }
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Relock read-back failed: ${e.javaClass.simpleName}")
+        } finally {
             runCatching { context.unregisterReceiver(receiver) }
             thread.quitSafely()
         }
@@ -210,7 +232,7 @@ object MobileNetworkRuntime {
     /** Design 95 rev. 3's `mobile_data`. */
     fun mobileDataReport(context: Context): MobileDataReport = MobileDataReport(
         enabled = runCatching { dataTelephony(context)?.isDataEnabled }.getOrNull(),
-        sink = sinkReason(storedInputs(), bestNet(context)).wire,
+        sink = reportedSink(storedInputs(), bestNet(context), storedShape()).wire,
         settingsLocked = restricted(context, UserManager.DISALLOW_CONFIG_MOBILE_NETWORKS),
     )
 }

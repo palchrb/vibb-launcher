@@ -1450,6 +1450,8 @@ object AppEnforcer {
         try {
             // The single owner (design 95 §2.2): the decided shape is recorded, always-on written for it alone.
             MobileNetworkRuntime.writeAlwaysOn(context, shape)
+            // Code QA L2: keep this start - the service's reshape() then writes its own decision last, so the two
+            // writers of always-on settle on the service's view of the network.
             if (shape != VpnShape.NONE) KidVpnService.start(context) else KidVpnService.stop(context)
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Failed to apply the VPN's shape", e)
