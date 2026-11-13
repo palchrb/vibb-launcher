@@ -1148,7 +1148,7 @@
   "mobile.value.data_off": "Mobile data off",
   "data_roaming.ship": "Roaming on a ship or plane network",
   "data_roaming.ship_home": "On a ship or plane network that isn't counted as roaming: the lock doesn't cover it",
-  "data_roaming.other": "Roaming ({country})",
+  "data_roaming.elsewhere": "Roaming ({country})",
   "data_roaming.plain": "Roaming",
   "data_roaming.in.at": "Roaming in Austria",
   "data_roaming.in.be": "Roaming in Belgium",

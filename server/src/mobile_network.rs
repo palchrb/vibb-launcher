@@ -166,7 +166,7 @@ pub fn roaming_words(lang: Lang, report: &RoamingReport) -> Option<(String, bool
             None => (
                 t_params(
                     lang,
-                    "data_roaming.other",
+                    "data_roaming.elsewhere",
                     &[("country", &cc.to_ascii_uppercase())],
                 ),
                 true,

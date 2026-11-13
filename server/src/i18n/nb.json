@@ -1148,7 +1148,7 @@
   "mobile.value.data_off": "Mobildata av",
   "data_roaming.ship": "Roamer på et skips- eller flynett",
   "data_roaming.ship_home": "På et skips- eller flynett som ikke regnes som roaming: låsen dekker det ikke",
-  "data_roaming.other": "Roamer ({country})",
+  "data_roaming.elsewhere": "Roamer ({country})",
   "data_roaming.plain": "Roamer",
   "data_roaming.in.at": "Roamer i Østerrike",
   "data_roaming.in.be": "Roamer i Belgia",

@@ -40,7 +40,8 @@ async fn report(app: &TestApp, token: &str, extra: Value, capabilities: &[&str])
     let res = app
         .request(Method::POST, "/api/devices/status", Some(token), Some(body))
         .await;
-    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    // 204, or 200 for a launcher that claims app_logos_v1.
+    assert!(res.status.is_success(), "{} {}", res.status, res.text());
 }
 
 async fn policy(app: &TestApp, token: &str) -> Value {
