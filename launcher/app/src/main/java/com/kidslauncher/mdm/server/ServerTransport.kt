@@ -15,11 +15,13 @@ import okhttp3.Dns
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
+import okhttp3.Request
 
 /*
  * How every server client reaches the server (security review S-M1): the API (`createMdmApi`), the command stream
  * (`CommandListenerService`) and the music client (`createMusicServer`) all build their OkHttp client through
- * [serverPath] and [toServer]. There is no fallback between the paths:
+ * [serverPath] and [toServer] - since design 95 as children of the one base client [ServerClients] keeps per path.
+ * There is no fallback between the paths:
  * - `https://` goes direct, or through tsnet's SOCKS proxy while it runs (as before);
  * - `http://<tailnet IP>` goes only through tsnet's proxy; with tsnet down no request is made ([ServerPath.Closed]);
  * - anything else is never asked ([ServerUrlVerdict.REFUSED]): a phone set up before the rule with a plain-http
@@ -186,6 +188,102 @@ fun OkHttpClient.Builder.toServer(
     is ServerPath.Closed -> proxy(Proxy.NO_PROXY)
         .dns(NoDns)
         .addInterceptor(Interceptor { throw ServerPathClosed(path.why) })
+}
+
+/**
+ * One base client per server path (design 95 §3.5, step 95-T1): the sync's API client (`createMdmApi`), the command
+ * stream's ([CommandListenerService]), the music client (`createMusicServer`) and the shutdown's prepared client
+ * ([PowerEvents]) are `newBuilder()` children of [base] with their own timeouts and interceptors, so they share one
+ * connection pool and one TLS context: behind an HTTP/2 proxy (Caddy) a sync rides the stream's connection, and on
+ * HTTP/1.1 a new connection resumes TLS instead of a full handshake. Before, every `createMdmApi` built its own client.
+ *
+ * The base is [toServer] for the path and the certificate check's flag and pins now, built again (and the old pool's
+ * idle connections closed) when any of them changes - a tsnet restart's new proxy, Leave Tailnet, a new address, the
+ * flag switched. Each child adds its own interceptors after the base's, so a closed path's refusal, the origin fence
+ * and the pinner still run first. The DNS filter's DoH/DoT clients are never children of this (`buildDohClient`: they
+ * must not carry tsnet's proxy).
+ */
+object ServerClients {
+    private data class Key(val path: ServerPath, val enforce: Boolean, val pins: List<String>)
+
+    private class Slot(val key: Key, val client: OkHttpClient)
+
+    private var slot: Slot? = null
+
+    /** The base client for [path] under [pinning] (default: the stored flag now); the same instance while neither
+     * changes. */
+    fun base(path: ServerPath, pinning: ServerPinning = ServerPinStore.pinningNow()): OkHttpClient {
+        val key = Key(path, pinning.enforce, pinning.pins)
+        val replaced: OkHttpClient?
+        val client: OkHttpClient
+        synchronized(this) {
+            slot?.takeIf { it.key == key }?.let { return it.client }
+            replaced = slot?.client
+            client = OkHttpClient.Builder().toServer(path, pinning).build()
+            slot = Slot(key, client)
+        }
+        // Idle connections only: a call still in flight on the old client finishes on its connection.
+        replaced?.connectionPool?.evictAll()
+        return client
+    }
+
+    /**
+     * The command stream dropped: its connection may be dead (a network change, a NAT that forgot it), and a sync
+     * that picked it from the pool would wait out its read timeout - so the pool's idle connections go, and the next
+     * request opens a fresh one. Costs nothing on the line (no keepalive pings).
+     */
+    fun streamDropped() {
+        val client = synchronized(this) { slot?.client }
+        client?.connectionPool?.evictAll()
+    }
+}
+
+/** OkHttp 4.12's wait for the pong of the ping a timed-out HTTP/2 stream sends (`DEGRADED_PONG_TIMEOUT_NS`, 1 s), and a
+ * margin: past it an unanswered ping marks the connection unhealthy and the pool never hands it out again. */
+const val STALE_RETRY_PAUSE_MS = 1_200L
+
+/** The requests [retryOnStaleConnection] may send twice: every GET, and the status report (a second copy of a report
+ * is one more `device_status` row, as a report sent twice in a minute today). */
+fun staleRetryable(request: Request): Boolean =
+    request.method == "GET" || (request.method == "POST" && request.url.encodedPath.endsWith("/api/devices/status"))
+
+/**
+ * Design 95 §3.5 (code QA M1): a request that timed out reading on a **reused** connection is sent once more on a
+ * fresh one. The shared pool's connection can be dead without anyone knowing - behind HTTP/2 it is the command
+ * stream's, busy and never evicted, which a NAT or a Wi-Fi without a way out can drop silently; the stream only
+ * notices after its read timeout (5 min). So: the pool's idle connections are evicted, the retry waits out
+ * [STALE_RETRY_PAUSE_MS] (OkHttp's ping on the timed-out HTTP/2 connection goes unanswered and the connection is
+ * dropped from the pool), and the request goes again. Only [retryable] requests, only once, and never one that
+ * opened its own connection (a server that is just slow isn't asked twice). Costs nothing on the line, unlike a
+ * `pingInterval`. Added last, after the bearer: the retry repeats only what comes after it (OkHttp's own chain).
+ */
+fun OkHttpClient.Builder.retryOnStaleConnection(
+    pool: () -> okhttp3.ConnectionPool,
+    retryable: (Request) -> Boolean = ::staleRetryable,
+    pause: () -> Unit = { Thread.sleep(STALE_RETRY_PAUSE_MS) },
+    log: (String) -> Unit = { Log.w("ServerTransport", it) },
+): OkHttpClient.Builder {
+    val connected: MutableMap<okhttp3.Call, Boolean> = Collections.synchronizedMap(WeakHashMap())
+    eventListenerFactory { call ->
+        object : okhttp3.EventListener() {
+            override fun connectStart(call: okhttp3.Call, inetSocketAddress: java.net.InetSocketAddress, proxy: Proxy) {
+                connected[call] = true
+            }
+        }
+    }
+    addInterceptor(Interceptor { chain ->
+        val request = chain.request()
+        try {
+            chain.proceed(request)
+        } catch (e: java.net.SocketTimeoutException) {
+            if (!retryable(request) || connected[chain.call()] == true || chain.call().isCanceled()) throw e
+            log("A reused connection timed out - once more on a fresh one")
+            pool().evictAll()
+            pause()
+            chain.proceed(request)
+        }
+    })
+    return this
 }
 
 /** The [ServerPath.Direct] client (design 76 §3), in this order: the origin fence, the refusal catch, the pinner once

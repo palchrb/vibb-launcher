@@ -90,10 +90,10 @@ class CommandListenerService : Service() {
     private var dropWakeLockAt: Long? = null
 
     private fun buildClient(path: ServerPath, stamp: AtomicLong): OkHttpClient {
-        val builder = OkHttpClient.Builder()
-            // Security review S-M1: the path read fresh per connect - the server may be reachable only through the
-            // embedded tailnet's proxy, which may come up after this service (CLAUDE.md, the "by lazy" staleness bug).
-            .toServer(path)
+        // Security review S-M1: the path read fresh per connect - the server may be reachable only through the
+        // embedded tailnet's proxy, which may come up after this service (CLAUDE.md, the "by lazy" staleness bug).
+        // Design 95 §3.5: a child of the shared base ([ServerClients]), so a sync can ride this stream's connection.
+        val builder = ServerClients.base(path).newBuilder()
             // The server sends a keepalive comment every SSE_KEEPALIVE_SECS (240 s by default,
             // never more); five minutes of silence means the stream is dead - reconnect.
             .readTimeout(SSE_READ_TIMEOUT_MS, TimeUnit.MILLISECONDS)
@@ -285,6 +285,8 @@ class CommandListenerService : Service() {
     private fun streamDown(source: EventSource) {
         if (source !== eventSource) return
         eventSource = null
+        // Design 95 §3.5: the shared pool's idle connections go with the stream, so no sync waits on a dead one.
+        ServerClients.streamDropped()
         markDown()
         scheduleReconnect()
     }

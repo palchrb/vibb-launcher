@@ -15,6 +15,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -203,11 +204,128 @@ class ServerTransportTest {
     }
 
     @Test
+    fun `the server clients share one base client per path and flag`() {
+        // Design 95 §3.5: the same path and flag give the same base (one pool, one TLS context); a change builds anew.
+        val path = serverPath("https://vibb.example", null, debug = false)
+        val off = ServerPinning(enforce = false)
+        val base = ServerClients.base(path, off)
+        assertTrue(base === ServerClients.base(path, ServerPinning(enforce = false)))
+        val child = base.newBuilder().readTimeout(30, TimeUnit.SECONDS).build()
+        assertTrue(child.connectionPool === base.connectionPool)
+        val on = ServerClients.base(path, ServerPinning(enforce = true))
+        assertFalse(on === base)
+        assertFalse(ServerClients.base(serverPath("https://other.example", null, debug = false), off) === on)
+        assertFalse(ServerClients.base(serverPath("https://vibb.example", socks, debug = false), off) === base)
+    }
+
+    /** A keep-alive HTTP/1.1 server on loopback: each connection answers `ok<n>` to its requests, except that
+     * [silentAfter] requests in, a connection goes silent (a dead NAT entry). [accepts] counts the connections. */
+    private class LoopServer(private val silentAfter: Int = Int.MAX_VALUE) : AutoCloseable {
+        val socket = ServerSocket(0, 8, InetAddress.getLoopbackAddress())
+        val accepts = java.util.concurrent.atomic.AtomicInteger()
+        val url get() = "http://127.0.0.1:${socket.localPort}/"
+
+        init {
+            Thread {
+                while (!socket.isClosed) {
+                    val conn = try { socket.accept() } catch (e: Exception) { break }
+                    val n = accepts.incrementAndGet()
+                    Thread {
+                        conn.use { c ->
+                            val input = c.getInputStream().bufferedReader()
+                            var served = 0
+                            while (true) {
+                                val line = input.readLine() ?: break
+                                if (line.isNotEmpty()) continue
+                                if (served++ >= silentAfter) { input.readLine(); break }
+                                val text = "ok$n"
+                                c.getOutputStream().write("HTTP/1.1 200 OK\r\nContent-Length: ${text.length}\r\n\r\n$text".toByteArray())
+                                c.getOutputStream().flush()
+                            }
+                        }
+                    }.apply { isDaemon = true; start() }
+                }
+            }.apply { isDaemon = true; start() }
+        }
+
+        override fun close() = socket.close()
+    }
+
+    private fun OkHttpClient.get(url: String, path: String = "api/devices/policy"): String =
+        newCall(Request.Builder().url(url + path).build()).execute().use { it.body!!.string() }
+
+    @Test
+    fun `a key change and a dropped stream close the pool's idle connections`() {
+        // Code QA L2.
+        LoopServer().use { server ->
+            val path = ServerPath.Direct(server.url, null)
+            val base = ServerClients.base(path, ServerPinning(enforce = false))
+            val child = base.newBuilder().build()
+            assertEquals("ok1", child.get(server.url))
+            assertEquals(1, base.connectionPool.connectionCount())
+            ServerClients.streamDropped()
+            assertEquals(0, base.connectionPool.connectionCount())
+            assertEquals("ok2", child.get(server.url))
+            assertEquals(1, base.connectionPool.connectionCount())
+            ServerClients.base(path, ServerPinning(enforce = true))
+            assertEquals(0, base.connectionPool.connectionCount())
+        }
+    }
+
+    @Test
+    fun `a child's interceptors run after the base's`() {
+        // Code QA L2: a closed path's refusal comes before anything a child adds (the bearer included).
+        var seen = false
+        val child = ServerClients.base(ServerPath.Closed(ClosedWhy.NOT_HTTPS), ServerPinning(enforce = false)).newBuilder()
+            .addInterceptor(okhttp3.Interceptor { seen = true; it.proceed(it.request()) })
+            .build()
+        try {
+            child.get("http://closed.vibb.invalid/")
+            fail("a closed path sent a request")
+        } catch (e: ServerPathClosed) {
+            assertFalse(seen)
+        }
+    }
+
+    @Test
+    fun `a request that times out on a reused connection goes once more on a fresh one`() {
+        // Code QA M1: the second request on the kept connection gets no answer; the retry opens a new one.
+        LoopServer(silentAfter = 1).use { server ->
+            val client = OkHttpClient.Builder().readTimeout(300, TimeUnit.MILLISECONDS)
+            lateinit var built: OkHttpClient
+            built = client.retryOnStaleConnection({ built.connectionPool }, pause = {}, log = {}).build()
+            assertEquals("ok1", built.get(server.url))
+            assertEquals("ok2", built.get(server.url))
+            assertEquals(2, server.accepts.get())
+            // A POST other than the status report is never sent twice.
+            assertFalse(staleRetryable(Request.Builder().url(server.url + "api/devices/power").post(ByteArray(0).toRequestBody()).build()))
+            assertTrue(staleRetryable(Request.Builder().url(server.url + "api/devices/status").post(ByteArray(0).toRequestBody()).build()))
+        }
+        // A request that opened its own connection and timed out is a slow server: not asked twice.
+        LoopServer(silentAfter = 0).use { server ->
+            lateinit var built: OkHttpClient
+            built = OkHttpClient.Builder().readTimeout(300, TimeUnit.MILLISECONDS)
+                .retryOnStaleConnection({ built.connectionPool }, pause = {}, log = {}).build()
+            try {
+                built.get(server.url)
+                fail("a silent server answered")
+            } catch (e: SocketTimeoutException) {
+                assertEquals(1, server.accepts.get())
+            }
+        }
+    }
+
+    @Test
     fun `every server client takes its way from the transport`() {
         val main = File("src/main/java/com/kidslauncher/mdm")
+        // Design 95 §3.5: each is a child of the one base client, which alone is built with `.toServer(`.
         for (name in listOf("server/MdmApi.kt", "server/CommandListenerService.kt", "music/MusicServer.kt")) {
-            assertTrue(name, File(main, name).readText().contains(".toServer("))
+            val text = File(main, name).readText()
+            assertTrue(name, text.contains("ServerClients.base(path)"))
+            assertTrue(name, text.contains("base.newBuilder()") || text.contains("ServerClients.base(path).newBuilder()"))
+            assertFalse(name, text.contains("OkHttpClient.Builder()"))
         }
+        assertTrue(File(main, "server/ServerTransport.kt").readText().contains("OkHttpClient.Builder().toServer(path, pinning).build()"))
         val proxyUsers = main.walk().filter { it.isFile && it.extension == "kt" && it.readText().contains("TsnetClient.proxy()") }
             .map { it.name }.toSet()
         assertEquals(setOf("ServerTransport.kt"), proxyUsers)
