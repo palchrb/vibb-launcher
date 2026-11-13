@@ -1,11 +1,30 @@
 # Design 93: "Slå på nå" and Quick Actions as three tiles
 
-Status: design, revision 2, 2026-11-13. It folds in the user's mockup rounds (revision 3 approved) and the user's
+Status: design, revision 3, 2026-11-13. It folds in the user's mockup rounds (revision 3 approved) and the user's
 change of 2026-11-13: Quick Actions has **three** tiles, **Skjermtid**, **Pause regler** and **Slå på regel**. The two
 rule tiles open **one** Regler sheet, with its Hva segment preselected by the tile ("Sett på pause" / "Slå på nå"),
-and the segment can still be switched in the sheet. **Server only** (§9): the launcher's rc.8 shows everything.
-Migration `0142_time_lock_now.sql` is the next free number on `main` at `58bf42e3` (no local or remote branch has a
-0142 either); recheck it at merge.
+and the segment can still be switched in the sheet. **The server's part works on rc.8 as it is**; a small launcher
+part for the next RC (§9) adds an absolute end and the card's choice. Migration `0142_time_lock_now.sql` is the next
+free number on `main` at `58bf42e3` (no local or remote branch has a 0142 either); recheck it at merge.
+
+**Revision 3 (the user's answers to Q1-Q4, 2026-11-13)**:
+- Q1, the card's order: accepted for rc.8, and a launcher field asked for. Every served rule gets `card_first`
+  (true on a copy only): a launcher from the next RC shows the turned-on rule on the card, with its Til, ahead of the
+  kind order whenever its end is a real unlock (§4.2, §9.2). The server's index order stays for rc.8.
+- Q2, a week offline: the phone gets the absolute end. Every served rule gets `until_ms` (the copy's end as epoch
+  ms, `null` on a scheduled rule); a launcher from the next RC treats a rule as gone from that instant, whatever its
+  weekday window says. That closes the week-offline relock (§4.6, §9.1). No `from_ms`: a late copy is already bounded
+  by its window's start (§9.1).
+- The policy's shape changes: two keys on every rule, pinned by `policy_json_keys_snapshot` and
+  `PolicyResponseCompatTest`, and a new contract file `server/testdata/lock_now.json`, byte-identical in
+  `launcher/app/src/test/resources/` (§9.3). The launcher claims `lock_now_v1` once it honours them.
+- Q3: "Åpne for oppsett" is the first row of the existing Avansert page (`/devices/{id}/advanced`); the new Avansert
+  group on the summary is gone (§6.6).
+- Q4: one turned-on rule at a time, as written.
+- The tiles' state lines (§7): a line only when it says something. Pause regler: a running pause, else the rule in
+  force now ("Skole gjelder nå"). Slå på regel: only a turned-on rule. The tiles stay level.
+- Steps (§13): the server first (it works on rc.8, and carries the two keys and the contract), then the launcher's
+  behaviour in the next RC.
 
 **Revision 2 (design QA, 2026-11-13)**:
 - Three tiles (the user's change): Skjermtid (was Mer skjermtid), Pause regler, Slå på regel; their state lines (§7).
@@ -28,20 +47,22 @@ Migration `0142_time_lock_now.sql` is the next free number on `main` at `58bf42e
 
 ## 1. Verdict and summary
 
-**Buildable server-only, with one residual gap the parent should know about (§4.6, Q2).** A rule turned on now
+**Buildable, the server first.** On rc.8 it has one residual gap (§4.6), which the next RC's launcher part closes
+(§9). A rule turned on now
 ("Slå på nå", first asked for as "Lås nå") is the server serving one more entry in `time_policy.rules`: a **copy of the chosen
 rule** (its kind, name, exempt apps, calls, Kalender and silence) whose `days` hold one window on today's weekday, from
 now to the end the parent chose, in the phone's local time. The launcher evaluates it like any rule
 (`decideTimeLock`), shows it on the r13 card with the rule's own name and icon and "Til 18:30", ends it by itself at
-the end, and pauses it under an "Alle regler" pause. Nothing in the policy's shape changes.
+the end, and pauses it under an "Alle regler" pause. Every served rule gets two keys, `until_ms` and `card_first`,
+which rc.8 ignores and the next RC honours (§9).
 
 - **The phone offline when the lock ends**: no problem. The phone ends the window by itself; the server stops serving
   the copy at its end.
-- **The phone offline for over a week**: the launcher has **no date-bound field** on a rule (`TimeRule` is weekly
-  windows only, and the cached policy is kept without end). A phone that got the copy and then reaches no server for
+- **The phone offline for over a week**: rc.8 has **no date-bound field** on a rule (`TimeRule` is weekly windows
+  only, and the cached policy is kept without end). An rc.8 phone that got the copy and then reaches no server for
   seven days locks again in the same window on the same weekday, and every week after, until its next sync drops the
-  copy. Nothing the server can send changes that; it would take a launcher change (Q2). Until then the parent can
-  lift it on the phone with the Parent PIN, as with every rule offline. The lock is stricter, never looser.
+  copy; the Parent PIN lifts it, and the lock is stricter, never looser. From the next RC the copy's `until_ms` ends it
+  for good at its end (§9.1).
 - **The zone's DST, the server's restart, two parents at once**: §3, §4.4 and §5.1. All the state is in one table, every
   decision is a single SQL statement, and the window is wall-clock time, like the launcher's.
 
@@ -49,15 +70,16 @@ Quick Actions becomes three tiles in one row, **Skjermtid**, **Pause regler** an
 coloured glyph, its name and a state line. Each opens a sheet below the row in one pattern: title + Lukk, what, how
 much or how long, an optional Til, one line on what happens, and one button saying the action in plain words. The
 +15/+30/+1 h tiles become the Skjermtid sheet. Pause regler and Slå på regel open the same Regler sheet, preselected
-to their own choice. The Finn tile goes (Finn has its own tab). "Lås opp 2 t" moves to a new **Avansert** group under
-Innstillinger, as the row **"Åpne for oppsett"**. While the opening runs, a row right under the phone's header shows it
-with "Lås igjen".
+to their own choice. The Finn tile goes (Finn has its own tab). "Lås opp 2 t" moves to the existing **Avansert** page,
+as its first row, **"Åpne for oppsett"**. While the opening runs, a row right under the phone's header shows it with
+"Lås igjen".
 
-Size: medium, about 1,450 lines with the tests (§12). Four steps (§13).
+Size: medium, about 1,750 lines with the tests: about 1,450 on the server and the page, about 300 in the launcher
+(§12). Six steps (§13).
 
 ## 2. What exists today
 
-### 2.1 The launcher (unchanged by this design)
+### 2.1 The launcher (rc.8; §9 is the next RC's change)
 
 - `TimeRule` (`launcher/.../timerules/TimeRules.kt:29-42`): `id`, `name`, `kind`, `callsAllowed`, `exemptApps`,
   `calendarAllowed`, `silent`, `days` (7 windows, Monday first). **No date and no expiry.**
@@ -150,7 +172,8 @@ CREATE INDEX idx_time_lock_now_device ON time_lock_now(device_id, ends_at);
 ### 4.1 The copy
 
 `lock_now::served(db, device_id, now) -> Option<(LockNowRow, TimeRuleRow)>`: the running row, with its rule among
-`effective_rule_rows`. The served entry is that rule's `to_policy()` with three changes:
+`effective_rule_rows`. The served entry is that rule's `to_policy()` with four changes (the last two are the keys
+every rule now carries, §9.3):
 
 - `id: -(time_lock_now.id)`. Negative ids can't collide with a rule's id, and they stay the same across a change of
   the end, so the launcher's `TimeLock.key()` (`TimeRules.kt:315`, the rules' ids: a changed id would re-apply the
@@ -164,13 +187,23 @@ CREATE INDEX idx_time_lock_now_device ON time_lock_now(device_id, ends_at);
 - `name`, `kind`, `calls_allowed`, `exempt_apps`, `calendar_allowed` and `silent` are the rule's own. The bedtime and
   server names stay `""`, so the kid sees "Leggetid" and the moon, and "Skole" with the school glyph, plus "Til 18:30"
   from `lockEnd`.
+- `until_ms`: `ends_at` as epoch milliseconds, the same instant as the window's end in the zone (§4.4). A scheduled
+  rule sends `null`. A change of the end (§5.2) changes it with the window.
+- `card_first: true`. A scheduled rule sends `false`.
 
 `start_minute` is the local minute when the parent tapped, rounded down. A phone that syncs late gets a window that
 has already begun and is still running. A phone that syncs after the end gets nothing (§4.6).
 
-### 4.2 Where it goes in `rules[]`: the card shows the lock that ends last
+### 4.2 Which rule the kid's card shows
 
-The launcher sorts by kind first, then index. The server can only choose the copy's **index**:
+**From the next RC** (§9.2) the card takes the rule with `card_first` when it is among the rules locking now and its
+end is a real unlock (`lockEnd` at its own end), so a turned-on Leggetid shows "Leggetid · Til 18:00" even while a
+scheduled Skole also locks until 14:30. When its end is no unlock (a scheduled Leggetid takes over at 20:00), the
+card falls back to today's kind order. The lock itself (which rules, their intersection, the `LockReason`) is not
+touched; only the card's choice and the report's `active_rule_id` follow it.
+
+**On rc.8**, which sorts by kind first, then index, the server can only choose the copy's **index**, and keeps doing so
+for every launcher (a newer one doesn't need it, and it costs nothing):
 
 - **The copy first** when no rule of the same kind has an occurrence that overlaps the copy's window and ends after
   it. An occurrence from yesterday that runs past midnight counts (Leggetid until 07:00 while the copy runs from
@@ -182,12 +215,13 @@ The launcher sorts by kind first, then index. The server can only choose the cop
 The server computes this from the served days in the copy's zone (`time_state::covering_ends`, made `pub(crate)`). It
 is a pure function, `lock_now::copy_first(copy, rules) -> bool`, and pinned by a vector test.
 
-**What the server can't do: a stronger kind that ends earlier.** Say Leggetid is turned on from 12:00 to 18:00 while
+**What rc.8 can't do: a stronger kind that ends earlier.** Say Leggetid is turned on from 12:00 to 18:00 while
 the scheduled Skole runs to 14:30. Skole ranks first, so until 14:30 the card shows "Skole" with **no time**: `lockEnd`
 sees Leggetid still locking at 14:30. After that it shows "Leggetid · Til 18:00". The lock itself is right
 throughout (both rules, the intersection of their modes). Giving the copy Skole's kind would change its icon and its
 silence (a bedtime lets alarms ring), and dropping Skole's window would loosen the lock. Neither is acceptable. The
-sheet says it before the tap: "Skole gjelder allerede til 14:30" (§6.2). Q1 asks the user to accept this.
+sheet says it before the tap, for a phone without `lock_now_v1`: "Skole gjelder allerede til 14:30" (§6.2). The
+user accepted this for rc.8 (Q1); the next RC's `card_first` removes it.
 
 ### 4.3 Pauses and the copy
 
@@ -246,14 +280,14 @@ only the badge's `rule_days`/`named_by` take the served rows, the rest keep the 
 | Offline when it ends | The phone ends it by itself (its own window). The server stops serving it. |
 | Ended early or shortened while offline | The phone keeps the longer window until it syncs. The state line says "Avsluttet · venter på telefonen" or "Ny tid sendt · venter på telefonen". The Parent PIN lifts it on the phone. |
 | Extended while offline | The phone ends at the old, earlier end and locks again from its next sync until the new end. The state line says "Ny tid sendt · venter på telefonen". |
-| **Offline 7 days or more** | **The cached copy locks again in the same window on the same weekday, and every week, until a sync.** `TimeRule` has no date, and the server's later policy can't reach the phone. A lift can't help: it is timed from first sight, and the cache drops lifts (`PolicyGate.kt:192`). |
+| **Offline 7 days or more, rc.8** | **The cached copy locks again in the same window on the same weekday, and every week, until a sync.** `TimeRule` has no date there, and the server's later policy can't reach the phone. A lift can't help: it is timed from first sight, and the cache drops lifts (`PolicyGate.kt:192`). |
+| Offline 7 days or more, the next RC | Nothing: the cached copy keeps its `until_ms` (the cache stores `TimeRule` whole), and from that instant the launcher treats it as gone (§9.1). |
 
-The last row is the gap the brief asked about. **No field the launcher already honours can bound a rule to a date.**
-The only shapes `spanOn` knows are weekly windows. A wrong-size `days` locks *always* (fail closed). Lifts are
-relative and not cached. How it fails matters: the phone locks with the rule's own mode, so calls and exempt apps
-follow the rule, and emergency calls always work. It happens only on a phone that has reached no server for a week,
-the Parent PIN lifts it, and any sync clears it. Q2 asks whether to queue a small launcher change: a `date` on
-`TimeRule`, which an older launcher ignores and a newer one honours.
+On rc.8 **no field the launcher honours can bound a rule to a date.** The only shapes `spanOn` knows are weekly
+windows, a wrong-size `days` locks *always* (fail closed), and lifts are relative and not cached. How it fails
+matters: the phone locks with the rule's own mode, so calls and exempt apps follow the rule, and emergency calls always
+work. It happens only on an rc.8 phone that has reached no server for a week, the Parent PIN lifts it, and any sync
+clears it. The user chose to close it in the launcher (Q2, §9.1).
 
 ## 5. Routes and handlers
 
@@ -397,8 +431,8 @@ When section A shows, the main form below it is a group of its own with the head
    the rule's mode in words ("Telefonen låses som i Skole: anrop med kontakter, Meldinger og Musikk virker. Nødanrop
    virker alltid."), built from the rule (`lock_now::mode_line`). Then, when they apply, `.qa-warn` lines:
    "Telefonen er åpnet for oppsett til 17:10. Det avsluttes når du slår på Skole." / "Skole er på pause til 17:00.
-   Pausen avsluttes." / "Alle regler er på pause til 17:00. Pausen avsluttes." / "Skole gjelder allerede til 14:30."
-   (§4.2) / an older launcher: "Åpningen kan ikke avsluttes herfra; regelen begynner når den er over." The warnings
+   Pausen avsluttes." / "Alle regler er på pause til 17:00. Pausen avsluttes." / for a phone without `lock_now_v1`
+   (rc.8's card, §4.2): "Skole gjelder allerede til 14:30." / a launcher without `window_relock_v1`: "Åpningen kan ikke avsluttes herfra; regelen begynner når den er over." The warnings
    name the rule selected when the page was drawn; JS rewrites them on a change of rule. For pause: "Reglene kommer
    tilbake av seg selv, eller med Avslutt nå. «Alle regler» finnes bare for pause."
 6. **One button** per panel, `type="submit"`, each a direct child: "Slå på" (`.when-on`) and "Sett på pause"
@@ -470,14 +504,16 @@ codes: `on`, `on_changed`, `on_ended`, `on_busy`, `changed_elsewhere`, `on_no_zo
 closed, the tile's default). `tests::time_pages::every_form_on_the_time_pages_returns_to_its_group` takes the new
 forms.
 
-### 6.6 Innstillinger › Avansert › Åpne for oppsett
+### 6.6 Avansert › Åpne for oppsett
 
-A new group follows the Innstillinger group on the summary, with the header **Avansert** (`#setup`), for a
-`window_relock_v1` phone (an older one has no group, as it has no "Lås opp 2 t" today). It holds one row,
+The user's answer to Q3: **"Åpne for oppsett" is the first row of the existing Avansert page**
+(`templates/device_advanced.html`, `/devices/{id}/advanced`, the summary's "Avansert" row). There is no new group on
+the summary. On the Avansert page a new first section, `<section id="setup">` before `#restrictions`, holds one group
+with one row, for a `window_relock_v1` phone (an older one has no row, as it has no "Lås opp 2 t" today):
 `<details class="act-sheet row-sheet" id="setup-sheet">` whose summary is a `.row` with a graphite unlock tile, the
-label "Åpne for oppsett" and a chevron. It opens the same sheet pattern right under the row: head "Åpne for oppsett" +
-Lukk (`data-confirm-cancel`: `confirm.js` already closes the `<details>` it sits in; without JS it is hidden and the
-row closes it). Then:
+label "Åpne for oppsett" and a chevron. It opens the sheet pattern right under the row: head "Åpne for oppsett" + Lukk
+(`data-confirm-cancel`: `confirm.js` already closes the `<details>` it sits in; without JS it is hidden and the row
+closes it). Then:
 
 - **Not open**: the note "Apper, Innstillinger og Play Butikk åpnes på telefonen til Emma i 2 timer, så du kan sette
   opp noe der. Den låses igjen av seg selv, eller med Lås igjen." (plus the on-lock line in §6.4 when one runs), and
@@ -485,10 +521,13 @@ row closes it). Then:
 - **Open** (the condition of §6.1's row): the row's value is "til 17:10" (or nothing without a time), and the sheet
   holds "Åpnet for oppsett til 17:10" and **Lås igjen** (`/end-windows`) instead of the open button.
 
-The 2 h stays fixed, so there is no length choice and no launcher change. `window_relock::flash("start_pause_sent")`
-moves to the group `setup`, and the "Sent…" line shows in the group; `end_windows_sent` stays in `quick` (§6.1's row
-is where Lås igjen is usually tapped). `auto-reload.js` behaves as today. The About and Advanced rows below it stay as
-they are (Q3 is about the double "Avansert").
+**Where the forms return.** Both forms on the Avansert page carry `back=advanced`. `window_relock::queue` then
+redirects to `/devices/{id}/advanced?notice=<code>#setup` instead of the summary, and the flash ("Sendt…") shows in the
+`setup` group. Without `back` (the summary's Lås igjen in §6.1's row, and any older open tab) it returns to the summary
+as today. `view_advanced` builds the same `RelockCard` the summary does (`window_relock::card`) for the row's state,
+and loads `auto-reload.js` while it waits for the phone (`wait_for_phone`), as the summary does after Unlock 2 h…
+today; `auto-reload.js` doesn't reload while the row's `<details>` is open. The forms-return test takes both new
+forms. The 2 h stays fixed, so there is no length choice and no launcher change.
 
 ### 6.7 CSS
 
@@ -501,20 +540,22 @@ and `.act-sheet` stay while another page uses them (`grep` at build); otherwise 
 ## 7. The state lines
 
 All are in the reader's language, and the times are the phone's local clock as stored. A phone whose zone differs
-from Phone Setup's adds "(telefonens tid)".
+from Phone Setup's adds "(telefonens tid)". **A line shows only when it says something** (the user, revision 3); a
+tile without one keeps the line's height, so the three tiles stay level.
 
 | Tile | Line, in priority order |
 |---|---|
 | Skjermtid | "48 min igjen i dag" (budget + extra − used, from a report of today); "Brukt opp i dag"; "Ingen grense i dag" (unlimited); nothing without a current report. |
-| Pause regler | The latest-ending running pause: "Leggetid på pause til 21:00" / "Alle regler på pause til 17:00". Else nothing. `.qa-on` while one runs. |
-| Slå på regel | An on-lock: "Skole på til 18:30" (and "· venter" until a report after its start or change shows it). Else nothing. `.qa-on` while it runs. |
-| Avansert row | "til 17:10" while open for setup (§6.6). |
+| Pause regler | A running pause wins: the latest-ending one, "Leggetid på pause til 21:00" / "Alle regler på pause til 17:00" (`.qa-on`). Else a rule in force now that a pause would lift: "Skole gjelder nå" (en "Skole is on now"). That is the rule the badge names (`lock_badge` on the latest report, its name as `named_by` gives it), only while the badge isn't stale (no "at last report") and the lock is a rule's, not the screen-time lock; a turned-on rule counts. Else no line. |
+| Slå på regel | Only a rule turned on outside its schedule: "Skole på til 18:30" (and "· venter" until a report after its start or change shows it; `.qa-on`). Else no line. |
 
-A tile with no line keeps the line's height, so the three tiles stay level.
+The Avansert page's row shows "til 17:10" while the phone is open for setup (§6.6).
 
 On-lock states (`lock_now::State`, like `LiftState`): **Waiting** (no report after `created_at`/`changed_at`),
 **OnPhone** (a report after it shows `active_rule_id == -id`, or the twin or "all" pause it explains), **Over**, and
-**EndedEarly(at)**. After End now there is "Avsluttet · venter på telefonen" until a report shows no copy.
+**EndedEarly(at)**. After End now there is "Avsluttet · venter på telefonen" until a report shows no copy. On rc.8 a
+copy that a stronger scheduled rule outranks is not the reported `active_rule_id`; it is OnPhone once a report after it
+is newer than its start and shows a rule lock (the phone has the policy), and the next RC reports it by `card_first`.
 
 ## 8. History and the inbox
 
@@ -528,21 +569,74 @@ Today's lifts make security events and Activity rows, and no inbox event or push
 - The summary's Today lists today's on-locks the same way, and the running one with Avslutt nå.
 - No new push. No inbox event.
 
-## 9. What doesn't change
+## 9. The launcher part (the next RC) and the contract
 
-- **The launcher.** No new key, no capability, no new behaviour. rc.8 shows the copy as a rule, the card with name,
-  icon and Til, and the pause.
-- **The policy's shape.** A copy is a `rules[]` entry with today's keys, and a twin is a `lifts[]` entry.
-  `policy_json_keys_snapshot` (`server/src/tests/device_api.rs:315`) and the launcher's `PolicyResponseCompatTest` stay
-  as they are; no contract file changes. Only the values are new (a negative `id` and `rule_id`), and the DTOs already
-  take a `Long`.
+The user's answers to Q1 and Q2 add two keys to every served rule. rc.8 ignores both (`ServerJson`'s
+`ignoreUnknownKeys`) and behaves as §4.2 and §4.6 say; a launcher from the next RC honours them and claims
+`lock_now_v1`.
+
+### 9.1 `until_ms`: the absolute end
+
+- `TimeRule` gets `untilMs: Long? = null` (`until_ms` on the wire). The cache keeps it: `policyToCache` stores
+  `timePolicy` whole but for its lifts (`PolicyGate.kt:192`), so a phone a week offline still has it.
+- One pure function, `TimePolicy.inForceAt(nowMs)`: the policy without the rules whose `untilMs` is at or before
+  `nowMs`. `TimeRulesRuntime` applies it where it takes the policy for a decision (`snapshot()`, `:141`, and the call
+  path, `:191`), so `decideTimeLock`, `lockEnd`, `nextBoundary`, the card, the silence and the report all see the same
+  rules. Code QA greps every caller of `decideTimeLock`, `callsBlockedAt` and `nextBoundary` outside it.
+- Every future `untilMs` goes into `nextBoundary`'s `extraInstants`, so the lock is decided again at that instant even
+  when the window's local end has moved (the phone changed zone since).
+- The phone's wall clock decides, as for every window. A clock set back keeps the lock longer (stricter); setting it
+  forward needs Settings, which the kid doesn't have, and would end every scheduled window early today as well.
+- **No `from_ms`.** The window already starts at the tap's minute on that weekday: a copy delivered late is in force
+  from delivery to its end, which is what the parent asked, and no copy can be in force before its start. Only the
+  repeat a week later needed bounding, and `until_ms` does it.
+
+### 9.2 `card_first`: the card's rule
+
+- `TimeRule` gets `cardFirst: Boolean = false` (`card_first`).
+- `cardRule(snap)`: among `lock.rules`, the first rule with `cardFirst` whose own end (its `activeSpan` end) is a
+  certain unlock by `lockEnd`; else `lock.rules.first()`, as today. `lockEnd` takes the end to test as a parameter
+  instead of reading `lock.until`.
+- The kid's card (`ruleCardOf`, `RuleCard.kt:127`), the time-rule screen's title (`LockActivity.kt:244`) and the
+  report's `active_rule_id`/`active_rule_name` (`TimeRulesRuntime.kt:206`) use `cardRule`, so the card, the lock
+  screen and the PWA's badge name the same rule and end.
+- The decision itself is unchanged: `decideTimeLock`'s order, its `LockReason`, calls, usable apps, Kalender and
+  silence.
+
+### 9.3 The policy and the contract file
+
+- Every served rule carries `until_ms` (`null` on a scheduled rule) and `card_first` (`false`), always explicit, as
+  the policy's other keys are: `policy_json_keys_snapshot`'s rule keys gain both, and the launcher's
+  `PolicyResponseCompatTest` decodes them. A twin stays a `lifts[]` entry with today's keys.
+- **`server/testdata/lock_now.json`**, byte-identical in `launcher/app/src/test/resources/`:
+  - `capability`: `lock_now_v1`.
+  - `policy`: a `time_policy` with a scheduled Skole, a copy of Leggetid (negative `id`, one weekday's window,
+    `until_ms`, `card_first: true`) and a Skole pause with its twin.
+  - `cases`: `{at, zone, locked, card_rule, card_until}` rows: during the copy while Skole also locks (the card shows
+    Leggetid and its Til); after Skole's end; at the copy's end (unlocked); the same weekday and time a week later (not
+    locked, `until_ms`); a copy whose end is no unlock (the card falls back to the kind order).
+  - The server's `lock_now::tests::the_contract` produces `policy` from seeded rows at a fixed now
+    (`LOCK_NOW_CONTRACT_WRITE=1` rewrites it) and checks `capability` against its constant. The launcher's
+    `LockNowTest` decodes `policy` and checks every field, runs every case through `inForceAt`, `decideTimeLock`,
+    `cardRule` and `lockEnd`, and checks the capability it claims. Both compare the copies.
+- `CLAUDE.md`'s shared-contract paragraph gets the file, and `launcher.yml`'s and `server-ci.yml`'s path filters take
+  both copies, as for every contract file.
+- **The keys and the contract file go into both directories in one commit** (step 1): the server's keys, the snapshot,
+  the launcher's two DTO fields, `PolicyResponseCompatTest`, both copies and the copy-comparing tests. The launcher's
+  behaviour, the `cases` run and the capability claim follow in step 5, for the next RC.
+- The server reads `lock_now_v1` only for words: the rc.8 warning "Skole gjelder allerede…" (§6.2) shows only without
+  it. Nothing is served differently.
+
+### 9.4 What doesn't change
+
 - The kid's "Be om mer tid" and its answers, the daily limit, the rule editor and the Settings lists.
+- The launcher's lock decision and its lifts.
 
 ## 10. i18n
 
 Every new word goes in both `en.json` and `nb.json` (`i18n::tests` keeps them equal). About 45 keys under
-`device.summary.qa.*`, `device.summary.rules_now.*`, `device.summary.setup.*`, `device.summary.flash.*`, `events` and
-`security.*`. The nb words are the user's: Skjermtid, Pause regler, Slå på regel, Regler, Regel, Hva, Slå på nå, Sett
+`device.summary.qa.*`, `device.summary.rules_now.*`, `device.advanced.setup.*`, `device.summary.flash.*`, `events`
+and `security.*`. The nb words are the user's: Skjermtid, Pause regler, Slå på regel, Regler, Regel, Hva, Slå på nå, Sett
 på pause, Hvor lenge, Til, Ut dagen, Noe annet, Forleng eller forkort, Lagre ny tid, Avslutt nå, Hvor mye, Åpne for
 oppsett, Avansert, Lås igjen, Lukk, Alle regler. The en words: Screen time, Pause rules, Turn on rule, Rules, Rule,
 What, Turn on now, Pause, How long, Until, Rest of the day, Something else, Extend or shorten, Save new time, End now,
@@ -553,7 +647,7 @@ The sentences, nb / en (parameters in braces):
 | Where | nb | en |
 |---|---|---|
 | Skjermtid's line | {left} igjen i dag / Brukt opp i dag / Ingen grense i dag | {left} left today / Used up today / No limit today |
-| Pause regler's line | {rule} på pause til {at} / Alle regler på pause til {at} | {rule} paused until {at} / All rules paused until {at} |
+| Pause regler's line | {rule} på pause til {at} / Alle regler på pause til {at} / {rule} gjelder nå | {rule} paused until {at} / All rules paused until {at} / {rule} is on now |
 | Slå på regel's line | {rule} på til {at} · venter | {rule} on until {at} · waiting |
 | Buttons | Slå på {rule} til {at} / Sett {rule} på pause i {duration} / Sett alle regler på pause i {duration} / Gi {duration} ekstra / Åpne for oppsett i 2 t | Turn on {rule} until {at} / Pause {rule} for {duration} / Pause all rules for {duration} / Give {duration} extra / Open for setup for 2 h |
 | Setup row | Åpnet for oppsett til {at} · Apper og Play Butikk er åpne | Open for setup until {at} · Apps and Play Store are open |
@@ -567,9 +661,12 @@ with each sheet open (`?open=`).
 
 ## 11. Risks
 
-- **The week-offline relock** (§4.6): stricter than wanted, on the same weekday's hours, until a sync. The Parent PIN
-  lifts it. The parent isn't told on the phone page today; the "last seen" line is the hint. Q2 is the real fix.
-- **The card without a time** while a stronger scheduled rule ends first (§4.2). The lock is right; the sheet warns.
+- **The week-offline relock on rc.8** (§4.6): stricter than wanted, on the same weekday's hours, until a sync. The
+  Parent PIN lifts it. The next RC's `until_ms` closes it (§9.1); until every phone runs it, the "last seen" line is
+  the parent's hint.
+- **The card without a time on rc.8** while a stronger scheduled rule ends first (§4.2). The lock is right; the sheet
+  warns. The next RC's `card_first` closes it (§9.2).
+- **`until_ms` and the phone's clock** (§9.1): a wrong clock moves the end, as it moves every window today.
 - **A copy the phone has but the server ended** (End now offline) lasts to the window's end. It is liftable on the
   phone, and the PWA says "venter på telefonen".
 - **`time_state.zone` wrong or stale** (a zone change after the last report): the window lands at the wrong wall time
@@ -596,7 +693,13 @@ with each sheet open (`?open=`).
   twin in `lifts`; the summary's badge names "Skole" and shows "until 18:30"; the rule tiles are hidden without
   rules; `?open=rules&mode=pause` renders the sheet with `m-pause` checked and "Alle regler" selected, `mode=on` with
   `m-on` and the school rule; the Regler sheet renders open with the reason, the posted mode and rule after a
-  refusal; `policy_json_keys_snapshot` unchanged (it runs anyway).
+  refusal; the rule keys in `policy_json_keys_snapshot` gain `card_first` and `until_ms`; the Pause regler line is
+  "Skole gjelder nå" with a fresh rule lock and nothing with a stale one; the Avansert page's row opens, posts
+  `back=advanced` and lands on `/devices/{id}/advanced?notice=start_pause_sent#setup`.
+- The contract (§9.3): the server's `lock_now::tests::the_contract` (produces `policy`, compares the copies); the
+  launcher's `LockNowTest` (step 1: decodes `policy`, compares the copies; step 5: runs `cases`, the capability) and
+  `PolicyResponseCompatTest`'s two keys. The launcher's `inForceAt` and `cardRule` need no tests beyond the `cases`;
+  `RuleCardTest` takes one case for `lockEnd`'s new parameter.
 - `jstest/quick-sheets.test.js`: a tile opens its sheet in place and checks its mode, Lukk closes it, the button
   sentences, Til from a segment, and the "Alle regler" switch. `jstest/auto-reload.test.js`: one case, no reload while
   a `.qa-sheet` is shown.
@@ -605,28 +708,28 @@ with each sheet open (`?open=`).
 
 ## 13. Steps
 
-1. **The model and the policy** (migration 0142, `lock_now.rs` pure parts and reads, `served_rule_rows`,
-   `build_time_policy`, the badge readers, retention) with `lock_now::tests`. Nothing is visible yet; the policy is
-   unchanged while the table is empty.
+1. **The model, the policy and the contract** (migration 0142, `lock_now.rs` pure parts and reads,
+   `served_rule_rows`, `build_time_policy`, `until_ms` and `card_first` on every rule, the badge readers, retention)
+   with `lock_now::tests`, `policy_json_keys_snapshot`, and in the same commit the launcher's two DTO fields,
+   `PolicyResponseCompatTest`, `lock_now.json` in both directories, `LockNowTest`'s decode and compare, and
+   `CLAUDE.md`'s and the two workflows' lists (§9.3). Nothing shows yet; the policy differs only by the two keys while
+   the table is empty, and rc.8 ignores them.
 2. **The routes** (`rules_now.rs`, `create_rule_lift` taken out of `create_lift`, `NOT_SAVES`, security events) with
    `tests::lock_now`'s route cases.
-3. **The page** (Quick Actions as three tiles and their sheets, `?open=`/`mode=`, the open-for-setup row,
-   Innstillinger › Avansert, `quick-sheets.js`, the `auto-reload.js` check, CSS, the words, Activity and Today) with
-   the page tests and the jstests. A browser pass on jelly36
-   size, light and dark, with JS and without.
-4. **The notes**: `docs/notes/server/time-rules.md` ("Slå på nå"), `pwa.md` (the summary's Quick Actions), and
-   `server/CLAUDE.md` only if its index needs a line.
+3. **The page** (Quick Actions as three tiles and their sheets, `?open=`/`mode=`, the open-for-setup row, the
+   Avansert page's first row with `back=advanced`, `quick-sheets.js`, the `auto-reload.js` check, CSS, the words,
+   Activity and Today) with the page tests and the jstests. A browser pass on jelly36 size, light and dark, with JS
+   and without.
+4. **The server's notes**: `docs/notes/server/time-rules.md` ("Slå på nå"), `pwa.md` (the summary's Quick Actions,
+   the Avansert page's row), and `server/CLAUDE.md` only if its index needs a line. Steps 1-4 ship in a server
+   release and work on rc.8.
+5. **The launcher, for the next RC** (§9.1, §9.2): `inForceAt`, the `untilMs` boundaries, `cardRule` with `lockEnd`'s
+   end parameter, the card, the time-rule screen's title and the report following it, the `lock_now_v1` claim, and
+   `LockNowTest`'s `cases`. An emulator pass: a copy on the card with its Til while a scheduled Skole also locks, and
+   the clock moved a week on with the network off (no lock).
+6. **The launcher's notes**: `docs/notes/launcher/` (the time rules' note: `until_ms`, `card_first`).
 
 ## 14. Open questions
 
-- **Q1** (§4.2): while a stronger scheduled rule runs (Skole to 14:30) and a weaker rule is turned on past it (Leggetid
-  to 18:00), the kid's card shows "Skole" with no time until 14:30, then "Leggetid · Til 18:00". The lock is right;
-  only the card's time is missing for those hours, and the sheet warns before the tap. Accept?
-- **Q2** (§4.6): a phone that gets the copy and then reaches no server for 7 days locks again in that window each
-  week until it syncs (the Parent PIN lifts it). Accept, or queue a small launcher change (a `date` on `TimeRule`)?
-  Older launchers would still have the gap until they update.
-- **Q3** (§6.6): the new group's header "Avansert" sits just above the existing "Avansert" page row. Keep both, or
-  name the page row something else (for example "Mer om telefonen")?
-- **Q4** (§6.4): one on-lock per phone at a time. While Skole is on, "Slå på nå" is disabled in the sheet ("Avslutt
-  Skole først…"); the mockup's 5 shows the "Noe annet" form with both segments. Allowing a second on-lock means two
-  copies, two state lines and two rows of Forleng; the lock would be their intersection. Keep one at a time?
+None. The user answered Q1-Q4 on 2026-11-13 (revision 3's changelog): `card_first` for the card, `until_ms` for the
+week offline, "Åpne for oppsett" as the Avansert page's first row, and one turned-on rule at a time.
