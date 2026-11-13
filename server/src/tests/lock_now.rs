@@ -493,3 +493,35 @@ async fn the_state_lines_and_the_badge() {
     let html = app.get_page(&summary, &cookie).await.text();
     assert!(!quick(&html).contains("is on now"), "{}", quick(&html));
 }
+
+/// §6.6: Avansert's first row, "Åpne for oppsett", posts `back=advanced` and lands back there,
+/// in its group, with the flash.
+#[tokio::test]
+async fn the_advanced_page_opens_for_setup_and_lands_back_there() {
+    let (app, cookie, id, _token, _skole) = emma(json!({})).await;
+    let page = app
+        .get_page(&format!("/devices/{id}/advanced"), &cookie)
+        .await
+        .text();
+    assert!(page.contains("id=\"setup-sheet\""), "{page}");
+    let res = post(
+        &app,
+        &cookie,
+        &format!("/devices/{id}/start-pause"),
+        &[("back", "advanced")],
+    )
+    .await;
+    assert_redirect(
+        &res,
+        &format!("/devices/{id}/advanced?notice=start_pause_sent"),
+        Some("setup"),
+    );
+    let page = app
+        .get_page(
+            &format!("/devices/{id}/advanced?notice=start_pause_sent"),
+            &cookie,
+        )
+        .await
+        .text();
+    assert!(page.contains("data-flash=\"setup\""), "{page}");
+}
