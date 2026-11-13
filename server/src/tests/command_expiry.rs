@@ -54,7 +54,7 @@ async fn find_page(app: &TestApp, cookie: &str, device: i64) -> String {
         .text()
 }
 
-/// `command`'s newest row in Find Phone's requests or the summary's Activity.
+/// `command`'s newest row in Find Phone's requests or the phone's Activity page.
 fn row<'a>(page: &'a str, command: &str) -> &'a str {
     super::locate_page::recent_row(page, command)
 }
@@ -156,10 +156,10 @@ async fn a_cancelled_command_never_reaches_the_phone() {
         .text();
     assert!(page.contains("Cancelled. The phone will never get it."));
     // Requests leaves out what the parent cancelled (its line says so, design 48 §1.4); the
-    // summary's Activity keeps it.
+    // phone's Activity page keeps it.
     assert!(!page.contains("data-command=\"wipe\""), "{page}");
     let page = app
-        .get_page(&format!("/devices/{device}"), &cookie)
+        .get_page(&format!("/devices/{device}/activity"), &cookie)
         .await
         .text();
     assert!(
@@ -300,7 +300,7 @@ async fn find_phone_shows_waiting_expired_and_cancelled() {
     );
 }
 
-/// The summary's Activity (design 48): a pause never fetched within the hour expired, a cancelled
+/// The phone's Activity page (design 48): a pause never fetched within the hour expired, a cancelled
 /// one says so - the command's own row, the one line for it.
 #[tokio::test]
 async fn the_device_page_says_a_pause_expired_or_was_cancelled() {
@@ -309,7 +309,7 @@ async fn the_device_page_says_a_pause_expired_or_was_cancelled() {
     let (device, _) = app.enrolled_device("phone").await;
     insert(&app, device, "start_pause", "datetime('now', '-2 hours')").await;
     let page = app
-        .get_page(&format!("/devices/{device}"), &cookie)
+        .get_page(&format!("/devices/{device}/activity"), &cookie)
         .await
         .text();
     let expired = row(&page, "start_pause");
@@ -321,7 +321,7 @@ async fn the_device_page_says_a_pause_expired_or_was_cancelled() {
     let pause = insert(&app, device, "start_pause", "datetime('now')").await;
     cancel(&app, &cookie, device, pause).await;
     let page = app
-        .get_page(&format!("/devices/{device}"), &cookie)
+        .get_page(&format!("/devices/{device}/activity"), &cookie)
         .await
         .text();
     let cancelled = row(&page, "start_pause");
@@ -400,11 +400,11 @@ async fn a_waiting_wipe_is_never_replaced() {
         "{replaced:?}"
     );
     // Find Phone keeps the wipe and the lock, sent and not confirmed (in flight), and the newest
-    // other; the replaced ring is in the summary's Activity (design 88).
+    // other; the replaced ring is in the phone's Activity page (design 88).
     let page = find_page(&app, &cookie, device).await;
     assert!(page.contains("data-command=\"wipe\""), "{page}");
     let page = app
-        .get_page(&format!("/devices/{device}"), &cookie)
+        .get_page(&format!("/devices/{device}/activity"), &cookie)
         .await
         .text();
     assert!(
@@ -472,9 +472,9 @@ async fn an_enrollment_or_a_restart_ends_what_could_expire() {
     let wipe = insert(&app, device, "wipe", "datetime('now')").await;
     crate::handlers::device_api::end_expiring_at_start(&app.db).await;
     assert_eq!(app.policy(&token).await["pending_command"]["id"], wipe);
-    // Not in Find Phone's requests (no bucket of design 48 §1.4 holds it): the summary's Activity.
+    // Not in Find Phone's requests (no bucket of design 48 §1.4 holds it): the phone's Activity page.
     let page = app
-        .get_page(&format!("/devices/{device}"), &cookie)
+        .get_page(&format!("/devices/{device}/activity"), &cookie)
         .await
         .text();
     assert!(

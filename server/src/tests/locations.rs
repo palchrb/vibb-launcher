@@ -299,7 +299,7 @@ async fn a_delivered_command_is_not_shown_as_done() {
         .unwrap();
     }
     // Find Phone (design 88): what is in flight - the waiting ring, the lock not confirmed yet,
-    // the wipe that can't confirm; the stop, possibly lost, is in the summary's Activity below.
+    // the wipe that can't confirm; the stop, possibly lost, is in the phone's Activity page below.
     let page = app
         .get_page(&format!("/devices/{id}/find"), &cookie)
         .await
@@ -318,10 +318,10 @@ async fn a_delivered_command_is_not_shown_as_done() {
         row("wipe")
     );
     assert!(!row("wipe").contains("Send it again"));
-    // A result is done: not a request any more (design 48 §1.4), a row of the summary's Activity.
+    // A result is done: not a request any more (design 48 §1.4), a row of the phone's Activity.
     assert!(!page.contains("data-command=\"locate\""), "{page}");
     let page = app
-        .get_page(&format!("/devices/{id}"), &cookie)
+        .get_page(&format!("/devices/{id}/activity"), &cookie)
         .await
         .text();
     let row = |command: &str| super::locate_page::recent_row(&page, command).to_string();

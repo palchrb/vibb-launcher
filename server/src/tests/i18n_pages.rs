@@ -15,8 +15,8 @@ const FIXTURES: &[&str] = &["mamma", "a"];
 
 /// Words that are facts on one page, not English: the phone's `found` code in the security log's blocked-app line
 /// ("(outside_play, install, …)"), and the phone's own answer that Activity keeps in a reworded row's `title`
-/// ("refused: mismatch", Ola's Child PIN).
-const ALLOWED: &[(&str, &str)] = &[("/security", "install"), ("/devices/2", "refused")];
+/// ("refused: mismatch", Ola's Child PIN; on the phone's Activity page since 2026-11-13).
+const ALLOWED: &[(&str, &str)] = &[("/security", "install"), ("/devices/2/activity", "refused")];
 
 /// What a reader sees of a page: its text and the attributes read out or shown (`title`, `aria-label`,
 /// `placeholder`, `alt`, every `data-w-*` a script shows, an input button's `value`), without scripts, styles and

@@ -321,7 +321,7 @@ async fn find_phone_reads_receipts_and_failures() {
     .await
     .unwrap();
     let summary = app
-        .get_page(&format!("/devices/{device}"), &cookie)
+        .get_page(&format!("/devices/{device}/activity"), &cookie)
         .await
         .text();
     let line = |command: &str| super::locate_page::recent_row(&summary, command).to_string();
