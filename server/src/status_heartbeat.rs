@@ -314,7 +314,11 @@ mod tests {
                 .get("lock_state")
                 .is_some_and(|v| v.get("unlock_pin").is_some())
         );
-        assert!(kept["call_state"].get("anything_else").is_none());
+        assert!(
+            !kept
+                .get("call_state")
+                .is_some_and(|v| v.get("anything_else").is_some())
+        );
     }
 
     /// Every `pub <name>:` of `StatusReportRequest` in `models.rs` is a [REPORT_KEYS] entry and no other.
