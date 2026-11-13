@@ -3011,6 +3011,7 @@ a.act, a.act:hover { text-decoration: none; }
 .qa-head .row-label { font-weight: 600; }
 .qa-head .row-label:focus { outline: none; }
 .qa-head > .row-action { margin-left: auto; }
+.qa-head > a.row-action, .qa-head > a.row-action:hover { text-decoration: none; }
 .qa-row-tile { margin-right: 12px; }
 .qa-warn { color: var(--orange-text); }
 .qa-danger, .qa-danger:hover { color: var(--red-text); }

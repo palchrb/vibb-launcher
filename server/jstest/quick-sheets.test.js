@@ -184,6 +184,23 @@ test("a length fills Til, typing in Til clears the lengths, and a rule brings it
     assert.strictEqual(p.rulesForm.querySelector("[data-qa-line]").textContent, "Som i Leggetid");
     assert.deepStrictEqual(p.warnings(), []);
     assert.strictEqual(p.button("on").textContent, "Slå på Leggetid til 19:00");
+    // Til emptied again: the page's length is back, so the form never posts neither.
+    til.value = "";
+    p.fire("input", til);
+    assert.ok(lengths[1].checked);
+    assert.strictEqual(p.button("on").textContent, "Slå på Leggetid til 18:30");
+});
+
+test("Slå på regel closes the sheet it opened while Slå på nå can't be chosen", () => {
+    const p = page();
+    p.get("m-on").disabled = true;
+    p.fire("click", p.tiles.on);
+    assert.strictEqual(p.rulesSheet.hidden, false);
+    assert.strictEqual(p.get("m-pause").checked, true);
+    assert.ok(p.tiles.on.classList.contains("qa-chosen"));
+    assert.ok(!p.tiles.pause.classList.contains("qa-chosen"));
+    p.fire("click", p.tiles.on);
+    assert.strictEqual(p.rulesSheet.hidden, true);
 });
 
 test("Lukk closes the sheet and gives the focus back to its tile; a tile hides the other sheet", () => {
@@ -195,6 +212,6 @@ test("Lukk closes the sheet and gives the focus back to its tile; a tile hides t
     assert.strictEqual(p.rulesSheet.hidden, false);
     assert.ok(p.fire("click", p.rulesSheet.querySelector("[data-qa-close]")));
     assert.strictEqual(p.rulesSheet.hidden, true);
-    assert.deepStrictEqual(p.tiles.pause.focused, [{ preventScroll: true }]);
+    assert.deepStrictEqual(p.tiles.on.focused, [{ preventScroll: true }], "the tile that opened it");
     assert.ok(!p.fire("click", p.rulesForm), "a click elsewhere does nothing");
 });

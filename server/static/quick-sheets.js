@@ -76,6 +76,25 @@
             return mOn && mOn.checked ? "on" : "pause";
         }
 
+        // The rule tile the Regler sheet belongs to: the one that opened it, then the mode chosen in it. While Slå på nå
+        // can't be chosen (a rule already on, no zone, the day's last minute) Slå på regel opens it in pause mode and
+        // stays the chosen tile, so it closes the sheet it opened. The server marks the tile it opened with.
+        var openedMode = null;
+        (function () {
+            var list = section.querySelectorAll("a.qa[data-sheet]");
+            for (var i = 0; i < list.length; i++) {
+                if (list[i].classList.contains("qa-chosen") && list[i].hasAttribute("data-mode")) {
+                    openedMode = list[i].getAttribute("data-mode");
+                }
+            }
+        })();
+        function showsMode(tileMode) {
+            return !tileMode || tileMode === (openedMode || mode());
+        }
+
+        // The length the page came with: Til emptied again falls back to it, so the form never posts neither.
+        var defaultLength = rulesForm ? checkedOf(rulesForm, "on_len") : null;
+
         function setMode(wanted) {
             if (!mOn || !mPause) return;
             var on = wanted === "on" && !mOn.disabled;
@@ -170,7 +189,7 @@
                 var tile = list[i];
                 var sheet = doc.getElementById(tile.getAttribute("data-sheet"));
                 var tileMode = tile.getAttribute("data-mode");
-                var chosen = !!sheet && !sheet.hidden && (!tileMode || tileMode === mode());
+                var chosen = !!sheet && !sheet.hidden && showsMode(tileMode);
                 if (chosen) tile.classList.add("qa-chosen");
                 else tile.classList.remove("qa-chosen");
                 tile.setAttribute("aria-expanded", chosen ? "true" : "false");
@@ -185,7 +204,7 @@
             var sheet = doc.getElementById(tile.getAttribute("data-sheet"));
             if (!sheet) return;
             var tileMode = tile.getAttribute("data-mode");
-            if (!sheet.hidden && (!tileMode || tileMode === mode())) {
+            if (!sheet.hidden && showsMode(tileMode)) {
                 sheet.hidden = true;
                 mark();
                 return;
@@ -194,6 +213,7 @@
             var sheets = section.querySelectorAll(".qa-sheet");
             for (var i = 0; i < sheets.length; i++) sheets[i].hidden = sheets[i] !== sheet;
             if (tileMode) {
+                openedMode = tileMode;
                 setMode(tileMode);
                 updateRules();
             }
@@ -201,16 +221,18 @@
             if (wasHidden) focus(doc.getElementById(sheet.id + "-title"));
         }
 
+        // The focus goes back to the tile the sheet belonged to (for the Regler sheet, [showsMode]'s).
         function close(sheet) {
-            sheet.hidden = true;
-            mark();
             var list = tiles();
-            for (var i = 0; i < list.length; i++) {
-                if (list[i].getAttribute("data-sheet") === sheet.id) {
-                    focus(list[i]);
-                    return;
+            var back = null;
+            for (var i = 0; i < list.length && !back; i++) {
+                if (list[i].getAttribute("data-sheet") === sheet.id && showsMode(list[i].getAttribute("data-mode"))) {
+                    back = list[i];
                 }
             }
+            sheet.hidden = true;
+            mark();
+            focus(back);
         }
 
         doc.addEventListener("click", function (e) {
@@ -238,6 +260,7 @@
             var el = e.target;
             if (!el || !el.form) return;
             if (el.form === rulesForm) {
+                if (el.name === "mode") openedMode = mode();
                 if (el.name === "on_len") {
                     var til = rulesForm.querySelector("[data-qa-til]");
                     if (til) til.value = el.value === "day" ? "" : clock(nowMinute + Number(el.value), "00:00");
@@ -255,6 +278,8 @@
             if (el.value) {
                 var lengths = rulesForm.querySelectorAll("input[name=on_len]");
                 for (var i = 0; i < lengths.length; i++) lengths[i].checked = false;
+            } else if (defaultLength && !checkedOf(rulesForm, "on_len")) {
+                defaultLength.checked = true;
             }
             updateRules();
         });

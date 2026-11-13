@@ -59,6 +59,9 @@ pub(crate) struct QuickActions {
     pub open: Option<&'static str>,
     /// The Regler sheet opens in on mode (else pause).
     pub mode_on: bool,
+    /// The address asked for Slå på regel's tile (`mode=on`): that tile is the chosen one even when
+    /// Slå på nå can't be chosen and the sheet opens in pause mode.
+    pub tile_on: bool,
     /// Why Slå på nå can't be chosen now (`m-on` disabled), if it can't.
     pub on_disabled: Option<String>,
     pub rules: Vec<RuleOption>,
@@ -480,8 +483,8 @@ pub(crate) async fn build(
     } else {
         None
     };
-    let mode_on =
-        on_disabled.is_none() && input.query.get("mode").map(String::as_str) == Some("on");
+    let tile_on = input.query.get("mode").map(String::as_str) == Some("on");
+    let mode_on = on_disabled.is_none() && tile_on;
     let default_rule = rules
         .iter()
         .zip(input.rules)
@@ -519,6 +522,7 @@ pub(crate) async fn build(
     Ok(QuickActions {
         open,
         mode_on,
+        tile_on,
         on_disabled,
         rules,
         selected,

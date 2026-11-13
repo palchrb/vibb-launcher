@@ -146,11 +146,11 @@
                 <span><span class="qa-label">{{ self.t("device.summary.qa.time") }}</span><span class="qa-sub">{% if let Some(line) = qa.time_line %}{{ line }}{% else %}&nbsp;{% endif %}</span></span>
             </a>
             {% if !qa.rules.is_empty() %}
-            <a class="qa{% if qa.open == Some("rules") && !qa.mode_on %} qa-chosen{% endif %}{% if qa.pause_line.is_some() && !qa.pauses.is_empty() %} qa-on{% endif %}" href="/devices/{{ device.id }}?open=rules&amp;mode=pause#quick" data-sheet="rules-sheet" data-mode="pause" aria-controls="rules-sheet" aria-expanded="{% if qa.open == Some("rules") && !qa.mode_on %}true{% else %}false{% endif %}">
+            <a class="qa{% if qa.open == Some("rules") && !qa.tile_on %} qa-chosen{% endif %}{% if qa.pause_line.is_some() && !qa.pauses.is_empty() %} qa-on{% endif %}" href="/devices/{{ device.id }}?open=rules&amp;mode=pause#quick" data-sheet="rules-sheet" data-mode="pause" aria-controls="rules-sheet" aria-expanded="{% if qa.open == Some("rules") && !qa.tile_on %}true{% else %}false{% endif %}">
                 <span class="tile tile-indigo"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><rect x="4" y="3.5" width="3" height="10" rx="1" fill="currentColor"/><rect x="10" y="3.5" width="3" height="10" rx="1" fill="currentColor"/></svg></span>
                 <span><span class="qa-label">{{ self.t("device.summary.qa.pause") }}</span><span class="qa-sub">{% if let Some(line) = qa.pause_line %}{{ line }}{% else %}&nbsp;{% endif %}</span></span>
             </a>
-            <a class="qa{% if qa.open == Some("rules") && qa.mode_on %} qa-chosen{% endif %}{% if qa.on_line.is_some() %} qa-on{% endif %}" href="/devices/{{ device.id }}?open=rules&amp;mode=on#quick" data-sheet="rules-sheet" data-mode="on" aria-controls="rules-sheet" aria-expanded="{% if qa.open == Some("rules") && qa.mode_on %}true{% else %}false{% endif %}">
+            <a class="qa{% if qa.open == Some("rules") && qa.tile_on %} qa-chosen{% endif %}{% if qa.on_line.is_some() %} qa-on{% endif %}" href="/devices/{{ device.id }}?open=rules&amp;mode=on#quick" data-sheet="rules-sheet" data-mode="on" aria-controls="rules-sheet" aria-expanded="{% if qa.open == Some("rules") && qa.tile_on %}true{% else %}false{% endif %}">
                 <span class="tile tile-indigo"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><rect x="3" y="7.2" width="11" height="7.6" rx="1.7" fill="currentColor"/><path d="M5.4 7.2V5.3a3.1 3.1 0 0 1 6.2 0v1.9" fill="none" stroke="currentColor" stroke-width="1.7"/></svg></span>
                 <span><span class="qa-label">{{ self.t("device.summary.qa.on") }}</span><span class="qa-sub">{% if let Some(line) = qa.on_line %}{{ line }}{% else %}&nbsp;{% endif %}</span></span>
             </a>
@@ -504,7 +504,7 @@
     {% if relock.wait_for_phone %}
     <script src="/static/auto-reload.js?v=9" defer></script>
     {% endif %}
-    <script src="/static/quick-sheets.js?v=1" defer></script>
+    <script src="/static/quick-sheets.js?v=2" defer></script>
     </div>
 </main>
 {#- Pull down to refresh (2026-10-25): on the Devices list and a phone's summary only (static/pull-refresh.js), never a page with a map. -#}
