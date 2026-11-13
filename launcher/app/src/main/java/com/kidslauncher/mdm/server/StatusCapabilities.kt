@@ -64,6 +64,9 @@ val STATUS_CAPABILITIES: List<String> = listOf(
     com.kidslauncher.mdm.sms.MESSAGES_APP_CAPABILITY,
     // Design 87: `installed_apps[].logo` in every report, the answer's `wanted_logos` read and those logos uploaded.
     com.kidslauncher.mdm.server.dto.APP_LOGOS_CAPABILITY,
+    // Design 93: a rule's `until_ms` (gone from that instant) and `card_first` (the card names it while its end is a
+    // real unlock). The server shows its rc.8 warning ("Skole gjelder allerede…") only without it.
+    com.kidslauncher.mdm.timerules.LOCK_NOW_CAPABILITY,
 )
 
 /** A time rule's "Stille" switch (server migration 0121): `rules[].silent` is enforced. */

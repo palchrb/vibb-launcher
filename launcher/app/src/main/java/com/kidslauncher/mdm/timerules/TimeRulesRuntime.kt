@@ -140,7 +140,8 @@ object TimeRulesRuntime {
     /** [zone] is read once here and passed down; nothing below reads the system zone again. */
     fun snapshot(context: Context, policy: PolicyResponse?, overrideActive: Boolean = overrideActive(), zone: ZoneId = zone()): Snapshot {
         val clocks = clocks()
-        val tp = KidModeEnforcer.timePolicyOf(policy)
+        // Design 93 §9.1: a rule turned on now is gone from its `until_ms`.
+        val tp = KidModeEnforcer.timePolicyOf(policy)?.inForceAt(clocks.wallMs)
             ?: return Snapshot(UNLOCKED, null, null, null, emptyList(), clocks, zone)
         val ledger = ledger(context, tp, clocks, zone)
         val records = liftRecords(context, tp.lifts, clocks)
@@ -183,9 +184,11 @@ object TimeRulesRuntime {
     /** The call path's live answer (TimeRulesStore.liveDecider): a no-calls rule is in force,
      * counting lifts and the override PIN/pause. */
     fun callsBlockedNow(): Boolean {
-        val context = appContext ?: return callsBlockedAt(TimeRulesStore.policy, LocalDateTime.now(), false, RuleLifts())
-        val tp = TimeRulesStore.policy ?: return false
+        val context = appContext ?: return callsBlockedAt(
+            TimeRulesStore.policy?.inForceAt(System.currentTimeMillis()), LocalDateTime.now(), false, RuleLifts(),
+        )
         val clocks = clocks()
+        val tp = TimeRulesStore.policy?.inForceAt(clocks.wallMs) ?: return false
         val records = liftRecords(context, tp.lifts, clocks)
         val at = LocalDateTime.ofInstant(Instant.ofEpochMilli(clocks.wallMs), zone())
         return callsBlockedAt(tp, at, overrideActive(), activeRuleLifts(records, tp.lifts, clocks))
@@ -197,7 +200,13 @@ object TimeRulesRuntime {
 
     /** The `time_state` of [snap] - pure: its `zone` is the snapshot's own (design 34 P13). */
     fun timeStateOf(snap: Snapshot, lockReason: LockReason): TimeState {
-        val top = snap.lock.rules.firstOrNull()
+        // Design 93 §9.2: the rule the card names (a turned-on rule with a certain end ahead of the kind order), so the
+        // PWA's badge names the same rule and end.
+        val top = try {
+            com.kidslauncher.mdm.lock.cardPick(snap).rule
+        } catch (e: Exception) {
+            snap.lock.rules.firstOrNull()
+        }
         return TimeState(
             day = snap.ledger?.day,
             usedMinutes = ((snap.ledger?.usedMs ?: 0) / 60_000L).toInt(),
@@ -223,9 +232,14 @@ object TimeRulesRuntime {
         val windowEnds = (windowEnds(clocks) + listOfNotNull(TimeRequests.openUntilMs(context)))
             .filter { it > clocks.wallMs }
             .map { Instant.ofEpochMilli(it) }
-        val policy = KidModeEnforcer.timePolicyOf(currentPolicyDecision().policy) ?: return windowEnds.minOrNull()
+        val all = KidModeEnforcer.timePolicyOf(currentPolicyDecision().policy) ?: return windowEnds.minOrNull()
+        val policy = all.inForceAt(clocks.wallMs)
         val records = liftRecords(context, policy.lifts, clocks)
-        return nextBoundary(policy, Instant.ofEpochMilli(clocks.wallMs), zone(), liftExpiries(records, clocks) + windowEnds)
+        // Design 93 §9.1: a turned-on rule's absolute end is a boundary of its own.
+        return nextBoundary(
+            policy, Instant.ofEpochMilli(clocks.wallMs), zone(),
+            liftExpiries(records, clocks) + windowEnds + untilInstants(policy, clocks.wallMs),
+        )
     }
 
     /** The open override's and pause's ends: the earlier of the wall end and now plus the elapsed

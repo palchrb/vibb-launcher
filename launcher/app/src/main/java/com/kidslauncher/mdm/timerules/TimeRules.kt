@@ -48,6 +48,9 @@ data class TimeRule(
     val cardFirst: Boolean = false,
 )
 
+/** Design 93 §9.3: the launcher honours `until_ms` and `card_first` (the server's `lock_now::CAPABILITY`). */
+const val LOCK_NOW_CAPABILITY = "lock_now_v1"
+
 const val KIND_SCHOOL = "school"
 const val KIND_BEDTIME = "bedtime"
 const val KIND_CUSTOM = "custom"
@@ -74,6 +77,18 @@ data class TimePolicy(
     val dailyBudgetMinutes: List<Int?> = emptyList(),
     val lifts: List<Lift> = emptyList(),
 )
+
+/** Design 93 §9.1: the policy without the rules whose `untilMs` is at or before [nowMs] - a rule the parent turned on
+ * now is gone from its end, whatever its weekday window says (no relock a week later, the phone offline). The phone's
+ * wall clock decides, as for every window. Applied wherever the runtime takes the policy for a decision. */
+fun TimePolicy.inForceAt(nowMs: Long): TimePolicy =
+    if (rules.none { r -> r.untilMs.let { it != null && it <= nowMs } }) this
+    else copy(rules = rules.filter { r -> r.untilMs.let { it == null || it > nowMs } })
+
+/** Design 93 §9.1: every rule's absolute end still ahead of [nowMs] - one more boundary each, so the lock is decided
+ * again at that instant even when the window's local end has moved (the phone changed zone since). */
+fun untilInstants(policy: TimePolicy?, nowMs: Long): List<Instant> =
+    policy?.rules.orEmpty().mapNotNull { r -> r.untilMs?.takeIf { it > nowMs }?.let { Instant.ofEpochMilli(it) } }
 
 /** No rules, no budget. */
 val NO_TIME_RULES = TimePolicy(dailyBudgetMinutes = List(7) { null })
