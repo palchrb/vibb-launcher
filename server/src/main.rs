@@ -39,6 +39,7 @@ mod lock;
 mod lock_glance;
 mod lock_now;
 mod mmsc_hosts;
+mod mobile_network;
 mod models;
 mod music;
 mod music_icons;
@@ -1129,6 +1130,11 @@ pub fn build_admin_router(
         .route(
             "/devices/{id}/lock",
             get(handlers::device_pages::view_lock).post(handlers::device_pages::lock_action),
+        )
+        // Design 95 rev. 3: Device › Mobilnett, a page of its own (mobile data, data roaming, the settings lock).
+        .route(
+            "/devices/{id}/mobile",
+            get(handlers::mobile_page::view).post(handlers::mobile_page::save),
         )
         // Step 6: Device › Apps (its forms: `/apps/toggle`, `/app-updates`, `/apps/display`,
         // `/apps/permissions`).

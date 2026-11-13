@@ -95,6 +95,19 @@
     </section>
     {% endif %}
 
+    {#- Design 95 rev. 3 (the approved mockup's "Telefonens side"): Mobilnett's lines, only when they say something -
+        mobile data off on the phone, only Vibb on cellular now (grey), a roaming warning (orange). Each opens the page. -#}
+    {% if !mobile_lines.is_empty() %}
+    <section id="mobile-state" aria-label="{{ self.t("device.page.mobile") }}">
+        {% for line in mobile_lines %}
+        <a class="attention{% if line.warn %} attention-action{% endif %}" href="/devices/{{ device.id }}/mobile" data-mobile-line="{{ line.key }}">
+            <span class="attention-text">{{ line.title }}{% if let Some(sub) = line.sub %}<span class="attention-sub">{{ sub }}</span>{% endif %}</span>
+            <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </a>
+        {% endfor %}
+    </section>
+    {% endif %}
+
     {#- While the phone refuses the Parent PIN (design 24b, QA High 1 (b)): the steps out, by the
         quick actions they name. The packages are behind the ⓘ. -#}
     {% if let Some(f) = relock.foreign %}
@@ -468,6 +481,13 @@
             <span class="tile tile-teal"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><path d="M8.5 1.8l5.5 2v4.3c0 3.5-2.4 6-5.5 7.1C5.4 14.1 3 11.6 3 8.1V3.8z" fill="currentColor"/></svg></span>
             <span class="row-label">{{ self.t("device.page.filter") }}</span>
             <span class="row-value">{{ filter_value }}</span>
+            <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </a>
+        {#- Design 95 rev. 3: Mobilnett, a page of its own like Lock Screen; the value only when it says something. -#}
+        <a class="row" href="/devices/{{ device.id }}/mobile" data-row="mobile">
+            <span class="tile tile-green"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><rect x="2.5" y="10.5" width="2.4" height="4" rx=".6" fill="currentColor"/><rect x="6" y="8" width="2.4" height="6.5" rx=".6" fill="currentColor"/><rect x="9.5" y="5.5" width="2.4" height="9" rx=".6" fill="currentColor"/><rect x="13" y="3" width="2.4" height="11.5" rx=".6" fill="currentColor"/></svg></span>
+            <span class="row-label">{{ self.t("device.page.mobile") }}</span>
+            {% if let Some(value) = mobile_value %}<span class="row-value">{{ value }}</span>{% endif %}
             <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </a>
     </div>

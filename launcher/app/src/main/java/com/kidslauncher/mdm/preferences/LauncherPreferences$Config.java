@@ -147,6 +147,13 @@ import eu.jonahbauer.android.preference.annotations.Preferences;
                         // before any policy has ever been fetched - knows whether to start the service
                         // at all. See AppEnforcer.applyVpnRestrictions, the only writer.
                         @Preference(name = "vpn_filter_enabled", type = boolean.class, defaultValue = "true"),
+                        // Design 95 rev. 3 (Bare Vibb): the VPN's inputs besides the network, with the lifts applied
+                        // ("filter,parentSink,roamingLocked" as 0/1, MobileNetworkRuntime.encodeInputs), written by
+                        // AppEnforcer.apply before every start; and the shape last decided ("none", "filter", "sink",
+                        // "pass"), written by whoever decided it (apply or KidVpnService's watcher) before it writes
+                        // always-on - the single owner's record (alwaysOnFor). Absent = the filter alone, as before.
+                        @Preference(name = "vpn_inputs", type = String.class),
+                        @Preference(name = "vpn_shape", type = String.class),
                 }),
         })
 public final class LauncherPreferences$Config {

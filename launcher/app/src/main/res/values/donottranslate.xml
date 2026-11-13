@@ -37,6 +37,8 @@
     <string name="settings_mdm_dns_upstream_custom_key" translatable="false">mdm.dns_upstream_custom</string>
     <string name="settings_mdm_blocked_dns_event_queue_json_key" translatable="false">mdm.blocked_dns_event_queue_json</string>
     <string name="settings_mdm_vpn_filter_enabled_key" translatable="false">mdm.vpn_filter_enabled</string>
+    <string name="settings_mdm_vpn_inputs_key" translatable="false">mdm.vpn_inputs</string>
+    <string name="settings_mdm_vpn_shape_key" translatable="false">mdm.vpn_shape</string>
     <string name="settings_mdm_device_token_key" translatable="false">mdm.device_token</string>
     <string name="settings_mdm_enrolled_key" translatable="false">mdm.enrolled</string>
     <string name="settings_mdm_kid_mode_policy_key" translatable="false">mdm.kid_mode_policy</string>

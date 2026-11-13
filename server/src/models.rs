@@ -121,6 +121,17 @@ pub struct DevicePolicy {
     #[sqlx(default)]
     pub bluetooth_any_device: bool,
     pub vpn_filter_enabled: bool,
+    /// Design 94 (migration 0143): "off" (data roaming off and locked, the default) or "phone"; "eea" is allowed by
+    /// the column for a later round and served as it is (an older launcher locks on a value it doesn't know). Read
+    /// through [crate::mobile_network::roaming_choice].
+    #[sqlx(default)]
+    pub data_roaming: String,
+    /// Design 95 rev. 3 (migration 0143): "Mobildata for apper", "on" or "vibb" (Bare Vibb).
+    #[sqlx(default)]
+    pub apps_mobile: String,
+    /// Design 95 rev. 3 item 3 (migration 0143): `DISALLOW_CONFIG_MOBILE_NETWORKS` on the phone, on by default.
+    #[sqlx(default)]
+    pub mobile_settings_locked: bool,
     /// Device › Time Rules' "Own limit" switch: when set, this device uses its own
     /// `daily_budget_json` instead of the global one. Until migration 0115 it also swapped
     /// everyone's rules for the phone's own; since then each rule has its own switch
@@ -555,6 +566,13 @@ pub struct DeviceStatus {
     /// launchers.
     #[sqlx(default)]
     pub tailnet_joined: Option<bool>,
+    /// Design 94 §5 (migration 0143): the report's `data_roaming`, cleaned (`mobile_network::clean_roaming`). `None`
+    /// from older launchers.
+    #[sqlx(default)]
+    pub data_roaming_json: Option<String>,
+    /// Design 95 rev. 3 (migration 0143): the report's `mobile_data`, cleaned (`mobile_network::clean_mobile`).
+    #[sqlx(default)]
+    pub mobile_data_json: Option<String>,
     // call_state_json (migrations/0022_calls.sql) is read directly by
     // handlers::calls::call_report.
 }
@@ -1327,6 +1345,13 @@ pub struct PolicyResponse {
     /// app (`app_permissions::lock_media_apps`). A failing query sends `[]` (it only hides a tile). An older launcher
     /// ignores it.
     pub lock_media_apps: Vec<String>,
+    /// Design 94: `"off"` (data roaming off and locked) or `"phone"` (the phone's choice), always sent. An older
+    /// launcher ignores it.
+    pub data_roaming: String,
+    /// Design 95 rev. 3: "Mobildata for apper", `"on"` or `"vibb"` (Bare Vibb), always sent.
+    pub apps_mobile: String,
+    /// Design 95 rev. 3 item 3: Android's mobile-network settings locked on the phone, always sent.
+    pub mobile_settings_locked: bool,
     /// Design 76 D2: the certificate check for a launcher with `server_pin_v1` (`server_tls::policy`): `{}` while
     /// watching (no `enforce`: the phone keeps its flag), `{"enforce": true}` on, `{"enforce": false}` the parent's
     /// off. Left out for an older launcher.
@@ -1576,6 +1601,15 @@ pub struct StatusReportRequest {
     /// `report`). Absent from older launchers.
     #[serde(default)]
     pub tailnet_joined: Option<bool>,
+    /// Design 94 §5 (capability `data_roaming_v1`): `{locked, roaming, country, network, enabled, data_active,
+    /// modems}`, raw - cleaned field by field by `mobile_network::clean_roaming`, so nothing in it can fail the report.
+    /// Absent from older launchers.
+    #[serde(default)]
+    pub data_roaming: Option<serde_json::Value>,
+    /// Design 95 rev. 3 (capability `mobile_data_v1`): `{enabled, sink, settings_locked}`, raw - cleaned by
+    /// `mobile_network::clean_mobile`. Absent from older launchers.
+    #[serde(default)]
+    pub mobile_data: Option<serde_json::Value>,
     /// Design 76: the launcher's certificate check (`testdata/server_tls_report.json`'s `report`), raw - read
     /// within limits by `server_tls::sanitize`, so nothing in it can fail the report. Absent from older launchers.
     #[serde(default)]

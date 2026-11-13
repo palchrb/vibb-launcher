@@ -179,4 +179,15 @@ class SyncScheduleTest {
         assertTrue(collect.contains("versionCode = pkg.longVersionCode,"))
         assertTrue(collect.contains("versionName = com.kidslauncher.mdm.server.dto.installedVersionName(pkg.versionName),"))
     }
+
+    /** The emulator run of 2026-11-13: a stream on a network that went away reconnects at once; one on the default
+     * network stays; with no stream, a network cuts the back-off short. */
+    @Test
+    fun `the command stream follows the default network`() {
+        assertTrue("cellular lost", sseReconnectOnNetwork(streamExists = true, streamNetwork = 101L, defaultNetwork = null))
+        assertTrue("Wi-Fi to cellular", sseReconnectOnNetwork(streamExists = true, streamNetwork = 101L, defaultNetwork = 104L))
+        assertFalse("the same network", sseReconnectOnNetwork(streamExists = true, streamNetwork = 104L, defaultNetwork = 104L))
+        assertTrue("backing off, a network came", sseReconnectOnNetwork(streamExists = false, streamNetwork = null, defaultNetwork = 104L))
+        assertFalse("no stream, no network", sseReconnectOnNetwork(streamExists = false, streamNetwork = 101L, defaultNetwork = null))
+    }
 }

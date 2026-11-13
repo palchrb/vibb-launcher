@@ -22,8 +22,10 @@ const ALLOWED: &[(&str, &str)] = &[("/security", "install"), ("/devices/2/activi
 /// `placeholder`, `alt`, every `data-w-*` a script shows, an input button's `value`), without scripts, styles and
 /// comments.
 fn seen_text(html: &str) -> String {
+    // The 2FA setup's secret key (`.secret-key`) is random base32: a key ending in "MUST" read as English (the flaky
+    // run of 2026-11-13), so it is no text a reader translates.
     let gone = regex::Regex::new(
-        r"(?is)<!--.*?-->|<script\b.*?</script>|<style\b.*?</style>|<!DOCTYPE[^>]*>",
+        r#"(?is)<!--.*?-->|<script\b.*?</script>|<style\b.*?</style>|<!DOCTYPE[^>]*>|<p class="secret-key">.*?</p>"#,
     )
     .unwrap();
     let text = gone.replace_all(html, " ");

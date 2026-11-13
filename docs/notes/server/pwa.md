@@ -2219,3 +2219,23 @@ pointer here.
 - **Activity** lists each rule turned on that is over ("Skole slått på 16:30-18:30", "Sluttet 18:30" / "Avsluttet
   17:10" / "Regelen ble fjernet") as a lift's row; Today keeps the running one with End now.
 
+## Device › Mobilnett (designs 94 and 95 revision 3, 2026-11-13, branch `mobilnett`, migration `0143_mobile_network.sql`)
+
+A settings page of the phone's own (the user: on a par with Lock Screen, not a group on Avansert), `GET
+/devices/{id}/mobile` (`handlers::mobile_page`, `device_mobile.html`), reached from the "Mobilnett" row on the phone's
+page, whose value shows only what differs from the defaults ("Bare Vibb", "Roaming: telefonens valg", "Mobildata av").
+Three groups, each one auto-saving form posting `POST /devices/{id}/mobile` with its `group` and landing on its own
+anchor (`#mobile-data`, `#data-roaming`, `#mobile-lock`), so a save never jumps to the top: "Mobildata" (radio rows På
+/ Bare Vibb with their subtitles, `apps_mobile`), "Dataroaming" (Av (låst) / Telefonens valg, `data_roaming`; the
+column allows `eea` for a later round, the page doesn't offer it), and "Lås mobilnett-innstillingene"
+(`mobile_settings_locked`, on by default). An unknown value or group is a 400 with nothing written; `settings_log`
+writes the line; each save nudges the phone. The radio rows are `.pick-row` (style.css v110).
+
+The choices are disabled with "Virker etter at Vibb One er oppdatert" while the latest report doesn't claim
+`mobile_data_v1` / `data_roaming_v1`; a phone not set up has them live. The phone's state, worded by
+`mobile_network::card` from the report's cleaned `data_roaming` and `mobile_data`, sits under each group: design 94
+§6.1's table (locked, unlocked in a pause, the phone's choice on/off, where it roams, the lingering session - "Bare
+Vibb bruker roamingdata fra før låsen" when the launcher sinks it - and a SIM still reading roaming on), "Mobildata:
+bare Vibb" and "Mobildata er slått av på telefonen". On the summary only the lines that say something show
+(`mobile_network::summary_lines`, `#mobile-state`, each leading to the page), and "Roamer i Sverige" ends the header's
+second line while the phone is in touch (`phone_status::with_roaming`). Pinned by `tests::mobile_network`.

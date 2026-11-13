@@ -129,6 +129,12 @@ data class StatusReportRequest(
     /** Design 77 §7 (capability `sms_engine_v1`): what the message engine did - see [SmsState]; `null` = the engine
      * couldn't be read (left out). No content. Pinned by `sms_contract.json` (`SmsContractTest`). */
     val smsState: SmsState? = null,
+    /** Design 94 §5 (capability `data_roaming_v1`): the roaming lock, where the phone roams, whether roaming data is
+     * in use; `null` = telephony unreadable (left out). Pinned by `mobile_network.json` (`MobileNetworkTest`). */
+    val dataRoaming: com.kidslauncher.mdm.server.DataRoamingReport? = null,
+    /** Design 95 rev. 3 (capability `mobile_data_v1`): Android's mobile-data switch, why only Vibb uses cellular, the
+     * mobile-network settings lock. Pinned by `mobile_network.json`. */
+    val mobileData: com.kidslauncher.mdm.server.MobileDataReport? = null,
 )
 
 /**
