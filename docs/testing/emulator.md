@@ -4344,6 +4344,16 @@ way the stream should reconnect on a change of the default network (design 95 §
 `ServerClients`). Once (D.1) the sink also held ~55 s after Wi-Fi came back before the watcher saw Wi-Fi as best -
 fail closed, but worth a look with the stream fix.
 
+**Fixed on `stream-reconnect` (2026-11-13):** `CommandListenerService` follows the default network
+(`sseReconnectOnNetwork`, settled 1.5 s): a stream on a network that went away is dropped with the shared pool's idle
+connections and opened on the new one; while backing off, a new network cuts the back-off short. Checked on `jelly36`
+(no device owner - the stream doesn't need one): the stream on cellular, `svc data disable; svc wifi enable` - the dead
+stream dropped 1.8 s after, the open with no network failed (`ENETUNREACH`), and the stream was up on Wi-Fi 5.9 s after
+the switch (before: ~5 min); a PWA nudge 15 s later arrived at once. Wi-Fi off with the stream on Wi-Fi: up on
+cellular after 2.2 s. One reconnect per change, no storm. The ~55 s sink hold was not reproduced and its cause is not
+clear (the shape watcher's best-matching callback, or Wi-Fi's validation under lockdown); left open, [needs device
+test].
+
 ### What `jelly36` can't show
 
 The Jelly Star's dual-SIM relock (design 94 §2.4.2), VoLTE/MMS/Wi-Fi calling under lockdown and a real locate indoors
