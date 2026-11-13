@@ -81,6 +81,8 @@ class WeatherLockPanel(
     private val activity: AppCompatActivity,
     private val glance: ViewLockGlanceBinding,
     private val face: LockClockFace,
+    /** Runs the hit area's work after the layout pass ([AfterLayout], E6 L1). */
+    private val afterLayout: AfterLayout,
     /** A finger is on the rows (the glance's dismiss): the nowcast line waits. */
     private val rowsHeld: () -> Boolean,
     /** The card opened or folded, or the own line came or went: the glance places the list and the "Neste" line. */
@@ -130,7 +132,7 @@ class WeatherLockPanel(
             override fun afterTextChanged(s: android.text.Editable?) = guarded("tick") { if (started) repick() }
         })
         // The hit area follows the mark wherever the layout puts it.
-        glance.lockGlanceTop.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> guarded("hit") { hitArea() } }
+        glance.lockGlanceTop.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> afterLayout.add("hit") { guarded("hit") { hitArea() } } }
     }
 
     /** onStart: watching the store. */
