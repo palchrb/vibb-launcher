@@ -1949,10 +1949,12 @@ async fn render_device_time(
     let calls_enforced = crate::attention::calls_enforced(&policy, &call_problems);
     let (lock, locking, screen) = match &report {
         Some((reported_at, report)) => {
+            // Design 93 §4.5: the badge reads the served rows (a rule turned on now among them).
+            let served = crate::lock_now::badge_rows(&state.db, id, now).await;
             let (badge, screen) = crate::handlers::devices::badge_and_screen(
                 report,
                 *reported_at,
-                &effective,
+                &served,
                 &connection,
                 calls_enforced,
                 &zone,

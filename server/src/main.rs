@@ -37,6 +37,7 @@ mod launcher_check;
 mod limits;
 mod lock;
 mod lock_glance;
+mod lock_now;
 mod mmsc_hosts;
 mod models;
 mod music;

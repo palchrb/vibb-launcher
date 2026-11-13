@@ -40,6 +40,12 @@ data class TimeRule(
      * [ruleSilenceFor], our own Do Not Disturb rule ([ZenRuleRuntime]). Missing - an older server - is false. */
     val silent: Boolean = false,
     val days: List<TimeWindow?> = emptyList(),
+    /** Design 93 §9.1: a rule the parent turned on now ("Slå på nå") is gone from this instant (epoch ms), whatever its
+     * weekday window says. Null - a scheduled rule, or an older server - never ends. Kept in the cache with the rule. */
+    val untilMs: Long? = null,
+    /** Design 93 §9.2: the card shows this rule ahead of the kind order while its own end is a real unlock. True on a
+     * turned-on rule only; missing is false. */
+    val cardFirst: Boolean = false,
 )
 
 const val KIND_SCHOOL = "school"

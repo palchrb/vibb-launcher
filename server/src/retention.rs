@@ -472,6 +472,16 @@ pub async fn prune(db: &SqlitePool) -> Pruned {
         .bind(LIFT_DAYS)
         .execute(db)
         .await,
+    ) + rows(
+        failed,
+        "time_lock_now",
+        // Design 93 §3: a rule turned on now goes with the lifts.
+        sqlx::query(
+            "DELETE FROM time_lock_now WHERE ends_at < datetime('now', '-' || ? || ' days')",
+        )
+        .bind(LIFT_DAYS)
+        .execute(db)
+        .await,
     );
     let bans = rows(
         failed,

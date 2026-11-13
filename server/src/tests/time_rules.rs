@@ -1578,7 +1578,8 @@ async fn the_bedtime_is_served_after_the_rule_set_once_and_without_a_name() {
         rules[1],
         json!({"id": bedtime, "name": "", "kind": "bedtime", "calls_allowed": true,
                "exempt_apps": [], "calendar_allowed": false, "silent": false,
-               "days": serde_json::from_str::<serde_json::Value>(NIGHTS).unwrap()})
+               "days": serde_json::from_str::<serde_json::Value>(NIGHTS).unwrap(),
+               "until_ms": null, "card_first": false})
     );
     own_rules_on(&app, id).await;
     crate::time_rules::switch_like_0115(&app.db).await;

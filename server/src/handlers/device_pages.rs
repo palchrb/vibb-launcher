@@ -739,12 +739,8 @@ pub async fn view_about(
                 });
             // The active rule by its id, as the schedules page words it (design 70 §7).
             let report = if report.locking() && report.active_rule_id.is_some() {
-                let rules = crate::time_rules::effective_rule_rows(&state.db, id)
-                    .await
-                    .unwrap_or_else(|err| {
-                        tracing::error!(device_id = id, %err, "can't read the phone's rules");
-                        Vec::new()
-                    });
+                // Design 93 §4.5: the served rows, a rule turned on now named by its rule.
+                let rules = crate::lock_now::badge_rows(&state.db, id, chrono::Utc::now()).await;
                 report.named_by(&rules, lang)
             } else {
                 report

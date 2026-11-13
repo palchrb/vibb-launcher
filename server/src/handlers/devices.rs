@@ -382,9 +382,8 @@ pub(crate) async fn time_glance(
     // locks the phone. A rule whose days don't read is kept as "always on" (no end).
     let mut rules = Vec::new();
     if report.active_rule_id.is_some() && report.locking() {
-        rules = crate::time_rules::effective_rule_rows(&state.db, device_id)
-            .await
-            .unwrap_or_default();
+        // Design 93 §4.5: the served rows, so a rule turned on now is named and can show its end.
+        rules = crate::lock_now::badge_rows(&state.db, device_id, now).await;
     }
     let (lock, screen) = badge_and_screen(
         &report,
@@ -2221,10 +2220,12 @@ async fn render_device(
         .and_then(|s| time_report(&s.reported_at, &s.lock_reason, s.time_state_json.as_deref()))
     {
         Some((reported_at, report)) if device.enrolled_at.is_some() => {
+            // Design 93 §4.5: the badge reads the served rows (a rule turned on now among them).
+            let served = crate::lock_now::badge_rows(&state.db, id, now).await;
             let (badge, screen) = badge_and_screen(
                 &report,
                 reported_at,
-                time_rules.as_deref().unwrap_or(&[]),
+                &served,
                 &connection,
                 facts.calls_enforced,
                 &zone,

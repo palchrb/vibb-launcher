@@ -112,6 +112,12 @@ pub struct PolicyTimeRule {
     /// launcher without it ignores the key; a missing key is not silent.
     pub silent: bool,
     pub days: Vec<Option<DayWindow>>,
+    /// Design 93 §9.1: a rule turned on now ends for good at this instant (epoch ms), whatever its
+    /// weekday window says; `null` on a scheduled rule. A launcher without `lock_now_v1` ignores it.
+    pub until_ms: Option<i64>,
+    /// Design 93 §9.2: the card shows this rule ahead of the kind order while its end is a real
+    /// unlock; true on a turned-on rule only.
+    pub card_first: bool,
 }
 
 /// `PolicyResponse.time_policy.lifts[]`. `rule_id` null with target "rule" = every rule.
@@ -185,6 +191,8 @@ impl TimeRuleRow {
             days: served_days(
                 &parse_days(&self.days_json).map_err(|e| format!("rule {}: {e}", self.id))?,
             ),
+            until_ms: None,
+            card_first: false,
         })
     }
 }
