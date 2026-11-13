@@ -2163,3 +2163,35 @@ pointer here.
   keeps ` data-waiting`; a new fix still reloads at `#location`. Tests:
   `locate_page::update_location_is_the_first_row_and_the_map_has_no_box`, `the_bubble_says_fresh_or_old`,
   `jstest/locate.test.js`.
+
+## Quick Actions as three tiles, Åpne for oppsett on Avansert (design 93, `docs/design/93-lock-now-quick-actions.md` §6)
+
+- **The tiles** (`handlers/quick_actions.rs` builds them, `device_detail.html`'s `#quick`): `.qa-grid`, three equal
+  columns - **Skjermtid** (teal), **Pause regler** and **Slå på regel** (indigo; both left out while no rule applies) -,
+  each an `<a class="qa">` to `?open=time` / `?open=rules&mode=pause|on` with `#quick`. Its state line shows only when it
+  says something (an empty one keeps its height): "48 min igjen i dag" / "Brukt opp i dag" / "Ingen grense i dag"; the
+  latest-ending running pause, else "Skole gjelder nå" from a badge that isn't stale and isn't the screen-time lock;
+  only a rule turned on now ("Skole på til 18:30 · venter" until a report after its start or change). The +15/+30/+1 h
+  tiles, Pause a rule…, Lock again, Unlock 2 h… and Locate are gone (Finn has its own tab).
+- **The sheets** render below the grid, `hidden` but the one `?open=` names. Skjermtid posts `target=budget` to
+  `/lifts` as before. Regler: what runs first (the turned-on rule with Avslutt nå, Forleng eller forkort and Lagre ny
+  tid; each running pause with Avslutt nå), then "Noe annet" (or "Regler"): one form to `/rules-now` whose `mode`
+  radios (`#m-on`, `#m-pause`, `.qa-mode`) are its first children, so `.when-on` / `.when-pause` switch with sibling
+  selectors only (Chrome 80 / iOS 14). `#m-on` is disabled while a rule is on (one at a time), without the phone's zone
+  and in the day's last minute. Each `<option>` carries its mode line and warnings (`data-line`, `data-warn`); "Skole
+  gjelder allerede til 14:30" only for a phone without `lock_now_v1`. A refusal's words show in the sheet it reopens.
+- **`static/quick-sheets.js`** (ES5, `jstest/quick-sheets.test.js`): a tile opens its sheet in place (no reload, the
+  address kept, the focus to the sheet's head without a scroll), the open tile or Lukk closes it, the other rule tile
+  only switches the mode; "Alle regler" leaves in Slå på nå; a length fills Til, typing Til clears the lengths; the
+  buttons say the sentence ("Slå på Skole til 18:30"), their words from `#quick`'s `data-w-*`. `auto-reload.js` (`?v=9`)
+  holds while a `.qa-sheet` is shown.
+- **Open for setup**: while the report shows the restrictions pause or Play install mode, `#setup-open` sits inside
+  `#quick` above its header (where Attention's row lands): "Åpnet for oppsett til 17:10" (the newest answered
+  `start_pause` + 2 h), "Apper og Play Butikk er åpne" and Lås igjen (`/end-windows`); an older launcher's own words and
+  no action. **Avansert's first row** (`device_advanced.html`, `#setup`, a `window_relock_v1` phone only,
+  `quick_actions::setup_card`): a `<details class="act-sheet row-sheet">` whose sheet holds "Åpne for oppsett i 2 t"
+  (`/start-pause`) or, while open, Lås igjen; both forms send `back=advanced` and `window_relock::queue` returns to
+  `/devices/{id}/advanced?notice=..#setup`, the flash in the group; the page loads `auto-reload.js` while it waits.
+- **Activity** lists each rule turned on that is over ("Skole slått på 16:30-18:30", "Sluttet 18:30" / "Avsluttet
+  17:10" / "Regelen ble fjernet") as a lift's row; Today keeps the running one with End now.
+

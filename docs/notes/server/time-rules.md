@@ -164,3 +164,35 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   21:00-07:00 · Fri-Sat 22:30-09:00" / "Every night 21:00-07:00" / "Not set" / "Can't be read" in `text-alarm`; the
   remove's flash), and each phone's sub-line on Settings › Time Rules ("Bedtime …", "No bedtime", "Bedtime can't be
   read"). The phone: `ruleLabel(kind, "")` gives "Leggetid" and the moon; no launcher change.
+
+## A rule turned on now, "Slå på nå" (design 93, `docs/design/93-lock-now-quick-actions.md`, migration `0142_time_lock_now.sql`)
+
+- **The row**: `time_lock_now` - the phone, the rule (`ON DELETE SET NULL`), its name at the start (Activity's words once
+  the rule is gone), the phone's zone (`time_state.zone`), the local date and minutes (`end_minute` 1439 = until
+  midnight), `ends_at` in UTC, who started, changed and ended it. **Running** = not ended early, its rule still there and
+  `ends_at` ahead: one SQL condition (`lock_now::running`), no timer. At most one per phone: the insert is
+  `INSERT ... SELECT ... WHERE NOT EXISTS (running)`, so of two parents tapping at once one gets `on_busy`. Retention
+  prunes it with the lifts (`LIFT_DAYS`).
+- **The policy** (`lock_now::served_rule_rows`, read by `build_time_policy` and every badge reader - the Devices list,
+  the summary's header, Device › About, Device › Time Rules - never by the counts or the Settings lists): the effective
+  rows plus a copy of the rule (`copy_row`: its name, kind, calls, exempt apps, Kalender and silence read live) with
+  one window on the lock's weekday and `id` `-(lock id)`. A rule deleted or switched off for the phone is no longer
+  served. The copy goes **first** in `rules[]` unless a rule of its kind has an occurrence that overlaps its window and
+  ends after it (`copy_first`, yesterday's past-midnight one included): rc.8's card sorts by kind, then index. A pause
+  of the turned-on rule is served with a **twin** for the copy (`twin_lifts`: `-(lift id)`, `rule_id` `-(lock id)`, the
+  same expiry); "Alle regler" needs none.
+- **`until_ms` and `card_first`** on every served rule (design 93 §9): the copy's end as epoch ms and `true`; a scheduled
+  rule `null` and `false`, always explicit. rc.8 ignores both; a launcher with `lock_now_v1` drops the copy at
+  `until_ms` (no relock a week later) and shows it on the card while its end is a real unlock. The contract is
+  `server/testdata/lock_now.json` (CLAUDE.md), `lock_now::tests::the_contract`.
+- **Time**: wall clock in the phone's zone, never instant + hours (`end_minute`, `instant_of`: a gap moves later, an
+  overlap takes the earlier offset, as `java.time`). Never past midnight: 1/2/3 t are offered only when they end by
+  24:00 (24:00 is stored as 1439), Til must be after the current minute, 00:00 is "Ut dagen"; nothing starts in the day's
+  last minute. Without a zone in the newest report "Slå på nå" is refused (`on_no_zone`).
+- **Routes** (`handlers/rules_now.rs`, in `settings_log::NOT_SAVES`): `POST /devices/{id}/rules-now` (`mode=pause` through
+  `lifts::record_lift`, `create_lift`'s core; `mode=on` turns a rule on: the pauses of that rule and an "Alle regler"
+  pause end in the same transaction, `end_windows` is queued when the report shows the phone open for setup on a
+  `window_relock_v1` launcher), `/lock-now/{lock_id}` (`add=30|60|day` or `til`, refused as `changed_elsewhere` when
+  `seen` isn't the stored end) and `/lock-now/{lock_id}/end`. Each writes `time_lock_now`, `time_lock_now_changed` or
+  `time_lock_now_ended` to the security log and nudges; no inbox event, no push. A refusal returns
+  `?done=<code>&open=rules&mode=..&rule=..#quick`; the flashes name the rule and its end (the newest row's).
