@@ -1126,9 +1126,8 @@ select.pick {
     appearance: none;
     flex: 0 1 auto;
     width: auto;
-    /* A flex item's min-width is its longest choice: 0 lets it shrink to its row at any text size (the choice
-       shown is cut by the picker itself). */
-    min-width: 0;
+    /* Its longest choice is its least width (a flex item's own), held to 60 % of the row: never past the screen at any
+       text size, and the label gives way first - the choice shown is never cut at 100 % text. */
     max-width: 60%;
     margin: 0;
     padding: 4px 0;
@@ -1165,7 +1164,10 @@ select.pick {
 }
 
 .row-stacked > select.pick {
-    flex: 1 1 0%;
+    /* Its own line less the arrows' 16 px: wide enough never to share the label's line, and at large text never
+       wider than the row (min-width 0: its longest choice is cut by the picker itself). */
+    flex: 1 1 calc(100% - 16px);
+    min-width: 0;
     max-width: none;
     margin: 4px 0 0;
     text-align: left;
