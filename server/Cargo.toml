@@ -71,7 +71,7 @@ sha2 = "0.10"
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "macros", "chrono"] }
 tokio = { version = "1.52.3", features = ["full"] }
 totp-rs = { version = "5.7.2", features = ["gen_secret", "qr"] }
-tower-http = { version = "0.7.0", features = ["compression-gzip", "fs", "set-header"] }
+tower-http = { version = "0.7.0", features = ["compression-gzip", "decompression-gzip", "fs", "set-header"] }
 tower-sessions = "0.14"
 tower-sessions-sqlx-store = { version = "0.15.0", features = ["sqlite"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
@@ -80,8 +80,9 @@ tracing = "0.1.44"
 unicode-normalization = "0.1"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+# Design 95 §3.5: the status route's request decompression and its body mapping (`device_routes`).
+tower = { version = "0.5", features = ["util"] }
 
 [dev-dependencies]
 http-body-util = "0.1"
 tempfile = "3"
-tower = { version = "0.5", features = ["util"] }

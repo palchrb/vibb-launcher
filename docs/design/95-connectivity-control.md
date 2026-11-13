@@ -854,7 +854,18 @@ The PWA's footer says this, and says that the dual-SIM case is "nesten null".
    - Launcher: the sealed raw body with its ETag, versionCode and URL; `If-None-Match`; a 304 applied as a 200; one
      base client per server path, with the SSE, sync and power clients as `newBuilder()` children.
    - No contract file: the 304 is plain HTTP, and each side tests its own half.
-2. **95-T2 (the heartbeat), both directories, M.**
+2. **95-T2 (the heartbeat), both directories, M.** **Built** (branch `traffic-2`, 2026-11-13), with the gzip of the
+   non-secret answers moved here from 95-T1. Decided in the build: the server **expands** a heartbeat into the full
+   report it stands for (the kept body in `device_report_base` with the heartbeat's fields over it) and runs it
+   through the one intake every full report takes, instead of copying the latest row and skipping the diffs - so
+   every consumer of a report behaves exactly as for the full report, by construction (§3.5's copy would have
+   skipped the zones' "here now", the certificate check's `seen`, the Child PIN's re-queue check and the battery's
+   events unless each was re-run by hand). The server never computes the hash (it is the phone's name for the body),
+   so the contract has no hash vectors on the server side. The heartbeat fields are `lock_reason`, `battery`,
+   `time_state`, `location`, `extra_locations`, `zone_watch`, `server_tls` (its `seen.at_ms` moves every sync over
+   https; the §3.2 measurement ran over plain http and could not see it), `data_roaming` and `mobile_data` (the built
+   name of §3.5's `sink`). The decompression sits on the status route alone. Notes:
+   `docs/notes/launcher/push-and-play.md`, `docs/notes/server/architecture.md`.
    - Server: `report_hash`, the heartbeat path (copy the row, no diffs, `full_report`),
      `RequestDecompressionLayer` with a past-the-limit test, the policy flag `status_gzip`.
    - Launcher: `status_heartbeat_v1`, the hash without the heartbeat fields, the 6 h full report, gzip under the

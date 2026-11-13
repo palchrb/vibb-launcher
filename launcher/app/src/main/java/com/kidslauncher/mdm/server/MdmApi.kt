@@ -11,7 +11,6 @@ import com.kidslauncher.mdm.server.dto.EnrollResponse
 import com.kidslauncher.mdm.server.dto.InstallProgressReport
 import com.kidslauncher.mdm.server.dto.ParentPinEventBatch
 import com.kidslauncher.mdm.server.dto.PowerReport
-import com.kidslauncher.mdm.server.dto.StatusReportRequest
 import com.kidslauncher.mdm.server.dto.TimeRequestBody
 import com.kidslauncher.mdm.server.dto.TrackedAppUpdate
 import okhttp3.MediaType.Companion.toMediaType
@@ -47,10 +46,11 @@ interface MdmApi {
 
     /** The raw answer (design 87 §4.2, R2-L7): to a report claiming `app_logos_v1` a `200` with the logos the server
      * wants ([com.kidslauncher.mdm.appdisplay.wantedLogosOf]), else `204`. The caller closes the body; every 2xx is
-     * "the server took the report". Streamed, so the caller's bound on what it reads is real. */
+     * "the server took the report". Streamed, so the caller's bound on what it reads is real. Design 95 §3.5: the body
+     * is [StatusReports]' JSON (a full report or a heartbeat), [encoding] `gzip` when it is gzip'd, else `null`. */
     @Streaming
     @POST("api/devices/status")
-    suspend fun sendStatus(@Body report: StatusReportRequest): Response<ResponseBody>
+    suspend fun sendStatus(@Body report: okhttp3.RequestBody, @Header("Content-Encoding") encoding: String?): Response<ResponseBody>
 
     /** One wanted logo, the raw `image/png` (design 87 §4.3) - see [com.kidslauncher.mdm.appdisplay.AppLogos.upload]. */
     @POST("api/devices/app-logos/{hash}")

@@ -24,6 +24,8 @@ val STATUS_CAPABILITIES: List<String> = listOf(
     // Design 67: the browsers' managed config, the built-in secure-DNS hosts and Firefox's canary.
     DNS_BYPASS_CAPABILITY,
     BATTERY_CAPABILITY,
+    // Design 95 §3.5: heartbeat reports (StatusReports).
+    STATUS_HEARTBEAT_CAPABILITY,
     INSTALL_NOW_CAPABILITY,
     // The RC-to-RC fix: a same-code release under a newer name installs (launcherBuildAhead). Legacy since
     // launcher-v0.36.0-rc.4 (every build its own versionCode); kept for builds tagged before it.

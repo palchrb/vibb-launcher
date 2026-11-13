@@ -336,8 +336,10 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         // Design 76 D3: the outside sightings go in every report; they leave the phone only after a 2xx over a
         // connection that passed the built-in set, or over the tailnet (R-2).
         val tlsSent = ServerPinStore.ring(context)
-        val sent = api.sendStatus(
-            StatusReportRequest(
+        // Design 95 §3.5: a heartbeat while only its fields moved and the server takes them, else the full report
+        // (gzip'd while the policy says so) - see StatusReports.kt.
+        val sent = sendReport(
+            report = StatusReportRequest(
                 lockReason = reason.name,
                 kioskEngaged = mdm.kioskEnabled(),
                 installedApps = collectInstalledApps(context),
@@ -420,19 +422,32 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
                     seen = seenOf(policyHandshake, ServerPinStore.network(context), System.currentTimeMillis()),
                     outside = tlsSent,
                 ),
-            )
-        )
-        // Design 87 (R2-L7): read at once (bounded) and closed; a 204, an empty or unreadable body is nothing wanted. A
-        // 200 is still a 2xx below - `sent.isSuccessful` is unchanged by the body, and a body that fails to read never
-        // makes a taken report a failed one.
+            ),
+            heartbeat = decision.policy?.statusHeartbeat == true,
+            gzip = decision.policy?.statusGzip == true,
+            owner = HeartbeatAckStore.ownerOf(serverUrl, deviceToken),
+            acks = HeartbeatAckStore.of(context),
+            nowMs = System::currentTimeMillis,
+            // Design 87 (R2-L7): read at once (bounded) and closed; a body that fails to read is nothing wanted, and
+            // never makes a taken report a failed one.
+            read = { body ->
+                try {
+                    body?.use { it.byteStream().use(::readWantedLogosBody) }
+                } catch (e: Exception) {
+                    // `use` closed the body.
+                    Log.w(LOG_TAG, "The status answer's body didn't read: ${e.javaClass.simpleName}")
+                    null
+                }
+            },
+        ) { body, encoding -> api.sendStatus(body, encoding) }
+        // A 204, an empty or unreadable body is nothing wanted. A 200 is still a 2xx below - `sent.isSuccessful` is
+        // unchanged by the body.
         wantedLogos = try {
-            wantedLogosOf(sent.code(), sent.body()?.use { body -> body.byteStream().use(::readWantedLogosBody) })
+            wantedLogosOf(sent.code, sent.body)
         } catch (e: Exception) {
-            // `use` closed the body.
-            Log.w(LOG_TAG, "The status answer's body didn't read: ${e.javaClass.simpleName}")
             emptyList()
         }
-        if (sent.isSuccessful) ServerPinStore.reported(context, tlsSent, pinConnection(apiPath, sent.raw().handshake))
+        if (sent.isSuccessful) ServerPinStore.reported(context, tlsSent, pinConnection(apiPath, sent.raw.handshake))
         // Design 64 step 2: what the server took leaves the queue; a report it didn't take leaves
         // its fix there for the next one.
         afterZoneReport(context, extraFixes, location.fix, sent.isSuccessful, queueOff)

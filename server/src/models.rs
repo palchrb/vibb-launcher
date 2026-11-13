@@ -1352,6 +1352,11 @@ pub struct PolicyResponse {
     pub apps_mobile: String,
     /// Design 95 rev. 3 item 3: Android's mobile-network settings locked on the phone, always sent.
     pub mobile_settings_locked: bool,
+    /// Design 95 §3.5 (step 95-T2): this server expands heartbeat reports (`status_heartbeat`), always `true`. A
+    /// launcher with `status_heartbeat_v1` sends hashes and heartbeats only while it says so; an older one ignores it.
+    pub status_heartbeat: bool,
+    /// Design 95 §3.5: this server takes a gzip'd status report (`Content-Encoding: gzip`), always `true`.
+    pub status_gzip: bool,
     /// Design 76 D2: the certificate check for a launcher with `server_pin_v1` (`server_tls::policy`): `{}` while
     /// watching (no `enforce`: the phone keeps its flag), `{"enforce": true}` on, `{"enforce": false}` the parent's
     /// off. Left out for an older launcher.

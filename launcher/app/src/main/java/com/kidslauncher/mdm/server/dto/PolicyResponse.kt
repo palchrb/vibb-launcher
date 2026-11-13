@@ -166,6 +166,11 @@ data class PolicyResponse(
     /** Design 95 rev. 3 item 3: Android's mobile-network settings locked (`DISALLOW_CONFIG_MOBILE_NETWORKS`); missing =
      * not set. Kept by [com.kidslauncher.mdm.server.LastEnforcedPlan]. */
     val mobileSettingsLocked: Boolean? = null,
+    /** Design 95 §3.5 (step 95-T2): the server expands heartbeat reports ([StatusReports]); missing (an older server)
+     * = never send one. */
+    val statusHeartbeat: Boolean = false,
+    /** Design 95 §3.5: the server takes a gzip'd status report; missing = never gzip. */
+    val statusGzip: Boolean = false,
 )
 
 /** `PolicyResponse.kidLock` - `security::hash_pin` on the server (PBKDF2-SHA256, see

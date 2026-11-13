@@ -277,6 +277,16 @@ decodes the policy rows, runs every rule and shape row through `dataRoamingLocke
 `parentSinkOn`, `vpnShape`, `sinkReason` and `alwaysOnFor`, and encodes `report` exactly; both compare the copies. The
 policy's three keys are pinned by `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTest`.
 
+The heartbeat report (design 95 §3.5, step 95-T2) is `server/testdata/status_heartbeat.json`, byte-identical in
+`launcher/app/src/test/resources/`: `capability` (`status_heartbeat_v1`), `policy` (the top-level `status_heartbeat` and
+`status_gzip`), `heartbeat_fields` (what a heartbeat carries and the phone's hash leaves out), `full` (a full report
+with its `hash`), `heartbeat` (the heartbeat that names it) and `answers` (`{"full_report": true}`). The hash is the
+phone's alone (`StatusReports.kt`'s `reportHash`); the server keeps the full body under it (`device_report_base`) and
+expands a heartbeat into that report before the one intake runs (`status_heartbeat`). The launcher's `StatusReportsTest`
+encodes `full` and `heartbeat` exactly from one report, checks the hash and the fields list and reads the answer; the
+server's `tests::status_heartbeat` posts `full` and `heartbeat` and checks what is stored and every refusal; both
+compare the copies. The policy's two keys are pinned by `policy_json_keys_snapshot` and `StatusReportsTest`.
+
 ## CI and releases
 
 - `.github/workflows/launcher.yml`, `server-ci.yml` and `music.yml` run on every push/PR, but their build job
@@ -284,7 +294,7 @@ policy's three keys are pinned by `policy_json_keys_snapshot` and the launcher's
   (`launcher.yml` also on `.github/actions/build-tsnet/` and the music files its tests read: the bridge, the
   shared snapshots, the three `spotify_hosts.json`, `server/testdata/time_status_report.json`,
   `dns_upstream_status.json`, `power_report.json`, `zone_status_report.json`, `launcher_tag_codes.json`,
-  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json`, `server_url_vectors.json`, `restrictions_pause.json`, `server_tls_report.json`, `sms_contract.json`, `contact_request.json`, `app_logos.json`, `lock_now.json` and `mobile_network.json`, `music/gradle/` and `music.yml`, and the server's and music's `storytel_token_answers.json`, and `server/testdata/doh_hosts.txt`, and `scripts/yr-symbols.py` with its vendored `yr-symbols-11.svg` (the changes job runs its `--selftest` always); `music.yml` also on the shared
+  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json`, `server_url_vectors.json`, `restrictions_pause.json`, `server_tls_report.json`, `sms_contract.json`, `contact_request.json`, `app_logos.json`, `lock_now.json`, `mobile_network.json` and `status_heartbeat.json`, `music/gradle/` and `music.yml`, and the server's and music's `storytel_token_answers.json`, and `server/testdata/doh_hosts.txt`, and `scripts/yr-symbols.py` with its vendored `yr-symbols-11.svg` (the changes job runs its `--selftest` always); `music.yml` also on the shared
   `server/testdata/music_*.json` and `spotify_hosts.json`, the launcher's copy of the bridge AIDL,
   `bridge_contract.json` and `spotify_hosts.json`, `server/testdata/spotify/`, `scripts/fake-sonos.py`,
   `scripts/fake-storytel.py`, `scripts/fake-spotify.py`, `scripts/fake-audio.py`, `scripts/music-splash.py`
@@ -293,7 +303,7 @@ policy's three keys are pinned by `policy_json_keys_snapshot` and the launcher's
   `server-ci.yml`'s build job also on the apps' `spotify_hosts.json` and `storytel_token_answers.json` copies and
   the launcher's `time_status_report.json`,
   `dns_upstream_status.json`, `power_report.json`, `zone_status_report.json`, `launcher_tag_codes.json`,
-  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json`, `server_url_vectors.json`, `restrictions_pause.json`, `server_tls_report.json`, `sms_contract.json`, `contact_request.json`, `app_logos.json`, `lock_now.json` and `mobile_network.json`, and the launcher's `assets/dns/doh_hosts.txt`, and `scripts/mmsc-hosts.py` with its `scripts/mmsc-hosts-sample.xml` (the changes job runs its `--selftest` always);
+  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json`, `server_url_vectors.json`, `restrictions_pause.json`, `server_tls_report.json`, `sms_contract.json`, `contact_request.json`, `app_logos.json`, `lock_now.json`, `mobile_network.json` and `status_heartbeat.json`, and the launcher's `assets/dns/doh_hosts.txt`, and `scripts/mmsc-hosts.py` with its `scripts/mmsc-hosts-sample.xml` (the changes job runs its `--selftest` always);
   `server-ci.yml`'s
   `server-image` job only when `server/Dockerfile`, `server/.dockerignore`, `server/deploy/image-smoke.sh`, `server/deploy/distrusted-roots.txt` or
   the workflow changed). The server's Rust (`toolchain: 1.99.0`) is pinned in `server-ci.yml` and

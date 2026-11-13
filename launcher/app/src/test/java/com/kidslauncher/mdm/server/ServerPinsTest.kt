@@ -255,7 +255,7 @@ class ServerPinsTest {
         // OkHttp's pinner is set up in one place: the transport's direct path.
         assertEquals(mapOf("ServerTransport.kt" to 1), callers("certificatePinner("))
         // The report: the ring sent, dropped by the report's own connection.
-        assertTrue(sync.contains("if (sent.isSuccessful) ServerPinStore.reported(context, tlsSent, pinConnection(apiPath, sent.raw().handshake))"))
+        assertTrue(sync.contains("if (sent.isSuccessful) ServerPinStore.reported(context, tlsSent, pinConnection(apiPath, sent.raw.handshake))"))
         assertTrue(SERVER_PIN_CAPABILITY in STATUS_CAPABILITIES)
     }
 

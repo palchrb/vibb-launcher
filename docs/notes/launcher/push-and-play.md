@@ -104,3 +104,15 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   (`createMdmApi(ownPool = true)`, a fresh connection as before design 95). No `pingInterval` (it would cost line bytes).
   The DNS filter's DoH/DoT clients stay separate builders (`buildDohClient`). `ServerTransportTest` checks the reuse
   and that no server client builds its own.
+
+## The heartbeat report (design 95 step 95-T2, `docs/design/95-connectivity-control.md` §3.5)
+
+- `server/StatusReports.kt` (`StatusReportsTest`, contract `status_heartbeat.json`): while the policy says
+  `status_heartbeat`, the sync's report goes through `sendReport`. It hashes the report's JSON without
+  `HEARTBEAT_FIELDS` (`reportHash`) and sends the full report with that `hash`; a 2xx is kept as the `HeartbeatAck`
+  (prefs `status_heartbeat`: the hash, when, and a hash of the server URL and token). While the hash is the acked one
+  and the acked full report is under `FULL_REPORT_EVERY_MS` (6 h) old, only `{"heartbeat": true, "hash", <the
+  heartbeat fields>}` goes. The server's `{"full_report": true}` sends the full report at once in the same sync; a 4xx
+  to a heartbeat drops the ack. A report over 1 KiB is gzip'd while the policy says `status_gzip`. An older server
+  says neither: no hash, no heartbeat, no gzip, the ack cleared. Enrollment clears the ack. Claimed as
+  `status_heartbeat_v1`.

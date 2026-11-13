@@ -71,6 +71,7 @@ mod shell;
 mod sms;
 mod sms_page;
 mod sound_mode;
+mod status_heartbeat;
 mod step10;
 mod step11;
 mod step9;

@@ -38,3 +38,16 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   happens. `Cache-Control: no-store` stays (set by the handler, so `limits::device_cache_control` doesn't turn the ETag
   into `no-cache`), and the policy is never gzip'd (the PIN hashes, design 95 §3.3). An older launcher sends no
   `If-None-Match` and always gets the 200. `tests::policy_etag`.
+- **The heartbeat report and gzip (design 95 step 95-T2, §3.5; contract `testdata/status_heartbeat.json`)**:
+  `handlers::device_api::status` reads the body as JSON first. `status_heartbeat::take`: a full report with a `hash`
+  (the phone's own SHA-256 over the report without `HEARTBEAT_FIELDS`; the server never computes it) is kept without
+  those fields in `device_report_base` (one row per phone, migration 0144, so no location is kept there); a report
+  without one forgets it (an older launcher). A `{"heartbeat": true, "hash", <fields>}` is expanded into the kept body
+  with its fields over it - only for the same hash, kept by this server version, after the phone's latest enrollment
+  and within `MAX_AGE_HOURS` (7) - else answered `200 {"full_report": true}` with nothing stored. Either way one full
+  report runs through `status_intake`, the unchanged intake, so every row, event, log line, zone, logo and the
+  certificate check behave as for a full report. The policy's `status_heartbeat` and `status_gzip` are always `true`.
+  The status route inflates `Content-Encoding: gzip` (`RequestDecompressionLayer`, inside `require_device_token`;
+  another encoding is a 415; the body limit counts inflated bytes, a bomb is a 413). `device_routes::gzip_answers`
+  gzips the catalog list, the DNS blocklist and the weather over 1 KiB when asked; never the policy, the token
+  answers, enroll, the stream, images, audio or APKs (BREACH, design 95 §3.3). `tests::status_heartbeat`.
