@@ -799,7 +799,7 @@ async fn activity_mixes_commands_and_events_newest_first_with_the_clock() {
     );
     assert!(
         activity.contains(&format!(
-            "<a class=\"row\" href=\"/devices/{id}/activity\" data-row=\"activity\">"
+            "<a class=\"row row-tile\" href=\"/devices/{id}/activity\" data-row=\"activity\">"
         )),
         "{activity}"
     );
