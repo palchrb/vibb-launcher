@@ -46,7 +46,9 @@ everything below it where they disagree; the rest stays as the record of what wa
   `#mobile-lock`), so a save never jumps to the top. Design 94 §6.1's `#data-roaming` section on Avansert and §6
   item 1's `#mobile-network` anchor are **gone**; nothing redirects there (neither was ever built). The phone's state
   lines (94 §6.1's table, "Mobildata: bare Vibb", "Mobildata er slått av på telefonen") sit on this page under their
-  group, and on the summary only the roaming part of 94 §6.2 joins the header line.
+  group; on the summary (the mockup's "Telefonens side") only the lines that say something show - mobile data off on
+  the phone, only Vibb on cellular now, a roaming warning - each leading to the page, and 94 §6.2's "Roamer i
+  Sverige" ends the header's second line.
 - **One contract file, two capabilities.** `server/testdata/mobile_network.json` (byte-identical in the launcher's
   test resources) holds both halves: `data_roaming_v1` (design 94) and `mobile_data_v1` (Bare Vibb, the settings
   lock, the report of Android's mobile-data switch). The PWA shows each group's controls only once the latest report

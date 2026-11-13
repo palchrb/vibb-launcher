@@ -46,3 +46,22 @@ Part A (SMS allowlist via the SMS role) is **postponed (user, 2026-10-05)**: SMS
 - `enforceOnNewPackage` reacts to a single newly-installed package **immediately** (suspends/hides it if not on the current allowlist) rather than waiting for the next full `apply()` cycle, which could be up to the 5-minute periodic-sync backstop away. Wired to `Application.kt`'s `LauncherApps.Callback.onPackageAdded` - an existing, already-registered callback that fires the instant Android finishes any install, on-device, with zero network round-trip, regardless of whether the app came from a store or (for anything installed before the sideload restriction above was ever applied) a sideloaded APK. Dispatched onto a background coroutine from the callback, not run inline - `onPackageAdded` fires on the main thread by default, and this does `DevicePolicyManager` Binder calls, which is exactly the class of mistake that caused the ANR described above. Already respects the same overrides independently (checks them itself before acting).
 
 Together: an app store install of something not on the allowlist would still need the admin to explicitly add it before it stays usable (same as it always did), but now becomes unusable within moments of installing rather than surviving until the next sync; a sideloaded APK can't be installed at all once the restriction is in place. Neither is a true "you literally cannot install this" guarantee before the fact for the store-install case - that guarantee doesn't exist without Managed Google Play - but it closes the practical gap to something close to instant.
+
+## Mobilnett: data roaming, Bare Vibb, the mobile-network settings lock (designs 94 and 95 rev. 3, 2026-11-13)
+
+Three restrictions of ours, all under the standing rule (the offline override, the pause and "Åpne for oppsett" lift
+them), all whether or not the phone is managed in hardening's sense (the parent's explicit choice per phone):
+
+- `DISALLOW_DATA_ROAMING` while the policy's `data_roaming` is `"off"` (the server's default) or a value this build
+  doesn't know (fail closed); `"phone"` and an older server's missing key clear it. Clearing never turns roaming on
+  (Android writes nothing on a clear). While locked, `MobileNetworkRuntime.applyDataRoaming` relocks a SIM that still
+  reads roaming on (an absent per-SIM key on a dual-SIM phone): clear, wait for `USER_RESTRICTIONS_CHANGED` (5 s at
+  most), set again - at most once per subscription per process (design 94 §2.4.2).
+- `DISALLOW_CONFIG_MOBILE_NETWORKS` while `mobile_settings_locked` is true (the server's default): Android's SIM page and
+  the Internet tile's mobile-data toggle are gone, so mobile data the parent turned off on the phone during Åpne for
+  oppsett stays off - the true zero ("helt av"). A new SIM brings its own data switch, on; the report's
+  `mobile_data.enabled` shows it.
+- Bare Vibb (`apps_mobile: "vibb"`): the VPN's sink shape on cellular - see `dns-and-vpn.md`, "Three shapes".
+  `DISALLOW_CONFIG_VPN` holds while any shape runs (`vpnConfigLocked`), so it is lifted with them.
+
+The rules are pure (`MobileNetwork.kt`), pinned by `mobile_network.json` (`MobileNetworkTest`).
