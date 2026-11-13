@@ -352,11 +352,22 @@ object AppEnforcer {
         // restrictions that stay on are (re)set at the end, after the always-on VPN.
         CallPolicyStore.ensureLoaded(context)
         val managedForHardening = hardeningManaged(policy?.allowlist, CallPolicyStore.state.managed)
+        // The VPN's shape (design 95 rev. 3): the filter, Bare Vibb's sink on cellular (the parent's choice, or a roaming
+        // session that outlived the roaming lock), the pass shape that stands ready for it - all lifted by the override
+        // and the pause. Only true-by-default (filtering on) with no policy yet, as before.
+        val vpnFilterEnabled = if (overrideActive) false else (policy?.vpnFilterEnabled ?: true)
+        val vpnInputs = VpnInputs(
+            filterOn = vpnFilterEnabled,
+            parentSink = parentSinkOn(policy?.appsMobile, overrideActive),
+            roamingLocked = dataRoamingLocked(policy?.dataRoaming, overrideActive),
+        )
+        val vpnShapeNow = applyShape(vpnInputs, MobileNetworkRuntime.bestNet(context), MobileNetworkRuntime.storedShape())
         // Security review S-L11: DISALLOW_CONFIG_VPN also while the Web filter is on (a filter-only phone) - lifted
-        // with the filter by the override and the pause, as the filter is.
+        // with the filter by the override and the pause, as the filter is. Design 95 §2.2: and with the sink and the
+        // pass shape, lifted with them.
         val hardening = withFilterVpnLock(
             hardeningPlan(policy?.hardening, managedForHardening), policy?.hardening,
-            filterOn = policy != null && !overrideActive && policy.vpnFilterEnabled,
+            filterOn = policy != null && vpnConfigLocked(vpnShapeNow),
         )
         clearHardening(context, dpm, admin, hardening)
         // Design 64 step 2: an unmanaged phone (un-enrolled from the server's side, or never
@@ -594,6 +605,13 @@ object AppEnforcer {
         // Security review S-L5: no Bluetooth file transfer (OPP) to or from a friend's phone or a PC while managed -
         // audio devices are untouched. Lifted by the override and the pause, like every restriction of ours.
         setRestriction(dpm, admin, UserManager.DISALLOW_BLUETOOTH_SHARING, bluetoothSharingRestricted(managedForHardening, overrideActive))
+        // Design 94: data roaming off and locked, or the phone's choice - the parent's explicit choice per phone, so
+        // whether or not the phone is managed in hardening's sense; lifted by the override and the pause. Then the
+        // relock of a SIM that still reads roaming on (§2.4.2).
+        MobileNetworkRuntime.applyDataRoaming(context, dpm, admin, dataRoamingLocked(policy?.dataRoaming, overrideActive))
+        // Design 95 rev. 3 item 3: Android's mobile-network settings locked (the parent's switch, on by default), so
+        // mobile data the parent turned off in Android stays off; lifted by the override and the pause.
+        MobileNetworkRuntime.applyMobileSettingsLock(dpm, admin, mobileSettingsLocked(policy?.mobileSettingsLocked, overrideActive))
 
         // Same "fully open" treatment as everything else while an override is active - confirmed
         // live this needs to include the VPN filter too: the whole point of the offline-override PIN
@@ -604,8 +622,7 @@ object AppEnforcer {
         // filtering choice) - wrong in practice, reverted. Only true-by-default (filtering on) when
         // no override is active AND no policy has ever been fetched, which has no admin choice yet
         // to respect.
-        val vpnFilterEnabled = if (overrideActive) false else (policy?.vpnFilterEnabled ?: true)
-        applyVpnRestrictions(context, dpm, admin, vpnFilterEnabled)
+        applyVpnRestrictions(context, vpnInputs, vpnShapeNow)
         // The browsers' own secure DNS off with the filter (design 67 §2.1), lifted with it.
         BrowserDoh.apply(context, dpm, admin, vpnFilterEnabled)
 
@@ -1397,7 +1414,11 @@ object AppEnforcer {
      * what makes Android auto-start/restart the service as needed, independent of anything this app
      * does itself.
      *
-     * Lockdown is deliberately NOT enabled here - unconditional, not gated on any policy field,
+     * Design 95 rev. 3: [MobileNetworkRuntime.writeAlwaysOn] is now the one writer ([alwaysOnFor]); lockdown is on
+     * only in the sink shape (Bare Vibb on cellular), whose routes take everything. In the filter and pass shapes
+     * lockdown stays off for the reason below.
+     *
+     * Lockdown is deliberately NOT enabled for the filter shape,
      * because it's actively wrong for this VPN's design, not just risky. Confirmed live: with
      * lockdown on, once this VPN becomes the system default network, `dumpsys connectivity` showed
      * its routes as only the one fake-DNS-server address plus an explicit `::/0 unreachable` -
@@ -1416,7 +1437,7 @@ object AppEnforcer {
      * unfiltered through the OS's normal path if the service is ever down, which is an acceptable
      * gap next to bricking the device's entire network.
      *
-     * [vpnFilterEnabled] is [PolicyResponse.vpnFilterEnabled] - a per-device admin toggle for the
+     * [inputs]' `filterOn` is [PolicyResponse.vpnFilterEnabled] - a per-device admin toggle for the
      * filter itself (independent of the lockdown discussion above). When off, both the always-on
      * designation and the running service are torn down; when on, both are (re)established. Also
      * caches the value so [com.kidslauncher.mdm.Application.onCreate]'s cold-start
@@ -1424,23 +1445,14 @@ object AppEnforcer {
      * whether to start the service at all, rather than always starting and then immediately
      * stopping it again once this function runs on the first sync.
      */
-    private fun applyVpnRestrictions(
-        context: Context,
-        dpm: DevicePolicyManager,
-        admin: ComponentName,
-        vpnFilterEnabled: Boolean,
-    ) {
-        LauncherPreferences.mdm().vpnFilterEnabled(vpnFilterEnabled)
+    private fun applyVpnRestrictions(context: Context, inputs: VpnInputs, shape: VpnShape) {
+        MobileNetworkRuntime.storeInputs(inputs)
         try {
-            if (vpnFilterEnabled) {
-                dpm.setAlwaysOnVpnPackage(admin, context.packageName, false)
-                KidVpnService.start(context)
-            } else {
-                dpm.setAlwaysOnVpnPackage(admin, null, false)
-                KidVpnService.stop(context)
-            }
+            // The single owner (design 95 §2.2): the decided shape is recorded, always-on written for it alone.
+            MobileNetworkRuntime.writeAlwaysOn(context, shape)
+            if (shape != VpnShape.NONE) KidVpnService.start(context) else KidVpnService.stop(context)
         } catch (e: Exception) {
-            Log.w(LOG_TAG, "Failed to apply VPN filter enabled state", e)
+            Log.w(LOG_TAG, "Failed to apply the VPN's shape", e)
         }
     }
 

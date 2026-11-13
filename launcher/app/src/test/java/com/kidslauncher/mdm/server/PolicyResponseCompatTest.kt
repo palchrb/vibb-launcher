@@ -67,6 +67,23 @@ class PolicyResponseCompatTest {
         assertEquals(FreshDecode.Ok(policy), decodeFresh(serverResponse))
     }
 
+    /** Design 94 and design 95 rev. 3: the Mobilnett keys (the server's `policy_json_keys_snapshot` literal); missing
+     * (an older server) = roaming the phone's choice, apps on mobile data, the settings unlocked. */
+    @Test
+    fun `the Mobilnett keys decode, and missing means nothing is locked`() {
+        val policy = ServerJson.decodeFromString(
+            PolicyResponse.serializer(),
+            """{"data_roaming": "off", "apps_mobile": "vibb", "mobile_settings_locked": true}""",
+        )
+        assertEquals("off", policy.dataRoaming)
+        assertEquals("vibb", policy.appsMobile)
+        assertEquals(true, policy.mobileSettingsLocked)
+        val older = decodeCached(serverResponse).let { (it as CachedPolicy.Ok).policy }
+        assertFalse(dataRoamingLocked(older.dataRoaming, overrideActive = false))
+        assertFalse(parentSinkOn(older.appsMobile, overrideActive = false))
+        assertFalse(mobileSettingsLocked(older.mobileSettingsLocked, overrideActive = false))
+    }
+
     /** Design 68 §3.1: `app_permissions` (the server's `policy_json_keys_snapshot` literal) - read field by field by
      * `appPermissionsOf`, so nothing in it fails the policy; missing or not a list = touch nothing (`null`). */
     @Test

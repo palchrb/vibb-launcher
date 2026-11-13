@@ -66,11 +66,15 @@ fun downloadGate(
     totalBytes: Long?,
     allocatableBytes: Long?,
     parentOverride: Boolean = false,
+    mobileHeld: Boolean = false,
 ): DownloadGate {
     if (caps == null || !caps.internet || !caps.physical) return DownloadGate.WAIT_NETWORK
     // Install Now (design 37 §4.1): the parent chose this download - neither "Wi-Fi only" nor
     // roaming holds it; a network and the space still do.
     if (!caps.notRoaming && !parentOverride) return DownloadGate.WAIT_ROAMING
+    // Design 95 §2.4: while only Vibb may use cellular (Bare Vibb's sink), our own bulk downloads - outside the sink -
+    // wait for Wi-Fi too, the launcher's grace included; Install Now still goes.
+    if (mobileHeld && !caps.notMetered && !parentOverride) return DownloadGate.WAIT_WIFI
     val graceOver = anyNetworkAt != null && nowMs >= anyNetworkAt
     if (wifiOnly && !caps.notMetered && !graceOver && !parentOverride) return DownloadGate.WAIT_WIFI
     if (allocatableBytes != null && totalBytes != null && !enoughSpace(haveBytes, totalBytes, allocatableBytes)) {

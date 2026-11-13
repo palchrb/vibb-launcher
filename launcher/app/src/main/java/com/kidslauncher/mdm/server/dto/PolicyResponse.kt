@@ -156,6 +156,16 @@ data class PolicyResponse(
      * nothing in it can fail the policy; missing or not a list (an older server, a `Fallback`) = none. Not in
      * `LastEnforcedPlan`. */
     val lockMediaApps: kotlinx.serialization.json.JsonElement? = null,
+    /** Design 94: `"off"` (data roaming off and locked, the server's default) or `"phone"` (the phone's choice);
+     * missing from an older server = the phone's choice; a value this build doesn't know locks
+     * ([com.kidslauncher.mdm.server.dataRoamingLocked]). Kept by [com.kidslauncher.mdm.server.LastEnforcedPlan]. */
+    val dataRoaming: String? = null,
+    /** Design 95 rev. 3: "Mobildata for apper" - `"on"` or `"vibb"` (Bare Vibb: only Vibb uses cellular,
+     * [com.kidslauncher.mdm.server.parentSinkOn]); missing = on. Kept by [com.kidslauncher.mdm.server.LastEnforcedPlan]. */
+    val appsMobile: String? = null,
+    /** Design 95 rev. 3 item 3: Android's mobile-network settings locked (`DISALLOW_CONFIG_MOBILE_NETWORKS`); missing =
+     * not set. Kept by [com.kidslauncher.mdm.server.LastEnforcedPlan]. */
+    val mobileSettingsLocked: Boolean? = null,
 )
 
 /** `PolicyResponse.kidLock` - `security::hash_pin` on the server (PBKDF2-SHA256, see

@@ -2323,6 +2323,34 @@ code.key {
     outline: none;
 }
 
+/* Device › Mobilnett (design 95 rev. 3): radio rows with a subtitle - the radio inside its row, hidden, a check on the
+   chosen one; each saves on change (autosave.js). */
+.pick-row {
+    position: relative;
+    cursor: pointer;
+}
+
+.pick-row > input[type="radio"] {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: 0;
+    opacity: 0;
+}
+
+.pick-row > input:checked ~ .choice-check {
+    visibility: visible;
+}
+
+.pick-row > input:focus-visible ~ .row-label {
+    outline: 2px solid var(--tint);
+    outline-offset: 2px;
+}
+
+.pick-row > input:disabled ~ .row-label {
+    opacity: 0.5;
+}
+
 @media (forced-colors: active) {
     .choice-check {
         color: CanvasText;

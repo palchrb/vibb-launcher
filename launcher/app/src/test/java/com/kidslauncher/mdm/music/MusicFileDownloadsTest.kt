@@ -190,9 +190,11 @@ class MusicFileDownloadsTest {
         // The glue is one call each, pinned whole (qa-30-s2-code L2): nothing between the cached policy and ownFileGate.
         fun source(path: String) = listOf(java.io.File(path), java.io.File("app/$path")).first { it.exists() }.readText()
         val gateSource = source("src/main/java/com/kidslauncher/mdm/music/MusicFileDownloads.kt").substringAfter("private fun gate(").substringBefore("\n    }\n")
+        // Design 95 §2.4: and Bare Vibb's sink holds them for Wi-Fi too.
         assertEquals(
-            "return ownFileGate(AppDownloads.currentCaps(app), MusicSync.cachedMusicPolicy(), System.currentTimeMillis(), have, file.size, allocatable(app))",
-            gateSource.lines().last().trim(),
+            "return ownFileGate( AppDownloads.currentCaps(app), MusicSync.cachedMusicPolicy(), System.currentTimeMillis(), have, file.size, allocatable(app), " +
+                "mobileHeld = com.kidslauncher.mdm.server.MobileNetworkRuntime.sinkWanted(app), )",
+            gateSource.substringAfter("return ownFileGate(").let { "return ownFileGate(" + it }.lines().joinToString(" ") { it.trim() },
         )
         val sync = source("src/main/java/com/kidslauncher/mdm/music/MusicSync.kt").substringAfter("fun cachedMusicPolicy(): MusicPolicy? = try {").substringBefore("\n    }\n")
         assertEquals("musicPolicy(currentPolicyDecision().policy?.music)\n    } catch (e: Exception) {\n        null", sync.trim())

@@ -1,0 +1,52 @@
+{
+  "capabilities": {"data_roaming": "data_roaming_v1", "mobile_data": "mobile_data_v1"},
+  "policy": [
+    {"data_roaming": "off", "apps_mobile": "on", "mobile_settings_locked": true},
+    {"data_roaming": "phone", "apps_mobile": "vibb", "mobile_settings_locked": false}
+  ],
+  "roaming_locked": [
+    {"value": "off", "override": false, "locked": true},
+    {"value": "off", "override": true, "locked": false},
+    {"value": "phone", "override": false, "locked": false},
+    {"value": null, "override": false, "locked": false},
+    {"value": "eea", "override": false, "locked": true},
+    {"value": "eea", "override": true, "locked": false}
+  ],
+  "settings_locked": [
+    {"value": true, "override": false, "locked": true},
+    {"value": true, "override": true, "locked": false},
+    {"value": false, "override": false, "locked": false},
+    {"value": null, "override": false, "locked": false}
+  ],
+  "shapes": [
+    {"filter": true, "apps_mobile": "on", "data_roaming": "off", "override": false, "cellular": false, "roaming": false, "shape": "filter", "sink": "off", "lockdown": false},
+    {"filter": true, "apps_mobile": "on", "data_roaming": "off", "override": false, "cellular": true, "roaming": false, "shape": "filter", "sink": "off", "lockdown": false},
+    {"filter": true, "apps_mobile": "vibb", "data_roaming": "phone", "override": false, "cellular": true, "roaming": false, "shape": "sink", "sink": "parent", "lockdown": true},
+    {"filter": true, "apps_mobile": "vibb", "data_roaming": "phone", "override": false, "cellular": false, "roaming": false, "shape": "filter", "sink": "off", "lockdown": false},
+    {"filter": true, "apps_mobile": "vibb", "data_roaming": "phone", "override": true, "cellular": true, "roaming": false, "shape": "none", "sink": "off", "lockdown": false},
+    {"filter": false, "apps_mobile": "vibb", "data_roaming": "phone", "override": false, "cellular": false, "roaming": false, "shape": "pass", "sink": "off", "lockdown": false},
+    {"filter": false, "apps_mobile": "vibb", "data_roaming": "phone", "override": false, "cellular": true, "roaming": false, "shape": "sink", "sink": "parent", "lockdown": true},
+    {"filter": false, "apps_mobile": "on", "data_roaming": "phone", "override": false, "cellular": true, "roaming": true, "shape": "none", "sink": "off", "lockdown": false},
+    {"filter": false, "apps_mobile": "on", "data_roaming": "off", "override": false, "cellular": true, "roaming": true, "shape": "sink", "sink": "roaming", "lockdown": true},
+    {"filter": true, "apps_mobile": "on", "data_roaming": "off", "override": false, "cellular": true, "roaming": true, "shape": "sink", "sink": "roaming", "lockdown": true},
+    {"filter": true, "apps_mobile": "on", "data_roaming": "off", "override": true, "cellular": true, "roaming": true, "shape": "none", "sink": "off", "lockdown": false},
+    {"filter": true, "apps_mobile": "later", "data_roaming": "phone", "override": false, "cellular": true, "roaming": false, "shape": "sink", "sink": "parent", "lockdown": true},
+    {"filter": true, "apps_mobile": null, "data_roaming": null, "override": false, "cellular": true, "roaming": true, "shape": "filter", "sink": "off", "lockdown": false}
+  ],
+  "report": {
+    "data_roaming": {"locked": true, "roaming": true, "country": "se", "network": "24001", "enabled": false, "data_active": false, "modems": 2},
+    "mobile_data": {"enabled": false, "sink": "parent", "settings_locked": true}
+  },
+  "clean": [
+    {"in": {"locked": true, "roaming": true, "country": "SE1", "network": "9011", "enabled": "yes", "data_active": false, "modems": 99},
+     "stored": {"locked": true, "roaming": true, "country": null, "network": null, "enabled": null, "data_active": false, "modems": null}},
+    {"in": {"locked": "yes", "roaming": true, "country": "dk", "network": "901012", "enabled": true, "data_active": true, "modems": 1},
+     "stored": {"locked": false, "roaming": true, "country": "dk", "network": "901012", "enabled": true, "data_active": true, "modems": 1}}
+  ],
+  "clean_mobile": [
+    {"in": {"enabled": "no", "sink": "later", "settings_locked": 1},
+     "stored": {"enabled": null, "sink": "off", "settings_locked": false}},
+    {"in": {"enabled": false, "sink": "roaming", "settings_locked": true},
+     "stored": {"enabled": false, "sink": "roaming", "settings_locked": true}}
+  ]
+}

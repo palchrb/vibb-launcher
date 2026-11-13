@@ -658,6 +658,7 @@ mod tests {
         "device_filter.html",
         "device_home.html",
         "device_lock.html",
+        "device_mobile.html",
         "device_time.html",
         "enroll_code.html",
         "provision_qr.html",

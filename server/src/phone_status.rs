@@ -289,6 +289,37 @@ fn no_contact_line(lead: &Lead, facts: &Facts, zone: &Zone, now: DateTime<Utc>) 
     ])
 }
 
+/// Design 94 §6.2: the roaming words ("Roamer i Sverige", [crate::mobile_network::roaming_words]) last on the header's
+/// second line - only while the phone is in touch (a lead of a rule, low battery or none, and no "No contact"): for a
+/// phone that is off, offline or out of contact a stale place is no fact.
+pub fn with_roaming(
+    mut lines: Vec<Line>,
+    facts: &Facts,
+    zone: &Zone,
+    now: DateTime<Utc>,
+    roaming: Option<(String, bool)>,
+) -> Vec<Line> {
+    let Some((words, warn)) = roaming else {
+        return lines;
+    };
+    let lead = lead(facts);
+    if !matches!(lead, Lead::Lock(_) | Lead::Low(_) | Lead::Plain)
+        || no_contact_line(&lead, facts, zone, now).is_some()
+    {
+        return lines;
+    }
+    let part = Part::new(
+        words,
+        if warn { Tone::Warn } else { Tone::Plain },
+        Some("roaming"),
+    );
+    match lines.get_mut(1) {
+        Some(second) => second.push(part),
+        None => lines.push(vec![part]),
+    }
+    lines
+}
+
 /// The summary header's lines under the name: one for a phone that can't be reached, else the
 /// lead and then the zone · the battery (the screen time when the lead is the battery); without
 /// contact "No contact · last seen 12 min ago" and then the rest of the row's line.

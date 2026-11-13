@@ -354,6 +354,7 @@ object AppDownloads {
     ): DownloadGate = downloadGate(
         caps, wifiOnly, anyNetworkAtMs(record.isLauncher, record.firstSeenMs), now, have, total, allocatable,
         parentOverride = record.isLauncher && InstallNow.active(app) != null,
+        mobileHeld = MobileNetworkRuntime.sinkWanted(app),
     )
 
     // ---- the network ---------------------------------------------------------------------------
