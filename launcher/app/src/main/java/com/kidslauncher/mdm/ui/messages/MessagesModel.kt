@@ -470,9 +470,14 @@ data class LaidRow(val position: Int, val top: Int, val bottom: Int)
  * stays in the list and still shows below the list's top edge [listTop] - its new position and its top's offset from
  * [listTop]; `null` with none. The list stacks from its end, so without a pin a layout keeps its lowest row's bottom
  * where it was, and a row that grows or shrinks moves every row above it.
+ *
+ * `null` too when a row on screen goes (a deleted message): a pinned top keeps the thread standing there, so a short
+ * thread that shrank below the list's height would keep a gap under its last bubble (a pin never stacks to the end
+ * again). It stacks from its end then, as before the pin.
  */
 fun threadAnchor(rows: List<LaidRow>, listTop: Int): Pair<Int, Int>? =
-    rows.filter { it.position >= 0 && it.bottom > listTop }.minByOrNull { it.top }?.let { it.position to it.top - listTop }
+    if (rows.any { it.position < 0 }) null
+    else rows.filter { it.bottom > listTop }.minByOrNull { it.top }?.let { it.position to it.top - listTop }
 
 /** How a part shows in its bubble (§6.7, D11, D14; an SMS has none). */
 sealed interface PartView {

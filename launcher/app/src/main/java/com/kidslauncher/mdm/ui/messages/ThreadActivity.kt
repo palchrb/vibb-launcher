@@ -414,9 +414,11 @@ open class ThreadActivity : KidPageActivity() {
      * it is - a reaction's chip coming on a bubble on screen (18 dp), or the time line the cut-off last bubble loses when
      * a message joins its run (26 dp), would move every row above it. Called once the new list's changes are dispatched
      * and before they are laid out (the rows still stand where the kid sees them, their positions already the new
-     * ones): the topmost row on screen is pinned where it stands ([threadAnchor]). */
+     * ones): the topmost row on screen is pinned where it stands ([threadAnchor]). Not while the list moves: a drag or a
+     * fling step before the layout would be undone by the pin, a jolt back under the finger. */
     private fun keepPlace() {
         val list = binding.threadList
+        if (list.scrollState != RecyclerView.SCROLL_STATE_IDLE) return
         val layout = list.layoutManager as? LinearLayoutManager ?: return
         val rows = (0 until list.childCount).map { i ->
             val child = list.getChildAt(i)

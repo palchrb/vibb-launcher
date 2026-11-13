@@ -328,17 +328,18 @@ class MessagesModelTest {
 
     @Test
     fun `a thread scrolled up keeps its top row where it stands`() {
-        // Rows as laid out before the new list: one scrolled off the top, the row at the top cut by the edge (100), a
-        // row that goes (a deleted message), and the cut-off last bubble whose chip or time line changes.
+        // Rows as laid out before the new list: one scrolled off the top, the row at the top cut by the edge (100), and
+        // the cut-off last bubble whose chip or time line changes.
         val rows = listOf(
             LaidRow(position = 3, top = 20, bottom = 90),
-            LaidRow(position = -1, top = 60, bottom = 140),
             LaidRow(position = 5, top = 80, bottom = 300),
             LaidRow(position = 6, top = 300, bottom = 900),
         )
         // The top row is pinned at its new position, its top 20 above the edge - whatever happens below it.
         assertEquals(5 to -20, threadAnchor(rows, listTop = 100))
         assertEquals(null, threadAnchor(emptyList(), listTop = 100))
+        // A row on screen that goes (a deleted message): no pin, the thread stacks from its end.
+        assertEquals(null, threadAnchor(rows + LaidRow(position = -1, top = 120, bottom = 200), listTop = 100))
     }
 
     @Test
