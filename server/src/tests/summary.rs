@@ -807,7 +807,7 @@ async fn activity_mixes_commands_and_events_newest_first_with_the_clock() {
     assert!(row.contains("class=\"tile tile-grey\""), "{row}");
     assert!(
         row.contains(&format!(
-            ">Lock again · {}</span>",
+            ">Lock again · Done · {}</span>",
             this_minute.with_timezone(&oslo).format("%H:%M")
         )),
         "{row}"
@@ -912,8 +912,9 @@ async fn an_event_row_shows_its_clock_once() {
 /// Design 48 §1.2, 48-7: the last week and at most fifty rows on the page (ten on the summary
 /// until 2026-11-13) - but a command that can still be cancelled is shown at any age, outside
 /// both, with its Cancel: on the summary as a row of its own above Activity's one row, back to the
-/// summary's `#activity`; on the page back to the page's. The line shows even when nothing else
-/// is left.
+/// summary's `#activity`; on the page back to the page's, its line first in the group (code QA M1:
+/// in sight where the redirect lands). The summary's badge counts the week's rows only - 50, then
+/// "50+" past the cap. The line shows even when nothing else is left.
 #[tokio::test]
 async fn activity_keeps_a_week_fifty_rows_and_what_can_be_cancelled() {
     let app = TestApp::new().await;
@@ -925,16 +926,38 @@ async fn activity_keeps_a_week_fifty_rows_and_what_can_be_cancelled() {
     let done = "delivered_at = requested_at, acknowledged_at = requested_at, result = 'ok'";
     command(&app, id, "ring", eight_days, done).await;
     event(&app, id, "Old", eight_days, "/devices").await;
-    for minute in 1..=52 {
-        event(
-            &app,
-            id,
-            &format!("Event {minute}"),
-            now - Duration::minutes(minute),
-            "/devices",
-        )
-        .await;
-    }
+    let add_events = |range: std::ops::RangeInclusive<i64>| {
+        let app = &app;
+        async move {
+            for minute in range {
+                event(
+                    app,
+                    id,
+                    &format!("Event {minute}"),
+                    now - Duration::minutes(minute),
+                    "/devices",
+                )
+                .await;
+            }
+        }
+    };
+    add_events(1..=50).await;
+    let badge = |html: &str| {
+        let row = group(html, "activity");
+        let row = &row[at(row, "data-activity-count=")..];
+        row[..at(row, "</span></span>")].to_string()
+    };
+    // Exactly the cap: the week's fifty, not the eight-day-old command shown above with Cancel.
+    let summary = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert_eq!(
+        badge(&summary),
+        "data-activity-count=\"50\"><span aria-hidden=\"true\">50</span>\
+         <span class=\"visually-hidden\">50 in the last 7 days"
+    );
+    add_events(51..=52).await;
     let html = activity_page(&app, id, &cookie, "").await;
     let activity = group(&html, "activity");
     assert_eq!(activity.matches("data-event=").count(), 50, "{activity}");
@@ -969,12 +992,10 @@ async fn activity_keeps_a_week_fifty_rows_and_what_can_be_cancelled() {
     assert_eq!(activity.matches("data-command=").count(), 1, "{activity}");
     assert!(!activity.contains("data-event="), "{activity}");
     assert!(activity.contains(">Event 1 · "), "{activity}");
-    assert!(
-        activity.contains(
-            "data-activity-count=\"51\"><span aria-hidden=\"true\">50+</span>\
-             <span class=\"visually-hidden\">More than 50 in the last 7 days</span>"
-        ),
-        "{activity}"
+    assert_eq!(
+        badge(&summary),
+        "data-activity-count=\"50+\"><span aria-hidden=\"true\">50+</span>\
+         <span class=\"visually-hidden\">More than 50 in the last 7 days"
     );
 
     // The page's Cancel lands back on the page's group, with its line.
@@ -993,9 +1014,14 @@ async fn activity_keeps_a_week_fifty_rows_and_what_can_be_cancelled() {
     );
     app.assert_lands(&res, &cookie).await;
     let html = activity_page(&app, id, &cookie, "cancel=done").await;
+    let activity = group(&html, "activity");
     assert!(
-        group(&html, "activity").contains("data-flash=\"activity\">Cancelled."),
-        "{html}"
+        activity.contains("data-flash=\"activity\">Cancelled."),
+        "{activity}"
+    );
+    assert!(
+        at(activity, "data-flash=") < at(activity, "data-event="),
+        "the line first: {activity}"
     );
 
     // The only row of another phone: cancelled from the summary, the group stays for its line.
@@ -1041,6 +1067,61 @@ async fn activity_keeps_a_week_fifty_rows_and_what_can_be_cancelled() {
         !activity.contains("data-command"),
         "8 days old and done: {activity}"
     );
+}
+
+/// The summary's one row (code QA L2, L3): its words are the newest row not already shown above with
+/// Cancel, escaped; a command still cancellable from before the week is shown with its Cancel but
+/// is no row of the week, so alone it leaves no row to the page. An unknown phone's page is a 404.
+#[tokio::test]
+async fn the_summary_row_skips_what_waits_and_counts_the_week() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (lily, _) = app.enrolled_device("Lily").await;
+    let now = Utc::now();
+    event(
+        &app,
+        lily,
+        "<b>Jack</b>",
+        now - Duration::minutes(5),
+        "/devices",
+    )
+    .await;
+    command(&app, lily, "end_windows", now, "").await;
+    let summary = app
+        .get_page(&format!("/devices/{lily}"), &cookie)
+        .await
+        .text();
+    let activity = group(&summary, "activity");
+    assert!(
+        super::locate_page::recent_row(activity, "end_windows").contains(">Cancel</button>"),
+        "{activity}"
+    );
+    let newest = &activity[at(activity, "data-newest")..];
+    let newest = &newest[..at(newest, "</span>")];
+    assert!(newest.contains(">&#60;b&#62;Jack"), "{newest}");
+    assert!(
+        !newest.contains("Lock again"),
+        "the waiting row is above: {newest}"
+    );
+    assert!(!activity.contains("<b>Jack"), "{activity}");
+    assert!(activity.contains("data-activity-count=\"2\""), "{activity}");
+
+    // Only a command from before the week, still cancellable: its row and Cancel, no row to the page.
+    let (jack, _) = app.enrolled_device("Jack").await;
+    command(&app, jack, "end_windows", now - Duration::days(8), "").await;
+    let summary = app
+        .get_page(&format!("/devices/{jack}"), &cookie)
+        .await
+        .text();
+    let activity = group(&summary, "activity");
+    assert!(
+        super::locate_page::recent_row(activity, "end_windows").contains(">Cancel</button>"),
+        "{activity}"
+    );
+    assert!(!activity.contains("data-row=\"activity\""), "{activity}");
+
+    let res = app.get_page("/devices/999999/activity", &cookie).await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND);
 }
 
 /// Design 48 §1.2, 48-10: an event's row marks it read and goes where it happened; its form

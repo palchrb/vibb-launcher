@@ -63,14 +63,17 @@ pub(crate) struct LiftRow {
 /// Activity: its page's `#activity` group, and what the summary's row is made of ([Summary]).
 pub(crate) struct Activity {
     pub(crate) rows: Vec<ActivityRow>,
+    /// How many of [rows](Activity::rows) are of the window: all but the commands still cancellable
+    /// that were asked before it.
+    pub(crate) in_window: usize,
     /// More rows in the window than [MAX_ROWS] (the badge says "50+").
     pub(crate) more: bool,
     /// After a Cancel (`?cancel=`): the line in the group, and whether it was refused.
     pub(crate) flash: Option<(&'static str, bool)>,
 }
 
-/// The newest row's words on the summary: what (a command's label, a lift's words, an event's
-/// title), when (`Zone::at`) and the exact time for `title=`.
+/// The newest row's words on the summary: what (a command's label and how it went, "Lock again ·
+/// Cancelled"; a lift's words; an event's title), when (`Zone::at`) and the exact time for `title=`.
 pub(crate) struct Newest {
     pub(crate) what: String,
     pub(crate) when: String,
@@ -79,14 +82,15 @@ pub(crate) struct Newest {
 
 /// The summary's `#activity` (the user's pick B, 2026-11-13): each command that can still be
 /// cancelled as its own row with Cancel, then one row to the page - the newest other row's words
-/// and clock under "Activity", the count of the page's rows in a badge. Shown when the page has a
-/// row or a Cancel's line is to be said.
+/// and clock under "Activity", how many of the week's rows the page lists in a badge (an older
+/// command shown above with Cancel isn't one of them). The section shows while it has a row or a
+/// Cancel's line to say; the row to the page while the week has a row.
 pub(crate) struct Summary {
     pub(crate) waiting: Vec<CommandRow>,
     pub(crate) newest: Option<Newest>,
-    /// How many rows the page lists (0: no row to it).
+    /// How many of the week's rows the page lists (0: no row to it).
     pub(crate) count: usize,
-    /// The badge: "12", or "50+" past the page's cap.
+    /// The badge, also its `data-activity-count`: "12", or "50+" past the page's cap.
     pub(crate) badge: String,
     /// The badge as spoken: "12 in the last 7 days".
     pub(crate) spoken: String,
@@ -95,7 +99,7 @@ pub(crate) struct Summary {
 
 impl Summary {
     pub(crate) fn of(activity: Activity, lang: Lang) -> Summary {
-        let count = activity.rows.len();
+        let count = activity.in_window;
         let (badge, spoken) = if activity.more {
             (
                 format!("{MAX_ROWS}+"),
@@ -131,7 +135,7 @@ impl Summary {
     }
 
     pub(crate) fn shown(&self) -> bool {
-        self.count > 0 || self.flash.is_some()
+        self.count > 0 || !self.waiting.is_empty() || self.flash.is_some()
     }
 }
 
@@ -139,7 +143,7 @@ impl ActivityRow {
     fn newest(self) -> Newest {
         match self {
             ActivityRow::Command(c) => Newest {
-                what: c.label.to_string(),
+                what: format!("{} · {}", c.label, c.word),
                 when: c.asked,
                 exact: c.asked_exact,
             },
@@ -262,8 +266,14 @@ pub(crate) async fn rows(
             capped <= MAX_ROWS
         }
     });
+    // Every row but a cancellable command is of the window (each read starts at `since`).
+    let in_window = all
+        .iter()
+        .filter(|(at, cancellable, _)| !*cancellable || at.is_some_and(|t| t >= since))
+        .count();
     Ok(Activity {
         rows: all.into_iter().map(|(_, _, row)| row).collect(),
+        in_window,
         // Each table reads one row past the cap, so one more anywhere shows here.
         more: capped > MAX_ROWS,
         flash: cancel_flash(zone.lang(), cancel),

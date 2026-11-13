@@ -605,7 +605,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `GET /devices/{id}/activity` (`activity::view`, `device_activity.html`; `band::phone`, back to `/devices/{id}`, the
   phone's picture right and no bell, as every phone page; tab title "Activity · Emma") draws exactly the group the
   summary drew - commands (Cancel while waiting, `back=activity` → `/devices/{id}/activity?cancel=done|too_late#activity`,
-  the line in the group), lifts, events - newest first, the last 7 days, at most `activity::MAX_ROWS` = **50** rows
+  the line **first** in the group, where the redirect lands, never under fifty rows - code QA M1), lifts, events - newest first, the last 7 days, at most `activity::MAX_ROWS` = **50** rows
   (each table reads 51, so `Activity.more` knows one more exists) plus every command still cancellable; then "Everything
   for this phone ›" to the inbox and the footer "The last 7 days, newest first."; empty, one quiet row "Nothing in the
   last 7 days" (Find Phone's Show all always leads here now, `locate::show_find` no longer reads Activity). 404 for an
@@ -613,15 +613,22 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `aria-label`, where the group was) holds each command `cancel_id` still has as its own row with Cancel (`back=summary`,
   `?cancel=…#activity` as before - the summary stays the one place one tap from Lock again, Unlock for 2 h, Allow these
   apps), then one row to the page: a grey tile with a list glyph, "Activity" / "Aktivitet", a one-line sub
-  (`.row-sub-line`, cut with "…"; style.css v110) with the newest other row's words and clock ("All rules paused for
-  1 h · 20:37": a command's label, a lift's words, an event's title, `Zone::at`, the exact time in `title`), a grey
-  `.badge` with the page's row count (`data-activity-count`; "50+" past the cap, spoken "12 in the last 7 days" /
-  "More than 50 …"), a chevron. Shown while the page has a row or a Cancel's line; the flash sits in that group.
+  (`.row-sub-line`, cut with "…") with the newest other row's words and clock ("All rules paused for 1 h · 20:37",
+  "Lock again · Cancelled · 13:41": a command's label and its outcome word, a lift's words, an event's title,
+  `Zone::at`, the exact time in `title`), a grey `.badge` with how many of the **week's** rows the page lists
+  (`Activity.in_window`: a command still cancellable from before the week, shown above with Cancel, is not one;
+  "50+" past the cap; `data-activity-count` is the badge's own text; spoken "12 in the last 7 days" / "More than 50
+  …"), a chevron; its hairline starts at the label (`.row-tile`, as a `.group-icons` row's; style.css v112). The row
+  shows while the week has a row, the section while it has a row, a waiting command or a Cancel's line; the flash sits
+  in that group.
   **A duration's number and unit never part**: `time.duration.*` (`display_time::duration`, every lift row, the screen
-  time lines, the pushes and the security log that use it) and the command label "Unlock for 2 h" put a no-break space
-  (U+00A0) between them, so "All rules paused for 1 h" never leaves "h" alone on the next line. Tests:
+  time lines, the pushes and the security log that use it), the command label "Unlock for 2 h", the foreign-app step
+  "Unlock 2 h below" and Avansert's "Open for setup for 2 h" put a no-break space (U+00A0) between them, so "All rules
+  paused for 1 h" never leaves "h" alone on the next line. Tests:
   `summary::activity_mixes_commands_and_events_newest_first_with_the_clock` (the page and the summary's row),
-  `activity_keeps_a_week_fifty_rows_and_what_can_be_cancelled` (the cap, "50+", Cancel on both),
+  `activity_keeps_a_week_fifty_rows_and_what_can_be_cancelled` (50 then "50+", Cancel on both, the page's line first),
+  `the_summary_row_skips_what_waits_and_counts_the_week` (the newest line past a waiting row, escaped; an old waiting
+  command alone leaves no row; the 404),
   `activity_shows_ended_pauses_and_extra_time_by_when_granted` (the no-break space, on both).
 
 ## The Apps tab (design 31 step 11, `docs/design/31-pwa-redesign.md` §3.3)

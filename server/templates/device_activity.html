@@ -18,9 +18,13 @@
         #activity), its events (a tap marks one read and goes where it happened; a pruned one comes
         back to this phone's inbox) and its lifts but the running pauses (the summary's Quick
         actions has those). The last week, at most activity::MAX_ROWS rows, plus what can still be
-        cancelled; then the phone's inbox. -#}
+        cancelled; then the phone's inbox. A Cancel's line comes first in the group, where its
+        redirect (#activity) lands - never under fifty rows. -#}
     <section id="activity" aria-label="{{ self.t("device.summary.activity") }}">
         <div class="group" data-group="activity">
+            {% if let Some((text, refused)) = activity.flash %}
+            <p class="flash{% if refused %} flash-error{% endif %}" role="status" data-flash="activity">{{ text }}</p>
+            {% endif %}
             {% for r in activity.rows %}
             {% match r %}
             {% when ActivityRow::Command(c) %}
@@ -44,9 +48,6 @@
             {% endfor %}
             {% if activity.rows.is_empty() %}
             <div class="row" data-row="empty"><span class="row-label row-label-quiet">{{ self.t("device.activity.empty") }}</span></div>
-            {% endif %}
-            {% if let Some((text, refused)) = activity.flash %}
-            <p class="flash{% if refused %} flash-error{% endif %}" role="status" data-flash="activity">{{ text }}</p>
             {% endif %}
             <a class="row" href="/notifications?from=devices&amp;device={{ device.id }}" data-row="everything">
                 <span class="row-label">{{ self.t("device.summary.everything") }}</span>

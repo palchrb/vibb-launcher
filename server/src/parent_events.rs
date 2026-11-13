@@ -1627,9 +1627,9 @@ pub fn extra_time_request(
 }
 
 /// A request's words (design r13 §2.6): "Anna asks for more screen time" / "17:21 · Screen time
-/// used up", "Yesterday 21:40 · Bedtime", "14:02 · 1\u{a0}h 20\u{a0}min left", the clock alone when the
+/// used up", "Yesterday 21:40 · Bedtime", "14:02 · 1 h 20 min left", the clock alone when the
 /// phone's state was unknown. Pushed (2026-10-25): "Anna: asks for more time" / "17:21", with the
-/// time left its one number ("14:02 · 1\u{a0}h 20\u{a0}min left").
+/// time left its one number ("14:02 · 1 h 20 min left").
 fn extra_time_told(
     form: Form,
     p: &ExtraTimeParams,
@@ -1770,7 +1770,7 @@ pub fn sms_held(
 
 /// A held message's words (design 77 §7, QA R2-M2), the same in the inbox and the push: the sender quoted and
 /// labelled by its kind, so a stranger's text never reads as Vibb's own words - "Anna: message from unknown number
-/// +4791234567" / "Anna: message from sender name «DNB»" - and "14:02 · Allow within 23\u{a0}h" (the time alone once it
+/// +4791234567" / "Anna: message from sender name «DNB»" - and "14:02 · Allow within 23 h" (the time alone once it
 /// expired). Shorter than the design's sentence, which can't fit [TITLE_MAX] with a 16-character number. The hour's
 /// digest is a push alone, worded by [digest_words].
 fn sms_held_told(p: &SmsHeldParams, zone: &Zone, now: DateTime<Utc>) -> (String, String) {

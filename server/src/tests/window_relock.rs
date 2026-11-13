@@ -901,7 +901,7 @@ async fn an_app_that_could_read_the_parent_pin_is_a_red_warning_with_the_steps()
         warning.contains("Device admin: com.evil.admin. Accessibility: com.evil.admin."),
         "{warning}"
     );
-    assert!(warning.contains("Unlock 2 h"), "{warning}");
+    assert!(warning.contains("Unlock 2\u{a0}h"), "{warning}");
     assert!(
         warning.contains("Security › Device admin apps"),
         "{warning}"
