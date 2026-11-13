@@ -1,15 +1,35 @@
-# Design 93: "Slå på nå" and Quick Actions as two tiles
+# Design 93: "Slå på nå" and Quick Actions as three tiles
 
-Status: design, 2026-11-13. It folds in the user's two mockup rounds and the change that came in while this note was
-being written: Quick Actions has **two** tiles, **Mer skjermtid** and **Regler**, and today's "Lås nå" and "Pause
-regler" are now the two choices of one Regler sheet. That change is in this note from the start; there is no older
-three-tile version below. **Server only** (§9): the launcher's rc.8 shows everything. Migration
-`0142_time_lock_now.sql` is the next free number on `main` at `d5125eb5`; recheck it at merge.
+Status: design, revision 2, 2026-11-13. It folds in the user's mockup rounds (revision 3 approved) and the user's
+change of 2026-11-13: Quick Actions has **three** tiles, **Skjermtid**, **Pause regler** and **Slå på regel**. The two
+rule tiles open **one** Regler sheet, with its Hva segment preselected by the tile ("Sett på pause" / "Slå på nå"),
+and the segment can still be switched in the sheet. **Server only** (§9): the launcher's rc.8 shows everything.
+Migration `0142_time_lock_now.sql` is the next free number on `main` at `58bf42e3` (no local or remote branch has a
+0142 either); recheck it at merge.
+
+**Revision 2 (design QA, 2026-11-13)**:
+- Three tiles (the user's change): Skjermtid (was Mer skjermtid), Pause regler, Slå på regel; their state lines (§7).
+- The sheets are no longer `<details>` inside the tile grid: an open `<details>` spans the grid, which puts the other
+  tiles under the sheet (the mockup keeps the tiles in their row), and two tiles can't open one `<details>`. Each tile is
+  now a link (`?open=rules&mode=on#quick`) that the server answers with the sheet open below the grid, and that
+  `quick-sheets.js` opens in place without a reload (§6.1, §6.2). `auto-reload.js` holds while a sheet is open.
+- Regel is the mockup's `.pick` select with "Alle regler" first, not a list of radio rows; the old nested
+  `.when-pause` row could never show (a `~` selector reaches only siblings). Every `.when-*` panel is a direct child of
+  the form (§6.2). `:focus-visible` replaced by the page's `:focus` / `:focus:not(:focus-visible)` pair (Chrome 80).
+- Matched to the mockup: the tile glyphs and colours, "48 min igjen i dag", the "Noe annet" head, the open-for-setup
+  row above the Quick Actions header, its sub-line, and the button "Åpne for oppsett i 2 t" (§6).
+- §5.1: the report doesn't show the Parent PIN's offline override (only `restrictions_paused` and Play install mode);
+  what that means is now said. §6.6: the Avansert row while the phone is open (it said both "hidden" and "til 17:10").
+- §4.2: an occurrence from yesterday that runs past midnight counts too. §4.4: a length ending at exactly midnight is
+  offered; the autumn hour's repeat. §4.6: an extension the phone hasn't got. §4.1, §4.3: the launcher's own negative
+  ids and `maxLiftId` checked. §4.5: `devices.rs:2121`'s read serves more than the badge.
+- i18n: the en words for the tiles, the state lines and the warnings (§10). Open question Q4 added (one on-lock at a
+  time against the mockup's "Noe annet").
 
 ## 1. Verdict and summary
 
 **Buildable server-only, with one residual gap the parent should know about (§4.6, Q2).** A rule turned on now
-("Slå på nå", the mockup's "Lås nå") is the server serving one more entry in `time_policy.rules`: a **copy of the chosen
+("Slå på nå", first asked for as "Lås nå") is the server serving one more entry in `time_policy.rules`: a **copy of the chosen
 rule** (its kind, name, exempt apps, calls, Kalender and silence) whose `days` hold one window on today's weekday, from
 now to the end the parent chose, in the phone's local time. The launcher evaluates it like any rule
 (`decideTimeLock`), shows it on the r13 card with the rule's own name and icon and "Til 18:30", ends it by itself at
@@ -25,13 +45,15 @@ the end, and pauses it under an "Alle regler" pause. Nothing in the policy's sha
 - **The zone's DST, the server's restart, two parents at once**: §3, §4.4 and §5.1. All the state is in one table, every
   decision is a single SQL statement, and the window is wall-clock time, like the launcher's.
 
-Quick Actions becomes two tiles in one row, each with a coloured glyph, its name and a state line, and each opens a
-sheet in one pattern: title + Lukk, what, how much or how long, an optional Til, one line on what happens, and one
-button saying the action in plain words. The +15/+30/+1 h tiles become the Mer skjermtid sheet. The Finn tile goes
-(Finn has its own tab). "Lås opp 2 t" moves to a new **Avansert** group under Innstillinger, as the row **"Åpne for
-oppsett"**. While the opening runs, a row at the top of Quick Actions shows it with "Lås igjen".
+Quick Actions becomes three tiles in one row, **Skjermtid**, **Pause regler** and **Slå på regel**, each with a
+coloured glyph, its name and a state line. Each opens a sheet below the row in one pattern: title + Lukk, what, how
+much or how long, an optional Til, one line on what happens, and one button saying the action in plain words. The
++15/+30/+1 h tiles become the Skjermtid sheet. Pause regler and Slå på regel open the same Regler sheet, preselected
+to their own choice. The Finn tile goes (Finn has its own tab). "Lås opp 2 t" moves to a new **Avansert** group under
+Innstillinger, as the row **"Åpne for oppsett"**. While the opening runs, a row right under the phone's header shows it
+with "Lås igjen".
 
-Size: medium, about 1,400 lines with the tests (§12). Four steps (§13).
+Size: medium, about 1,450 lines with the tests (§12). Four steps (§13).
 
 ## 2. What exists today
 
@@ -71,7 +93,8 @@ Size: medium, about 1,400 lines with the tests (§12). Four steps (§13).
   `time_lift_ended`). They make no inbox event and no push.
 - The restrictions pause: `start_pause` / `end_windows` (`handlers/window_relock.rs:353`, `:299`) queue the phone's
   `start_pause` (2 h, fixed on the phone) / `end_windows` (ends the pause, the override and Play install mode).
-  `DeviceStatus::paused_at` (`models.rs:570`). Attention's "Begrensninger satt på pause" lands on `#quick`
+  `DeviceStatus::paused_at` (`models.rs:570`). The report shows the pause (`restrictions_paused`) and Play install
+  mode, not the Parent PIN's offline override (only `offline_override_used`). Attention's "Begrensninger satt på pause" lands on `#quick`
   (`attention.rs:367`). The flash groups are at `window_relock.rs:974-977`.
 - The badge: `TimeReport::named_by` (`time_state.rs:106`), `rule_days` (`:147`), `lock_badge` (`:319`) and
   `provable_end` (`:362`) find the active rule **by id** among the rows they are given. The callers that read rules for
@@ -130,8 +153,11 @@ CREATE INDEX idx_time_lock_now_device ON time_lock_now(device_id, ends_at);
 `effective_rule_rows`. The served entry is that rule's `to_policy()` with three changes:
 
 - `id: -(time_lock_now.id)`. Negative ids can't collide with a rule's id, and they stay the same across a change of
-  the end, so the launcher's `TimeLock.key()` and its lift records hold. The launcher's DTO is `Long`, and the server
-  reads `active_rule_id` with `as_i64` (`time_state.rs:73`, `device_api.rs:1169` `Field::Int`).
+  the end, so the launcher's `TimeLock.key()` (`TimeRules.kt:315`, the rules' ids: a changed id would re-apply the
+  suspension) and its lift records hold. The launcher's DTO is `Long`, and the server reads `active_rule_id` with
+  `as_i64` (`time_state.rs:73`; the intake's `Field::Int`/`Ints`, `device_api.rs:1218-1221`, take any `i64`). The
+  launcher's own negative ids (`legacyTimePolicy`'s -1 and -2, `TimeRules.kt:250`) exist only for a policy without
+  `time_policy`, so they never meet a copy.
 - `days`: `null` on every weekday but `local_date`'s, which holds `{start_minute, end_minute}` through `served_days`.
   So 23:59 is served as `end: 0`, "until midnight". For "Ut dagen" from 16:30 that is `{990, 0}`, and the launcher's
   `start > end` puts its end at midnight.
@@ -146,8 +172,9 @@ has already begun and is still running. A phone that syncs after the end gets no
 
 The launcher sorts by kind first, then index. The server can only choose the copy's **index**:
 
-- **The copy first** when no rule of the same kind has an occurrence today that overlaps the copy's window and ends
-  after it. Then `until` is the copy's end, and at that end nothing of that kind still locks, so the card shows "Til
+- **The copy first** when no rule of the same kind has an occurrence that overlaps the copy's window and ends after
+  it. An occurrence from yesterday that runs past midnight counts (Leggetid until 07:00 while the copy runs from
+  06:30). Then `until` is the copy's end, and at that end nothing of that kind still locks, so the card shows "Til
   18:30".
 - **The copy last** otherwise. For example, Skole runs to 14:30 and the parent turns Skole on until 13:00. The
   scheduled Skole is then first, its end is 14:30, and the copy is over by then, so the card shows "Til 14:30".
@@ -170,7 +197,8 @@ sheet says it before the tap: "Skole gjelder allerede til 14:30" (§6.2). Q1 ask
   `lock_now::twin_lifts` adds it in `build_time_policy`. The twin is bounded by the same `expires_at_ms`, so it never
   outlives the real pause even when the phone sees it later (`updateLiftRecords` takes the earlier of the two). The
   phone reports the twin's id in `lifts_active`; `LiftState::of_running_pause` looks only at the real id, which the
-  phone runs too.
+  phone runs too. A twin is served only beside its real pause, so the policy's largest lift id, which the kid's "Be
+  om mer tid" reads (`maxLiftId`, `TimeRequests.kt:171`), is unchanged by it.
 - **Turning a rule on ends what would lift it at once** (§6.4): the running pauses of that rule and an "Alle regler"
   pause are ended early in the same transaction (`ended_early_at`), and a running restrictions pause or override is
   ended by queuing `end_windows`.
@@ -183,13 +211,18 @@ sheet says it before the tap: "Skole gjelder allerede til 14:30" (§6.2). Q1 ask
 - **The lengths are wall-clock time, like the launcher's windows.** "2 t" from 16:30 is "til 18:30" on the phone's
   clock. The server computes the end as a local time (`now_local + h`), never as an instant plus hours. That keeps the
   served window and `ends_at` the same on the two nights a year when the clock moves: from 01:30 on the autumn night,
-  "2 t" ends at the first 03:30, which is 3 h later. That is the accepted cost, and it falls only in the night hours.
+  "2 t" ends at 03:30, which is 3 h later. That is the accepted cost, and it falls only in the night hours. An end
+  inside the repeated hour (01:30 + "1 t" = 02:30) is the first 02:30 for the server; the phone, which compares wall
+  times, is inside the window again during the repeat until its next sync drops the copy, exactly as for a scheduled
+  rule today, and its card shows no Til there (`lockEnd`'s single-offset check).
 - **`ends_at`** comes from `(local_date, end_minute)` in the zone with the launcher's rule: a time in a gap moves later
   by the gap, and a time in an overlap takes the earlier offset (`java.time`'s `atZone`; `lock_now::instant_of`, unit
   vectors for Europe/Oslo's two change days). 1439 is the next day's 00:00.
-- **Never past midnight.** 1, 2 and 3 t are offered only when they end by 23:59 local (`disabled` otherwise). "Ut dagen"
-  is always offered. Til must be later than the current local minute and at most 23:59, and 00:00 is read as "Ut
-  dagen", as in the rule editor.
+- **Never past midnight.** 1, 2 and 3 t are offered only when they end by midnight local (`disabled` otherwise); one
+  ending at exactly 24:00 is stored as `end_minute` 1439, like "Ut dagen". "Ut dagen" is always offered, except in the
+  day's last minute (23:59), when nothing can start and the Slå på segment is disabled with "Dagen er snart over". Til
+  must be later than the current local minute and at most 23:59, and 00:00 is read as "Ut dagen", as in the rule
+  editor.
 - **A zone change while it runs** (the kid travels) moves the window with the phone's clock, as for every rule. The
   server stops serving at `ends_at`, computed in the old zone, and the phone picks that up at its next sync. This is
   rare, and the lock is never lost early by more than the zone difference.
@@ -199,9 +232,11 @@ sheet says it before the tap: "Skole gjelder allerede til 14:30" (§6.2). Q1 ask
 `build_time_policy` (`device_api.rs:613`) gets the rows from `lock_now::served_rule_rows(db, device, now)`: the
 effective rows, plus the copy as a `TimeRuleRow` at the index from §4.2. Its lifts are `deliverable_lifts` plus
 `twin_lifts`. The **badge** readers (`devices.rs:385`, `:2121`, `device_pages.rs:742`, `schedules.rs:1892`) read
-`served_rule_rows` too, so `named_by` names the copy ("Skole") and `provable_end` can show "until 18:30". Every other
-reader (lifts, Attention, counts, the Settings lists) keeps `effective_rule_rows`. The copy is not a rule of the
-phone, and "3 rules" stays 3.
+`served_rule_rows` too, so `named_by` names the copy ("Skole") and `provable_end` can show "until 18:30". The read at
+`devices.rs:2121` also feeds the Time row, the rule list for the Regler sheet and the calls-off Attention row: there
+only the badge's `rule_days`/`named_by` take the served rows, the rest keep the effective ones. Every other reader
+(lifts, Attention, counts, the Settings lists) keeps `effective_rule_rows`. The copy is not a rule of the phone, and
+"3 rules" stays 3.
 
 ### 4.6 The phone offline
 
@@ -210,6 +245,7 @@ phone, and "3 rules" stays 3.
 | Offline when the parent starts it | Served at the next sync if that is before `ends_at`, from that moment until the end. The state line says "Venter på telefonen". |
 | Offline when it ends | The phone ends it by itself (its own window). The server stops serving it. |
 | Ended early or shortened while offline | The phone keeps the longer window until it syncs. The state line says "Avsluttet · venter på telefonen" or "Ny tid sendt · venter på telefonen". The Parent PIN lifts it on the phone. |
+| Extended while offline | The phone ends at the old, earlier end and locks again from its next sync until the new end. The state line says "Ny tid sendt · venter på telefonen". |
 | **Offline 7 days or more** | **The cached copy locks again in the same window on the same weekday, and every week, until a sync.** `TimeRule` has no date, and the server's later policy can't reach the phone. A lift can't help: it is timed from first sight, and the cache drops lifts (`PolicyGate.kt:192`). |
 
 The last row is the gap the brief asked about. **No field the launcher already honours can bound a rule to a date.**
@@ -223,8 +259,8 @@ the Parent PIN lifts it, and any sync clears it. Q2 asks whether to queue a smal
 
 New module `server/src/lock_now.rs` (pure parts: the window, `instant_of`, `copy_first`, `twin_lifts`, the state
 lines; and the reads) and `handlers/rules_now.rs`. Each route needs full sign-in, is listed in `settings_log::NOT_SAVES`
-(it logs its own event), and returns to `/devices/{id}?done=<code>#quick`. A refusal adds `&open=rules`, so the sheet
-renders open with its reason (§6.5).
+(it logs its own event), and returns to `/devices/{id}?done=<code>#quick`. A refusal adds `&open=rules&mode=<the
+mode posted>&rule=<the rule posted>`, so the sheet renders open as it was, with its reason (§6.5).
 
 | Route | Form | Does |
 |---|---|---|
@@ -232,7 +268,7 @@ renders open with its reason (§6.5).
 | `POST /devices/{id}/lock-now/{lock_id}` | `add=30\|60\|day` or `til=HH:MM`, `seen=<ends_at as shown>` | Extends or shortens the running lock (§5.2). |
 | `POST /devices/{id}/lock-now/{lock_id}/end` | | "Avslutt nå" (§5.3). |
 
-The existing `/lifts` (the Mer skjermtid sheet posts `target=budget` there), `/lifts/{id}/end`, `/start-pause` and
+The existing `/lifts` (the Skjermtid sheet posts `target=budget` there), `/lifts/{id}/end`, `/start-pause` and
 `/end-windows` stay. An older open tab's forms keep working. One action per form, chosen by `mode` in the handler,
 because a hidden second submit button would still be the form's default for Enter in the Til field.
 
@@ -250,9 +286,14 @@ because a hidden second submit button would still be the form's default for Ente
    - `UPDATE time_lifts SET ended_early_at = datetime('now') WHERE device_id = ? AND target = 'rule' AND (rule_id IS
      NULL OR rule_id = ?) AND ended_early_at IS NULL AND expires_at > datetime('now')`: the pauses that would lift it
      end now.
-4. If the latest report shows the restrictions pause, the override or Play install mode (the condition behind today's
-   Lock again, `RelockCard::lock_again`), queue `end_windows` (`window_relock::queue_own_command`). On a launcher
-   without `window_relock_v1` that can't be done; the sheet says so before the tap (§6.2).
+4. If the latest report shows the restrictions pause or Play install mode (the condition behind today's Lock again,
+   `RelockCard::lock_again`: `paused_at` or `install_mode_until_ms`), queue `end_windows`
+   (`window_relock::queue_own_command`, after the commit). On a launcher without `window_relock_v1` that can't be
+   done; the sheet says so before the tap (§6.2). **The Parent PIN's offline override is not in the report** (the
+   phone sends only `restrictions_paused` and `offline_override_used`), so the server can't see it. `end_windows`
+   would end it too, but it is not queued blind: on a phone with nothing open it still runs a relock check (`WindowRelock.lockAgain`), whose findings can
+   then show on the summary for a week. An override typed on the phone keeps the new lock off until it runs out, as it
+   does for every rule; the parent who typed it is at the phone.
 5. Security log `time_lock_now`: "phone 3: Skole on 16:30-18:30" (`security::Detail::words(..).rule(..)`). Nudge.
    `done=on`.
 
@@ -276,97 +317,140 @@ then a nudge. `done=on_ended`.
 
 From top to bottom:
 
-1. **While the phone is open for setup** (the latest report's `paused_at`, or Play install mode) there is one row
-   first, `#setup-open`: "Åpnet for oppsett til 17:10" (en "Open for setup until 17:10") with the sub-line "Apper,
-   Innstillinger og Play Butikk er åpne", and the row action **Lås igjen** (a form to `/end-windows`). The time is
-   the answer time of the newest `start_pause` + 2 h when that started it (`window_relock::setup_until`). Otherwise
-   there is no time ("Åpnet for oppsett", which is the Parent PIN's pause). Play install mode reads "Play Butikk åpen
-   for installering". An older launcher keeps today's `pause_ends_old` line and no action. This row replaces the
-   `.quick-note` and the Lock again tile. Attention's "Begrensninger satt på pause" goes on landing on `#quick`, and
-   now finds it first.
-2. The notes that stay: `report_age` and `asked`.
-3. **`.qa-grid`**: two equal columns in one row, `grid-template-columns: repeat(2, minmax(0, 1fr))`. Each tile is
-   `<details class="qa-sheet-wrap" id="more-time|rules">` whose `<summary class="qa">` holds a `.tile` glyph (Mer
-   skjermtid indigo with a clock-plus, Regler graphite with a lock, the mockup's `G_TIME`/`G_LOCK`), `.qa-label` and
-   `.qa-sub` (the state line, §7). There is no "…" on any tile. `.qa-sheet-wrap[open]` spans both columns, and the
-   tile shows `.qa-chosen` while open. The Regler tile is not rendered when `effective_rule_rows` is empty.
-4. **Today** (`lifts::today`) as now, plus the day's on-locks (§8): the running one with Avslutt nå.
+1. **While the phone is open for setup** (the latest report's `paused_at`, or Play install mode) there is one row,
+   `#setup-open`, inside `<section id="quick">` but **before its header**, so it sits right under the phone's header
+   (the mockup's 6b) and Attention's "Begrensninger satt på pause", which lands on `#quick`, finds it first. It reads
+   "Åpnet for oppsett til 17:10" (en "Open for setup until 17:10") with the sub-line "Apper og Play Butikk er åpne"
+   (en "Apps and Play Store are open"), a graphite unlock tile, and the row action **Lås igjen** (a form to
+   `/end-windows`). The time is the answer time of the newest `start_pause` + 2 h when that started it
+   (`window_relock::setup_until`, new). Otherwise there is no time ("Åpnet for oppsett", the Settings switch's pause
+   behind the Parent PIN). Play install mode reads "Play Butikk åpen for installering". An older launcher keeps today's
+   `pause_ends_old` line and no action. This row replaces the `.quick-note` and the Lock again tile. The header's status
+   line says the same ("Åpnet for oppsett til 17:10"), as the mockup shows.
+2. The header "Hurtighandlinger", then the notes that stay: `report_age` and `asked`.
+3. **`.qa-grid`**: three equal columns in one row, `grid-template-columns: repeat(3, minmax(0, 1fr))`. Each tile is an
+   `<a class="qa">` with a `.tile` glyph, `.qa-label` and `.qa-sub` (the state line, §7). There is no "…" on any tile.
+   - **Skjermtid**: teal, the mockup's `G_TIME` (a plus in a circle); `href="/devices/{id}?open=time#quick"`.
+   - **Pause regler**: indigo, `G_PAUSE`; `href="/devices/{id}?open=rules&mode=pause#quick"`.
+   - **Slå på regel**: indigo, `G_LOCK`; `href="/devices/{id}?open=rules&mode=on#quick"`.
+
+   Both rule tiles are not rendered when `effective_rule_rows` is empty; Skjermtid then stands alone in the first
+   column. The tile whose sheet is open has `.qa-chosen` and `aria-expanded="true"`. A label wraps at phone width
+   (`overflow-wrap: anywhere`), so "Slå på regel" and "Pause regler" fit in a third of 288 px.
+4. **The open sheet**, below the grid and outside it: the Skjermtid sheet (§6.3) or the Regler sheet (§6.2). The
+   server renders both sheets (for a phone with rules) and gives every one but the `open=` one the `hidden` attribute.
+5. **Today** (`lifts::today`) as now, plus the day's on-locks (§8): the running one with Avslutt nå.
+
+**Opening and closing a sheet.** Without JS a tile is a plain link: the page comes back with that sheet open and the
+chosen segment checked, and `#quick` keeps the place (`scroll-restore.js` keeps `#quick` where it was on the screen,
+so the tiles don't move). Lukk is a link to `/devices/{id}#quick`. With JS, `static/quick-sheets.js` (ES5, deferred)
+takes the click on a tile and on Lukk: it shows or hides the sheet in place (the `hidden` attribute), checks the
+tile's mode, moves `.qa-chosen` and `aria-expanded`, and moves the focus to the sheet's head (or back to the tile on
+Lukk) with `preventScroll`. Nothing reloads, and the address doesn't change. A tap on the open tile closes its sheet.
+A tap on the other rule tile while the Regler sheet is open only switches the segment.
+
+`auto-reload.js` must not reload while a sheet is open (what was picked would be lost): its "a `<details>` is open"
+check also counts a `.qa-sheet` without `hidden`, with a jstest case. The `<details>` it already counts (the Avansert
+row, §6.6) stays a `<details>`.
+
+Why not `<details>` per tile, as the first revision had: an open `<details>` in the grid spans every column, which
+puts its own tile across the width and the other tiles below the sheet (the mockup keeps the row), and two tiles
+can't open one `<details>`. Two copies of the Regler form, one per tile, would double every id and name.
 
 The bell: the phone's page is a sub-page (`band::sub`), so it has no bell. Tab pages keep it last, top right. Nothing
 here touches the band.
 
 ### 6.2 The Regler sheet (no JS needed)
 
-The sheet is a `<div class="group qa-sheet">`. Its head is `.row.qa-head`: the tile, "Regler" and **Lukk**, a
-`<button type="button" data-confirm-cancel hidden>`. `confirm.js` already closes any `<details>` it sits in. Without JS
-it is hidden, and a tap on the tile closes the sheet. Then, top to bottom:
+The sheet is a `<div class="group qa-sheet" id="rules-sheet" role="region" aria-labelledby=...>`. Its head is
+`.row.qa-head`: an indigo tile with the clock glyph, "Regler" and **Lukk** (§6.1). Then, top to bottom:
 
 **A. What runs** (only when something does), each in its own form, before the main form:
 
-- An on-lock: "Skole på til 18:30", with the sub-line "Startet 16:30 · på telefonen" (or "venter på telefonen"). Then
-  `.row-stacked` "Forleng eller forkort" with `.segmented` `add` (+30 min, +1 t, Ut dagen; a segment that would pass
-  midnight is `disabled`), a Til row (`<input type="time" name="til">`, empty, with the current end as `placeholder`),
-  the hidden `seen`, and the button "Lagre ny tid". Then a separate form with **Avslutt nå** (`.qa-danger`).
+- An on-lock: "Skole på til 18:30", with the sub-line "Startet 16:30 · på telefonen" (or "venter på telefonen"), and
+  **Avslutt nå** (`.qa-danger`, its own form) as the row's action, as in the mockup. Then `.row-stacked` "Forleng
+  eller forkort" with `.segmented` `add` (+30 min, +1 t, Ut dagen; a segment that would pass midnight is `disabled`),
+  a Til row (`<input type="time" name="til">`, empty, with the current end as `placeholder`; "I dag, aldri over
+  midnatt"), the hidden `seen`, and the button "Lagre ny tid".
 - Each running pause: "Leggetid på pause til 21:00" with **Avslutt nå** (today's `/lifts/{id}/end`).
 
-**B. The main form** (`/rules-now`):
+When section A shows, the main form below it is a group of its own with the head **"Noe annet"** + Lukk (the mockup's
+5).
 
-1. **Regel**: a list of radio rows, `name="rule"`, the phone's rules in `effective_rule_rows` order, but with the first
-   school rule first and checked. Bedtime comes last, as "Leggetid". **"Alle regler"** is the last row, inside a
-   `.when-pause` wrapper.
-2. **Hva**: two radios, `mode=on` (id `m-on`) and `mode=pause` (`m-pause`). They are **direct children of the form,
-   placed before every panel** and visually hidden. Their faces are `<label for>`s in a `.segmented` ("Slå på nå",
-   "Sett på pause"). `m-on` is checked, unless an on-lock runs: then it is `disabled`, `m-pause` is checked, and a line
-   says "Avslutt Skole først for å slå på en annen regel". The same applies with no zone (§4.4).
-3. **Hvor lenge**: two panels. `.when-on` holds `on_len` (1 t, 2 t, 3 t, Ut dagen; past-midnight ones `disabled`;
-   2 t checked, else the longest enabled, else Ut dagen) and a Til row ("I dag, aldri over midnatt"). `.when-pause`
-   holds `pause_minutes` (15 min, 30 min, 1 t, 2 t; 1 t checked).
-4. **The line on what happens**, one `.row-note` per mode. For on: the rule's mode in words ("Som i Skole: anrop med
-   kontakter og Meldinger virker. Nødanrop virker alltid."), built from the rule (`lock_now::mode_line`). Then, when
-   they apply, `.qa-warn` lines: "Telefonen er åpnet for oppsett til 17:10. Det avsluttes når du slår på." / "Skole er
-   på pause til 17:00. Pausen avsluttes." / "Skole gjelder allerede til 14:30." (§4.2) / an older launcher: "Åpningen
-   kan ikke avsluttes herfra; regelen begynner når den er over." For pause: "Regelen kommer tilbake av seg selv, eller
-   med Avslutt nå."
-5. **One button**, `type="submit"`, in each panel: "Slå på" in `.when-on` and "Sett på pause" in `.when-pause`.
+**B. The main form** (`/rules-now`), its children in this order:
 
-**How the panels switch without JS** (the coordinator's question): sibling selectors on the hoisted radios. There is no
-`:has()`, so this works on Chrome 80 and iOS 14:
+1. **The hoisted mode radios**: `mode=on` (id `m-on`) and `mode=pause` (`m-pause`), direct children of the form,
+   before everything else, visually hidden (`.qa-mode`). The server checks the one in the address's `mode` (the
+   tile's). `m-on` is `disabled` while an on-lock runs ("Avslutt Skole først for å slå på en annen regel", Q4), with
+   no zone ("Venter på at telefonen sier hvilken tidssone den er i", §4.4) and in the day's last minute; then `m-pause`
+   is checked whatever the tile.
+2. **Regel**: a `.row` with the label "Regel" and the page's `<select class="pick" name="rule">` (the mockup's
+   "Skole ⇕", today's Pause a rule… picker). Its options: **"Alle regler"** (`value="all"`) first, as the mockup's 3
+   shows, then the phone's rules in `effective_rule_rows` order, with Leggetid last. Selected: "Alle regler" when the
+   sheet opens in pause mode, else the first school rule (else the first rule); a refusal's `rule=` wins.
+3. **Hva**: `.qa-hva`, a `.segmented` of two `<label for>` faces, "Slå på nå" (`for="m-on"`) and "Sett på pause"
+   (`for="m-pause"`).
+4. **Hvor lenge**, two panels, each a direct child of the form: `.when-on` holds `on_len` (1 t, 2 t, 3 t, Ut dagen;
+   past-midnight ones `disabled`; 2 t checked, else the longest enabled, else Ut dagen) and the Til row ("I dag,
+   aldri over midnatt"). `.when-pause` holds `pause_minutes` (15 min, 30 min, 1 t, 2 t; 1 t checked).
+5. **The line on what happens**, one `.row-note` per mode, again direct children (`.when-on`, `.when-pause`). For on:
+   the rule's mode in words ("Telefonen låses som i Skole: anrop med kontakter, Meldinger og Musikk virker. Nødanrop
+   virker alltid."), built from the rule (`lock_now::mode_line`). Then, when they apply, `.qa-warn` lines:
+   "Telefonen er åpnet for oppsett til 17:10. Det avsluttes når du slår på Skole." / "Skole er på pause til 17:00.
+   Pausen avsluttes." / "Alle regler er på pause til 17:00. Pausen avsluttes." / "Skole gjelder allerede til 14:30."
+   (§4.2) / an older launcher: "Åpningen kan ikke avsluttes herfra; regelen begynner når den er over." The warnings
+   name the rule selected when the page was drawn; JS rewrites them on a change of rule. For pause: "Reglene kommer
+   tilbake av seg selv, eller med Avslutt nå. «Alle regler» finnes bare for pause."
+6. **One button** per panel, `type="submit"`, each a direct child: "Slå på" (`.when-on`) and "Sett på pause"
+   (`.when-pause`).
+
+**How the panels switch without JS**: sibling selectors on the hoisted radios. There is no `:has()` and no
+`:focus-visible`, so this works on Chrome 80 and iOS 14. A `~` selector reaches only the radios' later **siblings**,
+so every mode-dependent element is a direct child of the form; nothing mode-dependent sits inside a wrapper.
 
 ```css
 .qa-mode { position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none; }
 .when-on, .when-pause { display: none; }
 #m-on:checked ~ .when-on, #m-pause:checked ~ .when-pause { display: block; }
 #m-on:checked ~ .qa-hva .face-on, #m-pause:checked ~ .qa-hva .face-pause { background: var(--surface); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); }
-#m-on:focus-visible ~ .qa-hva .face-on, #m-pause:focus-visible ~ .qa-hva .face-pause { outline: 2px solid var(--tint); outline-offset: -2px; }
+#m-on:disabled ~ .qa-hva .face-on { opacity: 0.4; cursor: default; }
+#m-on:focus ~ .qa-hva .face-on, #m-pause:focus ~ .qa-hva .face-pause { outline: 2px solid var(--tint); outline-offset: -2px; }
+#m-on:focus:not(:focus-visible) ~ .qa-hva .face-on, #m-pause:focus:not(:focus-visible) ~ .qa-hva .face-pause { outline: none; }
 ```
 
-The faces copy `.segment-face`'s look; only "checked" moves to the hoisted selectors. A panel's inputs keep their own
-names, so the server reads only the chosen mode's fields. A hidden panel's checked radio is ignored. "Alle regler"
-picked and then Slå på chosen is refused as `on_needs_rule`, and the sheet opens with "Velg én regel for Slå på".
+The faces copy `.segment-face`'s look; only "checked" moves to the hoisted selectors (the focus pair is
+`style.css:3385-3386`'s). A panel's inputs keep their own names, so the server reads only the chosen mode's fields; a
+hidden panel's checked radio is ignored. One action per form, chosen by `mode` in the handler, because a hidden second
+submit button would still be the form's default for Enter in the Til field. Without JS "Alle regler" stays in the
+select in both modes: "Alle regler" with Slå på is refused as `on_needs_rule`, and the sheet comes back open in on mode
+with "Velg én regel for Slå på".
 
-**With JS**, `static/rules-sheet.js` (ES5, deferred, about 80 lines, `jstest/rules-sheet.test.js`):
+**With JS**, `quick-sheets.js` (about 120 lines with §6.1's part, `jstest/quick-sheets.test.js`):
 
 - It writes each button as the full sentence: "Slå på Skole til 18:30" / "Sett Skole på pause i 1 t" / "Sett alle
   regler på pause i 1 t". The end is computed from the server-rendered phone-local now (`data-now-minute`) and the
   choice. The words come from `partials/js_words.html`.
+- In on mode the "Alle regler" option is `hidden` and `disabled`; switching to on while it is selected selects the
+  first school rule (else the first rule). Switching to pause shows it again and changes nothing else.
 - A tap on a length segment fills Til. Typing in Til unchecks the length segments.
-- Switching to Slå på while "Alle regler" is checked checks the first rule.
+- A change of rule rewrites the warnings' rule name, and hides "Skole gjelder allerede…" for a rule it doesn't fit (the
+  server renders one `data-already` per rule).
 
 Without JS the generic buttons stay, and the server's flash after the tap says the full sentence ("Skole er slått på
 til 18:30").
 
-### 6.3 The Mer skjermtid sheet
+### 6.3 The Skjermtid sheet
 
-Head "Mer skjermtid i dag" with Lukk. `.row-stacked` "Hvor mye" with `.segmented` `minutes` (15 min, 30 min checked,
-1 t). The note "Kommer i tillegg til dagens grense. Brukt i dag: 1 t 12 min av 2 t." (from `time_state::screen_time`;
-without a current report, only the first sentence). The button "Gi ekstra tid", which JS turns into "Gi 30 min ekstra".
-It posts `target=budget` to `/lifts`, unchanged.
+Head: a teal tile, "Skjermtid" and Lukk. `.row-stacked` "Hvor mye" with `.segmented` `minutes` (15 min, 30 min
+checked, 1 t). The note "Kommer i tillegg til dagens grense. Brukt i dag: 1 t 12 min av 2 t." (from
+`time_state::screen_time`; without a current report, only the first sentence). The button "Gi ekstra tid", which JS
+turns into "Gi 30 min ekstra". It posts `target=budget` to `/lifts`, unchanged.
 
 ### 6.4 Interaction rules
 
-- One on-lock per phone. The rule can't be switched while it runs: end it, then turn another on.
-- Turning a rule on ends the restrictions pause or override (`end_windows`), the running pauses of that rule, and an
-  "Alle regler" pause, in the same tap. The sheet says which before the tap.
+- One on-lock per phone (Q4). The rule can't be switched while it runs: end it, then turn another on.
+- Turning a rule on ends the restrictions pause and Play install mode (`end_windows`, §5.1 step 4), the running pauses
+  of that rule, and an "Alle regler" pause, in the same tap. The sheet says which before the tap.
 - A pause started later lifts the on-lock as it lifts the rule: "Alle regler" through `rule_id: null`, the same rule
   through its twin (§4.3). When the pause ends inside the window, the lock is back.
 - "Åpne for oppsett" started while an on-lock runs lifts it until the opening is over (the launcher's override comes
@@ -377,31 +461,42 @@ It posts `target=budget` to `/lifts`, unchanged.
 
 ### 6.5 Where forms return (the page must never jump to the top)
 
-Every form posts to `#quick`, and `scroll-restore.js` keeps the place, as for every form on the summary. A refusal
-redirects with `&open=rules` (or `more-time`), the server renders that `<details open>`, and its flash is the sheet's
-first row (`role="status"`, `flash-error`). A success closes the sheet, and the flash goes in Today's group as now.
-`done_flash` gets the new codes: `on`, `on_changed`, `on_ended`, `on_busy`, `changed_elsewhere`, `on_no_zone`,
-`on_needs_rule`, `til_past`, `til_invalid`, `past_midnight`; `over` and `gone` are reused.
-`tests::time_pages::every_form_on_the_time_pages_returns_to_its_group` takes the new forms.
+Every form posts to `#quick`, and `scroll-restore.js` keeps the place, as for every form on the summary; a tile's link
+and Lukk without JS do the same (§6.1). A refusal redirects with `&open=rules&mode=..&rule=..` (or `open=time`), the
+server renders that sheet open, and its flash is the sheet's first row after the head (`role="status"`,
+`flash-error`). A success closes the sheet, and the flash goes in Today's group as now. `done_flash` gets the new
+codes: `on`, `on_changed`, `on_ended`, `on_busy`, `changed_elsewhere`, `on_no_zone`, `on_needs_rule`, `til_past`,
+`til_invalid`, `past_midnight`; `over` and `gone` are reused. An unknown `open=` or `mode=` is ignored (all sheets
+closed, the tile's default). `tests::time_pages::every_form_on_the_time_pages_returns_to_its_group` takes the new
+forms.
 
 ### 6.6 Innstillinger › Avansert › Åpne for oppsett
 
-A new group follows the Innstillinger group on the summary, with the header **Avansert** (`#setup`). It holds one row,
-`<details class="act-sheet row-sheet" id="setup-sheet">` whose summary is a `.row` with the label "Åpne for oppsett",
-a chevron, and, while open for setup, the value "til 17:10". It opens the same sheet pattern: head "Åpne for oppsett"
-+ Lukk; the note "Apper, Innstillinger og Play Butikk åpnes på telefonen til Emma i 2 t. Den låses igjen av seg selv,
-eller med Lås igjen." (plus the on-lock line in §6.4 when one runs); and the button "Åpne i 2 t" (`.qa-danger`). It
-posts to `/start-pause`. The 2 h stays fixed, so there is no length choice and no launcher change. It is shown only
-for a `window_relock_v1` phone with no pause running, as today. `window_relock::flash("start_pause_sent")` moves to
-the group `setup`, and the "Sent…" line shows in the group. `auto-reload.js` behaves as today. The About and Advanced
-rows below it stay as they are (Q3 is about the double "Avansert").
+A new group follows the Innstillinger group on the summary, with the header **Avansert** (`#setup`), for a
+`window_relock_v1` phone (an older one has no group, as it has no "Lås opp 2 t" today). It holds one row,
+`<details class="act-sheet row-sheet" id="setup-sheet">` whose summary is a `.row` with a graphite unlock tile, the
+label "Åpne for oppsett" and a chevron. It opens the same sheet pattern right under the row: head "Åpne for oppsett" +
+Lukk (`data-confirm-cancel`: `confirm.js` already closes the `<details>` it sits in; without JS it is hidden and the
+row closes it). Then:
+
+- **Not open**: the note "Apper, Innstillinger og Play Butikk åpnes på telefonen til Emma i 2 timer, så du kan sette
+  opp noe der. Den låses igjen av seg selv, eller med Lås igjen." (plus the on-lock line in §6.4 when one runs), and
+  the button "Åpne for oppsett i 2 t" (`.qa-danger`), posting to `/start-pause`.
+- **Open** (the condition of §6.1's row): the row's value is "til 17:10" (or nothing without a time), and the sheet
+  holds "Åpnet for oppsett til 17:10" and **Lås igjen** (`/end-windows`) instead of the open button.
+
+The 2 h stays fixed, so there is no length choice and no launcher change. `window_relock::flash("start_pause_sent")`
+moves to the group `setup`, and the "Sent…" line shows in the group; `end_windows_sent` stays in `quick` (§6.1's row
+is where Lås igjen is usually tapped). `auto-reload.js` behaves as today. The About and Advanced rows below it stay as
+they are (Q3 is about the double "Avansert").
 
 ### 6.7 CSS
 
 `style.css` gets `.qa-grid`, `.qa`, `.qa-label`, `.qa-sub`, `.qa-chosen`, `.qa-on`, `.qa-sheet`, `.qa-head`,
-`.qa-warn` and `.qa-danger`, from the approved mockup (`build.py`'s style block), plus §6.2's mode rules and
-`.row-sheet`. The tokens are the existing ones (light and dark). `.act-grid`, `.act` and `.act-sheet` stay while
-another page uses them (`grep` at build); otherwise they go.
+`.qa-mode`, `.qa-hva`, `.qa-warn` and `.qa-danger`, from the approved mockup (`build.py`'s style block; its 6-column
+grid becomes `repeat(3, ...)`), plus §6.2's mode rules and `.row-sheet`. The tile colours are the existing
+`tile-teal`, `tile-indigo` and `tile-graphite`, and the tokens the existing ones (light and dark). `.act-grid`, `.act`
+and `.act-sheet` stay while another page uses them (`grep` at build); otherwise they go.
 
 ## 7. The state lines
 
@@ -410,9 +505,12 @@ from Phone Setup's adds "(telefonens tid)".
 
 | Tile | Line, in priority order |
 |---|---|
-| Mer skjermtid | "48 min igjen" (budget + extra − used, from a report of today); "Brukt opp i dag"; "Ingen grense i dag" (unlimited); nothing without a current report. |
-| Regler | An on-lock: "Skole på til 18:30" (and "· venter" until a report after its start or change shows it). Else the latest-ending running pause: "Leggetid på pause til 21:00" / "Alle regler på pause til 17:00". Else nothing. `.qa-on` while something runs. |
-| Avansert row | "til 17:10" while open for setup (§6.1). |
+| Skjermtid | "48 min igjen i dag" (budget + extra − used, from a report of today); "Brukt opp i dag"; "Ingen grense i dag" (unlimited); nothing without a current report. |
+| Pause regler | The latest-ending running pause: "Leggetid på pause til 21:00" / "Alle regler på pause til 17:00". Else nothing. `.qa-on` while one runs. |
+| Slå på regel | An on-lock: "Skole på til 18:30" (and "· venter" until a report after its start or change shows it). Else nothing. `.qa-on` while it runs. |
+| Avansert row | "til 17:10" while open for setup (§6.6). |
+
+A tile with no line keeps the line's height, so the three tiles stay level.
 
 On-lock states (`lock_now::State`, like `LiftState`): **Waiting** (no report after `created_at`/`changed_at`),
 **OnPhone** (a report after it shows `active_rule_id == -id`, or the twin or "all" pause it explains), **Over**, and
@@ -444,13 +542,28 @@ Today's lifts make security events and Activity rows, and no inbox event or push
 
 Every new word goes in both `en.json` and `nb.json` (`i18n::tests` keeps them equal). About 45 keys under
 `device.summary.qa.*`, `device.summary.rules_now.*`, `device.summary.setup.*`, `device.summary.flash.*`, `events` and
-`security.*`. The nb words are the user's: Regler, Slå på nå, Sett på pause, Hvor lenge, Til, Ut dagen, Forleng eller
-forkort, Lagre ny tid, Avslutt nå, Mer skjermtid, Hvor mye, Åpne for oppsett, Avansert, Lås igjen. The en words:
-Rules, Turn on now, Pause, How long, Until, Rest of the day, Extend or shorten, Save new time, End now, More screen
-time, How much, Open for setup, Advanced, Lock again. The button sentences take parameters ("Slå på {rule} til {at}" /
-"Turn on {rule} until {at}", "Sett {rule} på pause i {duration}" / "Pause {rule} for {duration}"). The JS gets its
-words through `partials/js_words.html`. `tests::i18n_pages::nb_pages_have_no_english` reads the summary with a running
-on-lock.
+`security.*`. The nb words are the user's: Skjermtid, Pause regler, Slå på regel, Regler, Regel, Hva, Slå på nå, Sett
+på pause, Hvor lenge, Til, Ut dagen, Noe annet, Forleng eller forkort, Lagre ny tid, Avslutt nå, Hvor mye, Åpne for
+oppsett, Avansert, Lås igjen, Lukk, Alle regler. The en words: Screen time, Pause rules, Turn on rule, Rules, Rule,
+What, Turn on now, Pause, How long, Until, Rest of the day, Something else, Extend or shorten, Save new time, End now,
+How much, Open for setup, Advanced, Lock again, Close, All rules.
+
+The sentences, nb / en (parameters in braces):
+
+| Where | nb | en |
+|---|---|---|
+| Skjermtid's line | {left} igjen i dag / Brukt opp i dag / Ingen grense i dag | {left} left today / Used up today / No limit today |
+| Pause regler's line | {rule} på pause til {at} / Alle regler på pause til {at} | {rule} paused until {at} / All rules paused until {at} |
+| Slå på regel's line | {rule} på til {at} · venter | {rule} on until {at} · waiting |
+| Buttons | Slå på {rule} til {at} / Sett {rule} på pause i {duration} / Sett alle regler på pause i {duration} / Gi {duration} ekstra / Åpne for oppsett i 2 t | Turn on {rule} until {at} / Pause {rule} for {duration} / Pause all rules for {duration} / Give {duration} extra / Open for setup for 2 h |
+| Setup row | Åpnet for oppsett til {at} · Apper og Play Butikk er åpne | Open for setup until {at} · Apps and Play Store are open |
+| Warnings | Telefonen er åpnet for oppsett til {at}. Det avsluttes når du slår på {rule}. / {rule} gjelder allerede til {at}. / {rule} er på pause til {at}. Pausen avsluttes. | The phone is open for setup until {at}. That ends when you turn on {rule}. / {rule} already runs until {at}. / {rule} is paused until {at}. The pause ends. |
+| Refusals | Velg én regel for Slå på / Emma har allerede {rule} på til {at} / Endret av en annen forelder: nå til {at} | Pick one rule to turn on / {name} already has {rule} on until {at} / Changed by another parent: now until {at} |
+| Waiting | Avsluttet · venter på telefonen / Ny tid sendt · venter på telefonen | Ended · waiting for the phone / New time sent · waiting for the phone |
+
+The phone's name is a parameter wherever the table says Emma. The JS gets its words through
+`partials/js_words.html`. `tests::i18n_pages::nb_pages_have_no_english` reads the summary with a running on-lock and
+with each sheet open (`?open=`).
 
 ## 11. Risks
 
@@ -464,8 +577,10 @@ on-lock.
 - **A negative id in a place that assumes positive ids.** Checked: the launcher's lift matching, `key()`, the report's
   `active_rule_id`, the server's `TimeReport` and the intake `Field::Int`. Code QA should grep both sides again for
   `id > 0`.
-- **The two-mode sheet without JS** reads well but says only "Slå på" on the button. The flash after it says the full
-  sentence.
+- **The two-mode sheet without JS** reads well but says only "Slå på" on the button, and keeps "Alle regler" in the
+  select in on mode (refused with a reason). The flash after it says the full sentence.
+- **The Parent PIN's offline override** is invisible to the server (§5.1): a lock turned on while it runs starts when
+  it runs out.
 
 ## 12. Tests (lean)
 
@@ -478,10 +593,15 @@ on-lock.
   and an "all" pause are ended, and `end_windows` is queued when the report shows a pause; a second start is
   `on_busy` with nothing written; a change with a stale `seen` is `changed_elsewhere`; End now → no copy, and a second
   End now → `over`; `ends_at` set into the past → no copy; the rule switched off → no copy; a pause of Skole → its
-  twin in `lifts`; the summary's badge names "Skole" and shows "until 18:30"; the tile is hidden without rules; the
-  Regler sheet renders open with the reason after a refusal; `policy_json_keys_snapshot` unchanged (it runs anyway).
-- `jstest/rules-sheet.test.js`: the button sentences, Til from a segment, and the "Alle regler" switch.
-- Existing tests to update: the summary's Quick Actions (`tests::step10`, `summary::*`) and the forms-return table.
+  twin in `lifts`; the summary's badge names "Skole" and shows "until 18:30"; the rule tiles are hidden without
+  rules; `?open=rules&mode=pause` renders the sheet with `m-pause` checked and "Alle regler" selected, `mode=on` with
+  `m-on` and the school rule; the Regler sheet renders open with the reason, the posted mode and rule after a
+  refusal; `policy_json_keys_snapshot` unchanged (it runs anyway).
+- `jstest/quick-sheets.test.js`: a tile opens its sheet in place and checks its mode, Lukk closes it, the button
+  sentences, Til from a segment, and the "Alle regler" switch. `jstest/auto-reload.test.js`: one case, no reload while
+  a `.qa-sheet` is shown.
+- Existing tests to update: the summary's Quick Actions (`tests::step10`, `tests::summary`) and the forms-return
+  table.
 
 ## 13. Steps
 
@@ -490,8 +610,9 @@ on-lock.
    unchanged while the table is empty.
 2. **The routes** (`rules_now.rs`, `create_rule_lift` taken out of `create_lift`, `NOT_SAVES`, security events) with
    `tests::lock_now`'s route cases.
-3. **The page** (Quick Actions as two tiles and their sheets, the open-for-setup row, Innstillinger › Avansert,
-   `rules-sheet.js`, CSS, the words, Activity and Today) with the page tests and the jstest. A browser pass on jelly36
+3. **The page** (Quick Actions as three tiles and their sheets, `?open=`/`mode=`, the open-for-setup row,
+   Innstillinger › Avansert, `quick-sheets.js`, the `auto-reload.js` check, CSS, the words, Activity and Today) with
+   the page tests and the jstests. A browser pass on jelly36
    size, light and dark, with JS and without.
 4. **The notes**: `docs/notes/server/time-rules.md` ("Slå på nå"), `pwa.md` (the summary's Quick Actions), and
    `server/CLAUDE.md` only if its index needs a line.
@@ -506,3 +627,6 @@ on-lock.
   Older launchers would still have the gap until they update.
 - **Q3** (§6.6): the new group's header "Avansert" sits just above the existing "Avansert" page row. Keep both, or
   name the page row something else (for example "Mer om telefonen")?
+- **Q4** (§6.4): one on-lock per phone at a time. While Skole is on, "Slå på nå" is disabled in the sheet ("Avslutt
+  Skole først…"); the mockup's 5 shows the "Noe annet" form with both segments. Allowing a second on-lock means two
+  copies, two state lines and two rows of Forleng; the lock would be their intersection. Keep one at a time?
