@@ -2504,12 +2504,32 @@ pub async fn power(
             }
             None => None,
         };
-        let plan = crate::parent_events::power_events(&report, last.as_ref(), &phone);
+        let mut plan = crate::parent_events::power_events(&report, last.as_ref(), &phone);
         for why in &plan.dropped {
             tracing::warn!(device_id = device.id, why, "dropped part of a power report");
         }
         let mut tx = state.db.begin().await?;
         let mut changed = false;
+        // The `off`'s still-queued pushes: dropped by a restart or a quick start, else sent now -
+        // before the "turned on" (only one never tried: a retry keeps its backoff).
+        let off_deliveries = "event_id = (SELECT id FROM parent_events \
+             WHERE device_id = ? AND kind = 'phone_off' AND dedup_key = ?) AND status = 'queued'";
+        // A quick start is quiet, unless the off's push already went (the start's upload came
+        // after the server's hold): then its "turned on" goes too.
+        if let (true, Some((key, _))) = (plan.quiet_start, &plan.drop_held_off) {
+            let off_went: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM push_deliveries WHERE event_id = \
+                 (SELECT id FROM parent_events WHERE device_id = ? AND kind = 'phone_off' \
+                  AND dedup_key = ?) AND status IN ('accepted', 'failed'))",
+            )
+            .bind(device.id)
+            .bind(key)
+            .fetch_one(&mut *tx)
+            .await?;
+            if off_went && let Some(start) = plan.events.last_mut() {
+                start.push = crate::parent_events::Push::Now;
+            }
+        }
         for event in &plan.events {
             let raised = crate::parent_events::raise(&mut tx, event).await?;
             changed |= raised.is_some();
@@ -2532,15 +2552,12 @@ pub async fn power(
                     > 0;
             }
         }
-        // The `off`'s still-queued pushes: dropped by a restart, else sent now - before the
-        // "turned on" (only one never tried: a retry keeps its backoff).
-        let off_deliveries = "event_id = (SELECT id FROM parent_events \
-             WHERE device_id = ? AND kind = 'phone_off' AND dedup_key = ?) AND status = 'queued'";
-        if let Some(key) = &plan.drop_held_off {
+        if let Some((key, reason)) = &plan.drop_held_off {
             changed |= sqlx::query(&format!(
-                "UPDATE push_deliveries SET status = 'dropped', reason = 'restart', \
+                "UPDATE push_deliveries SET status = 'dropped', reason = ?, \
                  next_try_at = NULL WHERE {off_deliveries}"
             ))
+            .bind(*reason)
             .bind(device.id)
             .bind(key)
             .execute(&mut *tx)

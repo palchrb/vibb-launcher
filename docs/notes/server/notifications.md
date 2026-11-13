@@ -230,13 +230,20 @@ Notifications on it). `docs/design/45-notifications-inbox-first.md`, `docs/desig
   `device_status` row, no security log line. Capability `power_v1` (an old launcher never calls it). Contract
   `testdata/power_report.json`, byte-identical in the launcher's test resources (root `CLAUDE.md`).
 - **The state machine** (pure `parent_events::power_events(&report, last_report, &phone) -> PowerPlan {events,
-  drop_held_off, release_held_off, dropped}`, applied in one transaction, then `push.wake()` if a row or a delivery
+  drop_held_off, quiet_start, release_held_off, dropped}`, applied in one transaction, then `push.wake()` if a row or a delivery
   changed): parts dropped first (an instant > 5 min in the server's future - that part only -, an `off` or an `on`
   older than 30 days - `POWER_MAX_AGE`, the `on` since the code QA's nit 2 -, an `off` later than its `on`; logged). Paired when `off.boot_count < on.boot_count`: one boot apart and
   (`reboot: true`, or `reboot` unknown and the phone's two instants <= `RESTART_GAP` = 3 min apart) is a **restart** -
   "Anna restarted" pushed, the off row (new: `Push::No`, " · told at the next start") and its still-`queued`
-  deliveries `dropped` with reason `restart` (`UPDATE ... WHERE event_id = <off> AND status = 'queued'`); otherwise
-  "Anna was turned on · 07:02 · off since 21:14, battery was 3 %" pushed, a new off row late and unpushed, and an
+  deliveries `dropped` with reason `restart` (`UPDATE ... WHERE event_id = <off> AND status = 'queued'`). **A quick
+  start** (2026-11-13, approved by the user): one boot apart and the phone's two instants <= `OFF_HOLD` = 5 min apart,
+  whatever `reboot` says, is quiet - the held off push dropped (reason `restart` for a restart, else `quick_start`) and
+  the start raised `Push::No` (`quiet_start`); both rows stay in the inbox, a restart's as above, a power-off's start
+  "Anna was turned off and on · Off 07:00–07:03 · battery 64 %" (nb "Annas mobil ble slått av og på · Av
+  07:00–07:03", `start: quick_off`; a power-off is no restart). The one exception: when the off's push already went
+  (a delivery `accepted` or `failed` - the start's upload came after the server's hold), the handler pushes the start
+  after all, worded "Anna: turned on" - never a "turned off" left standing alone. Otherwise (past 5 min, or a boot
+  between) "Anna was turned on · 07:02 · off since 21:14, battery was 3 %" pushed, a new off row late and unpushed, and an
   already-known off's held push - never tried yet - **released at once** (`next_try_at = NULL`), so the parent gets
   "turned off" before "turned on", never after (a deviation from the note, which left it untouched; design 38
   "Implementation status"). Unpaired: an `off` alone is a new row with its push held `OFF_HOLD` = 5 min from its
@@ -252,7 +259,7 @@ Notifications on it). `docs/design/45-notifications-inbox-first.md`, `docs/desig
   probably flat" (`battery_words`: probably flat at <= `FLAT_LEVEL` 3 not charging, else charging / not charging),
   reason `battery` "Anna shut down: battery flat" / `thermal-shutdown`, `thermal` "Anna shut down: too hot" (the level
   only), `reboot: true` "Anna is restarting" (`off_reason_words`: `userrequested` and anything else say nothing more,
-  never shown); `Phone::phone_on(on, at, &Start)`: `Restart` / `AfterOff` / `NoShutdownSeen(LastReport)` (probably
+  never shown); `Phone::phone_on(on, at, &Start)`: `Restart` / `QuickOff` / `AfterOff` / `NoShutdownSeen(LastReport)` (probably
   flat at <= `LAST_REPORT_FLAT_LEVEL` 10). Times by `Phone::at`, capitalised at the summary's start ("Yesterday
   21:14"); a missing battery leaves its clause out. Keys: `phone_off` = the instant (RFC 3339 ms UTC), `phone_on` =
   `boot:<devices.enrolled_at>:<boot_count>` (`Phone.enrolled_at`; a re-enrollment or a factory reset is another
@@ -262,7 +269,7 @@ Notifications on it). `docs/design/45-notifications-inbox-first.md`, `docs/desig
   wakes at the earliest; the TTL counts from `created_at`). **The sender claims a row** before its request
   (`push::claim`: `UPDATE ... SET token_hash, attempts + 1 WHERE id = ? AND status = 'queued'`) and skips it when that
   changed nothing - a restart's drop that commits after a pass read the row as due (qa-38-design N4).
-  `notifications::delivery_line` counts a `restart` or `superseded` drop as no delivery (no line, never "Not sent");
+  `notifications::delivery_line` counts a `restart`, `quick_start` or `superseded` drop as no delivery (no line, never "Not sent");
   during the hold the row reads "Sending".
 - **PWA**: the two switches on Notify Me About come from `Kind::switch()` (no template change; the form and its
   `#events` redirect are design 35's). The device page's header (`devices::render_device`, `data-power-off`): "Off
@@ -283,7 +290,8 @@ Notifications on it). `docs/design/45-notifications-inbox-first.md`, `docs/desig
   (the contract and its copy, H1's sequence - held, dropped, restarted -, the hold running out, the release before the
   "turned on", a known restart, the last report, the switch, re-enrollment, the 4xx answers, the device page's line,
   the claim; since the code QA's fix round a report ending "Off since", a superseded held push, the level range in
-  the route's own test), `music_spotify::migrations_73_to_95_in_order`.
+  the route's own test; since 2026-11-13 a quick power-off and on at 4 min - quiet, both in the inbox -, one at 6 min -
+  both pushed -, and a quick start after the off's push went), `music_spotify::migrations_73_to_95_in_order`.
 - **The shutdown's last position** (2026-10-25, design 38 "Last position", migration `0097_shutdown_fix.sql`): the
   `off` may carry `location {lat, lng, accuracy_m, at_ms, provider}` (`models::PowerLocation`, read leniently - a bad
   one is no position, never a refused body); `device_api::power` checks it as a report's fix

@@ -497,9 +497,11 @@ impl Phone {
         }
     }
 
-    /// The boot's start (design 38 §3.2), always pushed at once: told as "Anna restarted" / "07:02
-    /// · battery 64 %", "Anna was turned on" / "07:02 · off since 21:14, battery was 3 %", or with
-    /// no shutdown seen the newest report before the boot.
+    /// The boot's start (design 38 §3.2), pushed at once (a quick start's push [power_events]
+    /// takes away): told as "Anna restarted" / "07:02 · battery 64 %", "Anna was turned on" /
+    /// "07:02 · off since 21:14, battery was 3 %", "Anna was turned off and on" / "Off 07:00–07:03
+    /// · battery 64 %" (a power-off within [OFF_HOLD], 2026-11-13), or with no shutdown seen the
+    /// newest report before the boot.
     pub fn phone_on(&self, on: &PowerOn, at: DateTime<Utc>, start: &Start) -> NewEvent {
         // Design 59 §2.3: with Android's lock the phone waits at "type the PIN to start" after a
         // restart; "· unlocked 07:15" once that took more than [UNLOCK_SAID_AFTER].
@@ -510,6 +512,7 @@ impl Phone {
             .map(instant);
         let (start_code, off_at, off_battery, last) = match start {
             Start::Restart => ("restart", None, None, None),
+            Start::QuickOff { at: off_at } => ("quick_off", Some(instant(*off_at)), None, None),
             Start::AfterOff { off, at: off_at } => (
                 "after_off",
                 Some(instant(*off_at)),
@@ -607,8 +610,8 @@ pub struct PhoneOffParams {
 }
 
 /// A boot's start (design 38 §3.2): the battery now, the unlock when it was late (design 59
-/// §2.3), how the start is told (`restart`, `after_off` with the shutdown's instant and battery,
-/// `no_shutdown` with the newest report before the boot).
+/// §2.3), how the start is told (`restart`, `quick_off` with the shutdown's instant, `after_off`
+/// with the shutdown's instant and battery, `no_shutdown` with the newest report before the boot).
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PhoneOnParams {
     pub phone: String,
@@ -631,7 +634,8 @@ pub struct PhoneOnParams {
 }
 
 /// A `phone_off`'s push waits this long on the server's clock for the next boot's `phone_on`
-/// (design 38 §3.3): a restart's start drops it. Apart from [RESTART_GAP], since the start's
+/// (design 38 §3.3), and a start this close after the shutdown on the phone's two instants is
+/// quiet (2026-11-13): it drops the held push and pushes nothing itself, whatever the restart flag. Apart from [RESTART_GAP], since the start's
 /// upload comes only after the boot, the unlock, the network and tsnet's connect (qa-38-design N2;
 /// if the Jelly Star's check times it above this, raise this, not the gap).
 pub const OFF_HOLD: chrono::Duration = chrono::Duration::minutes(5);
@@ -730,7 +734,14 @@ pub struct LastReport {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Start {
     Restart,
-    AfterOff { off: PowerOff, at: DateTime<Utc> },
+    /// A power-off (not a restart) and a start within [OFF_HOLD]: "turned off and on".
+    QuickOff {
+        at: DateTime<Utc>,
+    },
+    AfterOff {
+        off: PowerOff,
+        at: DateTime<Utc>,
+    },
     NoShutdownSeen(Option<LastReport>),
 }
 
@@ -740,8 +751,12 @@ pub enum Start {
 pub struct PowerPlan {
     /// Raised in order (the `off` first).
     pub events: Vec<NewEvent>,
-    /// A restart: the `phone_off` with this key has its still-queued pushes `dropped`, `restart`.
-    pub drop_held_off: Option<String>,
+    /// A restart or a quick start: the `phone_off` with this key has its still-queued pushes
+    /// `dropped` with this reason (`restart`, `quick_start`).
+    pub drop_held_off: Option<(String, &'static str)>,
+    /// A quick start (within [OFF_HOLD]), raised unpushed: pushed after all when the off's push
+    /// already went (its upload came after the server's hold) - never a "turned off" left alone.
+    pub quiet_start: bool,
     /// A start after a real shutdown: the `phone_off` with this key, if its held push hasn't gone
     /// yet, goes now - before the "turned on", never after it.
     pub release_held_off: Option<String>,
@@ -752,7 +767,8 @@ pub struct PowerPlan {
 /// The state machine of one shutdown and the start after it (design 38 §3.3), pure over the body,
 /// the newest report before the boot and the phone. An `off` and an `on` pair when the off's boot
 /// is earlier; a pair one boot apart is a restart when the phone said so, or said nothing and the
-/// two instants are at most [RESTART_GAP] apart.
+/// two instants are at most [RESTART_GAP] apart; and quiet (no push at all) when the two instants
+/// are at most [OFF_HOLD] apart, whatever the flag (2026-11-13).
 pub fn power_events(report: &PowerReport, last: Option<&LastReport>, phone: &Phone) -> PowerPlan {
     let mut plan = PowerPlan::default();
     let in_reach = |at_ms: i64| {
@@ -789,16 +805,26 @@ pub fn power_events(report: &PowerReport, last: Option<&LastReport>, phone: &Pho
         });
     match (off, on) {
         (Some((off, off_at)), Some((on, on_at))) if off.boot_count < on.boot_count => {
-            let restart = off.boot_count + 1 == on.boot_count
+            let next_boot = off.boot_count + 1 == on.boot_count;
+            let quick = next_boot && on_at - off_at <= OFF_HOLD;
+            let restart = next_boot
                 && match off.reboot {
                     Some(reboot) => reboot,
                     None => on_at - off_at <= RESTART_GAP,
                 };
             let key = instant(off_at);
             plan.events.push(phone.phone_off(off, off_at, true));
-            if restart {
-                plan.events.push(phone.phone_on(on, on_at, &Start::Restart));
-                plan.drop_held_off = Some(key);
+            if restart || quick {
+                let (start, reason) = if restart {
+                    (Start::Restart, "restart")
+                } else {
+                    (Start::QuickOff { at: off_at }, "quick_start")
+                };
+                let event = phone.phone_on(on, on_at, &start);
+                let push = if quick { Push::No } else { event.push };
+                plan.events.push(NewEvent { push, ..event });
+                plan.drop_held_off = Some((key, reason));
+                plan.quiet_start = quick;
             } else {
                 let start = Start::AfterOff {
                     off: off.clone(),
@@ -2833,10 +2859,11 @@ fn phone_event_told(
         Kind::PhoneOn => {
             let p: PhoneOnParams = serde_json::from_str(params).ok()?;
             let (_, when) = at_of(&p.at)?;
-            let variant = if p.start == "restart" {
-                ".restart"
-            } else {
-                ".on"
+            // A quick start is pushed only when the off's push went before it: "turned on" then.
+            let variant = match (p.start.as_str(), form) {
+                ("restart", _) => ".restart",
+                ("quick_off", Form::Inbox) => ".quick_off",
+                _ => ".on",
             };
             let title = titled(lang, &title_key(variant), &p.phone);
             if form == Form::Push {
@@ -2850,7 +2877,16 @@ fn phone_event_told(
                     ),
                 ));
             }
-            let mut parts = vec![capitalized(&when)];
+            let mut parts = vec![
+                match (p.start.as_str(), p.off_at.as_deref().and_then(at_of)) {
+                    ("quick_off", Some((_, off_at))) => capitalized(&t_params(
+                        lang,
+                        "events.phone_on.off_between",
+                        &[("from", &off_at), ("to", &when)],
+                    )),
+                    _ => capitalized(&when),
+                },
+            ];
             if let Some((_, unlocked)) = p.unlocked.as_deref().and_then(at_of) {
                 parts.push(t_params(
                     lang,
@@ -2859,7 +2895,7 @@ fn phone_event_told(
                 ));
             }
             match p.start.as_str() {
-                "restart" => {
+                "restart" | "quick_off" => {
                     if let Some(level) = p.battery {
                         parts.push(battery_level(lang, level));
                     }
@@ -3257,7 +3293,8 @@ mod tests {
         );
 
         // Paired one boot apart: a restart within the 3-minute gap (the flag unknown), or with the
-        // flag whatever the gap; not with the flag false, nor past the gap.
+        // flag whatever the gap; not with the flag false, nor past the gap. Within the 5-minute
+        // hold on the phone's instants either is quiet (2026-11-13): no push at all.
         let pair = |off_s: &str, off_boot, reboot, on_s: &str, on_boot| {
             power_events(
                 &report(
@@ -3268,22 +3305,22 @@ mod tests {
                 &phone,
             )
         };
-        let restart = |plan: &PowerPlan| {
+        let folded = |plan: &PowerPlan, on_push, reason: &str, title: &str| {
             assert_eq!(
                 shape(plan),
-                (
-                    vec![(off_kind, Push::No), (on_kind, Push::Now)],
-                    true,
-                    false
-                )
+                (vec![(off_kind, Push::No), (on_kind, on_push)], true, false)
             );
-            assert_eq!(inbox(&phone, &plan.events[1]).0, "Anna's phone restarted");
+            assert_eq!(plan.drop_held_off.as_ref().unwrap().1, reason);
+            assert_eq!(plan.quiet_start, on_push == Push::No);
+            assert_eq!(inbox(&phone, &plan.events[1]).0, title);
             assert!(
                 inbox(&phone, &plan.events[0])
                     .1
                     .ends_with(" · told at the next start")
             );
         };
+        let restarted = "Anna's phone restarted";
+        let off_and_on = "Anna's phone was turned off and on";
         let after_off = |plan: &PowerPlan| {
             assert_eq!(
                 shape(plan),
@@ -3303,35 +3340,54 @@ mod tests {
                     .contains("off since 14:00, battery was 3 %")
             );
         };
-        restart(&pair(
-            "2026-10-18 12:00:00",
-            41,
-            None,
-            "2026-10-18 12:03:00",
-            42,
-        ));
-        restart(&pair(
-            "2026-10-18 12:00:00",
-            41,
-            Some(true),
-            "2026-10-18 12:20:00",
-            42,
-        ));
-        after_off(&pair(
-            "2026-10-18 12:00:00",
-            41,
-            None,
-            "2026-10-18 12:03:01",
-            42,
-        ));
-        after_off(&pair(
-            "2026-10-18 12:00:00",
-            41,
-            Some(false),
-            "2026-10-18 12:01:00",
-            42,
-        ));
-        // A boot between the two is never a restart (unseen_boot tells it).
+        let quick = |reboot, on_s| pair("2026-10-18 12:00:00", 41, reboot, on_s, 42);
+        folded(
+            &quick(None, "2026-10-18 12:03:00"),
+            Push::No,
+            "restart",
+            restarted,
+        );
+        folded(
+            &quick(Some(true), "2026-10-18 12:05:00"),
+            Push::No,
+            "restart",
+            restarted,
+        );
+        folded(
+            &quick(Some(true), "2026-10-18 12:20:00"),
+            Push::Now,
+            "restart",
+            restarted,
+        );
+        // A power-off and a start at 4 minutes: quiet, told as "turned off and on" with the span.
+        for reboot in [None, Some(false)] {
+            let plan = quick(reboot, "2026-10-18 12:04:00");
+            folded(&plan, Push::No, "quick_start", off_and_on);
+            assert_eq!(inbox(&phone, &plan.events[1]).1, "Off 14:00–14:04");
+            let event = &plan.events[1];
+            let nb = told(
+                event.kind.wire(),
+                String::new(),
+                String::new(),
+                event.params.as_deref(),
+                &phone.zone.in_lang(Lang::Nb),
+                phone.now,
+            );
+            assert_eq!(
+                (nb.0.as_str(), nb.1.as_str()),
+                ("Annas mobil ble slått av og på", "Av 14:00–14:04")
+            );
+        }
+        folded(
+            &quick(Some(false), "2026-10-18 12:05:00"),
+            Push::No,
+            "quick_start",
+            off_and_on,
+        );
+        // At 6 minutes: both pushed, as before.
+        after_off(&quick(Some(false), "2026-10-18 12:05:01"));
+        after_off(&quick(None, "2026-10-18 12:06:00"));
+        // A boot between the two is never a restart nor quiet (unseen_boot tells it).
         after_off(&pair(
             "2026-10-18 12:00:00",
             40,
@@ -3342,7 +3398,7 @@ mod tests {
         // The drop and the release name the off's key.
         let plan = pair("2026-10-18 12:00:00", 41, None, "2026-10-18 12:01:00", 42);
         assert_eq!(
-            plan.drop_held_off.as_deref(),
+            plan.drop_held_off.map(|(key, _)| key).as_deref(),
             Some("2026-10-18T12:00:00.000Z")
         );
         // Not paired (the off isn't of an earlier boot): each told alone.
