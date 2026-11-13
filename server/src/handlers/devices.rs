@@ -1062,8 +1062,9 @@ struct DeviceDetailTemplate {
     /// "17:21": the kid's request for more time still open (design r13 §2.7), above the tiles
     /// until a lift or the day's end; a request's push opens `#quick`.
     asked: Option<String>,
-    /// A lift form's flash (`?done=`): the summary group ("quick"), text, refused.
-    done: Option<(&'static str, &'static str, bool)>,
+    /// A lift form's or the Regler sheet's flash (`?done=`): the summary group ("quick"), its words
+    /// (a rule turned on now's name and end filled in, design 93), refused.
+    done: Option<(&'static str, String, bool)>,
     /// The last report has the phone's restrictions paused: said at the top of Quick actions,
     /// where the Attention row lands (qa-31-s10-code M1).
     paused: bool,
@@ -1100,15 +1101,16 @@ crate::i18n::words!(DeviceDetailTemplate);
 impl DeviceDetailTemplate {
     /// The flash of summary group [group]: a command's (`?notice=`) or a lift's (`?done=`), worded, and
     /// whether it is a refusal.
-    fn flash(&self, group: &str) -> Option<(&'static str, bool)> {
+    fn flash(&self, group: &str) -> Option<(String, bool)> {
         self.relock
             .flash_in(group)
-            .map(|key| (key, false))
-            .or(self
-                .done
-                .filter(|(g, _, _)| *g == group)
-                .map(|(_, key, refused)| (key, refused)))
-            .map(|(key, refused)| (t(self.lang, key), refused))
+            .map(|key| (t(self.lang, key).to_string(), false))
+            .or_else(|| {
+                self.done
+                    .as_ref()
+                    .filter(|(g, _, _)| *g == group)
+                    .map(|(_, text, refused)| (text.clone(), *refused))
+            })
     }
 
     /// Access removed: the header says so and links to Advanced › Connection (L2).
@@ -2284,10 +2286,31 @@ async fn render_device(
             return crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.read_phone");
         }
     };
+    // Design 93: a rule turned on now's flash names its rule and end (the newest on-lock's).
+    let newest_lock = match crate::lock_now::newest(&state.db, id).await {
+        Ok(lock) => lock,
+        Err(err) => {
+            tracing::error!(device_id = id, %err, "can't read the rule turned on now");
+            return crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.read_phone");
+        }
+    };
     let done = query
         .get("done")
         .and_then(|code| crate::handlers::lifts::done_flash(code))
-        .map(|(group, key, refused)| (crate::handlers::lifts::summary_group(group), key, refused));
+        .map(|(group, key, refused)| {
+            let (rule, at) = newest_lock.as_ref().map_or_else(Default::default, |l| {
+                (
+                    crate::time_rules::shown_name(lang, &l.rule_name),
+                    crate::lock_now::end_words(lang, l.end_minute),
+                )
+            });
+            let text = t_params(
+                lang,
+                key,
+                &[("rule", &rule), ("at", &at), ("name", &device.name)],
+            );
+            (crate::handlers::lifts::summary_group(group), text, refused)
+        });
     Html(
         DeviceDetailTemplate {
             lang,

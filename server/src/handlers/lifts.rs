@@ -79,24 +79,53 @@ pub async fn create_lift(
         .get("minutes")
         .and_then(|m| m.trim().parse::<i64>().ok())
         .unwrap_or(0);
+    let rule = form.get("rule").map(|r| r.trim()).unwrap_or("all");
+    match record_lift(&state, lang, id, &admin, target, rule, minutes).await {
+        Ok(done) => back_to(id, if target == "rule" { "pause" } else { "extra" }, done),
+        Err(refused) => refused,
+    }
+}
+
+/// [create_lift]'s core, shared with design 93's Regler sheet (`rules_now`, "Sett på pause"):
+/// checks the lift, writes its row and security event, nudges the phone. `Ok` is the flash code
+/// (`pause`, `extra`, or `gone` for a rule no longer the phone's, with nothing written); `Err` is
+/// an error page. `rule`: "all" (or empty) or a rule id, read only for a rule pause.
+#[allow(clippy::result_large_err)]
+pub(crate) async fn record_lift(
+    state: &AppState,
+    lang: Lang,
+    id: i64,
+    admin: &crate::models::AdminUser,
+    target: &str,
+    rule: &str,
+    minutes: i64,
+) -> Result<&'static str, Response> {
     if !time_rules::valid_lift(target, minutes) {
-        return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.unknown_lift");
+        return Err(crate::i18n::error(
+            lang,
+            StatusCode::BAD_REQUEST,
+            "error.unknown_lift",
+        ));
     }
 
     let (rule_id, rule_name) = if target == "rule" {
-        match form.get("rule").map(|r| r.trim()).unwrap_or("all") {
+        match rule {
             "all" | "" => (None, None),
             raw => {
                 let Ok(rule_id) = raw.parse::<i64>() else {
-                    return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.unknown_rule");
+                    return Err(crate::i18n::error(
+                        lang,
+                        StatusCode::BAD_REQUEST,
+                        "error.unknown_rule",
+                    ));
                 };
                 let rules = match time_rules::effective_rule_rows(&state.db, id).await {
                     Ok(rules) => rules,
-                    Err(err) => return server_error(lang, err, "failed to read time rules"),
+                    Err(err) => return Err(server_error(lang, err, "failed to read time rules")),
                 };
                 let Some(rule) = rules.into_iter().find(|r| r.id == rule_id) else {
                     // Deleted, or switched off for the phone, since the page loaded.
-                    return back_to(id, "pause", "gone");
+                    return Ok("gone");
                 };
                 (Some(rule.id), Some(rule.name))
             }
@@ -124,7 +153,7 @@ pub async fn create_lift(
     .execute(&state.db)
     .await
     {
-        return server_error(lang, err, "failed to record a lift");
+        return Err(server_error(lang, err, "failed to record a lift"));
     }
 
     let device = id.to_string();
@@ -153,11 +182,7 @@ pub async fn create_lift(
     )
     .await;
     let _ = state.command_notify.send(id);
-    if target == "rule" {
-        back_to(id, "pause", "pause")
-    } else {
-        back_to(id, "extra", "extra")
-    }
+    Ok(if target == "rule" { "pause" } else { "extra" })
 }
 
 /// "End now": an active rule pause stops being sent, and the phone drops it on its next sync. A
@@ -223,6 +248,20 @@ pub(crate) fn done_flash(code: &str) -> Option<(&'static str, &'static str, bool
         "gone" => ("pause", "device.summary.flash.gone", true),
         "ended" => ("lifts", "device.summary.flash.ended", false),
         "over" => ("lifts", "device.summary.flash.over", false),
+        // Design 93's Regler sheet: a rule turned on now, and its refusals (the sheet reopens).
+        "on" => ("pause", "device.summary.flash.on", false),
+        "on_changed" => ("pause", "device.summary.flash.on_changed", false),
+        "on_ended" => ("pause", "device.summary.flash.on_ended", false),
+        "on_over" => ("pause", "device.summary.flash.on_over", false),
+        "on_busy" => ("pause", "device.summary.flash.on_busy", true),
+        "changed_elsewhere" => ("pause", "device.summary.flash.changed_elsewhere", true),
+        "on_no_zone" => ("pause", "device.summary.flash.on_no_zone", true),
+        "on_needs_rule" => ("pause", "device.summary.flash.on_needs_rule", true),
+        "on_gone" => ("pause", "device.summary.flash.on_gone", true),
+        "til_past" => ("pause", "device.summary.flash.til_past", true),
+        "til_invalid" => ("pause", "device.summary.flash.til_invalid", true),
+        "past_midnight" => ("pause", "device.summary.flash.past_midnight", true),
+        "day_over" => ("pause", "device.summary.flash.day_over", true),
         _ => return None,
     })
 }

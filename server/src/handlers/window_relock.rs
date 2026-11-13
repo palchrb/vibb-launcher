@@ -69,6 +69,35 @@ impl RelockCard {
     }
 }
 
+/// The launcher takes this design's commands (`window_relock_v1`) at its newest report.
+pub(crate) fn takes_commands(latest: Option<&DeviceStatus>) -> bool {
+    latest.is_some_and(|s| {
+        s.capabilities_json
+            .as_deref()
+            .is_some_and(|caps| caps.contains(&format!("\"{WINDOW_RELOCK_CAPABILITY}\"")))
+    })
+}
+
+/// "Lock again" queued by another action (design 93 §5.1 step 4: a rule turned on ends the
+/// opening for setup), logged as [end_windows] logs it.
+pub(crate) async fn queue_end_windows(
+    state: &AppState,
+    id: i64,
+    admin: &crate::models::AdminUser,
+) -> Result<(), sqlx::Error> {
+    if queue_own_command(state, id, END_WINDOWS, None, admin.id).await? {
+        security::record_security_event(
+            &state.db,
+            "device_command_queued",
+            Some(&admin.username),
+            None,
+            Some(security::Detail::facts(END_WINDOWS)),
+        )
+        .await;
+    }
+    Ok(())
+}
+
 /// [allowed]: the apps allowed under Apps, `None` when apps aren't managed. A failed read of the
 /// answers or the catalog's pins is the caller's error (qa-31-s10-code L4): without the pins an
 /// imposter would be offered to "Allow these apps…", without the answers an Allow already answered
@@ -83,11 +112,7 @@ pub async fn card(
     allowed: Option<&std::collections::HashSet<String>>,
 ) -> Result<RelockCard, sqlx::Error> {
     let now_ms = now.timestamp_millis();
-    let capable = latest.is_some_and(|s| {
-        s.capabilities_json
-            .as_deref()
-            .is_some_and(|caps| caps.contains(&format!("\"{WINDOW_RELOCK_CAPABILITY}\"")))
-    });
+    let capable = takes_commands(latest);
     let open = latest.is_some_and(|s| {
         s.paused_at(now_ms) || s.install_mode_until_ms.is_some_and(|until| until > now_ms)
     });

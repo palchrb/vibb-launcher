@@ -1079,6 +1079,18 @@ pub fn build_admin_router(
             post(handlers::lifts::end_lift),
         )
         .route(
+            "/devices/{id}/rules-now",
+            post(handlers::rules_now::rules_now),
+        )
+        .route(
+            "/devices/{id}/lock-now/{lock_id}",
+            post(handlers::rules_now::change_lock),
+        )
+        .route(
+            "/devices/{id}/lock-now/{lock_id}/end",
+            post(handlers::rules_now::end_lock),
+        )
+        .route(
             "/devices/{id}/location-policy",
             post(handlers::locate::update_location_policy),
         )

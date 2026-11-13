@@ -159,6 +159,22 @@ pub fn end_minute(start: i64, choice: Choice) -> Result<i64, &'static str> {
     }
 }
 
+/// `end` moved `add` minutes later, never past midnight (24:00 is stored as 1439); `None` past it.
+pub fn extended(end: i64, add: i64) -> Option<i64> {
+    if end >= LAST_MINUTE {
+        return None;
+    }
+    let end = end + add;
+    (end <= 24 * 60).then_some(end.min(LAST_MINUTE))
+}
+
+/// The phone's own zone from its newest report (`time_state.zone`, design 34 P13); `None` without
+/// one or when it doesn't read, and then "Slå på nå" isn't offered (§4.4).
+pub fn phone_zone(latest: Option<&crate::models::DeviceStatus>) -> Option<Tz> {
+    let report = crate::time_state::TimeReport::parse(latest?.time_state_json.as_deref()?)?;
+    report.zone?.parse::<Tz>().ok()
+}
+
 /// Which of [LENGTH_HOURS] end by midnight from `start` (the others are `disabled`).
 pub fn lengths_offered(start: i64) -> [bool; 3] {
     LENGTH_HOURS.map(|h| start + h * 60 <= 24 * 60)
@@ -286,6 +302,24 @@ impl ServedRules {
     }
 }
 
+/// The phone's newest on-lock, running or not (the flashes' words).
+pub async fn newest(db: &SqlitePool, device_id: i64) -> Result<Option<LockNowRow>, sqlx::Error> {
+    sqlx::query_as::<_, LockNowRow>(
+        "SELECT * FROM time_lock_now WHERE device_id = ? ORDER BY id DESC LIMIT 1",
+    )
+    .bind(device_id)
+    .fetch_optional(db)
+    .await
+}
+
+/// A stored end on the phone's clock: "18:30", or "midnight" for 1439, in `lang`.
+pub fn end_words(lang: crate::i18n::Lang, end_minute: i64) -> String {
+    if end_minute >= LAST_MINUTE {
+        return crate::i18n::t(lang, "device.summary.rules_now.midnight").to_string();
+    }
+    format!("{:02}:{:02}", end_minute / 60, end_minute % 60)
+}
+
 /// [ServedRules] for the phone at `now`.
 pub async fn served_rule_rows(
     db: &SqlitePool,
@@ -387,6 +421,10 @@ mod tests {
         assert_eq!(end_minute(990, Choice::Til(990)), Err("til_past"));
         assert_eq!(end_minute(990, Choice::Til(600)), Err("til_past"));
         assert_eq!(end_minute(LAST_MINUTE, Choice::Day), Err("day_over"));
+        assert_eq!(extended(1110, 30), Some(1140));
+        assert_eq!(extended(1410, 30), Some(LAST_MINUTE));
+        assert_eq!(extended(1420, 30), None);
+        assert_eq!(extended(LAST_MINUTE, 30), None);
         assert_eq!(lengths_offered(1260), [true, true, true]);
         assert_eq!(lengths_offered(1290), [true, true, false]);
         assert_eq!(parse_til("18:30"), Some(1110));
