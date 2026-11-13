@@ -650,6 +650,7 @@ mod tests {
         "devices_list.html",
         "device_detail.html",
         "device_about.html",
+        "device_activity.html",
         "device_add.html",
         "device_advanced.html",
         "device_apps.html",

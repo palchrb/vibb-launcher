@@ -117,8 +117,7 @@ struct FindTemplate {
     who: crate::handlers::devices::BandAvatar,
     /// [requests] as Find Phone lists them ([find_rows]); the first is highlighted.
     recent: Recent,
-    /// Show all's target: the summary's `#activity`, or the summary itself when its Activity is
-    /// empty (it is then not on the page, and the link mustn't land at the top).
+    /// Show all's target: the phone's Activity page (2026-11-13; it was the summary's `#activity`).
     activity_href: String,
     /// The phone's last report said it can't erase itself yet (QA of the launcher wave, Low 4).
     wipe_not_ready: bool,
@@ -1974,11 +1973,9 @@ pub async fn show_zones(
     .into_response()
 }
 
-/// The Find Phone page for `device` as `admin_id` reads it; `erase_refused` = a wrong name was
-/// typed into Erase Phone….
+/// The Find Phone page for `device`; `erase_refused` = a wrong name was typed into Erase Phone….
 async fn render_find_page(
     state: &AppState,
-    admin_id: i64,
     device: Device,
     cancel: Option<&str>,
     erase_refused: bool,
@@ -1989,12 +1986,7 @@ async fn render_find_page(
     let now = Utc::now();
     let mut recent = requests(state, id, cancel, &zone, now).await?;
     find_rows(&mut recent.rows);
-    let activity = crate::handlers::activity::rows(state, admin_id, id, None, &zone, now).await?;
-    let activity_href = if activity.rows.is_empty() {
-        format!("/devices/{id}")
-    } else {
-        format!("/devices/{id}#activity")
-    };
+    let activity_href = format!("/devices/{id}/activity");
     let policy = location_policy(state, id).await?;
     let wipe_not_ready = sqlx::query_scalar::<_, Option<bool>>(
         "SELECT remote_wipe_ready FROM device_status WHERE device_id = ? \
@@ -2027,7 +2019,6 @@ async fn render_find_page(
 pub async fn show_find(
     State(state): State<AppState>,
     lang: Lang,
-    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Path(id): Path<i64>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Response {
@@ -2036,7 +2027,7 @@ pub async fn show_find(
         Err(answer) => return *answer,
     };
     let cancel = params.get("cancel").map(String::as_str);
-    match render_find_page(&state, admin.id, device, cancel, false, lang).await {
+    match render_find_page(&state, device, cancel, false, lang).await {
         Ok(page) => page.into_response(),
         Err(err) => db_error(id, err, lang),
     }
@@ -2210,7 +2201,8 @@ pub async fn show_locate(
 /// pop skips `cancelled_at`), and one the phone just fetched can't be cancelled (`too_late`, as is
 /// an expired one, or another phone's). Logged in the security log. Back to the group it came
 /// from, where the line says what happened: `back` = `summary` is the phone's summary page's
-/// Activity (`#activity`, design 48 §1.5), anything else Find Phone's requests (`#recent`, design 88).
+/// Activity (`#activity`, design 48 §1.5), `activity` the phone's Activity page (its `#activity`,
+/// 2026-11-13), anything else Find Phone's requests (`#recent`, design 88).
 pub async fn cancel_command(
     State(state): State<AppState>,
     lang: Lang,
@@ -2232,6 +2224,7 @@ pub async fn cancel_command(
     };
     let back = match form.get("back").map(String::as_str) {
         Some("summary") => format!("/devices/{id}?cancel={outcome}#activity"),
+        Some("activity") => format!("/devices/{id}/activity?cancel={outcome}#activity"),
         _ => format!("/devices/{id}/find?cancel={outcome}#recent"),
     };
     Redirect::to(&back).into_response()
@@ -2948,7 +2941,7 @@ pub async fn wipe(
 
     let confirm = form.get("confirm_name").map(|s| s.trim()).unwrap_or("");
     if confirm != device.name {
-        return match render_find_page(&state, admin.id, device, None, true, lang).await {
+        return match render_find_page(&state, device, None, true, lang).await {
             Ok(page) => page.into_response(),
             Err(err) => db_error(id, err, lang),
         };
@@ -3409,7 +3402,7 @@ mod tests {
             ("locate", "Update Location"),
             ("wipe", "Erase Phone"),
             ("end_windows", "Lock again"),
-            ("start_pause", "Unlock for 2 h"),
+            ("start_pause", "Unlock for 2\u{a0}h"),
             ("allow_blocked", "Allow these apps"),
             ("install_update", "Install Now"),
             ("made_up", "Other request"),

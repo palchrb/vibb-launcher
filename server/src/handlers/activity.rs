@@ -1,30 +1,42 @@
-//! The phone summary's Activity (design 48 §1.2, §1.7): one history of the phone, newest first -
-//! every command asked of it (the row Locate's Requests draws, with Cancel while it waits) and
-//! its events (the inbox's rows, without the avatar), from the last [WINDOW_DAYS] days, at most
+//! A phone's Activity (design 48 §1.2, §1.7): one history of the phone, newest first - every
+//! command asked of it (the row Locate's Requests draws, with Cancel while it waits) and its
+//! events (the inbox's rows, without the avatar), from the last [WINDOW_DAYS] days, at most
 //! [MAX_ROWS]. A command that can still be cancelled is shown at any age, outside the window and
-//! the cap: the summary is the only place to cancel Lock again, Unlock for 2 h or Allow these
-//! apps. Each row carries the clock (`Zone::at`). The window is a filter; retention is
+//! the cap. Each row carries the clock (`Zone::at`). The window is a filter; retention is
 //! `retention::prune`'s.
 //!
 //! The phone's lifts (`time_lifts`) are rows too since 2026-11-02 (Device › Time Rules' Recent went
 //! on 2026-11-01): every rule pause that is over and every extra screen time, at when it was
 //! granted, read-only. A pause still running isn't one - Quick actions has it with End now - so
-//! each lift shows once on the summary.
+//! each lift shows once.
+//!
+//! Since 2026-11-13 (the user's pick B, "Én rad, minimal") the list is a page of its own,
+//! `GET /devices/{id}/activity` ([view], `device_activity.html`), and the summary keeps one row
+//! of it ([Summary]): the newest row's words and clock and how many rows the page has - plus each
+//! command that can still be cancelled, with its Cancel back to the summary's `#activity`, so
+//! Lock again, Unlock for 2 h and Allow these apps stay one tap from the summary.
 
+use askama::Template;
+use axum::Extension;
+use axum::extract::{Path, Query, State};
+use axum::http::StatusCode;
+use axum::response::{Html, IntoResponse, Response};
 use chrono::{DateTime, Utc};
 
 use crate::AppState;
 use crate::display_time::{Zone, duration, parse_db_utc};
 use crate::handlers::locate::{CommandRow, cancel_flash, command_row};
 use crate::handlers::notifications::{InboxRow, ROW_COLUMNS, Row, inbox_row, row_from};
-use crate::i18n::{t, t_params};
-use crate::models::DeviceCommand;
+use crate::i18n::{Lang, Words, t, t_count, t_params};
+use crate::models::{Device, DeviceCommand};
+use crate::security::CurrentAdmin;
 use crate::time_rules::TimeLiftRow;
 
 /// How far back Activity reads.
 const WINDOW_DAYS: i64 = 7;
-/// How many rows Activity shows, besides the commands that can still be cancelled.
-const MAX_ROWS: usize = 10;
+/// How many rows Activity's page shows, besides the commands that can still be cancelled (ten
+/// on the summary until 2026-11-13; the page has the room).
+pub(crate) const MAX_ROWS: usize = 50;
 
 /// One row of Activity.
 pub(crate) enum ActivityRow {
@@ -48,11 +60,105 @@ pub(crate) struct LiftRow {
     pub(crate) tone: &'static str,
 }
 
-/// The summary's `#activity` group.
+/// Activity: its page's `#activity` group, and what the summary's row is made of ([Summary]).
 pub(crate) struct Activity {
     pub(crate) rows: Vec<ActivityRow>,
+    /// How many of [rows](Activity::rows) are of the window: all but the commands still cancellable
+    /// that were asked before it.
+    pub(crate) in_window: usize,
+    /// More rows in the window than [MAX_ROWS] (the badge says "50+").
+    pub(crate) more: bool,
     /// After a Cancel (`?cancel=`): the line in the group, and whether it was refused.
     pub(crate) flash: Option<(&'static str, bool)>,
+}
+
+/// The newest row's words on the summary: what (a command's label and how it went, "Lock again ·
+/// Cancelled"; a lift's words; an event's title), when (`Zone::at`) and the exact time for `title=`.
+pub(crate) struct Newest {
+    pub(crate) what: String,
+    pub(crate) when: String,
+    pub(crate) exact: String,
+}
+
+/// The summary's `#activity` (the user's pick B, 2026-11-13): each command that can still be
+/// cancelled as its own row with Cancel, then one row to the page - the newest other row's words
+/// and clock under "Activity", how many of the week's rows the page lists in a badge (an older
+/// command shown above with Cancel isn't one of them). The section shows while it has a row or a
+/// Cancel's line to say; the row to the page while the week has a row.
+pub(crate) struct Summary {
+    pub(crate) waiting: Vec<CommandRow>,
+    pub(crate) newest: Option<Newest>,
+    /// How many of the week's rows the page lists (0: no row to it).
+    pub(crate) count: usize,
+    /// The badge, also its `data-activity-count`: "12", or "50+" past the page's cap.
+    pub(crate) badge: String,
+    /// The badge as spoken: "12 in the last 7 days".
+    pub(crate) spoken: String,
+    pub(crate) flash: Option<(&'static str, bool)>,
+}
+
+impl Summary {
+    pub(crate) fn of(activity: Activity, lang: Lang) -> Summary {
+        let count = activity.in_window;
+        let (badge, spoken) = if activity.more {
+            (
+                format!("{MAX_ROWS}+"),
+                t_params(
+                    lang,
+                    "device.activity.count_more",
+                    &[("count", &MAX_ROWS.to_string())],
+                ),
+            )
+        } else {
+            (
+                count.to_string(),
+                t_count(lang, "device.activity.count", count as i64, &[]),
+            )
+        };
+        let mut waiting = Vec::new();
+        let mut newest = None;
+        for row in activity.rows {
+            match row {
+                ActivityRow::Command(c) if c.cancel_id.is_some() => waiting.push(c),
+                row if newest.is_none() => newest = Some(row.newest()),
+                _ => {}
+            }
+        }
+        Summary {
+            waiting,
+            newest,
+            count,
+            badge,
+            spoken,
+            flash: activity.flash,
+        }
+    }
+
+    pub(crate) fn shown(&self) -> bool {
+        self.count > 0 || !self.waiting.is_empty() || self.flash.is_some()
+    }
+}
+
+impl ActivityRow {
+    fn newest(self) -> Newest {
+        match self {
+            ActivityRow::Command(c) => Newest {
+                what: format!("{} · {}", c.label, c.word),
+                when: c.asked,
+                exact: c.asked_exact,
+            },
+            ActivityRow::Lift(l) => Newest {
+                what: l.what,
+                when: l.when,
+                exact: l.exact,
+            },
+            ActivityRow::Event(e) => Newest {
+                what: e.title,
+                when: e.when,
+                exact: e.exact,
+            },
+        }
+    }
 }
 
 /// Activity for `device_id` at `now` as `admin` reads it (unread is theirs; design 62 §5), with
@@ -87,7 +193,7 @@ pub(crate) async fn rows(
     ))
     .bind(device_id)
     .bind(since.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string())
-    .bind(MAX_ROWS as i64)
+    .bind(MAX_ROWS as i64 + 1)
     .bind(admin_id)
     .fetch_all(&state.db)
     .await?;
@@ -100,7 +206,7 @@ pub(crate) async fn rows(
     )
     .bind(device_id)
     .bind(since.format("%Y-%m-%d %H:%M:%S").to_string())
-    .bind(MAX_ROWS as i64)
+    .bind(MAX_ROWS as i64 + 1)
     .fetch_all(&state.db)
     .await?;
     // Design 93 §8: every rule turned on now that is no longer running (the running one is Quick actions').
@@ -111,7 +217,7 @@ pub(crate) async fn rows(
     )
     .bind(device_id)
     .bind(since.format("%Y-%m-%d %H:%M:%S").to_string())
-    .bind(MAX_ROWS as i64)
+    .bind(MAX_ROWS as i64 + 1)
     .fetch_all(&state.db)
     .await?;
     let receipts =
@@ -160,10 +266,69 @@ pub(crate) async fn rows(
             capped <= MAX_ROWS
         }
     });
+    // Every row but a cancellable command is of the window (each read starts at `since`).
+    let in_window = all
+        .iter()
+        .filter(|(at, cancellable, _)| !*cancellable || at.is_some_and(|t| t >= since))
+        .count();
     Ok(Activity {
         rows: all.into_iter().map(|(_, _, row)| row).collect(),
+        in_window,
+        // Each table reads one row past the cap, so one more anywhere shows here.
+        more: capped > MAX_ROWS,
         flash: cancel_flash(zone.lang(), cancel),
     })
+}
+
+#[derive(Template)]
+#[template(path = "device_activity.html")]
+struct ActivityTemplate {
+    lang: Lang,
+    /// The phone's small picture on the band (design 84, `band::phone`).
+    who: crate::handlers::devices::BandAvatar,
+    /// The tab's name: "Activity · Emma".
+    title: String,
+    device: Device,
+    activity: Activity,
+}
+crate::i18n::words!(ActivityTemplate);
+
+/// GET `/devices/{id}/activity` (2026-11-13): the phone's whole Activity, as the summary's group
+/// drew it until then - the commands with Cancel while they wait (back here, `back=activity`), the
+/// lifts, the events - then "Everything for this phone ›" to its inbox. 404 for an unknown phone,
+/// 500 when a read fails (never a shorter history that reads as true).
+pub async fn view(
+    State(state): State<AppState>,
+    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
+    lang: Lang,
+    Path(id): Path<i64>,
+    Query(query): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let device = match crate::handlers::device_pages::load_device(&state, id).await {
+        Ok(device) => device,
+        Err((status, key)) => return crate::i18n::error(lang, status, key),
+    };
+    let zone = Zone::load(&state.db, lang).await;
+    let cancel = query.get("cancel").map(String::as_str);
+    let activity = match rows(&state, admin.id, id, cancel, &zone, Utc::now()).await {
+        Ok(activity) => activity,
+        Err(err) => {
+            tracing::error!(device_id = id, %err, "can't read the phone's activity");
+            return crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.read_phone");
+        }
+    };
+    Html(
+        ActivityTemplate {
+            lang,
+            who: crate::handlers::devices::BandAvatar::of(&device),
+            title: format!("{} · {}", t(lang, "device.summary.activity"), device.name),
+            device,
+            activity,
+        }
+        .render()
+        .unwrap(),
+    )
+    .into_response()
 }
 
 /// A rule turned on now in Activity (design 93 §8), as a lift's row: "Skole slått på 16:30-18:30",

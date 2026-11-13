@@ -6,7 +6,6 @@ use axum::{Extension, Form};
 use serde::Deserialize;
 
 use crate::AppState;
-use crate::handlers::activity::ActivityRow;
 use crate::i18n::{Lang, Words, t, t_count, t_params};
 use crate::models::{Device, DevicePolicy, DeviceStatus, InstalledApp, TrackedApp};
 use crate::security::{self, CurrentAdmin};
@@ -1055,8 +1054,9 @@ struct DeviceDetailTemplate {
     /// Design 24b: the quick actions Lock again and Unlock for 2 h…, the foreign-app warning, the
     /// blocked apps with Allow these apps…, the last relock's findings.
     relock: crate::handlers::window_relock::RelockCard,
-    /// Activity (design 48): the phone's commands and events, with Cancel back here.
-    activity: crate::handlers::activity::Activity,
+    /// Activity (design 48): one row to its page, and the commands that can still be cancelled
+    /// with Cancel back here (the user's pick B, 2026-11-13).
+    activity: crate::handlers::activity::Summary,
     /// Design 93: Quick Actions' three tiles, their sheets and the row while the phone is open for setup.
     qa: crate::handlers::quick_actions::QuickActions,
     /// "17:21": the kid's request for more time still open (design r13 §2.7), above the tiles
@@ -2277,7 +2277,7 @@ async fn render_device(
     )
     .await
     {
-        Ok(activity) => activity,
+        Ok(activity) => crate::handlers::activity::Summary::of(activity, lang),
         Err(err) => {
             tracing::error!(device_id = id, %err, "can't read the phone's activity");
             return crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.read_phone");

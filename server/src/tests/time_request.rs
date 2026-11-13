@@ -233,7 +233,7 @@ async fn a_request_raises_one_event_and_pushes_by_each_parents_switch() {
     // The inbox tells it from the report: 80 minutes left.
     let inbox = app.get_page("/notifications", &mamma).await.text();
     assert!(inbox.contains("Anna asks for more screen time"), "{inbox}");
-    assert!(inbox.contains("1 h 20 min left"), "{inbox}");
+    assert!(inbox.contains("1\u{a0}h 20\u{a0}min left"), "{inbox}");
     let target: String =
         sqlx::query_scalar("SELECT target FROM parent_events WHERE kind = 'extra_time_request'")
             .fetch_one(&app.db)

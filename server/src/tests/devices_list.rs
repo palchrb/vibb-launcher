@@ -298,7 +298,10 @@ async fn a_locking_rule_and_todays_screen_time_show_on_the_row() {
     let html = app.get_page("/devices", &cookie).await.text();
     let anna_row = row(&html, anna);
     assert!(!anna_row.contains("data-lock"));
-    assert_eq!(line(&html, anna), "42 min of 1 h 30 min today · 100 %");
+    assert_eq!(
+        line(&html, anna),
+        "42\u{a0}min of 1\u{a0}h 30\u{a0}min today · 100 %"
+    );
     assert!(
         anna_row.contains("<i style=\"width: 46%\"></i>"),
         "{anna_row}"
@@ -308,7 +311,10 @@ async fn a_locking_rule_and_todays_screen_time_show_on_the_row() {
         "{anna_row}"
     );
     let nb = app.get_page("/devices?lang=nb", &cookie).await.text();
-    assert_eq!(line(&nb, anna), "42 min av 1 t 30 min i dag · 100 %");
+    assert_eq!(
+        line(&nb, anna),
+        "42\u{a0}min av 1\u{a0}t 30\u{a0}min i dag · 100 %"
+    );
 }
 
 #[tokio::test]

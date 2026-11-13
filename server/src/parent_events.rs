@@ -3686,7 +3686,7 @@ mod tests {
                     Push::Now,
                 ),
                 "Anna: message from sender name «DNB»",
-                "14:02 · Allow within 23 h",
+                "14:02 · Allow within 23\u{a0}h",
                 "/devices/3/calls#held-ab12",
             ),
             // Design 77 §14: the kid's contact request, to its row on the Calls page.
@@ -3897,7 +3897,7 @@ mod tests {
             (
                 extra_time_request(3, "Anna", "ab13", two, &TimeAsk::Left(80), Push::Now),
                 "Anna: asks for more time",
-                "14:02 · 1 h 20 min left",
+                "14:02 · 1\u{a0}h 20\u{a0}min left",
             ),
             (
                 extra_time_request(
@@ -3975,7 +3975,7 @@ mod tests {
             ("Anna: kom til Home", "14:02"),
             ("Anna: dro fra School", "14:02"),
             ("Anna: ber om mer tid", "14:02"),
-            ("Anna: ber om mer tid", "14:02 · 1 t 20 min igjen"),
+            ("Anna: ber om mer tid", "14:02 · 1\u{a0}t 20\u{a0}min igjen"),
             ("Anna: ber om mer tid", "14:02"),
             ("Signal: oppdatering tilgjengelig", "14:02 · versjon 7.2.0"),
             ("Annas mobil: Vibb One oppdatert", "14:02 · versjon 0.36.0"),
@@ -4109,11 +4109,11 @@ mod tests {
         );
         assert_eq!(
             tell("Anna", TimeAsk::Left(80), later).1,
-            "17:21 · 1 h 20 min left"
+            "17:21 · 1\u{a0}h 20\u{a0}min left"
         );
         assert_eq!(
             tell("Anna", TimeAsk::Left(45), later).1,
-            "17:21 · 45 min left"
+            "17:21 · 45\u{a0}min left"
         );
         assert_eq!(
             tell("Anna", TimeAsk::Rule("SCHOOL".into()), later).1,
@@ -4691,7 +4691,7 @@ mod tests {
             told_nb(&events[15]).1,
             "14:02 · låst opp 14:23 · av siden i går 19:14, batteriet var 3 %"
         );
-        assert_eq!(told_nb(&events[21]).1, "14:02 · 1 t 20 min igjen");
+        assert_eq!(told_nb(&events[21]).1, "14:02 · 1\u{a0}t 20\u{a0}min igjen");
         assert_eq!(
             inbox_detail(
                 &Phone {
@@ -4827,7 +4827,7 @@ mod tests {
             inbox(&phone, &number),
             (
                 "Anna: message from unknown number +4791234567".to_string(),
-                "14:02 · Allow within 23 h".to_string()
+                "14:02 · Allow within 23\u{a0}h".to_string()
             )
         );
         assert_eq!(number.target, "/devices/3/calls#held-ab12");
@@ -4888,7 +4888,7 @@ mod tests {
             ),
             (
                 "Anna: melding fra ukjent nummer +4791234567".to_string(),
-                "14:02 · Tillat innen 23 t".to_string()
+                "14:02 · Tillat innen 23\u{a0}t".to_string()
             )
         );
         assert_eq!(Kind::SmsHeld.switch().unwrap().0, "push_sms_held");
