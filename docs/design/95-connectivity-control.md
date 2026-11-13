@@ -1,6 +1,6 @@
 # Design 95: connectivity control as one whole - roaming by region, "bare Vibb", and a cheap line home
 
-Status: research and test note, **revision 2 (design QA)**, 2026-11-13. No code is built. It extends design 94 (data
+Status: research and test note, **revision 3 (slim scope)**, 2026-11-13; revision 2 was the design QA. Built in the round "Mobilnett" as revision 3 scopes it. It extends design 94 (data
 roaming, revision 2, approved, not built; branch `design-94`) and changes it in the places listed in §6. Everything
 marked "measured" was run on the emulator (`jelly36`, Android 16, Google Play image) with throwaway probes and the real
 debug launcher from `main` (`f4c1b196`) against a local server built from the same commit. The probes and logs stayed
@@ -8,6 +8,100 @@ in the scratchpad; nothing here was installed on a phone.
 
 The user (2026-11-13): *"lots of freedom to control whether the phone has a connection or not, while the phone can
 ideally always reach the server cheaply."*
+
+**Revision 3 (slim scope, 2026-11-13).** The user cut the round to what pays for itself. This section overrides
+everything below it where they disagree; the rest stays as the record of what was measured and why.
+
+- **In, built as one round "Mobilnett" (branch `mobilnett`):**
+  1. **Design 94, data roaming**, with the values `off` | `phone` offered in the PWA ("Av" is the default, locked;
+     "Telefonens valg"). The migration's `CHECK` already holds `eea` (§6 item 1), so a later round needs no table
+     rebuild. The report is 94's `data_roaming{...}` plus `modems` (§6 item 3; one call, no permission).
+  2. **"Bare Vibb" (95-S, slim):** `KidVpnService`'s filter, sink and pass shapes (§2.2), the launcher excluded in
+     every shape, one owner of always-on and lockdown (`alwaysOnFor`, never writing lockdown off while the persisted
+     shape is the sink), `DISALLOW_CONFIG_VPN` following the sink, and the trigger on the best-network callback the
+     filter already holds (no `ServiceStateListener`: without the EEA rule nothing needs an MCC change without a
+     network change). The sink has exactly **two reasons**: the parent's "Mobildata for apper: Bare Vibb" on
+     cellular, and design 94's lingering roaming session (`locked && data_active`, §6 item 2 option (d), without
+     quiet). Decisions: **D3 yes** (Åpne for oppsett and the parent override lift the parent's Bare Vibb, and with it
+     the sink's `DISALLOW_CONFIG_VPN`; the lingering-session reason goes too, since the pause lifts the roaming lock
+     itself); **D4 no** (neither the music app nor Google Play services is excluded). The ⓘ under Bare Vibb names what
+     stops: chat apps' notifications, Google's network location (Finn telefonen falls back to GPS), Play's updates;
+     calls, SMS and MMS go on. The launcher's own bulk downloads wait for Wi-Fi while the sink shape is wanted (§2.4).
+  3. **New: "Lås mobilnett-innstillingene"** (below), the user's "helt av".
+- **Out (not built, not planned in this round):** "Helt av" from the PWA, quiet mode, the ack report, "Tillat i
+  EU/EØS" with all EEA/MCC/modem logic (95-R), the kid's Mobildata switch in Quick Controls (D6), D7, D8, and the
+  traffic steps 95-T1/T2 (95-T1 runs on its own branch `traffic-1`). **Why:** the user judged "Helt av" from the PWA
+  and the automatic EEA rule not worth their complexity and risk. "Helt av" needed the launcher to silence itself on
+  cellular (no sync, no stream, no locate) with an ack-before-silence protocol, and the EEA rule needed the
+  dual-SIM per-key workaround whose way back needs a person anyway (§1.4). Android's own mobile-data switch, turned
+  off by the parent on the phone during Åpne for oppsett and then locked, gives a **true zero** with nothing of ours
+  in the way: no tunnel, no lockdown, no protocol.
+- **Where it lives in the PWA (the user, 2026-11-13): its own page, not a group on Avansert.** "Mobilnett" is a
+  settings page of the phone on a par with Låseskjerm (`device_lock.html`): a row on the phone's page among the other
+  settings rows, `GET /devices/{id}/mobile` (`device_mobile.html`). The row's value line shows only when it says
+  something ("Bare Vibb", "Roaming på", "Mobildata av", joined with " · "). The page has three groups, as the
+  approved mockup: **"Mobildata"** (radio rows "På" / "Bare Vibb", each with its subtitle), **"Dataroaming"** ("Av" /
+  "Telefonens valg"), then the switch **"Lås mobilnett-innstillingene"**. Each group saves on change
+  (`POST /devices/{id}/mobile`) and lands on its own anchor on the page (`#mobile-data`, `#data-roaming`,
+  `#mobile-lock`), so a save never jumps to the top. Design 94 §6.1's `#data-roaming` section on Avansert and §6
+  item 1's `#mobile-network` anchor are **gone**; nothing redirects there (neither was ever built). The phone's state
+  lines (94 §6.1's table, "Mobildata: bare Vibb", "Mobildata er slått av på telefonen") sit on this page under their
+  group, and on the summary only the roaming part of 94 §6.2 joins the header line.
+- **One contract file, two capabilities.** `server/testdata/mobile_network.json` (byte-identical in the launcher's
+  test resources) holds both halves: `data_roaming_v1` (design 94) and `mobile_data_v1` (Bare Vibb, the settings
+  lock, the report of Android's mobile-data switch). The PWA shows each group's controls only once the latest report
+  claims its capability; before that the group says the phone needs a newer Vibb One. An older launcher ignores the
+  new keys (`ignoreUnknownKeys`): nothing is enforced on it, and the page says so instead of pretending.
+
+### Revision 3, item 3: "Lås mobilnett-innstillingene" (`UserManager.DISALLOW_CONFIG_MOBILE_NETWORKS`)
+
+**The user's "helt av".** The parent turns Android's own mobile-data switch off on the phone during Åpne for oppsett
+(Settings › Nettverk og internett › SIM-kort › Mobildata, or the Internet tile in Quick Settings), and the lock keeps
+the kid from turning it back on. Android itself then brings up no data network for anyone, ours included: zero bytes
+on cellular, Wi-Fi untouched, calls and SMS untouched (they do not use the internet data network). MMS needs mobile
+data, so it waits for the switch, as it does on any phone with data off.
+
+- **Policy:** top-level `mobile_settings_locked: bool`, always sent; the server's column defaults to **on**
+  (`device_policy.mobile_settings_locked INTEGER NOT NULL DEFAULT 1`, migration 0143). The launcher sets the
+  restriction while it is `true` and no lift runs (`overrideActive`: the pause, "Åpne for oppsett", the offline
+  override - the standing rule); `false`, or an older server's missing key (`null`), clears it. It holds whether or
+  not the phone is "managed" in hardening's sense, like design 94's roaming lock.
+- **Report:** `mobile_data{enabled, sink, settings_locked}`. `enabled` is `TelephonyManager.isDataEnabled()` on the
+  default data SIM (`ACCESS_NETWORK_STATE`, which the manifest has; `null` when unreadable), `sink` is `"off"`,
+  `"parent"` or `"roaming"` (why the sink shape is wanted now), `settings_locked` is
+  `hasUserRestriction(DISALLOW_CONFIG_MOBILE_NETWORKS)` as Android has it. The PWA shows "Mobildata er slått av på
+  telefonen" when `enabled` is `false`, on the Mobilnett page and as the row's value.
+- **AOSP (android15-release, checked again in android16-release where the UI changed):**
+  - `UserManager.DISALLOW_CONFIG_MOBILE_NETWORKS = "no_config_mobile_networks"` (API 22): "can only be set by a device
+    owner, a profile owner on the primary user or a profile owner of an organization-owned managed profile on the
+    parent profile. When it is set by a device owner, it applies globally." `UserRestrictionsUtils` (15) lists it in
+    `USER_RESTRICTIONS`, `MAIN_USER_ONLY_RESTRICTIONS` and the organisation-owned parent's global set; DPMS maps it to
+    `MANAGE_DEVICE_POLICY_MOBILE_NETWORK`, which a device owner holds. **We can set it.**
+  - What it blocks is the **UI**, plus one setting:
+    - Settings' whole SIM page (`MobileNetworkSettings` is a `RestrictedDashboardFragment` of this restriction, 15
+      and 16): the Mobildata switch, the roaming switch, preferred network type, APNs, operator selection, Wi-Fi
+      calling's switch, the calls/SMS/data SIM choice on a dual-SIM phone. The "SIM-kort" entry on Network & internet
+      (`mobile_network_list`, a `RestrictedPreference` with `userRestriction="no_config_mobile_networks"`) shows as
+      disabled by the admin.
+    - SystemUI's Internet tile and dialog: `AccessPointControllerImpl.canConfigMobileData()` is false while it is set,
+      and the dialog hides the mobile-data toggle (`InternetDialogDelegate` 15; `InternetDialogDelegateLegacy` and the
+      new `InternetDetailsContentManager` 16).
+    - `UserRestrictionsUtils.isSettingRestrictedForUser`: writes of `Settings.Global.PREFERRED_NETWORK_MODE`.
+  - It does **not** stop telephony: data enabled/disabled is `TelephonyManager.setDataEnabledForReason(USER)`, which
+    the phone process writes, not the kid. The restriction only takes the switches away.
+- **What the kid loses that may matter**, all of it parent-only on a kid's phone anyway, and all reachable during
+  Åpne for oppsett: Wi-Fi calling's own switch, the dual-SIM choice of SIM for calls, SMS and data, the APN list
+  (MMS setup), and network-type and operator choice (useful abroad when the phone can't find a network). Nothing a
+  kid needs day to day: calls, SMS, emergency calls and Wi-Fi are untouched.
+- **Gaps, stated:** an OEM's own Quick Settings tile ("Mobildata" as its own tile on some skins) may not read the
+  restriction; [needs device test] on the Jelly Star. A **new SIM** brings its own per-subscription data setting,
+  which Android defaults to on, so a SIM swap restores data; the report's `enabled: true` then shows it and the PWA
+  stops saying "slått av". A device owner cannot turn mobile data off itself (`setDataEnabled` needs
+  `MODIFY_PHONE_STATE`), which is why the switch is the parent's, on the phone.
+- **Tests:** the contract's `policy` rows carry the key, `settings_locked` rows pin the rule
+  (`mobileSettingsLocked(value, overrideActive)`: `true` and no lift -> set; a lift, `false` or `null` -> cleared),
+  and the report's `mobile_data` is encoded exactly. Emulator: the SIM page and the Internet dialog's toggle are
+  gone while it is set, and back during Åpne for oppsett.
 
 **Revision 2 (design QA, 2026-11-13), checked against the logs, android15-release (`Vpn.java`, `ConnectivityService`,
 `DataNetworkController`, `DataSettingsManager`, `GlobalSettingsHelper`, `ServiceStateTracker`) and the repo
