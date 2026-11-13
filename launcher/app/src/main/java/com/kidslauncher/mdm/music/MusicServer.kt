@@ -1,7 +1,5 @@
 package com.kidslauncher.mdm.music
 
-import com.kidslauncher.mdm.server.toServer
-import okhttp3.OkHttpClient
 import okhttp3.RequestBody
 import okhttp3.ResponseBody
 import retrofit2.Call
@@ -76,8 +74,8 @@ private interface MusicApi {
 fun createMusicServer(baseUrl: String, token: String): MusicServer {
     val path = com.kidslauncher.mdm.server.serverPathNow(baseUrl)
     val normalizedBaseUrl = path.baseUrl
-    val client = OkHttpClient.Builder()
-        .toServer(path)
+    // Design 95 §3.5: a child of the shared base client (one pool with the sync and the stream).
+    val client = com.kidslauncher.mdm.server.ServerClients.base(path).newBuilder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .addInterceptor(com.kidslauncher.mdm.server.bearerInterceptor(normalizedBaseUrl, token))

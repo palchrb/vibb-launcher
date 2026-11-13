@@ -740,7 +740,12 @@ The PWA's footer says this, and says that the dual-SIM case is "nesten null".
 
 ## 8. Build steps and sizes
 
-1. **95-T1 (the policy and the client), both directories, S-M.**
+1. **95-T1 (the policy and the client), both directories, S-M.** **Built** (branch `traffic-1`, 2026-11-13; the
+   ETag/304 and the shared client; the gzip of the non-secret answers was left out and can ride along with 95-T2).
+   Decided in the build: the kept body is never one with a `pending_command` (one-shot, and `set_kid_pin`'s carries
+   the Child PIN); the server never answers `If-None-Match: *` with a 304; a dead shared connection is covered by
+   evicting the pool's idle connections when the stream drops, not a `pingInterval`. Notes:
+   `docs/notes/launcher/push-and-play.md` and `docs/notes/server/architecture.md`.
    - Server: the policy's ETag/304 and a page-less test of the pop-then-hash order. Gzip on the non-secret device
      answers (§3.3, a `Compressible`-style predicate; never the policy, token answers, enroll, SSE, images or audio).
    - Launcher: the sealed raw body with its ETag, versionCode and URL; `If-None-Match`; a 304 applied as a 200; one

@@ -59,6 +59,7 @@ mod parents;
 mod passkey_only;
 mod passkeys;
 mod play;
+mod policy_etag;
 mod power;
 mod provisioning;
 pub(crate) mod seeded_family;

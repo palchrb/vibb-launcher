@@ -203,11 +203,30 @@ class ServerTransportTest {
     }
 
     @Test
+    fun `the server clients share one base client per path and flag`() {
+        // Design 95 §3.5: the same path and flag give the same base (one pool, one TLS context); a change builds anew.
+        val path = serverPath("https://vibb.example", null, debug = false)
+        val off = ServerPinning(enforce = false)
+        val base = ServerClients.base(path, off)
+        assertTrue(base === ServerClients.base(path, ServerPinning(enforce = false)))
+        val child = base.newBuilder().readTimeout(30, TimeUnit.SECONDS).build()
+        assertTrue(child.connectionPool === base.connectionPool)
+        val on = ServerClients.base(path, ServerPinning(enforce = true))
+        assertFalse(on === base)
+        assertFalse(ServerClients.base(serverPath("https://other.example", null, debug = false), off) === on)
+        assertFalse(ServerClients.base(serverPath("https://vibb.example", socks, debug = false), off) === base)
+    }
+
+    @Test
     fun `every server client takes its way from the transport`() {
         val main = File("src/main/java/com/kidslauncher/mdm")
+        // Design 95 §3.5: each is a child of the one base client, which alone is built with `.toServer(`.
         for (name in listOf("server/MdmApi.kt", "server/CommandListenerService.kt", "music/MusicServer.kt")) {
-            assertTrue(name, File(main, name).readText().contains(".toServer("))
+            val text = File(main, name).readText()
+            assertTrue(name, text.contains("ServerClients.base(path).newBuilder()"))
+            assertFalse(name, text.contains("OkHttpClient.Builder()"))
         }
+        assertTrue(File(main, "server/ServerTransport.kt").readText().contains("OkHttpClient.Builder().toServer(path, pinning).build()"))
         val proxyUsers = main.walk().filter { it.isFile && it.extension == "kt" && it.readText().contains("TsnetClient.proxy()") }
             .map { it.name }.toSet()
         assertEquals(setOf("ServerTransport.kt"), proxyUsers)
