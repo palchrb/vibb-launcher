@@ -64,9 +64,9 @@
                 {% for d in rule.days %}
                 <div class="row day-row" data-day="{{ d.index }}">
                     <span class="row-label">{{ d.short }}</span>
-                    <input type="time" class="row-time" name="d{{ d.index }}_start" value="{{ d.start }}" aria-label="{{ self.tp("settings.time_rules.day_from", [("day", d.name)]) }}"{% if d.error.is_some() %} aria-invalid="true" aria-describedby="d{{ d.index }}-error" autofocus{% endif %}>
+                    <span class="day-times"><input type="time" class="row-time" name="d{{ d.index }}_start" value="{{ d.start }}" aria-label="{{ self.tp("settings.time_rules.day_from", [("day", d.name)]) }}"{% if d.error.is_some() %} aria-invalid="true" aria-describedby="d{{ d.index }}-error" autofocus{% endif %}>
                     <span class="day-dash" aria-hidden="true">&ndash;</span>
-                    <input type="time" class="row-time" name="d{{ d.index }}_end" value="{{ d.end }}" aria-label="{{ self.tp("settings.time_rules.day_until", [("day", d.name)]) }}"{% if d.error.is_some() %} aria-invalid="true" aria-describedby="d{{ d.index }}-error"{% endif %}>
+                    <input type="time" class="row-time" name="d{{ d.index }}_end" value="{{ d.end }}" aria-label="{{ self.tp("settings.time_rules.day_until", [("day", d.name)]) }}"{% if d.error.is_some() %} aria-invalid="true" aria-describedby="d{{ d.index }}-error"{% endif %}></span>
                 </div>
                 {% if let Some(why) = d.error %}<p class="flash flash-error" id="d{{ d.index }}-error" data-flash="day-{{ d.index }}">{{ why }}</p>{% endif %}
                 {% endfor %}
