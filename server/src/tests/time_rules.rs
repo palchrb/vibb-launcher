@@ -523,11 +523,11 @@ async fn lifts_are_recorded_delivered_and_end() {
     let page = app
         .get_page(&device_page(id, Section::Summary), &cookie)
         .await;
-    assert!(page.text().contains("Skole paused for 30 min"));
+    assert!(page.text().contains("Skole paused for 30\u{a0}min"));
     assert!(page.text().contains("End now"));
     // Added screen time is history: the security log has it, the summary shows only running
     // pauses (Device › Time Rules lost its Recent group on 2026-11-01).
-    assert!(!page.text().contains("+15 min screen time"));
+    assert!(!page.text().contains("+15\u{a0}min screen time"));
 
     // End the rule pause early: no longer delivered; ending it again changes nothing and lands
     // back (a second tap); a pause this phone never had is a 404.
@@ -609,7 +609,11 @@ async fn lifts_are_recorded_delivered_and_end() {
     let html = page.text();
     let quick = &html[html.find("id=\"quick\"").unwrap()..html.find("id=\"activity\"").unwrap()];
     assert!(!quick.contains("data-lift="), "{quick}");
-    let activity = &html[html.find("id=\"activity\"").unwrap()..];
+    let page = app
+        .get_page(&format!("/devices/{id}/activity"), &cookie)
+        .await
+        .text();
+    let activity = &page[page.find("id=\"activity\"").unwrap()..];
     assert!(activity.contains("data-lift="), "{activity}");
     assert!(!activity.contains("/end#"), "{activity}");
 }
@@ -755,7 +759,7 @@ async fn time_state_is_stored_and_shown() {
         "{text}"
     );
     assert!(text.contains(">42 of 90 min today<"), "{text}");
-    assert!(text.contains("Includes 30 min extra"));
+    assert!(text.contains("Includes 30\u{a0}min extra"));
     assert!(!text.contains("Vibb One too old for time rules"));
 
     // Not an object, or too big: not stored.

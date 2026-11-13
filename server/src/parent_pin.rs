@@ -634,7 +634,7 @@ mod tests {
                     ..ev(Kind::Lockout, Entry::Pause, NOW)
                 },
                 "9 Oct 2025 08:53 UTC: 5 wrong parent PINs in a row (the last for pausing \
-                 restrictions): the parent PIN is locked on the phone. For 24 h. Until 10 Oct 2025 \
+                 restrictions): the parent PIN is locked on the phone. For 24\u{a0}h. Until 10 Oct 2025 \
                  08:53 UTC. Saving a new parent PIN ends it once the phone checks in.",
             ),
             (
@@ -658,7 +658,7 @@ mod tests {
         assert_eq!(
             security::worded_in(&log_line(&lockout), crate::i18n::Lang::Nb),
             "9. okt. 2025 08:53 UTC: 5 feil foreldre-PIN-er på rad (den siste for pause i \
-             begrensningene): foreldre-PIN-en er sperret på telefonen. I 1 t. Til 9. okt. 2025 \
+             begrensningene): foreldre-PIN-en er sperret på telefonen. I 1\u{a0}t. Til 9. okt. 2025 \
              09:53 UTC. Lagrer du en ny foreldre-PIN, oppheves det neste gang telefonen melder seg."
         );
         assert_eq!(lockout_minutes(3), 60);

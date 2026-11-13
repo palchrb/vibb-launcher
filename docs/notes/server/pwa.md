@@ -600,6 +600,29 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   Test: `summary::activity_shows_ended_pauses_and_extra_time_by_when_granted`.
   Tests: `summary::quick_actions_*`, `end_now_lands_on_quick_actions_when_nothing_else_is_left`,
   `an_event_row_shows_its_clock_once`, `activity::tests`.
+- **Activity is one row on the summary, the list a page of its own (the user's pick B "Én rad, minimal",
+  2026-11-13: the list pushed the Settings rows far down)**: *supersedes the list in the summary's `#activity` above.*
+  `GET /devices/{id}/activity` (`activity::view`, `device_activity.html`; `band::phone`, back to `/devices/{id}`, the
+  phone's picture right and no bell, as every phone page; tab title "Activity · Emma") draws exactly the group the
+  summary drew - commands (Cancel while waiting, `back=activity` → `/devices/{id}/activity?cancel=done|too_late#activity`,
+  the line in the group), lifts, events - newest first, the last 7 days, at most `activity::MAX_ROWS` = **50** rows
+  (each table reads 51, so `Activity.more` knows one more exists) plus every command still cancellable; then "Everything
+  for this phone ›" to the inbox and the footer "The last 7 days, newest first."; empty, one quiet row "Nothing in the
+  last 7 days" (Find Phone's Show all always leads here now, `locate::show_find` no longer reads Activity). 404 for an
+  unknown phone, 500 on a failed read. The summary's `#activity` (`activity::Summary::of`, no group header, an
+  `aria-label`, where the group was) holds each command `cancel_id` still has as its own row with Cancel (`back=summary`,
+  `?cancel=…#activity` as before - the summary stays the one place one tap from Lock again, Unlock for 2 h, Allow these
+  apps), then one row to the page: a grey tile with a list glyph, "Activity" / "Aktivitet", a one-line sub
+  (`.row-sub-line`, cut with "…"; style.css v110) with the newest other row's words and clock ("All rules paused for
+  1 h · 20:37": a command's label, a lift's words, an event's title, `Zone::at`, the exact time in `title`), a grey
+  `.badge` with the page's row count (`data-activity-count`; "50+" past the cap, spoken "12 in the last 7 days" /
+  "More than 50 …"), a chevron. Shown while the page has a row or a Cancel's line; the flash sits in that group.
+  **A duration's number and unit never part**: `time.duration.*` (`display_time::duration`, every lift row, the screen
+  time lines, the pushes and the security log that use it) and the command label "Unlock for 2 h" put a no-break space
+  (U+00A0) between them, so "All rules paused for 1 h" never leaves "h" alone on the next line. Tests:
+  `summary::activity_mixes_commands_and_events_newest_first_with_the_clock` (the page and the summary's row),
+  `activity_keeps_a_week_fifty_rows_and_what_can_be_cancelled` (the cap, "50+", Cancel on both),
+  `activity_shows_ended_pauses_and_extra_time_by_when_granted` (the no-break space, on both).
 
 ## The Apps tab (design 31 step 11, `docs/design/31-pwa-redesign.md` §3.3)
 
@@ -1835,7 +1858,7 @@ pointer here.
   |---|---|---|---|
   | `band::tab(title, tab)` | the round Vibb mark (`.band-mark`, 36 px, the app icon's artwork) | the call's body ("+" on Devices and Apps), then the bell - last by construction | the 5 tab pages |
   | `band::sub(title, href, parent)` | the back chevron | the call's body | 29 pages under a tab |
-  | `band::phone(title, href, parent, who)` | the back chevron | the phone's small picture, then the call's body | a phone's 10 pages |
+  | `band::phone(title, href, parent, who)` | the back chevron | the phone's small picture, then the call's body | a phone's 11 pages |
   | `band::editor(title, href, parent)` | the back chevron | the call's body: Save | the 4 editors |
   | `band::bare(title)` | the mark | nothing | `music_spotify_done` (no session) |
 
@@ -1860,7 +1883,8 @@ pointer here.
   down where the row is short of room and the rest is cut with an ellipsis (the user: a long phone name may be cut).
   A 40-letter phone name is cut on its own summary, at 390 px too.
 - **A phone's ten pages** (`device_about`, `device_advanced`, `device_apps`, `device_calendar`, `device_calls`,
-  `device_filter`, `device_home`, `device_lock`, `device_music`, `device_time`) say whose page it is with the phone's
+  `device_filter`, `device_home`, `device_lock`, `device_music`, `device_time`; `device_activity` the eleventh since
+  2026-11-13) say whose page it is with the phone's
   picture, since the name left the back link (the user's choice, "Enig i c!"): `devices::BandAvatar { initial,
   avatar, photo }` from the functions the list and the summary use (`BandAvatar::of(&Device)`, from the
   `Device` each handler reads once), drawn as `<span class="band-who" aria-hidden="true">` around the list's own `.avatar`
@@ -2141,8 +2165,8 @@ pointer here.
 - **Find Phone**: the wipe-not-ready warning, the three tiles (`#actions`), "Recent Requests" (`#recent`):
   `locate::requests` through `find_rows` - every one still in flight (`locate::in_flight`, as Requests calls it), then the newest others up to
   `FIND_REQUESTS` (3) in all, so nothing in flight is hidden (code QA L2) -, the newest highlighted
-  (`.group-newest > .row[data-command]:first-child`), then Show all › Activity (`/devices/{id}#activity`, or plain
-  `/devices/{id}` while the summary's Activity is empty and so not on the page - code QA L1); Erase Phone… alone at the bottom (`row-button row-danger`) with
+  (`.group-newest > .row[data-command]:first-child`), then Show all › Activity (`/devices/{id}/activity` since
+  2026-11-13; it was the summary's `#activity`, or plain `/devices/{id}` while that was empty - code QA L1); Erase Phone… alone at the bottom (`row-button row-danger`) with
   the offline footer and ⓘ (`#erase`). A wrong name renders this page (200) with the confirm open.
 - **Where the forms land now**: Ring, Stop Ringing, Lock, Erase → `/devices/{id}/find#actions`; Cancel (any `back`
   but `summary`; the rows post `find`) → `/devices/{id}/find?cancel=…#recent`; the pickers →

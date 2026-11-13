@@ -1627,9 +1627,9 @@ pub fn extra_time_request(
 }
 
 /// A request's words (design r13 §2.6): "Anna asks for more screen time" / "17:21 · Screen time
-/// used up", "Yesterday 21:40 · Bedtime", "14:02 · 1 h 20 min left", the clock alone when the
+/// used up", "Yesterday 21:40 · Bedtime", "14:02 · 1\u{a0}h 20\u{a0}min left", the clock alone when the
 /// phone's state was unknown. Pushed (2026-10-25): "Anna: asks for more time" / "17:21", with the
-/// time left its one number ("14:02 · 1 h 20 min left").
+/// time left its one number ("14:02 · 1\u{a0}h 20\u{a0}min left").
 fn extra_time_told(
     form: Form,
     p: &ExtraTimeParams,
@@ -1770,7 +1770,7 @@ pub fn sms_held(
 
 /// A held message's words (design 77 §7, QA R2-M2), the same in the inbox and the push: the sender quoted and
 /// labelled by its kind, so a stranger's text never reads as Vibb's own words - "Anna: message from unknown number
-/// +4791234567" / "Anna: message from sender name «DNB»" - and "14:02 · Allow within 23 h" (the time alone once it
+/// +4791234567" / "Anna: message from sender name «DNB»" - and "14:02 · Allow within 23\u{a0}h" (the time alone once it
 /// expired). Shorter than the design's sentence, which can't fit [TITLE_MAX] with a 16-character number. The hour's
 /// digest is a push alone, worded by [digest_words].
 fn sms_held_told(p: &SmsHeldParams, zone: &Zone, now: DateTime<Utc>) -> (String, String) {
@@ -3686,7 +3686,7 @@ mod tests {
                     Push::Now,
                 ),
                 "Anna: message from sender name «DNB»",
-                "14:02 · Allow within 23 h",
+                "14:02 · Allow within 23\u{a0}h",
                 "/devices/3/calls#held-ab12",
             ),
             // Design 77 §14: the kid's contact request, to its row on the Calls page.
@@ -3897,7 +3897,7 @@ mod tests {
             (
                 extra_time_request(3, "Anna", "ab13", two, &TimeAsk::Left(80), Push::Now),
                 "Anna: asks for more time",
-                "14:02 · 1 h 20 min left",
+                "14:02 · 1\u{a0}h 20\u{a0}min left",
             ),
             (
                 extra_time_request(
@@ -3975,7 +3975,7 @@ mod tests {
             ("Anna: kom til Home", "14:02"),
             ("Anna: dro fra School", "14:02"),
             ("Anna: ber om mer tid", "14:02"),
-            ("Anna: ber om mer tid", "14:02 · 1 t 20 min igjen"),
+            ("Anna: ber om mer tid", "14:02 · 1\u{a0}t 20\u{a0}min igjen"),
             ("Anna: ber om mer tid", "14:02"),
             ("Signal: oppdatering tilgjengelig", "14:02 · versjon 7.2.0"),
             ("Annas mobil: Vibb One oppdatert", "14:02 · versjon 0.36.0"),
@@ -4109,11 +4109,11 @@ mod tests {
         );
         assert_eq!(
             tell("Anna", TimeAsk::Left(80), later).1,
-            "17:21 · 1 h 20 min left"
+            "17:21 · 1\u{a0}h 20\u{a0}min left"
         );
         assert_eq!(
             tell("Anna", TimeAsk::Left(45), later).1,
-            "17:21 · 45 min left"
+            "17:21 · 45\u{a0}min left"
         );
         assert_eq!(
             tell("Anna", TimeAsk::Rule("SCHOOL".into()), later).1,
@@ -4691,7 +4691,7 @@ mod tests {
             told_nb(&events[15]).1,
             "14:02 · låst opp 14:23 · av siden i går 19:14, batteriet var 3 %"
         );
-        assert_eq!(told_nb(&events[21]).1, "14:02 · 1 t 20 min igjen");
+        assert_eq!(told_nb(&events[21]).1, "14:02 · 1\u{a0}t 20\u{a0}min igjen");
         assert_eq!(
             inbox_detail(
                 &Phone {
@@ -4827,7 +4827,7 @@ mod tests {
             inbox(&phone, &number),
             (
                 "Anna: message from unknown number +4791234567".to_string(),
-                "14:02 · Allow within 23 h".to_string()
+                "14:02 · Allow within 23\u{a0}h".to_string()
             )
         );
         assert_eq!(number.target, "/devices/3/calls#held-ab12");
@@ -4888,7 +4888,7 @@ mod tests {
             ),
             (
                 "Anna: melding fra ukjent nummer +4791234567".to_string(),
-                "14:02 · Tillat innen 23 t".to_string()
+                "14:02 · Tillat innen 23\u{a0}t".to_string()
             )
         );
         assert_eq!(Kind::SmsHeld.switch().unwrap().0, "push_sms_held");

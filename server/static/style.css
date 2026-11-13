@@ -979,6 +979,14 @@ summary.row:active {
     line-height: 1.3;
 }
 
+/* A sub-line kept to one line, cut with "…" (the summary's Activity row, 2026-11-13: the newest
+   row's words and clock). */
+.row-sub-line {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 /* Device › Calendar's "Colour" row (2026-10-27): the swatch before the label is the dot Dagen draws before the time.
    The eight values are calendar::COLORS's, the same ARGB the launcher's CalendarColor keeps; peach (the kid's own)
    is never one of them. */

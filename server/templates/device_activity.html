@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="{{ lang.code() }}">
+<head>
+{% include "partials/head.html" %}
+</head>
+<body>
+<div class="top-strip" aria-hidden="true"></div>
+{% import "partials/recent.html" as recent_group %}
+{% let tab = "devices" %}
+{% include "partials/tab_bar.html" %}
+{% import "partials/band.html" as band %}
+<main class="container">
+    {% call band::phone(self.t("device.summary.activity"), "/devices/" ~ device.id, device.name, who) %}{% endcall %}
+    <div class="sheet">
+
+    {#- The phone's Activity (design 48 §1.2; its own page since 2026-11-13, the summary keeps one row
+        to it): newest first, every command asked of it (Cancel while it waits, back here:
+        #activity), its events (a tap marks one read and goes where it happened; a pruned one comes
+        back to this phone's inbox) and its lifts but the running pauses (the summary's Quick
+        actions has those). The last week, at most activity::MAX_ROWS rows, plus what can still be
+        cancelled; then the phone's inbox. -#}
+    <section id="activity" aria-label="{{ self.t("device.summary.activity") }}">
+        <div class="group" data-group="activity">
+            {% for r in activity.rows %}
+            {% match r %}
+            {% when ActivityRow::Command(c) %}
+            {% call recent_group::row(c, device.id, "activity", "activity") %}{% endcall %}
+            {% when ActivityRow::Lift(l) %}
+            {#- A rule pause that is over or extra screen time: read-only, granted at its time. -#}
+            <div class="row" data-lift="{{ l.id }}">
+                <span class="row-label">{{ l.what }}</span>
+                <span class="row-value"{% if !l.exact.is_empty() %} title="{{ l.exact }}"{% endif %}>{% if !l.when.is_empty() %}{{ l.when }} · {% endif %}{% if let Some(by) = l.by %}{{ by }} · {% endif %}<span class="tone-{{ l.tone }}">{{ l.word }}</span></span>
+            </div>
+            {% when ActivityRow::Event(e) %}
+            <form method="post" action="/notifications/{{ e.id }}/open" class="cell">
+                <input type="hidden" name="from" value="devices">
+                <input type="hidden" name="device" value="{{ device.id }}">
+                <button type="submit" class="row inbox-row" data-event="{{ e.id }}">
+                    <span class="row-label">{{ e.title }}<span class="row-sub">{% if !e.summary.is_empty() %}{{ e.summary }} · {% endif %}<span title="{{ e.exact }}">{{ e.when }}</span>{% if let Some(detail) = e.detail %}<br>{{ detail }}{% endif %}</span></span>
+                    <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </button>
+            </form>
+            {% endmatch %}
+            {% endfor %}
+            {% if activity.rows.is_empty() %}
+            <div class="row" data-row="empty"><span class="row-label row-label-quiet">{{ self.t("device.activity.empty") }}</span></div>
+            {% endif %}
+            {% if let Some((text, refused)) = activity.flash %}
+            <p class="flash{% if refused %} flash-error{% endif %}" role="status" data-flash="activity">{{ text }}</p>
+            {% endif %}
+            <a class="row" href="/notifications?from=devices&amp;device={{ device.id }}" data-row="everything">
+                <span class="row-label">{{ self.t("device.summary.everything") }}</span>
+                <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </a>
+        </div>
+        <p class="group-footer">{{ self.t("device.activity.footer") }}</p>
+    </section>
+    </div>
+</main>
+</body>
+</html>

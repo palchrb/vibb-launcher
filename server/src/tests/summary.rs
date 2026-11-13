@@ -22,6 +22,16 @@ fn group<'a>(html: &'a str, id: &str) -> &'a str {
     &html[start..end]
 }
 
+/// The phone's Activity page (2026-11-13: the summary keeps one row of it), `query` after `?`.
+async fn activity_page(app: &TestApp, id: i64, cookie: &str, query: &str) -> String {
+    let url = if query.is_empty() {
+        format!("/devices/{id}/activity")
+    } else {
+        format!("/devices/{id}/activity?{query}")
+    };
+    app.get_page(&url, cookie).await.text()
+}
+
 fn header(html: &str) -> &str {
     let start = html
         .find("<header class=\"summary-head\"")
@@ -175,10 +185,12 @@ async fn the_header_shows_the_lock_and_todays_screen_time() {
     assert!(!head.contains("data-lock"), "{head}");
     assert_eq!(
         status_lines(head),
-        ["42 min of 1 h 30 min screen time today"]
+        ["42\u{a0}min of 1\u{a0}h 30\u{a0}min screen time today"]
     );
     assert!(
-        head.contains("<span data-screen-time>42 min of 1 h 30 min screen time today</span>"),
+        head.contains(
+            "<span data-screen-time>42\u{a0}min of 1\u{a0}h 30\u{a0}min screen time today</span>"
+        ),
         "{head}"
     );
     assert!(head.contains("<i style=\"width: 46%\"></i>"), "{head}");
@@ -416,7 +428,7 @@ async fn quick_actions_list_running_pauses_in_local_time() {
         quick.contains(&format!("data-lift=\"{}\"", ids[0])),
         "{quick}"
     );
-    assert!(quick.contains("Skole paused for 15 min"), "{quick}");
+    assert!(quick.contains("Skole paused for 15\u{a0}min"), "{quick}");
     // Its clock, or "yesterday 23:59" just after local midnight: the zone's own words at the
     // page's `now`, which lies between `before` and `after` (never the wall clock's day).
     let zone = crate::display_time::Zone::from_setting("Europe/Oslo");
@@ -430,7 +442,8 @@ async fn quick_actions_list_running_pauses_in_local_time() {
     );
     // The pause that is over and the screen time: Activity's (2026-11-02), not Quick's; the running
     // pause is Quick's alone.
-    let activity = group(&html, "activity");
+    let page = activity_page(&app, id, &cookie, "").await;
+    let activity = group(&page, "activity");
     for lift in &ids[1..] {
         assert!(!quick.contains(&format!("data-lift=\"{lift}\"")), "{quick}");
         assert!(
@@ -564,11 +577,12 @@ async fn quick_actions_keep_running_pauses_and_no_answer_lines() {
         quick.contains(&format!("action=\"/devices/{id}/lifts/{pause}/end#quick\"")),
         "{quick}"
     );
-    assert!(!quick.contains("+15 min screen time"), "{quick}");
+    assert!(!quick.contains("+15\u{a0}min screen time"), "{quick}");
     assert!(!html.contains("data-answer"), "{html}");
+    let page = activity_page(&app, id, &cookie, "").await;
     assert!(
-        group(&html, "activity").contains("data-command=\"end_windows\""),
-        "{html}"
+        group(&page, "activity").contains("data-command=\"end_windows\""),
+        "{page}"
     );
 }
 
@@ -618,7 +632,8 @@ async fn end_now_lands_on_quick_actions_when_nothing_else_is_left() {
     assert!(!quick.contains("data-lift"), "{quick}");
     assert!(!html.contains("id=\"now\""), "{html}");
     // History now: Activity's row, without End now.
-    let activity = group(&html, "activity");
+    let page = activity_page(&app, id, &cookie, "").await;
+    let activity = group(&page, "activity");
     assert!(activity.contains("Ended early"), "{activity}");
     assert!(!activity.contains("/end"), "{activity}");
 }
@@ -681,7 +696,9 @@ fn at(haystack: &str, needle: &str) -> usize {
 
 /// Design 48 §1.2, §1.3: commands and events in one list, newest first by when each was asked or
 /// happened, each with the clock in the Phone Setup zone ("13:41", "yesterday 14:50", "15 Oct
-/// 14:02"); an event without its avatar; the last row leads to this phone's inbox.
+/// 14:02"); an event without its avatar; the last row leads to this phone's inbox. The list is
+/// its own page since 2026-11-13 (the user's pick B): the summary has one row to it under Quick
+/// actions - "Activity", the newest row's words and clock, how many rows - and no header.
 #[tokio::test]
 async fn activity_mixes_commands_and_events_newest_first_with_the_clock() {
     let app = TestApp::new().await;
@@ -717,10 +734,7 @@ async fn activity_mixes_commands_and_events_newest_first_with_the_clock() {
     command(&app, id, "ring", local(3, 14, 2), done).await;
     let off = event(&app, id, "Phone turned off", local(4, 9, 0), "/devices").await;
 
-    let html = app
-        .get_page(&format!("/devices/{id}"), &cookie)
-        .await
-        .text();
+    let html = activity_page(&app, id, &cookie, "").await;
     let activity = group(&html, "activity");
     let order = [
         at(activity, "data-command=\"end_windows\""),
@@ -759,9 +773,53 @@ async fn activity_mixes_commands_and_events_newest_first_with_the_clock() {
         )),
         "{activity}"
     );
-    // Under Quick actions.
-    assert!(html.find("id=\"quick\"").unwrap() < html.find("id=\"activity\"").unwrap());
-    super::settings_pages::check_forms(&format!("/devices/{id}"), &html);
+    // The page: the phone's band, back to its summary.
+    assert!(
+        html.contains(&format!("class=\"nav-back\" href=\"/devices/{id}\"")),
+        "{html}"
+    );
+    assert!(
+        html.contains("<h1 class=\"page-title\">Activity</h1>"),
+        "{html}"
+    );
+    super::settings_pages::check_forms(&format!("/devices/{id}/activity"), &html);
+
+    // The summary: one row under Quick actions, no group of rows and no header.
+    let summary = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(summary.find("id=\"quick\"").unwrap() < summary.find("id=\"activity\"").unwrap());
+    let activity = group(&summary, "activity");
+    assert!(!activity.contains("group-header"), "{activity}");
+    assert!(!activity.contains("data-event="), "{activity}");
+    assert!(
+        !activity.contains("data-command="),
+        "nothing to cancel: {activity}"
+    );
+    assert!(
+        activity.contains(&format!(
+            "<a class=\"row\" href=\"/devices/{id}/activity\" data-row=\"activity\">"
+        )),
+        "{activity}"
+    );
+    let row = &activity[at(activity, "data-row=\"activity\"")..];
+    assert!(row.contains("class=\"tile tile-grey\""), "{row}");
+    assert!(
+        row.contains(&format!(
+            ">Lock again · {}</span>",
+            this_minute.with_timezone(&oslo).format("%H:%M")
+        )),
+        "{row}"
+    );
+    assert!(
+        row.contains(
+            "data-activity-count=\"4\"><span aria-hidden=\"true\">4</span>\
+             <span class=\"visually-hidden\">4 in the last 7 days</span>"
+        ),
+        "{row}"
+    );
+    super::settings_pages::check_forms(&format!("/devices/{id}"), &summary);
 }
 
 /// One clock per Activity row (the user, 2026-10-20: "· 09:20 · 09:20"): design 38's start and
@@ -815,10 +873,7 @@ async fn an_event_row_shows_its_clock_once() {
         ids.push(event);
     }
     let before = Utc::now();
-    let html = app
-        .get_page(&format!("/devices/{id}"), &cookie)
-        .await
-        .text();
+    let html = activity_page(&app, id, &cookie, "").await;
     let after = Utc::now();
     // The row's `when` is the zone's words at the page's `now` (between `before` and `after`):
     // "23:59", or "yesterday 23:59" just after local midnight - never the wall clock's day.
@@ -854,51 +909,100 @@ async fn an_event_row_shows_its_clock_once() {
     }
 }
 
-/// Design 48 §1.2, 48-7: the last week and at most ten rows - but a command that can still be
-/// cancelled is shown at any age, outside both, with its Cancel back to `#activity`, where the
-/// line shows even when nothing else is left.
+/// Design 48 §1.2, 48-7: the last week and at most fifty rows on the page (ten on the summary
+/// until 2026-11-13) - but a command that can still be cancelled is shown at any age, outside
+/// both, with its Cancel: on the summary as a row of its own above Activity's one row, back to the
+/// summary's `#activity`; on the page back to the page's. The line shows even when nothing else
+/// is left.
 #[tokio::test]
-async fn activity_keeps_a_week_ten_rows_and_what_can_be_cancelled() {
+async fn activity_keeps_a_week_fifty_rows_and_what_can_be_cancelled() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
-    let (id, _) = app.enrolled_device("Anna").await;
+    let (id, _) = app.enrolled_device("Emma").await;
     let now = Utc::now();
     let eight_days = now - Duration::days(8);
     let waiting = command(&app, id, "end_windows", eight_days, "").await;
     let done = "delivered_at = requested_at, acknowledged_at = requested_at, result = 'ok'";
     command(&app, id, "ring", eight_days, done).await;
     event(&app, id, "Old", eight_days, "/devices").await;
-    for hour in 1..=12 {
+    for minute in 1..=52 {
         event(
             &app,
             id,
-            &format!("Event {hour}"),
-            now - Duration::hours(hour),
+            &format!("Event {minute}"),
+            now - Duration::minutes(minute),
             "/devices",
         )
         .await;
     }
-    let summary = format!("/devices/{id}");
-    let html = app.get_page(&summary, &cookie).await.text();
+    let html = activity_page(&app, id, &cookie, "").await;
     let activity = group(&html, "activity");
-    assert_eq!(activity.matches("data-event=").count(), 10, "{activity}");
-    assert!(activity.contains(">Event 10<"), "{activity}");
-    assert!(!activity.contains(">Event 11<"), "{activity}");
+    assert_eq!(activity.matches("data-event=").count(), 50, "{activity}");
+    assert!(activity.contains(">Event 50<"), "{activity}");
+    assert!(!activity.contains(">Event 51<"), "{activity}");
     assert!(!activity.contains(">Old<"), "{activity}");
     assert!(!activity.contains("data-command=\"ring\""), "{activity}");
     let row = super::locate_page::recent_row(activity, "end_windows");
     assert!(row.contains(">Cancel</button>"), "{row}");
-    let cancel = format!("/devices/{id}/commands/{waiting}/cancel#activity");
     assert!(
-        activity.contains(&format!("action=\"{cancel}\"")),
+        activity.contains(&format!(
+            "action=\"/devices/{id}/commands/{waiting}/cancel#activity\""
+        )),
+        "{activity}"
+    );
+    assert!(activity.contains("<input type=\"hidden\" name=\"back\" value=\"activity\">"));
+
+    // The summary: the waiting command as its own row with Cancel, then the one row, its badge
+    // past the cap; its words are the newest other row's.
+    let summary = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    let activity = group(&summary, "activity");
+    let row = super::locate_page::recent_row(activity, "end_windows");
+    assert!(row.contains(">Cancel</button>"), "{row}");
+    assert!(activity.contains("<input type=\"hidden\" name=\"back\" value=\"summary\">"));
+    assert!(
+        at(activity, "data-command=\"end_windows\"") < at(activity, "data-row=\"activity\""),
+        "{activity}"
+    );
+    assert_eq!(activity.matches("data-command=").count(), 1, "{activity}");
+    assert!(!activity.contains("data-event="), "{activity}");
+    assert!(activity.contains(">Event 1 · "), "{activity}");
+    assert!(
+        activity.contains(
+            "data-activity-count=\"51\"><span aria-hidden=\"true\">50+</span>\
+             <span class=\"visually-hidden\">More than 50 in the last 7 days</span>"
+        ),
         "{activity}"
     );
 
-    // The only row of another phone: cancelled, the group stays for its line.
-    let (emil, _) = app.enrolled_device("Emil").await;
-    let allow = command(&app, emil, "allow_blocked", eight_days, "").await;
+    // The page's Cancel lands back on the page's group, with its line.
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/commands/{waiting}/cancel"),
+            Some(&cookie),
+            &[("back", "activity")],
+        )
+        .await;
+    assert_redirect(
+        &res,
+        &format!("/devices/{id}/activity?cancel=done"),
+        Some("activity"),
+    );
+    app.assert_lands(&res, &cookie).await;
+    let html = activity_page(&app, id, &cookie, "cancel=done").await;
+    assert!(
+        group(&html, "activity").contains("data-flash=\"activity\">Cancelled."),
+        "{html}"
+    );
+
+    // The only row of another phone: cancelled from the summary, the group stays for its line.
+    let (jack, _) = app.enrolled_device("Jack").await;
+    let allow = command(&app, jack, "allow_blocked", eight_days, "").await;
     let html = app
-        .get_page(&format!("/devices/{emil}"), &cookie)
+        .get_page(&format!("/devices/{jack}"), &cookie)
         .await
         .text();
     let (action, hidden) = forms(group(&html, "activity"))
@@ -920,12 +1024,12 @@ async fn activity_keeps_a_week_ten_rows_and_what_can_be_cancelled() {
         .await;
     assert_redirect(
         &res,
-        &format!("/devices/{emil}?cancel=done"),
+        &format!("/devices/{jack}?cancel=done"),
         Some("activity"),
     );
     app.assert_lands(&res, &cookie).await;
     let html = app
-        .get_page(&format!("/devices/{emil}?cancel=done"), &cookie)
+        .get_page(&format!("/devices/{jack}?cancel=done"), &cookie)
         .await
         .text();
     let activity = group(&html, "activity");
@@ -949,10 +1053,7 @@ async fn an_event_opens_where_it_happened_or_this_phones_inbox() {
     let (id, _) = app.enrolled_device("Anna").await;
     let target = format!("/devices/{id}/lock#parent-pin");
     let pin = event(&app, id, "Parent PIN used", Utc::now(), &target).await;
-    let html = app
-        .get_page(&format!("/devices/{id}"), &cookie)
-        .await
-        .text();
+    let html = activity_page(&app, id, &cookie, "").await;
     let (action, hidden) = forms(group(&html, "activity"))
         .into_iter()
         .find(|(action, _)| action == &format!("/notifications/{pin}/open"))
@@ -1090,10 +1191,7 @@ async fn activity_shows_ended_pauses_and_extra_time_by_when_granted() {
     )
     .await;
 
-    let html = app
-        .get_page(&format!("/devices/{id}"), &cookie)
-        .await
-        .text();
+    let html = activity_page(&app, id, &cookie, "").await;
     let activity = group(&html, "activity");
     let order = [
         at(activity, &format!("data-lift=\"{skole}\"")),
@@ -1103,20 +1201,31 @@ async fn activity_shows_ended_pauses_and_extra_time_by_when_granted() {
     ];
     assert!(order.is_sorted(), "{activity}");
     for words in [
-        ">Skole paused for 30 min<",
+        ">Skole paused for 30\u{a0}min<",
         ">yesterday 14:00 · <span class=\"tone-grey\">Ended early yesterday 14:10<",
-        ">+15 min extra screen time<",
+        ">+15\u{a0}min extra screen time<",
         ">yesterday 12:00 · <span class=\"tone-green\">Added<",
-        ">All rules paused for 1 h<",
+        // A duration's number and unit never part at a line's end (2026-11-13: "h" alone).
+        ">All rules paused for 1\u{a0}h<",
         ">yesterday 10:00 · <span class=\"tone-grey\">Ended yesterday 11:00<",
     ] {
         assert!(activity.contains(words), "{words}: {activity}");
     }
     // Read-only; the running pause is Quick actions' alone; the old one is past the week.
     assert!(!activity.contains("/lifts/"), "{activity}");
+    let summary = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
     assert!(
-        group(&html, "quick").contains(&format!("data-lift=\"{running}\"")),
-        "{html}"
+        group(&summary, "quick").contains(&format!("data-lift=\"{running}\"")),
+        "{summary}"
+    );
+    // The summary's one row: the newest (the running pause is Quick's), its unit kept on.
+    assert!(
+        group(&summary, "activity")
+            .contains(">Skole paused for 30\u{a0}min · yesterday 14:00</span>"),
+        "{summary}"
     );
     for lift in [running, gone] {
         assert!(
@@ -1125,17 +1234,14 @@ async fn activity_shows_ended_pauses_and_extra_time_by_when_granted() {
         );
     }
 
-    let html = app
-        .get_page(&format!("/devices/{id}?lang=nb"), &cookie)
-        .await
-        .text();
+    let html = activity_page(&app, id, &cookie, "lang=nb").await;
     let activity = group(&html, "activity");
     for words in [
-        ">Skole satt på pause i 30 min<",
+        ">Skole satt på pause i 30\u{a0}min<",
         ">i går 14:00 · <span class=\"tone-grey\">Avsluttet tidlig i går 14:10<",
-        ">+15 min ekstra skjermtid<",
+        ">+15\u{a0}min ekstra skjermtid<",
         ">i går 12:00 · <span class=\"tone-green\">Lagt til<",
-        ">Alle regler satt på pause i 1 t<",
+        ">Alle regler satt på pause i 1\u{a0}t<",
         ">i går 10:00 · <span class=\"tone-grey\">Sluttet i går 11:00<",
     ] {
         assert!(activity.contains(words), "{words}: {activity}");

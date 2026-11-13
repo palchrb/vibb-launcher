@@ -1113,6 +1113,8 @@ pub fn build_admin_router(
             get(handlers::provisioning::provision_form).post(handlers::provisioning::provision_qr),
         )
         .route("/devices/{id}", get(handlers::devices::view_device))
+        // 2026-11-13: the phone's Activity, one row on the summary since.
+        .route("/devices/{id}/activity", get(handlers::activity::view))
         // Design 31 step 3: About This Phone and Advanced (their forms keep their POST routes).
         .route(
             "/devices/{id}/about",

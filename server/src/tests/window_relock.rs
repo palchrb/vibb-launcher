@@ -653,7 +653,12 @@ async fn an_install_time_block_is_listed_allowed_and_cleared() {
         .text();
     assert!(!html.contains("id=\"blocked-apps\""), "{html}");
     assert!(!html.contains(&button), "{html}");
-    let activity = group(&html, "activity");
+    // Answered: history, on the phone's Activity page (2026-11-13).
+    let page = app
+        .get_page(&format!("/devices/{id}/activity"), &cookie)
+        .await
+        .text();
+    let activity = group(&page, "activity");
     assert!(
         activity.contains("data-command=\"allow_blocked\""),
         "{activity}"
@@ -763,9 +768,13 @@ async fn the_phones_answers_show_and_an_answered_allow_hides_its_button() {
         .await
         .text();
     assert!(!html.contains(&button), "{html}");
+    let page = app
+        .get_page(&format!("/devices/{id}/activity"), &cookie)
+        .await
+        .text();
     assert!(
-        group(&html, "activity").contains(">1 app allowed<"),
-        "{html}"
+        group(&page, "activity").contains(">1 app allowed<"),
+        "{page}"
     );
     // The list itself stays with the report it came from; nothing waits any more.
     assert!(

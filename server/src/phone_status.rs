@@ -512,12 +512,12 @@ mod tests {
             both(&f),
             [
                 pair(
-                    "4 min today · 100 %",
-                    &["4 min screen time today", "Test since 09:19 · 100 %"]
+                    "4\u{a0}min today · 100 %",
+                    &["4\u{a0}min screen time today", "Test since 09:19 · 100 %"]
                 ),
                 pair(
-                    "4 min i dag · 100 %",
-                    &["4 min skjermtid i dag", "Test siden 09:19 · 100 %"]
+                    "4\u{a0}min i dag · 100 %",
+                    &["4\u{a0}min skjermtid i dag", "Test siden 09:19 · 100 %"]
                 ),
             ]
         );
@@ -528,8 +528,11 @@ mod tests {
         assert_eq!(
             both(&f)[1],
             pair(
-                "4 min i dag · 62 %, lader",
-                &["4 min skjermtid i dag", "Test siden 09:19 · 62 %, lader"]
+                "4\u{a0}min i dag · 62 %, lader",
+                &[
+                    "4\u{a0}min skjermtid i dag",
+                    "Test siden 09:19 · 62 %, lader"
+                ]
             )
         );
         // 5. Low battery (latched, not charging): it leads, the screen time follows.
@@ -542,17 +545,17 @@ mod tests {
             both(&f),
             [
                 pair(
-                    "Low battery, 9 % · 4 min today",
+                    "Low battery, 9 % · 4\u{a0}min today",
                     &[
                         "Low battery, 9 %",
-                        "Test since 09:19 · 4 min screen time today"
+                        "Test since 09:19 · 4\u{a0}min screen time today"
                     ]
                 ),
                 pair(
-                    "Lavt batteri, 9 % · 4 min i dag",
+                    "Lavt batteri, 9 % · 4\u{a0}min i dag",
                     &[
                         "Lavt batteri, 9 %",
-                        "Test siden 09:19 · 4 min skjermtid i dag"
+                        "Test siden 09:19 · 4\u{a0}min skjermtid i dag"
                     ]
                 ),
             ]
@@ -563,7 +566,7 @@ mod tests {
             level: 9,
             charging: true,
         });
-        assert_eq!(both(&f)[0].0, "4 min today · 9 %, charging");
+        assert_eq!(both(&f)[0].0, "4\u{a0}min today · 9 %, charging");
         // 4. A rule locks: the lock's words · the battery.
         let lock = LockBadge {
             name: "Leggetid".to_string(),
@@ -679,12 +682,12 @@ mod tests {
             both(&f),
             [
                 pair(
-                    "1 h 12 min of 1 h 30 min today",
-                    &["1 h 12 min of 1 h 30 min screen time today"]
+                    "1\u{a0}h 12\u{a0}min of 1\u{a0}h 30\u{a0}min today",
+                    &["1\u{a0}h 12\u{a0}min of 1\u{a0}h 30\u{a0}min screen time today"]
                 ),
                 pair(
-                    "1 t 12 min av 1 t 30 min i dag",
-                    &["1 t 12 min av 1 t 30 min skjermtid i dag"]
+                    "1\u{a0}t 12\u{a0}min av 1\u{a0}t 30\u{a0}min i dag",
+                    &["1\u{a0}t 12\u{a0}min av 1\u{a0}t 30\u{a0}min skjermtid i dag"]
                 ),
             ]
         );
@@ -694,7 +697,7 @@ mod tests {
             day: Some("13. okt.".to_string()),
         };
         f.screen = Some(&other_day);
-        assert_eq!(both(&f)[1].0, "42 min den 13. okt.");
+        assert_eq!(both(&f)[1].0, "42\u{a0}min den 13. okt.");
 
         let lock = LockBadge {
             name: "Bedtime".to_string(),
@@ -844,10 +847,10 @@ mod tests {
         assert_eq!(
             both(&f)[0],
             pair(
-                "No contact · last seen 20 min ago · 4 min today · 64 %",
+                "No contact · last seen 20 min ago · 4\u{a0}min today · 64 %",
                 &[
                     "No contact · last seen 20 min ago",
-                    "4 min screen time today · 64 %"
+                    "4\u{a0}min screen time today · 64 %"
                 ]
             )
         );

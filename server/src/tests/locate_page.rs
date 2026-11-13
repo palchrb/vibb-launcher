@@ -364,7 +364,7 @@ async fn the_rows_and_their_pages() {
         let newest = recent.split("data-command=\"").nth(1).unwrap();
         let kind = path.replace('-', "_");
         assert!(newest.starts_with(&format!("{kind}\"")), "{path}: {recent}");
-        assert!(recent.contains(&format!("href=\"/devices/{id}#activity\"")));
+        assert!(recent.contains(&format!("href=\"/devices/{id}/activity\"")));
         assert!(recent.contains(">Show all</span>") && recent.contains(">Activity</span>"));
     }
     // Lock, Stop Ringing, Lock wait (each with its Cancel): the replaced Ring is left out.
@@ -390,8 +390,8 @@ async fn links_to_the_moved_groups_resolve() {
     assert!(lock.contains("href=\"/devices/{{ device.id }}/location-settings\""));
     assert!(lock.contains("href=\"/devices/{{ device.id }}/zones\""));
     assert!(zone.contains("\"/devices/\" ~ device.id ~ \"/zones\""));
-    // Show all goes to the summary's Activity - or to the summary itself while its Activity is
-    // empty (code QA L1): a done ring eight days old is still Find Phone's newest Ring.
+    // Show all goes to the phone's Activity page (2026-11-13), which answers while it is empty
+    // too: a done ring eight days old is still Find Phone's newest Ring, past Activity's week.
     let (lily, _) = app.create_device("Lily").await;
     sqlx::query(
         "INSERT INTO device_commands (device_id, command, requested_at, delivered_at, \
@@ -405,7 +405,9 @@ async fn links_to_the_moved_groups_resolve() {
     let find = phone_page(&app, &cookie, lily, "find", "").await;
     assert!(find.contains("data-command=\"ring\""), "{find}");
     assert!(
-        find.contains(&format!("href=\"/devices/{lily}\" data-row=\"activity\"")),
+        find.contains(&format!(
+            "href=\"/devices/{lily}/activity\" data-row=\"activity\""
+        )),
         "{find}"
     );
     let summary = app
@@ -413,6 +415,13 @@ async fn links_to_the_moved_groups_resolve() {
         .await
         .text();
     assert!(!summary.contains("id=\"activity\""), "{summary}");
+    let page = app
+        .get_page(&format!("/devices/{lily}/activity"), &cookie)
+        .await
+        .text();
+    assert!(page.contains("<section id=\"activity\""), "{page}");
+    assert!(page.contains("data-row=\"empty\""), "{page}");
+    assert!(!page.contains("data-command="), "{page}");
     let new_zone = app
         .get_page(&format!("/devices/{id}/zones/new"), &cookie)
         .await

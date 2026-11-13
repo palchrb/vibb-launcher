@@ -268,6 +268,7 @@ async fn nb_pages_have_no_english() {
     for id in [anna, ola] {
         for sub in [
             "",
+            "/activity",
             "/about",
             "/advanced",
             "/lock",

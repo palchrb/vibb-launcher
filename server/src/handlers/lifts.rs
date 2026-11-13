@@ -519,11 +519,11 @@ mod tests {
     #[test]
     fn durations_read_short() {
         use crate::display_time::duration;
-        assert_eq!(duration(Lang::En, 15), "15 min");
-        assert_eq!(duration(Lang::En, 60), "1 h");
-        assert_eq!(duration(Lang::En, 120), "2 h");
-        assert_eq!(duration(Lang::En, 90), "1 h 30 min");
-        assert_eq!(duration(Lang::Nb, 90), "1 t 30 min");
+        assert_eq!(duration(Lang::En, 15), "15\u{a0}min");
+        assert_eq!(duration(Lang::En, 60), "1\u{a0}h");
+        assert_eq!(duration(Lang::En, 120), "2\u{a0}h");
+        assert_eq!(duration(Lang::En, 90), "1\u{a0}h 30\u{a0}min");
+        assert_eq!(duration(Lang::Nb, 90), "1\u{a0}t 30\u{a0}min");
     }
 
     #[test]

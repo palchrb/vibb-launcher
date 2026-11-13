@@ -1085,6 +1085,7 @@ async fn every_form_on_every_page_lands_on_its_own_group() {
         ] {
             pages.push(device_page(phone, section));
         }
+        pages.push(format!("/devices/{phone}/activity"));
         pages.push(format!("/devices/{phone}/provision"));
     }
     // The Spotify parts are on the pages the loop checks.

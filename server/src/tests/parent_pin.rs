@@ -500,7 +500,7 @@ async fn wrong_tries_stay_off_the_security_log_and_lockouts_go_on_it() {
     assert!(
         lockouts[0].contains(
             ": 5 wrong parent PINs in a row (the last on the lock screen): the parent PIN is \
-             locked on the phone. For 30 min. Until "
+             locked on the phone. For 30\u{a0}min. Until "
         ),
         "{lockouts:?}"
     );
