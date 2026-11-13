@@ -87,6 +87,7 @@ fn provision_payload_uses_configured_values() {
         pwa_default_lang: None,
         github_api: "https://api.github.com".to_string(),
         met_contact: None,
+        status_heartbeat: true,
     };
     let payload = provisioning::provisioning_payload(
         &config,

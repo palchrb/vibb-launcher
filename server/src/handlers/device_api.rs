@@ -603,7 +603,8 @@ pub(crate) async fn build_policy(
         data_roaming: crate::mobile_network::roaming_choice(&policy.data_roaming).to_string(),
         apps_mobile: crate::mobile_network::apps_choice(&policy.apps_mobile).to_string(),
         mobile_settings_locked: policy.mobile_settings_locked,
-        status_heartbeat: true,
+        status_heartbeat: state.config.status_heartbeat,
+        status_heartbeat_fields: crate::status_heartbeat::HEARTBEAT_FIELDS,
         status_gzip: true,
         server_tls,
     })
@@ -1295,7 +1296,8 @@ pub async fn status(
     Json(body): Json<serde_json::Value>,
 ) -> axum::response::Response {
     use crate::status_heartbeat::{self, Intake};
-    let (report, keep) = match status_heartbeat::take(&state.db, device.id, body).await {
+    let enabled = state.config.status_heartbeat;
+    let (report, keep) = match status_heartbeat::take(&state.db, device.id, body, enabled).await {
         Intake::Full { report, keep } => (report, Some(keep)),
         Intake::Expanded(report) => (report, None),
         Intake::FullReportWanted => return status_heartbeat::full_report_wanted(),
@@ -1311,11 +1313,15 @@ pub async fn status(
                 .into_response();
         }
     };
-    // A full report's body is kept (or what was kept forgotten) once it read; a heartbeat leaves it.
-    if let Some(keep) = keep {
-        status_heartbeat::keep(&state.db, device.id, keep.as_ref()).await;
+    let db = state.db.clone();
+    let response = status_intake(state, device, report).await;
+    // A full report's body is kept (or what was kept forgotten) only once the intake took it; a heartbeat leaves it.
+    if let Some(keep) = keep
+        && response.status().is_success()
+    {
+        status_heartbeat::keep(&db, device.id, keep.as_ref()).await;
     }
-    status_intake(state, device, report).await
+    response
 }
 
 /// One full status report, as the phone sent it or as a heartbeat stands for it.
@@ -1378,7 +1384,8 @@ async fn status_intake(
 
     let install_mode_until_ms = report.install_mode.map(|m| m.until_ms);
     // Handy's lock (step 10): what the phone says about it - only the known fields are kept, so
-    // no unlock times or PIN material can be stored whatever a launcher sends.
+    // no unlock times or PIN material can be stored whatever a launcher sends (the heartbeat's kept body takes the
+    // same sanitizer, `status_heartbeat::kept_body`).
     let lock_state_json = report.lock_state.as_ref().and_then(|state| {
         crate::kid_lock::sanitize_lock_state(state, chrono::Utc::now().timestamp_millis())
     });

@@ -423,7 +423,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
                     outside = tlsSent,
                 ),
             ),
-            heartbeat = decision.policy?.statusHeartbeat == true,
+            heartbeat = heartbeatOn(decision.policy),
             gzip = decision.policy?.statusGzip == true,
             owner = HeartbeatAckStore.ownerOf(serverUrl, deviceToken),
             acks = HeartbeatAckStore.of(context),

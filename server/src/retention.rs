@@ -177,6 +177,8 @@ pub struct Pruned {
     /// The unanswered questions about an MMS address (design 83 §4), `mmsc_hosts::OPEN_DAYS` after a report last
     /// named them.
     pub mmsc_hosts: u64,
+    /// The heartbeat's kept bodies past `status_heartbeat::MAX_AGE_HOURS` (design 95 §3.5, code QA L2).
+    pub report_bases: u64,
     /// The tables whose statement failed in this pass (logged; security review L9): every other
     /// table was pruned all the same.
     pub failed: Vec<&'static str>,
@@ -232,7 +234,8 @@ fn rows(
 ///   `update_location_policy`'s);
 /// - a held or blocked sender `sms::HELD_KEEP_DAYS` after the phone received it (design 77 §7);
 /// - an unanswered question about an MMS address `mmsc_hosts::OPEN_DAYS` after a report last named it (design 83 §4;
-///   an answered one stays: it is the parent's setting).
+///   an answered one stays: it is the parent's setting);
+/// - a heartbeat's kept body past `status_heartbeat::MAX_AGE_HOURS`, never expanded again (design 95 §3.5).
 ///
 /// Each statement runs on its own: one that fails is logged and named in [Pruned::failed], and the
 /// rest of the pass goes on (security review L9).
@@ -549,6 +552,12 @@ pub async fn prune(db: &SqlitePool) -> Pruned {
             .execute(db)
             .await,
     );
+    // Design 95 §3.5: a kept body no heartbeat can use any more.
+    let report_bases = rows(
+        failed,
+        "device_report_base",
+        crate::status_heartbeat::prune(db).await,
+    );
     // (No local is named `*_events`: `admin::every_written_event_has_a_label` reads the table names
     // next to such a `let` as event ids.)
     Pruned {
@@ -568,6 +577,7 @@ pub async fn prune(db: &SqlitePool) -> Pruned {
         sms_held,
         contact_requests,
         mmsc_hosts,
+        report_bases,
         failed: std::mem::take(failed),
     }
 }

@@ -22,6 +22,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 import retrofit2.Response
 import java.io.File
@@ -62,6 +63,7 @@ class StatusReportsTest {
         assertEquals(STATUS_HEARTBEAT_CAPABILITY, contract["capability"]!!.jsonPrimitive.content)
         assertTrue(STATUS_HEARTBEAT_CAPABILITY in STATUS_CAPABILITIES)
         assertEquals(HEARTBEAT_FIELDS, contract["heartbeat_fields"]!!.jsonArray.map { it.jsonPrimitive.content })
+        assertEquals(HEARTBEAT_FIELDS_TAG, contract["fields_tag"]!!.jsonPrimitive.content)
 
         val json = reportJson(report)
         val hash = reportHash(json)
@@ -76,9 +78,14 @@ class StatusReportsTest {
 
         // The policy's keys; an older server's policy says neither.
         val policy = ServerJson.decodeFromString(PolicyResponse.serializer(), contract["policy"].toString())
-        assertTrue(policy.statusHeartbeat && policy.statusGzip)
+        assertTrue(policy.statusHeartbeat && policy.statusGzip && heartbeatOn(policy))
         val older = ServerJson.decodeFromString(PolicyResponse.serializer(), "{}")
-        assertFalse(older.statusHeartbeat || older.statusGzip)
+        assertFalse(older.statusHeartbeat || older.statusGzip || heartbeatOn(older))
+        // Code QA M1: a server overlaying another list gets no heartbeats from this launcher.
+        assertFalse(heartbeatOn(policy.copy(statusHeartbeatFields = HEARTBEAT_FIELDS + "sink")))
+        assertFalse(heartbeatOn(policy.copy(statusHeartbeatFields = null)))
+        // ... and the heartbeat naming another list is one the server answers with a full-report request.
+        assertNotEquals(HEARTBEAT_FIELDS_TAG, contract["heartbeat_other_fields"]!!.jsonObject["fields_tag"]!!.jsonPrimitive.content)
 
         val answer = contract["answers"]!!.jsonObject["full_report"].toString().toByteArray()
         assertTrue(isFullReportAnswer(200, answer))
@@ -99,16 +106,54 @@ class StatusReportsTest {
         return if (code in 200..299) Response.success(body, raw) else Response.error(body, raw)
     }
 
-    private fun send(report: StatusReportRequest, heartbeat: Boolean = true, gzip: Boolean = false, answers: List<Response<ResponseBody>>): SentReport =
-        runBlocking {
-            var calls = 0
-            sendReport(report, heartbeat, gzip, owner, acks, { now }, { it?.use { b -> b.bytes() } }) { body: RequestBody, encoding: String? ->
-                val buffer = Buffer().also { body.writeTo(it) }
-                val bytes = if (encoding == "gzip") GZIPInputStream(buffer.inputStream()).readBytes() else buffer.readByteArray()
-                posted += ServerJson.parseToJsonElement(bytes.decodeToString()).jsonObject to encoding
-                answers[calls++]
-            }
+    /** One report; an answer `null` throws (no answer: the network). */
+    private fun send(
+        report: StatusReportRequest,
+        heartbeat: Boolean = true,
+        gzip: Boolean = false,
+        owner: String = this.owner,
+        answers: List<Response<ResponseBody>?>,
+    ): SentReport = runBlocking {
+        var calls = 0
+        sendReport(report, heartbeat, gzip, owner, acks, { now }, { it?.use { b -> b.bytes() } }) { body: RequestBody, encoding: String? ->
+            val buffer = Buffer().also { body.writeTo(it) }
+            val bytes = if (encoding == "gzip") GZIPInputStream(buffer.inputStream()).readBytes() else buffer.readByteArray()
+            posted += ServerJson.parseToJsonElement(bytes.decodeToString()).jsonObject to encoding
+            answers[calls++] ?: throw java.io.IOException("no answer")
         }
+    }
+
+    private fun lastWasHeartbeat() = posted.last().first["heartbeat"] == JsonPrimitive(true)
+
+    @Test
+    fun `a refused heartbeat drops the ack, a 5xx or no answer keeps it, another owner sends a full report`() {
+        send(report, answers = listOf(answer(204)))
+        // A 5xx: the ack stays, the next is a heartbeat again.
+        send(moved, answers = listOf(answer(503)))
+        assertTrue(lastWasHeartbeat())
+        // No answer at all: the same.
+        try {
+            send(moved, answers = listOf(null))
+            fail("no answer must throw")
+        } catch (e: java.io.IOException) {
+            assertTrue(lastWasHeartbeat())
+        }
+        send(moved, answers = listOf(answer(204)))
+        assertTrue(lastWasHeartbeat())
+        // A 4xx (an older server, a broken expansion): the ack goes, the next report is full.
+        send(moved, answers = listOf(answer(422)))
+        assertTrue(lastWasHeartbeat())
+        assertNull(acks.get())
+        send(moved, answers = listOf(answer(204)))
+        assertFalse(lastWasHeartbeat())
+        // Another server or token (the owner): a full report, then heartbeats for that owner.
+        send(moved, owner = "owner-b", answers = listOf(answer(204)))
+        assertFalse(lastWasHeartbeat())
+        send(moved, owner = "owner-b", answers = listOf(answer(204)))
+        assertTrue(lastWasHeartbeat())
+        assertNotEquals(HeartbeatAckStore.ownerOf("https://a.example/", "t"), HeartbeatAckStore.ownerOf("https://b.example/", "t"))
+        assertNotEquals(HeartbeatAckStore.ownerOf("https://a.example/", "t"), HeartbeatAckStore.ownerOf("https://a.example/", "u"))
+    }
 
     @Test
     fun `a heartbeat goes only after a full report the server took, and a full report when asked`() {

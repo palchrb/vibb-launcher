@@ -169,6 +169,9 @@ data class PolicyResponse(
     /** Design 95 §3.5 (step 95-T2): the server expands heartbeat reports ([StatusReports]); missing (an older server)
      * = never send one. */
     val statusHeartbeat: Boolean = false,
+    /** Design 95 §3.5 (code QA M1): the heartbeat fields the server overlays; a heartbeat goes only while this is the
+     * launcher's own [com.kidslauncher.mdm.server.HEARTBEAT_FIELDS] ([com.kidslauncher.mdm.server.heartbeatOn]). */
+    val statusHeartbeatFields: List<String>? = null,
     /** Design 95 §3.5: the server takes a gzip'd status report; missing = never gzip. */
     val statusGzip: Boolean = false,
 )

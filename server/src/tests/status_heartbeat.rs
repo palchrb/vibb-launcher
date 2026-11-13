@@ -8,7 +8,7 @@ use axum::http::{Method, Request, StatusCode, header};
 use serde_json::{Value, json};
 
 use super::{TestApp, TestResponse};
-use crate::status_heartbeat::{CAPABILITY, HEARTBEAT_FIELDS};
+use crate::status_heartbeat::{CAPABILITY, HEARTBEAT_FIELDS, fields_tag};
 
 const CONTRACT: &str = include_str!("../../testdata/status_heartbeat.json");
 
@@ -90,13 +90,27 @@ fn the_contract_matches_the_launchers_copy_and_the_constants() {
         .map(|f| f.as_str().unwrap())
         .collect();
     assert_eq!(fields, HEARTBEAT_FIELDS);
-    // The heartbeat carries exactly the marker, the hash and heartbeat fields.
+    assert_eq!(contract["fields_tag"], fields_tag());
+    assert_eq!(contract["heartbeat"]["fields_tag"], fields_tag());
+    // The heartbeat carries exactly the marker, the hash, the list's tag and heartbeat fields.
     for key in contract["heartbeat"].as_object().unwrap().keys() {
         assert!(
-            key == "heartbeat" || key == "hash" || HEARTBEAT_FIELDS.contains(&key.as_str()),
+            ["heartbeat", "hash", "fields_tag"].contains(&key.as_str())
+                || HEARTBEAT_FIELDS.contains(&key.as_str()),
             "{key}"
         );
     }
+}
+
+/// Sets the kept body's column [column] to the SQL [value] (a server version, an age).
+async fn age_kept(app: &TestApp, device: i64, column: &str, value: &str) {
+    sqlx::query(&format!(
+        "UPDATE device_report_base SET {column} = {value} WHERE device_id = ?"
+    ))
+    .bind(device)
+    .execute(&app.db)
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -174,6 +188,54 @@ async fn a_heartbeat_stands_for_the_full_report_it_names() {
         .await
         .unwrap();
 
+    // A heartbeat naming another list of fields (code QA M1): the full report, nothing stored.
+    let other_fields = post(&app, &token, &contract["heartbeat_other_fields"]).await;
+    assert_eq!(other_fields.json(), contract["answers"]["full_report"]);
+    assert_eq!(latest(&app, device).await.5, 2);
+    // A body kept by another server version, or past 7 h, is never expanded (and retention prunes the old one).
+    age_kept(&app, device, "server_version", "'0.0.1'").await;
+    assert_eq!(
+        post(&app, &token, &contract["heartbeat"]).await.json(),
+        contract["answers"]["full_report"]
+    );
+    age_kept(
+        &app,
+        device,
+        "server_version",
+        &format!("'{}'", env!("CARGO_PKG_VERSION")),
+    )
+    .await;
+    assert_eq!(
+        post(&app, &token, &contract["heartbeat"]).await.status,
+        StatusCode::NO_CONTENT
+    );
+    age_kept(&app, device, "stored_at", "datetime('now', '-8 hours')").await;
+    assert_eq!(
+        post(&app, &token, &contract["heartbeat"]).await.json(),
+        contract["answers"]["full_report"]
+    );
+    assert_eq!(crate::retention::prune(&app.db).await.report_bases, 1);
+    assert_eq!(
+        post(&app, &token, &contract["full"]).await.status,
+        StatusCode::NO_CONTENT
+    );
+
+    // A report the intake refuses is never kept (code QA M2): the hash stays the last taken one's.
+    let mut broken = contract["full"].clone();
+    broken["kiosk_engaged"] = json!("not a bool");
+    broken["hash"] = json!("broken");
+    assert_eq!(
+        post(&app, &token, &broken).await.status,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    let hash: String =
+        sqlx::query_scalar("SELECT hash FROM device_report_base WHERE device_id = ?")
+            .bind(device)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(hash, contract["full"]["hash"].as_str().unwrap());
+
     // An older launcher's report (no hash) forgets what was kept.
     let mut plain = contract["full"].clone();
     plain.as_object_mut().unwrap().remove("hash");
@@ -213,13 +275,39 @@ async fn a_gzipd_report_is_taken_within_the_limit() {
     assert_eq!(res.status, StatusCode::PAYLOAD_TOO_LARGE, "{}", res.text());
     assert_eq!(latest(&app, device).await.5, 1);
 
-    // Without a token nothing is inflated.
+    // The decompression sits inside the token check (code QA L3): an unknown encoding is a 415 at once in the layer,
+    // so without a token the answer is the token check's 401 - it would be the 415 were the layer outside.
     let request = Request::builder()
         .method(Method::POST)
         .uri("/api/devices/status")
         .header(header::CONTENT_TYPE, "application/json")
-        .header(header::CONTENT_ENCODING, "gzip")
+        .header(header::CONTENT_ENCODING, "br")
         .body(Body::from(vec![0u8; 16]))
         .unwrap();
     assert_eq!(app.send(request).await.status, StatusCode::UNAUTHORIZED);
+}
+
+/// `STATUS_HEARTBEAT=off` (code QA L4): the policy says no, every heartbeat is asked for the full report, and nothing
+/// is kept.
+#[tokio::test]
+async fn the_switch_turns_heartbeats_off() {
+    let app = TestApp::with_env(&[("STATUS_HEARTBEAT", "off")]).await;
+    let (device, token) = app.enrolled_device("phone").await;
+    let contract = contract();
+    assert_eq!(app.policy(&token).await["status_heartbeat"], false);
+    assert_eq!(
+        post(&app, &token, &contract["full"]).await.status,
+        StatusCode::NO_CONTENT
+    );
+    let kept: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM device_report_base WHERE device_id = ?")
+            .bind(device)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(kept, 0);
+    assert_eq!(
+        post(&app, &token, &contract["heartbeat"]).await.json(),
+        contract["answers"]["full_report"]
+    );
 }

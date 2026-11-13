@@ -278,14 +278,15 @@ decodes the policy rows, runs every rule and shape row through `dataRoamingLocke
 policy's three keys are pinned by `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTest`.
 
 The heartbeat report (design 95 §3.5, step 95-T2) is `server/testdata/status_heartbeat.json`, byte-identical in
-`launcher/app/src/test/resources/`: `capability` (`status_heartbeat_v1`), `policy` (the top-level `status_heartbeat` and
-`status_gzip`), `heartbeat_fields` (what a heartbeat carries and the phone's hash leaves out), `full` (a full report
-with its `hash`), `heartbeat` (the heartbeat that names it) and `answers` (`{"full_report": true}`). The hash is the
+`launcher/app/src/test/resources/`: `capability` (`status_heartbeat_v1`), `policy` (the top-level `status_heartbeat`,
+`status_heartbeat_fields` and `status_gzip`), `heartbeat_fields` (what a heartbeat carries and the phone's hash leaves
+out) and `fields_tag` (their name in a heartbeat), `full` (a full report with its `hash`), `heartbeat` (the heartbeat
+that names it), `heartbeat_other_fields` (one naming another list) and `answers` (`{"full_report": true}`). The hash is the
 phone's alone (`StatusReports.kt`'s `reportHash`); the server keeps the full body under it (`device_report_base`) and
 expands a heartbeat into that report before the one intake runs (`status_heartbeat`). The launcher's `StatusReportsTest`
 encodes `full` and `heartbeat` exactly from one report, checks the hash and the fields list and reads the answer; the
 server's `tests::status_heartbeat` posts `full` and `heartbeat` and checks what is stored and every refusal; both
-compare the copies. The policy's two keys are pinned by `policy_json_keys_snapshot` and `StatusReportsTest`.
+compare the copies. The policy's three keys are pinned by `policy_json_keys_snapshot` and `StatusReportsTest`.
 
 ## CI and releases
 

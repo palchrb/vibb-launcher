@@ -20,7 +20,7 @@ import java.util.zip.GZIPOutputStream
 /*
  * The heartbeat report (design 95 §3.5, step 95-T2; the contract `status_heartbeat.json`). The full report is ~8 KB;
  * between two idle syncs only a few fields move (the screen time, the battery, the certificate check's `seen.at_ms`,
- * the re-sent location). So, while the policy says `status_heartbeat`:
+ * the re-sent location). So, while the policy says `status_heartbeat` with this launcher's list ([heartbeatOn]):
  * - the phone hashes its full report without the [HEARTBEAT_FIELDS] ([reportHash]) and sends the full report with
  *   that `hash`; the server keeps the body under it;
  * - while the hash is the one the server took last ([HeartbeatAck]) and that full report is under [FULL_REPORT_EVERY_MS]
@@ -41,6 +41,17 @@ val HEARTBEAT_FIELDS: List<String> = listOf(
     "mobile_data",
 )
 
+/** The name of [HEARTBEAT_FIELDS] a heartbeat carries (`fields_tag`, the server's `status_heartbeat::fields_tag`): the
+ * first 16 hex characters of the SHA-256 of the names joined by `,`. The server refuses a heartbeat naming another
+ * list (code QA M1). */
+val HEARTBEAT_FIELDS_TAG: String = MessageDigest.getInstance("SHA-256")
+    .digest(HEARTBEAT_FIELDS.joinToString(",").toByteArray(Charsets.UTF_8)).take(8).joinToString("") { "%02x".format(it) }
+
+/** Whether [policy] lets this launcher send hashes and heartbeats: the server says so and overlays exactly this
+ * launcher's [HEARTBEAT_FIELDS] (another list: plain full reports, code QA M1). */
+fun heartbeatOn(policy: com.kidslauncher.mdm.server.dto.PolicyResponse?): Boolean =
+    policy?.statusHeartbeat == true && policy.statusHeartbeatFields == HEARTBEAT_FIELDS
+
 /** A full report at least this often, whatever the hash (the server takes a kept body for 7 h). */
 const val FULL_REPORT_EVERY_MS = 6 * 60 * 60 * 1000L
 
@@ -59,9 +70,14 @@ fun reportHash(report: JsonObject): String {
 /** The full report with its [hash]. */
 fun fullBody(report: JsonObject, hash: String): JsonObject = JsonObject(report + ("hash" to JsonPrimitive(hash)))
 
-/** The heartbeat for [report]: the marker, the [hash] and the heartbeat fields the report has. */
+/** The heartbeat for [report]: the marker, the [hash], the list's [HEARTBEAT_FIELDS_TAG] and the heartbeat fields the
+ * report has. */
 fun heartbeatBody(report: JsonObject, hash: String): JsonObject = JsonObject(
-    linkedMapOf<String, kotlinx.serialization.json.JsonElement>("heartbeat" to JsonPrimitive(true), "hash" to JsonPrimitive(hash)) +
+    linkedMapOf<String, kotlinx.serialization.json.JsonElement>(
+        "heartbeat" to JsonPrimitive(true),
+        "hash" to JsonPrimitive(hash),
+        "fields_tag" to JsonPrimitive(HEARTBEAT_FIELDS_TAG),
+    ) +
         report.filterKeys { it in HEARTBEAT_FIELDS },
 )
 

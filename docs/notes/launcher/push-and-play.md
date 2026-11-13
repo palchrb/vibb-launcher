@@ -108,7 +108,9 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
 ## The heartbeat report (design 95 step 95-T2, `docs/design/95-connectivity-control.md` §3.5)
 
 - `server/StatusReports.kt` (`StatusReportsTest`, contract `status_heartbeat.json`): while the policy says
-  `status_heartbeat`, the sync's report goes through `sendReport`. It hashes the report's JSON without
+  `status_heartbeat` and its `status_heartbeat_fields` are this launcher's `HEARTBEAT_FIELDS` (`heartbeatOn`; another
+  list: plain full reports), the sync's report goes through `sendReport`; each heartbeat names the list
+  (`fields_tag`, `HEARTBEAT_FIELDS_TAG`). It hashes the report's JSON without
   `HEARTBEAT_FIELDS` (`reportHash`) and sends the full report with that `hash`; a 2xx is kept as the `HeartbeatAck`
   (prefs `status_heartbeat`: the hash, when, and a hash of the server URL and token). While the hash is the acked one
   and the acked full report is under `FULL_REPORT_EVERY_MS` (6 h) old, only `{"heartbeat": true, "hash", <the
