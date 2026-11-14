@@ -496,6 +496,58 @@ async fn check_now_while_a_sync_runs_says_so() {
     assert_eq!(unknown.status, StatusCode::NOT_FOUND);
 }
 
+/// Check now, then Back, must not show the same app page again (the user, 2026-11-14): a save that
+/// `static/scroll-restore.js` posts itself (`X-Handy-Stay`) gets its redirect as a 204 naming the
+/// address, fragment and all, so the page replaces its own history entry with it
+/// (`admin_auth::stay_answer`); the browser's own POST still gets the 303, and an answer that isn't
+/// a redirect passes as it is.
+#[tokio::test]
+async fn a_save_posted_by_the_page_learns_where_its_redirect_goes() {
+    use crate::admin_auth::{STAY_HEADER, STAY_LOCATION_HEADER};
+    use axum::body::Body;
+    use axum::http::Request;
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let id = insert_app(&app, "Element X", None).await;
+    // A sync on its way: Check now answers at once, without the network.
+    let _running = app.state.app_syncs.start(id).expect("no sync runs yet");
+    let stayed = |uri: String| {
+        Request::builder()
+            .method(Method::POST)
+            .uri(uri)
+            .header(header::COOKIE, &cookie)
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .header(STAY_HEADER, "1")
+            .body(Body::empty())
+            .unwrap()
+    };
+    let res = app.send(stayed(format!("/apps/tracked/{id}/check"))).await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        res.headers
+            .get(STAY_LOCATION_HEADER)
+            .and_then(|v| v.to_str().ok()),
+        Some(format!("/apps/tracked/{id}#check").as_str())
+    );
+    assert!(res.location().is_none());
+    assert!(res.body.is_empty());
+
+    let plain = app
+        .request_form(
+            Method::POST,
+            &format!("/apps/tracked/{id}/check"),
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    assert!(plain.status.is_redirection());
+    assert!(plain.headers.get(STAY_LOCATION_HEADER).is_none());
+
+    let unknown = app.send(stayed("/apps/tracked/9999/check".into())).await;
+    assert_eq!(unknown.status, StatusCode::NOT_FOUND);
+    assert!(unknown.headers.get(STAY_LOCATION_HEADER).is_none());
+}
+
 /// A manual upload is stored under the app's directory, the row then names it (and its file
 /// name and size), and only then is the old file removed (qa-catalog #7); the answer redirects
 /// back to the page. Deleting the app removes its whole directory (#4).
