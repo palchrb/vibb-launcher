@@ -346,11 +346,20 @@ impl Phone {
         }
     }
 
-    /// An emergency call the phone reported (`call_state.last_emergency_call_at`).
+    /// An emergency call the phone reported (`call_state.last_emergency_call_at`), without design 98's line (the
+    /// tests' form; the intake raises [Phone::emergency_call_with]).
+    #[cfg(test)]
     pub fn emergency_call(&self, at: DateTime<Utc>) -> NewEvent {
-        let params = PhoneAtParams {
+        self.emergency_call_with(at, false)
+    }
+
+    /// [Phone::emergency_call] with design 98 §7.1's line: `airplane_off` when the same report says the call ended
+    /// airplane mode (`airplane_mode::emergency_off`) - told in the inbox and the push, never from phone text.
+    pub fn emergency_call_with(&self, at: DateTime<Utc>, airplane_off: bool) -> NewEvent {
+        let params = EmergencyCallParams {
             phone: self.name.clone(),
             at: instant(at),
+            airplane_off,
         };
         NewEvent {
             target: format!("/devices/{}/calls", self.id),
@@ -582,6 +591,37 @@ impl Phone {
 pub struct PhoneAtParams {
     pub phone: String,
     pub at: String,
+}
+
+/// An emergency call (design 35; the first two keys are [PhoneAtParams]'s): since design 98 §7.1 `airplane_off`, the call
+/// turned airplane mode off - set at the raise when the same report says so, or later by
+/// [mark_emergency_airplane_off] (the inbox's line then, no second push). Absent (false) on every older row.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct EmergencyCallParams {
+    pub phone: String,
+    pub at: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub airplane_off: bool,
+}
+
+/// Design 98 §7.1: a later report brings the period an emergency call ended - its event (keyed by the call's instant)
+/// gets the line in the inbox; no second push (a push not sent yet carries it). `true` when a row changed.
+pub async fn mark_emergency_airplane_off(
+    db: &SqlitePool,
+    device_id: i64,
+    call_at: DateTime<Utc>,
+) -> Result<bool, sqlx::Error> {
+    let done = sqlx::query(
+        "UPDATE parent_events SET params = json_set(params, '$.airplane_off', json('true')) \
+         WHERE device_id = ? AND kind = ? AND dedup_key = ? AND params IS NOT NULL \
+         AND json_valid(params) AND json_extract(params, '$.airplane_off') IS NULL",
+    )
+    .bind(device_id)
+    .bind(Kind::EmergencyCall.wire())
+    .bind(instant(call_at))
+    .execute(db)
+    .await?;
+    Ok(done.rows_affected() > 0)
 }
 
 /// A parent-PIN use or lockout: where the PIN was typed (`override`, `pin_lock`, `settings`,
@@ -2774,7 +2814,7 @@ fn phone_event_told(
         |stored: &str| crate::display_time::parse_db_utc(stored).map(|at| (at, zone.at(at, now)));
     Some(match kind {
         Kind::EmergencyCall => {
-            let p: PhoneAtParams = serde_json::from_str(params).ok()?;
+            let p: EmergencyCallParams = serde_json::from_str(params).ok()?;
             let (at, when) = at_of(&p.at)?;
             let summary = match form {
                 Form::Inbox if zone.is_today(at, now) => t_params(
@@ -2783,6 +2823,15 @@ fn phone_event_told(
                     &[("at", &when)],
                 ),
                 _ => capitalized(&when),
+            };
+            // Design 98 §7.1: "The call turned airplane mode off.", in the inbox and the push.
+            let summary = if p.airplane_off {
+                format!(
+                    "{summary} · {}",
+                    t(lang, "events.emergency_call.airplane_off")
+                )
+            } else {
+                summary
             };
             (titled(lang, &title_key(""), &p.phone), summary)
         }

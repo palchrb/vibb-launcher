@@ -320,6 +320,57 @@ pub fn with_roaming(
     lines
 }
 
+/// Design 98 §6.2: "Flymodus på siden 21:03" (`since`, `airplane_mode::on_since`). It takes the place of the line
+/// that says the phone isn't heard from - "Offline · last seen 13:05" or "No contact · last seen 12 min ago" - and
+/// goes last on the second line while the phone is in touch (airplane mode with Wi-Fi kept). A phone not set up,
+/// without access, not seen yet or turned off keeps its line.
+pub fn with_airplane(
+    mut lines: Vec<Line>,
+    facts: &Facts,
+    zone: &Zone,
+    now: DateTime<Utc>,
+    since: Option<DateTime<Utc>>,
+) -> Vec<Line> {
+    let Some(since) = since else {
+        return lines;
+    };
+    let part = Part::new(
+        t_params(
+            zone.lang(),
+            "devices.status.airplane_since",
+            &[("at", &zone.since(since, now))],
+        ),
+        Tone::Plain,
+        Some("airplane"),
+    )
+    .titled(zone.exact(since));
+    let lead = lead(facts);
+    match lead {
+        Lead::Alone(_) | Lead::Off(_) => lines,
+        Lead::Offline(_) => {
+            match lines.first_mut() {
+                Some(first) => *first = vec![part],
+                None => lines.push(vec![part]),
+            }
+            lines
+        }
+        _ if no_contact_line(&lead, facts, zone, now).is_some() => {
+            match lines.first_mut() {
+                Some(first) => *first = vec![part],
+                None => lines.push(vec![part]),
+            }
+            lines
+        }
+        _ => {
+            match lines.get_mut(1) {
+                Some(second) => second.push(part),
+                None => lines.push(vec![part]),
+            }
+            lines
+        }
+    }
+}
+
 /// The summary header's lines under the name: one for a phone that can't be reached, else the
 /// lead and then the zone · the battery (the screen time when the lead is the battery); without
 /// contact "No contact · last seen 12 min ago" and then the rest of the row's line.

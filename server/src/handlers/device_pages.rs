@@ -695,6 +695,33 @@ pub async fn view_about(
             ),
             None => {}
         }
+        // Design 98 §6.2: the Digital assistant role (Flymodus' route) and Wi-Fi in airplane mode, from a launcher
+        // with `airplane_mode_v1`.
+        if let Some(airplane) = crate::airplane_mode::report(status) {
+            software.push(if airplane.assistant {
+                Row::new("assistant", t(lang, "device.about.assistant"), "Vibb One")
+            } else {
+                Row::new(
+                    "assistant",
+                    t(lang, "device.about.assistant"),
+                    t(lang, "device.about.assistant_not_chosen"),
+                )
+                .class("row-value-action")
+                .detail(Some(t(lang, "device.airplane.assistant_steps")))
+            });
+            software.push(Row::new(
+                "wifi-airplane",
+                t(lang, "device.about.wifi_airplane"),
+                t(
+                    lang,
+                    match airplane.wifi_kept {
+                        Some(true) => "device.about.wifi_airplane_kept",
+                        Some(false) => "device.about.wifi_airplane_off",
+                        None => "device.about.wifi_airplane_not_set_up",
+                    },
+                ),
+            ));
+        }
     }
 
     // When "Block safe mode" went on, for the advice (QA 24b Low 12).
@@ -1528,6 +1555,10 @@ struct HomeTemplate {
     quick_touch: bool,
     /// Security review S-L5: the Bluetooth page pairs any device (`bluetooth_any_device`).
     bluetooth_any_device: bool,
+    /// Design 98 §6.1: the kid's Flymodus switch (bit 64), its row only for a launcher with `airplane_mode_v1` - its
+    /// sub-line when it says something (`airplane_mode::home_sub`).
+    airplane_row: Option<Option<String>>,
+    quick_airplane: bool,
 }
 crate::i18n::words!(HomeTemplate);
 
@@ -1559,6 +1590,13 @@ pub async fn view_home(State(state): State<AppState>, lang: Lang, Path(id): Path
         Err(err) => return read_failed(lang, id, "the last report", err),
     };
     let mask = policy.quick_controls_mask;
+    let airplane_row = latest
+        .as_ref()
+        .filter(|s| has_capability(Some(s), crate::airplane_mode::CAPABILITY))
+        .map(|s| {
+            let report = crate::airplane_mode::report(s).unwrap_or_default();
+            crate::airplane_mode::home_sub(lang, &device.name, &policy, &report)
+        });
     Html(
         HomeTemplate {
             lang,
@@ -1576,12 +1614,56 @@ pub async fn view_home(State(state): State<AppState>, lang: Lang, Path(id): Path
             quick_sound: mask & QUICK_CONTROL_SOUND != 0,
             quick_touch: mask & QUICK_CONTROL_TOUCH != 0,
             bluetooth_any_device: policy.bluetooth_any_device,
+            airplane_row,
+            quick_airplane: mask & crate::handlers::devices::QUICK_CONTROL_AIRPLANE != 0,
             device,
         }
         .render()
         .unwrap(),
     )
     .into_response()
+}
+
+/// `POST /devices/{id}/setup-card/hide` (design 98 §6.2): the summary's Oppsett card's "Ikke nå" - stores the needed
+/// steps as they are now (`airplane_mode::setup_key`), so the card stays away until they change. Back to `#oppsett`
+/// with its flash. 404 for an unknown phone, 500 on a DB error.
+pub async fn hide_setup_card(
+    State(state): State<AppState>,
+    lang: Lang,
+    Path(id): Path<i64>,
+) -> Response {
+    let policy = match load_policy(&state, id).await {
+        Ok(policy) => policy,
+        Err((status, key)) => return crate::i18n::error(lang, status, key),
+    };
+    let latest = match load_latest(&state, id).await {
+        Ok(latest) => latest,
+        Err(err) => return read_failed(lang, id, "the last report", err),
+    };
+    let steps = crate::airplane_mode::setup_steps(lang, &policy, latest.as_ref());
+    let hidden = (!steps.is_empty()).then(|| crate::airplane_mode::setup_key(&steps));
+    match sqlx::query("UPDATE device_policy SET setup_card_hidden = ? WHERE device_id = ?")
+        .bind(hidden)
+        .bind(id)
+        .execute(&state.db)
+        .await
+    {
+        Ok(done) if done.rows_affected() == 0 => {
+            crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.device_not_found")
+        }
+        Ok(_) => {
+            axum::response::Redirect::to(&format!("/devices/{id}?notice=setup_hidden#oppsett"))
+                .into_response()
+        }
+        Err(err) => {
+            tracing::error!(device_id = id, %err, "can't hide the setup card");
+            crate::i18n::error(
+                lang,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "error.save_failed_log",
+            )
+        }
+    }
 }
 
 /// One blocklist on a phone's Web Filter page.

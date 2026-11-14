@@ -1647,12 +1647,33 @@ async fn status_intake(
         let previous_call = previous
             .as_ref()
             .and_then(|p| emergency_call_at(p.call_state_json.as_deref()));
-        if let Some(at) = crate::parent_events::new_emergency_call(
-            emergency_call_at(call_state_json.as_deref()),
-            previous_call,
-            phone.now,
-        ) {
-            crate::parent_events::raise_logged(&state, &phone.emergency_call(at)).await;
+        let reported_call = emergency_call_at(call_state_json.as_deref());
+        // Design 98 §7.1: this report says the call turned airplane mode off (a period with `off_by: "emergency"`).
+        let airplane_off = reported_call.is_some_and(|call| {
+            crate::airplane_mode::emergency_off(
+                airplane_mode_json.as_deref(),
+                call.timestamp_millis(),
+            )
+        });
+        if let Some(at) =
+            crate::parent_events::new_emergency_call(reported_call, previous_call, phone.now)
+        {
+            crate::parent_events::raise_logged(
+                &state,
+                &phone.emergency_call_with(at, airplane_off),
+            )
+            .await;
+        } else if airplane_off && let Some(call) = reported_call {
+            // A later report brings the period: the inbox's line only, no second push.
+            if let Err(err) = crate::parent_events::mark_emergency_airplane_off(
+                &state.db,
+                device.id,
+                call.min(phone.now),
+            )
+            .await
+            {
+                tracing::error!(device_id = device.id, %err, "can't add the airplane line to the emergency call");
+            }
         }
         if let Some(battery) = &report.battery {
             crate::parent_events::battery_report(&state, phone, battery).await;
