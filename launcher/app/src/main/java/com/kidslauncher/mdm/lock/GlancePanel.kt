@@ -131,8 +131,9 @@ class GlancePanel(
     private val glance = ViewLockGlanceBinding.inflate(activity.layoutInflater, frame, true)
 
     /** The clock, the date and the alarm (launcher round L6: one face with the time-rule screen's), with design
-     * 59d step L's profile: Android's small clock's geometry on this phone, else `null` (the centred clock). The alarm
-     * sits on the date line when it holds it (the calmer glance, 2026-11-04), else on the line under the date. */
+     * 59d step L's profile: Android's small clock's geometry on this phone (measured or design 96's general one), else
+     * `null` (the centred clock). The alarm sits on the date line when it holds it (the calmer glance, 2026-11-04), else
+     * on the line under the date. */
     private val clockFace = LockClockFace(
         activity, glance.root, glance.lockGlanceTop, glance.lockGlanceClock, glance.lockGlanceDate, glance.lockGlanceAlarm,
         extra = listOf(glance.lockGlanceNext, glance.lockGlanceWeatherLine.root), logTag = LOG_TAG, dateRow = glance.lockGlanceDateRow,

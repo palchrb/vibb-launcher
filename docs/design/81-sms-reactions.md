@@ -462,7 +462,7 @@ How the rows behave:
   - **No skin tones.** The skin-tone variants are left out: the picker shows each emoji's default (yellow) form. That
     keeps the grid a third of the size and the screen calm. An incoming skin-toned reaction still shows as itself.
   - **Only what the font can draw.** Only emoji `Paint.hasGlyph` says the system font draws are shown, so the kid
-    never sees an empty box. On the Jelly Star (Android 14) that is roughly Unicode 15.0.
+    never sees an empty box. On the Jelly Star (Android 14) that is roughly Unicode 15.0. *(Correction, design 96's code QA L6: the Jelly Star that runs Vibb One is on Android 16 - Unihertz took it from 13 straight to 16, 2026-08-31, and `minSdk` is 34; see design 56 §1.)*
   - **Size.** About 1,900 emoji in nine groups.
 - **The layout at 288 dp.**
   - **Where:** an in-screen panel over the thread (the delete confirm's surface, full height), titled "Velg en
