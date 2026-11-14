@@ -267,14 +267,17 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   ("Android SDK built for ..." by "unknown"), both only at 240 dpi **and** 320 dp wide (`GLANCE_CLOCK_PROFILE_DENSITY`, `GLANCE_CLOCK_PROFILE_WIDTH_DP`: the
   dp width is what makes the numbers fit, the density where they were measured; the code QA's JL-6); **since design 96
   (`docs/design/96-glance-general-clock.md`, 2026-11-14) every other phone gets the general profile**
-  (`generalClockProfile(manufacturer, widthDp, sdk)`: AOSP SystemUI's small-clock dimensions, all in dp - 86 dp, the box
-  at 28 dp, the top 18 dp under the keyguard bar - plus the two font measurements the measured profiles carry; Google's
-  bearing on a Google phone, the AOSP image's elsewhere; 18 dp lower below Android 16, the legacy keyguard; the measured
-  profiles, all Android 16, only from API 36), logged once (`Glance clock: no measured profile (model .., maker ..,
-  density .., width .. dp) - the general one`); `null` = the centred clock only below 271/274 dp (Nunito Light's widest
-  clock must end inside the face's 16 dp padding, `generalClockFits`) or from a tablet's 600 dp (`Glance clock: no
-  profile ...`); the date's baseline moves down with the font scale as Android's (`profileDateBaselineBelowBarDp`, 0.875
-  em of 16 sp a unit; Android keeps the date's top); no PWA switch - the glance's clock, the date and the alarm line go
+  (`generalClockProfile(manufacturer, widthDp, sdk, smallestWidthDp)`: AOSP SystemUI's small-clock dimensions, all in dp
+  - 86 dp, the box at 28 dp, the top 18 dp under the keyguard bar, the date at `below_clock_padding_start` 32 dp - plus
+  the two font measurements the measured profiles carry; Google's bearing on a Google phone, the AOSP image's elsewhere;
+  18 dp lower below Android 16, the legacy keyguard, checked on 14 and 15; the measured profiles, all Android 16 - the
+  real Jelly Star is on 16 -, only from API 36), logged once (`Glance clock: no measured profile (model .., maker ..,
+  density .., width .. dp, sdk ..) - the general one`); `null` = the centred clock only below 271/274 dp (Nunito Light's
+  widest clock must end inside the face's 16 dp padding, `generalClockFits`), from a smallest width of 600 dp, and -
+  `glanceClockCopyAllowed` - in landscape, right to left or with digits Nunito Light doesn't draw (`Glance clock: no
+  profile (..., copy ..) ...`); the date's baseline moves down with the font scale as Android's
+  (`profileDateBaselineBelowBarDp`: 0.93 of the date's growth as `TypedValue.applyDimension` scales it, non-linear since
+  Android 14; Android keeps the date's top); no PWA switch - the glance's clock, the date and the alarm line go
   left-aligned where Android's small single-line clock is: the clock's first digit's ink at `clockInkStartDp` (the box
   moves with the digit's side bearing, again at each text change) with its baseline `clockBaselineBelowBarDp` under
   SystemUI's keyguard status bar - never from the screen's top (the glance-topinset round, `docs/testing/2026-10-23-glance-topinset.md`:
