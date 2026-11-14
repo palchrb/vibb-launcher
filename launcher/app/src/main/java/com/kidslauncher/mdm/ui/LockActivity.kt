@@ -113,8 +113,52 @@ class LockActivity : UIObjectActivity() {
         // secure lock screen has no keyguard Emergency button - so this one is always shown,
         // whatever the call state (QA step 4 #1).
         binding.lockEmergencyButton.setOnClickListener { EmergencyCall.confirm(this) }
+        // Design 98 §4.3: the dim "···" opens the sheet (Flymodus, Foreldrekode) - a plain tap, never a swipe.
+        binding.lockMore.setOnClickListener { openSheet() }
         // TalkBack reads it as a button ("Nødsamtale, knapp"), as the keypad's pill (design 34 P7).
         binding.lockEmergencyButton.accessibilityDelegate = ButtonRole
+    }
+
+    /** Design 98 §4.3: the lock of the last render, for the sheet's rows. */
+    private var shownLock: com.kidslauncher.mdm.timerules.TimeLock? = null
+    private var sheetDialog: RuleSheetDialog? = null
+
+    /** Design 98 §4.1: bit 64 with the assistant role (the sheet's full Flymodus row). */
+    private fun fullAirplane(): Boolean {
+        val mask = (com.kidslauncher.mdm.server.cachedPolicy() as? com.kidslauncher.mdm.server.CachedPolicy.Ok)?.policy?.quickControlsMask ?: 0L
+        return mask and com.kidslauncher.mdm.server.QuickControlFeature.AIRPLANE != 0L && com.kidslauncher.mdm.assistant.AirplaneRuntime.roleHeld(this)
+    }
+
+    /** Design 98 §4.3: the sheet's rows now ([com.kidslauncher.mdm.assistant.ruleSheet]). */
+    private fun sheetNow(): com.kidslauncher.mdm.assistant.RuleSheet {
+        val lock = shownLock
+        val kind = when {
+            lock == null || !lock.locked -> ""
+            lock.rules.isEmpty() -> com.kidslauncher.mdm.assistant.RuleSheetLock.BUDGET
+            lock.budgetExhausted -> com.kidslauncher.mdm.assistant.RuleSheetLock.RULE_AND_BUDGET
+            else -> com.kidslauncher.mdm.assistant.RuleSheetLock.RULE
+        }
+        return com.kidslauncher.mdm.assistant.ruleSheet(
+            kind,
+            airplaneRow = fullAirplane() || com.kidslauncher.mdm.assistant.AirplaneRuntime.isOn(this),
+            pinConfigured = false,
+            // Foreldrekode comes with the rule pause (design 98 step 7).
+            rulePause = false,
+        )
+    }
+
+    private fun openSheet() {
+        if (!sheetNow().button || isFinishing) return
+        sheetDialog?.dismiss()
+        sheetDialog = RuleSheetDialog(this, ::sheetNow, ::fullAirplane) {}.also { it.show() }
+    }
+
+    /** Airplane mode or the route changed: the "···" and an open sheet follow. */
+    private val airplaneListener: () -> Unit = {
+        if (!isFinishing) {
+            binding.lockMore.visibility = if (sheetNow().button) View.VISIBLE else View.GONE
+            sheetDialog?.render()
+        }
     }
 
     /** The phone's clock format changed (design 34 P12): the clock and the rule's end again. */
@@ -163,6 +207,7 @@ class LockActivity : UIObjectActivity() {
         com.kidslauncher.mdm.sms.SmsHome.refresh(this)
         com.kidslauncher.mdm.badges.AlarmNoticeReader.addListener(alarmListener)
         com.kidslauncher.mdm.timerules.ZenRuleRuntime.addListener(alarmListener)
+        com.kidslauncher.mdm.assistant.AirplaneRuntime.addListener(airplaneListener)
         render()
     }
 
@@ -215,6 +260,10 @@ class LockActivity : UIObjectActivity() {
         com.kidslauncher.mdm.sms.SmsHome.removeListener(calendarListener)
         com.kidslauncher.mdm.badges.AlarmNoticeReader.removeListener(alarmListener)
         com.kidslauncher.mdm.timerules.ZenRuleRuntime.removeListener(alarmListener)
+        com.kidslauncher.mdm.assistant.AirplaneRuntime.removeListener(airplaneListener)
+        // Design 98 §4.3/§4.4.1: the sheet never outlives the screen in view (a parent handing the phone back).
+        sheetDialog?.dismiss()
+        sheetDialog = null
         icons.cancel()
         super.onStop()
     }
@@ -241,6 +290,10 @@ class LockActivity : UIObjectActivity() {
             null
         }
         val lock = snap?.lock
+        shownLock = lock
+        // Design 98 §4.3: the "···" only with a row to show; an open sheet follows (it closes when the rule ends).
+        binding.lockMore.visibility = if (sheetNow().button) View.VISIBLE else View.GONE
+        sheetDialog?.render()
         // Design 93 §9.2: the rule the card names - a turned-on rule with a certain end ahead of the kind order - and
         // its end (design r13 D2: the certain end only, as the glance card's).
         val pick = try {

@@ -795,4 +795,7 @@
     <string name="kid_settings_airplane_on_offline">Ingen nett. Nødsamtaler virker.</string>
     <string name="kid_settings_wifi_airplane">Kan ikke endres i flymodus</string>
     <string name="kid_settings_mobile_airplane">Flymodus er på</string>
+    <string name="home_airplane_on">Flymodus er på · Trykk for å slå av</string>
+    <string name="lock_more">Mer</string>
+    <string name="rule_sheet_parent_code">Foreldrekode ›</string>
 </resources>

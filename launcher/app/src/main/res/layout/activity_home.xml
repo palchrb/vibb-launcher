@@ -61,6 +61,23 @@
             android:textSize="15sp" />
     </LinearLayout>
 
+    <!-- Design 98 §4.2: "Flymodus er på · Trykk for å slå av" while airplane mode is on - one calm line under the pause's
+         banner, a plain tap turns it off (gesture and 3-button navigation alike). -->
+    <TextView
+        android:id="@+id/home_airplane_line"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:alpha="0.75"
+        android:background="?attr/selectableItemBackground"
+        android:fontFamily="@font/nunito_bold"
+        android:gravity="center_vertical"
+        android:minHeight="48dp"
+        android:paddingStart="4dp"
+        android:paddingEnd="4dp"
+        android:textColor="@color/kid_core"
+        android:textSize="15sp"
+        android:visibility="gone" />
+
     <!-- While a call exists the contacts row gives way to this card (user request after the
          emulator run): avatar, "Call with <name> · mm:ss", "Tap to go back" - a tap brings our
          call screen back. -->

@@ -246,10 +246,11 @@ class TimeLockModelTest {
         // No saturated full-width buttons: nothing on this screen is tinted a colour field or styled apart.
         assertTrue(views.none { it.attr("backgroundTint").isNotEmpty() || it.attr("style").isNotEmpty() })
         // The order: the clock, the date, the alarm line, the rule card, the rows' card, then emergency at the bottom - and
-        // no code entry (2026-11-01, the parent lifts a rule from the PWA only), no title or icon of its own any more.
+        // no code entry (2026-11-01, the parent lifts a rule from the PWA only), no title or icon of its own any more. Design
+        // 98 §4.3: the dim "···" first (gone without a row; its sheet holds Flymodus and Foreldrekode, never a code field).
         val ids = views.map { it.attr("id").removePrefix("@+id/") }.filter { it.isNotEmpty() }
         assertEquals(
-            listOf("lock_top", "lock_clock", "lock_date", "lock_alarm", "lock_rule_card", "lock_rows", "lock_emergency_button"),
+            listOf("lock_top", "lock_more", "lock_clock", "lock_date", "lock_alarm", "lock_rule_card", "lock_rows", "lock_emergency_button"),
             ids,
         )
         // The rule name is the screen's heading (TalkBack's heading navigation), on this screen's card only.

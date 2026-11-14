@@ -122,4 +122,6 @@
         <p><a href=\"https://github.com/googlefonts/nunito\">github.com/googlefonts/nunito</a></p>
         <p>SIL Open Font License, Version 1.1</p>
     ]]></string>
+    <!-- Design 98 §4.3: the time-rule screen's dim "···". -->
+    <string name="lock_more_glyph" translatable="false">···</string>
 </resources>

@@ -205,3 +205,39 @@ fun airplaneLineRes(state: AirplaneRowState): Int? = when (state) {
     AirplaneRowState.ON_OFFLINE -> com.kidslauncher.mdm.R.string.kid_settings_airplane_on_offline
     AirplaneRowState.COOLDOWN, AirplaneRowState.OFF, AirplaneRowState.HIDDEN -> null
 }
+
+/** §4.2: Home's line - `on` ("Flymodus er på · Trykk for å slå av") and `busy` ("Slår av…"). */
+object HomeAirplaneLine {
+    const val ON = "on"
+    const val BUSY = "busy"
+}
+
+/** §4.2: whenever airplane mode is on (whatever bit 64 and the role), unless the parent's switch is set. */
+fun homeAirplaneLine(on: Boolean, restricted: Boolean, busy: Boolean): String? = when {
+    !on || restricted -> null
+    busy -> HomeAirplaneLine.BUSY
+    else -> HomeAirplaneLine.ON
+}
+
+/** §4.3: the time-rule screen's sheet - whether there is a "···" at all, and its rows (`airplane`, `parent_code`). */
+data class RuleSheet(val button: Boolean, val rows: List<String>)
+
+/** The lock's kind for [ruleSheet]: a rule, the used-up budget alone, or a rule with the budget used up as well. */
+object RuleSheetLock {
+    const val RULE = "rule"
+    const val BUDGET = "budget"
+    const val RULE_AND_BUDGET = "rule_and_budget"
+}
+
+/**
+ * §4.3: Flymodus when §4.1's row would show ([airplaneRow] - bit 64 with the role, or airplane mode on); Foreldrekode
+ * only for a rule whose budget isn't used up as well (D11, Q98-R3-L4), with a PIN on the server
+ * (`ParentPin.status(..).configured`) and a server that takes the pause (`rule_pause: true`). No rows, no button.
+ */
+fun ruleSheet(lock: String, airplaneRow: Boolean, pinConfigured: Boolean, rulePause: Boolean): RuleSheet {
+    val rows = listOfNotNull(
+        "airplane".takeIf { airplaneRow },
+        "parent_code".takeIf { lock == RuleSheetLock.RULE && pinConfigured && rulePause },
+    )
+    return RuleSheet(rows.isNotEmpty(), rows)
+}

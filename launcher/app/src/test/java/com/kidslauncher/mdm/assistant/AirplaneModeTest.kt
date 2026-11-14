@@ -63,6 +63,21 @@ class AirplaneModeTest {
         }
     }
 
+    /** §4.2 and §4.3: Home's line and the time-rule screen's sheet. */
+    @Test
+    fun `Home's line and the sheet follow every row`() {
+        for (row in contract["home_line"]!!.jsonArray.map { it.jsonObject }) {
+            val b = { k: String -> row[k]!!.jsonPrimitive.content.toBoolean() }
+            assertEquals(row.toString(), row.str("line"), homeAirplaneLine(b("on"), b("restricted"), b("busy")))
+        }
+        for (row in contract["sheet"]!!.jsonArray.map { it.jsonObject }) {
+            val b = { k: String -> row[k]!!.jsonPrimitive.content.toBoolean() }
+            val sheet = ruleSheet(row.str("lock")!!, b("airplane_row"), b("pin_configured"), b("rule_pause"))
+            assertEquals(row.str("case"), b("button"), sheet.button)
+            assertEquals(row.str("case"), row["rows"]!!.jsonArray.map { it.jsonPrimitive.content }, sheet.rows)
+        }
+    }
+
     @Test
     fun `the capability and the bit`() {
         assertEquals(contract.str("capability"), AIRPLANE_MODE_CAPABILITY)

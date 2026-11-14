@@ -37,6 +37,27 @@
             android:paddingTop="8dp"
             android:paddingEnd="16dp">
 
+            <!-- Design 98 §4.3 (concept C): a dim "···" top right, 8 dp under the status bar, clear of the clock and the
+                 card (its height is given back below, so nothing moves). A tap opens the sheet with Flymodus and
+                 Foreldrekode; never a swipe. Gone with no row to show. -->
+            <TextView
+                android:id="@+id/lock_more"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:layout_gravity="end"
+                android:layout_marginBottom="-48dp"
+                android:alpha="0.4"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:clickable="true"
+                android:contentDescription="@string/lock_more"
+                android:focusable="true"
+                android:fontFamily="@font/nunito_extrabold"
+                android:gravity="center"
+                android:text="@string/lock_more_glyph"
+                android:textColor="@color/kid_core"
+                android:textSize="20sp"
+                android:visibility="gone" />
+
             <TextClock
                 android:id="@+id/lock_clock"
                 android:layout_width="wrap_content"

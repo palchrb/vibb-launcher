@@ -884,4 +884,7 @@
     <string name="kid_settings_airplane_on_offline">No network. Emergency calls still work.</string>
     <string name="kid_settings_wifi_airplane">Can\'t be changed in airplane mode</string>
     <string name="kid_settings_mobile_airplane">Airplane mode is on</string>
+    <string name="home_airplane_on">Airplane mode is on · Tap to turn off</string>
+    <string name="lock_more">More</string>
+    <string name="rule_sheet_parent_code">Parent code ›</string>
 </resources>
