@@ -135,3 +135,15 @@ branch, the debug apps of this branch.
 Other inset bugs looked for: `activity_lock.xml` was the only layout with a scrolling root that drew under the bars
 (`clipToPadding="false"`); the glance's bottom row, the keypad, kid Settings and the pause screen were above the bar in
 both modes in the matrix run and on this one (the keypad and the glance measured above).
+
+### After the code QA (`docs/review/qa-size-fixes-code.md`)
+
+- **M1:** Dagen's second line is a plain `TextView` again. On `jelly36` at 1.3, an event of the kid's own whose location
+  is a Zoom link shows the link at the line's own size, cut with "…", and with the "›".
+- **M2:** S9's strip is now each page's own bottom padding, clipped, inside the pager, and only while the page keeps
+  about three rows (`addPlace`, `ADD_STRIP_MIN_LIST_DP` 220). Otherwise the floating "+" comes back with the old 96 dp.
+  `ADD_STRIP = false` gives the old floating "+" everywhere. On `jelly36` in portrait at 1.3 the strip shows, and a day
+  swipe that starts in it (left of the "+") turns to Sunday. In landscape the floating "+" sits over a list of the
+  full height.
+
+`jelly36` was wiped for the check and put back clean afterwards (22 of 22 SHA-256 sums match, same file tree).

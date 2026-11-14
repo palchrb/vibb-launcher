@@ -184,9 +184,21 @@ class FitTest {
             assertTrue(w[0] >= mins[0] && w[1] >= mins[1])
             assertEquals(room, w.sum())
         }
-        // no room left by the others: it gives way to nothing below zero
+        // a name that can't be whole asks for nothing: it gives way at its weighted share, as before (code QA L4)
         assertEquals(0, shrinkerMin(100, 120, 130))
-        assertEquals(40, shrinkerMin(100, 120, 80))
+        assertEquals(0, shrinkerMin(100, 120, 80))
+        assertEquals(40, shrinkerMin(40, 120, 80))
+        // a Sonos group too long to be whole at 411 dp (about 260 dp of text): Liste and Sov keep their weighted shares,
+        // not their bare content, and the name gives way as before
+        val room = available(411f).toInt() - 2 * 8
+        val mins = listOf(bar(liste), bar(sov))
+        val w = flexWidths(room, listOf(1f, 1f, 1.2f), mins + shrinkerMin(bar(260f), room, mins.sum()))
+        assertEquals(flexWidths(room, listOf(1f, 1f, 1.2f), mins + 0), w)
+        assertTrue("Liste has air", w[0] > mins[0] + 16)
+        // one that can be whole there ("Barnerommet i andre etasje", 184.7 dp) is, and the others still keep more than
+        // their bare content
+        val whole = flexWidths(room, listOf(1f, 1f, 1.2f), mins + shrinkerMin(bar(184.7f), room, mins.sum()))
+        assertTrue(whole[2] >= bar(184.7f) && whole[0] > mins[0] && whole[1] > mins[1])
         val player = moduleFile("src/main/java/me/vibb/music/ui/PlayerScreen.kt").readText()
         assertTrue(player.contains("if (shrinks[i]) shrinkerMin(w, available, fixed) else w"))
     }

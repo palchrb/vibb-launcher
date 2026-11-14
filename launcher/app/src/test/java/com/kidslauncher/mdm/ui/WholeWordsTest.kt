@@ -246,6 +246,10 @@ class WholeWordsTest {
         assertEquals("com.kidslauncher.mdm.ui.WholeWordTextView", tile.tagName)
         assertEquals("normal", tile.getAttributeNS(ns, "hyphenationFrequency"))
         assertEquals("2", tile.getAttributeNS(ns, "maxLines"))
+        // Dagen: the title keeps words whole (S3); the second line is a plain TextView (code QA M1: a link in a location
+        // would shrink the whole line to the floor).
+        assertEquals("com.kidslauncher.mdm.ui.WholeWordTextView", label("res/layout/item_day_event.xml", "day_event_title").tagName)
+        assertEquals("TextView", label("res/layout/item_day_event.xml", "day_event_second").tagName)
         val name = label("res/layout/item_kid_contact.xml", "contact_name")
         assertEquals("com.kidslauncher.mdm.ui.WholeWordTextView", name.tagName)
         assertEquals("2", name.getAttributeNS(ns, "maxLines"))
@@ -337,6 +341,23 @@ class WholeWordsTest {
         assertFalse(WholeWords.cutLines("Ny melding", intArrayOf(3, 10), floatArrayOf(20f, 50f), floatArrayOf(24f, 50f), 3f, WholeWords.wholeCheckedLines(1, 2), { false }))
         assertEquals(2, WholeWords.wholeCheckedLines(2, 2))
         assertEquals(3, WholeWords.wholeCheckedLines(2, 5))
+    }
+
+    @Test
+    fun `whole means all of it shown, unless hyphens wouldn't show it either - one line must show it all (code QA L1, L8)`() {
+        // Two lines: whole and complete.
+        assertTrue(WholeWords.wholeOk(cut = false, lines = 2, hyphenLines = 2, maxLines = 2))
+        // "Aa / Bbbbbbbbb / Cc" without hyphens, "Aa Bbbbbb- / bbb Cc" with them: not whole - the hyphens show all of it.
+        assertFalse(WholeWords.wholeOk(cut = false, lines = 3, hyphenLines = 2, maxLines = 2))
+        // Neither shows all of it: whole words, ellipsized at the end, as before.
+        assertTrue(WholeWords.wholeOk(cut = false, lines = 3, hyphenLines = 3, maxLines = 2))
+        // A cut word is never whole.
+        assertFalse(WholeWords.wholeOk(cut = true, lines = 1, hyphenLines = 1, maxLines = 2))
+        // One line ("Bluetooth-enheter" in the header): only a size that shows all of it is whole.
+        assertFalse(WholeWords.wholeOk(cut = false, lines = 2, hyphenLines = 2, maxLines = 1))
+        assertTrue(WholeWords.wholeOk(cut = false, lines = 1, hyphenLines = 1, maxLines = 1))
+        // No line limit.
+        assertTrue(WholeWords.wholeOk(cut = false, lines = 9, hyphenLines = 9, maxLines = -1))
     }
 
     @Test

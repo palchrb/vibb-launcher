@@ -3,9 +3,10 @@
      2026-10-27: invisible, never gone, without a colour, so the start and the end time of every row share one left
      edge), the start in peach over the end (dim), the title (15 sp, three lines at most) and the second line (13 sp
      dim, two lines at most) - the location, else the description's first sentence; a small "›" at the right edge
-     only when something was cut. One TalkBack node: the row. Both texts keep their words whole (WholeWordTextView,
+     only when something was cut. One TalkBack node: the row. The title keeps its words whole (WholeWordTextView,
      screen-size fix S3: on a 270 dp phone at font 1.3 "Fotballtr/ening" broke mid-word): a word too wide for the
-     column makes the text a little smaller, and the title takes a third line rather than an ellipsis. -->
+     column makes it a little smaller, and it takes a third line rather than an ellipsis. The second line stays a plain
+     TextView (code QA M1): a location is often a link or a code no smaller size makes whole, and it ends in "…". -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/day_event"
     android:layout_width="match_parent"
@@ -78,7 +79,7 @@
             android:textColor="@color/kid_page_ink"
             android:textSize="15sp" />
 
-        <com.kidslauncher.mdm.ui.WholeWordTextView
+        <TextView
             android:id="@+id/day_event_second"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

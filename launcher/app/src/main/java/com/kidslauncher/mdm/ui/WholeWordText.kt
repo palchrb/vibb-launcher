@@ -130,6 +130,20 @@ object WholeWords {
      * before the ellipsis does not. */
     fun wholeCheckedLines(maxLines: Int, lineCount: Int): Int = minOf(shownLines(maxLines, lineCount) + 1, lineCount)
 
+    /** Whether [lines] fit a view of [maxLines] (unset, `-1`, or 0: no limit). */
+    fun fitsLines(lines: Int, maxLines: Int): Boolean = maxLines < 1 || lines <= maxLines
+
+    /**
+     * Whether a layout without hyphens counts as whole for [fitPreferWhole] (S6 and its code QA L1/L8): no word cut
+     * ([cut]), and all of the text shown ([lines] within [maxLines]) - or, for more than one line, not all of it shown
+     * but not with the view's own hyphenation at that size either ([hyphenLines]), so whole words never cost text the
+     * hyphens would have shown ("Aa Bbbbbb-/bbb Cc" stays rather than "Aa/Bbbbbbbbb…"). A one-line view must show all
+     * of it (L8: "Bluetooth-enheter" a little smaller and whole, not "Bluetooth-enh…" at full size); where no size does,
+     * the rest of the rule decides as before.
+     */
+    fun wholeOk(cut: Boolean, lines: Int, hyphenLines: Int, maxLines: Int): Boolean =
+        !cut && (fitsLines(lines, maxLines) || (maxLines != 1 && !fitsLines(hyphenLines, maxLines)))
+
     /** Every word [fits] refuses becomes its longest prefix that fits with [ELLIPSIS] (at least one
      * letter); spaces, punctuation and words that fit are left as they are. */
     fun ellipsizeWords(text: String, fits: (String) -> Boolean): String {
@@ -162,9 +176,9 @@ object WholeWords {
  * A TextView that follows [WholeWords] (Home's tile labels, the contact names on Home and in the
  * phone book, and since the screen-size fixes S3/S4 Dagen's rows and the kid header's title). Measures with an offline [StaticLayout] in the view's own break settings and applies
  * a size or an ellipsis only when it changes, so a layout pass settles. `text` is never changed: an
- * ellipsis is a [TransformationMethod]. The label's own accessibility text is the shown one
- * ("Melding…", `getTextForAccessibility` reads the transformed text); TalkBack reads the full name
- * from the clickable tile or contact, whose content description carries it (qa-34-emu-launcher-code N1).
+ * ellipsis is a [TransformationMethod]. TalkBack reads the full text (the node's text is the source while a word
+ * ellipsis shows - size-fixes code QA L2: the kid header's title has no clickable parent to carry it; the tile and the
+ * contact also keep their content description, qa-34-emu-launcher-code N1).
  */
 class WholeWordTextView @JvmOverloads constructor(
     context: Context,
@@ -175,6 +189,16 @@ class WholeWordTextView @JvmOverloads constructor(
     /** The fit's bookkeeping; null only while TextView's constructor runs (it sets text and size). */
     private var state: WholeWords.FitState? = null
     private var adjusting = false
+
+    /** Whether a word ends in the rule's own "…" now ([WordEllipsis]; the layout's own ellipsis count doesn't see it -
+     * code QA L3: Dagen's "›"). */
+    val wordEllipsized: Boolean get() = transformationMethod is WordEllipsis
+
+    /** TalkBack reads the full text, never the word-ellipsized one shown (code QA L2: the header's "Meld…"). */
+    override fun onInitializeAccessibilityNodeInfo(info: android.view.accessibility.AccessibilityNodeInfo) {
+        super.onInitializeAccessibilityNodeInfo(info)
+        if (wordEllipsized) info.text = text
+    }
 
     /** The XML's hyphenation, used when whole words don't fit ([WholeWords.fitPreferWhole]). */
     private var ownHyphens = Layout.HYPHENATION_FREQUENCY_NONE
@@ -211,10 +235,16 @@ class WholeWordTextView @JvmOverloads constructor(
         val fitState = state ?: return
         val source = text?.toString().orEmpty()
         if (!fitState.due(source, width)) return
+        // One break iterator and each (size, hyphenation) layout once per fit (code QA L5): without hyphens of its own the
+        // two passes ask the same layouts.
+        val isBreak = WholeWords.breakOpportunities(source, textLocale)
+        val laid = HashMap<Pair<Float, Int>, Laid>()
+        fun at(size: Float, frequency: Int) = laid.getOrPut(size to frequency) { layoutAt(source, size, width, frequency, isBreak) }
+        val none = Layout.HYPHENATION_FREQUENCY_NONE
         val fit = WholeWords.fitPreferWhole(
             fitState.basePx,
-            { !cutsAt(source, it, width, Layout.HYPHENATION_FREQUENCY_NONE) },
-            { cutsAt(source, it, width, ownHyphens) },
+            { at(it, none).let { plain -> WholeWords.wholeOk(plain.cut, plain.lines, at(it, ownHyphens).lines, maxLines) } },
+            { at(it, ownHyphens).cut },
         )
         val hyphens = if (fit.hyphens) ownHyphens else Layout.HYPHENATION_FREQUENCY_NONE
         val method = if (fit.ellipsized) {
@@ -233,10 +263,14 @@ class WholeWordTextView @JvmOverloads constructor(
         }
     }
 
-    /** Whether Android's layout of [source] at [sizePx] with [frequency] cuts a word within the lines shown, the last
-     * one's end included ([WholeWords.wholeCheckedLines], S4: a one-line title's word wider than the line). */
-    private fun cutsAt(source: String, sizePx: Float, width: Int, frequency: Int): Boolean {
-        if (source.isEmpty()) return false
+    /** A layout's verdict: whether it cuts a word, and its line count. */
+    private class Laid(val cut: Boolean, val lines: Int)
+
+    /** Android's layout of [source] at [sizePx] with [frequency]: whether it cuts a word within the lines shown, the last
+     * one's end included ([WholeWords.wholeCheckedLines], S4: a one-line title's word wider than the line), and its
+     * lines. */
+    private fun layoutAt(source: String, sizePx: Float, width: Int, frequency: Int, isBreak: (Int) -> Boolean): Laid {
+        if (source.isEmpty()) return Laid(false, 0)
         val atSize = TextPaint(paint).apply { textSize = sizePx }
         val layout = StaticLayout.Builder.obtain(source, 0, source.length, atSize, width)
             .setBreakStrategy(breakStrategy)
@@ -245,15 +279,16 @@ class WholeWordTextView @JvmOverloads constructor(
             .setLineSpacing(lineSpacingExtra, lineSpacingMultiplier)
             .build()
         val lines = layout.lineCount
-        return WholeWords.cutLines(
+        val cut = WholeWords.cutLines(
             source,
             IntArray(lines) { layout.getLineEnd(it) },
             FloatArray(lines) { layout.getLineWidth(it) },
             FloatArray(lines) { StaticLayout.getDesiredWidth(source, layout.getLineStart(it), layout.getLineEnd(it), atSize) },
             atSize.measureText("-") / 2f,
             WholeWords.wholeCheckedLines(maxLines, lines),
-            WholeWords.breakOpportunities(source, textLocale),
+            isBreak,
         )
+        return Laid(cut, lines)
     }
 
     /** Shows [display] for exactly [source]; any other text as it is. */

@@ -100,10 +100,11 @@ fun flexWidths(available: Int, weights: List<Float>, mins: List<Int>): List<Int>
 
 /**
  * The shrinking slot's own min in [FlexBar] (screen-size fix S7, 2026-11-14: "Telefonen" showed as "Telefo…" while Liste
- * and Sov had room to spare): its whole width ([ownDp]) as long as the others' mins ([othersDp]) leave that much of
- * [available], else what they leave - the others give their extra first, the name gives way only after them.
+ * and Sov had room to spare): its whole width ([ownDp]) when the others' mins ([othersDp]) leave that much of
+ * [available] - the name shown whole is worth their extra -, else 0 as before (code QA L4: a name that is cut anyway,
+ * a long Sonos room, never squeezes Liste and Sov to their bare content; it gives way at its weighted share).
  */
-fun shrinkerMin(ownDp: Int, available: Int, othersDp: Int): Int = ownDp.coerceAtMost(available - othersDp).coerceAtLeast(0)
+fun shrinkerMin(ownDp: Int, available: Int, othersDp: Int): Int = if (ownDp <= available - othersDp) ownDp else 0
 
 /** Five category tiles fill the row with four 4 dp gaps (more scroll), each wide enough for its 44 dp circle. */
 fun categoryTileWidth(availableDp: Float): Float = (availableDp - 4 * 4) / 5
