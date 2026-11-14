@@ -51,7 +51,7 @@
               "rules": [{"rule_id": 2, "until_ms": 1794826200000}]},
      "status": 400, "answer": null},
     {"case": "a start more than the slack in the future",
-     "body": {"key": "0123456789abcdef0123456789abcd07", "minutes": 30, "started_at_ms": 1794826561000,
+     "body": {"key": "0123456789abcdef0123456789abcd07", "minutes": 30, "started_at_ms": 1794826660000,
               "rules": [{"rule_id": 2, "until_ms": 1794828000000}]},
      "status": 400, "answer": null},
     {"case": "a key that isn't 32 hex characters",

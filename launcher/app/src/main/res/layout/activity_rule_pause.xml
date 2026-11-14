@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Design 98 §4.4.1: Foreldrekode's choices - "Sett Leggetid på pause", the PWA's lengths only (15/30/60/120 min, each
+     only when it ends no later than the rules in force), the line under them, "Sett på pause"; the parent PIN keypad
+     after. Closes on onStop and at screen-off. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/rule_pause_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/kid_ground"
+    android:orientation="vertical"
+    android:paddingStart="16dp"
+    android:paddingTop="24dp"
+    android:paddingEnd="16dp"
+    android:paddingBottom="16dp">
+
+    <TextView
+        android:id="@+id/rule_pause_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:accessibilityHeading="true"
+        android:fontFamily="@font/nunito_extrabold"
+        android:textColor="@color/kid_ink"
+        android:textSize="22sp" />
+
+    <RadioGroup
+        android:id="@+id/rule_pause_lengths"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:background="@drawable/bg_rule_sheet"
+        android:orientation="vertical"
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp" />
+
+    <TextView
+        android:id="@+id/rule_pause_words"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:alpha="0.8"
+        android:fontFamily="@font/nunito_bold"
+        android:text="@string/rule_pause_words"
+        android:textColor="@color/kid_ink"
+        android:textSize="14sp" />
+
+    <Space
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
+
+    <TextView
+        android:id="@+id/rule_pause_button"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@drawable/bg_home_window_lock_again"
+        android:clickable="true"
+        android:focusable="true"
+        android:fontFamily="@font/nunito_extrabold"
+        android:gravity="center"
+        android:minHeight="52dp"
+        android:text="@string/rule_pause_button"
+        android:textColor="@color/kid_core"
+        android:textSize="17sp" />
+</LinearLayout>

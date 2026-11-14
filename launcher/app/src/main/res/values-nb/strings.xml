@@ -798,4 +798,14 @@
     <string name="home_airplane_on">Flymodus er på · Trykk for å slå av</string>
     <string name="lock_more">Mer</string>
     <string name="rule_sheet_parent_code">Foreldrekode ›</string>
+    <string name="rule_pause_title_one">Sett %1$s på pause</string>
+    <string name="rule_pause_title_two">Sett %1$s og %2$s på pause</string>
+    <string name="rule_pause_15">15 min</string>
+    <string name="rule_pause_30">30 min</string>
+    <string name="rule_pause_60">1 time</string>
+    <string name="rule_pause_120">2 timer</string>
+    <string name="rule_pause_words">Gjelder bare denne regelen. Du ser pausen i appen når telefonen har nett igjen, og kan avslutte den der.</string>
+    <string name="rule_pause_button">Sett på pause</string>
+    <string name="rule_sheet_parent_code_title">Foreldrekode</string>
+    <string name="rule_pause_no_pin">Ingen foreldre-PIN er satt på serveren.</string>
 </resources>

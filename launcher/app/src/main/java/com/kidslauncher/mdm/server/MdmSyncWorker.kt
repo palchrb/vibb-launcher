@@ -127,6 +127,15 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     val etags = PolicyEtagStore.of(context)
     val owner = PolicyOwner.of(BuildConfig.VERSION_CODE, serverUrl, deviceToken)
     var served: ServedPolicy? = null
+    // Design 98 §4.4.4: the parent code's pauses go before the policy GET, so this sync's policy carries them.
+    try {
+        com.kidslauncher.mdm.timerules.PhonePauses.upload(context, api)
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Log.w(LOG_TAG, "Rule pause upload failed: ${e.javaClass.simpleName}")
+    }
+    val policyGetStartedMs = System.currentTimeMillis()
     val freshOutcome = when (val fetched = fetchPolicy(api, etags, owner, { served = it }) { policyHandshake = it.handshake }) {
         null -> FreshOutcome.UNREACHABLE
         is FreshDecode.Failed -> if (fetched === POLICY_SERVER_ERROR) FreshOutcome.SERVER_ERROR else {
@@ -152,6 +161,8 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
 
     if (freshPolicy != null) {
         storeAcceptedPolicy(context, freshPolicy)
+        // Design 98 §4.4.4: the parent code's pauses read this policy (an ack, or ended in the PWA after the ack).
+        com.kidslauncher.mdm.timerules.PhonePauses.policyAccepted(context, freshPolicy.timePolicy, policyGetStartedMs)
         // Design 95 §3.5: an accepted 200 is kept with its ETag (a 304's body is the kept one already); one with a
         // command is not (its Child PIN stays out of storage, design 59 §1), nor one without an ETag (an older server).
         when (val step = keptBodyStep(served, freshPolicy)) {

@@ -40,6 +40,9 @@ enum class ParentPinEntry(val wire: String) {
 
     /** Settings' "Install from Play". */
     INSTALL_MODE("install_mode"),
+
+    /** Design 98 §4.4: the time-rule screen's Foreldrekode - the rule(s) in force paused, offline. */
+    RULE_PAUSE("rule_pause"),
 }
 
 sealed interface ParentPinResult {

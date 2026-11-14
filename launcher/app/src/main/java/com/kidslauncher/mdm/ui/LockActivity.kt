@@ -141,16 +141,27 @@ class LockActivity : UIObjectActivity() {
         return com.kidslauncher.mdm.assistant.ruleSheet(
             kind,
             airplaneRow = fullAirplane() || com.kidslauncher.mdm.assistant.AirplaneRuntime.isOn(this),
-            pinConfigured = false,
-            // Foreldrekode comes with the rule pause (design 98 step 7).
-            rulePause = false,
+            pinConfigured = pinConfigured,
+            rulePause = (com.kidslauncher.mdm.server.cachedPolicy() as? com.kidslauncher.mdm.server.CachedPolicy.Ok)?.policy?.rulePause == true,
         )
     }
 
     private fun openSheet() {
         if (!sheetNow().button || isFinishing) return
         sheetDialog?.dismiss()
-        sheetDialog = RuleSheetDialog(this, ::sheetNow, ::fullAirplane) {}.also { it.show() }
+        sheetDialog = RuleSheetDialog(this, ::sheetNow, ::fullAirplane) { RulePauseActivity.start(this) }.also { it.show() }
+    }
+
+    /** Design 98 §4.3 (Q98-R3-L6): Foreldrekode only with a PIN on the server - the vault's state, read without hashing
+     * at each start. */
+    private var pinConfigured = false
+
+    private fun readPinConfigured() {
+        pinConfigured = try {
+            com.kidslauncher.mdm.server.ParentPin.status(this).configured
+        } catch (e: Exception) {
+            false
+        }
     }
 
     /** Airplane mode or the route changed: the "···" and an open sheet follow. */
@@ -208,6 +219,7 @@ class LockActivity : UIObjectActivity() {
         com.kidslauncher.mdm.badges.AlarmNoticeReader.addListener(alarmListener)
         com.kidslauncher.mdm.timerules.ZenRuleRuntime.addListener(alarmListener)
         com.kidslauncher.mdm.assistant.AirplaneRuntime.addListener(airplaneListener)
+        readPinConfigured()
         render()
     }
 

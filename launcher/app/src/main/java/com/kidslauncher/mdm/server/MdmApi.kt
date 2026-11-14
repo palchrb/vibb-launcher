@@ -125,6 +125,11 @@ interface MdmApi {
     @POST("api/devices/time-request")
     suspend fun sendTimeRequest(@Body request: TimeRequestBody): Response<ResponseBody>
 
+    /** Design 98 §4.4.4: the parent code's pause on the phone - the raw answer, read by `rulePauseAction`
+     * (`timerules/PhonePauses`). */
+    @POST("api/devices/rule-pause")
+    suspend fun postRulePause(@Body request: com.kidslauncher.mdm.timerules.RulePauseRequest): Response<ResponseBody>
+
     /** The kid's contact request from the phone book (design 77 §14): the raw answer, read by `contactRequestAnswer`
      * (an old server's 404 included) - see `calls/ContactRequests`. */
     @POST("api/devices/contact-request")

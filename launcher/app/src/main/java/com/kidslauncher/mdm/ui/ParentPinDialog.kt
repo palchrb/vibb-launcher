@@ -38,6 +38,8 @@ object ParentPinDialog {
         notConfigured: Int,
         cancelable: Boolean = true,
         onCancel: () -> Unit = {},
+        /** Design 98 §4.4.1: the rule pause's chosen length, handed to the gate. */
+        minutes: Int? = null,
         onOk: () -> Unit,
     ): AlertDialog {
         val dialog = AlertDialog.Builder(context, R.style.AlertDialogCustom)
@@ -69,7 +71,7 @@ object ParentPinDialog {
             val pin = keypad?.pin.orEmpty()
             ok.isEnabled = false
             scope.launch {
-                val result = withContext(Dispatchers.Default) { ParentPin.check(context, entry, pin) }
+                val result = withContext(Dispatchers.Default) { ParentPin.check(context, entry, pin, minutes) }
                 if (result == ParentPinResult.Ok) {
                     dialog.dismiss()
                     onOk()

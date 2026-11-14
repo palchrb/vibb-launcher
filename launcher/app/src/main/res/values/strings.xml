@@ -887,4 +887,14 @@
     <string name="home_airplane_on">Airplane mode is on · Tap to turn off</string>
     <string name="lock_more">More</string>
     <string name="rule_sheet_parent_code">Parent code ›</string>
+    <string name="rule_pause_title_one">Pause %1$s</string>
+    <string name="rule_pause_title_two">Pause %1$s and %2$s</string>
+    <string name="rule_pause_15">15 min</string>
+    <string name="rule_pause_30">30 min</string>
+    <string name="rule_pause_60">1 hour</string>
+    <string name="rule_pause_120">2 hours</string>
+    <string name="rule_pause_words">Applies to this rule only. You\'ll see the pause in the app when the phone is online again, and can end it there.</string>
+    <string name="rule_pause_button">Pause it</string>
+    <string name="rule_sheet_parent_code_title">Parent code</string>
+    <string name="rule_pause_no_pin">No parent PIN is set on the server.</string>
 </resources>

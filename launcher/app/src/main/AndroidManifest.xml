@@ -276,6 +276,13 @@
             android:taskAffinity="${applicationId}.day"
             android:theme="@style/KidPageLightTheme"
             android:windowSoftInputMode="adjustResize" />
+        <!-- Design 98 §4.4.1: Foreldrekode's choices from the time-rule screen's sheet, then the parent PIN; in Home's
+             locked task, never in recents, finished on stop. -->
+        <activity
+            android:name=".ui.RulePauseActivity"
+            android:configChanges="orientation|screenSize|uiMode"
+            android:excludeFromRecents="true"
+            android:exported="false" />
         <activity
             android:name=".ui.kidsettings.KidSettingsActivity"
             android:configChanges="orientation|screenSize|uiMode"
