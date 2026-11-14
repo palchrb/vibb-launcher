@@ -1463,6 +1463,11 @@ async fn status_intake(
         .mobile_data
         .as_ref()
         .and_then(crate::mobile_network::clean_mobile);
+    // Design 98 §5.1: Flymodus, its role and its periods, cleaned field by field.
+    let airplane_mode_json = report
+        .airplane_mode
+        .as_ref()
+        .and_then(|value| crate::airplane_mode::clean(value, arrived_ms));
     // Design 64 step 2: the phone's zone watch, known keys only.
     let zone_watch_json = report
         .zone_watch
@@ -1500,8 +1505,8 @@ async fn status_intake(
           foreign_access_json, remote_wipe_ready, admin_policies_pending_json, relock_blocks_json, \
           relock_blocks_total, clock_format_applied, battery_level, battery_charging, dns_upstream_json, \
           write_settings_granted, zone_watch_json, tailnet_joined, sms_state_json, data_roaming_json, \
-          mobile_data_json) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          mobile_data_json, airplane_mode_json) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(device.id)
     .bind(&report.lock_reason)
@@ -1561,6 +1566,7 @@ async fn status_intake(
     .bind(&sms_state_json)
     .bind(&data_roaming_json)
     .bind(&mobile_data_json)
+    .bind(&airplane_mode_json)
     .execute(&state.db)
     .await
     .ok();

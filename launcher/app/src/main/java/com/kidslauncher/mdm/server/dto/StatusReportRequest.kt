@@ -135,6 +135,10 @@ data class StatusReportRequest(
     /** Design 95 rev. 3 (capability `mobile_data_v1`): Android's mobile-data switch, why only Vibb uses cellular, the
      * mobile-network settings lock. Pinned by `mobile_network.json`. */
     val mobileData: com.kidslauncher.mdm.server.MobileDataReport? = null,
+    /** Design 98 §5.1 (capability `airplane_mode_v1`): Flymodus, the assistant role, Wi-Fi in airplane mode and the
+     * periods. A full-report field (not in `status_heartbeat_fields`). Pinned by `airplane_mode.json`
+     * (`AirplaneModeTest`). */
+    val airplaneMode: com.kidslauncher.mdm.assistant.AirplaneModeReport? = null,
 )
 
 /**

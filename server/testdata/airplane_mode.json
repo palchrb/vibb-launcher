@@ -1,0 +1,165 @@
+{
+  "capability": "airplane_mode_v1",
+  "bit": 64,
+  "rows": [
+    {"case": "on with the role, airplane mode off", "mask": 64, "role": true, "restricted": false, "on": false, "wifi_up": false, "busy": null, "last_error": null, "error_age_ms": null, "state": "off", "section": "rows"},
+    {"case": "bit 64 alone without the role: no card", "mask": 64, "role": false, "restricted": false, "on": false, "wifi_up": false, "busy": null, "last_error": null, "error_age_ms": null, "state": "hidden", "section": "none"},
+    {"case": "bit 64 off: no row", "mask": 1, "role": true, "restricted": false, "on": false, "wifi_up": false, "busy": null, "last_error": null, "error_age_ms": null, "state": "hidden", "section": "rows"},
+    {"case": "mask 0, airplane mode on: the Off-only row makes a card", "mask": 0, "role": false, "restricted": false, "on": true, "wifi_up": false, "busy": null, "last_error": null, "error_age_ms": null, "state": "off_only", "section": "rows"},
+    {"case": "a mask without 64, airplane mode on", "mask": 1, "role": true, "restricted": false, "on": true, "wifi_up": true, "busy": null, "last_error": null, "error_age_ms": null, "state": "off_only", "section": "rows"},
+    {"case": "the role lost, airplane mode on", "mask": 64, "role": false, "restricted": false, "on": true, "wifi_up": false, "busy": null, "last_error": null, "error_age_ms": null, "state": "off_only", "section": "rows"},
+    {"case": "no policy yet, airplane mode on", "mask": null, "role": false, "restricted": false, "on": true, "wifi_up": false, "busy": null, "last_error": null, "error_age_ms": null, "state": "off_only", "section": "rows"},
+    {"case": "no policy yet, airplane mode off", "mask": null, "role": true, "restricted": false, "on": false, "wifi_up": false, "busy": null, "last_error": null, "error_age_ms": null, "state": "hidden", "section": "no_policy"},
+    {"case": "the Off-only row turning off", "mask": 0, "role": false, "restricted": false, "on": true, "wifi_up": false, "busy": "off", "last_error": null, "error_age_ms": null, "state": "busy_off", "section": "rows"},
+    {"case": "the parent's switch", "mask": 64, "role": true, "restricted": true, "on": false, "wifi_up": false, "busy": null, "last_error": "refused", "error_age_ms": 1000, "state": "restricted", "section": "rows"},
+    {"case": "turning on", "mask": 64, "role": true, "restricted": false, "on": false, "wifi_up": false, "busy": "on", "last_error": null, "error_age_ms": null, "state": "busy_on", "section": "rows"},
+    {"case": "turning off", "mask": 64, "role": true, "restricted": false, "on": true, "wifi_up": true, "busy": "off", "last_error": null, "error_age_ms": null, "state": "busy_off", "section": "rows"},
+    {"case": "refused after an emergency call", "mask": 64, "role": true, "restricted": false, "on": false, "wifi_up": false, "busy": null, "last_error": "emergency", "error_age_ms": 60000, "state": "emergency", "section": "rows"},
+    {"case": "the emergency refusal is over after 10 minutes", "mask": 64, "role": true, "restricted": false, "on": false, "wifi_up": false, "busy": null, "last_error": "emergency", "error_age_ms": 600000, "state": "off", "section": "rows"},
+    {"case": "the cool-down", "mask": 64, "role": true, "restricted": false, "on": false, "wifi_up": false, "busy": null, "last_error": "cooldown", "error_age_ms": 3000, "state": "cooldown", "section": "rows"},
+    {"case": "the cool-down is over after 10 s", "mask": 64, "role": true, "restricted": false, "on": false, "wifi_up": false, "busy": null, "last_error": "cooldown", "error_age_ms": 10000, "state": "off", "section": "rows"},
+    {"case": "the last turn-on timed out", "mask": 64, "role": true, "restricted": false, "on": false, "wifi_up": false, "busy": null, "last_error": "timeout", "error_age_ms": 30000, "state": "failed", "section": "rows"},
+    {"case": "no route on this phone", "mask": 64, "role": true, "restricted": false, "on": false, "wifi_up": false, "busy": null, "last_error": "route_missing", "error_age_ms": 59999, "state": "failed", "section": "rows"},
+    {"case": "the failure line goes after a minute", "mask": 64, "role": true, "restricted": false, "on": false, "wifi_up": false, "busy": null, "last_error": "timeout", "error_age_ms": 60000, "state": "off", "section": "rows"},
+    {"case": "on with Wi-Fi", "mask": 64, "role": true, "restricted": false, "on": true, "wifi_up": true, "busy": null, "last_error": null, "error_age_ms": null, "state": "on_wifi", "section": "rows"},
+    {"case": "on without Wi-Fi, an old error ignored", "mask": 64, "role": true, "restricted": false, "on": true, "wifi_up": false, "busy": null, "last_error": "timeout", "error_age_ms": 1000, "state": "on_offline", "section": "rows"}
+  ],
+  "report": {
+    "on": false,
+    "going_on": false,
+    "assistant": true,
+    "wifi_kept": true,
+    "last_error": null,
+    "default_apps_changed": [],
+    "periods": [
+      {"on_ms": 1763150580000, "on_by": "kid", "off_ms": 1763183400000, "off_by": "kid"}
+    ]
+  },
+  "report_open": {
+    "on": true,
+    "going_on": false,
+    "assistant": true,
+    "wifi_kept": null,
+    "last_error": "timeout",
+    "default_apps_changed": ["call_screening", "browser"],
+    "periods": [
+      {"on_ms": 1763150580000, "on_by": "kid", "off_ms": 1763183400000, "off_by": "emergency"},
+      {"on_ms": 1763190000000, "on_by": "other", "off_ms": null, "off_by": null}
+    ]
+  },
+  "clean": [
+    {
+      "case": "unknown words become other, a refusal kept on the phone isn't stored, unknown roles dropped",
+      "now_ms": 1763200000000,
+      "in": {"on": "yes", "going_on": true, "assistant": true, "wifi_kept": "maybe", "last_error": "cooldown", "default_apps_changed": ["home", "nope", "sms", 7],
+             "periods": [{"on_ms": 1763150580000, "on_by": "grandma", "off_ms": 1763183400000, "off_by": "storm"}]},
+      "out": {"on": false, "going_on": true, "assistant": true, "wifi_kept": null, "last_error": null, "default_apps_changed": ["home", "sms"],
+              "periods": [{"on_ms": 1763150580000, "on_by": "other", "off_ms": 1763183400000, "off_by": "other"}]}
+    },
+    {
+      "case": "an end before its start is dropped, a period from the future is dropped, an open period that isn't the last is closed at the next one's start",
+      "now_ms": 1763200000000,
+      "in": {"on": true, "going_on": false, "assistant": false, "wifi_kept": false, "last_error": "route_missing", "default_apps_changed": [],
+             "periods": [
+               {"on_ms": 1763183400000, "on_by": "kid", "off_ms": 1763150580000, "off_by": "kid"},
+               {"on_ms": 1763160000000, "on_by": "kid", "off_ms": null, "off_by": null},
+               {"on_ms": 1763170000000, "on_by": "kid", "off_ms": null, "off_by": null},
+               {"on_ms": 1763299999000, "on_by": "kid", "off_ms": null, "off_by": null}
+             ]},
+      "out": {"on": true, "going_on": false, "assistant": false, "wifi_kept": false, "last_error": "route_missing", "default_apps_changed": [],
+              "periods": [
+                {"on_ms": 1763160000000, "on_by": "kid", "off_ms": 1763170000000, "off_by": "other"},
+                {"on_ms": 1763170000000, "on_by": "kid", "off_ms": null, "off_by": null}
+              ]}
+    },
+    {
+      "case": "more than 10 periods: the newest 10, oldest first",
+      "now_ms": 1763200000000,
+      "in": {"on": false, "going_on": false, "assistant": true, "wifi_kept": true, "last_error": null, "default_apps_changed": [],
+             "periods": [
+               {"on_ms": 1763100000000, "on_by": "kid", "off_ms": 1763100060000, "off_by": "kid"},
+               {"on_ms": 1763101000000, "on_by": "kid", "off_ms": 1763101060000, "off_by": "kid"},
+               {"on_ms": 1763102000000, "on_by": "kid", "off_ms": 1763102060000, "off_by": "kid"},
+               {"on_ms": 1763103000000, "on_by": "kid", "off_ms": 1763103060000, "off_by": "kid"},
+               {"on_ms": 1763104000000, "on_by": "kid", "off_ms": 1763104060000, "off_by": "kid"},
+               {"on_ms": 1763105000000, "on_by": "kid", "off_ms": 1763105060000, "off_by": "kid"},
+               {"on_ms": 1763106000000, "on_by": "kid", "off_ms": 1763106060000, "off_by": "kid"},
+               {"on_ms": 1763107000000, "on_by": "kid", "off_ms": 1763107060000, "off_by": "kid"},
+               {"on_ms": 1763108000000, "on_by": "kid", "off_ms": 1763108060000, "off_by": "parent"},
+               {"on_ms": 1763109000000, "on_by": "kid", "off_ms": 1763109060000, "off_by": "emergency"},
+               {"on_ms": 1763110000000, "on_by": "other", "off_ms": 1763110060000, "off_by": "other"}
+             ]},
+      "out": {"on": false, "going_on": false, "assistant": true, "wifi_kept": true, "last_error": null, "default_apps_changed": [],
+              "periods": [
+                {"on_ms": 1763101000000, "on_by": "kid", "off_ms": 1763101060000, "off_by": "kid"},
+                {"on_ms": 1763102000000, "on_by": "kid", "off_ms": 1763102060000, "off_by": "kid"},
+                {"on_ms": 1763103000000, "on_by": "kid", "off_ms": 1763103060000, "off_by": "kid"},
+                {"on_ms": 1763104000000, "on_by": "kid", "off_ms": 1763104060000, "off_by": "kid"},
+                {"on_ms": 1763105000000, "on_by": "kid", "off_ms": 1763105060000, "off_by": "kid"},
+                {"on_ms": 1763106000000, "on_by": "kid", "off_ms": 1763106060000, "off_by": "kid"},
+                {"on_ms": 1763107000000, "on_by": "kid", "off_ms": 1763107060000, "off_by": "kid"},
+                {"on_ms": 1763108000000, "on_by": "kid", "off_ms": 1763108060000, "off_by": "parent"},
+                {"on_ms": 1763109000000, "on_by": "kid", "off_ms": 1763109060000, "off_by": "emergency"},
+                {"on_ms": 1763110000000, "on_by": "other", "off_ms": 1763110060000, "off_by": "other"}
+              ]}
+    },
+    {
+      "case": "not an object: nothing stored",
+      "now_ms": 1763200000000,
+      "in": [1, 2],
+      "out": null
+    }
+  ],
+  "emergency": {
+    "line": [
+      {"case": "off 4 s after the call", "call_ms": 1763183396000, "period": {"on_ms": 1763150580000, "off_ms": 1763183400000, "off_by": "emergency"}, "line": true},
+      {"case": "off just before the phone recorded the call", "call_ms": 1763183430000, "period": {"on_ms": 1763150580000, "off_ms": 1763183400000, "off_by": "emergency"}, "line": true},
+      {"case": "off 11 minutes after the call", "call_ms": 1763182740000, "period": {"on_ms": 1763150580000, "off_ms": 1763183400000, "off_by": "emergency"}, "line": false},
+      {"case": "the kid turned it off", "call_ms": 1763183396000, "period": {"on_ms": 1763150580000, "off_ms": 1763183400000, "off_by": "kid"}, "line": false},
+      {"case": "still on", "call_ms": 1763183396000, "period": {"on_ms": 1763150580000, "off_ms": null, "off_by": null}, "line": false}
+    ],
+    "off_by": [
+      {"case": "Vibb's own Off", "by_vibb": "kid", "placed_ms": 1763183396000, "off_ms": 1763183400000, "ecbm": false, "off_by": "kid"},
+      {"case": "the parent's switch went on", "by_vibb": "parent", "placed_ms": null, "off_ms": 1763183400000, "ecbm": false, "off_by": "parent"},
+      {"case": "4 s after an emergency call was placed", "by_vibb": null, "placed_ms": 1763183396000, "off_ms": 1763183400000, "ecbm": false, "off_by": "emergency"},
+      {"case": "in emergency callback mode", "by_vibb": null, "placed_ms": null, "off_ms": 1763183400000, "ecbm": true, "off_by": "emergency"},
+      {"case": "11 s after the call", "by_vibb": null, "placed_ms": 1763183389000, "off_ms": 1763183400000, "ecbm": false, "off_by": "other"},
+      {"case": "anything else", "by_vibb": null, "placed_ms": null, "off_ms": 1763183400000, "ecbm": false, "off_by": "other"}
+    ]
+  },
+  "rules": {
+    "on": [
+      {"case": "a rule in force changes nothing", "rule_in_force": true, "role": true, "ready": true, "restricted": false, "on": false, "emergency": false, "cooldown": false, "result": "go"},
+      {"case": "no rule", "rule_in_force": false, "role": true, "ready": true, "restricted": false, "on": false, "emergency": false, "cooldown": false, "result": "go"},
+      {"case": "the parent's switch under a rule", "rule_in_force": true, "role": true, "ready": true, "restricted": true, "on": false, "emergency": false, "cooldown": false, "result": "refused"},
+      {"case": "the parent's switch without a rule", "rule_in_force": false, "role": true, "ready": true, "restricted": true, "on": false, "emergency": false, "cooldown": false, "result": "refused"},
+      {"case": "the role missing", "rule_in_force": true, "role": false, "ready": false, "restricted": false, "on": false, "emergency": false, "cooldown": false, "result": "route_missing"},
+      {"case": "the service not ready", "rule_in_force": false, "role": true, "ready": false, "restricted": false, "on": false, "emergency": false, "cooldown": false, "result": "route_missing"},
+      {"case": "already on", "rule_in_force": true, "role": true, "ready": true, "restricted": false, "on": true, "emergency": false, "cooldown": false, "result": "already_on"},
+      {"case": "after an emergency call", "rule_in_force": true, "role": true, "ready": true, "restricted": false, "on": false, "emergency": true, "cooldown": false, "result": "emergency"},
+      {"case": "the cool-down", "rule_in_force": false, "role": true, "ready": true, "restricted": false, "on": false, "emergency": false, "cooldown": true, "result": "cooldown"}
+    ],
+    "edges": [
+      {"edge": "start", "on": true, "action": null},
+      {"edge": "end", "on": true, "action": null},
+      {"edge": "pause", "on": true, "action": null},
+      {"edge": "lift", "on": true, "action": null}
+    ]
+  },
+  "home_line": [
+    {"on": false, "restricted": false, "busy": false, "line": null},
+    {"on": true, "restricted": false, "busy": false, "line": "on"},
+    {"on": true, "restricted": false, "busy": true, "line": "busy"},
+    {"on": true, "restricted": true, "busy": false, "line": null}
+  ],
+  "sheet": [
+    {"case": "both rows", "lock": "rule", "airplane_row": true, "pin_configured": true, "rule_pause": true, "button": true, "rows": ["airplane", "parent_code"]},
+    {"case": "no airplane row", "lock": "rule", "airplane_row": false, "pin_configured": true, "rule_pause": true, "button": true, "rows": ["parent_code"]},
+    {"case": "no PIN on the server", "lock": "rule", "airplane_row": true, "pin_configured": false, "rule_pause": true, "button": true, "rows": ["airplane"]},
+    {"case": "neither row: no button", "lock": "rule", "airplane_row": false, "pin_configured": false, "rule_pause": true, "button": false, "rows": []},
+    {"case": "an older server without rule_pause", "lock": "rule", "airplane_row": false, "pin_configured": true, "rule_pause": false, "button": false, "rows": []},
+    {"case": "the budget alone (D11)", "lock": "budget", "airplane_row": false, "pin_configured": true, "rule_pause": true, "button": false, "rows": []},
+    {"case": "the budget alone, the airplane row", "lock": "budget", "airplane_row": true, "pin_configured": true, "rule_pause": true, "button": true, "rows": ["airplane"]},
+    {"case": "a rule with the budget used up as well", "lock": "rule_and_budget", "airplane_row": true, "pin_configured": true, "rule_pause": true, "button": true, "rows": ["airplane"]}
+  ]
+}

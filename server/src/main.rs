@@ -1,4 +1,5 @@
 mod admin_auth;
+mod airplane_mode;
 mod apk;
 mod app_display;
 mod app_downloads;

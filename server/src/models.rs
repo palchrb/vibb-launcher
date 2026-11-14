@@ -1621,6 +1621,10 @@ pub struct StatusReportRequest {
     /// `mobile_network::clean_mobile`. Absent from older launchers.
     #[serde(default)]
     pub mobile_data: Option<serde_json::Value>,
+    /// Design 98 §5.1 (capability `airplane_mode_v1`): `{on, going_on, assistant, wifi_kept, last_error,
+    /// default_apps_changed, periods}`, raw - cleaned by `airplane_mode::clean`. Absent from older launchers.
+    #[serde(default)]
+    pub airplane_mode: Option<serde_json::Value>,
     /// Design 76: the launcher's certificate check (`testdata/server_tls_report.json`'s `report`), raw - read
     /// within limits by `server_tls::sanitize`, so nothing in it can fail the report. Absent from older launchers.
     #[serde(default)]
