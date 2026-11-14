@@ -199,6 +199,10 @@ pub fn roaming_words(lang: Lang, report: &RoamingReport) -> Option<(String, bool
     if !report.roaming && !abroad_unflagged(report) {
         return None;
     }
+    // National roaming: another network in the SIM's own country is never "roaming in <home>".
+    if report.where_is.as_deref() == Some("home") {
+        return Some((t(lang, "data_roaming.national").to_string(), false));
+    }
     Some(match report.country.as_deref() {
         Some(cc) => match place_phrase(lang, cc) {
             Some(place) => (
@@ -460,7 +464,33 @@ fn switch_line(
             Line::named(lang, "switch", "mobile.abroad.switch.on_locked", name)
         }
         true => Line::named(lang, "switch", "mobile.abroad.switch.on_open", name),
-        false => Line::new(lang, "switch", "mobile.abroad.switch.off", None, true),
+        // Grey while the phone is home or its place is unknown; orange only abroad, leading with the place.
+        false if report.where_is.as_deref() == Some("abroad") => {
+            let place = roaming_words(lang, report)
+                .map(|(words, _)| words)
+                .unwrap_or_else(|| t(lang, "data_roaming.plain").to_string());
+            Line {
+                key: "switch",
+                title: t_params(
+                    lang,
+                    "mobile.abroad.switch.off_abroad",
+                    &[("place", &place)],
+                ),
+                sub: Some(t_params(
+                    lang,
+                    "mobile.abroad.switch.off_abroad_sub",
+                    &[("name", name)],
+                )),
+                warn: true,
+            }
+        }
+        false => Line::new(
+            lang,
+            "switch",
+            "mobile.abroad.switch.off",
+            Some("mobile.abroad.switch.off_sub"),
+            false,
+        ),
     })
 }
 
@@ -535,8 +565,12 @@ pub fn card(lang: Lang, name: &str, policy: &DevicePolicy, latest: Option<&Devic
             paused,
             network_capable,
         ));
-        if let Some((words, warn)) =
-            roaming_words(lang, report).filter(|_| report.roaming || abroad_unflagged(report))
+        // The abroad switch-off line already leads with the place: one mention is enough.
+        let place_in_switch = abroad_lines
+            .iter()
+            .any(|l: &Line| l.key == "switch" && l.warn);
+        if let Some((words, warn)) = roaming_words(lang, report)
+            .filter(|_| (report.roaming || abroad_unflagged(report)) && !place_in_switch)
         {
             abroad_lines.push(Line {
                 key: "roaming",
@@ -797,6 +831,19 @@ mod tests {
             Some(("Roamer i Sverige".to_string(), false))
         );
         assert_eq!(roaming_words(Lang::Nb, &unflagged("home")), None);
+        // National roaming: another network in the SIM's own country is never "Roamer i <home>".
+        let national = RoamingReport {
+            where_is: Some("home".to_string()),
+            ..roaming(Some("no"), Some("24201"), true)
+        };
+        assert_eq!(
+            roaming_words(Lang::Nb, &national),
+            Some(("Bruker et annet nett i hjemlandet".to_string(), false))
+        );
+        assert_eq!(
+            roaming_words(Lang::En, &national).unwrap().0,
+            "Using another network in its home country"
+        );
     }
 
     /// Design 97 §6 (D6 as corrected): a run of reports, each `(minutes, where, place)`, and the places told.

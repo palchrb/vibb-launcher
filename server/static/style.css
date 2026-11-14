@@ -1634,6 +1634,13 @@ button:hover {
     color: var(--on-tint-fill);
 }
 
+/* A save on its way (scroll-restore.js, 2026-11-14): its button disabled and quietly dimmed until the answer -
+   a still state, no animation. */
+button[aria-busy="true"] {
+    opacity: 0.55;
+    cursor: progress;
+}
+
 .button-secondary,
 .button-secondary:hover {
     background: var(--surface);

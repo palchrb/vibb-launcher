@@ -48,6 +48,26 @@
 // with no referrer of this origin (a notification, a typed address) forgets the page's entry. Pages
 // are compared without the one-shot query words a save adds (`notice`, `app`, `saved`), which
 // reconnect.js and auto-reload.js take off the address again.
+//
+// A save leaves the history as it was (the user, 2026-11-14: Check now on an app, then Back, showed
+// the same app page again - the POST and its 303 back had added an entry). A form that comes back
+// to its page - a POST whose action has a #fragment, the forms that leave their page have none
+// (settings_pages::check_forms) - is posted by this script (`fetch`, header `X-Handy-Stay`), and the
+// server answers its redirect as a 204 naming the address, fragment and all (`X-Handy-Location`,
+// admin_auth::stay_answer). The same page: the entry is replaced with that address and reloaded (a
+// bare `location.replace` to the same page with another fragment would only scroll); another page:
+// opened as a link would be. The place record above works as before; a #fragment the form's groups
+// don't hold is the anchor (the record is marked `stay`, so the reload's place record doesn't win).
+// While a form's save is out it is busy (`aria-busy`, its button disabled): a second tap does
+// nothing, a switch's next save goes after it; the page lands once, when the last save in flight
+// has answered. Left to the browser as before: no JS or no fetch; a form with a `target`,
+// `data-native-post` (its POST is answered with a page, not a redirect: Show Child PIN, the music
+// import's upload, Add Parent, a parent's Reset, the setup QR) or a password, file or passkey field
+// (a refusal posted again would count a password twice, spend a passkey's challenge, send a file
+// twice). A refusal (400, 403, 404, 409, 422, 423, a 200 refused form) is sent again the browser's
+// way, which shows it; no answer, a 5xx, a redirect past the server's stay answer or an address
+// that isn't an http(s) one of this origin never posts again - the server may have acted - and the
+// page is loaded with a GET instead, showing what the server holds.
 (function (root) {
     "use strict";
     var KEY = "handy-scroll";
@@ -58,6 +78,71 @@
     var FROM_KEY = "handy-from";
     // A save's one-shot words in the address: not part of which page it is.
     var ONE_SHOT = { notice: 1, app: 1, saved: 1 };
+    // admin_auth::STAY_HEADER and STAY_LOCATION_HEADER.
+    var STAY_HEADER = "X-Handy-Stay";
+    var STAY_LOCATION = "X-Handy-Location";
+    // Fields whose form the browser posts itself (a refusal posted again must not repeat them).
+    var ONE_SHOT_TYPES = { password: 1, file: 1 };
+    var ONE_SHOT_NAMES = { assertion: 1, credential: 1 };
+    // The answers where the server refused before acting (a 200 is a refused form shown again: the forms
+    // answered with a page on success are `data-native-post`): the only ones a save is sent again on.
+    var REFUSED = { 200: 1, 400: 1, 403: 1, 404: 1, 409: 1, 422: 1, 423: 1 };
+
+    /** `el`'s attribute `name`, or null when it has none. */
+    function attr(el, name) {
+        return el && el.hasAttribute && el.hasAttribute(name) ? String(el.getAttribute(name)) : null;
+    }
+
+    /**
+     * How a save that comes back to its page is posted by this script: `{ url, multipart }` (its action
+     * as an absolute address, its fragment kept), or null when the browser posts it as before (see the
+     * top). `submitter` is the button that sent it, or null; `href` the page's address.
+     */
+    function stayPost(form, submitter, href) {
+        if (!form || typeof URL !== "function") return null;
+        var method = attr(submitter, "formmethod") || attr(form, "method") || "get";
+        if (method.toLowerCase() !== "post") return null;
+        var target = attr(submitter, "formtarget") || attr(form, "target");
+        if (target && target.toLowerCase() !== "_self") return null;
+        if (attr(form, "data-native-post") !== null) return null;
+        var fields = form.elements || [];
+        for (var i = 0; i < fields.length; i++) {
+            var type = String(fields[i].type || "").toLowerCase();
+            if (ONE_SHOT_TYPES[type] === 1 || ONE_SHOT_NAMES[String(fields[i].name || "")] === 1) return null;
+        }
+        var action = attr(submitter, "formaction");
+        if (action === null) action = attr(form, "action") || "";
+        var url;
+        var here;
+        try {
+            url = new URL(action, href);
+            here = new URL(href);
+        } catch (e) {
+            return null;
+        }
+        if (url.origin !== here.origin || url.hash.length < 2) return null;
+        var enctype = attr(submitter, "formenctype") || attr(form, "enctype") || "";
+        return { url: url.href, multipart: enctype.toLowerCase() === "multipart/form-data" };
+    }
+
+    /**
+     * Where a stayed save goes on to: `{ reload: true, url }` for this page (its entry replaced with
+     * `url`, then reloaded), `{ reload: false, url }` for another page of this origin (opened as a link
+     * would be), or null for anything but an http(s) address of this origin.
+     */
+    function stayLanding(to, href) {
+        var url;
+        var here;
+        try {
+            url = new URL(to, href);
+            here = new URL(href);
+        } catch (e) {
+            return null;
+        }
+        // Only an http(s) address of this origin (code QA L3: never a `javascript:` one).
+        if ((url.protocol !== "http:" && url.protocol !== "https:") || url.origin !== here.origin) return null;
+        return { reload: url.pathname === here.pathname, url: url.href };
+    }
 
     function has(tops, id) {
         return Object.prototype.hasOwnProperty.call(tops, id) && typeof tops[id] === "number";
@@ -214,13 +299,16 @@
             storage = win.sessionStorage;
         } catch (e) {}
 
+        // The last form record, marked `stay` when its save reloads the page (land).
+        var lastRecord = null;
         function remember(form) {
-            carry({
+            lastRecord = {
                 path: win.location.pathname,
                 y: scrollerOf(win).top(),
                 t: now(),
                 tops: screenTops(form)
-            });
+            };
+            carry(lastRecord);
         }
 
         /** The record for the next page, in both carriers. */
@@ -238,10 +326,199 @@
 
         doc.addEventListener("submit", function (e) { remember(e && e.target); }, true);
         var proto = win.HTMLFormElement && win.HTMLFormElement.prototype;
+        // The browser's own form.submit(), kept on the prototype by the first install (never the hook).
+        var nativeSubmit = proto && (proto.handyNativeSubmit || proto.submit);
+
+        // A save that comes back to its page, posted here so the history stays as it was (see the top).
+        // The form the browser is sending again after a refusal (it shows the refusal's page).
+        var passing = null;
+        // The stay saves in flight (one per form at a time), the outcome to act on once the last
+        // settles, and each form's save asked for again while its first was out.
+        var inflight = 0;
+        var outcome = null;
+        var busy = [];
+        function isBusy(form) {
+            for (var i = 0; i < busy.length; i++) if (busy[i].form === form) return busy[i];
+            return null;
+        }
+        function markBusy(form, submitter) {
+            busy.push({ form: form, submitter: submitter, again: false });
+            try {
+                form.setAttribute("aria-busy", "true");
+                if (submitter) {
+                    submitter.setAttribute("aria-busy", "true");
+                    submitter.disabled = true;
+                }
+            } catch (e) {}
+        }
+        function unmark(entry) {
+            try {
+                entry.form.removeAttribute("aria-busy");
+                if (entry.submitter) {
+                    entry.submitter.removeAttribute("aria-busy");
+                    entry.submitter.disabled = false;
+                }
+            } catch (e) {}
+        }
+        function releaseAll() {
+            for (var i = 0; i < busy.length; i++) unmark(busy[i]);
+            busy = [];
+        }
+        /** The page with a GET: what the server holds now (`replaceState` first, so a POST's entry isn't sent again). */
+        function reloadHere() {
+            land({ reload: true, url: win.location.href });
+        }
+        function land(to) {
+            if (!to.reload) {
+                win.location.assign(to.url);
+                return;
+            }
+            // The record goes with the reload marked: a #fragment the form's groups don't hold is the
+            // browser's anchor, never the old place (code QA L2).
+            if (lastRecord) {
+                lastRecord.stay = true;
+                carry(lastRecord);
+            }
+            try {
+                win.history.replaceState(win.history.state, "", to.url);
+            } catch (e) {
+                win.location.replace(to.url);
+                return;
+            }
+            win.location.reload();
+        }
+        /** A refused save sent again the browser's way, so its page shows; a send that throws: the page with a GET. */
+        function browserPost(form, submitter, hooked) {
+            try {
+                if (hooked) {
+                    nativeSubmit.call(form);
+                    return;
+                }
+                // requestSubmit keeps the button's name, value and formaction; this listener lets it pass.
+                passing = form;
+                try {
+                    form.requestSubmit(submitter || undefined);
+                } finally {
+                    passing = null;
+                }
+            } catch (e) {
+                reloadHere();
+            }
+        }
+        // What an answer asks for, by weight: a refusal must show (resend), an answer not had means a
+        // GET of the page (reload), else where the last save landed (land).
+        var WEIGHT = { land: 1, reload: 2, resend: 3 };
+        function settle(next) {
+            if (!outcome || WEIGHT[next.kind] >= WEIGHT[outcome.kind]) outcome = next;
+            if (--inflight > 0) return;
+            var o = outcome;
+            outcome = null;
+            if (o.kind === "land" && o.to.reload) {
+                land(o.to);
+                return;
+            }
+            if (o.kind === "reload") {
+                reloadHere();
+                return;
+            }
+            releaseAll();
+            if (o.kind === "resend") browserPost(o.form, o.submitter, o.hooked);
+            else land(o.to);
+        }
+        /** What the answer to a stay save asks for (code QA H1, L3, L4). */
+        function verdict(res) {
+            var to = res && res.headers && res.headers.get(STAY_LOCATION);
+            if (res && res.status === 204 && to) {
+                var landing = stayLanding(to, win.location.href);
+                // Saved, but an address that isn't an http(s) one of this origin: the page with a GET.
+                return landing ? { kind: "land", to: landing } : { kind: "reload" };
+            }
+            // A redirect past the server's stay answer (a sign-in portal in front of it): saved or not is
+            // unknown - the page with a GET, which the portal then takes.
+            if (res && res.type === "opaqueredirect") return { kind: "reload" };
+            // A refusal, before the server acted: sent again the browser's way, which shows its page.
+            if (res && REFUSED[res.status] === 1) return { kind: "resend" };
+            // A 5xx or anything else: the server may have acted - never posted again.
+            return { kind: "reload" };
+        }
+        /** Sends `form`'s stay save now (its fields as they are). */
+        function send(form, submitter, hooked, how) {
+            var body = new win.FormData(form);
+            if (submitter && submitter.name) body.append(submitter.name, submitter.value || "");
+            if (!how.multipart) {
+                var fields = new win.URLSearchParams();
+                body.forEach(function (value, key) { fields.append(key, value); });
+                body = fields;
+            }
+            var headers = {};
+            headers[STAY_HEADER] = "1";
+            var done = function (next) {
+                var entry = isBusy(form);
+                // Asked for again meanwhile (an auto-saving switch flipped twice): its next save goes
+                // after this one, in order, before anything lands.
+                if (entry && entry.again) {
+                    entry.again = false;
+                    var nextHow = stayPost(form, null, win.location.href);
+                    if (nextHow) {
+                        try {
+                            send(form, null, true, nextHow);
+                        } catch (e) {}
+                    }
+                }
+                next.form = form;
+                next.submitter = submitter;
+                next.hooked = hooked;
+                settle(next);
+            };
+            var answer = win.fetch(how.url, {
+                method: "POST",
+                body: body,
+                credentials: "same-origin",
+                redirect: "manual",
+                headers: headers
+            });
+            inflight++;
+            answer.then(function (res) {
+                done(verdict(res));
+            }, function () {
+                // No answer (the network, an app sent to the background): the server may have acted.
+                done({ kind: "reload" });
+            });
+        }
+        /** Posts `form` itself when it is a save that comes back to its page; false: the browser's way. */
+        function stay(form, submitter, hooked) {
+            if (typeof win.fetch !== "function" || typeof win.FormData !== "function") return false;
+            if (!win.history || typeof win.history.replaceState !== "function") return false;
+            if (hooked ? typeof nativeSubmit !== "function" : typeof form.requestSubmit !== "function") return false;
+            var how = stayPost(form, submitter, win.location.href);
+            if (!how) return false;
+            var entry = isBusy(form);
+            if (entry) {
+                // Its save is out: a second tap does nothing; a switch's save goes after it (code QA M1, L1).
+                if (hooked) entry.again = true;
+                return true;
+            }
+            try {
+                send(form, submitter, hooked, how);
+            } catch (e) {
+                return false;
+            }
+            markBusy(form, submitter);
+            return true;
+        }
+        // On the window, after every other submit listener: one that took the submit over
+        // (passkey.js, register-sw.js) has prevented it, and a browser without `submitter` posts as before.
+        win.addEventListener("submit", function (e) {
+            var form = e && e.target;
+            if (!form || e.defaultPrevented || form === passing || !("submitter" in e)) return;
+            if (stay(form, e.submitter || null, false)) e.preventDefault();
+        });
+
         if (proto && !proto.handyScrollHooked) {
-            var nativeSubmit = proto.submit;
+            proto.handyNativeSubmit = nativeSubmit;
             proto.submit = function () {
                 remember(this);
+                if (stay(this, null, true)) return;
                 return nativeSubmit.apply(this, arguments);
             };
             proto.handyScrollHooked = true;
@@ -376,8 +653,24 @@
         var loadedAt = now();
         // Once the page is parsed (the #fragment's element exists), and again at `load`: the place
         // can still move while images and fonts come in.
+        // A stay save's reload (land): a #fragment the form's groups don't hold is the anchor, as after
+        // the browser's own 303 - never the place record a reload would otherwise bring (code QA L2).
+        var stayed = !!(saved && saved.stay === true && saved.path === path && typeof saved.t === "number" &&
+            loadedAt - saved.t >= 0 && loadedAt - saved.t < MAX_AGE_MS);
         var restore = function () {
             var y = saved ? restoreTarget(saved, path, hash, loadedAt, find) : null;
+            if (y === null && stayed) {
+                var id = hash ? hash.slice(1) : "";
+                try {
+                    id = decodeURIComponent(id);
+                } catch (e) {}
+                var anchor = id ? doc.getElementById(id) : null;
+                if (anchor && anchor.scrollIntoView) {
+                    if (win.history && "scrollRestoration" in win.history) win.history.scrollRestoration = "manual";
+                    anchor.scrollIntoView(true);
+                }
+                return;
+            }
             if (y === null) y = place;
             if (y === null) return;
             if (win.history && "scrollRestoration" in win.history) win.history.scrollRestoration = "manual";
@@ -421,7 +714,11 @@
         MAX_AGE_MS: MAX_AGE_MS,
         PLACE_KEY: PLACE_KEY,
         MAX_PLACES: MAX_PLACES,
-        FROM_KEY: FROM_KEY
+        FROM_KEY: FROM_KEY,
+        stayPost: stayPost,
+        stayLanding: stayLanding,
+        STAY_HEADER: STAY_HEADER,
+        STAY_LOCATION: STAY_LOCATION
     };
     if (typeof module !== "undefined" && module.exports) {
         module.exports = api;
