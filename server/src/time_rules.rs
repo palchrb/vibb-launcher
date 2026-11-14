@@ -280,6 +280,10 @@ pub struct TimeLiftRow {
     pub expires_at: String,
     pub created_by: Option<String>,
     pub ended_early_at: Option<String>,
+    /// Design 98 §4.4.5 (migration 0147): the parent code's pause posted by the phone (`created_by` NULL then) - the
+    /// pages word its source from it.
+    #[sqlx(default)]
+    pub phone_key: Option<String>,
 }
 
 pub fn valid_minute(m: i64) -> bool {

@@ -408,6 +408,33 @@ fn lift_row(
         ),
         _ => t_params(lang, "device.summary.lift.extra", &[("duration", &length)]),
     };
+    // Design 98 §4.4.5: the parent code's pause on the phone, by its window ("Leggetid på pause 21:10–21:40
+    // (foreldrekoden)") - its source, since no parent made it.
+    let phone_window = lift
+        .phone_key
+        .as_ref()
+        .filter(|_| lift.target == "rule")
+        .and_then(|_| {
+            let from = parse_db_utc(&lift.created_at)?;
+            let to = parse_db_utc(&lift.expires_at)?;
+            Some(t_params(
+                lang,
+                "device.summary.lift.phone_window",
+                &[
+                    (
+                        "rule",
+                        &crate::time_rules::shown_name(
+                            lang,
+                            lift.rule_name.as_deref().unwrap_or(""),
+                        ),
+                    ),
+                    ("from", &zone.clock(from)),
+                    ("to", &zone.clock(to)),
+                ],
+            ))
+        });
+    let phone = phone_window.is_some();
+    let what = phone_window.unwrap_or(what);
     let (word, tone) = if lift.target == "rule" {
         let early = lift.ended_early_at.as_deref().and_then(parse_db_utc);
         let word = match (early, parse_db_utc(&lift.expires_at)) {
@@ -433,7 +460,11 @@ fn lift_row(
         what,
         when: made.map(|t| zone.at(t, now)).unwrap_or_default(),
         exact: made.map(|t| zone.exact(t)).unwrap_or_default(),
-        by: names.granter(lift.created_by.as_deref()),
+        by: if phone {
+            None
+        } else {
+            names.granter(lift.created_by.as_deref())
+        },
         word,
         tone,
     }

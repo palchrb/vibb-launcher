@@ -4539,5 +4539,17 @@
   "device.about.wifi_airplane_off": "Turns off",
   "device.about.wifi_airplane_not_set_up": "Not set up",
   "devices.qr.open_setup": "Open for setup now",
-  "events.emergency_call.airplane_off": "The call turned airplane mode off."
+  "events.emergency_call.airplane_off": "The call turned airplane mode off.",
+  "device.summary.lift.phone": "Set with the parent code on the phone",
+  "device.summary.lift.phone_window": "{rule} paused {from}–{to} (parent code)",
+  "device.time.rule_pause_info_label": "About the parent code",
+  "device.time.rule_pause_info": "The parent code on the phone can pause the rule in force for 15 minutes to 2 hours.",
+  "security.event.time_lift_phone": "Time rule paused on the phone",
+  "security.detail.lift.phone": "phone {device}: {rule} paused for {minutes} min with the parent code",
+  "security.detail.pin.rule_pause": "{at}: the rule in force paused on the time-rule screen.",
+  "security.detail.pin.rule_pause_until": "{at}: the rule in force paused on the time-rule screen, until {until}.",
+  "security.detail.pin.place.rule_pause": "on the time-rule screen",
+  "events.pin_used.entry.rule_pause": "The time-rule screen",
+  "events.pin_used.inbox.summary_until": "{entry} until {until} · {at}",
+  "events.pin_used.push.summary": "{entry} · {at}"
 }

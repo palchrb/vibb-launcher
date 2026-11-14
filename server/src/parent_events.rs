@@ -376,6 +376,14 @@ impl Phone {
         let at = DateTime::from_timestamp_millis(event.occurred_at_ms).unwrap_or(self.now);
         let (kind, until) = match event.kind {
             PinKind::Wrong => return None,
+            // Design 98 §4.4.5: the time-rule screen's pause says until when, as its security-log line does.
+            PinKind::Unlocked if event.entry == Entry::RulePause => (
+                Kind::PinUsed,
+                event
+                    .until_ms
+                    .and_then(DateTime::from_timestamp_millis)
+                    .map(instant),
+            ),
             PinKind::Unlocked => (Kind::PinUsed, None),
             PinKind::Lockout => (
                 Kind::PinLockout,
@@ -392,6 +400,7 @@ impl Phone {
             Entry::Settings => "settings",
             Entry::Pause => "pause",
             Entry::InstallMode => "install_mode",
+            Entry::RulePause => "rule_pause",
         };
         let params = PinParams {
             phone: self.name.clone(),
@@ -2838,19 +2847,30 @@ fn phone_event_told(
         Kind::PinUsed => {
             let p: PinParams = serde_json::from_str(params).ok()?;
             let (_, when) = at_of(&p.at)?;
-            let summary = match form {
-                Form::Inbox => t_params(
+            let entry = t(lang, &format!("events.pin_used.entry.{}", p.entry)).to_string();
+            // Design 98 §4.4.5: the time-rule screen's pause - its end in the inbox, its place in the push too.
+            let until = p
+                .until
+                .as_deref()
+                .and_then(crate::display_time::parse_db_utc)
+                .map(|until| zone.until(until, now));
+            let summary = match (form, until) {
+                (Form::Inbox, Some(until)) => t_params(
+                    lang,
+                    "events.pin_used.inbox.summary_until",
+                    &[("entry", &entry), ("until", &until), ("at", &when)],
+                ),
+                (Form::Inbox, None) => t_params(
                     lang,
                     "events.pin_used.inbox.summary",
-                    &[
-                        (
-                            "entry",
-                            t(lang, &format!("events.pin_used.entry.{}", p.entry)),
-                        ),
-                        ("at", &when),
-                    ],
+                    &[("entry", &entry), ("at", &when)],
                 ),
-                Form::Push => capitalized(&when),
+                (Form::Push, _) if p.entry == "rule_pause" => t_params(
+                    lang,
+                    "events.pin_used.push.summary",
+                    &[("entry", &entry), ("at", &when)],
+                ),
+                (Form::Push, _) => capitalized(&when),
             };
             (titled(lang, &title_key(""), &p.phone), summary)
         }

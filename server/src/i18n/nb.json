@@ -4539,5 +4539,17 @@
   "device.about.wifi_airplane_off": "Slås av",
   "device.about.wifi_airplane_not_set_up": "Ikke satt opp",
   "devices.qr.open_setup": "Åpne for oppsett nå",
-  "events.emergency_call.airplane_off": "Flymodus ble slått av av samtalen."
+  "events.emergency_call.airplane_off": "Flymodus ble slått av av samtalen.",
+  "device.summary.lift.phone": "Satt med foreldrekoden på telefonen",
+  "device.summary.lift.phone_window": "{rule} på pause {from}–{to} (foreldrekoden)",
+  "device.time.rule_pause_info_label": "Om foreldrekoden",
+  "device.time.rule_pause_info": "Foreldrekoden på telefonen kan sette regelen som gjelder på pause i 15 minutter til 2 timer.",
+  "security.event.time_lift_phone": "Tidsregel satt på pause på telefonen",
+  "security.detail.lift.phone": "telefon {device}: {rule} satt på pause i {minutes} min med foreldrekoden",
+  "security.detail.pin.rule_pause": "{at}: regelen som gjaldt, satt på pause på regelskjermen.",
+  "security.detail.pin.rule_pause_until": "{at}: regelen som gjaldt, satt på pause på regelskjermen, til {until}.",
+  "security.detail.pin.place.rule_pause": "på regelskjermen",
+  "events.pin_used.entry.rule_pause": "Regelskjermen",
+  "events.pin_used.inbox.summary_until": "{entry} til {until} · {at}",
+  "events.pin_used.push.summary": "{entry} · {at}"
 }

@@ -36,6 +36,10 @@
             {% endif %}
         </div>
         {% if let Some((age, exact)) = reported %}<p class="group-footer">{{ self.t("device.time.reported.before") }} <span title="{{ exact }}" data-reported>{{ age }}</span>{{ self.t("device.time.reported.after") }}</p>{% endif %}
+        {#- Design 98 §4.4.5: a phone with Foreldrekode on its time-rule screen. -#}
+        {% if rule_pause %}<div class="group-footer" data-rule-pause-info>{{ self.t("device.time.rule_pause_info_label") }}
+            <details class="info"><summary aria-label="{{ self.t("device.time.rule_pause_info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("device.time.rule_pause_info") }}</p></div></details>
+        </div>{% endif %}
     </section>
 
     {#- Design 66: the phone's bedtime, outside the rule sets - never switched off. Remove Bedtime
