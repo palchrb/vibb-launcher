@@ -5,11 +5,9 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PageSize
 import androidx.compose.foundation.pager.PagerDefaults
@@ -57,7 +55,8 @@ import kotlin.math.sign
  * the box has room for it ([playerCarousel]), else today's single cover. [onLanding] gets the queue
  * index of the page the carousel is landing on (null for the single cover), for the title and
  * "Episode N av M" under it. With a [notice] the loaded item's cover is greyed under it ("Kan ikke spilles nå",
- * [cantPlayNotice]); the neighbours keep their colours.
+ * [cantPlayNotice]); the neighbours keep their colours. Its room is the box's largest size; the box itself is only
+ * as tall as the picture (S10: the player centres the cover and what follows it as one group).
  */
 @Composable
 fun PlayerArt(
@@ -81,9 +80,11 @@ fun PlayerArt(
             LaunchedEffect(Unit) { onLanding(null) }
             // Next and previous show their cover on the first frame (an own file's art differs per track).
             PrefetchCovers(listOf(now.index + 1, now.index - 1).mapNotNull { i -> now.queue.getOrNull(Math.floorMod(i, now.queue.size))?.artHash }.distinct())
+            // as big as its room and the width allow (S10: wider phones grow it, playerArtMax)
+            val art = playerArt(maxWidth.value, maxHeight.value, false)
             Cover(
-                now.cover, now.category, 26.dp, 104.dp,
-                Modifier.sizeIn(maxWidth = PLAYER_ART_MAX_DP.dp, maxHeight = PLAYER_ART_MAX_DP.dp).aspectRatio(1f).shadow(12.dp, RoundedCornerShape(26.dp)),
+                now.cover, now.category, 26.dp, playerGlyph(art).dp,
+                Modifier.size(art.dp).shadow(12.dp, RoundedCornerShape(26.dp)),
                 fallback = now.fallback,
                 greyed = notice != null,
             ) { notice?.let { CantPlayOverlay(it, speak = true, onFit = onNoticeFit) } }
@@ -193,7 +194,7 @@ private fun EpisodeCarousel(
         // region - and the overlay stays silent; the label is the page's own ("Spill X")
         val refusedWords = refused?.let { noticeSpoken(it) }
         Cover(
-            item.artHash ?: own.cover, now.categoryOf(item), 26.dp, 104.dp,
+            item.artHash ?: own.cover, now.categoryOf(item), 26.dp, playerGlyph(artDp).dp,
             Modifier.size(artDp.dp)
                 .graphicsLayer {
                     val offset = (pager.currentPage - page) + pager.currentPageOffsetFraction

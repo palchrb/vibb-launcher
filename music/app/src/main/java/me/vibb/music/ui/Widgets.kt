@@ -196,9 +196,9 @@ private suspend fun loadThumb(context: Context, hash: String, px: Int): ImageBit
 
 /**
  * A cover from memory, else decoded (off the main thread) into it; null when there is no file.
- * Decoded at the largest size a cover is shown ([coverDecodePx]: the player's 224 dp), scaled while
- * decoding, never above the file's 512 px: at density 1.5 (the Jelly Star) a picture decodes at
- * 336 px, under half the memory of 512 (QA L3, code QA L12).
+ * Decoded at the largest size a cover is shown on this screen ([coverDecodePx]: the player's, 224 dp on a 320 dp
+ * phone, more on a wider one, S10), scaled while decoding, never above the file's 512 px: at density 1.5 (the Jelly
+ * Star) a picture decodes at 336 px, under half the memory of 512 (QA L3, code QA L12).
  */
 private suspend fun loadCover(context: Context, hash: String): ImageBitmap? = bitmaps.get(hash) ?: withContext(Dispatchers.IO) {
     val file = Store.get(context).coverFile(hash)
@@ -206,7 +206,7 @@ private suspend fun loadCover(context: Context, hash: String): ImageBitmap? = bi
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     BitmapFactory.decodeFile(file.path, bounds)
     val side = minOf(bounds.outWidth, bounds.outHeight)
-    val target = coverDecodePx(side, context.resources.displayMetrics.density)
+    val target = coverDecodePx(side, context.resources.displayMetrics.density, context.resources.configuration.screenWidthDp)
     val options = BitmapFactory.Options().apply {
         if (target < side) {
             inScaled = true

@@ -153,92 +153,101 @@ fun PlayerScreen(
                 headerLineText(rendererState, notice, noticeFit)?.let { Line(stringResource(it), 12, 700, Palette.sub, Modifier.fillMaxWidth(), center = true) }
             }
         }
-        // The cover, or the episode carousel in its place (design 27 §3); the title and number under
-        // it follow the page the carousel is landing on.
-        var landing by remember(now.pagerKey) { mutableStateOf<Int?>(null) }
-        PlayerArt(now, notice, { noticeFit = it }, Modifier.weight(1f).fillMaxWidth(), onSkipTo, onTogglePlay) { landing = it }
-        val shown = landing?.let { now.queue.getOrNull(it) }?.takeIf { now.carousel } ?: now.item
-        // keyed by entry and item: a favourites queue's pages come from many entries (design r12 §0)
-        Crossfade(pageKey(shown), animationSpec = tween(if (animationsOn()) 200 else 0), label = "item") { key ->
-            val item = now.queue.firstOrNull { pageKey(it) == key } ?: shown
-            Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Line(if (item == now.item) now.itemTitle else item.title, 20, 800, Palette.white, Modifier.basicMarquee(iterations = Int.MAX_VALUE))
-                // design r12 §3.2: "Favoritt N av M" over a favourites queue
-                val numberText = if (now.favourites) R.string.favourite_of else when (kindOf(now.entry)) {
-                    Kind.OWN -> R.string.track_of
-                    Kind.AUDIOBOOK -> R.string.part_of
-                    Kind.PODCAST -> R.string.episode_of
-                    Kind.MUSIC -> R.string.track_of
-                }
-                // a Spotify context has no number: Spotify picks the tracks (design 26c §5.9)
-                val heart = favourite(item)
-                // design 50 §1.5: the heart at the end of the "Episode N av M" line, overlaid (code QA 7): the number stays
-                // centred, the line keeps its height, so the cover never moves
-                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    if (showsNumber(now)) Line(stringResource(numberText, numberOf(item), of), 13, 700, Palette.sub)
-                    heart?.let { on ->
-                        HeartButton(on, PLAYER_HEART_DP.dp, 18.dp, Modifier.align(Alignment.CenterEnd).overlayOnLine()) { onFavourite(item, it) }
+        // S10 (2026-11-14): the cover, its title, the seek line and the controls are one group, centred between the
+        // header and the bottom bar - on a tall phone what is left goes above and below it, never one hole between
+        // the cover and its title. The cover takes what the rest leaves it (a weight that doesn't fill) and grows with
+        // the width ([playerArt]).
+        Column(
+            Modifier.weight(1f).fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
+        ) {
+            // The cover, or the episode carousel in its place (design 27 §3); the title and number under
+            // it follow the page the carousel is landing on.
+            var landing by remember(now.pagerKey) { mutableStateOf<Int?>(null) }
+            PlayerArt(now, notice, { noticeFit = it }, Modifier.weight(1f, fill = false).fillMaxWidth(), onSkipTo, onTogglePlay) { landing = it }
+            val shown = landing?.let { now.queue.getOrNull(it) }?.takeIf { now.carousel } ?: now.item
+            // keyed by entry and item: a favourites queue's pages come from many entries (design r12 §0)
+            Crossfade(pageKey(shown), animationSpec = tween(if (animationsOn()) 200 else 0), label = "item") { key ->
+                val item = now.queue.firstOrNull { pageKey(it) == key } ?: shown
+                Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Line(if (item == now.item) now.itemTitle else item.title, 20, 800, Palette.white, Modifier.basicMarquee(iterations = Int.MAX_VALUE))
+                    // design r12 §3.2: "Favoritt N av M" over a favourites queue
+                    val numberText = if (now.favourites) R.string.favourite_of else when (kindOf(now.entry)) {
+                        Kind.OWN -> R.string.track_of
+                        Kind.AUDIOBOOK -> R.string.part_of
+                        Kind.PODCAST -> R.string.episode_of
+                        Kind.MUSIC -> R.string.track_of
+                    }
+                    // a Spotify context has no number: Spotify picks the tracks (design 26c §5.9)
+                    val heart = favourite(item)
+                    // design 50 §1.5: the heart at the end of the "Episode N av M" line, overlaid (code QA 7): the number stays
+                    // centred, the line keeps its height, so the cover never moves
+                    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        if (showsNumber(now)) Line(stringResource(numberText, numberOf(item), of), 13, 700, Palette.sub)
+                        heart?.let { on ->
+                            HeartButton(on, PLAYER_HEART_DP.dp, 18.dp, Modifier.align(Alignment.CenterEnd).overlayOnLine()) { onFavourite(item, it) }
+                        }
                     }
                 }
             }
-        }
-        val status = when (timeRow) {
-            TimeRow.TIMES -> null
-            TimeRow.CONNECTING_SPEAKER -> stringResource(R.string.connecting_speaker)
-            TimeRow.CONNECTING -> stringResource(R.string.connecting)
-        }
-        SeekBar(positionMs, now.durationMs, stringResource(R.string.seek), status, onSeek)
-        // v12's sizes where they fit, v15's compact ones on a 320 dp phone, the narrow ones below it (S2, reaching into
-        // the screen's sides): always round, play centred.
-        BoxWithConstraints(Modifier.fillMaxWidth()) {
-            val row = controlRow(maxWidth.value)
-            Row(Modifier.bleed(controlBleed(row, maxWidth.value).dp).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(row.gap.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
-                // design 50 §1.1: what resumes gets "15 s tilbake" / "15 s fram" in the side slots; music gets design
-                // 49's shuffle (left) and repeat (right), peach when on - controlSlots decides (49 §1.1); a Spotify artist
-                // context repeat only (Spotify picks)
-                val skips = now.slots == ControlSlots.SKIP
-                if (skips) {
-                    SkipButton(R.drawable.player_glyph_replay, skipSeconds(SKIP_BACK_MS), stringResource(R.string.skip_back), row.side.dp) { onSkipBy(-SKIP_BACK_MS) }
-                } else if (now.canShuffle) {
-                    val state = stringResource(if (now.shuffled) R.string.shuffle_on else R.string.shuffle_off)
+            val status = when (timeRow) {
+                TimeRow.TIMES -> null
+                TimeRow.CONNECTING_SPEAKER -> stringResource(R.string.connecting_speaker)
+                TimeRow.CONNECTING -> stringResource(R.string.connecting)
+            }
+            SeekBar(positionMs, now.durationMs, stringResource(R.string.seek), status, onSeek)
+            // v12's sizes where they fit, v15's compact ones on a 320 dp phone, the narrow ones below it (S2, reaching into
+            // the screen's sides): always round, play centred.
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                val row = controlRow(maxWidth.value)
+                Row(Modifier.bleed(controlBleed(row, maxWidth.value).dp).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(row.gap.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
+                    // design 50 §1.1: what resumes gets "15 s tilbake" / "15 s fram" in the side slots; music gets design
+                    // 49's shuffle (left) and repeat (right), peach when on - controlSlots decides (49 §1.1); a Spotify artist
+                    // context repeat only (Spotify picks)
+                    val skips = now.slots == ControlSlots.SKIP
+                    if (skips) {
+                        SkipButton(R.drawable.player_glyph_replay, skipSeconds(SKIP_BACK_MS), stringResource(R.string.skip_back), row.side.dp) { onSkipBy(-SKIP_BACK_MS) }
+                    } else if (now.canShuffle) {
+                        val state = stringResource(if (now.shuffled) R.string.shuffle_on else R.string.shuffle_off)
+                        RoundButton(
+                            Icons.shuffle, stringResource(R.string.shuffle), onShuffle, row.side.dp, 20.dp,
+                            if (now.shuffled) Palette.peach else Palette.card, if (now.shuffled) Palette.bg else Palette.fg,
+                            Modifier.semantics {
+                                selected = now.shuffled
+                                stateDescription = state
+                            },
+                        )
+                    } else {
+                        Spacer(Modifier.requiredSize(row.side.dp))
+                    }
+                    RoundButton(Icons.previous, stringResource(R.string.previous), onPrevious, row.skip.dp, 24.dp)
+                    // greyed when a tap can't help (the notice's own rule), still a button: what a tap does stays the renderer's
+                    val off = playOff(notice)
+                    val offState = if (off) notice?.let { stringResource(it.title) } else null
+                    // greyed, it shows play even while a held retry runs (showsPause)
+                    val pause = showsPause(now.playing, notice)
                     RoundButton(
-                        Icons.shuffle, stringResource(R.string.shuffle), onShuffle, row.side.dp, 20.dp,
-                        if (now.shuffled) Palette.peach else Palette.card, if (now.shuffled) Palette.bg else Palette.fg,
-                        Modifier.semantics {
-                            selected = now.shuffled
-                            stateDescription = state
-                        },
+                        if (pause) Icons.pause else Icons.play, stringResource(if (pause) R.string.pause else R.string.play),
+                        onTogglePlay, row.play.dp, 32.dp, if (off) Palette.track else Palette.peach, if (off) PLAY_OFF_FG else Palette.bg,
+                        if (offState != null) Modifier.semantics { stateDescription = offState } else Modifier,
                     )
-                } else {
-                    Spacer(Modifier.requiredSize(row.side.dp))
-                }
-                RoundButton(Icons.previous, stringResource(R.string.previous), onPrevious, row.skip.dp, 24.dp)
-                // greyed when a tap can't help (the notice's own rule), still a button: what a tap does stays the renderer's
-                val off = playOff(notice)
-                val offState = if (off) notice?.let { stringResource(it.title) } else null
-                // greyed, it shows play even while a held retry runs (showsPause)
-                val pause = showsPause(now.playing, notice)
-                RoundButton(
-                    if (pause) Icons.pause else Icons.play, stringResource(if (pause) R.string.pause else R.string.play),
-                    onTogglePlay, row.play.dp, 32.dp, if (off) Palette.track else Palette.peach, if (off) PLAY_OFF_FG else Palette.bg,
-                    if (offState != null) Modifier.semantics { stateDescription = offState } else Modifier,
-                )
-                RoundButton(Icons.next, stringResource(R.string.next), onNext, row.skip.dp, 24.dp)
-                if (skips) {
-                    SkipButton(R.drawable.player_glyph_forward_media, skipSeconds(SKIP_FORWARD_MS), stringResource(R.string.skip_forward), row.side.dp) { onSkipBy(SKIP_FORWARD_MS) }
-                } else if (now.canRepeat) {
-                    val on = now.repeat != Repeat.OFF
-                    val state = stringResource(repeatState(now.repeat))
-                    RoundButton(
-                        if (now.repeat == Repeat.ONE) Icons.repeatOne else Icons.repeat, stringResource(R.string.repeat), onRepeat,
-                        row.side.dp, 20.dp, if (on) Palette.peach else Palette.card, if (on) Palette.bg else Palette.fg,
-                        Modifier.semantics {
-                            selected = on
-                            stateDescription = state
-                        },
-                    )
-                } else {
-                    Spacer(Modifier.requiredSize(row.side.dp))
+                    RoundButton(Icons.next, stringResource(R.string.next), onNext, row.skip.dp, 24.dp)
+                    if (skips) {
+                        SkipButton(R.drawable.player_glyph_forward_media, skipSeconds(SKIP_FORWARD_MS), stringResource(R.string.skip_forward), row.side.dp) { onSkipBy(SKIP_FORWARD_MS) }
+                    } else if (now.canRepeat) {
+                        val on = now.repeat != Repeat.OFF
+                        val state = stringResource(repeatState(now.repeat))
+                        RoundButton(
+                            if (now.repeat == Repeat.ONE) Icons.repeatOne else Icons.repeat, stringResource(R.string.repeat), onRepeat,
+                            row.side.dp, 20.dp, if (on) Palette.peach else Palette.card, if (on) Palette.bg else Palette.fg,
+                            Modifier.semantics {
+                                selected = on
+                                stateDescription = state
+                            },
+                        )
+                    } else {
+                        Spacer(Modifier.requiredSize(row.side.dp))
+                    }
                 }
             }
         }

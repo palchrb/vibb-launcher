@@ -130,7 +130,8 @@ fun holdRefusal(held: HeldRefusal?, state: RendererState?, webStarting: Boolean,
 fun shownState(held: HeldRefusal?, state: RendererState?): RendererState? = state ?: held?.state
 
 /*
- * The notice in the cover's real box (qa-music-cant-play M1, M2). The cover is 224 dp at most and shrinks with the room
+ * The notice in the cover's real box (qa-music-cant-play M1, M2). The cover is 224 dp at most on a 320 dp phone (more on
+ * a wider one, S10's playerArtMax) and shrinks with the room
  * (a large font or display size; the carousel's pages down to PLAYER_ART_MIN_DP = 96): the text is set in dp, never the
  * font scale's sp (as SKIP_NUMBER_DP: a fixed box), the title may take three lines, and what doesn't fit goes - the
  * disc first, then the help line, then the title (the "!" alone). The overlay measures its own words in its own box

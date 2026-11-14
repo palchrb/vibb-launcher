@@ -4,24 +4,23 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Screen-size fix S9 and its code QA M2: where Dagen's pages leave room for the "+". */
+/** Dagen's floating "+" (S9 back to it, 2026-11-14) and the room the pages leave under their last card. */
 class AddPlaceTest {
     @Test
-    fun `the strip only where the page keeps about three rows, else the floating plus as before`() {
-        // The Jelly Star in portrait: a pager of about 440 dp keeps 360 dp of list under the strip.
-        assertEquals(AddPlace.STRIP, addPlace(shown = true, pagerDp = 440f))
-        // Turned to landscape (about 190 dp of pager), or with the reminder row on top: the floating "+".
-        assertEquals(AddPlace.FLOATING, addPlace(shown = true, pagerDp = 190f))
-        assertEquals(AddPlace.FLOATING, addPlace(shown = true, pagerDp = DayActivity.ADD_CLEAR_DP + ADD_STRIP_MIN_LIST_DP - 1f))
-        assertEquals(AddPlace.STRIP, addPlace(shown = true, pagerDp = (DayActivity.ADD_CLEAR_DP + ADD_STRIP_MIN_LIST_DP).toFloat()))
-        // Not laid out yet: the strip, corrected at the first layout.
-        assertEquals(AddPlace.STRIP, addPlace(shown = true, pagerDp = 0f))
-        // No "+": no room kept; the one switch back to the floating "+" everywhere.
-        assertEquals(AddPlace.NONE, addPlace(shown = false, pagerDp = 440f))
-        assertEquals(AddPlace.FLOATING, addPlace(shown = true, pagerDp = 440f, strip = false))
-        // The pages' bottom: the strip clears the "+" (56 dp, 20 dp margin, 4 dp air); the floating "+" the old 96 dp.
-        assertEquals(80, pageBottomDp(AddPlace.STRIP))
-        assertEquals(96, pageBottomDp(AddPlace.FLOATING))
-        assertTrue(pageBottomDp(AddPlace.NONE) < pageBottomDp(AddPlace.STRIP))
+    fun `the last card scrolls clear of the floating plus, and no room is kept without it`() {
+        // The "+" ends ADD_BUTTON_DP + ADD_MARGIN_DP above the pager's bottom; the page's room clears it with air.
+        assertTrue(pageBottomDp(shown = true) >= ADD_BUTTON_DP + ADD_MARGIN_DP + 16)
+        assertEquals(96, pageBottomDp(shown = true))
+        assertEquals(PAGE_AIR_DP, pageBottomDp(shown = false))
+        assertTrue(pageBottomDp(shown = false) < ADD_BUTTON_DP + ADD_MARGIN_DP)
+    }
+
+    @Test
+    fun `the constants are the layout's plus`() {
+        val layout = java.io.File("src/main/res/layout/activity_day.xml").readText()
+        val add = layout.substringAfter("android:id=\"@+id/day_add\"").substringBefore("/>")
+        assertTrue(add.contains("android:layout_width=\"${ADD_BUTTON_DP}dp\""))
+        assertTrue(add.contains("android:layout_height=\"${ADD_BUTTON_DP}dp\""))
+        assertTrue(add.contains("android:layout_marginBottom=\"${ADD_MARGIN_DP}dp\""))
     }
 }

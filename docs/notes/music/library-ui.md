@@ -19,6 +19,14 @@ Moved from music/CLAUDE.md on 2026-11-01.
   and Sov have room to give it that, else it gives way at its share as before, `shrinkerMin`), the category tiles, the carousel, the bar's room label (a four-member group, design 53), the Sonos state
   lines and "Spill av på"'s group block and "+" rows (design 53: `joinRowTextDp`, `memberNameDp`, the sliders).
   `RoundButton` is `requiredSize`: give it the room, it never shrinks.
+- **The player's height** (screen-size finding S10, 2026-11-14): the cover (or the episode carousel), the title and its
+  number line, the seek line and the control row are one group between the header and the bottom bar, centred in that
+  room (`Arrangement.spacedBy(12.dp, Alignment.CenterVertically)`): what is left on a tall phone goes above and below
+  the group, never into one hole between the cover and its title. The cover takes what the rest of the group leaves
+  (`weight(1f, fill = false)`; the box is only as tall as the picture) and grows with the width: `playerArtMax` is the
+  width less the carousel's two 8 dp gaps and 36 dp peeks (so the neighbours look as on the Jelly Star), never under
+  224 dp (320 dp phones and below keep their cover) nor over 320; a cover without art scales its glyph above 224
+  (`playerGlyph`). The Jelly Star and the narrow class are room-limited as before.
 - **The library's height** (design 34 P10 b, QA L1): the header, the category tiles and the now-playing bar keep their
   own height; the carousel fills the weighted slot between them (`BoxWithConstraints`). Its cover is
   `libraryFit(slotPx, linesPx, reservePx, density)`, in whole pixels with every fixed part rounded as Compose rounds a
@@ -29,8 +37,9 @@ Moved from music/CLAUDE.md on 2026-11-01.
   shadow), so the tiles never slide under the bar. Without the bar its room (`nowBarRoomPx`) is still kept out of the
   cover, so the cover never changes size when the bar comes or goes. The progress line's room is always kept (the cover never
   resizes on a turn). The pager, its side padding, the pull and the cover glyph all take that cover (`carouselSide`,
-  `carouselPeek`, `carouselPull`, `carouselGlyph`); `coverDecodePx` stays at the player's 224 dp (the largest a cover
-  is shown, one decoded bitmap per hash for both screens). No fixed `180.dp`/`184.dp` in `LibraryScreen` (`FitTest`).
+  `carouselPeek`, `carouselPull`, `carouselGlyph`); `coverDecodePx` decodes at the player's largest cover on this
+  screen (`playerArtMax` of its width: 224 dp on a 320 dp phone, 291 on a 411 dp one; one decoded bitmap per hash for
+  both screens). No fixed `180.dp`/`184.dp` in `LibraryScreen` (`FitTest`).
 - **Quiet look** (design 34 P10 a, c): an empty library, Nytt and search show `EmptyState` - a 104 dp night disc with
   the headphones/bell/search glyph in peach (decorative, no description: QA L7), the headline and, for the library,
   "Mamma eller pappa legger til musikk, podkaster og bøker. De dukker opp her av seg selv."; no animation, no button.

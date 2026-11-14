@@ -222,8 +222,14 @@ fun nowBarRoomPx(linesPx: Int, density: Float): Int =
 
 // The player's art (design 27 §3.3): today's single cover, or the episode carousel in its place.
 
-/** The player's cover: at most 224 dp, as big as its box allows. */
-const val PLAYER_ART_MAX_DP = 224
+/**
+ * The player's cover on a 320 dp phone and below: at most 224 dp, as big as its box allows. Wider phones grow it with
+ * the width ([playerArtMax], screen-size finding S10, 2026-11-14), up to [PLAYER_ART_MAX_DP].
+ */
+const val PLAYER_ART_BASE_DP = 224
+
+/** The player's cover at its largest (a 411 dp phone reaches 291 dp, its width's own limit; this caps wider screens). */
+const val PLAYER_ART_MAX_DP = 320
 
 /** The carousel's pages are this far apart, and each neighbour peeks at least this much. */
 const val PLAYER_PAGE_GAP_DP = 8
@@ -236,14 +242,26 @@ const val PLAYER_ART_MIN_DP = 96
 const val NEIGHBOUR_SCALE = 0.733f
 
 /**
+ * The largest the player's cover gets in a box [widthDp] wide (inside the screen's sides), height aside (S10): as wide
+ * as leaves the carousel's neighbours their 8 dp gap and 36 dp peek - the Jelly Star's look, 36 dp each side at the
+ * mockup's 200 dp -, never under today's [PLAYER_ART_BASE_DP] (so a 320 dp phone and below keep today's cover) nor
+ * over [PLAYER_ART_MAX_DP].
+ */
+fun playerArtMax(widthDp: Float): Float =
+    (widthDp - 2 * (PLAYER_PAGE_GAP_DP + PLAYER_PEEK_MIN_DP)).coerceIn(PLAYER_ART_BASE_DP.toFloat(), PLAYER_ART_MAX_DP.toFloat())
+
+/**
  * The centred picture's side (dp) in a box [widthDp] wide (inside the screen's sides) and [roomDp]
- * tall: min(224, the room) as today; with the [carousel] also no wider than leaves both neighbours
+ * tall: min([playerArtMax], the room, the width); with the [carousel] also no wider than leaves both neighbours
  * their 8 dp gap and 36 dp peek.
  */
 fun playerArt(widthDp: Float, roomDp: Float, carousel: Boolean): Float {
-    val single = minOf(PLAYER_ART_MAX_DP.toFloat(), roomDp)
+    val single = minOf(playerArtMax(widthDp), roomDp, widthDp)
     return if (carousel) minOf(single, widthDp - 2 * (PLAYER_PAGE_GAP_DP + PLAYER_PEEK_MIN_DP)) else single
 }
+
+/** The category glyph on a player cover without art: 104 dp up to [PLAYER_ART_BASE_DP], in proportion above it (S10). */
+fun playerGlyph(artDp: Float): Float = 104f * maxOf(artDp, PLAYER_ART_BASE_DP.toFloat()) / PLAYER_ART_BASE_DP
 
 /** Does the carousel show in that box (it has to, and its picture isn't too small)? */
 fun playerCarousel(widthDp: Float, roomDp: Float, carousel: Boolean): Boolean =
@@ -277,8 +295,15 @@ const val LIST_LINE_GLYPH_DP = 22f
 fun orderWordsFit(lineDp: Float, glyph: Boolean, availableDp: Float): Boolean =
     lineDp + (if (glyph) LIST_LINE_GLYPH_DP else 0f) <= availableDp
 
-/** The side (px) a cover file of [sidePx] decodes at on a screen of [density]: what the player's 224 dp needs, never more than the file. */
-fun coverDecodePx(sidePx: Int, density: Float): Int = minOf(sidePx, kotlin.math.ceil(PLAYER_ART_MAX_DP * density).toInt()).coerceAtLeast(1)
+/**
+ * The side (px) a cover file of [sidePx] decodes at on a screen of [density] and [screenWidthDp]: what the player's
+ * largest cover on that screen needs ([playerArtMax] inside the sides: 224 dp on a 320 dp phone, S10), never more than
+ * the file.
+ */
+fun coverDecodePx(sidePx: Int, density: Float, screenWidthDp: Int): Int {
+    val art = playerArtMax((screenWidthDp - 2 * SCREEN_SIDE_DP).toFloat())
+    return minOf(sidePx, kotlin.math.ceil(art * density).toInt()).coerceAtLeast(1)
+}
 
 // -- "Spill av på" with grouping (design 53 §2.7, §2.12): the sheet's row geometry, dp --
 

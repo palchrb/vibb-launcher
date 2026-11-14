@@ -453,7 +453,11 @@ class FitTest {
     @Test
     fun `the episode carousel - the row fills the width, the picture fits its room, neighbours peek`() {
         // (width inside the sides, the box's height) -> the picture: the spec's table.
-        val cases = listOf(Triple(288f, 154f, 154f), Triple(288f, 240f, 200f), Triple(328f, 300f, 224f), Triple(379f, 300f, 224f), Triple(288f, 120f, 120f))
+        // S10: a wider phone's picture grows with the width (379 dp inside a 411 dp phone's sides: 291).
+        val cases = listOf(
+            Triple(288f, 154f, 154f), Triple(288f, 240f, 200f), Triple(328f, 300f, 240f), Triple(379f, 300f, 291f),
+            Triple(379f, 250f, 250f), Triple(288f, 120f, 120f),
+        )
         for ((width, room, expected) in cases) {
             val a = playerArt(width, room, carousel = true)
             assertEquals("$width x $room", expected, a, 0.001f)
@@ -469,6 +473,9 @@ class FitTest {
         assertEquals(29.9f, playerPull(224f), 0.1f)
         assertEquals("without the carousel: today's cover", 224f, playerArt(288f, 300f, carousel = false), 0.001f)
         assertEquals(154f, playerArt(288f, 154f, carousel = false), 0.001f)
+        assertEquals("the narrow class keeps today's cover", 224f, playerArt(238f, 300f, carousel = false), 0.001f)
+        assertEquals("a 411 dp phone: as the carousel's", 291f, playerArt(379f, 400f, carousel = false), 0.001f)
+        assertEquals("a tablet's width is capped", PLAYER_ART_MAX_DP.toFloat(), playerArt(560f, 900f, carousel = true), 0.001f)
         // A large font or display size: below 96 dp the single cover comes back (QA L2 b).
         assertTrue(playerCarousel(288f, 96f, true))
         assertTrue(!playerCarousel(288f, 95f, true))
@@ -478,16 +485,32 @@ class FitTest {
     @Test
     fun `the player's art replaces only the cover box`() {
         val player = moduleFile("src/main/java/me/vibb/music/ui/PlayerScreen.kt").readText()
-        assertTrue(player.contains("PlayerArt(now, notice, { noticeFit = it }, Modifier.weight(1f).fillMaxWidth(), onSkipTo, onTogglePlay)"))
+        // S10: the box is only as tall as the picture, in the group centred between the header and the bar
+        assertTrue(player.contains("PlayerArt(now, notice, { noticeFit = it }, Modifier.weight(1f, fill = false).fillMaxWidth(), onSkipTo, onTogglePlay)"))
+        assertTrue(player.contains("verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically)"))
         assertEquals("one picture, drawn by PlayerArt", 1, Regex("PlayerArt\\(").findAll(player).count())
         assertTrue("no cover of its own", !player.contains("Cover("))
     }
 
     @Test
     fun `covers decode at the player's size, never above the file (code QA L12)`() {
-        assertEquals("the Jelly Star (density 1.5)", 336, coverDecodePx(512, 1.5f))
-        assertEquals("a 2.625 phone: the whole file", 512, coverDecodePx(512, 2.625f))
-        assertEquals(300, coverDecodePx(300, 3f))
+        assertEquals("the Jelly Star (density 1.5)", 336, coverDecodePx(512, 1.5f, 320))
+        assertEquals("the narrow class (density 2)", 448, coverDecodePx(512, 2f, 270))
+        assertEquals("a 2.625 phone: the whole file", 512, coverDecodePx(512, 2.625f, 411))
+        assertEquals(300, coverDecodePx(300, 3f, 411))
+        // S10: a 411 dp phone at density 1.5 decodes for its 291 dp cover
+        assertEquals(437, coverDecodePx(512, 1.5f, 411))
+    }
+
+    @Test
+    fun `the player's cover grows with the width, a cover without art its glyph too (S10)`() {
+        assertEquals("320 dp and below: today's 224", 224f, playerArtMax(288f), 0.001f)
+        assertEquals(224f, playerArtMax(238f), 0.001f)
+        assertEquals("411 dp: the carousel's own limit", 291f, playerArtMax(379f), 0.001f)
+        assertEquals(PLAYER_ART_MAX_DP.toFloat(), playerArtMax(600f), 0.001f)
+        assertEquals("today's glyph up to 224", 104f, playerGlyph(150f), 0.001f)
+        assertEquals(104f, playerGlyph(224f), 0.001f)
+        assertEquals("in proportion above", 104f * 291 / 224, playerGlyph(291f), 0.001f)
     }
 
     // The library's fit (design 34 P10 b, QA L1; qa-34-s11-code L1, N2): the cover from the measured slot in whole

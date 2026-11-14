@@ -54,7 +54,9 @@ glance's "Lås opp og åpne Kalender" (`day_title`, `glance_reminder_action`). "
   `ViewPager2` over `Int.MAX_VALUE` days, a 10 dp peek of the neighbours' cards - the pager's list padded
   `PAGER_PAD_DP` 13 dp, each page 3 dp, the root `clipToPadding=false` (E5's L1); a page shows nothing until its day is read; a date/time/zone
   change keeps the page's date; a minute tick; a reminder that is up under the header; the "+" while the kid may add
-  events; since 2026-10-27 a task of its own - `taskAffinity` `${applicationId}.day` on the three Dagen activities, in
+  events (floating at the bottom right over the list, as Google Calendar's; while it shows each page keeps 96 dp under
+  its last card so that card scrolls clear of it, else 12 dp, `pageBottomDp`, `AddPlaceTest`; screen-size fix S9's strip
+  of its own was tried and dropped on 2026-11-14, the user: the floating "+" looks best); since 2026-10-27 a task of its own - `taskAffinity` `${applicationId}.day` on the three Dagen activities, in
   Recents with "Kalender" (`day_title`) and the launcher's icon as its card (`setTaskDescription` on the root), so Home and Back get
   Android's task-close animation; a minute away (`DAY_BACK_TO_TODAY_MS`, pure `backToToday`: stopped that long, or its
   saved state that old) and it opens on today again, unless a day is asked for (the reminder row); the one `DayActivity.intent(context, day)` (`FLAG_ACTIVITY_NEW_TASK`; with a day
