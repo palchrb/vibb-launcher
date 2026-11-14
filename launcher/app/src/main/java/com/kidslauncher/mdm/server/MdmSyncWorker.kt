@@ -353,8 +353,8 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         // (gzip'd while the policy says so) - see StatusReports.kt.
         val sent = sendReport(
             report = statusReportOf(
-                context, reason, policyState(freshOutcome, cached, policyEverApplied), decision.policy,
-                location.report, location.still, extraFixes, lockState, blocks, tlsSent,
+                context, reason, policyState(freshOutcome, cached, policyEverApplied), decision,
+                location, extraFixes, lockState, blocks, tlsSent,
                 seenOf(policyHandshake, ServerPinStore.network(context), System.currentTimeMillis()),
             ),
             heartbeat = heartbeatOn(decision.policy),
@@ -455,6 +455,10 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     return freshPolicy != null
 }
 
+/** Status-report capability: the update fence, the pending self-update and the notification rule
+ * (handy step 11). */
+const val KIOSK_ESCAPES_CAPABILITY = "kiosk_escapes_v1"
+
 /**
  * Design 98 §2.2 step 2: a report-only post before a Flymodus turn-on - no policy GET, no apply(), the same heartbeat
  * hash state, under [syncMutex]; [airplaneGoingOn] makes the parent's page say "Flymodus på". The caller bounds it
@@ -467,12 +471,14 @@ suspend fun postReportOnly(context: Context, airplaneGoingOn: Boolean): Boolean 
     if (serverUrl.isNullOrBlank() || deviceToken.isNullOrBlank()) return false
     try {
         val api = createMdmApi(serverUrl, deviceToken, path = serverPathNow(serverUrl))
-        val policy = currentPolicyDecision().policy
+        val decision = currentPolicyDecision()
+        val policy = decision.policy
         val reason = mdm.lockReason()
         val sent = sendReport(
             report = statusReportOf(
-                context, reason, policyState(FreshOutcome.UNREACHABLE, cachedPolicy(), mdm.policyEverApplied()), policy,
-                null, false, null, com.kidslauncher.mdm.lock.PinLockRuntime.report(context), WindowRelock.reportBlocks(context),
+                context, reason, policyState(FreshOutcome.UNREACHABLE, cachedPolicy(), mdm.policyEverApplied()), decision,
+                LocationOutcome(LocationAction.NONE, null, null, null), null, com.kidslauncher.mdm.lock.PinLockRuntime.report(context),
+                WindowRelock.reportBlocks(context),
                 ServerPinStore.ring(context), null, airplaneGoingOn,
             ),
             heartbeat = heartbeatOn(policy),
@@ -502,9 +508,8 @@ private fun statusReportOf(
     context: Context,
     reason: LockReason,
     policyState: String,
-    policy: PolicyResponse?,
-    locationReport: LocationReport?,
-    locationStill: Boolean,
+    decision: PolicyToApply,
+    location: LocationOutcome,
     extraFixes: List<QueuedFix>?,
     lockState: com.kidslauncher.mdm.server.dto.LockStateReport,
     blocks: Pair<List<com.kidslauncher.mdm.server.dto.RelockBlockReport>, Int>?,
@@ -520,22 +525,22 @@ private fun statusReportOf(
         appVersion = BuildConfig.VERSION_NAME,
         appVersionCode = BuildConfig.VERSION_CODE,
         offlineOverrideUsed = mdm.offlineOverrideUsedPendingReport(),
-        location = locationReport,
+        location = location.report,
         policyState = policyState,
         restrictionsPaused = RestrictionsPause.isActive(),
         capabilities = STATUS_CAPABILITIES,
         callState = CallStateReport.build(context),
         notificationListenerEnabled = BadgeStore.accessGranted(context),
-        timeState = TimeRulesRuntime.report(context, policy, reason),
+        timeState = TimeRulesRuntime.report(context, decision.policy, reason),
         installMode = PlayRuntime.installModeReport(context),
-        playWindowActive = policy?.allowlist != null && PlayRuntime.updateWindowActive(context),
+        playWindowActive = decision.policy?.allowlist != null && PlayRuntime.updateWindowActive(context),
         playStoreSuspendable = PlayRuntime.storeSuspendable(context),
         lockState = lockState,
         screenTimeoutSeconds = ScreenTimeout.currentSeconds(context),
         backupServiceEnabled = BackupService.reportedState(context),
         ringerMode = ringerModeName(QuickControls.ringerMode(context)),
         interruptionFilter = interruptionFilterName(QuickControls.interruptionFilter(context)),
-        updateFence = UpdateFence.report(context, policy),
+        updateFence = UpdateFence.report(context, decision.policy),
         notificationCancels = com.kidslauncher.mdm.badges.NotificationRuleRuntime.report(),
         appDownloads = try {
             AppDownloads.report(context)
@@ -563,7 +568,7 @@ private fun statusReportOf(
         relockBlocksTotal = blocks?.second,
         remoteWipeReady = LocateCommands.remoteWipeReady(context),
         adminPoliciesPending = AdminPolicies.pending(context),
-        clockFormatApplied = ClockFormatSetting.report(context, policy),
+        clockFormatApplied = ClockFormatSetting.report(context, decision.policy),
         // Design 36 §4.2: only while the VPN runs with the parent's own server.
         dnsUpstream = KidVpnService.dnsUpstreamReport(),
         battery = BatteryStatus.report(context).also { LowBatteryFix.observe(context, it) },
@@ -571,7 +576,7 @@ private fun statusReportOf(
         // S-L10's fix round: the server shows Leave Tailnet only while this says true.
         tailnetJoined = TsnetClient.joined(context),
         extraLocations = extraFixes?.map { it.toReport() },
-        zoneWatch = ZoneWatch.report(context, still = locationStill),
+        zoneWatch = ZoneWatch.report(context, still = location.still),
         calendar = try {
             com.kidslauncher.mdm.calendar.CalendarStore.report(context)
         } catch (e: Exception) {
@@ -599,10 +604,6 @@ private fun statusReportOf(
         airplaneMode = com.kidslauncher.mdm.assistant.AirplaneRuntime.report(context, airplaneGoingOn),
     )
 }
-
-/** Status-report capability: the update fence, the pending self-update and the notification rule
- * (handy step 11). */
-const val KIOSK_ESCAPES_CAPABILITY = "kiosk_escapes_v1"
 
 /** Drains whatever [KidVpnService] has queued via [BlockedEventLog] since the last successful
  * report - best-effort, same as the status report above; only clears the queue once the server

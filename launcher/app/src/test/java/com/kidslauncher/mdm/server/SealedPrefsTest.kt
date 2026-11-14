@@ -265,7 +265,8 @@ class SealedPrefsTest {
         val sites = all.mapValues { Regex("""DeviceToken\.get\(\)""").findAll(it.value).count() }.filterValues { it > 0 }
         assertEquals(
             mapOf(
-                "server/MdmSyncWorker.kt" to 1, "server/CommandListenerService.kt" to 1, "server/AppInstallReceiver.kt" to 1,
+                // Design 98 §2.2 step 2: the sync and Flymodus's report-only post.
+                "server/MdmSyncWorker.kt" to 2, "server/CommandListenerService.kt" to 1, "server/AppInstallReceiver.kt" to 1,
                 "server/AppDownloads.kt" to 1, "server/PowerEvents.kt" to 1, "music/MusicSync.kt" to 2,
                 "music/MusicFileDownloads.kt" to 1, "music/MusicBridgeService.kt" to 3,
                 // Design 75: the lock weather's pull.
