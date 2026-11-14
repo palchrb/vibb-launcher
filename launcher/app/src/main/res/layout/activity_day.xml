@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Dagen (design 69 §2.1, mockup dagen.html §1): the shared header (the weekday over the date, "← I dag" / "I dag →"
      off today), a reminder's row while one is up (§2.1 "A reminder in Dagen", step 2), and the endless day pager - one
-     day per swipe, a 10 dp peek of the next days. The "+" for the kid's own event (step 3) sits over the pager, in each page's bottom strip when the pager is tall
-     enough (DayActivity.renderAdd, S9). -->
+     day per swipe, a 10 dp peek of the next days. The "+" for the kid's own event (step 3) floats over the pager; its
+     size and bottom margin are ADD_BUTTON_DP and ADD_MARGIN_DP (DayActivity.kt), which the pages' bottom room clears. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/day_root"
     android:layout_width="match_parent"
