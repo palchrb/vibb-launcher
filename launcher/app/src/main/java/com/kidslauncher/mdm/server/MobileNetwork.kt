@@ -86,16 +86,6 @@ fun whereOf(airplane: Boolean, roaming: Boolean, network: String?, simOperator: 
     return if (domestic) Where.HOME else Where.ABROAD
 }
 
-/**
- * Design 94 §3: `DISALLOW_DATA_ROAMING` is set. An older server (`null`) and `"phone"` leave it to the phone; `"off"`,
- * and any value this build doesn't know (`"eea"` of a later round), lock it - fail closed. The pause, "Åpne for
- * oppsett" and the offline override ([overrideActive]) lift it, as every restriction.
- */
-fun dataRoamingLocked(value: String?, overrideActive: Boolean): Boolean = when (value) {
-    null, "phone" -> false
-    else -> !overrideActive
-}
-
 /** Design 95 rev. 3 item 3: `DISALLOW_CONFIG_MOBILE_NETWORKS` while the parent's switch is on, lifted by the pause. An
  * older server's missing key (`null`) sets nothing. */
 fun mobileSettingsLocked(value: Boolean?, overrideActive: Boolean): Boolean = value == true && !overrideActive

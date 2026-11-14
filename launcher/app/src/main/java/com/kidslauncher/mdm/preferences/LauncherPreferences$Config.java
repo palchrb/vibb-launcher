@@ -153,6 +153,13 @@ import eu.jonahbauer.android.preference.annotations.Preferences;
                         // "pass"), written by whoever decided it (apply or KidVpnService's watcher) before it writes
                         // always-on - the single owner's record (alwaysOnFor). Absent = the filter alone, as before.
                         @Preference(name = "vpn_inputs", type = String.class),
+                        // Design 97 (Q97-M3): the inputs revision 4 adds ("abroadArmed,kidOff" as 0/1,
+                        // MobileNetworkRuntime.encodeInputsR4), a record of their own so an rc.1 launcher after a
+                        // rollback still reads vpn_inputs exactly as it wrote it. Absent = both false (rc.1's rule).
+                        @Preference(name = "vpn_inputs_r4", type = String.class),
+                        // Design 97 §4.3: the kid's own Mobildata switch is Off (only Vibb uses mobile data). It counts
+                        // only while quick_controls_mask has bit 32, and resets to On when a fresh policy clears it (D7).
+                        @Preference(name = "kid_mobile_off", type = boolean.class, defaultValue = "false"),
                         @Preference(name = "vpn_shape", type = String.class),
                 }),
         })

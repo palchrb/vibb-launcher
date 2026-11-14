@@ -354,12 +354,16 @@ object AppEnforcer {
         val managedForHardening = hardeningManaged(policy?.allowlist, CallPolicyStore.state.managed)
         // The VPN's shape (design 95 rev. 3): the filter, Bare Vibb's sink on cellular (the parent's choice, or a roaming
         // session that outlived the roaming lock), the pass shape that stands ready for it - all lifted by the override
-        // and the pause. Only true-by-default (filtering on) with no policy yet, as before.
+        // and the pause. Only true-by-default (filtering on) with no policy yet, as before. Design 97: "I utlandet"'s
+        // abroad sink (lifted too) and the kid's own Off (no lift, D4).
         val vpnFilterEnabled = if (overrideActive) false else (policy?.vpnFilterEnabled ?: true)
+        val abroad = abroadChoice(policy?.abroad, policy?.dataRoaming)
         val vpnInputs = VpnInputs(
             filterOn = vpnFilterEnabled,
             parentSink = parentSinkOn(policy?.appsMobile, overrideActive),
-            roamingLocked = dataRoamingLocked(policy?.dataRoaming, overrideActive),
+            roamingLocked = roamingLocked(abroad, overrideActive),
+            abroadArmed = abroadArmed(abroad, overrideActive),
+            kidOff = MobileNetworkRuntime.kidOff(policy?.quickControlsMask),
         )
         val vpnShapeNow = applyShape(vpnInputs, MobileNetworkRuntime.bestNet(context), MobileNetworkRuntime.storedShape())
         // Security review S-L11: DISALLOW_CONFIG_VPN also while the Web filter is on (a filter-only phone) - lifted
@@ -605,10 +609,10 @@ object AppEnforcer {
         // Security review S-L5: no Bluetooth file transfer (OPP) to or from a friend's phone or a PC while managed -
         // audio devices are untouched. Lifted by the override and the pause, like every restriction of ours.
         setRestriction(dpm, admin, UserManager.DISALLOW_BLUETOOTH_SHARING, bluetoothSharingRestricted(managedForHardening, overrideActive))
-        // Design 94: data roaming off and locked, or the phone's choice - the parent's explicit choice per phone, so
-        // whether or not the phone is managed in hardening's sense; lifted by the override and the pause. Then the
-        // relock of a SIM that still reads roaming on (§2.4.2).
-        MobileNetworkRuntime.applyDataRoaming(context, dpm, admin, dataRoamingLocked(policy?.dataRoaming, overrideActive))
+        // Design 94: data roaming off and locked - since design 97 under "I utlandet"'s Ingen data, the parent's explicit
+        // choice per phone, so whether or not the phone is managed in hardening's sense; lifted by the override and the
+        // pause. Then the relock of a SIM that still reads roaming on (§2.4.2). Vibb never turns roaming on (D9).
+        MobileNetworkRuntime.applyDataRoaming(context, dpm, admin, vpnInputs.roamingLocked)
         // Design 95 rev. 3 item 3: Android's mobile-network settings locked (the parent's switch, on by default), so
         // mobile data the parent turned off in Android stays off; lifted by the override and the pause.
         MobileNetworkRuntime.applyMobileSettingsLock(dpm, admin, mobileSettingsLocked(policy?.mobileSettingsLocked, overrideActive))

@@ -158,7 +158,7 @@ data class PolicyResponse(
     val lockMediaApps: kotlinx.serialization.json.JsonElement? = null,
     /** Design 94: `"off"` (data roaming off and locked, the server's default) or `"phone"` (the phone's choice);
      * missing from an older server = the phone's choice; a value this build doesn't know locks
-     * ([com.kidslauncher.mdm.server.dataRoamingLocked]). Kept by [com.kidslauncher.mdm.server.LastEnforcedPlan]. */
+     * ([com.kidslauncher.mdm.server.abroadChoice], [com.kidslauncher.mdm.server.roamingLocked]). Kept by [com.kidslauncher.mdm.server.LastEnforcedPlan]. */
     val dataRoaming: String? = null,
     /** Design 97: "I utlandet", `"off"`, `"vibb"` or `"home"`; read with [dataRoaming] through
      * [com.kidslauncher.mdm.server.abroadChoice] (missing = an older server, revision 3's rule; an unknown value = Ingen

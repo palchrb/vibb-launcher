@@ -48,20 +48,39 @@ object MobileNetworkRuntime {
         return VpnInputs(parts[0] == "1", parts[1] == "1", parts[2] == "1")
     }
 
+    /** Design 97 (Q97-M3): the second record, `abroadArmed,kidOff`. */
+    fun encodeInputsR4(inputs: VpnInputs): String =
+        listOf(inputs.abroadArmed, inputs.kidOff).joinToString(",") { if (it) "1" else "0" }
+
+    /** [base] with the second record's inputs; an absent or unreadable record (the first start after the upgrade from
+     * rc.1) reads both false - rc.1's own rule until the first `apply()`. */
+    fun withInputsR4(base: VpnInputs, raw: String?): VpnInputs {
+        val parts = raw?.split(",")?.takeIf { it.size == 2 && it.all { p -> p == "0" || p == "1" } } ?: return base
+        return base.copy(abroadArmed = parts[0] == "1", kidOff = parts[1] == "1")
+    }
+
     /** The inputs `apply()` last wrote; before any (a launcher from before this round), the cached filter switch alone
      * - a failed read counts the filter on, as `KidVpnService.filterWanted` always did. */
     fun storedInputs(): VpnInputs = try {
         val mdm = LauncherPreferences.mdm()
-        decodeInputs(mdm.vpnInputs()) ?: VpnInputs(filterOn = mdm.vpnFilterEnabled(), parentSink = false, roamingLocked = false)
+        val base = decodeInputs(mdm.vpnInputs()) ?: VpnInputs(filterOn = mdm.vpnFilterEnabled(), parentSink = false, roamingLocked = false)
+        withInputsR4(base, mdm.vpnInputsR4())
     } catch (e: Exception) {
         VpnInputs(filterOn = true, parentSink = false, roamingLocked = false)
     }
 
+    /** Both records: rc.1's exactly as it reads it (a rollback), and design 97's second one. */
     fun storeInputs(inputs: VpnInputs) {
         val mdm = LauncherPreferences.mdm()
         mdm.vpnFilterEnabled(inputs.filterOn)
         mdm.vpnInputs(encodeInputs(inputs))
+        mdm.vpnInputsR4(encodeInputsR4(inputs))
     }
+
+    /** Design 97 §4.3: the kid's Off counts while the row is shown ([mask] bit 32); no lift touches it (D4). */
+    fun kidOff(mask: Long?): Boolean =
+        mask != null && mask and QuickControlFeature.MOBILE_DATA != 0L &&
+            runCatching { LauncherPreferences.mdm().kidMobileOff() }.getOrDefault(false)
 
     fun storedShape(): VpnShape? = runCatching { VpnShape.of(LauncherPreferences.mdm().vpnShape()) }.getOrNull()
 
@@ -89,18 +108,23 @@ object MobileNetworkRuntime {
 
     // ---- the network ---------------------------------------------------------------------------------------------
 
-    /** [BestNet] from a network's capabilities. A VPN's carry its underlying network's transports. */
-    fun bestNetOf(caps: NetworkCapabilities): BestNet {
+    /** [BestNet] from a network's capabilities. A VPN's carry its underlying network's transports. Design 97: on
+     * cellular, [BestNet.abroad] from telephony ([whereNow]): registration comes before the data attach. */
+    fun bestNetOf(context: Context, caps: NetworkCapabilities): BestNet {
         val cellular = caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) &&
             !caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) &&
             !caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
-        return BestNet(cellular = cellular, roaming = cellular && !caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_ROAMING))
+        return BestNet(
+            cellular = cellular,
+            roaming = cellular && !caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_ROAMING),
+            abroad = cellular && whereNow(context) == Where.ABROAD,
+        )
     }
 
     /** The launcher's default network - outside the VPN in every shape, so the physical one. `null` = none. */
     fun bestNet(context: Context): BestNet? = try {
         val cm = context.getSystemService(ConnectivityManager::class.java)
-        cm?.activeNetwork?.let { cm.getNetworkCapabilities(it) }?.let(::bestNetOf)
+        cm?.activeNetwork?.let { cm.getNetworkCapabilities(it) }?.let { bestNetOf(context, it) }
     } catch (e: Exception) {
         null
     }

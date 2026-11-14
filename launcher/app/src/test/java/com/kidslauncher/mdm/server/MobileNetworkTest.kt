@@ -178,6 +178,21 @@ class MobileNetworkTest {
         assertEquals(null, MobileNetworkRuntime.decodeInputs(null))
     }
 
+    /** Design 97 (Q97-M3): rc.1's record stays exactly three fields, so an rc.1 launcher after a rollback reads what it
+     * knows; the new inputs ride in a second record, and its absence (the first start after the upgrade) is rc.1's rule. */
+    @Test
+    fun `the second record survives an upgrade and a rollback`() {
+        val inputs = VpnInputs(filterOn = true, parentSink = false, roamingLocked = false, abroadArmed = true, kidOff = true)
+        val first = MobileNetworkRuntime.encodeInputs(inputs)
+        assertEquals("1,0,0", first)
+        val second = MobileNetworkRuntime.encodeInputsR4(inputs)
+        assertEquals(inputs, MobileNetworkRuntime.withInputsR4(MobileNetworkRuntime.decodeInputs(first)!!, second))
+        // The upgrade: no second record yet.
+        val upgraded = MobileNetworkRuntime.withInputsR4(MobileNetworkRuntime.decodeInputs("0,1,1")!!, null)
+        assertEquals(VpnInputs(filterOn = false, parentSink = true, roamingLocked = true), upgraded)
+        assertEquals(upgraded, MobileNetworkRuntime.withInputsR4(upgraded, "1"))
+    }
+
     @Test
     fun `the relock takes a SIM reading on at most twice per process, never unlocked`() {
         assertEquals(setOf(2), dataRoamingRelock(true, mapOf(1 to false, 2 to true), emptyMap()))

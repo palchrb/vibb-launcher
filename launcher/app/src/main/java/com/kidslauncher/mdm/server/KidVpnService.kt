@@ -333,7 +333,7 @@ class KidVpnService : VpnService() {
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
                 onNetwork(NetworkSnapshot(network.networkHandle, capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)))
-                val best = MobileNetworkRuntime.bestNetOf(capabilities)
+                val best = MobileNetworkRuntime.bestNetOf(this@KidVpnService, capabilities)
                 if (best != lastBest) {
                     lastBest = best
                     reshape()
