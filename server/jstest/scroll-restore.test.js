@@ -739,12 +739,23 @@ function fakeForm(attrs = {}, fields = []) {
         elements,
         hasAttribute: (n) => n in attrs,
         getAttribute: (n) => (n in attrs ? attrs[n] : null),
+        setAttribute: (n, v) => { attrs[n] = String(v); },
+        removeAttribute: (n) => { delete attrs[n]; },
     };
 }
 
 /** A fake submit button. */
 function fakeButton(attrs = {}, name = "", value = "") {
-    return { name, value, hasAttribute: (n) => n in attrs, getAttribute: (n) => (n in attrs ? attrs[n] : null) };
+    return {
+        name,
+        value,
+        disabled: false,
+        attrs,
+        hasAttribute: (n) => n in attrs,
+        getAttribute: (n) => (n in attrs ? attrs[n] : null),
+        setAttribute: (n, v) => { attrs[n] = String(v); },
+        removeAttribute: (n) => { delete attrs[n]; },
+    };
 }
 
 const checkNow = () => fakeForm({ method: "post", action: "/apps/tracked/2/check#check" }, [["v", "1"]]);
@@ -791,7 +802,10 @@ test("stayLanding: the same page is reloaded in its own entry, another page open
         reload: false,
         url: "https://vibb.example/schedules/rules/5#rule",
     });
-    assert.strictEqual(stayLanding("https://other.example/apps/tracked/2", HERE).reload, false);
+    // Only an http(s) address of this origin (code QA L3).
+    for (const to of ["https://other.example/apps/tracked/2", "javascript:alert(1)", "data:text/html,x", "http://vibb.example/apps"]) {
+        assert.strictEqual(stayLanding(to, HERE), null, to);
+    }
 });
 
 /** A window with fetch: `answer(url, init)` gives the fetch's answer (a promise's value, or throws to reject). */
@@ -881,25 +895,152 @@ test("an auto-saving switch (form.submit()) stays too; a save that lands on anot
     assert.deepStrictEqual(w.nativeSubmits, []);
 });
 
-test("any other answer sends the form the browser's way, which shows it", async () => {
-    for (const answer of [() => page(400), () => page(423), () => page(200), () => page(500), () => { throw new Error("offline"); }]) {
-        const w = stayWindow(answer);
+test("a refusal is sent again the browser's way, which shows it; no answer or a 5xx never posts again (code QA H1)", async () => {
+    for (const status of [400, 403, 404, 409, 422, 423, 200]) {
+        const w = stayWindow(() => page(status));
         const form = w.form({ method: "post", action: "/apps/tracked/2/check#check" });
         const button = fakeButton({}, "action", "x");
         assert.strictEqual(w.submit(form, button).defaultPrevented, true);
         await settle();
-        assert.deepStrictEqual(w.requested, [button], "requestSubmit with its button");
-        assert.deepStrictEqual(w.went, []);
+        assert.deepStrictEqual(w.requested, [button], status + ": requestSubmit with its button");
+        assert.strictEqual(button.disabled, false, status + ": the button is live again for it");
+        assert.deepStrictEqual(w.went, [], String(status));
         const hooked = w.form({ method: "post", action: "/x#x" });
         hooked.submit();
         await settle();
-        assert.deepStrictEqual(w.nativeSubmits, [hooked], "form.submit()'s own");
+        assert.deepStrictEqual(w.nativeSubmits, [hooked], status + ": form.submit()'s own");
     }
-    // A redirect that came past the server's stay answer: this page again, its place kept by the record.
-    const w = stayWindow(() => ({ status: 0, type: "opaqueredirect", headers: { get: () => null } }));
-    w.submit(w.form({ method: "post", action: "/apps/tracked/2/check#check" }));
+    // The server may have acted: the page with a GET, nothing posted again. A redirect past the stay
+    // answer (a sign-in portal) too.
+    const lost = [
+        () => page(500),
+        () => page(502),
+        () => page(504),
+        () => page(413),
+        () => { throw new Error("Load failed"); },
+        () => ({ status: 0, type: "opaqueredirect", headers: { get: () => null } }),
+        () => stayAnswer("javascript:alert(1)"),
+        () => stayAnswer("https://other.example/apps/tracked/2#check"),
+    ];
+    for (const answer of lost) {
+        const w = stayWindow(answer);
+        w.submit(w.form({ method: "post", action: "/apps/tracked/2/check#check" }), fakeButton({}, "go", "1"));
+        await settle();
+        assert.deepStrictEqual(w.requested, []);
+        assert.deepStrictEqual(w.nativeSubmits, []);
+        assert.deepStrictEqual(w.went, [["replaceState", HERE, { s: 1 }], ["reload", HERE]]);
+    }
+});
+
+test("a requestSubmit that throws (its button left the form): the page with a GET, nothing escapes", async () => {
+    const w = stayWindow(() => page(400));
+    const form = w.form({ method: "post", action: "/apps/tracked/2/check#check" });
+    form.requestSubmit = () => { throw new TypeError("not a submit button of this form"); };
+    w.submit(form, fakeButton({}, "go", "1"));
     await settle();
     assert.deepStrictEqual(w.went, [["replaceState", HERE, { s: 1 }], ["reload", HERE]]);
+});
+
+test("while a save is out its form is busy: a second tap does nothing, the button is disabled (code QA M1)", async () => {
+    let answer;
+    const w = stayWindow(() => new Promise((r) => { answer = r; }));
+    const form = w.form({ method: "post", action: "/devices/1/lifts#quick" });
+    const button = fakeButton({}, "minutes", "30");
+    assert.strictEqual(w.submit(form, button).defaultPrevented, true);
+    assert.strictEqual(form.attrs["aria-busy"], "true");
+    assert.strictEqual(button.disabled, true);
+    assert.strictEqual(button.attrs["aria-busy"], "true");
+    const again = w.submit(form, button);
+    assert.strictEqual(again.defaultPrevented, true, "not the browser's POST either");
+    assert.strictEqual(w.fetches.length, 1, "one lift, not two");
+    answer(stayAnswer("/apps/tracked/2#quick"));
+    await settle();
+    assert.deepStrictEqual(w.went.map((g) => g[0]), ["replaceState", "reload"]);
+});
+
+test("several saves out: the page lands once, after the last, at the last's address; a form's saves go in order (code QA L1)", async () => {
+    const answers = [];
+    const w = stayWindow(() => new Promise((r) => answers.push(r)));
+    const one = w.form({ method: "post", action: "/devices/1/apps/toggle#a" }, [["on", "on"]]);
+    const two = w.form({ method: "post", action: "/devices/1/apps/toggle#b" }, [["on", "on"]]);
+    one.submit();
+    two.submit();
+    one.elements[0].value = "off";
+    one.submit();
+    assert.strictEqual(w.fetches.length, 2, "one's second save waits for its first");
+    answers[0](stayAnswer("/apps/tracked/2#a"));
+    await settle();
+    assert.strictEqual(w.fetches.length, 3, "then it goes");
+    assert.strictEqual(w.fetches[2][1].body.toString(), "on=off", "with the form as it is now");
+    assert.deepStrictEqual(w.went, [], "nothing lands while saves are out");
+    answers[1](stayAnswer("/apps/tracked/2#b"));
+    await settle();
+    assert.deepStrictEqual(w.went, []);
+    answers[2](stayAnswer("/apps/tracked/2#a2"));
+    await settle();
+    assert.deepStrictEqual(w.went, [
+        ["replaceState", HERE + "#a2", { s: 1 }],
+        ["reload", HERE + "#a2"],
+    ]);
+    // A refusal among them still shows, once the rest are done.
+    const later = [];
+    const m = stayWindow((url) => new Promise((r) => later.push([url, r])));
+    const ok = m.form({ method: "post", action: "/devices/1/x#x" });
+    const bad = m.form({ method: "post", action: "/devices/1/y#y" });
+    ok.submit();
+    bad.submit();
+    later[1][1](page(400));
+    await settle();
+    assert.deepStrictEqual(m.nativeSubmits, []);
+    later[0][1](stayAnswer("/apps/tracked/2#x"));
+    await settle();
+    assert.deepStrictEqual(m.nativeSubmits, [bad]);
+    assert.deepStrictEqual(m.went, []);
+});
+
+test("a stay save's reload: a #fragment outside the form's groups is the anchor, not the old place (code QA L2)", () => {
+    // Music import's Confirm (#import-preview) lands on #import, a sibling the record doesn't hold.
+    const record = { path: "/music/import", y: 900, t: 990, tops: { "import-preview": 120 }, stay: true };
+    const w = fakeWindow({
+        mode: "main",
+        path: "/music/import",
+        hash: "#import",
+        stored: record,
+        places: { "/music/import": { y: 900, t: 980 } },
+        navType: "reload",
+        elements: { import: 40 },
+    });
+    const anchored = [];
+    const byId = w.win.document.getElementById;
+    w.win.document.getElementById = (id) => {
+        const el = byId(id);
+        if (el) el.scrollIntoView = (top) => anchored.push([id, top]);
+        return el;
+    };
+    install(w.win, () => 1000);
+    assert.deepStrictEqual(w.scrolls, [], "not the place record's 900");
+    assert.deepStrictEqual(anchored, [["import", true]]);
+    // Without the stay mark (a reload by hand) the place record as before.
+    const plain = fakeWindow({
+        mode: "main",
+        path: "/music/import",
+        hash: "#import",
+        stored: Object.assign({}, record, { stay: undefined }),
+        places: { "/music/import": { y: 900, t: 980 } },
+        navType: "reload",
+        elements: { import: 40 },
+    });
+    install(plain.win, () => 1000);
+    assert.deepStrictEqual(plain.scrolls, [[0, 900]]);
+});
+
+test("the reload carries the form record marked as a stay", async () => {
+    const w = stayWindow(() => stayAnswer("/apps/tracked/2#check"));
+    w.submit(w.form({ method: "post", action: "/apps/tracked/2/check#check" }), null);
+    // The submit's capture listener records the place (the fake keeps one listener per type).
+    w.listeners.submit({ target: { id: "check", parentNode: null, getBoundingClientRect: () => ({ top: 50 }) } });
+    await settle();
+    assert.strictEqual(JSON.parse(w.store.get(KEY)).stay, true);
 });
 
 test("the browser posts as before: a form that leaves its page, a submit taken over, no submitter, no fetch", () => {

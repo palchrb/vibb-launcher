@@ -176,3 +176,35 @@ then takes the GET.
   - The JS test has no case for an `X-Handy-Location` on another origin or with another scheme (L3).
   - Nothing covers a `requestSubmit` that throws because the submitter has left the form (`:322`; the exception
     escapes from a promise callback, and nothing is shown).
+
+## Resolution
+
+Fixed on `pwa-back` in the commit after b5ef2fd2a (see `docs/notes/server/pwa.md`, "A save leaves the history as it
+was").
+
+- **H1**: only a refusal is sent again the browser's way - 400, 403, 404, 409, 422, 423 and a 200 (a refused form
+  shown again; the forms answered with a page on success are `data-native-post`). A rejected fetch, a 5xx, any other
+  status, an `opaqueredirect` and an unusable `X-Handy-Location` never post again: the page is loaded with a GET
+  (`replaceState` to its own address, then `reload()`), which shows what the server holds; offline, the browser's own
+  page. No "unsure" notice exists, so no new words were added. The JS test that pinned the old fallback now pins both
+  sides (`a refusal is sent again ...; no answer or a 5xx never posts again`); the pwa.md bullet is rewritten.
+- **M1**: while a form's save is out the form carries `aria-busy="true"` and its submit button is disabled with
+  `aria-busy` (style.css v113: `button[aria-busy="true"]` dimmed to 0.55, `cursor: progress`, no animation). A second
+  submit of that form is prevented and does nothing; the state is released on every path but the reload.
+- **L1**: the stay saves in flight are counted; the page lands once, when the last has answered, at the last one's
+  address (a refusal outweighs a lost answer, which outweighs a landing, so a refusal still shows). A form's
+  `form.submit()` while its save is out is queued and sent, with the form as it is then, after the first answer.
+- **L2**: `land` marks the form record `stay: true` before the reload; on load, a fresh stay record whose
+  `restoreTarget` is null never takes the place record - the `#fragment`'s element is scrolled into view
+  (`scrollIntoView(true)`, the anchor). Tested with the import's Confirm -> `#import`.
+- **L3**: `stayLanding` returns null for anything but an http(s) address of this origin; the page is then loaded with a
+  GET (the save was done, so it is not posted again).
+- **L4**: `opaqueredirect` is "unknown": the plain GET reload, and the comment says so.
+- **L5**: Add Parent, a parent's Reset and the setup QR carry `data-native-post` and are in `answered_with_a_page`.
+  New tests: `admin_auth::tests::only_a_stay_posts_redirect_becomes_its_204` (the 204 keeps `Set-Cookie`; a GET with
+  the header, a POST without it, a 423 and a 403 pass as they are), JS cases for another origin, `javascript:`,
+  `data:` and another scheme, and for a `requestSubmit` that throws (the page with a GET, nothing escapes).
+
+Checks: `node --test jstest/` 385/385; `cargo fmt --check`; `cargo clippy --all-targets -- -D warnings` clean; the
+headless Chromium and WebKit run against the stub again (saves keep `history.length`, Back goes to the page before,
+a 400 is shown by the browser's own POST, a password form posts natively). No cargo tests run locally.

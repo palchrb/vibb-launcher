@@ -2247,7 +2247,7 @@ bare Vibb" and "Mobildata er slått av på telefonen". On the summary only the l
 (`mobile_network::summary_lines`, `#mobile-state`, each leading to the page), and "Roamer i Sverige" ends the header's
 second line while the phone is in touch (`phone_status::with_roaming`). Pinned by `tests::mobile_network`.
 
-## A save leaves the history as it was (2026-11-14, branch `pwa-back`)
+## A save leaves the history as it was (2026-11-14, branch `pwa-back`; code QA `docs/review/qa-pwa-back-code.md`)
 
 The user: Apps -> Vibb One -> "Sjekk nå", wait, swipe back -> the same app page again, not the Apps list. Every form
 posts and is answered with a 303 back to its page, and a POST navigation always adds a history entry, so each save -
@@ -2260,26 +2260,41 @@ posted by `static/scroll-restore.js` (`?v=9`) itself, and the return replaces th
   script took over, `defaultPrevented`, is left alone) or by `form.submit()` (the auto-saving controls, through the
   existing hook). Left to the browser as before: no JS, no `fetch`, a browser without `SubmitEvent.submitter` or
   `requestSubmit` (Safari before 16), a `target`, `data-native-post` - exactly the forms answered with a page, not a
-  redirect: Show Child PIN (`/devices/{id}/lock#show-pin`) and the Vibb import's upload (`/music/import#import-preview`),
-  pinned by `check_forms` both ways - and a form with a password, file, `assertion` or `credential` field (a refusal
-  posted again would count a password twice, spend a passkey's challenge or send a file twice). Those keep the extra
-  entry, as before.
+  redirect: Show Child PIN (`/devices/{id}/lock#show-pin`), the Vibb import's upload (`/music/import#import-preview`),
+  Add Parent and a parent's Reset (`/account/parents#parents`, `/account/parents/{id}/reset#parents`: the one-time
+  password) and the setup QR (`/devices/{id}/provision#qr`: a new code each time), marked whatever fields they hold and
+  pinned by `check_forms` both ways (`answered_with_a_page`) - and a form with a password, file, `assertion` or
+  `credential` field (a refusal posted again would count a password twice, spend a passkey's challenge or send a file
+  twice). Those keep the extra entry, as before.
 - **How**: `fetch` (the form's fields, urlencoded - multipart for a `multipart/form-data` form -, the button's name and
   value, `redirect: "manual"`, header `X-Handy-Stay: 1`). `admin_auth::stay_answer` (a layer just outside
   `csrf_guard`) answers such a POST's redirect as `204` with the `Location`, fragment and all, in `X-Handy-Location`
   (a followed redirect hides its fragment, renders the page once for nothing and would take a one-shot session notice,
-  `music.rs`'s Storytel one, with it); cookies and the other headers stay. The same path: `history.replaceState` to that
-  address, then `location.reload()` (a `location.replace` that differs only in the fragment would only scroll); another
-  path (an Add's `/new` -> `/5`): `location.assign`, a new entry as a link makes. The form record is taken before, so
-  the place comes back as ever, and the `handy-from` logic sees the same as with the browser's POST.
-- **Any other answer** - a refused form shown again (400 or 200), the lock's 423, a 403/404/500, no network -: the
-  form is sent the browser's way (`requestSubmit(submitter)`, which the listener lets pass, or the native
-  `form.submit()`), so that answer shows as before; a refusal is thus posted twice, which writes nothing. An
-  `opaqueredirect` (a redirect past the server's answer) reloads the page in place.
-- No visible wait mark was added: Check now waits up to 10 s on the server with the page still showing (as an
-  installed PWA's own POST showed nothing either).
-- Tests: `jstest/scroll-restore.test.js` (`stayPost`'s rules, `stayLanding`, the fetch and its body, the replace and
-  reload, every fallback), `tests::tracked_apps::a_save_posted_by_the_page_learns_where_its_redirect_goes`, and
-  `check_forms`' `data-native-post` rule. Seen in headless Chromium and WebKit against a stub server (a button save and
-  `form.submit()` keep `history.length`, Back after a save goes to the page before, a refusal shows, a password form
-  posts natively).
+  `music.rs`'s Storytel one, with it); cookies and the other headers stay; a GET, a POST without the header and every
+  answer that isn't a redirect pass as they are. The address is taken only when it is an http(s) one of this origin.
+  The same path: `history.replaceState` to that address, then `location.reload()` (a `location.replace` that differs
+  only in the fragment would only scroll); another path (an Add's `/new` -> `/5`): `location.assign`, a new entry as a
+  link makes. The form record is taken before and goes with the reload marked `stay`: the place comes back as ever,
+  and a `#fragment` the form's groups don't hold (the import's Confirm -> `#import`) is the anchor
+  (`scrollIntoView`), never the reload's place record (QA L2). The `handy-from` logic sees the same as with the
+  browser's POST.
+- **Busy, in order** (QA M1, L1): while a form's save is out the form has `aria-busy="true"` and its button is disabled
+  with `aria-busy` (style.css v113: dimmed to 0.55, `cursor: progress`, no animation); a second tap on it does nothing
+  (no second lift or ring), and an auto-saving switch flipped again meanwhile sends the form as it is then, after the
+  first answer. The page lands once, when the last save in flight has answered, at the last one's address.
+- **Any other answer** (QA H1): a refusal, where the server refused before acting - 400, 403, 404, 409, 422, 423 (the
+  lock), or a 200 (a refused form shown again; the forms answered with a page on success are `data-native-post`) - is
+  sent again the browser's way (`requestSubmit(submitter)`, which the listener lets pass, or the native
+  `form.submit()`), so that answer shows as before; a refusal writes nothing. No answer (the network, an app sent to the
+  background), a 5xx, a redirect past the server's stay answer (`opaqueredirect`: a sign-in portal in front of the
+  server), an address that isn't this origin's, or a `requestSubmit` that throws: never posted again - the server may
+  have acted - the page is loaded with a GET instead and shows what the server holds (no new words: an offline page is
+  the browser's own). A refusal among several saves in flight is shown once the rest have answered.
+- Tests: `jstest/scroll-restore.test.js` (`stayPost`'s rules, `stayLanding`'s origin and scheme, the fetch and its
+  body, the replace and reload, refusals sent again and lost answers never, the busy form and the second tap, several
+  saves in flight and a form's saves in order, the stay record's anchor), `admin_auth::tests::only_a_stay_posts_redirect_becomes_its_204`
+  (the 204 with `Set-Cookie`; a GET, a POST without the header, a 423 and a 403 pass),
+  `tests::tracked_apps::a_save_posted_by_the_page_learns_where_its_redirect_goes`, and `check_forms`'
+  `data-native-post` rule. The first version was seen in headless Chromium and WebKit against a stub server (a
+  button save and `form.submit()` keep `history.length`, Back after a save goes to the page before, a refusal shows, a
+  password form posts natively).

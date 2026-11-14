@@ -1075,6 +1075,67 @@ pub fn compress_when(
 mod tests {
     use super::*;
 
+    /// [stay_answer] (code QA L5 of `pwa-back`): only a POST carrying [STAY_HEADER] whose answer is a redirect becomes
+    /// the 204 naming it, `Set-Cookie` kept; a GET with the header, a POST without it, and a POST's 423 or 403 pass
+    /// as they are.
+    #[tokio::test]
+    async fn only_a_stay_posts_redirect_becomes_its_204() {
+        use axum::body::Body;
+        use axum::response::Redirect;
+        use tower::ServiceExt;
+
+        let saved = || async {
+            (
+                [(header::SET_COOKIE, "id=new; Path=/; HttpOnly")],
+                Redirect::to("/apps/tracked/2#check"),
+            )
+        };
+        let router = axum::Router::new()
+            .route("/save", axum::routing::post(saved).get(saved))
+            .route(
+                "/locked",
+                axum::routing::post(|| async { StatusCode::LOCKED }),
+            )
+            .route(
+                "/refused",
+                axum::routing::post(|| async { (StatusCode::FORBIDDEN, "no") }),
+            )
+            .layer(axum::middleware::from_fn(stay_answer));
+        let send = |method: Method, uri: &str, stay: bool| {
+            let mut request = Request::builder().method(method).uri(uri);
+            if stay {
+                request = request.header(STAY_HEADER, "1");
+            }
+            router.clone().oneshot(request.body(Body::empty()).unwrap())
+        };
+
+        let stayed = send(Method::POST, "/save", true).await.unwrap();
+        assert_eq!(stayed.status(), StatusCode::NO_CONTENT);
+        assert_eq!(
+            stayed.headers().get(STAY_LOCATION_HEADER).unwrap(),
+            "/apps/tracked/2#check"
+        );
+        assert!(stayed.headers().get(header::LOCATION).is_none());
+        assert_eq!(
+            stayed.headers().get(header::SET_COOKIE).unwrap(),
+            "id=new; Path=/; HttpOnly"
+        );
+
+        for (method, uri, stay, status) in [
+            (Method::GET, "/save", true, StatusCode::SEE_OTHER),
+            (Method::POST, "/save", false, StatusCode::SEE_OTHER),
+            (Method::POST, "/locked", true, StatusCode::LOCKED),
+            (Method::POST, "/refused", true, StatusCode::FORBIDDEN),
+        ] {
+            let res = send(method.clone(), uri, stay).await.unwrap();
+            assert_eq!(res.status(), status, "{method} {uri}");
+            assert!(
+                res.headers().get(STAY_LOCATION_HEADER).is_none(),
+                "{method} {uri}"
+            );
+        }
+    }
+
     /// The banner is worded by the page; a session from before keeps its English sentence (qa-s-i18n-3a L3).
     #[test]
     fn the_login_warning_reads_in_the_language_or_as_it_was_said() {

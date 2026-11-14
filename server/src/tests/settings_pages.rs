@@ -115,14 +115,22 @@ fn leaves_the_page(action: &str) -> bool {
 }
 
 /// The forms that stay on their page but whose POST is answered with a page, not a redirect: Show
-/// Child PIN (the PIN can't go through a redirect) and the Vibb import's upload (its preview). They
-/// carry `data-native-post`, so `static/scroll-restore.js` leaves them to the browser - it posts a
-/// form that comes back to its page itself, and only a redirect's answer lets it keep the history
-/// as it was (2026-11-14, `admin_auth::stay_answer`).
+/// Child PIN (the PIN can't go through a redirect), the Vibb import's upload (its preview), Add
+/// Parent and a parent's Reset (the one-time password) and the setup QR (a new code each time). They
+/// carry `data-native-post` whatever fields they hold, so `static/scroll-restore.js` leaves them to
+/// the browser - it posts a form that comes back to its page itself, and only a redirect's answer
+/// lets it keep the history as it was (2026-11-14, `admin_auth::stay_answer`).
 fn answered_with_a_page(action: &str) -> bool {
     let path: Vec<&str> = action.split('/').skip(1).collect();
-    action == "/music/import#import-preview"
-        || matches!(path.as_slice(), ["devices", n, "lock#show-pin"] if n.parse::<i64>().is_ok())
+    let number = |segment: &str| segment.parse::<i64>().is_ok();
+    matches!(
+        path.as_slice(),
+        ["music", "import#import-preview"] | ["account", "parents#parents"]
+    ) || matches!(
+        path.as_slice(),
+        ["devices", n, "lock#show-pin" | "provision#qr"] | ["account", "parents", n, "reset#parents"]
+            if number(n)
+    )
 }
 
 /// Every action's fragment names **the form's own group** - the element holding it (qa-31-s14-code
