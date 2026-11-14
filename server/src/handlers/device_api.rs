@@ -600,7 +600,11 @@ pub(crate) async fn build_policy(
         calendar,
         app_permissions,
         lock_media_apps,
-        data_roaming: crate::mobile_network::roaming_choice(&policy.data_roaming).to_string(),
+        abroad: crate::mobile_network::abroad_choice(&policy.abroad).to_string(),
+        data_roaming: crate::mobile_network::derived_roaming(crate::mobile_network::abroad_choice(
+            &policy.abroad,
+        ))
+        .to_string(),
         apps_mobile: crate::mobile_network::apps_choice(&policy.apps_mobile).to_string(),
         mobile_settings_locked: policy.mobile_settings_locked,
         status_heartbeat: state.config.status_heartbeat,

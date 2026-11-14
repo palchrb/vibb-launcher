@@ -205,15 +205,29 @@ object MobileNetworkRuntime {
     private fun restricted(context: Context, restriction: String): Boolean =
         runCatching { context.getSystemService(UserManager::class.java)?.hasUserRestriction(restriction) == true }.getOrDefault(false)
 
-    /** Design 94 §5's `data_roaming`; `null` (left out) when telephony can't be read at all. */
+    /** Design 97 §4.1: [whereOf] on the default data SIM ([tm]); none of the reads needs a permission. */
+    fun whereNow(context: Context, tm: TelephonyManager? = dataTelephony(context)): Where = try {
+        val airplane = android.provider.Settings.Global.getInt(
+            context.contentResolver, android.provider.Settings.Global.AIRPLANE_MODE_ON, 0,
+        ) != 0
+        whereOf(
+            airplane = airplane,
+            roaming = runCatching { tm?.isNetworkRoaming == true }.getOrDefault(false),
+            network = runCatching { tm?.networkOperator }.getOrNull(),
+            simOperator = runCatching { tm?.simOperator }.getOrNull(),
+            netCc = runCatching { tm?.networkCountryIso }.getOrNull(),
+            simCc = runCatching { tm?.simCountryIso }.getOrNull(),
+        )
+    } catch (e: Exception) {
+        Where.UNKNOWN
+    }
+
+        /** Design 94 §5's `data_roaming`; `null` (left out) when telephony can't be read at all. */
     fun dataRoamingReport(context: Context): DataRoamingReport? = try {
         val tm = dataTelephony(context)
         val roaming = runCatching { tm?.isNetworkRoaming == true }.getOrDefault(false)
-        val (country, network) = roamingPlace(
-            roaming,
-            runCatching { tm?.networkCountryIso }.getOrNull(),
-            runCatching { tm?.networkOperator }.getOrNull(),
-        )
+        val networkOperator = runCatching { tm?.networkOperator }.getOrNull()
+        val (country, network) = roamingPlace(roaming, runCatching { tm?.networkCountryIso }.getOrNull(), networkOperator)
         val net = bestNet(context)
         DataRoamingReport(
             locked = restricted(context, UserManager.DISALLOW_DATA_ROAMING),
@@ -223,6 +237,7 @@ object MobileNetworkRuntime {
             enabled = runCatching { tm?.isDataRoamingEnabled }.getOrNull(),
             dataActive = net?.cellular == true && net.roaming,
             modems = runCatching { context.getSystemService(TelephonyManager::class.java)?.activeModemCount }.getOrNull(),
+            whereIs = whereNow(context, tm).wire,
         )
     } catch (e: Exception) {
         Log.w(LOG_TAG, "Roaming report failed: ${e.javaClass.simpleName}")
@@ -234,5 +249,6 @@ object MobileNetworkRuntime {
         enabled = runCatching { dataTelephony(context)?.isDataEnabled }.getOrNull(),
         sink = reportedSink(storedInputs(), bestNet(context), storedShape()).wire,
         settingsLocked = restricted(context, UserManager.DISALLOW_CONFIG_MOBILE_NETWORKS),
+        kid = null,
     )
 }

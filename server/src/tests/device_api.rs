@@ -326,6 +326,7 @@ async fn policy_json_keys_snapshot() {
     assert_eq!(
         keys,
         [
+            "abroad",
             "allowlist",
             "app_permissions",
             "app_updates_wifi_only",

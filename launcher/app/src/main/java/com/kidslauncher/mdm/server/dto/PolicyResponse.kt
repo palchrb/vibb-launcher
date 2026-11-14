@@ -160,6 +160,10 @@ data class PolicyResponse(
      * missing from an older server = the phone's choice; a value this build doesn't know locks
      * ([com.kidslauncher.mdm.server.dataRoamingLocked]). Kept by [com.kidslauncher.mdm.server.LastEnforcedPlan]. */
     val dataRoaming: String? = null,
+    /** Design 97: "I utlandet", `"off"`, `"vibb"` or `"home"`; read with [dataRoaming] through
+     * [com.kidslauncher.mdm.server.abroadChoice] (missing = an older server, revision 3's rule; an unknown value = Ingen
+     * data). Kept by [com.kidslauncher.mdm.server.LastEnforcedPlan]. */
+    val abroad: String? = null,
     /** Design 95 rev. 3: "Mobildata for apper" - `"on"` or `"vibb"` (Bare Vibb: only Vibb uses cellular,
      * [com.kidslauncher.mdm.server.parentSinkOn]); missing = on. Kept by [com.kidslauncher.mdm.server.LastEnforcedPlan]. */
     val appsMobile: String? = null,

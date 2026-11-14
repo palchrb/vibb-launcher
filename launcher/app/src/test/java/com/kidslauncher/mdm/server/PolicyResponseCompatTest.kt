@@ -73,13 +73,15 @@ class PolicyResponseCompatTest {
     fun `the Mobilnett keys decode, and missing means nothing is locked`() {
         val policy = ServerJson.decodeFromString(
             PolicyResponse.serializer(),
-            """{"data_roaming": "off", "apps_mobile": "vibb", "mobile_settings_locked": true}""",
+            """{"abroad": "vibb", "data_roaming": "off", "apps_mobile": "vibb", "mobile_settings_locked": true}""",
         )
         assertEquals("off", policy.dataRoaming)
+        assertEquals(AbroadChoice.VIBB, abroadChoice(policy.abroad, policy.dataRoaming))
         assertEquals("vibb", policy.appsMobile)
         assertEquals(true, policy.mobileSettingsLocked)
         val older = decodeCached(serverResponse).let { (it as CachedPolicy.Ok).policy }
-        assertFalse(dataRoamingLocked(older.dataRoaming, overrideActive = false))
+        assertEquals(AbroadChoice.LEGACY, abroadChoice(older.abroad, older.dataRoaming))
+        assertFalse(roamingLocked(abroadChoice(older.abroad, older.dataRoaming), lift = false))
         assertFalse(parentSinkOn(older.appsMobile, overrideActive = false))
         assertFalse(mobileSettingsLocked(older.mobileSettingsLocked, overrideActive = false))
     }

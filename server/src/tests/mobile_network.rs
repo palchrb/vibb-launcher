@@ -5,7 +5,9 @@ use axum::http::{Method, StatusCode};
 use serde_json::{Value, json};
 
 use super::{TestApp, assert_redirect};
-use crate::mobile_network::{MOBILE_CAPABILITY, ROAMING_CAPABILITY, clean_mobile, clean_roaming};
+use crate::mobile_network::{
+    MOBILE_CAPABILITY, NETWORK_CAPABILITY, ROAMING_CAPABILITY, clean_mobile, clean_roaming,
+};
 
 const CONTRACT: &str = include_str!("../../testdata/mobile_network.json");
 
@@ -71,11 +73,17 @@ async fn the_contract() {
     let contract = contract();
     assert_eq!(contract["capabilities"]["data_roaming"], ROAMING_CAPABILITY);
     assert_eq!(contract["capabilities"]["mobile_data"], MOBILE_CAPABILITY);
+    assert_eq!(
+        contract["capabilities"]["mobile_network"],
+        NETWORK_CAPABILITY
+    );
 
-    // A new phone: the defaults are the first row (off and locked, apps on, the settings locked).
+    // A new phone: the defaults are the first row (design 97 D1: Bare Vibb abroad, so the derived roaming is off and
+    // locked; apps on, the settings locked).
     let rows = contract["policy"].as_array().unwrap();
     let pick = |p: &Value| {
         json!({
+            "abroad": p["abroad"],
             "data_roaming": p["data_roaming"],
             "apps_mobile": p["apps_mobile"],
             "mobile_settings_locked": p["mobile_settings_locked"],
@@ -83,7 +91,7 @@ async fn the_contract() {
     };
     assert_eq!(pick(&policy(&app, &token).await), rows[0]);
     for (group, fields) in [
-        ("data-roaming", vec![("data_roaming", "phone")]),
+        ("abroad", vec![("abroad", "home")]),
         ("mobile-data", vec![("apps_mobile", "vibb")]),
         ("mobile-lock", vec![]),
     ] {
@@ -93,12 +101,15 @@ async fn the_contract() {
         assert_redirect(&res, &format!("/devices/{id}/mobile"), Some(group));
     }
     assert_eq!(pick(&policy(&app, &token).await), rows[1]);
+    let res = save(&app, &cookie, id, &[("group", "abroad"), ("abroad", "off")]).await;
+    assert_redirect(&res, &format!("/devices/{id}/mobile"), Some("abroad"));
+    assert_eq!(pick(&policy(&app, &token).await), rows[2]);
 
     report(
         &app,
         &token,
         contract["report"].clone(),
-        &[ROAMING_CAPABILITY, MOBILE_CAPABILITY],
+        &[ROAMING_CAPABILITY, MOBILE_CAPABILITY, NETWORK_CAPABILITY],
     )
     .await;
     let (roaming, mobile) = stored(&app, id).await;
@@ -132,7 +143,7 @@ async fn a_bad_save_writes_nothing() {
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("Jack").await;
     for fields in [
-        vec![("group", "data-roaming"), ("data_roaming", "eea")],
+        vec![("group", "abroad"), ("abroad", "eea")],
         vec![("group", "mobile-data"), ("apps_mobile", "off")],
         vec![("group", "elsewhere")],
     ] {
@@ -140,6 +151,7 @@ async fn a_bad_save_writes_nothing() {
         assert_eq!(res.status, StatusCode::BAD_REQUEST, "{fields:?}");
     }
     let served = policy(&app, &token).await;
+    assert_eq!(served["abroad"], "vibb");
     assert_eq!(served["data_roaming"], "off");
     assert_eq!(served["apps_mobile"], "on");
     let res = save(&app, &cookie, id + 99, &[("group", "mobile-lock")]).await;

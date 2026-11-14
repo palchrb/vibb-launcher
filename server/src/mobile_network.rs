@@ -16,6 +16,9 @@ use crate::models::{DevicePolicy, DeviceStatus};
 pub const ROAMING_CAPABILITY: &str = "data_roaming_v1";
 /// The launcher capability for Bare Vibb, the settings lock and `mobile_data` (design 95 rev. 3).
 pub const MOBILE_CAPABILITY: &str = "mobile_data_v1";
+/// Design 97 §3.2: the launcher enforces `abroad`, reports `data_roaming.where` and `mobile_data.kid`, and shows the
+/// kid's Mobildata row. The kid's switch on the page and the roaming notice wait for it.
+pub const NETWORK_CAPABILITY: &str = "mobile_network_v2";
 
 /// The choices the page offers (design 95 rev. 3: "Tillat i EU/EØS" is out of this round; the column allows `eea`).
 pub const ROAMING_CHOICES: &[&str] = &["off", "phone"];
@@ -30,14 +33,33 @@ pub fn roaming_choice(stored: &str) -> &'static str {
     }
 }
 
+/// Design 97: "I utlandet" - Ingen data, Bare Vibb, Som hjemme.
+pub const ABROAD_CHOICES: &[&str] = &["off", "vibb", "home"];
+
+/// The stored "I utlandet" as served: `vibb` and `home` as they are, anything else `off` (fail closed).
+pub fn abroad_choice(stored: &str) -> &'static str {
+    match stored {
+        "vibb" => "vibb",
+        "home" => "home",
+        _ => "off",
+    }
+}
+
+/// Design 97 §3.1: the policy's `data_roaming` for a launcher from before design 97, derived from the choice so it
+/// never gets more data abroad than chosen - Bare Vibb is `off` there (no data abroad until it is updated).
+pub fn derived_roaming(abroad: &str) -> &'static str {
+    if abroad == "home" { "phone" } else { "off" }
+}
+
 /// The stored "Mobildata for apper" as served: `vibb` or `on`.
 pub fn apps_choice(stored: &str) -> &'static str {
     if stored == "vibb" { "vibb" } else { "on" }
 }
 
 /// Design 94 §5: the report's `data_roaming`, re-serialised field by field. A booleans that isn't one reads as its safe
-/// value (`false`; `null` for `enabled`), `country` must be `[a-z]{2}`, `network` `[0-9]{5,6}`, `modems` 1..=8; a value
-/// that isn't an object is `None` (stored `NULL`), never a refused report.
+/// value (`false`; `null` for `enabled`), `country` must be `[a-z]{2}`, `network` `[0-9]{5,6}`, `modems` 1..=8, design
+/// 97's `where` one of `home`, `abroad`, `unknown` (else `null`, an older launcher); a value that isn't an object is
+/// `None` (stored `NULL`), never a refused report.
 pub fn clean_roaming(value: &Value) -> Option<String> {
     let object = value.as_object()?;
     let flag = |key: &str| object.get(key).and_then(Value::as_bool).unwrap_or(false);
@@ -62,25 +84,34 @@ pub fn clean_roaming(value: &Value) -> Option<String> {
             "enabled": object.get("enabled").and_then(Value::as_bool),
             "data_active": flag("data_active"),
             "modems": modems,
+            "where": object
+                .get("where")
+                .and_then(Value::as_str)
+                .filter(|w| matches!(*w, "home" | "abroad" | "unknown")),
         })
         .to_string(),
     )
 }
 
 /// Design 95 rev. 3: the report's `mobile_data`, re-serialised: `enabled` a boolean or `null`, `sink` one of the known
-/// words (else `off`), `settings_locked` a boolean (else `false`).
+/// words (else `off`), `settings_locked` a boolean (else `false`); design 97's `kid` `on`, `off` or `null` (the row
+/// hidden, or an older launcher).
 pub fn clean_mobile(value: &Value) -> Option<String> {
     let object = value.as_object()?;
     let sink = object
         .get("sink")
         .and_then(Value::as_str)
-        .filter(|s| matches!(*s, "off" | "parent" | "roaming"))
+        .filter(|s| matches!(*s, "off" | "parent" | "abroad" | "roaming" | "kid"))
         .unwrap_or("off");
     Some(
         json!({
             "enabled": object.get("enabled").and_then(Value::as_bool),
             "sink": sink,
             "settings_locked": object.get("settings_locked").and_then(Value::as_bool).unwrap_or(false),
+            "kid": object
+                .get("kid")
+                .and_then(Value::as_str)
+                .filter(|k| matches!(*k, "on" | "off")),
         })
         .to_string(),
     )
@@ -96,6 +127,9 @@ pub struct RoamingReport {
     pub enabled: Option<bool>,
     pub data_active: bool,
     pub modems: Option<i64>,
+    /// Design 97 §4.1: the launcher's own judgement, `home`, `abroad` or `unknown`; `None` from an older launcher.
+    #[serde(default, rename = "where")]
+    pub place: Option<String>,
 }
 
 /// A stored `mobile_data_json`.
@@ -104,6 +138,9 @@ pub struct MobileReport {
     pub enabled: Option<bool>,
     pub sink: String,
     pub settings_locked: bool,
+    /// Design 97 §3.2: the kid's own switch, `on` or `off`; `None` while the row is hidden or from an older launcher.
+    #[serde(default)]
+    pub kid: Option<String>,
 }
 
 fn has(latest: &DeviceStatus, capability: &str) -> bool {

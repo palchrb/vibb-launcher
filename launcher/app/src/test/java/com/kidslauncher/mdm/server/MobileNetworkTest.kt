@@ -23,37 +23,94 @@ class MobileNetworkTest {
     private fun JsonObject.str(key: String): String? = this[key]!!.let { if (it is JsonNull) null else it.jsonPrimitive.content }
     private fun JsonObject.bool(key: String): Boolean? = this[key]!!.jsonPrimitive.booleanOrNull
 
+    /** A key the older rows don't carry reads as `null`. */
+    private fun JsonObject.opt(key: String): String? = if (containsKey(key)) str(key) else null
+
     @Test
     fun `the served policy rows decode`() {
-        val (off, phone) = rows("policy").map { ServerJson.decodeFromString(PolicyResponse.serializer(), it.toString()) }
-        assertEquals(Triple("off", "on", true), Triple(off.dataRoaming, off.appsMobile, off.mobileSettingsLocked))
-        assertEquals(Triple("phone", "vibb", false), Triple(phone.dataRoaming, phone.appsMobile, phone.mobileSettingsLocked))
+        val (fresh, home, off) = rows("policy").map { ServerJson.decodeFromString(PolicyResponse.serializer(), it.toString()) }
+        // Design 97 D1: a new phone is Bare Vibb abroad, the derived roaming "off" for an older launcher.
+        assertEquals(AbroadChoice.VIBB, abroadChoice(fresh.abroad, fresh.dataRoaming))
+        assertEquals(Triple("off", "on", true), Triple(fresh.dataRoaming, fresh.appsMobile, fresh.mobileSettingsLocked))
+        assertEquals(AbroadChoice.HOME, abroadChoice(home.abroad, home.dataRoaming))
+        assertEquals(Triple("phone", "vibb", false), Triple(home.dataRoaming, home.appsMobile, home.mobileSettingsLocked))
+        assertEquals(AbroadChoice.OFF, abroadChoice(off.abroad, off.dataRoaming))
+    }
+
+    @Test
+    fun `the choice reads every row and fails closed`() {
+        for (row in rows("abroad_choice")) {
+            assertEquals("$row", row.str("choice"), abroadChoice(row.str("abroad"), row.str("data_roaming")).wire)
+        }
+    }
+
+    @Test
+    fun `where the phone is follows every row`() {
+        for (row in rows("where")) {
+            val where = whereOf(
+                airplane = row.bool("airplane")!!,
+                roaming = row.bool("roaming")!!,
+                network = row.str("network"),
+                simOperator = row.str("sim_operator"),
+                netCc = row.str("net_cc"),
+                simCc = row.str("sim_cc"),
+            )
+            assertEquals("$row", row.str("where"), where.wire)
+        }
+    }
+
+    @Test
+    fun `the kid's row follows every row`() {
+        for (row in rows("kid_row")) {
+            val choice = AbroadChoice.entries.first { it.wire == row.str("choice") }
+            val where = Where.entries.first { it.wire == row.str("where") }
+            val shown = kidMobileRow(
+                shown = row.bool("shown")!!,
+                kidOff = row.str("kid") == "off",
+                lift = row.bool("lift")!!,
+                parentVibb = row.bool("parent_vibb")!!,
+                where = where,
+                choice = choice,
+                dataEnabled = row.bool("data_enabled"),
+            )
+            assertEquals("$row", row.str("row"), shown.wire)
+        }
     }
 
     @Test
     fun `the roaming lock and the settings lock follow every row`() {
         for (row in rows("roaming_locked")) {
-            assertEquals("$row", row.bool("locked"), dataRoamingLocked(row.str("value"), row.bool("override")!!))
+            val choice = abroadChoice(null, row.str("value"))
+            assertEquals("$row", row.bool("locked"), roamingLocked(choice, row.bool("override")!!))
         }
         for (row in rows("settings_locked")) {
             assertEquals("$row", row.bool("locked"), mobileSettingsLocked(row.bool("value"), row.bool("override")!!))
         }
     }
 
-    /** Every shape row through the same rules `apply()` uses, and always-on's lockdown for it. */
+    /** Every shape row through the same rules `apply()` uses, and always-on's lockdown for it. The rows from before
+     * design 97 carry no `abroad`, `where` or `kid`: an older server's rows, read through [abroadChoice]. A row with
+     * `cellular: null` is a moment with no network seen, with the shape last decided as `persisted`. */
     @Test
     fun `every shape row decides the shape, the reason and lockdown`() {
         for (row in rows("shapes")) {
             val override = row.bool("override")!!
+            val choice = abroadChoice(row.opt("abroad"), row.str("data_roaming"))
             val inputs = VpnInputs(
                 filterOn = row.bool("filter")!! && !override,
                 parentSink = parentSinkOn(row.str("apps_mobile"), override),
-                roamingLocked = dataRoamingLocked(row.str("data_roaming"), override),
+                roamingLocked = roamingLocked(choice, override),
+                abroadArmed = abroadArmed(choice, override),
+                kidOff = row.opt("kid") == "off",
             )
-            val net = BestNet(cellular = row.bool("cellular")!!, roaming = row.bool("roaming")!!)
-            val shape = vpnShape(inputs, net)
+            val net = row.bool("cellular")?.let {
+                BestNet(cellular = it, roaming = row.bool("roaming")!!, abroad = row.opt("where") == "abroad")
+            }
+            val persisted = VpnShape.of(row.opt("persisted"))
+            val shape = applyShape(inputs, net, persisted)
+            if (net != null) assertEquals("$row", vpnShape(inputs, net), shape)
             assertEquals("$row", row.str("shape"), shape.wire)
-            assertEquals("$row", row.str("sink"), sinkReason(inputs, net).wire)
+            assertEquals("$row", row.str("sink"), reportedSink(inputs, net, persisted).wire)
             assertEquals("$row", row.bool("lockdown"), alwaysOnFor(shape).lockdown)
             assertEquals("$row", shape != VpnShape.NONE, vpnConfigLocked(shape))
         }
@@ -134,9 +191,10 @@ class MobileNetworkTest {
     fun `the report encodes exactly the contract's`() {
         val report = contract["report"]!!.jsonObject
         val roaming = DataRoamingReport(
-            locked = true, roaming = true, country = "se", network = "24001", enabled = false, dataActive = false, modems = 2,
+            locked = false, roaming = true, country = "se", network = "24001", enabled = true, dataActive = true, modems = 2,
+            whereIs = Where.ABROAD.wire,
         )
-        val mobile = MobileDataReport(enabled = false, sink = SinkReason.PARENT.wire, settingsLocked = true)
+        val mobile = MobileDataReport(enabled = true, sink = SinkReason.ABROAD.wire, settingsLocked = true, kid = "off")
         assertEquals(report["data_roaming"], ServerJson.encodeToJsonElement(DataRoamingReport.serializer(), roaming))
         assertEquals(report["mobile_data"], ServerJson.encodeToJsonElement(MobileDataReport.serializer(), mobile))
         // No home location leaves the phone; a 901 network is named even when it counts as home.
@@ -147,10 +205,11 @@ class MobileNetworkTest {
     }
 
     @Test
-    fun `this launcher claims both capabilities`() {
+    fun `this launcher claims the capabilities`() {
         val capabilities = contract["capabilities"]!!.jsonObject
         assertEquals(capabilities["data_roaming"]!!.jsonPrimitive.content, DATA_ROAMING_CAPABILITY)
         assertEquals(capabilities["mobile_data"]!!.jsonPrimitive.content, MOBILE_DATA_CAPABILITY)
+        assertEquals(capabilities["mobile_network"]!!.jsonPrimitive.content, MOBILE_NETWORK_CAPABILITY)
         assertTrue(DATA_ROAMING_CAPABILITY in STATUS_CAPABILITIES)
         assertTrue(MOBILE_DATA_CAPABILITY in STATUS_CAPABILITIES)
     }
@@ -158,11 +217,13 @@ class MobileNetworkTest {
     /** Design 94 §3: a fallback keeps the parent's choices; an older record fails closed. */
     @Test
     fun `the last enforced plan keeps the choices, an older record locks`() {
-        val policy = PolicyResponse(dataRoaming = null, appsMobile = "vibb", mobileSettingsLocked = false)
+        val policy = PolicyResponse(dataRoaming = null, abroad = "home", appsMobile = "vibb", mobileSettingsLocked = false)
         val kept = LastEnforcedPlan.decode(ServerJson.encodeToString(LastEnforcedPlan.serializer(), LastEnforcedPlan.of(policy)))!!.toPolicy()
         assertEquals(Triple(null, "vibb", false), Triple(kept.dataRoaming, kept.appsMobile, kept.mobileSettingsLocked))
+        assertEquals(AbroadChoice.HOME, abroadChoice(kept.abroad, kept.dataRoaming))
         val old = LastEnforcedPlan.decode("{}")!!.toPolicy()
         assertEquals(Triple("off", null, true), Triple(old.dataRoaming, old.appsMobile, old.mobileSettingsLocked))
+        assertEquals(AbroadChoice.OFF, abroadChoice(old.abroad, old.dataRoaming))
     }
 
     @Test

@@ -79,6 +79,11 @@ fn change(form: &HashMap<String, String>) -> Option<(&'static str, ChangeValue, 
             ChangeValue::Text(pick("apps_mobile", mobile_network::APPS_CHOICES)?),
             "mobile-data",
         )),
+        "abroad" => Some((
+            "abroad",
+            ChangeValue::Text(pick("abroad", mobile_network::ABROAD_CHOICES)?),
+            "abroad",
+        )),
         "data-roaming" => Some((
             "data_roaming",
             ChangeValue::Text(pick("data_roaming", mobile_network::ROAMING_CHOICES)?),
