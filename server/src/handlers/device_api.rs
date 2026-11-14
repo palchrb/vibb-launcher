@@ -1650,6 +1650,18 @@ async fn status_intake(
         if let Some(battery) = &report.battery {
             crate::parent_events::battery_report(&state, phone, battery).await;
         }
+        // Design 97 §6: the roaming notice, only from a launcher that judges where it is (`where`).
+        let judges_where = report
+            .capabilities
+            .iter()
+            .any(|c| c == crate::mobile_network::NETWORK_CAPABILITY);
+        if let Some(roaming) = data_roaming_json
+            .as_deref()
+            .filter(|_| judges_where)
+            .and_then(|json| serde_json::from_str(json).ok())
+        {
+            crate::mobile_network::roaming_intake(&state, phone, &roaming).await;
+        }
     }
     if let Some(line) =
         crate::boot_witness::log_line(previous_unseen, unseen_boots.map(|(count, _)| count))

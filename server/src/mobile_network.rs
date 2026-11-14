@@ -119,7 +119,7 @@ pub struct RoamingReport {
     pub modems: Option<i64>,
     /// Design 97 §4.1: the launcher's own judgement, `home`, `abroad` or `unknown`; `None` from an older launcher.
     #[serde(default, rename = "where")]
-    pub place: Option<String>,
+    pub where_is: Option<String>,
 }
 
 /// A stored `mobile_data_json`.
@@ -526,7 +526,7 @@ pub fn card(lang: Lang, name: &str, policy: &DevicePolicy, latest: Option<&Devic
             });
         }
         // Design 97 §5: Ingen data cuts mobile data in a national-roaming area at home.
-        if abroad == "off" && report.roaming && report.place.as_deref() == Some("home") {
+        if abroad == "off" && report.roaming && report.where_is.as_deref() == Some("home") {
             abroad_lines.push(Line::new(
                 lang,
                 "national",
@@ -574,6 +574,159 @@ pub fn card(lang: Lang, name: &str, policy: &DevicePolicy, latest: Option<&Devic
     }
 }
 
+/// Design 97 §6 (D6 as corrected): a place told within this long is not told again - the border guard.
+pub const ROAMING_GUARD: chrono::Duration = chrono::Duration::hours(1);
+
+/// The roaming notice's state on the device (`devices.roaming_place`, `devices.roaming_told`): the last abroad place
+/// (`None` at home) and the places told within [ROAMING_GUARD], with when (epoch ms).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RoamingState {
+    pub place: Option<String>,
+    pub told: std::collections::BTreeMap<String, i64>,
+}
+
+impl RoamingState {
+    /// From the two columns; an unreadable `told` reads as none (the worst case is one notice too many).
+    pub fn of(place: Option<String>, told: Option<&str>) -> RoamingState {
+        RoamingState {
+            place,
+            told: told
+                .and_then(|t| serde_json::from_str(t).ok())
+                .unwrap_or_default(),
+        }
+    }
+
+    /// `roaming_told` as stored: `NULL` when empty.
+    pub fn told_json(&self) -> Option<String> {
+        (!self.told.is_empty())
+            .then(|| serde_json::to_string(&self.told).expect("a map serializes"))
+    }
+}
+
+/// A report's place for the notice (design 97 §6): `ship` on a 901 network (a place of its own, the most expensive),
+/// else its country, else none.
+pub fn notice_place(report: &RoamingReport) -> Option<String> {
+    if ship_network(report) {
+        return Some("ship".to_string());
+    }
+    report.country.clone()
+}
+
+/// Design 97 §6, the pure rule (D6 as corrected): what one report (`where_is` and its [notice_place]) does to the state,
+/// and the place to tell, if any.
+/// - `abroad` at another place than the last one (or none before): told, unless told within [ROAMING_GUARD]; the place
+///   becomes the last one either way. The same place: nothing. No readable place: the plain notice only when there is
+///   no last place (`plain` becomes it), otherwise nothing.
+/// - `home`: the last place cleared - coming home never tells.
+/// - `unknown` (or anything else): nothing changes.
+///
+/// Told entries older than the guard are dropped whenever the state changes.
+pub fn roaming_edge(
+    state: &RoamingState,
+    where_is: &str,
+    place: Option<&str>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> (RoamingState, Option<String>) {
+    let now_ms = now.timestamp_millis();
+    let fresh = |told: &std::collections::BTreeMap<String, i64>| {
+        told.iter()
+            .filter(|(_, at)| now_ms - **at < ROAMING_GUARD.num_milliseconds())
+            .map(|(p, at)| (p.clone(), *at))
+            .collect::<std::collections::BTreeMap<_, _>>()
+    };
+    match where_is {
+        "home" if state.place.is_some() => (
+            RoamingState {
+                place: None,
+                told: fresh(&state.told),
+            },
+            None,
+        ),
+        "abroad" => {
+            let place = match place {
+                Some(place) => place,
+                None if state.place.is_none() => "plain",
+                None => return (state.clone(), None),
+            };
+            if state.place.as_deref() == Some(place) {
+                return (state.clone(), None);
+            }
+            let mut told = fresh(&state.told);
+            let tell = !told.contains_key(place);
+            if tell {
+                told.insert(place.to_string(), now_ms);
+            }
+            (
+                RoamingState {
+                    place: Some(place.to_string()),
+                    told,
+                },
+                tell.then(|| place.to_string()),
+            )
+        }
+        _ => (state.clone(), None),
+    }
+}
+
+/// A report's `data_roaming` from a launcher with [NETWORK_CAPABILITY] against the phone's roaming state (design 97 §6):
+/// in one transaction, a compare-and-set on the state as read and the raise only when that changed the row (two
+/// parallel reports tell once), as `parent_events::battery_report`. Failures are logged.
+pub async fn roaming_intake(
+    state: &crate::AppState,
+    phone: &crate::parent_events::Phone,
+    report: &RoamingReport,
+) {
+    let Some(where_is) = report.where_is.as_deref() else {
+        return;
+    };
+    let result = async {
+        let mut tx = state.db.begin().await?;
+        let (place, told): (Option<String>, Option<String>) =
+            sqlx::query_as("SELECT roaming_place, roaming_told FROM devices WHERE id = ?")
+                .bind(phone.id)
+                .fetch_one(&mut *tx)
+                .await?;
+        let before = RoamingState::of(place.clone(), told.as_deref());
+        let (after, tell) = roaming_edge(
+            &before,
+            where_is,
+            notice_place(report).as_deref(),
+            phone.now,
+        );
+        if after == before {
+            return Ok::<_, sqlx::Error>(false);
+        }
+        let changed = sqlx::query(
+            "UPDATE devices SET roaming_place = ?, roaming_told = ? \
+             WHERE id = ? AND roaming_place IS ? AND roaming_told IS ?",
+        )
+        .bind(&after.place)
+        .bind(after.told_json())
+        .bind(phone.id)
+        .bind(&place)
+        .bind(&told)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+        let raised = match tell {
+            Some(tell) if changed == 1 => {
+                crate::parent_events::raise(&mut tx, &phone.roaming_started(&tell, phone.now))
+                    .await?
+            }
+            _ => None,
+        };
+        tx.commit().await?;
+        Ok(raised.is_some())
+    };
+    match result.await {
+        Ok(true) => state.push.wake(),
+        Ok(false) => {}
+        Err(err) => {
+            tracing::error!(device_id = phone.id, %err, "can't keep the roaming notice's state")
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -614,6 +767,108 @@ mod tests {
                 .contains("doesn't cover it")
         );
         assert_eq!(roaming_words(Lang::Nb, &roaming(None, None, false)), None);
+    }
+
+    /// Design 97 §6 (D6 as corrected): a run of reports, each `(minutes, where, place)`, and the places told.
+    fn told_in(run: &[(i64, &str, Option<&str>)]) -> Vec<String> {
+        let start = chrono::DateTime::from_timestamp(1_763_100_000, 0).unwrap();
+        let mut state = RoamingState::default();
+        let mut told = Vec::new();
+        for (minutes, where_is, place) in run {
+            let now = start + chrono::Duration::minutes(*minutes);
+            // Each write goes through the columns, as the intake's does.
+            let (after, tell) = roaming_edge(&state, where_is, *place, now);
+            state = RoamingState::of(after.place.clone(), after.told_json().as_deref());
+            assert_eq!(state, after);
+            told.extend(tell);
+        }
+        told
+    }
+
+    #[test]
+    fn a_notice_for_every_crossing_with_the_hours_border_guard() {
+        // Norway -> Sweden -> Denmark -> Sweden, hours apart: three.
+        assert_eq!(
+            told_in(&[
+                (0, "home", None),
+                (60, "abroad", Some("se")),
+                (180, "abroad", Some("dk")),
+                (300, "abroad", Some("se")),
+            ]),
+            ["se", "dk", "se"]
+        );
+        // A border flap within the hour: one. Sweden again after more than an hour: a second.
+        assert_eq!(
+            told_in(&[
+                (0, "abroad", Some("se")),
+                (10, "home", None),
+                (20, "abroad", Some("se")),
+                (30, "home", None),
+                (50, "abroad", Some("se")),
+                (55, "home", None),
+            ]),
+            ["se"]
+        );
+        assert_eq!(
+            told_in(&[
+                (0, "abroad", Some("se")),
+                (10, "home", None),
+                (20, "abroad", Some("se")),
+                (40, "home", None),
+                (70, "abroad", Some("se")),
+            ]),
+            ["se", "se"]
+        );
+        // A ferry: Norway -> ship -> Denmark.
+        assert_eq!(
+            told_in(&[
+                (0, "home", None),
+                (30, "abroad", Some("ship")),
+                (240, "abroad", Some("dk")),
+            ]),
+            ["ship", "dk"]
+        );
+        // `unknown` in between (airplane mode, no service) changes nothing.
+        assert_eq!(
+            told_in(&[
+                (0, "abroad", Some("se")),
+                (60, "unknown", None),
+                (600, "unknown", None),
+                (660, "abroad", Some("se")),
+            ]),
+            ["se"]
+        );
+        // Home, then Sweden: a notice; home never tells.
+        assert_eq!(
+            told_in(&[
+                (0, "home", None),
+                (5, "home", None),
+                (90, "abroad", Some("se"))
+            ]),
+            ["se"]
+        );
+        // No readable country: the plain notice only when no place is open; a country after it is told.
+        assert_eq!(
+            told_in(&[
+                (0, "abroad", None),
+                (10, "abroad", None),
+                (20, "abroad", Some("se")),
+                (30, "abroad", None),
+            ]),
+            ["plain", "se"]
+        );
+        // A 901 network is a place of its own mid-trip too, and the report's place reads it first.
+        assert_eq!(
+            told_in(&[(0, "abroad", Some("dk")), (120, "abroad", Some("ship"))]),
+            ["dk", "ship"]
+        );
+        let ferry = roaming(Some("dk"), Some("901012"), true);
+        assert_eq!(notice_place(&ferry).as_deref(), Some("ship"));
+        assert_eq!(
+            notice_place(&roaming(Some("se"), Some("24001"), true)).as_deref(),
+            Some("se")
+        );
+        assert_eq!(notice_place(&roaming(None, None, true)), None);
     }
 
     #[test]

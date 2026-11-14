@@ -441,6 +441,8 @@ async fn zone_events_go_with_the_location_history() {
         ("zone_arrived", "a"),
         ("zone_left", "b"),
         ("unseen_boot", "c"),
+        // Design 97 §6: a roaming notice names the country - it goes with them.
+        ("roaming_started", "d"),
     ] {
         sqlx::query(
             "INSERT INTO parent_events (device_id, kind, dedup_key, title, summary, target, \
@@ -459,14 +461,14 @@ async fn zone_events_go_with_the_location_history() {
         .await
         .unwrap();
     crate::retention::prune(&app.db).await;
-    assert_eq!(count(&app, "SELECT COUNT(*) FROM parent_events").await, 3);
+    assert_eq!(count(&app, "SELECT COUNT(*) FROM parent_events").await, 4);
     // 7 days: the zone events go, the other kind keeps its 90 days.
     sqlx::query("UPDATE device_policy SET location_retention_days = 7")
         .execute(&app.db)
         .await
         .unwrap();
     let pruned = crate::retention::prune(&app.db).await;
-    assert_eq!(pruned.parent_events, 2);
+    assert_eq!(pruned.parent_events, 3);
     let left: Vec<String> = sqlx::query_scalar("SELECT kind FROM parent_events")
         .fetch_all(&app.db)
         .await

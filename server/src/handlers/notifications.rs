@@ -116,6 +116,7 @@ fn switch_key(column: &str) -> &'static str {
         "push_extra_time" => "settings.notifications.switch.extra_time",
         "push_sms_held" => "settings.notifications.switch.sms_held",
         "push_contact_request" => "settings.notifications.switch.contact_request",
+        "push_roaming" => "settings.notifications.switch.roaming",
         crate::parent_events::APP_UPDATES_SWITCH => "settings.notifications.switch.app_updates",
         _ => "settings.notifications.switch.unknown",
     }

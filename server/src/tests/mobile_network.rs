@@ -440,3 +440,47 @@ async fn the_page_saves_on_its_anchors_and_the_home_form_keeps_bit_32() {
         "{summary}"
     );
 }
+
+/// Design 97 §6: a launcher with `mobile_network_v2` reporting abroad raises one notice per crossing (its key the place
+/// and the instant, to "I utlandet"), a repeat of the same place none, and an older launcher's report none.
+#[tokio::test]
+async fn a_crossing_raises_the_roaming_notice_once() {
+    let app = TestApp::new().await;
+    let (id, token) = app.enrolled_device("Emma").await;
+    let (_, older) = app.enrolled_device("Jack").await;
+    let abroad = |country: &str| {
+        json!({"data_roaming": {"locked": false, "roaming": true, "country": country, "network": "24001",
+                                "enabled": true, "data_active": true, "modems": 1, "where": "abroad"}})
+    };
+    let all = [ROAMING_CAPABILITY, MOBILE_CAPABILITY, NETWORK_CAPABILITY];
+    report(&app, &token, abroad("se"), &all).await;
+    report(&app, &token, abroad("se"), &all).await;
+    report(
+        &app,
+        &older,
+        abroad("se"),
+        &[ROAMING_CAPABILITY, MOBILE_CAPABILITY],
+    )
+    .await;
+    let events: Vec<(i64, String, String, String)> = sqlx::query_as(
+        "SELECT device_id, dedup_key, target, params FROM parent_events WHERE kind = 'roaming_started'",
+    )
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(events.len(), 1, "{events:?}");
+    let (device, key, target, params) = &events[0];
+    assert_eq!(*device, id);
+    assert!(key.starts_with("se:"), "{key}");
+    assert_eq!(target, &format!("/devices/{id}/mobile#abroad"));
+    let params: Value = serde_json::from_str(params).unwrap();
+    assert_eq!(params["place"], "se");
+    assert_eq!(params["phone"], "Emma");
+    let place: Option<String> =
+        sqlx::query_scalar("SELECT roaming_place FROM devices WHERE id = ?")
+            .bind(id)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(place.as_deref(), Some("se"));
+}
