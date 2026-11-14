@@ -78,7 +78,14 @@ Also found and fixed on the same test pass: **`CommandListenerService`'s SSE `Ok
   the server; one silent to the deadline - the watchdog's close or the read's own timeout (QA L1) - is silence after
   the write, as on a fresh one. A `give` also closes every server's connections idle past the limit (QA L4). The pool is evicted on a
   network change and closed at stop (off the main thread); the one deadline per attempt (`DotDeadline`, the
-  handshake included) and the trickle-proof `readFully` stay. DoH: `buildDohClient` - **one OkHttpClient per `CustomDns`, from a fresh
+  handshake included) and the trickle-proof `readFully` stay. **A new DoT connection resumes the last TLS session**
+  (design 95 D7, measured 2026-11-14 - no code of ours): `openDot`'s `SSLSocketFactory.getDefault()` is the process's
+  one Conscrypt context, whose client session cache keys a session by the host string given to `createSocket` (the
+  name, or the IP literal) and the port, and offers it as a TLS 1.3 PSK (~2.2 KB a connection instead of ~5 KB with
+  the chain; Cloudflare every time, Quad9 every other, Google never). A session is cached only from a handshake that
+  passed the system CAs (and, for a name, the name check), and the IP check runs on every connection, resumed too (a
+  resumed session keeps its peer certificates). Keep `openDot` on the default factory and the peer host in `createSocket`: a new `SSLContext` per
+  connection, or `createSocket` without the host, would lose it. DoH: `buildDohClient` - **one OkHttpClient per `CustomDns`, from a fresh
   `OkHttpClient.Builder()` (never `newBuilder()` of the API/SSE clients, which carry tsnet's SOCKS proxy)**,
   `Proxy.NO_PROXY`, `ProtectedSocketFactory` (sockets protected before they connect), `BootstrapDns` as its `Dns`,
   1.5 s connect / 2.5 s call, no redirects, no cache, no cookies, system CAs; a per-call `EventListener` (`CallMarks`)
