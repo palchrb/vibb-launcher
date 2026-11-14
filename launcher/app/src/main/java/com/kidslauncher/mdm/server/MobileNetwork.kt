@@ -60,19 +60,29 @@ enum class Where(val wire: String) {
     HOME("home"),
     ABROAD("abroad"),
 
-    /** Airplane mode, or no registered network: neither home nor abroad. */
+    /** Airplane mode, no registered network, or out of service: neither home nor abroad. */
     UNKNOWN("unknown"),
 }
 
 /**
- * Design 97 §4.1 (Q97-H1, Q97-L3): `UNKNOWN` in airplane mode or with no registered network ([network], the network's
- * MCC+MNC, isn't 5-6 digits); `ABROAD` on a 901 (ship or plane) network, roaming flag or not; `ABROAD` when roaming and
- * not domestic - the SIM's and the network's country ISO equal when both are known (multi-MCC countries), else equal
- * MCCs, and neither known fails toward abroad; `HOME` otherwise (national roaming included).
+ * Design 97 §4.1 (Q97-H1, Q97-L3): `UNKNOWN` in airplane mode, with no registered network ([network], the network's
+ * MCC+MNC, isn't 5-6 digits) or out of service ([inService] `false`: the network's name and the roaming flag can be stale
+ * then - measured on the emulator, a cellular network kept up while out of service read `roaming=false` with the old
+ * operator; `null`, unreadable, doesn't count); `ABROAD` on a 901 (ship or plane) network, roaming flag or not; `ABROAD`
+ * when roaming and not domestic - the SIM's and the network's country ISO equal when both are known (multi-MCC
+ * countries), else equal MCCs, and neither known fails toward abroad; `HOME` otherwise (national roaming included).
  */
-fun whereOf(airplane: Boolean, roaming: Boolean, network: String?, simOperator: String?, netCc: String?, simCc: String?): Where {
+fun whereOf(
+    airplane: Boolean,
+    roaming: Boolean,
+    network: String?,
+    simOperator: String?,
+    netCc: String?,
+    simCc: String?,
+    inService: Boolean? = null,
+): Where {
     val net = network?.takeIf { it.length in 5..6 && it.all(Char::isDigit) }
-    if (airplane || net == null) return Where.UNKNOWN
+    if (airplane || net == null || inService == false) return Where.UNKNOWN
     if (net.startsWith("901")) return Where.ABROAD
     if (!roaming) return Where.HOME
     val netCountry = netCc?.lowercase()?.takeIf { it.isNotEmpty() }
@@ -116,8 +126,9 @@ data class VpnInputs(
 }
 
 /** The best non-VPN network as the launcher sees it: cellular (not Wi-Fi or Ethernet), roaming (no
- * `NET_CAPABILITY_NOT_ROAMING`), and design 97's [abroad] ([whereOf] is `ABROAD`). `null` = none. */
-data class BestNet(val cellular: Boolean, val roaming: Boolean, val abroad: Boolean = false)
+ * `NET_CAPABILITY_NOT_ROAMING`), and design 97's [abroad] ([whereOf] is `ABROAD`) and [unsure] (a cellular network while
+ * [whereOf] is `UNKNOWN`: a doubt, as no network is - [applyShape]). `null` = none. */
+data class BestNet(val cellular: Boolean, val roaming: Boolean, val abroad: Boolean = false, val unsure: Boolean = false)
 
 /** Why the sink shape is wanted now; [wire] is the report's `mobile_data.sink`. */
 enum class SinkReason(val wire: String) {
@@ -183,13 +194,14 @@ fun vpnShape(inputs: VpnInputs, net: BestNet?): VpnShape = when {
 }
 
 /**
- * `apply()`'s decision ([vpnShape] with its own reading of the network). When it can't see a network but the shape
- * last decided ([persisted], by [KidVpnService]'s watcher) is the sink and a sink reason is still configured, it keeps
- * the sink: `apply()` never writes lockdown off on a doubt about the network, only on a change of the inputs (a pause,
- * the parent's choice) or a network it can see.
+ * `apply()`'s decision ([vpnShape] with its own reading of the network). When it can't see a network, or sees a cellular
+ * one it can't place ([BestNet.unsure], design 97: out of service), but the shape last decided ([persisted], by
+ * [KidVpnService]'s watcher) is the sink and a sink reason is still configured, it keeps the sink: `apply()` never writes
+ * lockdown off on a doubt about the network, only on a change of the inputs (a pause, the parent's choice) or a network
+ * it can see and place.
  */
 fun applyShape(inputs: VpnInputs, net: BestNet?, persisted: VpnShape?): VpnShape =
-    if (net == null && persisted == VpnShape.SINK && inputs.anyArmed) {
+    if ((net == null || net.unsure) && persisted == VpnShape.SINK && inputs.anyArmed) {
         VpnShape.SINK
     } else {
         vpnShape(inputs, net)
@@ -220,7 +232,7 @@ fun retriesFailedEstablish(wanted: VpnShape, established: Boolean): Boolean = !e
  * names its configured reason in [sinkReason]'s order (design 97 Q97-M2); otherwise [sinkReason].
  */
 fun reportedSink(inputs: VpnInputs, net: BestNet?, persisted: VpnShape?): SinkReason {
-    if (net != null || persisted != VpnShape.SINK) return sinkReason(inputs, net)
+    if ((net != null && !net.unsure) || persisted != VpnShape.SINK) return sinkReason(inputs, net)
     return when {
         inputs.parentSink -> SinkReason.PARENT
         inputs.abroadArmed -> SinkReason.ABROAD

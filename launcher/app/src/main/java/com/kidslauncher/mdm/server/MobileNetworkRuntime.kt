@@ -140,15 +140,21 @@ object MobileNetworkRuntime {
     // ---- the network ---------------------------------------------------------------------------------------------
 
     /** [BestNet] from a network's capabilities. A VPN's carry its underlying network's transports. Design 97: on
-     * cellular, [BestNet.abroad] from telephony ([whereNow]): registration comes before the data attach. */
+     * cellular, [BestNet.abroad] from telephony ([whereNow]): registration comes before the data attach. [BestNet.unsure]
+     * while `where` is unknown or the network is suspended (out of service - measured on the emulator: the network's
+     * capabilities lose `NOT_SUSPENDED` and gain `NOT_ROAMING` in one update, with a stale operator). The capability, not
+     * `getDataState()`, which lags the callback by some ms both ways (measured), and no permission is needed. */
     fun bestNetOf(context: Context, caps: NetworkCapabilities): BestNet {
         val cellular = caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) &&
             !caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) &&
             !caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
+        val where = if (cellular) whereNow(context) else null
+        val suspended = cellular && !caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_SUSPENDED)
         return BestNet(
             cellular = cellular,
             roaming = cellular && !caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_ROAMING),
-            abroad = cellular && whereNow(context) == Where.ABROAD,
+            abroad = where == Where.ABROAD,
+            unsure = where == Where.UNKNOWN || suspended,
         )
     }
 
@@ -272,10 +278,24 @@ object MobileNetworkRuntime {
             simOperator = runCatching { tm?.simOperator }.getOrNull(),
             netCc = runCatching { tm?.networkCountryIso }.getOrNull(),
             simCc = runCatching { tm?.simCountryIso }.getOrNull(),
+            inService = inService(tm),
         )
     } catch (e: Exception) {
         Where.UNKNOWN
     }
+
+    /** In service on the data SIM: voice in service, or a mobile data registration (a data-only network). `null` when
+     * unreadable (no `READ_PHONE_STATE`, no service state yet). */
+    // `isRegistered` is deprecated from Android 16 for `getNetworkRegistrationState()`, which minSdk 34 lacks; it still works.
+    @Suppress("DEPRECATION")
+    private fun inService(tm: TelephonyManager?): Boolean? = runCatching {
+        val state = tm?.serviceState ?: return@runCatching null
+        state.state == android.telephony.ServiceState.STATE_IN_SERVICE ||
+            state.networkRegistrationInfoList.any {
+                it.transportType == android.telephony.AccessNetworkConstants.TRANSPORT_TYPE_WWAN &&
+                    it.domain and android.telephony.NetworkRegistrationInfo.DOMAIN_PS != 0 && it.isRegistered
+            }
+    }.getOrNull()
 
         /** Design 94 §5's `data_roaming`; `null` (left out) when telephony can't be read at all. */
     fun dataRoamingReport(context: Context): DataRoamingReport? = try {

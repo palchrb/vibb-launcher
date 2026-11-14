@@ -1160,7 +1160,7 @@
   "mobile.abroad.home": "Like at home",
   "mobile.abroad.home_sub": "Mobile data as at home. Can cost a lot outside the EU/EEA.",
   "mobile.abroad.info_label": "About abroad",
-  "mobile.abroad.info": "Only Vibb still uses a little data abroad: Vibb's own, a few hundred KB a day, plus Android's own checks - outside the EU/EEA that can start a day price on a Norwegian plan. No data is zero, except on a ship or plane network that Android doesn't count as roaming; there only Vibb gets data. Calls and SMS are not affected, and a picture message (MMS) waits for Wi-Fi under No data. Open for setup lifts No data and Only Vibb while it runs.",
+  "mobile.abroad.info": "Only Vibb still uses a little data abroad: Vibb's own, a few hundred KB a day, plus Android's own checks - outside the EU/EEA that can start a day price on a Norwegian plan. No data is zero, except on a ship or plane network that Android doesn't count as roaming; there only Vibb gets data. An app can't use mobile data next to Wi-Fi either under No data or Only Vibb. Calls and SMS are not affected, and a picture message (MMS) waits for Wi-Fi under No data. Open for setup lifts No data and Only Vibb while it runs.",
   "mobile.abroad.footer": "Applies outside the SIM card's country. Wi-Fi always works.",
   "mobile.abroad.switch.locked": "Android's roaming switch: off and locked",
   "mobile.abroad.switch.on_locked": "Android's roaming switch: on – locked, {name} can't change it",

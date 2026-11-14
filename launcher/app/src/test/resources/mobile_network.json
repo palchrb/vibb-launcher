@@ -43,7 +43,9 @@
     {"airplane": false, "roaming": true, "network": "24001", "sim_operator": "", "net_cc": "", "sim_cc": "", "where": "abroad"},
     {"airplane": false, "roaming": false, "network": "901012", "sim_operator": "24201", "net_cc": "", "sim_cc": "no", "where": "abroad"},
     {"airplane": false, "roaming": true, "network": "90114", "sim_operator": "24201", "net_cc": "dk", "sim_cc": "no", "where": "abroad"},
-    {"airplane": false, "roaming": false, "network": "24001", "sim_operator": "24201", "net_cc": "se", "sim_cc": "no", "where": "home"}
+    {"airplane": false, "roaming": false, "network": "24001", "sim_operator": "24201", "net_cc": "se", "sim_cc": "no", "where": "home"},
+    {"airplane": false, "roaming": false, "network": "311740", "sim_operator": "24201", "net_cc": "us", "sim_cc": "no", "in_service": false, "where": "unknown"},
+    {"airplane": false, "roaming": true, "network": "311740", "sim_operator": "24201", "net_cc": "us", "sim_cc": "no", "in_service": true, "where": "abroad"}
   ],
   "shapes": [
     {"filter": true, "apps_mobile": "on", "data_roaming": "off", "override": false, "cellular": false, "roaming": false, "shape": "filter", "sink": "off", "lockdown": false},
@@ -81,7 +83,9 @@
     {"filter": true, "apps_mobile": "on", "data_roaming": "off", "abroad": "vibb", "kid": null, "override": false, "cellular": null, "roaming": false, "persisted": "sink", "shape": "sink", "sink": "abroad", "lockdown": true},
     {"filter": true, "apps_mobile": "on", "data_roaming": "phone", "abroad": "home", "kid": "off", "override": false, "cellular": null, "roaming": false, "persisted": "sink", "shape": "sink", "sink": "kid", "lockdown": true},
     {"filter": true, "apps_mobile": "on", "data_roaming": "phone", "abroad": "home", "kid": "on", "override": false, "cellular": null, "roaming": false, "persisted": "sink", "shape": "filter", "sink": "off", "lockdown": false},
-    {"filter": true, "apps_mobile": "on", "data_roaming": "off", "abroad": "vibb", "kid": "on", "override": true, "cellular": null, "roaming": false, "persisted": "sink", "shape": "none", "sink": "off", "lockdown": false}
+    {"filter": true, "apps_mobile": "on", "data_roaming": "off", "abroad": "vibb", "kid": "on", "override": true, "cellular": null, "roaming": false, "persisted": "sink", "shape": "none", "sink": "off", "lockdown": false},
+    {"filter": true, "apps_mobile": "on", "data_roaming": "off", "abroad": "vibb", "kid": "on", "override": false, "cellular": true, "roaming": false, "where": "unknown", "persisted": "sink", "shape": "sink", "sink": "abroad", "lockdown": true},
+    {"filter": true, "apps_mobile": "on", "data_roaming": "off", "abroad": "vibb", "kid": "on", "override": false, "cellular": true, "roaming": false, "where": "unknown", "persisted": "filter", "shape": "filter", "sink": "off", "lockdown": false}
   ],
   "kid_row": [
     {"shown": false, "kid": "off", "lift": false, "parent_vibb": false, "where": "home", "choice": "vibb", "data_enabled": true, "row": "hidden"},

@@ -104,8 +104,10 @@ The migration and the roaming notice's state belong to the server alone and are 
 ### 4.1 Where the phone is
 
 `where(...)` is a pure function, read on the default data SIM. None of the reads needs a permission.
-- `unknown` when airplane mode is on (`Settings.Global.AIRPLANE_MODE_ON`) or there is no registered network
-  (`getNetworkOperator()` isn't 5-6 digits).
+- `unknown` when airplane mode is on (`Settings.Global.AIRPLANE_MODE_ON`), there is no registered network
+  (`getNetworkOperator()` isn't 5-6 digits), or the service state reads out of service (build: the operator and the
+  roaming flag go stale then; the service state needs `READ_PHONE_STATE`, which only phones with managed calls hold, so
+  unreadable doesn't count).
 - `abroad` when the network's MCC is **901**, roaming flag or not (Q97-H1).
 - `abroad` when roaming and not domestic. Domestic: `getSimCountryIso() == getNetworkCountryIso()` when both are
   known, which handles multi-MCC countries (Q97-L3), else equal MCCs. Roaming with neither known counts as abroad
@@ -129,7 +131,9 @@ switch (it counts only while bit 32 is set), and the best non-VPN network.
      flag as roaming (the lock can't cover it), or a session from before the lock;
   3. `roaming`: the lock is on and `net.roaming` while not abroad (a national-roaming session from before the lock);
   4. `kid`: the row is shown and the kid's switch is Off. The pause does not lift it (D4).
-- **Keep the sink on a doubt** (Q97-M2). With no network seen and SINK persisted, the sink stays while any configured,
+- **Keep the sink on a doubt** (Q97-M2). With no network seen - or, found in the build's emulator run, a cellular network
+  that is suspended (no `NET_CAPABILITY_NOT_SUSPENDED`: out of service, where it also gains `NOT_ROAMING` with a stale
+  operator and `where` read home) or whose `where` is `unknown` (`BestNet.unsure`) - and SINK persisted, the sink stays while any configured,
   unlifted reason that doesn't need the network holds: `parentSink || abroadArmed || kidOff`, where `abroadArmed` is
   `choice in {OFF, VIBB} && !lift` (it covers `roamingLocked`). This applies to `apply()` and to the service's cold
   start alike. A flap (a tunnel, a modem restart, airplane on and off, a reboot abroad) never writes lockdown off. The
@@ -330,9 +334,12 @@ existing `off` row, and a new phone's `vibb` with bit 32.
 - **A cellular session next to Wi-Fi** (Q97-M7). With Android's switch on abroad, an app that asks for cellular while
   the phone is on Wi-Fi might get roaming data, as might Android's "switch to mobile data when Wi-Fi is poor". The
   expectation: our VPN is not bypassable, so netd refuses a covered uid's socket on another network (EPERM), and only
-  system uids could. **This is measured in the build's emulator step (§10 test 6), not assumed.** If a normal app gets
-  through, the build stops there and the measured result goes to the user as a decision before anything ships. It
-  affects Bare Vibb and Som hjemme only: under Ingen data, Android refuses roaming data to everyone.
+  system uids could. **Measured in the build (§10 test 6, `docs/testing/emulator.md` §6al): no leak.** On Wi-Fi with
+  roaming data up, an app's `requestNetwork(CELLULAR)` gets the network in 1-2 ms, but binding to it fails with EPERM
+  (`network.openConnection` and `bindSocket` alike) in every VPN shape - filter, pass and sink - under Bare Vibb and Som
+  hjemme. Only with no VPN at all (Som hjemme with the filter off) did it get roaming data (200 in 58 ms) - the parent's
+  own "like at home". Under Ingen data and Bare Vibb the VPN always runs, so the ⓘ says an app can't do it. Android's
+  "switch to mobile data when Wi-Fi is poor" (a system uid) was not measured.
 - **National to foreign roaming without a network change:** no capabilities callback may come, so the abroad sink
   waits for the next `apply()` (at most 30 min). This is rare (a national-roaming area at the border). If a report
   shows it, add 95 §2.2's `ServiceStateListener`.

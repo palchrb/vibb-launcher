@@ -54,6 +54,7 @@ class MobileNetworkTest {
                 simOperator = row.str("sim_operator"),
                 netCc = row.str("net_cc"),
                 simCc = row.str("sim_cc"),
+                inService = if (row.containsKey("in_service")) row.bool("in_service") else null,
             )
             assertEquals("$row", row.str("where"), where.wire)
         }
@@ -104,11 +105,16 @@ class MobileNetworkTest {
                 kidOff = row.opt("kid") == "off",
             )
             val net = row.bool("cellular")?.let {
-                BestNet(cellular = it, roaming = row.bool("roaming")!!, abroad = row.opt("where") == "abroad")
+                BestNet(
+                    cellular = it,
+                    roaming = row.bool("roaming")!!,
+                    abroad = row.opt("where") == "abroad",
+                    unsure = it && row.opt("where") == "unknown",
+                )
             }
             val persisted = VpnShape.of(row.opt("persisted"))
             val shape = applyShape(inputs, net, persisted)
-            if (net != null) assertEquals("$row", vpnShape(inputs, net), shape)
+            if (net != null && persisted == null) assertEquals("$row", vpnShape(inputs, net), shape)
             assertEquals("$row", row.str("shape"), shape.wire)
             assertEquals("$row", row.str("sink"), reportedSink(inputs, net, persisted).wire)
             assertEquals("$row", row.bool("lockdown"), alwaysOnFor(shape).lockdown)

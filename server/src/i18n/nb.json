@@ -1160,7 +1160,7 @@
   "mobile.abroad.home": "Som hjemme",
   "mobile.abroad.home_sub": "Mobildata som hjemme. Kan koste mye utenfor EU/EØS.",
   "mobile.abroad.info_label": "Om utlandet",
-  "mobile.abroad.info": "Bare Vibb bruker fortsatt litt data i utlandet: Vibbs egen, noen hundre KB om dagen, pluss Androids egne sjekker - utenfor EU/EØS kan det starte en dagspris på et norsk abonnement. Ingen data er null, unntatt på et skips- eller flynett som Android ikke regner som roaming; der får bare Vibb data. Samtaler og SMS påvirkes ikke, og en bildemelding (MMS) venter på Wi-Fi under Ingen data. Åpne for oppsett opphever Ingen data og Bare Vibb mens det varer.",
+  "mobile.abroad.info": "Bare Vibb bruker fortsatt litt data i utlandet: Vibbs egen, noen hundre KB om dagen, pluss Androids egne sjekker - utenfor EU/EØS kan det starte en dagspris på et norsk abonnement. Ingen data er null, unntatt på et skips- eller flynett som Android ikke regner som roaming; der får bare Vibb data. En app får heller ikke mobildata ved siden av Wi-Fi under Ingen data eller Bare Vibb. Samtaler og SMS påvirkes ikke, og en bildemelding (MMS) venter på Wi-Fi under Ingen data. Åpne for oppsett opphever Ingen data og Bare Vibb mens det varer.",
   "mobile.abroad.footer": "Gjelder utenfor landet SIM-kortet hører til. Wi-Fi virker alltid.",
   "mobile.abroad.switch.locked": "Androids roamingbryter: av og låst",
   "mobile.abroad.switch.on_locked": "Androids roamingbryter: på – låst, {name} kan ikke endre den",
