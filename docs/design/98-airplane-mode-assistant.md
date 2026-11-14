@@ -1202,7 +1202,22 @@ Those come from the RC on the Jelly Star, through the reports, with no adb and n
   - Without it, the phone's door is never wider than the PWA's.
   - If the user wants it: it is a new length on both sides, in the PWA too, and the server's check grows. Size XS-S.
 
-Still awaiting the user's confirmation: D1, D2, D3, D4, D6, D7, D10, D11 and D13. Decided: D5 (design 99), D8, D9, D12.
+**Decided by the user (2026-11-14), all as recommended** - this is what is built:
+
+- D1: bit 64 on in a new phone's default mask; the row hidden until the assistant step is done.
+- D2: the QR page's "Ferdig" step offers "Åpne for oppsett nå".
+- D3: airplane mode stays off after 112; no turn-on for 10 minutes or in emergency callback mode; the line in the
+  emergency notice.
+- D4: no battery saver.
+- D5: Snarveier is design 99 (not here).
+- D6: no Flymodus from the PWA.
+- D7: no push when the kid turns airplane mode on.
+- D8: as replaced in revision 3 (Vibb never ends airplane mode for a rule; turning it on always allowed).
+- D9: accepted (the assist gesture does nothing while the phone is open for setup).
+- D10: Samtalefilter without adb, in the setup window.
+- D11: no Foreldrekode when only the budget locks.
+- D12: Foreldrekode as specified.
+- D13: no "Til <end>" choice - the PWA's 15/30/60/120 minutes only.
 
 ## 14. Design QA (`docs/review/qa-98-design.md`): how each finding was handled
 
