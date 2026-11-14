@@ -36,8 +36,11 @@ import com.kidslauncher.mdm.apps.AppFilter.Companion.AppSetVisibility
 import com.kidslauncher.mdm.databinding.ItemKidHiddenAppBinding
 import com.kidslauncher.mdm.databinding.ActivityKidSettingsBinding
 import com.kidslauncher.mdm.preferences.LauncherPreferences
+import com.kidslauncher.mdm.server.CachedPolicy
+import com.kidslauncher.mdm.server.KidMobileRow
 import com.kidslauncher.mdm.server.LockReason
 import com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
+import com.kidslauncher.mdm.server.MobileNetworkRuntime
 import com.kidslauncher.mdm.server.QuickControls
 import com.kidslauncher.mdm.server.SoundChoice
 import com.kidslauncher.mdm.server.SoundNote
@@ -141,6 +144,12 @@ class KidSettingsActivity : UIObjectActivity() {
     private val wifiListener = CompoundButton.OnCheckedChangeListener { _, checked ->
         QuickControls.setWifiEnabled(this, checked)
         setManageEnabled(binding.kidSettingsWifiManage, checked)
+    }
+
+    /** Design 97 §4.3: the kid's Mobildata switch - On is mobile data for every allowed app, Off only Vibb One. */
+    private val mobileListener = CompoundButton.OnCheckedChangeListener { _, checked ->
+        MobileNetworkRuntime.setKidOff(this, !checked)
+        renderControls(section ?: return@OnCheckedChangeListener)
     }
 
     private val bluetoothListener = CompoundButton.OnCheckedChangeListener { _, checked ->
@@ -346,7 +355,9 @@ class KidSettingsActivity : UIObjectActivity() {
         val picksShown = renderPicks(rows?.sound == true)
         val touchShown = renderTouch(rows?.touch == true)
         // Mask 0: no card and no heading - there is simply nothing to show.
-        val anyRow = rows != null && (rows.wifi || rows.bluetooth || rows.brightness || soundShown || picksShown || touchShown)
+        val mobileShown = renderMobile(rows?.mobileData == true)
+        val anyRow = rows != null &&
+            (rows.wifi || rows.bluetooth || rows.brightness || soundShown || picksShown || touchShown || mobileShown)
         binding.kidSettingsControlsHeading.visibility =
             if (section == ControlsSection.NoneEnabled || (rows != null && !anyRow)) View.GONE else View.VISIBLE
         binding.kidSettingsControlsMessage.visibility = if (message != null) View.VISIBLE else View.GONE
@@ -374,6 +385,29 @@ class KidSettingsActivity : UIObjectActivity() {
         if (rows?.brightness == true) {
             binding.kidSettingsBrightnessSeekbar.progress = QuickControls.currentBrightness(this)
         }
+    }
+
+    /** Design 97 §4.3: the kid's Mobildata row ([kidMobileRow]) when the parent's bit 32 is on. Returns whether it shows. */
+    private fun renderMobile(wanted: Boolean): Boolean {
+        val row = if (wanted) MobileNetworkRuntime.kidRowNow(this, (cachedPolicy() as? CachedPolicy.Ok)?.policy) else KidMobileRow.HIDDEN
+        binding.kidSettingsMobileRow.visibility = if (row != KidMobileRow.HIDDEN) View.VISIBLE else View.GONE
+        if (row == KidMobileRow.HIDDEN) return false
+        val clickable = row == KidMobileRow.ON || row == KidMobileRow.OFF
+        // Showing the state must not store a choice.
+        binding.kidSettingsMobileSwitch.setOnCheckedChangeListener(null)
+        binding.kidSettingsMobileSwitch.isChecked = row == KidMobileRow.ON
+        binding.kidSettingsMobileSwitch.setOnCheckedChangeListener(mobileListener)
+        binding.kidSettingsMobileSwitch.isEnabled = clickable
+        binding.kidSettingsMobileSwitch.alpha = if (clickable) 1.0f else 0.5f
+        val line = when (row) {
+            KidMobileRow.PARENT -> R.string.kid_settings_mobile_parent
+            KidMobileRow.PHONE_OFF -> R.string.kid_settings_mobile_phone_off
+            KidMobileRow.OFF -> R.string.kid_settings_mobile_off
+            KidMobileRow.ON, KidMobileRow.HIDDEN -> null
+        }
+        binding.kidSettingsMobileLine.visibility = if (line != null) View.VISIBLE else View.GONE
+        line?.let { binding.kidSettingsMobileLine.setText(it) }
+        return true
     }
 
     /**
@@ -542,6 +576,7 @@ class KidSettingsActivity : UIObjectActivity() {
             binding.kidSettingsHeader.kidHeaderTitle, binding.kidSettingsWallpaperHeading, binding.kidSettingsWallpaperCaption,
             binding.kidSettingsLookHeading, binding.kidSettingsLookCaption,
             binding.kidSettingsControlsHeading, binding.kidSettingsControlsMessage, binding.kidSettingsWifiSwitch,
+            binding.kidSettingsMobileSwitch, binding.kidSettingsMobileLine,
             binding.kidSettingsBluetoothSwitch, binding.kidSettingsBrightnessLabel, binding.kidSettingsSoundLabel,
             binding.kidSettingsSoundNote, binding.kidSettingsTouchSounds, binding.kidSettingsTouchVibration,
             binding.kidSettingsTouchReadOnly, binding.kidSettingsTouchKeyboard, binding.kidSettingsLocationLine,

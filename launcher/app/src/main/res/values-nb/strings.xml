@@ -302,6 +302,10 @@
     <string name="kid_settings_touch_sounds">Lyd ved trykk</string>
     <string name="kid_settings_touch_vibration">Vibrasjon ved trykk</string>
     <string name="kid_settings_touch_keyboard">Tastaturet har egen lyd og vibrasjon i sine innstillinger.</string>
+    <string name="kid_settings_mobile_data">Mobildata</string>
+    <string name="kid_settings_mobile_parent">Bestemt av mamma og pappa</string>
+    <string name="kid_settings_mobile_phone_off">Mobildata er slått av på telefonen</string>
+    <string name="kid_settings_mobile_off">Bare Vibb One bruker mobildata. Wi-Fi virker som før.</string>
     <string name="kid_settings_touch_read_only">Kan ikke endres på denne telefonen ennå.</string>
     <!-- Barnets ringetone og meldingslyd (2026-11-04). -->
     <string name="kid_settings_ringtone">Ringetone</string>

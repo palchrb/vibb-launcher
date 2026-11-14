@@ -344,6 +344,10 @@
     <string name="kid_settings_touch_sounds">Touch sounds</string>
     <string name="kid_settings_touch_vibration">Vibrate on touch</string>
     <string name="kid_settings_touch_keyboard">The keyboard has its own sound and vibration in its settings.</string>
+    <string name="kid_settings_mobile_data">Mobile data</string>
+    <string name="kid_settings_mobile_parent">Set by mum and dad</string>
+    <string name="kid_settings_mobile_phone_off">Mobile data is off on the phone</string>
+    <string name="kid_settings_mobile_off">Only Vibb One uses mobile data. Wi-Fi works as before.</string>
     <string name="kid_settings_touch_read_only">Can\'t be changed on this phone yet.</string>
     <!-- The kid's ringtone and message sound (2026-11-04): the rows, their value when none is set or unnamed, the picker's lines. -->
     <string name="kid_settings_ringtone">Ringtone</string>

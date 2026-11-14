@@ -77,6 +77,37 @@ object MobileNetworkRuntime {
         mdm.vpnInputsR4(encodeInputsR4(inputs))
     }
 
+    /** Design 97 §4.3: the kid's row now, from the cached policy (null without an accepted one: [shown] false). */
+    fun kidRowNow(context: Context, policy: com.kidslauncher.mdm.server.dto.PolicyResponse?): KidMobileRow {
+        val shown = policy != null && policy.quickControlsMask and QuickControlFeature.MOBILE_DATA != 0L
+        if (!shown) return KidMobileRow.HIDDEN
+        return kidMobileRow(
+            shown = true,
+            kidOff = runCatching { LauncherPreferences.mdm().kidMobileOff() }.getOrDefault(false),
+            lift = OfflineOverride.isActive() || RestrictionsPause.isActive(),
+            parentVibb = parentSinkOn(policy?.appsMobile, overrideActive = false),
+            where = whereNow(context),
+            choice = abroadChoice(policy?.abroad, policy?.dataRoaming),
+            dataEnabled = runCatching { dataTelephony(context)?.isDataEnabled }.getOrNull(),
+        )
+    }
+
+    /**
+     * Design 97 §4.3, the kid's tap: the choice stored and written into the VPN's second record before the shape is
+     * re-decided, so the service, `apply()` and [sinkWanted] read one source (Q97-M3); then the VPN reshapes and a sync
+     * reports it. Only while the row is shown, so the bit is set.
+     */
+    fun setKidOff(context: Context, off: Boolean) {
+        val mdm = LauncherPreferences.mdm()
+        mdm.kidMobileOff(off)
+        val inputs = storedInputs().copy(kidOff = off)
+        mdm.vpnInputsR4(encodeInputsR4(inputs))
+        // A shape other than NONE needs the service: it decides from the stored inputs (serviceShape) and writes
+        // always-on for it; a NONE it stops by itself.
+        if (vpnShape(inputs, bestNet(context)) != VpnShape.NONE || storedShape() != VpnShape.NONE) KidVpnService.start(context)
+        CommandListenerService.requestSync(context, "kid mobile data")
+    }
+
     /** Design 97 §4.3: the kid's Off counts while the row is shown ([mask] bit 32); no lift touches it (D4). */
     fun kidOff(mask: Long?): Boolean =
         mask != null && mask and QuickControlFeature.MOBILE_DATA != 0L &&
@@ -220,7 +251,7 @@ object MobileNetworkRuntime {
 
     // ---- the report ----------------------------------------------------------------------------------------------
 
-    private fun dataTelephony(context: Context): TelephonyManager? {
+    fun dataTelephony(context: Context): TelephonyManager? {
         val tm = context.getSystemService(TelephonyManager::class.java) ?: return null
         val sub = SubscriptionManager.getDefaultDataSubscriptionId()
         return if (sub == SubscriptionManager.INVALID_SUBSCRIPTION_ID) tm else tm.createForSubscriptionId(sub)
@@ -268,11 +299,13 @@ object MobileNetworkRuntime {
         null
     }
 
-    /** Design 95 rev. 3's `mobile_data`. */
+    /** Design 95 rev. 3's `mobile_data`; design 97's `kid` while the row is shown in the cached policy. */
     fun mobileDataReport(context: Context): MobileDataReport = MobileDataReport(
         enabled = runCatching { dataTelephony(context)?.isDataEnabled }.getOrNull(),
         sink = reportedSink(storedInputs(), bestNet(context), storedShape()).wire,
         settingsLocked = restricted(context, UserManager.DISALLOW_CONFIG_MOBILE_NETWORKS),
-        kid = null,
+        kid = (cachedPolicy() as? CachedPolicy.Ok)?.policy?.quickControlsMask
+            ?.takeIf { it and QuickControlFeature.MOBILE_DATA != 0L }
+            ?.let { if (runCatching { LauncherPreferences.mdm().kidMobileOff() }.getOrDefault(false)) "off" else "on" },
     )
 }
