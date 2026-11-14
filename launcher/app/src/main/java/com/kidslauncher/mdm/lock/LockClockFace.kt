@@ -30,7 +30,8 @@ import kotlin.math.roundToInt
  * The lock's clock face - the clock, the date and the next alarm's line - as one piece shared by the glance page
  * ([GlancePanel]) and the time-rule screen (`ui/LockActivity`, launcher round L6: the two screens read as one design).
  * Without a clock profile the centred 56 sp clock and the long date; on a phone with one (design 59d step L,
- * [glanceClockProfile]) Android's small clock - Nunito Light at the profile's size, the short date capitalised, all
+ * [glanceClockProfile]; since design 96 every phone from 271 dp wide to a tablet's 600 dp has one, measured or general)
+ * Android's small clock - Nunito Light at the profile's size, the short date capitalised, all
  * left-aligned and placed in the window's coordinates under the keyguard status bar ([place]), so the clock stands in
  * the same spot on both screens. Information only: nothing here is a control.
  *
@@ -55,13 +56,15 @@ class LockClockFace(
 ) {
     /** What the face places where the date was: the glance's date row, else the date. */
     private val dateBox: View get() = dateRow ?: date
-    /** Design 59d step L: Android's small clock's geometry on this phone, else `null` (the centred clock). */
+    /** Design 59d step L: Android's small clock's geometry on this phone - measured, or since design 96 the general one
+     * from AOSP's dimensions -, else `null` (the centred clock: a screen too narrow, or a tablet's). */
     val profile: ClockGeometry? = try {
         val density = context.resources.displayMetrics.density
         val widthDp = context.resources.configuration.screenWidthDp
         glanceClockProfile(Build.MODEL, Build.MANUFACTURER, density, widthDp).also {
-            // JL-6: a phone with no profile says so once (nothing here is personal).
+            // JL-6: a phone without a measured profile says so once, with what was looked at (nothing here is personal).
             if (it == null) Log.i(logTag, "Glance clock: no profile (model ${Build.MODEL}, maker ${Build.MANUFACTURER}, density $density, width $widthDp dp) - the centred clock")
+            else if (it.general) Log.i(logTag, "Glance clock: no measured profile (model ${Build.MODEL}, maker ${Build.MANUFACTURER}, density $density, width $widthDp dp) - the general one")
         }
     } catch (e: Throwable) {
         null

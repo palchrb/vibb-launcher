@@ -213,9 +213,9 @@ class LockGlanceTest {
         assertEquals(24f, glanceHandleViewHeightDp(glanceHandle(EMULATOR_PIXEL_CLOCK)), 0.01f)
         assertEquals(20f, glanceHandleViewHeightDp(DEFAULT_GLANCE_HANDLE), 0.01f)
     }
-    /** Design 59d step L: Android's small clock's geometry by phone, measured at 240 dpi; else the centred clock. */
+    /** Design 59d step L: Android's small clock's geometry by phone, measured at 240 dpi; else design 96's general one. */
     @Test
-    fun `the clock profile - the emulator's Pixel and the Jelly Star at 240 dpi, else none`() {
+    fun `the measured clock profiles - the emulator's Pixel and the Jelly Star at 240 dpi, else none`() {
         assertEquals(EMULATOR_PIXEL_CLOCK, glanceClockProfile("sdk_gphone64_x86_64", "Google", 1.5f, 320))
         assertEquals(EMULATOR_PIXEL_CLOCK, glanceClockProfile("sdk_gphone16k_arm64", "Google", 1.5f, 320))
         // JL-6: the Jelly Star's model string isn't verified - spaces, underscores and case don't matter.
@@ -227,8 +227,8 @@ class LockGlanceTest {
         // The pure AOSP image (`default`, AVD aosp36): "Android SDK built for x86_64" by "unknown".
         assertEquals(AOSP_EMULATOR_CLOCK, glanceClockProfile("Android SDK built for x86_64", "unknown", 1.5f, 320))
         assertEquals(AOSP_EMULATOR_CLOCK, glanceClockProfile("Android SDK built for arm64", "unknown", 1.5f, 320))
-        assertNull("AOSP's model by another maker", glanceClockProfile("Android SDK built for x86_64", "Google", 1.5f, 320))
-        assertNull("the AOSP image at its own 160 dpi", glanceClockProfile("Android SDK built for x86_64", "unknown", 1f, 480))
+        assertNull("AOSP's model by another maker", measuredClockProfile("Android SDK built for x86_64", "Google", 1.5f, 320))
+        assertNull("the AOSP image at its own 160 dpi", measuredClockProfile("Android SDK built for x86_64", "unknown", 1f, 480))
         // The AOSP emulator's numbers: the digits' ink rows 104-196 (93, as Pixel's 180-272) on a baseline at 197 px
         // under a 36 px status bar (the keyguard's bar 60 px), the "1"'s ink at x 56; the date 56 px under the clock's
         // baseline (AOSP's face shows none).
@@ -237,13 +237,13 @@ class LockGlanceTest {
         assertEquals("the ink at x 56", 56f, a.clockInkStartDp * 1.5f, 0.1f)
         assertEquals("the baseline at 197 px", 197f, profileBaselinePx(keyguardStatusBarPx(36, 0, 1.5f), a.clockBaselineBelowBarDp, 1.5f), 0.1f)
         assertEquals("the date's baseline 56 px under the clock's", 56f, (a.dateBaselineBelowBarDp - a.clockBaselineBelowBarDp) * 1.5f, 0.1f)
-        assertNull("the AVD's own 320 dpi: not measured", glanceClockProfile("sdk_gphone64_x86_64", "Google", 2f, 240))
+        assertNull("the AVD's own 320 dpi: not measured", measuredClockProfile("sdk_gphone64_x86_64", "Google", 2f, 240))
         // JL-6: keyed on the width in dp too - the six-inch AVD at 240 dpi (411 dp) or a "Display size" change.
-        assertNull("411 dp at 240 dpi", glanceClockProfile("sdk_gphone64_x86_64", "Google", 1.5f, 411))
-        assertNull("320 dp at another density", glanceClockProfile("sdk_gphone64_x86_64", "Google", 2f, 320))
-        assertNull("a real Pixel", glanceClockProfile("Pixel 7", "Google", 1.5f, 320))
-        assertNull("another maker's emulator name", glanceClockProfile("sdk_gphone64_x86_64", "Unihertz", 1.5f, 320))
-        assertNull(glanceClockProfile(null, null, 1.5f, 320))
+        assertNull("411 dp at 240 dpi", measuredClockProfile("sdk_gphone64_x86_64", "Google", 1.5f, 411))
+        assertNull("320 dp at another density", measuredClockProfile("sdk_gphone64_x86_64", "Google", 2f, 320))
+        assertNull("a real Pixel", measuredClockProfile("Pixel 7", "Google", 1.5f, 320))
+        assertNull("another maker's emulator name", measuredClockProfile("sdk_gphone64_x86_64", "Unihertz", 1.5f, 320))
+        assertNull(measuredClockProfile(null, null, 1.5f, 320))
         // The emulator Pixel's numbers (59d §8.11): Android's digits 92 px high on a baseline 137 px under the keyguard's
         // status bar (273 px on handy36), the first digit's ink at x 49-53 ("1"-"5"); the date's at x 50 on a baseline
         // 193 px under it (329 px).
@@ -254,6 +254,55 @@ class LockGlanceTest {
         assertEquals(p.dateBaselineBelowBarDp, a.dateBaselineBelowBarDp)
         assertEquals("the ink's target is within 2 px of Android's \"1\" and \"5\"", 51f, p.clockInkStartDp * 1.5f, 0.01f)
         assertEquals("Nunito's digits are 0.712 em: 92 px at 1.5", 92f, 0.712f * p.clockDp * 1.5f, 1f)
+    }
+
+    /**
+     * Design 96: every other phone takes the general profile, computed from AOSP SystemUI's dimensions in dp - the same
+     * numbers at any density and width -, Google's font bearing on a Google phone and the AOSP image's on the others.
+     * It reproduces the measured profiles; it gives way to the centred clock only where Nunito Light's widest clock
+     * would not end inside the face's 16 dp padding, or on a tablet's width.
+     */
+    @Test
+    fun `the general clock profile - AOSP's dimensions reproduce the measured profiles, for any density and width`() {
+        // The AOSP values (customization and SystemUI dimens.xml, Android 14-16).
+        assertEquals(listOf(86f, 18f, 28f), listOf(AOSP_SMALL_CLOCK_TEXT_DP, AOSP_KEYGUARD_CLOCK_TOP_MARGIN_DP, AOSP_CLOCK_PADDING_START_DP))
+        assertEquals(GlanceHandle(108f, 4f, 10f, 0.92f), AOSP_GLANCE_HANDLE)
+        // The measured profiles, reproduced within 0.1 dp (the name and the flag aside).
+        val pixel = generalClockProfile("Google", 320)!!
+        val aosp = generalClockProfile("unknown", 320)!!
+        for ((general, measured) in listOf(pixel to EMULATOR_PIXEL_CLOCK, aosp to AOSP_EMULATOR_CLOCK, generalClockProfile("Unihertz", 320)!! to JELLY_STAR_CLOCK)) {
+            val g = listOf(general.clockInkStartDp, general.clockBaselineBelowBarDp, general.clockDp, general.dateStartDp, general.dateBaselineBelowBarDp, general.dateSp)
+            val m = listOf(measured.clockInkStartDp, measured.clockBaselineBelowBarDp, measured.clockDp, measured.dateStartDp, measured.dateBaselineBelowBarDp, measured.dateSp)
+            for (i in g.indices) assertEquals("${measured.name} [$i]", m[i], g[i], 0.1f)
+            assertEquals(measured.handle, general.handle)
+            assertTrue(general.general)
+            assertFalse(measured.general)
+        }
+        assertEquals(listOf("general Pixel", "general AOSP"), listOf(pixel.name, aosp.name))
+        // The measured ones take precedence where they match; everything else is general, whatever the density.
+        assertEquals(EMULATOR_PIXEL_CLOCK, glanceClockProfile("sdk_gphone64_x86_64", "Google", 1.5f, 320))
+        assertEquals(pixel, glanceClockProfile("Pixel 9 Pro XL", "Google", 3.5f, 320))
+        assertEquals("the 6.1\" emulator at 420 dpi", "general Pixel", glanceClockProfile("sdk_gphone64_x86_64", "Google", 2.625f, 411)?.name)
+        assertEquals("a Jelly Star at another display size", "general AOSP", glanceClockProfile("Jelly Star", "Unihertz", 1.75f, 274)?.name)
+        assertEquals("general AOSP", glanceClockProfile("moto g84 5G", "motorola", 2.75f, 393)?.name)
+        assertEquals("general AOSP", glanceClockProfile(null, null, 2f, 360)?.name)
+        // A 411 dp phone: the same dp as at 320 - the clock's ink 34 dp in, its baseline 91.3 dp under the keyguard bar,
+        // which is the 40 dp floor at 3.5 (a 24 dp status bar, 84 px): 140 + 319.6 = 459.6 px.
+        val wide = glanceClockProfile("sdk_gphone64_x86_64", "Google", 3.5f, 411)!!
+        assertEquals(34f, wide.clockInkStartDp, 0.01f)
+        assertEquals(459.6f, profileBaselinePx(keyguardStatusBarPx(84, 0, 3.5f), wide.clockBaselineBelowBarDp, 3.5f), 0.1f)
+        assertTrue(generalClockFits(wide.clockInkStartDp, wide.clockDp, 411))
+        // The bound: Nunito Light's widest "HH:mm" (2.619 em less a "4"'s 0.053 em bearing) ends inside the 16 dp
+        // padding from 271 dp (Google) / 274 dp (others); a 270 dp phone keeps the centred clock, which fits there.
+        assertEquals("general Pixel", glanceClockProfile("Pixel", "Google", 2f, 271)?.name)
+        assertNull(glanceClockProfile("Pixel", "Google", 2f, 270))
+        assertEquals("general AOSP", glanceClockProfile("Phone", "Nokia", 2f, 274)?.name)
+        assertNull(glanceClockProfile("Phone", "Nokia", 2f, 273))
+        assertNull("the narrow 270 dp class", glanceClockProfile("sdk_gphone64_x86_64", "Google", 2f, 270))
+        // A tablet's width: AOSP's sw600dp resources (the split shade) - not this model.
+        assertEquals("general AOSP", glanceClockProfile("Phone", "Nokia", 2f, 599)?.name)
+        assertNull(glanceClockProfile("Tablet", "Lenovo", 2f, 600))
+        assertNull(glanceClockProfile("Pixel Fold", "Google", 2.625f, 673))
     }
 
     /**
