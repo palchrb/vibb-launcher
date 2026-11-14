@@ -46,6 +46,9 @@ data class TimeRule(
     /** Design 93 §9.2: the card shows this rule ahead of the kind order while its own end is a real unlock. True on a
      * turned-on rule only; missing is false. */
     val cardFirst: Boolean = false,
+    /** Design 98 §4.4.2: on a rule turned on now (a copy, negative [id]), the rule it copies - the parent code's pause
+     * pauses both, as the PWA's twin lift does. Missing - a scheduled rule, or an older server - pauses the copy alone. */
+    val copyOf: Long? = null,
 )
 
 /** Design 93 §9.3: the launcher honours `until_ms` and `card_first` (the server's `lock_now::CAPABILITY`). */
@@ -65,6 +68,9 @@ data class Lift(
     val ruleId: Long? = null,
     val minutes: Int = 0,
     val expiresAtMs: Long = 0,
+    /** Design 98 §4.4.3: the parent code's pause this phone posted. Such a lift lifts only through this phone's own
+     * record of the key ([phonePauseLifts]), never through a [LiftRecord]; missing - the PWA's lifts - as before. */
+    val phoneKey: String? = null,
 )
 
 const val TARGET_RULE = "rule"

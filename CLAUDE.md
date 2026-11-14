@@ -303,6 +303,20 @@ its pure functions; the server's `tests::airplane_mode` posts the reports and ch
 `emergency.line`, and `intake_limits` keeps the reports' keys; both compare the copies. No policy key: bit 64 rides in
 `quick_controls_mask`.
 
+The parent code's pause of the rule in force on the phone (design 98 §4.4, Foreldrekode) is
+`server/testdata/rule_pause.json`, byte-identical in `launcher/app/src/test/resources/`: `capability` (`rule_pause_v1`),
+`lengths` (the PWA's `RULE_LIFT_MINUTES`), `policy` (the top-level `rule_pause: true`, a copy's `copy_of` and the lifts
+with `phone_key`), `request` (the exact `POST /api/devices/rule-pause` body), `answers` (each body's status and answer:
+accepted, a retry's same ids, `over`, `unknown_rule`, the refused 400s; its instants are moved to the last minutes),
+`phone_answers` (the phone's action for each: `acked`, `done`, `retry`), `plan_zone`/`plan_policy`/`plans` (the
+offered lengths and each rule's own end, a copy paused with the rule it copies) and `adopt` (whether a pause still
+lifts: before the post, acked, ended in the app before any policy carried it, a reboot, pruned, the clock set back).
+The launcher's `RulePauseTest` encodes `request` exactly and runs every row through `rulePausePlan`,
+`rulePauseAction` and `phonePauseLifts`; the server's `tests::rule_pause` posts the bodies and produces every answer,
+checks the `time_lifts` rows and the security event, and serves `policy`'s lift keys; both compare the copies.
+`lock_now.json`'s copy rows carry `copy_of`. The policy's `rule_pause`, `lifts[].phone_key` and `rules[].copy_of` are
+pinned by `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTest`.
+
 ## CI and releases
 
 - `.github/workflows/launcher.yml`, `server-ci.yml` and `music.yml` run on every push/PR, but their build job
@@ -310,7 +324,7 @@ its pure functions; the server's `tests::airplane_mode` posts the reports and ch
   (`launcher.yml` also on `.github/actions/build-tsnet/` and the music files its tests read: the bridge, the
   shared snapshots, the three `spotify_hosts.json`, `server/testdata/time_status_report.json`,
   `dns_upstream_status.json`, `power_report.json`, `zone_status_report.json`, `launcher_tag_codes.json`,
-  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json`, `server_url_vectors.json`, `restrictions_pause.json`, `server_tls_report.json`, `sms_contract.json`, `contact_request.json`, `app_logos.json`, `lock_now.json`, `mobile_network.json`, `status_heartbeat.json` and `airplane_mode.json`, `music/gradle/` and `music.yml`, and the server's and music's `storytel_token_answers.json`, and `server/testdata/doh_hosts.txt`, and `scripts/yr-symbols.py` with its vendored `yr-symbols-11.svg` (the changes job runs its `--selftest` always); `music.yml` also on the shared
+  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json`, `server_url_vectors.json`, `restrictions_pause.json`, `server_tls_report.json`, `sms_contract.json`, `contact_request.json`, `app_logos.json`, `lock_now.json`, `mobile_network.json`, `status_heartbeat.json`, `airplane_mode.json` and `rule_pause.json`, `music/gradle/` and `music.yml`, and the server's and music's `storytel_token_answers.json`, and `server/testdata/doh_hosts.txt`, and `scripts/yr-symbols.py` with its vendored `yr-symbols-11.svg` (the changes job runs its `--selftest` always); `music.yml` also on the shared
   `server/testdata/music_*.json` and `spotify_hosts.json`, the launcher's copy of the bridge AIDL,
   `bridge_contract.json` and `spotify_hosts.json`, `server/testdata/spotify/`, `scripts/fake-sonos.py`,
   `scripts/fake-storytel.py`, `scripts/fake-spotify.py`, `scripts/fake-audio.py`, `scripts/music-splash.py`
@@ -319,7 +333,7 @@ its pure functions; the server's `tests::airplane_mode` posts the reports and ch
   `server-ci.yml`'s build job also on the apps' `spotify_hosts.json` and `storytel_token_answers.json` copies and
   the launcher's `time_status_report.json`,
   `dns_upstream_status.json`, `power_report.json`, `zone_status_report.json`, `launcher_tag_codes.json`,
-  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json`, `server_url_vectors.json`, `restrictions_pause.json`, `server_tls_report.json`, `sms_contract.json`, `contact_request.json`, `app_logos.json`, `lock_now.json`, `mobile_network.json`, `status_heartbeat.json` and `airplane_mode.json`, and the launcher's `assets/dns/doh_hosts.txt`, and `scripts/mmsc-hosts.py` with its `scripts/mmsc-hosts-sample.xml` (the changes job runs its `--selftest` always);
+  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json`, `server_url_vectors.json`, `restrictions_pause.json`, `server_tls_report.json`, `sms_contract.json`, `contact_request.json`, `app_logos.json`, `lock_now.json`, `mobile_network.json`, `status_heartbeat.json`, `airplane_mode.json` and `rule_pause.json`, and the launcher's `assets/dns/doh_hosts.txt`, and `scripts/mmsc-hosts.py` with its `scripts/mmsc-hosts-sample.xml` (the changes job runs its `--selftest` always);
   `server-ci.yml`'s
   `server-image` job only when `server/Dockerfile`, `server/.dockerignore`, `server/deploy/image-smoke.sh`, `server/deploy/distrusted-roots.txt` or
   the workflow changed). The server's Rust (`toolchain: 1.99.0`) is pinned in `server-ci.yml` and

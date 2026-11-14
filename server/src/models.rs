@@ -1363,6 +1363,9 @@ pub struct PolicyResponse {
     pub status_heartbeat_fields: &'static [&'static str],
     /// Design 95 §3.5: this server takes a gzip'd status report (`Content-Encoding: gzip`), always `true`.
     pub status_gzip: bool,
+    /// Design 98 §4.4.6: this server takes `POST /api/devices/rule-pause`, so the phone offers Foreldrekode on the
+    /// time-rule screen; always `true`. An older launcher ignores it.
+    pub rule_pause: bool,
     /// Design 76 D2: the certificate check for a launcher with `server_pin_v1` (`server_tls::policy`): `{}` while
     /// watching (no `enforce`: the phone keeps its flag), `{"enforce": true}` on, `{"enforce": false}` the parent's
     /// off. Left out for an older launcher.

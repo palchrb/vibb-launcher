@@ -610,6 +610,7 @@ pub(crate) async fn build_policy(
         status_heartbeat: state.config.status_heartbeat,
         status_heartbeat_fields: crate::status_heartbeat::HEARTBEAT_FIELDS,
         status_gzip: true,
+        rule_pause: true,
         server_tls,
     })
 }

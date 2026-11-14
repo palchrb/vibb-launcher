@@ -118,6 +118,10 @@ pub struct PolicyTimeRule {
     /// Design 93 §9.2: the card shows this rule ahead of the kind order while its end is a real
     /// unlock; true on a turned-on rule only.
     pub card_first: bool,
+    /// Design 98 §4.4.2: on a rule turned on now (a copy), the rule it copies - the phone's parent-code pause pauses
+    /// both, as the PWA's twin lift does. Absent on a scheduled rule; an older launcher ignores it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub copy_of: Option<i64>,
 }
 
 /// `PolicyResponse.time_policy.lifts[]`. `rule_id` null with target "rule" = every rule.
@@ -128,6 +132,10 @@ pub struct PolicyLift {
     pub rule_id: Option<i64>,
     pub minutes: i64,
     pub expires_at_ms: i64,
+    /// Design 98 §4.4.3: the parent code's pause on the phone (`POST /api/devices/rule-pause`) - the phone lifts it
+    /// only through its own record of that key. Absent on the PWA's lifts; an older launcher ignores it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub phone_key: Option<String>,
 }
 
 /// `PolicyResponse.time_policy` - always sent.
@@ -193,6 +201,7 @@ impl TimeRuleRow {
             ),
             until_ms: None,
             card_first: false,
+            copy_of: None,
         })
     }
 }
@@ -991,13 +1000,16 @@ pub async fn rules_off(
     Ok(ids.into_iter().collect())
 }
 
+/// A `time_lifts` row as [deliverable_lifts] reads it: id, target, rule, minutes, expiry (ms), the phone's key.
+type LiftRow = (i64, String, Option<i64>, i64, i64, Option<String>);
+
 /// Lifts the phone should still see: not ended early, not expired.
 pub async fn deliverable_lifts(
     db: &SqlitePool,
     device_id: i64,
 ) -> Result<Vec<PolicyLift>, sqlx::Error> {
-    let rows: Vec<(i64, String, Option<i64>, i64, i64)> = sqlx::query_as(
-        "SELECT id, target, rule_id, minutes, CAST(strftime('%s', expires_at) AS INTEGER) * 1000 \
+    let rows: Vec<LiftRow> = sqlx::query_as(
+        "SELECT id, target, rule_id, minutes, CAST(strftime('%s', expires_at) AS INTEGER) * 1000, phone_key \
          FROM time_lifts WHERE device_id = ? AND ended_early_at IS NULL \
          AND expires_at > datetime('now') ORDER BY id",
     )
@@ -1006,13 +1018,16 @@ pub async fn deliverable_lifts(
     .await?;
     Ok(rows
         .into_iter()
-        .map(|(id, target, rule_id, minutes, expires_at_ms)| PolicyLift {
-            id,
-            target,
-            rule_id,
-            minutes,
-            expires_at_ms,
-        })
+        .map(
+            |(id, target, rule_id, minutes, expires_at_ms, phone_key)| PolicyLift {
+                id,
+                target,
+                rule_id,
+                minutes,
+                expires_at_ms,
+                phone_key,
+            },
+        )
         .collect())
 }
 

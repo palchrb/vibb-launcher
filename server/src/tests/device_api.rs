@@ -359,6 +359,7 @@ async fn policy_json_keys_snapshot() {
             "packages_to_uninstall",
             "pending_command",
             "quick_controls_mask",
+            "rule_pause",
             "screen_timeout_seconds",
             "status_gzip",
             "status_heartbeat",
@@ -397,6 +398,7 @@ async fn policy_json_keys_snapshot() {
         "notification_auto_cancel",
         "packages_to_uninstall",
         "quick_controls_mask",
+        "rule_pause",
         "screen_timeout_seconds",
         "status_gzip",
         "status_heartbeat",
@@ -407,6 +409,9 @@ async fn policy_json_keys_snapshot() {
     ] {
         assert!(!object[non_null].is_null(), "{non_null} is null");
     }
+    // Design 98 §4.4.6: this server takes the phone's parent-code pause; a lift's `phone_key` is pinned with it
+    // (`tests::rule_pause`, `rule_pause.json`'s `policy`).
+    assert_eq!(object["rule_pause"], serde_json::json!(true));
 
     // The launcher's CallPolicy DTO: every key present and non-null, also when unmanaged.
     let call_policy = object["call_policy"].as_object().unwrap();
@@ -547,7 +552,8 @@ async fn policy_json_keys_snapshot() {
             "until_ms"
         ]
     );
-    // Design 93 §9.3: a scheduled rule's absolute end and card choice, always explicit.
+    // Design 93 §9.3: a scheduled rule's absolute end and card choice, always explicit. Design 98 §4.4.2: `copy_of`
+    // only on a rule turned on now (`lock_now::tests::the_served_copy_and_twin`, `lock_now.json`).
     assert_eq!(rule["until_ms"], serde_json::Value::Null);
     assert_eq!(rule["card_first"], serde_json::json!(false));
     assert_eq!(rule["calendar_allowed"], serde_json::json!(true));
