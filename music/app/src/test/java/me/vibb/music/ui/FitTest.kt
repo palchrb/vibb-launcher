@@ -41,6 +41,32 @@ class FitTest {
     }
 
     @Test
+    fun `S2 - below the Jelly Star the narrow row fits the screen with its sides, previous and next at 48 dp, never overlapping`() {
+        // 270 dp (the narrow 4" class): 238 dp of room, the narrow row's 256 dp reaching 9 dp into each 16 dp side
+        val room = available(270f)
+        val row = controlRow(room)
+        assertEquals(CONTROLS_NARROW, row)
+        assertEquals(256, CONTROLS_NARROW.width)
+        assertTrue("previous and next keep the touch target", CONTROLS_NARROW.skip >= 48)
+        assertTrue("play the largest", CONTROLS_NARROW.play > CONTROLS_NARROW.skip && CONTROLS_NARROW.skip >= CONTROLS_NARROW.side)
+        assertEquals(9f, controlBleed(row, room), 0.001f)
+        val edges = controlEdges(row, room + 2 * controlBleed(row, room))
+        assertTrue("4 dp or more from the screen's edge", SCREEN_SIDE_DP - controlBleed(row, room) >= 4f)
+        for (i in 0 until edges.size - 1) assertTrue("no overlap", edges[i + 1].first - edges[i].second >= row.gap - 0.001f)
+        // the Jelly Star and up reach nowhere
+        for (screen in widths) assertEquals(0f, controlBleed(controlRow(available(screen)), available(screen)), 0f)
+        // narrower still: scaled down, within the room with the sides, never overlapping
+        for (screen in listOf(240f, 256f, 262f)) {
+            val r = available(screen)
+            val scaled = controlRow(r)
+            assertTrue("$screen: ${scaled.width}", scaled.width <= r + 2 * CONTROLS_BLEED_MAX_DP)
+            assertTrue(scaled.play >= scaled.skip && scaled.skip >= scaled.side)
+        }
+        val player = moduleFile("src/main/java/me/vibb/music/ui/PlayerScreen.kt").readText()
+        assertTrue(player.contains("Row(Modifier.bleed(controlBleed(row, maxWidth.value).dp).fillMaxWidth()"))
+    }
+
+    @Test
     fun `the player uses the rule and round buttons never give in`() {
         val player = moduleFile("src/main/java/me/vibb/music/ui/PlayerScreen.kt").readText()
         assertTrue(player.contains("val row = controlRow(maxWidth.value)"))
@@ -142,6 +168,27 @@ class FitTest {
         val jelly = flexWidths(288 - 16, listOf(1f, 1f, 1.2f), listOf(bar(liste), bar(sov), 0))
         assertTrue("Telefonen", jelly[2] >= bar(66.8f))
         assertTrue("The phone", jelly[2] >= bar(69.9f))
+    }
+
+    @Test
+    fun `S7 - the output's name stays whole while Liste and Sov have room to give`() {
+        val liste = 32.0f
+        val sov = 24.7f
+        val telefonen = 66.8f
+        // the Jelly Star at font 1.3 (the bar's text 1.3 times wider) and the 270 dp phone at 1.0
+        for ((room, scale) in listOf(288 - 16 to 1.3f, 238 - 16 to 1f)) {
+            val mins = listOf(bar(liste * scale), bar(sov * scale))
+            val own = bar(telefonen * scale)
+            val w = flexWidths(room, listOf(1f, 1f, 1.2f), mins + shrinkerMin(own, room, mins.sum()))
+            assertTrue("$room dp at $scale: Telefonen whole (${w[2]} >= $own)", w[2] >= own)
+            assertTrue(w[0] >= mins[0] && w[1] >= mins[1])
+            assertEquals(room, w.sum())
+        }
+        // no room left by the others: it gives way to nothing below zero
+        assertEquals(0, shrinkerMin(100, 120, 130))
+        assertEquals(40, shrinkerMin(100, 120, 80))
+        val player = moduleFile("src/main/java/me/vibb/music/ui/PlayerScreen.kt").readText()
+        assertTrue(player.contains("if (shrinks[i]) shrinkerMin(w, available, fixed) else w"))
     }
 
     @Test

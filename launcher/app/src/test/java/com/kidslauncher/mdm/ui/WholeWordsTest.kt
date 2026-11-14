@@ -254,8 +254,8 @@ class WholeWordsTest {
         // re-fits on a text change; it never changes the text itself.
         val code = File(main, "java/com/kidslauncher/mdm/ui/WholeWordText.kt").readText()
         for (needed in listOf(
-            ".setBreakStrategy(breakStrategy)", ".setHyphenationFrequency(hyphenationFrequency)",
-            "WholeWords.cutLines(", "WholeWords.shownLines(maxLines, lines)", "WholeWords.breakOpportunities(source, textLocale)",
+            ".setBreakStrategy(breakStrategy)", ".setHyphenationFrequency(frequency)",
+            "WholeWords.cutLines(", "WholeWords.wholeCheckedLines(maxLines, lines)", "WholeWords.breakOpportunities(source, textLocale)",
             "transformationMethod = method", "if (textSize != fit.sizePx)", "if (!fitState.due(source, width)) return",
             "state?.sizeSet(adjusting, textSize)", "if (state?.textChanged(adjusting) == true) requestLayout()",
         )) assertTrue(needed, needed in code)
@@ -318,6 +318,25 @@ class WholeWordsTest {
         assertEquals(2, WholeWords.shownLines(2, 2))
         assertEquals(1, WholeWords.shownLines(2, 1))
         assertEquals(3, WholeWords.shownLines(-1, 3))
+    }
+
+    @Test
+    fun `whole words first, then the view's hyphens, then the ellipsis - the last shown line's word counts (S4, S6)`() {
+        val sizes = WholeWords.sizes(40f)
+        // Whole at the base size: no shrink, hyphens off.
+        assertEquals(WholeWords.Fit(40f, false, hyphens = false), WholeWords.fitPreferWhole(40f, { true }, { true }))
+        // "Telefon-/bok" at 1.3 on a 270 dp phone: a little smaller and whole rather than hyphenated at full size.
+        assertEquals(WholeWords.Fit(sizes[1], false, hyphens = false), WholeWords.fitPreferWhole(40f, { it <= sizes[1] }, { false }))
+        // No size keeps every word whole: the view's own hyphenation, as before ("Innstillin-ger" at 2.0).
+        assertEquals(WholeWords.Fit(40f, false, hyphens = true), WholeWords.fitPreferWhole(40f, { false }, { false }))
+        assertEquals(WholeWords.Fit(30f, true, hyphens = true), WholeWords.fitPreferWhole(40f, { false }, { true }))
+        // The checked lines: one more than shown, so a one-line title's "Meldin|ger" is a cut...
+        assertEquals(2, WholeWords.wholeCheckedLines(1, 2))
+        assertTrue(WholeWords.cutLines("Meldinger", intArrayOf(6, 9), floatArrayOf(60f, 30f), floatArrayOf(60f, 30f), 3f, WholeWords.wholeCheckedLines(1, 2), { false }))
+        // ...but a line ending between words before the ellipsis is not, and a text that fits checks all its lines.
+        assertFalse(WholeWords.cutLines("Ny melding", intArrayOf(3, 10), floatArrayOf(20f, 50f), floatArrayOf(24f, 50f), 3f, WholeWords.wholeCheckedLines(1, 2), { false }))
+        assertEquals(2, WholeWords.wholeCheckedLines(2, 2))
+        assertEquals(3, WholeWords.wholeCheckedLines(2, 5))
     }
 
     @Test

@@ -117,10 +117,18 @@ open class DayActivity : KidPageActivity() {
         binding.dayAdd.setOnClickListener { startActivity(EventEditActivity.newIntent(this, shownDay())) }
     }
 
-    /** The "+" while the kid may add events and their calendar is there to write to (§1b). */
+    /** The "+" while the kid may add events and their calendar is there to write to (§1b). With it the pager ends
+     * above it (screen-size fix S9, 2026-11-14: at rest the "+" lay over the last card in view), so no card is ever
+     * under it; without it the pager reaches the bottom. */
     private fun renderAdd() {
         val shown = CalendarStore.kidCalendar() != null && CalendarStore.canWrite(this)
         binding.dayAdd.visibility = if (shown) android.view.View.VISIBLE else android.view.View.GONE
+        val clear = if (shown) (ADD_CLEAR_DP * resources.displayMetrics.density).toInt() else 0
+        val params = binding.dayPager.layoutParams as android.view.ViewGroup.MarginLayoutParams
+        if (params.bottomMargin != clear) {
+            params.bottomMargin = clear
+            binding.dayPager.layoutParams = params
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -254,6 +262,9 @@ open class DayActivity : KidPageActivity() {
 
         /** The pager's side padding (dp); with the page's 3 dp the neighbours' cards peek 10 dp. */
         const val PAGER_PAD_DP = 13
+
+        /** The pager's bottom margin while the "+" shows (S9): its 56 dp and 20 dp margin, and a 4 dp gap above it. */
+        const val ADD_CLEAR_DP = 80
 
         /**
          * The one way to open Dagen - Home's tile and the lock's glance (the reminder row, after the code): a task of

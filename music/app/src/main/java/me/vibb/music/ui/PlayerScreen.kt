@@ -60,6 +60,7 @@ import me.vibb.music.logic.SKIP_BACK_MS
 import me.vibb.music.logic.SKIP_FORWARD_MS
 import me.vibb.music.logic.skipSeconds
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
@@ -187,10 +188,11 @@ fun PlayerScreen(
             TimeRow.CONNECTING -> stringResource(R.string.connecting)
         }
         SeekBar(positionMs, now.durationMs, stringResource(R.string.seek), status, onSeek)
-        // v12's sizes where they fit, v15's compact ones on a 320 dp phone: always round, play centred.
+        // v12's sizes where they fit, v15's compact ones on a 320 dp phone, the narrow ones below it (S2, reaching into
+        // the screen's sides): always round, play centred.
         BoxWithConstraints(Modifier.fillMaxWidth()) {
             val row = controlRow(maxWidth.value)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(row.gap.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.bleed(controlBleed(row, maxWidth.value).dp).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(row.gap.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
                 // design 50 §1.1: what resumes gets "15 s tilbake" / "15 s fram" in the side slots; music gets design
                 // 49's shuffle (left) and repeat (right), peach when on - controlSlots decides (49 §1.1); a Spotify artist
                 // context repeat only (Spotify picks)
@@ -281,6 +283,14 @@ const val SKIP_GLYPH_DP = 20
 const val SKIP_NUMBER_DP = 7
 const val SKIP_NUMBER_DROP_DP = 1
 
+/** S2: the content is measured [side] wider on each side than its room and placed centred on it, reaching into the
+ * screen's side padding (the narrow control row, [controlBleed]); the layout keeps its room's width. */
+private fun Modifier.bleed(side: Dp): Modifier = if (side <= 0.dp) this else layout { measurable, constraints ->
+    val extra = 2 * side.roundToPx()
+    val placeable = measurable.measure(constraints.copy(minWidth = constraints.minWidth + extra, maxWidth = constraints.maxWidth + extra))
+    layout(constraints.maxWidth, placeable.height) { placeable.place(-extra / 2, 0) }
+}
+
 /**
  * A row of [weights] sharing the width, each child at least as wide as its content unless it
  * [shrinks] ([flexWidths]), [gap] apart; as tall as the tallest child.
@@ -290,7 +300,10 @@ private fun FlexBar(weights: List<Float>, shrinks: List<Boolean>, gap: Dp, conte
     Layout(content, Modifier.fillMaxWidth()) { measurables, constraints ->
         val gapPx = gap.roundToPx()
         val available = (constraints.maxWidth - gapPx * (measurables.size - 1)).coerceAtLeast(0)
-        val mins = measurables.mapIndexed { i, m -> if (shrinks[i]) 0 else m.maxIntrinsicWidth(constraints.maxHeight) }
+        val own = measurables.map { it.maxIntrinsicWidth(constraints.maxHeight) }
+        val fixed = own.filterIndexed { i, _ -> !shrinks[i] }.sum()
+        // S7: a shrinking slot keeps its whole name while the others' mins leave room for it
+        val mins = own.mapIndexed { i, w -> if (shrinks[i]) shrinkerMin(w, available, fixed) else w }
         val widths = flexWidths(available, weights, mins)
         val placeables = measurables.mapIndexed { i, m -> m.measure(Constraints.fixedWidth(widths[i])) }
         val height = placeables.maxOfOrNull { it.height } ?: 0

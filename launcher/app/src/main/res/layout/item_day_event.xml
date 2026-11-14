@@ -1,9 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- A Dagen row (design 69 §2.1, mockup dagen.html §1): the calendar's 8 dp dot in its own 14 dp column (mockup §6 B,
      2026-10-27: invisible, never gone, without a colour, so the start and the end time of every row share one left
-     edge), the start in peach over the end (dim), the title (15 sp, two lines at most) and the second line (13 sp
+     edge), the start in peach over the end (dim), the title (15 sp, three lines at most) and the second line (13 sp
      dim, two lines at most) - the location, else the description's first sentence; a small "›" at the right edge
-     only when something was cut. One TalkBack node: the row. -->
+     only when something was cut. One TalkBack node: the row. Both texts keep their words whole (WholeWordTextView,
+     screen-size fix S3: on a 270 dp phone at font 1.3 "Fotballtr/ening" broke mid-word): a word too wide for the
+     column makes the text a little smaller, and the title takes a third line rather than an ellipsis. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/day_event"
     android:layout_width="match_parent"
@@ -66,17 +68,17 @@
         android:importantForAccessibility="noHideDescendants"
         android:orientation="vertical">
 
-        <TextView
+        <com.kidslauncher.mdm.ui.WholeWordTextView
             android:id="@+id/day_event_title"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:ellipsize="end"
             android:fontFamily="@font/nunito_extrabold"
-            android:maxLines="2"
+            android:maxLines="3"
             android:textColor="@color/kid_page_ink"
             android:textSize="15sp" />
 
-        <TextView
+        <com.kidslauncher.mdm.ui.WholeWordTextView
             android:id="@+id/day_event_second"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
