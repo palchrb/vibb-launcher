@@ -141,3 +141,67 @@ fun prunedPeriods(periods: List<AirplanePeriod>, nowMs: Long): List<AirplanePeri
  * rule starts, ends, is paused or lifted (the kid could be on a flight). `rules.edges` pins it. */
 @Suppress("UNUSED_PARAMETER")
 fun airplaneActionAtRuleEdge(edge: String, airplaneOn: Boolean): String? = null
+
+/** §4.1: the kid's Flymodus row ([wire] = `airplane_mode.json`'s `state`). */
+enum class AirplaneRowState(val wire: String) {
+    HIDDEN("hidden"),
+    OFF_ONLY("off_only"),
+    RESTRICTED("restricted"),
+    BUSY_ON("busy_on"),
+    BUSY_OFF("busy_off"),
+    EMERGENCY("emergency"),
+    COOLDOWN("cooldown"),
+    FAILED("failed"),
+    ON_WIFI("on_wifi"),
+    ON_OFFLINE("on_offline"),
+    OFF("off"),
+    ;
+
+    /** The switch as it is (busy: as it will be). */
+    val checked: Boolean get() = this == OFF_ONLY || this == BUSY_ON || this == ON_WIFI || this == ON_OFFLINE
+
+    /** A plain tap does something: on, off, Off-only, try again. */
+    val clickable: Boolean get() = this == OFF || this == OFF_ONLY || this == ON_WIFI || this == ON_OFFLINE || this == FAILED
+
+    /** Off at 50 %: the parent decides, or right after an emergency call. */
+    val dimmed: Boolean get() = this == RESTRICTED || this == EMERGENCY
+}
+
+/** §4.1: a failed turn-on's line shows this long (or until the next tap). */
+const val AIRPLANE_FAILED_LINE_MS = 60_000L
+
+/**
+ * §4.1's states in priority order. The row shows with bit 64 and the role, and - Off-only (Q98-M5) - whenever airplane
+ * mode is on, whatever the bit and the role. [busy] `on`/`off` while §2.2/§2.3 runs. [lastError] with its age: the
+ * emergency refusal for [RECENT_EMERGENCY_CALL_MS], the cool-down for [AIRPLANE_COOLDOWN_MS], a failure for
+ * [AIRPLANE_FAILED_LINE_MS].
+ */
+fun airplaneRow(bit: Boolean, role: Boolean, restricted: Boolean, on: Boolean, wifiUp: Boolean, busy: String?, lastError: String?, errorAgeMs: Long?): AirplaneRowState {
+    val full = bit && role
+    if (!on && !full) return AirplaneRowState.HIDDEN
+    if (busy == "off") return AirplaneRowState.BUSY_OFF
+    if (busy == "on") return AirplaneRowState.BUSY_ON
+    if (on && !full) return AirplaneRowState.OFF_ONLY
+    if (restricted) return AirplaneRowState.RESTRICTED
+    if (on) return if (wifiUp) AirplaneRowState.ON_WIFI else AirplaneRowState.ON_OFFLINE
+    val age = errorAgeMs ?: Long.MAX_VALUE
+    return when {
+        lastError == AirplaneError.EMERGENCY && age in 0 until RECENT_EMERGENCY_CALL_MS -> AirplaneRowState.EMERGENCY
+        lastError == AirplaneError.COOLDOWN && age in 0 until AIRPLANE_COOLDOWN_MS -> AirplaneRowState.COOLDOWN
+        (lastError == AirplaneError.TIMEOUT || lastError == AirplaneError.ROUTE_MISSING) && age in 0 until AIRPLANE_FAILED_LINE_MS -> AirplaneRowState.FAILED
+        else -> AirplaneRowState.OFF
+    }
+}
+
+/** §4.1: the line under the row (nb + en), `null` for none. */
+fun airplaneLineRes(state: AirplaneRowState): Int? = when (state) {
+    AirplaneRowState.OFF_ONLY -> com.kidslauncher.mdm.R.string.kid_settings_airplane_off_only
+    AirplaneRowState.RESTRICTED -> com.kidslauncher.mdm.R.string.kid_settings_airplane_parent
+    AirplaneRowState.BUSY_ON -> com.kidslauncher.mdm.R.string.kid_settings_airplane_turning_on
+    AirplaneRowState.BUSY_OFF -> com.kidslauncher.mdm.R.string.kid_settings_airplane_turning_off
+    AirplaneRowState.EMERGENCY -> com.kidslauncher.mdm.R.string.kid_settings_airplane_emergency
+    AirplaneRowState.FAILED -> com.kidslauncher.mdm.R.string.kid_settings_airplane_failed
+    AirplaneRowState.ON_WIFI -> com.kidslauncher.mdm.R.string.kid_settings_airplane_on_wifi
+    AirplaneRowState.ON_OFFLINE -> com.kidslauncher.mdm.R.string.kid_settings_airplane_on_offline
+    AirplaneRowState.COOLDOWN, AirplaneRowState.OFF, AirplaneRowState.HIDDEN -> null
+}

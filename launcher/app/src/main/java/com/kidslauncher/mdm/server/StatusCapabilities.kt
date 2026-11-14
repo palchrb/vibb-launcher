@@ -69,6 +69,9 @@ val STATUS_CAPABILITIES: List<String> = listOf(
     // Design 93: a rule's `until_ms` (gone from that instant) and `card_first` (the card names it while its end is a
     // real unlock). The server shows its rc.8 warning ("Skole gjelder allerede…") only without it.
     com.kidslauncher.mdm.timerules.LOCK_NOW_CAPABILITY,
+    // Design 98: `airplane_mode` in every full report and the kid's Flymodus row (bit 64); the server's Home page shows
+    // its switch only for a phone claiming it.
+    com.kidslauncher.mdm.assistant.AIRPLANE_MODE_CAPABILITY,
     // Design 94: the policy's `data_roaming` (DISALLOW_DATA_ROAMING, the relock) and `data_roaming` in every report.
     DATA_ROAMING_CAPABILITY,
     // Design 95 rev. 3: the policy's `apps_mobile` (Bare Vibb, the VPN's sink) and `mobile_settings_locked`

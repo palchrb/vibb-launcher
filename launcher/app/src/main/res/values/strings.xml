@@ -872,4 +872,16 @@
         <item quantity="one">%d step left</item>
         <item quantity="other">%d steps left</item>
     </plurals>
+    <!-- Design 98 §4.1: the kid's Flymodus row. -->
+    <string name="kid_settings_airplane">Airplane mode</string>
+    <string name="kid_settings_airplane_off_only">Turn off airplane mode</string>
+    <string name="kid_settings_airplane_parent">Set by mum and dad</string>
+    <string name="kid_settings_airplane_turning_on">Turning on airplane mode…</string>
+    <string name="kid_settings_airplane_turning_off">Turning off…</string>
+    <string name="kid_settings_airplane_emergency">Airplane mode can\'t be turned on right after an emergency call</string>
+    <string name="kid_settings_airplane_failed">Couldn\'t turn on airplane mode. Try again.</string>
+    <string name="kid_settings_airplane_on_wifi">No mobile network. Wi-Fi is on. Emergency calls still work.</string>
+    <string name="kid_settings_airplane_on_offline">No network. Emergency calls still work.</string>
+    <string name="kid_settings_wifi_airplane">Can\'t be changed in airplane mode</string>
+    <string name="kid_settings_mobile_airplane">Airplane mode is on</string>
 </resources>

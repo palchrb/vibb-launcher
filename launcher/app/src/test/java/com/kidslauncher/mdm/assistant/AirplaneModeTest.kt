@@ -37,11 +37,38 @@ class AirplaneModeTest {
         assertEquals(contract["report_open"], ServerJson.encodeToJsonElement(AirplaneModeReport.serializer(), open))
     }
 
+    /** §4.1: every `rows` row through [airplaneRow] and the section through `controlsSection`. */
+    @Test
+    fun `the kid's row and the section follow every row`() {
+        for (row in contract["rows"]!!.jsonArray.map { it.jsonObject }) {
+            val maskElement = row["mask"]!!
+            val mask = if (maskElement is JsonNull) null else maskElement.jsonPrimitive.content.toLong()
+            val role = row["role"]!!.jsonPrimitive.content.toBoolean()
+            val on = row["on"]!!.jsonPrimitive.content.toBoolean()
+            val bit = mask != null && mask and com.kidslauncher.mdm.server.QuickControlFeature.AIRPLANE != 0L
+            val state = airplaneRow(
+                bit, role, row["restricted"]!!.jsonPrimitive.content.toBoolean(), on, row["wifi_up"]!!.jsonPrimitive.content.toBoolean(),
+                row.str("busy"), row.str("last_error"), row.str("error_age_ms")?.toLong(),
+            )
+            assertEquals(row.str("case"), row.str("state"), state.wire)
+            val cached = if (mask == null) com.kidslauncher.mdm.server.CachedPolicy.Absent
+            else com.kidslauncher.mdm.server.CachedPolicy.Ok(com.kidslauncher.mdm.server.dto.PolicyResponse(quickControlsMask = mask))
+            val section = when (com.kidslauncher.mdm.ui.kidsettings.controlsSection(true, cached, role, on)) {
+                com.kidslauncher.mdm.ui.kidsettings.ControlsSection.NoneEnabled -> "none"
+                com.kidslauncher.mdm.ui.kidsettings.ControlsSection.NoPolicyYet -> "no_policy"
+                is com.kidslauncher.mdm.ui.kidsettings.ControlsSection.Rows -> "rows"
+                else -> "other"
+            }
+            assertEquals(row.str("case"), row.str("section"), section)
+        }
+    }
+
     @Test
     fun `the capability and the bit`() {
         assertEquals(contract.str("capability"), AIRPLANE_MODE_CAPABILITY)
         assertEquals(contract["bit"]!!.jsonPrimitive.content.toLong(), com.kidslauncher.mdm.server.QuickControlFeature.AIRPLANE)
         assertTrue(contract["rows"]!!.jsonArray.isNotEmpty())
+        assertTrue(AIRPLANE_MODE_CAPABILITY in com.kidslauncher.mdm.server.STATUS_CAPABILITIES)
     }
 
     @Test

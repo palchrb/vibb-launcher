@@ -783,4 +783,16 @@
         <item quantity="one">%d steg igjen</item>
         <item quantity="other">%d steg igjen</item>
     </plurals>
+    <!-- Design 98 §4.1: barnets Flymodus-rad. -->
+    <string name="kid_settings_airplane">Flymodus</string>
+    <string name="kid_settings_airplane_off_only">Slå av flymodus</string>
+    <string name="kid_settings_airplane_parent">Bestemt av mamma og pappa</string>
+    <string name="kid_settings_airplane_turning_on">Slår på flymodus…</string>
+    <string name="kid_settings_airplane_turning_off">Slår av…</string>
+    <string name="kid_settings_airplane_emergency">Etter en nødsamtale kan ikke flymodus slås på ennå</string>
+    <string name="kid_settings_airplane_failed">Fikk ikke slått på flymodus. Prøv igjen.</string>
+    <string name="kid_settings_airplane_on_wifi">Ingen mobilnett. Wi-Fi er på. Nødsamtaler virker.</string>
+    <string name="kid_settings_airplane_on_offline">Ingen nett. Nødsamtaler virker.</string>
+    <string name="kid_settings_wifi_airplane">Kan ikke endres i flymodus</string>
+    <string name="kid_settings_mobile_airplane">Flymodus er på</string>
 </resources>
