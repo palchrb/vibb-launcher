@@ -372,6 +372,8 @@ pub async fn seed(app: &TestApp, lang: crate::i18n::Lang) -> Family {
         ),
         // Design 83: a contact's picture names an MMS address the parent must allow.
         parent_events::mmsc_host(anna, &phone.name, 1, "Mormor", ago(122)),
+        // Design 97 §6: the phone's first network abroad.
+        phone.roaming_started("se", ago(123)),
     ];
     let kinds: std::collections::BTreeSet<&str> = events.iter().map(|e| e.kind.wire()).collect();
     assert_eq!(kinds.len(), parent_events::Kind::ALL.len(), "every kind");

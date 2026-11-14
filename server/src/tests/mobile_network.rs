@@ -401,6 +401,34 @@ async fn the_page_saves_on_its_anchors_and_the_home_form_keeps_bit_32() {
     );
     // Android's switch on under Som hjemme, the settings lock on: "on - locked, Emma can't change it".
     assert!(html.contains("on – locked, Emma can"), "{html}");
+    // Code QA L5: under Bare Vibb this launcher keeps the derived lock, so no line asks for a step on Android's switch.
+    save(
+        &app,
+        &cookie,
+        id,
+        &[("group", "abroad"), ("abroad", "vibb")],
+    )
+    .await;
+    report(
+        &app,
+        &token,
+        json!({
+            "data_roaming": {"locked": true, "roaming": false, "enabled": false, "data_active": false},
+            "mobile_data": {"enabled": true, "sink": "off", "settings_locked": true},
+        }),
+        &[ROAMING_CAPABILITY, MOBILE_CAPABILITY],
+    )
+    .await;
+    let html = app.get_page(&page, &cookie).await.text();
+    assert!(!html.contains("data-mobile-line=\"switch\""), "{html}");
+    assert!(html.contains("data-hint=\"vibb-update\""));
+    save(
+        &app,
+        &cookie,
+        id,
+        &[("group", "abroad"), ("abroad", "home")],
+    )
+    .await;
 
     // Design 97's launcher: the kid's switch works; the kid's Off and the abroad sink are worded in Norwegian too.
     report(
@@ -419,6 +447,9 @@ async fn the_page_saves_on_its_anchors_and_the_home_form_keeps_bit_32() {
         .await
         .text();
     assert!(!html.contains("data-hint=\"vibb-update\""));
+    // Code QA L6: the kid's Off is said once on the page.
+    assert!(html.contains("data-mobile-line=\"kid-off\""));
+    assert!(!html.contains("data-mobile-line=\"only-vibb-kid\""));
     for words in [
         "Emma har slått mobildata av",
         "Roamer i Sverige",

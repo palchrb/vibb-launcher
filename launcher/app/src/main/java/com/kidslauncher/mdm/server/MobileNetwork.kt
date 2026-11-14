@@ -68,9 +68,10 @@ enum class Where(val wire: String) {
  * Design 97 §4.1 (Q97-H1, Q97-L3): `UNKNOWN` in airplane mode, with no registered network ([network], the network's
  * MCC+MNC, isn't 5-6 digits) or out of service ([inService] `false`: the network's name and the roaming flag can be stale
  * then - measured on the emulator, a cellular network kept up while out of service read `roaming=false` with the old
- * operator; `null`, unreadable, doesn't count); `ABROAD` on a 901 (ship or plane) network, roaming flag or not; `ABROAD`
- * when roaming and not domestic - the SIM's and the network's country ISO equal when both are known (multi-MCC
- * countries), else equal MCCs, and neither known fails toward abroad; `HOME` otherwise (national roaming included).
+ * operator; `null`, unreadable, doesn't count); `ABROAD` on a 901 (ship or plane) network, roaming flag or not; with
+ * both the SIM's and the network's country ISO known, `ABROAD` when they differ and `HOME` when they are equal (multi-MCC
+ * countries, national roaming), roaming flag or not (code QA M2: carrier config can clear the flag for a partner network
+ * abroad); otherwise `ABROAD` when roaming on another MCC than the SIM's (neither known fails toward abroad), else `HOME`.
  */
 fun whereOf(
     airplane: Boolean,
@@ -84,16 +85,14 @@ fun whereOf(
     val net = network?.takeIf { it.length in 5..6 && it.all(Char::isDigit) }
     if (airplane || net == null || inService == false) return Where.UNKNOWN
     if (net.startsWith("901")) return Where.ABROAD
-    if (!roaming) return Where.HOME
     val netCountry = netCc?.lowercase()?.takeIf { it.isNotEmpty() }
     val simCountry = simCc?.lowercase()?.takeIf { it.isNotEmpty() }
-    val domestic = if (netCountry != null && simCountry != null) {
-        netCountry == simCountry
-    } else {
-        val simMcc = simOperator?.take(3)?.takeIf { it.length == 3 && it.all(Char::isDigit) }
-        simMcc == net.take(3)
-    }
-    return if (domestic) Where.HOME else Where.ABROAD
+    // Code QA M2: the country decides when both are known, whatever the roaming flag says - carrier config can clear the
+    // flag for a partner network abroad.
+    if (netCountry != null && simCountry != null) return if (netCountry == simCountry) Where.HOME else Where.ABROAD
+    if (!roaming) return Where.HOME
+    val simMcc = simOperator?.take(3)?.takeIf { it.length == 3 && it.all(Char::isDigit) }
+    return if (simMcc == net.take(3)) Where.HOME else Where.ABROAD
 }
 
 /** Design 95 rev. 3 item 3: `DISALLOW_CONFIG_MOBILE_NETWORKS` while the parent's switch is on, lifted by the pause. An
@@ -171,11 +170,13 @@ enum class VpnShape(val wire: String) {
     }
 }
 
-/** Design 97 §4.2: on cellular only, the first reason that holds - the one order [applyShape] and [reportedSink] use. */
+/** Design 97 §4.2: on cellular only, the first reason that holds - the one order [applyShape] and [reportedSink] use.
+ * Code QA L8: a roaming network that can't be placed ([BestNet.unsure]) counts as abroad while the abroad sink is armed -
+ * fail closed until telephony reads again. */
 fun sinkReason(inputs: VpnInputs, net: BestNet?): SinkReason = when {
     net?.cellular != true -> SinkReason.OFF
     inputs.parentSink -> SinkReason.PARENT
-    inputs.abroadArmed && net.abroad -> SinkReason.ABROAD
+    inputs.abroadArmed && (net.abroad || (net.unsure && net.roaming)) -> SinkReason.ABROAD
     inputs.roamingLocked && net.roaming -> SinkReason.ROAMING
     inputs.kidOff -> SinkReason.KID
     else -> SinkReason.OFF
@@ -215,6 +216,20 @@ fun applyShape(inputs: VpnInputs, net: BestNet?, persisted: VpnShape?): VpnShape
 fun serviceShape(inputs: VpnInputs, watched: BestNet?, live: BestNet?, persisted: VpnShape?): VpnShape =
     applyShape(inputs, watched ?: live, persisted)
 
+/** The sink's reason worth remembering for [reportedSink]'s `held`: the sink decided with a cellular network seen and
+ * placed; `null` otherwise (keep what is stored). */
+fun sinkReasonToHold(inputs: VpnInputs, net: BestNet?, shape: VpnShape): SinkReason? =
+    if (shape == VpnShape.SINK && net != null && !net.unsure) sinkReason(inputs, net).takeIf { it != SinkReason.OFF } else null
+
+/** How often the watcher reads telephony again for the same network with the same capabilities (design 97 code QA L7). */
+const val TELEPHONY_REREAD_MS = 10_000L
+
+/** Code QA L7: the watcher reads telephony ([MobileNetworkRuntime.bestNetOf]) for a new network or a change in what
+ * [BestNet] is made of ([sameCaps] false), and otherwise at most every [TELEPHONY_REREAD_MS] - a cellular network's
+ * frequent bandwidth and signal updates don't each cost the binder calls, while a country change without a capability
+ * change is still seen within that time. */
+fun readsTelephony(sameCaps: Boolean, sinceLastReadMs: Long): Boolean = !sameCaps || sinceLastReadMs !in 0 until TELEPHONY_REREAD_MS
+
 /** The always-on decision written before `establish(wanted)`: lockdown off first when leaving for a non-sink shape;
  * nothing before the sink's tunnel (design 95 §2.2). */
 fun alwaysOnBeforeEstablish(wanted: VpnShape): VpnShape? = wanted.takeIf { it != VpnShape.SINK }
@@ -227,12 +242,24 @@ fun alwaysOnAfterEstablish(wanted: VpnShape): VpnShape? = wanted.takeIf { it == 
 /** A failed `establish()` toward the sink is retried by the service itself (5 s doubling to 5 min). */
 fun retriesFailedEstablish(wanted: VpnShape, established: Boolean): Boolean = !established && wanted == VpnShape.SINK
 
+/** [reason] is still configured: what keeps a held sink naming it (design 97 code QA L1). */
+fun SinkReason.stillArmed(inputs: VpnInputs): Boolean = when (this) {
+    SinkReason.OFF -> false
+    SinkReason.PARENT -> inputs.parentSink
+    SinkReason.ABROAD -> inputs.abroadArmed
+    SinkReason.ROAMING -> inputs.roamingLocked
+    SinkReason.KID -> inputs.kidOff
+}
+
 /**
- * The report's `mobile_data.sink` (code QA L7): with no network seen, a sink that the last decision holds ([persisted])
- * names its configured reason in [sinkReason]'s order (design 97 Q97-M2); otherwise [sinkReason].
+ * The report's `mobile_data.sink` (code QA L7): with no network seen (or one that can't be placed), a sink that the last
+ * decision holds ([persisted]) names the reason it was decided for with a network seen ([held], design 97 code QA L1:
+ * a kid's Off at home stays `kid` through a tunnel, not the first armed `abroad`) while that reason is still configured;
+ * else its configured reason in [sinkReason]'s order (design 97 Q97-M2); otherwise [sinkReason].
  */
-fun reportedSink(inputs: VpnInputs, net: BestNet?, persisted: VpnShape?): SinkReason {
+fun reportedSink(inputs: VpnInputs, net: BestNet?, persisted: VpnShape?, held: SinkReason? = null): SinkReason {
     if ((net != null && !net.unsure) || persisted != VpnShape.SINK) return sinkReason(inputs, net)
+    if (held != null && held.stillArmed(inputs)) return held
     return when {
         inputs.parentSink -> SinkReason.PARENT
         inputs.abroadArmed -> SinkReason.ABROAD
@@ -318,9 +345,9 @@ data class DataRoamingReport(
     val locked: Boolean,
     /** `isNetworkRoaming()` on the default data SIM; `false` with no SIM or no service. */
     val roaming: Boolean,
-    /** The network's country, only while [roaming]; never a home location. */
+    /** The network's country, only while [roaming] or abroad ([roamingPlace]); never a home location. */
     val country: String? = null,
-    /** The network's MCC+MNC, only while [roaming] or on a 901 (ship or plane) network. */
+    /** The network's MCC+MNC, only while [roaming], abroad or on a 901 (ship or plane) network. */
     val network: String? = null,
     /** The data SIM's `isDataRoamingEnabled()`, `null` when unreadable. */
     val enabled: Boolean? = null,
@@ -345,11 +372,13 @@ data class MobileDataReport(
     val kid: String?,
 )
 
-/** Design 94 §5: `country` and `network` only while roaming, `network` also on a 901 network; `""` reads as unknown. */
-fun roamingPlace(roaming: Boolean, country: String?, network: String?): Pair<String?, String?> {
+/** Design 94 §5: `country` and `network` only while roaming or abroad ([away]: design 97 code QA M2, a foreign network
+ * Android doesn't flag as roaming is named too, so the notice names its country), `network` also on a 901 network; `""`
+ * reads as unknown. Never a home location. */
+fun roamingPlace(away: Boolean, country: String?, network: String?): Pair<String?, String?> {
     val net = network?.takeIf { it.isNotEmpty() }
     return Pair(
-        country?.lowercase()?.takeIf { roaming && it.isNotEmpty() },
-        net?.takeIf { roaming || it.startsWith("901") },
+        country?.lowercase()?.takeIf { away && it.isNotEmpty() },
+        net?.takeIf { away || it.startsWith("901") },
     )
 }

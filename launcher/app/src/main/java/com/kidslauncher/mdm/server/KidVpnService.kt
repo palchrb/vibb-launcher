@@ -108,6 +108,9 @@ class KidVpnService : VpnService() {
      * which must not drop the sink's lockdown on the way. */
     @Volatile
     private var lastBest: BestNet? = null
+    /** What [lastBest] was read from, and when telephony was read for it (code QA L7, [readsTelephony]); main thread. */
+    private var lastCapsKey: List<Any>? = null
+    private var lastTelephonyMs = 0L
 
     /** One retry chain at most: every post replaces the pending one. */
     private val retry = Runnable { retryTunnel() }
@@ -180,11 +183,15 @@ class KidVpnService : VpnService() {
         }
     }
 
-    /** The shape the inputs `apply()` stored and the last network seen ask for ([vpnShape]). */
-    /** [serviceShape]: `apply()`'s rule, with this service's view of the network - never lockdown off on a doubt. */
-    private fun wantedShape(): VpnShape = serviceShape(
-        MobileNetworkRuntime.storedInputs(), lastBest, MobileNetworkRuntime.bestNet(this), MobileNetworkRuntime.storedShape(),
-    )
+    /** [serviceShape]: `apply()`'s rule, with this service's view of the network - never lockdown off on a doubt. The
+     * sink's reason is held for the report (code QA L1). */
+    private fun wantedShape(): VpnShape {
+        val inputs = MobileNetworkRuntime.storedInputs()
+        val watched = lastBest
+        val live = if (watched == null) MobileNetworkRuntime.bestNet(this) else null
+        return serviceShape(inputs, watched, live, MobileNetworkRuntime.storedShape())
+            .also { MobileNetworkRuntime.holdSinkReason(inputs, watched ?: live, it) }
+    }
 
     /** Code QA M1: the retry of a failed switch to the sink (the tunnel may be up in another shape, so the read loop's
      * retry chain doesn't run); main thread only. */
@@ -333,8 +340,23 @@ class KidVpnService : VpnService() {
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
                 onNetwork(NetworkSnapshot(network.networkHandle, capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)))
+                // Code QA L7: telephony is read for a new network or a change in what BestNet is made of, else at
+                // most every TELEPHONY_REREAD_MS - not for each of cellular's bandwidth and signal updates.
+                val key = listOf<Any>(
+                    network.networkHandle,
+                    capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR),
+                    capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI),
+                    capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET),
+                    capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_ROAMING),
+                    capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_SUSPENDED),
+                )
+                val now = SystemClock.elapsedRealtime()
+                val known = lastBest
+                if (known != null && !readsTelephony(key == lastCapsKey, now - lastTelephonyMs)) return
+                lastCapsKey = key
+                lastTelephonyMs = now
                 val best = MobileNetworkRuntime.bestNetOf(this@KidVpnService, capabilities)
-                if (best != lastBest) {
+                if (best != known) {
                     lastBest = best
                     reshape()
                 }

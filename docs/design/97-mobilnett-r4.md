@@ -114,6 +114,11 @@ The migration and the roaming notice's state belong to the server alone and are 
   (fail closed toward the sink).
 - `home` otherwise.
 
+Code QA M2: when both countries are known, they decide whatever Android's roaming flag says - a network in another
+country than the SIM's is `abroad` even unflagged (carrier config can clear the flag for a partner network), and the
+same country is `home` (national roaming); only with a country unknown does the flag (and then the MCC) decide. The
+report then names the country and network as it does while roaming.
+
 The watcher's `BestNet` carries `abroad = where == "abroad"`.
 
 ### 4.2 The rule
@@ -128,7 +133,8 @@ switch (it counts only while bit 32 is set), and the best non-VPN network.
   `reportedSink` use the same order (Q97-M2):
   1. `parent`: `apps_mobile == "vibb" && !lift`;
   2. `abroad`: `choice in {OFF, VIBB} && !lift && net.abroad`. Under Ingen data this is a 901 network Android doesn't
-     flag as roaming (the lock can't cover it), or a session from before the lock;
+     flag as roaming (the lock can't cover it), or a session from before the lock. Code QA L8: a roaming network whose
+     `where` is `unknown` counts as abroad here (fail closed until telephony reads again);
   3. `roaming`: the lock is on and `net.roaming` while not abroad (a national-roaming session from before the lock);
   4. `kid`: the row is shown and the kid's switch is Off. The pause does not lift it (D4).
 - **Keep the sink on a doubt** (Q97-M2). With no network seen - or, found in the build's emulator run, a cellular network
@@ -137,12 +143,15 @@ switch (it counts only while bit 32 is set), and the best non-VPN network.
   unlifted reason that doesn't need the network holds: `parentSink || abroadArmed || kidOff`, where `abroadArmed` is
   `choice in {OFF, VIBB} && !lift` (it covers `roamingLocked`). This applies to `apply()` and to the service's cold
   start alike. A flap (a tunnel, a modem restart, airplane on and off, a reboot abroad) never writes lockdown off. The
-  next network then decides.
+  next network then decides. The report names the reason the sink was last decided for with a network seen
+  (`vpn_sink_reason`) while it is still configured, else the first configured one in the order above (code QA L1).
 - **Pass shape** (filter off): when any reason can arise: `parentSink || abroadArmed || kidOff`.
-- **The persisted inputs** (Q97-M3). rc.1's record `vpn_inputs` (`filter,parentSink,roamingLocked`) stays exactly as it
-  is, written as before, so a rollback to rc.1 reads what it knows. A second record, `vpn_inputs_r4`, holds
-  `abroadArmed,kidOff`. An absent second record (the first start after the upgrade) reads as both false, which is rc.1's
-  own behaviour until the first `apply()`. The kid's tap writes `kidOff` into `vpn_inputs_r4` before it re-decides
+- **The persisted inputs** (Q97-M3). rc.1's record `vpn_inputs` (`filter,parentSink,roamingLocked`) keeps its shape, so
+  a rollback to rc.1 reads what it knows; its third field is rc.1's own reading of the served `data_roaming`,
+  `roamingLocked || abroadArmed` (code QA L2: the derived `"off"` under Bare Vibb, so rc.1 keeps a sink abroad). A
+  second record, `vpn_inputs_r4`, holds `abroadArmed,kidOff,roamingLocked`. An absent second record (the first start
+  after the upgrade) reads as both false with the first record's `roamingLocked`, which is rc.1's own behaviour until
+  the first `apply()`. The kid's tap writes `kidOff` into `vpn_inputs_r4` before it re-decides
   through `applyShape`, so the service, `apply()` and `sinkWanted` read one source. Unit test: upgrade (no second
   record), rollback (rc.1 decoding the untouched first record).
 
@@ -340,8 +349,12 @@ existing `off` row, and a new phone's `vibb` with bit 32.
   hjemme. Only with no VPN at all (Som hjemme with the filter off) did it get roaming data (200 in 58 ms) - the parent's
   own "like at home". Under Ingen data and Bare Vibb the VPN always runs, so the ⓘ says an app can't do it. Android's
   "switch to mobile data when Wi-Fi is poor" (a system uid) was not measured.
+- **A SIM from a foreign operator used at home reads abroad** (code QA M2: the countries decide over Android's roaming
+  flag). It fails closed: under Ingen data and Bare Vibb only Vibb uses mobile data, and the parent is told the phone
+  is roaming. The parent can choose Som hjemme.
 - **National to foreign roaming without a network change:** no capabilities callback may come, so the abroad sink
-  waits for the next `apply()` (at most 30 min). This is rare (a national-roaming area at the border). If a report
+  waits for the next `apply()` (at most 30 min), or a capabilities update after the watcher's 10 s re-read interval
+  (code QA L7). This is rare (a national-roaming area at the border). If a report
   shows it, add 95 §2.2's `ServiceStateListener`.
 - **Ingen data in a national-roaming area** cuts data at home (unchanged). The warning line names it.
 - **An older launcher under Bare Vibb** has no data abroad (the derived `"off"`), and the page says so. Since Bare Vibb

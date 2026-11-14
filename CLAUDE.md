@@ -276,9 +276,9 @@ sink with no network - the launcher's alone), `kid_row` (the kid's Mobildata row
 and `mobile_data` of a status report) and `clean`/`clean_mobile` (the server's field-by-field cleaning). The server's
 `tests::mobile_network::the_contract` saves the choices through `POST /devices/{id}/mobile` and produces each
 `policy` row, posts `report` and checks what is stored, runs the cleaning rows; the launcher's `MobileNetworkTest`
-decodes the policy rows, runs every rule and shape row through `dataRoamingLocked`, `mobileSettingsLocked`,
-`parentSinkOn`, `vpnShape`, `sinkReason` and `alwaysOnFor`, and encodes `report` exactly; both compare the copies. The
-policy's three keys are pinned by `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTest`.
+decodes the policy rows, runs every rule, `where`, shape and kid-row row through `abroadChoice`, `roamingLocked`,
+`mobileSettingsLocked`, `whereOf`, `parentSinkOn`, `applyShape`, `sinkReason`, `reportedSink`, `alwaysOnFor` and
+`kidMobileRow`, and encodes `report` exactly; both compare the copies. The policy's four keys are pinned by `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTest`.
 
 The heartbeat report (design 95 §3.5, step 95-T2) is `server/testdata/status_heartbeat.json`, byte-identical in
 `launcher/app/src/test/resources/`: `capability` (`status_heartbeat_v1`), `policy` (the top-level `status_heartbeat`,

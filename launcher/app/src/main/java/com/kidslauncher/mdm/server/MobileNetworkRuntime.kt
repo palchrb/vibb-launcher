@@ -39,8 +39,12 @@ object MobileNetworkRuntime {
 
     // ---- the VPN's inputs and shape ------------------------------------------------------------------------------
 
+    /** rc.1's record. Design 97 code QA L2: its third field is rc.1's own reading of the served `data_roaming` - the
+     * derived `"off"` under Ingen data and Bare Vibb, so `roamingLocked || abroadArmed` -, so an rc.1 launcher after a
+     * rollback keeps a sink abroad as it would have itself; this launcher reads `roamingLocked` from the second record. */
     fun encodeInputs(inputs: VpnInputs): String =
-        listOf(inputs.filterOn, inputs.parentSink, inputs.roamingLocked).joinToString(",") { if (it) "1" else "0" }
+        listOf(inputs.filterOn, inputs.parentSink, inputs.roamingLocked || inputs.abroadArmed)
+            .joinToString(",") { if (it) "1" else "0" }
 
     /** `null` for an absent or unreadable record. */
     fun decodeInputs(raw: String?): VpnInputs? {
@@ -48,16 +52,20 @@ object MobileNetworkRuntime {
         return VpnInputs(parts[0] == "1", parts[1] == "1", parts[2] == "1")
     }
 
-    /** Design 97 (Q97-M3): the second record, `abroadArmed,kidOff`. */
+    /** Design 97 (Q97-M3): the second record, `abroadArmed,kidOff,roamingLocked` (code QA L2: the roaming lock itself,
+     * as the first record carries rc.1's reading of it). */
     fun encodeInputsR4(inputs: VpnInputs): String =
-        listOf(inputs.abroadArmed, inputs.kidOff).joinToString(",") { if (it) "1" else "0" }
+        listOf(inputs.abroadArmed, inputs.kidOff, inputs.roamingLocked).joinToString(",") { if (it) "1" else "0" }
 
     /** [base] with the second record's inputs; an absent or unreadable record (the first start after the upgrade from
-     * rc.1) reads both false - rc.1's own rule until the first `apply()`. */
+     * rc.1) reads both false with the first record's `roamingLocked` - rc.1's own rule until the first `apply()`. */
     fun withInputsR4(base: VpnInputs, raw: String?): VpnInputs {
-        val parts = raw?.split(",")?.takeIf { it.size == 2 && it.all { p -> p == "0" || p == "1" } } ?: return base
-        return base.copy(abroadArmed = parts[0] == "1", kidOff = parts[1] == "1")
+        val parts = raw?.split(",")?.takeIf { it.size == 3 && it.all { p -> p == "0" || p == "1" } } ?: return base
+        return base.copy(abroadArmed = parts[0] == "1", kidOff = parts[1] == "1", roamingLocked = parts[2] == "1")
     }
+
+    /** Code QA L4: `apply()`'s write of the inputs and the kid's tap don't interleave. */
+    private val inputsLock = Any()
 
     /** The inputs `apply()` last wrote; before any (a launcher from before this round), the cached filter switch alone
      * - a failed read counts the filter on, as `KidVpnService.filterWanted` always did. */
@@ -69,25 +77,27 @@ object MobileNetworkRuntime {
         VpnInputs(filterOn = true, parentSink = false, roamingLocked = false)
     }
 
-    /** Both records: rc.1's exactly as it reads it (a rollback), and design 97's second one. */
-    fun storeInputs(inputs: VpnInputs) {
+    /** Both records: rc.1's as it reads it (a rollback), and design 97's second one. Code QA L4: the kid's Off is read
+     * again here ([mask], the applied policy's `quick_controls_mask`), under the lock the kid's tap writes under, so a tap
+     * between `apply()`'s read and this write isn't overwritten. */
+    fun storeInputs(inputs: VpnInputs, mask: Long?) = synchronized(inputsLock) {
+        val fresh = inputs.copy(kidOff = kidOff(mask))
         val mdm = LauncherPreferences.mdm()
-        mdm.vpnFilterEnabled(inputs.filterOn)
-        mdm.vpnInputs(encodeInputs(inputs))
-        mdm.vpnInputsR4(encodeInputsR4(inputs))
+        mdm.vpnFilterEnabled(fresh.filterOn)
+        mdm.vpnInputs(encodeInputs(fresh))
+        mdm.vpnInputsR4(encodeInputsR4(fresh))
     }
 
     /** Design 97 §4.3: the kid's row now, from the cached policy (null without an accepted one: [shown] false). */
     fun kidRowNow(context: Context, policy: com.kidslauncher.mdm.server.dto.PolicyResponse?): KidMobileRow {
-        val shown = policy != null && policy.quickControlsMask and QuickControlFeature.MOBILE_DATA != 0L
-        if (!shown) return KidMobileRow.HIDDEN
+        val p = policy?.takeIf { it.quickControlsMask and QuickControlFeature.MOBILE_DATA != 0L } ?: return KidMobileRow.HIDDEN
         return kidMobileRow(
             shown = true,
             kidOff = runCatching { LauncherPreferences.mdm().kidMobileOff() }.getOrDefault(false),
             lift = OfflineOverride.isActive() || RestrictionsPause.isActive(),
-            parentVibb = parentSinkOn(policy?.appsMobile, overrideActive = false),
+            parentVibb = parentSinkOn(p.appsMobile, overrideActive = false),
             where = whereNow(context),
-            choice = abroadChoice(policy?.abroad, policy?.dataRoaming),
+            choice = abroadChoice(p.abroad, p.dataRoaming),
             dataEnabled = runCatching { dataTelephony(context)?.isDataEnabled }.getOrNull(),
         )
     }
@@ -98,10 +108,11 @@ object MobileNetworkRuntime {
      * reports it. Only while the row is shown, so the bit is set.
      */
     fun setKidOff(context: Context, off: Boolean) {
-        val mdm = LauncherPreferences.mdm()
-        mdm.kidMobileOff(off)
-        val inputs = storedInputs().copy(kidOff = off)
-        mdm.vpnInputsR4(encodeInputsR4(inputs))
+        val inputs = synchronized(inputsLock) {
+            val mdm = LauncherPreferences.mdm()
+            mdm.kidMobileOff(off)
+            storedInputs().copy(kidOff = off).also { mdm.vpnInputsR4(encodeInputsR4(it)) }
+        }
         // A shape other than NONE needs the service: it decides from the stored inputs (serviceShape) and writes
         // always-on for it; a NONE it stops by itself.
         if (vpnShape(inputs, bestNet(context)) != VpnShape.NONE || storedShape() != VpnShape.NONE) KidVpnService.start(context)
@@ -114,6 +125,19 @@ object MobileNetworkRuntime {
             runCatching { LauncherPreferences.mdm().kidMobileOff() }.getOrDefault(false)
 
     fun storedShape(): VpnShape? = runCatching { VpnShape.of(LauncherPreferences.mdm().vpnShape()) }.getOrNull()
+
+    /** Design 97 code QA L1: the reason a sink was last decided for with a network seen ([sinkReasonToHold]), which a
+     * held sink keeps naming ([reportedSink]). Written only on a change. Never throws. */
+    fun holdSinkReason(inputs: VpnInputs, net: BestNet?, shape: VpnShape) {
+        val reason = sinkReasonToHold(inputs, net, shape) ?: return
+        runCatching {
+            val mdm = LauncherPreferences.mdm()
+            if (mdm.vpnSinkReason() != reason.wire) mdm.vpnSinkReason(reason.wire)
+        }
+    }
+
+    private fun heldSinkReason(): SinkReason? =
+        runCatching { LauncherPreferences.mdm().vpnSinkReason() }.getOrNull()?.let { wire -> SinkReason.entries.firstOrNull { it.wire == wire } }
 
     /**
      * The single owner of always-on (design 95 §2.2, [alwaysOnFor]): records [shape] as the decision, then writes what
@@ -297,12 +321,15 @@ object MobileNetworkRuntime {
             }
     }.getOrNull()
 
-        /** Design 94 §5's `data_roaming`; `null` (left out) when telephony can't be read at all. */
+    /** Design 94 §5's `data_roaming`; `null` (left out) when telephony can't be read at all. */
     fun dataRoamingReport(context: Context): DataRoamingReport? = try {
         val tm = dataTelephony(context)
         val roaming = runCatching { tm?.isNetworkRoaming == true }.getOrDefault(false)
         val networkOperator = runCatching { tm?.networkOperator }.getOrNull()
-        val (country, network) = roamingPlace(roaming, runCatching { tm?.networkCountryIso }.getOrNull(), networkOperator)
+        val where = whereNow(context, tm)
+        val (country, network) = roamingPlace(
+            roaming || where == Where.ABROAD, runCatching { tm?.networkCountryIso }.getOrNull(), networkOperator,
+        )
         val net = bestNet(context)
         DataRoamingReport(
             locked = restricted(context, UserManager.DISALLOW_DATA_ROAMING),
@@ -312,7 +339,7 @@ object MobileNetworkRuntime {
             enabled = runCatching { tm?.isDataRoamingEnabled }.getOrNull(),
             dataActive = net?.cellular == true && net.roaming,
             modems = runCatching { context.getSystemService(TelephonyManager::class.java)?.activeModemCount }.getOrNull(),
-            whereIs = whereNow(context, tm).wire,
+            whereIs = where.wire,
         )
     } catch (e: Exception) {
         Log.w(LOG_TAG, "Roaming report failed: ${e.javaClass.simpleName}")
@@ -322,7 +349,7 @@ object MobileNetworkRuntime {
     /** Design 95 rev. 3's `mobile_data`; design 97's `kid` while the row is shown in the cached policy. */
     fun mobileDataReport(context: Context): MobileDataReport = MobileDataReport(
         enabled = runCatching { dataTelephony(context)?.isDataEnabled }.getOrNull(),
-        sink = reportedSink(storedInputs(), bestNet(context), storedShape()).wire,
+        sink = reportedSink(storedInputs(), bestNet(context), storedShape(), heldSinkReason()).wire,
         settingsLocked = restricted(context, UserManager.DISALLOW_CONFIG_MOBILE_NETWORKS),
         kid = (cachedPolicy() as? CachedPolicy.Ok)?.policy?.quickControlsMask
             ?.takeIf { it and QuickControlFeature.MOBILE_DATA != 0L }

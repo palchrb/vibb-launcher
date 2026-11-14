@@ -4477,7 +4477,7 @@ mod tests {
         assert_eq!(zones.count(), 1);
         assert_eq!(
             switches.len(),
-            12,
+            13,
             "every switch once; the emergency call has none"
         );
         // "App updates": one switch for both kinds, the only one off by default.

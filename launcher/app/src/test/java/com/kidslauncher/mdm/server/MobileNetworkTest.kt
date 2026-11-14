@@ -176,6 +176,43 @@ class MobileNetworkTest {
         assertEquals(SinkReason.PARENT, reportedSink(roaming.copy(parentSink = true), net = null, persisted = VpnShape.SINK))
     }
 
+    /** Design 97 code QA L1: a kid's Off at home under Bare Vibb (the abroad sink armed) stays `kid` through a tunnel,
+     * while that reason is still configured; a reason no longer configured falls to the order. */
+    @Test
+    fun `a held sink keeps naming the reason it was decided for`() {
+        val home = VpnInputs(filterOn = true, parentSink = false, roamingLocked = false, abroadArmed = true, kidOff = true)
+        val cell = BestNet(cellular = true, roaming = false)
+        assertEquals(SinkReason.KID, sinkReasonToHold(home, cell, VpnShape.SINK))
+        assertEquals(null, sinkReasonToHold(home, cell.copy(unsure = true), VpnShape.SINK))
+        assertEquals(null, sinkReasonToHold(home, null, VpnShape.SINK))
+        assertEquals(null, sinkReasonToHold(home.copy(kidOff = false), cell, VpnShape.FILTER))
+        assertEquals(SinkReason.KID, reportedSink(home, net = null, persisted = VpnShape.SINK, held = SinkReason.KID))
+        assertEquals(SinkReason.KID, reportedSink(home, cell.copy(unsure = true), VpnShape.SINK, held = SinkReason.KID))
+        assertEquals(SinkReason.ABROAD, reportedSink(home, net = null, persisted = VpnShape.SINK))
+        assertEquals(SinkReason.ABROAD, reportedSink(home.copy(kidOff = false), net = null, persisted = VpnShape.SINK, held = SinkReason.KID))
+        // A network seen and placed decides by itself.
+        assertEquals(SinkReason.KID, reportedSink(home, cell, VpnShape.SINK, held = SinkReason.ABROAD))
+    }
+
+    /** Design 97 code QA L8: a roaming network that can't be placed sinks while the abroad sink is armed. */
+    @Test
+    fun `an unplaced roaming network counts as abroad while armed`() {
+        val bareVibb = VpnInputs(filterOn = true, parentSink = false, roamingLocked = false, abroadArmed = true)
+        val unplaced = BestNet(cellular = true, roaming = true, unsure = true)
+        assertEquals(SinkReason.ABROAD, sinkReason(bareVibb, unplaced))
+        assertEquals(SinkReason.OFF, sinkReason(bareVibb, unplaced.copy(roaming = false)))
+        assertEquals(SinkReason.OFF, sinkReason(bareVibb.copy(abroadArmed = false), unplaced))
+    }
+
+    /** Design 97 code QA L7: telephony is read again for a capability change, else at most every 10 s. */
+    @Test
+    fun `the watcher reads telephony on a change and at most every ten seconds`() {
+        assertTrue(readsTelephony(sameCaps = false, sinceLastReadMs = 0))
+        assertFalse(readsTelephony(sameCaps = true, sinceLastReadMs = TELEPHONY_REREAD_MS - 1))
+        assertTrue(readsTelephony(sameCaps = true, sinceLastReadMs = TELEPHONY_REREAD_MS))
+        assertTrue(readsTelephony(sameCaps = true, sinceLastReadMs = -1))
+    }
+
     @Test
     fun `the stored inputs round trip and a bad record reads as none`() {
         val inputs = VpnInputs(filterOn = true, parentSink = false, roamingLocked = true)
@@ -185,13 +222,18 @@ class MobileNetworkTest {
     }
 
     /** Design 97 (Q97-M3): rc.1's record stays exactly three fields, so an rc.1 launcher after a rollback reads what it
-     * knows; the new inputs ride in a second record, and its absence (the first start after the upgrade) is rc.1's rule. */
+     * knows - code QA L2: its third field rc.1's own reading of the derived `data_roaming`, so under Bare Vibb abroad
+     * rc.1 keeps the sink -; the new inputs ride in a second record with the roaming lock itself, and its absence (the
+     * first start after the upgrade) is rc.1's rule. */
     @Test
     fun `the second record survives an upgrade and a rollback`() {
         val inputs = VpnInputs(filterOn = true, parentSink = false, roamingLocked = false, abroadArmed = true, kidOff = true)
         val first = MobileNetworkRuntime.encodeInputs(inputs)
-        assertEquals("1,0,0", first)
+        assertEquals("1,0,1", first)
+        // rc.1 decoding the untouched first record: its roaming lock, which keeps a persisted sink.
+        assertTrue(MobileNetworkRuntime.decodeInputs(first)!!.roamingLocked)
         val second = MobileNetworkRuntime.encodeInputsR4(inputs)
+        assertEquals("1,1,0", second)
         assertEquals(inputs, MobileNetworkRuntime.withInputsR4(MobileNetworkRuntime.decodeInputs(first)!!, second))
         // The upgrade: no second record yet.
         val upgraded = MobileNetworkRuntime.withInputsR4(MobileNetworkRuntime.decodeInputs("0,1,1")!!, null)
@@ -233,6 +275,7 @@ class MobileNetworkTest {
         assertEquals(capabilities["mobile_network"]!!.jsonPrimitive.content, MOBILE_NETWORK_CAPABILITY)
         assertTrue(DATA_ROAMING_CAPABILITY in STATUS_CAPABILITIES)
         assertTrue(MOBILE_DATA_CAPABILITY in STATUS_CAPABILITIES)
+        assertTrue(MOBILE_NETWORK_CAPABILITY in STATUS_CAPABILITIES)
     }
 
     /** Design 94 §3: a fallback keeps the parent's choices; an older record fails closed. */
@@ -242,7 +285,11 @@ class MobileNetworkTest {
         val kept = LastEnforcedPlan.decode(ServerJson.encodeToString(LastEnforcedPlan.serializer(), LastEnforcedPlan.of(policy)))!!.toPolicy()
         assertEquals(Triple(null, "vibb", false), Triple(kept.dataRoaming, kept.appsMobile, kept.mobileSettingsLocked))
         assertEquals(AbroadChoice.HOME, abroadChoice(kept.abroad, kept.dataRoaming))
+        // Design 97 code QA L3: the kid's Mobildata bit survives a fallback; an older record has none.
+        val withKid = PolicyResponse(quickControlsMask = 1L or QuickControlFeature.MOBILE_DATA)
+        assertEquals(withKid.quickControlsMask, LastEnforcedPlan.of(withKid).toPolicy().quickControlsMask)
         val old = LastEnforcedPlan.decode("{}")!!.toPolicy()
+        assertEquals(0L, old.quickControlsMask)
         assertEquals(Triple("off", null, true), Triple(old.dataRoaming, old.appsMobile, old.mobileSettingsLocked))
         assertEquals(AbroadChoice.OFF, abroadChoice(old.abroad, old.dataRoaming))
     }
@@ -251,7 +298,7 @@ class MobileNetworkTest {
     fun `the service decides with serviceShape and switches with the pure steps`() {
         val vpn = listOf(java.io.File("src/main/java/com/kidslauncher/mdm/server/KidVpnService.kt"), java.io.File("app/src/main/java/com/kidslauncher/mdm/server/KidVpnService.kt"))
             .first { it.exists() }.readText()
-        val wanted = vpn.substringAfter("private fun wantedShape(): VpnShape =").substringBefore("\n\n")
+        val wanted = vpn.substringAfter("private fun wantedShape(): VpnShape {").substringBefore("\n    }\n")
         assertTrue(wanted, "serviceShape(" in wanted && "storedShape()" in wanted)
         val switch = vpn.substringAfter("private fun switchTo(wanted: VpnShape): Boolean {").substringBefore("\n    }\n")
         assertTrue(switch.indexOf("alwaysOnBeforeEstablish(wanted)") in 0 until switch.indexOf("establish(wanted)"))

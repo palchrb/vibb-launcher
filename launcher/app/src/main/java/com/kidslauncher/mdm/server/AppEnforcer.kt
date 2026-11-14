@@ -365,7 +365,9 @@ object AppEnforcer {
             abroadArmed = abroadArmed(abroad, overrideActive),
             kidOff = MobileNetworkRuntime.kidOff(policy?.quickControlsMask),
         )
-        val vpnShapeNow = applyShape(vpnInputs, MobileNetworkRuntime.bestNet(context), MobileNetworkRuntime.storedShape())
+        val bestNetNow = MobileNetworkRuntime.bestNet(context)
+        val vpnShapeNow = applyShape(vpnInputs, bestNetNow, MobileNetworkRuntime.storedShape())
+        MobileNetworkRuntime.holdSinkReason(vpnInputs, bestNetNow, vpnShapeNow)
         // Security review S-L11: DISALLOW_CONFIG_VPN also while the Web filter is on (a filter-only phone) - lifted
         // with the filter by the override and the pause, as the filter is. Design 95 §2.2: and with the sink and the
         // pass shape, lifted with them.
@@ -626,7 +628,7 @@ object AppEnforcer {
         // filtering choice) - wrong in practice, reverted. Only true-by-default (filtering on) when
         // no override is active AND no policy has ever been fetched, which has no admin choice yet
         // to respect.
-        applyVpnRestrictions(context, vpnInputs, vpnShapeNow)
+        applyVpnRestrictions(context, vpnInputs, policy?.quickControlsMask, vpnShapeNow)
         // The browsers' own secure DNS off with the filter (design 67 §2.1), lifted with it.
         BrowserDoh.apply(context, dpm, admin, vpnFilterEnabled)
 
@@ -1449,8 +1451,8 @@ object AppEnforcer {
      * whether to start the service at all, rather than always starting and then immediately
      * stopping it again once this function runs on the first sync.
      */
-    private fun applyVpnRestrictions(context: Context, inputs: VpnInputs, shape: VpnShape) {
-        MobileNetworkRuntime.storeInputs(inputs)
+    private fun applyVpnRestrictions(context: Context, inputs: VpnInputs, quickControlsMask: Long?, shape: VpnShape) {
+        MobileNetworkRuntime.storeInputs(inputs, quickControlsMask)
         try {
             // The single owner (design 95 §2.2): the decided shape is recorded, always-on written for it alone.
             MobileNetworkRuntime.writeAlwaysOn(context, shape)

@@ -178,8 +178,15 @@ pub fn place_phrase(lang: Lang, cc: &str) -> Option<String> {
         .then(|| t(lang, &format!("data_roaming.place.{cc}")).to_string())
 }
 
+/// Design 97 code QA M2: the launcher reads the phone abroad on a foreign network Android doesn't flag as roaming
+/// (carrier config can clear the flag for a partner network); it is worded as roaming.
+fn abroad_unflagged(report: &RoamingReport) -> bool {
+    !report.roaming && !ship_network(report) && report.where_is.as_deref() == Some("abroad")
+}
+
 /// Design 94 §6.2: where the phone roams, and whether it is a warning (orange). The 901 rows decide first - near land
-/// the country can be a coastal one. `None` when the phone doesn't roam and isn't on a ship or plane network.
+/// the country can be a coastal one. `None` when the phone doesn't roam (or, design 97, isn't abroad) and isn't on a ship
+/// or plane network.
 pub fn roaming_words(lang: Lang, report: &RoamingReport) -> Option<(String, bool)> {
     if ship_network(report) {
         let key = if report.roaming {
@@ -189,7 +196,7 @@ pub fn roaming_words(lang: Lang, report: &RoamingReport) -> Option<(String, bool
         };
         return Some((t(lang, key).to_string(), true));
     }
-    if !report.roaming {
+    if !report.roaming && !abroad_unflagged(report) {
         return None;
     }
     Some(match report.country.as_deref() {
@@ -417,7 +424,9 @@ pub struct Card {
 }
 
 /// The switch line under "I utlandet" (design 97 §5's table): from the choice, the report's `enabled`, `locked` and
-/// `settings_locked`, and the pause. No line ever asks the parent to wait for Vibb.
+/// `settings_locked`, and the pause. No line ever asks the parent to wait for Vibb. Code QA L5: none under Bare Vibb on a
+/// launcher without [NETWORK_CAPABILITY] ([network_capable] false) outside a pause - it keeps the derived roaming lock, so
+/// a step on Android's switch wouldn't hold; the radio's update hint says what does.
 fn switch_line(
     lang: Lang,
     name: &str,
@@ -425,6 +434,7 @@ fn switch_line(
     report: &RoamingReport,
     mobile: Option<&MobileReport>,
     paused: bool,
+    network_capable: bool,
 ) -> Option<Line> {
     if paused {
         let key = if report.enabled == Some(true) {
@@ -433,6 +443,9 @@ fn switch_line(
             "mobile.abroad.switch.paused_off"
         };
         return Some(Line::new(lang, "switch", key, None, false));
+    }
+    if abroad == "vibb" && !network_capable {
+        return None;
     }
     if abroad == "off" {
         return Some(if report.locked {
@@ -487,10 +500,14 @@ pub fn card(lang: Lang, name: &str, policy: &DevicePolicy, latest: Option<&Devic
                 false,
             ));
         }
-        if let Some(line) = only_vibb_line(lang, name, &m.sink) {
+        let kid_off = m.kid.as_deref() == Some("off");
+        // Code QA L6: the kid's Off is said once on the page, by its own line; the "only Vibb" form is the summary's.
+        if let Some(line) =
+            only_vibb_line(lang, name, &m.sink).filter(|l| !(kid_off && l.key == "only-vibb-kid"))
+        {
             data_lines.push(line);
         }
-        if m.kid.as_deref() == Some("off") {
+        if kid_off {
             data_lines.push(Line::named(lang, "kid-off", "mobile.state.kid_off", name));
         }
     }
@@ -516,8 +533,11 @@ pub fn card(lang: Lang, name: &str, policy: &DevicePolicy, latest: Option<&Devic
             report,
             mobile.as_ref(),
             paused,
+            network_capable,
         ));
-        if let Some((words, warn)) = roaming_words(lang, report).filter(|_| report.roaming) {
+        if let Some((words, warn)) =
+            roaming_words(lang, report).filter(|_| report.roaming || abroad_unflagged(report))
+        {
             abroad_lines.push(Line {
                 key: "roaming",
                 title: words,
@@ -767,6 +787,16 @@ mod tests {
                 .contains("doesn't cover it")
         );
         assert_eq!(roaming_words(Lang::Nb, &roaming(None, None, false)), None);
+        // Code QA M2: abroad on a network Android doesn't flag as roaming reads as roaming; at home it doesn't.
+        let unflagged = |where_is: &str| RoamingReport {
+            where_is: Some(where_is.to_string()),
+            ..roaming(Some("se"), Some("24001"), false)
+        };
+        assert_eq!(
+            roaming_words(Lang::Nb, &unflagged("abroad")),
+            Some(("Roamer i Sverige".to_string(), false))
+        );
+        assert_eq!(roaming_words(Lang::Nb, &unflagged("home")), None);
     }
 
     /// Design 97 §6 (D6 as corrected): a run of reports, each `(minutes, where, place)`, and the places told.

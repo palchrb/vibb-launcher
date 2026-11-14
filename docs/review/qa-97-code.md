@@ -158,3 +158,57 @@ before. It could read telephony only when the cellular network or its roaming ca
   - D7's reset sits in `storeAcceptedPolicy`.
   - A mask of 32 alone is a card.
   - The row's strings are in nb and en and calm.
+
+## Resolution
+
+Every finding is fixed; none is left.
+
+- **H1.** The seeded family raises `phone.roaming_started("se", ago(123))`, so it covers all 21 kinds again and the nb
+  sweep reads the notice ("Anna er på roaming i Sverige") in the inbox.
+- **H2.** `two_kinds_share_the_zones_switch` counts 13 switches. The other enumerations were checked: the words and
+  targets test and the wording sweep in `parent_events.rs` already list `RoamingStarted`, the Notify Me About settings
+  read `Kind::switches()` (`push_roaming` has its words and its column in migration 0145), and the per-switch tests
+  (`zones`, `time_request`, `app_updates`, `contact_requests`) filter the list rather than count it.
+- **M1.** `kidRowNow` takes the policy as non-null once the bit is checked (`val p = policy?.takeIf { … } ?: return
+  HIDDEN`), so it has no safe calls left. The launcher was built with `-PwarningsAsErrors=true`.
+- **M2.** Decided by the orchestrator: when both countries are known they decide, whatever Android's roaming flag says.
+  Another country than the SIM's is `abroad`, the same country is `home` (national roaming), a 901 network stays
+  `abroad`, and an unknown country stays with the flag and then the MCC. The contract row `24001`, `se` vs `no`, not
+  roaming, now reads `abroad` in both copies. A new row pins the fallback: the same network with the SIM's country
+  unknown and no flag reads `home`. The existing `shapes` row (Ingen data, not roaming, `abroad` -> sink `abroad`)
+  already covers the sink, so no new `shapes` row was needed.
+  - The report names the country and network while abroad too (`roamingPlace`'s first argument is `roaming || where ==
+    abroad`), so the notice names the country (D8).
+  - The server words an unflagged `abroad` report as roaming on the page and in the header (`abroad_unflagged` in
+    `roaming_words`, unit-tested).
+  - Design §4.1 has the sentence, and §8 has the risk: a SIM from a foreign operator used at home reads abroad. This
+    fails closed, and the parent can choose Som hjemme.
+- **L1.** Fixed. Whenever a sink is decided with a placed cellular network, both `apply()` and the service hold its
+  reason in `mdm.vpn_sink_reason` (`sinkReasonToHold`, written only on a change). On a doubt, `reportedSink(…, held)`
+  names that reason while it is still configured and otherwise falls back to the order. A kid's Off at home stays
+  `kid` through a tunnel. Unit test: `a held sink keeps naming the reason it was decided for`.
+- **L2.** Fixed as suggested. The first record's third field is rc.1's own reading, `roamingLocked || abroadArmed`. The
+  second record became `abroadArmed,kidOff,roamingLocked`, so r4 reads the lock itself from it. An absent second record
+  still reads rc.1's rule. No r4 record exists outside the emulator, so the new shape needs no migration. Design §4.2
+  and the unit test (`"1,0,1"`, `"1,1,0"`) are updated.
+- **L3.** Fixed. `LastEnforcedPlan` carries `quickControlsMask` (an older record reads 0), so a fallback apply keeps the
+  kid's Off. The row's visibility still follows the cached policy, which is the unusable one in that case. That part
+  is UI only and was left alone.
+- **L4.** Fixed. `storeInputs` and the kid's tap share one lock. `storeInputs` reads the kid's Off again under it, from
+  the applied policy's mask, so a tap between `apply()`'s read and its write is never overwritten. The service
+  reshapes from the stored record as before.
+- **L5.** Fixed. With Bare Vibb on a launcher without `mobile_network_v2`, no switch line is shown outside a pause. The
+  radio's "Ingen data i utlandet til Vibb One er oppdatert" hint stays. Page test added.
+- **L6.** Fixed. The page shows only `kid-off` when the kid's Off is the sink's reason. The summary keeps the "bare
+  Vibb" form, and the page test checks both.
+- **L7.** Fixed with a throttle rather than a skip. The watcher reads telephony for a new network or when a capability
+  that `BestNet` is made of changes (transports, `NOT_ROAMING`, `NOT_SUSPENDED`), and otherwise at most every 10 s
+  (`readsTelephony`). A full skip would have given up the incidental catch of a country change without a capability
+  change (§8), so the 10 s re-read keeps it. `wantedShape` also stops reading the live network when the watcher has
+  one.
+- **L8.**
+  - `MOBILE_NETWORK_CAPABILITY in STATUS_CAPABILITIES` is asserted.
+  - An `unsure` roaming cellular network counts as abroad while the abroad sink is armed (`sinkReason`, unit-tested;
+    design §4.2).
+  - The root `CLAUDE.md` names the functions the launcher's test runs (`abroadChoice`, `roamingLocked`, `whereOf`,
+    `applyShape`, `reportedSink`, `kidMobileRow`, …) and the policy's four keys.
