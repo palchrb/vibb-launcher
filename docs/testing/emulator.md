@@ -4389,6 +4389,36 @@ shell and the console has no SIM power command, so no SIM reload.
 | 8 the pause | **Passed.** The abroad sink lifted 0.9 s after the PWA's POST (the other app 200), back 0.4 s after the end. During the pause the kid's row is the kid's own; its Off brought the `kid` sink with the pause running. Ingen data's lock lifted 1.3 s after the POST (the nudge and the policy fetch included) and came back at the end |
 | 9 the page | **Passed.** Each save on its anchor (`#abroad`, `#mobile-data` for both forms there, `#mobile-lock`); no bell; the Home form keeps bit 32 on `quick` and the whole form; its footer names the switch; nb and en, light and dark, at 390 px |
 
+## 6am. Flymodus through the Digital assistant role, the rule screen's sheet, Foreldrekode (design 98) (2026-11-14)
+
+Design 98 §12's tests. Setup: **`jelly36`** restored clean from `~/kid-look-1-avd-pre-start` (22 of 22 sums), started under
+`flock -o ~/build.lock` (no `-wipe-data`: the userdata partition needs 7.4 GB free), the branch's debug launcher as Device
+Owner, a server of the branch with `LAUNCHER_ADMIN_COMPONENT` set to the debug component, the phone made through the PWA's
+Add Phone (mask 111: bit 64 on, D1), enrolled with a typed code. The parent's Settings is reached through the drawer's
+settings button (swipe up past the grid), or the setup notification. `POST_NOTIFICATIONS` granted with `pm grant` (on a
+phone Home asks for it at the first start). The emulator's network time is UTC, and the launcher forces it.
+
+| Test | Result |
+|---|---|
+| 1 onboarding | **Passed.** The card's one step, Åpne for oppsett (`#oppsett`), the notification "1 step left", its tap to the PIN and the rows. The row's tap lifted `disallow_config_default_apps` before Android's page; Default digital assistant app › Vibb One › OK: the window closed 249 ms after `onReady` (the role at .841, closed .090), the restriction back, dialer and SMS ours, `assistant: true`, the step gone |
+| 1b moved roles | **Passed.** HOME chosen as Pixel Launcher during the window: the HOME role stayed Vibb's at once. Caller ID moved to Phone during a later window: `default_apps_changed: ["call_screening"]`, the card's "Default apps changed: Call screening" |
+| D10 Samtalefilter | **Passed.** The row (calls managed, roles not held) asks Android twice in the window; both roles ours, the window closed, the row gone. No adb |
+| 2 on and off under the kiosk | **Passed after a fix.** **Found:** Settings' `AirplaneModeVoiceActivity` uses `Theme.DeviceDefault.Light.Voice`, floating, not `windowIsTranslucent` - `route_missing`. Fixed: translucent or floating is accepted. Then: the window 309 ms (on at ~190 ms), still LOCKED in Home's task, Settings hidden again, the lock-task list without Settings, `mDisabled1` back to 0x6000000; the `going_on` report stored before the `on` report. Off from the row: `no_airplane_mode` not set afterwards. 2b (power during the route) and 2c not run |
+| 3 the parent's switch | **Passed.** "Blokker flymodus" on while on: off, `off_by: "parent"`, the row "Set by mum and dad" at 50 %; off again: the row works |
+| 4 Wi-Fi in airplane mode | **Passed after a fix.** `Settings.Panel.ACTION_WIFI` is a panel on Android 16 (`SettingsPanelActivity`), and Wi-Fi on there wrote `wifi_apm_state=1`. The step ended on the panel's answer (`wifi_kept: true`, airplane mode off) and on the pause's end. **Found:** the route's own voice activity paused and resumed Settings, which ended the step before the panel opened - fixed (only a resume after a pause while the panel is up). The deadline path not run. A later turn-on with Wi-Fi on: Wi-Fi stayed up and the summary read "Airplane mode on since …" from a live report |
+| 5 112 | **Passed after a fix.** **Found:** an emergency call's end of airplane mode is broadcast by `com.android.phone`, which the not-exported receiver missed (the period stayed open, no line). Exported (a protected broadcast). Then: off 109 ms after the call was placed, `off_by: "emergency"`, the event's `airplane_off: true` in the same intake ("The call turned airplane mode off."), and the row refused with the emergency line - **for an hour** (Vibb's callback window, §2.2 step 1), not 10 minutes |
+| 8 reboot | **Passed.** Rebooted in airplane mode with a pause running: on after boot, the role kept, the rule back, Off before the first sync. A period missed by a dead process was closed as `other` at the next start. Mid-route: the DE marker written by hand and the process killed - "left open: putting it back" 0.5 s before the first sync, the marker cleared (a real kill inside the 0.3 s window not run) |
+| 9 the role lost | **Passed.** "None" chosen in Android's own page during a setup window (allowed under the restriction, M2): `assistant: false` in a second (the service's `onShutdown`), the summary's warning, the card's step back |
+| 10 the assist gesture | **Passed.** Under the kiosk, unlocked and at the keyguard: `KEYCODE_ASSIST`, long-press power, the corner swipe - no session shown (`mShown=false`); at the keyguard `mDisabled1=0x7200000` (with `DISABLE_SEARCH`). During Åpne for oppsett: nothing opens (D9) |
+| 11 Off-only | **Passed.** Bit 64 off, airplane mode on during the setup window, then "Lås igjen": Kid Settings "Turn off airplane mode", Wi-Fi read-only, Mobildata "Airplane mode is on"; the tap turned it off |
+| 12 the PWA | **Passed.** The Home form keeps 32 and 64 without `airplane_row` (97) and clears 64 with the row unticked (47); every save lands on its anchor; no bell; nb and en |
+| 13 the sheet | **Passed** with gesture and 3-button navigation: "···" 8 dp under the status bar, clear of the clock; the sheet's last row above the navigation bar in both (818/782 px); Back and a tap outside close it; Flymodus on under the rule (423 ms, LOCKED, Settings hidden after), the rule stays |
+| 14 Foreldrekode | **Passed.** Offline: 15 and 30 min offered (the rule ends 23:59), a wrong PIN counted, the right one: Home, `phone_lifts_v1` with exactly its keys. Lekser started during the pause and locked at 23:20:01. The alarm at the pause's end (.168) fired at the next second. The choices closed at screen-off. Online: the post (200, acked) before the GET, the row (`created_by` NULL, `phone_key`), `lifts_active: [1]`, the summary, the sub-line, the Time page's ⓘ, the inbox's "The time-rule screen until …"; "Avslutt nå": locked at the next sync. Reboot, then online: posted, the rule stayed locked. The clock set back 10 min: the rule back at once. Two rules: "Pause Lekser and Kveld". "Avslutt nå" before the phone's next policy not run (the `adopt` rows) |
+| 15 Home's line | **Passed** in both modes: under the pause's banner, a tap turns airplane mode off |
+
+**Also found:** after an Off the sync waited for the default network, which is the always-on VPN and read validated at
+once - the sync ran before Wi-Fi was up. Fixed: a real validated network. Not run: 6 (Bluetooth), 7 (Gboard's mic).
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:
