@@ -1322,6 +1322,8 @@ private fun storeAcceptedPolicy(context: Context, policy: PolicyResponse): Unit 
         .putString(keys.lastEnforcedPlan(), LastEnforcedPlan.encode(LastEnforcedPlan.of(policy)))
     if (policy.timePolicy != null) editor.putBoolean(keys.timePolicySeen(), true)
     if (policy.callPolicy?.hasChannelModes == true) editor.putBoolean(keys.channelModesSeen(), true)
+    // Design 97 D7: the kid's Mobildata switch hidden resets it to On.
+    if (policy.quickControlsMask and QuickControlFeature.MOBILE_DATA == 0L) editor.putBoolean(keys.kidMobileOff(), false)
     // What KidVpnService forwards to (it never fetches policy itself): the provider, and the
     // parent's own servers or none (design 36 §5.1) - with the policy, so they never disagree.
     editor.putString(keys.dnsUpstreamProvider(), policy.dnsUpstreamProvider)

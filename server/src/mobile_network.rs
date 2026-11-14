@@ -16,18 +16,29 @@ use crate::models::{DevicePolicy, DeviceStatus};
 pub const ROAMING_CAPABILITY: &str = "data_roaming_v1";
 /// The launcher capability for Bare Vibb, the settings lock and `mobile_data` (design 95 rev. 3).
 pub const MOBILE_CAPABILITY: &str = "mobile_data_v1";
+/// Design 97 §3.2: the launcher enforces `abroad`, reports `data_roaming.where` and `mobile_data.kid`, and shows the
+/// kid's Mobildata row. The kid's switch on the page and the roaming notice wait for it.
+pub const NETWORK_CAPABILITY: &str = "mobile_network_v2";
 
-/// The choices the page offers (design 95 rev. 3: "Tillat i EU/EØS" is out of this round; the column allows `eea`).
-pub const ROAMING_CHOICES: &[&str] = &["off", "phone"];
+/// "Mobildata for apper" (design 95 rev. 3).
 pub const APPS_CHOICES: &[&str] = &["on", "vibb"];
 
-/// The stored roaming choice as served: `phone` and `eea` as they are, anything else (an empty default) `off`.
-pub fn roaming_choice(stored: &str) -> &'static str {
+/// Design 97: "I utlandet" - Ingen data, Bare Vibb, Som hjemme.
+pub const ABROAD_CHOICES: &[&str] = &["off", "vibb", "home"];
+
+/// The stored "I utlandet" as served: `vibb` and `home` as they are, anything else `off` (fail closed).
+pub fn abroad_choice(stored: &str) -> &'static str {
     match stored {
-        "phone" => "phone",
-        "eea" => "eea",
+        "vibb" => "vibb",
+        "home" => "home",
         _ => "off",
     }
+}
+
+/// Design 97 §3.1: the policy's `data_roaming` for a launcher from before design 97, derived from the choice so it
+/// never gets more data abroad than chosen - Bare Vibb is `off` there (no data abroad until it is updated).
+pub fn derived_roaming(abroad: &str) -> &'static str {
+    if abroad == "home" { "phone" } else { "off" }
 }
 
 /// The stored "Mobildata for apper" as served: `vibb` or `on`.
@@ -36,8 +47,9 @@ pub fn apps_choice(stored: &str) -> &'static str {
 }
 
 /// Design 94 §5: the report's `data_roaming`, re-serialised field by field. A booleans that isn't one reads as its safe
-/// value (`false`; `null` for `enabled`), `country` must be `[a-z]{2}`, `network` `[0-9]{5,6}`, `modems` 1..=8; a value
-/// that isn't an object is `None` (stored `NULL`), never a refused report.
+/// value (`false`; `null` for `enabled`), `country` must be `[a-z]{2}`, `network` `[0-9]{5,6}`, `modems` 1..=8, design
+/// 97's `where` one of `home`, `abroad`, `unknown` (else `null`, an older launcher); a value that isn't an object is
+/// `None` (stored `NULL`), never a refused report.
 pub fn clean_roaming(value: &Value) -> Option<String> {
     let object = value.as_object()?;
     let flag = |key: &str| object.get(key).and_then(Value::as_bool).unwrap_or(false);
@@ -62,25 +74,34 @@ pub fn clean_roaming(value: &Value) -> Option<String> {
             "enabled": object.get("enabled").and_then(Value::as_bool),
             "data_active": flag("data_active"),
             "modems": modems,
+            "where": object
+                .get("where")
+                .and_then(Value::as_str)
+                .filter(|w| matches!(*w, "home" | "abroad" | "unknown")),
         })
         .to_string(),
     )
 }
 
 /// Design 95 rev. 3: the report's `mobile_data`, re-serialised: `enabled` a boolean or `null`, `sink` one of the known
-/// words (else `off`), `settings_locked` a boolean (else `false`).
+/// words (else `off`), `settings_locked` a boolean (else `false`); design 97's `kid` `on`, `off` or `null` (the row
+/// hidden, or an older launcher).
 pub fn clean_mobile(value: &Value) -> Option<String> {
     let object = value.as_object()?;
     let sink = object
         .get("sink")
         .and_then(Value::as_str)
-        .filter(|s| matches!(*s, "off" | "parent" | "roaming"))
+        .filter(|s| matches!(*s, "off" | "parent" | "abroad" | "roaming" | "kid"))
         .unwrap_or("off");
     Some(
         json!({
             "enabled": object.get("enabled").and_then(Value::as_bool),
             "sink": sink,
             "settings_locked": object.get("settings_locked").and_then(Value::as_bool).unwrap_or(false),
+            "kid": object
+                .get("kid")
+                .and_then(Value::as_str)
+                .filter(|k| matches!(*k, "on" | "off")),
         })
         .to_string(),
     )
@@ -96,6 +117,9 @@ pub struct RoamingReport {
     pub enabled: Option<bool>,
     pub data_active: bool,
     pub modems: Option<i64>,
+    /// Design 97 §4.1: the launcher's own judgement, `home`, `abroad` or `unknown`; `None` from an older launcher.
+    #[serde(default, rename = "where")]
+    pub where_is: Option<String>,
 }
 
 /// A stored `mobile_data_json`.
@@ -104,6 +128,9 @@ pub struct MobileReport {
     pub enabled: Option<bool>,
     pub sink: String,
     pub settings_locked: bool,
+    /// Design 97 §3.2: the kid's own switch, `on` or `off`; `None` while the row is hidden or from an older launcher.
+    #[serde(default)]
+    pub kid: Option<String>,
 }
 
 fn has(latest: &DeviceStatus, capability: &str) -> bool {
@@ -127,8 +154,9 @@ pub fn mobile_report(latest: &DeviceStatus) -> Option<MobileReport> {
 }
 
 /// The countries named in full (design 94 §6.2): the EEA (EU 27, IS, LI, NO) and then GB and CH, which are outside it.
-/// Each has `data_roaming.in.<cc>` in both catalogs - the whole phrase, since nb's preposition and en's "the" depend on
-/// the country.
+/// Each has `data_roaming.place.<cc>` in both catalogs - the whole place phrase ("i Sverige", "på Island"; "in the UK"),
+/// since nb's preposition and en's "the" depend on the country (design 97 §5: used through `data_roaming.in` and the
+/// roaming notice's title).
 pub const NAMED: &[&str] = &[
     "at", "be", "bg", "hr", "cy", "cz", "dk", "ee", "fi", "fr", "de", "gr", "hu", "ie", "it", "lv",
     "lt", "lu", "mt", "nl", "pl", "pt", "ro", "sk", "si", "es", "se", "is", "li", "no", "gb", "ch",
@@ -143,8 +171,22 @@ fn ship_network(report: &RoamingReport) -> bool {
         .is_some_and(|n| n.starts_with("901"))
 }
 
+/// A named country's place phrase ("i Sverige" / "in Sweden"), `None` for a country not in [NAMED].
+pub fn place_phrase(lang: Lang, cc: &str) -> Option<String> {
+    NAMED
+        .contains(&cc)
+        .then(|| t(lang, &format!("data_roaming.place.{cc}")).to_string())
+}
+
+/// Design 97 code QA M2: the launcher reads the phone abroad on a foreign network Android doesn't flag as roaming
+/// (carrier config can clear the flag for a partner network); it is worded as roaming.
+fn abroad_unflagged(report: &RoamingReport) -> bool {
+    !report.roaming && !ship_network(report) && report.where_is.as_deref() == Some("abroad")
+}
+
 /// Design 94 §6.2: where the phone roams, and whether it is a warning (orange). The 901 rows decide first - near land
-/// the country can be a coastal one. `None` when the phone doesn't roam and isn't on a ship or plane network.
+/// the country can be a coastal one. `None` when the phone doesn't roam (or, design 97, isn't abroad) and isn't on a ship
+/// or plane network.
 pub fn roaming_words(lang: Lang, report: &RoamingReport) -> Option<(String, bool)> {
     if ship_network(report) {
         let key = if report.roaming {
@@ -154,14 +196,14 @@ pub fn roaming_words(lang: Lang, report: &RoamingReport) -> Option<(String, bool
         };
         return Some((t(lang, key).to_string(), true));
     }
-    if !report.roaming {
+    if !report.roaming && !abroad_unflagged(report) {
         return None;
     }
     Some(match report.country.as_deref() {
-        Some(cc) => match NAMED.iter().position(|named| *named == cc) {
-            Some(index) => (
-                t(lang, &format!("data_roaming.in.{cc}")).to_string(),
-                index >= EEA_COUNT,
+        Some(cc) => match place_phrase(lang, cc) {
+            Some(place) => (
+                t_params(lang, "data_roaming.in", &[("place", &place)]),
+                NAMED.iter().position(|named| *named == cc) >= Some(EEA_COUNT),
             ),
             None => (
                 t_params(
@@ -200,19 +242,35 @@ impl Line {
             warn,
         }
     }
+
+    fn named(lang: Lang, key: &'static str, title: &str, name: &str) -> Line {
+        Line {
+            key,
+            title: t_params(lang, title, &[("name", name)]),
+            sub: None,
+            warn: false,
+        }
+    }
+}
+
+/// The latest report claims design 97's capability: the kid's switch, the abroad sink and `where` are there.
+fn network_capable(latest: &DeviceStatus) -> bool {
+    has(latest, NETWORK_CAPABILITY)
 }
 
 /// Design 94 §6.1's warnings from the report: a roaming session that outlived the lock (with a launcher that sinks it,
-/// only Vibb uses it), a SIM that still reads roaming on under the lock, a ship network the lock doesn't cover.
+/// only Vibb uses it), a SIM that still reads roaming on under the lock, a ship network the lock doesn't cover (design
+/// 97: unless the phone's abroad sink covers it - Ingen data or Bare Vibb on a launcher with the capability).
 fn roaming_warnings(
     lang: Lang,
     report: &RoamingReport,
     mobile: Option<&MobileReport>,
     airplane_locked: bool,
+    sink_covers_ship: bool,
 ) -> Vec<Line> {
     let mut lines = Vec::new();
     if report.locked && report.data_active {
-        let sinking = mobile.is_some_and(|m| m.sink == "roaming");
+        let sinking = mobile.is_some_and(|m| m.sink == "roaming" || m.sink == "abroad");
         let sub = match (sinking, airplane_locked) {
             (_, true) => "mobile.state.lingering_fix_restart",
             (_, false) => "mobile.state.lingering_fix",
@@ -233,7 +291,7 @@ fn roaming_warnings(
             true,
         ));
     }
-    if ship_network(report) && !report.roaming {
+    if ship_network(report) && !report.roaming && !sink_covers_ship {
         lines.push(Line {
             key: "ship-home",
             title: t(lang, "data_roaming.ship_home").to_string(),
@@ -244,10 +302,42 @@ fn roaming_warnings(
     lines
 }
 
+/// Whether the phone's abroad sink covers a ship network Android doesn't count as roaming (design 97 Q97-H1).
+fn sink_covers_ship(policy: &DevicePolicy, latest: &DeviceStatus) -> bool {
+    network_capable(latest) && abroad_choice(&policy.abroad) != "home"
+}
+
+/// The "only Vibb" line for the report's sink (design 97 §5): the parent's Bare Vibb, the kid's Off, or abroad.
+fn only_vibb_line(lang: Lang, name: &str, sink: &str) -> Option<Line> {
+    match sink {
+        "parent" => Some(Line::new(
+            lang,
+            "only-vibb",
+            "mobile.state.only_vibb",
+            Some("mobile.state.only_vibb_sub"),
+            false,
+        )),
+        "kid" => Some(Line {
+            sub: Some(t(lang, "mobile.state.only_vibb_sub").to_string()),
+            ..Line::named(lang, "only-vibb-kid", "mobile.state.only_vibb_kid", name)
+        }),
+        "abroad" => Some(Line::new(
+            lang,
+            "only-vibb-abroad",
+            "mobile.state.only_vibb_abroad",
+            Some("mobile.state.only_vibb_sub"),
+            false,
+        )),
+        _ => None,
+    }
+}
+
 /// The summary's lines (design 95 rev. 3, the approved mockup): only when they say something - mobile data off on the
-/// phone, only Vibb on cellular now, and the roaming warnings. Each leads to the Mobilnett page.
+/// phone, only Vibb on cellular now (the parent's, the kid's or abroad), and the roaming warnings. Each leads to the
+/// Mobilnett page.
 pub fn summary_lines(
     lang: Lang,
+    name: &str,
     policy: &DevicePolicy,
     latest: Option<&DeviceStatus>,
 ) -> Vec<Line> {
@@ -265,14 +355,8 @@ pub fn summary_lines(
                 Some("mobile.state.data_off_sub"),
                 false,
             ));
-        } else if m.sink == "parent" {
-            lines.push(Line::new(
-                lang,
-                "only-vibb",
-                "mobile.state.only_vibb",
-                Some("mobile.state.only_vibb_sub"),
-                false,
-            ));
+        } else if let Some(line) = only_vibb_line(lang, name, &m.sink) {
+            lines.push(line);
         }
     }
     if let Some(report) = roaming_report(latest) {
@@ -281,30 +365,38 @@ pub fn summary_lines(
             &report,
             mobile.as_ref(),
             policy.hardening.disallow_airplane_mode,
+            sink_covers_ship(policy, latest),
         ));
     }
     lines
 }
 
-/// The phone page's Mobilnett row value (design 95 rev. 3): the choices away from the defaults and mobile data off on
-/// the phone, joined with " · "; `None` when nothing differs.
+/// The phone page's Mobilnett row value (design 97 §5): the choices away from a new phone's defaults (apps on, Bare
+/// Vibb abroad), the kid's Off and mobile data off on the phone, joined with " · "; `None` when nothing differs.
 pub fn row_value(
     lang: Lang,
+    name: &str,
     policy: &DevicePolicy,
     latest: Option<&DeviceStatus>,
 ) -> Option<String> {
-    let mut parts: Vec<&str> = Vec::new();
+    let mut parts: Vec<String> = Vec::new();
     if apps_choice(&policy.apps_mobile) == "vibb" {
-        parts.push(t(lang, "mobile.value.vibb"));
+        parts.push(t(lang, "mobile.value.vibb").to_string());
     }
-    if roaming_choice(&policy.data_roaming) == "phone" {
-        parts.push(t(lang, "mobile.value.roaming_phone"));
+    match abroad_choice(&policy.abroad) {
+        "off" => parts.push(t(lang, "mobile.value.abroad_off").to_string()),
+        "home" => parts.push(t(lang, "mobile.value.abroad_home").to_string()),
+        _ => {}
     }
-    if latest
-        .and_then(mobile_report)
-        .is_some_and(|m| m.enabled == Some(false))
+    let mobile = latest.and_then(mobile_report);
+    if mobile
+        .as_ref()
+        .is_some_and(|m| m.kid.as_deref() == Some("off"))
     {
-        parts.push(t(lang, "mobile.value.data_off"));
+        parts.push(t_params(lang, "mobile.value.kid_off", &[("name", name)]));
+    }
+    if mobile.is_some_and(|m| m.enabled == Some(false)) {
+        parts.push(t(lang, "mobile.value.data_off").to_string());
     }
     (!parts.is_empty()).then(|| parts.join(" · "))
 }
@@ -312,28 +404,77 @@ pub fn row_value(
 /// The Mobilnett page's groups (`device_mobile.html`).
 pub struct Card {
     pub apps_mobile: &'static str,
-    pub data_roaming: &'static str,
+    pub abroad: &'static str,
     pub settings_locked: bool,
-    /// The latest report claims each capability; the groups' controls wait for it.
+    /// The parent shows the kid's own Mobildata switch (`quick_controls_mask` bit 32).
+    pub kid_shown: bool,
+    /// The latest report claims each capability; the groups' controls wait for it. The "I utlandet" radios need only
+    /// `data_roaming_v1` (the derived value works there, design 97 §3.2); the kid's switch needs `mobile_network_v2`.
     pub mobile_capable: bool,
     pub roaming_capable: bool,
+    pub network_capable: bool,
     /// The phone has reported at all: without a report nothing is said about its Vibb One.
     pub reported: bool,
-    /// Under "Mobildata", "Dataroaming" and the lock: the phone's state, worded.
+    /// Android's roaming switch reads on: Ingen data's sub-line says a later choice needs the phone's step again.
+    pub switch_on: bool,
+    /// Under "Mobildata", "I utlandet" and the lock: the phone's state, worded.
     pub data_lines: Vec<Line>,
-    pub roaming_lines: Vec<Line>,
+    pub abroad_lines: Vec<Line>,
     pub lock_lines: Vec<Line>,
 }
 
-/// The page's state from the stored choices and the latest report (design 94 §6.1's table, design 95 rev. 3's lines).
-pub fn card(lang: Lang, policy: &DevicePolicy, latest: Option<&DeviceStatus>) -> Card {
+/// The switch line under "I utlandet" (design 97 §5's table): from the choice, the report's `enabled`, `locked` and
+/// `settings_locked`, and the pause. No line ever asks the parent to wait for Vibb. Code QA L5: none under Bare Vibb on a
+/// launcher without [NETWORK_CAPABILITY] ([network_capable] false) outside a pause - it keeps the derived roaming lock, so
+/// a step on Android's switch wouldn't hold; the radio's update hint says what does.
+fn switch_line(
+    lang: Lang,
+    name: &str,
+    abroad: &str,
+    report: &RoamingReport,
+    mobile: Option<&MobileReport>,
+    paused: bool,
+    network_capable: bool,
+) -> Option<Line> {
+    if paused {
+        let key = if report.enabled == Some(true) {
+            "mobile.abroad.switch.paused_on"
+        } else {
+            "mobile.abroad.switch.paused_off"
+        };
+        return Some(Line::new(lang, "switch", key, None, false));
+    }
+    if abroad == "vibb" && !network_capable {
+        return None;
+    }
+    if abroad == "off" {
+        return Some(if report.locked {
+            Line::new(lang, "switch", "mobile.abroad.switch.locked", None, false)
+        } else {
+            // The lock hasn't reached the phone yet (a choice changed since its report).
+            Line::new(lang, "pending", "mobile.state.pending", None, false)
+        });
+    }
+    Some(match report.enabled? {
+        true if mobile.is_some_and(|m| m.settings_locked) => {
+            Line::named(lang, "switch", "mobile.abroad.switch.on_locked", name)
+        }
+        true => Line::named(lang, "switch", "mobile.abroad.switch.on_open", name),
+        false => Line::new(lang, "switch", "mobile.abroad.switch.off", None, true),
+    })
+}
+
+/// The page's state from the stored choices and the latest report (design 94 §6.1's table, design 95 rev. 3's lines,
+/// design 97 §5).
+pub fn card(lang: Lang, name: &str, policy: &DevicePolicy, latest: Option<&DeviceStatus>) -> Card {
     let apps_mobile = apps_choice(&policy.apps_mobile);
-    let data_roaming = roaming_choice(&policy.data_roaming);
+    let abroad = abroad_choice(&policy.abroad);
     let mobile = latest.and_then(mobile_report);
     let roaming = latest.and_then(roaming_report);
     let paused = latest.is_some_and(|s| s.paused_at(chrono::Utc::now().timestamp_millis()));
     let mobile_capable = latest.is_some_and(|s| has(s, MOBILE_CAPABILITY));
     let roaming_capable = latest.is_some_and(|s| has(s, ROAMING_CAPABILITY));
+    let network_capable = latest.is_some_and(network_capable);
     let reported = latest.is_some();
     let update = |lang| {
         Line::new(
@@ -359,14 +500,15 @@ pub fn card(lang: Lang, policy: &DevicePolicy, latest: Option<&DeviceStatus>) ->
                 false,
             ));
         }
-        if m.sink == "parent" {
-            data_lines.push(Line::new(
-                lang,
-                "only-vibb",
-                "mobile.state.only_vibb",
-                Some("mobile.state.only_vibb_sub"),
-                false,
-            ));
+        let kid_off = m.kid.as_deref() == Some("off");
+        // Code QA L6: the kid's Off is said once on the page, by its own line; the "only Vibb" form is the summary's.
+        if let Some(line) =
+            only_vibb_line(lang, name, &m.sink).filter(|l| !(kid_off && l.key == "only-vibb-kid"))
+        {
+            data_lines.push(line);
+        }
+        if kid_off {
+            data_lines.push(Line::named(lang, "kid-off", "mobile.state.kid_off", name));
         }
     }
     if apps_mobile == "vibb" && paused && mobile_capable {
@@ -379,54 +521,46 @@ pub fn card(lang: Lang, policy: &DevicePolicy, latest: Option<&DeviceStatus>) ->
         ));
     }
 
-    let mut roaming_lines = Vec::new();
+    let mut abroad_lines = Vec::new();
     if reported && !roaming_capable {
-        roaming_lines.push(update(lang));
+        abroad_lines.push(update(lang));
     }
     if let Some(report) = &roaming {
-        if report.locked {
-            roaming_lines.push(Line::new(
-                lang,
-                "locked",
-                "mobile.state.roaming_locked",
-                None,
-                false,
-            ));
-        } else if data_roaming == "off" {
-            // Code QA L6: "unlocked for setup" only while a pause runs; otherwise the lock just hasn't reached the
-            // phone yet (a choice changed since its report, or a launcher that couldn't set it).
-            roaming_lines.push(if paused {
-                Line::new(
-                    lang,
-                    "unlocked",
-                    "mobile.state.roaming_unlocked",
-                    None,
-                    false,
-                )
-            } else {
-                Line::new(lang, "pending", "mobile.state.pending", None, false)
-            });
-        } else if let Some(enabled) = report.enabled {
-            let key = if enabled {
-                "mobile.state.phone_on"
-            } else {
-                "mobile.state.phone_off"
-            };
-            roaming_lines.push(Line::new(lang, "phone", key, None, false));
-        }
-        if let Some((words, warn)) = roaming_words(lang, report).filter(|_| report.roaming) {
-            roaming_lines.push(Line {
+        abroad_lines.extend(switch_line(
+            lang,
+            name,
+            abroad,
+            report,
+            mobile.as_ref(),
+            paused,
+            network_capable,
+        ));
+        if let Some((words, warn)) =
+            roaming_words(lang, report).filter(|_| report.roaming || abroad_unflagged(report))
+        {
+            abroad_lines.push(Line {
                 key: "roaming",
                 title: words,
                 sub: None,
                 warn,
             });
         }
-        roaming_lines.extend(roaming_warnings(
+        // Design 97 §5: Ingen data cuts mobile data in a national-roaming area at home.
+        if abroad == "off" && report.roaming && report.where_is.as_deref() == Some("home") {
+            abroad_lines.push(Line::new(
+                lang,
+                "national",
+                "mobile.abroad.national",
+                None,
+                true,
+            ));
+        }
+        abroad_lines.extend(roaming_warnings(
             lang,
             report,
             mobile.as_ref(),
             policy.hardening.disallow_airplane_mode,
+            latest.is_some_and(|s| sink_covers_ship(policy, s)),
         ));
     }
 
@@ -445,14 +579,171 @@ pub fn card(lang: Lang, policy: &DevicePolicy, latest: Option<&DeviceStatus>) ->
 
     Card {
         apps_mobile,
-        data_roaming,
+        abroad,
         settings_locked: policy.mobile_settings_locked,
+        kid_shown: policy.quick_controls_mask & crate::handlers::devices::QUICK_CONTROL_MOBILE_DATA
+            != 0,
         mobile_capable,
         roaming_capable,
+        network_capable,
         reported,
+        switch_on: roaming.as_ref().is_some_and(|r| r.enabled == Some(true)),
         data_lines,
-        roaming_lines,
+        abroad_lines,
         lock_lines,
+    }
+}
+
+/// Design 97 §6 (D6 as corrected): a place told within this long is not told again - the border guard.
+pub const ROAMING_GUARD: chrono::Duration = chrono::Duration::hours(1);
+
+/// The roaming notice's state on the device (`devices.roaming_place`, `devices.roaming_told`): the last abroad place
+/// (`None` at home) and the places told within [ROAMING_GUARD], with when (epoch ms).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RoamingState {
+    pub place: Option<String>,
+    pub told: std::collections::BTreeMap<String, i64>,
+}
+
+impl RoamingState {
+    /// From the two columns; an unreadable `told` reads as none (the worst case is one notice too many).
+    pub fn of(place: Option<String>, told: Option<&str>) -> RoamingState {
+        RoamingState {
+            place,
+            told: told
+                .and_then(|t| serde_json::from_str(t).ok())
+                .unwrap_or_default(),
+        }
+    }
+
+    /// `roaming_told` as stored: `NULL` when empty.
+    pub fn told_json(&self) -> Option<String> {
+        (!self.told.is_empty())
+            .then(|| serde_json::to_string(&self.told).expect("a map serializes"))
+    }
+}
+
+/// A report's place for the notice (design 97 §6): `ship` on a 901 network (a place of its own, the most expensive),
+/// else its country, else none.
+pub fn notice_place(report: &RoamingReport) -> Option<String> {
+    if ship_network(report) {
+        return Some("ship".to_string());
+    }
+    report.country.clone()
+}
+
+/// Design 97 §6, the pure rule (D6 as corrected): what one report (`where_is` and its [notice_place]) does to the state,
+/// and the place to tell, if any.
+/// - `abroad` at another place than the last one (or none before): told, unless told within [ROAMING_GUARD]; the place
+///   becomes the last one either way. The same place: nothing. No readable place: the plain notice only when there is
+///   no last place (`plain` becomes it), otherwise nothing.
+/// - `home`: the last place cleared - coming home never tells.
+/// - `unknown` (or anything else): nothing changes.
+///
+/// Told entries older than the guard are dropped whenever the state changes.
+pub fn roaming_edge(
+    state: &RoamingState,
+    where_is: &str,
+    place: Option<&str>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> (RoamingState, Option<String>) {
+    let now_ms = now.timestamp_millis();
+    let fresh = |told: &std::collections::BTreeMap<String, i64>| {
+        told.iter()
+            .filter(|(_, at)| now_ms - **at < ROAMING_GUARD.num_milliseconds())
+            .map(|(p, at)| (p.clone(), *at))
+            .collect::<std::collections::BTreeMap<_, _>>()
+    };
+    match where_is {
+        "home" if state.place.is_some() => (
+            RoamingState {
+                place: None,
+                told: fresh(&state.told),
+            },
+            None,
+        ),
+        "abroad" => {
+            let place = match place {
+                Some(place) => place,
+                None if state.place.is_none() => "plain",
+                None => return (state.clone(), None),
+            };
+            if state.place.as_deref() == Some(place) {
+                return (state.clone(), None);
+            }
+            let mut told = fresh(&state.told);
+            let tell = !told.contains_key(place);
+            if tell {
+                told.insert(place.to_string(), now_ms);
+            }
+            (
+                RoamingState {
+                    place: Some(place.to_string()),
+                    told,
+                },
+                tell.then(|| place.to_string()),
+            )
+        }
+        _ => (state.clone(), None),
+    }
+}
+
+/// A report's `data_roaming` from a launcher with [NETWORK_CAPABILITY] against the phone's roaming state (design 97 §6):
+/// in one transaction, a compare-and-set on the state as read and the raise only when that changed the row (two
+/// parallel reports tell once), as `parent_events::battery_report`. Failures are logged.
+pub async fn roaming_intake(
+    state: &crate::AppState,
+    phone: &crate::parent_events::Phone,
+    report: &RoamingReport,
+) {
+    let Some(where_is) = report.where_is.as_deref() else {
+        return;
+    };
+    let result = async {
+        let mut tx = state.db.begin().await?;
+        let (place, told): (Option<String>, Option<String>) =
+            sqlx::query_as("SELECT roaming_place, roaming_told FROM devices WHERE id = ?")
+                .bind(phone.id)
+                .fetch_one(&mut *tx)
+                .await?;
+        let before = RoamingState::of(place.clone(), told.as_deref());
+        let (after, tell) = roaming_edge(
+            &before,
+            where_is,
+            notice_place(report).as_deref(),
+            phone.now,
+        );
+        if after == before {
+            return Ok::<_, sqlx::Error>(false);
+        }
+        let changed = sqlx::query(
+            "UPDATE devices SET roaming_place = ?, roaming_told = ? \
+             WHERE id = ? AND roaming_place IS ? AND roaming_told IS ?",
+        )
+        .bind(&after.place)
+        .bind(after.told_json())
+        .bind(phone.id)
+        .bind(&place)
+        .bind(&told)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+        let raised = match tell {
+            Some(tell) if changed == 1 => {
+                crate::parent_events::raise(&mut tx, &phone.roaming_started(&tell, phone.now))
+                    .await?
+            }
+            _ => None,
+        };
+        tx.commit().await?;
+        Ok(raised.is_some())
+    };
+    match result.await {
+        Ok(true) => state.push.wake(),
+        Ok(false) => {}
+        Err(err) => {
+            tracing::error!(device_id = phone.id, %err, "can't keep the roaming notice's state")
+        }
     }
 }
 
@@ -496,13 +787,125 @@ mod tests {
                 .contains("doesn't cover it")
         );
         assert_eq!(roaming_words(Lang::Nb, &roaming(None, None, false)), None);
+        // Code QA M2: abroad on a network Android doesn't flag as roaming reads as roaming; at home it doesn't.
+        let unflagged = |where_is: &str| RoamingReport {
+            where_is: Some(where_is.to_string()),
+            ..roaming(Some("se"), Some("24001"), false)
+        };
+        assert_eq!(
+            roaming_words(Lang::Nb, &unflagged("abroad")),
+            Some(("Roamer i Sverige".to_string(), false))
+        );
+        assert_eq!(roaming_words(Lang::Nb, &unflagged("home")), None);
+    }
+
+    /// Design 97 §6 (D6 as corrected): a run of reports, each `(minutes, where, place)`, and the places told.
+    fn told_in(run: &[(i64, &str, Option<&str>)]) -> Vec<String> {
+        let start = chrono::DateTime::from_timestamp(1_763_100_000, 0).unwrap();
+        let mut state = RoamingState::default();
+        let mut told = Vec::new();
+        for (minutes, where_is, place) in run {
+            let now = start + chrono::Duration::minutes(*minutes);
+            // Each write goes through the columns, as the intake's does.
+            let (after, tell) = roaming_edge(&state, where_is, *place, now);
+            state = RoamingState::of(after.place.clone(), after.told_json().as_deref());
+            assert_eq!(state, after);
+            told.extend(tell);
+        }
+        told
+    }
+
+    #[test]
+    fn a_notice_for_every_crossing_with_the_hours_border_guard() {
+        // Norway -> Sweden -> Denmark -> Sweden, hours apart: three.
+        assert_eq!(
+            told_in(&[
+                (0, "home", None),
+                (60, "abroad", Some("se")),
+                (180, "abroad", Some("dk")),
+                (300, "abroad", Some("se")),
+            ]),
+            ["se", "dk", "se"]
+        );
+        // A border flap within the hour: one. Sweden again after more than an hour: a second.
+        assert_eq!(
+            told_in(&[
+                (0, "abroad", Some("se")),
+                (10, "home", None),
+                (20, "abroad", Some("se")),
+                (30, "home", None),
+                (50, "abroad", Some("se")),
+                (55, "home", None),
+            ]),
+            ["se"]
+        );
+        assert_eq!(
+            told_in(&[
+                (0, "abroad", Some("se")),
+                (10, "home", None),
+                (20, "abroad", Some("se")),
+                (40, "home", None),
+                (70, "abroad", Some("se")),
+            ]),
+            ["se", "se"]
+        );
+        // A ferry: Norway -> ship -> Denmark.
+        assert_eq!(
+            told_in(&[
+                (0, "home", None),
+                (30, "abroad", Some("ship")),
+                (240, "abroad", Some("dk")),
+            ]),
+            ["ship", "dk"]
+        );
+        // `unknown` in between (airplane mode, no service) changes nothing.
+        assert_eq!(
+            told_in(&[
+                (0, "abroad", Some("se")),
+                (60, "unknown", None),
+                (600, "unknown", None),
+                (660, "abroad", Some("se")),
+            ]),
+            ["se"]
+        );
+        // Home, then Sweden: a notice; home never tells.
+        assert_eq!(
+            told_in(&[
+                (0, "home", None),
+                (5, "home", None),
+                (90, "abroad", Some("se"))
+            ]),
+            ["se"]
+        );
+        // No readable country: the plain notice only when no place is open; a country after it is told.
+        assert_eq!(
+            told_in(&[
+                (0, "abroad", None),
+                (10, "abroad", None),
+                (20, "abroad", Some("se")),
+                (30, "abroad", None),
+            ]),
+            ["plain", "se"]
+        );
+        // A 901 network is a place of its own mid-trip too, and the report's place reads it first.
+        assert_eq!(
+            told_in(&[(0, "abroad", Some("dk")), (120, "abroad", Some("ship"))]),
+            ["dk", "ship"]
+        );
+        let ferry = roaming(Some("dk"), Some("901012"), true);
+        assert_eq!(notice_place(&ferry).as_deref(), Some("ship"));
+        assert_eq!(
+            notice_place(&roaming(Some("se"), Some("24001"), true)).as_deref(),
+            Some("se")
+        );
+        assert_eq!(notice_place(&roaming(None, None, true)), None);
     }
 
     #[test]
     fn every_named_country_has_its_phrase_in_both_languages() {
         for cc in NAMED {
             for lang in [Lang::En, Lang::Nb] {
-                let key = format!("data_roaming.in.{cc}");
+                let key = format!("data_roaming.place.{cc}");
                 let words = t(lang, &key);
                 assert!(
                     words != key && !words.is_empty(),
@@ -518,7 +921,7 @@ mod tests {
     #[test]
     fn unlocked_without_a_pause_is_pending() {
         let policy = DevicePolicy {
-            data_roaming: "off".into(),
+            abroad: "off".into(),
             mobile_settings_locked: true,
             ..Default::default()
         };
@@ -536,18 +939,18 @@ mod tests {
         };
         let keys = |card: &Card| {
             (
-                card.roaming_lines.iter().map(|l| l.key).collect::<Vec<_>>(),
+                card.abroad_lines.iter().map(|l| l.key).collect::<Vec<_>>(),
                 card.lock_lines.iter().map(|l| l.key).collect::<Vec<_>>(),
             )
         };
         assert_eq!(
-            keys(&card(Lang::En, &policy, Some(&status))),
+            keys(&card(Lang::En, "Emma", &policy, Some(&status))),
             (vec!["pending"], vec!["pending"])
         );
         status.restrictions_paused = true;
         assert_eq!(
-            keys(&card(Lang::En, &policy, Some(&status))),
-            (vec!["unlocked"], vec!["lifted"])
+            keys(&card(Lang::En, "Emma", &policy, Some(&status))),
+            (vec!["switch"], vec!["lifted"])
         );
     }
 }

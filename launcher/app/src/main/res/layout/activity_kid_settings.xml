@@ -195,6 +195,35 @@
                 <View style="@style/KidDivider" />
             </LinearLayout>
 
+            <!-- Design 97 §4.3: the kid's own Mobildata switch (bit 32). Off = only Vibb One uses mobile data. Off at
+                 50 % and not clickable while the parent decides or Android's own mobile data is off, with its line. -->
+            <LinearLayout
+                android:id="@+id/kid_settings_mobile_row"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/kid_settings_mobile_switch"
+                    style="@style/KidSwitchRow"
+                    android:text="@string/kid_settings_mobile_data" />
+
+                <TextView
+                    android:id="@+id/kid_settings_mobile_line"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingStart="14dp"
+                    android:paddingEnd="14dp"
+                    android:paddingBottom="12dp"
+                    android:fontFamily="@font/nunito_bold"
+                    android:textColor="@color/kid_ink"
+                    android:textSize="13sp"
+                    android:visibility="gone" />
+
+                <View style="@style/KidDivider" />
+            </LinearLayout>
+
             <LinearLayout
                 android:id="@+id/kid_settings_bluetooth_row"
                 android:layout_width="match_parent"

@@ -74,6 +74,9 @@ val STATUS_CAPABILITIES: List<String> = listOf(
     // Design 95 rev. 3: the policy's `apps_mobile` (Bare Vibb, the VPN's sink) and `mobile_settings_locked`
     // (DISALLOW_CONFIG_MOBILE_NETWORKS), and `mobile_data` in every report. The server's Mobilnett page waits for it.
     MOBILE_DATA_CAPABILITY,
+    // Design 97: the policy's `abroad` ("I utlandet"), `data_roaming.where` and `mobile_data.kid` in every report, and
+    // the kid's Mobildata row (bit 32). The server's kid switch and the roaming notice wait for it.
+    MOBILE_NETWORK_CAPABILITY,
 )
 
 /** A time rule's "Stille" switch (server migration 0121): `rules[].silent` is enforced. */

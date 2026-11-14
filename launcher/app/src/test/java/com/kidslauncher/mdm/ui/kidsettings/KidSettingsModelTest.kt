@@ -23,8 +23,13 @@ class KidSettingsModelTest {
         // The sound bit (design 18) alone is a card, not NoneEnabled (QA #6); so is the touch bit (design r9 §4).
         assertEquals(ControlsSection.Rows(wifi = false, bluetooth = false, brightness = false, sound = true, touch = false), controlsSection(true, ok(8)))
         assertEquals(ControlsSection.Rows(wifi = false, bluetooth = false, brightness = false, sound = false, touch = true), controlsSection(true, ok(16)))
+        // Design 97 (Q97-L1): the kid's Mobildata bit alone is a card too.
+        assertEquals(
+            ControlsSection.Rows(wifi = false, bluetooth = false, brightness = false, sound = false, touch = false, mobileData = true),
+            controlsSection(true, ok(32)),
+        )
         // Unknown bits alone are nothing.
-        assertEquals(ControlsSection.NoneEnabled, controlsSection(true, ok(32)))
+        assertEquals(ControlsSection.NoneEnabled, controlsSection(true, ok(64)))
         assertEquals(ControlsSection.NoneEnabled, controlsSection(true, ok(0)))
     }
 

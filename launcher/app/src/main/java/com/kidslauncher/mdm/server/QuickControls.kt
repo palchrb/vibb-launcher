@@ -41,6 +41,10 @@ object QuickControlFeature {
     /** Touch sounds and vibration (design r9 §4): Android's two switches for taps. Off on a new phone
      * (the parent grants "Modify system settings" first). */
     const val TOUCH: Long = 16
+
+    /** Design 97 §4.3: the kid's own Mobildata switch (Off = only Vibb uses mobile data). In a new phone's default
+     * mask (D3). */
+    const val MOBILE_DATA: Long = 32
 }
 
 /**

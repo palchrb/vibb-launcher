@@ -3,7 +3,9 @@
 //! of this page, so a save never jumps to the top (with JS `scroll-restore.js` keeps the exact place; without, a
 //! `<noscript>` Save does the same):
 //! - `#mobile-data`: "Mobildata" - På / Bare Vibb (`apps_mobile`);
-//! - `#data-roaming`: "Dataroaming" - Av (locked) / Telefonens valg (`data_roaming`, design 94);
+//!   with the kid's own Mobildata switch (design 97 §5, `group=kid-mobile`: `quick_controls_mask` bit 32 alone);
+//! - `#abroad`: "I utlandet" - Ingen data / Bare Vibb / Som hjemme (`abroad`, design 97; it replaced design 94's
+//!   `#data-roaming`, which nothing linked to);
 //! - `#mobile-lock`: "Lås mobilnett-innstillingene" (`mobile_settings_locked`).
 //!
 //! One route, `POST /devices/{id}/mobile`, with the group in `group`: an unknown value is a 400 with nothing written,
@@ -58,7 +60,7 @@ pub async fn view(State(state): State<AppState>, lang: Lang, Path(id): Path<i64>
             lang,
             who: crate::handlers::devices::BandAvatar::of(&device),
             title: crate::i18n::t(lang, "device.page.mobile").to_string(),
-            card: mobile_network::card(lang, &policy, latest.as_ref()),
+            card: mobile_network::card(lang, &device.name, &policy, latest.as_ref()),
             device,
         }
         .render()
@@ -79,10 +81,19 @@ fn change(form: &HashMap<String, String>) -> Option<(&'static str, ChangeValue, 
             ChangeValue::Text(pick("apps_mobile", mobile_network::APPS_CHOICES)?),
             "mobile-data",
         )),
-        "data-roaming" => Some((
-            "data_roaming",
-            ChangeValue::Text(pick("data_roaming", mobile_network::ROAMING_CHOICES)?),
-            "data-roaming",
+        "abroad" => Some((
+            "abroad",
+            ChangeValue::Text(pick("abroad", mobile_network::ABROAD_CHOICES)?),
+            "abroad",
+        )),
+        // Design 97 §5: the kid's switch writes bit 32 of the quick-controls mask alone. A switch: missing = off.
+        "kid-mobile" => Some((
+            "quick_controls_mask",
+            ChangeValue::Bit(
+                crate::handlers::devices::QUICK_CONTROL_MOBILE_DATA,
+                form.contains_key("on"),
+            ),
+            "mobile-data",
         )),
         // A switch: missing = off.
         "mobile-lock" => Some((
@@ -97,6 +108,8 @@ fn change(form: &HashMap<String, String>) -> Option<(&'static str, ChangeValue, 
 enum ChangeValue {
     Text(&'static str),
     Flag(bool),
+    /// One bit of an integer column, set or cleared; the other bits kept.
+    Bit(i64, bool),
 }
 
 /// POST `/devices/{id}/mobile`: one group's choice. Back to the group's anchor, the phone nudged.
@@ -110,13 +123,19 @@ pub async fn save(
         return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.out_of_date");
     };
     // The column comes from the fixed list above, never from the form.
-    let sql = format!(
-        "UPDATE device_policy SET {column} = ?, updated_at = datetime('now') WHERE device_id = ?"
-    );
+    let set = match value {
+        ChangeValue::Bit(..) => {
+            format!("{column} = CASE WHEN ? THEN {column} | ? ELSE {column} & ~? END")
+        }
+        _ => format!("{column} = ?"),
+    };
+    let sql =
+        format!("UPDATE device_policy SET {set}, updated_at = datetime('now') WHERE device_id = ?");
     let query = sqlx::query(&sql);
     let query = match value {
         ChangeValue::Text(text) => query.bind(text),
         ChangeValue::Flag(flag) => query.bind(flag),
+        ChangeValue::Bit(bit, on) => query.bind(on).bind(bit).bind(bit),
     };
     match query.bind(id).execute(&state.db).await {
         Ok(done) if done.rows_affected() == 0 => {

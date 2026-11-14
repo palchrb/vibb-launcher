@@ -219,7 +219,7 @@ fn rows(
 ///   [SIGN_IN_NAME_HOURS];
 /// - the phones' parent-PIN events after `parent_pin::PIN_EVENT_DAYS` (by when they arrived);
 /// - a zone's arrivals and departures with the phone's location history (`location_retention_days`,
-///   by when they were stored; design 64 decision 6);
+///   by when they were stored; design 64 decision 6), and a roaming notice, which names the country (design 97 §6);
 /// - the parent's events after `parent_events::EVENT_DAYS`, push deliveries after [PUSH_DAYS] (design 35 §2.4),
 ///   subscriptions a push service ended after [PUSH_GONE_DAYS] (a parent's Remove notes stay);
 /// - commands asked more than [COMMAND_DAYS] ago, except one the phone may still get: never
@@ -382,18 +382,20 @@ pub async fn prune(db: &SqlitePool) -> Pruned {
     .execute(db)
     .await);
     // A zone's arrivals and departures are location records (design 64 decision 6): they go
-    // with the phone's location history, not after the inbox's 90 days.
+    // with the phone's location history, not after the inbox's 90 days - and so does a roaming
+    // notice, which names the country (design 97 §6, Q97-M5).
     let zone_rows = rows(
         failed,
         "parent_events",
         sqlx::query(
-            "DELETE FROM parent_events WHERE kind IN (?, ?) \
+            "DELETE FROM parent_events WHERE kind IN (?, ?, ?) \
            AND created_at < datetime('now', '-' || MAX(1, COALESCE( \
                  (SELECT p.location_retention_days FROM device_policy p \
                   WHERE p.device_id = parent_events.device_id), ?)) || ' days')",
         )
         .bind(crate::parent_events::Kind::ZoneArrived.wire())
         .bind(crate::parent_events::Kind::ZoneLeft.wire())
+        .bind(crate::parent_events::Kind::RoamingStarted.wire())
         .bind(DEFAULT_LOCATION_RETENTION_DAYS)
         .execute(db)
         .await,

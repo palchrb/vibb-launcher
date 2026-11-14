@@ -326,6 +326,7 @@ async fn policy_json_keys_snapshot() {
     assert_eq!(
         keys,
         [
+            "abroad",
             "allowlist",
             "app_permissions",
             "app_updates_wifi_only",
@@ -744,7 +745,8 @@ async fn a_new_device_starts_with_all_kid_settings_on() {
     let policy = app
         .request(Method::GET, "/api/devices/policy", Some(&token), None)
         .await;
-    assert_eq!(policy.json()["quick_controls_mask"], 15);
+    // Design 97 D3: the kid's Mobildata switch (bit 32) too.
+    assert_eq!(policy.json()["quick_controls_mask"], 15 | 32);
     assert_eq!(policy.json()["notification_auto_cancel"], true);
 }
 

@@ -600,7 +600,11 @@ pub(crate) async fn build_policy(
         calendar,
         app_permissions,
         lock_media_apps,
-        data_roaming: crate::mobile_network::roaming_choice(&policy.data_roaming).to_string(),
+        abroad: crate::mobile_network::abroad_choice(&policy.abroad).to_string(),
+        data_roaming: crate::mobile_network::derived_roaming(crate::mobile_network::abroad_choice(
+            &policy.abroad,
+        ))
+        .to_string(),
         apps_mobile: crate::mobile_network::apps_choice(&policy.apps_mobile).to_string(),
         mobile_settings_locked: policy.mobile_settings_locked,
         status_heartbeat: state.config.status_heartbeat,
@@ -1645,6 +1649,18 @@ async fn status_intake(
         }
         if let Some(battery) = &report.battery {
             crate::parent_events::battery_report(&state, phone, battery).await;
+        }
+        // Design 97 §6: the roaming notice, only from a launcher that judges where it is (`where`).
+        let judges_where = report
+            .capabilities
+            .iter()
+            .any(|c| c == crate::mobile_network::NETWORK_CAPABILITY);
+        if let Some(roaming) = data_roaming_json
+            .as_deref()
+            .filter(|_| judges_where)
+            .and_then(|json| serde_json::from_str(json).ok())
+        {
+            crate::mobile_network::roaming_intake(&state, phone, &roaming).await;
         }
     }
     if let Some(line) =

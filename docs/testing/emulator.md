@@ -4359,6 +4359,36 @@ test].
 The Jelly Star's dual-SIM relock (design 94 §2.4.2), VoLTE/MMS/Wi-Fi calling under lockdown and a real locate indoors
 with the sink (design 95 §2.4): [needs device test].
 
+## 6al. Mobilnett revision 4: "I utlandet", the roaming notice, the kid's switch (design 97) (2026-11-14)
+
+Design 97 §10's tests. Setup: **`jelly36`** restored clean from `~/kid-look-1-avd-pre-start`, started under `flock -o
+~/build.lock` with a private `-sysdir`: symlinks to the SDK image's files and a copy of its `data/`, whose
+`misc/modem_simulator/iccprofile_for_sim0.xml` reads `CIMI 242010000000000` and `EF_AD` `00000002` (MNC length 2), so the
+SIM is `24201` (no) on the network `311740` (us). An APN for 24201 from the shell (`content insert --uri
+content://telephony/carriers --bind numeric:s:24201 --bind mcc:s:242 --bind mnc:s:01 --bind apn:s:internet --bind
+type:s:default,supl ...`). The phone made through the PWA's own Add Phone (so a new phone's defaults: `abroad` `vibb`,
+mask 47), the debug launcher as Device Owner, enrolled from its Settings. The other app is design 95's probe rebuilt as
+`me.vibb.probe.other` with a `cellfetch` command (`requestNetwork(CELLULAR)`, then `network.openConnection` and a raw
+socket through `network.bindSocket`), let out with Allow these apps. `gsm data roaming` + `gsm voice roaming` makes the
+phone abroad; `gsm data home` + `gsm voice home` brings it home.
+
+**Emulator limits:** the network operator (`311740`) is fixed in the modem simulator, so a second country (Denmark) can't
+be faked - D6's per-country rule rests on `mobile_network::tests`. The modem forgets `gsm data roaming` at every radio
+power cycle (airplane mode, a reboot): it comes back registered at home. `cmd phone restart-modem` is refused to the
+shell and the console has no SIM power command, so no SIM reload.
+
+| Test | Result |
+|---|---|
+| 1 abroad, Bare Vibb | **Passed.** `Tunnel: sink`, lockdown 19 ms later; the other app's IP literal `ConnectException` in 2 ms, a name `UnknownHostException` in 4 ms. The report `where: "abroad"`, `sink: "abroad"`; one `roaming_started` (`us:<instant>`, to `/devices/1/mobile#abroad`). Three home/roaming flips with a sync each: still one notice, the place cleared at home and back to `us` |
+| 2 a flap and a reboot | **Passed after a fix.** Airplane mode under the sink: sink and lockdown held while no network was seen. **Found:** `gsm data unregistered` (out of service) kept the cellular network up with `-NOT_SUSPENDED+NOT_ROAMING` in one update and a stale operator, so `where` read home, the shape went to filter for ~25 s and the other app got a 200 in 69 ms (the emulator still passes traffic). Fixed in the build: a cellular network without `NOT_SUSPENDED` (or whose `where` is unknown) is a doubt that keeps the persisted sink; `getDataState()` was tried first and lags the callback by some ms both ways (it held the sink at home once). After: three flaps, lockdown 1 on every sample (203 of 203), the other app refused in 1-2 ms throughout; Wi-Fi, cellular abroad, cellular home (filter, 200) and abroad again all move as before. A reboot in airplane mode: lockdown 1 from the first read after boot, `Tunnel: sink` |
+| 3 the upgrade | **Passed.** `launcher-v0.40.0-rc.1` built as debug from the tag, run under the parent's Bare Vibb on cellular (`vpn_inputs` 1,1,1, sink). Its leftover second record removed, the server stopped, r4 installed over it: lockdown 1 and `vpn_shape` sink from the first read; the second record was written a second later by `apply()` from the cached policy; the other app refused. The other way (rc.1 over r4) kept the sink too |
+| 4 Android's switch | **Passed, but the SIM reload not run.** Ingen data: `data_roaming` 0, `no_data_roaming`, "Androids roamingbryter: av og låst". Bare Vibb: the restriction cleared, nothing written, "av – slå den på én gang …". Turned on during Åpne for oppsett ("åpnet for oppsett nå"); after: "på – låst, Emma kan ikke endre den"; still 1 after a reboot. Back to Ingen data: 0 and locked |
+| 5 national roaming | **Passed.** SIM `311480` (MNC length 3) on `311740`: `roaming: true, where: "home"`; under Bare Vibb the filter (no sink), the other app loads, no notice; under Ingen data "Nasjonal roaming: Ingen data stenger mobildata her …" (en too). Airplane mode abroad with Wi-Fi on: the report `where: "unknown"`, the place kept |
+| 6 the Wi-Fi bypass | **No leak.** Abroad, roaming data up, on Wi-Fi: `cellfetch` gets the cellular network in 1-2 ms, and binding to it fails `EPERM` for HTTP and a raw socket in 0-3 ms - under Bare Vibb (filter shape), Som hjemme (filter), and Bare Vibb with the filter off (pass shape). The control, Som hjemme with the filter off (no VPN): HTTP 200 in 58 ms, the raw connect in 12 ms |
+| 7 the kid's switch | **Passed.** Bit 32 alone (the Home form's `section=quick` with nothing ticked keeps it): the row in its card. Off: the line "Only Vibb One uses mobile data. Wi-Fi works as before."; Wi-Fi filter; cellular `sink`/`kid`, lockdown 1, the other app refused; the report `kid: "off"`; the PWA "Mobildata: bare Vibb – Emma har slått av", "Emma har slått mobildata av", the row value "Mobildata av (Emma)". The parent's Bare Vibb: Off at 50 %, "Set by mum and dad". The bit hidden from the PWA: no row, `kid_mobile_off` false; shown again: On |
+| 8 the pause | **Passed.** The abroad sink lifted 0.9 s after the PWA's POST (the other app 200), back 0.4 s after the end. During the pause the kid's row is the kid's own; its Off brought the `kid` sink with the pause running. Ingen data's lock lifted 1.3 s after the POST (the nudge and the policy fetch included) and came back at the end |
+| 9 the page | **Passed.** Each save on its anchor (`#abroad`, `#mobile-data` for both forms there, `#mobile-lock`); no bell; the Home form keeps bit 32 on `quick` and the whole form; its footer names the switch; nb and en, light and dark, at 390 px |
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:

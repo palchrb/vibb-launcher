@@ -88,6 +88,11 @@ pub enum Kind {
     /// and no [PushBudget]: at most four are open until a parent answers. Told from its parameters
     /// ([MmscHostParams]).
     MmscHost,
+    /// Design 97 §6: the phone crossed into another country abroad or onto a ship's or plane's network (a report's
+    /// `data_roaming`, `mobile_network::roaming_edge`), keyed by the place and the crossing's instant. Its own switch,
+    /// no [PushBudget] (the hour's border guard). Told from its parameters ([RoamingParams]); pruned with the phone's
+    /// location history.
+    RoamingStarted,
 }
 
 /// A kind's own push rate (design 77 §7, QA R2-M3), beside [EVENTS_AN_HOUR] and [URGENT_PUSHES_AN_HOUR]: a phone's
@@ -101,7 +106,7 @@ pub struct PushBudget {
 }
 
 impl Kind {
-    pub const ALL: [Kind; 20] = [
+    pub const ALL: [Kind; 21] = [
         Kind::EmergencyCall,
         Kind::PinUsed,
         Kind::PinLockout,
@@ -122,6 +127,7 @@ impl Kind {
         Kind::SmsHeld,
         Kind::ContactRequest,
         Kind::MmscHost,
+        Kind::RoamingStarted,
     ];
 
     pub fn wire(self) -> &'static str {
@@ -146,6 +152,7 @@ impl Kind {
             Kind::SmsHeld => "sms_held",
             Kind::ContactRequest => "contact_request",
             Kind::MmscHost => "mmsc_host",
+            Kind::RoamingStarted => "roaming_started",
         }
     }
 
@@ -213,6 +220,8 @@ impl Kind {
             }
             // Design 77 §14: on by default (migration 0133).
             Kind::ContactRequest => Some(("push_contact_request", "Asks for a new contact")),
+            // Design 97 §6: on by default (migration 0145).
+            Kind::RoamingStarted => Some(("push_roaming", "Roaming abroad")),
         }
     }
 
@@ -443,6 +452,26 @@ impl Phone {
             ..self.with_params(
                 Kind::UnseenBoot,
                 format!("{count}:{}", last_at_ms.unwrap_or(0)),
+                at,
+                &params,
+            )
+        }
+    }
+
+    /// Design 97 §6: the phone crossed into `place` abroad (a country code, `ship`, or `plain` for none readable) at
+    /// `at`. The place is stored as a code and worded when read, in the reader's language; the target is the Mobilnett
+    /// page's "I utlandet".
+    pub fn roaming_started(&self, place: &str, at: DateTime<Utc>) -> NewEvent {
+        let params = RoamingParams {
+            phone: self.name.clone(),
+            at: instant(at),
+            place: Some(place.to_string()).filter(|p| p != "plain"),
+        };
+        NewEvent {
+            target: format!("/devices/{}/mobile#abroad", self.id),
+            ..self.with_params(
+                Kind::RoamingStarted,
+                format!("{place}:{}", instant(at)),
                 at,
                 &params,
             )
@@ -1463,6 +1492,44 @@ fn fit_name(name: &str, max: usize, words: impl Fn(&str) -> String) -> String {
     }
     let cut: String = name.chars().take(room.saturating_sub(1)).collect();
     words(&format!("{}…", cut.trim_end()))
+}
+
+/// A roaming notice's parameters (design 97 §6): the phone's name, when, and the place as a code - a country code,
+/// `ship`, or none.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RoamingParams {
+    pub phone: String,
+    pub at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub place: Option<String>,
+}
+
+/// A roaming notice's words (design 97 §6): "Emma is roaming in Sweden" / "14:02" - the named country's phrase, the ship
+/// notice, "(US)" for a country not named, or plainly. The push says the same.
+fn roaming_told(p: &RoamingParams, zone: &Zone, now: DateTime<Utc>) -> (String, String) {
+    let lang = zone.lang();
+    let (key, param) = match p.place.as_deref() {
+        Some("ship") => ("events.roaming_started.ship", None),
+        Some(cc) => match crate::mobile_network::place_phrase(lang, cc) {
+            Some(phrase) => ("events.roaming_started.title", Some(("place", phrase))),
+            None => (
+                "events.roaming_started.elsewhere",
+                Some(("country", cc.to_ascii_uppercase())),
+            ),
+        },
+        None => ("events.roaming_started.plain", None),
+    };
+    let title = fit_name(&p.phone, TITLE_MAX, |name| {
+        let mut params = vec![("name", name)];
+        if let Some((k, v)) = &param {
+            params.push((k, v.as_str()));
+        }
+        t_params(lang, key, &params)
+    });
+    let summary = crate::display_time::parse_db_utc(&p.at)
+        .map(|at| capitalized(&zone.at(at, now)))
+        .unwrap_or_default();
+    (crate::audit::clip(&title, TITLE_MAX).to_string(), summary)
 }
 
 /// A zone event's parameters (design 64 §3.4, the user's decision 5): what the words are made of,
@@ -2593,6 +2660,9 @@ pub fn told_as(
         Kind::ServerTlsOff | Kind::ServerTlsSeen => params
             .and_then(|p| serde_json::from_str::<ServerTlsParams>(p).ok())
             .map(|p| server_tls_told(form, kind, &p, zone, now)),
+        Kind::RoamingStarted => params
+            .and_then(|p| serde_json::from_str::<RoamingParams>(p).ok())
+            .map(|p| roaming_told(&p, zone, now)),
         // An older row's words are stored (design 70 §4: one whose title is not empty).
         _ if !title.is_empty() => None,
         _ => params.and_then(|p| phone_event_told(form, kind, p, zone, now)),
@@ -3703,6 +3773,13 @@ mod tests {
                 "The phone wants to fetch it from an address you need to approve.",
                 "/devices/3/calls#mmsc",
             ),
+            // Design 97 §6: told from its parameters, to the Mobilnett page's "I utlandet".
+            (
+                phone.roaming_started("se", two),
+                "Anna is roaming in Sweden",
+                "14:02",
+                "/devices/3/mobile#abroad",
+            ),
         ];
         for (event, title, summary, target) in &rows {
             // Nothing is stored as words any more (design 70 §4): every kind is told from its
@@ -4400,7 +4477,7 @@ mod tests {
         assert_eq!(zones.count(), 1);
         assert_eq!(
             switches.len(),
-            12,
+            13,
             "every switch once; the emergency call has none"
         );
         // "App updates": one switch for both kinds, the only one off by default.
@@ -4620,6 +4697,11 @@ mod tests {
             contact_request(3, &phone.name, "ab17", "Bestemor Østby", "+4791234567", two),
             // Design 83: a long contact name.
             mmsc_host(3, &phone.name, 18, "Bestemor Østby på Hadeland", two),
+            // Design 97 §6: each form of the place.
+            phone.roaming_started("is", two),
+            phone.roaming_started("ship", two),
+            phone.roaming_started("us", two),
+            phone.roaming_started("plain", two),
         ];
         let kinds: std::collections::BTreeSet<&str> =
             events.iter().map(|e| e.kind.wire()).collect();
