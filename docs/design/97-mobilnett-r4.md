@@ -268,6 +268,12 @@ MMS waits for Wi-Fi under Ingen data.
 `i18n::tests::every_key_is_used` and the test `every_named_country_has_its_phrase_in_both_languages` move to
 `data_roaming.place.`.
 
+**Change 2026-11-14 (after mockups).** "Androids roamingbryter: av" is grey with a calm sub-line while the phone is home or
+its place is unknown, and orange only abroad, where it leads with the place ("Roamer i Sverige – Androids roamingbryter er
+av") and says what it means now; the separate "Roamer i ..." line is then left out (one place mention). National roaming
+(`where` = home with the roaming flag) reads "Bruker et annet nett i hjemlandet" through `roaming_words` (the page's state
+line and the summary header), never "Roamer i <the SIM's country>".
+
 ## 6. The notice: `Kind::RoamingStarted` (`roaming_started`)
 
 - **Parameters** `{name, place, at}`. `place` is stored as a **code**: a country code, `"ship"`, or absent. It is
