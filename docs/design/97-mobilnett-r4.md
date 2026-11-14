@@ -1,10 +1,12 @@
 # Design 97: Mobilnett revision 4 - "I utlandet", the roaming notice, and the kid's Mobildata switch
 
-Status: design, **revision 2 (design QA)**, 2026-11-14 (branch `mobilnett-r4`). It revises what design 94 and design 95
+Status: design, **revision 3 (the user's decisions)**, 2026-11-14 (branch `mobilnett-r4`). It revises what design 94 and design 95
 revision 3 built (server 0.79.0, launcher 0.40.0-rc.1). Both directories, migration `0145_abroad.sql` (0144 is
 `device_report_base`; recheck at merge), and the shared contract `server/testdata/mobile_network.json` grows. Size:
 launcher **S-M**, server **M**. The design QA is `docs/review/qa-97-design.md` (1 H, 8 M, 7 L); §12 lists how each
-finding was handled.
+finding was handled. Revision 3 takes the user's answers to D1-D9 (2026-11-14, §11): Bare Vibb abroad is a new phone's
+default (D1), the kid's switch shows from the start on a new phone (D3), a notice every time the phone crosses into
+another country abroad (D6), and the notice always names the country (D8).
 
 The user (2026-11-14) found the page confusing. "Telefonens valg" with "Telefonens valg: av" read as roaming *on*, and
 roaming couldn't be turned on, because the settings lock also locks Android's roaming switch. What matters abroad is
@@ -20,8 +22,9 @@ words, and the kid's own Mobildata switch (95's D6/N4). Not in scope: automatic 
 | Android's roaming switch | never touched by Vibb | still never written by Vibb (D9). For Bare Vibb and Som hjemme the parent turns it on once during Åpne for oppsett, the page says when it is off, and the settings lock keeps it on |
 | Abroad | `roaming` from `NOT_ROAMING` | `where`: `home` / `abroad` / `unknown`. National roaming is home. A 901 (ship or plane) network is always abroad |
 | Sink reasons | `parent`, `roaming` (lingering session) | + `abroad` (Ingen data or Bare Vibb while abroad), + `kid` (the kid's Off) |
-| Notice | none | `roaming_started`: "Emma er på roaming i Sverige", once per trip |
+| Notice | none | `roaming_started`: "Emma er på roaming i Sverige", each time the phone crosses into another country abroad or onto a ship's network (D6) |
 | Kid | nothing | "Mobildata" On/Off in the kid's settings. Off = only Vibb uses mobile data |
+| A new phone | - | Bare Vibb abroad (D1) and the kid's switch shown (D3); an existing phone is migrated by §7's rule |
 
 These stay as built: the filter/sink/pass shapes and the single owner of always-on (95 §2.2), the relock (94 §2.4.2),
 "Lås mobilnett-innstillingene", `mobile_data.enabled`, and the pause and override lifts.
@@ -49,10 +52,11 @@ LIMIT 1`). After the r4 RC, the check is the report: `enabled` reads `true` afte
 ### 3.1 Policy
 
 - **New** top-level `abroad`: `"off"` (Ingen data), `"vibb"` (Bare Vibb) or `"home"` (Som hjemme). It is always sent.
+  A new phone starts on `"vibb"` (D1); every existing phone is set by §7's rule.
 - `data_roaming` stays, **derived** for an older launcher: `off` -> `"off"`, `vibb` -> `"off"`, `home` -> `"phone"`.
   An older launcher never gets more than the parent chose.
 - `quick_controls_mask` bit **32** (`QUICK_CONTROL_MOBILE_DATA`): the kid's Mobildata row shows. An older launcher
-  ignores the bit.
+  ignores the bit. It is in a new phone's default mask (D3); no existing phone's mask changes.
 - `policy_json_keys_snapshot` and `PolicyResponseCompatTest` pin `abroad`.
 
 The launcher reads the choice with `abroadChoice(abroad, dataRoaming)`, which fails closed:
@@ -93,7 +97,7 @@ Added:
 - `report` with `where`, `kid` and `sink: "abroad"`;
 - `clean` and `clean_mobile` rows for the new fields.
 
-The migration and the trip latch belong to the server alone and are covered by its unit tests.
+The migration and the roaming notice's state belong to the server alone and are covered by its unit tests.
 
 ## 4. The launcher's rule
 
@@ -168,7 +172,8 @@ switch (it counts only while bit 32 is set), and the best non-VPN network.
 | the kid's Off | Off | "Bare Vibb One bruker mobildata. Wi-Fi virker som før." / "Only Vibb One uses mobile data. Wi-Fi works as before." |
 
 A tap stores the choice, re-decides the shape, and calls `CommandListenerService.requestSync(context, "kid mobile
-data")`. When bit 32 goes, the stored choice resets to On (D7).
+data")`. When bit 32 goes, the stored choice resets to On (D7). A new phone's mask has bit 32 (D3), so its kid sees the
+row from the start, On; an existing phone's row stays hidden until the parent shows it.
 
 ## 5. The PWA (`/devices/{id}/mobile`)
 
@@ -188,12 +193,12 @@ MOBILDATA
       Emma kan slå mobildata av på telefonen. Da bruker bare Vibb mobildata. Den kan bare stramme inn.
       · Emma har slått mobildata av                      (state line, kid = "off")
 I UTLANDET
-  (•) Ingen data   Ingen mobildata i utlandet. På et skips- eller flynett som telefonen ikke regner som roaming,
+  ( ) Ingen data   Ingen mobildata i utlandet. På et skips- eller flynett som telefonen ikke regner som roaming,
                    får bare Vibb data.
-  ( ) Bare Vibb    Vibb holder kontakten med deg; apper og nettleser venter på Wi-Fi. Utenfor EU/EØS kan det
+  (•) Bare Vibb    Vibb holder kontakten med deg; apper og nettleser venter på Wi-Fi. Utenfor EU/EØS kan det
                    starte en dagspris.
   ( ) Som hjemme   Mobildata som hjemme. Kan koste mye utenfor EU/EØS.
-  · Androids roamingbryter: av og låst
+  · Androids roamingbryter: på – låst, Emma kan ikke endre den
   · Roamer i Sverige
   ⓘ Om utlandet
   Gjelder utenfor landet SIM-kortet hører til. Wi-Fi virker alltid.
@@ -213,7 +218,7 @@ ABROAD
 ```
 
 The `{name}` in these lines is the phone's own (`device.name`); the examples use Emma. There is no "anbefalt" mark
-unless the user chooses one in D1 (Q97-M8).
+(D1, Q97-M8): a new phone starts on Bare Vibb, and its day-price sub-line stays.
 
 **The switch line** (`mobile.abroad.switch.*`) is built from the choice and the report's `enabled`, `locked` and
 `settings_locked`, plus the pause. It replaces `phone_on`/`phone_off`. No line ever asks the parent to wait (Q97-M6):
@@ -260,42 +265,59 @@ MMS waits for Wi-Fi under Ingen data.
   - `.elsewhere`: "{name} er på roaming ({CC})";
   - `.plain`: "{name} er på roaming".
   The summary and the push body are the clock alone. The target is `/devices/{id}/mobile#abroad`.
-- **Once per trip** (Q97-M4). The latch is `devices.roaming_trip_at` and `devices.roaming_home_at`, driven by the pure
-  `trip_edge(trip_at, home_at, where, now)` and only by reports from a `mobile_network_v2` launcher:
-  - `abroad` with no trip open: raise the notice and open the trip;
-  - `abroad` with a trip open: clear `home_at`;
-  - `home`: set `home_at` if it is empty, and close the trip once `home_at` is **6 h** old;
-  - `unknown` (airplane mode, no service, no SIM): **nothing**.
-  So a night in airplane mode, a border cell flipping back and forth, a ferry, or Sweden then Denmark is one notice. The
-  update is conditional and in one transaction with the raise, as `battery_report`; `dedup_key` is the trip's start.
-  Unit rows cover each case.
+- **A notice for every crossing** (D6 as corrected by the user, Q97-M4). The phone's roaming state is
+  `devices.roaming_place` (the last abroad place: a country code, `"ship"` or `"plain"`; `NULL` at home) and
+  `devices.roaming_told` (a JSON object of the places told in the last hour and when), driven by the pure
+  `roaming_edge(state, where, place, now) -> (state after, place to tell)` and only by reports from a
+  `mobile_network_v2` launcher. A report's place is `ship` on a 901 network (maritime roaming is the most expensive, so
+  it is a place of its own, also mid-trip), else its `country`, else none.
+  - `abroad` with a place other than the last one (or none before: home, or a first report): the notice for that place,
+    unless that place was told **within the last hour** (the border guard: a Sweden/Norway flap, or Sweden -> Norway ->
+    Sweden within the hour, stays silent; after more than an hour it tells again). The place becomes the last one either
+    way;
+  - `abroad` with the same place as the last one: nothing;
+  - `abroad` with no readable country: the plain notice only when there is no last place (`plain` becomes it), otherwise
+    nothing;
+  - `home` (in service, not abroad): the last place is cleared - coming home never tells;
+  - `unknown` (airplane mode, no service, no SIM): **nothing** changes.
+  So Norway -> Sweden -> Denmark -> Sweden, an hour or more apart, gives three notices; a ferry Norway -> ship ->
+  Denmark gives the ship and Denmark; a night in airplane mode gives nothing. There is no trip and no 6 h close: the
+  last place and the hour's guard are the whole state. Told entries older than an hour are dropped on every write. The
+  update is a compare-and-set on the state as read, in one transaction with the raise, as `battery_report`;
+  `dedup_key` is per crossing, `<place>:<the crossing's instant>`. Unit rows cover each case.
 - **Retention** (Q97-M5): pruned with the phone's `location_retention_days`, as zone events are, not after 90 days.
-  Under location mode Off the notice carries no place (D8).
+  The notice always names the country, also under location mode Off (D8): the country is the cost fact.
 - **Switch** `push_roaming` ("Roaming", on by default) in Notify Me About. TTL 43200, normal, foldable, no
-  `PushBudget` (at most one per trip).
+  `PushBudget` (the hour's guard keeps one place to one notice an hour; `EVENTS_AN_HOUR` bounds the rest).
 - A phone under Ingen data reports abroad only once it is on Wi-Fi, so its notice comes then.
 
 ## 7. Migration `0145_abroad.sql`
 
 ```sql
-ALTER TABLE device_policy ADD COLUMN abroad TEXT NOT NULL DEFAULT 'off' CHECK (abroad IN ('off', 'vibb', 'home'));
+-- D1: a new phone starts on 'vibb', the column's default. Every existing row is set explicitly below (D2), so none
+-- keeps that default.
+ALTER TABLE device_policy ADD COLUMN abroad TEXT NOT NULL DEFAULT 'vibb' CHECK (abroad IN ('off', 'vibb', 'home'));
 -- 'phone' becomes 'home' only where the phone's last roaming report read Android's switch on; every other row 'off'.
-UPDATE device_policy SET abroad = 'home' WHERE data_roaming = 'phone' AND (
+UPDATE device_policy SET abroad = CASE WHEN data_roaming = 'phone' AND (
     SELECT json_extract(s.data_roaming_json, '$.enabled') FROM device_status s
-    WHERE s.device_id = device_policy.device_id AND s.data_roaming_json IS NOT NULL ORDER BY s.id DESC LIMIT 1) = 1;
-ALTER TABLE devices ADD COLUMN roaming_trip_at TEXT;
-ALTER TABLE devices ADD COLUMN roaming_home_at TEXT;
+    WHERE s.device_id = device_policy.device_id AND s.data_roaming_json IS NOT NULL ORDER BY s.id DESC LIMIT 1) = 1
+    THEN 'home' ELSE 'off' END;
+ALTER TABLE devices ADD COLUMN roaming_place TEXT;
+ALTER TABLE devices ADD COLUMN roaming_told TEXT;
 ALTER TABLE notification_prefs ADD COLUMN push_roaming INTEGER NOT NULL DEFAULT 1;
 ```
 
 **The rule:**
+- A phone created after the migration -> Bare Vibb (D1), and `DEFAULT_QUICK_CONTROLS` gains bit 32 (D3). No
+  existing phone's mask changes.
 - `off` -> Ingen data.
 - `phone` -> Som hjemme **only** if the newest stored roaming report says Android's switch was on. That phone had full
   data abroad and keeps exactly that.
 - Every other `phone` (switch off, unreadable, never reported) -> Ingen data, which is what it really had abroad.
 
-No phone gains data abroad. `data_roaming` stays as a column and is no longer read or written; the server serves the
-derived value. A server test covers the four `phone` cases (`enabled` true, false, null, never reported).
+No existing phone gains data abroad. `data_roaming` stays as a column and is no longer read or written; the server
+serves the derived value. A server test covers the four `phone` cases (`enabled` true, false, null, never reported), an
+existing `off` row, and a new phone's `vibb` with bit 32.
 
 ## 8. Risks
 
@@ -315,7 +337,9 @@ derived value. A server test covers the four `phone` cases (`enabled` true, fals
   waits for the next `apply()` (at most 30 min). This is rare (a national-roaming area at the border). If a report
   shows it, add 95 §2.2's `ServiceStateListener`.
 - **Ingen data in a national-roaming area** cuts data at home (unchanged). The warning line names it.
-- **An older launcher under Bare Vibb** has no data abroad (the derived `"off"`), and the page says so.
+- **An older launcher under Bare Vibb** has no data abroad (the derived `"off"`), and the page says so. Since Bare Vibb
+  is a new phone's default (D1), that is every new phone set up with a launcher from before this round until it
+  updates: it fails closed.
 - **The Home Screen form** must keep bit 32, which a test pins.
 
 ## 9. Build steps and sizes
@@ -328,11 +352,12 @@ derived value. A server test covers the four `phone` cases (`enabled` true, fals
    upgrade/rollback test.
 3. **Launcher kid row, S.** Bit 32 in `controlsSection`, `kidMobileRow`, the row and its strings (nb + en), the stored
    choice and its reset, the re-decide and the sync. `KidSettingsModelTest` covers a mask of 32 alone.
-4. **Server page and migration, M.** 0145 with its four-case test, the "I utlandet" radios (`data_roaming_v1`), the
-   kid switch, the switch lines, the restructured country phrases and their tests, the row value and summary lines, and
+4. **Server page and migration, M.** 0145 with its four-case test and a new phone's defaults (D1, D3), the "I utlandet"
+   radios (`data_roaming_v1`), the kid switch, the switch lines, the restructured country phrases and their tests, the row value and summary lines, and
    the Home form keeping bit 32 on both sections. Every page test: anchors, no bell, nb + en.
-5. **Server notice, S.** `Kind::RoamingStarted`, `trip_edge` with `unknown`, the latch, pruning with
-   `location_retention_days`, D8's place-less form, the switch, and the words in both languages.
+5. **Server notice, S.** `Kind::RoamingStarted`, `roaming_edge` with `unknown`, the last place and the hour's guard
+   (D6), the compare-and-set,
+   pruning with `location_retention_days`, the switch, and the words in both languages.
 6. **Emulator run (§10), S-M** (S in revision 1). It now includes the Wi-Fi bypass measurement; a leak stops the build
    (§8).
 
@@ -342,7 +367,8 @@ Android's roaming switch is turned on by hand during Åpne for oppsett, as the p
 
 1. **Abroad, Bare Vibb:** network `311740`, `gsm data roaming` + `gsm voice roaming`. The sink reads `abroad`,
    another app gets RSTs, the launcher syncs, and the report reads `where: "abroad"`. One notice. Flip `gsm data home`
-   / `roaming` three times: still one notice.
+   / `roaming` three times within the hour: still one notice. A Danish network (`23801`): a second notice; back to
+   the Swedish one within the hour: none (D6's guard).
 2. **A flap and a reboot:** under the sink, airplane on and off, `gsm data unregistered` and back, and a reboot.
    `always_on_vpn_lockdown` stays 1 throughout, and `vpn_shape` stays `sink` before the first sync.
 3. **The upgrade:** rc.1 installed with the parent's Bare Vibb on cellular (SINK persisted), the r4 build installed
@@ -351,8 +377,8 @@ Android's roaming switch is turned on by hand during Åpne for oppsett, as the p
    says "turn it on once". Turn it on during Åpne for oppsett; after the pause it stays on, the page reads "på – låst".
    It still reads on after a restart and after a SIM reload (`adb emu gsm` SIM off and on). Back to Ingen data -> 0.
 5. **National roaming:** a second image copy with `CIMI 311480…` (MCC 311 as the network, another name) reads
-   `roaming: true, where: "home"`. Under Bare Vibb: no sink and no notice. Airplane mode overnight while abroad
-   (test 1's image) reads `unknown` and leaves the trip open.
+   `roaming: true, where: "home"`. Under Bare Vibb: no sink and no notice. Airplane mode while abroad (test 1's image)
+   reads `unknown` and changes nothing: no notice when it comes back on the same network.
 6. **The Wi-Fi bypass (Q97-M7):** abroad, Bare Vibb, on Wi-Fi with roaming data up. A throwaway app with
    `CHANGE_NETWORK_STATE` does `requestNetwork(CELLULAR)` and fetches over it with `bindSocket`. Expected: EPERM. Run it
    under Som hjemme too, as the control.
@@ -365,36 +391,33 @@ Android's roaming switch is turned on by hand during Åpne for oppsett, as the p
 Not on the emulator (it has one modem): the dual-SIM per-SIM key. That comes from the Jelly Star's reports after the RC.
 No adb and no debug build on the kid's phone.
 
-## 11. Decisions for the user
+## 11. Decisions (the user, 2026-11-14)
 
-- **D1. The default, and the "anbefalt" mark:** (a) Ingen data by default with no mark (recommended: zero bytes, and
-  Bare Vibb's day-price line sits next to it for the parent to weigh); (b) Ingen data by default with Bare Vibb marked
-  "anbefalt"; (c) Bare Vibb by default (it can start a day price outside the EU/EØS, and on the Jelly Star it needs the
-  parent's step anyway).
-- **D2. The migration:** `phone` becomes Som hjemme only where the phone reported Android's switch on, else Ingen data
-  (recommended: no phone gains data abroad).
-- **D3. The kid's switch:** hidden until the parent turns it on, for new and existing phones (recommended, as 95
-  §4.1), or shown on new phones.
-- **D4. Does Åpne for oppsett lift the kid's own Off?** No (recommended: it is the kid's choice, and whoever holds the
-  phone can flip it).
+- **D1. The default, and the "anbefalt" mark. Changed:** Bare Vibb is the default for **new** phones, with no
+  "anbefalt" mark; Bare Vibb's day-price sub-line stays. Existing phones follow D2 (§7: the column's default is
+  `vibb`, and the migration sets every existing row explicitly).
+- **D2. The migration:** as recommended - `phone` becomes Som hjemme only where the phone reported Android's switch on,
+  every other existing row Ingen data.
+- **D3. The kid's switch. Changed:** shown from the start on **new** phones (bit 32 in a new phone's default mask);
+  existing phones keep it hidden until the parent turns it on.
+- **D4. Does Åpne for oppsett lift the kid's own Off?** No, as recommended.
 - **D5. Where the parent shows or hides the kid's switch:** on the Mobilnett page, with a line on the Home Screen
-  page (recommended).
-- **D6. One notice per trip:** a new trip only after 6 h reported **in service** at home (recommended); not per
-  country, and not for a ship network in the middle of a trip.
-- **D7. Hiding the kid's switch resets it to On** (recommended).
-- **D8. Location Off and the notice:** under location mode Off the notice says "Emma er på roaming" without the
-  country (recommended: the phone tells the kid it doesn't share where it is; the page's live line still names the
-  country, which is the cost fact, and is kept only for hours), or the country always.
-- **D9. Vibb turning Android's roaming switch on itself (one-modem phones only):** cut (recommended: the only real
-  phone, the Jelly Star, is dual standby, where a device owner can't; the writer added an avoidable leak window and a
-  "wait" state; the parent's one step works on every phone). Or build it, which adds about S-M to the launcher plus an
-  emulator step, worth doing once a one-modem phone shows up in `modems`.
+  page, as recommended.
+- **D6. The notice. Changed (and corrected the same day):** a notice **every time** the phone crosses into another
+  country abroad, also back into one visited earlier: Norway -> Sweden -> Denmark -> Sweden gives three. A 901 network
+  is a place of its own and tells also mid-trip. An abroad report with no readable country tells (plainly) only when no
+  place is open. The border guard: no notice for a place told within the last hour. Coming home never tells, `unknown`
+  changes nothing, and the per-trip latch with its 6 h close is gone (§6).
+- **D7. Hiding the kid's switch resets it to On**, as recommended.
+- **D8. Location Off and the notice. Changed:** the notice always names the country, also under location mode Off -
+  the country is the cost fact. The place-less rule is gone; the retention with `location_retention_days` stays.
+- **D9. Vibb turning Android's roaming switch on itself:** cut, as recommended.
 
 ## 12. Design QA (`docs/review/qa-97-design.md`): how each finding was handled
 
 | Finding | Handled |
 |---|---|
-| H1 a 901 network not flagged roaming | §4.1: 901 is always abroad. §4.2: the `abroad` sink also under Ingen data. §5: Ingen data's text no longer promises zero there. §3.3: contract rows. §6: it counts for the trip |
+| H1 a 901 network not flagged roaming | §4.1: 901 is always abroad. §4.2: the `abroad` sink also under Ingen data. §5: Ingen data's text no longer promises zero there. §3.3: contract rows. §6: it is a place of its own for the notice |
 | M1 the write before the sink | Gone with the writer (D9) |
 | M2 keep-on-doubt and the order | §4.2: one order for all three functions, and the sink kept for every armed reason. Contract rows with `cellular: null`. §10 test 2 |
 | M3 the persisted inputs | §4.2: rc.1's record untouched plus `vpn_inputs_r4`. Upgrade and rollback unit tests. §10 test 3 |
@@ -409,4 +432,4 @@ No adb and no debug build on the kid's phone.
 | L4 the phrase tests, the notice's keys | §5's moved tests. §6: own keys for ship, elsewhere and plain, and `place` stored as a code |
 | L5 the kid row's words | "Mobildata er slått av på telefonen" and "bruker mobildata" (§4.3) |
 | L6 cut the one-modem write | Cut, and put to the user as D9 |
-| L7 the test gaps | §10 tests 2-6 and 9; unit rows for 901, `trip_edge`, the migration's four cases, and the Home form's two sections |
+| L7 the test gaps | §10 tests 2-6 and 9; unit rows for 901, `roaming_edge`, the migration's four cases, and the Home form's two sections |
