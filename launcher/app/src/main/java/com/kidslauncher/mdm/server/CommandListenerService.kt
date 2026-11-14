@@ -132,6 +132,8 @@ class CommandListenerService : Service() {
         // Application, not for this service's lifetime (QA 10 #4).
         connect()
         watchDefaultNetwork()
+        // Design 98 §5.1: airplane mode's edges, written synchronously for the whole process.
+        com.kidslauncher.mdm.assistant.AirplaneRuntime.registerEdges(applicationContext)
         BackstopAlarm.schedule(applicationContext)
         // The sync at start runs from onStartCommand (always delivered after onCreate), so a cold
         // start through requestSync runs one sync, not two.

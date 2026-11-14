@@ -183,6 +183,9 @@ data class LockTaskSetting(
  * with the kiosk off also pins that package and the permission controller (mic/camera prompts)
  * and sets the app-block bit, so the call app's other screens (links, viewers) can't open over the
  * lock. With the kiosk on the list is untouched (the app is allowlisted).
+ *
+ * [routePin] (design 98 §2.2 step 4): Settings for the second of a Flymodus turn-on - added to the kiosk's list with the
+ * status bar disabled, only while unlocked and the kiosk is on. A LOCKED pass leaves it out (the route then times out).
  */
 fun lockTaskWhileLocked(
     kioskPackages: Set<String>?,
@@ -195,7 +198,10 @@ fun lockTaskWhileLocked(
     voipPackages: Set<String> = emptySet(),
     recentsPin: String? = null,
     sosNarrowed: Set<String>? = null,
+    routePin: String? = null,
 ): LockTaskSetting = when {
+    !locked && kioskPackages != null && routePin != null ->
+        LockTaskSetting(kioskPackages + routePin, baseFeatures, statusBarDisabled = true, createWindowsBlocked = restrictCreateWindows)
     !locked -> LockTaskSetting(kioskPackages, baseFeatures, statusBarDisabled = fenced, createWindowsBlocked = restrictCreateWindows)
     // qa-25b-25f H1: during the "sos" yield the kiosk's list shrinks to the kiosk-off one, so Android
     // removes every other locked task (an allowed app brought up in the SOS window).

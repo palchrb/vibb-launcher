@@ -59,12 +59,15 @@ class Application : android.app.Application() {
     // TODO: only update specific apps
     private val launcherAppsCallback = object : LauncherApps.Callback() {
         override fun onPackageRemoved(p0: String?, p1: UserHandle?) {
+            if (p0 == com.kidslauncher.mdm.assistant.SETTINGS_PACKAGE && com.kidslauncher.mdm.assistant.AirplaneRoute.inFlight) return
             evictIcons(p0)
             loadApps(listOfNotNull(p0))
             clockAppChanged(p0)
         }
 
         override fun onPackageAdded(p0: String?, p1: UserHandle?) {
+            // Design 98 §2.2 step 4: Settings unhidden for a Flymodus turn-on's second is the route's, not an install.
+            if (p0 == com.kidslauncher.mdm.assistant.SETTINGS_PACKAGE && com.kidslauncher.mdm.assistant.AirplaneRoute.inFlight) return
             evictIcons(p0)
             loadApps(listOfNotNull(p0))
             clockAppChanged(p0)
@@ -93,6 +96,7 @@ class Application : android.app.Application() {
         }
 
         override fun onPackageChanged(p0: String?, p1: UserHandle?) {
+            if (p0 == com.kidslauncher.mdm.assistant.SETTINGS_PACKAGE && com.kidslauncher.mdm.assistant.AirplaneRoute.inFlight) return
             evictIcons(p0)
             loadApps(listOfNotNull(p0))
             clockAppChanged(p0)
@@ -376,6 +380,17 @@ class Application : android.app.Application() {
     }
 
     private fun initRest() {
+        // Design 98 §2.2: a Flymodus route's window left open by a process death or a reboot is put back before
+        // anything else and before the first sync (the anchor's start sync waits on apply()'s monitor), and the
+        // airplane-mode periods catch up with the state (M7). Off the main thread.
+        Thread {
+            try {
+                com.kidslauncher.mdm.assistant.AirplaneRoute.putBackIfMarked(this)
+                com.kidslauncher.mdm.assistant.AirplaneRuntime.reconcile(this)
+            } catch (e: Exception) {
+                android.util.Log.w("Application", "Airplane put-back failed: ${e.javaClass.simpleName}")
+            }
+        }.start()
 
         // Try to restore old preferences
         migratePreferencesToNewVersion(this)

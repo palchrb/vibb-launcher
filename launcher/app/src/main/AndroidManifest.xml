@@ -421,6 +421,32 @@
                 <action android:name="android.telecom.CallRedirectionService" />
             </intent-filter>
         </service>
+        <!-- Design 98 §2.1: the Digital assistant role's three parts - only Flymodus's route (Settings'
+             AirplaneModeVoiceActivity through our own marked session). The parent chooses Vibb One once on Android's
+             own page (Settings' PIN-gated "Fullfør oppsett"). No assist data, no screenshot, no window, no microphone. -->
+        <service
+            android:name=".assistant.VibbAssistantService"
+            android:exported="true"
+            android:permission="android.permission.BIND_VOICE_INTERACTION">
+            <meta-data
+                android:name="android.voice_interaction"
+                android:resource="@xml/vibb_voice_interaction" />
+            <intent-filter>
+                <action android:name="android.service.voice.VoiceInteractionService" />
+            </intent-filter>
+        </service>
+        <service
+            android:name=".assistant.VibbSessionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_VOICE_INTERACTION" />
+        <!-- The stub recognizer the role requires: every request answers ERROR_CLIENT at once. -->
+        <service
+            android:name=".assistant.VibbRecognizer"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.speech.RecognitionService" />
+            </intent-filter>
+        </service>
         <!-- Only our own notification PendingIntents (Answer / Hang up). -->
         <receiver
             android:name=".calls.CallActionReceiver"

@@ -114,6 +114,26 @@ class LockTaskHelpersTest {
         assertEquals(null, plan(block = true, kiosk = false).kioskPackages)
     }
 
+    /** Design 98 §2.2 step 4: Flymodus's route window - Settings and the disabled status bar only while unlocked with the
+     * kiosk on; a LOCKED pass leaves Settings and the recents provider out, so the route's start is blocked. */
+    @Test
+    fun `the route pin adds Settings only unlocked with the kiosk on, never while LOCKED`() {
+        val settings = "com.android.settings"
+        val kiosk = setOf("me.vibb.launcher", "org.example.game", recents)
+        val open = lockTaskWhileLocked(kiosk, 127, false, locked = false, ownPackage = "me.vibb.launcher", lockHelpers = emptySet(), recentsPin = recents, routePin = settings)
+        assertEquals(kiosk + settings, open.packages)
+        assertTrue(open.statusBarDisabled)
+        val locked = lockTaskWhileLocked(kiosk, 127, false, locked = true, ownPackage = "me.vibb.launcher", lockHelpers = emptySet(), recentsPin = recents, routePin = settings)
+        assertFalse(settings in locked.packages!!)
+        assertFalse(recents in locked.packages!!)
+        // Closed: the list and the status bar as the chrome's own inputs say.
+        val closed = lockTaskWhileLocked(kiosk, 127, false, locked = false, ownPackage = "me.vibb.launcher", lockHelpers = emptySet(), recentsPin = recents)
+        assertEquals(kiosk, closed.packages)
+        assertFalse(closed.statusBarDisabled)
+        // The kiosk off (the pause, Åpne for oppsett): nothing pinned, nothing added.
+        assertEquals(null, lockTaskWhileLocked(null, 127, false, locked = false, ownPackage = "me.vibb.launcher", lockHelpers = emptySet(), routePin = settings).packages)
+    }
+
     @Test
     fun `LOCKED takes the recents provider out of the kiosk list, unlocked puts it back (qa-16d-code 1)`() {
         val kiosk = setOf("me.vibb.launcher", "org.example.game", recents)

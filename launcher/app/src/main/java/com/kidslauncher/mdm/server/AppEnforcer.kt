@@ -400,6 +400,8 @@ object AppEnforcer {
         applySmsRole(context, dpm, admin, callsState, smsMode, allowRelease = false)
         // Inside a sync the status report right after this tells the server anyway (qa-09-code #10).
         if (!fromSync) signalRoleChange(context)
+        // Design 98 §3.6: the assistant role read on every pass; a change asks for one report.
+        if (!fromSync) com.kidslauncher.mdm.assistant.AssistantSetup.roleMaybeChanged(context)
 
         // A time rule or the used-up budget: suspend everything but our own package, the system
         // dialer and the lock's usable apps (see computeEnforcementPlan), from the same decision
@@ -710,6 +712,12 @@ object AppEnforcer {
             if (QuickControls.isLocationEnabled(context) != wanted) QuickControls.setLocationEnabled(dpm, admin, wanted)
         }
         for ((restriction, set) in plan.restrictions) {
+            // Design 98 §2.4: the parent's "Blokker flymodus" going on ends the kid's airplane mode - `off_by: parent`.
+            if (set && restriction == HardeningRestriction.AIRPLANE_MODE && com.kidslauncher.mdm.assistant.AirplaneRuntime.isOn(context) &&
+                !com.kidslauncher.mdm.assistant.AirplaneRuntime.restricted(context)
+            ) {
+                com.kidslauncher.mdm.assistant.AirplaneRuntime.vibbEnding(com.kidslauncher.mdm.assistant.AirplaneBy.PARENT)
+            }
             if (set) setRestriction(dpm, admin, restriction.userManagerKey(), true)
         }
         if (plan.screenCaptureDisabled) syncScreenCapture(dpm, admin, true)
