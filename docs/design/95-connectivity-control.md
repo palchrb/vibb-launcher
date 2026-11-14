@@ -7,7 +7,7 @@ debug launcher from `main` (`f4c1b196`) against a local server built from the sa
 in the scratchpad; nothing here was installed on a phone.
 
 **Revision 4 (2026-11-14) is design 97** (`97-mobilnett-r4.md`): "I utlandet" (Ingen data / Bare Vibb / Som hjemme)
-replaces the roaming choice, the launcher turns Android's roaming switch on where it can, a roaming notice, and the kid's
+replaces the roaming choice (Android's roaming switch turned on once by the parent), a roaming notice, and the kid's
 Mobildata switch (D6). Where 97 and this note disagree, 97 wins.
 
 The user (2026-11-13): *"lots of freedom to control whether the phone has a connection or not, while the phone can
