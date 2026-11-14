@@ -613,7 +613,8 @@ size) or ~1.4 (Jelly Star). The keepalives become the largest part.
 
 The DNS filter's own upstream (~0.5 MB/day here) is the next biggest item on an idle phone. Its DoT connections are
 evicted on every network change and close after a short idle on the resolver's side. It is worth its own look (D7). In
-the sink shape it is zero (DNS is answered locally).
+the sink shape it is zero (DNS is answered locally). **D7, measured 2026-11-14: its new connections already resume a
+TLS 1.3 session** (no certificate chain), so the ~1 KB per query above is already the resumed cost - see D7.
 
 ### 3.5 The traffic changes, specified
 
@@ -930,5 +931,31 @@ The PWA's footer says this, and says that the dual-SIM case is "nesten null".
 - **D6. A kid's Mobildata switch**: in Quick Controls behind the parent's tick (recommended), or not at all.
 - **D7. The DNS filter's upstream cost** (~0.5 MB/day on the emulator, from other apps' lookups): look at keeping DoT
   connections longer or a larger answer cache, as its own small item. Not part of this design's steps.
+  **Decided 2026-11-14: TLS session resumption only** (no longer idle, no answer cache, no server change, no weaker
+  check). **Measured the same day: it already works, so no code changed.** `jelly36` (Android 16's Conscrypt) under
+  the emulator's `-tcpdump`, the TLS hellos read per TCP flow (`pre_shared_key` offered in the ClientHello, accepted
+  in the ServerHello), with the enrolled debug launcher (provider Cloudflare, VPN up) and a throwaway `app_process`
+  probe running `openDot`'s exact TLS setup (`SSLSocketFactory.getDefault()` layered on a plain socket, SNI + endpoint
+  identification for a name; no SNI + the default hostname verifier for an IP literal). Bytes on the wire per new
+  connection with one query, both ways, TCP/IP included:
+
+  | Upstream | Full handshake | Resumed | Resumes |
+  |---|---|---|---|
+  | Cloudflare `1.1.1.1` (the provider; the launcher itself) | ~5.1-5.4 KB | ~2.1-2.3 KB | every connection: Cloudflare sends a new ticket on each resumed one |
+  | Cloudflare by name, `one.one.one.one` (as a custom DoT) | ~5.1 KB | ~2.2 KB | every connection |
+  | Quad9, `9.9.9.9` and `dns.quad9.net` | ~5.9 KB | ~1.9 KB | every other: Quad9 sends no new ticket on a resumed connection, and Conscrypt uses a TLS 1.3 ticket once (RFC 8446 C.4) |
+  | Google, `dns.google` | ~5 KB | - | never: the client offers the ticket, Google's server declines it |
+
+  The launcher made 14 DoT connections in 35 minutes (the idle emulator's own look-ups plus spaced `ping`s from adb):
+  the 3 opened together as the VPN came up were full, all 11 later ones resumed - 25 s to 18 minutes apart (the
+  cache is in memory, so only a process start pays the chain again). On its own the idle emulator opened 4 in about
+  half an hour. Design 95's ~22 KB/hour for ~20 queries (~1.1 KB a query, some sharing a kept connection) was therefore
+  already the resumed cost; a full handshake per query would have been ~5 KB. Conscrypt keys a client session by the
+  host string given to `createSocket` (the name, or the IP literal) and the port, measured: a `1.1.1.1:853` session is
+  not offered to `1.1.1.1:443` nor to `one.one.one.one` at the same address, and vice versa. What is left per
+  connection is TCP, the key share and the new ticket; less needs a longer idle or a cache, both declined. Quad9's
+  every-other and Google's never are the servers' choice; reusing a ticket would need our own session cache and goes
+  against RFC 8446's advice. Open: a look at the Jelly Star's data use for Vibb One (its Android's own Conscrypt; nothing
+  installed there for this).
 - **D8. "Bare Vibb" on a schedule** (nights, school hours) through the time rules: possible later with the same plan
   input; not asked for. Recommended: not now.
