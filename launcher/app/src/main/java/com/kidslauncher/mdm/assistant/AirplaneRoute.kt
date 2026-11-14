@@ -333,8 +333,8 @@ object AirplaneRoute {
 
     /**
      * §2.2 step 3: `ACTION_VOICE_CONTROL_AIRPLANE_MODE` in the VOICE category, system apps only (a hidden Settings
-     * included). Exactly one activity, in Settings, with a translucent theme - anything else is `null` (`route_missing`),
-     * never a full Settings page.
+     * included). Exactly one activity, in Settings, with a translucent or floating (dialog) theme - anything else is
+     * `null` (`route_missing`), never a full Settings page.
      */
     fun resolveVoiceActivity(context: Context): ComponentName? = try {
         val pm = context.packageManager
@@ -347,13 +347,16 @@ object AirplaneRoute {
         } else {
             val res = pm.getResourcesForApplication(only.applicationInfo)
             val theme = res.newTheme().apply { applyStyle(only.themeResource, true) }
-            val attrs = theme.obtainStyledAttributes(intArrayOf(android.R.attr.windowIsTranslucent))
-            val translucent = try {
-                attrs.getBoolean(0, false)
+            val attrs = theme.obtainStyledAttributes(intArrayOf(android.R.attr.windowIsTranslucent, android.R.attr.windowIsFloating))
+            val (translucent, floating) = try {
+                attrs.getBoolean(0, false) to attrs.getBoolean(1, false)
             } finally {
                 attrs.recycle()
             }
-            if (translucent) ComponentName(only.packageName, only.name) else null
+            // Measured on Android 16 (jelly36): Settings' AirplaneModeVoiceActivity uses Theme.DeviceDefault.Light.Voice, a
+            // floating dialog theme that isn't windowIsTranslucent - never a full page either way.
+            Log.i(LOG_TAG, "Voice activity ${only.name}: translucent $translucent, floating $floating")
+            if (translucent || floating) ComponentName(only.packageName, only.name) else null
         }
     } catch (e: Exception) {
         Log.w(LOG_TAG, "Couldn't resolve the voice activity: ${e.javaClass.simpleName}")
