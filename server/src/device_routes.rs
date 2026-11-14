@@ -30,7 +30,17 @@ pub fn device_routes(state: AppState) -> Router<AppState> {
 
     let authed_routes = Router::new()
         .route("/api/devices/policy", get(handlers::device_api::policy))
-        .route("/api/devices/status", post(handlers::device_api::status))
+        // Design 95 §3.5: a gzip'd report (`Content-Encoding: gzip`, the policy's `status_gzip`) is inflated here,
+        // inside `require_device_token` (never an unauthenticated body); another encoding is a 415. The body limit is
+        // the extractor's, on the inflated bytes: a gzip bomb stops at it with a 413.
+        .route(
+            "/api/devices/status",
+            post(handlers::device_api::status).layer(
+                tower::ServiceBuilder::new()
+                    .layer(tower_http::decompression::RequestDecompressionLayer::new())
+                    .map_request(|req: axum::http::Request<_>| req.map(axum::body::Body::new)),
+            ),
+        )
         .route(
             "/api/devices/command-result",
             post(handlers::device_api::command_result),
@@ -45,7 +55,7 @@ pub fn device_routes(state: AppState) -> Router<AppState> {
         )
         .route(
             "/api/devices/apps",
-            get(handlers::device_api::tracked_app_updates),
+            get(handlers::device_api::tracked_app_updates).layer(gzip_answers()),
         )
         .route(
             "/api/devices/wallpapers/{hash}",
@@ -65,7 +75,7 @@ pub fn device_routes(state: AppState) -> Router<AppState> {
         )
         .route(
             "/api/devices/dns-blocklist",
-            get(handlers::device_api::dns_blocklist),
+            get(handlers::device_api::dns_blocklist).layer(gzip_answers()),
         )
         .route(
             "/api/devices/dns-events",
@@ -140,8 +150,14 @@ pub fn device_routes(state: AppState) -> Router<AppState> {
                 .layer(DefaultBodyLimit::max(crate::app_logos::MAX_BYTES)),
         )
         // Design 75 §3.4: the lock glance's weather and the card's nowcast line.
-        .route("/api/devices/weather", get(handlers::weather::forecast))
-        .route("/api/devices/weather/now", get(handlers::weather::now))
+        .route(
+            "/api/devices/weather",
+            get(handlers::weather::forecast).layer(gzip_answers()),
+        )
+        .route(
+            "/api/devices/weather/now",
+            get(handlers::weather::now).layer(gzip_answers()),
+        )
         // Design 72 §3: a calendar link's set, for a phone that has the link.
         .route(
             "/api/devices/calendar/feeds/{uid}",
@@ -165,4 +181,15 @@ pub fn device_routes(state: AppState) -> Router<AppState> {
         .merge(authed_routes)
         .layer(DefaultBodyLimit::max(limits::DEVICE_BODY_LIMIT))
         .layer(from_fn_with_state(state, limits::device_edge))
+}
+
+/// Gzip for the device answers that carry no secret (design 95 §3.3, step 95-T2): the catalog list, the DNS blocklist
+/// and the weather - when the phone asks for it (OkHttp always does) and the answer is over 1 KiB. Never the policy (the
+/// PIN hashes), the token answers, enroll, the command stream, images, audio or APKs: BREACH needs a secret in a
+/// compressed answer, and these routes have none. The music library and listings and a calendar link's set gzip
+/// themselves (`music_api::versioned_json`).
+fn gzip_answers()
+-> tower_http::compression::CompressionLayer<tower_http::compression::predicate::SizeAbove> {
+    tower_http::compression::CompressionLayer::new()
+        .compress_when(tower_http::compression::predicate::SizeAbove::new(1024))
 }

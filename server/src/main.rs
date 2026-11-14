@@ -67,6 +67,7 @@ mod sound_mode;
 mod spotify;
 mod startup;
 mod status_bar;
+mod status_heartbeat;
 mod storytel;
 mod streams;
 #[cfg(test)]

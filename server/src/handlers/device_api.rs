@@ -603,6 +603,9 @@ pub(crate) async fn build_policy(
         data_roaming: crate::mobile_network::roaming_choice(&policy.data_roaming).to_string(),
         apps_mobile: crate::mobile_network::apps_choice(&policy.apps_mobile).to_string(),
         mobile_settings_locked: policy.mobile_settings_locked,
+        status_heartbeat: state.config.status_heartbeat,
+        status_heartbeat_fields: crate::status_heartbeat::HEARTBEAT_FIELDS,
+        status_gzip: true,
         server_tls,
     })
 }
@@ -1283,11 +1286,50 @@ pub(crate) fn known_fields(value: &serde_json::Value, fields: &[(&str, Field)]) 
     (!kept.is_empty()).then(|| Value::Object(kept).to_string())
 }
 
+/// `POST /api/devices/status`. Design 95 §3.5 (step 95-T2): a heartbeat is first expanded into the full report it
+/// stands for (`status_heartbeat`), or answered `{"full_report": true}`; a full report with a `hash` is kept for the
+/// heartbeats after it. Either way one full report runs through [status_intake], so nothing the server derives from a
+/// report knows whether a heartbeat came.
 pub async fn status(
     State(state): State<AppState>,
     Extension(AuthedDevice(device)): Extension<AuthedDevice>,
-    Json(mut report): Json<StatusReportRequest>,
-) -> impl IntoResponse {
+    Json(body): Json<serde_json::Value>,
+) -> axum::response::Response {
+    use crate::status_heartbeat::{self, Intake};
+    let enabled = state.config.status_heartbeat;
+    let (report, keep) = match status_heartbeat::take(&state.db, device.id, body, enabled).await {
+        Intake::Full { report, keep } => (report, Some(keep)),
+        Intake::Expanded(report) => (report, None),
+        Intake::FullReportWanted => return status_heartbeat::full_report_wanted(),
+    };
+    let report: StatusReportRequest = match serde_json::from_value(report) {
+        Ok(report) => report,
+        // As the `Json` extractor answers a body of the wrong shape.
+        Err(err) => {
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                format!("Failed to deserialize the JSON body into the target type: {err}"),
+            )
+                .into_response();
+        }
+    };
+    let db = state.db.clone();
+    let response = status_intake(state, device, report).await;
+    // A full report's body is kept (or what was kept forgotten) only once the intake took it; a heartbeat leaves it.
+    if let Some(keep) = keep
+        && response.status().is_success()
+    {
+        status_heartbeat::keep(&db, device.id, keep.as_ref()).await;
+    }
+    response
+}
+
+/// One full status report, as the phone sent it or as a heartbeat stands for it.
+async fn status_intake(
+    state: AppState,
+    device: crate::security::DeviceRef,
+    mut report: StatusReportRequest,
+) -> axum::response::Response {
     // Security review M7: what a phone (or anything holding its token) sends is stored only within
     // limits - at most MAX_INSTALLED_APPS apps with real package names, short labels, and short
     // free-text fields. Everything below works on the capped report.
@@ -1342,7 +1384,8 @@ pub async fn status(
 
     let install_mode_until_ms = report.install_mode.map(|m| m.until_ms);
     // Handy's lock (step 10): what the phone says about it - only the known fields are kept, so
-    // no unlock times or PIN material can be stored whatever a launcher sends.
+    // no unlock times or PIN material can be stored whatever a launcher sends (the heartbeat's kept body takes the
+    // same sanitizer, `status_heartbeat::kept_body`).
     let lock_state_json = report.lock_state.as_ref().and_then(|state| {
         crate::kid_lock::sanitize_lock_state(state, chrono::Utc::now().timestamp_millis())
     });

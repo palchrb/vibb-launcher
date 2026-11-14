@@ -43,6 +43,8 @@ object Enrollment {
             // Design 95 (code QA L3): the old enrollment's kept policy body (its PIN hashes) goes; the token hash would
             // refuse it anyway.
             PolicyEtagStore.of(context).drop()
+            // And the last full report the old enrollment's server took (design 95 §3.5): the next one is full.
+            HeartbeatAckStore.of(context).clear()
             // A new enrollment: the queued parent-PIN events were about the old one (design 24).
             ParentPin.clearEvents(context)
             // And the commands it ran and the answers it queued (QA of the launcher wave, Medium 1).

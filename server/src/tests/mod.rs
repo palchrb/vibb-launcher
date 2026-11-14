@@ -71,6 +71,7 @@ mod shell;
 mod sms;
 mod sms_page;
 mod sound_mode;
+mod status_heartbeat;
 mod step10;
 mod step11;
 mod step9;
@@ -178,6 +179,7 @@ impl TestApp {
             .collect();
         let mut config = ForkConfig::for_tests();
         config.pwa_default_lang = ForkConfig::from_vars(&vars).pwa_default_lang;
+        config.status_heartbeat = ForkConfig::from_vars(&vars).status_heartbeat;
         let passkeys = crate::webauthn::PasskeyConfig::from_vars(&vars)
             .expect("the test's PASSKEY_RP_ID/PASSKEY_ORIGINS");
         Self::with_net_config(crate::net::NetConfig::from_vars(&vars), config, passkeys).await

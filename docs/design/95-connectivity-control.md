@@ -639,25 +639,35 @@ the sink shape it is zero (DNS is answered locally).
   `Response<PolicyResponse>` (Retrofit treats 304 as unsuccessful). Design 76's certificate check reads the 304's
   handshake as it reads a 200's.
 
-**The heartbeat report** (`status_heartbeat_v1`). The server stores every report as a full `device_status` row and
-reads it in many places, so the heartbeat is defined by what the server does with it:
+**The heartbeat report** (`status_heartbeat_v1`; as built in 95-T2, rewritten after its code QA). The server stores
+every report as a full `device_status` row and reads it in many places, so a heartbeat is turned back into the full
+report it stands for and run through the one intake every report takes:
 
-- Launcher: it hashes its full report body **without the heartbeat fields** (`battery`, `time_state`, `lock_reason`,
-  and design 94/95's `data_roaming` and `sink`). If the hash equals the last one the server acknowledged, and the last
-  full report is under 6 h old, it sends `{"heartbeat": true, "hash": "...", <the heartbeat fields>}`. Otherwise it
-  sends the full report with `"hash"`. Any other field changing therefore sends a full report: an app installed, a
-  call state, a zone arrival, a capability.
-- Server: on a heartbeat it checks the hash against the one stored with the latest row since enrollment
-  (`report_hash`, a new column).
-  - On a match it **inserts a copy of that row** with the heartbeat's fields and a new `reported_at` (`INSERT ...
-    SELECT`). The battery history and the time badges keep their rows, and retention prunes as today. It updates
-    `devices.last_seen_at`, runs the heartbeat fields' own checks (time state, battery low), and runs **none** of the
-    previous-row diffs (security log, new or foreign apps, unseen boots, `app_updated`, the parent's events). It
-    answers as for a full report (`wanted_logos` from the stored apps).
-  - With no match, no row, or a row from before the latest enrollment, it answers `{"full_report": true}` and stores
-    nothing. The phone sends the full report at once. A server upgrade that wants new fields can answer the same.
-- A contract file `server/testdata/status_heartbeat.json`: the heartbeat body, the hash rule's vectors (which fields
-  are out), and each answer. Both sides run it, as the other contracts.
+- **The heartbeat fields** (`status_heartbeat::HEARTBEAT_FIELDS`, the launcher's `HEARTBEAT_FIELDS`): `lock_reason`,
+  `battery`, `time_state`, `location`, `extra_locations`, `zone_watch`, `server_tls` (its `seen.at_ms` moves every
+  sync over https; §3.2 ran over plain http and could not see it), `data_roaming` and `mobile_data` (the built name of
+  this section's earlier `sink`). The policy sends the server's list (`status_heartbeat_fields`) with
+  `status_heartbeat`; the launcher sends hashes and heartbeats only while that list is its own, and each heartbeat
+  names the list by `fields_tag` (the first 16 hex of the SHA-256 of the names joined by `,`), which the server checks.
+  So a list changed on one side only falls back to full reports, never to a stale or a flapping field.
+- **Launcher:** it hashes its full report's JSON **without the heartbeat fields** and sends the full report with
+  `"hash"`; a 2xx is its ack (the hash, when, and for which server and token). While the hash is the acked one and that
+  full report is under 6 h old, it sends `{"heartbeat": true, "hash", "fields_tag", <the heartbeat fields>}`. Any
+  other field changing sends a full report: an app installed, a call state, a zone, a capability. A 4xx to a heartbeat
+  drops the ack; a 5xx or no answer keeps it. Enrollment clears it.
+- **Server:** after the intake took a full report with a hash (2xx), it keeps the body (`device_report_base`, one row
+  per phone): only the report's known top-level keys, without the heartbeat fields (so no location is kept there),
+  the lock state and the call state through their sanitizers, at most 128 KiB (a larger report keeps sending full
+  ones). A heartbeat with the same hash and list tag, kept by this server version, after the phone's latest
+  enrollment and within 7 h, is **expanded**: the kept body with the heartbeat's fields over it, then the unchanged
+  intake (the row, `last_seen_at`, every diff, event and log line, the zones, the logos, the certificate check). The
+  diffs find nothing new, as they did when every sync sent the same full report. Anything else is answered
+  `{"full_report": true}` and stores nothing; the phone sends the full report at once. Retention deletes kept bodies
+  past 7 h. A report without a hash (an older launcher) forgets the kept body. `STATUS_HEARTBEAT=off` turns it off
+  (the policy says `false`, every heartbeat gets `full_report`).
+- **The contract** `server/testdata/status_heartbeat.json`: the capability, the policy's keys, the fields and their
+  tag, a full report with its hash, the heartbeat naming it, one naming another list, and the answer. The hash is the
+  phone's alone: the server never computes it.
 
 **gzip'd report uploads.** The server adds `tower_http::decompression::RequestDecompressionLayer` (gzip only;
 another `Content-Encoding` is refused with 415) on the authenticated routes, inside `require_device_token`, so an
@@ -854,11 +864,26 @@ The PWA's footer says this, and says that the dual-SIM case is "nesten null".
    - Launcher: the sealed raw body with its ETag, versionCode and URL; `If-None-Match`; a 304 applied as a 200; one
      base client per server path, with the SSE, sync and power clients as `newBuilder()` children.
    - No contract file: the 304 is plain HTTP, and each side tests its own half.
-2. **95-T2 (the heartbeat), both directories, M.**
-   - Server: `report_hash`, the heartbeat path (copy the row, no diffs, `full_report`),
-     `RequestDecompressionLayer` with a past-the-limit test, the policy flag `status_gzip`.
-   - Launcher: `status_heartbeat_v1`, the hash without the heartbeat fields, the 6 h full report, gzip under the
-     flag.
+2. **95-T2 (the heartbeat), both directories, M.** **Built** (branch `traffic-2`, 2026-11-13), with the gzip of the
+   non-secret answers moved here from 95-T1. Decided in the build: the server **expands** a heartbeat into the full
+   report it stands for (the kept body in `device_report_base` with the heartbeat's fields over it) and runs it
+   through the one intake every full report takes, instead of copying the latest row and skipping the diffs - so
+   every consumer of a report behaves exactly as for the full report, by construction (§3.5's copy would have
+   skipped the zones' "here now", the certificate check's `seen`, the Child PIN's re-queue check and the battery's
+   events unless each was re-run by hand). The server never computes the hash (it is the phone's name for the body),
+   so the contract has no hash vectors on the server side. The heartbeat fields are `lock_reason`, `battery`,
+   `time_state`, `location`, `extra_locations`, `zone_watch`, `server_tls` (its `seen.at_ms` moves every sync over
+   https; the §3.2 measurement ran over plain http and could not see it), `data_roaming` and `mobile_data` (the built
+   name of §3.5's `sink`). The decompression sits on the status route alone. The code QA's fixes (2026-11-13): the
+   list negotiated (policy and `fields_tag`), the kept body sanitised and kept only after a 2xx, retention, the switch.
+   Notes:
+   `docs/notes/launcher/push-and-play.md`, `docs/notes/server/architecture.md`.
+   - Server: `device_report_base` and the expansion into the one intake (`status_heartbeat`), `full_report`, the
+     policy's `status_heartbeat`, `status_heartbeat_fields` and `status_gzip`, `RequestDecompressionLayer` on the
+     status route with a past-the-limit test, retention of the kept bodies, the switch `STATUS_HEARTBEAT=off`, gzip
+     on the answers without secrets.
+   - Launcher: `status_heartbeat_v1`, the hash without the heartbeat fields, the list check and `fields_tag`, the 6 h
+     full report, gzip under the flag.
    - The contract file `server/testdata/status_heartbeat.json`, byte-identical in the launcher's test resources, and
      added to `launcher.yml`'s and `server-ci.yml`'s path lists.
 3. **95-S (the sink), launcher L, server S.**
