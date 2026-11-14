@@ -711,11 +711,11 @@ async fn a_new_device_starts_with_all_kid_settings_on() {
         .bind(device)
         .fetch_one(&app.db)
     };
-    assert_eq!(mask(id).await.unwrap(), 1 | 2 | 4 | 8);
+    assert_eq!(mask(id).await.unwrap(), 1 | 2 | 4 | 8 | 32);
     assert_eq!(
         crate::handlers::devices::DEFAULT_QUICK_CONTROLS,
-        1 | 2 | 4 | 8,
-        "Wi-Fi, Bluetooth, brightness, sound (design 18)"
+        1 | 2 | 4 | 8 | 32,
+        "Wi-Fi, Bluetooth, brightness, sound (design 18), Mobildata (design 97 D3)"
     );
     assert_eq!(mask(existing).await.unwrap(), 0);
     // The notification filter starts on for a new phone (2026-10-21); an existing one keeps its

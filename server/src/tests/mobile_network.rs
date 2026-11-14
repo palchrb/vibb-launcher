@@ -192,7 +192,9 @@ async fn the_page_and_the_summary_say_what_the_phone_reports() {
     .await;
     let html = app.get_page(&page, &cookie).await.text();
     assert!(!html.contains("needs-update"));
-    for line in ["only-vibb", "switch", "roaming", "lingering"] {
+    // An older launcher under Bare Vibb (the default) gets no switch line outside a pause (design 97 code QA L5).
+    assert!(!html.contains("data-mobile-line=\"switch\""), "{html}");
+    for line in ["only-vibb", "roaming", "lingering"] {
         assert!(
             html.contains(&format!("data-mobile-line=\"{line}\"")),
             "{line}"

@@ -205,7 +205,7 @@ async fn binding(app: &TestApp, device: i64) -> Option<i64> {
 /// design 77's SMS 0130, Spotify audiobooks' marker 0131, design 77 step 4's push budget 0132. Design 82's lock
 /// level for Meldinger 0135. Design 83's MMS addresses 0137. Design 85's avatar tones 0138. The
 /// catalog release's versionCode 0139. Design 87's app logos 0140. Design 90's update holds 0141. Design 93's rule
-/// turned on now 0142. Mobilnett (designs 94/95) 0143.
+/// turned on now 0142. Mobilnett (designs 94/95) 0143. Design 95's heartbeat report 0144. Design 97's abroad 0145.
 #[test]
 fn migrations_from_73_in_order() {
     let versions: Vec<(i64, String)> = crate::MIGRATOR
@@ -286,7 +286,8 @@ fn migrations_from_73_in_order() {
             (141, "catalog update holds".to_string()),
             (142, "time lock now".to_string()),
             (143, "mobile network".to_string()),
-            (144, "device report base".to_string())
+            (144, "device report base".to_string()),
+            (145, "abroad".to_string())
         ],
         "0073 (design 30), 0074 (Spotify), 0075 (the clock format), 0076 (the softer \
          wallpapers), 0077 (Vibb One), 0078 (design 35), 0079 (the custom DNS server), 0080 \
