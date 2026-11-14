@@ -1,8 +1,9 @@
 # Design 98: Flymodus in the kid's settings, through the Digital assistant role
 
-Status: design, **revision 3 (the user's answers)**, 2026-11-14 (branch `design-98`). Revision 1 was 82abae18, and
-revision 2 (9a9f77fe) took the design QA, `docs/review/qa-98-design.md` (1 High, 9 Medium, 8 Low); §14 says how each
-finding was handled. Revision 3 takes the user's answers of the evening of 2026-11-14 (§15). The user saw the mockups
+Status: design, **revision 4 (design QA of revision 3)**, 2026-11-14 (branch `design-98`). Revision 1 was 82abae18,
+revision 2 (9a9f77fe) took the design QA, `docs/review/qa-98-design.md` (1 High, 9 Medium, 8 Low), and revision 3
+(54a046bb) took the user's answers. Revision 4 takes that file's "Revision 3" section (0 High, 5 Medium, 8 Low), which
+reworks §4.4's rule pause. §14 and §16 say how each finding was handled. Revision 3 takes the user's answers of the evening of 2026-11-14 (§15). The user saw the mockups
 of the time-rule screen (`https://claude.ai/artifact/V3FYVAfh5yMaUFA5JLkYnA`) and chose concept C. Revision 3 adds:
 
 - Flymodus on the time-rule screen behind a dim "···" (§4.3);
@@ -458,9 +459,9 @@ While airplane mode is on, Home shows one calm line in the banner slot the pause
   rule ends. It holds at most two rows:
   - **Flymodus**: the switch of §4.1 with the same states, lines and Off-only rule. It is shown when §4.1's row would
     show (bit 64 with the role) or airplane mode is on. The kid's own, no PIN.
-  - **Foreldrekode** ›: opens the parent PIN keypad (`ParentPinDialog`/`ParentPinKeypad`, entry `RULE_PAUSE`), then
-    §4.4's choices. Shown only when the lock is a **rule** (not the used-up screen-time budget alone, see D11), a PIN
-    hash is cached, and the policy carries `rule_pause: true` (§4.4).
+  - **Foreldrekode** / **Parent code** ›: opens §4.4's choices, then the parent PIN keypad. Shown only when the lock
+    is a **rule** and the budget isn't used up as well, `ParentPin.status(..).configured` is true, and the policy
+    carries `rule_pause: true` (§4.4.1).
 - **No rows, no button.** With neither row to show, there is no "···" at all, and the screen looks as today.
 - **Where it isn't.** The sheet is on the unlocked time-rule screen only. Android's keyguard and the lock glance
   (design 59) are unchanged. A kid at the keyguard reaches neither row.
@@ -472,94 +473,171 @@ While airplane mode is on, Home shows one calm line in the banner slot the pause
 **The user's decision (2026-11-14):** a narrow door on the phone, behind the parent PIN. It works offline, pauses only
 the rule or rules in force now, and reaches the PWA at the next sync as a pause the parent can see and end there.
 
-**History, so it isn't read as the old one coming back:**
+**History, so it isn't read as the old one coming back.** The old offline override ("Enter unlock code" on this screen,
+`OfflineOverride`) opened **everything** for 2 hours. It was removed on 2026-11-01 by the user's choice of 2026-10-26,
+that the parent lifts a rule from the PWA only. This door is the user's new decision, and it isn't that override:
 
-- The old offline override ("Enter unlock code" on this screen, `OfflineOverride`) opened **everything** for 2 hours.
-  It was removed on 2026-11-01 by the user's choice of 2026-10-26, that the parent lifts a rule from the PWA only.
-- This door is the user's new decision. It is not that override: it pauses one rule's lock, never the hardening,
-  never the kiosk, never the allowlist, and never another rule that starts during the pause.
+- it pauses one rule's lock, and never the hardening, the kiosk or the allowlist;
+- it never pauses a rule that starts during the pause;
+- it offers only the PWA's own lengths.
 
-**The steps on the phone:**
+#### 4.4.1 The steps on the phone: choose first, then the PIN (Q98-R3-M1)
 
-1. **Foreldrekode** -> the parent PIN keypad. `ParentPin.check` with the new entry `RULE_PAUSE("rule_pause")`, its
-   own escalating lockout and its events, offline against the cached hash as every PIN entry is. A lockout shows the
-   keypad's own wait line.
-2. **"Sett Leggetid på pause"** (`R.string.rule_pause_title` with the rule's name; with two rules in force: "Sett
-   Leggetid og Skole på pause") with four choices: **30 min**, **1 time**, **2 timer**, and **"Til 07:00"** (the
-   latest end among the rules in force, as the card shows it). These are the PWA's own choices.
-   - A choice whose end is past the rule's end isn't offered: 2 timer goes when 1 h 20 min are left.
-   - The words: "Gjelder bare denne regelen. Du ser pausen i appen når telefonen har nett igjen, og kan avslutte den der."
-     / "Applies to this rule only. You'll see the pause in the app when the phone is online again, and can end it
-     there."
-3. **"Sett på pause"** stores the pause and runs `reevaluateLockReasonFromCache` off the main thread. The time-rule
-   screen goes, Home opens, and the rule card on Home and the glance reads the pause ("Leggetid på pause til 23:41")
-   as for any lift.
+As Settings' "Pause all restrictions" does, the parent chooses first, and **only the PIN gate stores the pause**.
 
-**The pure plan** (`rulePausePlan(lock, choice, clocks) -> PhoneLift`):
+1. **Foreldrekode ›** opens the choices: "Sett Leggetid på pause" / "Pause Leggetid" (`rule_pause_title`; with two
+   rules in force, "Sett Leggetid og Skole på pause" / "Pause Leggetid and Skole").
+   - **The lengths are exactly the PWA's `RULE_LIFT_MINUTES`:** **15 min**, **30 min**, **1 time** / **1 hour** and
+     **2 timer** / **2 hours** (Q98-R3-M2). There is no "Til 07:00", which the mockup showed; D13 asks.
+   - A length is offered only when it ends no later than the latest end among the rules in force.
+   - The words under them: "Gjelder bare denne regelen. Du ser pausen i appen når telefonen har nett igjen, og kan
+     avslutte den der." / "Applies to this rule only. You'll see the pause in the app when the phone is online again,
+     and can end it there."
+   - The button: "Sett på pause" / "Pause it".
+2. **"Sett på pause"** opens the parent PIN keypad (`ParentPinDialog`/`ParentPinKeypad`) with the new entry
+   `RULE_PAUSE("rule_pause")`.
+   - The lockout is **the shared one** (`ParentLockoutState`, one per PIN): tries here count against every entry, so
+     this door adds a place to type the PIN but no tries (Q98-R3-L1).
+   - The keypad already handles `untilSync`, `foreignAccess` and the lockout.
+3. **`ParentPin.check(RULE_PAUSE, pin, choice)`** works offline against the vault as every entry does. On `Ok`, the gate
+   itself:
+   - re-runs `rulePausePlan` at that instant (the rule may have ended meanwhile; nothing in force means nothing is
+     stored and the screen just closes);
+   - stores the pause in `startWindow`;
+   - sends the `unlocked` event with `until` set to the pause's end.
 
-- `rule_ids`: the ids of the active, un-lifted rules in `lock` (`decideTimeLock`'s `rules`). A copy of a rule turned
-  on now (design 93: negative id) is paused by its own id. The lock must be a rule's, not the budget's.
-- `until_wall_ms`: now plus the choice, or the latest end of the rules in force for "Til".
-- `duration_ms`: the same span, so the record is a `LiftRecord` window of today's kind (see "The clock" below).
-- `key`: 32 hex characters from `SecureRandom`, the pause's identity on both sides.
+   `ParentPinCallersTest` gains "only `ParentPin.kt` writes `phone_lifts_v1`".
+4. **After the gate:** `TimeRulesRuntime.recheck` runs off the main thread (Q98-R3-M5). It re-arms `TimeRuleAlarm` with
+   the pause's end among the boundaries (`liftExpiries` takes the active phone pauses), runs `AnchorRefresh.request`
+   and re-evaluates the lock. The time-rule screen goes, Home opens, and the rule card on Home and the glance reads
+   "Leggetid på pause til 21:40" / "Leggetid paused until 21:40", as for any lift.
+5. **The choices and the keypad close on `onStop` and at screen-off.** A parent who hands the phone back with the
+   choices open leaves nothing a kid can finish.
 
-**Where it lives and how it acts:**
+**When the row isn't offered** (§4.3's sheet):
 
-- **Storage.** It goes in the same prefs file as the `LiftRecord`s, as `phone_lifts_v1`: a list of `{key, rule_ids,
-  untilWallMs, elapsedStartMs, bootCount, durationMs, posted, acked_ids}`. It holds no PIN material: no PIN, hash,
-  salt or attempt counter, and the PIN hash stays where `ParentPin` keeps it today. `RulePauseTest` checks that
-  the stored JSON's keys are exactly these.
-- **The clock.** Each pause is a `LiftRecord` window: `timedWindowActive` over the wall clock, elapsed realtime and
-  `BOOT_COUNT`. Setting the clock back can't stretch it, and a reboot ends it, as with every lift and window.
-- **Enforcement.** `activeRuleLifts` gains the active phone pauses: `RuleLifts(ruleIds += pause.rule_ids)`. They are
-  never `all`. `TimeRuleAlarm` gets their ends among its boundaries (`liftExpiries`). Nothing else changes: the
-  allowlist, the kiosk (it pins as for any lifted rule), the hardening, the call rules (a no-calls rule paused lifts
-  its call block as a PWA lift does) and a rule that begins later.
+- `ParentPin.status(..).configured` is false (Q98-R3-L6);
+- the lock is the screen-time budget's alone (D11);
+- **the budget is used up as well**: pausing the rule would leave the budget's lock, and Home wouldn't open
+  (Q98-R3-L4). A `sheet` contract row pins this;
+- the policy lacks `rule_pause: true`.
 
-**Reporting it, and the PWA ending it.** The pause becomes an ordinary `time_lifts` row on the server, created from
-the phone. It is **not a new lift kind**: `target` stays `rule`, with a new source.
+#### 4.4.2 The plan (`rulePausePlan(lock, minutes, clocks) -> PhonePause`)
 
-- **The post.** `POST /api/devices/rule-pause` with
-  `{"key", "rule_ids", "started_at_ms", "until_ms", "minutes"}` goes at once when there is a network, else at the next
-  sync. It goes before the status report, from a small retry queue like the time request's (`TimeRequests`).
-- **The server's work** (`handlers::rule_pause`):
-  - it checks the body field by field;
-  - for each rule id the device has (a copy's negative id maps to its rule), it inserts a `time_lifts` row:
-    `target = 'rule'`, `rule_id`, `rule_name`, `minutes`, `expires_at = until_ms`, `created_by = 'phone_pin'`, and
-    the new `phone_key = key`. The pair `(device_id, phone_key, rule_id)` is unique, so a retried post gives the same
-    rows;
-  - it nudges the phone.
-- **The answers:**
-  - `200 {"accepted": true, "lift_ids": [..]}`;
-  - `200 {"accepted": false, "reason": "stale"}` when `until_ms` is already past;
-  - `200 {"accepted": false, "reason": "unknown_rule"}` when none of the rules exists any more;
-  - `400` for a malformed body.
-  - A refusal ends the phone's retries. The pause stays the phone's alone until its end.
-- **Adoption.** The policy's `time_policy.lifts[]` then carries the rows with `phone_key`. The phone matches them by
-  key and **adopts** them: it writes `LiftRecord`s with the server ids and the pause's own window values (not a new
-  start, so `updateLiftRecords` doesn't restart the clock), marks the pause `acked`, and from then on treats the
-  server's lifts as the source.
-- **Ending it.** A later policy, fetched after the ack, that lacks them means the parent ended the pause in the PWA
-  (`ended_early_at`): the records go and the rule is back. Before the ack, a policy without them changes nothing.
-  `rulePausePlan`'s companion `reconcilePhoneLifts(pauses, lifts, ackedAt, fetchedAt)` is pure and covered row by row
-  by the contract's `adopt` rows.
-- **The parent event.** The PIN use is reported as today through `pin-events`, with the new entry `rule_pause` (the
-  inbox and push "Foreldre-PIN brukt på Emmas telefon · Regelskjermen"). The server words an older phone's
-  `override` as before.
-- **The PWA's side.** The lift shows as every lift does: the summary's "Pause regler" line "Leggetid på pause til
-  23:41", the Time page's lifts, and "Avslutt nå". It carries a sub-line "Satt med foreldrekoden på telefonen" / "Set
-  with the parent code on the phone" (from `created_by`).
+- **The rules.** The active, un-lifted rules in `lock`, each with **its own end**: `min(now + minutes, that rule's
+  current occurrence end)`. That isn't `lock.until`, which may chain into a rule that starts later (Q98-R3-L4).
+- **A design 93 copy (a rule turned on now, negative id) is paused as the PWA pauses it** (Q98-R3-L3): its own id and
+  the rule it copies, so the scheduled rule is paused with it, as the PWA's twin lift does.
+  - For that, the server serves the copy with a new optional `copy_of: <rule id>` in `time_policy.rules[]`. This is a
+    `lock_now.json` contract change, made in both directories in the same commit as `rule_pause.json`.
+  - A copy without `copy_of` (an older server) is paused by its own id alone.
+- **`key`:** 32 hex characters from `SecureRandom`, the pause's identity on both sides.
+- **`started_wall_ms`, `elapsed_start_ms`, `boot_count`:** one `LiftRecord`-style window per rule
+  (`untilWallMs`, `durationMs`), so `timedWindowActive` applies. Setting the clock back ends a pause **at once**, never
+  later (Q98-R3-L8), and a reboot ends it.
 
-**Older servers and older launchers:**
+#### 4.4.3 One clock source (Q98-R3-M3)
+
+There are two stores, written by different code:
+
+- **`phone_lifts_v1`** holds the windows: `{key, minutes, rules: [{id, untilWallMs, durationMs}], elapsedStartMs,
+  bootCount}`. Only the PIN gate writes it.
+  - It holds no PIN material: no PIN, hash, salt or attempt counter. `RulePauseTest` checks that the stored JSON's
+    keys are exactly these.
+  - An entry is kept until its last `untilWallMs` has passed by the clock slack (5 min), at most 8 entries, then
+    pruned.
+- **`phone_lifts_sync_v1`** holds the server's side: `{key, posted, acked_at_wall_ms, lift_ids}`. Only the post queue
+  and the reconcile write it.
+
+**The rule:**
+
+- **A lift in the policy with a `phone_key` lifts only through the `phone_lifts_v1` entry with that key,** inside that
+  entry's own window.
+- `updateLiftRecords` never creates a `LiftRecord` for a lift with `phone_key`, and an unreadable `lift_records`
+  can't restart one.
+- An unknown key, a pruned entry, or an entry whose window ended (a reboot, the clock set back, its time up) lifts
+  nothing, whatever the policy says. So a pause ended by a reboot never comes back when its rows arrive.
+
+The dead pause is still posted, so the parent sees that it happened (§4.4.5).
+
+**Whether the pause still lifts** (`phonePauseLifts(entry, sync, lastPolicy, clocks)`):
+
+- its window is active; and
+- either it isn't acked yet, or the newest policy whose GET **started after** `acked_at` still carries a lift with its
+  key (or there is no such policy yet).
+
+#### 4.4.4 Posting and acknowledging (Q98-R3-M4, Q98-R3-L2)
+
+- **Post before the policy.** The queue's `POST /api/devices/rule-pause` runs **at the start of every sync, before the
+  policy GET**, and at once when a network appears. So the sync that posts the pause also fetches a policy carrying
+  it, and the status report of that sync lists the new lift ids in `lifts_active`. The PWA then never reads a fresh
+  pause as "ended on the phone".
+- **The body:**
+  ```json
+  {"key": "0123456789abcdef0123456789abcdef", "minutes": 30, "started_at_ms": 1794826200000,
+   "rules": [{"rule_id": 2, "until_ms": 1794828000000}, {"rule_id": -1, "until_ms": 1794828000000}]}
+  ```
+- **The ack is the post's `200 accepted`.** The phone stores `lift_ids` and `acked_at`, the time the answer arrived.
+  A policy carrying the key also acks, whichever comes first.
+  - After the ack, a policy whose GET started after `acked_at` and lacks the rows **ends the pause** at once.
+  - Then `TimeRulesRuntime.recheck` runs.
+  - So "Avslutt nå" pressed in the PWA between the post and the phone's next policy is honoured at that next sync.
+- **Every 4xx is final**, like a refusal: the entry is marked done and the pause stays the phone's alone until its end.
+- **A 404** (a rolled-back server without the route) is retried until the pause's last `until_ms`, then dropped, as a
+  past pause is (Q98-R3-L5).
+- **A 5xx or no network** is retried with the queue's backoff.
+
+#### 4.4.5 The server (`handlers::rule_pause`, Q98-R3-M2, Q98-R3-L5)
+
+**The checks**, field by field. A body that fails any of them gets a `400`:
+
+- `key` is 32 hex characters;
+- `minutes ∈ RULE_LIFT_MINUTES` (`time_rules::valid_lift`'s set);
+- `started_at_ms` is not more than the clock slack (5 min) in the future, and not older than 7 days;
+- each rule's `until_ms` is greater than `started_at_ms` and at most `started_at_ms + minutes` plus the slack;
+- 1 to 8 rules.
+
+A rule id the device doesn't have is skipped. None left gives `200 {"accepted": false, "reason": "unknown_rule"}`.
+
+**The rows.** One `time_lifts` row per rule id. A copy's negative id is written as the PWA writes a copy's pause (the
+copied rule's row, from which `twin_lifts` serves the twin). Each row has:
+
+- `target = 'rule'`, `rule_id`, `rule_name`, `minutes`, `expires_at = until_ms`;
+- `phone_key = key` — the source marker (Q98-R3-L5);
+- `created_by` **NULL**, so no username can collide with it; the PWA words the source from `phone_key IS NOT NULL`;
+- `created_at` = the pause's start (`started_at_ms`, bounded by now).
+
+`INSERT ... ON CONFLICT (device_id, phone_key, rule_id) DO NOTHING`, then the existing ids are selected. A retried post
+returns the same ids and never revives a row the parent ended (`ended_early_at` stays).
+
+**A pause that is already over** (every `until_ms` at or before now) is stored all the same as an over row. The Today
+list shows "Leggetid på pause 21:10–21:40 (foreldrekoden)" / "Leggetid paused 21:10–21:40 (parent code)". The answer
+is `200 {"accepted": true, "lift_ids": [..], "over": true}`. There is no `stale` refusal any more.
+
+**A named security event** `time_lift_phone` (`security.rs`, as `record_lift` records `time_lift`), with the phone, the
+rules and the minutes. The answer is `200 {"accepted": true, "lift_ids": [...]}`, and the server nudges the phone.
+
+**The PWA's side:**
+
+- The lift shows as every lift does: the summary's "Pause regler" line, the Time page's lifts, and "Avslutt nå"
+  (`end_lift`, which any rule lift takes).
+- It has a sub-line "Satt med foreldrekoden på telefonen" / "Set with the parent code on the phone".
+- The PIN event's entry `rule_pause` is worded "Regelskjermen" / "The time-rule screen" in the inbox and the push: "Foreldre-PIN brukt på Emmas
+  telefon · Regelskjermen" / "Parent PIN used on Emma's phone · The time-rule screen". The `until` of the event comes
+  from the gate (§4.4.1 step 3).
+- The Time page's ⓘ, for a phone reporting `rule_pause_v1`: "Foreldrekoden på telefonen kan sette regelen som gjelder
+  på pause i 15 minutter til 2 timer." / "The parent code on the phone can pause the rule in force for 15 minutes to 2
+  hours."
+
+#### 4.4.6 Older servers and older launchers
 
 - The policy's new top-level `rule_pause: true` says this server takes the post. The phone offers Foreldrekode only
-  with it, so a pause always reaches the PWA. It is pinned by `policy_json_keys_snapshot` and the launcher's
+  with it, so a pause always has a server to reach.
+- `rule_pause`, `lifts[].phone_key` and `rules[].copy_of` are pinned by `policy_json_keys_snapshot` and the launcher's
   `PolicyResponseCompatTest`.
-- An older launcher ignores the key.
-- An older server doesn't send it, so no row.
-- The launcher reports the capability `rule_pause_v1`. The server uses it only to word the Time page's ⓘ ("Foreldrekoden
-  på telefonen kan sette regelen som gjelder på pause").
-
+- An older launcher ignores all three; for it, a phone lift is an ordinary lift it never sees, since it never posts
+  one.
+- The launcher reports the capability `rule_pause_v1`.
 ## 5. The report and the contract
 
 ### 5.1 The report: `airplane_mode` (a full-report field, not a heartbeat field)
@@ -642,22 +720,34 @@ It follows `time_request.json`'s and `lock_now.json`'s patterns, and is byte-ide
 - `capability` (`rule_pause_v1`).
 - `policy`: the top-level `rule_pause: true`, and a `time_policy` whose `lifts[]` holds a phone pause's rows with
   `phone_key`.
-- `request`: the exact `POST /api/devices/rule-pause` body.
-- `answers`: accepted with `lift_ids`, `stale`, `unknown_rule`.
-- `plans`: `{rules in force, choice, now}` -> `{rule_ids, until_ms}`, with two rules, a design 93 copy, "Til", and a
-  choice past the rule's end left out.
-- `adopt`: `{pause, posted/acked, policy lifts, fetched_at}` -> `{records, rule lifted?}`. It covers before the ack,
-  adopted, ended early in the PWA, a reboot, and the clock set back.
+- `request`: the exact `POST /api/devices/rule-pause` body (§4.4.4).
+- `answers`: accepted with `lift_ids`, accepted `over`, `unknown_rule`, and the refused bodies with their `400`.
+  - The refused bodies: minutes not in the set, `until` past `started + minutes`, `started` in the future, a bad key.
+  - The phone's action for each: `done` for 200 and 4xx, `retry` for 404 until the end, `retry` for 5xx.
+- `plans`: `{rules in force, budget used up, minutes, now}` -> `{offered lengths, rules: [{id, until_ms}]}`. With two
+  rules ending at different times, a design 93 copy with `copy_of` (paused with its rule) and without it, a length past
+  the latest end left out, and the budget used up (not offered).
+- `adopt`: `{pause window, sync state, policies (GET start, lifts), clocks}` -> `{rule lifted?}`. The cases:
+  - before the post;
+  - acked by the 200 with the next policy carrying it;
+  - **"Avslutt nå" before any policy carried it -> ended** (Q98-R3-M4);
+  - **reboot, then the policy with the rows -> not lifted** (Q98-R3-M3);
+  - the entry pruned, then the rows -> not lifted;
+  - the clock set back -> ended at once;
+  - a policy fetched before the ack and lacking the rows -> still lifted.
 
 **Its tests:**
 
-- The launcher's `RulePauseTest` encodes `request` exactly, reads every answer, runs `plans` through `rulePausePlan` and
-  `adopt` through `reconcilePhoneLifts`, and checks the stored JSON's keys (no PIN material).
-- The server's `tests::rule_pause` posts `request` (its instants moved to the last minutes), produces each answer row,
-  checks the `time_lifts` rows and that a retry adds none, and serves `policy`'s lifts with `phone_key`.
+- The launcher's `RulePauseTest` encodes `request` exactly, reads every answer to its action, runs `plans` through
+  `rulePausePlan` and `adopt` through `phonePauseLifts`, and checks the stored JSON's keys (no PIN material).
+- The server's `tests::rule_pause` posts `request` (its instants moved to the last minutes) and produces each answer
+  row. It checks the `time_lifts` rows (`created_by` null, `created_at` the pause's start) and that a retry adds none
+  and doesn't revive an ended row. It checks the security event, and that `policy`'s lifts are served with
+  `phone_key`.
 - Both compare the copies.
 
-The policy's `rule_pause` and `lifts[].phone_key` are pinned by `policy_json_keys_snapshot` and the launcher's
+`lock_now.json` gains `copy_of` on its copy rows, in the same commit. The policy's `rule_pause`, `lifts[].phone_key`
+and `rules[].copy_of` are pinned by `policy_json_keys_snapshot` and the launcher's
 `PolicyResponseCompatTest`. The root `CLAUDE.md` and the workflows' path lists get the file.
 
 ## 6. Server and PWA
@@ -743,8 +833,7 @@ The card has two forms. Both land on `#oppsett`, and the flash shows in the card
 **`0147_rule_pause.sql` (§4.4):**
 
 - `time_lifts.phone_key TEXT` (null for the PWA's lifts), with a unique index on `(device_id, phone_key, rule_id)
-  WHERE phone_key IS NOT NULL`.
-- `created_by = 'phone_pin'` for the phone's rows.
+  WHERE phone_key IS NOT NULL`. It is the source marker; `created_by` stays NULL for the phone's rows (Q98-R3-L5).
 - The parent-PIN events' `entry` takes `rule_pause` (a Rust enum value, no schema change).
 
 ### 6.4 An older launcher, an older server
@@ -945,15 +1034,33 @@ alarm and §2.3, offline), and the kid can still turn it off from the row. Size 
    - Unit rows: §5.2's `home_line` and `sheet`, and the `rules` rows (On allowed under a rule; no airplane action at
      any rule edge; the parent's switch wins).
 7. **Rule pause, both directories, M.**
-   - **Contract commit:** `rule_pause.json` and its copy, the DTOs (`Lift.phoneKey`, `PolicyResponse.rulePause`), the
-     snapshot tests.
-   - **Launcher (S-M):** `ParentPinEntry.RULE_PAUSE`, the choices screen, `rulePausePlan`, `phone_lifts_v1`, the merge
-     into `activeRuleLifts` and the alarm, the post queue, `reconcilePhoneLifts`.
-     - `RulePauseTest` has one row per decision: only the rules in force; never `all`; a rule starting later isn't
-       paused; a reboot or the clock set back ends it; adopted without a restart; ended by the PWA; no PIN material
-       stored.
-   - **Server (S):** 0147, `handlers::rule_pause` with its route, `phone_key` in the policy's lifts, the
-     `created_by` sub-line, the pin entry's words, the capability's ⓘ, nb + en.
+   - **Contract commit:**
+     - `rule_pause.json` and its copy;
+     - `lock_now.json`'s `copy_of`;
+     - the DTOs (`Lift.phoneKey`, `TimeRule.copyOf`, `PolicyResponse.rulePause`);
+     - the snapshot tests.
+   - **Launcher (S-M):**
+     - `ParentPinEntry.RULE_PAUSE`, with the gate storing the pause (`startWindow`, the event's `until`);
+     - the choices screen (`RULE_LIFT_MINUTES` only, closing on `onStop`/screen-off);
+     - `rulePausePlan` with per-rule ends and `copy_of`;
+     - `phone_lifts_v1` and `phone_lifts_sync_v1`;
+     - `phonePauseLifts` merged into `activeRuleLifts`;
+     - `updateLiftRecords` skipping `phone_key`;
+     - `liftExpiries` and `TimeRulesRuntime.recheck` after the start and after an end;
+     - the post queue at the start of the sync, before the policy GET.
+     - Tests:
+       - `ParentPinCallersTest` ("only the gate writes `phone_lifts_v1`");
+       - a `ParentPinStoreTest` row (four wrong tries at `PIN_LOCK`, a fifth at `RULE_PAUSE` -> locked out);
+       - `RulePauseTest`, with one row per decision: only the rules in force; never `all`; each rule its own end; a
+         rule starting later isn't paused; a copy paused with its rule; a reboot or the clock set back ends it at
+         once; never revived by its rows; ended by "Avslutt nå" before or after the adoption; no PIN material stored.
+   - **Server (S):**
+     - 0147;
+     - `handlers::rule_pause` with its checks, the over row, `ON CONFLICT DO NOTHING`, `created_at`, and the security
+       event `time_lift_phone`;
+     - `phone_key` in the policy's lifts, and `copy_of` on copies;
+     - the sub-line from `phone_key`, the pin entry's words, the capability's ⓘ;
+     - nb + en.
 8. **Emulator run (§12), S-M.**
 
 Total: launcher **M-L** (revision 2: M), server **M** (revision 2: S-M). Options: §9.1 **S**, §9.3 **M**, D10 **S**.
@@ -1019,14 +1126,23 @@ the PWA's Add Phone. Tests 2 and 4 run with gesture navigation and with 3-button
     - At Android's keyguard (the PIN lock LOCKED) the sheet isn't reachable. After unlocking, it is.
     - With bit 64 off and airplane mode off: no Flymodus row. With no PIN on the server as well: no "···".
 14. **Foreldrekode**, offline and online:
-    - In airplane mode with no Wi-Fi: "···" -> Foreldrekode -> a wrong PIN (the lockout counts) -> the right PIN -> 30
-      min. Home opens, the card reads the pause, and a second rule that starts within the 30 minutes locks.
-    - Turn airplane mode off: the post goes, the PWA's summary and Time page show "Leggetid på pause til …" with the
-      sub-line, and the parent's inbox has "Foreldre-PIN brukt · Regelskjermen". "Avslutt nå" in the PWA -> after the
-      sync the rule locks again.
-    - Set the clock back an hour during a pause: it still ends on time. Reboot during a pause: the rule is back.
-    - `run-as` isn't possible on a release build, so on the debug build check the prefs file holds `phone_lifts_v1`'s
-      keys only.
+    - **The basic path, offline.** In airplane mode with no Wi-Fi: "···" -> Foreldrekode -> 30 min -> "Sett på pause"
+      -> a wrong PIN (the shared lockout counts) -> the right PIN. Home opens, and the card reads the pause. A second
+      rule that starts within the 30 minutes locks.
+    - **The alarm (Q98-R3-M5).** Pause 15 min offline and keep the screen on (a video): the rule is back at the
+      minute.
+    - **The choices close.** Open the choices, let the screen time out, unlock: the choices are gone.
+    - **Online.** Turn airplane mode off. The post goes before the policy GET. The same sync's report lists the lift,
+      the PWA's summary and Time page show "Leggetid på pause til …" with the sub-line, and the inbox has "Foreldre-PIN
+      brukt · Regelskjermen" with its "til" time. "Avslutt nå" in the PWA -> after the sync the rule locks again.
+    - **"Avslutt nå" before the phone's next sync (Q98-R3-M4).** Post with the nudge blocked (no SSE), press "Avslutt nå",
+      then Sync now: the rule is back after it.
+    - **Reboot, then online (Q98-R3-M3).** Pause offline, reboot (the rule is back), turn airplane mode off: the post
+      goes, the PWA shows the pause, and the rule **stays** locked.
+    - **The clock.** Date/time is locked while a time rule exists, so set it back with adb on the debug build: the pause
+      ends **at once**, never later (Q98-R3-L8).
+    - **No PIN material.** On the debug build, check that the prefs files hold `phone_lifts_v1`'s and
+      `phone_lifts_sync_v1`'s keys only.
 15. **Home's line:** airplane mode on -> "Flymodus er på · Trykk for å slå av" on Home in both navigation modes; a tap
     turns it off; with the pause's banner the two lines stack.
 
@@ -1079,8 +1195,14 @@ Those come from the RC on the Jelly Star, through the reports, with no adb and n
   minutes on the same path).
 - **D12. Foreldrekode decided by the user (2026-11-14):** an offline pause of the rule(s) in force only (§4.4), in
   the PWA's choices, reported as a lift the PWA shows and can end. Nothing to decide.
+- **D13. "Til 07:00" on the phone's choices** (it was in the mockup the user saw). **Recommended: leave it out.**
+  - The PWA has no "until" for a rule lift (`RULE_LIFT_MINUTES` = 15, 30, 60, 120).
+  - On an overnight Leggetid, "Til 07:00" would be a 10-hour pause from an offline PIN: five times anything the PWA
+    gives.
+  - Without it, the phone's door is never wider than the PWA's.
+  - If the user wants it: it is a new length on both sides, in the PWA too, and the server's check grows. Size XS-S.
 
-Still awaiting the user's confirmation: D1, D2, D3, D4, D6, D7, D10 and D11. Decided: D5 (design 99), D8, D9, D12.
+Still awaiting the user's confirmation: D1, D2, D3, D4, D6, D7, D10, D11 and D13. Decided: D5 (design 99), D8, D9, D12.
 
 ## 14. Design QA (`docs/review/qa-98-design.md`): how each finding was handled
 
@@ -1111,8 +1233,26 @@ Still awaiting the user's confirmation: D1, D2, D3, D4, D6, D7, D10 and D11. Dec
 |---|---|
 | Vibb never ends airplane mode because a rule starts; turning it on is always allowed, also under a rule; the parent's "Blokker flymodus" wins | §4.1, §7.2, §5.2's `rules` rows, D8 |
 | Concept C on the time-rule screen: a dim "···" top right, a sheet with Flymodus and Foreldrekode, a tap in both navigation modes | §4.3, §12 test 13 |
-| Foreldrekode pauses only the rule in force, offline, with the PWA's choices, and shows in the PWA, which can end it | §4.4, §5.3 (`rule_pause.json`), §6.3 (0147), §12 test 14, D12 |
+| Foreldrekode pauses only the rule in force, offline, with the PWA's choices, and shows in the PWA, which can end it | §4.4, §5.3 (`rule_pause.json`), §6.3 (0147), §12 test 14, D12; revision 4: the PWA's lengths exactly, "Til" to D13 |
 | "Flymodus er på" on Home, a tap turns it off | §4.2, §12 test 15 |
 | D9 accepted: setup is only for setup | D9 |
 | Snarveier is design 99 | §9.2, D5 |
+
+## 16. Design QA of revision 3 (`docs/review/qa-98-design.md`, "Revision 3"): how each finding was handled
+
+| Finding | Handled |
+|---|---|
+| R3-M1 the PIN and the pause are two steps | §4.4.1: choose first, then the PIN. `ParentPin.check(RULE_PAUSE, …)` re-runs the plan and stores the pause in `startWindow`, with the event's `until`. `ParentPinCallersTest`: only the gate writes `phone_lifts_v1`. The choices and keypad close on `onStop`/screen-off. §12 test 14 |
+| R3-M2 the choices aren't the PWA's | §4.4.1: exactly `RULE_LIFT_MINUTES` (15/30/60/120), each offered only within the latest end. "Til" dropped and put to the user as D13. §4.4.5: the server's bounds. §4.4.4: every 4xx final. Contract rows for the refused bodies (§5.3) |
+| R3-M3 two clock sources | §4.4.3: one source. A `phone_key` lift lifts only through its own `phone_lifts_v1` entry and window. `updateLiftRecords` skips them. Entries are kept to their end plus the slack, at most 8. `adopt` rows "reboot, then the rows -> not lifted" and "pruned -> not lifted". §12 test 14 |
+| R3-M4 "Avslutt nå" before the adoption | §4.4.4: ack on the post's 200 (or a policy carrying the key). A policy whose GET started after the ack and lacks the rows ends the pause. The post runs before the policy GET. `ON CONFLICT DO NOTHING` returns the existing ids and never revives an ended row. An `adopt` row and §12 test 14 |
+| R3-M5 no boundary alarm for the pause | §4.4.1 step 4 and §4.4.4: `TimeRulesRuntime.recheck` after the start and after an end. `liftExpiries` takes the phone pauses. §12 test 14 "keep the screen on" |
+| R3-L1 "its own lockout" | §4.4.1 step 2: the shared `ParentLockoutState`. A `ParentPinStoreTest` row |
+| R3-L2 the report marks the new pause ended | §4.4.4: the post goes before the policy GET, so the same sync's report lists the lift ids |
+| R3-L3 a design 93 copy | §4.4.2: the PWA's meaning. A copy is paused with the rule it copies, through a new `copy_of` on the served copy (`lock_now.json`, both directories). Without `copy_of`, the copy's id alone. `plans` rows |
+| R3-L4 two rules, the budget | §4.4.2: each rule its own end, `min(now + minutes, that rule's occurrence end)`. §4.4.1: not offered while the budget is used up as well (a `sheet` row) |
+| R3-L5 the server row's details | §4.4.5: `created_by` NULL with `phone_key` as the marker, a security event `time_lift_phone`, `created_at` = the pause's start bounded by now, a past pause stored as an over row (accepted, `over`) instead of `stale`. §4.4.4: a 404 retried until the end, then dropped |
+| R3-L6 "a PIN hash is cached" | §4.3 and §4.4.1: `ParentPin.status(..).configured` |
+| R3-L7 English missing | English given for the sheet's row, the choices' title (one and two rules), the lengths, "Sett på pause", the line under them, the card's pause line, the PWA sub-line, the inbox entry and the Time page's ⓘ |
+| R3-L8 test 14 | §12 test 14: the clock set back ends at once (through adb on the debug build, since Date/time is locked). Added: the M3 reboot case, the M4 "Avslutt nå" case, the alarm case, the choices closing |
 
