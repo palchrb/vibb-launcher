@@ -48,6 +48,20 @@
 // with no referrer of this origin (a notification, a typed address) forgets the page's entry. Pages
 // are compared without the one-shot query words a save adds (`notice`, `app`, `saved`), which
 // reconnect.js and auto-reload.js take off the address again.
+//
+// A save leaves the history as it was (the user, 2026-11-14: Check now on an app, then Back, showed
+// the same app page again - the POST and its 303 back had added an entry). A form that comes back
+// to its page - a POST whose action has a #fragment, the forms that leave their page have none
+// (settings_pages::check_forms) - is posted by this script (`fetch`, header `X-Handy-Stay`), and the
+// server answers its redirect as a 204 naming the address, fragment and all (`X-Handy-Location`,
+// admin_auth::stay_answer). The same page: the entry is replaced with that address and reloaded (a
+// bare `location.replace` to the same page with another fragment would only scroll); another page:
+// opened as a link would be. The place record above works as before. Left to the browser as before:
+// no JS or no fetch; a form with a `target`, `data-native-post` (its POST is answered with a page,
+// not a redirect: Show Child PIN, the music import's upload) or a password, file or passkey field
+// (a refusal posted again would count a password twice, spend a passkey's challenge, send a file
+// twice); and any answer that is not such a 204 - a refused form shown again, the lock's 423, an
+// error, no network -: the form is then sent the browser's way, which shows that answer.
 (function (root) {
     "use strict";
     var KEY = "handy-scroll";
@@ -58,6 +72,59 @@
     var FROM_KEY = "handy-from";
     // A save's one-shot words in the address: not part of which page it is.
     var ONE_SHOT = { notice: 1, app: 1, saved: 1 };
+    // admin_auth::STAY_HEADER and STAY_LOCATION_HEADER.
+    var STAY_HEADER = "X-Handy-Stay";
+    var STAY_LOCATION = "X-Handy-Location";
+    // Fields whose form the browser posts itself (a refusal posted again must not repeat them).
+    var ONE_SHOT_TYPES = { password: 1, file: 1 };
+    var ONE_SHOT_NAMES = { assertion: 1, credential: 1 };
+
+    /** `el`'s attribute `name`, or null when it has none. */
+    function attr(el, name) {
+        return el && el.hasAttribute && el.hasAttribute(name) ? String(el.getAttribute(name)) : null;
+    }
+
+    /**
+     * How a save that comes back to its page is posted by this script: `{ url, multipart }` (its action
+     * as an absolute address, its fragment kept), or null when the browser posts it as before (see the
+     * top). `submitter` is the button that sent it, or null; `href` the page's address.
+     */
+    function stayPost(form, submitter, href) {
+        if (!form || typeof URL !== "function") return null;
+        var method = attr(submitter, "formmethod") || attr(form, "method") || "get";
+        if (method.toLowerCase() !== "post") return null;
+        var target = attr(submitter, "formtarget") || attr(form, "target");
+        if (target && target.toLowerCase() !== "_self") return null;
+        if (attr(form, "data-native-post") !== null) return null;
+        var fields = form.elements || [];
+        for (var i = 0; i < fields.length; i++) {
+            var type = String(fields[i].type || "").toLowerCase();
+            if (ONE_SHOT_TYPES[type] === 1 || ONE_SHOT_NAMES[String(fields[i].name || "")] === 1) return null;
+        }
+        var action = attr(submitter, "formaction");
+        if (action === null) action = attr(form, "action") || "";
+        var url;
+        var here;
+        try {
+            url = new URL(action, href);
+            here = new URL(href);
+        } catch (e) {
+            return null;
+        }
+        if (url.origin !== here.origin || url.hash.length < 2) return null;
+        var enctype = attr(submitter, "formenctype") || attr(form, "enctype") || "";
+        return { url: url.href, multipart: enctype.toLowerCase() === "multipart/form-data" };
+    }
+
+    /**
+     * Where a stayed save goes on to: `{ reload: true, url }` for this page (its entry replaced with
+     * `url`, then reloaded), `{ reload: false, url }` for another page (opened as a link would be).
+     */
+    function stayLanding(to, href) {
+        var url = new URL(to, href);
+        var here = new URL(href);
+        return { reload: url.origin === here.origin && url.pathname === here.pathname, url: url.href };
+    }
 
     function has(tops, id) {
         return Object.prototype.hasOwnProperty.call(tops, id) && typeof tops[id] === "number";
@@ -238,10 +305,93 @@
 
         doc.addEventListener("submit", function (e) { remember(e && e.target); }, true);
         var proto = win.HTMLFormElement && win.HTMLFormElement.prototype;
+        // The browser's own form.submit(), kept on the prototype by the first install (never the hook).
+        var nativeSubmit = proto && (proto.handyNativeSubmit || proto.submit);
+
+        // A save that comes back to its page, posted here so the history stays as it was (see the top).
+        // The form the browser is sending again after an answer that wasn't the stay's 204.
+        var passing = null;
+        function browserPost(form, submitter, hooked) {
+            if (hooked) {
+                nativeSubmit.call(form);
+                return;
+            }
+            // requestSubmit keeps the button's name, value and formaction; this listener lets it pass.
+            passing = form;
+            try {
+                form.requestSubmit(submitter || undefined);
+            } finally {
+                passing = null;
+            }
+        }
+        function land(to) {
+            if (!to.reload) {
+                win.location.assign(to.url);
+                return;
+            }
+            try {
+                win.history.replaceState(win.history.state, "", to.url);
+            } catch (e) {
+                win.location.replace(to.url);
+                return;
+            }
+            win.location.reload();
+        }
+        /** Posts `form` itself when it is a save that comes back to its page; false: the browser's way. */
+        function stay(form, submitter, hooked) {
+            if (typeof win.fetch !== "function" || typeof win.FormData !== "function") return false;
+            if (!win.history || typeof win.history.replaceState !== "function") return false;
+            if (hooked ? typeof nativeSubmit !== "function" : typeof form.requestSubmit !== "function") return false;
+            var how = stayPost(form, submitter, win.location.href);
+            if (!how) return false;
+            var body;
+            try {
+                body = new win.FormData(form);
+                if (submitter && submitter.name) body.append(submitter.name, submitter.value || "");
+                if (!how.multipart) {
+                    var fields = new win.URLSearchParams();
+                    body.forEach(function (value, key) { fields.append(key, value); });
+                    body = fields;
+                }
+            } catch (e) {
+                return false;
+            }
+            var headers = {};
+            headers[STAY_HEADER] = "1";
+            var post = function () { browserPost(form, submitter, hooked); };
+            win.fetch(how.url, {
+                method: "POST",
+                body: body,
+                credentials: "same-origin",
+                redirect: "manual",
+                headers: headers
+            }).then(function (res) {
+                var to = res && res.headers && res.headers.get(STAY_LOCATION);
+                if (to) {
+                    land(stayLanding(to, win.location.href));
+                } else if (res && res.type === "opaqueredirect") {
+                    // A redirect that came past the server's stay answer: saved, its address unknown -
+                    // this page again, at the place the record keeps.
+                    land({ reload: true, url: win.location.href });
+                } else {
+                    post();
+                }
+            }, post);
+            return true;
+        }
+        // On the window, after every other submit listener: one that took the submit over
+        // (passkey.js, register-sw.js) has prevented it, and a browser without `submitter` posts as before.
+        win.addEventListener("submit", function (e) {
+            var form = e && e.target;
+            if (!form || e.defaultPrevented || form === passing || !("submitter" in e)) return;
+            if (stay(form, e.submitter || null, false)) e.preventDefault();
+        });
+
         if (proto && !proto.handyScrollHooked) {
-            var nativeSubmit = proto.submit;
+            proto.handyNativeSubmit = nativeSubmit;
             proto.submit = function () {
                 remember(this);
+                if (stay(this, null, true)) return;
                 return nativeSubmit.apply(this, arguments);
             };
             proto.handyScrollHooked = true;
@@ -421,7 +571,11 @@
         MAX_AGE_MS: MAX_AGE_MS,
         PLACE_KEY: PLACE_KEY,
         MAX_PLACES: MAX_PLACES,
-        FROM_KEY: FROM_KEY
+        FROM_KEY: FROM_KEY,
+        stayPost: stayPost,
+        stayLanding: stayLanding,
+        STAY_HEADER: STAY_HEADER,
+        STAY_LOCATION: STAY_LOCATION
     };
     if (typeof module !== "undefined" && module.exports) {
         module.exports = api;

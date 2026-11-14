@@ -947,6 +947,37 @@ pub fn mark_body(html: &[u8]) -> Vec<u8> {
     }
 }
 
+/// The request header `static/scroll-restore.js` sends with a save it posts itself (`fetch`), and the answer's
+/// header that names where the save's redirect went ([stay_answer]).
+pub const STAY_HEADER: &str = "x-handy-stay";
+pub const STAY_LOCATION_HEADER: &str = "x-handy-location";
+
+/// A save that comes back to its own page must leave the browser's history as it was (the user, 2026-11-14: Check
+/// now, then Back, showed the same page again - the form's POST and its 303 had added an entry). So
+/// `static/scroll-restore.js` posts such a form itself, marked [STAY_HEADER], and this answers its redirect as
+/// `204 No Content` with the `Location` - fragment and all - in [STAY_LOCATION_HEADER] instead (a script never sees
+/// a followed redirect's fragment, and following it would render the page once for nothing and take a one-shot
+/// session notice with it); the page then replaces its own entry with that address and reloads, or goes on to
+/// another page as a link would. Any other answer - a refused form shown again, the lock's 423, an error - passes as
+/// it is, and the page sends the form the browser's way. Its cookies and other headers stay.
+pub async fn stay_answer(request: Request, next: Next) -> Response {
+    let stay = request.method() == Method::POST && request.headers().contains_key(STAY_HEADER);
+    let response = next.run(request).await;
+    if !stay || !response.status().is_redirection() {
+        return response;
+    }
+    let Some(location) = response.headers().get(header::LOCATION).cloned() else {
+        return response;
+    };
+    let (mut parts, _) = response.into_parts();
+    parts.status = StatusCode::NO_CONTENT;
+    parts.headers.remove(header::LOCATION);
+    parts.headers.remove(header::CONTENT_LENGTH);
+    parts.headers.remove(header::CONTENT_TYPE);
+    parts.headers.insert(STAY_LOCATION_HEADER, location);
+    Response::from_parts(parts, axum::body::Body::empty())
+}
+
 /// Headers on every admin response (§3.2.4); the device API sets its own (`limits`).
 pub async fn admin_headers(request: Request, next: Next) -> Response {
     let path = request.uri().path().to_string();

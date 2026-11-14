@@ -1897,6 +1897,9 @@ pub fn build_admin_router(
         ))
         // Before the session is read: a cross-site form never acts (design 22 §3.2.5).
         .layer(from_fn_with_state(state.clone(), admin_auth::csrf_guard))
+        // A save posted by scroll-restore.js learns where its redirect goes, so the page can replace its own history
+        // entry (`admin_auth::stay_answer`, 2026-11-14).
+        .layer(axum::middleware::from_fn(admin_auth::stay_answer))
         // A POST's own page is marked so reconnect.js never reloads it (qa-srv-sweep-resume M1).
         .layer(axum::middleware::from_fn(admin_auth::mark_post_answer))
         // Every page's iPhone status bar style by Safari's version (`status_bar`, 2026-11-10).
