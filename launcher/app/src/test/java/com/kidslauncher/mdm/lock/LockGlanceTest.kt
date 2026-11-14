@@ -303,6 +303,20 @@ class LockGlanceTest {
         assertEquals("general AOSP", glanceClockProfile("Phone", "Nokia", 2f, 599)?.name)
         assertNull(glanceClockProfile("Tablet", "Lenovo", 2f, 600))
         assertNull(glanceClockProfile("Pixel Fold", "Google", 2.625f, 673))
+        // Android 14 and 15's legacy keyguard: the clock and the date 18 dp lower, the rest the same - on the Android 15
+        // Pixel image at 420 dpi (2.625, a 105 px keyguard bar): the "1"'s ink to row 390, the date's "S" to 490.
+        val legacy = glanceClockProfile("sdk_gphone64_x86_64", "Google", 2.625f, 411, sdk = 35)!!
+        assertEquals("general Pixel (API 35)", legacy.name)
+        val l = listOf(legacy.clockInkStartDp, legacy.clockBaselineBelowBarDp, legacy.clockDp, legacy.dateStartDp, legacy.dateBaselineBelowBarDp, legacy.dateSp)
+        listOf(34f, 109.3f, 86f, 32f, 146.7f, 16f).forEachIndexed { i, want -> assertEquals("[$i]", want, l[i], 0.01f) }
+        assertEquals(391f, profileBaselinePx(keyguardStatusBarPx(63, 0, 2.625f), legacy.clockBaselineBelowBarDp, 2.625f), 1f)
+        assertEquals(490f, profileBaselinePx(keyguardStatusBarPx(63, 0, 2.625f), legacy.dateBaselineBelowBarDp, 2.625f), 1f)
+        assertEquals(109.3f, generalClockProfile("motorola", 393, sdk = 34)!!.clockBaselineBelowBarDp, 0.01f)
+        assertEquals("Android 16 and later: the blueprint's place", 91.3f, generalClockProfile("motorola", 393, sdk = 37)!!.clockBaselineBelowBarDp, 0.01f)
+        // The measured profiles were all taken on Android 16: below it the general one, with the legacy place.
+        assertEquals("general Pixel (API 35)", glanceClockProfile("sdk_gphone64_x86_64", "Google", 1.5f, 320, sdk = 35)?.name)
+        assertEquals("general AOSP (API 35)", glanceClockProfile("Jelly Star", "Unihertz", 1.5f, 320, sdk = 35)?.name)
+        assertEquals(JELLY_STAR_CLOCK, glanceClockProfile("Jelly Star", "Unihertz", 1.5f, 320, sdk = 36))
     }
 
     /** Design 96 §6: Android keeps the date's top where it is, so its baseline moves down with the font scale (4.2 dp at
@@ -1442,7 +1456,7 @@ class LockGlanceLayoutTest {
         assertTrue(glancePanel.contains("private val clockFace = LockClockFace(\n        activity, glance.root, glance.lockGlanceTop, glance.lockGlanceClock, glance.lockGlanceDate, glance.lockGlanceAlarm,\n        extra = listOf(glance.lockGlanceNext, glance.lockGlanceWeatherLine.root), logTag = LOG_TAG, dateRow = glance.lockGlanceDateRow,\n        dateAlarm = glance.lockGlanceDateAlarm,"))
         assertTrue(glancePanel.contains("val pill = glanceHandle(profile)") && glancePanel.contains("private val profile: ClockGeometry? = clockFace.profile"))
         val panel = file("java/com/kidslauncher/mdm/lock/LockClockFace.kt").readText()
-        assertTrue(panel.contains("glanceClockProfile(Build.MODEL, Build.MANUFACTURER, density, widthDp)"))
+        assertTrue(panel.contains("glanceClockProfile(Build.MODEL, Build.MANUFACTURER, density, widthDp, Build.VERSION.SDK_INT)"))
         assertTrue(panel.contains("val widthDp = context.resources.configuration.screenWidthDp"))
         // JL-6: no profile is said once, with what was looked at.
         assertTrue(panel.contains("if (it == null) Log.i(logTag, \"Glance clock: no profile (model"))

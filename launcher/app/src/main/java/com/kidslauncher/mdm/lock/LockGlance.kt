@@ -465,13 +465,14 @@ val JELLY_STAR_CLOCK = AOSP_EMULATOR_CLOCK.copy(name = "Jelly Star")
 
 /**
  * The clock profile for this phone ([model] and [manufacturer] as `Build` reports them, [density] the display's,
- * [widthDp] the screen's width in dp): a measured profile where one matches ([measuredClockProfile]), else the general
- * one computed from AOSP SystemUI's own dimensions ([generalClockProfile], design 96) - `null` only when that one fails
+ * [widthDp] the screen's width in dp, [sdk] `Build.VERSION.SDK_INT`): a measured profile where one matches ([measuredClockProfile]), else the general
+ * one computed from AOSP SystemUI's own dimensions ([generalClockProfile], design 96; also below Android 16, where the
+ * measured profiles - all taken on Android 16 - don't hold) - `null` only when that one fails
  * its sanity bound (a screen too narrow for Android's 86 dp clock, or a tablet's width), and the glance keeps its own
  * centred clock (56 sp, the long date). No PWA switch. The face logs which one it took once (`LockClockFace`).
  */
-fun glanceClockProfile(model: String?, manufacturer: String?, density: Float, widthDp: Int): ClockGeometry? =
-    measuredClockProfile(model, manufacturer, density, widthDp) ?: generalClockProfile(manufacturer, widthDp)
+fun glanceClockProfile(model: String?, manufacturer: String?, density: Float, widthDp: Int, sdk: Int = KEYGUARD_BLUEPRINT_SDK): ClockGeometry? =
+    measuredClockProfile(model, manufacturer, density, widthDp).takeIf { sdk >= KEYGUARD_BLUEPRINT_SDK } ?: generalClockProfile(manufacturer, widthDp, sdk)
 
 /**
  * The measured profiles: the emulator's Pixel image (`sdk_gphone*` by Google), the pure AOSP emulator image ("Android
@@ -544,6 +545,15 @@ const val CLOCK_FACE_SIDE_PADDING_DP = 16f
 /** AOSP's `sw600dp` resources (a tablet's split shade, other margins) start here: no general profile from this width. */
 const val AOSP_TABLET_WIDTH_DP = 600
 
+/** Android 16 (API 36): SystemUI lays the keyguard out by its blueprint (`ClockSection`, the clock's top at the bar plus
+ * [AOSP_KEYGUARD_CLOCK_TOP_MARGIN_DP]) - what every measured profile saw. */
+const val KEYGUARD_BLUEPRINT_SDK = 36
+
+/** Before it (Android 14 and 15, the legacy `KeyguardStatusView` laid out by `KeyguardClockPositionAlgorithm`) the small
+ * clock and the date sit this much lower - [AOSP_KEYGUARD_CLOCK_TOP_MARGIN_DP] again; measured on the Android 15 Pixel
+ * image at 411 dp and 420 dpi (design 96 §6): the clock's baseline 109.3 dp under the keyguard bar, the date's 146.7. */
+const val LEGACY_KEYGUARD_EXTRA_TOP_DP = 18f
+
 /**
  * Design 96: Android's small clock on any phone, from AOSP SystemUI's dimensions - all in dp, with no phone-size
  * qualifier below `sw600dp` (Android 14-16), so the same numbers hold at every density and width: the box at
@@ -551,16 +561,18 @@ const val AOSP_TABLET_WIDTH_DP = 600
  * under the keyguard status bar ([keyguardStatusBarPx]), [AOSP_SMALL_CLOCK_TEXT_DP]; the date
  * [DATE_BELOW_CLOCK_BASELINE_DP] under it at the clock's ink less [DATE_LEFT_OF_CLOCK_INK_DP], 16 sp;
  * [AOSP_GLANCE_HANDLE]. The font's bearing is the maker's: Google's for a Google phone, the AOSP image's for every other
- * maker. It reproduces the measured profiles (59d step L) to 0.1 dp. `null` when Nunito Light's widest clock would not
+ * maker. Below Android 16 ([sdk]) the clock and the date sit [LEGACY_KEYGUARD_EXTRA_TOP_DP] lower. It reproduces the
+ * measured profiles (59d step L, all Android 16) to 0.1 dp. `null` when Nunito Light's widest clock would not
  * end inside the face's padding, or on a tablet's width ([generalClockFits]) - the centred clock then.
  */
-fun generalClockProfile(manufacturer: String?, widthDp: Int): ClockGeometry? {
+fun generalClockProfile(manufacturer: String?, widthDp: Int, sdk: Int = KEYGUARD_BLUEPRINT_SDK): ClockGeometry? {
     val google = manufacturer.orEmpty().trim().equals("Google", ignoreCase = true)
     val inkStart = AOSP_CLOCK_PADDING_START_DP + if (google) GOOGLE_CLOCK_BEARING_DP else AOSP_CLOCK_BEARING_DP
     if (!generalClockFits(inkStart, AOSP_SMALL_CLOCK_TEXT_DP, widthDp)) return null
-    val clockBaseline = AOSP_KEYGUARD_CLOCK_TOP_MARGIN_DP + SMALL_CLOCK_BASELINE_IN_VIEW_DP
+    val legacy = sdk < KEYGUARD_BLUEPRINT_SDK
+    val clockBaseline = AOSP_KEYGUARD_CLOCK_TOP_MARGIN_DP + SMALL_CLOCK_BASELINE_IN_VIEW_DP + if (legacy) LEGACY_KEYGUARD_EXTRA_TOP_DP else 0f
     return ClockGeometry(
-        name = if (google) "general Pixel" else "general AOSP",
+        name = (if (google) "general Pixel" else "general AOSP") + if (legacy) " (API $sdk)" else "",
         clockInkStartDp = inkStart,
         clockBaselineBelowBarDp = clockBaseline,
         clockDp = AOSP_SMALL_CLOCK_TEXT_DP,

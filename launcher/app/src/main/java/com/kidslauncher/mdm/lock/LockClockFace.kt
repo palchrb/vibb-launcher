@@ -61,7 +61,7 @@ class LockClockFace(
     val profile: ClockGeometry? = try {
         val density = context.resources.displayMetrics.density
         val widthDp = context.resources.configuration.screenWidthDp
-        glanceClockProfile(Build.MODEL, Build.MANUFACTURER, density, widthDp).also {
+        glanceClockProfile(Build.MODEL, Build.MANUFACTURER, density, widthDp, Build.VERSION.SDK_INT).also {
             // JL-6: a phone without a measured profile says so once, with what was looked at (nothing here is personal).
             if (it == null) Log.i(logTag, "Glance clock: no profile (model ${Build.MODEL}, maker ${Build.MANUFACTURER}, density $density, width $widthDp dp) - the centred clock")
             else if (it.general) Log.i(logTag, "Glance clock: no measured profile (model ${Build.MODEL}, maker ${Build.MANUFACTURER}, density $density, width $widthDp dp) - the general one")
