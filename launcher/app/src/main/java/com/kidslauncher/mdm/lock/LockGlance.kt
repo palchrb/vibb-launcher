@@ -396,6 +396,16 @@ const val KEYGUARD_STATUS_BAR_MIN_DP = 40f
 fun keyguardStatusBarPx(statusBarPx: Int, cutoutTopPx: Int, density: Float): Float =
     maxOf(statusBarPx.toFloat(), cutoutTopPx.toFloat(), KEYGUARD_STATUS_BAR_MIN_DP * density)
 
+/** The date's ascent on Android's face (em of the date's size): SystemUI keeps the date's top where it is and its
+ * baseline moves down as the font scale grows it - on the 6.7" emulator (Pixel SystemUI, 411 dp at 560 dpi) 4.2 dp
+ * lower at 1.3 than at 1.0, 0.875 em of 16 sp (design 96 §6). The clock does not move (it is in dp). */
+const val DATE_ASCENT_EM = 0.875f
+
+/** The date's baseline under the keyguard status bar (dp) at [fontScale]: the profile's (measured at 1.0) plus the
+ * growth of the date's ascent, since Android keeps the date's top in place (design 96). */
+fun profileDateBaselineBelowBarDp(p: ClockGeometry, fontScale: Float): Float =
+    p.dateBaselineBelowBarDp + (fontScale - 1f) * DATE_ASCENT_EM * p.dateSp
+
 /** Where (px from the window's top) a profile's baseline [belowBarDp] under the keyguard status bar [barPx] lands. */
 fun profileBaselinePx(barPx: Float, belowBarDp: Float, density: Float): Float = barPx + belowBarDp * density
 

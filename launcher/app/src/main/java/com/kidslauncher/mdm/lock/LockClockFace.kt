@@ -345,7 +345,7 @@ class LockClockFace(
         val clockBottom = contentTop + clockTop + clock.measuredHeight
         val descent = (clock.measuredHeight - clock.baseline).toFloat()
         val dateStart = startMarginPx(p.dateStartDp * density, contentStart)
-        val dateTarget = profileBaselinePx(bar, p.dateBaselineBelowBarDp, density)
+        val dateTarget = profileBaselinePx(bar, profileDateBaselineBelowBarDp(p, context.resources.configuration.fontScale), density)
         val baseline = if (box === date) date.baseline else box.baseline.takeIf { it >= 0 } ?: date.baseline
         moved = margins(box, dateStart, baselineMarginPx(dateTarget, clockBottom, baseline.toFloat(), floorPx = -descent)) || moved
         if (bar != placedBarPx) {

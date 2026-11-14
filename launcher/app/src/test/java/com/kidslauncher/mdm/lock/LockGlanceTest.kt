@@ -305,6 +305,21 @@ class LockGlanceTest {
         assertNull(glanceClockProfile("Pixel Fold", "Google", 2.625f, 673))
     }
 
+    /** Design 96 §6: Android keeps the date's top where it is, so its baseline moves down with the font scale (4.2 dp at
+     * 1.3, measured on the 6.7" emulator); the clock, in dp, never moves. */
+    @Test
+    fun `the date's baseline follows the font scale as Android's, the clock's doesn't`() {
+        for (p in listOf(EMULATOR_PIXEL_CLOCK, JELLY_STAR_CLOCK, generalClockProfile("Google", 411)!!)) {
+            assertEquals(p.dateBaselineBelowBarDp, profileDateBaselineBelowBarDp(p, 1f), 0.001f)
+            assertEquals("${p.name} at 1.3", p.dateBaselineBelowBarDp + 4.2f, profileDateBaselineBelowBarDp(p, 1.3f), 0.05f)
+            assertEquals("${p.name} at 0.85", p.dateBaselineBelowBarDp - 2.1f, profileDateBaselineBelowBarDp(p, 0.85f), 0.05f)
+        }
+        // On the 6.7" emulator (3.5, a 140 px keyguard bar): Android's "S" of "Sat" on rows ending at 591 and 605 px.
+        val p = generalClockProfile("Google", 411)!!
+        assertEquals(591f, profileBaselinePx(140f, profileDateBaselineBelowBarDp(p, 1f), 3.5f), 1f)
+        assertEquals(605f, profileBaselinePx(140f, profileDateBaselineBelowBarDp(p, 1.3f), 3.5f), 1f)
+    }
+
     /**
      * The glance-topinset round: the profile's baselines hang under SystemUI's keyguard status bar - the larger of the
      * window's status bar (a cutout's inset where larger) and 40 dp -, never from the screen's top. Measured: Android's
@@ -1454,7 +1469,8 @@ class LockGlanceLayoutTest {
         assertTrue(place, place.contains("val bar = keyguardBarPx(density)"))
         // Whole lines (qa-glance-topinset-code Q-1): the clock's target from the clock's offset, the date's from the date's.
         assertTrue(place, place.contains("val clockTarget = profileBaselinePx(bar, p.clockBaselineBelowBarDp, density)\n"))
-        assertTrue(place, place.contains("val dateTarget = profileBaselinePx(bar, p.dateBaselineBelowBarDp, density)\n"))
+        // Design 96: the date's from the date's offset at the font scale (Android keeps the date's top in place).
+        assertTrue(place, place.contains("val dateTarget = profileBaselinePx(bar, profileDateBaselineBelowBarDp(p, context.resources.configuration.fontScale), density)\n"))
         assertTrue(place, place.contains("baselineMarginPx(clockTarget, contentTop, clock.baseline.toFloat(),"))
         // Design 75 §5.5: the glance's date row is placed as the date was - its baseline is the date's.
         assertTrue(place, place.contains("baselineMarginPx(dateTarget, clockBottom, baseline.toFloat(),"))
