@@ -106,3 +106,44 @@ phone book, Meldinger and the thread, Kalender.
 - `six35` after `-wipe-data`: SystemUI showed "isn't responding" once at the first boot, and Android's swipe keyguard
   came up once before the device owner's policy arrived. It was dismissed with `wm dismiss-keyguard`, and the
   enrolment then went as usual.
+
+## Fix round 2026-11-14
+
+Branch `size-fixes` (from `c7583b9b`): S1-S9 fixed; S10 (nothing scales up on large screens) is out of scope. The user:
+"Barnet må kunne bruke både bevegelse og knapper" - every screen with both gesture and 3-button navigation.
+
+| # | Change | After, on the emulator | After-shot |
+|---|---|---|---|
+| S1 | `activity_lock.xml`: "Nødsamtale" moved out of the `ScrollView`, under it; the content scrolls above it with the glance's 32 dp fade | Jelly Star (`jelly36`), 3-button: `[150,698][330,770]` at 1.0 and `[132,698][348,770]` at 1.3, the bar from 782; gesture `[150,734][330,806]` / `[132,734][348,806]`, the bar from 818. A tap at its centre with 3-button at 1.3 opens "Ringe 112?". Narrow and 6.7" likewise above the bar | `f1-after-timerule-emergency-above-navbar` (3-button 1.3, then 1.0) |
+| S2 | `music/.../ui/Fit.kt`: `CONTROLS_NARROW` (44/48/56/48/44, 4 dp gaps, 256 dp) below 288 dp, reaching up to 12 dp into the screen's sides (`controlBleed`, `PlayerScreen`'s `Modifier.bleed`); narrower still it scales down | Narrow 270 dp, 1.0 and 1.3: the row spans `[14..526]` px of 540, 7 dp from each edge, 4 dp between the buttons, no overlap; Previous/Next 48 dp; the ±15 s buttons kept | `f2-after-player-row-narrow` (1.0, then 1.3) |
+| S3 | `item_day_event.xml`: title and second line are `WholeWordTextView`s, the title up to 3 lines | Narrow 1.3: "Fotballtrening / med Jack", "Bursdagsselskap / hos Lily" (a little smaller), "Kunstgressbane..." ends at a word with "..." on its second line; no mid-word break | `f3-after-kalender-whole-words-narrow-13` |
+| S4 | `include_kid_header.xml`: the title is a `WholeWordTextView` (a word wider than the line counts as cut, `WholeWords.wholeCheckedLines`) | "Meldinger" whole on the Jelly Star at 1.3 and on the narrow at 1.0 (a little smaller). **Narrow at 1.3 still "Meld..."**: "Ny melding" takes 120 of its 238 dp and the title's 75 % floor doesn't fit the 60 dp left (below the floor size; not changed) | `f4-after-header-jelly-13-narrow-10` |
+| S5 | `GlancePanel.handleAboveButtons` + `KidInsets.buttonBarPx` (the bar's tappable inset, 0 with gestures): with 3-button navigation the handle stands on the bar's top edge and the page keeps its height free | 3-button: the handle `[159,746][321,782]` on the Jelly Star (bar from 782), `[162,1032][378,1072]` on the narrow at 1.3; a swipe from its centre opens the keypad on both (it did nothing before). Gesture: unchanged, on the window's bottom edge (`[159,818][321,854]`), and its swipe still opens the keypad. No gesture removed | `f5-after-glance-handle-above-buttons` (Jelly 3-button, narrow 3-button 1.3, Jelly gesture) |
+| S6 | `WholeWordTextView` tries whole words without hyphenation first (`WholeWords.fitPreferWhole`, at most 25 % smaller), then the view's own hyphenation as before | Narrow 1.3: "Telefonbok", "Meldinger", "Innstillinger" whole on one line, slightly smaller than their neighbours; no hyphen | `f6-after-home-labels-narrow-13` |
+| S7 | `FlexBar`: the output's min is its whole width as long as Liste's and Sov's own widths leave room (`shrinkerMin`) | "Telefonen" whole on the Jelly Star at 1.3 and the narrow at 1.0; the narrow at 1.3 shows "Tele..." (Liste and Sov already at their own widths) | `f7-after-player-output-jelly-13`, `f2-after-player-row-narrow` |
+| S8 | `activity_pin_lock.xml`: "Foreldrekode" `minHeight` 48 dp, the root's 4 dp bottom padding given to it (the keys keep their size budget) | 48 dp: `[156,710][324,782]` with 3-button, `[156,746][324,818]` with gestures, on the bar's top edge | `f8-after-keypad-parent-code` |
+| S9 | `DayActivity.renderAdd`: while the "+" shows the pager ends 80 dp up (the "+" and its 20 dp margin, 4 dp air), the page's bottom padding 96 -> 12 dp | No card under the "+" at rest, on the Jelly Star (1.0, 1.3) and the narrow; the "+" stands in its own strip at the bottom. It costs that strip's height on every screen while the kid may add events | `f9-after-kalender-plus-clear-jelly-13` |
+
+Run: `jelly36` (wiped, then put back from `~/kid-look-1-avd-pre-start`, all 22 SHA-256 sums matching and the same file
+tree) with 3-button and gesture navigation at 1.0 and 1.3 for S1, S5, S8, S9 and S4/S7 at 1.3; a throwaway `ssnarrow`
+(540x1168 @ 320, jelly36's image) at 1.0 gesture and 1.3 3-button for S2-S7 plus S1/S5/S9; a throwaway `sstall`
+(1440x3120 @ 560) at 1.0 gesture as a spot check of Home, Meldinger, Kalender, the glance, the keypad and the time-rule
+screen - nothing broken (the "+" strip shows there too; the player's row and bar can't change at 411 dp, `FitTest`).
+Both throwaway AVDs deleted. The same seeded server data as the matrix run (a copy), a 0.79.0 debug server of this
+branch, the debug apps of this branch.
+
+Other inset bugs looked for: `activity_lock.xml` was the only layout with a scrolling root that drew under the bars
+(`clipToPadding="false"`); the glance's bottom row, the keypad, kid Settings and the pause screen were above the bar in
+both modes in the matrix run and on this one (the keypad and the glance measured above).
+
+### After the code QA (`docs/review/qa-size-fixes-code.md`)
+
+- **M1:** Dagen's second line is a plain `TextView` again. On `jelly36` at 1.3, an event of the kid's own whose location
+  is a Zoom link shows the link at the line's own size, cut with "…", and with the "›".
+- **M2:** S9's strip is now each page's own bottom padding, clipped, inside the pager, and only while the page keeps
+  about three rows (`addPlace`, `ADD_STRIP_MIN_LIST_DP` 220). Otherwise the floating "+" comes back with the old 96 dp.
+  `ADD_STRIP = false` gives the old floating "+" everywhere. On `jelly36` in portrait at 1.3 the strip shows, and a day
+  swipe that starts in it (left of the "+") turns to Sunday. In landscape the floating "+" sits over a list of the
+  full height.
+
+`jelly36` was wiped for the check and put back clean afterwards (22 of 22 SHA-256 sums match, same file tree).

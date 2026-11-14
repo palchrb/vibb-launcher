@@ -246,6 +246,10 @@ class WholeWordsTest {
         assertEquals("com.kidslauncher.mdm.ui.WholeWordTextView", tile.tagName)
         assertEquals("normal", tile.getAttributeNS(ns, "hyphenationFrequency"))
         assertEquals("2", tile.getAttributeNS(ns, "maxLines"))
+        // Dagen: the title keeps words whole (S3); the second line is a plain TextView (code QA M1: a link in a location
+        // would shrink the whole line to the floor).
+        assertEquals("com.kidslauncher.mdm.ui.WholeWordTextView", label("res/layout/item_day_event.xml", "day_event_title").tagName)
+        assertEquals("TextView", label("res/layout/item_day_event.xml", "day_event_second").tagName)
         val name = label("res/layout/item_kid_contact.xml", "contact_name")
         assertEquals("com.kidslauncher.mdm.ui.WholeWordTextView", name.tagName)
         assertEquals("2", name.getAttributeNS(ns, "maxLines"))
@@ -254,8 +258,8 @@ class WholeWordsTest {
         // re-fits on a text change; it never changes the text itself.
         val code = File(main, "java/com/kidslauncher/mdm/ui/WholeWordText.kt").readText()
         for (needed in listOf(
-            ".setBreakStrategy(breakStrategy)", ".setHyphenationFrequency(hyphenationFrequency)",
-            "WholeWords.cutLines(", "WholeWords.shownLines(maxLines, lines)", "WholeWords.breakOpportunities(source, textLocale)",
+            ".setBreakStrategy(breakStrategy)", ".setHyphenationFrequency(frequency)",
+            "WholeWords.cutLines(", "WholeWords.wholeCheckedLines(maxLines, lines)", "WholeWords.breakOpportunities(source, textLocale)",
             "transformationMethod = method", "if (textSize != fit.sizePx)", "if (!fitState.due(source, width)) return",
             "state?.sizeSet(adjusting, textSize)", "if (state?.textChanged(adjusting) == true) requestLayout()",
         )) assertTrue(needed, needed in code)
@@ -318,6 +322,42 @@ class WholeWordsTest {
         assertEquals(2, WholeWords.shownLines(2, 2))
         assertEquals(1, WholeWords.shownLines(2, 1))
         assertEquals(3, WholeWords.shownLines(-1, 3))
+    }
+
+    @Test
+    fun `whole words first, then the view's hyphens, then the ellipsis - the last shown line's word counts (S4, S6)`() {
+        val sizes = WholeWords.sizes(40f)
+        // Whole at the base size: no shrink, hyphens off.
+        assertEquals(WholeWords.Fit(40f, false, hyphens = false), WholeWords.fitPreferWhole(40f, { true }, { true }))
+        // "Telefon-/bok" at 1.3 on a 270 dp phone: a little smaller and whole rather than hyphenated at full size.
+        assertEquals(WholeWords.Fit(sizes[1], false, hyphens = false), WholeWords.fitPreferWhole(40f, { it <= sizes[1] }, { false }))
+        // No size keeps every word whole: the view's own hyphenation, as before ("Innstillin-ger" at 2.0).
+        assertEquals(WholeWords.Fit(40f, false, hyphens = true), WholeWords.fitPreferWhole(40f, { false }, { false }))
+        assertEquals(WholeWords.Fit(30f, true, hyphens = true), WholeWords.fitPreferWhole(40f, { false }, { true }))
+        // The checked lines: one more than shown, so a one-line title's "Meldin|ger" is a cut...
+        assertEquals(2, WholeWords.wholeCheckedLines(1, 2))
+        assertTrue(WholeWords.cutLines("Meldinger", intArrayOf(6, 9), floatArrayOf(60f, 30f), floatArrayOf(60f, 30f), 3f, WholeWords.wholeCheckedLines(1, 2), { false }))
+        // ...but a line ending between words before the ellipsis is not, and a text that fits checks all its lines.
+        assertFalse(WholeWords.cutLines("Ny melding", intArrayOf(3, 10), floatArrayOf(20f, 50f), floatArrayOf(24f, 50f), 3f, WholeWords.wholeCheckedLines(1, 2), { false }))
+        assertEquals(2, WholeWords.wholeCheckedLines(2, 2))
+        assertEquals(3, WholeWords.wholeCheckedLines(2, 5))
+    }
+
+    @Test
+    fun `whole means all of it shown, unless hyphens wouldn't show it either - one line must show it all (code QA L1, L8)`() {
+        // Two lines: whole and complete.
+        assertTrue(WholeWords.wholeOk(cut = false, lines = 2, hyphenLines = 2, maxLines = 2))
+        // "Aa / Bbbbbbbbb / Cc" without hyphens, "Aa Bbbbbb- / bbb Cc" with them: not whole - the hyphens show all of it.
+        assertFalse(WholeWords.wholeOk(cut = false, lines = 3, hyphenLines = 2, maxLines = 2))
+        // Neither shows all of it: whole words, ellipsized at the end, as before.
+        assertTrue(WholeWords.wholeOk(cut = false, lines = 3, hyphenLines = 3, maxLines = 2))
+        // A cut word is never whole.
+        assertFalse(WholeWords.wholeOk(cut = true, lines = 1, hyphenLines = 1, maxLines = 2))
+        // One line ("Bluetooth-enheter" in the header): only a size that shows all of it is whole.
+        assertFalse(WholeWords.wholeOk(cut = false, lines = 2, hyphenLines = 2, maxLines = 1))
+        assertTrue(WholeWords.wholeOk(cut = false, lines = 1, hyphenLines = 1, maxLines = 1))
+        // No line limit.
+        assertTrue(WholeWords.wholeOk(cut = false, lines = 9, hyphenLines = 9, maxLines = -1))
     }
 
     @Test

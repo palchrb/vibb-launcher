@@ -302,11 +302,35 @@ class TimeLockModelTest {
         assertTrue("WallpaperStore.addListener(wallpaperListener)" in activity && "WallpaperStore.removeListener(wallpaperListener)" in activity)
         // A cold start holds the first frame for the ground as the PIN lock does (at most LOCK_GROUND_WAIT_MS).
         assertTrue("if (holdForLockGround(WallpaperStore.state.lockReady, since, now)) return false" in body(activity, "override fun onStart()"))
-        // The profile clock's box may reach into the status bar's padding: the root never clips it.
-        assertEquals("false", screen.first().attr("clipToPadding"))
+        // The profile clock (size-fixes code QA L7): its box sits in the scrolling part, which clips at the status bar's
+        // edge; the digits' ink stays inside it - the placement's floor keeps the ink below the block's top, and the block
+        // keeps its 8 dp top padding as the glance's.
+        assertEquals("8dp", screen.byId("lock_top").attr("paddingTop"))
+        assertTrue("floorPx = -(clock.baseline + ink.top).toFloat()" in code("java/com/kidslauncher/mdm/lock/LockClockFace.kt"))
         assertTrue("AlarmManager.ACTION_NEXT_ALARM_CLOCK_CHANGED" in activity && "unregisterReceiver(alarmChanged)" in activity)
         val panel = code("java/com/kidslauncher/mdm/lock/GlancePanel.kt")
         assertTrue("LockClockFace(" in panel && "RuleCardView.bind(" in panel)
+    }
+
+    /** Screen-size fix S1 (size-fixes code QA L6): Emergency call is never inside the scrolling part, where 3-button
+     * navigation on the Jelly Star put it under the bar - it is the root's last child, under a ScrollView that takes the
+     * rest of the height, so it is always laid out whole above the root's bottom padding (the navigation bar, KidInsets). */
+    @Test
+    fun `S1 - emergency call sits outside the scroll, under a weighted ScrollView, always shown`() {
+        val root = layout("activity_lock").first()
+        val children = (0 until root.childNodes.length).map { root.childNodes.item(it) }.filterIsInstance<Element>()
+        assertEquals(listOf("ScrollView", "TextView"), children.map { it.tagName })
+        assertEquals("vertical", root.attr("orientation"))
+        val scroll = children[0]
+        assertEquals("0dp", scroll.attr("layout_height"))
+        assertEquals("1", scroll.attr("layout_weight"))
+        assertEquals("@+id/lock_top", (0 until scroll.childNodes.length).map { scroll.childNodes.item(it) }.filterIsInstance<Element>().single().attr("id"))
+        val button = children[1]
+        assertEquals("@+id/lock_emergency_button", button.attr("id"))
+        assertEquals("", button.attr("visibility"))
+        assertEquals("", button.attr("maxLines"))
+        // The root carries the bars as padding (KidInsets on binding.root).
+        assertTrue("com.kidslauncher.mdm.ui.KidInsets.apply(binding.root)" in code("java/com/kidslauncher/mdm/ui/LockActivity.kt"))
     }
 
     @Test

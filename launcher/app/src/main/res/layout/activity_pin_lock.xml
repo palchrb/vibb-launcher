@@ -3,7 +3,7 @@
      Lock.dc.html, 320x568 dp; since design 25 mockup LockGlance.dc.html C; since design 34 P7 mockups
      05/05b): one column with nothing overlaid - the back arrow to the glance page by the prompt, the
      dots, the keypad, a gap of at least 16 dp, Emergency call (the tonal pill, at least 48 dp, wraps and
-     grows with the font scale), the Parent code link (at least 44 dp; decision after QA review: always
+     grows with the font scale), the Parent code link (at least 48 dp since screen-size fix S8, its target reaching the inset; always
      there), the inset. Only the keys give way: lock.PinKeypadLayout sizes them from the keypad's
      measured height, min(72, (h - 3 x gap) / 4) dp, at the last resort down to 32 dp. No clock or
      date - the glance page (view_lock_glance.xml, over this stage) has them. Android draws the status
@@ -19,7 +19,7 @@
     android:paddingStart="16dp"
     android:paddingTop="0dp"
     android:paddingEnd="16dp"
-    android:paddingBottom="4dp">
+    android:paddingBottom="0dp">
 
     <!-- The prompt between the back arrow's columns (two lines at most, qa-21-step4-code L5 and
          design 25 QA Low 5): the arrow always leads back to the glance page. -->
@@ -118,7 +118,7 @@
         android:background="?android:attr/selectableItemBackground"
         android:fontFamily="@font/nunito_bold"
         android:gravity="center"
-        android:minHeight="44dp"
+        android:minHeight="48dp"
         android:paddingStart="16dp"
         android:paddingEnd="16dp"
         android:text="@string/pin_lock_parent_code"

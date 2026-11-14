@@ -109,6 +109,8 @@ class DayListAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
         private fun ellipsized(text: TextView): Boolean {
             if (text.visibility != View.VISIBLE) return false
+            // A word cut to "…" by the title's whole-word rule counts too (size-fixes code QA L3).
+            if ((text as? com.kidslauncher.mdm.ui.WholeWordTextView)?.wordEllipsized == true) return true
             val layout: Layout = text.layout ?: return false
             return layout.lineCount > 0 && layout.getEllipsisCount(layout.lineCount - 1) > 0
         }

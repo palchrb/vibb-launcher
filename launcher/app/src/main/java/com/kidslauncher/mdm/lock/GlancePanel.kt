@@ -144,7 +144,9 @@ class GlancePanel(
      * Design 59d §8.13: Android's gesture handle, drawn by us where SystemUI's is (lock task hides SystemUI's while we are
      * LOCKED). A view of its own in the lock's frame, over the page and under the VoIP ring card, on the window's bottom
      * edge ([glanceHandle], [glanceHandleViewHeightDp]); not clickable, so every touch on it reaches the page and its swipe.
-     * TalkBack's node for the unlock ([handleAction]).
+     * TalkBack's node for the unlock ([handleAction]). With 3-button navigation (screen-size fix S5, 2026-11-14: the pill
+     * lay in the bar under ◀, and a swipe from it went to the bar) it sits right above the bar instead, in room of its
+     * own under the page's content ([handleAboveButtons]).
      */
     private val handle: View = View(activity).also { view ->
         val pill = glanceHandle(profile)
@@ -255,7 +257,7 @@ class GlancePanel(
     private var clockWatch: ClockFormat.Watch? = null
 
     init {
-        KidInsets.apply(glance.root)
+        KidInsets.apply(glance.root, extraBottom = ::handleAboveButtons)
         handleAction(handle)
         glance.lockGlanceEmergency.setOnClickListener { onEmergency() }
         glance.lockGlanceTorch.setOnClickListener { torch?.toggle() }
@@ -1577,6 +1579,21 @@ class GlancePanel(
     }
 
     // ---- the layout (r11 §1.2) ---------------------------------------------------------------------------
+
+    /**
+     * S5: with 3-button navigation ([KidInsets.buttonBarPx] > 0) the handle stands on the bar's top edge, and the page
+     * keeps the handle's height free under its content (the px returned, added to the root's bottom padding); with gesture
+     * navigation it stays on the window's bottom edge, as SystemUI's own, and nothing is added.
+     */
+    private fun handleAboveButtons(insets: android.view.WindowInsets): Int {
+        val buttons = KidInsets.buttonBarPx(insets)
+        val params = handle.layoutParams as FrameLayout.LayoutParams
+        if (params.bottomMargin != buttons) {
+            params.bottomMargin = buttons
+            handle.layoutParams = params
+        }
+        return if (buttons > 0) params.height else 0
+    }
 
     /** The page's room at [height]: the root less its paddings, which carry the visible system bars (`KidInsets`). */
     private fun available(height: Int): Int = glance.root.let { height - it.paddingTop - it.paddingBottom }

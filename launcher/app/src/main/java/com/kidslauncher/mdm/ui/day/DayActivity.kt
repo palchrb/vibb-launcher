@@ -108,6 +108,10 @@ open class DayActivity : KidPageActivity() {
             else -> LocalDate.ofEpochDay(savedInstanceState.getLong(STATE_DAY))
         }
         binding.dayPager.setCurrentItem(positionOf(anchor, start), false)
+        // S9 (code QA M2): the "+"'s room follows the pager's height (a rotation, the reminder row, the font).
+        binding.dayPager.addOnLayoutChangeListener { _, _, top, _, bottom, _, oldTop, _, oldBottom ->
+            if (bottom - top != oldBottom - oldTop) binding.dayPager.post { if (!isDestroyed) renderAdd() }
+        }
         binding.dayPager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
             override fun onPageSelected(position: Int) = renderHeader()
         })
@@ -117,10 +121,16 @@ open class DayActivity : KidPageActivity() {
         binding.dayAdd.setOnClickListener { startActivity(EventEditActivity.newIntent(this, shownDay())) }
     }
 
-    /** The "+" while the kid may add events and their calendar is there to write to (§1b). */
+    /** The "+" while the kid may add events and their calendar is there to write to (§1b), and where the pages leave
+     * room for it ([addPlace], screen-size fix S9 and its code QA M2): a strip of its own at the bottom of each page
+     * while the pager is tall enough - no card under it at rest, and a day swipe from the strip still turns the page
+     * (the strip is the page's own clipped padding, inside the pager) -, else the floating "+" over the list as before. */
     private fun renderAdd() {
         val shown = CalendarStore.kidCalendar() != null && CalendarStore.canWrite(this)
         binding.dayAdd.visibility = if (shown) android.view.View.VISIBLE else android.view.View.GONE
+        val density = resources.displayMetrics.density
+        val place = addPlace(shown, binding.dayPager.height / density)
+        adapter.pageBottom((pageBottomDp(place) * density).toInt(), clip = place == AddPlace.STRIP)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -255,6 +265,9 @@ open class DayActivity : KidPageActivity() {
         /** The pager's side padding (dp); with the page's 3 dp the neighbours' cards peek 10 dp. */
         const val PAGER_PAD_DP = 13
 
+        /** The "+"'s strip (S9): its 56 dp and 20 dp margin, and a 4 dp gap above it. */
+        const val ADD_CLEAR_DP = 80
+
         /**
          * The one way to open Dagen - Home's tile and the lock's glance (the reminder row, after the code): a task of
          * its own (`FLAG_ACTIVITY_NEW_TASK` with the manifest's `.day` affinity, 2026-10-27), as the missed calls'
@@ -312,6 +325,33 @@ open class DayActivity : KidPageActivity() {
     }
 }
 
+/** Where Dagen's pages leave room for the "+" (screen-size fix S9, its code QA M2). */
+enum class AddPlace { NONE, STRIP, FLOATING }
+
+/** S9's strip at all (the user may still pick the old floating "+" everywhere: this one switch). */
+const val ADD_STRIP = true
+
+/** The list the strip must leave on a page (dp): about three event rows. Less (landscape, a reminder row): floating. */
+const val ADD_STRIP_MIN_LIST_DP = 220
+
+/** The page's bottom air without a strip, and the old room under the last card for the floating "+" (dp). */
+const val PAGE_AIR_DP = 12
+const val ADD_FLOATING_ROOM_DP = 96
+
+/** The "+"'s place for a pager [pagerDp] tall (0 = not laid out yet: the strip, corrected at the first layout). */
+fun addPlace(shown: Boolean, pagerDp: Float, strip: Boolean = ADD_STRIP): AddPlace = when {
+    !shown -> AddPlace.NONE
+    strip && (pagerDp <= 0f || pagerDp - DayActivity.ADD_CLEAR_DP >= ADD_STRIP_MIN_LIST_DP) -> AddPlace.STRIP
+    else -> AddPlace.FLOATING
+}
+
+/** A page's bottom padding (dp) for [place]: the strip (its clip edge 4 dp above the "+"), the floating "+"'s old room, or the air alone. */
+fun pageBottomDp(place: AddPlace): Int = when (place) {
+    AddPlace.STRIP -> DayActivity.ADD_CLEAR_DP
+    AddPlace.FLOATING -> ADD_FLOATING_ROOM_DP
+    AddPlace.NONE -> PAGE_AIR_DP
+}
+
 /** The pager: [Int.MAX_VALUE] pages, page `p` is day `anchor + (p - CENTER)`. Each page reads its day lazily and shows
  * nothing until it lands; a reload keeps the old rows until the new ones come. */
 class DayPagerAdapter(
@@ -326,6 +366,25 @@ class DayPagerAdapter(
 
     private val bound = LinkedHashSet<Page>()
 
+    /** Every page made (a handful: the pager keeps its neighbours and a small pool), for [pageBottom]. */
+    private val made = ArrayList<Page>()
+    private var bottomPx = -1
+    private var clipBottom = false
+
+    /** S9: each page's bottom padding, clipped while it is the "+"'s strip (no card drawn under the "+"). */
+    fun pageBottom(px: Int, clip: Boolean) {
+        if (px == bottomPx && clip == clipBottom) return
+        bottomPx = px
+        clipBottom = clip
+        made.forEach(::applyBottom)
+    }
+
+    private fun applyBottom(page: Page) {
+        val list = page.list
+        if (bottomPx >= 0 && list.paddingBottom != bottomPx) list.setPadding(list.paddingLeft, list.paddingTop, list.paddingRight, bottomPx)
+        if (list.clipToPadding != clipBottom) list.clipToPadding = clipBottom
+    }
+
     override fun getItemCount(): Int = Int.MAX_VALUE
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Page {
@@ -333,6 +392,8 @@ class DayPagerAdapter(
         list.layoutManager = LinearLayoutManager(parent.context)
         val page = Page(list)
         list.adapter = page.rows
+        made += page
+        applyBottom(page)
         return page
     }
 

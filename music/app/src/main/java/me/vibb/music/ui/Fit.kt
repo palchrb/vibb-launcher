@@ -25,8 +25,37 @@ val CONTROLS_ROOMY = ControlRow(side = 44, skip = 56, play = 76, gap = 14)
 /** Mockup v15's compact row: exactly 288 dp, the Jelly Star's room. */
 val CONTROLS_COMPACT = ControlRow(side = 44, skip = 52, play = 72, gap = 6)
 
-/** v12's row where it fits, else v15's compact one. */
-fun controlRow(availableDp: Float): ControlRow = if (availableDp >= CONTROLS_ROOMY.width) CONTROLS_ROOMY else CONTROLS_COMPACT
+/**
+ * Below the Jelly Star (screen-size fix S2, 2026-11-14: on a 270 dp phone the compact row was 288 dp in 238 and "15 s
+ * fram" lay over "Neste"): 256 dp, previous and next at the 48 dp touch target, the side slots as ever, play still the
+ * largest. Five round buttons can't fit 238 dp at those sizes, so this row may also take up to [CONTROLS_BLEED_MAX_DP]
+ * of each screen side ([controlBleed]).
+ */
+val CONTROLS_NARROW = ControlRow(side = 44, skip = 48, play = 56, gap = 4)
+
+/** How far into each screen side (of [SCREEN_SIDE_DP]) the narrow row may reach (dp): 4 dp stay free at the edge. */
+const val CONTROLS_BLEED_MAX_DP = 12
+
+/**
+ * v12's row where it fits, else v15's compact one, else the narrow one (with the sides' room), and on a screen narrower
+ * still the narrow one scaled down to that room - never wider than the room, never overlapping.
+ */
+fun controlRow(availableDp: Float): ControlRow {
+    val withSides = availableDp + 2 * CONTROLS_BLEED_MAX_DP
+    return when {
+        availableDp >= CONTROLS_ROOMY.width -> CONTROLS_ROOMY
+        availableDp >= CONTROLS_COMPACT.width -> CONTROLS_COMPACT
+        withSides >= CONTROLS_NARROW.width -> CONTROLS_NARROW
+        else -> {
+            val share = (withSides - 4 * CONTROLS_NARROW.gap).coerceAtLeast(0f) / CONTROLS_NARROW.sizes.sum()
+            fun scaled(dp: Int) = (dp * share).toInt()
+            ControlRow(scaled(CONTROLS_NARROW.side), scaled(CONTROLS_NARROW.skip), scaled(CONTROLS_NARROW.play), CONTROLS_NARROW.gap)
+        }
+    }
+}
+
+/** How far [row] reaches into each screen side beyond [availableDp] (dp, 0 when it fits): centred, the overflow halved. */
+fun controlBleed(row: ControlRow, availableDp: Float): Float = ((row.width - availableDp) / 2).coerceIn(0f, CONTROLS_BLEED_MAX_DP.toFloat())
 
 /**
  * Each button's left and right edge (dp) in a row of [availableDp], centred with [ControlRow.gap]
@@ -68,6 +97,14 @@ fun flexWidths(available: Int, weights: List<Float>, mins: List<Int>): List<Int>
         short.forEach { fixed[it] = true }
     }
 }
+
+/**
+ * The shrinking slot's own min in [FlexBar] (screen-size fix S7, 2026-11-14: "Telefonen" showed as "Telefo…" while Liste
+ * and Sov had room to spare): its whole width ([ownDp]) when the others' mins ([othersDp]) leave that much of
+ * [available] - the name shown whole is worth their extra -, else 0 as before (code QA L4: a name that is cut anyway,
+ * a long Sonos room, never squeezes Liste and Sov to their bare content; it gives way at its weighted share).
+ */
+fun shrinkerMin(ownDp: Int, available: Int, othersDp: Int): Int = if (ownDp <= available - othersDp) ownDp else 0
 
 /** Five category tiles fill the row with four 4 dp gaps (more scroll), each wide enough for its 44 dp circle. */
 fun categoryTileWidth(availableDp: Float): Float = (availableDp - 4 * 4) / 5
