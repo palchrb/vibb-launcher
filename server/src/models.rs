@@ -121,16 +121,12 @@ pub struct DevicePolicy {
     #[sqlx(default)]
     pub bluetooth_any_device: bool,
     pub vpn_filter_enabled: bool,
-    /// Design 94 (migration 0143): "off" (data roaming off and locked, the default) or "phone"; "eea" is allowed by
-    /// the column for a later round and served as it is (an older launcher locks on a value it doesn't know). Read
-    /// through [crate::mobile_network::roaming_choice].
-    #[sqlx(default)]
-    pub data_roaming: String,
     /// Design 95 rev. 3 (migration 0143): "Mobildata for apper", "on" or "vibb" (Bare Vibb).
     #[sqlx(default)]
     pub apps_mobile: String,
     /// Design 97 (migration 0145): "I utlandet" - "off" (Ingen data), "vibb" (Bare Vibb, a new phone's default) or
-    /// "home" (Som hjemme). Read through [crate::mobile_network::abroad_choice]; `data_roaming` is served derived from it.
+    /// "home" (Som hjemme). Read through [crate::mobile_network::abroad_choice]; the policy's `data_roaming` is derived
+    /// from it, and design 94's `data_roaming` column (migration 0143) is no longer read or written.
     #[sqlx(default)]
     pub abroad: String,
     /// Design 95 rev. 3 item 3 (migration 0143): `DISALLOW_CONFIG_MOBILE_NETWORKS` on the phone, on by default.

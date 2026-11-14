@@ -1022,9 +1022,17 @@ pub(crate) const QUICK_CONTROL_SOUND: i64 = 8;
 /// "Modify system settings" app-op the clock format uses, so the bit is **not** in the default: the
 /// parent turns it on after granting it. A launcher before r9 ignores the bit.
 pub(crate) const QUICK_CONTROL_TOUCH: i64 = 16;
-/// A new device's `quick_controls_mask`: every switch on but touch (`insert_device_with_policy`).
-pub(crate) const DEFAULT_QUICK_CONTROLS: i64 =
-    QUICK_CONTROL_WIFI | QUICK_CONTROL_BLUETOOTH | QUICK_CONTROL_BRIGHTNESS | QUICK_CONTROL_SOUND;
+/// The kid's own Mobildata switch (design 97 §4.3): Off = only Vibb uses mobile data. Set on the Mobilnett page
+/// (`group=kid-mobile`), never by the Home Screen form, which keeps it. In a new device's default (D3); an existing
+/// phone's mask is not changed. A launcher before design 97 ignores the bit.
+pub(crate) const QUICK_CONTROL_MOBILE_DATA: i64 = 32;
+/// A new device's `quick_controls_mask`: every switch on but touch (`insert_device_with_policy`), the kid's Mobildata
+/// switch included (design 97 D3).
+pub(crate) const DEFAULT_QUICK_CONTROLS: i64 = QUICK_CONTROL_WIFI
+    | QUICK_CONTROL_BLUETOOTH
+    | QUICK_CONTROL_BRIGHTNESS
+    | QUICK_CONTROL_SOUND
+    | QUICK_CONTROL_MOBILE_DATA;
 
 #[derive(Template)]
 #[template(path = "device_detail.html")]
@@ -2426,8 +2434,18 @@ async fn render_device(
                     "common.off"
                 },
             ),
-            mobile_value: crate::mobile_network::row_value(lang, &policy, latest.as_ref()),
-            mobile_lines: crate::mobile_network::summary_lines(lang, &policy, latest.as_ref()),
+            mobile_value: crate::mobile_network::row_value(
+                lang,
+                &device.name,
+                &policy,
+                latest.as_ref(),
+            ),
+            mobile_lines: crate::mobile_network::summary_lines(
+                lang,
+                &device.name,
+                &policy,
+                latest.as_ref(),
+            ),
             device,
         }
         .render()
@@ -2903,12 +2921,14 @@ pub async fn update_policy(
     // form's SQL never touches it. A part the form didn't carry binds NULL and keeps its value.
     let result = sqlx::query(
         "UPDATE device_policy SET kiosk_desired = 1, lock_task_features = ?, \
-         quick_controls_mask = COALESCE(?, quick_controls_mask), \
+         quick_controls_mask = COALESCE((quick_controls_mask & ?) | ?, quick_controls_mask), \
          bluetooth_any_device = COALESCE(?, bluetooth_any_device), \
          vpn_filter_enabled = COALESCE(?, vpn_filter_enabled), updated_at = datetime('now') \
          WHERE device_id = ?",
     )
     .bind(lock_task_features)
+    // Design 97 §5: bit 32 (the kid's Mobildata switch) is the Mobilnett page's; this form keeps it.
+    .bind(QUICK_CONTROL_MOBILE_DATA)
     .bind(quick.then_some(quick_controls_mask))
     .bind(quick.then_some(bluetooth_any_device))
     .bind(filter.then_some(vpn_filter_enabled))
