@@ -1,13 +1,22 @@
 # Design 98: Flymodus in the kid's settings, through the Digital assistant role
 
-Status: design, **revision 2 (design QA)**, 2026-11-14 (branch `design-98`). Revision 1 was 82abae18. The design QA
-is `docs/review/qa-98-design.md` (1 High, 9 Medium, 8 Low), and §14 says how each finding was handled.
+Status: design, **revision 3 (the user's answers)**, 2026-11-14 (branch `design-98`). Revision 1 was 82abae18, and
+revision 2 (9a9f77fe) took the design QA, `docs/review/qa-98-design.md` (1 High, 9 Medium, 8 Low); §14 says how each
+finding was handled. Revision 3 takes the user's answers of the evening of 2026-11-14 (§15). The user saw the mockups
+of the time-rule screen (`https://claude.ai/artifact/V3FYVAfh5yMaUFA5JLkYnA`) and chose concept C. Revision 3 adds:
+
+- Flymodus on the time-rule screen behind a dim "···" (§4.3);
+- a **Foreldrekode** that pauses only the rule in force, offline (§4.4);
+- a "Flymodus er på" line on Home (§4.2);
+- the rule that Vibb never ends airplane mode because a rule starts (§7.2).
+
+The old D8 is gone, and D9 is accepted.
 
 Approved by the user on 2026-11-14: real Android airplane mode as a row in the kid's settings, made possible by making
 Vibb One the phone's **Digital assistant**, on the condition that the assistant step is easy when a new phone is
-enrolled. Both directories. There is a new shared contract `server/testdata/airplane_mode.json`, migration
-`0146_airplane_mode.sql` (0145 is `abroad`; recheck at merge), and `quick_controls_mask` bit **64**. Size: launcher
-**M**, server **S-M** (§11). §13 holds the decisions this design needs before it is built. Battery saver and Flymodus
+enrolled. Both directories. There are two new shared contracts, `server/testdata/airplane_mode.json` and
+`server/testdata/rule_pause.json`, migrations `0146_airplane_mode.sql` and `0147_rule_pause.sql` (0145 is `abroad`;
+recheck at merge), and `quick_controls_mask` bit **64**. Size: launcher **M-L**, server **M** (§11). §13 holds the decisions this design needs before it is built. Battery saver and Flymodus
 from the PWA (§9) are not approved and are asked there.
 
 The user (2026-11-14): *"om vi kan gjøre on-boarding av assistenten enkelt når man in ruller er en ny tlf, så er jeg ok
@@ -117,7 +126,7 @@ What this means:
 
 ### 2.2 On (`AirplaneRoute.turnOn`; pure plan `airplaneOnPlan`, `AirplaneRouteTest`)
 
-Only the kid's row (§4) and §3.5's setup step call it. It takes one request at a time, from a background thread.
+Only the kid's Flymodus switch (§4.1, and the same switch in §4.3's sheet) and §3.5's setup step call it. It takes one request at a time, from a background thread.
 
 1. **Refuse early.** The row says why (§4), and `last_error` records it (§5.1). The refusals:
    - the role isn't held, or the VIS isn't ready;
@@ -365,7 +374,9 @@ public broadcast for a role change. A change asks for one sync (`roleReportNeede
 
 The report catches every case.
 
-## 4. The kid's row: "Flymodus" (pure `airplaneRow`, `KidSettingsModelTest`)
+## 4. What the kid sees, and the parent's door on the time-rule screen
+
+### 4.1 Kid Settings' row "Flymodus" (pure `airplaneRow`, `KidSettingsModelTest`)
 
 **Placement:** the first row of "Tilkobling og skjerm", above Wi-Fi, since it decides what the rows under it can do.
 `controlsSection` gains `Rows.airplane` (bit 64) and `Rows.airplaneOffOnly`, and `describe()` names both.
@@ -412,7 +423,142 @@ and Off needs neither the role nor Settings.
 - After an Off, the launcher waits for the first validated network (a `NetworkCallback`, at most 60 s) and then asks
   for a sync, so the parent's page follows.
 - The pause and the override don't change airplane mode or the row.
-- Under a time rule Kid Settings isn't reachable, as today. D8 asks about leaving airplane mode then.
+- Under a time rule Kid Settings isn't reachable, as today. The time-rule screen's sheet carries the same row
+  (§4.3), so turning airplane mode on or off works under a rule too.
+
+**Turning airplane mode on is always allowed, also while a time rule is in force (the user, 2026-11-14).** It never
+weakens a rule: rules are enforced on the phone, offline. Only the parent's "Blokker flymodus" (§2.4) and §2.2 step 1's
+refusals stop it. `airplaneOnPlan` takes no rule input, and a contract row pins that a rule in force changes nothing
+(§5.2).
+
+### 4.2 Home: "Flymodus er på" (pure `homeAirplaneLine`)
+
+While airplane mode is on, Home shows one calm line in the banner slot the pause's "Lås igjen" line uses
+(`homeWindowBanner`'s place, under the status bar):
+
+- the words: "Flymodus er på · Trykk for å slå av" / "Airplane mode is on · Tap to turn off";
+- `kid_core` at the secondary text level, no colour of alarm, no icon animation;
+- one tap runs §2.3. The line then reads "Slår av…" / "Turning off…", and it goes when airplane mode is off;
+- shown whenever airplane mode is on, whatever bit 64 and the role (the Off-only rule, §4.1), unless
+  `DISALLOW_AIRPLANE_MODE` is set (then airplane mode can't be on);
+- when the pause's banner shows too, the pause's line comes first and this one sits under it;
+- a plain tap, so it works the same with gesture and 3-button navigation.
+
+### 4.3 The time-rule screen: "···" and its sheet (concept C, pure `ruleSheet`, `TimeLockModelTest`)
+
+`LockActivity` (the time-rule screen) stays exactly as it is until someone taps a dim **"···"** at its top right:
+
+- **The button.** A 48 x 48 dp touch target, placed 8 dp under the status bar inset (`KidInsets`), and clear of the
+  rule card. The glyph is "···" in `kid_core` at 40 % alpha. Content description "Mer" / "More". It is a tap only,
+  never a swipe from an edge, so it works the same with gesture and 3-button navigation, and it never competes with
+  the system's back or home gestures.
+- **The sheet.** A tap slides up a small sheet from the bottom. It has the `kid_ground_lift` surface, 16 dp corners, and
+  its bottom padded by the navigation bar's inset (`KidInsets.buttonBarPx`, or the gesture area). It closes on a tap
+  outside it, on Back (the screen keeps Back off otherwise: the sheet consumes Back only to close itself), or when the
+  rule ends. It holds at most two rows:
+  - **Flymodus**: the switch of §4.1 with the same states, lines and Off-only rule. It is shown when §4.1's row would
+    show (bit 64 with the role) or airplane mode is on. The kid's own, no PIN.
+  - **Foreldrekode** ›: opens the parent PIN keypad (`ParentPinDialog`/`ParentPinKeypad`, entry `RULE_PAUSE`), then
+    §4.4's choices. Shown only when the lock is a **rule** (not the used-up screen-time budget alone, see D11), a PIN
+    hash is cached, and the policy carries `rule_pause: true` (§4.4).
+- **No rows, no button.** With neither row to show, there is no "···" at all, and the screen looks as today.
+- **Where it isn't.** The sheet is on the unlocked time-rule screen only. Android's keyguard and the lock glance
+  (design 59) are unchanged. A kid at the keyguard reaches neither row.
+- **Under the kiosk.** `LockActivity` runs in Home's locked task, so nothing new is pinned. The Flymodus row's route
+  runs as in §2.2. During a rule the kiosk pins only Vibb, and `routePin` adds Settings for the window in the same way.
+
+### 4.4 Foreldrekode: an offline pause of the rule in force only (pure `rulePausePlan`, `RulePauseTest`)
+
+**The user's decision (2026-11-14):** a narrow door on the phone, behind the parent PIN. It works offline, pauses only
+the rule or rules in force now, and reaches the PWA at the next sync as a pause the parent can see and end there.
+
+**History, so it isn't read as the old one coming back:**
+
+- The old offline override ("Enter unlock code" on this screen, `OfflineOverride`) opened **everything** for 2 hours.
+  It was removed on 2026-11-01 by the user's choice of 2026-10-26, that the parent lifts a rule from the PWA only.
+- This door is the user's new decision. It is not that override: it pauses one rule's lock, never the hardening,
+  never the kiosk, never the allowlist, and never another rule that starts during the pause.
+
+**The steps on the phone:**
+
+1. **Foreldrekode** -> the parent PIN keypad. `ParentPin.check` with the new entry `RULE_PAUSE("rule_pause")`, its
+   own escalating lockout and its events, offline against the cached hash as every PIN entry is. A lockout shows the
+   keypad's own wait line.
+2. **"Sett Leggetid på pause"** (`R.string.rule_pause_title` with the rule's name; with two rules in force: "Sett
+   Leggetid og Skole på pause") with four choices: **30 min**, **1 time**, **2 timer**, and **"Til 07:00"** (the
+   latest end among the rules in force, as the card shows it). These are the PWA's own choices.
+   - A choice whose end is past the rule's end isn't offered: 2 timer goes when 1 h 20 min are left.
+   - The words: "Gjelder bare denne regelen. Du ser pausen i appen når telefonen har nett igjen, og kan avslutte den der."
+     / "Applies to this rule only. You'll see the pause in the app when the phone is online again, and can end it
+     there."
+3. **"Sett på pause"** stores the pause and runs `reevaluateLockReasonFromCache` off the main thread. The time-rule
+   screen goes, Home opens, and the rule card on Home and the glance reads the pause ("Leggetid på pause til 23:41")
+   as for any lift.
+
+**The pure plan** (`rulePausePlan(lock, choice, clocks) -> PhoneLift`):
+
+- `rule_ids`: the ids of the active, un-lifted rules in `lock` (`decideTimeLock`'s `rules`). A copy of a rule turned
+  on now (design 93: negative id) is paused by its own id. The lock must be a rule's, not the budget's.
+- `until_wall_ms`: now plus the choice, or the latest end of the rules in force for "Til".
+- `duration_ms`: the same span, so the record is a `LiftRecord` window of today's kind (see "The clock" below).
+- `key`: 32 hex characters from `SecureRandom`, the pause's identity on both sides.
+
+**Where it lives and how it acts:**
+
+- **Storage.** It goes in the same prefs file as the `LiftRecord`s, as `phone_lifts_v1`: a list of `{key, rule_ids,
+  untilWallMs, elapsedStartMs, bootCount, durationMs, posted, acked_ids}`. It holds no PIN material: no PIN, hash,
+  salt or attempt counter, and the PIN hash stays where `ParentPin` keeps it today. `RulePauseTest` checks that
+  the stored JSON's keys are exactly these.
+- **The clock.** Each pause is a `LiftRecord` window: `timedWindowActive` over the wall clock, elapsed realtime and
+  `BOOT_COUNT`. Setting the clock back can't stretch it, and a reboot ends it, as with every lift and window.
+- **Enforcement.** `activeRuleLifts` gains the active phone pauses: `RuleLifts(ruleIds += pause.rule_ids)`. They are
+  never `all`. `TimeRuleAlarm` gets their ends among its boundaries (`liftExpiries`). Nothing else changes: the
+  allowlist, the kiosk (it pins as for any lifted rule), the hardening, the call rules (a no-calls rule paused lifts
+  its call block as a PWA lift does) and a rule that begins later.
+
+**Reporting it, and the PWA ending it.** The pause becomes an ordinary `time_lifts` row on the server, created from
+the phone. It is **not a new lift kind**: `target` stays `rule`, with a new source.
+
+- **The post.** `POST /api/devices/rule-pause` with
+  `{"key", "rule_ids", "started_at_ms", "until_ms", "minutes"}` goes at once when there is a network, else at the next
+  sync. It goes before the status report, from a small retry queue like the time request's (`TimeRequests`).
+- **The server's work** (`handlers::rule_pause`):
+  - it checks the body field by field;
+  - for each rule id the device has (a copy's negative id maps to its rule), it inserts a `time_lifts` row:
+    `target = 'rule'`, `rule_id`, `rule_name`, `minutes`, `expires_at = until_ms`, `created_by = 'phone_pin'`, and
+    the new `phone_key = key`. The pair `(device_id, phone_key, rule_id)` is unique, so a retried post gives the same
+    rows;
+  - it nudges the phone.
+- **The answers:**
+  - `200 {"accepted": true, "lift_ids": [..]}`;
+  - `200 {"accepted": false, "reason": "stale"}` when `until_ms` is already past;
+  - `200 {"accepted": false, "reason": "unknown_rule"}` when none of the rules exists any more;
+  - `400` for a malformed body.
+  - A refusal ends the phone's retries. The pause stays the phone's alone until its end.
+- **Adoption.** The policy's `time_policy.lifts[]` then carries the rows with `phone_key`. The phone matches them by
+  key and **adopts** them: it writes `LiftRecord`s with the server ids and the pause's own window values (not a new
+  start, so `updateLiftRecords` doesn't restart the clock), marks the pause `acked`, and from then on treats the
+  server's lifts as the source.
+- **Ending it.** A later policy, fetched after the ack, that lacks them means the parent ended the pause in the PWA
+  (`ended_early_at`): the records go and the rule is back. Before the ack, a policy without them changes nothing.
+  `rulePausePlan`'s companion `reconcilePhoneLifts(pauses, lifts, ackedAt, fetchedAt)` is pure and covered row by row
+  by the contract's `adopt` rows.
+- **The parent event.** The PIN use is reported as today through `pin-events`, with the new entry `rule_pause` (the
+  inbox and push "Foreldre-PIN brukt på Emmas telefon · Regelskjermen"). The server words an older phone's
+  `override` as before.
+- **The PWA's side.** The lift shows as every lift does: the summary's "Pause regler" line "Leggetid på pause til
+  23:41", the Time page's lifts, and "Avslutt nå". It carries a sub-line "Satt med foreldrekoden på telefonen" / "Set
+  with the parent code on the phone" (from `created_by`).
+
+**Older servers and older launchers:**
+
+- The policy's new top-level `rule_pause: true` says this server takes the post. The phone offers Foreldrekode only
+  with it, so a pause always reaches the PWA. It is pinned by `policy_json_keys_snapshot` and the launcher's
+  `PolicyResponseCompatTest`.
+- An older launcher ignores the key.
+- An older server doesn't send it, so no row.
+- The launcher reports the capability `rule_pause_v1`. The server uses it only to word the Time page's ⓘ ("Foreldrekoden
+  på telefonen kan sette regelen som gjelder på pause").
 
 ## 5. The report and the contract
 
@@ -471,6 +617,10 @@ data. It is byte-identical in `launcher/app/src/test/resources/`.
   - An `on_ms` more than the usual clock slack in the future is dropped.
   - Unknown `last_error` and `default_apps_changed` words are dropped.
 - `emergency`: the rows of §7.1's rule (a call time and a period -> whether the call's event gets the airplane line).
+- `rules`: a rule in force at the tap -> On allowed exactly as without it, and each time-rule edge (start, end, a
+  pause, a lift) with airplane mode on -> no airplane action (§7.2). The parent's switch -> refused, rule or not.
+- `home_line` and `sheet`: §4.2's line from `{on, restricted}`, and §4.3's sheet from `{lock kind, airplane row,
+  pin cached, rule_pause}` -> `{button, rows}`.
 
 **Its tests:**
 
@@ -481,6 +631,34 @@ data. It is byte-identical in `launcher/app/src/test/resources/`.
 
 The root `CLAUDE.md`, the three workflows' path lists and `intake_limits` get the file. No policy key changes: bit 64
 rides in the existing `quick_controls_mask`.
+
+### 5.3 The contract: a new file `server/testdata/rule_pause.json` (§4.4)
+
+It follows `time_request.json`'s and `lock_now.json`'s patterns, and is byte-identical in
+`launcher/app/src/test/resources/`.
+
+**Its parts:**
+
+- `capability` (`rule_pause_v1`).
+- `policy`: the top-level `rule_pause: true`, and a `time_policy` whose `lifts[]` holds a phone pause's rows with
+  `phone_key`.
+- `request`: the exact `POST /api/devices/rule-pause` body.
+- `answers`: accepted with `lift_ids`, `stale`, `unknown_rule`.
+- `plans`: `{rules in force, choice, now}` -> `{rule_ids, until_ms}`, with two rules, a design 93 copy, "Til", and a
+  choice past the rule's end left out.
+- `adopt`: `{pause, posted/acked, policy lifts, fetched_at}` -> `{records, rule lifted?}`. It covers before the ack,
+  adopted, ended early in the PWA, a reboot, and the clock set back.
+
+**Its tests:**
+
+- The launcher's `RulePauseTest` encodes `request` exactly, reads every answer, runs `plans` through `rulePausePlan` and
+  `adopt` through `reconcilePhoneLifts`, and checks the stored JSON's keys (no PIN material).
+- The server's `tests::rule_pause` posts `request` (its instants moved to the last minutes), produces each answer row,
+  checks the `time_lifts` rows and that a retry adds none, and serves `policy`'s lifts with `phone_key`.
+- Both compare the copies.
+
+The policy's `rule_pause` and `lifts[].phone_key` are pinned by `policy_json_keys_snapshot` and the launcher's
+`PolicyResponseCompatTest`. The root `CLAUDE.md` and the workflows' path lists get the file.
 
 ## 6. Server and PWA
 
@@ -562,6 +740,13 @@ The card has two forms. Both land on `#oppsett`, and the flash shows in the card
 - No new table: the periods ride on every full report, and the latest report holds the last 10. Retention is as
   `device_status`'s.
 
+**`0147_rule_pause.sql` (§4.4):**
+
+- `time_lifts.phone_key TEXT` (null for the PWA's lifts), with a unique index on `(device_id, phone_key, rule_id)
+  WHERE phone_key IS NOT NULL`.
+- `created_by = 'phone_pin'` for the phone's rows.
+- The parent-PIN events' `entry` takes `rule_pause` (a Rust enum value, no schema change).
+
 ### 6.4 An older launcher, an older server
 
 - **An older launcher on this server:** no capability, so no Flymodus row on the Home page (and the form keeps bit 64,
@@ -604,8 +789,12 @@ numbers for the SIM and network. 112 always does.
   leaves Settings out and the route ends with `timeout` (§2.2 step 4).
 - **The pause and the override:** they don't touch airplane mode. The kiosk is off then, so §2.2 skips step 4's chrome
   part. The assist gesture fires then (M9), and D9 asks what it should do.
-- **A time rule:** with airplane mode on before Leggetid or Skole starts, the phone stays unreachable through the rule.
-  Kid Settings isn't reachable under a rule, and calls the rule allows can't arrive. D8 asks the user.
+- **A time rule (the user, 2026-11-14):** **Vibb never ends airplane mode because a rule starts.** The kid could be
+  on a flight. With airplane mode on before Leggetid or Skole starts, the phone stays offline through the rule, and
+  calls the rule allows can't arrive until the kid turns it off. The kid can do that from the time-rule screen's sheet
+  (§4.3) or Home's line (§4.2). Turning it on under a rule is allowed (§4.1). The parent sees "Flymodus på siden …"
+  (§6.2), and only the parent's "Blokker flymodus" stops it altogether. A pure test pins that no time-rule edge (start,
+  end, a pause, a lift) produces an airplane action (`AirplaneRouteTest`, and a contract row in §5.2).
 - **Unmanaged:** no policy and no bit, but the Off-only row still shows while airplane mode is on and Vibb is device
   owner. Airplane mode is otherwise Android's own then.
 - **Vibb's own connection:** in airplane mode without Wi-Fi, the SSE stream drops and syncs fail fast, as with any lost
@@ -709,13 +898,16 @@ alarm and §2.3, offline), and the kid can still turn it off from the row. Size 
   own recognizer. To be measured in the build (§12 test 7): Gboard's mic in Meldinger and in an allowed app.
 - **The role lost silently** to a privileged Google flow (§3.6): not measured. The report catches it within a sync.
 - **Wi-Fi memory on the Jelly Star** depends on the OEM's `apm_enhancement_enabled`. Without it, Flymodus is offline.
-- **The kid can be unreachable.** That is the feature. The report-first step (§2.2), the summary line and D8 make it
-  visible, and 112 always works.
+- **The kid can be unreachable.** That is the feature, also through a rule (§7.2). The report-first step (§2.2) and the
+  summary line make it visible, and 112 always works.
+- **Foreldrekode on the phone is a door again** (§4.4), narrower than the removed override. It is guarded by
+  `ParentPin`'s escalating lockout, and it is reported (the pin event at once, the lift when online). A kid who learns
+  the PIN gains a pause of the rule in force, which the parent sees and can end.
 
 ## 11. Build steps and sizes
 
 1. **Contract, both directories, one commit, S.**
-   - `airplane_mode.json` and its copy, the DTOs, `clean`, the capability.
+   - `airplane_mode.json` and its copy (with §5.2's `rules`, `home_line` and `sheet` rows), the DTOs, `clean`, the capability.
    - The root `CLAUDE.md` paragraph and the workflows' path lists.
 2. **Launcher: the assistant and the route, M.**
    - The three services and the XML.
@@ -747,9 +939,25 @@ alarm and §2.3, offline), and the kid can still turn it off from the row. Size 
      Phone's rows.
    - The emergency line in the same intake, `DEFAULT_QUICK_CONTROLS` per D1, nb + en.
    - Page tests: anchors, no bell, both languages.
-6. **Emulator run (§12), S-M.**
+6. **Launcher: Home's line and the time-rule sheet, S.**
+   - `homeAirplaneLine` and the banner slot.
+   - `ruleSheet`, the "···" button and the sheet in `LockActivity` with the insets for both navigation modes.
+   - Unit rows: §5.2's `home_line` and `sheet`, and the `rules` rows (On allowed under a rule; no airplane action at
+     any rule edge; the parent's switch wins).
+7. **Rule pause, both directories, M.**
+   - **Contract commit:** `rule_pause.json` and its copy, the DTOs (`Lift.phoneKey`, `PolicyResponse.rulePause`), the
+     snapshot tests.
+   - **Launcher (S-M):** `ParentPinEntry.RULE_PAUSE`, the choices screen, `rulePausePlan`, `phone_lifts_v1`, the merge
+     into `activeRuleLifts` and the alarm, the post queue, `reconcilePhoneLifts`.
+     - `RulePauseTest` has one row per decision: only the rules in force; never `all`; a rule starting later isn't
+       paused; a reboot or the clock set back ends it; adopted without a restart; ended by the PWA; no PIN material
+       stored.
+   - **Server (S):** 0147, `handlers::rule_pause` with its route, `phone_key` in the policy's lifts, the
+     `created_by` sub-line, the pin entry's words, the capability's ⓘ, nb + en.
+8. **Emulator run (§12), S-M.**
 
-Total: launcher **M**, server **S-M**. Options: §9.1 **S**, §9.3 **M**, D8 **S**, D10 **S**. Snarveier is design 99.
+Total: launcher **M-L** (revision 2: M), server **M** (revision 2: S-M). Options: §9.1 **S**, §9.3 **M**, D10 **S**.
+Snarveier is design 99.
 
 ## 12. Emulator tests (`jelly36` restored clean, `docs/testing/emulator.md` §6am)
 
@@ -801,6 +1009,26 @@ the PWA's Add Phone. Tests 2 and 4 run with gesture navigation and with 3-button
     Settings shows "Slå av flymodus", and it works.
 12. **The PWA.** Both languages. The Home form keeps bits 32 and 64 on `quick` and `all` without the row. The card's
     forms land on `#oppsett`. Every save stays on its anchor.
+13. **The time-rule sheet**, under the kiosk with a rule in force (Leggetid turned on now, design 93), with **gesture
+    and 3-button navigation**:
+    - The screen looks as today until "···" is tapped, and "···" sits clear of the status bar and the card.
+    - The sheet's bottom row is above the navigation bar in both modes. Back and a tap outside close it.
+    - Flymodus On from the sheet: the route runs under the rule (still LOCKED in Home's task, Settings hidden after)
+      and the rule stays in force. Off from the sheet works.
+    - Turn airplane mode on, then let a rule start (an edge 1 minute ahead): airplane mode stays on.
+    - At Android's keyguard (the PIN lock LOCKED) the sheet isn't reachable. After unlocking, it is.
+    - With bit 64 off and airplane mode off: no Flymodus row. With no PIN on the server as well: no "···".
+14. **Foreldrekode**, offline and online:
+    - In airplane mode with no Wi-Fi: "···" -> Foreldrekode -> a wrong PIN (the lockout counts) -> the right PIN -> 30
+      min. Home opens, the card reads the pause, and a second rule that starts within the 30 minutes locks.
+    - Turn airplane mode off: the post goes, the PWA's summary and Time page show "Leggetid på pause til …" with the
+      sub-line, and the parent's inbox has "Foreldre-PIN brukt · Regelskjermen". "Avslutt nå" in the PWA -> after the
+      sync the rule locks again.
+    - Set the clock back an hour during a pause: it still ends on time. Reboot during a pause: the rule is back.
+    - `run-as` isn't possible on a release build, so on the debug build check the prefs file holds `phone_lifts_v1`'s
+      keys only.
+15. **Home's line:** airplane mode on -> "Flymodus er på · Trykk for å slå av" on Home in both navigation modes; a tap
+    turns it off; with the pause's banner the two lines stack.
 
 Not on the emulator:
 
@@ -832,30 +1060,27 @@ Those come from the RC on the Jelly Star, through the reports, with no adb and n
 - **D7. A push to the parent when the kid turns on airplane mode.** **Recommended: no push.** The summary line says
   "Flymodus på siden 21:03" (§6.2), and the 112 case has its line in the emergency notice. A switch in the notification
   settings would be S.
-- **D8. Airplane mode when a time rule starts (Q98-M6).** With airplane mode on, Leggetid or Skole keeps the phone
-  unreachable, and the calls the rule allows can't arrive.
-  - **Recommended:** while airplane mode is on and the rule in force allows calls, the time-rule screen and the lock
-    glance show a "Slå av flymodus" / "Turn off airplane mode" row (§2.3: no Settings, no role). Size S.
-  - The alternative: refuse a kid's turn-on within 30 minutes of a rule's start. That doesn't cover airplane mode
-    turned on earlier.
-  - Or both.
-- **D9. The assist gesture while the phone is open (Q98-L4).** With Vibb as the assistant, the stock assist gestures
-  stop opening Google while the kiosk is off: Åpne for oppsett, the parent override, an unmanaged phone. Concretely,
-  during those 2 hours the parent loses:
-  - long-press power, where it is set to the assistant;
-  - the gesture-navigation corner swipe;
-  - a headset's assist button;
-  - Google Assistant / Gemini from those gestures;
-  - Circle to Search, where the phone has it through the assistant.
-
-  Under the kiosk nothing changes: those gestures are already dead there (M10). The options:
-  - (a) **Recommended:** accept it. The setup window is the parent's, Google's apps still open from the app list then,
-    and nothing reaches a kid.
-  - (b) Have Vibb's session hand an unmarked request on to the Google app (`ACTION_ASSIST`, explicit to
-    `com.google.android.googlequicksearchbox`) while the kiosk is off. It is fragile across Google updates, and Size S.
+- **D8. Airplane mode and time rules. Decided by the user (2026-11-14), replacing revision 2's D8:**
+  - Vibb never ends airplane mode because a rule starts (the kid could be on a flight).
+  - Turning it on is always allowed, also under a rule (rules are enforced offline).
+  - The parent's "Blokker flymodus" still wins.
+  - The kid reaches Flymodus on the time-rule screen through concept C's "···" sheet (§4.3), and Home shows "Flymodus
+    er på" with a tap to turn it off (§4.2).
+- **D9. The assist gesture while the phone is open (Q98-L4). Accepted by the user (2026-11-14):** setup is only
+  for setup, so losing these gestures while the phone is open for setup is fine. While the kiosk is off, Vibb's session hides unmarked requests, and the stock assist gestures
+  (long-press power to the assistant, the corner swipe, a headset's assist button, Assistant/Gemini, Circle to Search
+  through the assistant) open nothing. Under the kiosk they were dead already (M10). Nothing to build beyond §2.1.
 - **D10. Call screening and redirection without adb (§3.2, Q98-M4).** **Recommended: yes**, a "Samtalefilter" row in
   "Fullfør oppsett" that requests both roles inside the same PIN-gated window. It closes the last adb-only grant in
   provisioning. Size S.
+- **D11. Foreldrekode under the used-up screen-time budget alone** (no rule in force). §4.4 pauses rules, as the user
+  asked. **Recommended: no row then**: the PWA's extra time and the kid's "Be om mer tid" (design r13) cover the
+  budget, and a pause of "the budget" would be a new kind. Size XS to add later (a phone-originated budget lift of N
+  minutes on the same path).
+- **D12. Foreldrekode decided by the user (2026-11-14):** an offline pause of the rule(s) in force only (§4.4), in
+  the PWA's choices, reported as a lift the PWA shows and can end. Nothing to decide.
+
+Still awaiting the user's confirmation: D1, D2, D3, D4, D6, D7, D10 and D11. Decided: D5 (design 99), D8, D9, D12.
 
 ## 14. Design QA (`docs/review/qa-98-design.md`): how each finding was handled
 
@@ -867,7 +1092,7 @@ Those come from the RC on the Jelly Star, through the reports, with no adb and n
 | M3 the report under the monitor | §2.2 step 2: a report-only post outside every lock, 5 s budget. Only steps 4-7 take the monitor. A failure after `going_on` requests a sync (step 8) |
 | M4 roles freed by the window, HOME assumed | §3.2: the window closes at the role's `onReady`. It snapshots every exclusive role at the start and compares at the end. HOME is re-seated, and its role is a device check. Screening, redirection and the browser are reported (`default_apps_changed`, the card). The table of what is and isn't taken back. §12 test 1b. D10 for the on-phone screening grant |
 | M5 no row to leave airplane mode | §4: an Off-only row whenever airplane mode is on, whatever the bit and the role. Contract rows (§5.2), §12 test 11, §6.4 |
-| M6 airplane mode under a time rule | D8, with the recommendation. §7.2 names it |
+| M6 airplane mode under a time rule | Revision 2: D8 asked. Revision 3: the user decided (§15): never ended by a rule, the sheet on the time-rule screen (§4.3), Home's line (§4.2) |
 | M7 the route skips the ECBM guard | §2.2 step 1: refused during ECBM, within 10 min of an emergency call and in Vibb's callback window. `last_error: emergency`, §4's line, §12 test 5, D3 |
 | M8 the Wi-Fi step can leave airplane mode on | §3.5: `wifi_step_open` with a 5 min deadline, ending on Settings' resume, the result, the deadline, the pause's end or process start. §12 test 4 |
 | M9 the Home form drops bit 64 | §6.1: `airplane_row=1` only with the row, and the SQL keeps `32 \| 64` without it. Server tests for both sections |
@@ -879,3 +1104,15 @@ Those come from the RC on the Jelly Star, through the reports, with no adb and n
 | L6 claims to mark as device checks | §1.2 (the keyguard under lock task inferred), §3.2 (the HOME role), §3.5 (the Wi-Fi panel and the memory), §2.2 and §10 (the Jelly Star's component and theme, the containment). §12 tests 1b, 2c, 4, 10 |
 | L7 the card nags, its anchors, English | §6.2: only steps a feature needs, the Wi-Fi step done also when `false`, `back=setup` -> `#oppsett` with the flash in the card, "Ikke nå" per needed set. English added for the card, the emergency line and the ⓘ |
 | L8 smaller points | §2.2 step 7: the chrome writes the list (no "as `apply()` last wrote"), and `setApplicationHidden`'s return is checked with a retry. §2.1: the permissions per service. §4: the sync waits for a validated network |
+
+## 15. Revision 3: the user's answers (2026-11-14, evening)
+
+| The user's answer | Where |
+|---|---|
+| Vibb never ends airplane mode because a rule starts; turning it on is always allowed, also under a rule; the parent's "Blokker flymodus" wins | §4.1, §7.2, §5.2's `rules` rows, D8 |
+| Concept C on the time-rule screen: a dim "···" top right, a sheet with Flymodus and Foreldrekode, a tap in both navigation modes | §4.3, §12 test 13 |
+| Foreldrekode pauses only the rule in force, offline, with the PWA's choices, and shows in the PWA, which can end it | §4.4, §5.3 (`rule_pause.json`), §6.3 (0147), §12 test 14, D12 |
+| "Flymodus er på" on Home, a tap turns it off | §4.2, §12 test 15 |
+| D9 accepted: setup is only for setup | D9 |
+| Snarveier is design 99 | §9.2, D5 |
+
