@@ -454,8 +454,8 @@ async fn the_page_saves_on_its_anchors_and_the_home_form_keeps_bit_32() {
     assert!(!html.contains("data-mobile-line=\"only-vibb-kid\""));
     for words in [
         "Emma har slått mobildata av",
-        "Roamer i Sverige",
-        "Androids roamingbryter: av – slå den på én gang",
+        "Roamer i Sverige – Androids roamingbryter er av",
+        "har ingen mobildata nå, heller ikke Vibb",
         "I utlandet",
     ] {
         assert!(html.contains(words), "{words}");
