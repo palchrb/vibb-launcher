@@ -218,7 +218,13 @@ object AirplaneRuntime {
             }
         }
         try {
-            cm.registerDefaultNetworkCallback(callback)
+            // Not the default network: under the always-on VPN that is the VPN, which reads validated at once (measured
+            // on jelly36) - a real network (NOT_VPN is in a request's defaults) with validated internet.
+            val request = android.net.NetworkRequest.Builder()
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+                .build()
+            cm.registerNetworkCallback(request, callback)
             main.postDelayed({
                 if (!callback.done) {
                     callback.done = true
@@ -264,8 +270,11 @@ object AirplaneRuntime {
         if (edgeRegistered) return
         edgeRegistered = true
         try {
+            // Exported: an emergency call's end of airplane mode is sent by com.android.phone (the radio uid), which a
+            // not-exported receiver never gets (measured on jelly36: the 112 call's edge was missed). The action is a
+            // protected broadcast - only the platform sends it.
             ContextCompat.registerReceiver(
-                context.applicationContext, EdgeReceiver(), IntentFilter(Intent.ACTION_AIRPLANE_MODE_CHANGED), ContextCompat.RECEIVER_NOT_EXPORTED,
+                context.applicationContext, EdgeReceiver(), IntentFilter(Intent.ACTION_AIRPLANE_MODE_CHANGED), ContextCompat.RECEIVER_EXPORTED,
             )
         } catch (e: Exception) {
             edgeRegistered = false

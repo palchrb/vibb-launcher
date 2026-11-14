@@ -131,8 +131,11 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
         updateAssistantRows()
     }
 
-    /** Design 98 §3.5: the Wi-Fi panel opened by this screen; its return (or this screen's resume) ends the step. */
+    /** Design 98 §3.5: the Wi-Fi panel opened by this screen; its return (or this screen's resume after a pause while
+     * the panel was up) ends the step. The route's own voice activity pauses this screen too, before the panel opens -
+     * that resume must not end the step (measured on jelly36). */
     private var wifiPanelShown = false
+    private var wifiPanelPaused = false
     private val wifiLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         endWifiStepNow("result")
     }
@@ -326,6 +329,7 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
                         try {
                             (activity as? com.kidslauncher.mdm.ui.settings.SettingsActivity)?.ownPageOpening()
                             wifiPanelShown = true
+                            wifiPanelPaused = false
                             wifiLauncher.launch(com.kidslauncher.mdm.assistant.AssistantSetup.wifiPanelIntent())
                             Toast.makeText(app, R.string.settings_wifi_apm_line, Toast.LENGTH_LONG).show()
                         } catch (e: Exception) {
@@ -524,7 +528,7 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
         // Re-read every time: a pause started or ended, or the dialog answered; and after each apply while shown.
         AppEnforcer.addAppliedListener(appliedListener)
         // Design 98 §3.5: back from the Wi-Fi panel - the step ends (airplane mode off again).
-        if (wifiPanelShown) endWifiStepNow("resume")
+        if (wifiPanelShown && wifiPanelPaused) endWifiStepNow("resume")
         updateSystemPageRows()
         // §3.3: the setup notification opens Settings at "Fullfør oppsett".
         if (activity?.intent?.getBooleanExtra(com.kidslauncher.mdm.assistant.EXTRA_SETTINGS_SECTION, false) == true) {
@@ -535,6 +539,7 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
     }
 
     override fun onPause() {
+        if (wifiPanelShown) wifiPanelPaused = true
         AppEnforcer.removeAppliedListener(appliedListener)
         super.onPause()
     }
@@ -643,6 +648,7 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
     /** §3.5: the Wi-Fi step ends - airplane mode off again (background), then the rows. */
     private fun endWifiStepNow(why: String) {
         wifiPanelShown = false
+        wifiPanelPaused = false
         val app = context?.applicationContext ?: return
         lifecycleScope.launch {
             withContext(Dispatchers.IO) { com.kidslauncher.mdm.assistant.AssistantSetup.endWifiStep(app, why) }
