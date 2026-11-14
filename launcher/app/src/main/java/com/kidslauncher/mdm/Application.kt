@@ -387,6 +387,8 @@ class Application : android.app.Application() {
             try {
                 com.kidslauncher.mdm.assistant.AirplaneRoute.putBackIfMarked(this)
                 com.kidslauncher.mdm.assistant.AirplaneRuntime.reconcile(this)
+                // §3.5: a Wi-Fi step left open by a process death ends (airplane mode off again).
+                com.kidslauncher.mdm.assistant.AssistantSetup.atProcessStart(this)
             } catch (e: Exception) {
                 android.util.Log.w("Application", "Airplane put-back failed: ${e.javaClass.simpleName}")
             }

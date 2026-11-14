@@ -221,6 +221,7 @@ object AirplaneRoute {
                 if (posted) com.kidslauncher.mdm.push.SyncRunner.request(context, "airplane_failed")
                 return AirplaneError.ROUTE_MISSING
             }
+            val wifiBefore = runCatching { context.getSystemService(android.net.wifi.WifiManager::class.java)?.isWifiEnabled == true }.getOrDefault(false)
             val started = SystemClock.elapsedRealtime()
             // Steps 4-7 under the enforcer's monitor: no apply() interleaves.
             val on = try {
@@ -235,12 +236,29 @@ object AirplaneRoute {
                 if (posted) com.kidslauncher.mdm.push.SyncRunner.request(context, "airplane_failed")
                 return AirplaneError.TIMEOUT
             }
+            recheckWifiKept(context.applicationContext, wifiBefore)
             return AirplaneOn.GO
         } finally {
             busy = null
             running.set(false)
             AirplaneRuntime.changed()
         }
+    }
+
+    /** §3.5: every airplane mode turned on with Wi-Fi on checks Android's memory again 3 s later - still on keeps
+     * `true`, gone writes `false` (and the report says so). */
+    private fun recheckWifiKept(context: Context, wifiBefore: Boolean) {
+        if (!wifiBefore || AssistantSetup.wifiStepOpen(context)) return
+        main.postDelayed({
+            Thread {
+                if (!AirplaneRuntime.isOn(context)) return@Thread
+                val kept = runCatching { context.getSystemService(android.net.wifi.WifiManager::class.java)?.isWifiEnabled == true }.getOrDefault(false)
+                if (AirplaneRuntime.wifiKept(context) != kept) {
+                    AirplaneRuntime.storeWifiKept(context, kept)
+                    com.kidslauncher.mdm.push.SyncRunner.request(context, "wifi_kept")
+                }
+            }.start()
+        }, 3_000)
     }
 
     /** The real steps of the window. */

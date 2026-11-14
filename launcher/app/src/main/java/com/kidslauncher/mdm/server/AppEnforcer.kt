@@ -650,6 +650,9 @@ object AppEnforcer {
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Notification rule refresh failed", e)
         }
+        // Design 98 §3: a default-apps window that is over closes for good (HOME re-seated, the roles compared), a Wi-Fi
+        // step left by a pause that ended ends, and the setup notification follows. Never throws.
+        com.kidslauncher.mdm.assistant.AssistantSetup.afterApply(context)
     }
 
     /**
@@ -977,7 +980,8 @@ object AppEnforcer {
         // Design 77: the SMS role's lock counts too (lockDefaultAppsFor).
         setRestriction(
             dpm, admin, UserManager.DISALLOW_CONFIG_DEFAULT_APPS,
-            lockDefaultAppsFor(state.managed, CallSystem.dialerRoleHeld(context), smsMode, SmsRuntime.roleHeld(context)),
+            lockDefaultAppsFor(state.managed, CallSystem.dialerRoleHeld(context), smsMode, SmsRuntime.roleHeld(context)) &&
+                !com.kidslauncher.mdm.assistant.AssistantSetup.assistantPickOpen(context),
         )
         val heldAfter = CallSystem.dialerRoleHeld(context)
         // Handed back: our fixed permissions return to DEFAULT (no revoke, no kill) - qa-09-code #4. Not while the SMS
@@ -1054,7 +1058,8 @@ object AppEnforcer {
         val heldAfter = SmsRuntime.roleHeld(context)
         setRestriction(
             dpm, admin, UserManager.DISALLOW_CONFIG_DEFAULT_APPS,
-            lockDefaultAppsFor(callsState.managed, CallSystem.dialerRoleHeld(context), smsMode, heldAfter),
+            lockDefaultAppsFor(callsState.managed, CallSystem.dialerRoleHeld(context), smsMode, heldAfter) &&
+                !com.kidslauncher.mdm.assistant.AssistantSetup.assistantPickOpen(context),
         )
         signalSmsRoleChange(context, heldAfter)
     }

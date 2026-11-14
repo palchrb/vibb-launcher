@@ -759,4 +759,28 @@
     <!-- TalkBack sier «Dobbelttrykk for å» foran en klikketikett (kode-QA L2): infinitiv. -->
     <string name="weather_card_hint">se dagen</string>
     <string name="weather_card_close">lukke dagen</string>
+    <!-- Design 98 §3.3: «Fullfør oppsett» - assistenten, Wi-Fi i flymodus, samtalefilteret. -->
+    <string name="settings_assistant_title">Digital assistent</string>
+    <string name="settings_assistant_chosen">Vibb One er valgt</string>
+    <string name="settings_assistant_open">Velg Vibb One - trengs for Flymodus. Trykk: Standard digital assistent-app › Vibb One › OK. Android spør om assistenten kan lese skjermen. Vibb One leser den aldri.</string>
+    <string name="settings_assistant_pause_first">Velg Vibb One - trengs for Flymodus. Sett alle begrensninger på pause først, og trykk her</string>
+    <string name="settings_assistant_wait">Velg Vibb One - pausen starter, et øyeblikk …</string>
+    <string name="settings_assistant_no_page">Android har ingen side for dette på denne telefonen</string>
+    <string name="settings_wifi_apm_title">Wi-Fi i flymodus</string>
+    <string name="settings_wifi_apm_kept">Wi-Fi blir på i flymodus</string>
+    <string name="settings_wifi_apm_turns_off">Denne telefonen slår av Wi-Fi i flymodus</string>
+    <string name="settings_wifi_apm_not_set">Ikke satt opp</string>
+    <string name="settings_wifi_apm_start">Ikke satt opp - trykk: flymodus slås på, slå på Wi-Fi i panelet, og gå tilbake</string>
+    <string name="settings_wifi_apm_pause_first">Ikke satt opp - sett alle begrensninger på pause først, og trykk her</string>
+    <string name="settings_wifi_apm_line">Slå på Wi-Fi her, og gå tilbake</string>
+    <string name="settings_wifi_apm_failed">Fikk ikke slått på flymodus. Prøv igjen.</string>
+    <string name="settings_call_filter_title">Samtalefilter</string>
+    <string name="settings_call_filter_open">Ikke valgt - trykk og velg Vibb One (Android spør to ganger)</string>
+    <string name="settings_call_filter_pause_first">Ikke valgt - sett alle begrensninger på pause først, og trykk her</string>
+    <string name="notification_channel_setup">Oppsett</string>
+    <string name="setup_notice_title">Fullfør oppsettet av Vibb One</string>
+    <plurals name="setup_notice_steps">
+        <item quantity="one">%d steg igjen</item>
+        <item quantity="other">%d steg igjen</item>
+    </plurals>
 </resources>

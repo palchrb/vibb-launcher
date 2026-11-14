@@ -56,6 +56,23 @@
         android:key="settings_mdm_write_settings"
         android:title="@string/settings_mdm_write_settings" />
 
+    <!-- Design 98 §3.3, "Fullfør oppsett": Vibb One as the Digital assistant (Flymodus), Wi-Fi in airplane mode, and
+         the call filter's two roles (D10) - shown and summarised in code. -->
+    <Preference
+        android:key="settings_mdm_assistant"
+        android:title="@string/settings_assistant_title"
+        app:isPreferenceVisible="false" />
+
+    <Preference
+        android:key="settings_mdm_wifi_apm"
+        android:title="@string/settings_wifi_apm_title"
+        app:isPreferenceVisible="false" />
+
+    <Preference
+        android:key="settings_mdm_call_filter"
+        android:title="@string/settings_call_filter_title"
+        app:isPreferenceVisible="false" />
+
     <!-- Android's fingerprint enrolment for the kid (android mode, a phone with a sensor); shown and summarised in
          code. -->
     <Preference

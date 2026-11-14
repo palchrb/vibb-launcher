@@ -439,6 +439,10 @@
             android:name=".assistant.VibbSessionService"
             android:exported="true"
             android:permission="android.permission.BIND_VOICE_INTERACTION" />
+        <!-- §3.2/§3.5: the default-apps window's and the Wi-Fi step's deadline (our own alarm only). -->
+        <receiver
+            android:name=".assistant.SetupDeadlineReceiver"
+            android:exported="false" />
         <!-- The stub recognizer the role requires: every request answers ERROR_CLIENT at once. -->
         <service
             android:name=".assistant.VibbRecognizer"
