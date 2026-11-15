@@ -2335,7 +2335,9 @@ posted by `static/scroll-restore.js` (`?v=9`) itself, and the return replaces th
   is kept as 64 and 32 are (`kept_bits`). On for new phones (`DEFAULT_QUICK_CONTROLS`) and set on every existing phone
   by `0148_shortcuts.sql` (D2). Its sub-line (`shortcuts::home_sub`, the kid named, never a pronoun): hidden by the kid
   (with the bit on or off), else with the bit on what the kid chose ("Emma chose: Flashlight, Sound, ...", the
-  items' names from `shortcuts::ITEMS` in the page's language) or "None of the switches below is on." (no items). The
+  items' names from `shortcuts::ITEMS` in the page's language) or "No shortcuts are shown now." (no items: nothing
+  offered or none chosen, which the report can't tell apart - code QA C99-L3; it was "None of the switches below is
+  on.", untrue when the kid chose none). The
   ⓘ gains the panel's paragraph (`data-shortcuts-info`) and the footer the sentence `device.home.quick_footer_shortcuts`
   - a key of its own, shown only with the row, so an older launcher's page doesn't promise a panel it hasn't got.
 - **The report**: `shortcuts` (`{shown, hidden, items}`, a full-report field, not a heartbeat field), cleaned by

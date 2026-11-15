@@ -114,10 +114,6 @@
     <string name="contact_request_done">Done</string>
     <string name="contact_request_row_description">%1$s, %2$s</string>
     <string name="kid_settings_title">Settings</string>
-    <!-- The flashlight (design 41): Home's tile and the lock's button, and TalkBack's state words. -->
-    <string name="torch_title">Flashlight</string>
-    <string name="torch_state_on">on</string>
-    <string name="torch_state_off">off</string>
     <string name="calls_phone_book_empty">There\'s nobody to call yet. Emergency numbers (112, 110, 113) always work from the lock screen\'s Emergency button.</string>
     <string name="calls_off">Calls are turned off on this phone. Emergency numbers still work.</string>
     <string name="calls_call">Call</string>
@@ -897,20 +893,10 @@
     <string name="rule_pause_button">Pause it</string>
     <string name="rule_sheet_parent_code_title">Parent code</string>
     <string name="rule_pause_no_pin">No parent PIN is set on the server.</string>
-    <!-- Snarveier (design 99): the panel in the shade, its names (short, under the buttons) and full names (the picker,
-         the content descriptions), and Kid Settings' row and picker page. -->
+    <!-- Snarveier (design 99): the panel in the shade, the items' names (the picker and the buttons' content
+         descriptions; none under the buttons, revision 3), and Kid Settings' row and picker page. -->
     <string name="shortcuts_channel">Shortcuts</string>
     <string name="shortcuts_subtext">Shortcuts</string>
-    <string name="shortcut_name_torch">Flashlight</string>
-    <string name="shortcut_name_sound">Sound</string>
-    <string name="shortcut_name_airplane">Airplane</string>
-    <string name="shortcut_name_wifi">Wi-Fi</string>
-    <string name="shortcut_name_bluetooth">Bluetooth</string>
-    <string name="shortcut_name_mobile_data">Data</string>
-    <string name="shortcut_name_brightness">Brightness</string>
-    <string name="shortcut_name_more_time">More time</string>
-    <string name="shortcut_name_music">Music</string>
-    <string name="shortcut_name_asked">Asked</string>
     <string name="shortcut_full_torch">Flashlight</string>
     <string name="shortcut_full_sound">Sound</string>
     <string name="shortcut_full_airplane">Airplane mode</string>

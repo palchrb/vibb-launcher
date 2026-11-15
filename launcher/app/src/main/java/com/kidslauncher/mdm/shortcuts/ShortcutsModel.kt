@@ -235,14 +235,12 @@ fun shortcutTapAllowed(
 }
 
 /**
- * §3.2: the names' one common size (sp) - the largest of 11, 10.5 ... 9 at which every name fits [cellDp] less 2 dp on
- * each side, from each name's width at 10 sp ([widthsAt10Sp], dp). 9 when even that doesn't fit (the name is cut).
+ * §4.1, C99-M1: whether a cell's tap opens [ShortcutAirplaneActivity] (the window that closes the shade first) - only
+ * Flymodus while off, usable and not busy. A dimmed or busy Flymodus is a broadcast like every other item, refused by
+ * [shortcutTapAllowed] with the shade left open (D10: a dimmed tap does nothing).
  */
-fun shortcutNameSp(widthsAt10Sp: List<Float>, cellDp: Float): Float {
-    val room = cellDp - 4f
-    val widest = widthsAt10Sp.maxOrNull() ?: return 11f
-    return generateSequence(11f) { it - 0.5f }.takeWhile { it >= 9f }.firstOrNull { widest * it / 10f <= room } ?: 9f
-}
+fun shortcutOpensWindow(item: ShortcutItem): Boolean =
+    item.key == ShortcutKey.AIRPLANE && !item.on && item.usable && !item.busy
 
 /** §2.3 (Q99-L7): at most one post a second. The delay before the next post may go, from the last post's time. */
 fun shortcutPostDelay(nowMs: Long, lastPostMs: Long?, gapMs: Long = 1_000): Long =

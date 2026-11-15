@@ -4,9 +4,6 @@ import android.app.Notification
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import android.graphics.Typeface
-import android.text.TextPaint
-import android.util.TypedValue
 import android.view.View
 import android.widget.RemoteViews
 import com.kidslauncher.mdm.R
@@ -21,26 +18,24 @@ const val EXTRA_SHORTCUT_KEY = "key"
 private val CELLS = intArrayOf(R.id.shortcut_cell_0, R.id.shortcut_cell_1, R.id.shortcut_cell_2, R.id.shortcut_cell_3)
 private val DISCS = intArrayOf(R.id.shortcut_disc_0, R.id.shortcut_disc_1, R.id.shortcut_disc_2, R.id.shortcut_disc_3)
 private val GLYPHS = intArrayOf(R.id.shortcut_glyph_0, R.id.shortcut_glyph_1, R.id.shortcut_glyph_2, R.id.shortcut_glyph_3)
-private val NAMES = intArrayOf(R.id.shortcut_name_0, R.id.shortcut_name_1, R.id.shortcut_name_2, R.id.shortcut_name_3)
 
 /**
- * Snarveier's notification (design 99 §2.1, §3): decorated custom views - the icons folded, the same row with names
- * unfolded -, colorized in `kid_ground`, shown at once, ongoing and silent, secret on a lock screen, no content intent.
+ * Snarveier's notification (design 99 §2.1, §3): decorated custom views - one row of icons, no names, the same folded
+ * and unfolded (revision 3) -, colorized in `kid_ground`, shown at once, ongoing and silent, secret on a lock screen,
+ * no content intent. The small icon is the Vibb mark (`ic_stat_vibb`).
  * Each cell's tap is an explicit, immutable broadcast to [ShortcutsReceiver] with the key alone; Flymodus On is the one
  * activity, [ShortcutAirplaneActivity] (§4.1).
  */
 object ShortcutsNotification {
     fun build(context: Context, channelId: String, panel: ShortcutsPanel): Notification {
-        val names = panel.items.map { context.getString(nameRes(it)) }
-        val sp = shortcutNameSp(names.map { widthAt10SpDp(context, it) }, cellDp(context))
-        val folded = views(context, R.layout.shortcuts_row, panel, null, sp)
-        val unfolded = views(context, R.layout.shortcuts_names, panel, names, sp)
         val ground = context.getColor(R.color.kid_ground)
         return Notification.Builder(context, channelId)
-            .setSmallIcon(R.drawable.baseline_settings_24)
+            .setSmallIcon(R.drawable.ic_stat_vibb)
             .setStyle(Notification.DecoratedCustomViewStyle())
-            .setCustomContentView(folded)
-            .setCustomBigContentView(unfolded)
+            // The same row both ways: Android shows the top notification unfolded (S2), and the kid sees no change
+            // when it folds.
+            .setCustomContentView(views(context, panel))
+            .setCustomBigContentView(views(context, panel))
             .setColor(ground)
             .setColorized(true)
             .setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
@@ -53,22 +48,8 @@ object ShortcutsNotification {
             .build()
     }
 
-    /** The unfolded content's cell width: 220 dp at 320 dp (S7), the shade's margins and the header's icon off. */
-    private fun cellDp(context: Context): Float =
-        ((context.resources.configuration.screenWidthDp - 100).coerceAtLeast(160)) / SHORTCUTS_MAX.toFloat()
-
-    /** A name's width at 10 sp in dp, in the layout's font (Nunito Bold, `@font/nunito_bold`) at this phone's font scale. */
-    private fun widthAt10SpDp(context: Context, text: String): Float {
-        val metrics = context.resources.displayMetrics
-        val paint = TextPaint(TextPaint.ANTI_ALIAS_FLAG).apply {
-            typeface = runCatching { context.resources.getFont(R.font.nunito_bold) }.getOrDefault(Typeface.SANS_SERIF)
-            textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 10f, metrics)
-        }
-        return paint.measureText(text) / metrics.density
-    }
-
-    private fun views(context: Context, layout: Int, panel: ShortcutsPanel, names: List<String>?, sp: Float): RemoteViews {
-        val views = RemoteViews(context.packageName, layout)
+    private fun views(context: Context, panel: ShortcutsPanel): RemoteViews {
+        val views = RemoteViews(context.packageName, R.layout.shortcuts_row)
         val ground = context.getColor(R.color.kid_ground)
         val white = 0xFFFFFFFF.toInt()
         for (i in 0 until SHORTCUTS_MAX) {
@@ -85,24 +66,8 @@ object ShortcutsNotification {
             views.setFloat(CELLS[i], "setAlpha", if (item.busy) 0.5f else if (!item.usable) 0.4f else 1.0f)
             views.setContentDescription(CELLS[i], description(context, item))
             views.setOnClickPendingIntent(CELLS[i], tapIntent(context, item))
-            if (names != null) {
-                views.setTextViewText(NAMES[i], names[i])
-                views.setTextViewTextSize(NAMES[i], TypedValue.COMPLEX_UNIT_SP, sp)
-            }
         }
         return views
-    }
-
-    fun nameRes(item: ShortcutItem): Int = if (item.asked) R.string.shortcut_name_asked else when (item.key) {
-        ShortcutKey.TORCH -> R.string.shortcut_name_torch
-        ShortcutKey.SOUND -> R.string.shortcut_name_sound
-        ShortcutKey.AIRPLANE -> R.string.shortcut_name_airplane
-        ShortcutKey.WIFI -> R.string.shortcut_name_wifi
-        ShortcutKey.BLUETOOTH -> R.string.shortcut_name_bluetooth
-        ShortcutKey.MOBILE_DATA -> R.string.shortcut_name_mobile_data
-        ShortcutKey.BRIGHTNESS -> R.string.shortcut_name_brightness
-        ShortcutKey.MORE_TIME -> R.string.shortcut_name_more_time
-        ShortcutKey.MUSIC -> R.string.shortcut_name_music
     }
 
     fun fullNameRes(key: ShortcutKey): Int = when (key) {
@@ -134,7 +99,8 @@ object ShortcutsNotification {
         ShortcutKey.MUSIC -> R.drawable.shortcut_glyph_music
     }
 
-    /** TalkBack's words (§3.1): the full name and its state; a dimmed item says it isn't available now (Q99-L10). */
+    /** TalkBack's words (§3.1): the full name and its state; a dimmed item says it isn't available now (Q99-L10). The
+     * names live here and in the picker only (revision 3: none under the buttons). */
     private fun description(context: Context, item: ShortcutItem): String {
         val name = context.getString(fullNameRes(item.key))
         return when {
@@ -160,11 +126,12 @@ object ShortcutsNotification {
     }
 
     /**
-     * The cell's tap. Flymodus while off: the window that closes the shade first ([ShortcutAirplaneActivity], §4.1) -
-     * the only `getActivity` here. Everything else: our own receiver with the key alone.
+     * The cell's tap. Flymodus while off, usable and not busy ([shortcutOpensWindow]): the window that closes the shade
+     * first ([ShortcutAirplaneActivity], §4.1) - the only `getActivity` here. Everything else, a dimmed or busy Flymodus
+     * too (C99-M1: a dimmed tap does nothing and leaves the shade open, D10): our own receiver with the key alone.
      */
     private fun tapIntent(context: Context, item: ShortcutItem): PendingIntent =
-        if (item.key == ShortcutKey.AIRPLANE && !item.on) {
+        if (shortcutOpensWindow(item)) {
             PendingIntent.getActivity(
                 context,
                 AIRPLANE_WINDOW_REQUEST,

@@ -276,6 +276,8 @@ class Application : android.app.Application() {
         } catch (e: Exception) {
             android.util.Log.w("Application", "The notification channels weren't named again", e)
         }
+        // Snarveier's channel and panel follow too (design 99, C99-L1): its channel is created apart from the others.
+        com.kidslauncher.mdm.shortcuts.ShortcutsRuntime.languageChanged(this)
     }
 
     /** Design 59 F3: when the unlocked setup began (elapsed realtime) - the unlock reaching this process; `BootHome`

@@ -99,10 +99,6 @@
     <string name="contact_request_done">Ferdig</string>
     <string name="contact_request_row_description">%1$s, %2$s</string>
     <string name="kid_settings_title">Innstillinger</string>
-    <!-- Lommelykten (design 41): Home-flisen og låsens knapp, og TalkBacks tilstandsord. -->
-    <string name="torch_title">Lommelykt</string>
-    <string name="torch_state_on">på</string>
-    <string name="torch_state_off">av</string>
     <string name="calls_phone_book_empty">Det er ingen å ringe ennå. Nødnumrene (112, 110, 113) virker alltid fra nødknappen på låseskjermen.</string>
     <string name="calls_off">Samtaler er slått av på denne telefonen. Nødnumrene virker fortsatt.</string>
     <string name="calls_call">Ring</string>
@@ -811,16 +807,6 @@
     <!-- Snarveier (design 99). -->
     <string name="shortcuts_channel">Snarveier</string>
     <string name="shortcuts_subtext">Snarveier</string>
-    <string name="shortcut_name_torch">Lommelykt</string>
-    <string name="shortcut_name_sound">Lyd</string>
-    <string name="shortcut_name_airplane">Flymodus</string>
-    <string name="shortcut_name_wifi">Wi-Fi</string>
-    <string name="shortcut_name_bluetooth">Bluetooth</string>
-    <string name="shortcut_name_mobile_data">Mobildata</string>
-    <string name="shortcut_name_brightness">Lysstyrke</string>
-    <string name="shortcut_name_more_time">Mer tid</string>
-    <string name="shortcut_name_music">Musikk</string>
-    <string name="shortcut_name_asked">Spurt</string>
     <string name="shortcut_full_torch">Lommelykt</string>
     <string name="shortcut_full_sound">Lyd</string>
     <string name="shortcut_full_airplane">Flymodus</string>

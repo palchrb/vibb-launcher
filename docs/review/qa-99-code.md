@@ -129,3 +129,24 @@ Fix: remove the three strings in both languages, or keep them with a comment say
   replaces it with the foreground one.
 - **The report** is a full-report field only (not in `status_heartbeat_fields`), in `REPORT_KEYS`, kept by
   `intake_limits`; the server shows the row and the About line only with `shortcuts_v1`.
+
+## Fixes (2026-11-15, branch `design-99`)
+
+With the user's change of the same day (design 99 revision 3, after the emulator run's screenshots: *"Må vi ha navn
+under logoen? Det har ikke ios"*): **no names under the buttons.** One layout, `shortcuts_row.xml`, is both the
+content and the big content view, so folded and unfolded show the same row; the discs grew from 36 to 40 dp (glyphs 20
+-> 22 dp). `shortcuts_names.xml`, `shortcutNameSp` and its measuring, the short names `shortcut_name_*` (nb + en) and
+their test are gone; the names stay in the picker and as each cell's content description (`shortcut_full_*`). The post
+key's font scale and width went with the names (the discs are in dp), and so did the `ACTION_CONFIGURATION_CHANGED`
+registration. The header's small icon is the Vibb mark, `ic_stat_vibb` (white rings and core, made by
+`launcher/scripts/vibb-icon.py` from the same source as the app icon; NOTICE.md names it), not the gear that drew a
+blank disc.
+
+| Finding | Fix |
+|---|---|
+| C99-M1 | Pure `shortcutOpensWindow(item)`: the activity only for Flymodus off, usable and not busy; a dimmed or busy Flymodus is a broadcast like the rest, refused by the check with the shade left open. `ShortcutsTest` runs every non-clickable row state through the model and pins the notification's use of it |
+| C99-L1 | `Application.onConfigurationChanged`, after the other channels are named again, calls `ShortcutsRuntime.languageChanged`: the current Snarveier channel is created again (a rename; a channel the kid turned off stays off - Android never raises a user-set importance) and a refresh posts the panel in the new language (the post key's language differs) |
+| C99-L2 | `notificationForStart` reads `panel`, the channel and the language once; the queued `posted` records exactly what was built |
+| C99-L3 | No contract change: `device.home.shortcuts_none` is now "Ingen snarveier vises nå." / "No shortcuts are shown now.", true both when nothing is offered and when the kid chose none (the report can't tell them apart). `tests::shortcuts` and `docs/notes/server/pwa.md` follow; the row's save path is unchanged (`#quick-controls`, no jump) |
+| C99-L4 | `watchMusic` wants `panel.shown && panel.items.any { it.key == MUSIC }` |
+| C99-L5 | `torch_title`, `torch_state_on`, `torch_state_off` removed in both languages (no reader); `home-and-photos.md` and design 99 §7 say so |

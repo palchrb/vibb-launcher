@@ -20,7 +20,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
-/** Design 99: Snarveier's model, the tap check, the names' size, the pacing, the picker - and the shared contract
+/** Design 99: Snarveier's model, the tap check, the window's choice, the pacing, the picker - and the shared contract
  * `shortcuts.json` (byte-identical with `server/testdata/`, whose `tests::shortcuts` reads the same rows). */
 class ShortcutsTest {
     private val contractText = javaClass.classLoader!!.getResource("shortcuts.json")!!.readText()
@@ -260,15 +260,23 @@ class ShortcutsTest {
     }
 
     @Test
-    fun `the names share one size, the largest that fits, never under 9 sp`() {
-        // Every name narrow: 11 sp.
-        assertEquals(11f, shortcutNameSp(listOf(20f, 30f), 55f))
-        // Lommelykt is about 51 dp at 10 sp (61 dp at 12 sp, S10): 51 dp of room at 55 dp cells.
-        assertEquals(10f, shortcutNameSp(listOf(51f, 20f), 55f))
-        assertEquals(10.5f, shortcutNameSp(listOf(48f), 55f))
-        // Too wide even at 9 sp: 9, the name cut.
-        assertEquals(9f, shortcutNameSp(listOf(80f), 55f))
-        assertEquals(11f, shortcutNameSp(emptyList(), 55f))
+    fun `only a usable flymodus that is off opens the window - dimmed or busy it is a broadcast (C99-M1)`() {
+        fun airplane(state: AirplaneRowState, on: Boolean = false) =
+            shortcutsModel(true, mask, listOf("airplane"), false, all.copy(airplane = state, airplaneOn = on)).items.single()
+        assertTrue(shortcutOpensWindow(airplane(AirplaneRowState.OFF)))
+        // The parent's "Blokker flymodus", the emergency refusal, the cool-down: dimmed, so the shade stays open (D10).
+        for (state in AirplaneRowState.entries.filter { it != AirplaneRowState.HIDDEN && !it.clickable }) {
+            val item = airplane(state)
+            assertFalse(state.name, shortcutOpensWindow(item))
+            assertTrue(state.name, item.busy || !item.usable)
+        }
+        // On: Off is a broadcast.
+        assertFalse(shortcutOpensWindow(airplane(AirplaneRowState.OFF_ONLY, on = true)))
+        assertFalse(shortcutOpensWindow(ShortcutItem(ShortcutKey.AIRPLANE, usable = false)))
+        assertFalse(shortcutOpensWindow(ShortcutItem(ShortcutKey.AIRPLANE, busy = true)))
+        assertFalse(shortcutOpensWindow(ShortcutItem(ShortcutKey.WIFI)))
+        // The notification asks exactly this.
+        assertTrue(code("shortcuts/ShortcutsNotification.kt").contains("if (shortcutOpensWindow(item)) {"))
     }
 
     @Test

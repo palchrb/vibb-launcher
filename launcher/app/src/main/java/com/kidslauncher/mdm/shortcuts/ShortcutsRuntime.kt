@@ -99,7 +99,7 @@ object ShortcutsRuntime {
     @Volatile
     private var ask: AskPart? = null
 
-    /** Watching Vibb music's session while the picks hold Musikk (main thread). */
+    /** Watching Vibb music's session while the panel holds Musikk (main thread). */
     private var musicWatched = false
     private val musicListener: () -> Unit = { requestRefresh() }
 
@@ -120,9 +120,9 @@ object ShortcutsRuntime {
             addAction(WifiManager.WIFI_STATE_CHANGED_ACTION)
             addAction(BluetoothAdapter.ACTION_STATE_CHANGED)
             addAction(NotificationManager.ACTION_NOTIFICATION_CHANNEL_BLOCK_STATE_CHANGED)
+            // The phone's language. The launcher's own (a per-app locale) comes only as a configuration change:
+            // [languageChanged], from `Application.onConfigurationChanged` (C99-L1).
             addAction(Intent.ACTION_LOCALE_CHANGED)
-            // The font scale and the display size change the names' measured size (emulator run, 2026-11-15).
-            addAction(Intent.ACTION_CONFIGURATION_CHANGED)
         }
         ContextCompat.registerReceiver(
             app,
@@ -232,20 +232,41 @@ object ShortcutsRuntime {
         }
     }
 
-    /** The notification for the service's `startForeground` (main thread): the panel built last. */
+    /** The notification for the service's `startForeground` (main thread): the panel built last, read once, so what
+     * is recorded as posted is what was built (C99-L2). */
     fun notificationForStart(context: Context) = context.applicationContext.let { app ->
-        ShortcutsNotification.build(app, channelId(app), panel).also {
+        val shown = panel
+        val channel = channelId(app)
+        val language = locale(app)
+        ShortcutsNotification.build(app, channel, shown).also {
             refresher.execute {
-                posted = Triple(panel, locale(app), channelId(app))
+                posted = Triple(shown, language, channel)
                 lastPostMs = SystemClock.elapsedRealtime()
             }
         }
     }
 
-    /** What the posted views depend on besides the panel: the language, the font scale and the width (the names'
-     * size, §3.2). */
-    private fun locale(context: Context): String = context.resources.configuration.let { c ->
-        "${c.locales[0]?.toLanguageTag().orEmpty()} ${c.fontScale} ${c.screenWidthDp}"
+    /** What the posted views depend on besides the panel: the language (the content descriptions, the subtext). The
+     * discs are in dp, so the font scale changes nothing (revision 3: no names). */
+    private fun locale(context: Context): String = context.resources.configuration.locales[0]?.toLanguageTag().orEmpty()
+
+    /**
+     * The launcher's language changed (C99-L1: `Application.onConfigurationChanged`, after the other channels were
+     * named again; main thread): the channel in use takes its new name, and the panel is posted again in the new
+     * language (the post key's language differs).
+     */
+    fun languageChanged(context: Context) {
+        val app = context.applicationContext
+        if (appContext == null) return
+        try {
+            val id = currentChannelId(app)
+            val nm = app.getSystemService(NotificationManager::class.java)
+            // Creating an existing channel again only renames it: a channel the kid turned off stays off.
+            if (nm?.getNotificationChannel(id) != null) createChannel(app, id)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "The channel wasn't named again: ${e.javaClass.simpleName}")
+        }
+        requestRefresh()
     }
 
     // ---- what the panel shows ----
@@ -316,9 +337,10 @@ object ShortcutsRuntime {
         return ShortcutMusic(session = session != null, playing = session?.playing == true, usable = MusicSessions.usable(app, pkg))
     }
 
-    /** Watch Vibb music's session while the kid's picks hold Musikk and the panel can show (main thread, Q99-L3). */
+    /** Watch Vibb music's session while the panel holds Musikk (main thread, Q99-L3, C99-L4). The item is there whenever
+     * Vibb music is installed, session or not, so the watch starts before a session does. */
     private fun watchMusic(app: Context) {
-        val want = panel.shown && ShortcutKey.MUSIC in shortcutPicks(storedPicks(app))
+        val want = panel.let { p -> p.shown && p.items.any { it.key == ShortcutKey.MUSIC } }
         if (want == musicWatched) return
         musicWatched = want
         if (want) MusicSessions.addListener(app, musicListener) else MusicSessions.removeListener(musicListener)
@@ -345,15 +367,24 @@ object ShortcutsRuntime {
 
     /** The channel in use: `launcher:shortcuts`, or `launcher:shortcuts.N` after the kid showed it again (§2.6). */
     fun channelId(context: Context): String {
-        val n = prefs(context).getInt(KEY_CHANNEL, 0)
-        val id = if (n == 0) CHANNEL_BASE else "$CHANNEL_BASE.$n"
+        val id = currentChannelId(context)
         ensureChannel(context, id)
         return id
+    }
+
+    private fun currentChannelId(context: Context): String {
+        val n = prefs(context).getInt(KEY_CHANNEL, 0)
+        return if (n == 0) CHANNEL_BASE else "$CHANNEL_BASE.$n"
     }
 
     private fun ensureChannel(context: Context, id: String) {
         val nm = context.getSystemService(NotificationManager::class.java) ?: return
         if (nm.getNotificationChannel(id) != null) return
+        createChannel(context, id)
+    }
+
+    private fun createChannel(context: Context, id: String) {
+        val nm = context.getSystemService(NotificationManager::class.java) ?: return
         nm.createNotificationChannel(
             NotificationChannel(id, context.getString(com.kidslauncher.mdm.R.string.shortcuts_channel), NotificationManager.IMPORTANCE_LOW).apply {
                 setSound(null, null)
@@ -366,8 +397,7 @@ object ShortcutsRuntime {
 
     /** §2.6: the kid turned the channel off from the long-press menu. */
     fun hidden(context: Context): Boolean = try {
-        val n = prefs(context).getInt(KEY_CHANNEL, 0)
-        val id = if (n == 0) CHANNEL_BASE else "$CHANNEL_BASE.$n"
+        val id = currentChannelId(context)
         context.getSystemService(NotificationManager::class.java)?.getNotificationChannel(id)?.importance == NotificationManager.IMPORTANCE_NONE
     } catch (e: Exception) {
         false

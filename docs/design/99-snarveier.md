@@ -1,6 +1,10 @@
 # Design 99: Snarveier, the kid's quick panel in the shade
 
-Status: design, **revision 2**, 2026-11-15 (branch `design-99`), decided and in build. Revision 1 was 631e74067. Revision
+Status: design, **revision 3**, 2026-11-15 (branch `design-99`), built. **Revision 3** (the user, 2026-11-15, after the
+emulator run's screenshots: *"Må vi ha navn under logoen? Det har ikke ios"*): **no names under the buttons.** The
+panel is one row of four 40 dp discs, the same view folded and unfolded (§3); the names stay in the picker and as each
+button's content description for TalkBack. With it the header's small icon became the Vibb mark (`ic_stat_vibb`), and
+the code QA's findings were fixed (`docs/review/qa-99-code.md`, "Fixes"). Revision 1 was 631e74067. Revision
 2 takes the user's decisions of 2026-11-15 (§11) and every finding of the design QA, `docs/review/qa-99-design.md` (1
 High, 2 Medium, 11 Low; §13 says how each was handled). What changed: **four items in one row**, not six with a 3 x 2
 grid; Flymodus from the shade starts its route only after a Vibb window has focus (§4.1); one pure fail-closed tap check
@@ -19,6 +23,8 @@ words:
 - 2026-11-15, after revision 1's measurements (§11): **four items, not six, in one row.** Folded, the row of four icons.
   Unfolded (Android always shows the top notification unfolded, S2), the same single row with each item's name under
   it. No grid, no "⋯" cell.
+- 2026-11-15, after the build's screenshots: *"Må vi ha navn under logoen? Det har ikke ios"*: **no names** - the same
+  row of icons folded and unfolded (revision 3).
 
 The approved mockup is `https://claude.ai/artifact/14trZrh8r52SwX3Geex1aD`, section 3 ("Snarveier i varsellisten");
 revision 2 keeps its look and drops its grid.
@@ -27,9 +33,8 @@ revision 2 keeps its look and drops its grid.
 its own, **colorized** in the kid's dark ground. Only a colorized foreground-service notification stays at the top
 of the shade, and only it escapes Android 16's grouping, which otherwise folds it into a collapsed "Vibb One · 3"
 bundle with the launcher's other notifications (§1, measured). It holds **up to four round buttons in one row**: the
-kid's picks from nine items, Lommelykt, Lyd, Flymodus and Wi-Fi by default. Android always opens the top notification
-unfolded, so the kid normally sees the row with a name under each button; a tap on the header folds it to the icons
-alone until the shade closes. Each button is a broadcast to our own receiver: a tap works at once and the shade stays
+kid's picks from nine items, Lommelykt, Lyd, Flymodus and Wi-Fi by default, with no names under them (revision 3).
+Android always opens the top notification unfolded; folded or unfolded, the kid sees the same row of icons. Each button is a broadcast to our own receiver: a tap works at once and the shade stays
 open. Flymodus On is the one exception: the tap opens a small invisible Vibb window, the shade closes as it opens, and
 the route starts only once that window has focus (§4.1). Snarveier is hidden on Android's keyguard, every tap is refused
 there, and Vibb's own lock disables the shade.
@@ -67,12 +72,12 @@ What this means:
 - **Top and on its own needs the colorized foreground-service notification (S4, S5).** A plain notification ends up
   inside a collapsed bundle on every managed phone.
 - **Then it is always first, so Android always opens it unfolded (S2).** Revision 2 makes that the normal view: the
-  unfolded notification is the same row as the folded one, with the names under the buttons. Nothing has to be
-  narrow by default any more, so S2 costs nothing.
-- **Four fit with room to spare.** Folded, 180 dp / 4 = 45 dp a cell, so a 36 dp disc fits in a 45 x 48 dp target
-  (S7, S8; six needed 28 dp discs, S9). Unfolded, 220 dp / 4 = 55 dp a cell for the disc and its name. Revision 1's 12
-  sp names were 52-61 dp wide (S10), too wide for 55 dp, so the names have their own rule (§3.2) and the build
-  measures them (§10, test 1).
+  unfolded notification is the same row as the folded one (revision 3: without names, so the same view). Nothing has
+  to be narrow by default any more, so S2 costs nothing.
+- **Four fit with room to spare.** Folded, 180 dp / 4 = 45 dp a cell, so a 40 dp disc (revision 2: 36 dp) fits in a
+  45 x 48 dp target (S7, S8; six needed 28 dp discs, S9). Unfolded, 220 dp / 4 = 55 dp a cell. Revision 2 put each
+  item's name under its disc there (revision 1's 12 sp names were 52-61 dp wide, S10, too wide for 55 dp, so they had
+  their own size rule); revision 3 has no names.
 
 ## 2. The notification
 
@@ -85,11 +90,12 @@ What this means:
   time-left notice and the rule that it never becomes a second notification).
 - **The channel** `launcher:shortcuts` (and `launcher:shortcuts.N` after §2.6): `IMPORTANCE_LOW`, no sound, no
   vibration, `setShowBadge(false)`, lockscreen visibility `VISIBILITY_SECRET`. Name "Snarveier" / "Shortcuts".
-- **The notification**: `DecoratedCustomViewStyle`, the folded row (`setCustomContentView`, §3.1) and the row with
-  names (`setCustomBigContentView`, §3.2), `setColorized(true)` with `kid_ground` (`#0C0C14`),
+- **The notification**: `DecoratedCustomViewStyle`, the one row (§3) as both `setCustomContentView` and
+  `setCustomBigContentView` (revision 3), `setColorized(true)` with `kid_ground` (`#0C0C14`),
   `setForegroundServiceBehavior(FOREGROUND_SERVICE_IMMEDIATE)` (S6), `setOngoing(true)`, `setOnlyAlertOnce(true)`,
   `setSilent(true)`, `setShowWhen(false)`, `setVisibility(VISIBILITY_SECRET)`, `CATEGORY_STATUS`, the launcher's
-  small icon, `setSubText("Snarveier")` (the header reads "Vibb One · Snarveier"), no content intent (S13: a header tap
+  small icon `ic_stat_vibb` (revision 3: the Vibb mark's rings and core in white on transparent, made by
+  `launcher/scripts/vibb-icon.py`; the gear it had drew a blank disc in the header), `setSubText("Snarveier")` (the header reads "Vibb One · Snarveier"), no content intent (S13: a header tap
   folds, it never opens anything).
 - **`ShortcutsReceiver`**: not exported. Each button's `PendingIntent.getBroadcast` is explicit, `FLAG_IMMUTABLE`,
   with the item's key as the only extra and a request code per key. The receiver trusts nothing but the key. It calls
@@ -194,42 +200,31 @@ choice:
   come back blocked; a new id is what Android allows an app to do.
 - Vibb never re-creates the channel by itself (that would fight the kid).
 
-## 3. The two views
+## 3. The view
 
 The ground is the colorized `kid_ground`. Off: a disc of white at 12 % with the glyph in white. On: a filled
 `kid_accent` peach disc with the glyph in `kid_ground`, as Home's torch tile today. No yellow, no animation (the
 launcher-look rule). Glyphs are Material Symbols (Apache-2.0) from `scripts/material-symbols.sh`, as the torch's are
 (`shortcut_glyph_<key>.xml`).
 
-Both views are **four quarter cells** in one horizontal `LinearLayout`, each `layout_weight` 1. The items fill the
-cells from the left in the kid's order; with fewer than four, the cells on the right stay empty (invisible, not gone),
-so a button never moves when another leaves. The whole cell is the tap target (`setOnClickPendingIntent` on the cell).
+**One view, folded and unfolded** (revision 3, the user: *"Må vi ha navn under logoen? Det har ikke ios"*):
+`shortcuts_row.xml`, set as both the content and the big content view. Revision 2's second view with the names under
+the buttons (`shortcuts_names.xml`), its names' size rule (`shortcutNameSp`, 11-9 sp) and the panel's short names
+(`shortcut_name_*`) are gone.
 
-### 3.1 Folded: the icons (`shortcuts_row.xml`)
-
-- Cells of 45 x 48 dp at 320 dp (the content's full 48 dp height, S8). The disc is **36 dp**, the glyph 20 dp,
-  centred.
-- Content descriptions: "Lommelykt, på" / "Flashlight, on" and so on, "Lysstyrke, middels" for the level, and
-  "ikke tilgjengelig nå" / "not available now" for a dimmed item (Q99-L10).
-- About 68-76 dp in all (S8).
-
-### 3.2 Unfolded: the icons with names (`shortcuts_names.xml`)
-
-- The same row, now 55 dp a cell at 320 dp. The same 36 dp disc and 20 dp glyph, then the item's name under it.
-- **The names' rule.** One line each, centred, white, in Nunito Bold (the launcher's font; a dimmed cell is dimmed as a
-  whole). All four names get **one common
-  size**: the largest from 11 sp down to 9 sp at which every shown name fits its cell less 2 dp on each side, measured
-  with the names' own font at post time (`TextPaint.measureText`; pure `shortcutNameSp`, `ShortcutsTest`). Should even
-  9 sp not fit (only at the largest font sizes), the names stay at 9 sp and a name too long is cut with an ellipsis;
-  the content description still has the whole name. One common size keeps the row calm: no name is smaller than its
-  neighbour.
-- **Short names in the panel.** The panel's names are their own strings (`shortcut_name_*`), the same words as Kid
-  Settings' rows where those fit, shorter where not: nb Lommelykt, Lyd, Flymodus, Wi-Fi, Bluetooth, Mobildata,
-  Lysstyrke, Mer tid, Musikk; en Flashlight, Sound, Airplane, Wi-Fi, Bluetooth, Data, Brightness, More time, Music
-  ("Airplane mode" and "Mobile data" are two words, about 66 dp at 9 sp). The content descriptions and the picker use
-  the full names.
+- **Four quarter cells** in one horizontal `LinearLayout` 48 dp tall (the folded content's full height, S8), each
+  `layout_weight` 1. The items fill the cells from the left in the kid's order; with fewer than four, the cells on the
+  right stay empty (invisible, not gone), so a button never moves when another leaves. The whole cell is the tap
+  target (`setOnClickPendingIntent` on the cell).
+- **The disc is 40 dp, the glyph 22 dp**, centred. Folded the cells are 45 x 48 dp at 320 dp, unfolded 55 x 48 dp
+  (S7): 40 dp is the largest round size that leaves a gap between two discs folded (2.5 dp on each side) and fits the
+  48 dp height. Discs and glyphs are in dp, so the font size changes nothing (the measurements: `docs/testing/emulator.md`
+  §6an, "Revision 3").
+- **The names** are each button's content description only: "Lommelykt, på" / "Flashlight, on" and so on, "Lysstyrke,
+  middels" for the level, "Mer tid, spurt" while a request waits, and "ikke tilgjengelig nå" / "not available now" for
+  a dimmed item (Q99-L10). The picker shows the same full names (`shortcut_full_*`).
 - **No "På/Av" line** (D6): the peach fill says it and TalkBack reads the state.
-- Mer tid's name reads "Spurt" / "Asked" while a request waits.
+- About 76 dp folded with the header beside the row, a little more unfolded with the header line above it (S8, S11).
 
 ### 3.3 Busy and not usable
 
@@ -257,7 +252,7 @@ same switch that shows its row in Kid Settings, so "allowed" means one thing in 
 | `bluetooth` | Bluetooth | Bluetooth is on | `QuickControls.setBluetoothEnabled` | bit 2 | - | no adapter | XS |
 | `mobile_data` | Mobildata / Mobile data (panel: Data) | apps may use mobile data | the kid's switch, `MobileNetworkRuntime.setKidOff` (design 97 §4.3) | bit 32 | `kidMobileRow` is PARENT or PHONE_OFF (Bare Vibb, Ingen data, abroad, Android's own data off), or airplane mode is on | - | S |
 | `brightness` | Lysstyrke / Brightness | never peach (a level, not on/off) | the next of three steps, lav -> middels -> høy -> lav, `QuickControls.setBrightness` (manual mode, as the slider); the glyph shows the step (D5) | bit 4 | - | - | S |
-| `more_time` | Mer tid / More time | never peach | "Be om mer tid": the same path as the anchor's action (`TimeAskReceiver`'s `TimeRequests.ask`, then a sync) | none: shown exactly when the anchor's notice has its time part (`timeLeftNotice`'s `ask` is Action or Asked) | a request is waiting ("Spurt" / "Asked" as its name) | no budget today, or the pause or override runs | S |
+| `more_time` | Mer tid / More time | never peach | "Be om mer tid": the same path as the anchor's action (`TimeAskReceiver`'s `TimeRequests.ask`, then a sync) | none: shown exactly when the anchor's notice has its time part (`timeLeftNotice`'s `ask` is Action or Asked) | a request is waiting (TalkBack: "spurt" / "asked") | no budget today, or the pause or override runs | S |
 | `music` | Musikk / Music | Vibb music is playing | play / pause of **Vibb music's** session (`MusicSessions.playPause`, as Home's card; never another app's) | none: the music app installed | no session, or the music app isn't usable now (`MusicSessions.usable`: a rule, the used-up budget, the camera lock) | the music app not installed | S |
 
 The kid's Bluetooth item turns the radio on and off. Connecting headphones stays in Kid Settings › Bluetooth: an item
@@ -277,6 +272,10 @@ the tap: a rule that suspends Vibb music dims Musikk, and the tap check refuses 
 - **So Flymodus On is not a broadcast.** Its button is an explicit, immutable `PendingIntent.getActivity` for
   `ShortcutAirplaneActivity`. Android collapses the shade when a notification starts an activity, and the activity's
   window only gets focus once the shade has let it go.
+- **Only while it can act** (code QA C99-M1): the activity intent is used only for Flymodus off, usable and not busy
+  (pure `shortcutOpensWindow`). A dimmed (the parent's block, the emergency refusal, the cool-down) or busy Flymodus is
+  a broadcast like every other item: the check refuses it and the shade stays open (D10), with no window over the app
+  in front.
 - In `onWindowFocusChanged(true)`, the first time, `ShortcutAirplaneActivity` hands the tap to the shortcuts executor:
   the tap check (§2.1) first, refused and nothing happens, then `AirplaneRoute.turnOn`; when that returns, it finishes.
   (The window itself opens nothing, so the check runs once, at the focus, with the freshest inputs.) No focus within 3 s (the kid held the shade open): it finishes without the route.
@@ -392,7 +391,9 @@ Snarveier adds no restriction and no new way past one:
   - hidden by the kid: "Emma har skjult Snarveier i varsellisten. Emma kan vise dem igjen under Innstillinger ›
     Snarveier." / "Emma has hidden the shortcuts in the notifications. Emma can show them again under Settings ›
     Shortcuts.";
-  - the bit on but nothing offered: "Ingen av bryterne under er slått på." / "None of the switches below is on."
+  - the bit on but no items: "Ingen snarveier vises nå." / "No shortcuts are shown now." True both when nothing is
+    offered and when the kid chose none, which the report can't tell apart (code QA C99-L3; it was "Ingen av bryterne
+    under er slått på.", untrue in the second case).
 - **The ⓘ** gets: "Snarveier er et fast varsel øverst i varsellisten med inntil fire knapper. Emma velger dem blant
   bryterne her og lommelykten. Det vises aldri på låseskjermen." / "Shortcuts is a fixed notification at the top of the
   notifications with up to four buttons. Emma picks them from the switches here and the flashlight. It never shows on
@@ -463,7 +464,8 @@ Design 41 put two things on Home: the tile and its listener. Both go. Nothing el
   `Torch.toggle` become the lock's button and the shortcuts' torch item. `BootCoverManifestTest` and
   `LockGlanceGuardTest` only need a check that they don't name the tile.
 - **Stays:** `torch/Torch.kt`, `TorchRules` (the 10-minute auto-off, off at a call), `TorchOffReceiver`, the lock
-  glance's button (`lock/GlancePanel.kt`, design 41 §1.3), the strings `torch_title`/`torch_state_on`/`_off`, the
+  glance's button (`lock/GlancePanel.kt`, design 41 §1.3; its own `lock_torch*` strings - the tile's `torch_title`/
+  `torch_state_on`/`_off` had no reader left and went, code QA C99-L5), the
   glyphs, and the colour `kid_torch_tile` (`kid_lock_alarm_row` uses it).
 - Home gets one tile fewer. `docs/testing/emulator.md` §6 check 12 (Home's fold, 11 tiles in 3 columns) counts no
   flashlight tile, since the emulator has no flash; its numbers stand, and the build checks the fold on the Jelly
@@ -485,8 +487,8 @@ Design 41 put two things on Home: the tile and its listener. Both go. Nothing el
 ## 9. Risks
 
 - **Android's unfolding (S2) is AOSP SystemUI's behaviour.** The Jelly Star's SystemUI may differ: an OEM may not
-  unfold the first notification, or may limit custom views differently. With one row in both views the cost is only
-  the names. Device check (§10 test 8).
+  unfold the first notification, or may limit custom views differently. With one row in both views (revision 3: the
+  same view) that costs nothing. Device check (§10 test 8).
 - **Grouping (S4) is new in Android 16** and could change in a later Android. The colorized foreground service is
   what escapes it today; if a later Android bundles that too, the panel would hide behind a tap. The report's `shown`
   and a device check on each Android update catch it.
@@ -507,7 +509,8 @@ Unit (`ShortcutsTest`, `ShortcutsPickerTest`, the changed Home and torch tests):
   a pick; equality, so an unchanged model posts nothing.
 - `shortcutTapAllowed`: lock state or time-rule snapshot unknown, LOCKED, the keyguard, an unknown key, an item not
   in the model, dimmed, busy, Musikk with the music app unusable; the one allowed case per item.
-- `shortcutNameSp`: the common size, the 9 sp floor.
+- `shortcutOpensWindow`: only Flymodus off, usable and not busy opens the window; dimmed or busy it is a broadcast
+  (C99-M1).
 - The coalescing: a burst posts once now and once a second later, never more.
 - The picker: at most four, up and down at the ends, the order written, `null` until the first edit.
 - The contract (§6.2) on both sides; the server's mask keep for `section=quick` and the whole form; the sub-lines.
@@ -518,8 +521,9 @@ Unit (`ShortcutsTest`, `ShortcutsPickerTest`, the changed Home and torch tests):
 Emulator (`jelly36` restored clean, `wm density` stays 240; a new section in `docs/testing/emulator.md`):
 
 1. The panel at the top under lock task, with three Meldinger threads, a missed call and an ongoing call (Q99-L8): not
-   bundled, and where the call and the panel sit. Unfolded with four names on the first pull; the names' measured
-   size and widths, nb and en; folded by a header tap; unfolded again on the next pull. In **gesture and 3-button
+   bundled, and where the call and the panel sit. Unfolded on the first pull (revision 2: with four names, their
+   measured size and widths, nb and en; revision 3: the same row as folded, the disc size at font scale 1.0 and 1.3);
+   folded by a header tap; unfolded again on the next pull. In **gesture and 3-button
    navigation** (Q99-L11).
 2. Each emulator-testable item's tap with the shade open: Lyd, Wi-Fi, Bluetooth, Mobildata, Lysstyrke, Mer tid,
    Musikk; the disc follows the platform's state; a refused change flips back. The same under a time rule.
@@ -539,7 +543,8 @@ Emulator (`jelly36` restored clean, `wm density` stays 240; a new section in `do
 
 - **D1. Four items in one row** (settled by the user, replacing revision 1's a/b and QA's c). Folded: four icons
   (36 dp discs in 45 x 48 dp cells). Unfolded, which Android shows first: the same row with each item's name under it
-  (55 dp cells, §3.2's names rule). No 3 x 2 grid, no "⋯" cell.
+  (55 dp cells, §3.2's names rule). No 3 x 2 grid, no "⋯" cell. **Revision 3** (the user, after the screenshots: *"Må
+  vi ha navn under logoen? Det har ikke ios"*): no names; the same row of 40 dp discs folded and unfolded (§3).
 - **D2. Bit 128 on** for new phones (`DEFAULT_QUICK_CONTROLS`) and for every existing phone by migration 0148, because
   Home's flashlight tile goes in the same launcher.
 - **D3. Mer tid and Musikk are items.**
@@ -564,7 +569,7 @@ Emulator (`jelly36` restored clean, `wm density` stays 240; a new section in `do
    `shortcuts.rs` (capability, `clean`), the Home Screen row with `shortcuts_row` and the keep, the sub-lines, About
    This Phone, i18n nb + en, `tests::shortcuts`. **S.**
 3. Launcher, the model: `shortcuts/ShortcutsModel.kt` (the items, `shortcutsShown`, `shortcutsModel`,
-   `shortcutTapAllowed`, `shortcutNameSp`, the default), the picks' storage, the report field and the capability, the
+   `shortcutTapAllowed`, `shortcutNameSp` (gone in revision 3), the default), the picks' storage, the report field and the capability, the
    contract test. In the same commit as the server's intake (an API change crosses both). **S.**
 4. Launcher, the notification: `ShortcutsService`, the channel, the two `RemoteViews` layouts, the glyphs,
    `ShortcutsRuntime` (refresh, coalescing, the process's listeners, the channel re-creation), `ShortcutsReceiver`,
@@ -601,7 +606,7 @@ Emulator (`jelly36` restored clean, `wm density` stays 240; a new section in `do
   app's notification channels (`mImportanceLockedDefaultApp`): the long-press menu says "These notifications can't be
   modified." The probe of §1 (S16) held no role. §2.6's hidden state, its report flag and "Vis i varsellisten igjen"
   stay for a phone without those roles. D11 (blocked channels) is moot on such phones for the same reason.
-- **Names at large font sizes.** At font scale 1.3 the 9 sp floor is reached and the longest names are cut
-  ("Brightne…", "Lomme…"). The rule stays as written (§3.2); a lower floor or two lines are the alternatives.
+- **Names at large font sizes** (moot since revision 3: no names). At font scale 1.3 the 9 sp floor was reached and
+  the longest names were cut ("Brightne…", "Lomme…").
 - **During a call** the CallStyle notification is first and the panel second and folded (the icons, usable).
 - The picker's refusal line stands in the count line's place (a line above the list moved the rows under the next tap).

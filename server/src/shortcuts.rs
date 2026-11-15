@@ -168,8 +168,9 @@ fn names(lang: Lang, report: &Report) -> String {
 }
 
 /// The Home Screen row's sub-line (§5.2), only when it says something; `name` is the phone's (the kid is named, never
-/// given a pronoun): the kid hid the panel; else, with bit 128 on, what the kid chose, or that no switch under it is on
-/// (no items). Nothing while the bit is off and the panel isn't hidden.
+/// given a pronoun): the kid hid the panel; else, with bit 128 on, what the kid chose, or that no shortcut is shown now
+/// (no items: the kid chose none, or none of the chosen is offered - the report can't tell the two apart, C99-L3).
+/// Nothing while the bit is off and the panel isn't hidden.
 pub fn home_sub(lang: Lang, name: &str, policy: &DevicePolicy, report: &Report) -> Option<String> {
     if report.hidden {
         return Some(t_params(

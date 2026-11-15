@@ -323,7 +323,7 @@ async fn the_home_row_says_what_the_kid_did() {
     report(&app, &token, contract()["report"].clone()).await;
     assert_eq!(sub_line(&page("en").await), None);
 
-    // The bit on, nothing offered.
+    // The bit on, no items (nothing offered, or the kid chose none - C99-L3: true for both).
     set_mask(&app, id, 128).await;
     report(
         &app,
@@ -333,11 +333,11 @@ async fn the_home_row_says_what_the_kid_did() {
     .await;
     assert_eq!(
         sub_line(&page("en").await),
-        Some("None of the switches below is on.")
+        Some("No shortcuts are shown now.")
     );
     assert_eq!(
         sub_line(&page("nb").await),
-        Some("Ingen av bryterne under er slått på.")
+        Some("Ingen snarveier vises nå.")
     );
 
     // A launcher with the capability that sent no `shortcuts` reads as nothing offered.
@@ -345,7 +345,7 @@ async fn the_home_row_says_what_the_kid_did() {
         .await;
     assert_eq!(
         sub_line(&page("en").await),
-        Some("None of the switches below is on.")
+        Some("No shortcuts are shown now.")
     );
 }
 
