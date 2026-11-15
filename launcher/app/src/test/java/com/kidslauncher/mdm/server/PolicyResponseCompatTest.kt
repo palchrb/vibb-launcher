@@ -1230,6 +1230,26 @@ class PolicyResponseCompatTest {
         assertNull(time.lifts[0].phoneKey)
         assertNull(time.rules[0].copyOf)
         assertEquals(false, policy.rulePause)
+        // Design 100 §14.2: an older server's lifts name no parent and no instant, and it answers no request.
+        assertNull(time.lifts[1].by)
+        assertEquals(0L, time.lifts[1].atMs)
+        assertEquals(false, time.requestAnswers)
+        assertNull(time.answer)
+        val answered = (decodeCached(
+            withTime.replace(
+                "\"minutes\": 15, \"expires_at_ms\": 1759690000000}]",
+                "\"minutes\": 15, \"expires_at_ms\": 1759690000000, \"by\": \"Mamma\", \"at_ms\": 1759646400000}],\n" +
+                    "\"request_answers\": true, \"answer\": {\"request_id\": \"0123456789abcdef0123456789abcdef\", \"answer\": \"yes\", " +
+                    "\"by\": \"Mamma\", \"at_ms\": 1759646400000, \"lift_id\": 10, \"minutes\": 15}",
+            ),
+        ) as CachedPolicy.Ok).policy.timePolicy!!
+        assertEquals("Mamma", answered.lifts[1].by)
+        assertEquals(1759646400000L, answered.lifts[1].atMs)
+        assertEquals(true, answered.requestAnswers)
+        assertEquals(
+            com.kidslauncher.mdm.timerules.TimeAnswer("0123456789abcdef0123456789abcdef", "yes", "Mamma", 1759646400000L, 10L, 15),
+            answered.answer,
+        )
         assertEquals(com.kidslauncher.mdm.server.dto.LocationPolicy("interval", 15), policy.locationPolicy)
         val reencoded = ServerJson.encodeToString(PolicyResponse.serializer(), policy)
         assertEquals(CachedPolicy.Ok(policy), decodeCached(reencoded))

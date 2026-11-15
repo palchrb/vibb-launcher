@@ -228,9 +228,9 @@ class QuietNotificationsTest {
             assertFalse(path, "notification_listener_text" in s)
         }
         // Design r13 §2.2: the builder is AnchorNotice's; the plain notice (no budget) is the title alone.
-        val build = body(source("AnchorNotice.kt"), "fun build(context: Context, notice: TimeLeftNotice)")
+        val build = body(source("AnchorNotice.kt"), "fun build(context: Context, time: TimePart)")
         assertTrue("null -> context.getString(R.string.notification_listener_title)" in build)
-        assertTrue("the asked line is the only body", "is AskPart.Asked -> builder.setContentText(" in build)
+        assertTrue("the note is the only body", "noteText(context, time.note)?.let { builder.setContentText(it) }" in build)
         assertEquals(1, Regex("setContentText").findAll(build).count())
         assertTrue("NOTIFICATION_CHANNEL_LISTENER" in build)
         // Design 100 §2.3: the plain builder never asks to be shown at once (the panel normally replaces it at boot;

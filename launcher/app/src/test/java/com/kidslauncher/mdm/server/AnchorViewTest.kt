@@ -3,18 +3,20 @@ package com.kidslauncher.mdm.server
 import com.kidslauncher.mdm.shortcuts.ShortcutItem
 import com.kidslauncher.mdm.shortcuts.ShortcutKey
 import com.kidslauncher.mdm.shortcuts.ShortcutsPanel
+import com.kidslauncher.mdm.timerules.AskNote
 import com.kidslauncher.mdm.timerules.AskPart
 import com.kidslauncher.mdm.timerules.PLAIN_NOTICE
-import com.kidslauncher.mdm.timerules.TimeLeftNotice
 import com.kidslauncher.mdm.timerules.TimeLeftText
+import com.kidslauncher.mdm.timerules.TimePart
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
 /** Design 100 §2.2, §2.5: the anchor notification's view ([anchorView]) and the poster's one queued refresh
  * ([AnchorPostQueue]). */
 class AnchorViewTest {
-    private val time = TimeLeftNotice(TimeLeftText.Left(80), AskPart.Asked(1234L))
+    private val time = TimePart(TimeLeftText.Left(80), AskNote.Waiting(1234L), AskPart.Asked(1234L))
     private val shown = ShortcutsPanel(shown = true, hidden = false, items = listOf(ShortcutItem(ShortcutKey.TORCH)))
 
     @Test
@@ -24,8 +26,9 @@ class AnchorViewTest {
         assertEquals("hidden by the kid", AnchorView.Plain(time), anchorView(ShortcutsPanel(false, true, emptyList()), time))
         assertEquals(AnchorView.Panel(shown, time), anchorView(shown, time))
         assertEquals("no budget today: the panel as design 99's", AnchorView.Panel(shown, PLAIN_NOTICE), anchorView(shown, PLAIN_NOTICE))
-        // Equal inputs give equal views: an unchanged view posts nothing.
+        // Equal inputs give equal views: an unchanged view posts nothing; a changed note is a new view (the answer).
         assertEquals(anchorView(shown, time), anchorView(shown.copy(), time.copy()))
+        assertNotEquals(anchorView(shown, time), anchorView(shown, time.copy(note = AskNote.No("Pappa", 2000L))))
     }
 
     @Test

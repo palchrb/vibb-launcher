@@ -20,7 +20,8 @@ private const val LOG_TAG = "TimeAskReceiver"
  * "Be om mer tid" in the anchor's notification: our own explicit, immutable PendingIntent only - not exported (as
  * `InstallModeReceiver`, `WindowRelockReceiver`). Android asks for the unlock first when tapped on its keyguard
  * (`setAuthenticationRequired`). [TimeRequests.ask] writes a PENDING record when `askStep` says so; then the notice
- * loses its action at once and the sync posts the request. Anything else does nothing (a stale notification).
+ * loses its action at once ("Spurt kl. 14:02 · sender …") and the sync posts the request. Anything else does nothing
+ * (a stale notification).
  */
 class TimeAskReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -32,7 +33,8 @@ class TimeAskReceiver : BroadcastReceiver() {
             val asked = TimeRequests.ask(app, LauncherPreferences.mdm().enrolled(), windowOpen, snap)
             AnchorNotice.refresh(app, snap)
             if (asked) {
-                // The 30 minutes' end is a boundary (R13-8): armed now, not only by the sync's re-check (Q-4).
+                // The note's 15-second mark ("sendes når telefonen er på nett") is a boundary (design 100 QA R2-L3):
+                // armed now, not only by the sync's re-check (Q-4).
                 TimeRuleAlarm.schedule(app)
                 SyncRunner.request(app, "time_request")
             }

@@ -174,8 +174,11 @@ the setup notification.
   **four** round buttons in one row, four quarter cells, **no names** (revision 3, the user 2026-11-15: "Må vi ha navn
   under logoen? Det har ikke ios"): `shortcuts_row.xml` is the content view; the big view is the same row, and on a day
   with a screen-time budget `shortcuts_panel_big.xml` - the time line over it (r13's words, "1 t 20 min igjen i dag" /
-  "Skjermtiden er brukt opp i dag", 14 sp `nunito_bold`, two lines at most) and the note "Spurt kl. 14:02" (13 sp,
-  white 70 %) when a request is open. No action in the panel (design 100 D1: "Be om mer tid" is the Mer tid disc's).
+  "Skjermtiden er brukt opp i dag", 14 sp `nunito_bold`, two lines at most) and the note line (13 sp, white 70 %) when
+  there is one: "Spurt kl. 14:02 · venter på svar", the parent's answer for 30 minutes ("Pappa svarte nei kl. 14:10",
+  "Mamma ga deg 30 min"), or time given without a request (design 100 step 2, §14.3; push-and-play.md, "The
+  request"). No action in the panel (design 100 D1: "Be om mer tid" is the Mer tid disc's - usable while the kid may
+  ask, dimmed "Mer tid, spurt" while a request is open, gone at the day's three).
   Folded, the row alone (the time is then hidden: accepted). 40 dp discs, 22 dp glyphs, in the 48 dp content height
   (45 dp cells folded, 55 dp unfolded at 320 dp); the discs are dp only. Off: white at 12 %, on: the peach disc with the
   glyph in `kid_ground`; dimmed 40 %, busy 50 %. The names (`shortcut_full_*`) are the picker's and each cell's content

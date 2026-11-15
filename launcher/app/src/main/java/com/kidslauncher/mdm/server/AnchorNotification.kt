@@ -11,7 +11,7 @@ import com.kidslauncher.mdm.createListenerChannel
 import com.kidslauncher.mdm.shortcuts.ShortcutsNotification
 import com.kidslauncher.mdm.shortcuts.ShortcutsRuntime
 import com.kidslauncher.mdm.timerules.PLAIN_NOTICE
-import com.kidslauncher.mdm.timerules.TimeLeftNotice
+import com.kidslauncher.mdm.timerules.TimePart
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit
@@ -53,7 +53,7 @@ object AnchorNotification {
 
     /** The time part [AnchorNotice] handed over last; `null` before the first. */
     @Volatile
-    private var notice: TimeLeftNotice? = null
+    private var notice: TimePart? = null
 
     /** A view as posted: with the language its words are in and the channel it is on. */
     private data class Key(val view: AnchorView, val locale: String, val channel: String)
@@ -72,7 +72,7 @@ object AnchorNotification {
 
     /** [AnchorNotice]'s time part was computed (the tracker's minute, a re-check, a tap, the server's answer): the view
      * follows it. Any thread. */
-    fun notice(context: Context, notice: TimeLeftNotice) {
+    fun notice(context: Context, notice: TimePart) {
         remember(context)
         this.notice = notice
         requestRefresh()
@@ -109,7 +109,7 @@ object AnchorNotification {
     }
 
     /** Before [AnchorNotice]'s first hand-over in this process: the same computation; plain if it can't be made. */
-    private fun firstNotice(app: Context): TimeLeftNotice = try {
+    private fun firstNotice(app: Context): TimePart = try {
         AnchorNotice.noticeNow(app).also { if (notice == null) notice = it }
     } catch (e: Exception) {
         PLAIN_NOTICE
@@ -117,7 +117,7 @@ object AnchorNotification {
 
     /** The panel model for [time], `null` when it can't be built (Q100-M1: the view is then the plain notice, never
      * nothing). Mer tid's state is set from this very time part first (Q100-L6). */
-    private fun panelFor(app: Context, time: TimeLeftNotice) = try {
+    private fun panelFor(app: Context, time: TimePart) = try {
         ShortcutsRuntime.panelFor(app, time.ask)
     } catch (e: Exception) {
         Log.w(LOG_TAG, "No panel: ${e.javaClass.simpleName}")
@@ -150,8 +150,8 @@ object AnchorNotification {
             is AnchorView.Panel -> ShortcutsRuntime.ensureChannel(context, key.channel)
         }
         val notification = when (val view = key.view) {
-            is AnchorView.Plain -> AnchorNotice.build(context, view.notice)
-            is AnchorView.Panel -> ShortcutsNotification.build(context, key.channel, view.panel, view.notice)
+            is AnchorView.Plain -> AnchorNotice.build(context, view.time)
+            is AnchorView.Panel -> ShortcutsNotification.build(context, key.channel, view.panel, view.time)
         }
         notification.extras.putInt(EXTRA_VIEW_KEY, key.hashCode())
         return notification

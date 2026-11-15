@@ -8,17 +8,17 @@ import androidx.core.app.NotificationCompat
 import com.kidslauncher.mdm.NOTIFICATION_CHANNEL_LISTENER
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.timerules.ACTION_ASK_TIME
+import com.kidslauncher.mdm.timerules.AskNote
 import com.kidslauncher.mdm.timerules.AskPart
 import com.kidslauncher.mdm.timerules.BudgetUse
-import com.kidslauncher.mdm.timerules.TimePolicy
-import com.kidslauncher.mdm.timerules.maxLiftId
 import com.kidslauncher.mdm.timerules.PLAIN_NOTICE
 import com.kidslauncher.mdm.timerules.TimeAskReceiver
-import com.kidslauncher.mdm.timerules.TimeLeftNotice
 import com.kidslauncher.mdm.timerules.TimeLeftText
+import com.kidslauncher.mdm.timerules.TimePart
+import com.kidslauncher.mdm.timerules.TimePolicy
 import com.kidslauncher.mdm.timerules.TimeRequests
 import com.kidslauncher.mdm.timerules.TimeRulesRuntime
-import com.kidslauncher.mdm.timerules.timeLeftNotice
+import com.kidslauncher.mdm.timerules.timePart
 import com.kidslauncher.mdm.ui.ClockFormat
 import com.kidslauncher.mdm.ui.durationText
 
@@ -38,11 +38,30 @@ object AnchorNotice {
         TimeLeftText.UsedUp -> context.getString(R.string.anchor_time_used_up)
     }
 
-    /** The plain notice for [notice] (Snarveier not shown): silent, ongoing, no time, the MIN channel, the Vibb mark
-     * (design 100 §4); no `FOREGROUND_SERVICE_IMMEDIATE` (§2.3). The action asks for the unlock first from Android's
-     * keyguard (`setAuthenticationRequired`). "Spurt kl. 14:02" is the content text, never a button. */
-    fun build(context: Context, notice: TimeLeftNotice): Notification {
-        val title = when (val text = notice.text) {
+    /** The note line's words (design 100 §8.4, §14.3): "Spurt kl. 14:02 · venter på svar", "Pappa svarte nei kl.
+     * 14:10", "Mamma ga deg 30 min" (D11: "Svaret ble nei kl. 14:10", "Du fikk 30 min mer" without a display name);
+     * `null` for none. The panel's note line, the plain notice's text and the time-rule screen's block. */
+    fun noteText(context: Context, note: AskNote): String? {
+        fun clock(atMs: Long) = ClockFormat.formatTime(context, atMs)
+        fun minutes(m: Int) =
+            durationText(m, context.getString(R.string.duration_unit_hours), context.getString(R.string.duration_unit_minutes))
+        return when (note) {
+            is AskNote.Sending -> context.getString(if (note.offline) R.string.ask_note_offline else R.string.ask_note_sending, clock(note.atMs))
+            is AskNote.Waiting -> context.getString(R.string.ask_note_waiting, clock(note.atMs))
+            is AskNote.No -> note.by?.let { context.getString(R.string.ask_note_no, it, clock(note.atMs)) }
+                ?: context.getString(R.string.ask_note_no_unnamed, clock(note.atMs))
+            is AskNote.Given -> note.by?.let { context.getString(R.string.ask_note_given, it, minutes(note.minutes)) }
+                ?: context.getString(R.string.ask_note_given_unnamed, minutes(note.minutes))
+            AskNote.None -> null
+        }
+    }
+
+    /** The plain notice for [time] (Snarveier not shown): silent, ongoing, no time, the MIN channel, the Vibb mark
+     * (design 100 §4); no `FOREGROUND_SERVICE_IMMEDIATE` (§2.3). The action, while the kid may ask, asks for the unlock
+     * first from Android's keyguard (`setAuthenticationRequired`). The note ("Spurt kl. 14:02 · venter på svar", the
+     * parent's answer) is the content text, never a button. */
+    fun build(context: Context, time: TimePart): Notification {
+        val title = when (val text = time.text) {
             null -> context.getString(R.string.notification_listener_title)
             else -> timeText(context, text)
         }
@@ -54,15 +73,14 @@ object AnchorNotice {
             .setSilent(true)
             .setOnlyAlertOnce(true)
             .setShowWhen(false)
-        when (val ask = notice.ask) {
-            AskPart.Action -> builder.addAction(
+        if (time.ask == AskPart.Action) {
+            builder.addAction(
                 NotificationCompat.Action.Builder(0, context.getString(R.string.anchor_ask_more_time), askIntent(context))
                     .setAuthenticationRequired(true)
                     .build(),
             )
-            is AskPart.Asked -> builder.setContentText(context.getString(R.string.anchor_asked_at, ClockFormat.formatTime(context, ask.atMs)))
-            AskPart.None -> {}
         }
+        noteText(context, time.note)?.let { builder.setContentText(it) }
         return builder.build()
     }
 
@@ -74,13 +92,16 @@ object AnchorNotice {
         PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
     )
 
-    /** The notice for [budget] (today's use), [policy] (its lifts), the ledger's [day] at [nowMs]: the pause or the
-     * override, and the request's state from its DE prefs - no snapshot (qa-r13-rule-card-code Q-5). */
-    fun noticeFor(context: Context, budget: BudgetUse?, policy: TimePolicy?, day: String?, nowMs: Long): TimeLeftNotice =
-        timeLeftNotice(
+    /** The time part for [budget] (today's use), [policy] (its answer and lifts), the ledger's [day] at [nowMs], for
+     * the shade: the pause or the override, and the request's state from its DE prefs - no snapshot
+     * (qa-r13-rule-card-code Q-5). */
+    fun noticeFor(context: Context, budget: BudgetUse?, policy: TimePolicy?, day: String?, nowMs: Long): TimePart =
+        timePart(
             budget,
             OfflineOverride.isActive() || RestrictionsPause.isActive(),
-            TimeRequests.state(context, day, nowMs, maxLiftId(policy)),
+            TimeRequests.state(context, day, policy),
+            policy,
+            nowMs,
         )
 
     /** The notice for [snap] (`recheck`'s, the tap's), handed to the poster. */
@@ -101,7 +122,7 @@ object AnchorNotice {
     }
 
     /** The notice from a fresh snapshot, nothing handed over (the poster's first view in a process). */
-    fun noticeNow(context: Context): TimeLeftNotice {
+    fun noticeNow(context: Context): TimePart {
         val snap = TimeRulesRuntime.snapshot(context, currentPolicyDecision().policy)
         return noticeFor(context, snap.budget, snap.policy, snap.ledger?.day, snap.clocks.wallMs)
     }

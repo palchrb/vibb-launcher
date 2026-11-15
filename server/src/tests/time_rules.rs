@@ -23,7 +23,8 @@ async fn fresh_policy_has_no_rules_unlimited_budget_and_on_request_location() {
     let p = app.policy(&token).await;
     assert_eq!(
         p["time_policy"],
-        json!({"rules": [], "daily_budget_minutes": [null, null, null, null, null, null, null], "lifts": []})
+        json!({"rules": [], "daily_budget_minutes": [null, null, null, null, null, null, null], "lifts": [],
+               "request_answers": true})
     );
     assert_eq!(
         p["location_policy"],

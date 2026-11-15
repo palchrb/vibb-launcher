@@ -42,6 +42,8 @@ const NOT_SAVES: &[&str] = &[
     "/devices/{id}/kid-pin/send",
     "/devices/{id}/lifts",
     "/devices/{id}/lifts/{lift_id}/end",
+    // Design 100: the answer card's answer (a lift's line, or its own `time_request_no`).
+    "/devices/{id}/time-request/answer",
     // Design 93's Regler sheet: a pause or a rule turned on now, and its change and end (their own events).
     "/devices/{id}/rules-now",
     "/devices/{id}/lock-now/{lock_id}",

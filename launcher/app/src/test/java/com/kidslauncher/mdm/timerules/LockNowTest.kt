@@ -51,8 +51,9 @@ class LockNowTest {
         assertEquals(listOf(-1L, 1L, 3L, 2L), policy("policy_end_locked").rules.map { it.id })
         // The pause of the turned-on rule and its twin for the copy: the same minutes and expiry.
         val (pause, twin) = policy.lifts
-        assertEquals(Lift(5, TARGET_RULE, 2, 30, 1794828600000L), pause)
-        assertEquals(Lift(-5, TARGET_RULE, -1, 30, 1794828600000L), twin)
+        // Design 100 §14.2: who gave it and when ride along, the twin's the pause's.
+        assertEquals(Lift(5, TARGET_RULE, 2, 30, 1794828600000L, by = "Mamma", atMs = 1794826800000L), pause)
+        assertEquals(Lift(-5, TARGET_RULE, -1, 30, 1794828600000L, by = "Mamma", atMs = 1794826800000L), twin)
         // The cache keeps the rule whole (PolicyGate drops only the lifts).
         val reencoded = ServerJson.encodeToString(TimePolicy.serializer(), policy)
         assertEquals(policy, ServerJson.decodeFromString(TimePolicy.serializer(), reencoded))

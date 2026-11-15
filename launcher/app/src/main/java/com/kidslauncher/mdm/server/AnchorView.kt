@@ -2,27 +2,27 @@ package com.kidslauncher.mdm.server
 
 import com.kidslauncher.mdm.shortcuts.ShortcutsPanel
 import com.kidslauncher.mdm.shortcuts.shortcutPostDelay
-import com.kidslauncher.mdm.timerules.TimeLeftNotice
+import com.kidslauncher.mdm.timerules.TimePart
 
 /*
  * What the anchor's one notification shows (design 100 §2.5, `AnchorViewTest`): pure. While Snarveier is shown, the
- * panel with the time part (design 99's row, the time line and "Spurt kl. 14:02" over it); otherwise r13's plain
+ * panel with the time part (design 99's row, the time line and the note line over it); otherwise r13's plain
  * notice. One id (1002), two channels: the glue (`AnchorNotification`) swaps them with `notify`.
  */
 
 /** The anchor notification's view: [Plain] r13's notice, or the Snarveier [Panel] with the same time part. */
 sealed interface AnchorView {
-    val notice: TimeLeftNotice
+    val time: TimePart
 
-    data class Plain(override val notice: TimeLeftNotice) : AnchorView
+    data class Plain(override val time: TimePart) : AnchorView
 
-    data class Panel(val panel: ShortcutsPanel, override val notice: TimeLeftNotice) : AnchorView
+    data class Panel(val panel: ShortcutsPanel, override val time: TimePart) : AnchorView
 }
 
-/** The view for [panel] (`null`: no model - none yet, or it couldn't be built, Q100-M1) and [notice]: the panel only
+/** The view for [panel] (`null`: no model - none yet, or it couldn't be built, Q100-M1) and [time]: the panel only
  * while design 99 says it is shown, else the plain notice. Never nothing. */
-fun anchorView(panel: ShortcutsPanel?, notice: TimeLeftNotice): AnchorView =
-    if (panel == null || !panel.shown) AnchorView.Plain(notice) else AnchorView.Panel(panel, notice)
+fun anchorView(panel: ShortcutsPanel?, time: TimePart): AnchorView =
+    if (panel == null || !panel.shown) AnchorView.Plain(time) else AnchorView.Panel(panel, time)
 
 /**
  * The poster's one queued refresh (§2.2, design 99's Q99-L7): the first request after a quiet second runs at once;
