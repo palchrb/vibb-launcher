@@ -68,7 +68,8 @@ fun browserConfigPlan(filterOn: Boolean, lockdownHosts: List<String>?, installed
         if (pkg == CHROME_PACKAGE && lockdownHosts != null) chromeLockdown(lockdownHosts) + doh else doh
     }
 
-/** The role as the policy and the allowlist give it: off, refused for another package (D8), or Chrome's with its sites. */
+/** The role as the policy and the allowlist give it: off (no role, an unmanaged phone, Chrome ticked), refused for another
+ * package (D8), or Chrome's with its sites. */
 sealed interface LoginRole {
     /** No `login_browser`, or Chrome ticked as a normal app (a ticked Chrome ignores the role). */
     data object Off : LoginRole
@@ -81,6 +82,8 @@ sealed interface LoginRole {
 
 fun loginRoleOf(policy: LoginBrowserPolicy?, allowlist: List<String>?): LoginRole = when {
     policy == null -> LoginRole.Off
+    // An unmanaged phone (no allowlist): every app is free, so no lockdown of Chrome (code QA L8).
+    allowlist == null -> LoginRole.Off
     policy.packageName != CHROME_PACKAGE -> LoginRole.WrongPackage
     allowlist?.contains(CHROME_PACKAGE) == true -> LoginRole.Off
     else -> LoginRole.On(loginHostsOf(policy).orEmpty())

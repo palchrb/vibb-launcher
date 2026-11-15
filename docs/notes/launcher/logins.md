@@ -38,10 +38,13 @@ The server's side is `docs/notes/server/status.md`, "Wi-Fi sign-in and logins (d
   start-up runs there and no preference is read. The window reads the snapshot `noBackupFilesDir/portal/state.json`
   (written by the entry right before the start; a stale one opens nothing), binds the process to the network
   (`bindProcessToNetwork`), writes `sessions/<opened_ms>.json` at its start and end, and tells the main process by an
-  explicit broadcast to the non-exported `PortalSessionReceiver`. Vibb One tells the window to close
+  explicit broadcast to the non-exported `PortalSessionReceiver`. A window opened in a pause writes the pause's end into
+  its session file, so it holds the one-window slot until then, not 11 minutes (code QA M2). Vibb One tells the window to close
   (`ACTION_CLOSE_WINDOW`, this package only, a `RECEIVER_NOT_EXPORTED` receiver): on the PIN lock's LOCKED edge
   (`PinLockRuntime.dispatch`), with Part A off, and at a pause's end (`RestrictionsPause.clear`; only a window opened in
-  the pause - the snapshot's `pauseEndMs` is the fallback). The process kills itself when the window finishes.
+  the pause - the snapshot's `pauseEndMs` is the fallback). The close is always sent, whatever the window's age (code
+  QA M2). Only the instance that owns the session ends the `:portal` process when it finishes (code QA L6); the window
+  declares every configuration change, so a locale or font change doesn't end it.
 - **Where the page may go** (pure `portalNavigation`, `portalFrame` rows, `frameDocument`, `schemeVerdict`; the
   `navigation` rows): http and https only, `tel:` to Vibb's own dialer, everything else refused in place. Sites are
   registrable domains (OkHttp's `topPrivateDomain()`, an IP literal is its own). Until the kid first acts (a tap or a
@@ -50,8 +53,11 @@ The server's side is `docs/notes/server/status.md`, "Wi-Fi sign-in and logins (d
   start (R3-M2): a tapped GET's chain may not leave the tapped link's site but to a portal site (a portal site's own
   redirector leads nowhere); the page's own move and a POST from a portal site may go anywhere; from a leaf only back.
   Sub-frame documents (`Accept: text/html`, not the main frame) only of the top page's site or a portal site; a refused
-  one is a page of ours and counts in `blocked_frames`. The filter's lists (`classifyDomain` over the main process's
-  compiled file, the Spotify flag and the secure-DNS asset) on every request while the filter is on and no pause. A
+  one is a page of ours and counts in `blocked_frames` (only these: a document the lists block counts in `blocked_hosts`
+  alone, code QA L2). The filter's lists (`classifyDomain` over the main process's compiled file, the Spotify flag and the
+  secure-DNS asset) on every request while the filter is on and no pause; they are read **before** the first page loads
+  (code QA M1), and a missing or unreadable list refuses every document (fail closed). A page of ours at a refused URL
+  is never the current site or a visited one (code QA L1). A
   reopen keeps to the recorded first site alone, by any means. Not seen by these hooks (design §7): a sub-resource's
   redirect target, WebSockets, WebRTC, an app-like site's in-page moves, the parent's own DNS upstream. Service workers
   are off (`ServiceWorkerController`: network loads blocked, a client answering 403).
@@ -62,8 +68,8 @@ The server's side is `docs/notes/server/status.md`, "Wi-Fi sign-in and logins (d
 - **Closing** (pure `portalClose`, the `close` rows): `validated` (`reportCaptivePortalDismissed()`) or `passes` (Vibb's
   check, every 5 s on the bound network) for a sign-in; `closed_by_vibb`; a pause lifts the limits while it lasts;
   `timeout` after 10 minutes for every opening; `budget` for a code-free one. A reopen never closes on a working
-  network. After each main-frame page Android re-probes at most every 3 s (with the binder `reportCaptivePortalDismissed`,
-  without it `reportNetworkConnectivity`, best effort - E7).
+  network. After each main-frame page Android re-probes at most every 3 s through `reportNetworkConnectivity` (best
+  effort, E7); `reportCaptivePortalDismissed()` only at the window's end (code QA L7).
 - **Vibb's https check** (`portal/PortalCheck.kt`, pure `portalPasses`, the `passes` rows): OkHttp on the network's
   socket factory and DNS, system trust, no proxy, no redirects; `https://www.gstatic.com/generate_204` and
   `https://cp.cloudflare.com/generate_204` (an exact 204 with an empty body), and the phone's own server only when its
@@ -78,7 +84,8 @@ The server's side is `docs/notes/server/status.md`, "Wi-Fi sign-in and logins (d
 - **The kid's ways in** (`wifiRowState`, the `wifi_rows` rows): Android's notification (in the Silent bundle); the
   Wi-Fi page's row above the list ("Tilkoblet – må logges på" on the connected network's row, "Logg på", or "Spør en
   voksen om Wi-Fi-innlogging" with the code off and the budget spent); Home's calm line "Wi-Fi-en vil at du logger på"
-  (`home_portal_line`, never a sound or a badge). `PortalRuntime.start` watches the Wi-Fi networks
+  (`home_portal_line`, never a sound or a badge); both read `PortalRuntime.row()` off the main thread (code QA L9).
+  `PortalRuntime.start` watches the Wi-Fi networks
   (`FLAG_INCLUDE_LOCATION_INFO` for the SSID) for both.
 - **The report**: `captive_portal` (`CaptivePortalReport`: `handler` from `resolveActivity`, `parent_code_set`, today's
   code-free use, the last 10 sessions), a full-report field; capability `captive_portal_v1`.
@@ -90,8 +97,8 @@ The server's side is `docs/notes/server/status.md`, "Wi-Fi sign-in and logins (d
 
 ## Part B: Chrome only for logins (`logins/`, `server/BrowserConfig.kt`)
 
-- **The role** (pure `loginRoleOf`, the `roles` rows): the policy's `login_browser` (null while off, or with Chrome
-  ticked under Apps - the server keeps the two exclusive, and a ticked Chrome ignores the role here too); a
+- **The role** (pure `loginRoleOf`, the `roles` rows): no role on an unmanaged phone (no allowlist, code QA L8); the
+  policy's `login_browser` (null while off, or with Chrome ticked under Apps - the server keeps the two exclusive, and a ticked Chrome ignores the role here too); a
   `package` other than `com.android.chrome` is `failed`/`package` and unhides nothing (D8). Each site goes through
   `loginEntry` (the shared `entries` rule): an invalid one is dropped, never written to Chrome.
 - **The lockdown first** (Q102-M3): `BrowserConfig.apply` (design 67's `BrowserDoh`, renamed and widened, the one owner
@@ -111,11 +118,13 @@ The server's side is `docs/notes/server/status.md`, "Wi-Fi sign-in and logins (d
 - **Each tightening ends Chrome's tabs** (Q102-M4, R2-L4; `chromeTightened`, the `tighten` rows): the lockdown back
   (the role's first turn-on, a pause's or the override's end) or any old site gone (a set difference) - the same apply
   hides Chrome after the new bundle reads back (hiding stops the package and its tasks) and the plan unhides it. The
-  role off while Chrome isn't ticked: the plan hides it. The written sites are kept in the main process's
+  role off (or another package) after its lockdown was in force: Chrome is hidden **before** its bundle is loosened
+  (code QA L3), then the plan hides it or, ticked, unhides it. The written sites are kept in the main process's
   `login_browser` prefs.
 - **Chrome's data cleared once** (D13): on the role's turn-on with no record (every phone at its first version with the
   role) or after a phase where Chrome was a free app (a ticked Chrome forgets the record),
-  `dpm.clearApplicationUserData` before the bundle; `cleared_ms` in the report. A pause needs no clear: its restored
+  `dpm.clearApplicationUserData` first and on its own: the role waits (Chrome hidden) until the clear's callback reports
+  success, which is recorded then (`cleared_ms` in the report) and asks for a sync; a failure is tried again (code QA L5). A pause needs no clear: its restored
   tabs reload through `URLBlocklist` (E9).
 - **A pause or the override** lifts the lockdown with everything else (D9): the bundle falls back to secure DNS only (or
   empty), Chrome stays unlisted but reachable from apps; its end is a tightening.

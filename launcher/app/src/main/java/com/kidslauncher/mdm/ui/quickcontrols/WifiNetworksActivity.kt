@@ -89,7 +89,15 @@ class WifiNetworksActivity : KidPageActivity() {
     /** Design 102 §3.6, §3.8: the connected Wi-Fi's sign-in row ([com.kidslauncher.mdm.portal.wifiRowState]). */
     private fun renderPortal() {
         if (isFinishing || isDestroyed) return
-        val row = com.kidslauncher.mdm.portal.PortalRuntime.row(this)
+        val app = applicationContext
+        // The row reads the budget and the records (files and preferences): off the main thread (code QA L9).
+        Thread {
+            val row = com.kidslauncher.mdm.portal.PortalRuntime.row(app)
+            runOnUiThread { if (!isFinishing && !isDestroyed) showPortal(row) }
+        }.start()
+    }
+
+    private fun showPortal(row: com.kidslauncher.mdm.portal.WifiPortalRow) {
         portalRow = row
         adapter.setCaptiveSsid(com.kidslauncher.mdm.portal.PortalRuntime.wifi().takeIf { it.captive }?.ssid)
         val (title, sub) = when (row) {

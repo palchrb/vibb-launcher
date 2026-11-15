@@ -50,7 +50,7 @@ imported with full history (`git subtree`), so old commit hashes in the docs sti
   `fake-portal.py` (a fake captive portal for design 102's Wi-Fi sign-in window: one server answering the portal's
   name and another site's, with modes - a 302 portal, meta refresh, script, a soft portal, a hotspot that 302s to a
   search page, a Google walled garden, a full-page iframe, a same-site redirector, a form whose POST 302s to another
-  site; standard library, `--selftest`, run by `launcher.yml`'s always-run changes job; `docs/testing/emulator.md`
+  site, a reached site's POSTs that 302 and 307 to a third site; standard library, `--selftest`, run by `launcher.yml`'s always-run changes job; `docs/testing/emulator.md`
   §6ap),
   `music-splash.py` (the music app's launch splash drawables: the Vibb mark read from the launcher's Home splash, "vibb
   music" from Nunito's outlines; `--selftest`), `webauthn-rs256-vector.py` (the server's RS256 passkey vector

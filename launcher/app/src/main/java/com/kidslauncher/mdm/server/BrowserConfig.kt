@@ -65,6 +65,7 @@ object BrowserConfig {
     private const val KEY_WRITTEN_MS = "written_ms"
     private const val KEY_CLEARED = "cleared"
     private const val KEY_CLEARED_MS = "cleared_ms"
+    private const val KEY_CLEARING_MS = "clearing_ms"
     private const val KEY_STATE = "state"
     private const val KEY_REASON = "reason"
 
@@ -92,12 +93,27 @@ object BrowserConfig {
         val lockdown = (role as? com.kidslauncher.mdm.logins.LoginRole.On)?.hosts?.takeIf { !lockdownLifted }
         var ready = false
         val chromeInstalled = com.kidslauncher.mdm.logins.CHROME_PACKAGE in installed
+        // The role off (or another package) after its lockdown was in force: Chrome is hidden first - its tabs end -,
+        // and only then is its bundle loosened (code QA L3); the plan then hides it or, ticked, unhides it.
+        if (!roleOn && chromeInstalled && prefs.getString(KEY_WRITTEN, null) != null) {
+            try {
+                dpm.setApplicationHidden(admin, com.kidslauncher.mdm.logins.CHROME_PACKAGE, true)
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "Couldn't hide Chrome before loosening its config: ${e.javaClass.simpleName}")
+            }
+        }
         for ((pkg, values) in com.kidslauncher.mdm.logins.browserConfigPlan(filterOn, lockdown, installed)) {
             val chromeRole = pkg == com.kidslauncher.mdm.logins.CHROME_PACKAGE && roleOn
             try {
                 if (chromeRole && com.kidslauncher.mdm.logins.chromeClearDue(roleOn, prefs.getBoolean(KEY_CLEARED, false))) {
-                    clearChrome(context, dpm, admin)
-                    prefs.edit().putBoolean(KEY_CLEARED, true).putLong(KEY_CLEARED_MS, System.currentTimeMillis()).apply()
+                    // D13 first and on its own (code QA L5): the role waits - Chrome stays hidden - until the clear has
+                    // reported success, which is recorded then and asks for the next apply; a failure is tried again.
+                    val clearing = prefs.getLong(KEY_CLEARING_MS, 0L)
+                    if (System.currentTimeMillis() - clearing !in 0..CLEAR_WAIT_MS) {
+                        prefs.edit().putLong(KEY_CLEARING_MS, System.currentTimeMillis()).apply()
+                        clearChrome(context, dpm, admin, prefs)
+                    }
+                    continue
                 }
                 val desired = bundleOf(values)
                 if (!sameBundle(dpm.getApplicationRestrictions(admin, pkg), desired)) {
@@ -180,11 +196,20 @@ object BrowserConfig {
 
     /** D13: Chrome's history and web sign-ins from a free phase go, once (asynchronous; the bundle is the device
      * owner's, not Chrome's data, and stays). */
-    private fun clearChrome(context: Context, dpm: DevicePolicyManager, admin: ComponentName) {
+    private fun clearChrome(context: Context, dpm: DevicePolicyManager, admin: ComponentName, prefs: android.content.SharedPreferences) {
+        val app = context.applicationContext
         dpm.clearApplicationUserData(admin, com.kidslauncher.mdm.logins.CHROME_PACKAGE, context.mainExecutor) { pkg, ok ->
             Log.i(LOG_TAG, "Cleared $pkg's data: $ok")
+            val edit = prefs.edit().remove(KEY_CLEARING_MS)
+            if (ok) edit.putBoolean(KEY_CLEARED, true).putLong(KEY_CLEARED_MS, System.currentTimeMillis())
+            edit.apply()
+            // The role's bundle and Chrome's unhiding come with the next apply.
+            com.kidslauncher.mdm.push.SyncRunner.request(app, "login_browser_cleared")
         }
     }
+
+    /** A clear that never reported is asked again after this long. */
+    private const val CLEAR_WAIT_MS = 120_000L
 
     private fun installed(context: Context, pkg: String): Boolean = try {
         context.packageManager.getPackageInfo(pkg, PackageManager.PackageInfoFlags.of(PackageManager.MATCH_UNINSTALLED_PACKAGES.toLong()))

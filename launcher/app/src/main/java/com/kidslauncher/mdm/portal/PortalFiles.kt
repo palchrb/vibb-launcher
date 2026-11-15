@@ -67,6 +67,8 @@ data class PortalSessionFile(
     val start: String,
     val approved: String,
     val kind: String,
+    /** A window opened in a pause runs until the pause's end, not its minutes (code QA M2): until then it is open. */
+    val pauseEndMs: Long? = null,
 )
 
 /** The files' places. */
@@ -101,7 +103,11 @@ object PortalFiles {
         }.sortedBy { it.openedMs }
 }
 
-/** A session file still open: not closed, and opened within its minutes and a minute's grace (a window the system
- * killed without its end leaves an open file; past that it counts as closed, R3-L5). */
-fun sessionOpen(session: PortalSessionFile, nowMs: Long, minutes: Int): Boolean =
-    session.closedMs == null && nowMs - session.openedMs in 0..(minutes + 1) * 60_000L
+/** A session file still open: not closed, and within its minutes - or a pause window's end - and a minute's grace (a
+ * window the system killed without its end leaves an open file; past that it counts as closed, R3-L5). A window opened
+ * in a pause has no 10 minutes while the pause lasts (code QA M2): its slot isn't freed for a second window then. */
+fun sessionOpen(session: PortalSessionFile, nowMs: Long, minutes: Int): Boolean {
+    if (session.closedMs != null || nowMs < session.openedMs) return false
+    val until = maxOf(session.openedMs + minutes * 60_000L, session.pauseEndMs ?: 0L) + 60_000L
+    return nowMs <= until
+}

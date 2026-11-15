@@ -135,6 +135,7 @@ class PortalRulesTest {
                 openedMs = opened,
                 closedMs = if (row.bool("closed")) opened + 1_000L else null,
                 start = "system", approved = "code", kind = "sign_in",
+                pauseEndMs = row["pause_end_in_ms"]?.let { now + it.jsonPrimitive.long },
             )
             assertEquals(row.name(), row.bool("open"), sessionOpen(file, now, row.getValue("minutes").jsonPrimitive.int))
         }

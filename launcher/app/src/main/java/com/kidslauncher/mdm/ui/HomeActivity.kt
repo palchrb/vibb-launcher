@@ -24,6 +24,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
 import androidx.lifecycle.Observer
+import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.GridLayoutManager
 import android.app.role.RoleManager
 import com.kidslauncher.mdm.Application
@@ -772,7 +773,15 @@ class HomeActivity : UIObjectActivity() {
     /** Design 102 §3.6 (D5): one calm line while the phone's Wi-Fi wants a sign-in - never a sound or a badge. */
     private fun renderPortalLine() {
         if (!contentShown) return
-        val row = com.kidslauncher.mdm.portal.PortalRuntime.row(this)
+        val app = applicationContext
+        // The row reads the budget and the records (files and preferences): off the main thread (code QA L9).
+        lifecycleScope.launch {
+            val row = withContext(Dispatchers.IO) { com.kidslauncher.mdm.portal.PortalRuntime.row(app) }
+            if (contentShown && !isDestroyed) showPortalLine(row)
+        }
+    }
+
+    private fun showPortalLine(row: com.kidslauncher.mdm.portal.WifiPortalRow) {
         val text = when (row) {
             com.kidslauncher.mdm.portal.WifiPortalRow.SIGN_IN -> R.string.home_portal_line
             com.kidslauncher.mdm.portal.WifiPortalRow.ASK -> R.string.portal_ask

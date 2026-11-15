@@ -26,7 +26,11 @@ Point Android's probe at it (``captive_portal_http_url`` and ``captive_portal_ht
 - ``iframe``     the login page holds a full-page iframe of OTHER (E5: refused and counted);
 - ``redirector`` the login page links to its own ``/out?to=`` (same site) which 302s to OTHER (E5: refused);
 - ``formpost``   the login form posts to ``/post-out``, which 302s to OTHER (E5: allowed, OTHER becomes a portal
-                 site).
+                 site);
+- ``leafpost``   the login page moves itself (a meta refresh after 3 s) to OTHER's ``/partner`` - a leaf, reached by
+                 the page's own move -, whose two forms POST to OTHER's ``/post302`` and ``/post307``, which redirect
+                 (302, and 307 keeping the POST) to a third site (E5, code QA's owed check: a POST from a leaf may not
+                 leave for a third site; record what the window does with each).
 
 Every login page also has a same-site link (``/terms``), a link straight to OTHER (refused), a ``target=_blank`` one,
 a ``tel:`` link and the Accept button. OTHER's pages link back to the portal and to ``/away``, a 302 to a third site
@@ -43,7 +47,7 @@ import sys
 import threading
 import urllib.parse
 
-MODES = ("portal", "meta", "script", "soft", "hotspot", "walled", "iframe", "redirector", "formpost")
+MODES = ("portal", "meta", "script", "soft", "hotspot", "walled", "iframe", "redirector", "formpost", "leafpost")
 THIRD_SITE = "http://example.com/"
 
 
@@ -97,6 +101,11 @@ def answer(state, method, host, path):
     if name == state.other:
         if route == "/away":
             return 302, {"Location": THIRD_SITE}, b""
+        if route == "/partner":
+            return 200, {}, page("A partner", "<form method=post action='/post302'><button id=post302>Go (302)</button></form>"
+                                 "<form method=post action='/post307'><button id=post307>Go (307)</button></form>")
+        if route in ("/post302", "/post307") and method == "POST":
+            return (302 if route == "/post302" else 307), {"Location": THIRD_SITE}, b""
         if route in ("/page", "/welcome"):
             return 200, {}, page("Another site", "<p><a id=back href='%s'>Back to the sign-in</a></p>"
                                  "<p><a id=away href='/away'>Somewhere else</a></p>" % login)
@@ -110,13 +119,16 @@ def answer(state, method, host, path):
         action = "/post-out" if state.mode == "formpost" else "/accept"
         form = "<form method=post action='%s'><button id=accept>Accept</button></form>" % action
         extra = ""
+        head = ""
+        if state.mode == "leafpost":
+            head = "<meta http-equiv=refresh content='3; url=%s'>" % state.url(state.other, "/partner")
         if state.mode == "walled":
             extra = "<p><a id=google href='https://accounts.google.com/'>Log in with Google</a></p>"
         elif state.mode == "iframe":
             extra = "<iframe id=frame src='%s' style='width:100%%;height:60vh'></iframe>" % other
         elif state.mode == "redirector":
             extra = "<p><a id=redirector href='/out?to=%s'>Our partner</a></p>" % urllib.parse.quote(other, safe="")
-        return 200, {}, page("Sign in to Fake Wi-Fi", form + links + extra)
+        return 200, {}, page("Sign in to Fake Wi-Fi", form + links + extra, head)
     if route == "/terms":
         return 200, {}, page("Terms", "<p><a href='/login'>Back</a></p>")
     if route == "/out":
@@ -202,6 +214,11 @@ def selftest():
             assert ("<iframe" in body) == (mode == "iframe"), mode
             assert ("id=redirector" in body) == (mode == "redirector"), mode
             assert ("accounts.google.com" in body) == (mode == "walled"), mode
+            assert ("/partner" in body) == (mode == "leafpost"), mode
+            if mode == "leafpost":
+                assert "id=post307" in request(state, "GET", "other.test", "/partner")[2]
+                assert request(state, "POST", "other.test", "/post302")[:2] == (302, THIRD_SITE)
+                assert request(state, "POST", "other.test", "/post307")[:2] == (307, THIRD_SITE)
             other = state.url("other.test", "/page")
             if mode == "redirector":
                 path = "/out?to=" + urllib.parse.quote(other, safe="")

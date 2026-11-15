@@ -149,7 +149,9 @@
   "open_sessions": [
     {"name": "written at the window's start, not closed", "opened_ago_ms": 120000, "closed": false, "minutes": 10, "open": true},
     {"name": "closed", "opened_ago_ms": 120000, "closed": true, "minutes": 10, "open": false},
-    {"name": "never closed, past its minutes and a minute's grace", "opened_ago_ms": 700000, "closed": false, "minutes": 10, "open": false}
+    {"name": "never closed, past its minutes and a minute's grace", "opened_ago_ms": 700000, "closed": false, "minutes": 10, "open": false},
+    {"name": "a window opened in a pause holds its slot until the pause's end (code QA M2)", "opened_ago_ms": 1800000, "closed": false, "minutes": 10, "pause_end_in_ms": 1800000, "open": true},
+    {"name": "a pause window past the pause's end and a minute's grace", "opened_ago_ms": 1800000, "closed": false, "minutes": 10, "pause_end_in_ms": -120000, "open": false}
   ],
   "wifi_rows": [
     {"name": "Part A off", "part_on": false, "captive": true, "require_code": true, "budget_left": true, "grant_left": false, "revisit": false, "row": "none"},
@@ -191,5 +193,6 @@
     {"name": "no login_browser", "policy": null, "allowlist": ["org.example.game"], "role": "off", "hosts": null},
     {"name": "Chrome's, with its sites", "policy": {"package": "com.android.chrome", "hosts": ["idp.feide.no", "*", "Accounts.Google.com"]}, "allowlist": ["org.example.game"], "role": "on", "hosts": ["accounts.google.com", "idp.feide.no"]},
     {"name": "another browser is refused (D8)", "policy": {"package": "org.mozilla.firefox", "hosts": ["idp.feide.no"]}, "allowlist": ["org.example.game"], "role": "wrong_package", "hosts": null},
+    {"name": "an unmanaged phone (no allowlist) has no role (code QA L8)", "policy": {"package": "com.android.chrome", "hosts": ["idp.feide.no"]}, "allowlist": null, "role": "off", "hosts": null},
     {"name": "Chrome ticked ignores the role", "policy": {"package": "com.android.chrome", "hosts": ["idp.feide.no"]}, "allowlist": ["com.android.chrome"], "role": "off", "hosts": null}]
 }

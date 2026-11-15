@@ -60,6 +60,9 @@ fun preparePortalProcess() {
 private const val CHECK_EVERY_MS = 5_000L
 private const val TICK_MS = 1_000L
 private const val REPROBE_EVERY_MS = 3_000L
+private const val LISTS_LOADING = 0
+private const val LISTS_READY = 1
+private const val LISTS_FAILED = 2
 
 /**
  * Design 102 §3.3: the Wi-Fi sign-in window - a WebView of Vibb's own in the `:portal` process, bound to the portal's
@@ -102,6 +105,19 @@ class PortalWindowActivity : ComponentActivity() {
     @Volatile
     private var dohHosts: Set<String> = emptySet()
 
+    /** The filter's lists (code QA M1): [LISTS_LOADING] until read - the first page waits for them -, [LISTS_FAILED]
+     * when they couldn't be read, and then every document is refused (fail closed). */
+    @Volatile
+    private var lists = LISTS_LOADING
+
+    /** The URLs answered with a page of ours (a refused POST, a listed document): never the current site, never visited
+     * (code QA L1). */
+    private val substituted = HashSet<String>()
+
+    /** This instance owns the window's session (written at its start): only it ends the `:portal` process (code QA
+     * L6 - a stray instance, a `Forward` without the network, finishes alone). */
+    private var owner = false
+
     @Volatile
     private var validated = false
 
@@ -137,6 +153,7 @@ class PortalWindowActivity : ComponentActivity() {
         val cm = getSystemService(ConnectivityManager::class.java)
         cm.bindProcessToNetwork(net)
         writeSession(null)
+        owner = true
 
         binding = ActivityPortalWindowBinding.inflate(layoutInflater)
         setContentView(binding.root)
@@ -161,7 +178,6 @@ class PortalWindowActivity : ComponentActivity() {
         })
         registerReceiver(closeReceiver, IntentFilter(ACTION_CLOSE_WINDOW), Context.RECEIVER_NOT_EXPORTED)
         watch(cm, net)
-        loadLists()
 
         val first = Uri.parse(snap.url)
         val firstSite = first.host?.let(::siteOf)
@@ -176,34 +192,48 @@ class PortalWindowActivity : ComponentActivity() {
         setUp(view)
         binding.portalWindowPage.addView(view, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         binding.portalWindowHost.text = first.host.orEmpty()
-        view.loadUrl(snap.url)
+        // The first page only once the filter's lists are in (code QA M1): its redirects are judged by them too.
+        loadLists { if (!ended) view.loadUrl(snap.url) }
         handler.post(tick)
     }
 
-    /** The filter's lists from the main process's compiled file, and the built-in secure-DNS hosts (off the main thread). */
-    private fun loadLists() {
-        if (!snapshot.filterOn) return
+    /** The filter's lists from the main process's compiled file, and the built-in secure-DNS hosts, read off the main
+     * thread; [then] runs on the main thread once they are in (at once with the filter off or in a pause). A missing or
+     * unreadable list leaves [lists] failed: every document is refused. */
+    private fun loadLists(then: () -> Unit) {
+        if (!snapshot.filterOn) {
+            lists = LISTS_READY
+            then()
+            return
+        }
         val path = snapshot.blocklistPath
         Thread {
-            try {
+            lists = try {
                 dohHosts = parseDohHosts(assets.open(DOH_HOSTS_ASSET).bufferedReader().use { it.readText() })
-                if (path != null && File(path).exists()) {
-                    val map = HashMap<String, String>()
-                    File(path).bufferedReader().useLines { lines ->
-                        for (line in lines) {
-                            val tab = line.indexOf('\t')
-                            if (tab > 0) map[line.substring(0, tab)] = line.substring(tab + 1)
-                        }
+                val file = path?.let(::File)?.takeIf { it.exists() } ?: error("no compiled list")
+                val map = HashMap<String, String>()
+                file.bufferedReader().useLines { lines ->
+                    for (line in lines) {
+                        val tab = line.indexOf('\t')
+                        if (tab > 0) map[line.substring(0, tab)] = line.substring(tab + 1)
                     }
-                    blocked = map
                 }
+                blocked = map
+                LISTS_READY
             } catch (e: Exception) {
-                android.util.Log.w("PortalWindow", "Couldn't read the filter's lists: ${e.javaClass.simpleName}")
+                android.util.Log.w("PortalWindow", "Couldn't read the filter's lists - every page refused: ${e.javaClass.simpleName}")
+                LISTS_FAILED
             }
+            handler.post(then)
         }.start()
     }
 
-    private fun listed(host: String): Boolean = snapshot.filterOn && classifyDomain(blocked, host, snapshot.spotify, dohHosts) != null
+    /** The filter's lists say no - and, fail closed, while they aren't in or couldn't be read. */
+    private fun listed(host: String): Boolean = when {
+        !snapshot.filterOn -> false
+        lists != LISTS_READY -> true
+        else -> classifyDomain(blocked, host, snapshot.spotify, dohHosts) != null
+    }
 
     private fun pauseOn(): Boolean = snapshot.pauseEndMs?.let { System.currentTimeMillis() < it } == true
 
@@ -275,12 +305,9 @@ class PortalWindowActivity : ComponentActivity() {
         if (now - lastReprobe < REPROBE_EVERY_MS || kind != PortalKind.SIGN_IN) return
         lastReprobe = now
         val net = network ?: return
-        val captive = portal
-        if (captive != null) {
-            captive.reportCaptivePortalDismissed()
-        } else {
-            runCatching { getSystemService(ConnectivityManager::class.java).reportNetworkConnectivity(net, true) }
-        }
+        // `reportNetworkConnectivity` for both starts (code QA L7): `reportCaptivePortalDismissed()` is the window's end
+        // only, as AOSP's login app - called on every page it could re-post Android's notification while the window is open.
+        runCatching { getSystemService(ConnectivityManager::class.java).reportNetworkConnectivity(net, true) }
     }
 
     /** The WebView's settings, explicit (Q102-L4). */
@@ -339,7 +366,8 @@ class PortalWindowActivity : ComponentActivity() {
                 }
                 val host = url.host?.lowercase() ?: return true
                 if (listed(host)) {
-                    synchronized(lock) { blockedHosts += host; blockedFrames += host }
+                    // A listed host is the filter's, never "showed a blocked site" (code QA L2): blocked_hosts only.
+                    synchronized(lock) { if (blockedHosts.size < 10) blockedHosts += host }
                     showLine(R.string.portal_blocked)
                     return true
                 }
@@ -367,12 +395,15 @@ class PortalWindowActivity : ComponentActivity() {
                 if (listed(host)) {
                     synchronized(lock) {
                         if (blockedHosts.size < 10) blockedHosts += host
-                        if (document && blockedFrames.size < 10) blockedFrames += host
+                        if (request.isForMainFrame) substituted += url.toString()
                     }
                     return if (document) page(R.string.portal_blocked) else refusal(403)
                 }
                 if (request.isForMainFrame && request.method.equals("POST", ignoreCase = true)) {
-                    if (!judge(NavStep(StepKind.POST, siteOf(host)))) return page(R.string.portal_leaves)
+                    if (!judge(NavStep(StepKind.POST, siteOf(host)))) {
+                        synchronized(lock) { substituted += url.toString() }
+                        return page(R.string.portal_leaves)
+                    }
                 } else if (!request.isForMainFrame && document) {
                     if (!judge(NavStep(StepKind.FRAME, siteOf(host)))) {
                         synchronized(lock) { if (blockedFrames.size < 10) blockedFrames += host }
@@ -386,6 +417,8 @@ class PortalWindowActivity : ComponentActivity() {
                 val host = Uri.parse(url).host?.lowercase() ?: return
                 val site = siteOf(host)
                 synchronized(lock) {
+                    // Our own page at a refused URL is no site of the kid's (code QA L1).
+                    if (url in substituted) return
                     sites = sites.copy(current = site)
                     if (!sites.settled) {
                         firstUrl = url
@@ -473,6 +506,7 @@ class PortalWindowActivity : ComponentActivity() {
                     start = snapshot.start,
                     approved = snapshot.approved,
                     kind = snapshot.kind,
+                    pauseEndMs = snapshot.pauseEndMs,
                 ),
             )
         } catch (e: Exception) {
@@ -527,8 +561,9 @@ class PortalWindowActivity : ComponentActivity() {
             runCatching { getSystemService(ConnectivityManager::class.java).bindProcessToNetwork(null) }
         }
         super.onDestroy()
-        // The window's process ends with it: nothing of it stays bound to the portal's network.
-        if (isFinishing) android.os.Process.killProcess(android.os.Process.myPid())
+        // The window's process ends with it: nothing of it stays bound to the portal's network. Only the instance that
+        // owned the session ends it (code QA L6).
+        if (isFinishing && owner) android.os.Process.killProcess(android.os.Process.myPid())
     }
 }
 

@@ -287,6 +287,12 @@ class ServerTransportTest {
             mapOf("server/UpstreamTransport.kt" to "import javax.net.ssl.HttpsURLConnection|HttpsURLConnection.getDefaultHostnameVerifier()"),
         ),
         Triple(".openStream(", Regex("\\.openStream\\("), emptyMap()),
+        // Code QA L4: a wildcard import hides `URL`, and `openConnection(` is the way it speaks; raw sockets only where the
+        // DoT/bootstrap and tsnet's SOCKS hop make them.
+        Triple("import java.net.*", Regex("import\\s+java\\.net\\.\\*"), emptyMap()),
+        Triple("openConnection(", Regex("openConnection\\("), emptyMap()),
+        Triple("Socket(", Regex("\\bSocket\\("), mapOf("server/ServerTransport.kt" to null, "server/UpstreamTransport.kt" to null)),
+        Triple("DatagramSocket(", Regex("DatagramSocket\\("), emptyMap()),
         Triple("DownloadManager", Regex("DownloadManager"), emptyMap()),
         Triple("HttpEngine", Regex("HttpEngine"), emptyMap()),
         Triple(
@@ -326,6 +332,10 @@ class ServerTransportTest {
         assertTrue(allowed.first { it.first == "java.net.URL" }.second.containsMatchIn("import java.net.URL\nURL(x).readText()"))
         assertTrue(allowed.first { it.first == "OkHttpClient(" }.second.containsMatchIn("val c = OkHttpClient()"))
         assertFalse(allowed.first { it.first == "java.net.URL" }.second.containsMatchIn("java.net.URLDecoder.decode(x)"))
+        assertTrue(allowed.first { it.first == "import java.net.*" }.second.containsMatchIn("import java.net.*\nURL(x).openConnection()"))
+        assertTrue(allowed.first { it.first == "openConnection(" }.second.containsMatchIn("URL(x).openConnection()"))
+        assertTrue(allowed.first { it.first == "Socket(" }.second.containsMatchIn("val s = Socket(host, 80)"))
+        assertFalse(allowed.first { it.first == "Socket(" }.second.containsMatchIn("protectedSocket(protect)"))
     }
 
     @Test

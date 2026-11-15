@@ -202,10 +202,10 @@ object PortalRuntime {
         closeWindow(context, "off")
     }
 
-    /** Vibb One → the window: close now (R2-M4). */
+    /** Vibb One → the window: close now (R2-M4). Always sent (code QA M2: a pause window outlives its minutes): this
+     * package only, to a receiver that isn't exported; no window running, nobody hears it. */
     fun closeWindow(context: Context, why: String) {
         try {
-            if (!windowOpen(context)) return
             context.sendBroadcast(Intent(ACTION_CLOSE_WINDOW).setPackage(context.packageName).putExtra("why", why))
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Couldn't tell the window to close: ${e.javaClass.simpleName}")
@@ -269,7 +269,7 @@ object PortalRuntime {
         for (file in PortalFiles.readSessions(noBackup)) {
             if (sessionOpen(file, now, policy.minutes)) continue
             val ended = if (file.closedMs == null) {
-                file.copy(closedMs = file.openedMs + policy.minutes * 60_000L, outcome = file.outcome ?: "lost")
+                file.copy(closedMs = file.pauseEndMs ?: (file.openedMs + policy.minutes * 60_000L), outcome = file.outcome ?: "lost")
             } else {
                 file
             }
