@@ -2026,6 +2026,15 @@ pointer here.
   `style.css?v=105`, `top-strip.js?v=1`. Tests: `shell::the_app_shell_scrolls_main_not_the_document` (the canvas rule,
   the nudge's colour, which templates mark `doc-scroll`, the script in the head), `jstest/top-strip.test.js`. Not yet
   seen on the iPhone.
+- **Retries after a return** (design 104, 2026-11-15, `docs/design/104-ios-status-bar.md`; the user: the fade still
+  comes back *"etter den har vært i bakgrunnen av og til"*): the installed app on the user's iPhone (iOS 27.2, added
+  again after 0.72.1) already has `default` - `status_bar.rs` gives `black-translucent` only to Safari 26 or older, so
+  the iOS 26.1 `black-translucent` scrim research does not apply to it, and the bar style is unchanged. What changed is
+  `static/top-strip.js` (`?v=2`): a return (`pageshow`, visible) nudges at once and again 300 ms, 1 s and 3 s later
+  (`RETRY_MS`), each one frame; a new return restarts the series and hidden cancels it, so they never stack. A field's
+  `focusout` and `visualViewport`'s `resize` re-arm one timer: a single nudge 300 ms after the last (`KEYBOARD_MS`).
+  Nothing else: the strip, its colour, the canvas. Tests: `jstest/top-strip.test.js`; the shell test pins `?v=2`.
+  Not seen on the iPhone yet.
 
 ## Every phone's own colour (design 85 step 1, 2026-11-12, branch `design-85`, migration `0138_device_avatar_tone.sql`)
 

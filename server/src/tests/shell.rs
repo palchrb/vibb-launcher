@@ -1507,7 +1507,7 @@ fn the_app_shell_scrolls_main_not_the_document() {
     assert_eq!(block(".top-strip.top-strip-nudge"), "background: #0C0C15;");
     assert!(!css.contains(":has("), "no :has() on the browser floor");
     let head = std::fs::read_to_string("templates/partials/head.html").unwrap();
-    assert!(head.contains("<script src=\"/static/top-strip.js?v=1\" defer></script>"));
+    assert!(head.contains("<script src=\"/static/top-strip.js?v=2\" defer></script>"));
     for path in super::device_api::template_files() {
         let text = std::fs::read_to_string(&path).unwrap();
         let auth = text.contains("<body class=\"auth-page");
