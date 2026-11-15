@@ -4483,6 +4483,47 @@ the run's server data again, enrolled with a typed code; `jelly36` restored afte
 | **Found:** the block didn't dim it | With 01e0bb93b the panel kept Flymodus usable after the block until another signal (a brightness change) refreshed it: the policy write the panel hears comes before `applyHardening` sets `DISALLOW_AIRPLANE_MODE`, and no broadcast an app can register for says a restriction changed (`ACTION_USER_RESTRICTIONS_CHANGED` isn't in the SDK). **Fixed:** `AppEnforcer.applyHardening` asks `ShortcutsRuntime.requestRefresh()` at its end. Checked again: the block off and on from the PWA, Flymodus "off" and "not available now" within the sync, no nudge |
 | The launcher's language (C99-L1) | `cmd locale set-app-locales ... nb-NO`: `Notification channels named again: nb-NO,en-US`, the channel `launcher:shortcuts` named "Snarveier", the header "Snarveier", the descriptions "Lommelykt, av", "Lyd, på", "Flymodus, ikke tilgjengelig nå", "Wi-Fi, på" |
 
+## 6ao. Wi-Fi sign-in: the window, the parent code, the reopen (design 102 Part A)
+
+Owed: design 102 §11's E1-E7 and E10-E13 (E8-E9 are Part B, §6ap). Setup: **`jelly36`** restored clean (the sums, as
+§6an), the branch's debug launcher as Device Owner with a kiosk, a server of the branch with a parent code set on the
+phone, the phone enrolled; mobile data off. The fake portal on the VM: `python3 -I scripts/fake-portal.py --mode portal
+--port 8105` (`--selftest` first); point Android's probe at it with `settings put global captive_portal_http_url
+http://10-0-2-2.nip.io:8105/generate_204` and the same for `captive_portal_https_url` and `captive_portal_fallback_url`,
+`captive_portal_use_https 0` (adb shortcuts for the rig only; the kid's ways in need none). **Always through a hostname**
+(`nip.io`, the other site `sslip.io`), never `10.0.2.2`: the window's own lookup on the bound network is part of the
+check. Wi-Fi off and on (`svc wifi`) makes NetworkMonitor probe again; `curl http://10-0-2-2.nip.io:8105/reset` forgets
+an Accept. Logs: `adb logcat -s PortalWindow PortalRuntime ActivityTaskManager ConnectivityService NetworkMonitor`.
+
+| Check | What to see |
+|---|---|
+| E1 | The notification ("Sign in to Wi-Fi network", folded in the Silent bundle) under the kiosk opens Vibb's entry (`cmp=…/com.kidslauncher.mdm.portal.CaptivePortalEntry`, no violation): "Sjekker nettet …", the keypad, then the window in `:portal` (`ps -A | grep portal`). Accept closes it within ~2 s; the next report's `captive_portal.sessions` has `validated`, `approved: "code"` |
+| E2 | `resolveActivity` names the entry; a second ordinary app's `startActivity` of the entry gets "Permission Denial … requires android.permission.NETWORK_STACK" (not the shell) |
+| E3 | Vibb's real filter on, and Bare Vibb's sink on a SIM-less AVD: the portal loads by hostname in the window; a listed host (add the other site to Blocked domains) is "Denne siden er sperret" and counted |
+| E4 | `--mode soft` and `--mode hotspot`: the window closes as `passes` within 5 s (Vibb's check). `--mode walled`: does **not** close early - needs `cp.cloudflare.com` unreachable from the emulator (block it in the VM's resolver for the run); without that rig the rule rests on `login_rules.json`'s `passes` rows |
+| E5 | `--mode meta` and `--mode script` reach the login page; a tap on "Another site" and on `target=_blank` is refused ("Denne lenken går ut av innloggingssiden"); on the other site, `/away` (a leaf's redirect onward) is refused; `--mode iframe`: the frame shows our blocked page and the session's `blocked_frames` names it (a `wifi_signin_wide` event in the PWA); `--mode redirector`: the tapped `/out?to=` 302 to the other site is refused; `--mode formpost`: the POST's 302 to the other site is allowed and a tap back there works (a portal site). Log whether `hasGesture()` rides a tapped link's and a POST's redirect hops (R7) |
+| E6 | Advanced's "Krev foreldrekode" off: four code-free openings, the fifth "Spør en voksen om Wi-Fi-innlogging" (and `wifi_signin_budget` once); "Gi én innlogging til nå" in the PWA lets one through after the sync |
+| E7 | The binderless start from the Wi-Fi page's "Logg på" and Home's line: the window loads Android's probe URL and the portal's redirect; note how often `reportNetworkConnectivity` re-probes (the rate limit) |
+| E10 | After a `validated` sign-in the Wi-Fi page offers "Åpne påloggingssiden" on that network and not on another; it opens the recorded page, a tap to the other site is refused, it stays open on a working network, counts in the budget (code off), asks the code (code on); the row is gone the next day (set the date) and after a Wi-Fi with no sign-in |
+| E11 | Cleartext allowed in both configs: Settings' server address `http://example.org` is still refused (the vectors on the device), and the sync never connects to it |
+| E12 | The keypad: a wrong code counts in the shared lockout (Settings' gate shows the same tries left), a right one opens this opening only; a second sign-in asks again; the budget spent and a right code still opens (D17); no parent code on the server: only a grant opens; the requirement off on Avansert opens without the keypad; Cancel keeps Android's notification; the PWA shows the `wifi_signin` PIN events |
+| E13 | After a reboot the reopen's row is gone; on a second AVD hotspot with another SSID it doesn't show |
+
+## 6ap. Chrome only for logins (design 102 Part B)
+
+Owed: design 102 §11's E8 and E9. Setup as §6ao, Chrome installed (the Play image's), not ticked under Apps; on the
+Sign-in page the role on with the Google preset and an own site; a test app with a Custom Tab login (the probe app of
+the design's §1 has one, or any allowed app with "Log in with Google"). Logs: `adb logcat -s BrowserConfig AppEnforcer`;
+`adb shell dumpsys device_policy | grep -A3 com.android.chrome` for the written restrictions.
+
+| Check | What to see |
+|---|---|
+| E8 the role | `BrowserConfig: Managed config written for com.android.chrome` before the apply's hide loop; the report says `login_browser.state: on` (the page "Klar"). A Custom Tab to a listed site opens (Chrome pinned, M12) with no first-run screen; a typed blocked site in full Chrome ("Open in Chrome browser") is "… is blocked"; typed words do nothing; the New Tab page's feed is gone; Chrome is on neither Home nor the drawer |
+| E8 refusals | Tick Chrome under Apps: the Sign-in page's switch is disabled with the reason, the policy's `login_browser` is null, Chrome is a normal app. A failed write (e.g. the policy's package changed by SQL to another browser): `failed`/`package`, Chrome hidden and unpinned |
+| E9 the pause | A Custom Tab of YouTube opened during a PIN pause (the lockdown lifted) is gone after the pause's end (Chrome hidden and unhidden in the same apply), and a restored tab reloads blocked |
+| E9 the clear | The role's first turn-on clears Chrome's history and sign-ins once (`cleared_ms` in the report); turning it off and on again doesn't clear again; ticking Chrome and then the role again does |
+| E9 the window | A Wi-Fi sign-in window opened in a pause closes at the pause's end (`closed_by_vibb`) |
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:
