@@ -259,3 +259,28 @@ test("a closed contact holding an open Avansert doesn't refuse the pull; an open
     // Without querySelectorAll (an old fake), any open <details> counts.
     assert.strictEqual(pr.shownOpen({ querySelector: () => ({}) }), true);
 });
+
+// Design 103: the release refreshes in place; the spinner goes when the page has been refreshed (handy:swapped) or
+// the chip takes over (handy:swapwait), and a save's hold ends once no save is left on its way (handy:saved).
+test("the spinner goes on handy:swapped and handy:swapwait; a save's hold ends on handy:saved with none left", () => {
+    const win = fakeWindow();
+    win.install();
+    win.drag(180, 100, [130, 190]);
+    assert.deepStrictEqual(win.shown.slice(-1), ["spinner"]);
+    win.fire("doc", "handy:swapped");
+    assert.deepStrictEqual(win.shown.slice(-1), ["hide"]);
+    win.drag(180, 100, [130, 190]);
+    win.fire("doc", "handy:swapwait");
+    assert.deepStrictEqual(win.shown.slice(-1), ["hide"]);
+    // A save: no pull until it has landed.
+    win.fire("doc", "submit", {});
+    win.shown = [];
+    win.drag(180, 100, [130, 190]);
+    assert.deepStrictEqual(win.shown, []);
+    win.fire("doc", "handy:saved", { detail: { forms: [], pending: 1 } });
+    win.drag(180, 100, [130, 190]);
+    assert.deepStrictEqual(win.shown, [], "another save still out");
+    win.fire("doc", "handy:saved", { detail: { forms: [], pending: 0 } });
+    win.drag(180, 100, [130, 190]);
+    assert.deepStrictEqual(win.shown.slice(-1), ["spinner"]);
+});

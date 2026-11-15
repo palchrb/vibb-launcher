@@ -1307,6 +1307,76 @@ fn the_app_shell_scrolls_main_not_the_document() {
         !main.contains("max-width"),
         "the scroller spans the window: {main}"
     );
+    // Design 103-16: swap.js alone keeps the place over a refresh in place.
+    assert!(main.contains("overflow-anchor: none;"), "{main}");
+    // Design 103 §4: every row line is one rule's `::before` - a 1 px line, scaled to half on 2x+ screens by one block
+    // after every list's rule; a list's own rule sets only its `left`, and no 0.5 px row border is left.
+    let base_at = css
+        .find("\n.group > .row ~ .row::before,")
+        .expect("the hairlines' base rule");
+    let base_open = css[base_at..].find('{').unwrap() + base_at;
+    let base = &css[base_at..base_open];
+    let base_body: String = css[base_open + 1..base_open + css[base_open..].find('}').unwrap()]
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert_eq!(
+        base_body,
+        "content: \"\"; position: absolute; top: 0; right: 0; pointer-events: none; \
+         border-top: 1px solid var(--sep-light);"
+    );
+    let selectors: Vec<&str> = base
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+    assert!(selectors.len() >= 17, "{selectors:?}");
+    let scaled_at = css
+        .rfind("@media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 2dppx)")
+        .expect("the 2dppx block");
+    let scaled_end = scaled_at + css[scaled_at..].find("}\n}").unwrap();
+    let scaled: String = css[scaled_at..scaled_end]
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    for needle in [
+        "border-top: 0;",
+        "height: 1px;",
+        "background: var(--sep);",
+        "transform: scaleY(0.5);",
+        "transform-origin: 0 0;",
+    ] {
+        assert!(scaled.contains(needle), "2dppx: {needle} in {scaled}");
+    }
+    for selector in &selectors {
+        assert!(scaled.contains(selector), "2dppx block lacks {selector}");
+        // Every rule naming this hairline (a list's own) comes before the block and sets no border.
+        let mut from = 0;
+        while let Some(at) = css[from..].find(selector).map(|a| a + from) {
+            from = at + selector.len();
+            if at > scaled_at {
+                continue;
+            }
+            let open = css[at..].find('{').unwrap() + at;
+            let body = &css[open..open + css[open..].find('}').unwrap()];
+            if at != base_at + css[base_at..].find(selector).unwrap() {
+                assert!(
+                    !body.contains("border-top"),
+                    "{selector}: border-top in a list's rule: {body}"
+                );
+            }
+        }
+    }
+    // The one 0.5 px border left is `.all-show`'s, inside a Leaflet popup (not a row line).
+    assert_eq!(
+        compact.matches("border-top:0.5px").count()
+            + compact.matches("border-top-width:0.5px").count(),
+        1,
+        "a 0.5 px row border"
+    );
+    assert!(
+        compact.contains(".all-show{display:block;margin-top:8px;padding-top:8px;border-top:0.5px")
+    );
     // Main has no padding of its own (design 84): the band and the sheet inside it take the column
     // and every inset. The band is main's first child and scrolls away with the page; an editor's
     // is the body's child beside main (.band-fixed keeps its height) - a block, never fixed or
@@ -1627,9 +1697,15 @@ fn the_accent_rules_hold() {
         "--tint-fill-hover: #E07A4C;",
         "--on-tint-fill: #0C0C14;",
         "--field-focus: #FFFFFF;",
+        "--field-focus-line: #D9784C;",
     ] {
         assert!(root.contains(token), ":root: {token}");
     }
+    // Design 103 D13 (a): the focused line's dark-mode peach.
+    assert!(
+        css.contains("--field-focus-line: #C08266;"),
+        "dark --field-focus-line"
+    );
     assert!(!css.contains("--strong"), "--strong is gone");
     for selector in ["button {", ".button-small {", ".act-strong {"] {
         let rule = block(selector);
@@ -1656,16 +1732,28 @@ fn the_accent_rules_hold() {
         "outline: none;",
         "a tapped field shows no ring"
     );
+    // Design 103 §3: a tapped summary shows no ring either (Safari before 15.4).
+    assert!(
+        css.contains(".pointer-focus summary:focus {"),
+        "summary in the pointer rule"
+    );
+    // Design 103 §5: 1 px of the lighter peach, no inset shadow.
     let field = block("input[type=\"text\"]:not(.row-input):focus,");
     for part in [
-        "border-color: var(--tint);",
-        "box-shadow: inset 0 0 0 0.5px var(--tint);",
+        "border-color: var(--field-focus-line);",
         "background-color: var(--field-focus);",
     ] {
         assert!(field.contains(part), "{part} in {field}");
     }
+    assert!(!field.contains("box-shadow"), "no inset shadow: {field}");
     assert!(
-        block("input.row-input:focus,").contains("box-shadow: inset 0 -1.5px 0 var(--tint);"),
+        block("input.row-time:focus,")
+            .contains("box-shadow: inset 0 0 0 1px var(--field-focus-line);"),
+        "the day's small fields' 1 px"
+    );
+    assert!(
+        block("input.row-input:focus,")
+            .contains("box-shadow: inset 0 -1px 0 var(--field-focus-line);"),
         "a borderless field's underline"
     );
     // The keyboard keeps the ring: the :focus outline and the Safari-fallback reset stay.
@@ -1852,7 +1940,8 @@ fn every_class_a_template_uses_is_in_style_css() {
 /// summary only - no template with a Leaflet map loads it, nor any other tab page.
 #[tokio::test]
 async fn pull_down_to_refresh_is_on_devices_and_the_summary_only() {
-    const SCRIPT: &str = "<script src=\"/static/pull-refresh.js?v=4\" defer></script>";
+    const SCRIPT: &str =
+        "<script src=\"/static/pull-refresh.js?v=5\" defer data-swap-ready></script>";
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("phone").await;
@@ -1880,6 +1969,59 @@ async fn pull_down_to_refresh_is_on_devices_and_the_summary_only() {
     }
 }
 
+/// Saves in place (design 103 §2.5, §2.9): every `<script src>` in a template outside the head partial carries
+/// `data-swap-ready` (its load pass runs again on `handy:swapped`, its listeners sit on nodes a save keeps) or is one
+/// of the map pages' scripts, which keep a real reload (D6) - so a new page script fails safe, as a reload. The head
+/// partial's own scripts are `static/swap.js`'s `HEAD_SCRIPTS`.
+#[test]
+fn every_page_script_is_swap_ready_or_listed() {
+    const MAPS: &[&str] = &[
+        "/static/leaflet/leaflet.js",
+        "/static/map-marker.js",
+        "/static/locate.js",
+        "/static/locate-all.js",
+        "/static/map-full.js",
+        "/static/zones.js",
+    ];
+    let tag = regex::Regex::new(r#"<script src="([^"?]+)[^"]*"[^>]*>"#).unwrap();
+    let mut files = super::device_api::template_files();
+    for entry in std::fs::read_dir("templates/partials").unwrap() {
+        let path = entry.unwrap().path();
+        if !path.ends_with("head.html") {
+            files.push(path);
+        }
+    }
+    let mut ready = 0;
+    for path in files {
+        let text = std::fs::read_to_string(&path).unwrap();
+        for found in tag.captures_iter(&text) {
+            let src = &found[1];
+            let whole = &found[0];
+            if whole.contains(" data-swap-ready") {
+                ready += 1;
+                continue;
+            }
+            assert!(
+                MAPS.contains(&src),
+                "{}: {src} is neither data-swap-ready nor a map page's",
+                path.display()
+            );
+        }
+    }
+    assert!(ready >= 20, "{ready} ready page scripts");
+    let head = std::fs::read_to_string("templates/partials/head.html").unwrap();
+    let swap = std::fs::read_to_string("static/swap.js").unwrap();
+    for found in tag.captures_iter(&head) {
+        let name = found[1]
+            .trim_start_matches("/static/")
+            .trim_end_matches(".js");
+        assert!(
+            swap.contains(&format!("\"{name}\": 1")),
+            "swap.js's HEAD_SCRIPTS lacks {name}"
+        );
+    }
+}
+
 /// 2026-10-21, a tap after being away never "does nothing": every page carries
 /// `static/reconnect.js` (deferred, from the head partial), and its ping `GET /ping` is an empty
 /// 204 that is never cached with a session and the login's redirect without one. The backup
@@ -1887,7 +2029,26 @@ async fn pull_down_to_refresh_is_on_devices_and_the_summary_only() {
 #[tokio::test]
 async fn every_page_carries_the_connecting_script_and_its_ping() {
     let head = std::fs::read_to_string("templates/partials/head.html").unwrap();
-    assert!(head.contains("<script src=\"/static/reconnect.js?v=13\" defer></script>"));
+    assert!(head.contains("<script src=\"/static/reconnect.js?v=15\" defer></script>"));
+    // Saves in place (design 103): swap.js un-deferred right after scroll-restore.js (which hands it a save's landing),
+    // and auto-reload.js on every page, armed only by the server's `data-waits` marker.
+    assert!(head.contains(
+        "<script src=\"/static/scroll-restore.js?v=11\"></script>\n\
+         <!-- Saves in place (design 103)"
+    ));
+    assert!(head.contains("<script src=\"/static/swap.js?v=2\"></script>"));
+    assert!(
+        head.find("/static/scroll-restore.js").unwrap() < head.find("/static/swap.js").unwrap()
+            && head.find("/static/swap.js").unwrap() < head.find("/static/autosave.js").unwrap()
+    );
+    assert!(head.contains("<script src=\"/static/auto-reload.js?v=10\" defer></script>"));
+    assert!(head.contains("<script src=\"/static/register-sw.js?v=7\" defer></script>"));
+    // The live region a refreshed flash is spoken in, and the lost save's words (103-12, §2.6).
+    let words = std::fs::read_to_string("templates/partials/js_words.html").unwrap();
+    assert!(
+        words.contains("<div id=\"swap-status\" class=\"visually-hidden\" role=\"status\"></div>")
+    );
+    assert!(words.contains("data-w-save-unknown=\"{{ self.t(\"js.save_unknown\") }}\""));
     // The tab-switch timing (Q28), off until `?timing=1`: on every page too, deferred.
     assert!(head.contains("<script src=\"/static/nav-timing.js?v=3\" defer></script>"));
     let app = TestApp::new().await;
@@ -1901,10 +2062,10 @@ async fn every_page_carries_the_connecting_script_and_its_ping() {
         "/settings".to_string(),
     ] {
         let html = app.get_page(&page, &cookie).await.text();
-        assert!(html.contains("/static/reconnect.js?v=13"), "{page}");
+        assert!(html.contains("/static/reconnect.js?v=15"), "{page}");
     }
     let signed_out = app.request(Method::GET, "/login", None, None).await;
-    assert!(signed_out.text().contains("/static/reconnect.js?v=13"));
+    assert!(signed_out.text().contains("/static/reconnect.js?v=15"));
     // About's Page timing row turns the timing on in this browser (code QA M2: the installed
     // iPhone app has no address bar), back to its own group.
     let about = app.get_page("/updates", &cookie).await.text();
@@ -2205,7 +2366,7 @@ async fn every_confirm_has_a_cancel() {
     }
     assert!(confirms >= 32, "{confirms} confirms");
     let head = std::fs::read_to_string("templates/partials/head.html").unwrap();
-    assert!(head.contains("<script src=\"/static/confirm.js?v=3\" defer></script>"));
+    assert!(head.contains("<script src=\"/static/confirm.js?v=4\" defer></script>"));
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("phone").await;

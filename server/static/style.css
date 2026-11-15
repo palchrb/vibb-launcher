@@ -31,8 +31,10 @@
     --tint-fill: #E8895E;
     --tint-fill-hover: #E07A4C;
     --on-tint-fill: #0C0C14;
-    /* A focused text field's fill (the user's pick A): white, its border --tint. */
+    /* A focused text field's fill (the user's pick A): white. */
     --field-focus: #FFFFFF;
+    /* Its 1 px edge (design 103 D13 a): a lighter peach, 3.1:1 on the white fill and --surface. */
+    --field-focus-line: #D9784C;
     --destructive: #D70015;
     --destructive-hover: #B0001A;
 
@@ -160,6 +162,8 @@
         --on-tint-fill: #0C0C14;
         /* The field keeps its night fill; the peach border says it is focused. */
         --field-focus: #0C0C14;
+        /* A dimmer peach than --tint (6.1:1 on the night fill): a tap changes only the line's colour. */
+        --field-focus-line: #C08266;
         --destructive: #D70015;
         --destructive-hover: #E5172B;
 
@@ -357,8 +361,8 @@ summary:focus:not(:focus-visible) {
 }
 
 /* A focused text field or select (the user's pick A, 2026-10-25; not the borderless ones that are
-   a row's value - .row-input, select.pick): its own border takes the tint at
-   1.5 px (the 1 px border and a 0.5 px inset shadow, so nothing moves) and its fill --field-focus.
+   a row's value - .row-input, select.pick): its own 1 px border takes --field-focus-line, a lighter
+   peach than --tint (design 103 D13), and its fill --field-focus. Nothing moves: the border is 1 px either way.
    A tap or a click shows no ring; the keyboard keeps the 2 px ring above. A browser counts every
    focus of a text field as :focus-visible, a tap too, so the rules above can't tell them apart:
    static/focus-mode.js marks <html> `pointer-focus` from a press until the keyboard moves focus. Without it
@@ -373,15 +377,14 @@ input[type="number"]:not(.row-num):not(.row-input):focus,
 input[type="search"]:not(.row-input):focus,
 select:not(.pick):focus,
 textarea:focus {
-    border-color: var(--tint);
-    box-shadow: inset 0 0 0 0.5px var(--tint);
+    border-color: var(--field-focus-line);
     background-color: var(--field-focus);
 }
 
-/* The day's small fields have no border of their own: the 1.5 px is all shadow. */
+/* The day's small fields have no border of their own: the 1 px is all shadow. */
 input.row-time:focus,
 input.row-num:focus {
-    box-shadow: inset 0 0 0 1.5px var(--tint);
+    box-shadow: inset 0 0 0 1px var(--field-focus-line);
     background-color: var(--field-focus);
 }
 
@@ -389,13 +392,15 @@ input.row-num:focus {
    to tint, so a focus shows a quiet tinted underline - a tap's only sign, the keyboard's ring on top. */
 input.row-input:focus,
 select.pick:focus {
-    box-shadow: inset 0 -1.5px 0 var(--tint);
+    box-shadow: inset 0 -1px 0 var(--field-focus-line);
 }
 
-/* A press marks pointer mode until the keyboard moves (static/focus-mode.js): no ring then. */
+/* A press marks pointer mode until the keyboard moves (static/focus-mode.js): no ring then. A summary too
+   (design 103 §3): Safari before 15.4 drops the :focus-visible reset whole and drew the ring after a tap. */
 .pointer-focus input:focus,
 .pointer-focus select:focus,
-.pointer-focus textarea:focus {
+.pointer-focus textarea:focus,
+.pointer-focus summary:focus {
     outline: none;
 }
 
@@ -427,6 +432,9 @@ input[type="radio"] {
     overscroll-behavior-y: contain;
     touch-action: manipulation;
     padding: 0;
+    /* Design 103-16: no browser scroll anchoring - static/swap.js alone keeps the place over a refresh in place
+       (Chromium's own would move main at a time it can't predict; WebKit has none in a scroller). */
+    overflow-anchor: none;
 }
 
 /* With the floating bar (it comes first in the source) main runs to the screen's bottom edge and
@@ -940,20 +948,42 @@ summary.row:active {
     margin: 0;
 }
 
-/* Hairlines between rows: 1px in a light colour, 0.5px only on 2x screens (§5.7). A .cell-rows is a
-   cell (a form) holding several rows, which get them too (Device › Time Rules' own limits). */
+/* Hairlines between rows (design 103 §4): every row line in the PWA is this one rule - a 1px line in a light
+   colour, and on 2x+ screens a 1px --sep line scaled to half (the block at the end of this file, after every
+   list's rule). A 0.5px border vanished at some fractional positions at 3x (WebKit); the scaled line never
+   does. Each list's own rule below sets only its `left`. A .cell-rows is a cell (a form) holding several rows,
+   which get them too (Device › Time Rules' own limits). */
+.group > .row ~ .row::before,
+.group > .row ~ .cell::before,
+.group > .cell ~ .row::before,
+.group > .cell ~ .cell::before,
+.group > .cell-rows > .row ~ .row::before,
+.group-music > .music-card ~ .music-card::before,
+.wallpaper-item > .cell::before,
+.contact-body .row::before,
+.contact-body .contact-field::before,
+.held-body .row::before,
+.group-lines .row ~ .row::before,
+.group-lines form + form .row:first-child::before,
+.group-lines div + form .row:first-child::before,
+.group-lines form > .cell::before,
+.group-lines form > .contact-field::before,
+.group-lines > details.cell::before,
+.row-sheet-body::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    right: 0;
+    pointer-events: none;
+    border-top: 1px solid var(--sep-light);
+}
+
 .group > .row ~ .row::before,
 .group > .row ~ .cell::before,
 .group > .cell ~ .row::before,
 .group > .cell ~ .cell::before,
 .group > .cell-rows > .row ~ .row::before {
-    content: "";
-    position: absolute;
-    top: 0;
     left: 16px;
-    right: 0;
-    border-top: 1px solid var(--sep-light);
-    pointer-events: none;
 }
 
 .group-icons > .row ~ .row::before,
@@ -976,17 +1006,6 @@ summary.row:active {
 .group-avatars > .cell ~ .cell::before {
     left: 74px;
     left: var(--avatar-inset, 74px);
-}
-
-@media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 2dppx) {
-    .group > .row ~ .row::before,
-    .group > .row ~ .cell::before,
-    .group > .cell ~ .row::before,
-    .group > .cell ~ .cell::before,
-    .group > .cell-rows > .row ~ .row::before {
-        border-top-width: 0.5px;
-        border-top-color: var(--sep);
-    }
 }
 
 .row-label {
@@ -1656,6 +1675,13 @@ button:hover {
 /* A save on its way (scroll-restore.js, 2026-11-14): its button disabled and quietly dimmed until the answer -
    a still state, no animation. */
 button[aria-busy="true"] {
+    opacity: 0.55;
+    cursor: progress;
+}
+
+/* Design 103 D1 (a): a save held while the server can't be reached (static/swap.js marks its busy form `data-held`):
+   its rows dimmed the same way, so a switch shows neither state as saved until the page shows what is stored. */
+form[aria-busy="true"][data-held] .row {
     opacity: 0.55;
     cursor: progress;
 }
@@ -2544,7 +2570,7 @@ details.info[open] > summary .section-chev { -webkit-transform: rotate(90deg); t
 
 .group-music { --avatar-inset: 72px; }
 .music-card { position: relative; }
-.group-music > .music-card ~ .music-card::before { content: ""; position: absolute; top: 0; left: 72px; right: 0; border-top: 1px solid var(--sep-light); pointer-events: none; }
+.group-music > .music-card ~ .music-card::before { left: 72px; }
 .music-cover, .music-tile { flex: none; width: 44px; height: 44px; border-radius: 8px; object-fit: cover; }
 .music-tile { display: flex; align-items: center; justify-content: center; }
 .music-tile img { width: 26px; height: 26px; }
@@ -2768,13 +2794,7 @@ input.row-input {
 }
 
 .wallpaper-item > .cell::before {
-    content: "";
-    position: absolute;
-    top: 0;
     left: 73px;
-    right: 0;
-    border-top: 1px solid var(--sep-light);
-    pointer-events: none;
 }
 
 /* Backups: Download above the backup's two confirms. */
@@ -2803,13 +2823,7 @@ input.row-input {
 
 .contact-body .row::before,
 .contact-body .contact-field::before {
-    content: "";
-    position: absolute;
-    top: 0;
     left: 16px;
-    right: 0;
-    border-top: 1px solid var(--sep-light);
-    pointer-events: none;
 }
 
 .contact-field {
@@ -3126,8 +3140,12 @@ a.act, a.act:hover { text-decoration: none; }
 /* Design 93 §6.6: a row that opens a sheet under it (Avansert's "Åpne for oppsett"). */
 .row-sheet > summary { list-style: none; cursor: pointer; }
 .row-sheet > summary::-webkit-details-marker { display: none; }
-.row-sheet[open] > summary { box-shadow: inset 0 0 0 2px var(--tint); border-radius: 12px; }
-.row-sheet-body { border-top: 0.5px solid var(--sep); }
+.row-sheet > summary .chev { transition: transform 0.2s; }
+/* Open: the chevron turns down (design 103 D11; no outline - the turn is the open mark). */
+.row-sheet[open] > summary .chev { -webkit-transform: rotate(90deg); transform: rotate(90deg); }
+/* The line under the row is the lists' hairline (the one rule, its 2dppx block last in the file). */
+.row-sheet-body { position: relative; }
+.row-sheet-body::before { left: 57px; }
 /* The foreign-app warning's steps, inside its Attention block. */
 .attention-steps { margin: 8px 0 0; padding-left: 20px; font-size: 0.875rem; font-weight: 400; }
 .attention-steps li + li { margin-top: 4px; }
@@ -3555,13 +3573,7 @@ html.veiled body { background: var(--night) url("vibb-rest.svg") center / var(--
 /* Design 77 D16: a waiting message's actions under its row, each a full-width row with a hairline above. Add
    Contact's switches (R2-M1) sit in its form between the fields and the button. */
 .held-body .row::before {
-    content: "";
-    position: absolute;
-    top: 0;
     left: 16px;
-    right: 0;
-    border-top: 1px solid var(--sep-light);
-    pointer-events: none;
 }
 .add-switches { margin: 0 -16px 16px; }
 /* "Tillat avsendernavnet…" opens a confirm (D17's warning) but grants, not deletes: the tint, not the red. */
@@ -3636,13 +3648,7 @@ div.row[data-custom] > .row-value {
 .group-lines form > .cell::before,
 .group-lines form > .contact-field::before,
 .group-lines > details.cell::before {
-    content: "";
-    position: absolute;
-    top: 0;
     left: 16px;
-    right: 0;
-    border-top: 1px solid var(--sep-light);
-    pointer-events: none;
 }
 .group-lines .cell,
 .group-lines .contact-field {
@@ -3758,3 +3764,34 @@ details.own-edit[open] {
 .map-legend-over { display: none; }
 .map-full .map-legend-over { position: absolute; z-index: 1001; bottom: calc(26px + env(safe-area-inset-bottom, 0px)); left: max(10px, env(safe-area-inset-left, 0px)); display: flex; margin: 0; padding: 6px 12px; border-radius: 16px; background: #FFFFFF; color: #636366; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2); }
 .map-legend-over > span:last-child { margin-right: 0; }
+
+/* The hairlines on 2x+ screens (design 103 §4, D12 a): every row line's 1px --sep line scaled to half - 1 device px at
+   2x, 1.5 at 3x, the same at every fractional position. Last in the file, after every list's rule, so no list gets
+   a border and the scaled line both. */
+@media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 2dppx) {
+    .group > .row ~ .row::before,
+    .group > .row ~ .cell::before,
+    .group > .cell ~ .row::before,
+    .group > .cell ~ .cell::before,
+    .group > .cell-rows > .row ~ .row::before,
+    .group-music > .music-card ~ .music-card::before,
+    .wallpaper-item > .cell::before,
+    .contact-body .row::before,
+    .contact-body .contact-field::before,
+    .held-body .row::before,
+    .group-lines .row ~ .row::before,
+    .group-lines form + form .row:first-child::before,
+    .group-lines div + form .row:first-child::before,
+    .group-lines form > .cell::before,
+    .group-lines form > .contact-field::before,
+    .group-lines > details.cell::before,
+    .row-sheet-body::before {
+        border-top: 0;
+        height: 1px;
+        background: var(--sep);
+        -webkit-transform: scaleY(0.5);
+        transform: scaleY(0.5);
+        -webkit-transform-origin: 0 0;
+        transform-origin: 0 0;
+    }
+}

@@ -215,3 +215,13 @@ test("Lukk closes the sheet and gives the focus back to its tile; a tile hides t
     assert.deepStrictEqual(p.tiles.on.focused, [{ preventScroll: true }], "the tile that opened it");
     assert.ok(!p.fire("click", p.rulesForm), "a click elsewhere does nothing");
 });
+
+// Design 103: a refresh in place brings the server's words back; the script reads the page again and redraws them.
+test("after handy:swapped the buttons say their sentences again", () => {
+    const p = page();
+    p.button("pause").textContent = "Sett på pause";
+    p.timeForm.querySelector("button").textContent = "Gi ekstra tid";
+    p.fire("handy:swapped", null);
+    assert.strictEqual(p.button("pause").textContent, "Sett alle regler på pause i 1 t");
+    assert.strictEqual(p.timeForm.querySelector("button").textContent, "Gi 30 min ekstra");
+});

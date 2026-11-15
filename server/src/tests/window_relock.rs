@@ -803,10 +803,13 @@ async fn open_for_setup_is_the_advanced_pages_first_row() {
     );
     assert!(setup.contains(&button), "{setup}");
     assert!(setup.contains("<input type=\"hidden\" name=\"back\" value=\"advanced\">"));
+    // Design 103 §3: one line and "Open now" (the long note with the phone's name is gone).
     assert!(
-        setup.contains("Apps, Settings and Play Store open on phone&#39;s phone for 2 hours"),
+        setup.contains("Apps, Settings and Play open for 2 hours."),
         "{setup}"
     );
+    assert!(setup.contains(">Open now</button>"), "{setup}");
+    assert!(!setup.contains("Play Store open on"), "{setup}");
     let summary = app
         .get_page(&format!("/devices/{id}"), &cookie)
         .await
@@ -1062,12 +1065,12 @@ async fn answer_newest(app: &TestApp, token: &str, id: i64, success: bool) {
     assert_eq!(res.status, StatusCode::NO_CONTENT);
 }
 
-/// PLAN's fix backlog (pwa-fixes-a): after Lock again or Unlock 2 h… the summary loads
-/// `auto-reload.js` until the newest report shows what the phone did - unanswered, or answered but
-/// not reported yet - and never 2 minutes after the press; with nothing pending it loads nothing.
+/// PLAN's fix backlog (pwa-fixes-a): after Lock again or Unlock 2 h… the summary draws the `data-waits` marker
+/// (`static/auto-reload.js` refreshes while it is there, design 103) until the newest report shows what the phone did -
+/// unanswered, or answered but not reported yet - and never 2 minutes after the press; with nothing pending, none.
 #[tokio::test]
 async fn the_summary_reloads_until_the_phone_shows_lock_again_or_unlock() {
-    const SCRIPT: &str = "<script src=\"/static/auto-reload.js?v=9\" defer></script>";
+    const SCRIPT: &str = "<span hidden data-waits></span>";
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;

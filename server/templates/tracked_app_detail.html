@@ -100,7 +100,7 @@
         {% include "partials/app_display_form.html" %}
     </div>
     <p class="group-footer">{% if app.package_name.is_empty() %}{{ self.t("apps.app.display_no_package") }}{% else %}{{ self.t("apps.app.display_footer") }}{% endif %}</p>
-    <script src="/static/app-display.js?v=6" defer></script>
+    <script src="/static/app-display.js?v=7" defer data-swap-ready></script>
 
     <h2 class="group-header">{{ self.t("apps.on_phones") }}</h2>
     {#- The group is always rendered with its id: Install Now's answers land on `#phone-{id}` or,
@@ -141,7 +141,9 @@
     </div>
     {% if app.is_launcher %}
     <div class="group-footer" data-install-about>{{ self.t("apps.install.about") }} <details class="info"><summary aria-label="{{ self.t("apps.install.about_aria") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("apps.install.about_info") }}</p></div></details></div>
-    {% if install_polling %}<script src="/static/install-now.js?v=3" defer></script>{% endif %}
+    {#- On every launcher page, polling only while a row waits (`data-install-poll`), so a row that stops waiting keeps
+        the script list and the page refreshes in place (design 103's code QA L7). -#}
+    <script src="/static/install-now.js?v=5" defer data-swap-ready></script>
     {% endif %}
     {% endif %}
 

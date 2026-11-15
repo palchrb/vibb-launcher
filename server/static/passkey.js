@@ -722,7 +722,27 @@
 
     // ---- The page -------------------------------------------------------------------------------------------
 
+    /** `fn(el)` once per element (design 103: the pass runs again after a refresh in place). */
+    function once(el, key, fn) {
+        if (!el || el[key]) return;
+        el[key] = true;
+        fn(el);
+    }
+
     function install(win) {
+        var doc = win.document;
+        var ok = pass(win);
+        // A refresh in place (design 103, static/swap.js) brings the server's `hidden` back and may bring new forms: the
+        // pass again; a node already wired is never wired twice.
+        if (doc.addEventListener) {
+            doc.addEventListener("handy:swapped", function () {
+                pass(win);
+            });
+        }
+        return ok;
+    }
+
+    function pass(win) {
         var doc = win.document;
         var i;
         if (!supported(win)) {
@@ -736,16 +756,14 @@
         }
         var ui = doc.querySelectorAll("[data-passkey-ui]");
         for (i = 0; i < ui.length; i++) ui[i].hidden = false;
-        var login = doc.getElementById("passkey-sign-in");
-        if (login) installLogin(win, login);
+        once(doc.getElementById("passkey-sign-in"), "handyPasskey", function (login) { installLogin(win, login); });
         var buttons = doc.querySelectorAll("[data-passkey-reauth]");
-        for (i = 0; i < buttons.length; i++) installReauth(win, buttons[i]);
+        for (i = 0; i < buttons.length; i++) once(buttons[i], "handyPasskey", function (b) { installReauth(win, b); });
         var adds = doc.querySelectorAll("[data-passkey-add]");
-        for (i = 0; i < adds.length; i++) installAdd(win, adds[i]);
-        var unlock = doc.querySelector("[data-passkey-unlock]");
-        if (unlock) installUnlock(win, unlock);
+        for (i = 0; i < adds.length; i++) once(adds[i], "handyPasskeyAdd", function (f) { installAdd(win, f); });
+        once(doc.querySelector("[data-passkey-unlock]"), "handyPasskey", function (u) { installUnlock(win, u); });
         var locks = doc.querySelectorAll("[data-app-lock]");
-        for (i = 0; i < locks.length; i++) installAppLock(win, locks[i]);
+        for (i = 0; i < locks.length; i++) once(locks[i], "handyPasskey", function (l) { installAppLock(win, l); });
         return true;
     }
 

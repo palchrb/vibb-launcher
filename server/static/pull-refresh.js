@@ -14,6 +14,9 @@
 // - Our own touch tracking: the drag's moves are `preventDefault`ed only once it is a pull, so a
 //   scroll, a tap or a sideways swipe is the browser's as before; main keeps style.css's
 //   `overscroll-behavior-y: contain` (no browser pull-to-refresh, no scroll chaining to the body).
+// - Design 103 (saves in place): the reload is a refresh in place (reconnect.js's "swap" wait, static/swap.js), so the
+//   spinner is put away on `handy:swapped` - and on `handy:swapwait`, when the chip takes over -; a save's hold ends on
+//   `handy:saved` once no save is left on its way (`pending` 0), since a save no longer leaves the page.
 // ES5, no framework (Chrome/WebView 80, iOS Safari 14). Run its tests: node --test jstest/pull-refresh.test.js
 (function (root) {
     "use strict";
@@ -190,6 +193,15 @@
         });
 
         doc.addEventListener("touchcancel", reset);
+        // Design 103: the page refreshed in place (or the chip took over): no spinner left turning.
+        function settled() {
+            if (!pull) view.hide();
+        }
+        doc.addEventListener("handy:swapped", settled);
+        doc.addEventListener("handy:swapwait", settled);
+        doc.addEventListener("handy:saved", function (e) {
+            if (!e || !e.detail || !e.detail.pending) saving = false;
+        });
         // Back from the back-forward cache: never left spinning.
         win.addEventListener("pageshow", function (e) {
             if (e && e.persisted) {

@@ -68,6 +68,15 @@
 // way, which shows it; no answer, a 5xx, a redirect past the server's stay answer or an address
 // that isn't an http(s) one of this origin never posts again - the server may have acted - and the
 // page is loaded with a GET instead, showing what the server holds.
+//
+// Saves in place (design 103 §2.2): a save that lands on this page is no longer a reload. Its landing goes to
+// static/swap.js (`handySwap.refresh`, with the saved forms and the buttons that sent them), which fetches the page and
+// changes only what differs; an answer not had refreshes it in place too, with a red line (`lost`). The landed forms
+// stay busy until that morph is done: a flip in the gap is queued (`again`) and sent right after it, and only the landed
+// forms' entries are released, never the busy marks of another save started meanwhile. swap.js reads this script's
+// bookkeeping through `window.handyStay` (`inflight`, `entry`, `isSubmitter`, `landed`). A save with no answer after
+// 400 ms shows reconnect.js's thin bar (`handyReconnect.busy`), a counter of its own, until its form is released.
+// No swap.js, or a page it can't swap: the reload as before.
 (function (root) {
     "use strict";
     var KEY = "handy-scroll";
@@ -77,7 +86,9 @@
     var MAX_PLACES = 50;
     var FROM_KEY = "handy-from";
     // A save's one-shot words in the address: not part of which page it is.
-    var ONE_SHOT = { notice: 1, app: 1, saved: 1 };
+    // (design 103's code QA L1: every flash's word, swap.js's ONE_SHOT too.)
+    var ONE_SHOT = { notice: 1, app: 1, saved: 1, done: 1, cancel: 1, changed: 1, install: 1, music_notice: 1,
+        music_entry: 1, avatar: 1, parents: 1, cleared: 1, removed: 1, held: 1, unbanned: 1 };
     // admin_auth::STAY_HEADER and STAY_LOCATION_HEADER.
     var STAY_HEADER = "X-Handy-Stay";
     var STAY_LOCATION = "X-Handy-Location";
@@ -87,6 +98,8 @@
     // The answers where the server refused before acting (a 200 is a refused form shown again: the forms
     // answered with a page on success are `data-native-post`): the only ones a save is sent again on.
     var REFUSED = { 200: 1, 400: 1, 403: 1, 404: 1, 409: 1, 422: 1, 423: 1 };
+    // A save with no answer by then shows the thin bar (design 103 D5; reconnect.js's BAR_AFTER).
+    var BAR_AFTER = 400;
 
     /** `el`'s attribute `name`, or null when it has none. */
     function attr(el, name) {
@@ -341,8 +354,38 @@
             for (var i = 0; i < busy.length; i++) if (busy[i].form === form) return busy[i];
             return null;
         }
+        /** reconnect.js's bar counter (design 103 D5): +1 while a slow save is out, -1 when its form is released. */
+        function bar(n) {
+            var shared = win.handyReconnect;
+            if (shared && typeof shared.busy === "function") shared.busy(n);
+        }
+        /**
+         * The form's text fields as they were sent (design 103-9, code QA L2): after the save lands each takes the server's
+         * value only while it still holds this one - typed on during the round trip, it keeps the parent's text.
+         */
+        var TEXTLESS = { hidden: 1, submit: 1, button: 1, reset: 1, image: 1, checkbox: 1, radio: 1, file: 1, range: 1, color: 1 };
+        function sentOf(form) {
+            var out = [];
+            var fields = (form && form.elements) || [];
+            for (var i = 0; i < fields.length; i++) {
+                var el = fields[i];
+                var tag = String(el.tagName || "").toUpperCase();
+                if (tag === "TEXTAREA" || (tag === "INPUT" && TEXTLESS[String(el.type || "text").toLowerCase()] !== 1)) {
+                    out.push([el, el.value]);
+                }
+            }
+            return out;
+        }
         function markBusy(form, submitter) {
-            busy.push({ form: form, submitter: submitter, again: false });
+            var entry = { form: form, submitter: submitter, again: false, sent: sentOf(form), bar: false, timer: null };
+            busy.push(entry);
+            if (typeof win.setTimeout === "function") {
+                entry.timer = win.setTimeout(function () {
+                    entry.timer = null;
+                    entry.bar = true;
+                    bar(1);
+                }, BAR_AFTER);
+            }
             try {
                 form.setAttribute("aria-busy", "true");
                 if (submitter) {
@@ -352,6 +395,12 @@
             } catch (e) {}
         }
         function unmark(entry) {
+            if (entry.timer !== null && typeof win.clearTimeout === "function") win.clearTimeout(entry.timer);
+            entry.timer = null;
+            if (entry.bar) {
+                entry.bar = false;
+                bar(-1);
+            }
             try {
                 entry.form.removeAttribute("aria-busy");
                 if (entry.submitter) {
@@ -367,6 +416,33 @@
         /** The page with a GET: what the server holds now (`replaceState` first, so a POST's entry isn't sent again). */
         function reloadHere() {
             land({ reload: true, url: win.location.href });
+        }
+        /**
+         * The landing on this page in place (design 103 §2.2): swap.js refreshes it with every busy form (all have
+         * landed: nothing is in flight) and keeps them busy until its morph is done (`landed`). `lost`: the answer
+         * never came, so the page shows what is stored with a red line. No swap.js, or it says no: `land` as before.
+         */
+        function landHere(to, lost) {
+            var swap = win.handySwap;
+            if (swap && typeof swap.refresh === "function") {
+                var forms = [];
+                var buttons = [];
+                for (var i = 0; i < busy.length; i++) {
+                    forms.push(busy[i].form);
+                    if (busy[i].submitter) buttons.push(busy[i].submitter);
+                }
+                var taken = false;
+                try {
+                    taken = swap.refresh(to.url, {
+                        forms: forms,
+                        byButton: buttons,
+                        lost: !!lost,
+                        fallback: function () { land(to); }
+                    });
+                } catch (e) {}
+                if (taken) return;
+            }
+            land(to);
         }
         function land(to) {
             if (!to.reload) {
@@ -414,11 +490,11 @@
             var o = outcome;
             outcome = null;
             if (o.kind === "land" && o.to.reload) {
-                land(o.to);
+                landHere(o.to, false);
                 return;
             }
             if (o.kind === "reload") {
-                reloadHere();
+                landHere({ reload: true, url: win.location.href }, true);
                 return;
             }
             releaseAll();
@@ -458,6 +534,7 @@
                 // after this one, in order, before anything lands.
                 if (entry && entry.again) {
                     entry.again = false;
+                    entry.sent = sentOf(form);
                     var nextHow = stayPost(form, null, win.location.href);
                     if (nextHow) {
                         try {
@@ -506,6 +583,43 @@
             markBusy(form, submitter);
             return true;
         }
+        // swap.js's view of the saves (design 103 §2.2): how many are out, a form's busy entry, a busy button, and the
+        // landed forms released once the morph is done - each one asked for again meanwhile is sent now.
+        win.handyStay = {
+            inflight: function () { return inflight; },
+            entry: isBusy,
+            isSubmitter: function (el) {
+                for (var i = 0; i < busy.length; i++) if (el && busy[i].submitter === el) return true;
+                return false;
+            },
+            landed: function (forms) {
+                var again = [];
+                var kept = [];
+                for (var i = 0; i < busy.length; i++) {
+                    var landed = false;
+                    for (var j = 0; j < forms.length; j++) if (forms[j] === busy[i].form) landed = true;
+                    // A form whose save started in the gap is not among them: it keeps its marks.
+                    if (!landed) {
+                        kept.push(busy[i]);
+                        continue;
+                    }
+                    unmark(busy[i]);
+                    if (busy[i].again) again.push(busy[i].form);
+                }
+                busy = kept;
+                for (var k = 0; k < again.length; k++) {
+                    // A form the morph took off the page is not sent again (code QA L8).
+                    if (again[k].isConnected === false) continue;
+                    var how = stayPost(again[k], null, win.location.href);
+                    if (!how) continue;
+                    try {
+                        send(again[k], null, true, how);
+                        markBusy(again[k], null);
+                    } catch (e) {}
+                }
+            }
+        };
+
         // On the window, after every other submit listener: one that took the submit over
         // (passkey.js, register-sw.js) has prevented it, and a browser without `submitter` posts as before.
         win.addEventListener("submit", function (e) {

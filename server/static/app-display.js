@@ -7,7 +7,8 @@
 // `data-auto-tile`): "Automatic" previews as that glyph on that tile, and a chosen glyph keeps the tile
 // until a colour is chosen (the colour's own `data-tile`). Design 87: where a phone has sent the app's real logo
 // (the form's `data-logo`), "App logo" previews as that image filling the tile (`data-preview-logo`); "Automatic"
-// keeps "Vibb style", as the phone draws it (R2-M6). The form works without this.
+// keeps "Vibb style", as the phone draws it (R2-M6). The form works without this. Every preview is drawn again after a
+// refresh in place (`handy:swapped`, design 103).
 (function () {
     "use strict";
 
@@ -71,6 +72,8 @@
 
     document.addEventListener("input", onEvent);
     document.addEventListener("change", onEvent);
+    // A refresh in place (design 103, static/swap.js) brings the server's tile and glyph back: the previews again.
+    document.addEventListener("handy:swapped", updateAll);
     if (document.readyState === "loading") {
         document.addEventListener("DOMContentLoaded", updateAll);
     } else {

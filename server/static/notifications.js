@@ -247,7 +247,7 @@
         }
     }
 
-    function offer(win) {
+    function offer(win, own) {
         var doc = win.document;
         var card = doc.getElementById("push-offer");
         if (!card) return;
@@ -282,14 +282,14 @@
                     var known = (card.getAttribute("data-subscribed") || "").split(",");
                     if (known.indexOf(hash) >= 0) return true;
                     return reconcile(win, subscription, card.getAttribute("data-key")).then(function (r) {
-                        if (r.replaces && card.elements.replaces) card.elements.replaces.value = r.replaces;
+                        if (r.replaces && card.elements.replaces) own(card.elements.replaces, "value", r.replaces);
                         return r.on;
                     });
                 });
             }).then(function (known) {
                 if (known || !offerShown(facts())) return;
-                card.hidden = false;
-                onButton.disabled = false;
+                own(card, "hidden", false);
+                own(onButton, "disabled", false);
             }, function () {
                 // No worker or no answer: no card, This Device is still the way.
             });
@@ -303,27 +303,27 @@
                 userVisibleOnly: true,
                 applicationServerKey: decodeKey(card.getAttribute("data-key"), win)
             });
-            onButton.disabled = true;
+            own(onButton, "disabled", true);
             asked.then(function (subscription) {
                 var json = subscription.toJSON();
                 card.elements.endpoint.value = json.endpoint;
                 card.elements.p256dh.value = json.keys.p256dh;
                 card.elements.auth.value = json.keys.auth;
-                card.submit();
+                nativePost(card);
             }, function () {
-                onButton.disabled = false;
+                own(onButton, "disabled", false);
                 if (win.Notification && win.Notification.permission === "denied") {
-                    onButton.hidden = true;
-                    line.textContent = card.getAttribute("data-blocked");
+                    own(onButton, "hidden", true);
+                    own(line, "textContent", card.getAttribute("data-blocked"));
                 } else {
-                    line.textContent = card.getAttribute("data-failed");
+                    own(line, "textContent", card.getAttribute("data-failed"));
                 }
             });
         });
 
         later.addEventListener("click", function () {
             dismissOffer(win);
-            card.hidden = true;
+            own(card, "hidden", true);
         });
 
         if (win.addEventListener) {
@@ -335,9 +335,47 @@
         check();
     }
 
+    // A refresh in place (design 103, static/swap.js) brings the server's markup back over what this script set: the
+    // `hidden`, `disabled`, words and hidden fields it set go through `own`, which keeps them, and are set again on
+    // `handy:swapped` (the morph keeps these nodes: the forms and buttons have ids, the card is #push-offer).
+    /**
+     * A subscription's form posts the browser's way, a full page (design 103 §2.9): what this script set on the page
+     * belongs to the state before it, so the page is the server's afresh. `data-native-post` makes
+     * static/scroll-restore.js leave it to the browser and still keep the place.
+     */
+    function nativePost(form) {
+        if (form.setAttribute) form.setAttribute("data-native-post", "");
+        form.submit();
+    }
+
+    function owner(win) {
+        var owned = [];
+        function own(el, prop, value) {
+            if (!el) return;
+            el[prop] = value;
+            if (!el.handyOwn) {
+                el.handyOwn = {};
+                owned.push(el);
+            }
+            el.handyOwn[prop] = value;
+        }
+        var doc = win.document;
+        if (doc.addEventListener) {
+            doc.addEventListener("handy:swapped", function () {
+                for (var i = 0; i < owned.length; i++) {
+                    for (var prop in owned[i].handyOwn) {
+                        if (Object.prototype.hasOwnProperty.call(owned[i].handyOwn, prop)) owned[i][prop] = owned[i].handyOwn[prop];
+                    }
+                }
+            });
+        }
+        return own;
+    }
+
     function install(win) {
         var doc = win.document;
-        offer(win);
+        var own = owner(win);
+        offer(win, own);
         var tested = testedRow(win.location && win.location.search);
         if (tested && doc.querySelector) pollRows(win, tested);
         var form = doc.getElementById("push-on-form");
@@ -351,8 +389,8 @@
         var current = null;
 
         function show(word, note) {
-            stateText.textContent = w(form, word);
-            if (note) doc.getElementById(note).hidden = false;
+            own(stateText, "textContent", w(form, word));
+            if (note) own(doc.getElementById(note), "hidden", false);
         }
 
         if (nav.standalone === false) {
@@ -368,8 +406,8 @@
             return;
         }
         show("off");
-        onButton.hidden = false;
-        onButton.disabled = true;
+        own(onButton, "hidden", false);
+        own(onButton, "disabled", true);
 
         nav.serviceWorker.ready.then(function (reg) {
             registration = reg;
@@ -392,20 +430,20 @@
                         current = subscription;
                         return true;
                     }
-                    if (r.replaces && form.elements.replaces) form.elements.replaces.value = r.replaces;
+                    if (r.replaces && form.elements.replaces) own(form.elements.replaces, "value", r.replaces);
                     return false;
                 });
             });
         }).then(function (on) {
             if (on) {
                 show("on");
-                onButton.hidden = true;
-                offButton.hidden = false;
+                own(onButton, "hidden", true);
+                own(offButton, "hidden", false);
             } else {
-                onButton.disabled = false;
+                own(onButton, "disabled", false);
             }
         }, function () {
-            onButton.disabled = false;
+            own(onButton, "disabled", false);
         });
 
         onButton.addEventListener("click", function () {
@@ -419,10 +457,10 @@
                 form.elements.endpoint.value = json.endpoint;
                 form.elements.p256dh.value = json.keys.p256dh;
                 form.elements.auth.value = json.keys.auth;
-                form.submit();
+                nativePost(form);
             }, function () {
                 if (win.Notification && win.Notification.permission === "denied") {
-                    onButton.hidden = true;
+                    own(onButton, "hidden", true);
                     show("blocked", "push-blocked");
                 } else {
                     show("on-failed");
@@ -437,7 +475,7 @@
             markOff(win, true);
             current.unsubscribe().then(function () {
                 offForm.elements.endpoint.value = endpoint;
-                offForm.submit();
+                nativePost(offForm);
             }, function () {
                 // Still on (review L-1): the app must keep sending it again if the server loses it.
                 markOff(win, false);

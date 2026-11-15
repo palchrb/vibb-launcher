@@ -1,14 +1,20 @@
 // A confirm's Cancel (PLAN "PWA small things", 2026-11-01): every `<details class="confirm">`'s form ends with
 // `[data-confirm-cancel]` (partials/confirm_cancel.html), hidden without JS. This shows them and, on a click, closes
 // the confirm it sits in and moves the focus to its summary, so the page stays where it is. One listener on the
-// document; nothing is posted. Deferred from the head partial. ES5. Tests: jstest/confirm.test.js.
+// document; nothing is posted. Deferred from the head partial; its load pass runs again on `handy:swapped` (design 103).
+// ES5. Tests: jstest/confirm.test.js.
 (function (root) {
     "use strict";
 
     function install(win) {
         var doc = win.document;
-        var buttons = doc.querySelectorAll("[data-confirm-cancel]");
-        for (var i = 0; i < buttons.length; i++) buttons[i].hidden = false;
+        function show() {
+            var buttons = doc.querySelectorAll("[data-confirm-cancel]");
+            for (var i = 0; i < buttons.length; i++) buttons[i].hidden = false;
+        }
+        show();
+        // A refresh in place (design 103, static/swap.js) brings the server's `hidden` back: shown again.
+        doc.addEventListener("handy:swapped", show);
         // Whether the last click was a key's (Enter or Space on a summary has `detail` 0): only then the sheet's first
         // action takes the focus when it opens - after a tap a script focus would draw the pressed look on it.
         var byKey = false;

@@ -951,7 +951,11 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   page from the server near by (LAN, Tailscale) is usually there well before, so a fast change shows nothing, while a
   real wait still gets its mark well under the second after which a tap feels unanswered. The link's mark stays
   immediate: it is the tapped tab or row itself answering the tap, never a stray element. The reload in place (the
-  return's, pull-refresh.js's) gets the bar after the same 400 ms. `reconnect.js?v=13`.
+  return's, pull-refresh.js's) gets the bar after the same 400 ms. `reconnect.js?v=13`. **Since design 103** (`?v=15`)
+  the reload in place is a wait of kind `"swap"`: the same bar, chip, pings and restarts, but every restart is
+  `handySwap.refresh(here)` (a refresh in place, "Saves in place" below), the reload only when the page can't be
+  swapped; `handy:swapped` ends the wait (a link's navigation goes on), a save that is only queued on a held form
+  doesn't end it, and a slow save's bar is a counter of its own (`handyReconnect.busy`), which no wait's end hides.
   Not left after 3 s: a small calm chip "Connecting…" (`.net-chip`, `role=status`; no alarm colour, no modal, the page
   usable under it), a ping (`GET /ping`, 4 s timeout) then and every 5 s, on `online` and when the page is visible
   again; once the server answers (any status below 500 - a signed-out session gets the login's redirect, which counts)
@@ -1090,7 +1094,9 @@ man er inne på en device". Branch `pwa-fixes-b`.
   pull, and from then every move is `preventDefault`ed and moves the arrow (half the finger past the first 10 px, at
   most 40 px, fading in over its first 20). Past 70 px of finger travel (`THRESHOLD`) the arrow turns over
   (`is-armed`); a release there (asked `mayReload` again) shows the spinner (`is-refreshing`) and calls
-  `handyReconnect.reload()` - its `false` puts it away -, without reconnect.js a plain `location.reload()`. A release
+  `handyReconnect.reload()` - its `false` puts it away -, without reconnect.js a plain `location.reload()`. Since design
+  103 that is a refresh in place (reconnect.js's `"swap"` wait): the spinner goes on `handy:swapped`, or on
+  `handy:swapwait` when the chip takes over, and a save's hold ends on `handy:saved` with no save left. A release
   short of 70 px, a second finger, `touchcancel` or a back-forward-cache `pageshow` put it away. A tap, a scroll and a
   sideways swipe are never touched. `.container`'s `overscroll-behavior-y: contain` (on every page already) keeps the
   browser's own pull and chaining out; iOS' rubber band at main's top stays.
@@ -1522,6 +1528,11 @@ man er inne på en device". Branch `pwa-fixes-b`.
 ## Field focus and the filled button (the user's picks A and 3, 2026-10-25, branch `pwa-fixes-c`)
 
 - **The mockup** (https://claude.ai/artifact/CcNPzaNhQsCJitG3RJsmxb, the user: "A og 3 høres bra ut"). `style.css?v=54` (`?v=55` since the code QA's fix round).
+- **Softer since design 103** (§5, D13 a, `style.css?v=116`): the focused border is **1 px** of `--field-focus-line` -
+  light `#D9784C` (3.1:1 on the white fill and `--surface`), dark `#C08266` (6.1:1 on the night fill) - with no inset
+  shadow; `.row-time`/`.row-num` an inset 1 px, `.row-input`/`select.pick` a 1 px underline, all in that colour. The
+  fill and the keyboard's 2 px `--tint` ring are unchanged. A tapped `<summary>` drops its ring too (`.pointer-focus
+  summary:focus`: Safari before 15.4 drew it). What follows describes the first version (1.5 px of `--tint`).
 - **(A) A focused text field or select** (`input` text/tel/password/time/email/url/number/search, `select`,
   `textarea`; not the borderless ones that are a row's value - `.row-input`, `select.pick`): its own border takes
   `--tint` at 1.5 px (the 1 px border plus `box-shadow: inset 0 0 0 0.5px`, so nothing moves; the day's borderless
@@ -2308,14 +2319,19 @@ Server only: no launcher or API change, no migration. The user's "Vi går for a!
   address kept, the focus to the sheet's head without a scroll), the open tile or Lukk closes it, the other rule tile
   only switches the mode; "Alle regler" leaves in Slå på nå; a length fills Til, typing Til clears the lengths; the
   buttons say the sentence ("Slå på Skole til 18:30"), their words from `#quick`'s `data-w-*`. `auto-reload.js` (`?v=9`)
-  holds while a `.qa-sheet` is shown.
+  holds while a `.qa-sheet` is shown. Since design 103 (`?v=3`) it reads `#quick` again on `handy:swapped` and redraws
+  the words; a save in place closes a shown sheet, as the reload did.
 - **Open for setup**: while the report shows the restrictions pause or Play install mode, `#setup-open` sits inside
   `#quick` above its header (where Attention's row lands): "Åpnet for oppsett til 17:10" (the newest answered
   `start_pause` + 2 h), "Apper og Play Butikk er åpne" and Lås igjen (`/end-windows`); an older launcher's own words and
   no action. **Avansert's first row** (`device_advanced.html`, `#setup`, a `window_relock_v1` phone only,
-  `quick_actions::setup_card`): a `<details class="act-sheet row-sheet">` whose sheet holds "Åpne for oppsett i 2 t"
-  (`/start-pause`) or, while open, Lås igjen; both forms send `back=advanced` and `window_relock::queue` returns to
-  `/devices/{id}/advanced?notice=..#setup`, the flash in the group; the page loads `auto-reload.js` while it waits.
+  `quick_actions::setup_card`): since design 103 §3 one row that opens in place - `<details class="row-sheet">`, its
+  chevron turning down, no outline, no second tile or title, no Lukk - whose sheet holds one line ("Apper,
+  innstillinger og Play åpnes i 2 timer.", `device.advanced.setup.line`), the orange line while a rule is turned on,
+  and "Åpne nå" (`/start-pause`, the plain row button); while open the row says "til 17:10" and the sheet holds Lås
+  igjen, with the open line ("Åpnet for oppsett", Play's words) only when the row has no value. Both forms send
+  `back=advanced` and `window_relock::queue` returns to `/devices/{id}/advanced?notice=..#setup`, the flash in the
+  group; the page draws the `data-waits` marker while it waits (the 3 s refresh in place).
 - **Activity** lists each rule turned on that is over ("Skole slått på 16:30-18:30", "Sluttet 18:30" / "Avsluttet
   17:10" / "Regelen ble fjernet") as a lift's row; Today keeps the running one with End now.
 
@@ -2456,3 +2472,69 @@ posted by `static/scroll-restore.js` (`?v=9`) itself, and the return replaces th
   `scroll-restore.js`'s staying post, so a save never jumps to the top; without JS a plain post). The answer lands on
   `#quick` with its flash; `#ask` is gone then, and the script lands on the server's `#quick`.
 - **The push** opens `/devices/{id}#ask`.
+
+## Saves in place (design 103, 2026-11-15, `docs/design/103-saves-in-place.md`, QA `docs/review/qa-103-design.md`)
+
+The user: switches on Avansert gave "forskjellige grader av synlig refresh" - every save reloaded the page. Now a save,
+the 3 s refresh, pull to refresh and the return after being away change only what differs, with no new document.
+
+- **`static/swap.js`** (`?v=1`, un-deferred in `head.html` right after `scroll-restore.js`, ES5):
+  `handySwap.refresh(url, {forms, byButton, lost, fallback})` fetches the page (`redirect: "manual"`, `no-store`),
+  parses it with `DOMParser` and morphs `main` (and an editor's `body > header.band`) in place; `false` means "do it
+  the old way". One pending landing record (a later refresh inherits the saved forms), the newest GET wins, nothing is
+  swapped or reloaded while a save is in flight (scroll-restore's `inflight`), an answer during parsing waits for
+  `DOMContentLoaded`. A real reload instead for: no `main`, another `html[lang]` or `data-lock-ms`, other stylesheets
+  or `script[src]` (a server update), a page script without `data-swap-ready`, anything but a 200 `text/html`, a sign-in
+  redirect; a 423 goes to the lock. A GET that fails holds the saved forms (`data-held`, dimmed rows) and hands over to
+  reconnect.js's `"swap"` wait (`handyReconnect.waitSwap`), `handy:swapwait`.
+- **The morph**: children matched by key - the id, else the tag and the first of `action`, `data-flash`,
+  `data-warning`, `data-mobile-line`, `data-choice`, `data-row`, `data-setup-step`, `for`, `name`, else the tag - with
+  a lookahead (a line that comes in before a form never replaces it; two forms that change places are moved; an id'd
+  node is moved, parked while its old parent is cleared). `<noscript>` is opaque (and emptied in an imported subtree:
+  DOMParser has scripting off), `<script>` never inserted, `data-swap-keep` (the push banner) left as it is,
+  `[data-flash]` always imported fresh and its text spoken through `#swap-status` (`partials/js_words.html`). An open
+  `<details>` stays as the parent had it, unless the button that saved sat in it (D4: the setup sheet closes). A busy
+  form's `aria-busy`/`data-held` and its button's `disabled` are left alone. Controls: a saved form takes the
+  server's values; one with a queued flip (`again`) or one changed and not saved keeps the parent's (the defaults move
+  to the server's); the focused field keeps its caret (in the saved form the server's value when it still holds what
+  was sent). A POST answer's `data-post-answer` goes from the body.
+- **The place**: before the morph the saved form's top and its id'd ancestors' (or, without a save, the first id'd
+  element below the top strip); after it the first of them still connected and drawn is put back where it was - a
+  closed `<details>` hides its content (both engines still give such content client rects, so `drawn` checks the
+  ancestors); a form that left a recorded ancestor (a row moved to another group) scrolls nothing. `main.container`
+  has `overflow-anchor: none`. The address is replaced without the one-shot words, scroll-restore's record cleared.
+- **Then**: `handy:swapped` (`detail.root`) - confirm.js, register-sw.js (badge, sign-out `endpoint` filled again, one
+  submit listener), reconnect.js, pull-refresh.js, auto-reload.js and every page script run their pass again - and,
+  for a save, `handy:saved` (`forms`, `pending`: the saves still out). `scroll-restore.js?v=10`'s `window.handyStay`
+  releases only the landed forms and sends a queued flip now; a lost answer (5xx, no answer) is a refresh in place
+  with the red line `js.save_unknown` in the form's group; a save with no answer after 400 ms shows the thin bar
+  (`handyReconnect.busy`).
+- **auto-reload.js** (`?v=10`) is in the head on every page and ticks only while main holds the server's
+  `<span hidden data-waits>` (the five places that loaded it: Avansert while it waits, Device › Apps installing, Calls
+  confirming, the summary after Lock again/Unlock, provisioning's launcher check); armed by a swap that brings the
+  marker, disarmed by one that takes it away, re-armed after `handy:saved` with none left and from the bfcache; the
+  tick is a refresh in place. The `notice=` strip runs only on a page that has the marker at load.
+- **Page scripts** (`data-swap-ready`, pinned by `shell::every_page_script_is_swap_ready_or_listed`): rule-kind,
+  calendar-preview, pull-refresh, quick-sheets, app-display, contact-form (document listeners), notifications (its
+  own settings through `own()`, its subscription forms post the browser's way), passkey, reveal, photo-crop (wired once
+  per node), music-cards, install-now (its reload a refresh). The map pages (Locate, Locations, a zone) keep a real
+  reload (D6).
+- **Not in place**: a form that leaves its page, a password/file/passkey form, `data-native-post`, a refusal (the
+  browser's own POST shows it, D2), a button save on iOS 14/15 (no `requestSubmit`/`submitter`).
+- **Tests**: `jstest/swap.test.js` (a small fake DOM: keys and lookahead, noscript, flash, keep, details, busy,
+  controls, the anchor chain, the swappable checks, the bookkeeping, DOMContentLoaded, the events),
+  `scroll-restore`/`auto-reload`/`reconnect`/`pull-refresh`/`confirm`/`register-sw` and each page script's jstest.
+  **The real-engine check** `node server/jstest/real/swap-real.js` (by hand, not CI; Chromium and WebKit through the
+  local Playwright, `HANDY_PW_CHROMIUM`/`HANDY_PW_WEBKIT`; "skipped" without Playwright) runs
+  `jstest/real/swap-fixture.html`: real dirty flags, `<option>` and radio, DOMParser's `<noscript>`, `form.elements`
+  after an import, a closed `<details>`, the anchor's delta and the hairlines at 24 fractional offsets.
+- **Owed on the iPhone**: the switches on Avansert, the hairlines at 3x, VoiceOver on `#swap-status`.
+
+## The hairlines: one rule (design 103 §4)
+
+Every row line is one `::before` rule (the group's five selectors, `.group-music`'s cards, `.wallpaper-item`,
+`.contact-body`, `.held-body`, `.group-lines`, `.row-sheet-body`): a 1 px `--sep-light` line; each list's own rule sets
+only its `left`; the 2dppx block - a 1 px `--sep` line `scaleY(0.5)` - is the last rule in `style.css`, so no list
+gets the border and the scaled line both. A 0.5 px border vanished at some fractional positions at 3x in WebKit (§1.3);
+the scaled line shows at every one (1 device px at 2x, 1.5 at 3x). `.all-show` (a Leaflet popup) keeps its own.
+Pinned by `shell::the_app_shell_scrolls_main_not_the_document`; measured by `jstest/real/swap-real.js`.

@@ -33,7 +33,7 @@
     </div>
     <p class="group-footer">{% if edit %}{{ self.t("music.tab.edit_footer") }}{% else %}{% let max = max_entries.to_string() %}{{ self.tc("music.tab.footer", entry_count, [("max", max.as_str())]) }}{% endif %}</p>
     {% endif %}
-    <script src="/static/music-cards.js?v=4" defer></script>
+    <script src="/static/music-cards.js?v=5" defer data-swap-ready></script>
 
     <h2 class="group-header">{{ self.t("common.add") }}</h2>
     <div class="group group-icons">

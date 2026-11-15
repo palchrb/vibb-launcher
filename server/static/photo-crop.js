@@ -619,37 +619,47 @@
             stops[next].focus();
         }, true);
 
-        var inputs = doc.querySelectorAll("input[type=file][data-photo-crop]");
-        Array.prototype.forEach.call(inputs, function (input) {
-            // autosave.js would upload the file as picked; from here the dialog's Save does.
-            input.removeAttribute("data-autosave");
-            input.addEventListener("change", function () {
-                if (session || submitting) return;
-                var file = input.files && input.files[0];
-                if (!file) return;
-                var url = win.URL.createObjectURL(file);
-                open(input, input, url, {
-                    picked: true,
-                    big: file.size > maxBytes,
-                    revoke: function () { win.URL.revokeObjectURL(url); }
+        // The pickers and the Adjust buttons; again on `handy:swapped` (design 103, static/swap.js): a refresh in place
+        // brings the server's `data-autosave` and `hidden` back, and may bring new rows. Each node is wired once.
+        function wire() {
+            var inputs = doc.querySelectorAll("input[type=file][data-photo-crop]");
+            Array.prototype.forEach.call(inputs, function (input) {
+                // autosave.js would upload the file as picked; from here the dialog's Save does.
+                input.removeAttribute("data-autosave");
+                if (input.handyCrop) return;
+                input.handyCrop = true;
+                input.addEventListener("change", function () {
+                    if (session || submitting) return;
+                    var file = input.files && input.files[0];
+                    if (!file) return;
+                    var url = win.URL.createObjectURL(file);
+                    open(input, input, url, {
+                        picked: true,
+                        big: file.size > maxBytes,
+                        revoke: function () { win.URL.revokeObjectURL(url); }
+                    });
                 });
             });
-        });
 
-        var adjusters = doc.querySelectorAll("[data-photo-adjust]");
-        Array.prototype.forEach.call(adjusters, function (button) {
-            var file = button.form && button.form.querySelector("input[type=file][data-photo-crop]");
-            if (!file) return;
-            button.hidden = false;
-            button.addEventListener("click", function () {
-                if (session || submitting) return;
-                open(file, button, button.getAttribute("data-photo-adjust"), {
-                    original: button.getAttribute("data-photo-original"),
-                    view: button.getAttribute("data-photo-view"),
-                    square: button.getAttribute("data-photo-square")
+            var adjusters = doc.querySelectorAll("[data-photo-adjust]");
+            Array.prototype.forEach.call(adjusters, function (button) {
+                var file = button.form && button.form.querySelector("input[type=file][data-photo-crop]");
+                if (!file) return;
+                button.hidden = false;
+                if (button.handyCrop) return;
+                button.handyCrop = true;
+                button.addEventListener("click", function () {
+                    if (session || submitting) return;
+                    open(file, button, button.getAttribute("data-photo-adjust"), {
+                        original: button.getAttribute("data-photo-original"),
+                        view: button.getAttribute("data-photo-view"),
+                        square: button.getAttribute("data-photo-square")
+                    });
                 });
             });
-        });
+        }
+        wire();
+        if (doc.addEventListener) doc.addEventListener("handy:swapped", wire);
 
         // Back to this page from the back-forward cache after a save: it can crop again.
         if (win.addEventListener) {

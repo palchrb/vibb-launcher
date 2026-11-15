@@ -1,3 +1,6 @@
-{#- The every-page scripts' words (design 70 §5.3): `static/reconnect.js` and `static/nav-timing.js` read them from
+{#- The every-page scripts' words (design 70 §5.3): `static/reconnect.js`, `static/nav-timing.js` and `static/swap.js` read them from
     here (`data-w-<name>`, set with textContent). Included by tab_bar.html and by the pages without a tab bar. -#}
-<div id="js-words" hidden data-w-connecting="{{ self.t("js.connecting") }}" data-w-retry="{{ self.t("js.retry") }}" data-w-on="{{ self.t("common.on") }}" data-w-off="{{ self.t("common.off") }}"></div>
+<div id="js-words" hidden data-w-connecting="{{ self.t("js.connecting") }}" data-w-retry="{{ self.t("js.retry") }}" data-w-on="{{ self.t("common.on") }}" data-w-off="{{ self.t("common.off") }}" data-w-save-unknown="{{ self.t("js.save_unknown") }}"></div>
+{#- Design 103-12: a save's flash, refreshed in place, is spoken here (static/swap.js) - one persistent region outside
+    main, so a screen reader hears the new line even when its words are the same as before. -#}
+<div id="swap-status" class="visually-hidden" role="status"></div>

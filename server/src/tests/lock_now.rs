@@ -504,6 +504,33 @@ async fn the_advanced_page_opens_for_setup_and_lands_back_there() {
         .await
         .text();
     assert!(page.contains("id=\"setup-sheet\""), "{page}");
+    // Design 103 §3: one row that opens in place - no second tile and title, no Close, one line and "Open now".
+    let words = |key| crate::i18n::t(crate::i18n::Lang::En, key);
+    let sheet = |page: &str| -> String {
+        let at = page.find("id=\"setup-sheet\"").unwrap();
+        let end = page[at..].find("</details>").unwrap() + at;
+        page[at..end].to_string()
+    };
+    let closed = sheet(&page);
+    assert!(!closed.contains("qa-head"), "{closed}");
+    assert!(!closed.contains("data-confirm-cancel"), "{closed}");
+    assert!(
+        !closed.contains(words("device.summary.qa.close")),
+        "{closed}"
+    );
+    assert!(!closed.contains("qa-danger"), "{closed}");
+    assert!(
+        closed.contains(&format!(
+            "<p class=\"row row-note\">{}</p>",
+            words("device.advanced.setup.line")
+        )),
+        "{closed}"
+    );
+    assert!(
+        closed.contains(words("device.advanced.setup.open_now")),
+        "{closed}"
+    );
+    assert!(!closed.contains("so you can set something up"), "{closed}");
     let res = post(
         &app,
         &cookie,
@@ -524,4 +551,23 @@ async fn the_advanced_page_opens_for_setup_and_lands_back_there() {
         .await
         .text();
     assert!(page.contains("data-flash=\"setup\""), "{page}");
+
+    // 103-11: open with no known end (no answered start_pause): the row has no value, so the sheet says it is open.
+    let (app, cookie, id, _token, _skole) = emma(json!({"restrictions_paused": true})).await;
+    let page = app
+        .get_page(&format!("/devices/{id}/advanced"), &cookie)
+        .await
+        .text();
+    let open = sheet(&page);
+    assert!(!open.contains("class=\"row-value\""), "{open}");
+    let line = format!(
+        "<p class=\"row row-note\">{}</p>",
+        words("device.summary.qa.setup_open")
+    );
+    assert!(open.contains(&line), "{open}");
+    assert!(open.contains(words("device.summary.lock_again")), "{open}");
+    assert!(
+        !open.contains(words("device.advanced.setup.open_now")),
+        "{open}"
+    );
 }

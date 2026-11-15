@@ -1067,3 +1067,111 @@ test("the browser posts as before: a form that leaves its page, a submit taken o
     form.submit();
     assert.deepStrictEqual(bare.nativeSubmits, [form]);
 });
+
+// Design 103 §2.2: a landing on this page goes to swap.js (handySwap.refresh), the landed forms busy until its morph.
+function swapWindow(answer) {
+    const w = stayWindow(answer);
+    w.refreshes = [];
+    w.taken = true;
+    w.win.handySwap = {
+        refresh: (url, opts) => {
+            w.refreshes.push([url, opts]);
+            return w.taken;
+        },
+    };
+    return w;
+}
+
+test("a landing on this page is refreshed in place with its forms and buttons; a refresh that says no is the reload", async () => {
+    const w = swapWindow(() => stayAnswer("/apps/tracked/2?notice=checked#check"));
+    const form = w.form({ method: "post", action: "/apps/tracked/2/check#check" });
+    const button = fakeButton({}, "go", "1");
+    w.submit(form, button);
+    await settle();
+    assert.strictEqual(w.refreshes.length, 1);
+    const [url, opts] = w.refreshes[0];
+    assert.strictEqual(url, "https://vibb.example/apps/tracked/2?notice=checked#check");
+    assert.deepStrictEqual(opts.forms, [form]);
+    assert.deepStrictEqual(opts.byButton, [button]);
+    assert.strictEqual(opts.lost, false);
+    assert.deepStrictEqual(w.went, [], "no reload");
+    assert.strictEqual(form.attrs["aria-busy"], "true", "still busy until the morph");
+    assert.strictEqual(button.disabled, true);
+    // The morph is done: swap.js releases the landed forms.
+    w.win.handyStay.landed([form]);
+    assert.strictEqual(form.attrs["aria-busy"], undefined);
+    assert.strictEqual(button.disabled, false);
+    // A refresh that says no: the reload as before, with its record.
+    const no = swapWindow(() => stayAnswer("/apps/tracked/2#check"));
+    no.taken = false;
+    no.submit(no.form({ method: "post", action: "/apps/tracked/2/check#check" }), null);
+    await settle();
+    assert.deepStrictEqual(no.went.map((g) => g[0]), ["replaceState", "reload"]);
+    // And its fallback is that same reload.
+    const fb = swapWindow(() => stayAnswer("/apps/tracked/2#check"));
+    fb.submit(fb.form({ method: "post", action: "/apps/tracked/2/check#check" }), null);
+    await settle();
+    fb.refreshes[0][1].fallback();
+    assert.deepStrictEqual(fb.went.map((g) => g[0]), ["replaceState", "reload"]);
+});
+
+test("103-3: a flip in the gap is queued and sent after the morph; only the landed entries are released", async () => {
+    const answers = [];
+    const w = swapWindow(() => new Promise((r) => answers.push(r)));
+    const sw = w.form({ method: "post", action: "/devices/1/hardening#restrictions" }, [["a", "on"]]);
+    sw.submit();
+    answers[0](stayAnswer("/apps/tracked/2#restrictions"));
+    await settle();
+    assert.strictEqual(w.refreshes.length, 1, "landed: the GET is out");
+    // The gap: the same switch flipped again, and another form saved.
+    sw.elements[0].value = "off";
+    sw.submit();
+    assert.strictEqual(w.fetches.length, 1, "queued, not sent");
+    assert.strictEqual(w.win.handyStay.entry(sw).again, true);
+    const other = w.form({ method: "post", action: "/devices/1/other#other" });
+    const button = fakeButton({}, "x", "1");
+    w.submit(other, button);
+    assert.strictEqual(w.win.handyStay.inflight(), 1);
+    assert.strictEqual(w.win.handyStay.isSubmitter(button), true);
+    // The morph lands for the first form only.
+    w.win.handyStay.landed([sw]);
+    assert.strictEqual(w.fetches.length, 3, "the queued flip is sent now");
+    assert.strictEqual(w.fetches[2][1].body.toString(), "a=off");
+    assert.strictEqual(other.attrs["aria-busy"], "true", "the other save keeps its marks");
+    assert.strictEqual(button.disabled, true);
+    assert.strictEqual(sw.attrs["aria-busy"], "true", "busy again for its new save");
+    assert.strictEqual(w.win.handyStay.inflight(), 2);
+});
+
+test("an answer not had refreshes in place with the red line; the 400 ms bar is a counter of its own", async () => {
+    const w = swapWindow(() => page(502));
+    const timers = [];
+    w.win.setTimeout = (fn, ms) => { timers.push([fn, ms]); return timers.length; };
+    w.win.clearTimeout = (id) => { timers[id - 1] = null; };
+    const bars = [];
+    w.win.handyReconnect = { busy: (n) => bars.push(n) };
+    const form = w.form({ method: "post", action: "/apps/tracked/2/check#check" });
+    w.submit(form, fakeButton({}, "go", "1"));
+    assert.strictEqual(timers[0][1], 400);
+    timers[0][0]();
+    assert.deepStrictEqual(bars, [1], "slow: the bar");
+    await settle();
+    assert.strictEqual(w.refreshes[0][0], HERE);
+    assert.strictEqual(w.refreshes[0][1].lost, true);
+    assert.deepStrictEqual(w.went, [], "no reload, no POST again");
+    w.win.handyStay.landed([form]);
+    assert.deepStrictEqual(bars, [1, -1], "its share goes with its marks");
+    // A fast save never shows it.
+    const fast = swapWindow(() => stayAnswer("/apps/tracked/2#check"));
+    const t2 = [];
+    fast.win.setTimeout = (fn, ms) => { t2.push(fn); return t2.length; };
+    fast.win.clearTimeout = (id) => { t2[id - 1] = null; };
+    const b2 = [];
+    fast.win.handyReconnect = { busy: (n) => b2.push(n) };
+    const f2 = fast.form({ method: "post", action: "/apps/tracked/2/check#check" });
+    f2.submit();
+    await settle();
+    fast.win.handyStay.landed([f2]);
+    assert.strictEqual(t2[0], null, "the timer cleared");
+    assert.deepStrictEqual(b2, []);
+});
