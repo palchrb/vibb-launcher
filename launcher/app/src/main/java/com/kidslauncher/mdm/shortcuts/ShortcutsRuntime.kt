@@ -121,6 +121,8 @@ object ShortcutsRuntime {
             addAction(BluetoothAdapter.ACTION_STATE_CHANGED)
             addAction(NotificationManager.ACTION_NOTIFICATION_CHANNEL_BLOCK_STATE_CHANGED)
             addAction(Intent.ACTION_LOCALE_CHANGED)
+            // The font scale and the display size change the names' measured size (emulator run, 2026-11-15).
+            addAction(Intent.ACTION_CONFIGURATION_CHANGED)
         }
         ContextCompat.registerReceiver(
             app,
@@ -240,7 +242,11 @@ object ShortcutsRuntime {
         }
     }
 
-    private fun locale(context: Context): String = context.resources.configuration.locales[0]?.toLanguageTag().orEmpty()
+    /** What the posted views depend on besides the panel: the language, the font scale and the width (the names'
+     * size, §3.2). */
+    private fun locale(context: Context): String = context.resources.configuration.let { c ->
+        "${c.locales[0]?.toLanguageTag().orEmpty()} ${c.fontScale} ${c.screenWidthDp}"
+    }
 
     // ---- what the panel shows ----
 

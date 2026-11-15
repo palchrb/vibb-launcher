@@ -55,7 +55,12 @@ class ShortcutsPickerActivity : KidPageActivity() {
     private var mask = 0L
     private var hidden = false
 
-    private val hideFull = Runnable { binding.shortcutsFull.visibility = View.GONE }
+    /** The refusal line stands in the count's place for a moment - the same height, so no row moves under the kid's
+     * next tap (emulator run, 2026-11-15: a line added above the list shifted every row down). */
+    private val hideFull = Runnable {
+        binding.shortcutsFull.visibility = View.GONE
+        binding.shortcutsCount.visibility = View.VISIBLE
+    }
 
     private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         when (key) {
@@ -169,6 +174,7 @@ class ShortcutsPickerActivity : KidPageActivity() {
         val next = togglePick(chosen, key)
         if (next == null) {
             // A fifth: refused, with the line for a moment.
+            binding.shortcutsCount.visibility = View.GONE
             binding.shortcutsFull.visibility = View.VISIBLE
             binding.root.removeCallbacks(hideFull)
             binding.root.postDelayed(hideFull, 3_000)
@@ -181,6 +187,8 @@ class ShortcutsPickerActivity : KidPageActivity() {
     private fun move(key: ShortcutKey, up: Boolean) = save(movePick(chosen, key, up))
 
     private fun save(next: List<ShortcutKey>) {
+        binding.root.removeCallbacks(hideFull)
+        hideFull.run()
         chosen = next
         val picks = picksToStore(next, stored, candidates)
         stored = picks

@@ -62,13 +62,16 @@
         <TextView
             android:id="@+id/shortcuts_count"
             style="@style/KidSoundCaption"
+            android:maxLines="1"
             android:layout_marginTop="12dp"
             android:accessibilityLiveRegion="polite" />
 
         <TextView
             android:id="@+id/shortcuts_full"
             style="@style/KidSoundCaption"
-            android:layout_marginTop="4dp"
+            android:layout_marginTop="12dp"
+            android:maxLines="1"
+            android:ellipsize="end"
             android:accessibilityLiveRegion="polite"
             android:alpha="1"
             android:text="@string/shortcuts_picker_full"
