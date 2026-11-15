@@ -73,7 +73,8 @@ private const val LISTS_FAILED = 2
  * - No address bar, no menu; Close, and Back steps back and closes on the first page.
  * - Where the page may go: [portalNavigation] and [portalFrame] over the hooks (`shouldOverrideUrlLoading` for a
  *   main-frame GET, `shouldInterceptRequest` for a POST and a sub-frame's document, R5/R6), the filter's lists
- *   ([classifyDomain]) on every request. Not seen by these hooks (§7): a sub-resource's redirect target, WebSockets,
+ *   ([classifyDomain]) on every request; a main-frame load neither hook saw (a POST's 307/308 hop, a history move) is
+ *   judged at its commit in `onPageStarted`. Not seen by these hooks (§7): a sub-resource's redirect target, WebSockets,
  *   WebRTC, an app-like site's in-page moves, the parent's own DNS upstream. Service workers are off.
  * - Closes ([portalClose]): `validated` (with `reportCaptivePortalDismissed()`) or `passes` for a sign-in, `lost`,
  *   `closed`, `closed_by_vibb` (Vibb One's "close now", a pause's end), `timeout`, `budget`.
@@ -278,7 +279,17 @@ class PortalWindowActivity : ComponentActivity() {
                 ),
             )
             if (outcome != null) {
-                if (outcome == "validated" || outcome == "passes") portal?.reportCaptivePortalDismissed()
+                if (outcome == "validated" || outcome == "passes") {
+                    val captive = portal
+                    if (captive != null) {
+                        captive.reportCaptivePortalDismissed()
+                    } else if (outcome == "passes") {
+                        // A binderless start has nothing to dismiss, and Android keeps the Wi-Fi CAPTIVE_PORTAL until its
+                        // own recheck (the emulator check, 2026-11-15: Home's line and "Logg på" stayed): one re-probe
+                        // now, past the page loads' rate limit.
+                        network?.let { net -> runCatching { getSystemService(ConnectivityManager::class.java).reportNetworkConnectivity(net, true) } }
+                    }
+                }
                 end(outcome)
                 return
             }
@@ -416,9 +427,25 @@ class PortalWindowActivity : ComponentActivity() {
             override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
                 val host = Uri.parse(url).host?.lowercase() ?: return
                 val site = siteOf(host)
-                synchronized(lock) {
-                    // Our own page at a refused URL is no site of the kid's (code QA L1).
+                // Our own page at a refused URL is no site of the kid's (code QA L1).
+                val unjudged = synchronized(lock) {
                     if (url in substituted) return
+                    site != sites.current
+                }
+                // A main-frame load no hook judged, caught at its commit (the emulator check, 2026-11-15): a POST
+                // answered with 307/308 reaches neither shouldOverrideUrlLoading nor shouldInterceptRequest (measured),
+                // and neither does a history move. Its target is judged here - the filter's lists and, on another site,
+                // as a redirect hop of the chain in flight; refused, the load stops and the window steps back.
+                if (listed(host)) {
+                    synchronized(lock) { if (blockedHosts.size < 10) blockedHosts += host }
+                    refuseCommitted(view, R.string.portal_blocked)
+                    return
+                }
+                if (unjudged && !judge(NavStep(StepKind.REDIRECT, site))) {
+                    refuseCommitted(view, R.string.portal_leaves)
+                    return
+                }
+                synchronized(lock) {
                     sites = sites.copy(current = site)
                     if (!sites.settled) {
                         firstUrl = url
@@ -440,6 +467,18 @@ class PortalWindowActivity : ComponentActivity() {
                 end("closed")
                 return true
             }
+        }
+    }
+
+    /** A committed main-frame load refused at [WebViewClient.onPageStarted]: stopped, and the window steps back to the
+     * page before it (or shows our page when there is none). Its history entry is judged again if it is ever reached. */
+    private fun refuseCommitted(view: WebView, text: Int) {
+        view.stopLoading()
+        showLine(text)
+        if (view.canGoBack()) {
+            view.goBack()
+        } else {
+            view.loadDataWithBaseURL(null, pageHtml(text), "text/html", "utf-8", null)
         }
     }
 
@@ -476,11 +515,13 @@ class PortalWindowActivity : ComponentActivity() {
     private fun refusal(status: Int) = WebResourceResponse("text/plain", "utf-8", status, "Refused", emptyMap(), ByteArrayInputStream(ByteArray(0)))
 
     /** A page of ours in place of a refused document: the kid's words, nothing to tap. */
-    private fun page(text: Int): WebResourceResponse {
+    private fun page(text: Int): WebResourceResponse =
+        WebResourceResponse("text/html", "utf-8", 200, "OK", emptyMap(), ByteArrayInputStream(pageHtml(text).toByteArray()))
+
+    private fun pageHtml(text: Int): String {
         val words = android.text.Html.escapeHtml(getString(text))
-        val html = "<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'>" +
+        return "<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'>" +
             "<body style='font-family:sans-serif;padding:24px;background:#16213e;color:#f2f2f2'><p>$words</p></body>"
-        return WebResourceResponse("text/html", "utf-8", 200, "OK", emptyMap(), ByteArrayInputStream(html.toByteArray()))
     }
 
     /** The session as it stands; [outcome] `null` while open. */

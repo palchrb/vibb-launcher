@@ -52,7 +52,7 @@
             {% for r in recent %}
             <div class="row" data-signin>
                 <span class="row-label">{{ r.network }}<span class="row-sub">{{ r.how }}</span>{% if !r.sites.is_empty() %}<span class="row-sub">{{ r.sites }}</span>{% endif %}{% if !r.blocked.is_empty() %}<span class="row-sub">{{ r.blocked }}</span>{% endif %}</span>
-                <span class="row-value">{{ r.when }}</span>
+                <span class="row-value row-value-keep">{{ r.when }}</span>
             </div>
             {% endfor %}
         </div>
