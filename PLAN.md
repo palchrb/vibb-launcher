@@ -192,7 +192,7 @@ Nothing here is waiting on code. Each line names where the detail is; the longer
 - **Hide-and-unhide as a pause-end kill** for the apps that are blocked anyway - only if the user wants it (`launcher/CLAUDE.md` gotcha: since Android 14 `killBackgroundProcesses` ends only the caller's own processes).
 
 ### Dropped / declined
-- **LONG LIST, most likely not (the user 2026-11-14, from the Digital assistant ideas): a voice button with a fixed command set ("ring pappa", no AI chat) and "Vis mamma dette" (the kid sends a screenshot to the parent from the assistant panel).**
+- **LONG LIST, most likely not (the user 2026-11-14, from the Digital assistant ideas): a voice button with a fixed command set ("ring pappa", no AI chat) and "Vis mamma dette" (the kid sends a screenshot to the parent from the assistant panel).** Added 2026-11-15 (the user: "Ok enig"): Vibb's own notification shade replacing Android's under the kiosk - it could only open while a Vibb screen is in front (catching the top-edge swipe over other apps needs an overlay on every app), it would rebuild reply/media/call/grouped notifications, and it removes a standard gesture; the cost of keeping Android's shade is a ~24 dp empty header band under lock task (jelly36, A16; the real Jelly Star to be checked).
 - **The PWA's scroll bar on iOS half over the night band (seen by the user on 0.74.1, 2026-11-11: "det kan jeg leve med")**: iOS draws `main`'s scroll indicator the scroller's whole height, over the band where it cannot be seen; iOS lets a page neither colour nor move it. Accepted as is.
 
 - **DECLINED 2026-11-07: MET's "feels like" (`apparent_air_temperature`)** (the user: "Nei takk", after the advice to use it only in the words when it differs by 5° or more).
