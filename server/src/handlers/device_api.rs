@@ -610,6 +610,7 @@ pub(crate) async fn build_policy(
         status_heartbeat: state.config.status_heartbeat,
         status_heartbeat_fields: crate::status_heartbeat::HEARTBEAT_FIELDS,
         status_gzip: true,
+        rule_pause: true,
         server_tls,
     })
 }
@@ -1463,6 +1464,11 @@ async fn status_intake(
         .mobile_data
         .as_ref()
         .and_then(crate::mobile_network::clean_mobile);
+    // Design 98 §5.1: Flymodus, its role and its periods, cleaned field by field.
+    let airplane_mode_json = report
+        .airplane_mode
+        .as_ref()
+        .and_then(|value| crate::airplane_mode::clean(value, arrived_ms));
     // Design 64 step 2: the phone's zone watch, known keys only.
     let zone_watch_json = report
         .zone_watch
@@ -1500,8 +1506,8 @@ async fn status_intake(
           foreign_access_json, remote_wipe_ready, admin_policies_pending_json, relock_blocks_json, \
           relock_blocks_total, clock_format_applied, battery_level, battery_charging, dns_upstream_json, \
           write_settings_granted, zone_watch_json, tailnet_joined, sms_state_json, data_roaming_json, \
-          mobile_data_json) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          mobile_data_json, airplane_mode_json) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(device.id)
     .bind(&report.lock_reason)
@@ -1561,6 +1567,7 @@ async fn status_intake(
     .bind(&sms_state_json)
     .bind(&data_roaming_json)
     .bind(&mobile_data_json)
+    .bind(&airplane_mode_json)
     .execute(&state.db)
     .await
     .ok();
@@ -1640,12 +1647,33 @@ async fn status_intake(
         let previous_call = previous
             .as_ref()
             .and_then(|p| emergency_call_at(p.call_state_json.as_deref()));
-        if let Some(at) = crate::parent_events::new_emergency_call(
-            emergency_call_at(call_state_json.as_deref()),
-            previous_call,
-            phone.now,
-        ) {
-            crate::parent_events::raise_logged(&state, &phone.emergency_call(at)).await;
+        let reported_call = emergency_call_at(call_state_json.as_deref());
+        // Design 98 §7.1: this report says the call turned airplane mode off (a period with `off_by: "emergency"`).
+        let airplane_off = reported_call.is_some_and(|call| {
+            crate::airplane_mode::emergency_off(
+                airplane_mode_json.as_deref(),
+                call.timestamp_millis(),
+            )
+        });
+        if let Some(at) =
+            crate::parent_events::new_emergency_call(reported_call, previous_call, phone.now)
+        {
+            crate::parent_events::raise_logged(
+                &state,
+                &phone.emergency_call_with(at, airplane_off),
+            )
+            .await;
+        } else if airplane_off && let Some(call) = reported_call {
+            // A later report brings the period: the inbox's line only, no second push.
+            if let Err(err) = crate::parent_events::mark_emergency_airplane_off(
+                &state.db,
+                device.id,
+                call.min(phone.now),
+            )
+            .await
+            {
+                tracing::error!(device_id = device.id, %err, "can't add the airplane line to the emergency call");
+            }
         }
         if let Some(battery) = &report.battery {
             crate::parent_events::battery_report(&state, phone, battery).await;

@@ -848,4 +848,53 @@
     <!-- TalkBack says "Double-tap to" before a click label (code QA L2): infinitives. -->
     <string name="weather_card_hint">see the day</string>
     <string name="weather_card_close">close the day</string>
+    <!-- Design 98 §3.3: "Fullfør oppsett" - the assistant, Wi-Fi in airplane mode, the call filter. -->
+    <string name="settings_assistant_title">Digital assistant</string>
+    <string name="settings_assistant_chosen">Vibb One is chosen</string>
+    <string name="settings_assistant_open">Choose Vibb One - needed for Flymodus. Tap: Default digital assistant app › Vibb One › OK. Android asks whether the assistant may read the screen. Vibb One never does.</string>
+    <string name="settings_assistant_pause_first">Choose Vibb One - needed for Flymodus. Pause all restrictions first, then tap here</string>
+    <string name="settings_assistant_wait">Choose Vibb One - the pause is starting, a moment…</string>
+    <string name="settings_assistant_no_page">Android has no page for this on this phone</string>
+    <string name="settings_wifi_apm_title">Wi-Fi in airplane mode</string>
+    <string name="settings_wifi_apm_kept">Wi-Fi stays on in airplane mode</string>
+    <string name="settings_wifi_apm_turns_off">This phone turns off Wi-Fi in airplane mode</string>
+    <string name="settings_wifi_apm_not_set">Not set up</string>
+    <string name="settings_wifi_apm_start">Not set up - tap: airplane mode goes on, turn on Wi-Fi in the panel, then go back</string>
+    <string name="settings_wifi_apm_pause_first">Not set up - pause all restrictions first, then tap here</string>
+    <string name="settings_wifi_apm_line">Turn on Wi-Fi here, then go back</string>
+    <string name="settings_wifi_apm_failed">Couldn\'t turn on airplane mode. Try again.</string>
+    <string name="settings_call_filter_title">Call filter</string>
+    <string name="settings_call_filter_open">Not chosen - tap and choose Vibb One (Android asks twice)</string>
+    <string name="settings_call_filter_pause_first">Not chosen - pause all restrictions first, then tap here</string>
+    <string name="notification_channel_setup">Setup</string>
+    <string name="setup_notice_title">Finish setting up Vibb One</string>
+    <plurals name="setup_notice_steps">
+        <item quantity="one">%d step left</item>
+        <item quantity="other">%d steps left</item>
+    </plurals>
+    <!-- Design 98 §4.1: the kid's Flymodus row. -->
+    <string name="kid_settings_airplane">Airplane mode</string>
+    <string name="kid_settings_airplane_off_only">Turn off airplane mode</string>
+    <string name="kid_settings_airplane_parent">Set by mum and dad</string>
+    <string name="kid_settings_airplane_turning_on">Turning on airplane mode…</string>
+    <string name="kid_settings_airplane_turning_off">Turning off…</string>
+    <string name="kid_settings_airplane_emergency">Airplane mode can\'t be turned on right after an emergency call</string>
+    <string name="kid_settings_airplane_failed">Couldn\'t turn on airplane mode. Try again.</string>
+    <string name="kid_settings_airplane_on_wifi">No mobile network. Wi-Fi is on. Emergency calls still work.</string>
+    <string name="kid_settings_airplane_on_offline">No network. Emergency calls still work.</string>
+    <string name="kid_settings_wifi_airplane">Can\'t be changed in airplane mode</string>
+    <string name="kid_settings_mobile_airplane">Airplane mode is on</string>
+    <string name="home_airplane_on">Airplane mode is on · Tap to turn off</string>
+    <string name="lock_more">More</string>
+    <string name="rule_sheet_parent_code">Parent code ›</string>
+    <string name="rule_pause_title_one">Pause %1$s</string>
+    <string name="rule_pause_title_two">Pause %1$s and %2$s</string>
+    <string name="rule_pause_15">15 min</string>
+    <string name="rule_pause_30">30 min</string>
+    <string name="rule_pause_60">1 hour</string>
+    <string name="rule_pause_120">2 hours</string>
+    <string name="rule_pause_words">Applies to this rule only. You\'ll see the pause in the app when the phone is online again, and can end it there.</string>
+    <string name="rule_pause_button">Pause it</string>
+    <string name="rule_sheet_parent_code_title">Parent code</string>
+    <string name="rule_pause_no_pin">No parent PIN is set on the server.</string>
 </resources>

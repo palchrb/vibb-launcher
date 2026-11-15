@@ -86,6 +86,8 @@ private val syncMutex = Mutex()
  * the truth about whether it worked.
  */
 suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
+    // Design 98 §2.2: a Flymodus route's window left open by a process death or reboot is put back first.
+    com.kidslauncher.mdm.assistant.AirplaneRoute.putBackIfMarked(context)
     val mdm = LauncherPreferences.mdm()
     val serverUrl = mdm.serverUrl()
     val deviceToken = DeviceToken.get()
@@ -125,6 +127,15 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     val etags = PolicyEtagStore.of(context)
     val owner = PolicyOwner.of(BuildConfig.VERSION_CODE, serverUrl, deviceToken)
     var served: ServedPolicy? = null
+    // Design 98 §4.4.4: the parent code's pauses go before the policy GET, so this sync's policy carries them.
+    try {
+        com.kidslauncher.mdm.timerules.PhonePauses.upload(context, api)
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Log.w(LOG_TAG, "Rule pause upload failed: ${e.javaClass.simpleName}")
+    }
+    val policyGetStartedMs = System.currentTimeMillis()
     val freshOutcome = when (val fetched = fetchPolicy(api, etags, owner, { served = it }) { policyHandshake = it.handshake }) {
         null -> FreshOutcome.UNREACHABLE
         is FreshDecode.Failed -> if (fetched === POLICY_SERVER_ERROR) FreshOutcome.SERVER_ERROR else {
@@ -150,6 +161,8 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
 
     if (freshPolicy != null) {
         storeAcceptedPolicy(context, freshPolicy)
+        // Design 98 §4.4.4: the parent code's pauses read this policy (an ack, or ended in the PWA after the ack).
+        com.kidslauncher.mdm.timerules.PhonePauses.policyAccepted(context, freshPolicy.timePolicy, policyGetStartedMs)
         // Design 95 §3.5: an accepted 200 is kept with its ETag (a 304's body is the kept one already); one with a
         // command is not (its Child PIN stays out of storage, design 59 §1), nor one without an ETag (an older server).
         when (val step = keptBodyStep(served, freshPolicy)) {
@@ -339,89 +352,10 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         // Design 95 §3.5: a heartbeat while only its fields moved and the server takes them, else the full report
         // (gzip'd while the policy says so) - see StatusReports.kt.
         val sent = sendReport(
-            report = StatusReportRequest(
-                lockReason = reason.name,
-                kioskEngaged = mdm.kioskEnabled(),
-                installedApps = collectInstalledApps(context),
-                appVersion = BuildConfig.VERSION_NAME,
-                appVersionCode = BuildConfig.VERSION_CODE,
-                offlineOverrideUsed = mdm.offlineOverrideUsedPendingReport(),
-                location = location.report,
-                policyState = policyState(freshOutcome, cached, policyEverApplied),
-                restrictionsPaused = RestrictionsPause.isActive(),
-                capabilities = STATUS_CAPABILITIES,
-                callState = CallStateReport.build(context),
-                notificationListenerEnabled = BadgeStore.accessGranted(context),
-                timeState = TimeRulesRuntime.report(context, decision.policy, reason),
-                installMode = PlayRuntime.installModeReport(context),
-                playWindowActive = decision.policy?.allowlist != null && PlayRuntime.updateWindowActive(context),
-                playStoreSuspendable = PlayRuntime.storeSuspendable(context),
-                lockState = lockState,
-                screenTimeoutSeconds = ScreenTimeout.currentSeconds(context),
-                backupServiceEnabled = BackupService.reportedState(context),
-                ringerMode = ringerModeName(QuickControls.ringerMode(context)),
-                interruptionFilter = interruptionFilterName(QuickControls.interruptionFilter(context)),
-                updateFence = UpdateFence.report(context, decision.policy),
-                notificationCancels = com.kidslauncher.mdm.badges.NotificationRuleRuntime.report(),
-                appDownloads = try {
-                    AppDownloads.report(context)
-                } catch (e: Exception) {
-                    Log.w(LOG_TAG, "Download report failed", e)
-                    null
-                },
-                bootCover = try {
-                    com.kidslauncher.mdm.lock.BootCover.report(context)
-                } catch (e: Exception) {
-                    Log.w(LOG_TAG, "Boot cover report failed", e)
-                    null
-                },
-                musicState = try {
-                    com.kidslauncher.mdm.music.MusicStatus.report(context)
-                } catch (e: Exception) {
-                    Log.w(LOG_TAG, "Music report failed", e)
-                    null
-                },
-                batteryOptimizationExempt = BatteryExemption.exempt(context),
-                relock = WindowRelock.lastReport(context),
-                unseenBoots = BootWitness.report(context),
-                foreignAccess = ForeignAccess.report(context),
-                relockBlocks = blocks?.first,
-                relockBlocksTotal = blocks?.second,
-                remoteWipeReady = LocateCommands.remoteWipeReady(context),
-                adminPoliciesPending = AdminPolicies.pending(context),
-                clockFormatApplied = ClockFormatSetting.report(context, decision.policy),
-                // Design 36 §4.2: only while the VPN runs with the parent's own server.
-                dnsUpstream = KidVpnService.dnsUpstreamReport(),
-                battery = BatteryStatus.report(context).also { LowBatteryFix.observe(context, it) },
-                writeSettingsGranted = WriteSettingsAccess.granted(context),
-                // S-L10's fix round: the server shows Leave Tailnet only while this says true.
-                tailnetJoined = TsnetClient.joined(context),
-                extraLocations = extraFixes?.map { it.toReport() },
-                zoneWatch = ZoneWatch.report(context, still = location.still),
-                calendar = try {
-                    com.kidslauncher.mdm.calendar.CalendarStore.report(context)
-                } catch (e: Exception) {
-                    Log.w(LOG_TAG, "Calendar report failed: ${e.javaClass.simpleName}")
-                    null
-                },
-                smsState = try {
-                    com.kidslauncher.mdm.sms.SmsRuntime.report(context)
-                } catch (e: Exception) {
-                    Log.w(LOG_TAG, "SMS report failed", e)
-                    null
-                },
-                dataRoaming = MobileNetworkRuntime.dataRoamingReport(context),
-                mobileData = try {
-                    MobileNetworkRuntime.mobileDataReport(context)
-                } catch (e: Exception) {
-                    Log.w(LOG_TAG, "Mobile data report failed: ${e.javaClass.simpleName}")
-                    null
-                },
-                serverTls = ServerTlsReport(
-                    enforcing = ServerPinStore.enforce(context),
-                    seen = seenOf(policyHandshake, ServerPinStore.network(context), System.currentTimeMillis()),
-                    outside = tlsSent,
-                ),
+            report = statusReportOf(
+                context, reason, policyState(freshOutcome, cached, policyEverApplied), decision,
+                location, extraFixes, lockState, blocks, tlsSent,
+                seenOf(policyHandshake, ServerPinStore.network(context), System.currentTimeMillis()),
             ),
             heartbeat = heartbeatOn(decision.policy),
             gzip = decision.policy?.statusGzip == true,
@@ -524,6 +458,152 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
 /** Status-report capability: the update fence, the pending self-update and the notification rule
  * (handy step 11). */
 const val KIOSK_ESCAPES_CAPABILITY = "kiosk_escapes_v1"
+
+/**
+ * Design 98 §2.2 step 2: a report-only post before a Flymodus turn-on - no policy GET, no apply(), the same heartbeat
+ * hash state, under [syncMutex]; [airplaneGoingOn] makes the parent's page say "Flymodus på". The caller bounds it
+ * (5 s). Returns whether the server took it.
+ */
+suspend fun postReportOnly(context: Context, airplaneGoingOn: Boolean): Boolean = syncMutex.withLock {
+    val mdm = LauncherPreferences.mdm()
+    val serverUrl = mdm.serverUrl()
+    val deviceToken = DeviceToken.get()
+    if (serverUrl.isNullOrBlank() || deviceToken.isNullOrBlank()) return false
+    try {
+        val api = createMdmApi(serverUrl, deviceToken, path = serverPathNow(serverUrl))
+        val decision = currentPolicyDecision()
+        val policy = decision.policy
+        val reason = mdm.lockReason()
+        val sent = sendReport(
+            report = statusReportOf(
+                context, reason, policyState(FreshOutcome.UNREACHABLE, cachedPolicy(), mdm.policyEverApplied()), decision,
+                LocationOutcome(LocationAction.NONE, null, null, null), null, com.kidslauncher.mdm.lock.PinLockRuntime.report(context),
+                WindowRelock.reportBlocks(context),
+                ServerPinStore.ring(context), null, airplaneGoingOn,
+            ),
+            heartbeat = heartbeatOn(policy),
+            gzip = policy?.statusGzip == true,
+            owner = HeartbeatAckStore.ownerOf(serverUrl, deviceToken),
+            acks = HeartbeatAckStore.of(context),
+            nowMs = System::currentTimeMillis,
+            read = { body ->
+                runCatching { body?.close() }
+                null
+            },
+        ) { body, encoding -> api.sendStatus(body, encoding) }
+        sent.isSuccessful
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Log.w(LOG_TAG, "The report-only post failed: ${e.javaClass.simpleName}")
+        false
+    }
+}
+
+/**
+ * The full status report (`POST /api/devices/status`) as this sync builds it - also the report-only post before a
+ * Flymodus turn-on ([postReportOnly], design 98 §2.2 step 2), with [airplaneGoingOn].
+ */
+private fun statusReportOf(
+    context: Context,
+    reason: LockReason,
+    policyState: String,
+    decision: PolicyToApply,
+    location: LocationOutcome,
+    extraFixes: List<QueuedFix>?,
+    lockState: com.kidslauncher.mdm.server.dto.LockStateReport,
+    blocks: Pair<List<com.kidslauncher.mdm.server.dto.RelockBlockReport>, Int>?,
+    tlsSent: List<OutsideRow>,
+    seen: ServerTlsSeen?,
+    airplaneGoingOn: Boolean = false,
+): StatusReportRequest {
+    val mdm = LauncherPreferences.mdm()
+    return StatusReportRequest(
+        lockReason = reason.name,
+        kioskEngaged = mdm.kioskEnabled(),
+        installedApps = collectInstalledApps(context),
+        appVersion = BuildConfig.VERSION_NAME,
+        appVersionCode = BuildConfig.VERSION_CODE,
+        offlineOverrideUsed = mdm.offlineOverrideUsedPendingReport(),
+        location = location.report,
+        policyState = policyState,
+        restrictionsPaused = RestrictionsPause.isActive(),
+        capabilities = STATUS_CAPABILITIES,
+        callState = CallStateReport.build(context),
+        notificationListenerEnabled = BadgeStore.accessGranted(context),
+        timeState = TimeRulesRuntime.report(context, decision.policy, reason),
+        installMode = PlayRuntime.installModeReport(context),
+        playWindowActive = decision.policy?.allowlist != null && PlayRuntime.updateWindowActive(context),
+        playStoreSuspendable = PlayRuntime.storeSuspendable(context),
+        lockState = lockState,
+        screenTimeoutSeconds = ScreenTimeout.currentSeconds(context),
+        backupServiceEnabled = BackupService.reportedState(context),
+        ringerMode = ringerModeName(QuickControls.ringerMode(context)),
+        interruptionFilter = interruptionFilterName(QuickControls.interruptionFilter(context)),
+        updateFence = UpdateFence.report(context, decision.policy),
+        notificationCancels = com.kidslauncher.mdm.badges.NotificationRuleRuntime.report(),
+        appDownloads = try {
+            AppDownloads.report(context)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Download report failed", e)
+            null
+        },
+        bootCover = try {
+            com.kidslauncher.mdm.lock.BootCover.report(context)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Boot cover report failed", e)
+            null
+        },
+        musicState = try {
+            com.kidslauncher.mdm.music.MusicStatus.report(context)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Music report failed", e)
+            null
+        },
+        batteryOptimizationExempt = BatteryExemption.exempt(context),
+        relock = WindowRelock.lastReport(context),
+        unseenBoots = BootWitness.report(context),
+        foreignAccess = ForeignAccess.report(context),
+        relockBlocks = blocks?.first,
+        relockBlocksTotal = blocks?.second,
+        remoteWipeReady = LocateCommands.remoteWipeReady(context),
+        adminPoliciesPending = AdminPolicies.pending(context),
+        clockFormatApplied = ClockFormatSetting.report(context, decision.policy),
+        // Design 36 §4.2: only while the VPN runs with the parent's own server.
+        dnsUpstream = KidVpnService.dnsUpstreamReport(),
+        battery = BatteryStatus.report(context).also { LowBatteryFix.observe(context, it) },
+        writeSettingsGranted = WriteSettingsAccess.granted(context),
+        // S-L10's fix round: the server shows Leave Tailnet only while this says true.
+        tailnetJoined = TsnetClient.joined(context),
+        extraLocations = extraFixes?.map { it.toReport() },
+        zoneWatch = ZoneWatch.report(context, still = location.still),
+        calendar = try {
+            com.kidslauncher.mdm.calendar.CalendarStore.report(context)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Calendar report failed: ${e.javaClass.simpleName}")
+            null
+        },
+        smsState = try {
+            com.kidslauncher.mdm.sms.SmsRuntime.report(context)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "SMS report failed", e)
+            null
+        },
+        dataRoaming = MobileNetworkRuntime.dataRoamingReport(context),
+        mobileData = try {
+            MobileNetworkRuntime.mobileDataReport(context)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Mobile data report failed: ${e.javaClass.simpleName}")
+            null
+        },
+        serverTls = ServerTlsReport(
+            enforcing = ServerPinStore.enforce(context),
+            seen = seen,
+            outside = tlsSent,
+        ),
+        airplaneMode = com.kidslauncher.mdm.assistant.AirplaneRuntime.report(context, airplaneGoingOn),
+    )
+}
 
 /** Drains whatever [KidVpnService] has queued via [BlockedEventLog] since the last successful
  * report - best-effort, same as the status report above; only clears the queue once the server

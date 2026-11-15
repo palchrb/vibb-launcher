@@ -1026,13 +1026,18 @@ pub(crate) const QUICK_CONTROL_TOUCH: i64 = 16;
 /// (`group=kid-mobile`), never by the Home Screen form, which keeps it. In a new device's default (D3); an existing
 /// phone's mask is not changed. A launcher before design 97 ignores the bit.
 pub(crate) const QUICK_CONTROL_MOBILE_DATA: i64 = 32;
+/// The kid's own Flymodus switch (design 98 §6.1): shown on the phone once Vibb One is the Digital assistant. Set by
+/// the Home Screen form only while it shows the row (`airplane_row`, a launcher with `airplane_mode_v1`), else kept.
+/// In a new device's default (D1); an existing phone's mask is not changed. A launcher before design 98 ignores it.
+pub(crate) const QUICK_CONTROL_AIRPLANE: i64 = 64;
 /// A new device's `quick_controls_mask`: every switch on but touch (`insert_device_with_policy`), the kid's Mobildata
-/// switch included (design 97 D3).
+/// switch included (design 97 D3), and Flymodus (design 98 D1).
 pub(crate) const DEFAULT_QUICK_CONTROLS: i64 = QUICK_CONTROL_WIFI
     | QUICK_CONTROL_BLUETOOTH
     | QUICK_CONTROL_BRIGHTNESS
     | QUICK_CONTROL_SOUND
-    | QUICK_CONTROL_MOBILE_DATA;
+    | QUICK_CONTROL_MOBILE_DATA
+    | QUICK_CONTROL_AIRPLANE;
 
 #[derive(Template)]
 #[template(path = "device_detail.html")]
@@ -1104,6 +1109,10 @@ struct DeviceDetailTemplate {
     /// Design 95 rev. 3: Mobilnett's lines on the summary - only when they say something (mobile data off on the phone,
     /// only Vibb on cellular now, a roaming warning), each leading to the page.
     mobile_lines: Vec<crate::mobile_network::Line>,
+    /// Design 98 §6.2: Flymodus' lines - a period ended within 12 h, the one an emergency call ended, the role lost.
+    airplane_lines: Vec<crate::airplane_mode::Line>,
+    /// Design 98 §6.2: the Oppsett card (`#oppsett`), while a step the phone needs isn't done.
+    setup: crate::airplane_mode::SetupCard,
     about_value: Option<String>,
 }
 crate::i18n::words!(DeviceDetailTemplate);
@@ -2272,6 +2281,37 @@ async fn render_device(
             .as_ref()
             .and_then(|s| crate::mobile_network::summary_roaming(lang, s)),
     );
+    // Design 98 §6.2: "Flymodus på siden 21:03" in place of "not heard from" (last on the second line while in touch).
+    let status = crate::phone_status::with_airplane(
+        status,
+        &header_facts,
+        &zone,
+        now,
+        latest
+            .as_ref()
+            .filter(|_| device.enrolled_at.is_some())
+            .and_then(|s| crate::airplane_mode::on_since(s, now)),
+    );
+    let airplane = latest.as_ref().and_then(crate::airplane_mode::report);
+    let held_before = match &airplane {
+        Some(report) if !report.assistant => {
+            match crate::airplane_mode::assistant_held_before(&state.db, id).await {
+                Ok(held) => held,
+                Err(err) => {
+                    tracing::error!(device_id = id, %err, "can't read the phone's earlier reports");
+                    return crate::i18n::error(
+                        lang,
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "error.read_phone",
+                    );
+                }
+            }
+        }
+        _ => false,
+    };
+    let airplane_lines =
+        crate::airplane_mode::summary_lines(&zone, now, &policy, airplane.as_ref(), held_before);
+    let setup = crate::airplane_mode::SetupCard::of(lang, &policy, latest.as_ref());
     let meter = meter_of(screen_time.as_ref(), &status);
 
     // Activity (design 48); a failed read is no page, never a history that isn't true.
@@ -2446,6 +2486,8 @@ async fn render_device(
                 &policy,
                 latest.as_ref(),
             ),
+            airplane_lines,
+            setup,
             device,
         }
         .render()
@@ -2912,6 +2954,17 @@ pub async fn update_policy(
     if fields.contains_key("quick_control_touch") {
         quick_controls_mask |= QUICK_CONTROL_TOUCH;
     }
+    // Design 98 §6.1 (Q98-M9): bit 64 is this form's only while it shows the Flymodus row (`airplane_row`); a form
+    // without it (an older launcher's page, an older tab) keeps the stored bit, as it keeps 32.
+    let airplane_row = fields.contains_key("airplane_row");
+    if airplane_row && fields.contains_key("quick_control_airplane") {
+        quick_controls_mask |= QUICK_CONTROL_AIRPLANE;
+    }
+    let kept_bits = if airplane_row {
+        QUICK_CONTROL_MOBILE_DATA
+    } else {
+        QUICK_CONTROL_MOBILE_DATA | QUICK_CONTROL_AIRPLANE
+    };
 
     // Security review S-L5: pairing any Bluetooth device, not only headphones and speakers (a quick-controls field).
     let bluetooth_any_device = fields.contains_key("bluetooth_any_device");
@@ -2927,8 +2980,9 @@ pub async fn update_policy(
          WHERE device_id = ?",
     )
     .bind(lock_task_features)
-    // Design 97 §5: bit 32 (the kid's Mobildata switch) is the Mobilnett page's; this form keeps it.
-    .bind(QUICK_CONTROL_MOBILE_DATA)
+    // Design 97 §5: bit 32 (the kid's Mobildata switch) is the Mobilnett page's; this form keeps it. Design 98: and bit
+    // 64 while the form has no Flymodus row.
+    .bind(kept_bits)
     .bind(quick.then_some(quick_controls_mask))
     .bind(quick.then_some(bluetooth_any_device))
     .bind(filter.then_some(vpn_filter_enabled))

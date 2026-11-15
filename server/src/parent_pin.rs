@@ -242,6 +242,8 @@ pub enum Entry {
     Pause,
     /// Play install mode.
     InstallMode,
+    /// Design 98 §4.4: the time-rule screen's Foreldrekode - a pause of the rule in force ("Regelskjermen").
+    RulePause,
 }
 
 impl Entry {
@@ -252,6 +254,7 @@ impl Entry {
             "settings" => Entry::Settings,
             "pause" => Entry::Pause,
             "install_mode" => Entry::InstallMode,
+            "rule_pause" => Entry::RulePause,
             _ => return None,
         })
     }
@@ -263,6 +266,7 @@ impl Entry {
             Entry::Settings => "settings",
             Entry::Pause => "pause",
             Entry::InstallMode => "install_mode",
+            Entry::RulePause => "rule_pause",
         }
     }
 }
@@ -346,6 +350,7 @@ pub fn log_line(event: &PinEvent) -> security::Detail {
         Entry::Settings => "security.detail.pin.place.settings",
         Entry::Pause => "security.detail.pin.place.pause",
         Entry::InstallMode => "security.detail.pin.place.install_mode",
+        Entry::RulePause => "security.detail.pin.place.rule_pause",
     };
     let with_at = |detail: security::Detail| match at {
         Some(at) => detail.at("at", at),
@@ -366,6 +371,8 @@ pub fn log_line(event: &PinEvent) -> security::Detail {
                 (Entry::Pause, false) => "security.detail.pin.pause",
                 (Entry::InstallMode, true) => "security.detail.pin.install_mode_until",
                 (Entry::InstallMode, false) => "security.detail.pin.install_mode",
+                (Entry::RulePause, true) => "security.detail.pin.rule_pause_until",
+                (Entry::RulePause, false) => "security.detail.pin.rule_pause",
             };
             with_until(with_at(security::Detail::words(key, &[])))
         }

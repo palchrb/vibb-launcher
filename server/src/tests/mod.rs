@@ -3,6 +3,7 @@
 //! requests sent straight to the router - no network, no background tasks.
 
 mod admin_auth;
+mod airplane_mode;
 mod android_lock_page;
 mod app_display;
 mod app_lock;
@@ -63,6 +64,7 @@ mod play;
 mod policy_etag;
 mod power;
 mod provisioning;
+mod rule_pause;
 pub(crate) mod seeded_family;
 mod server_tls;
 mod settings_log;

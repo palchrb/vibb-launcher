@@ -540,6 +540,9 @@ phone_lines! {
     /// With the parent-PIN events they describe.
     ParentPinUsed = "parent_pin_used", crate::parent_pin::PIN_EVENT_DAYS;
     ParentPinLockout = "parent_pin_lockout", crate::parent_pin::PIN_EVENT_DAYS;
+    /// Design 98 §4.4.5: the parent code's pause of a rule, posted by the phone (`handlers::rule_pause`) - with the
+    /// parent-PIN use it follows.
+    TimeLiftPhone = "time_lift_phone", crate::parent_pin::PIN_EVENT_DAYS;
     /// The parent's Storytel credential handed to a phone: a sign-in's 180 days.
     StorytelLoginSent = "storytel_login_sent", crate::retention::SECURITY_EVENT_DAYS;
 }

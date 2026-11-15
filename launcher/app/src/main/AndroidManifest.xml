@@ -276,6 +276,13 @@
             android:taskAffinity="${applicationId}.day"
             android:theme="@style/KidPageLightTheme"
             android:windowSoftInputMode="adjustResize" />
+        <!-- Design 98 §4.4.1: Foreldrekode's choices from the time-rule screen's sheet, then the parent PIN; in Home's
+             locked task, never in recents, finished on stop. -->
+        <activity
+            android:name=".ui.RulePauseActivity"
+            android:configChanges="orientation|screenSize|uiMode"
+            android:excludeFromRecents="true"
+            android:exported="false" />
         <activity
             android:name=".ui.kidsettings.KidSettingsActivity"
             android:configChanges="orientation|screenSize|uiMode"
@@ -419,6 +426,36 @@
             android:permission="android.permission.BIND_CALL_REDIRECTION_SERVICE">
             <intent-filter>
                 <action android:name="android.telecom.CallRedirectionService" />
+            </intent-filter>
+        </service>
+        <!-- Design 98 §2.1: the Digital assistant role's three parts - only Flymodus's route (Settings'
+             AirplaneModeVoiceActivity through our own marked session). The parent chooses Vibb One once on Android's
+             own page (Settings' PIN-gated "Fullfør oppsett"). No assist data, no screenshot, no window, no microphone. -->
+        <service
+            android:name=".assistant.VibbAssistantService"
+            android:exported="true"
+            android:permission="android.permission.BIND_VOICE_INTERACTION">
+            <meta-data
+                android:name="android.voice_interaction"
+                android:resource="@xml/vibb_voice_interaction" />
+            <intent-filter>
+                <action android:name="android.service.voice.VoiceInteractionService" />
+            </intent-filter>
+        </service>
+        <service
+            android:name=".assistant.VibbSessionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_VOICE_INTERACTION" />
+        <!-- §3.2/§3.5: the default-apps window's and the Wi-Fi step's deadline (our own alarm only). -->
+        <receiver
+            android:name=".assistant.SetupDeadlineReceiver"
+            android:exported="false" />
+        <!-- The stub recognizer the role requires: every request answers ERROR_CLIENT at once. -->
+        <service
+            android:name=".assistant.VibbRecognizer"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.speech.RecognitionService" />
             </intent-filter>
         </service>
         <!-- Only our own notification PendingIntents (Answer / Hang up). -->

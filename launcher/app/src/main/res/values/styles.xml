@@ -227,6 +227,19 @@
          starting window (splash), the window background and the app-theme snapshot with its bars.
          Every one of them is pure black ("the lock or black"); the lock paints its own ground (25f),
          and its task description is black too (PinLockActivity.onCreate). -->
+    <!-- Design 98 §4.3: the time-rule screen's sheet - a full-window, transparent dialog drawn edge to edge (its own
+         scrim and bottom sheet, KidInsets for the bars). -->
+    <style name="RuleSheetTheme" parent="launcherBaseTheme">
+        <item name="android:windowIsFloating">false</item>
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowAnimationStyle">@android:style/Animation.InputMethod</item>
+    </style>
+
     <style name="PinLockTheme" parent="launcherBaseTheme">
         <item name="android:windowBackground">@android:color/black</item>
         <item name="android:windowSplashScreenBackground">@android:color/black</item>

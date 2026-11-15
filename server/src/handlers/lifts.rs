@@ -443,11 +443,15 @@ pub(crate) async fn today(
                 what,
                 when: created.map(|t| zone.when(t, now)).unwrap_or_default(),
                 exact: created.map(|t| zone.exact(t)).unwrap_or_default(),
-                by: lift
-                    .created_by
-                    .as_deref()
-                    .map(|by| names.of_username(by).to_string())
-                    .unwrap_or_default(),
+                // Design 98 §4.4.5: the parent code's pause on the phone has no parent; its source says so.
+                by: match &lift.phone_key {
+                    Some(_) => t(lang, "device.summary.lift.phone").to_string(),
+                    None => lift
+                        .created_by
+                        .as_deref()
+                        .map(|by| names.of_username(by).to_string())
+                        .unwrap_or_default(),
+                },
                 status: state.text(expires, zone, now),
                 can_end: lift.target == "rule" && active,
             }

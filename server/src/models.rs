@@ -132,6 +132,10 @@ pub struct DevicePolicy {
     /// Design 95 rev. 3 item 3 (migration 0143): `DISALLOW_CONFIG_MOBILE_NETWORKS` on the phone, on by default.
     #[sqlx(default)]
     pub mobile_settings_locked: bool,
+    /// Design 98 §6.2 (migration 0146): the Oppsett card's "Ikke nå" - the needed steps as they were then
+    /// (`airplane_mode::setup_key`); the card shows again once they change. `None` = never hidden.
+    #[sqlx(default)]
+    pub setup_card_hidden: Option<String>,
     /// Device › Time Rules' "Own limit" switch: when set, this device uses its own
     /// `daily_budget_json` instead of the global one. Until migration 0115 it also swapped
     /// everyone's rules for the phone's own; since then each rule has its own switch
@@ -573,8 +577,14 @@ pub struct DeviceStatus {
     /// Design 95 rev. 3 (migration 0143): the report's `mobile_data`, cleaned (`mobile_network::clean_mobile`).
     #[sqlx(default)]
     pub mobile_data_json: Option<String>,
-    // call_state_json (migrations/0022_calls.sql) is read directly by
-    // handlers::calls::call_report.
+    /// Design 98 §5.1 (migration 0146): the report's `airplane_mode`, cleaned (`airplane_mode::clean`); read through
+    /// `airplane_mode::report`, which wants the capability. `None` from older launchers.
+    #[sqlx(default)]
+    pub airplane_mode_json: Option<String>,
+    /// The report's `call_state` (migrations/0022_calls.sql), its known keys (`device_api::CALL_STATE_FIELDS`). Read
+    /// by handlers::calls::call_report on its own; design 98's Oppsett card reads the screening roles from it here.
+    #[sqlx(default)]
+    pub call_state_json: Option<String>,
 }
 
 /// The launcher's longest "pause all restrictions" (`RESTRICTIONS_PAUSE_DURATION_MS`, 2 hours from the PIN or the
@@ -1363,6 +1373,9 @@ pub struct PolicyResponse {
     pub status_heartbeat_fields: &'static [&'static str],
     /// Design 95 §3.5: this server takes a gzip'd status report (`Content-Encoding: gzip`), always `true`.
     pub status_gzip: bool,
+    /// Design 98 §4.4.6: this server takes `POST /api/devices/rule-pause`, so the phone offers Foreldrekode on the
+    /// time-rule screen; always `true`. An older launcher ignores it.
+    pub rule_pause: bool,
     /// Design 76 D2: the certificate check for a launcher with `server_pin_v1` (`server_tls::policy`): `{}` while
     /// watching (no `enforce`: the phone keeps its flag), `{"enforce": true}` on, `{"enforce": false}` the parent's
     /// off. Left out for an older launcher.
@@ -1621,6 +1634,10 @@ pub struct StatusReportRequest {
     /// `mobile_network::clean_mobile`. Absent from older launchers.
     #[serde(default)]
     pub mobile_data: Option<serde_json::Value>,
+    /// Design 98 §5.1 (capability `airplane_mode_v1`): `{on, going_on, assistant, wifi_kept, last_error,
+    /// default_apps_changed, periods}`, raw - cleaned by `airplane_mode::clean`. Absent from older launchers.
+    #[serde(default)]
+    pub airplane_mode: Option<serde_json::Value>,
     /// Design 76: the launcher's certificate check (`testdata/server_tls_report.json`'s `report`), raw - read
     /// within limits by `server_tls::sanitize`, so nothing in it can fail the report. Absent from older launchers.
     #[serde(default)]

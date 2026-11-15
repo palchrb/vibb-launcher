@@ -1,4 +1,5 @@
 mod admin_auth;
+mod airplane_mode;
 mod apk;
 mod app_display;
 mod app_downloads;
@@ -1191,6 +1192,10 @@ pub fn build_admin_router(
         .route(
             "/devices/{id}/start-pause",
             post(handlers::window_relock::start_pause),
+        )
+        .route(
+            "/devices/{id}/setup-card/hide",
+            post(handlers::device_pages::hide_setup_card),
         )
         .route(
             "/devices/{id}/regenerate-code",

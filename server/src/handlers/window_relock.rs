@@ -308,6 +308,12 @@ async fn queue(
                 return Redirect::to(&format!("/devices/{id}/advanced?notice={notice}#setup"))
                     .into_response();
             }
+            // Design 98 §6.2: from the summary's Oppsett card (and the QR page's "Åpne for oppsett nå", D2), back to the
+            // card with the flash in it.
+            if back == Some("setup") {
+                return Redirect::to(&format!("/devices/{id}?notice=setup_{notice}#oppsett"))
+                    .into_response();
+            }
             let group = window_relock::flash(notice).map_or("quick", |(group, _)| group);
             Redirect::to(&format!("/devices/{id}?notice={notice}#{group}")).into_response()
         }
@@ -324,7 +330,7 @@ async fn queue(
 }
 
 /// Where "Lock again" and "Unlock 2 h" return: `back=advanced` is the Avansert page's row (design 93
-/// §6.6); anything else, or none, the summary.
+/// §6.6), `back=setup` the summary's Oppsett card (design 98 §6.2); anything else, or none, the summary.
 #[derive(serde::Deserialize, Default)]
 pub struct BackForm {
     #[serde(default)]

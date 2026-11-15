@@ -2298,3 +2298,31 @@ posted by `static/scroll-restore.js` (`?v=9`) itself, and the return replaces th
   `data-native-post` rule. The first version was seen in headless Chromium and WebKit against a stub server (a
   button save and `form.submit()` keep `history.length`, Back after a save goes to the page before, a refusal shows, a
   password form posts natively).
+
+## Flymodus, the Oppsett card (design 98 step 5, 2026-11-14, branch `design-98`, `docs/design/98-airplane-mode-assistant.md` §6)
+
+- **Home Screen › Hurtigkontroller**: the kid's "Flymodus" switch (`quick_controls_mask` bit 64,
+  `devices::QUICK_CONTROL_AIRPLANE`) only for a phone that reported `airplane_mode_v1`; the form then carries
+  `airplane_row=1`, and `update_policy` takes bit 64 from the switch only with it - without it (an older launcher's
+  page, an older tab) bit 64 is kept as bit 32 is (`(mask & kept_bits) | ?`). A new phone has it on (D1). Its sub-line
+  (`airplane_mode::home_sub`): the parent's "Blokker flymodus", the role not chosen yet, or no Wi-Fi in airplane mode.
+- **The summary**: "Flymodus på siden 21:03" is a header part (`phone_status::with_airplane`, hook `data-airplane`)
+  in place of "Offline"/"No contact", last on the second line while in touch; from `on` (the open period's start) or
+  a `going_on` report for 10 minutes (`airplane_mode::on_since`). Under Attention, `#airplane-state`: a period ended
+  within 12 h, the emergency call that ended it, and the role lost - "held before" is any stored report with
+  `assistant: true` (`airplane_mode::assistant_held_before`; it goes with `device_status`' retention, the card's step
+  stays).
+- **The Oppsett card** (`#oppsett`, `airplane_mode::setup_steps`, a launcher with `airplane_mode_v1` only - its words
+  name that launcher's notification): Bakgrunnstilkobling, Endre systeminnstillinger (bit 16 or a clock format),
+  Digital assistent (bit 64), Wi-Fi i flymodus (bit 64 and the role), Standardapper endret, Samtalefilter (calls managed
+  and `call_state.screening_role_held`/`redirection_role_held` false - the report's existing keys, D10). Åpne for
+  oppsett is the start-pause with `back=setup` (`?notice=setup_start_pause_sent#oppsett`); "Ikke nå" is
+  `POST /devices/{id}/setup-card/hide`, storing the needed set (`airplane_mode::setup_key`) in
+  `device_policy.setup_card_hidden` (`?notice=setup_hidden#oppsett`); the card shows for its flash alone too. The QR
+  page's Done step has "Åpne for oppsett nå" (D2) to the same place, flashed also before the phone reported.
+- **About This Phone**: "Digital assistent" (Vibb One / Ikke valgt with the steps) and "Wi-Fi i flymodus".
+- **The emergency line** (§7.1): `emergency_call`'s params get `airplane_off: true` when the same report's period has
+  `off_by: "emergency"` (`airplane_mode::emergency_off`), worded in the push and the inbox; a later report adds it to
+  the stored event only (`parent_events::mark_emergency_airplane_off`, no second push).
+- Tests: `tests::airplane_mode` (the form's keep on both sections, the lines, the card's forms on `#oppsett`, About,
+  the QR page, the emergency line; nb and en).

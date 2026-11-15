@@ -25,7 +25,8 @@
           null
         ],
         "until_ms": 1794848400000,
-        "card_first": true
+        "card_first": true,
+        "copy_of": 2
       },
       {
         "id": 1,
@@ -159,7 +160,8 @@
           null
         ],
         "until_ms": 1794848400000,
-        "card_first": true
+        "card_first": true,
+        "copy_of": 2
       },
       {
         "id": 1,

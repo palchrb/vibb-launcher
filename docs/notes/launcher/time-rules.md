@@ -115,3 +115,13 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   calls, usable apps, Kalender, silence - is `decideTimeLock`'s, unchanged.
 - **`lock_now_v1`** in `STATUS_CAPABILITIES`: the server shows its rc.8 warning ("Skole gjelder allerede til 14:30")
   only to a phone without it. Nothing is served differently.
+
+## Foreldrekode: the parent code's pause of the rule in force (design 98 §4.4)
+
+From the time-rule screen's sheet: `RulePauseActivity` (the PWA's lengths only), then `ParentPin.check(RULE_PAUSE, ..,
+minutes)`, which plans the pause again (`rulePausePlan`) and stores it in `phone_lifts_v1` (`PhonePauses.addFromGate`,
+the only writer). A pause lifts only through its own entry and window (`phonePauseLifts`, merged in
+`TimeRulesRuntime.ruleLifts`); a lift with `phone_key` never gets a `LiftRecord`. The queue posts each pause at the
+start of every sync, before the policy GET; a policy after the ack without a rule's row (key and rule id, the twin's
+negative id too) ends that rule's pause - "Avslutt nå" on one rule of two ends that one alone (code QA M1). An entry is
+pruned only once posted (or 7 days old), so an offline pause still reaches the parent (L5). `rule_pause.json`.

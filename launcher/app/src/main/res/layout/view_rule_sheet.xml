@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Design 98 §4.3: the time-rule screen's sheet - a small sheet from the bottom on kid_ground_lift with 16 dp corners,
+     above the navigation bar in both modes (KidInsets on the root); a tap outside or Back closes it. At most two rows:
+     Flymodus (the kid's own switch, §4.1's states) and Foreldrekode (§4.4). -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/rule_sheet_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#66000000">
+
+    <LinearLayout
+        android:id="@+id/rule_sheet"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:layout_marginStart="8dp"
+        android:layout_marginEnd="8dp"
+        android:layout_marginBottom="8dp"
+        android:background="@drawable/bg_rule_sheet"
+        android:clickable="true"
+        android:focusable="false"
+        android:orientation="vertical"
+        android:paddingTop="8dp"
+        android:paddingBottom="8dp">
+
+        <LinearLayout
+            android:id="@+id/rule_sheet_airplane_row"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <androidx.appcompat.widget.SwitchCompat
+                android:id="@+id/rule_sheet_airplane_switch"
+                style="@style/KidSwitchRow"
+                android:text="@string/kid_settings_airplane" />
+
+            <TextView
+                android:id="@+id/rule_sheet_airplane_line"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingStart="14dp"
+                android:paddingEnd="14dp"
+                android:paddingBottom="12dp"
+                android:fontFamily="@font/nunito_bold"
+                android:textColor="@color/kid_ink"
+                android:textSize="13sp"
+                android:visibility="gone" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/rule_sheet_parent_code"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="?android:attr/selectableItemBackground"
+            android:fontFamily="@font/nunito_bold"
+            android:gravity="center_vertical"
+            android:minHeight="56dp"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp"
+            android:text="@string/rule_sheet_parent_code"
+            android:textColor="@color/kid_ink"
+            android:textSize="17sp"
+            android:visibility="gone" />
+    </LinearLayout>
+</FrameLayout>

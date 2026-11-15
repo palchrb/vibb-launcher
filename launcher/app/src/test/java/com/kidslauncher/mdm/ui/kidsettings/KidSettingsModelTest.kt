@@ -30,6 +30,12 @@ class KidSettingsModelTest {
         )
         // Unknown bits alone are nothing.
         assertEquals(ControlsSection.NoneEnabled, controlsSection(true, ok(64)))
+        // Design 98 §4.1: bit 64 alone without the role is no card; with the role the full row; airplane mode on with
+        // mask 0 is a card with the Off-only row - also before any policy.
+        assertEquals(ControlsSection.NoneEnabled, controlsSection(true, ok(64), roleHeld = false, airplaneOn = false))
+        assertEquals(ControlsSection.Rows(false, false, false, false, false, airplane = true), controlsSection(true, ok(64), roleHeld = true))
+        assertEquals(ControlsSection.Rows(false, false, false, false, false, airplaneOffOnly = true), controlsSection(true, ok(0), airplaneOn = true))
+        assertEquals(ControlsSection.Rows(false, false, false, false, false, airplaneOffOnly = true), controlsSection(true, CachedPolicy.Absent, airplaneOn = true))
         assertEquals(ControlsSection.NoneEnabled, controlsSection(true, ok(0)))
     }
 

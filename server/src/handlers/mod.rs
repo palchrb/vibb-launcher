@@ -31,6 +31,7 @@ pub mod parents;
 pub mod passkeys;
 pub mod provisioning;
 pub mod quick_actions;
+pub mod rule_pause;
 pub mod rules_now;
 pub mod schedules;
 pub mod settings;

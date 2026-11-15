@@ -39,8 +39,11 @@ class LockNowTest {
         assertEquals(listOf(TimeWindow(720, 1080)) + List(6) { null }, copy.days)
         assertEquals(1794848400000L, copy.untilMs)
         assertEquals(true, copy.cardFirst)
+        // Design 98 §4.4.2: the copy names the rule it copies.
+        assertEquals(2L, copy.copyOf)
         for (rule in policy.rules.drop(1)) {
             assertTrue("${rule.id}", rule.id > 0)
+            assertNull(rule.copyOf)
             assertNull(rule.untilMs)
             assertEquals(false, rule.cardFirst)
         }

@@ -178,6 +178,9 @@ data class PolicyResponse(
     val statusHeartbeatFields: List<String>? = null,
     /** Design 95 §3.5: the server takes a gzip'd status report; missing = never gzip. */
     val statusGzip: Boolean = false,
+    /** Design 98 §4.4.6: the server takes `POST /api/devices/rule-pause`; only then is Foreldrekode offered on the
+     * time-rule screen. Missing (an older server) = never. */
+    val rulePause: Boolean = false,
 )
 
 /** `PolicyResponse.kidLock` - `security::hash_pin` on the server (PBKDF2-SHA256, see

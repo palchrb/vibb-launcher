@@ -425,6 +425,21 @@ fn the_field_tables_keep_every_contract_key() {
             );
             checked += 1;
         }
+        // Design 98 §5.1: the report's `airplane_mode` (`airplane_mode.json`'s `report` and `report_open`), every key
+        // kept by the cleaning.
+        for key in ["report", "report_open"] {
+            if let Some(blob) = json
+                .get(key)
+                .and_then(|r| r.get("periods"))
+                .and(json.get(key))
+            {
+                let kept = crate::airplane_mode::clean(blob, chrono::Utc::now().timestamp_millis())
+                    .unwrap();
+                let kept: serde_json::Value = serde_json::from_str(&kept).unwrap();
+                assert_eq!(&kept, blob, "{}'s {key}", path.display());
+                checked += 1;
+            }
+        }
     }
     assert!(checked >= 1, "time_status_report.json carries a time_state");
 }

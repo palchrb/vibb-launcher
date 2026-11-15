@@ -1226,6 +1226,10 @@ class PolicyResponseCompatTest {
         assertEquals(4L, time.lifts[0].ruleId)
         assertNull(time.lifts[1].ruleId)
         assertEquals(1759650000000L, time.lifts[0].expiresAtMs)
+        // Design 98 §4.4: the PWA's lifts carry no phone key, an older server's rules no copy_of and no rule_pause.
+        assertNull(time.lifts[0].phoneKey)
+        assertNull(time.rules[0].copyOf)
+        assertEquals(false, policy.rulePause)
         assertEquals(com.kidslauncher.mdm.server.dto.LocationPolicy("interval", 15), policy.locationPolicy)
         val reencoded = ServerJson.encodeToString(PolicyResponse.serializer(), policy)
         assertEquals(CachedPolicy.Ok(policy), decodeCached(reencoded))

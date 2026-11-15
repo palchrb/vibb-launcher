@@ -81,6 +81,12 @@
         </div>
         <p class="group-footer">{{ self.t("device.summary.access.footer") }}</p>
     </section>
+    {#- Design 98 D2: the QR page's "Åpne for oppsett nå" lands here (#oppsett) before the phone has reported. -#}
+    {% if let Some((text, refused)) = self.flash("oppsett") %}
+    <section id="oppsett" aria-label="{{ self.t("device.summary.setup.title") }}">
+        <div class="group"><p class="flash{% if refused %} flash-error{% endif %}" role="status" data-flash="oppsett">{{ text }}</p></div>
+    </section>
+    {% endif %}
     {% else %}
 
     {% if !attention.is_empty() %}
@@ -105,6 +111,50 @@
             <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </a>
         {% endfor %}
+    </section>
+    {% endif %}
+
+    {#- Design 98 §6.2: Flymodus' lines - a period that ended within 12 hours, or the emergency call that ended it, and
+        the role lost (its steps behind the ⓘ). "Flymodus på siden 21:03" is the header's. -#}
+    {% if !airplane_lines.is_empty() %}
+    <section id="airplane-state" aria-label="{{ self.t("device.home.airplane") }}">
+        {% for line in airplane_lines %}
+        <div class="attention{% if line.warn %} attention-action{% endif %}" data-airplane-line="{{ line.key }}">
+            <div class="attention-text">{{ line.title }}
+                {% if let Some(steps) = line.steps %}<div class="attention-sub"><details class="info">
+                    <summary aria-label="{{ self.t("device.summary.airplane.steps_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                    <div class="info-panel"><p>{{ steps }}</p></div>
+                </details></div>{% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </section>
+    {% endif %}
+
+    {#- Design 98 §6.2: the Oppsett card while a step the phone needs isn't done - Åpne for oppsett (the start-pause,
+        back=setup) and "Ikke nå" (hidden until the needed steps change); both land here, #oppsett, with the flash in
+        the card. Shown for its flash alone too, so the redirect always finds its group. -#}
+    {% if setup.shown || self.flash("oppsett").is_some() %}
+    <section id="oppsett" aria-labelledby="oppsett-title">
+        <h2 class="group-header" id="oppsett-title">{{ self.t("device.summary.setup.title") }}</h2>
+        <div class="group">
+            {% if setup.shown %}
+            {% for step in setup.steps %}
+            <div class="row" data-setup-step="{{ step.id }}">
+                <span class="row-label">{{ step.label }}<span class="row-sub">{{ step.sub }}</span></span>
+            </div>
+            {% endfor %}
+            <form method="post" action="/devices/{{ device.id }}/start-pause#oppsett" class="cell">
+                <input type="hidden" name="back" value="setup">
+                <button type="submit" class="row row-button">{{ self.t("device.advanced.setup.button") }}</button>
+            </form>
+            <form method="post" action="/devices/{{ device.id }}/setup-card/hide#oppsett" class="cell">
+                <button type="submit" class="row row-button" data-setup-hide>{{ self.t("device.summary.setup.not_now") }}</button>
+            </form>
+            {% endif %}
+            {% if let Some((text, refused)) = self.flash("oppsett") %}<p class="flash{% if refused %} flash-error{% endif %}" role="status" data-flash="oppsett">{{ text }}</p>{% endif %}
+        </div>
+        {% if setup.shown %}<p class="group-footer">{{ self.t("device.summary.setup.footer") }}</p>{% endif %}
     </section>
     {% endif %}
 

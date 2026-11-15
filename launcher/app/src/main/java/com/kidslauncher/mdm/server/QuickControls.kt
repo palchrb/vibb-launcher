@@ -45,6 +45,10 @@ object QuickControlFeature {
     /** Design 97 §4.3: the kid's own Mobildata switch (Off = only Vibb uses mobile data). In a new phone's default
      * mask (D3). */
     const val MOBILE_DATA: Long = 32
+
+    /** Design 98 §4.1: the kid's own Flymodus switch, shown only while Vibb One holds the assistant role. In a new
+     * phone's default mask (D1). */
+    const val AIRPLANE: Long = 64
 }
 
 /**

@@ -88,6 +88,24 @@ object LockTaskChrome {
         }
     }
 
+    /** Design 98 §2.2 step 4: Settings for a Flymodus turn-on's window - an input like [sosNarrowing], set and cleared
+     * only by [com.kidslauncher.mdm.assistant.AirplaneRoute] through [routeWindow]. Never pinned while LOCKED. */
+    @Volatile
+    private var routePin: String? = null
+
+    /** The route's window opens ([pkg]) or closes (`null`): one pass now. Any thread but main. Only from a plan: a pass
+     * without one reads the platform's list back and couldn't take Settings out again, so it opens nothing (returns
+     * false - the route then refuses). */
+    fun routeWindow(context: Context, pkg: String?): Boolean = synchronized(this) {
+        if (plan == null) {
+            routePin = null
+            return false
+        }
+        routePin = pkg
+        applyNow(context)
+        true
+    }
+
     private fun sosNarrowed(context: Context, locked: Boolean, kioskOn: Boolean): Set<String>? =
         if (sosNarrowing && locked && kioskOn) sosNarrowedPackages(context.packageName, helpers, PinLockRuntime.sosPackage) else null
 
@@ -256,6 +274,7 @@ object LockTaskChrome {
             voipPackages = if (locked && !kioskOn) voipPackages() else emptySet(),
             recentsPin = current.recentsPin,
             sosNarrowed = sosNarrowed(context, locked, kioskOn),
+            routePin = routePin,
         )
         return apply(context, dpm, setting, heal, kioskOn = kioskOn, locked = locked)
     }

@@ -282,6 +282,7 @@ impl ServedRules {
                             .ok_or_else(|| format!("lock {}: unreadable end", lock.id))?,
                     );
                     rule.card_first = true;
+                    rule.copy_of = lock.rule_id;
                 }
                 Ok(rule)
             })
@@ -527,12 +528,15 @@ mod tests {
         assert_eq!(rules[0].until_ms, Some(1_794_848_400_000));
         assert!(rules[0].card_first);
         assert_eq!((rules[1].until_ms, rules[1].card_first), (None, false));
+        // Design 98 §4.4.2: the copy names the rule it copies; a scheduled rule doesn't.
+        assert_eq!((rules[0].copy_of, rules[1].copy_of), (Some(9), None));
         let lift = |id, rule_id| PolicyLift {
             id,
             target: "rule".into(),
             rule_id,
             minutes: 30,
             expires_at_ms: 5,
+            phone_key: None,
         };
         let lifts = served.with_twins(vec![lift(11, Some(9)), lift(12, None), lift(13, Some(4))]);
         assert_eq!(lifts.len(), 4);
@@ -620,6 +624,7 @@ mod tests {
             rule_id: Some(2),
             minutes: 30,
             expires_at_ms: 1_794_828_600_000,
+            phone_key: None,
         };
         let served = |served: ServedRules| {
             serde_json::to_value(crate::time_rules::TimePolicy {

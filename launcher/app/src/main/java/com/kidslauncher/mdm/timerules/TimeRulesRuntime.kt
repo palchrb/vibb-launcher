@@ -135,6 +135,8 @@ object TimeRulesRuntime {
         val records: List<LiftRecord>,
         val clocks: Clocks,
         val zone: ZoneId,
+        /** Design 98 §4.4: the policy's lift ids a parent-code pause on this phone stands behind (`lifts_active`). */
+        val phoneLiftIds: List<Long> = emptyList(),
     )
 
     /** [zone] is read once here and passed down; nothing below reads the system zone again. */
@@ -148,11 +150,22 @@ object TimeRulesRuntime {
         val budget = budgetUse(ledger, tp)
         val at = LocalDateTime.ofInstant(Instant.ofEpochMilli(clocks.wallMs), zone)
         val lock = decideTimeLock(
-            tp, at, overrideActive, activeRuleLifts(records, tp.lifts, clocks), budget, messagingApps(context),
+            tp, at, overrideActive, ruleLifts(context, records, tp.lifts, clocks), budget, messagingApps(context),
             // Security review S-L8: only the music app with our signer is exempt from the budget.
             musicApps = com.kidslauncher.mdm.music.MusicTrust.installed(context).toSet(),
         )
-        return Snapshot(lock, tp, ledger, budget, records, clocks, zone)
+        return Snapshot(lock, tp, ledger, budget, records, clocks, zone, PhonePauses.activeLiftIds(context, tp.lifts, clocks))
+    }
+
+    /** The PWA's lifts through their records, and design 98's parent-code pauses through their own entries. */
+    fun ruleLifts(context: Context, records: List<LiftRecord>, lifts: List<Lift>, clocks: Clocks): RuleLifts {
+        val fromPolicy = activeRuleLifts(records, lifts, clocks)
+        val phone = try {
+            PhonePauses.liftedRuleIds(context, clocks)
+        } catch (e: Exception) {
+            emptySet()
+        }
+        return if (phone.isEmpty()) fromPolicy else fromPolicy.copy(ruleIds = fromPolicy.ruleIds + phone)
     }
 
     /** Lock listeners (design r13 §1.4): handed each re-check's snapshot after the lock reason and key are written.
@@ -191,7 +204,7 @@ object TimeRulesRuntime {
         val tp = TimeRulesStore.policy?.inForceAt(clocks.wallMs) ?: return false
         val records = liftRecords(context, tp.lifts, clocks)
         val at = LocalDateTime.ofInstant(Instant.ofEpochMilli(clocks.wallMs), zone())
-        return callsBlockedAt(tp, at, overrideActive(), activeRuleLifts(records, tp.lifts, clocks))
+        return callsBlockedAt(tp, at, overrideActive(), ruleLifts(context, records, tp.lifts, clocks))
     }
 
     /** The status report's `time_state`. */
@@ -216,7 +229,7 @@ object TimeRulesRuntime {
             activeRuleName = top?.name,
             callsBlocked = snap.lock.callsBlocked,
             lockReason = lockReason.name,
-            liftsActive = snap.ledger?.let { activeLiftIds(snap.records, snap.policy?.lifts.orEmpty(), it, snap.clocks) }.orEmpty(),
+            liftsActive = snap.ledger?.let { activeLiftIds(snap.records, snap.policy?.lifts.orEmpty(), it, snap.clocks) + snap.phoneLiftIds }.orEmpty(),
             ledgerUnreadable = snap.ledger?.unreadable == true,
             zone = snap.zone.id,
         )
@@ -238,7 +251,8 @@ object TimeRulesRuntime {
         // Design 93 §9.1: a turned-on rule's absolute end is a boundary of its own.
         return nextBoundary(
             policy, Instant.ofEpochMilli(clocks.wallMs), zone(),
-            liftExpiries(records, clocks) + windowEnds + untilInstants(policy, clocks.wallMs),
+            liftExpiries(records, clocks) + windowEnds + untilInstants(policy, clocks.wallMs) +
+                PhonePauses.expiries(context, clocks),
         )
     }
 

@@ -342,6 +342,12 @@ class HomeActivity : UIObjectActivity() {
             binding.homeWindowBanner.visibility = View.GONE
             com.kidslauncher.mdm.server.WindowRelock.lockAgainAsync(this, com.kidslauncher.mdm.server.RelockTrigger.LOCK_AGAIN)
         }
+        // Design 98 §4.2: Home's "Flymodus er på" line - a tap turns airplane mode off (no role, no Settings needed).
+        binding.homeAirplaneLine.setOnClickListener {
+            val app = applicationContext
+            Thread { com.kidslauncher.mdm.assistant.AirplaneRoute.turnOff(app) }.start()
+            renderAirplaneLine()
+        }
         // Back to our call screen from the ongoing-call card.
         binding.homeCallCard.setOnClickListener {
             try {
@@ -454,6 +460,7 @@ class HomeActivity : UIObjectActivity() {
         WallpaperStore.addListener(wallpaperListener)
         com.kidslauncher.mdm.calls.OngoingCalls.addListener(callsListener)
         com.kidslauncher.mdm.server.WindowRelock.addListener(windowListener)
+        com.kidslauncher.mdm.assistant.AirplaneRuntime.addListener(airplaneListener)
         com.kidslauncher.mdm.torch.Torch.addListener(torchListener)
         com.kidslauncher.mdm.calendar.CalendarStore.addListener(calendarListener)
         com.kidslauncher.mdm.sms.SmsHome.addListener(messagesListener)
@@ -677,6 +684,7 @@ class HomeActivity : UIObjectActivity() {
         refreshHandler.removeCallbacks(badgeRender)
         com.kidslauncher.mdm.calls.OngoingCalls.removeListener(callsListener)
         com.kidslauncher.mdm.server.WindowRelock.removeListener(windowListener)
+        com.kidslauncher.mdm.assistant.AirplaneRuntime.removeListener(airplaneListener)
         com.kidslauncher.mdm.torch.Torch.removeListener(torchListener)
         com.kidslauncher.mdm.calendar.CalendarStore.removeListener(calendarListener)
         com.kidslauncher.mdm.sms.SmsHome.removeListener(messagesListener)
@@ -734,9 +742,29 @@ class HomeActivity : UIObjectActivity() {
     private fun render() {
         if (!contentShown) return
         renderWindowBanner()
+        renderAirplaneLine()
         renderCallParts()
         refreshApps()
     }
+
+    /** Design 98 §4.2: one calm line while airplane mode is on ([com.kidslauncher.mdm.assistant.homeAirplaneLine]). */
+    private fun renderAirplaneLine() {
+        if (!contentShown) return
+        val line = com.kidslauncher.mdm.assistant.homeAirplaneLine(
+            on = com.kidslauncher.mdm.assistant.AirplaneRuntime.isOn(this),
+            restricted = com.kidslauncher.mdm.assistant.AirplaneRuntime.restricted(this),
+            busy = com.kidslauncher.mdm.assistant.AirplaneRoute.busy == "off",
+        )
+        binding.homeAirplaneLine.visibility = if (line == null) View.GONE else View.VISIBLE
+        binding.homeAirplaneLine.isEnabled = line == com.kidslauncher.mdm.assistant.HomeAirplaneLine.ON
+        when (line) {
+            com.kidslauncher.mdm.assistant.HomeAirplaneLine.ON -> binding.homeAirplaneLine.setText(R.string.home_airplane_on)
+            com.kidslauncher.mdm.assistant.HomeAirplaneLine.BUSY -> binding.homeAirplaneLine.setText(R.string.kid_settings_airplane_turning_off)
+            null -> {}
+        }
+    }
+
+    private val airplaneListener: () -> Unit = { renderAirplaneLine() }
 
     /** Design 24b §1.3: "Open until 18:40 · Lock again" while a parent-PIN window is open. */
     private fun renderWindowBanner() {

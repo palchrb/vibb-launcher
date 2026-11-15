@@ -75,6 +75,12 @@
             </form>
             {% if !qr_svg.is_empty() && !enrolled %}
             <a class="row row-button" href="/devices/{{ device.id }}" data-row="done">{{ self.t("devices.code.done") }}</a>
+            {#- Design 98 D2: open the phone for setup from here (the start-pause, back=setup): its setup steps and the
+                Google account, landing on the summary's Oppsett card. -#}
+            <form method="post" action="/devices/{{ device.id }}/start-pause#oppsett" class="cell" data-row="open-setup">
+                <input type="hidden" name="back" value="setup">
+                <button type="submit" class="row row-button">{{ self.t("devices.qr.open_setup") }}</button>
+            </form>
             {% endif %}
             {% endif %}
         </div>

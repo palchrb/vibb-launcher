@@ -197,3 +197,23 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `seen` isn't the stored end) and `/lock-now/{lock_id}/end`. Each writes `time_lock_now`, `time_lock_now_changed` or
   `time_lock_now_ended` to the security log and nudges; no inbox event, no push. A refusal returns
   `?done=<code>&open=rules&mode=..&rule=..#quick`; the flashes name the rule and its end (the newest row's).
+
+## The parent code's pause on the phone (design 98 §4.4, step 7, 2026-11-14, migration `0147_rule_pause.sql`)
+
+- `POST /api/devices/rule-pause` (`handlers::rule_pause::intake`, `testdata/rule_pause.json`): the phone's Foreldrekode
+  pause of the rule(s) in force, set offline and posted before the next sync's policy GET. Checked field by field
+  ([`check`]: 32 lowercase hex key, `RULE_LIFT_MINUTES`, the start within 5 min ahead and 7 days back, 1-8 rules, each
+  end after the start and within start + minutes + 5 min) - a `400` otherwise. A rule the phone doesn't have is
+  skipped; a design 93 copy's `-(time_lock_now.id)` is written as its rule's row (the twin serves the copy). None left:
+  `unknown_rule`.
+- One `time_lifts` row per rule, `created_by` NULL, `phone_key` the key, `created_at` the pause's start (bounded by
+  now), `expires_at` the rule's own end. The key's rows are read first in one `BEGIN IMMEDIATE` and only the missing
+  ones inserted (an `ON CONFLICT DO NOTHING` on SQLite's AUTOINCREMENT still uses up an id, which would move the next
+  lift's id): a retry answers the same ids and never revives a row the parent ended. A pause already over is an over
+  row (`"over": true`). The phone line `time_lift_phone` (`security::PhoneLine`, the parent-PIN events' 90 days), a
+  nudge when the pause still runs.
+- The policy serves the row with its `phone_key`, the copy's twin too (`lock_now::twin_lifts` clones it). The PWA:
+  the summary's running pause says "Satt med foreldrekoden på telefonen" in place of a parent's name, End now ends it
+  as any lift; Activity words it by its window ("Leggetid på pause 21:10–21:40 (foreldrekoden)"); the parent-PIN
+  event's entry `rule_pause` is "Regelskjermen", with its end in the inbox and its place in the push; the Time page's
+  Now group has the ⓘ for a phone reporting `rule_pause_v1`. Tests: `tests::rule_pause`.

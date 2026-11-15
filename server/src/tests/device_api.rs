@@ -359,6 +359,7 @@ async fn policy_json_keys_snapshot() {
             "packages_to_uninstall",
             "pending_command",
             "quick_controls_mask",
+            "rule_pause",
             "screen_timeout_seconds",
             "status_gzip",
             "status_heartbeat",
@@ -397,6 +398,7 @@ async fn policy_json_keys_snapshot() {
         "notification_auto_cancel",
         "packages_to_uninstall",
         "quick_controls_mask",
+        "rule_pause",
         "screen_timeout_seconds",
         "status_gzip",
         "status_heartbeat",
@@ -407,6 +409,9 @@ async fn policy_json_keys_snapshot() {
     ] {
         assert!(!object[non_null].is_null(), "{non_null} is null");
     }
+    // Design 98 §4.4.6: this server takes the phone's parent-code pause; a lift's `phone_key` is pinned with it
+    // (`tests::rule_pause`, `rule_pause.json`'s `policy`).
+    assert_eq!(object["rule_pause"], serde_json::json!(true));
 
     // The launcher's CallPolicy DTO: every key present and non-null, also when unmanaged.
     let call_policy = object["call_policy"].as_object().unwrap();
@@ -547,7 +552,8 @@ async fn policy_json_keys_snapshot() {
             "until_ms"
         ]
     );
-    // Design 93 §9.3: a scheduled rule's absolute end and card choice, always explicit.
+    // Design 93 §9.3: a scheduled rule's absolute end and card choice, always explicit. Design 98 §4.4.2: `copy_of`
+    // only on a rule turned on now (`lock_now::tests::the_served_copy_and_twin`, `lock_now.json`).
     assert_eq!(rule["until_ms"], serde_json::Value::Null);
     assert_eq!(rule["card_first"], serde_json::json!(false));
     assert_eq!(rule["calendar_allowed"], serde_json::json!(true));
@@ -711,11 +717,11 @@ async fn a_new_device_starts_with_all_kid_settings_on() {
         .bind(device)
         .fetch_one(&app.db)
     };
-    assert_eq!(mask(id).await.unwrap(), 1 | 2 | 4 | 8 | 32);
+    assert_eq!(mask(id).await.unwrap(), 1 | 2 | 4 | 8 | 32 | 64);
     assert_eq!(
         crate::handlers::devices::DEFAULT_QUICK_CONTROLS,
-        1 | 2 | 4 | 8 | 32,
-        "Wi-Fi, Bluetooth, brightness, sound (design 18), Mobildata (design 97 D3)"
+        1 | 2 | 4 | 8 | 32 | 64,
+        "Wi-Fi, Bluetooth, brightness, sound (design 18), Mobildata (design 97 D3), Flymodus (design 98 D1)"
     );
     assert_eq!(mask(existing).await.unwrap(), 0);
     // The notification filter starts on for a new phone (2026-10-21); an existing one keeps its
@@ -745,8 +751,8 @@ async fn a_new_device_starts_with_all_kid_settings_on() {
     let policy = app
         .request(Method::GET, "/api/devices/policy", Some(&token), None)
         .await;
-    // Design 97 D3: the kid's Mobildata switch (bit 32) too.
-    assert_eq!(policy.json()["quick_controls_mask"], 15 | 32);
+    // Design 97 D3: the kid's Mobildata switch (bit 32) too; design 98 D1: and Flymodus (bit 64).
+    assert_eq!(policy.json()["quick_controls_mask"], 15 | 32 | 64);
     assert_eq!(policy.json()["notification_auto_cancel"], true);
 }
 

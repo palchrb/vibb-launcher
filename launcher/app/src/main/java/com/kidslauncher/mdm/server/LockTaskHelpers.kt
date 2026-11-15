@@ -183,6 +183,9 @@ data class LockTaskSetting(
  * with the kiosk off also pins that package and the permission controller (mic/camera prompts)
  * and sets the app-block bit, so the call app's other screens (links, viewers) can't open over the
  * lock. With the kiosk on the list is untouched (the app is allowlisted).
+ *
+ * [routePin] (design 98 §2.2 step 4): Settings for the second of a Flymodus turn-on - added to the kiosk's list with the
+ * status bar disabled, only while unlocked and the kiosk is on. A LOCKED pass leaves it out (the route then times out).
  */
 fun lockTaskWhileLocked(
     kioskPackages: Set<String>?,
@@ -195,7 +198,10 @@ fun lockTaskWhileLocked(
     voipPackages: Set<String> = emptySet(),
     recentsPin: String? = null,
     sosNarrowed: Set<String>? = null,
+    routePin: String? = null,
 ): LockTaskSetting = when {
+    !locked && kioskPackages != null && routePin != null ->
+        LockTaskSetting(kioskPackages + routePin, baseFeatures, statusBarDisabled = true, createWindowsBlocked = restrictCreateWindows)
     !locked -> LockTaskSetting(kioskPackages, baseFeatures, statusBarDisabled = fenced, createWindowsBlocked = restrictCreateWindows)
     // qa-25b-25f H1: during the "sos" yield the kiosk's list shrinks to the kiosk-off one, so Android
     // removes every other locked task (an allowed app brought up in the SOS window).
@@ -220,10 +226,13 @@ fun lockTaskWhileLocked(
  * The kiosk list of a pass without a plan (LockTaskChrome's fallback), from the platform's
  * [platformPackages]: a LOCKED pass took the [recentsPin] out (qa-16d-code #1), so an unlocked one
  * puts it back whenever the app block is on ([features]) - the plan pins it then too. `null` pin
- * (unknown, or not pinnable): the platform's list as it is.
+ * (unknown, or not pinnable): the platform's list as it is. Never Settings (design 98 code QA L4): only
+ * the Flymodus route's window pins it, and that needs a plan - in the platform's list it is a window a
+ * process death left open, which the put-back's apply closes.
  */
 fun fallbackKioskPackages(platformPackages: Set<String>, recentsPin: String?, features: Int): Set<String> =
-    if (recentsPin != null && features and LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_IN_TASK != 0) platformPackages + recentsPin else platformPackages
+    (if (recentsPin != null && features and LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_IN_TASK != 0) platformPackages + recentsPin else platformPackages) -
+        com.kidslauncher.mdm.assistant.SETTINGS_PACKAGE
 
 /**
  * Whether `config_recentsComponentName`'s [packageName] may be trusted as the recents provider
