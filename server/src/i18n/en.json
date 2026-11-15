@@ -4574,7 +4574,7 @@
   "device.home.shortcuts_chose": "{name} chose: {items}",
   "device.home.shortcuts_hidden": "{name} has hidden the shortcuts in the notifications. {name} can show them again under Settings › Shortcuts.",
   "device.home.shortcuts_none": "No shortcuts are shown now.",
-  "device.home.shortcuts_info": "Shortcuts is a fixed notification at the top of the notifications with up to four buttons. {name} picks them from the switches here and the flashlight. It never shows on the lock screen. On days with screen time it also shows the time left.",
+  "device.home.shortcuts_info": "Shortcuts is a fixed notification at the top of the notifications with up to four buttons. {name} picks them from the switches here and the flashlight. It never shows on the lock screen. When {name} has screen time today, it also shows the time left.",
   "device.home.quick_footer_shortcuts": "The switches apply to both Settings and Shortcuts.",
   "device.about.shortcuts": "Shortcuts",
   "device.about.shortcuts_hidden": "Hidden by {name}"
