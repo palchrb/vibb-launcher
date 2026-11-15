@@ -63,6 +63,7 @@ mod retention;
 mod security;
 mod server_tls;
 mod settings_log;
+mod shortcuts;
 mod sms;
 mod sound_mode;
 mod spotify;

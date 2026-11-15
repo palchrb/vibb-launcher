@@ -79,7 +79,7 @@ class TorchRulesTest {
         val callers = java.walk().filter { it.isFile && it.name.endsWith(".kt") }
             .filter { Regex("""Torch\.(autoOff|toggle)\(""").containsMatchIn(it.readText()) }
             .map { it.relativeTo(java).path }.toSet()
-        assertTrue(callers.toString(), callers.isNotEmpty() && callers.all { it in setOf("torch/Torch.kt", "ui/home/HomeGridAdapter.kt", "lock/GlancePanel.kt") })
+        assertTrue(callers.toString(), callers.isNotEmpty() && callers.all { it in setOf("torch/Torch.kt", "ui/home/HomeGridAdapter.kt", "shortcuts/ShortcutsRuntime.kt", "lock/GlancePanel.kt") })
         assertEquals(1, Regex("""Torch\.autoOff\(""").findAll(torch).count())
         assertTrue("override fun onReceive(context: Context, intent: Intent) = Torch.autoOff(context)" in torch)
         val adapter = File(java, "ui/home/HomeGridAdapter.kt").readText()

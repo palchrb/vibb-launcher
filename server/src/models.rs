@@ -581,6 +581,10 @@ pub struct DeviceStatus {
     /// `airplane_mode::report`, which wants the capability. `None` from older launchers.
     #[sqlx(default)]
     pub airplane_mode_json: Option<String>,
+    /// Design 99 §6.1 (migration 0148): the report's `shortcuts`, cleaned (`shortcuts::clean`); read through
+    /// `shortcuts::report`, which wants the capability. `None` from older launchers.
+    #[sqlx(default)]
+    pub shortcuts_json: Option<String>,
     /// The report's `call_state` (migrations/0022_calls.sql), its known keys (`device_api::CALL_STATE_FIELDS`). Read
     /// by handlers::calls::call_report on its own; design 98's Oppsett card reads the screening roles from it here.
     #[sqlx(default)]
@@ -1638,6 +1642,10 @@ pub struct StatusReportRequest {
     /// default_apps_changed, periods}`, raw - cleaned by `airplane_mode::clean`. Absent from older launchers.
     #[serde(default)]
     pub airplane_mode: Option<serde_json::Value>,
+    /// Design 99 §6.1 (capability `shortcuts_v1`): `{shown, hidden, items}`, raw - cleaned by `shortcuts::clean`. A
+    /// full-report field, not a heartbeat field. Absent from older launchers.
+    #[serde(default)]
+    pub shortcuts: Option<serde_json::Value>,
     /// Design 76: the launcher's certificate check (`testdata/server_tls_report.json`'s `report`), raw - read
     /// within limits by `server_tls::sanitize`, so nothing in it can fail the report. Absent from older launchers.
     #[serde(default)]

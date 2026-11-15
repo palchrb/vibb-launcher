@@ -4551,5 +4551,13 @@
   "security.detail.pin.place.rule_pause": "on the time-rule screen",
   "events.pin_used.entry.rule_pause": "The time-rule screen",
   "events.pin_used.inbox.summary_until": "{entry} until {until} · {at}",
-  "events.pin_used.push.summary": "{entry} · {at}"
+  "events.pin_used.push.summary": "{entry} · {at}",
+  "device.home.shortcuts": "Shortcuts in the notifications",
+  "device.home.shortcuts_chose": "{name} chose: {items}",
+  "device.home.shortcuts_hidden": "{name} has hidden the shortcuts in the notifications. {name} can show them again under Settings › Shortcuts.",
+  "device.home.shortcuts_none": "None of the switches below is on.",
+  "device.home.shortcuts_info": "Shortcuts is a fixed notification at the top of the notifications with up to four buttons. {name} picks them from the switches here and the flashlight. It never shows on the lock screen.",
+  "device.home.quick_footer_shortcuts": "The switches apply to both Settings and Shortcuts.",
+  "device.about.shortcuts": "Shortcuts",
+  "device.about.shortcuts_hidden": "Hidden by {name}"
 }

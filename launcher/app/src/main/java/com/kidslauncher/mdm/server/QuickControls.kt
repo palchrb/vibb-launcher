@@ -49,6 +49,11 @@ object QuickControlFeature {
     /** Design 98 §4.1: the kid's own Flymodus switch, shown only while Vibb One holds the assistant role. In a new
      * phone's default mask (D1). */
     const val AIRPLANE: Long = 64
+
+    /** Design 99: Snarveier, the kid's quick panel in the shade (`shortcuts/`). Not a Kid Settings switch: the kid's
+     * picker row shows with it. In a new phone's default mask and set on every phone by the server's migration 0148
+     * (D2), since Home's flashlight tile went into the panel. */
+    const val SHORTCUTS: Long = 128
 }
 
 /**

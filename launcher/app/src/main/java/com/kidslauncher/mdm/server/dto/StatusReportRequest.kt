@@ -139,6 +139,9 @@ data class StatusReportRequest(
      * periods. A full-report field (not in `status_heartbeat_fields`). Pinned by `airplane_mode.json`
      * (`AirplaneModeTest`). */
     val airplaneMode: com.kidslauncher.mdm.assistant.AirplaneModeReport? = null,
+    /** Design 99 §6.1 (capability `shortcuts_v1`): Snarveier - posted now, hidden by the kid, the panel's keys. A
+     * full-report field (not in `status_heartbeat_fields`). Pinned by `shortcuts.json` (`ShortcutsTest`). */
+    val shortcuts: com.kidslauncher.mdm.shortcuts.ShortcutsReport? = null,
 )
 
 /**

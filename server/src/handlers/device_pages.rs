@@ -722,6 +722,15 @@ pub async fn view_about(
                 ),
             ));
         }
+        // Design 99 §5.3: Snarveier - what the kid picked, hidden by the kid, or off - from a launcher with
+        // `shortcuts_v1`.
+        if let Some(shortcuts) = crate::shortcuts::report(status) {
+            software.push(Row::new(
+                "shortcuts",
+                t(lang, "device.about.shortcuts"),
+                crate::shortcuts::about_value(lang, &device.name, &policy, &shortcuts),
+            ));
+        }
     }
 
     // When "Block safe mode" went on, for the advice (QA 24b Low 12).
@@ -1559,6 +1568,10 @@ struct HomeTemplate {
     /// sub-line when it says something (`airplane_mode::home_sub`).
     airplane_row: Option<Option<String>>,
     quick_airplane: bool,
+    /// Design 99 §5.2: Snarveier (bit 128), its row only for a launcher with `shortcuts_v1` - its sub-line when it says
+    /// something (`shortcuts::home_sub`).
+    shortcuts_row: Option<Option<String>>,
+    quick_shortcuts: bool,
 }
 crate::i18n::words!(HomeTemplate);
 
@@ -1597,6 +1610,10 @@ pub async fn view_home(State(state): State<AppState>, lang: Lang, Path(id): Path
             let report = crate::airplane_mode::report(s).unwrap_or_default();
             crate::airplane_mode::home_sub(lang, &device.name, &policy, &report)
         });
+    let shortcuts_row = latest
+        .as_ref()
+        .and_then(crate::shortcuts::report)
+        .map(|report| crate::shortcuts::home_sub(lang, &device.name, &policy, &report));
     Html(
         HomeTemplate {
             lang,
@@ -1616,6 +1633,8 @@ pub async fn view_home(State(state): State<AppState>, lang: Lang, Path(id): Path
             bluetooth_any_device: policy.bluetooth_any_device,
             airplane_row,
             quick_airplane: mask & crate::handlers::devices::QUICK_CONTROL_AIRPLANE != 0,
+            shortcuts_row,
+            quick_shortcuts: mask & crate::handlers::devices::QUICK_CONTROL_SHORTCUTS != 0,
             device,
         }
         .render()

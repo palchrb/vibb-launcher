@@ -70,6 +70,7 @@ mod server_tls;
 mod settings_log;
 pub(crate) mod settings_pages;
 mod shell;
+mod shortcuts;
 mod sms;
 mod sms_page;
 mod sound_mode;

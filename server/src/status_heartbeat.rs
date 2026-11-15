@@ -96,6 +96,7 @@ pub const REPORT_KEYS: &[&str] = &[
     "zone_watch",
     "calendar",
     "airplane_mode",
+    "shortcuts",
 ];
 
 /// A kept body older than this is never expanded (the phone sends a full report every 6 h anyway); retention deletes it.

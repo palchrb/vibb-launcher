@@ -4551,5 +4551,13 @@
   "security.detail.pin.place.rule_pause": "på regelskjermen",
   "events.pin_used.entry.rule_pause": "Regelskjermen",
   "events.pin_used.inbox.summary_until": "{entry} til {until} · {at}",
-  "events.pin_used.push.summary": "{entry} · {at}"
+  "events.pin_used.push.summary": "{entry} · {at}",
+  "device.home.shortcuts": "Snarveier i varsellisten",
+  "device.home.shortcuts_chose": "{name} har valgt: {items}",
+  "device.home.shortcuts_hidden": "{name} har skjult Snarveier i varsellisten. {name} kan vise dem igjen under Innstillinger › Snarveier.",
+  "device.home.shortcuts_none": "Ingen av bryterne under er slått på.",
+  "device.home.shortcuts_info": "Snarveier er et fast varsel øverst i varsellisten med inntil fire knapper. {name} velger dem blant bryterne her og lommelykten. Det vises aldri på låseskjermen.",
+  "device.home.quick_footer_shortcuts": "Bryterne gjelder både Innstillinger og Snarveier.",
+  "device.about.shortcuts": "Snarveier",
+  "device.about.shortcuts_hidden": "Skjult av {name}"
 }

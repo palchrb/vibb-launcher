@@ -19,7 +19,7 @@ class PageTokensScanTest {
     private val pageClasses: List<File> by lazy {
         fun dir(path: String) = File(java, path).listFiles { f -> f.extension == "kt" }.orEmpty().toList()
         val files = dir("ui/day") + dir("ui/messages").filterNot { it.name == "PictureActivity.kt" } + dir("ui/quickcontrols") +
-            dir("ui/kidsettings").filter { it.name.startsWith("KidSoundPicker") } +
+            dir("ui/kidsettings").filter { it.name.startsWith("KidSoundPicker") || it.name.startsWith("ShortcutsPicker") } +
             listOf("PhoneBookActivity.kt", "PhoneBookAdapter.kt", "ContactRequestForm.kt").map { File(java, "calls/$it") } +
             // The search's highlight, on the phone book's and Meldinger's rows (code QA M1).
             File(java, "ui/search/KidSearchField.kt")
@@ -51,6 +51,8 @@ class PageTokensScanTest {
     private val masks = listOf(
         "bg_day_dot", "ic_kid_back", "bg_kid_circle", "ic_kid_search", "ic_kid_search_clear", "ic_kid_message", "ic_kid_phone",
         "ic_kid_check", "app_glyph_photo_library",
+        // Design 99: the Snarveier picker's "Flytt opp" / "Flytt ned", tinted in the page's ink.
+        "ic_kid_chevron",
     )
 
     /** The same in both looks (§4.1): what sits on a peach fill, the kid's own bubble, and the badge pill. */
@@ -83,7 +85,7 @@ class PageTokensScanTest {
             "activity_messages", "activity_thread", "item_message_bubble", "item_message_day", "item_messages_row", "view_messages_confirm",
             "view_messages_picker", "view_messages_picture_choice", "view_messages_react", "view_kid_search", "view_kid_search_empty",
             "activity_wifi_networks", "item_wifi_network", "activity_bluetooth_devices", "item_bluetooth_device",
-            "activity_kid_sound_picker", "item_kid_sound",
+            "activity_kid_sound_picker", "item_kid_sound", "activity_shortcuts_picker", "item_shortcut_pick",
             "activity_phone_book", "item_phone_book_row", "item_phone_book_label", "item_phone_book_request", "view_contact_request_form",
         )
         assertTrue("$layouts", layouts.containsAll(expected))

@@ -440,6 +440,16 @@ fn the_field_tables_keep_every_contract_key() {
                 checked += 1;
             }
         }
+        // Design 99 §6.1: the report's `shortcuts` (`shortcuts.json`'s `report` and `report_hidden`), every key kept by
+        // the cleaning.
+        if json.get("capability").and_then(|c| c.as_str()) == Some(crate::shortcuts::CAPABILITY) {
+            for key in ["report", "report_hidden"] {
+                let blob = &json[key];
+                let kept = crate::shortcuts::clean(blob).unwrap();
+                assert_eq!(&kept, blob, "{}'s {key}", path.display());
+                checked += 1;
+            }
+        }
     }
     assert!(checked >= 1, "time_status_report.json carries a time_state");
 }
