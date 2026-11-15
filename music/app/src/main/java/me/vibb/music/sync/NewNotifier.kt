@@ -63,7 +63,7 @@ object NewNotifier {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         val notification = NotificationCompat.Builder(context, CHANNEL)
-            .setSmallIcon(R.drawable.music_glyph_music_note)
+            .setSmallIcon(R.drawable.ic_stat_vibb_music)
             .setContentTitle(text)
             .setNumber(n)
             .setSilent(true)

@@ -11,6 +11,8 @@ name: Music
 #   copies, design 58 §8) or
 #   scripts/fake-audio.py (design 30's fake podcast host; its --selftest too) or scripts/music-splash.py and the
 #   launcher's splash_vibb_breathe.xml (the launch splash's drawables are drawn from it; its --selftest too) or
+#   scripts/music-icon.py and the launcher's ic_launcher_foreground.xml (the app icon's rings are read from it; its
+#   --selftest too) or
 #   scripts/sonos-ws-probe.py (its capture scrubber; its --selftest too, security review S-L5) changed, and
 #   uploads the debug APK as a workflow artifact. Nothing is published, no secrets.
 # - A tag music-vX.Y.Z (release) or music-vX.Y.Z-rc.N (release candidate) on a commit that is on
@@ -68,7 +70,7 @@ jobs:
         # No usable base (manual run, new branch, force push): build.
         if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
           changed=true
-        elif git diff --name-only "$base" "$GITHUB_SHA" | grep -qE '^(music/|\.github/workflows/music\.yml$|server/testdata/(music_(library|listing|icons|state)|spotify_hosts)\.json$|launcher/app/src/main/aidl/|launcher/app/src/test/resources/(bridge_contract|spotify_hosts)\.json$|server/testdata/spotify/|scripts/fake-sonos\.py$|scripts/fake-storytel\.py$|scripts/fake-spotify\.py$|scripts/fake-audio\.py$|scripts/music-splash\.py$|launcher/app/src/main/res/drawable/splash_vibb_breathe\.xml$|server/testdata/storytel_token_answers\.json$|launcher/app/src/test/resources/storytel_token_answers\.json$|server/testdata/storytel/)'; then
+        elif git diff --name-only "$base" "$GITHUB_SHA" | grep -qE '^(music/|\.github/workflows/music\.yml$|server/testdata/(music_(library|listing|icons|state)|spotify_hosts)\.json$|launcher/app/src/main/aidl/|launcher/app/src/test/resources/(bridge_contract|spotify_hosts)\.json$|server/testdata/spotify/|scripts/fake-sonos\.py$|scripts/fake-storytel\.py$|scripts/fake-spotify\.py$|scripts/fake-audio\.py$|scripts/music-splash\.py$|launcher/app/src/main/res/drawable/splash_vibb_breathe\.xml$|scripts/music-icon\.py$|launcher/app/src/main/res/drawable/ic_launcher_foreground\.xml$|server/testdata/storytel_token_answers\.json$|launcher/app/src/test/resources/storytel_token_answers\.json$|server/testdata/storytel/)'; then
           changed=true
         else
           changed=false
@@ -131,6 +133,12 @@ jobs:
       # rings and splash_wordmark.xml Nunito's outlines - both must still be byte for byte what
       # scripts/music-splash.py writes from them. Stdlib only.
       run: python3 -I ../scripts/music-splash.py --selftest
+    - name: App icon drawables selftest
+      # The app icon (the user's drawing vibb-music-q7: three of the Vibb mark's rings and a play button):
+      # ic_launcher_foreground.xml and ic_stat_vibb_music.xml read the launcher's ic_launcher_foreground.xml rings -
+      # both must still be byte for byte what scripts/music-icon.py writes, the outer ring inside the safe zone.
+      # Stdlib only.
+      run: python3 -I ../scripts/music-icon.py --selftest
     - name: Capture scrubber selftest
       # security review 2026-10-21 S-L5: sonos-ws-probe.py --save's scrub on made-up values, its fail-closed pass,
       # and that pass over the committed captures in music/app/src/test/resources/sonos/ws/. Stdlib only.

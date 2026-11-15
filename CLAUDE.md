@@ -53,7 +53,10 @@ imported with full history (`git subtree`), so old commit hashes in the docs sti
   site, a reached site's POSTs that 302 and 307 to a third site; standard library, `--selftest`, run by `launcher.yml`'s always-run changes job; `docs/testing/emulator.md`
   §6ap),
   `music-splash.py` (the music app's launch splash drawables: the Vibb mark read from the launcher's Home splash, "vibb
-  music" from Nunito's outlines; `--selftest`), `webauthn-rs256-vector.py` (the server's RS256 passkey vector
+  music" from Nunito's outlines; `--selftest`), `music-icon.py` (the music app's icon and notification small icon, the
+  user's drawing `vibb-music-q7`: the Vibb mark's outer three rings read from the launcher's `ic_launcher_foreground.xml`
+  and a round-cornered play triangle, its geometry measured on the drawing; `--selftest` checks the outer ring inside the
+  safe zone), `webauthn-rs256-vector.py` (the server's RS256 passkey vector
   `server/testdata/webauthn/rs256.json`, made once with a throwaway key - public data only; design 74), `emoji-list.py`
   (the launcher's `assets/sms/emoji-16.0.txt` from Unicode's `emoji-test.txt` 16.0, its SHA-256 pinned; design 81),
   `mmsc-hosts.py` (the server's `server/testdata/mmsc_hosts.txt`, design 83 §3: each operator's MMS server hosts from
@@ -368,7 +371,8 @@ check (`loginEntry`); both compare the copies. The window's and the role's own r
   `server/testdata/music_*.json` and `spotify_hosts.json`, the launcher's copy of the bridge AIDL,
   `bridge_contract.json` and `spotify_hosts.json`, `server/testdata/spotify/`, `scripts/fake-sonos.py`,
   `scripts/fake-storytel.py`, `scripts/fake-spotify.py`, `scripts/fake-audio.py`, `scripts/music-splash.py`
-  (with the launcher's `splash_vibb_breathe.xml` it draws from) and `scripts/sonos-ws-probe.py` (its capture
+  (with the launcher's `splash_vibb_breathe.xml` it draws from), `scripts/music-icon.py` (with the launcher's
+  `ic_launcher_foreground.xml` it reads the rings from) and `scripts/sonos-ws-probe.py` (its capture
   scrubber), whose `--selftest`s it runs after the build, the server's and the launcher's `storytel_token_answers.json` and `server/testdata/storytel/`;
   `server-ci.yml`'s build job also on the apps' `spotify_hosts.json` and `storytel_token_answers.json` copies and
   the launcher's `time_status_report.json`,
