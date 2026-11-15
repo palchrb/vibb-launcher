@@ -610,6 +610,24 @@ input[type="radio"] {
     font-size: 0.8125rem;
 }
 
+/* band::app (design 101 §7): the app's tile in the same place, 28 px. The glyph is keyed on the class - the letter is a
+   text node, so an <img> is :only-child in a logo tile too (QA M5); the logo keeps its fill (.app-row-logo img) and its
+   hairline is a light one on the night band. */
+.band-who > .app-row-tile {
+    width: 28px;
+    height: 28px;
+    font-size: 0.8125rem;
+}
+
+.band-who > .app-row-tile:not(.app-row-logo) > img {
+    width: 17px;
+    height: 17px;
+}
+
+.band-who > .app-row-logo {
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.14);
+}
+
 .band-who + .band-actions {
     margin-left: 0;
 }
