@@ -229,8 +229,8 @@ async fn the_home_form_keeps_bit_128_without_its_row() {
     assert!(html.contains("data-shortcuts-info"));
     assert!(html.contains(
         "Shortcuts is a fixed notification at the top of the notifications with up to four buttons. Emma picks them \
-         from the switches here and the flashlight. It never shows on the lock screen. On days with screen time it \
-         also shows the time left."
+         from the switches here and the flashlight. It never shows on the lock screen. When Emma has screen time \
+         today, it also shows the time left."
     ));
     assert!(html.contains("The switches apply to both Settings and Shortcuts."));
     assert!(!html.contains("title-bell"), "a phone sub-page has no bell");
