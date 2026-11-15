@@ -2029,7 +2029,7 @@ fn every_page_script_is_swap_ready_or_listed() {
 #[tokio::test]
 async fn every_page_carries_the_connecting_script_and_its_ping() {
     let head = std::fs::read_to_string("templates/partials/head.html").unwrap();
-    assert!(head.contains("<script src=\"/static/reconnect.js?v=14\" defer></script>"));
+    assert!(head.contains("<script src=\"/static/reconnect.js?v=15\" defer></script>"));
     // Saves in place (design 103): swap.js un-deferred right after scroll-restore.js (which hands it a save's landing),
     // and auto-reload.js on every page, armed only by the server's `data-waits` marker.
     assert!(head.contains(
@@ -2062,10 +2062,10 @@ async fn every_page_carries_the_connecting_script_and_its_ping() {
         "/settings".to_string(),
     ] {
         let html = app.get_page(&page, &cookie).await.text();
-        assert!(html.contains("/static/reconnect.js?v=14"), "{page}");
+        assert!(html.contains("/static/reconnect.js?v=15"), "{page}");
     }
     let signed_out = app.request(Method::GET, "/login", None, None).await;
-    assert!(signed_out.text().contains("/static/reconnect.js?v=14"));
+    assert!(signed_out.text().contains("/static/reconnect.js?v=15"));
     // About's Page timing row turns the timing on in this browser (code QA M2: the installed
     // iPhone app has no address bar), back to its own group.
     let about = app.get_page("/updates", &cookie).await.text();

@@ -39,10 +39,10 @@
 //   for, `window.handyLock.due()` (static/app-lock.js) is asked, and a due lock goes to /lock instead; a ping or the
 //   sign-in page's session check answered 423 (the server's lock) goes there too. The lock screen itself is left alone
 //   on a return (its own showing asks for the passkey, passkey.js), and the way to the lock from it keeps its `next`.
-// - saves in place (design 103 §2.7): a wait of kind "swap" has the bar, the chip, the pings and the restarts of a
-//   "load", but each restart is `handySwap.refresh(here)` (static/swap.js), never `location.reload()`, and falls back
-//   to the reload only when the refresh says no. swap.js hands a refresh whose GET failed (offline) to it
-//   (`handyReconnect.waitSwap`).
+// - saves in place (design 103 §2.7): the reload in place (pull to refresh, the return after being away) is a wait of
+//   kind "swap" - the bar, the chip, the pings and the restarts of a "load", but each restart is
+//   `handySwap.refresh(here)` (static/swap.js), never `location.reload()`, and falls back to the reload only when the
+//   refresh says no. swap.js hands a refresh whose GET failed (offline) to the same wait (`handyReconnect.waitSwap`).
 //   `handy:swapped` ends every wait but a link's navigation; `handy:saved` with no save left (`pending` 0) ends the
 //   save's hold. A slow save's bar is a counter of its own (`handyReconnect.busy(+1/-1)`, scroll-restore.js), so no
 //   wait's end hides it.
@@ -712,9 +712,10 @@
                         end();
                         return;
                     }
-                    // Away over 10 minutes: Devices, unless this already is Devices (then the reload in place).
+                    // Away over 10 minutes: Devices, unless this already is Devices (then the refresh in place,
+                    // design 103 D3).
                     var toHome = w.home && win.location.pathname !== HOME_PATH;
-                    var reload = toHome ? start("load", HOME_PATH, null) : start("load", null, null);
+                    var reload = toHome ? start("load", HOME_PATH, null) : start("swap", win.location.href, null);
                     go(reload);
                     return;
                 }
@@ -900,7 +901,8 @@
                     toLock(win, herePath(win));
                     return true;
                 }
-                go(start("load", null, null));
+                // Design 103 D3: in place (a "swap" wait), the reload only when the page can't be swapped.
+                go(start("swap", win.location.href, null));
                 return true;
             },
             /**
