@@ -272,3 +272,231 @@ that in E4. The window must check at open that the network is `CAPTIVE_PORTAL` a
   - the re-evaluation rate limit.
 - Chrome's handling of loaded tabs when `URLBlocklist` tightens (M4 assumes no eviction).
 - Whether the screen-time budget counts Chrome's foreground time under the role.
+
+## Revision 2
+
+Checked against `design-102` 3fb9ac2bf (revision 2: the "Revision 2" summary, §3.1-§3.6, §4.1, §6, §12, §13). Read
+again: `Application.kt:170-200` (the guards), `KidAppComponentFactory.kt`, `AppEnforcer.kt` (`reseatPreferredActivities`
+:1706, `applyDateTimeLock` :1391, `applyPrivateDnsLock` :1497), `EnforcementPlan.kt:267` (`lockDateTime`),
+`DnsFilterEngine.kt` (`classifyDomain` :65, `loadFromDisk`, `writeAtomically`), `res/xml/network_security_config.xml`
+(main and debug) and `ServerTransportTest`'s pin of it, `docs/notes/launcher/security.md` ("Cleartext"),
+`parent_events.rs` (`Push`, `raise`); the migrations on every branch (`main` and `design-102` end at 0148, `design-100`
+has `0149_time_request_answers.sql`, nothing else claims 0150). Android's `ActivityOptions.setShareIdentityEnabled`
+reference (developer.android.com). No emulator, no `cargo test`.
+
+**Verdict: every first-round finding is taken, and H1's four parts are all in. H1 is closed down to one residue - a
+network built on purpose to fail Vibb's check - which is bounded (20 minutes a day) and reported, but wider than §7
+says. Two new Highs stop Part A from working at all as written: the app's network security config forbids the http a
+portal is made of, and `getLaunchedFromUid()` can't see the system's uid. Both have clean fixes; the first needs the
+user (it reverses part of S-M1).**
+
+Counts: **2 High, 4 Medium, 6 Low.**
+
+### Q102-R2-H1 High - the window can't load http: cleartext is off for the whole app (§3.2, new)
+
+- `res/xml/network_security_config.xml`: `<base-config cleartextTrafficPermitted="false">`, one exception
+  (`tailnet-server.vibb.invalid`; debug adds `10.0.2.2`). `ServerTransportTest` pins exactly that ("cleartext is off but
+  for the tailnet name"). It was the user's S-M1 decision of 2026-11-04.
+- WebView honours the app's network security config for cleartext (targetSdk 26+): an http load ends in
+  `net::ERR_CLEARTEXT_NOT_PERMITTED`. A network security config is per app, not per process, and names hosts, never
+  ranges, so `:portal` can't be exempted alone.
+- A portal is http by nature: Android's probe URL (`http://connectivitycheck.gstatic.com/generate_204`, the binderless
+  start's first load), the intercepted redirect, `CAPTIVE_PORTAL_URL` (M7: `http://10-0-2-2.nip.io:8103/login`), and
+  portals on IP literals (`http://1.1.1.1/login.html`, `192.168.x.y`). The probe in §1 was its own app with its own
+  config, so M7 doesn't cover this. The design never mentions the config.
+- Proxying http through `shouldInterceptRequest` doesn't work: it gets no POST body, and portal forms post over http.
+- The debug config's `10.0.2.2` exception would hide it in the emulator loop, if the fake portal is reached by that
+  address.
+
+Fix, as a new D-item for the user (D15): (a) `cleartextTrafficPermitted="true"` in the base config, system CAs only
+as now, with S-M1 carried by the code that already refuses a non-https server path before a socket
+(`ServerTransport`'s `Closed`/`NOT_HTTPS`), and `ServerTransportTest`'s pin rewritten to pin that instead, plus a test
+that every server client still refuses `http://` to a non-tailnet host; or (b) the window as a separate small APK with
+its own config (a new package to sign, install, pin and update). I'd recommend (a). E1 must reach the fake portal by a
+hostname (`nip.io`), never `10.0.2.2`.
+
+### Q102-R2-H2 High - `getLaunchedFromUid()` returns `INVALID_UID` for the system's start (§3.1, M6's fix)
+
+- Since API 34, `Activity.getLaunchedFromUid()`/`getLaunchedFromPackage()` return the launcher's identity only when it
+  opted in with `ActivityOptions.setShareIdentityEnabled(true)` (default `false`), or the activity is platform-signed.
+  ConnectivityService's `startCaptivePortalAppInternal` starts the intent with no options (§1: "sets no package or
+  component", M2's `from uid 1000`). Vibb is not platform-signed. So the check sees `Process.INVALID_UID` on every real
+  start, and the entry refuses all of them: Part A never opens from the notification.
+- It fails closed, but E2 would find it during the build, and the easy patch (accept `INVALID_UID`) makes the entry
+  forgeable again: M6's hole.
+- **The fix: `android:permission` is the guard, not the fallback.** A signature permission (`NETWORK_STACK` or
+  `NETWORK_SETTINGS`) on the entry: system_server's start runs as uid 1000, which passes every permission check
+  (`checkComponentPermission`), and no installable app can hold either. Keep the network checks (they bound a forged
+  start anyway: it could only open the window on a network that really is captive, but it would choose the first URL).
+  Drop `getLaunchedFromUid` from §3.1, §7 and §10, or keep it as a log line only.
+- E2: the system's start passes; a start from a second, ordinary app is refused. Not the shell: it holds many network
+  permissions, and adb isn't the kid's way in.
+
+### Q102-R2-M1 Medium - H1's residue is wider than §7 says, and the cross-site rule has three gaps (§3.2, §7, D3)
+
+Against a network built to fail the check (a travel router or laptop hotspot that blocks `www.gstatic.com`,
+`cp.cloudflare.com` and the server by DNS and passes everything else):
+
+- **No form post is needed.** The probe's own 302 can point at any site the lists allow (YouTube, Google), and the
+  initial load's redirect is allowed. Same-site taps are then free there. §7 describes a form post to one site.
+- **The "current site" moves with every redirect**, so any same-site open redirector (a 302, or a page that sets
+  `location`) carries the kid onward: a tap within the site, then a redirect out. Such redirectors are common on large
+  sites.
+- **Sub-frames aren't judged by the site rule** (§3.2 judges "a main-frame GET"). A full-page iframe of another site
+  is a browser inside the window, and its own navigations go anywhere the lists allow.
+- **Sub-resource redirects skip `shouldInterceptRequest`** (it is called once per request, not per redirect hop), so a
+  sub-resource on an allowed host that redirects to a blocked one isn't filtered. List it with WebSockets and WebRTC.
+- **`visited` caps at 20**, so a long session is under-reported. Add a `visited_count`.
+
+The bound still holds: at most 20 minutes a day, 4 openings, each site named to the parent, the Activity event. So H1
+is closed to "a deliberate rig gets 20 reported minutes a day", not "can't browse". Put that sentence in §7 and in D3,
+so the user decides on the true residue. Cheap tightenings that keep real portals:
+
+- A cross-site redirect is allowed only when its source or its target is a **portal site**: the first page's site and
+  sites reached from a portal site by a form post. Sites reached by redirect (vendor auth, Facebook) are leaves: they
+  may redirect back to a portal site, not onward. That kills the open-redirector chain.
+- Sub-frame navigations to another site are judged like main frames (a tap is refused; the page's own load is
+  allowed), and their sites count in `visited`.
+
+### Q102-R2-M2 Medium - the cross-site rule refuses portals that redirect by meta refresh or script (§3.2, D3)
+
+`WebResourceRequest.isRedirect()` is true only for server redirects. A `<meta http-equiv="refresh">` or an onload
+`window.location = …` is a new navigation with `isRedirect() == false`. Real portals do this: the intercepted http
+answer is a 200 page that refreshes to the controller's login (a virtual IP such as `1.1.1.1`, or the vendor's host),
+or a "Redirecting…" page. In Vibb's window the first page's site is the probe host's (`gstatic.com`), and the jump is
+refused as "a script's `location` to another site". The first QA's H1.2 ("portals hop hosts mostly by 302s and form
+posts") understated this.
+
+Fix: on a portal site (R2-M1), a cross-site main-frame GET with `!hasGesture()` (the page's own code or a meta refresh,
+not the kid's tap) is allowed, as a redirect is. A tap (`hasGesture()`) is still refused. Add a meta-refresh mode and
+a script mode to `fake-portal.py`, a `navigation` row for each, and E5.
+
+### Q102-R2-M3 Medium - the https check false-passes on a portal that offers "Log in with Google" (§3.2)
+
+- A portal whose walled garden allows Google sign-in lists `*.gstatic.com` (and `accounts.google.com`,
+  `*.googleapis.com`). `GET https://www.gstatic.com/generate_204` then passes with a valid chain, while the internet
+  does not. "One pass means the network carries traffic" closes the window as `passes`, and the network is marked so
+  the entry refuses it while it stays connected. The kid can't sign in at that hotel at all, and Android keeps its
+  notification.
+- **The fix**: a pass needs **two operators**: `www.gstatic.com` **and** `cp.cloudflare.com`, or either one and the
+  phone's own server. It costs no security: the rig blocks two names as easily as one.
+- Replace the sticky "marked passing" with a fresh check at each opening (the entry already runs one), so a wrong
+  pass isn't kept for the whole connection.
+- Name the check client's rules: `followRedirects(false)`, an exact 204 with an empty body, the fixed constant hosts
+  (never from the policy). Its lookups don't go through the window's `classifyDomain` (they never need to), and it
+  doesn't touch the tunnel (Vibb is excluded from its own VPN).
+
+### Q102-R2-M4 Medium - the snapshot is frozen for the window's life (§3.2 "Its state", "A pause", "The PIN lock")
+
+- **A pause.** A window opened during a pause has no filter, no time limit, no budget and no cross-site rule (§3.2
+  "A pause or the override lifts the window's limits"). Nothing ends that when the pause ends, so on a check-failing
+  network it is an unlimited browser after the pause.
+- **No signal into `:portal`.** "The window finishes when the lock engages", the parent turning Part A off, and a
+  changed filter list all need one, and none is designed. The snapshot goes one way, at the start.
+- **The fix**:
+  - The snapshot carries the pause's end. At that moment the window applies the normal rules, with `minutes` counted
+    from then, or simply closes.
+  - The main process tells `:portal` to finish on the PIN lock, on Part A off and at the pause's end: an explicit
+    broadcast to a non-exported receiver registered in `:portal` (same uid only), or a bound service.
+  - A `close` row in `login_rules.json` for "opened in a pause, the pause ends".
+
+### Q102-R2-L1 Low - disabling the entry needs `DONT_KILL_APP` (§3.1 "Off is the disabled component")
+
+`setComponentEnabledSetting` on Vibb's own package kills its process unless the flag is `DONT_KILL_APP`. Without it,
+each turn of the switch kills Home, the VPN service, the call services and the lock runtime. Name the flag. The
+mechanism itself is sound (`findPersistentPreferredActivity` matches only components in the intent's resolve list, so
+a disabled entry falls through to the stock app).
+
+### Q102-R2-L2 Low - the budget's edges (§3.3)
+
+- **The clock.** "The date and time locks hold" only while `lockDateTime` (`EnforcementPlan.kt:267`: apps, calls, SMS
+  or time rules managed). Store the latest date seen and never treat an earlier date as a new day. That is a line,
+  not a dependency.
+- **One window at a time.** The entry must bring the open window forward (or refuse) while a session is open.
+  Otherwise two windows each get the snapshot's "time left".
+- **`grant`.**
+  - Say what a jump by more than one adds.
+  - On a fresh install or after a data loss, the phone stores the current `grant` as used without adding anything.
+    Otherwise an old counter gives a free opening.
+
+### Q102-R2-L3 Low - `wifi_signin_wide` will fire on ordinary sign-ins (§3.6)
+
+"Had blocked hosts" counts sub-resources, and portal pages load analytics and ad hosts that the lists block. Nearly
+every hotel sign-in would raise an event. Count blocked main frames and sub-frames only. Keep `blocked_hosts` in the
+session for the list.
+
+### Q102-R2-L4 Low - the tightening and the clear (§4.1, D9, D13)
+
+- `chromeTightened`'s "the written allowlist shrank" must mean "some old entry is gone" (a set difference), not a
+  smaller count: a swap of one site for another is a tightening.
+- D13's "Chrome was a ticked, free app": the phone has no record of that from before this version. Say whether
+  "unknown" clears (I'd say yes, once).
+- The pause (D9) leaves the same remains as a free phase (history, logged-in sites). Say why no clear is needed
+  there: restored tabs reload through `URLBlocklist`.
+- D13 is a visible cost (the kid's web logins in Chrome are gone). The role's switch, or a line under it, should say
+  so before the parent turns it on.
+
+### Q102-R2-L5 Low - two small mismatches with the code
+
+- **The snapshot's "the parent's allowed domains".** `classifyDomain` (`DnsFilterEngine.kt:65`) takes the list, the
+  Spotify flag and the DoH hosts, and has no allowed-domains input. Name where they apply (the server's compiled list,
+  I believe), or drop them from the snapshot. Do include the DoH hosts asset.
+- **D-C3 reads `chrome://policy`, but the bundle now blocks `chrome://*`.** Confirm Chrome keeps `chrome://policy`
+  reachable under a blocklist, or read it with a test bundle without that entry.
+
+### Q102-R2-L6 Low - the checks owed
+
+- E1/E3 through a hostname, not `10.0.2.2` (R2-H1).
+- E2 with a second app, not the shell (R2-H2).
+- E4 also with a "Google walled garden" mode (gstatic passes, nothing else does; R2-M3).
+- E5 with the meta-refresh and script modes (R2-M2), and a full-page iframe (R2-M1).
+- E9-style: a window opened in a pause, then the pause ends (R2-M4).
+
+### The first round's findings, as handled
+
+| Finding | Verdict |
+|---|---|
+| H1 | Taken in full. Closed to R2-M1's residue; R2-M2 and R2-M3 are the new rule's own costs |
+| M1 | Right: 0150 is free on every branch (`design-100` has 0149, nothing claims 0150) |
+| M2 | Right. The guard, the snapshot and a session file with an explicit broadcast to a non-exported receiver (same uid only, so no app can send it). The component factory is already safe (`instance` stays null). The reverse signal is missing (R2-M4) |
+| M3 | Right. Written, read back typed, then unhidden; the package constant; the types in the table match M10's schema |
+| M4 | Right. Hiding kills the package; Chrome's restored tabs reload through the blocklist (not verified on a device) |
+| M5 | Right, plus `DONT_KILL_APP` (R2-L1) |
+| M6 | The diagnosis was right; the chosen API can't work (R2-H2) |
+| M7 | Right; add sub-resource redirects (R2-M1) |
+| M8 | Right. A set column, own rows apart, expanded at build; the contract has the "own entry equal to a preset" row |
+| L1-L9 | All taken. L6's dedup and `Push::Held` match `parent_events.rs`; L8's nullable field and full-report fields are stated |
+
+The API and contract rule is met: one contract file, byte-identical in both directories, the launcher's half in step
+1's commit, both CI path lists, the root `CLAUDE.md` paragraph, and the policy keys pinned by
+`policy_json_keys_snapshot`/`PolicyResponseCompatTest` with `login_browser` nullable.
+
+### The D-items
+
+| # | Verdict |
+|---|---|
+| D1 | Sound once R2-H1/H2 are fixed. The text should carry R2-M1's residue, not "can't change site except by the portal's redirects" |
+| D2 | Sound (per phone, 4 openings, 20 minutes), with R2-L2's edges |
+| D3 | Sound as a choice. Add R2-M2's `!hasGesture()` allowance and R2-M1's portal-site rule. State the true residue. A third option for the user: no cross-site at all except by form post |
+| D4 | Sound now that the window is bounded |
+| D5 | Sound |
+| D6 | Sound; fix the trigger (R2-L3) |
+| D7, D8, D10, D11, D12 | Sound |
+| D9 | Sound under the pause rule; the window side needs R2-M4 |
+| D13 | Sound, automatic. Show its cost on the switch, and settle "unknown" (R2-L4) |
+| D14 | Sound and one-shot, with R2-L2's `grant` edges |
+| D15 (needed) | Cleartext for the app, or a separate portal APK (R2-H1). Recommend allowing cleartext in the config, with the server-path rule kept in code and re-pinned by tests |
+
+### Couldn't verify
+
+- **WebView and cleartext.** That WebView refuses http under this app's config (`ERR_CLEARTEXT_NOT_PERMITTED`) is from
+  the platform's documented behaviour, not run here. One `loadUrl("http://…")` in a debug build of the real launcher
+  settles it, at a hostname outside the debug exception.
+- **ConnectivityService's start.** That it passes no `ActivityOptions` (so `INVALID_UID`) is from AOSP as I know it;
+  the API reference confirms the opt-in rule.
+- **WebView's hooks:**
+  - whether `shouldOverrideUrlLoading` is called for the redirects of the first `loadUrl`;
+  - `hasGesture()` on meta-refresh and script navigations;
+  - `shouldInterceptRequest` and sub-resource redirects.
+- **Chrome:** tab restore after the kill; `chrome://policy` under `chrome://*`.
+- **Real portals:** how many whitelist `*.gstatic.com`, and how many use client-side redirects (D-C2 should log both).
