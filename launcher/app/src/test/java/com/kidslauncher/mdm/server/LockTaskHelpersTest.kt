@@ -158,6 +158,13 @@ class LockTaskHelpersTest {
         assertEquals(featuresWhileLocked(111, true), locked.features)
         assertEquals(97, locked.features)
         assertEquals(125, routeWindowFeatures(127))
+        // The close's first pass: Settings out, the shade still blocked - never the shade back with Settings pinnable.
+        val closing = lockTaskWhileLocked(kiosk, 111, false, locked = false, ownPackage = "me.vibb.launcher", lockHelpers = emptySet(), routeClosing = true)
+        assertEquals(kiosk, closing.packages)
+        assertEquals(109, closing.features)
+        // LOCKED or the kiosk off: the close changes nothing there.
+        assertEquals(97, lockTaskWhileLocked(kiosk, 111, false, locked = true, ownPackage = "me.vibb.launcher", lockHelpers = emptySet(), routeClosing = true).features)
+        assertEquals(null, lockTaskWhileLocked(null, 111, false, locked = false, ownPackage = "me.vibb.launcher", lockHelpers = emptySet(), routeClosing = true).packages)
     }
 
     @Test

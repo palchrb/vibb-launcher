@@ -160,7 +160,14 @@ Only the kid's Flymodus switch (§4.1, and the same switch in §4.3's sheet) and
      `setStatusBarDisabled(true)`. Under lock task DPMS only records that write (`lock/StatusBarHealPlan.kt`), so the
      shade stayed usable for the window, with Settings pinnable through a notification. The chrome still writes
      `statusBarDisabled = true` for the window, but only the features act. Measured in `docs/testing/emulator.md` §6am,
-     "Addendum".
+     "Addendum": the shade closes as Settings is pinned and can't be opened again, and the window's close takes Settings
+     out before the shade comes back.
+   - **What remains (measured, 2026-11-15).** SystemUI only *animates* the shade closed (~300 ms). A touch on the shade
+     during that animation stops it, and the shade then stays open for the rest of the window with its notifications
+     still clickable, `DISABLE2_NOTIFICATION_SHADE` notwithstanding: a notification tap can start a Settings page in the
+     pinned package until step 7. Step 7 contains it (the baseline run: such a page cleared by `clear-task-all` 21 ms
+     after it resumed, the process killed 190 ms later). Without a touch in that animation, nothing in the shade is
+     reachable for the window.
    - If the phone is LOCKED (the kid pressed power), the chrome leaves Settings out. The route's start is then blocked,
      and it ends with `timeout`. **Nothing in the route ever writes the lock-task list itself.**
    - Unhide Settings when the plan hides it (M3, M4). `AirplaneRoute.inFlight` (with its start time) makes the
@@ -172,8 +179,9 @@ Only the kid's Flymodus switch (§4.1, and the same switch in §4.3's sheet) and
 6. **Wait** for `ACTION_AIRPLANE_MODE_CHANGED` with `state = true`, the session's `onTaskFinished`, or **1 s**. M4's
    whole route took 270 ms.
 7. **Close the window, always** (a `finally`):
-   - Clear `routePin` and refresh the chrome (the plan's features with the shade, then the list without Settings, and
-     the status bar as the chrome's own inputs say).
+   - Clear `routePin` and refresh the chrome in two passes (`LockTaskChrome.routeWindow`): the list without Settings
+     with the shade still blocked, then the plan's features with the shade. A pass writes the features before the list,
+     so one pass would give the shade back while Settings is still pinnable (seen on the emulator, §6am "Addendum").
    - Hide Settings again when step 4 unhid it, and check `setApplicationHidden`'s return value. On `false`, retry once,
      then request an `apply()`.
    - Hide the session, clear `inFlight`, and clear the DE marker last.

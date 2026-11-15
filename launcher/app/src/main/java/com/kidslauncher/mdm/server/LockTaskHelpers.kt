@@ -198,7 +198,9 @@ data class LockTaskSetting(
  *
  * [routePin] (design 98 §2.2 step 4): Settings for the second of a Flymodus turn-on - added to the kiosk's list with the
  * shade closed and blocked ([routeWindowFeatures]), only while unlocked and the kiosk is on. A LOCKED pass leaves it out
- * (the route then times out).
+ * (the route then times out). [routeClosing]: the close's first pass - Settings out, the shade still blocked - so the
+ * shade is never back while Settings is pinnable (a pass writes the features before the list); the next pass, without
+ * it, gives the shade back.
  */
 fun lockTaskWhileLocked(
     kioskPackages: Set<String>?,
@@ -212,9 +214,12 @@ fun lockTaskWhileLocked(
     recentsPin: String? = null,
     sosNarrowed: Set<String>? = null,
     routePin: String? = null,
+    routeClosing: Boolean = false,
 ): LockTaskSetting = when {
     !locked && kioskPackages != null && routePin != null ->
         LockTaskSetting(kioskPackages + routePin, routeWindowFeatures(baseFeatures), statusBarDisabled = true, createWindowsBlocked = restrictCreateWindows)
+    !locked && kioskPackages != null && routeClosing ->
+        LockTaskSetting(kioskPackages, routeWindowFeatures(baseFeatures), statusBarDisabled = true, createWindowsBlocked = restrictCreateWindows)
     !locked -> LockTaskSetting(kioskPackages, baseFeatures, statusBarDisabled = fenced, createWindowsBlocked = restrictCreateWindows)
     // qa-25b-25f H1: during the "sos" yield the kiosk's list shrinks to the kiosk-off one, so Android
     // removes every other locked task (an allowed app brought up in the SOS window).
