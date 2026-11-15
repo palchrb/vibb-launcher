@@ -311,7 +311,12 @@ async fn the_tiles_say_their_state() {
         .unwrap();
     let (id, token) = app.enrolled_device("Emma").await;
     let oslo: chrono_tz::Tz = "Europe/Oslo".parse().unwrap();
-    let local = Utc::now().with_timezone(&oslo);
+    // Not across Oslo's midnight (the day and "tomorrow" would flip between here and the render): wait it out.
+    let mut local = Utc::now().with_timezone(&oslo);
+    if local.hour() == 23 && local.minute() >= 58 {
+        tokio::time::sleep(std::time::Duration::from_secs(150)).await;
+        local = Utc::now().with_timezone(&oslo);
+    }
     let day = |date: chrono::NaiveDate| date.to_string();
     let minute = i64::from(local.hour() * 60 + local.minute());
     // A rule every day: one window starting 90 minutes from now (over midnight if need be), 30 minutes long.
@@ -1276,7 +1281,7 @@ async fn the_summary_row_counts_what_is_new_to_this_parent() {
     let page = activity_page(&app, lily, &cookie, "").await;
     assert_eq!(page.matches("class=\"unread-dot\"").count(), 2, "{page}");
     assert!(
-        page.contains("<span class=\"visually-hidden\">Unread </span>"),
+        page.contains("<span class=\"visually-hidden\">Unread: </span>"),
         "{page}"
     );
     assert!(page.contains("<span hidden data-unread=\""), "{page}");

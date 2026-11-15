@@ -115,11 +115,17 @@ test("a focus that leaves the panel closes the sheet, one inside does not", () =
     assert.strictEqual(page.details.open, false);
 });
 
-test("opening the picture sheet focuses its first action, with the capture-phase toggle", () => {
+test("opening the picture sheet by keyboard focuses its first action, with the capture-phase toggle", () => {
     const page = fakeMenu();
     install(page.win);
     assert.strictEqual(page.listeners.toggle.capture, true);
+    // Opened by a tap (a click with a detail): no script focus, which would draw the pressed look.
+    page.listeners.click.fn({ target: page.other || {}, detail: 1 });
     page.details.open = true;
+    page.listeners.toggle.fn({ target: page.details });
+    assert.deepStrictEqual(page.focused, []);
+    // Opened by Enter or Space (detail 0): the first action takes the focus.
+    page.listeners.click.fn({ target: {}, detail: 0 });
     page.listeners.toggle.fn({ target: page.details });
     assert.deepStrictEqual(page.focused, [["action", { preventScroll: true }]]);
 });

@@ -226,21 +226,17 @@ impl ScreenTime {
         })
     }
 
-    /// The status lines' words in `lang` (the user's pick C, 2026-11-01): "4 min today", "1 h 12
-    /// min of 1 h 30 min today", "42 min on 13 Oct" in the fallback zone; `summary` names it
-    /// ("4 min screen time today", the summary's header).
-    pub fn words(&self, lang: Lang, summary: bool) -> String {
+    /// The Devices row's words in `lang` (the user's pick C, 2026-11-01): "4 min today", "1 h 12
+    /// min of 1 h 30 min today", "42 min on 13 Oct" in the fallback zone. (The summary's header no longer says it,
+    /// design 101.)
+    pub fn words(&self, lang: Lang) -> String {
         let used = crate::display_time::duration(lang, self.used);
         let budget = self.budget.map(|b| crate::display_time::duration(lang, b));
-        let key = match (summary, &budget, &self.day) {
-            (false, None, None) => "devices.status.screen.today",
-            (false, Some(_), None) => "devices.status.screen.today_budget",
-            (false, None, Some(_)) => "devices.status.screen.on_day",
-            (false, Some(_), Some(_)) => "devices.status.screen.on_day_budget",
-            (true, None, None) => "devices.status.screen_summary.today",
-            (true, Some(_), None) => "devices.status.screen_summary.today_budget",
-            (true, None, Some(_)) => "devices.status.screen_summary.on_day",
-            (true, Some(_), Some(_)) => "devices.status.screen_summary.on_day_budget",
+        let key = match (&budget, &self.day) {
+            (None, None) => "devices.status.screen.today",
+            (Some(_), None) => "devices.status.screen.today_budget",
+            (None, Some(_)) => "devices.status.screen.on_day",
+            (Some(_), Some(_)) => "devices.status.screen.on_day_budget",
         };
         let budget = budget.unwrap_or_default();
         let day = self.day.clone().unwrap_or_default();

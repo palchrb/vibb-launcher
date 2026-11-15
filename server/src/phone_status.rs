@@ -1,6 +1,6 @@
 //! A phone's status as the Devices row and the summary's header say it (the user's pick C of
 //! 2026-11-01, PLAN "Tidier status on Devices and the phone's summary"): the name, then one line on
-//! the row and at most two in the header, each the first that holds of
+//! the row and one in the summary's header (design 101), each the first that holds of
 //!
 //! 1. not set up, access removed, not seen yet (the phone can't tell more);
 //! 2. **turned off** - design 38's `phone_off` later than every `phone_on` and status report
@@ -19,11 +19,11 @@
 //! online or away under 10 min, orange with "No contact", grey turned off, offline or not reachable.
 //!
 //! No "seen 7 min ago" and no battery age while the phone is in touch - the dot says that. The
-//! header's first line is the same lead ("4 min screen time today" for the last case), its second
-//! the zone the phone is in now ("Test since 22:19") · the battery (the screen time when the lead is
-//! the battery); without contact the second line is the rest of the row's line, the zone left out
-//! (where it was then isn't where it is now); a phone turned off, offline or not reachable has the
-//! first line alone. Every word comes from the catalogs (`devices.status.*`) in the reader's
+//! header's line is the same lead ("Online" for the last case), then the zone the phone is in now ("Test since
+//! 22:19", with a pin) · the battery - never the screen time (the Skjermtid tile says it); without contact the
+//! lead is "No contact" and then the rest of the row's line, the zone left out (where it was then isn't where it is
+//! now); a phone turned off, offline or not reachable has its lead alone. [header] builds the parts in two lines for
+//! the roaming and airplane parts, [one_line] joins them. Every word comes from the catalogs (`devices.status.*`) in the reader's
 //! language, every time from [Zone::since].
 
 use chrono::{DateTime, Utc};
@@ -238,7 +238,7 @@ fn lead<'a>(facts: &Facts<'a>) -> Lead<'a> {
 /// The Devices row's one line.
 pub fn row(facts: &Facts, zone: &Zone, now: DateTime<Utc>) -> Line {
     let lead = lead(facts);
-    let rest = rest(&lead, facts, zone, now, false);
+    let rest = rest(&lead, facts, zone, now);
     match no_contact_line(&lead, facts, zone, now) {
         Some(mut line) => {
             line.extend(rest);
@@ -249,11 +249,10 @@ pub fn row(facts: &Facts, zone: &Zone, now: DateTime<Utc>) -> Line {
     }
 }
 
-/// The row's line without "No contact": the lead's parts and what follows them (`summary`: the
-/// screen time named, as the header says it).
-fn rest(lead: &Lead, facts: &Facts, zone: &Zone, now: DateTime<Utc>, summary: bool) -> Line {
+/// The row's line without "No contact": the lead's parts and what follows them.
+fn rest(lead: &Lead, facts: &Facts, zone: &Zone, now: DateTime<Utc>) -> Line {
     match lead {
-        Lead::Plain => [screen(facts, zone, summary), battery(facts, zone)]
+        Lead::Plain => [screen(facts, zone), battery(facts, zone)]
             .into_iter()
             .flatten()
             .collect(),
@@ -261,7 +260,7 @@ fn rest(lead: &Lead, facts: &Facts, zone: &Zone, now: DateTime<Utc>, summary: bo
             let mut line = lead_line(lead, facts, zone, now);
             match lead {
                 Lead::Lock(_) => line.extend(battery(facts, zone)),
-                Lead::Low(_) => line.extend(screen(facts, zone, summary)),
+                Lead::Low(_) => line.extend(screen(facts, zone)),
                 _ => {}
             }
             line
@@ -390,7 +389,7 @@ pub fn header(facts: &Facts, zone: &Zone, now: DateTime<Utc>) -> Vec<Line> {
     };
     let lead = lead(facts);
     if let Some(first) = no_contact_line(&lead, facts, zone, now) {
-        return [first, rest(&lead, facts, zone, now, false)]
+        return [first, rest(&lead, facts, zone, now)]
             .into_iter()
             .filter(|line| !line.is_empty())
             .collect();
@@ -492,15 +491,11 @@ fn battery(facts: &Facts, zone: &Zone) -> Option<Part> {
     Some(Part::new(words, Tone::Plain, Some("battery")).battery_icon(battery.level, zone))
 }
 
-/// "4 min today" (the row), "4 min screen time today" (the header).
-fn screen(facts: &Facts, zone: &Zone, summary: bool) -> Option<Part> {
-    facts.screen.map(|screen| {
-        Part::new(
-            screen.words(zone.lang(), summary),
-            Tone::Plain,
-            Some("screen-time"),
-        )
-    })
+/// "4 min today" (the row; the header leaves the screen time out).
+fn screen(facts: &Facts, zone: &Zone) -> Option<Part> {
+    facts
+        .screen
+        .map(|screen| Part::new(screen.words(zone.lang()), Tone::Plain, Some("screen-time")))
 }
 
 /// "Test since 22:19", or the zones' names alone.

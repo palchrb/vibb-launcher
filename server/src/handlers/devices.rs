@@ -2383,7 +2383,9 @@ async fn render_device(
             rules: time_rules.as_deref().unwrap_or(&[]),
             query,
             // Design 101 §4.1: a fresh report that says no rule locks (the screen-time lock is none).
+            // A rule list that couldn't be read says nothing (fail closed).
             no_rule_now: report_fresh
+                && time_rules.is_ok()
                 && lock
                     .as_ref()
                     .is_none_or(|b| b.name_key == Some("devices.status.lock.screen_time")),

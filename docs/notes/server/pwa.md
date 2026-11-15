@@ -2254,7 +2254,7 @@ Server only: no launcher or API change, no migration. The user's "Vi går for a!
   array string) after the rows were built, so the rows keep their state: the page draws the inbox's `unread-dot` and its
   visually-hidden word on those rows (QA M7). The page carries a hidden `data-unread` (what this parent still has unread after
   marking: `register-sw.js`'s app badge, QA L6); unread events older than the week or past the cap are neither counted nor
-  marked, so the bell can stay above "2 nye". The sub-line is `.row-sub-wrap` (a two-line `-webkit-line-clamp`), the clock in a
+  marked, so the bell can stay above "2 nye". The sub-line is `.row-sub-wrap` (wraps, no clamp), the clock in a
   `.nowrap` span (`.row-sub-line` went; `device.activity.count*` and `count_more` went with the old badge, and `Activity.more`).
 - **The app's tile on its band** (`band::app(title, href, parent, tile)`, the sixth macro; `tracked_app_detail.html` only - the
   only per-app page): `AppTile` as `apps_list.html` draws it, the real logo (the launcher the Vibb mark) over the catalog glyph
@@ -2262,7 +2262,18 @@ Server only: no launcher or API change, no migration. The user's "Vi går for a!
   tile and the Name and icon preview (a failed read is logged: glyph or letter). CSS keys the glyph's 17 px on
   `.band-who > .app-row-tile:not(.app-row-logo) > img` - **not `:only-child`**, which matches the logo's `<img>` too because the
   letter is a text node (QA M5) - and gives the logo a light hairline on the night. Test: `app_logos::the_pages_show_the_logos`.
-- Cache: `style.css?v=115`, `confirm.js?v=2`. To measure before a merge (not run here): the gap and the picture under a 40-letter
+- **Airplane periods in Activity (the user, 2026-11-15)**: the summary's grey "Flymodus var på 18:01–18:02" box
+  (`device.summary.airplane.was_on`) is gone; `airplane_mode::summary_lines` keeps the emergency line and the lost-role
+  warning, and the status line keeps "Flymodus på siden …" while on. Every ended period in the newest report (the launcher
+  keeps ten) that ended within the week is a read-only Activity row (`activity::airplane_row`, a `LiftRow` with no word:
+  "Flymodus på 18:01–18:02", `device.activity.airplane`, the exact start in `title`, `Zone::since`/`clock`); it is no event, so
+  no push and no unread count. Design 98's note says so.
+- **Code QA fixes**: `next_start` also offers the end of a pause over a window running now (M1) and builds a start from its
+  own minute, so 23:59 works (M2); a rule list that failed to read never says "Ingen regel nå" (L1); `confirm.js` (`?v=3`)
+  focuses the sheet's first action only after a keyboard open (`click.detail === 0`; a script focus after a tap drew the
+  pressed look); the Activity sub-line wraps without a line clamp (a clamp could hide a clock that wrapped to a third
+  line); the header's `screen_summary` words and `ScreenTime::words`' `summary` argument are gone.
+- Cache: `style.css?v=115`, `confirm.js?v=3`. To measure before a merge (not run here): the gap and the picture under a 40-letter
   name at 320 and 390 px, light and dark, scripts on and off; the sheet over the tab bar; an autosave keeping the place;
   pull-to-refresh refused while the sheet is open; the iPhone's photo picker from the file row in the installed app.
 

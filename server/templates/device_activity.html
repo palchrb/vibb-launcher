@@ -35,7 +35,7 @@
             {#- A rule pause that is over or extra screen time: read-only, granted at its time. -#}
             <div class="row" data-lift="{{ l.id }}">
                 <span class="row-label">{{ l.what }}</span>
-                <span class="row-value"{% if !l.exact.is_empty() %} title="{{ l.exact }}"{% endif %}>{% if !l.when.is_empty() %}{{ l.when }} · {% endif %}{% if let Some(by) = l.by %}{{ by }} · {% endif %}<span class="tone-{{ l.tone }}">{{ l.word }}</span></span>
+                <span class="row-value"{% if !l.exact.is_empty() %} title="{{ l.exact }}"{% endif %}>{% if !l.when.is_empty() %}{{ l.when }}{% if l.by.is_some() || !l.word.is_empty() %} · {% endif %}{% endif %}{% if let Some(by) = l.by %}{{ by }}{% if !l.word.is_empty() %} · {% endif %}{% endif %}{% if !l.word.is_empty() %}<span class="tone-{{ l.tone }}">{{ l.word }}</span>{% endif %}</span>
             </div>
             {% when ActivityRow::Event(e) %}
             <form method="post" action="/notifications/{{ e.id }}/open" class="cell">

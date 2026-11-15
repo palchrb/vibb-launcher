@@ -810,7 +810,7 @@ phone sub-page: no bell.
   - when the latest report has `on`;
   - or when it has `going_on`, **for 10 minutes only** unless a later report confirms with `on` or a period (Q98-L2);
   - this line replaces the "not heard from" line.
-- "Flymodus var på 21:03–07:10" / "Airplane mode was on 21:03–07:10", for a period that ended within the last 12 hours.
+- ~~"Flymodus var på 21:03–07:10" box for a period that ended within the last 12 hours~~ - **moved to Activity by design 101 (the user, 2026-11-15)**: every ended period of the newest report is an Activity row "Flymodus på 21:03–07:10" / "Airplane mode on 21:03–07:10" (the week's bounds, no push, no unread); the summary keeps "Flymodus på siden …" while on, the emergency line and the lost-role warning.
 - "Flymodus ble slått av av en nødsamtale 14:02" / "An emergency call turned airplane mode off at 14:02", when
   `off_by` is `emergency` (§7.1).
 - A warning line when the role was held before and is lost now (§3.6): "Flymodus virker ikke: Vibb One er ikke lenger

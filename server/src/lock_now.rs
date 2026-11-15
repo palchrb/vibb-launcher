@@ -200,10 +200,24 @@ pub fn next_start<'a>(
     let horizon = minute + Duration::hours(24);
     let one = Duration::minutes(1);
     let mut best: Option<(&TimeRuleRow, NaiveDateTime)> = None;
+    let key = |r: &TimeRuleRow, at: NaiveDateTime| (at, kind_rank(&r.kind), r.sort_order);
+    let mut offer = |rule: &'a TimeRuleRow, at: NaiveDateTime| {
+        if best.is_none_or(|(b, b_at)| key(rule, at) < key(b, b_at)) {
+            best = Some((rule, at));
+        }
+    };
     for rule in rules {
         let Some(days) = read_days(rule) else {
             continue;
         };
+        // A window running now under a pause locks again when the pause ends, if it still covers that minute (QA M1).
+        if !crate::time_state::covering_ends(&days, minute).is_empty()
+            && let Some(end) = paused_until(rule, pauses, minute)
+            && end <= horizon
+            && !crate::time_state::covering_ends(&days, end).is_empty()
+        {
+            offer(rule, end);
+        }
         for offset in 0..=1 {
             let Some(date) = minute.date().checked_add_days(chrono::Days::new(offset)) else {
                 continue;
@@ -211,7 +225,15 @@ pub fn next_start<'a>(
             let Some(window) = days[date.weekday().num_days_from_monday() as usize] else {
                 continue;
             };
-            let start = local_at(date, window.start);
+            // The start is the wall time of its own minute (not `local_at`: 1439 there means the next midnight, QA M2).
+            let Some(time) = NaiveTime::from_hms_opt(
+                u32::try_from(window.start / 60).unwrap_or(0),
+                u32::try_from(window.start % 60).unwrap_or(0),
+                0,
+            ) else {
+                continue;
+            };
+            let start = date.and_time(time);
             if start <= minute || start > horizon {
                 continue;
             }
@@ -227,10 +249,7 @@ pub fn next_start<'a>(
             if at > horizon {
                 continue;
             }
-            let key = |r: &TimeRuleRow, at: NaiveDateTime| (at, kind_rank(&r.kind), r.sort_order);
-            if best.is_none_or(|(b, b_at)| key(rule, at) < key(b, b_at)) {
-                best = Some((rule, at));
-            }
+            offer(rule, at);
         }
     }
     best
@@ -611,6 +630,35 @@ mod tests {
                 "2026-11-16 19:30"
             ),
             Some((2, "2026-11-16 21:30:00".into()))
+        );
+        // QA M1: Leggetid running 21:00-07:00 and paused at 21:10 until 22:00: it locks again at 22:00; a pause that ends
+        // outside the window (07:30) leaves the next night's start.
+        assert_eq!(
+            next(
+                std::slice::from_ref(&nights),
+                &until(Some(2), "2026-11-16 22:00"),
+                "2026-11-16 21:10"
+            ),
+            Some((2, "2026-11-16 22:00:00".into()))
+        );
+        assert_eq!(
+            next(
+                std::slice::from_ref(&nights),
+                &until(Some(2), "2026-11-17 07:30"),
+                "2026-11-17 06:00"
+            ),
+            Some((2, "2026-11-17 21:00:00".into()))
+        );
+        // QA M2: a window starting at 23:59 starts at 23:59, not at the next midnight.
+        let late = rule(
+            7,
+            "custom",
+            r#"[{"start":1439,"end":1439},null,null,null,null,null,null]"#,
+            false,
+        );
+        assert_eq!(
+            next(std::slice::from_ref(&late), &[], "2026-11-16 22:29"),
+            Some((7, "2026-11-16 23:59:00".into()))
         );
         // A copy and unreadable days are skipped.
         let copy = rule(-1, "school", SCHOOL, false);

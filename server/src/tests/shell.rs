@@ -2205,7 +2205,7 @@ async fn every_confirm_has_a_cancel() {
     }
     assert!(confirms >= 32, "{confirms} confirms");
     let head = std::fs::read_to_string("templates/partials/head.html").unwrap();
-    assert!(head.contains("<script src=\"/static/confirm.js?v=2\" defer></script>"));
+    assert!(head.contains("<script src=\"/static/confirm.js?v=3\" defer></script>"));
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("phone").await;

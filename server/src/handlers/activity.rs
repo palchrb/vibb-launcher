@@ -28,7 +28,7 @@ use crate::display_time::{Zone, duration, parse_db_utc};
 use crate::handlers::locate::{CommandRow, cancel_flash, command_row};
 use crate::handlers::notifications::{InboxRow, ROW_COLUMNS, Row, inbox_row, row_from};
 use crate::i18n::{Lang, Words, t, t_count, t_params};
-use crate::models::{Device, DeviceCommand};
+use crate::models::{Device, DeviceCommand, DeviceStatus};
 use crate::security::CurrentAdmin;
 use crate::time_rules::TimeLiftRow;
 
@@ -215,6 +215,25 @@ pub(crate) async fn rows(
     .bind(MAX_ROWS as i64 + 1)
     .fetch_all(&state.db)
     .await?;
+    // Design 98 / 101: every airplane period of the newest report that ended within the week (the launcher keeps its
+    // last ten), as a read-only row. Nothing here is a push or an unread event.
+    let latest: Option<DeviceStatus> = sqlx::query_as(
+        "SELECT * FROM device_status WHERE device_id = ? ORDER BY reported_at DESC, id DESC LIMIT 1",
+    )
+    .bind(device_id)
+    .fetch_optional(&state.db)
+    .await?;
+    let airplane: Vec<(DateTime<Utc>, LiftRow)> = latest
+        .as_ref()
+        .and_then(crate::airplane_mode::report)
+        .map(|report| {
+            report
+                .periods
+                .iter()
+                .filter_map(|p| airplane_row(p, since, zone, now))
+                .collect()
+        })
+        .unwrap_or_default();
     let receipts =
         crate::handlers::device_api::sends_command_receipts(&state.db, device_id).await?;
     let names = crate::parents::Names::load(&state.db).await?;
@@ -251,6 +270,9 @@ pub(crate) async fn rows(
             false,
             ActivityRow::Lift(lock_row(lock, &names, zone, now)),
         ));
+    }
+    for (at, row) in airplane {
+        all.push((Some(at), false, ActivityRow::Lift(row)));
     }
     // Newest first; a time that doesn't read goes last. Stable, so each table keeps its order.
     all.sort_by_key(|(at, _, _)| std::cmp::Reverse(*at));
@@ -350,6 +372,41 @@ pub async fn view(
         .unwrap(),
     )
     .into_response()
+}
+
+/// An ended airplane period as Activity's read-only row: "Flymodus på 21:03–07:10", when it started. A period still
+/// open, one that ended before `since` or whose times don't read gives none.
+fn airplane_row(
+    period: &crate::airplane_mode::Period,
+    since: DateTime<Utc>,
+    zone: &Zone,
+    now: DateTime<Utc>,
+) -> Option<(DateTime<Utc>, LiftRow)> {
+    let on_at = DateTime::from_timestamp_millis(period.on_ms)?;
+    let off_at = DateTime::from_timestamp_millis(period.off_ms?)?;
+    if off_at < since || on_at > now {
+        return None;
+    }
+    Some((
+        on_at,
+        LiftRow {
+            // Negative and far from a lock's small one, so it never meets a lift's or a rule's.
+            id: -period.on_ms,
+            what: t_params(
+                zone.lang(),
+                "device.activity.airplane",
+                &[
+                    ("from", &zone.since(on_at, now)),
+                    ("to", &zone.clock(off_at)),
+                ],
+            ),
+            when: String::new(),
+            exact: zone.exact(on_at),
+            by: None,
+            word: String::new(),
+            tone: "grey",
+        },
+    ))
 }
 
 /// A rule turned on now in Activity (design 93 §8), as a lift's row: "Skole slått på 16:30-18:30",
