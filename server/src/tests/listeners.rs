@@ -119,15 +119,18 @@ async fn the_device_router_serves_nothing_but_the_device_api() {
     }
 
     // Every device route answers: 401 without a token (the auth layer ran, so the route exists),
-    // and enroll a 4xx for an empty body.
-    for (method, path) in device_route_list() {
+    // and enroll a 4xx for an empty body. Each route from its own address: more routes than
+    // `limits::IP_FAILURES` from one would meet the failure block (429) instead (design 98's
+    // rule-pause was the 31st).
+    for (index, (method, path)) in device_route_list().into_iter().enumerate() {
         let request = Request::builder()
             .method(method.clone())
             .uri(&path)
             .header(header::CONTENT_TYPE, "application/json")
             .body(Body::from("{}"))
             .unwrap();
-        let res = app.send_via(&router, peer("203.0.113.7"), request).await;
+        let from = peer(&format!("198.51.100.{}", 1 + index % 250));
+        let res = app.send_via(&router, from, request).await;
         if path == "/api/devices/enroll" {
             assert!(
                 res.status.is_client_error() && res.status != StatusCode::NOT_FOUND,

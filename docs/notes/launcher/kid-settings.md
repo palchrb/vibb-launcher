@@ -146,7 +146,12 @@ has no window and reads nothing (`AssistantInvariantsTest`). On: `AirplaneRoute.
 parent's `DISALLOW_AIRPLANE_MODE`, ECBM or an emergency call in the last 10 min (not Vibb's 60-min callback window - the user, 2026-11-15), the 10 s cool-down), a report-only post
 with `going_on`, Settings' `AirplaneModeVoiceActivity` (translucent or floating; on Android 16 floating) through
 `LockTaskChrome.routeWindow` (never while LOCKED) with Settings unhidden and hidden again, the DE marker put back after a
-process death. Off: `DISALLOW_AIRPLANE_MODE` set and cleared - no role needed. The kid's row (bit 64 with the role,
+process death. The window closes and blocks the shade through the lock-task features, without
+`LOCK_TASK_FEATURE_NOTIFICATIONS` (`routeWindowFeatures`, Q99-H1, 2026-11-15): under lock task `setStatusBarDisabled` is
+only recorded, so the window's `statusBarDisabled` does nothing there. The close is two passes: Settings out with the
+shade still blocked (`routeClosing`), then the plan's features; after a process death the put-back's `apply()` writes them
+(a plan-less pass keeps the platform's features). Left: a touch during SystemUI's ~300 ms collapse keeps the shade open
+and clickable for the window; the close contains a page started then (design 98 §2.2 step 4, emulator.md §6am). Off: `DISALLOW_AIRPLANE_MODE` set and cleared - no role needed. The kid's row (bit 64 with the role,
 Off-only whenever airplane mode is on), Home's line, the time-rule screen's "···" sheet. `AirplaneRuntime` keeps the
 periods (the edge receiver is exported: an emergency call's edge comes from `com.android.phone`; `on_by` is `kid` within
 5 s of the kid's route showing its session, the Wi-Fi setup step's edge `other`). The rows' emergency refusal is read off

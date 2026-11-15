@@ -40,7 +40,7 @@ request dialog (`requestable="false"`), or by any intent an app may send directl
 - Under `DISALLOW_CONFIG_DEFAULT_APPS`, which every managed phone holds, Android's picker refuses every app except
   "None". So the onboarding needs a short, PIN-gated lift of that restriction (§3.2).
 - Settings is hidden on a managed phone, and a hidden Settings breaks the route. So the route shows Settings briefly,
-  through `LockTaskChrome` and with the status bar disabled (§2.2).
+  through `LockTaskChrome` and with the shade closed and blocked (§2.2).
 
 ## 1. The facts this rests on
 
@@ -152,9 +152,22 @@ Only the kid's Flymodus switch (§4.1, and the same switch in §4.3's sheet) and
    - Write the DE marker `airplane_route_open` (with `BOOT_COUNT`).
    - Set `LockTaskChrome.routePin = "com.android.settings"` and call `LockTaskChrome.refresh`. `routePin` is an input
      of `LockTaskChrome`, like `sosNarrowing` and `voipPackages()`. While it is set and the kiosk is on and
-     **not** `chromeLocked`, `applyNow` adds Settings to the kiosk list and disables the status bar
-     (`setStatusBarDisabled(true)`, the write it already does for LOCKED). The shade then can't be pulled during the
-     window, and an open one closes.
+     **not** `chromeLocked`, `applyNow` adds Settings to the kiosk list and writes the plan's lock-task features
+     **without `LOCK_TASK_FEATURE_NOTIFICATIONS`** (`routeWindowFeatures`), before the list. Android's
+     `LockTaskController` then sets `DISABLE2_NOTIFICATION_SHADE`: SystemUI collapses an open shade, and the window
+     can't open it. Quick Settings is never on in lock task.
+   - **Corrected 2026-11-15 (design 99's QA, Q99-H1).** This step first said the chrome closes the shade with
+     `setStatusBarDisabled(true)`. Under lock task DPMS only records that write (`lock/StatusBarHealPlan.kt`), so the
+     shade stayed usable for the window, with Settings pinnable through a notification. The chrome still writes
+     `statusBarDisabled = true` for the window, but only the features act. Measured in `docs/testing/emulator.md` §6am,
+     "Addendum": the shade closes as Settings is pinned and can't be opened again, and the window's close takes Settings
+     out before the shade comes back.
+   - **What remains (measured, 2026-11-15).** SystemUI only *animates* the shade closed (~300 ms). A touch on the shade
+     during that animation stops it, and the shade then stays open for the rest of the window with its notifications
+     still clickable, `DISABLE2_NOTIFICATION_SHADE` notwithstanding: a notification tap can start a Settings page in the
+     pinned package until step 7. Step 7 contains it (the baseline run: such a page cleared by `clear-task-all` 21 ms
+     after it resumed, the process killed 190 ms later). Without a touch in that animation, nothing in the shade is
+     reachable for the window.
    - If the phone is LOCKED (the kid pressed power), the chrome leaves Settings out. The route's start is then blocked,
      and it ends with `timeout`. **Nothing in the route ever writes the lock-task list itself.**
    - Unhide Settings when the plan hides it (M3, M4). `AirplaneRoute.inFlight` (with its start time) makes the
@@ -166,7 +179,9 @@ Only the kid's Flymodus switch (§4.1, and the same switch in §4.3's sheet) and
 6. **Wait** for `ACTION_AIRPLANE_MODE_CHANGED` with `state = true`, the session's `onTaskFinished`, or **1 s**. M4's
    whole route took 270 ms.
 7. **Close the window, always** (a `finally`):
-   - Clear `routePin` and refresh the chrome (the list and the status bar as the chrome's own inputs say).
+   - Clear `routePin` and refresh the chrome in two passes (`LockTaskChrome.routeWindow`): the list without Settings
+     with the shade still blocked, then the plan's features with the shade. A pass writes the features before the list,
+     so one pass would give the shade back while Settings is still pinnable (seen on the emulator, §6am "Addendum").
    - Hide Settings again when step 4 unhid it, and check `setApplicationHidden`'s return value. On `false`, retry once,
      then request an `apply()`.
    - Hide the session, clear `inFlight`, and clear the DE marker last.
@@ -178,7 +193,9 @@ Only the kid's Flymodus switch (§4.1, and the same switch in §4.3's sheet) and
 **After a process death or a reboot mid-route:** `Application.initRest`, before anything else and before the first
 sync, and `BootCallReceiver`'s unlocked path read `airplane_route_open`. If it is set, they run step 7's put-back at
 once on a background thread: clear `routePin`, refresh the chrome, and hide Settings if the plan hides it. A marker from
-an earlier boot means the same. `AirplaneRouteTest` covers "marker set at start -> put back before the first sync".
+an earlier boot means the same. The window's features outlive the process (DPM keeps them, across a reboot too), and a
+new process has no plan, so its chrome pass reads them back as they are. The put-back's `apply()` writes the plan's
+features, and the shade comes back with it. `AirplaneRouteTest` covers "marker set at start -> put back before the first sync".
 
 ### 2.3 Off (`AirplaneRoute.turnOff`)
 
@@ -338,8 +355,10 @@ So a parent who presses Home in the panel, or a pause that ends, never leaves th
 
 **What Vibb can and can't know:**
 
-- Android shows its own "Wi-Fi stays on in airplane mode" notification once. §2.2's step 4 disables the status bar
-  during a kid's route, so that notification can't be tapped through a pinned Settings.
+- Android shows its own "Wi-Fi stays on in airplane mode" notification once. §2.2's step 4 closes and blocks the shade
+  during a kid's route (the features without `LOCK_TASK_FEATURE_NOTIFICATIONS`; corrected 2026-11-15, Q99-H1), so that
+  notification can't be tapped through a pinned Settings. After the window it stays in the shade, and a tap on it is
+  blocked like any other Settings start under the kiosk.
 - Vibb can't read `wifi_apm_state`: it is a hidden Secure key, and apps get `SecurityException` since Android 12. The
   stored value is what the phone saw.
 - Every later airplane mode with Wi-Fi on checks it again: 3 s after §2.2, Wi-Fi still enabled keeps `true`, and Wi-Fi
@@ -419,8 +438,8 @@ and Off needs neither the role nor Settings.
 **Taps:**
 
 - A tap is a plain switch tap, so it works the same with gesture navigation and with the three buttons.
-- The route never leaves the kid's screen (M4), the session never has a window (§2.1), and the status bar is disabled
-  only for the window's second (§2.2).
+- The route never leaves the kid's screen (M4), the session never has a window (§2.1), and the shade is closed and
+  blocked only for the window's second (§2.2).
 - After an Off, the launcher waits for the first validated network (a `NetworkCallback`, at most 60 s) and then asks
   for a sync, so the parent's page follows.
 - The pause and the override don't change airplane mode or the row.
@@ -978,7 +997,8 @@ alarm and §2.3, offline), and the kid can still turn it off from the row. Size 
 - **Settings shown during the window.**
   - The window is bounded by step 6's 1 s. M4 measured 270 ms for the route; the full unhide-to-hide time is a §12
     measurement.
-  - The status bar is disabled for it, and the 10 s cool-down caps how often it opens.
+  - The shade is closed and blocked for it (the features, §2.2 step 4), and the 10 s cool-down caps how often it
+    opens.
   - What remains: an allowed app's own start of a Settings intent within that second. With the block bit on (the
     default), only pinned packages start, and Settings is the one added.
   - The containment after step 7 (Settings' task cleared, the app killed) is a device check.
@@ -1006,7 +1026,7 @@ alarm and §2.3, offline), and the kid can still turn it off from the row. Size 
      window, Off.
    - `LockTaskChrome.routePin` with the status-bar write, and its `LockTaskHelpersTest` rows: `routePin` with
      `locked = true` leaves Settings **and** the recents provider out; with `locked = false` it adds Settings and
-     disables the status bar.
+     drops `LOCK_TASK_FEATURE_NOTIFICATIONS` (Q99-H1).
    - The DE marker and its put-back at process start and boot.
    - `inFlight` in the package receiver.
    - `AirplaneLog` and the synchronous edge receiver, the report field.
@@ -1084,7 +1104,8 @@ the PWA's Add Phone. Tests 2 and 4 run with gesture navigation and with 3-button
 2. **On and off under the kiosk.**
    - The kid's row On -> airplane mode on within 1 s, still LOCKED in Home's task.
    - Settings hidden again (`dumpsys package com.android.settings | grep hidden`), the lock-task packages as before,
-     the status bar enabled again.
+     the shade back (`dumpsys statusbar`'s `mDisabled2` without `DISABLE2_NOTIFICATION_SHADE`); during the window it
+     is set, and an open shade closes (Q99-H1).
    - The `going_on` report reached the server first.
    - Measure the time from unhide to hide in the log.
    - Off -> airplane mode off within 3 s, and `DISALLOW_AIRPLANE_MODE` not set afterwards.
@@ -1226,7 +1247,7 @@ Those come from the RC on the Jelly Star, through the reports, with no adb and n
 | Finding | Handled |
 |---|---|
 | H1 the route writes the lock-task list past `LockTaskChrome` | §2.2 step 4: `routePin` is an input of `LockTaskChrome`, applied only while the kiosk is on and not `chromeLocked`; the route never writes the list. A LOCKED pass leaves Settings and the recents provider out, and the route ends `timeout`. §11 step 2's `LockTaskHelpersTest` rows, §12 test 2b |
-| M1 the window opened by the kid, repeatable, wider than said | §2.2: the status bar disabled through the chrome while `routePin` is set, the explicit component resolved `MATCH_SYSTEM_ONLY` and accepted only as a translucent Settings activity (step 3), the wait cut to 1 s, the 10 s cool-down. §10 rewritten. §12 tests 2 (the unhide-to-hide time), 2c, and the Jelly Star's component and theme |
+| M1 the window opened by the kid, repeatable, wider than said | §2.2: the shade closed through the chrome while `routePin` is set (first said as the status bar disabled, which lock task only records; corrected 2026-11-15 to the features without `NOTIFICATIONS`, Q99-H1), the explicit component resolved `MATCH_SYSTEM_ONLY` and accepted only as a translucent Settings activity (step 3), the wait cut to 1 s, the 10 s cool-down. §10 rewritten. §12 tests 2 (the unhide-to-hide time), 2c, and the Jelly Star's component and theme |
 | M2 process death or reboot mid-route | §2.2: the DE marker `airplane_route_open`, put back at `initRest` and `BootCallReceiver` before the first sync. `AirplaneRouteTest`, §12 test 8 |
 | M3 the report under the monitor | §2.2 step 2: a report-only post outside every lock, 5 s budget. Only steps 4-7 take the monitor. A failure after `going_on` requests a sync (step 8) |
 | M4 roles freed by the window, HOME assumed | §3.2: the window closes at the role's `onReady`. It snapshots every exclusive role at the start and compares at the end. HOME is re-seated, and its role is a device check. Screening, redirection and the browser are reported (`default_apps_changed`, the card). The table of what is and isn't taken back. §12 test 1b. D10 for the on-phone screening grant |
