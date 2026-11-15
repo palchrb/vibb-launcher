@@ -942,7 +942,7 @@ async fn the_device_page_says_off_since_until_the_start() {
         );
     assert!(
         html.contains(&format!(
-            "<span class=\"state-offline\" data-power-off title=\"{}\">Turned off {when}</span> · <span>battery was 2 %</span>",
+            "<span class=\"part\"><span class=\"state-offline\" data-power-off title=\"{}\">Turned off {when}</span></span> · <span class=\"part\"><span>battery was 2 %</span></span>",
             crate::display_time::Zone::load(&app.db, crate::i18n::Lang::En)
                 .await
                 .exact(DateTime::from_timestamp_millis(ms(shutdown)).unwrap())
@@ -1051,7 +1051,7 @@ async fn a_phone_clock_behind_and_a_report_at_shutdown_still_say_off() {
         .await
         .text();
     assert!(summary.contains("data-power-off"), "{summary}");
-    assert!(summary.contains("avatar-dot dot-offline"), "{summary}");
+    assert!(summary.contains("state-dot dot-offline"), "{summary}");
     let list = app.get_page("/devices", &cookie).await.text();
     assert!(list.contains("data-power-off"), "{list}");
     assert!(list.contains("avatar-dot dot-offline"), "{list}");

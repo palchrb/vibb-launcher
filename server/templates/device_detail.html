@@ -12,7 +12,7 @@
 {% import "partials/band.html" as band %}
 <main class="container">
     {% call band::sub(device.name, "/devices", self.t("nav.devices")) %}{% endcall %}
-    <div class="sheet">
+    <div class="sheet summary-sheet">
 
     {#- The phone's summary (design 31 §3.2): the header, Attention, the security warnings that need
         steps, Quick actions (with today's lifts and End now at its end), the blocked apps, the last
@@ -23,29 +23,35 @@
         {#- The phone's own picture (server round C): the avatar is the picker - a picture chosen is saved at once
             (data-autosave; without JS the <noscript> Save picture), and every form here lands back on #avatar. #}
         <div class="avatar-edit" id="avatar">
-            <form method="post" action="/devices/{{ device.id }}/avatar#avatar" enctype="multipart/form-data" class="avatar-form">
-                <input class="avatar-input" type="file" id="avatar-file" name="picture" accept="image/*" data-autosave{% if avatar_error.is_some() %} aria-invalid="true" aria-describedby="avatar-error"{% endif %}>
-                <label class="avatar-pick" for="avatar-file">
-                    <span class="avatar avatar-large {{ avatar }}" aria-hidden="true">{{ initial }}{% if let Some(src) = photo %}<img class="avatar-img" src="{{ src }}" alt="" decoding="async">{% endif %}<span class="avatar-dot dot-{{ dot }}"></span></span>
-                    <span class="visually-hidden">{% if photo.is_some() %}{{ self.tp("device.summary.change_picture_for", [("name", device.name.as_str())]) }}{% else %}{{ self.tp("device.summary.add_picture_for", [("name", device.name.as_str())]) }}{% endif %}</span>
-                </label>
-                <noscript><button type="submit" class="button-small avatar-save">{{ self.t("device.summary.save_picture") }}</button></noscript>
-            </form>
-            {% if photo.is_some() %}
-            <form method="post" action="/devices/{{ device.id }}/avatar/remove#avatar" class="avatar-form">
-                <button type="submit" class="avatar-remove" data-avatar-remove>{{ self.t("device.summary.remove_picture") }}</button>
-            </form>
-            {% else %}
-            <label class="avatar-add" for="avatar-file" aria-hidden="true">{{ self.t("device.summary.add_picture") }}</label>
-            {% endif %}
+            {#- Design 101 §2.3: a <details> (no <dialog>: iOS 14), the picture its summary. The panel and the backdrop are
+                out of flow and no ancestor of theirs is positioned (the summary itself is: it holds the pencil badge). -#}
+            <details class="pic-menu">
+                <summary class="pic-pick" aria-label="{% if photo.is_some() %}{{ self.tp("device.summary.change_picture_for", [("name", device.name.as_str())]) }}{% else %}{{ self.tp("device.summary.add_picture_for", [("name", device.name.as_str())]) }}{% endif %}">
+                    <span class="avatar avatar-large {{ avatar }}" aria-hidden="true">{{ initial }}{% if let Some(src) = photo %}<img class="avatar-img" src="{{ src }}" alt="" decoding="async">{% endif %}</span>
+                    <span class="pic-badge" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" focusable="false"><path d="M4 20h4L19 9l-4-4L4 16v4z M13.5 6.5l4 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+                </summary>
+                <span class="pic-backdrop" data-confirm-cancel hidden aria-hidden="true"></span>
+                <div class="pic-panel" role="group" aria-label="{{ self.tp("device.summary.picture_of", [("name", device.name.as_str())]) }}">
+                    <div class="pic-card">
+                        <p class="pic-note">{{ self.t("device.summary.picture_note") }}</p>
+                        <form method="post" action="/devices/{{ device.id }}/avatar#avatar" enctype="multipart/form-data" class="pic-form">
+                            <label class="pic-action"><input class="pic-file" type="file" id="avatar-file" name="picture" accept="image/*" data-autosave{% if avatar_error.is_some() %} aria-invalid="true" aria-describedby="avatar-error"{% endif %}>{% if photo.is_some() %}{{ self.t("device.summary.change_picture") }}{% else %}{{ self.t("device.summary.add_picture") }}{% endif %}</label>
+                            <noscript><button type="submit" class="pic-action">{{ self.t("device.summary.save_picture") }}</button></noscript>
+                        </form>
+                        {% if photo.is_some() %}<form method="post" action="/devices/{{ device.id }}/avatar/remove#avatar" class="pic-form">
+                            <button type="submit" class="pic-action pic-danger" data-avatar-remove>{{ self.t("device.summary.remove_picture") }}</button>
+                        </form>{% endif %}
+                    </div>
+                    {% include "partials/confirm_cancel.html" %}
+                </div>
+            </details>
             {% if let Some(error) = avatar_error %}<p class="field-error avatar-error" id="avatar-error" role="alert">{{ error }}</p>{% endif %}
         </div>
-        {#- The lines under the picture; the name is the band's title (design 84). The user's pick C, 2026-11-01 (phone_status::header): the first fact that holds,
-            then the zone and the battery; a phone turned off or offline has the first alone. -#}
-        {% for line in status %}<p class="summary-state"{% if loop.first %} data-status="{{ dot }}"{% endif %} data-line>{% call status_line::parts(line) %}{% endcall %}</p>
-        {% endfor %}
+        {#- The one line under the picture (design 101 §3): the dot, then the lead, the zone and the battery
+            (phone_status::header + one_line); the name is the band's title (design 84). Anything new at the top of the
+            summary (design 100's request card) goes right AFTER this header: the picture's -52px offset needs the header first. -#}
+        <p class="summary-state" data-status="{{ dot }}" data-line><span class="state-dot dot-{{ dot }}" aria-hidden="true"></span>{% call status_line::parts(status, true) %}{% endcall %}</p>
         {%- if self.disconnected() %}<a class="summary-link" href="/devices/{{ device.id }}/advanced#connection" data-connect-again>{{ self.t("device.summary.connect_again") }} &rsaquo;</a>{% endif %}
-        {% if let Some(percent) = meter %}<span class="meter summary-meter" aria-hidden="true"><i style="width: {{ percent }}%"></i></span>{% endif %}
     </header>
 
     {% if device.enrolled_at.is_none() %}
@@ -215,7 +221,7 @@
             </a>
             <a class="qa{% if qa.open == Some("rules") && qa.tile_on %} qa-chosen{% endif %}{% if qa.on_line.is_some() %} qa-on{% endif %}" href="/devices/{{ device.id }}?open=rules&amp;mode=on#quick" data-sheet="rules-sheet" data-mode="on" aria-controls="rules-sheet" aria-expanded="{% if qa.open == Some("rules") && qa.tile_on %}true{% else %}false{% endif %}">
                 <span class="tile tile-indigo"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><rect x="3" y="7.2" width="11" height="7.6" rx="1.7" fill="currentColor"/><path d="M5.4 7.2V5.3a3.1 3.1 0 0 1 6.2 0v1.9" fill="none" stroke="currentColor" stroke-width="1.7"/></svg></span>
-                <span><span class="qa-label">{{ self.t("device.summary.qa.on") }}</span><span class="qa-sub">{% if let Some(line) = qa.on_line %}{{ line }}{% else %}&nbsp;{% endif %}</span></span>
+                <span><span class="qa-label">{{ self.t("device.summary.qa.on") }}</span><span class="qa-sub">{% if let Some(line) = qa.on_line %}{{ line }}{% else if let Some(line) = qa.next_line %}{{ line }}{% else %}&nbsp;{% endif %}</span></span>
             </a>
             {% endif %}
         </div>
@@ -460,8 +466,8 @@
             {% if activity.count > 0 %}
             <a class="row row-tile" href="/devices/{{ device.id }}/activity" data-row="activity">
                 <span class="tile tile-grey"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><circle cx="3.6" cy="4.5" r="1.3" fill="currentColor"/><circle cx="3.6" cy="8.5" r="1.3" fill="currentColor"/><circle cx="3.6" cy="12.5" r="1.3" fill="currentColor"/><path d="M7 4.5h7.5M7 8.5h7.5M7 12.5h7.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></span>
-                <span class="row-label">{{ self.t("device.summary.activity") }}{% if let Some(n) = activity.newest %}<span class="row-sub row-sub-line" data-newest{% if !n.exact.is_empty() %} title="{{ n.exact }}"{% endif %}>{{ n.what }}{% if !n.when.is_empty() %} · {{ n.when }}{% endif %}</span>{% endif %}</span>
-                <span class="badge" data-activity-count="{{ activity.badge }}"><span aria-hidden="true">{{ activity.badge }}</span><span class="visually-hidden">{{ activity.spoken }}</span></span>
+                <span class="row-label">{{ self.t("device.summary.activity") }}{% if let Some(n) = activity.newest %}<span class="row-sub row-sub-wrap" data-newest{% if !n.exact.is_empty() %} title="{{ n.exact }}"{% endif %}>{{ n.what }}{% if !n.when.is_empty() %} · <span class="nowrap">{{ n.when }}</span>{% endif %}</span>{% endif %}</span>
+                {% if activity.new > 0 %}<span class="badge badge-warn" data-activity-new="{{ activity.new }}"><span aria-hidden="true">{{ activity.new_words }}</span><span class="visually-hidden">{{ activity.new_spoken }}</span></span>{% endif %}
                 <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </a>
             {% endif %}

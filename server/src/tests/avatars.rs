@@ -139,7 +139,15 @@ async fn an_uploaded_picture_is_served_and_shown_on_every_phone_row() {
         .await
         .text();
     assert!(page.contains(&src), "{page}");
-    assert!(page.contains("Remove picture"));
+    // The sheet's rows (design 101): Change picture, and Remove at once, on #avatar, with its hook.
+    assert!(page.contains(">Change picture</label>"), "{page}");
+    let remove = tags(&page, "button")
+        .into_iter()
+        .find(|t| t.has("data-avatar-remove"))
+        .expect("the remove row");
+    assert!(remove.attr("class").unwrap().contains("pic-danger"));
+    assert!(page.contains(&format!("action=\"/devices/{id}/avatar/remove#avatar\"")));
+    assert!(page.contains("Remove picture</button>"));
     // An event for the inbox's row and a catalog app for its page (code QA Q-5).
     let phone = crate::parent_events::Phone::load(&app.db, id)
         .await

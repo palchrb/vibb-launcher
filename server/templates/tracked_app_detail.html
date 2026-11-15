@@ -9,7 +9,7 @@
 {% include "partials/tab_bar.html" %}
 {% import "partials/band.html" as band %}
 <main class="container">
-    {% call band::sub(app.name, "/apps", self.t("nav.apps")) %}{% endcall %}
+    {% call band::app(app.name, "/apps", self.t("nav.apps"), tile) %}{% endcall %}
     <div class="sheet">
 
     <div class="group" id="check">
