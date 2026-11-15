@@ -184,9 +184,10 @@ object AirplaneRoute {
 
     /**
      * §2.2: turns airplane mode on, or refuses. Returns [AirplaneOn.GO] when it came on, else the refusal or failure
-     * ([AirplaneError] words, [AirplaneOn.ALREADY_ON], or `busy`). Background thread only.
+     * ([AirplaneError] words, [AirplaneOn.ALREADY_ON], or `busy`). [by] is §5.1's `on_by` of the edge: the kid's row
+     * ([AirplaneBy.KID]) or the parent's Wi-Fi setup step ([AirplaneBy.OTHER], §3.5). Background thread only.
      */
-    fun turnOn(context: Context): String {
+    fun turnOn(context: Context, by: String = AirplaneBy.KID): String {
         if (!running.compareAndSet(false, true)) return "busy"
         busy = "on"
         AirplaneRuntime.changed()
@@ -225,7 +226,7 @@ object AirplaneRoute {
             val started = SystemClock.elapsedRealtime()
             // Steps 4-7 under the enforcer's monitor: no apply() interleaves.
             val on = try {
-                synchronized(AppEnforcer) { runRouteWindow(WindowSteps(context.applicationContext, component)) }
+                synchronized(AppEnforcer) { runRouteWindow(WindowSteps(context.applicationContext, component, by)) }
             } catch (e: Exception) {
                 Log.w(LOG_TAG, "The route failed: ${e.javaClass.simpleName}")
                 false
@@ -262,7 +263,7 @@ object AirplaneRoute {
     }
 
     /** The real steps of the window. */
-    private class WindowSteps(val context: Context, val component: ComponentName) : RouteWindowSteps {
+    private class WindowSteps(val context: Context, val component: ComponentName, val by: String) : RouteWindowSteps {
         private val dpm = context.getSystemService(DevicePolicyManager::class.java)
         private val admin = admin(context)
         private val kioskOn = LockTaskChrome.kioskOn
@@ -286,6 +287,8 @@ object AirplaneRoute {
             val vis = service ?: return false
             val p = Pending(nonce(), component, CountDownLatch(1))
             pending = p
+            // §5.1: the edge's attribution starts now, right before the session (code QA L2).
+            AirplaneRuntime.recordKidOnStart(context, if (by == AirplaneBy.KID) System.currentTimeMillis() else null)
             vis.showSession(Bundle().apply { putString(EXTRA_ROUTE, p.nonce) }, 0)
             return true
         }

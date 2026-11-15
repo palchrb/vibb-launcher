@@ -70,9 +70,28 @@ data class PhonePauseSync(
     val liftIds: List<Long>,
 )
 
-/** The newest accepted policy as the pauses read it: when its GET started, and the phone keys its lifts carry. */
+/** One served lift with a phone key, as [PausePolicyView] keeps it: the key and the rule (a twin: the copy's negative
+ * id). */
 @Serializable
-data class PausePolicyView(val getStartedMs: Long, val keys: Set<String>)
+data class PausePolicyLift(val key: String, val ruleId: Long)
+
+/** The newest accepted policy as the pauses read it: when its GET started, and its lifts with a phone key, each with its
+ * rule (code QA M1: the PWA's "Avslutt nå" ends one rule's row of a pause). */
+@Serializable
+data class PausePolicyView(val getStartedMs: Long, val lifts: Set<PausePolicyLift>) {
+    /** The phone keys the policy carries (the ack). */
+    val keys: Set<String> get() = lifts.mapTo(HashSet()) { it.key }
+}
+
+/** The view of a policy fetched with its GET started at [getStartedMs]: every lift with a phone key and a rule. */
+fun pausePolicyView(policy: TimePolicy?, getStartedMs: Long): PausePolicyView = PausePolicyView(
+    getStartedMs,
+    policy?.lifts.orEmpty().mapNotNullTo(LinkedHashSet<PausePolicyLift>()) { l ->
+        val key = l.phoneKey
+        val ruleId = l.ruleId
+        if (key != null && ruleId != null) PausePolicyLift(key, ruleId) else null
+    },
+)
 
 /** §4.4.2: the offered lengths and, for a chosen length, each rule's own end. */
 data class RulePausePlan(val offered: List<Int>, val rules: List<RulePauseRuleBody>)
@@ -82,6 +101,9 @@ private const val MINUTE_MS = 60_000L
 /** §4.4.3: an entry is kept until its last end has passed by the clock slack, at most [PHONE_PAUSES_MAX] entries. */
 const val PHONE_PAUSE_SLACK_MS = 5 * 60_000L
 const val PHONE_PAUSES_MAX = 8
+
+/** §4.4.5: the server takes no start older than this; an entry never posted is kept until then (code QA L5). */
+const val PHONE_PAUSE_POST_MAX_AGE_MS = 7 * 24 * 60 * 60_000L
 
 /**
  * §4.4.2 (`rulePausePlan`): the active, un-lifted rules in force at [at] ([policy] already `inForceAt` now), each with its
@@ -119,24 +141,40 @@ fun phonePauseOf(key: String, minutes: Int, rules: List<RulePauseRuleBody>, cloc
     bootCount = clocks.bootCount,
 )
 
-/** The entries after the gate adds [added]: the ones still within their last end plus the slack, at most
- * [PHONE_PAUSES_MAX], newest kept. */
-fun phonePausesAfterAdd(entries: List<PhonePause>, added: PhonePause, nowMs: Long): List<PhonePause> =
-    (entries.filter { e -> e.key != added.key && (e.rules.maxOfOrNull { it.untilWallMs } ?: 0L) + PHONE_PAUSE_SLACK_MS > nowMs } + added)
-        .takeLast(PHONE_PAUSES_MAX)
+/** When [entry] started (the gate's wall clock). */
+fun phonePauseStartMs(entry: PhonePause): Long = entry.rules.firstOrNull()?.let { it.untilWallMs - it.durationMs } ?: 0L
 
 /**
- * §4.4.3 (`phonePauseLifts`): the rules [entry] still lifts - its window is active (a reboot or the clock set back ends
- * it at once) and it isn't acked yet, or the newest policy whose GET started after the ack still carries its key (or
- * there is no such policy yet). An unknown or pruned entry lifts nothing, whatever the policy says.
+ * The entries after the gate adds [added]: the ones still within their last end plus the slack, and the ones never
+ * [posted] whose start the server still takes (code QA L5: the dead pause is still posted, §4.4.3) - at most
+ * [PHONE_PAUSES_MAX], the oldest posted dropped first, then the oldest.
+ */
+fun phonePausesAfterAdd(entries: List<PhonePause>, added: PhonePause, nowMs: Long, posted: Set<String>): List<PhonePause> {
+    val kept = entries.filterTo(ArrayList()) { e ->
+        e.key != added.key && (
+            (e.rules.maxOfOrNull { it.untilWallMs } ?: 0L) + PHONE_PAUSE_SLACK_MS > nowMs ||
+                (e.key !in posted && phonePauseStartMs(e) + PHONE_PAUSE_POST_MAX_AGE_MS > nowMs)
+            )
+    }
+    while (kept.size >= PHONE_PAUSES_MAX) {
+        val oldestPosted = kept.indexOfFirst { it.key in posted }
+        kept.removeAt(if (oldestPosted >= 0) oldestPosted else 0)
+    }
+    return kept + added
+}
+
+/**
+ * §4.4.3 (`phonePauseLifts`): the rules [entry] still lifts - each rule's window is active (a reboot or the clock set
+ * back ends it at once) and the pause isn't acked yet, or the newest policy whose GET started after the ack still
+ * carries a lift with its key **for that rule** (or there is no such policy yet): the PWA's "Avslutt nå" on one rule of
+ * a two-rule pause ends that rule alone (code QA M1). An unknown or pruned entry lifts nothing, whatever the policy says.
  */
 fun phonePauseLifts(entry: PhonePause?, sync: PhonePauseSync?, policy: PausePolicyView?, clocks: Clocks): Set<Long> {
     if (entry == null) return emptySet()
     val acked = sync?.ackedAtWallMs
-    val stillHeld = acked == null || policy == null || policy.getStartedMs <= acked || entry.key in policy.keys
-    if (!stillHeld) return emptySet()
+    val judged = if (acked == null || policy == null || policy.getStartedMs <= acked) null else policy
     return entry.rules.filter { r ->
-        r.durationMs > 0 && com.kidslauncher.mdm.server.timedWindowActive(
+        (judged == null || PausePolicyLift(entry.key, r.id) in judged.lifts) && r.durationMs > 0 && com.kidslauncher.mdm.server.timedWindowActive(
             com.kidslauncher.mdm.server.WindowStart(r.untilWallMs, entry.elapsedStartMs, entry.bootCount),
             clocks.wallMs, clocks.elapsedMs, clocks.bootCount, r.durationMs,
         )

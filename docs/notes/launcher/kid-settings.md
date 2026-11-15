@@ -148,6 +148,10 @@ with `going_on`, Settings' `AirplaneModeVoiceActivity` (translucent or floating;
 `LockTaskChrome.routeWindow` (never while LOCKED) with Settings unhidden and hidden again, the DE marker put back after a
 process death. Off: `DISALLOW_AIRPLANE_MODE` set and cleared - no role needed. The kid's row (bit 64 with the role,
 Off-only whenever airplane mode is on), Home's line, the time-rule screen's "···" sheet. `AirplaneRuntime` keeps the
-periods (the edge receiver is exported: an emergency call's edge comes from `com.android.phone`). "Fullfør oppsett"
-(`AssistantSetup`): the default-apps window, Wi-Fi in airplane mode, Samtalefilter, the setup notification.
+periods (the edge receiver is exported: an emergency call's edge comes from `com.android.phone`; `on_by` is `kid` within
+5 s of the kid's route showing its session, the Wi-Fi setup step's edge `other`). The rows' emergency refusal is read off
+the main thread and cached 5 s (`AirplaneRuntime.rowState`); the route reads it fresh. A plan-less chrome pass never
+keeps Settings in the kiosk list (`fallbackKioskPackages`). "Fullfør oppsett"
+(`AssistantSetup`): the default-apps window, Wi-Fi in airplane mode (each with its own deadline alarm), Samtalefilter,
+the setup notification.
 `docs/design/98-airplane-mode-assistant.md`, `docs/testing/emulator.md` §6am.

@@ -45,6 +45,10 @@ const val NOTIFICATION_CHANNEL_SETUP = "launcher:setup"
 private const val SETUP_NOTIFICATION_ID = 1010
 const val ACTION_SETUP_DEADLINE = "me.vibb.launcher.action.SETUP_DEADLINE"
 
+/** Each deadline its own alarm (code QA L1): one alarm's PendingIntent would move the other's. */
+private const val DEADLINE_PICK = 9801
+private const val DEADLINE_WIFI = 9802
+
 /** Settings opens at "Fullfør oppsett"'s rows (the setup notification's tap). */
 const val EXTRA_SETTINGS_SECTION = "me.vibb.launcher.extra.SETTINGS_SECTION"
 
@@ -119,7 +123,7 @@ object AssistantSetup {
         prefs(context).edit().putString(KEY_SNAPSHOT, ServerJson.encodeToString(DefaultAppsSnapshot.serializer(), snapshot(context))).commit()
         storeWindow(context, KEY_PICK, BootClock.windowStart(ASSISTANT_PICK_MS))
         AirplaneRuntime.storeDefaultAppsChanged(context, emptyList())
-        scheduleDeadline(context, ASSISTANT_PICK_MS)
+        scheduleDeadline(context, DEADLINE_PICK, ASSISTANT_PICK_MS)
         Log.i(LOG_TAG, "The default-apps window is open (5 min at most)")
         AppEnforcer.apply(context, currentPolicyDecision())
         return true
@@ -206,8 +210,9 @@ object AssistantSetup {
     fun startWifiStep(context: Context): String {
         if (!setupWindowOpen()) return AirplaneError.REFUSED
         storeWindow(context, KEY_WIFI_STEP, BootClock.windowStart(WIFI_STEP_MS))
-        scheduleDeadline(context, WIFI_STEP_MS)
-        val result = AirplaneRoute.turnOn(context)
+        scheduleDeadline(context, DEADLINE_WIFI, WIFI_STEP_MS)
+        // §5.1: the parent's setup step turns airplane mode on - `other`, not the kid's (code QA L2).
+        val result = AirplaneRoute.turnOn(context, AirplaneBy.OTHER)
         if (result != AirplaneOn.GO && result != AirplaneOn.ALREADY_ON) {
             prefs(context).edit().remove(KEY_WIFI_STEP).commit()
             return result
@@ -251,11 +256,12 @@ object AssistantSetup {
         AppEnforcer.apply(context, currentPolicyDecision())
     }
 
-    private fun scheduleDeadline(context: Context, afterMs: Long) {
+    /** The deadline [which] ([DEADLINE_PICK], [DEADLINE_WIFI]) [afterMs] from now; the other's alarm stays as it is. */
+    private fun scheduleDeadline(context: Context, which: Int, afterMs: Long) {
         try {
             val am = context.getSystemService(AlarmManager::class.java) ?: return
             val intent = Intent(context, SetupDeadlineReceiver::class.java).setAction(ACTION_SETUP_DEADLINE)
-            val pending = PendingIntent.getBroadcast(context, 0, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+            val pending = PendingIntent.getBroadcast(context, which, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
             am.setExactAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, SystemClock.elapsedRealtime() + afterMs + 1_000, pending)
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Couldn't set the setup deadline: ${e.javaClass.simpleName}")

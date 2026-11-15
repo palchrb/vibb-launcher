@@ -70,7 +70,8 @@ const val RECENT_EMERGENCY_CALL_MS = 10 * 60_000L
  * counts as the emergency call's doing. */
 const val EMERGENCY_OFF_WINDOW_MS = 10_000L
 
-/** §5.1: Android turning airplane mode on at most this long after the route started counts as the kid's. */
+/** §5.1: Android turning airplane mode on at most this long after the kid's route showed its session counts as the
+ * kid's (`AirplaneRuntime.recordKidOnStart`). */
 const val KID_ON_WINDOW_MS = 5_000L
 
 /** §5.1: the periods kept, from the last week. */
@@ -115,7 +116,8 @@ fun offByOf(byVibb: String?, placedMs: Long?, offMs: Long, ecbm: Boolean): Strin
     else -> AirplaneBy.OTHER
 }
 
-/** §5.1: who turned airplane mode on at [onMs] - the kid when §2.2 started at most [KID_ON_WINDOW_MS] before. */
+/** §5.1: who turned airplane mode on at [onMs] - the kid when the kid's §2.2 showed its session at most
+ * [KID_ON_WINDOW_MS] before. */
 fun onByOf(routeStartMs: Long?, onMs: Long): String =
     if (routeStartMs != null && onMs - routeStartMs in 0..KID_ON_WINDOW_MS) AirplaneBy.KID else AirplaneBy.OTHER
 

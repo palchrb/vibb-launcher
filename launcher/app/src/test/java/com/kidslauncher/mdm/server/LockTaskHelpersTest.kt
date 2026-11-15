@@ -161,6 +161,9 @@ class LockTaskHelpersTest {
         assertEquals(kiosk - recents, fallbackKioskPackages(kiosk - recents, recents, 63))
         assertEquals(kiosk - recents, fallbackKioskPackages(kiosk - recents, null, blocked))
         assertEquals(kiosk - recents, lockTaskWhileLocked(fallbackKioskPackages(kiosk - recents, recents, blocked), blocked, false, true, "me.vibb.launcher", emptySet(), recentsPin = recents).packages)
+        // Design 98 code QA L4: Settings in the platform's list is a route window a process death left open - never kept.
+        assertEquals(kiosk, fallbackKioskPackages(kiosk + "com.android.settings", recents, blocked))
+        assertEquals(kiosk - recents, fallbackKioskPackages(kiosk - recents + "com.android.settings", recents, 63))
         // Kiosk off: the lock pins only our package and the PIN-lock helpers - never the recents
         // provider (no block bit there, so no dialog; pinning it would open its stock home to a call app).
         val kioskOff = lockTaskWhileLocked(null, unlocked, false, true, "me.vibb.launcher", setOf("com.android.phone"))

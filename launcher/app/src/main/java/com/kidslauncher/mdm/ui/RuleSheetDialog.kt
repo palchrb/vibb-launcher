@@ -7,7 +7,6 @@ import android.view.ViewGroup
 import android.widget.CompoundButton
 import androidx.appcompat.app.AppCompatDialog
 import com.kidslauncher.mdm.R
-import com.kidslauncher.mdm.assistant.AirplaneError
 import com.kidslauncher.mdm.assistant.AirplaneRoute
 import com.kidslauncher.mdm.assistant.AirplaneRowState
 import com.kidslauncher.mdm.assistant.AirplaneRuntime
@@ -41,6 +40,9 @@ class RuleSheetDialog(
 
     private val changed: () -> Unit = { if (isShowing) render() }
 
+    /** The row's own redraw while its cool-down or failure line shows. */
+    private val redraw = Runnable { if (isShowing) render() }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ViewRuleSheetBinding.inflate(layoutInflater)
@@ -66,6 +68,7 @@ class RuleSheetDialog(
 
     override fun onStop() {
         AirplaneRuntime.removeListener(changed)
+        if (::binding.isInitialized) binding.root.removeCallbacks(redraw)
         super.onStop()
     }
 
@@ -82,17 +85,22 @@ class RuleSheetDialog(
         if (!showAirplane) return
         val context = activity
         val now = System.currentTimeMillis()
-        val error = if (AirplaneRuntime.emergencyNow(context, now)) AirplaneError.EMERGENCY to now else AirplaneRuntime.lastError(context)
         val full = fullAirplane()
-        val state = airplaneRow(
-            bit = full, role = full,
-            restricted = AirplaneRuntime.restricted(context),
-            on = AirplaneRuntime.isOn(context),
-            wifiUp = QuickControls.isWifiEnabled(context),
-            busy = AirplaneRoute.busy,
-            lastError = error?.first,
-            errorAgeMs = error?.let { now - it.second },
-        )
+        val restricted = AirplaneRuntime.restricted(context)
+        val on = AirplaneRuntime.isOn(context)
+        val wifiUp = QuickControls.isWifiEnabled(context)
+        val busy = AirplaneRoute.busy
+        val state = AirplaneRuntime.rowState(context, now) { error ->
+            airplaneRow(
+                bit = full, role = full,
+                restricted = restricted,
+                on = on,
+                wifiUp = wifiUp,
+                busy = busy,
+                lastError = error?.first,
+                errorAgeMs = error?.let { now - it.second },
+            )
+        }
         binding.ruleSheetAirplaneSwitch.setOnCheckedChangeListener(null)
         binding.ruleSheetAirplaneSwitch.isChecked = state.checked
         binding.ruleSheetAirplaneSwitch.setOnCheckedChangeListener(airplaneListener)
@@ -101,6 +109,8 @@ class RuleSheetDialog(
         val line = airplaneLineRes(state)
         binding.ruleSheetAirplaneLine.visibility = if (line != null) View.VISIBLE else View.GONE
         line?.let { binding.ruleSheetAirplaneLine.setText(it) }
-        if (state == AirplaneRowState.COOLDOWN || state == AirplaneRowState.FAILED) binding.root.postDelayed({ render() }, 2_000)
+        // One pending redraw at most (code QA L3): every listener-driven render would start another chain.
+        binding.root.removeCallbacks(redraw)
+        if (state == AirplaneRowState.COOLDOWN || state == AirplaneRowState.FAILED) binding.root.postDelayed(redraw, 2_000)
     }
 }

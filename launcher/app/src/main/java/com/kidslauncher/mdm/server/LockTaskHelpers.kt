@@ -226,10 +226,13 @@ fun lockTaskWhileLocked(
  * The kiosk list of a pass without a plan (LockTaskChrome's fallback), from the platform's
  * [platformPackages]: a LOCKED pass took the [recentsPin] out (qa-16d-code #1), so an unlocked one
  * puts it back whenever the app block is on ([features]) - the plan pins it then too. `null` pin
- * (unknown, or not pinnable): the platform's list as it is.
+ * (unknown, or not pinnable): the platform's list as it is. Never Settings (design 98 code QA L4): only
+ * the Flymodus route's window pins it, and that needs a plan - in the platform's list it is a window a
+ * process death left open, which the put-back's apply closes.
  */
 fun fallbackKioskPackages(platformPackages: Set<String>, recentsPin: String?, features: Int): Set<String> =
-    if (recentsPin != null && features and LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_IN_TASK != 0) platformPackages + recentsPin else platformPackages
+    (if (recentsPin != null && features and LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_IN_TASK != 0) platformPackages + recentsPin else platformPackages) -
+        com.kidslauncher.mdm.assistant.SETTINGS_PACKAGE
 
 /**
  * Whether `config_recentsComponentName`'s [packageName] may be trusted as the recents provider

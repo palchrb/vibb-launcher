@@ -19,6 +19,7 @@ import com.kidslauncher.mdm.server.ServerJson
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.serializer
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicBoolean
 
 private const val LOG_TAG = "AirplaneRuntime"
 private const val PREFS = "airplane_mode"
@@ -26,6 +27,7 @@ private const val KEY_PERIODS = "periods"
 private const val KEY_LAST_ERROR = "last_error"
 private const val KEY_LAST_ERROR_AT = "last_error_at_ms"
 private const val KEY_LAST_ON_START = "last_on_start_ms"
+private const val KEY_KID_ON_START = "kid_on_start_ms"
 private const val KEY_WIFI_KEPT = "wifi_kept"
 private const val KEY_APPS_CHANGED = "default_apps_changed"
 private const val KEY_ROUTE_OPEN = "airplane_route_open"
@@ -40,6 +42,9 @@ private const val ERROR_REPORT_MS = 24 * 60 * 60_000L
 
 /** §4.1: after an Off, the sync waits at most this long for a validated network. */
 private const val NETWORK_WAIT_MS = 60_000L
+
+/** Code QA L3: a row's render reuses the last emergency check this long (elapsed); the route always reads it fresh. */
+private const val EMERGENCY_ROW_CACHE_MS = 5_000L
 
 /**
  * Design 98: Flymodus's state on the phone - the periods (`AirplaneLog`, §5.1), the last error, Wi-Fi in airplane mode,
@@ -99,11 +104,52 @@ object AirplaneRuntime {
         false
     }
 
-    /** D3: a turn-on is refused now (ECBM, a recent emergency call, Vibb's callback window). */
+    /** D3: a turn-on is refused now (ECBM, a recent emergency call, Vibb's callback window). Reads the call log: never
+     * on the main thread ([rowState] for the rows). */
     fun emergencyNow(context: Context, nowMs: Long = System.currentTimeMillis()): Boolean {
         val last = runCatching { com.kidslauncher.mdm.calls.CallSystem.lastEmergencyCallMs(context, nowMs) }.getOrNull()
         val window = runCatching { com.kidslauncher.mdm.calls.CallSystem.callbackWindowUntil(context, nowMs) }.getOrNull()
-        return emergencyBlocks(ecbm(context), last, nowMs, window != null && window > nowMs)
+        val blocks = emergencyBlocks(ecbm(context), last, nowMs, window != null && window > nowMs)
+        emergencySeen = blocks to android.os.SystemClock.elapsedRealtime()
+        return blocks
+    }
+
+    /** The last [emergencyNow] and when (elapsed). */
+    @Volatile
+    private var emergencySeen: Pair<Boolean, Long>? = null
+
+    private val emergencyReading = AtomicBoolean(false)
+
+    /**
+     * Code QA L3: [emergencyNow] for a row's render (main thread) - the last value read, at most
+     * [EMERGENCY_ROW_CACHE_MS] old; an older or missing one is read again on a thread of its own (one at a time) and the
+     * rows drawn again if it changed. Only a refused turn-on's line rests on it: the route reads [emergencyNow] itself.
+     */
+    private fun emergencyForRow(context: Context): Boolean {
+        val seen = emergencySeen
+        val fresh = seen != null && android.os.SystemClock.elapsedRealtime() - seen.second < EMERGENCY_ROW_CACHE_MS
+        if (!fresh && emergencyReading.compareAndSet(false, true)) {
+            val app = context.applicationContext
+            Thread {
+                try {
+                    if (emergencyNow(app) != (seen?.first ?: false)) changed()
+                } finally {
+                    emergencyReading.set(false)
+                }
+            }.start()
+        }
+        return seen?.first == true
+    }
+
+    /**
+     * The kid's Flymodus row ([airplaneRow] through [row], given the error to show): the stored error, or the emergency
+     * refusal while one holds - looked at only when the row would show Off, the cool-down or a failure (code QA L3: no
+     * call-log query for a hidden row, an on or busy one, and none on the main thread).
+     */
+    fun rowState(context: Context, nowMs: Long, row: (Pair<String, Long>?) -> AirplaneRowState): AirplaneRowState {
+        val state = row(lastError(context))
+        if (state != AirplaneRowState.OFF && state != AirplaneRowState.COOLDOWN && state != AirplaneRowState.FAILED) return state
+        return if (emergencyForRow(context)) row(AirplaneError.EMERGENCY to nowMs) else state
     }
 
     fun periods(context: Context): List<AirplanePeriod> = try {
@@ -133,9 +179,21 @@ object AirplaneRuntime {
 
     fun lastOnStartMs(context: Context): Long? = prefs(context).getLong(KEY_LAST_ON_START, -1).takeIf { it >= 0 }
 
+    /** The cool-down's start (§2.2 step 1): before the report-only post. */
     fun recordOnStart(context: Context, atMs: Long) {
         prefs(context).edit().putLong(KEY_LAST_ON_START, atMs).commit()
     }
+
+    /** §5.1's attribution: the kid's route shows its session at [atMs] (code QA L2: right before the window, after the
+     * report-only post, so a slow post can't push the edge past [KID_ON_WINDOW_MS]); `null` - the parent's setup step -
+     * clears it, so that edge is `other`. */
+    fun recordKidOnStart(context: Context, atMs: Long?) {
+        val edit = prefs(context).edit()
+        if (atMs == null) edit.remove(KEY_KID_ON_START) else edit.putLong(KEY_KID_ON_START, atMs)
+        edit.commit()
+    }
+
+    private fun kidOnStartMs(context: Context): Long? = prefs(context).getLong(KEY_KID_ON_START, -1).takeIf { it >= 0 }
 
     /** §3.5: Wi-Fi stays on in airplane mode, as this phone last saw it; `null` never set up. */
     fun wifiKept(context: Context): Boolean? = prefs(context).let { if (it.contains(KEY_WIFI_KEPT)) it.getBoolean(KEY_WIFI_KEPT, false) else null }
@@ -179,7 +237,7 @@ object AirplaneRuntime {
     fun onAirplaneChanged(context: Context, on: Boolean) {
         val now = System.currentTimeMillis()
         val by = if (on) {
-            onByOf(lastOnStartMs(context), now)
+            onByOf(kidOnStartMs(context), now)
         } else {
             val placed = runCatching { com.kidslauncher.mdm.calls.CallPrefs.recordedEmergencyAtMs(context) }.getOrNull()
             offByOf(vibbOffNow(), placed, now, ecbm(context))

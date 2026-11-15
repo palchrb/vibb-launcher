@@ -545,7 +545,8 @@ There are two stores, written by different code:
   - It holds no PIN material: no PIN, hash, salt or attempt counter. `RulePauseTest` checks that the stored JSON's
     keys are exactly these.
   - An entry is kept until its last `untilWallMs` has passed by the clock slack (5 min), at most 8 entries, then
-    pruned.
+    pruned. One never posted stays until it is posted, or its start is older than the server's 7 days (code QA L5);
+    over 8, the oldest posted entry goes first.
 - **`phone_lifts_sync_v1`** holds the server's side: `{key, posted, acked_at_wall_ms, lift_ids}`. Only the post queue
   and the reconcile write it.
 
@@ -564,7 +565,8 @@ The dead pause is still posted, so the parent sees that it happened (§4.4.5).
 
 - its window is active; and
 - either it isn't acked yet, or the newest policy whose GET **started after** `acked_at` still carries a lift with its
-  key (or there is no such policy yet).
+  key **for that rule** (or there is no such policy yet). Per rule (code QA M1): the PWA's "Avslutt nå" ends one row
+  of a two-rule pause, and the phone ends that rule alone.
 
 #### 4.4.4 Posting and acknowledging (Q98-R3-M4, Q98-R3-L2)
 

@@ -52,10 +52,12 @@ object PhonePauses {
         null
     }
 
-    /** §4.4.1 step 3: the gate stores the pause (pruning the old ones). Only `ParentPin.check` calls it. */
+    /** §4.4.1 step 3: the gate stores the pause (pruning the old ones - never one not yet posted, code QA L5). Only
+     * `ParentPin.check` calls it. */
     @Synchronized
     fun addFromGate(context: Context, pause: PhonePause, nowMs: Long) {
-        val after = phonePausesAfterAdd(entries(context), pause, nowMs)
+        val posted = syncs(context).filter { it.posted }.mapTo(HashSet()) { it.key }
+        val after = phonePausesAfterAdd(entries(context), pause, nowMs, posted)
         prefs(context).edit().putString(KEY_ENTRIES, ServerJson.encodeToString(entriesSerializer, after)).commit()
         // The sync records of pruned entries go with them.
         val keys = after.map { it.key }.toSet()
@@ -98,10 +100,10 @@ object PhonePauses {
 
     /**
      * §4.4.4: after an accepted policy fetched with its GET started at [getStartedMs] - a policy carrying a key acks
-     * it; the view is kept for [phonePauseLifts] (a policy after the ack without the rows ends the pause).
+     * it; the view is kept for [phonePauseLifts] (a policy after the ack without a rule's row ends that rule's pause).
      */
     fun policyAccepted(context: Context, policy: TimePolicy?, getStartedMs: Long) {
-        val view = PausePolicyView(getStartedMs, policy?.lifts.orEmpty().mapNotNull { it.phoneKey }.toSet())
+        val view = pausePolicyView(policy, getStartedMs)
         synchronized(this) {
             prefs(context).edit().putString(KEY_POLICY, ServerJson.encodeToString(PausePolicyView.serializer(), view)).commit()
             for (entry in entries(context)) updateSync(context, entry.key) { syncAfterPolicy(it, entry.key, view) }

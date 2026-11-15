@@ -155,3 +155,40 @@ list and Time page never show the first pause. Only the PIN event ("Regelskjerme
 
 Fix: prune an entry only once it is posted (or older than the server's 7-day bound), keeping the cap of 8 by dropping
 the oldest posted ones first.
+
+## Fixes
+
+All six fixed on `design-98` (2026-11-15). Gradle was not run: `/home` had about 5.3 GB free, under the 7 GB the build
+needs; the tests below were written but not run.
+
+- **M1.** `PausePolicyView` keeps `(key, rule_id)` pairs (`PausePolicyLift`, built by the new pure `pausePolicyView`
+  from the policy's lifts with a `phone_key`; the twin keeps the copy's negative id). After the ack,
+  `phonePauseLifts` lifts a rule only while the newest policy still carries a lift with the pause's key **for that
+  rule**; before the ack, or with no policy after it, as before. The ack itself still reads the keys
+  (`PausePolicyView.keys`). `rule_pause.json` (both copies, byte-identical): the `adopt` rows' `policy` is now
+  `{get_started_ms, lifts: [{key, rule_id}]}`, plus two rows - "two rules, one ended in the app: only the other lifted"
+  and "a rule and its copy, both rows carried: both lifted". The server doesn't read `adopt`. `RulePauseTest` checks
+  `pausePolicyView` against the contract's `policy`. Spec §4.4.3 and `docs/notes/launcher/time-rules.md` follow.
+- **L1.** `AssistantSetup.scheduleDeadline` takes a request code: the default-apps window (9801) and the Wi-Fi step
+  (9802) each have their own alarm, so neither moves the other.
+- **L2.** The cool-down's start (`recordOnStart`) stays before the report-only post; the attribution has its own stamp
+  (`AirplaneRuntime.recordKidOnStart`, `kid_on_start_ms`), written in the route's `show()` right before
+  `showSession`, which the edge's `onByOf` reads. `AirplaneRoute.turnOn(context, by)`: the kid's rows pass `kid`
+  (the default), `AssistantSetup.startWifiStep` passes `other`, which clears the stamp, so the setup step's edge is
+  `other` (§5.1).
+- **L3.** `AirplaneRuntime.rowState` computes the row from the stored error first and looks at the emergency refusal
+  only when the row would show Off, the cool-down or a failure. That look (`emergencyForRow`) never queries on the
+  main thread: it returns the last `emergencyNow` (at most 5 s old) and, when that is older or missing, reads it again
+  on a thread of its own (one at a time) and redraws the rows if it changed. The route still reads `emergencyNow` fresh
+  (background), so no turn-on rests on the cache. Kid Settings and the "···" sheet keep one pending 2 s redraw
+  (`removeCallbacks` before `postDelayed`, and again in `onStop`).
+- **L4.** `fallbackKioskPackages` drops `com.android.settings` from the platform's list: only the route's window pins
+  Settings, and `routeWindow` needs a plan, so in a plan-less pass it is a window a process death left open. A LOCKED
+  or unlocked chrome pass before the put-back's apply no longer keeps it pinned. `LockTaskHelpersTest` has the rows.
+- **L5.** `phonePausesAfterAdd(entries, added, now, posted)` keeps an entry never posted until it is posted or its
+  start is older than the server's 7 days (`PHONE_PAUSE_POST_MAX_AGE_MS`); over the cap of 8 the oldest posted entry
+  goes first, then the oldest. `addFromGate` passes the posted keys from `phone_lifts_sync_v1`. `RulePauseTest` has
+  the flight case and the cap order.
+
+Left as they are (open questions to the user): the post-112 refusal following the 60-minute callback window, and the
+clock set back during a pause.

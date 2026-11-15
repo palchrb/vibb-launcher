@@ -36,6 +36,12 @@ class RulePauseTest {
         assertEquals(listOf(null, "0123456789abcdef0123456789abcdef", "0123456789abcdef0123456789abcdef"), time.lifts.map { it.phoneKey })
         assertNull(ServerJson.decodeFromString(PolicyResponse.serializer(), "{}").timePolicy)
         assertEquals(false, ServerJson.decodeFromString(PolicyResponse.serializer(), "{}").rulePause)
+        // The view keeps each phone-key lift with its rule (code QA M1): the row and its copy's twin, not the PWA's lift.
+        val key = "0123456789abcdef0123456789abcdef"
+        val view = pausePolicyView(time, 42)
+        assertEquals(setOf(PausePolicyLift(key, 2), PausePolicyLift(key, -1)), view.lifts)
+        assertEquals(setOf(key), view.keys)
+        assertEquals(PausePolicyView(42, emptySet()), pausePolicyView(null, 42))
     }
 
     private fun rows(name: String) = contract[name]!!.jsonArray.map { it.jsonObject }
@@ -65,7 +71,7 @@ class RulePauseTest {
     }
 
     @Test
-    fun `the adoption rows - a reboot, a pruned entry, the clock set back, ended in the app`() {
+    fun `the adoption rows - a reboot, a pruned entry, the clock set back, ended in the app, one rule of two ended`() {
         for (row in rows("adopt")) {
             val entry = row["entry"]!!.takeIf { it !is JsonNull }?.let { ServerJson.decodeFromJsonElement(PhonePause.serializer(), it) }
             val sync = row["sync"]!!.takeIf { it !is JsonNull }?.let { ServerJson.decodeFromJsonElement(PhonePauseSync.serializer(), it) }
@@ -100,16 +106,24 @@ class RulePauseTest {
         val sync = ServerJson.encodeToJsonElement(PhonePauseSync.serializer(), PhonePauseSync("k", true, 5, listOf(7))).jsonObject
         assertEquals(setOf("key", "posted", "acked_at_wall_ms", "lift_ids"), sync.keys)
         // A policy carrying the key acks a pause the post hasn't; an acked one keeps its ack.
-        val view = PausePolicyView(10, setOf("k"))
+        val view = PausePolicyView(10, setOf(PausePolicyLift("k", 2)))
         assertEquals(10L, syncAfterPolicy(null, "k", view)!!.ackedAtWallMs)
         assertEquals(5L, syncAfterPolicy(PhonePauseSync("k", true, 5, emptyList()), "k", view)!!.ackedAtWallMs)
         assertNull(syncAfterPolicy(null, "other", view))
-        // Kept until the last end plus the slack, at most eight.
+        // A posted entry is kept until its last end plus the slack, at most eight.
         val old = phonePauseOf("a".repeat(32), 15, listOf(RulePauseRuleBody(2, 1_000)), Clocks(0, 0, 1))
         val fresh = phonePauseOf("b".repeat(32), 15, listOf(RulePauseRuleBody(2, 10_000_000)), Clocks(0, 0, 1))
-        assertEquals(listOf(fresh), phonePausesAfterAdd(listOf(old), fresh, 1_000 + PHONE_PAUSE_SLACK_MS))
+        assertEquals(listOf(fresh), phonePausesAfterAdd(listOf(old), fresh, 1_000 + PHONE_PAUSE_SLACK_MS, setOf(old.key)))
         val many = (0 until 10).map { phonePauseOf("%032d".format(it), 15, listOf(RulePauseRuleBody(2, 10_000_000)), Clocks(0, 0, 1)) }
-        assertEquals(PHONE_PAUSES_MAX, phonePausesAfterAdd(many.dropLast(1), many.last(), 0).size)
+        assertEquals(PHONE_PAUSES_MAX, phonePausesAfterAdd(many.dropLast(1), many.last(), 0, emptySet()).size)
+        // Code QA L5: one never posted (a flight, no network) stays past its end until posted, or the server's 7 days.
+        assertEquals(listOf(old, fresh), phonePausesAfterAdd(listOf(old), fresh, 1_000 + PHONE_PAUSE_SLACK_MS, emptySet()))
+        assertEquals(listOf(fresh), phonePausesAfterAdd(listOf(old), fresh, PHONE_PAUSE_POST_MAX_AGE_MS, emptySet()))
+        // Over the cap the oldest posted go first, then the oldest.
+        val posted = setOf(many[3].key, many[5].key)
+        val capped = phonePausesAfterAdd(many.take(8), many[8], 0, posted)
+        assertEquals(many.take(8) - many[3] + many[8], capped)
+        assertEquals(many.drop(1).take(7) + many[8], phonePausesAfterAdd(many.take(8), many[8], 0, emptySet()))
     }
 
     @Test

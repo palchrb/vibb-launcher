@@ -31,7 +31,6 @@ import android.widget.TextView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.kidslauncher.mdm.R
-import com.kidslauncher.mdm.assistant.AirplaneError
 import com.kidslauncher.mdm.assistant.AirplaneRoute
 import com.kidslauncher.mdm.assistant.AirplaneRowState
 import com.kidslauncher.mdm.assistant.AirplaneRuntime
@@ -172,6 +171,9 @@ class KidSettingsActivity : UIObjectActivity() {
     /** The row follows the route, the edges and the role (main thread). */
     private val airplaneChanged: () -> Unit = { render() }
 
+    /** The Flymodus row's own redraw while its cool-down or failure line shows (code QA L3: one pending at most). */
+    private val airplaneRedraw = Runnable { section?.let { renderControls(it) } }
+
     private val bluetoothListener = CompoundButton.OnCheckedChangeListener { _, checked ->
         QuickControls.setBluetoothEnabled(this, dpm, admin, checked)
         setManageEnabled(binding.kidSettingsBluetoothManage, checked)
@@ -275,6 +277,7 @@ class KidSettingsActivity : UIObjectActivity() {
         WallpaperStore.removeThumbnailListener(thumbnailListener)
         runCatching { unregisterReceiver(soundReceiver) }
         AirplaneRuntime.removeListener(airplaneChanged)
+        binding.root.removeCallbacks(airplaneRedraw)
         super.onStop()
     }
 
@@ -424,17 +427,24 @@ class KidSettingsActivity : UIObjectActivity() {
      * airplane mode is on. Returns whether it shows. */
     private fun renderAirplane(rows: ControlsSection.Rows?): Boolean {
         val now = System.currentTimeMillis()
-        val error = if (AirplaneRuntime.emergencyNow(this, now)) AirplaneError.EMERGENCY to now else AirplaneRuntime.lastError(this)
-        val state = airplaneRow(
-            bit = rows?.airplane == true,
-            role = rows?.airplane == true,
-            restricted = AirplaneRuntime.restricted(this),
-            on = rows != null && (rows.airplaneOffOnly || (rows.airplane && AirplaneRuntime.isOn(this))),
-            wifiUp = QuickControls.isWifiEnabled(this),
-            busy = AirplaneRoute.busy,
-            lastError = error?.first,
-            errorAgeMs = error?.let { now - it.second },
-        )
+        val restricted = AirplaneRuntime.restricted(this)
+        val on = rows != null && (rows.airplaneOffOnly || (rows.airplane && AirplaneRuntime.isOn(this)))
+        val wifiUp = QuickControls.isWifiEnabled(this)
+        val busy = AirplaneRoute.busy
+        val state = AirplaneRuntime.rowState(this, now) { error ->
+            airplaneRow(
+                bit = rows?.airplane == true,
+                role = rows?.airplane == true,
+                restricted = restricted,
+                on = on,
+                wifiUp = wifiUp,
+                busy = busy,
+                lastError = error?.first,
+                errorAgeMs = error?.let { now - it.second },
+            )
+        }
+        // The cool-down and a failure's line end by themselves: drawn again then - one pending redraw at most.
+        binding.root.removeCallbacks(airplaneRedraw)
         binding.kidSettingsAirplaneRow.visibility = if (state != AirplaneRowState.HIDDEN) View.VISIBLE else View.GONE
         if (state == AirplaneRowState.HIDDEN) return false
         // Showing the state must not run the route.
@@ -446,10 +456,7 @@ class KidSettingsActivity : UIObjectActivity() {
         val line = airplaneLineRes(state)
         binding.kidSettingsAirplaneLine.visibility = if (line != null) View.VISIBLE else View.GONE
         line?.let { binding.kidSettingsAirplaneLine.setText(it) }
-        // The cool-down and a failure's line end by themselves: drawn again then.
-        if (state == AirplaneRowState.COOLDOWN || state == AirplaneRowState.FAILED) {
-            binding.root.postDelayed({ section?.let { renderControls(it) } }, 2_000)
-        }
+        if (state == AirplaneRowState.COOLDOWN || state == AirplaneRowState.FAILED) binding.root.postDelayed(airplaneRedraw, 2_000)
         return true
     }
 
