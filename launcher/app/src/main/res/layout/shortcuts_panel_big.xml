@@ -3,7 +3,10 @@
      (r13's words, "1 t 20 min igjen i dag" / "Skjermtiden er brukt opp i dag"), the note line under it when there is
      one ("Spurt kl. 14:02"), then design 99's row unchanged. Text only, never a button (D1). The lines wrap to two at
      most (font scale 1.3, M13). The folded view keeps the row alone (design 99 S8). Built by
-     shortcuts/ShortcutsNotification.kt as RemoteViews: only LinearLayout, TextView and the row's views. -->
+     shortcuts/ShortcutsNotification.kt as RemoteViews: only LinearLayout, TextView and the row's views.
+     The shade's own fonts, never the app's: SystemUI inflates RemoteViews in a restricted context, where TextView
+     ignores a font resource (Nunito Bold drew as the default regular face, emulator 2026-11-15). The time line
+     takes the notification title's face, the note the notification text's. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
@@ -14,8 +17,8 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:ellipsize="end"
-        android:fontFamily="@font/nunito_bold"
         android:maxLines="2"
+        android:textAppearance="@android:style/TextAppearance.Material.Notification.Title"
         android:textColor="#FFFFFFFF"
         android:textSize="14sp" />
 
@@ -24,8 +27,8 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:ellipsize="end"
-        android:fontFamily="@font/nunito"
         android:maxLines="2"
+        android:textAppearance="@android:style/TextAppearance.Material.Notification"
         android:textColor="#B3FFFFFF"
         android:textSize="13sp"
         android:visibility="gone" />

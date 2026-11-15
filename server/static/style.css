@@ -3067,7 +3067,7 @@ details.pic-menu > summary::-webkit-details-marker { display: none; }
 /* Design 100 §14.4: the answer card - the kid's open request right after the header, a 2 px peach ring on the card's
    ground, the hourglass on an amber tile, four answers in one row. Margins, not flex gap (Safari 14.0); the grid's
    gap is fine. Tokens only, so light and dark follow. */
-.ask-card { margin: 22px 0 0; padding: 14px; border-radius: 16px; background: var(--surface); box-shadow: inset 0 0 0 2px var(--tint-fill); }
+.ask-card { margin: 22px 0 20px; padding: 14px; border-radius: 16px; background: var(--surface); box-shadow: inset 0 0 0 2px var(--tint-fill); }
 .ask-head { display: flex; align-items: flex-start; }
 .ask-tile { display: flex; flex: none; align-items: center; justify-content: center; width: 36px; height: 36px; margin-right: 12px; border-radius: 10px; background: var(--orange-bg); color: var(--orange); }
 .ask-text { display: flex; flex-direction: column; min-width: 0; }

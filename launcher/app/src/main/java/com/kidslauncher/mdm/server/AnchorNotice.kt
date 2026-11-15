@@ -43,7 +43,8 @@ object AnchorNotice {
      * 14:10", "Mamma ga deg 30 min" (D11: "Svaret ble nei kl. 14:10", "Du fikk 30 min mer" without a display name);
      * `null` for none. The panel's note line, the plain notice's text and the time-rule screen's block. */
     fun noteText(context: Context, note: AskNote): String? {
-        fun clock(atMs: Long) = ClockFormat.formatTime(context, atMs)
+        // A time in a line of text: with AM/PM in 12 h ("Spurt kl. 7:35" alone is either half of the day; 2026-11-15).
+        fun clock(atMs: Long) = ClockFormat.formatClock(context, atMs)
         fun minutes(m: Int) =
             durationText(m, context.getString(R.string.duration_unit_hours), context.getString(R.string.duration_unit_minutes))
         return when (note) {

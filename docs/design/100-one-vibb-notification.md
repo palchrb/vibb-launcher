@@ -245,9 +245,12 @@ Unfolded (the normal view: always first, so Android unfolds it, design 99 S2):
 - **The header** stays "Vibb One · Snarveier" (`shortcuts_subtext`). The time doesn't fit there (M11), and the
   title and text fields aren't shown (M12).
 - **The time line**: r13's words exactly (`anchor_time_left` "%1$s igjen i dag" / "%1$s left today",
-  `anchor_time_used_up` "Skjermtiden er brukt opp i dag" / "Screen time is used up today"), 14 sp, `nunito_bold`,
-  white. **Two lines at most** (`maxLines=2`, ellipsized after the second): at font scale 1.3 the used-up line wraps
-  rather than being cut (M13). Only in the big view (`setCustomBigContentView`). The folded view keeps the row alone,
+  `anchor_time_used_up` "Skjermtiden er brukt opp i dag" / "Screen time is used up today"), 14 sp, the
+  notification title's face (`TextAppearance.Material.Notification.Title`), white. Not Nunito: SystemUI inflates
+  RemoteViews in a restricted context, where a TextView ignores an app's font resource, and `nunito_bold` drew the
+  default regular face (emulator, 2026-11-15; the note line takes `TextAppearance.Material.Notification`).
+  **Two lines at most** (`maxLines=2`, ellipsized after the second): at font scale 1.3 the used-up line wraps rather
+  than being cut (M13). Only in the big view (`setCustomBigContentView`). The folded view keeps the row alone,
   since design 99's folded content is limited to 48 dp (S8).
 - **The note line** (§14.3's `AskNote`): 13 sp, white at 70 %, text only, never a button (R13-8). It shows only with a
   budget today, under the time line. A `Given` note from a lift without a request (D10) shows here too.

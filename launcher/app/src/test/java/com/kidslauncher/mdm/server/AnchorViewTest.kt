@@ -8,7 +8,9 @@ import com.kidslauncher.mdm.timerules.AskPart
 import com.kidslauncher.mdm.timerules.PLAIN_NOTICE
 import com.kidslauncher.mdm.timerules.TimeLeftText
 import com.kidslauncher.mdm.timerules.TimePart
+import java.io.File
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -52,5 +54,16 @@ class AnchorViewTest {
         queue.started()
         queue.posted(20_000)
         assertEquals(0L, queue.request(5_000))
+    }
+
+    /** Emulator 2026-11-15: SystemUI inflates RemoteViews in a restricted context, where TextView ignores a font
+     * resource - Nunito Bold drew as the default regular face. The panel's layouts use the shade's own faces. */
+    @Test
+    fun `the panel's layouts name no app font`() {
+        val res = listOf("src", "app/src").map(::File).first { File(it, "main/res").isDirectory }
+        for (name in listOf("shortcuts_panel_big.xml", "shortcuts_row.xml")) {
+            val xml = File(res, "main/res/layout/$name").readText()
+            assertFalse(name, "@font/" in xml)
+        }
     }
 }
