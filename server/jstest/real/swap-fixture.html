@@ -33,6 +33,15 @@
     </main></body></html>
 </script>
 
+<template data-pair="focused" data-part="cur">
+    <form id="lone" action="/lone#lone"><label><input type="checkbox" id="sw" name="sw" value="on"> Switch</label><select id="sel" name="sel"><option value="a" selected>a</option><option value="b">b</option></select><textarea id="ta" name="ta">old</textarea></form>
+</template>
+<script type="text/html" data-pair="focused" data-part="next">
+    <!DOCTYPE html><html lang="en"><body><main>
+    <form id="lone" action="/lone#lone"><label><input type="checkbox" id="sw" name="sw" value="on"> Switch</label><select id="sel" name="sel"><option value="a" selected>a</option><option value="b">b</option></select><textarea id="ta" name="ta">new</textarea></form>
+    </main></body></html>
+</script>
+
 <template data-pair="noscript" data-part="cur">
     <form id="one" action="/one#one"><input type="checkbox" name="a" value="on"><noscript></noscript></form>
 </template>

@@ -86,7 +86,9 @@
     var MAX_PLACES = 50;
     var FROM_KEY = "handy-from";
     // A save's one-shot words in the address: not part of which page it is.
-    var ONE_SHOT = { notice: 1, app: 1, saved: 1 };
+    // (design 103's code QA L1: every flash's word, swap.js's ONE_SHOT too.)
+    var ONE_SHOT = { notice: 1, app: 1, saved: 1, done: 1, cancel: 1, changed: 1, install: 1, music_notice: 1,
+        music_entry: 1, avatar: 1, parents: 1, cleared: 1, removed: 1, held: 1, unbanned: 1 };
     // admin_auth::STAY_HEADER and STAY_LOCATION_HEADER.
     var STAY_HEADER = "X-Handy-Stay";
     var STAY_LOCATION = "X-Handy-Location";
@@ -357,13 +359,22 @@
             var shared = win.handyReconnect;
             if (shared && typeof shared.busy === "function") shared.busy(n);
         }
-        /** The focused field's value as it was sent (design 103-9: the server's then, when it still holds it). */
+        /**
+         * The form's text fields as they were sent (design 103-9, code QA L2): after the save lands each takes the server's
+         * value only while it still holds this one - typed on during the round trip, it keeps the parent's text.
+         */
+        var TEXTLESS = { hidden: 1, submit: 1, button: 1, reset: 1, image: 1, checkbox: 1, radio: 1, file: 1, range: 1, color: 1 };
         function sentOf(form) {
-            var active = doc.activeElement;
-            for (var el = active; el; el = el.parentNode) {
-                if (el === form) return [[active, active.value]];
+            var out = [];
+            var fields = (form && form.elements) || [];
+            for (var i = 0; i < fields.length; i++) {
+                var el = fields[i];
+                var tag = String(el.tagName || "").toUpperCase();
+                if (tag === "TEXTAREA" || (tag === "INPUT" && TEXTLESS[String(el.type || "text").toLowerCase()] !== 1)) {
+                    out.push([el, el.value]);
+                }
             }
-            return null;
+            return out;
         }
         function markBusy(form, submitter) {
             var entry = { form: form, submitter: submitter, again: false, sent: sentOf(form), bar: false, timer: null };
@@ -597,6 +608,8 @@
                 }
                 busy = kept;
                 for (var k = 0; k < again.length; k++) {
+                    // A form the morph took off the page is not sent again (code QA L8).
+                    if (again[k].isConnected === false) continue;
                     var how = stayPost(again[k], null, win.location.href);
                     if (!how) continue;
                     try {

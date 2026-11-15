@@ -129,7 +129,13 @@
         var api = {
             due: function () { return false; },
             lock: lock,
-            homeAfter: HOME_AFTER
+            homeAfter: HOME_AFTER,
+            // A refresh in place's new title (static/swap.js, design 103's code QA L6): kept for later while the veil or the
+            // lock shows "Vibb", else shown.
+            setTitle: function (text) {
+                if (title !== null) title = text;
+                else doc.title = text;
+            }
         };
         win.handyLock = api;
 

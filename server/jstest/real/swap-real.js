@@ -116,6 +116,33 @@ async function controls(engine, page) {
     check(engine, "a picked radio is kept", got.otherRadio === "2", got);
 }
 
+// Code QA M1: a switch clicked (dirty) and still focused, in a form this landing didn't save, follows the server; a
+// focused textarea there keeps its text (L3).
+async function focused(engine, page) {
+    await page.evaluate(() => fx.load("focused"));
+    // The parent turns the switch on; the save lands (the page came back with it on), then the phone turns it off.
+    await page.click("#sw");
+    await page.evaluate(() => document.getElementById("sw").setAttribute("checked", ""));
+    await page.focus("#sw");
+    const sw = await page.evaluate(() => {
+        const el = document.getElementById("sw");
+        const before = document.activeElement === el && el.checked;
+        handySwap.api.morph(document.getElementById("m"), fx.next("focused").querySelector("main"), fx.ctx());
+        return { before, checked: el.checked, defaultChecked: el.defaultChecked };
+    });
+    check(engine, "a clicked, focused switch outside the saved forms follows the server (M1)",
+        sw.before && sw.checked === false && sw.defaultChecked === false, sw);
+    await page.evaluate(() => fx.load("focused"));
+    await page.focus("#ta");
+    const ta = await page.evaluate(() => {
+        const el = document.getElementById("ta");
+        el.setSelectionRange(1, 1);
+        handySwap.api.morph(document.getElementById("m"), fx.next("focused").querySelector("main"), fx.ctx());
+        return { value: el.value, caret: el.selectionStart, focused: document.activeElement === el };
+    });
+    check(engine, "a focused textarea keeps its text and caret (L3)", ta.value === "old" && ta.caret === 1 && ta.focused, ta);
+}
+
 async function noscript(engine, page) {
     const got = await page.evaluate(() => {
         fx.load("noscript");
@@ -257,6 +284,7 @@ async function hairlines(engine, page) {
         check(engine, "swap.js installed with its api", ready, null);
         if (ready) {
             await controls(engine, page);
+            await focused(engine, page);
             await noscript(engine, page);
             await sheet(engine, page);
             await hairlines(engine, page);

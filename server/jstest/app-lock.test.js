@@ -417,3 +417,18 @@ test("a lock due on the return: next is Devices (`/`) after over 10 minutes away
         }
     }
 });
+
+// Design 103's code QA L6: a refresh in place while veiled hands its title to app-lock.js, which shows it once the
+// page is shown again; when not veiled it is the tab's at once.
+test("a new title while hidden is kept for the return; while shown it shows", () => {
+    const win = fakeWindow();
+    win.install();
+    win.hide();
+    assert.strictEqual(win.document.title, "Vibb");
+    win.handyLock.setTitle("Avansert · Vibb Phone");
+    assert.strictEqual(win.document.title, "Vibb");
+    win.show();
+    assert.strictEqual(win.document.title, "Avansert · Vibb Phone");
+    win.handyLock.setTitle("Apper · Vibb Phone");
+    assert.strictEqual(win.document.title, "Apper · Vibb Phone");
+});

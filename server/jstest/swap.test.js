@@ -699,3 +699,97 @@ test("D1 (a): a GET that fails holds the forms and hands over to reconnect.js's 
     assert.strictEqual(line.textContent, "No answer from the server. This is what is saved now.");
     assert.strictEqual(line.parentNode, doc.querySelector(".group"), "in the form's group");
 });
+
+// ---- The code QA's fix round ----
+
+test("M1: a focused switch outside the saved forms follows the server; a focused text field keeps its own", () => {
+    const form = (on, v) => h("form", { action: "/f#f" },
+        h("input", Object.assign({ type: "checkbox", name: "sw", value: "on" }, on ? { checked: true } : {})),
+        h("input", { type: "text", name: "t", value: v }));
+    const doc = page([form(false, "a")]);
+    const sw = doc.querySelector("input[type=checkbox]");
+    sw.checked = true; // tapped and saved earlier: its dirty flag is set, the page came back with it on
+    sw.setAttribute("checked", "");
+    morph(mainOf(doc), mainOf(page([form(false, "a")])), ctxFor(doc, { focused: sw }));
+    assert.strictEqual(sw.checked, false, "the server's off");
+    assert.strictEqual(sw.defaultChecked, false);
+    const text = doc.querySelector("input[type=text]");
+    morph(mainOf(doc), mainOf(page([form(false, "b")])), ctxFor(doc, { focused: text }));
+    assert.strictEqual(text.getAttribute("value"), "a", "a focused text field's attribute stays");
+});
+
+test("L2: in the saved form a field typed on during the round trip keeps the parent's text", () => {
+    const form = (v, w) => h("form", { action: "/f#f" }, h("input", { type: "text", name: "a", value: v }),
+        h("input", { type: "text", name: "b", value: w }));
+    const doc = page([form("x", "y")]);
+    const f = doc.querySelector("form");
+    const [a, b] = f.querySelectorAll("input");
+    a.value = "x2";
+    b.value = "typed";
+    // `a` was sent as "x2"; `b` changed after the save went (sent "y").
+    const sent = [[a, "x2"], [b, "y"]];
+    morph(mainOf(doc), mainOf(page([form("X2", "y")])), ctxFor(doc, {
+        saved: (x) => x === f,
+        unchangedSince: (_form, el) => { const s = sent.find((p) => p[0] === el); return s ? s[1] === el.value : el.value === el.defaultValue; },
+    }));
+    assert.strictEqual(a.value, "X2", "sent and unchanged: the server's");
+    assert.strictEqual(b.value, "typed", "typed on: the parent's");
+});
+
+test("L3: a focused textarea outside the saved forms keeps its text; L4: a changed select is put back by value", () => {
+    const build = (text, opts) => [h("form", { action: "/f#f" }, h("textarea", { name: "n" }, text),
+        h("select", { name: "s" }, ...opts.map(([v, sel]) => h("option", Object.assign({ value: v }, sel ? { selected: true } : {}), v))))];
+    const doc = page(build("old", [["a", true], ["b", false], ["c", false]]));
+    const area = doc.querySelector("textarea");
+    const select = doc.querySelector("select");
+    select.options[0].selected = false; // the parent picked c (a single select: a goes)
+    select.options[2].selected = true;
+    morph(mainOf(doc), mainOf(page(build("new", [["z", false], ["a", true], ["b", false], ["c", false]]))), ctxFor(doc, { focused: area }));
+    assert.strictEqual(area.textContent, "old", "its default text didn't move under the caret");
+    assert.strictEqual(select.value, "c", "the parent's c, though the server added an option before it");
+});
+
+test("L6: under the app lock's veil the new title goes to app-lock.js, not the tab", async () => {
+    const doc = page([h("p", { id: "x" }, "old")]);
+    doc.documentElement.setAttribute("class", "veiled");
+    doc.title = "Vibb";
+    const w = flowWindow({ doc });
+    const titles = [];
+    w.win.handyLock = { setTitle: (t) => titles.push(t) };
+    const next = page([h("p", { id: "x" }, "new")]);
+    next.title = "Avansert · Vibb Phone";
+    w.answer(w.pageAnswer(next));
+    w.api.refresh("https://vibb.example/devices/1/advanced");
+    await settle(); await settle();
+    assert.strictEqual(doc.title, "Vibb");
+    assert.deepStrictEqual(titles, ["Avansert · Vibb Phone"]);
+});
+
+test("L1: a plain refresh asks without the one-shot words and speaks nothing; L8: another origin is refused", async () => {
+    const doc = page([h("p", { class: "flash", "data-flash": "q" }, "Sent.")], { bodyExtra: [h("div", { id: "swap-status" })] });
+    const w = flowWindow({ doc });
+    w.answer(w.pageAnswer(page([h("p", { class: "flash", "data-flash": "q" }, "Sent.")])));
+    w.api.refresh("https://vibb.example/devices/1?done=lock&cancel=x&from=apps#quick");
+    await settle(); await settle();
+    assert.strictEqual(w.fetched[0][0], "https://vibb.example/devices/1?from=apps");
+    w.timers.forEach((fn) => fn());
+    assert.strictEqual(doc.getElementById("swap-status").textContent, "", "nothing spoken");
+    w.win.URL = URL;
+    assert.strictEqual(w.api.refresh("https://other.example/devices/1"), false);
+});
+
+test("L5: the red line goes in before the place is kept, in the touched control's group", async () => {
+    const groups = () => [h("div", { class: "group", "data-h": "100" }, h("label", { "data-h": "40" }, h("input", { type: "checkbox", name: "a" }))),
+        h("div", { class: "group", "data-h": "100" }, h("label", { "data-h": "40" }, h("input", { type: "checkbox", name: "b" })))];
+    const doc = page([h("form", { id: "r", action: "/r#r" }, groups())], { bodyExtra: [h("div", { id: "js-words", "data-w-save-unknown": "No answer." })] });
+    const form = doc.getElementById("r");
+    const b = form.querySelectorAll("input")[1];
+    const stay = { inflight: () => 0, entry: () => null, landed: () => {} };
+    const w = flowWindow({ doc, stay });
+    doc.activeElement = b;
+    w.answer(w.pageAnswer(page([h("form", { id: "r", action: "/r#r" }, groups())])));
+    w.api.refresh("https://vibb.example/devices/1/advanced#r", { forms: [form], lost: true });
+    await settle(); await settle();
+    const line = doc.querySelector(".flash-error");
+    assert.strictEqual(line.parentNode, b.closest(".group"), "the second group, the touched switch's");
+});

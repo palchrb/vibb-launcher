@@ -33,8 +33,10 @@
 
     var SOFT_KEYS = ["action", "data-flash", "data-warning", "data-mobile-line", "data-choice", "data-row",
         "data-setup-step", "for", "name"];
-    // A save's one-shot words in the address (scroll-restore.js's ONE_SHOT).
-    var ONE_SHOT = { notice: 1, app: 1, saved: 1 };
+    // A save's one-shot words in the address (scroll-restore.js's ONE_SHOT): each draws a flash once. Code QA L1: every
+    // one of them, so a later refresh in place doesn't draw (and speak) the flash again.
+    var ONE_SHOT = { notice: 1, app: 1, saved: 1, done: 1, cancel: 1, changed: 1, install: 1, music_notice: 1,
+        music_entry: 1, avatar: 1, parents: 1, cleared: 1, removed: 1, held: 1, unbanned: 1 };
     // scroll-restore.js's form record (its KEY and NAME_PREFIX).
     var SCROLL_KEY = "handy-scroll";
     var NAME_PREFIX = "handy-scroll:";
@@ -237,10 +239,15 @@
         return false;
     }
 
-    function selectedOf(el) {
+    function optionValue(option) {
+        var value = attr(option, "value");
+        return value === null || value === undefined ? option.textContent : value;
+    }
+
+    function selectedValues(el) {
         var out = [];
         var options = el.options || [];
-        for (var i = 0; i < options.length; i++) out.push(options[i].selected);
+        for (var i = 0; i < options.length; i++) if (options[i].selected) out.push(optionValue(options[i]));
         return out;
     }
 
@@ -274,7 +281,9 @@
             skip["aria-busy"] = 1;
             skip.disabled = 1;
         }
-        if (cur === ctx.focused && !ctx.saved(ctx.formOf(cur))) skip.value = 1;
+        // 103-9 (code QA M1): only a text field keeps its own value while focused; a focused switch or select follows
+        // the ordinary rule.
+        if (cur === ctx.focused && controlKind(cur) === "text" && !ctx.saved(ctx.formOf(cur))) skip.value = 1;
         if (tag === "INPUT" && controlKind(cur) === "file") skip.value = 1;
         return skip;
     }
@@ -288,30 +297,36 @@
         var formOfCur = kind ? (form || null) : null;
         var keepParent = false;
         var kept = null;
+        // A focused text field outside the saved forms: neither its value attribute nor (a textarea) its text moves.
+        var focusedText = cur === ctx.focused && kind === "text" && !ctx.saved(formOfCur);
         if (kind && kind !== "hidden" && kind !== "file") {
             var savedForm = ctx.saved(formOfCur);
-            if (cur === ctx.focused) {
-                // 103-9: in the saved form, the server's value when the field still holds what was sent.
-                keepParent = !savedForm || (kind === "text" && !ctx.unchangedSince(formOfCur, cur));
+            if (savedForm) {
+                // 103-9, code QA L2: in the saved form a text field takes the server's value only while it still holds
+                // what was sent (typed on during the round trip: the parent's).
+                keepParent = kind === "text" && !ctx.unchangedSince(formOfCur, cur);
             } else {
-                keepParent = !savedForm && (ctx.again(formOfCur) || dirty(cur, kind));
+                keepParent = focusedText || ctx.again(formOfCur) || dirty(cur, kind);
             }
-            if (keepParent) kept = kind === "check" ? cur.checked : kind === "select" ? selectedOf(cur) : cur.value;
+            if (keepParent) kept = kind === "check" ? cur.checked : kind === "select" ? selectedValues(cur) : cur.value;
         }
         syncAttrs(cur, next, ctx, skipped(cur, ctx));
         if (tag === "TEXTAREA") {
             var text = next.textContent;
-            if (cur.textContent !== text) cur.textContent = text;
+            // Code QA L3: a focused textarea's text is its default value; moving it would move the caret.
+            if (!focusedText && cur.textContent !== text) cur.textContent = text;
         } else {
             morphChildren(cur, next, ctx, form);
         }
         if (!kind || kind === "hidden" || kind === "file") return;
-        if (cur === ctx.focused && !ctx.saved(formOfCur)) return;
+        if (focusedText) return;
         if (keepParent) {
             if (kind === "check") cur.checked = kept;
             else if (kind === "select") {
-                for (var i = 0; i < kept.length && i < cur.options.length; i++) cur.options[i].selected = kept[i];
-            } else cur.value = kept;
+                // Code QA L4: by value, so an option the server added or removed doesn't shift the pick.
+                var opts = cur.options || [];
+                for (var i = 0; i < opts.length; i++) opts[i].selected = has(kept, optionValue(opts[i]));
+            } else if (cur.value !== kept) cur.value = kept;
             return;
         }
         // The server's, set explicitly: a control with its dirty flag set no longer follows its attribute.
@@ -615,21 +630,23 @@
                 },
                 unchangedSince: function (form, el) {
                     var e = entry(form);
-                    var sent = e && e.sent;
-                    if (!sent) return true;
+                    var sent = (e && e.sent) || [];
                     for (var k = 0; k < sent.length; k++) if (sent[k][0] === el) return sent[k][1] === el.value;
-                    return true;
+                    // Not recorded (code QA L2): unchanged only when it still holds what the page came with.
+                    return el.value === el.defaultValue;
                 }
             };
             morph(main, next.querySelector("main"), ctx);
             var band = doc.querySelector("body > header.band");
             var nextBand = next.querySelector("body > header.band");
             if (band && nextBand) morph(band, nextBand, ctx);
-            if (next.title && doc.title !== next.title) doc.title = next.title;
+            retitle(next.title);
             // A POST's answer marks its body (reconnect.js never reloads it): the fetched page is a GET's.
             if (doc.body && next.body && doc.body.hasAttribute("data-post-answer") && !next.body.hasAttribute("data-post-answer")) {
                 doc.body.removeAttribute("data-post-answer");
             }
+            // Code QA L5: the red line goes in before the place is kept, so it never moves the row under the finger.
+            if (record.lost) lostLine(nowOf(lastForm), ctx.focused, record.byButton);
             var dy = anchorDelta(doc, chain);
             if (dy) scroller(main)(dy);
             try {
@@ -641,17 +658,35 @@
             try {
                 if (String(win.name || "").indexOf(NAME_PREFIX) === 0) win.name = "";
             } catch (e) {}
-            if (record.lost) lostLine(nowOf(lastForm));
-            var spoken = [];
-            for (var f = 0; f < ctx.flashes.length; f++) spoken.push(ctx.flashes[f].textContent);
-            if (record.lost) spoken.push(words("save-unknown"));
-            say(spoken.join(" ").replace(/\s+/g, " ").replace(/^ | $/g, ""));
+            // Code QA L1: only a save's landing speaks its flash; a refresh draws what is there, silently.
+            if (landedForms.length || record.lost) {
+                var spoken = [];
+                for (var f = 0; f < ctx.flashes.length; f++) spoken.push(ctx.flashes[f].textContent);
+                if (record.lost) spoken.push(words("save-unknown"));
+                say(spoken.join(" ").replace(/\s+/g, " ").replace(/^ | $/g, ""));
+            }
             dispatch(win, "handy:swapped", { root: main });
             if (landedForms.length) {
                 var s = stay();
                 if (s && typeof s.landed === "function") s.landed(landedForms);
                 dispatch(win, "handy:saved", { forms: landedForms.slice(), pending: inflight() });
             }
+        }
+
+        /**
+         * The page's title. Code QA L6: while app-lock.js's veil or lock is up the title is "Vibb" and the page's own is
+         * kept by app-lock.js - handed to it (`handyLock.setTitle`), never shown.
+         */
+        function retitle(title) {
+            if (!title) return;
+            var html = doc.documentElement;
+            var cls = " " + ((html && html.getAttribute && html.getAttribute("class")) || "") + " ";
+            var lock = win.handyLock;
+            if ((cls.indexOf(" veiled ") >= 0 || cls.indexOf(" locked ") >= 0) && lock && typeof lock.setTitle === "function") {
+                lock.setTitle(title);
+                return;
+            }
+            if (doc.title !== title) doc.title = title;
         }
 
         /** `form` as it is on the page after a morph: itself, else the form with its id or its action. */
@@ -665,8 +700,11 @@
             return null;
         }
 
-        /** §2.6: the save's answer never came - a red line in its group: what is shown now is what is stored. */
-        function lostLine(form) {
+        /**
+         * §2.6: the save's answer never came - a red line in its group: what is shown now is what is stored. The group
+         * of the control the parent touched (focused, or the button), else the form's (code QA L5).
+         */
+        function lostLine(form, focused, buttons) {
             var text = words("save-unknown");
             if (!text || !doc.createElement) return;
             var line = doc.createElement("p");
@@ -674,8 +712,15 @@
             line.setAttribute("role", "status");
             line.setAttribute("data-flash", "swap-lost");
             line.textContent = text;
-            // The group the form sits in, or the one it holds (Avansert's restrictions: a form around its groups).
-            var group = form && form.closest ? form.closest(".group") || form.querySelector(".group") : null;
+            var touched = null;
+            if (focused && form && contains(form, focused) && focused !== form) touched = focused;
+            for (var b = 0; !touched && buttons && b < buttons.length; b++) {
+                if (buttons[b] && connected(doc, buttons[b]) && contains(form, buttons[b])) touched = buttons[b];
+            }
+            // The group the touched control or the form sits in, or the one it holds (Avansert's restrictions: a form
+            // around its groups).
+            var group = touched && touched.closest ? touched.closest(".group") : null;
+            if (!group && form && form.closest) group = form.closest(".group") || form.querySelector(".group");
             if (group) group.appendChild(line);
             else if (form && form.parentNode) form.parentNode.insertBefore(line, form.nextSibling);
         }
@@ -698,6 +743,8 @@
                 shared.waitSwap(record.url);
                 return;
             }
+            // Without reconnect.js (it is on every page): the real reload, never under a POST on its way (code QA L8).
+            if (inflight() > 0) return;
             pending = null;
             reloadFor(record);
         }
@@ -753,13 +800,26 @@
             });
         }
 
+        /** Code QA L8: only an http(s) address of this page's origin is fetched. */
+        function sameOrigin(url) {
+            if (typeof URL !== "function") return true;
+            try {
+                var to = new URL(url, win.location.href);
+                return (to.protocol === "http:" || to.protocol === "https:") && to.origin === new URL(win.location.href).origin;
+            } catch (e) {
+                return false;
+            }
+        }
+
         function refresh(url, o) {
-            if (!supported()) return false;
+            if (!supported() || !sameOrigin(url)) return false;
             o = o || {};
+            var forms = o.forms || [];
             if (!pending) pending = { url: url, forms: [], byButton: [], lost: false, fallback: null };
             var record = pending;
-            record.url = url;
-            var forms = o.forms || [];
+            // A plain refresh asks for the page without the one-shot words (code QA L1); one that joins a save's landing
+            // keeps the landing's address, which draws that save's flash.
+            if (forms.length || !record.forms.length) record.url = forms.length ? url : withoutOneShot(url);
             for (var i = 0; i < forms.length; i++) if (forms[i] && !has(record.forms, forms[i])) record.forms.push(forms[i]);
             var buttons = o.byButton || [];
             for (var j = 0; j < buttons.length; j++) if (buttons[j] && !has(record.byButton, buttons[j])) record.byButton.push(buttons[j]);
@@ -769,7 +829,7 @@
             var my = ++seq;
             var answer;
             try {
-                answer = win.fetch(withoutHash(url), { credentials: "same-origin", redirect: "manual", cache: "no-store" });
+                answer = win.fetch(withoutHash(record.url), { credentials: "same-origin", redirect: "manual", cache: "no-store" });
             } catch (e) {
                 pending = null;
                 seq++;

@@ -29,8 +29,7 @@
 
     function install(win) {
         var doc = win.document;
-        var group = doc.querySelector("[data-install-poll]");
-        if (!group) return;
+        // Loaded on every launcher page since design 103's code QA L7: it polls only while a row waits.
         // Read again at each poll: a refresh in place may bring another group, or none (nothing waits any more).
         function pollUrl() {
             var now = doc.querySelector("[data-install-poll]");
@@ -49,7 +48,17 @@
             var el = e.target;
             if (el && el.hasAttribute && el.hasAttribute("data-autosave")) stop();
         }, true);
-        win.addEventListener("pagehide", stop);
+        // Left: no polling; back from the back-forward cache it goes on (code QA L7, as auto-reload.js since 103-4).
+        var away = false;
+        win.addEventListener("pagehide", function () {
+            away = true;
+        });
+        win.addEventListener("pageshow", function (e) {
+            if (!e || !e.persisted) return;
+            away = false;
+            leaving = false;
+            schedule();
+        });
         // Design 103: a save lands in place now - once none is left on its way the polling goes on, and a refresh in
         // place that still has a waiting row starts it again.
         doc.addEventListener("handy:saved", function (e) {
@@ -71,7 +80,7 @@
         }
 
         function schedule() {
-            if (leaving || timer !== null || doc.hidden || polls >= MAX_POLLS) return;
+            if (leaving || away || timer !== null || doc.hidden || polls >= MAX_POLLS || !pollUrl()) return;
             timer = win.setTimeout(tick, DELAY);
         }
 
@@ -94,7 +103,7 @@
 
         function tick() {
             timer = null;
-            if (leaving || doc.hidden) return;
+            if (leaving || away || doc.hidden) return;
             if (lockDue()) {
                 lockNow();
                 return;

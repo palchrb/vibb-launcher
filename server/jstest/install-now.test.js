@@ -74,8 +74,8 @@ function fakeWindow({ search = "", rows = {}, answer = null, poll = true } = {})
             await t.fn();
         }
     };
-    win.fire = (where, type, target) => {
-        (listeners[where + ":" + type] || []).forEach((fn) => fn({ type, target }));
+    win.fire = (where, type, target, extra = {}) => {
+        (listeners[where + ":" + type] || []).forEach((fn) => fn(Object.assign({ type, target }, extra)));
     };
     return win;
 }
@@ -241,4 +241,21 @@ test("a changed state refreshes in place, and the polling goes on after the swap
     assert.strictEqual(win.pending(), 0);
     (win.fire.bind(win))("doc", "handy:saved");
     assert.strictEqual(win.pending(), 1);
+});
+
+// Code QA L7: left and back from the back-forward cache, the polling goes on; on a page with nothing waiting it
+// never polls.
+test("back from the back-forward cache it polls again; nothing waiting, no poll", async () => {
+    const win = fakeWindow({ rows: {}, answer: { phones: [] } });
+    install(win);
+    win.fire("win", "pagehide");
+    await win.advance();
+    assert.strictEqual(win.fetches, 0, "left: no poll");
+    win.fire("win", "pageshow", null, { persisted: false });
+    assert.strictEqual(win.pending(), 0, "a plain pageshow isn't one from the cache");
+    win.fire("win", "pageshow", null, { persisted: true });
+    assert.strictEqual(win.pending(), 1, "back from the cache: polling again");
+    const idle = fakeWindow({ poll: false });
+    install(idle);
+    assert.strictEqual(idle.pending(), 0);
 });
