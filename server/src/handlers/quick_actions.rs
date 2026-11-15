@@ -600,10 +600,9 @@ pub(crate) struct SetupCard {
     pub open: bool,
     /// The row's value while open: "til 17:10".
     pub value: Option<String>,
-    /// "Åpnet for oppsett til 17:10" (or the Play install mode's words).
+    /// The sheet's line while open, shown only when the row has no value (design 103-11): the Play install mode's
+    /// words, or "Åpnet for oppsett" for an open with no known end.
     pub open_text: String,
-    /// What opening does, with the phone's name.
-    pub note: String,
     /// A rule turned on now is paused meanwhile: "Skole på til 18:30 står på pause så lenge."
     pub on_lock: Option<String>,
     /// "Sendt…" after a press, in the group (`?notice=`).
@@ -654,11 +653,6 @@ pub(crate) async fn setup_card(
             (true, None) => t(lang, "device.summary.qa.setup_open").to_string(),
             (false, _) => t(lang, "device.summary.qa.setup_play").to_string(),
         },
-        note: t_params(
-            lang,
-            "device.advanced.setup.note",
-            &[("name", &device.name)],
-        ),
         on_lock: lock.map(|l| {
             t_params(
                 lang,

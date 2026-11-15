@@ -1307,6 +1307,74 @@ fn the_app_shell_scrolls_main_not_the_document() {
         !main.contains("max-width"),
         "the scroller spans the window: {main}"
     );
+    // Design 103 §4: every row line is one rule's `::before` - a 1 px line, scaled to half on 2x+ screens by one block
+    // after every list's rule; a list's own rule sets only its `left`, and no 0.5 px row border is left.
+    let base_at = css
+        .find("\n.group > .row ~ .row::before,")
+        .expect("the hairlines' base rule");
+    let base_open = css[base_at..].find('{').unwrap() + base_at;
+    let base = &css[base_at..base_open];
+    let base_body: String = css[base_open + 1..base_open + css[base_open..].find('}').unwrap()]
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert_eq!(
+        base_body,
+        "content: \"\"; position: absolute; top: 0; right: 0; pointer-events: none; \
+         border-top: 1px solid var(--sep-light);"
+    );
+    let selectors: Vec<&str> = base
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+    assert!(selectors.len() >= 17, "{selectors:?}");
+    let scaled_at = css
+        .rfind("@media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 2dppx)")
+        .expect("the 2dppx block");
+    let scaled_end = scaled_at + css[scaled_at..].find("}\n}").unwrap();
+    let scaled: String = css[scaled_at..scaled_end]
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    for needle in [
+        "border-top: 0;",
+        "height: 1px;",
+        "background: var(--sep);",
+        "transform: scaleY(0.5);",
+        "transform-origin: 0 0;",
+    ] {
+        assert!(scaled.contains(needle), "2dppx: {needle} in {scaled}");
+    }
+    for selector in &selectors {
+        assert!(scaled.contains(selector), "2dppx block lacks {selector}");
+        // Every rule naming this hairline (a list's own) comes before the block and sets no border.
+        let mut from = 0;
+        while let Some(at) = css[from..].find(selector).map(|a| a + from) {
+            from = at + selector.len();
+            if at > scaled_at {
+                continue;
+            }
+            let open = css[at..].find('{').unwrap() + at;
+            let body = &css[open..open + css[open..].find('}').unwrap()];
+            if at != base_at + css[base_at..].find(selector).unwrap() {
+                assert!(
+                    !body.contains("border-top"),
+                    "{selector}: border-top in a list's rule: {body}"
+                );
+            }
+        }
+    }
+    // The one 0.5 px border left is `.all-show`'s, inside a Leaflet popup (not a row line).
+    assert_eq!(
+        compact.matches("border-top:0.5px").count()
+            + compact.matches("border-top-width:0.5px").count(),
+        1,
+        "a 0.5 px row border"
+    );
+    assert!(
+        compact.contains(".all-show{display:block;margin-top:8px;padding-top:8px;border-top:0.5px")
+    );
     // Main has no padding of its own (design 84): the band and the sheet inside it take the column
     // and every inset. The band is main's first child and scrolls away with the page; an editor's
     // is the body's child beside main (.band-fixed keeps its height) - a block, never fixed or
@@ -1627,9 +1695,15 @@ fn the_accent_rules_hold() {
         "--tint-fill-hover: #E07A4C;",
         "--on-tint-fill: #0C0C14;",
         "--field-focus: #FFFFFF;",
+        "--field-focus-line: #D9784C;",
     ] {
         assert!(root.contains(token), ":root: {token}");
     }
+    // Design 103 D13 (a): the focused line's dark-mode peach.
+    assert!(
+        css.contains("--field-focus-line: #C08266;"),
+        "dark --field-focus-line"
+    );
     assert!(!css.contains("--strong"), "--strong is gone");
     for selector in ["button {", ".button-small {", ".act-strong {"] {
         let rule = block(selector);
@@ -1656,16 +1730,28 @@ fn the_accent_rules_hold() {
         "outline: none;",
         "a tapped field shows no ring"
     );
+    // Design 103 §3: a tapped summary shows no ring either (Safari before 15.4).
+    assert!(
+        css.contains(".pointer-focus summary:focus {"),
+        "summary in the pointer rule"
+    );
+    // Design 103 §5: 1 px of the lighter peach, no inset shadow.
     let field = block("input[type=\"text\"]:not(.row-input):focus,");
     for part in [
-        "border-color: var(--tint);",
-        "box-shadow: inset 0 0 0 0.5px var(--tint);",
+        "border-color: var(--field-focus-line);",
         "background-color: var(--field-focus);",
     ] {
         assert!(field.contains(part), "{part} in {field}");
     }
+    assert!(!field.contains("box-shadow"), "no inset shadow: {field}");
     assert!(
-        block("input.row-input:focus,").contains("box-shadow: inset 0 -1.5px 0 var(--tint);"),
+        block("input.row-time:focus,")
+            .contains("box-shadow: inset 0 0 0 1px var(--field-focus-line);"),
+        "the day's small fields' 1 px"
+    );
+    assert!(
+        block("input.row-input:focus,")
+            .contains("box-shadow: inset 0 -1px 0 var(--field-focus-line);"),
         "a borderless field's underline"
     );
     // The keyboard keeps the ring: the :focus outline and the Safari-fallback reset stay.
