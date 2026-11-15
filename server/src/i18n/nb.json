@@ -4556,7 +4556,7 @@
   "device.home.shortcuts_chose": "{name} har valgt: {items}",
   "device.home.shortcuts_hidden": "{name} har skjult Snarveier i varsellisten. {name} kan vise dem igjen under Innstillinger › Snarveier.",
   "device.home.shortcuts_none": "Ingen snarveier vises nå.",
-  "device.home.shortcuts_info": "Snarveier er et fast varsel øverst i varsellisten med inntil fire knapper. {name} velger dem blant bryterne her og lommelykten. Det vises aldri på låseskjermen.",
+  "device.home.shortcuts_info": "Snarveier er et fast varsel øverst i varsellisten med inntil fire knapper. {name} velger dem blant bryterne her og lommelykten. Det vises aldri på låseskjermen. Når {name} har skjermtid i dag, viser den også tiden som er igjen.",
   "device.home.quick_footer_shortcuts": "Bryterne gjelder både Innstillinger og Snarveier.",
   "device.about.shortcuts": "Snarveier",
   "device.about.shortcuts_hidden": "Skjult av {name}"
