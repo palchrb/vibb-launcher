@@ -1,7 +1,10 @@
 # Design 100: One Vibb notification - the anchor carries Snarveier; the request for more time, answered
 
-Status: design, **revision 2**, 2026-11-15 (branch `design-100`). Not built. Revision 1 was 913764505; its design QA is
-`docs/review/qa-100-design.md` (afbc5dfcf: 1 High, 1 Medium, 10 Low, all taken as decided fixes, §15).
+Status: **revision 2, built** on `design-100` (step 1 c9f245e42/77a4bdf62, step 2 308a10001, step 3 efa11c62c), not
+emulator-checked yet (§11; `docs/testing/emulator.md` §6ao). Revision 1 was 913764505; its design QA is
+`docs/review/qa-100-design.md` (afbc5dfcf: 1 High, 1 Medium, 10 Low, all taken as decided fixes, §15); revision 2's
+QA round (0 High, 4 Medium, 11 Low) is handled in the build (§16). The mockups are `docs/design/100-mockups/`
+(`Foresporsel.dc.html` the PWA's card, `Telefon.dc.html` the time-rule screen).
 
 Approved by the user on 2026-11-15 (PLAN, "One Vibb notification"). The user asked *"Er vi nødt til å vise det tomme
 vibb one varselet?"* and then approved the merge: *"Genialt! Vi slår det sammen med snarvei baren vår, det er
@@ -896,3 +899,23 @@ file.
 | Q100-L8 `showAgain` on IO | One task on the poster's executor (§2.2) |
 | Q100-L9 M6 wasn't a user's block | Said in M6 and §2.4; check 7's full form is owed (§11) |
 | Q100-L10 small gaps | Nunito in check 2; `TIME_REQUESTS_A_DAY == 3` pinned; "sendes når telefonen er på nett" adopted (§8.4, §14.3); the pins added; D8's en sentence has no quoted button any more (§6) |
+
+## 16. Revision 2's design QA: what the build did with each finding
+
+| Finding | Built as |
+|---|---|
+| R2-M1 the card's form | `section#ask`'s form posts to `/devices/{id}/time-request/answer#ask` (a staying post); the route lands on `#quick` with its flash. In `summary.rs`'s form list and `check_forms` |
+| R2-M2 a lift that can't unlock | `time_answers::need` decides at the answer from the phone's fresh report (`report_is_fresh`, `TimeAsk::of`), else the request's own state; `fits`: screen time for a spent budget, a pause of every rule or of the report's rule for a rule. The card's minutes pause the rules when a rule locks (D9), with the line "Knappene setter reglene på pause." |
+| R2-M3 the other contracts | `lock_now.json` and `rule_pause.json` carry the lifts' `at_ms`/`by` and `request_answers`, in both directories; `policy_json_keys_snapshot` pins `request_answers`; `time_request.json`'s `policy_*` rows (made by `time_request::the_contract_policies`) pin `answer`'s and the lifts' keys; `PolicyResponseCompatTest` decodes them |
+| R2-M4 the old rows | Migration 0149 backfills a `yes` for every request a lift answered under r13's rule; the open request is one query |
+| R2-L1 | `answer.minutes` for a yes |
+| R2-L2 | D10's gift: a `budget` lift with a positive id, no `phone_key`, an `at_ms` (`givenLift`) |
+| R2-L3 | `noteChangeMs` (the 15-second mark, the 30 minutes' end) is a `nextBoundary` instant; the screen has no timer of its own |
+| R2-L4 | `timePart(.., surface, dayStart)` gives the shade's or the screen's note; `Capped` reads the policy's answer; the flag is `time_policy.request_answers` |
+| R2-L5 | `answer` is the newest yes/no of a request asked in the phone's day |
+| R2-L6 | The supersede runs only after `raise` stored the new request; stale cards: "… har allerede svart.", "… har spurt på nytt.", "Forespørselen er ikke åpen lenger."; `record_lift` is one IMMEDIATE transaction for every caller, the event and nudge after commit |
+| R2-L7 | The answer in the event's `params` (`answer`, `by`, `minutes`); `by` is the parent's PWA name at the answer (a snapshot: the wording reads params only) |
+| R2-L8 | nb + en for every string; the button row a grid, no flex `gap`; the mockups committed (above); the card above `#access`/`#oppsett`/`#attention` (pwa.md) |
+| R2-L9 | Not built (optional `open` key) |
+| R2-L10 | The account page's name hint says it shows on the phone; a lift that answered a request carries the answer's name |
+| R2-L11 | The trailing check compares the channel and a view key in the extras (step 1); "sendes når …" also for a 5xx accepted; PLAN is the coordinator's |

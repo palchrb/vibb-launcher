@@ -4483,6 +4483,24 @@ the run's server data again, enrolled with a typed code; `jelly36` restored afte
 | **Found:** the block didn't dim it | With 01e0bb93b the panel kept Flymodus usable after the block until another signal (a brightness change) refreshed it: the policy write the panel hears comes before `applyHardening` sets `DISALLOW_AIRPLANE_MODE`, and no broadcast an app can register for says a restriction changed (`ACTION_USER_RESTRICTIONS_CHANGED` isn't in the SDK). **Fixed:** `AppEnforcer.applyHardening` asks `ShortcutsRuntime.requestRefresh()` at its end. Checked again: the block off and on from the PWA, Flymodus "off" and "not available now" within the sync, no nudge |
 | The launcher's language (C99-L1) | `cmd locale set-app-locales ... nb-NO`: `Notification channels named again: nb-NO,en-US`, the channel `launcher:shortcuts` named "Snarveier", the header "Snarveier", the descriptions "Lommelykt, av", "Lyd, på", "Flymodus, ikke tilgjengelig nå", "Wi-Fi, på" |
 
+## 6ao. One Vibb notification, and the request for more time answered (design 100)
+
+**Not run yet** (built 2026-11-15, steps 1-3 on `design-100`). Design 100 §11 lists the checks; setup as §6an:
+**`jelly36`** restored clean from `~/kid-look-1-avd-pre-start`, density 240, the branch's debug launcher as Device
+Owner, a server of the branch (migration 0149) with a budget set today on Device › Time, two parents (one with a
+display name, "Pappa"; one without), each with a push subscription. Restore `jelly36` afterwards.
+
+| Check | What to see |
+|---|---|
+| 1 one notification, both views | `dumpsys notification --noredact`: only `id=1002` for the package at every step (Snarveier on, bit 128 off, on); `dumpsys activity services`: the anchor `isForeground=true`, no `ShortcutsService`; the row changes in place with the shade open, first at the next pull |
+| 2 the time line and the note | Nunito draws in SystemUI; no button under the row (D1); a Mer tid tap -> "Spurt kl. HH:MM · sender …" -> "· venter på svar" after the sync; nb/en, font scale 1.0 and 1.3 (wrapped, never cut) |
+| 3 Snarveier off | the plain notice: the time left as the title, "Be om mer tid" while the kid may ask, the note as content text |
+| 4 icons | the panel's gear, the plain notice's Vibb mark, Play's install mode, the ring, the assistant's setup notice, the filter's "kobler til …" |
+| 5 boot, 6 the update from design 99, 7 hiding (a non-role phone), 9 locale | as design 100 §11 |
+| 8 the time-rule screen (a budget of 1 min) | the used-up screen shows "Be om mer tid" under the rule card; a tap -> "sender …" -> "venter på svar" in the dim pill; network off: "sendes når telefonen er på nett" at 15 s (the boundary alarm, not a handler), the request goes when it is back; the PWA card (after the header, above Hurtighandlinger): Nei -> "Pappa svarte nei kl. HH:MM" and "Spør igjen"; +30 min -> the screen goes, the panel says "Mamma ga deg 30 min" (or "Du fikk 30 min mer" for the parent without a display name) for 30 minutes; the third answered request -> "Du har spurt tre ganger i dag."; Kveld turned on now with a budget -> no ask block (D4); a used-up screen with one app row stays after the PIN while it shows a button (D6); TalkBack: "Be om mer tid, knapp", the live announcements; gesture and 3-button navigation, nb and en |
+| 8b the answer's rules | a Quick actions "+15 min" while a used-up request is open answers it (the card goes, the phone says "Mamma ga deg 15 min"); a rule pause doesn't (the card stays, the phone still waits); a request asked under Leggetid: the card's buttons pause the rules (its line says so) |
+| 10 the PWA card | browser pass, 390 px, light/dark, JS off: the states, two parents (the second's stale tap -> "… har allerede svart."), the push opens `#ask`, a save never jumps to the top |
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:

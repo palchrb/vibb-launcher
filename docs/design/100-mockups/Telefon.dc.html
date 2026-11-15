@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="nb">
+<head>
+<meta charset="utf-8">
+<title>Barnets telefon, tre tilstander</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@700;800&amp;display=swap">
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="width: 390px; height: 844px; box-sizing: border-box; padding: 28px 20px; background: #0C0C14; color: #F6E7E0; font-family: Nunito, -apple-system, sans-serif; display: flex; flex-direction: column; gap: 22px">
+
+<div style="display: flex; flex-direction: column; gap: 8px">
+<span style="font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: #A8A0B0">1 · Tiden er brukt opp</span>
+<div style="background: #1C1B26; border-radius: 22px; padding: 18px; display: flex; flex-direction: column; gap: 14px">
+<div style="display: flex; align-items: center; gap: 12px">
+<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#F0A884" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 3h10M7 21h10M8 3c0 5 8 5 8 9s-8 4-8 9M16 3c0 5-8 5-8 9s8 4 8 9"/></svg>
+<span style="font-size: 20px; font-weight: 800">Skjermtiden er brukt opp</span>
+</div>
+<button type="button" style="height: 52px; border: 0; border-radius: 26px; background: #F0A884; color: #0C0C14; font-family: inherit; font-size: 17px; font-weight: 800">Be om mer tid</button>
+</div>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 8px">
+<span style="font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: #A8A0B0">2 · Har spurt, venter</span>
+<div style="background: #1C1B26; border-radius: 22px; padding: 18px; display: flex; flex-direction: column; gap: 14px">
+<div style="display: flex; align-items: center; gap: 12px">
+<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#F0A884" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 3h10M7 21h10M8 3c0 5 8 5 8 9s-8 4-8 9M16 3c0 5-8 5-8 9s8 4 8 9"/></svg>
+<span style="font-size: 20px; font-weight: 800">Skjermtiden er brukt opp</span>
+</div>
+<div style="height: 52px; border-radius: 26px; background: #2A2836; display: flex; align-items: center; justify-content: center; font-size: 16px; color: #E6DCE0">Spurt kl. 14:02 · venter på svar</div>
+</div>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 8px">
+<span style="font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: #A8A0B0">3 · Svart nei</span>
+<div style="background: #1C1B26; border-radius: 22px; padding: 18px; display: flex; flex-direction: column; gap: 14px">
+<div style="display: flex; align-items: center; gap: 12px">
+<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#F0A884" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 3h10M7 21h10M8 3c0 5 8 5 8 9s-8 4-8 9M16 3c0 5-8 5-8 9s8 4 8 9"/></svg>
+<span style="font-size: 20px; font-weight: 800">Skjermtiden er brukt opp</span>
+</div>
+<span style="font-size: 16px; color: #E6DCE0">Pappa svarte nei kl. 14:10.</span>
+<button type="button" style="height: 52px; border: 0; border-radius: 26px; background: #2A2836; color: #F0A884; font-family: inherit; font-size: 17px; font-weight: 800; box-shadow: inset 0 0 0 1.5px #F0A884">Spør igjen</button>
+</div>
+</div>
+
+<p style="margin: 0; font-size: 13px; color: #A8A0B0; line-height: 1.45">Får barnet ja, forsvinner kortet og telefonen låses opp med den nye tiden. «Spør igjen» bare hvis du vil det, og aldri mer enn tre ganger om dagen.</p>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>
