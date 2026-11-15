@@ -198,3 +198,275 @@ The emulator measurements themselves (M1-M16): only the probe's source and one f
 behaviour cited in L2 (actions exempt from deferral), L4 (shedding counts every post of the package) and §2.4
 (deleting a channel with an FGS notification throws) was read from documentation and source memory, not re-run.
 Nothing was run on the Jelly Star or with the launcher itself.
+
+---
+
+# Revision 2 (d12417042)
+
+Checked against `design-100` at d12417042 (= `main` 6c2f52d50 + the design; `main` itself is now 50ea94467, PLAN only)
+and design 101 at `design-101` 28902fa86 (its design, and `server/templates/device_detail.html` as its step 1 left it).
+Read for revision 2: the new "Revision 2" section, §2-§3 and §8 where they changed, §9's D9-D12, §14 whole, §15. In the
+server: `handlers/device_api.rs` (`time_request`, `phone_zone`), `parent_events.rs` (`extra_time_request`,
+`extra_time_told`, `open_extra_time_request`, `raise`), `handlers/lifts.rs` (`record_lift`), `handlers/rule_pause.rs`,
+`time_rules.rs` (`PolicyLift`, `TimePolicy`, `deliverable_lifts`), `lock_now.rs` (`the_contract`), `models.rs`
+(`PolicyResponse`), `handlers/devices.rs` (`render_device`'s `asked`), `security.rs` (`display_name`), migrations 0025,
+0087, 0147, 0148, `retention.rs`, `static/scroll-restore.js`, `static/style.css` (the Safari 14.0 notes), the tests
+`device_api.rs::policy_json_keys_snapshot`, `intake_limits.rs`, `settings_pages.rs::check_forms`, `rule_pause.rs`,
+`time_request.rs`; `testdata/time_request.json` (byte-identical with the launcher's copy, checked), `lock_now.json`,
+`rule_pause.json`; both workflows' path lists and the root `CLAUDE.md`. In the launcher: `timerules/TimeRequests.kt`,
+`TimeLeftNotice.kt`, `TimeRules.kt` (`Lift`, `TimePolicy`), `TimeRulesRuntime.kt` (`Snapshot`, the boundary list),
+`server/KidModeEnforcer.kt`, `server/StatusCapabilities.kt`, `PolicyResponseCompatTest`, `TimeRequestsTest`. The two
+mockups exist only in the session scratchpad (`d-mock/project/Foresporsel.dc.html`, `Telefon.dc.html`); the card's
+one was read.
+
+**Verdict.** The one-open-request rule is simple and the phone's state machine holds up: without the 30 minutes the
+record lives until an answer to its own id, the phone's day change, or a final verdict, and every case I walked
+(offline all afternoon, a reboot - the record is in DE prefs -, the day change in the phone's zone, a clock set back -
+the new ask is `stale` at the server and dropped, the server's card stays consistent and a later ask supersedes) ends
+in a state the kid can act on. The server side is the right shape too: one `BEGIN IMMEDIATE` per answer, the answer
+keyed by the phone's id, the request's day in `phone_zone` like the intake, an older launcher handled by
+`superseded`, a flag for an older server. Migration 0149 is the next free number (`main`'s highest is 0148, and no
+branch or worktree holds 0149 or higher). No High. Four Medium: the card's form breaks the repo's form rule as
+written, "every lift answers" tells the kid "Mamma ga deg 30 min" when the lift can't unlock, the contract change
+reaches two more shared files than §14.5 names, and the old rows' "before the migration" rule has no cut-off.
+
+Counts: **0 High, 4 Medium, 11 Low.**
+
+## Findings
+
+### Q100-R2-M1 Medium - the card's form has no fragment of its own group, so `check_forms` fails and the staying post never runs (§14.4, design 100:765-777)
+
+§14.4 gives the card `<form method="post" action="/devices/{id}/time-request/answer">` and says that with JS "it goes
+through `scroll-restore.js`'s staying post (`X-Handy-Stay`), so it never jumps to the top". The script posts as a
+staying post only "a POST whose action has a #fragment" (`server/static/scroll-restore.js:53-57`), and
+`settings_pages::check_forms` (`server/src/tests/settings_pages.rs:136-167`) requires every action on the summary to
+carry a fragment **that names the form's own enclosing group**. A fragment-less action is a plain browser post, and
+the summary's test fails. The return target `#quick` can't be the action's fragment either, because the card sits
+outside `section#quick` (after the header, design-101's `device_detail.html:22-55` and `:193`).
+
+Fix in the design: the action is `/devices/{id}/time-request/answer#ask` (the card's own `section#ask`), and the
+route's redirect goes to `/devices/{id}?done=…#quick` as written. The script then follows the server's stay answer to
+`#quick`, and since `#ask` no longer exists after the reload, "a #fragment the form's groups don't hold is the anchor"
+(`scroll-restore.js:59-60`) lands the parent at Quick actions, right where the card was. Name `summary.rs`'s form list
+(`src/tests/summary.rs:290-320`) in §14.6 for the new action.
+
+### Q100-R2-M2 Medium - "every lift answers an open request" can tell the kid "Mamma ga deg 30 min" while the phone stays locked (§14.4 "Every lift answers", design 100:790-793; D9)
+
+Any lift made while a request is open writes that request's `yes` row, "whichever button the parent used". Two
+ordinary cases go wrong on the phone:
+
+- The kid asked at "Skjermtiden er brukt opp" (state `used_up`), and later a parent pauses Leggetid from Quick actions
+  or the Regler sheet for an unrelated reason. That rule lift closes the request as `yes`. The phone says "Mamma ga deg
+  30 min" and the screen stays on the used-up lock.
+- The kid asked under a rule (D9's case), and a parent taps Skjermtid's "+30 min" in Quick actions. That budget lift
+  closes the request. The phone says "Mamma ga deg 30 min", and the rule keeps it locked.
+
+The kid may ask again (`Answered`), but no one answered this request, and the words promise time that never
+comes, which the r13 card and this design both try hard to avoid. Fix: a lift answers an open request only when its target
+fits the request's state (a budget lift for `used_up`/`left`/`unknown`, a rule pause for `rule`). Any other lift
+leaves the request open, and the card stays. Add a test row to §14.6 ("a rule pause doesn't answer a used-up
+request").
+
+The same point weakens D9's own rule. The card picks "pause the rules" from the request's `state`, which is the
+phone's report **at the ask** (`TimeAsk::of`, at most 15 min old, `handlers/device_api.rs:2887-2894`). A request asked
+at 19:50 under "used up" and answered at 20:40 under Leggetid adds screen time the rule won't let the kid use. The
+other way round, a rule that ended pauses nothing. Recommend D9 decides at the answer, from the phone's newest
+fresh report (`lock_badge`'s freshness, the same test design 101 §4.1 factors out as `time_state::report_stale`), and
+falls back to the ask's state only without one. Say what the card's sub-line shows when they differ.
+
+### Q100-R2-M3 Medium - `lifts[].by`/`at_ms` change two more shared contract files than §14.5 names (§14.2, §14.5)
+
+§14.5: "`server/testdata/time_request.json` is extended (… one file …)". But `PolicyLift` is served inside
+`time_policy` in other contracts too:
+
+- `server/src/lock_now.rs:621-652` (`lock_now::tests::the_contract`) serializes a `TimePolicy` with a `PolicyLift`
+  built in the test and compares it with `lock_now.json`'s `policy` and `policy_end_locked`. Each has lifts (4
+  `expires_at_ms`).
+- `server/src/tests/rule_pause.rs:205-216` compares the served lifts' **key sets** with `rule_pause.json`'s
+  `policy.time_policy.lifts`.
+
+With `at_ms` always sent (it comes from `created_at`, which every row has), both comparisons fail. `lock_now.json` and
+`rule_pause.json` must then be rewritten in both directories in the same commit (and the launcher's `LockNowTest` and
+`RulePauseTest` re-read them; they decode with defaults, so only the copies change). The alternative is to make
+`at_ms` and `by` `skip_serializing_if` on a lift without them, but `at_ms` would still appear for a seeded lift. Name
+the two files in §14.5, in step 2's commit list, and in the root `CLAUDE.md` paragraphs on `lock_now.json` and
+`rule_pause.json`. The CI path lists already hold all three files.
+
+Also in §14.5: `policy_json_keys_snapshot` pins `time_policy`'s keys exactly as `["daily_budget_minutes", "lifts",
+"rules"]` (`src/tests/device_api.rs:517-520`) on a fresh phone. `answer` is absent there, so the snapshot keeps
+passing and doesn't pin `answer`'s keys at all. Say how they are pinned: a seeded answered request in the snapshot
+test, or `time_request.json`'s `policy_*` rows standing as the pin, with the snapshot left as it is. Same for the
+launcher: `PolicyResponseCompatTest`'s time-policy test (`PolicyResponseCompatTest.kt:1183-1230`) decodes lifts. It
+should decode one with `by`/`at_ms` and the `answer` block.
+
+### Q100-R2-M4 Medium - "rows made before the migration" has no cut-off, and keeping two rules forever is the wrong shape (§14.4 "When", design 100:745-748)
+
+`open_extra_time_request` "keeps today's 'no lift since' condition only for rows made before the migration". The
+design doesn't say how the code tells such a row apart (an event id recorded at migration, a timestamp, the
+`_sqlx_migrations` time?). A permanent second branch in the open-request query would also have to be mirrored in the
+policy's `answer` and the intake's supersede.
+
+Simpler: the migration itself backfills. For every `extra_time_request` event that has a `time_lifts` row of the same
+device with `datetime(created_at) >= datetime(e.created_at)`, insert a `yes` answer with that first lift's id (and
+`answered_by` from `created_by` through `admin_users.username`, `by_name` NULL). The new rule is then the only rule
+from the first start, and §14.6 tests one query. An event the backfill leaves open is a real open request of today or
+an old one outside every day's window, both harmless. Keep the backfill in 0149 (a migration is frozen from its first
+pushed commit, `server/CLAUDE.md` "Data model"), so write the file only in step 2's build commit, after rechecking the
+number against `main`.
+
+### Q100-R2-L1 Low - the policy's minutes for a "yes" can be gone before the phone needs them (§14.2, §14.3)
+
+`answer` carries no minutes. `Given(by, minutes)` reads them from the lift `lift_id` names, but `deliverable_lifts`
+serves only lifts still running (`time_rules.rs:1009-1035`). A budget lift stays 12 h (`BUDGET_LIFT_DELIVERY_HOURS`),
+so the used-up screen after a "+30 min" is fine. A D9 rule pause of 15 min leaves the policy after 15 min, inside
+D12's 30 minutes, and "End now" removes it at once. Add `minutes` to `answer` (yes only), so the note never depends on
+the lift's delivery.
+
+### Q100-R2-L2 Low - D10's "Given" from a lift needs a filter (§14.3, D10)
+
+The table's "Idle, a lift with `by` or without, given within 30 min" would also catch:
+
+- design 98's phone-key pause (`by` absent by design, `created_by` NULL, `rule_pause.rs:159-161`), which shows "Du fikk
+  30 min mer" right after a parent typed the code on the phone to pause a rule;
+- the twin lifts with negative ids (`lock_now.rs:226-241`), which duplicate a rule pause;
+- a rule pause that isn't screen time at all.
+
+Recommend: D10's note comes only from a `target == "budget"` lift with no `phone_key` and a positive id.
+
+### Q100-R2-L3 Low - nothing re-posts the shade at D12's 30 minutes or at the 15-second "offline" mark (§8.4, §14.3, D12)
+
+The design removes the request's boundary alarm (`openUntilMs` in `TimeRulesRuntime.kt:245`) and adds two new
+instants the shade depends on: the answer's or the lift's at + 30 min (D10, D12), and the Pending record's ask + 15 s.
+Only the screen gets a `Handler` callback (§8.4). The notice is refreshed by the tracker's minute tick, which doesn't
+run while the used-up lock is up, and by syncs. So after a "Nei" on a locked phone, the panel's note can stay well
+past 30 minutes, and "sender …" can stay in the shade while the screen says "sendes når …". Put the next of these
+instants into `nextBoundary` (where `openUntilMs` was), which also re-renders the screen through `recheck`. That makes
+the screen's own 15-second callback unnecessary.
+
+### Q100-R2-L4 Low - `timePart`'s inputs and outputs don't cover what §8.2 and §14.3 ask of it (§8.2, §14.3, design 100:722)
+
+- `timePart(budget, windowOpen, state, lifts, nowMs)` has no `answers`. `Capped`'s "the last answer's note" needs it,
+  since `RequestState.Capped` carries nothing.
+- The screen uses the note "with no time limit" and the shade only within 30 min (D12). `TimePart` has one `note`.
+  Say whether `timePart` returns both (`shadeNote`, `screenNote`) or takes the surface as an argument. `lockAsk` takes
+  `note` separately, so the screen's caller needs the unlimited one.
+- `requestState(…, answers: TimeAnswers?, …)` needs the top-level `time_request_answers` flag, but the
+  `TimeRulesRuntime.Snapshot` that every caller holds carries only the `TimePolicy` (`TimeRulesRuntime.kt:130-139`,
+  `KidModeEnforcer.timePolicyOf`). Either put the flag inside `time_policy` (for example `time_policy.answers: true`,
+  so it travels and caches with `answer` and survives `inForceAt`'s `copy`), or say that the snapshot gains it.
+  Inside `time_policy` is the simpler of the two.
+
+### Q100-R2-L5 Low - "the newest answered request of the phone's day" is ambiguous at midnight (§14.2)
+
+Is it the newest request **asked** today that has an answer, or the newest answer **given** today? A request asked
+at 23:50 and answered "no" at 00:05 is the second but not the first. The phone's record is gone at its day change
+(Idle), so with the second reading the panel says "Pappa svarte nei kl. 00:05" about yesterday's request. Recommend
+"asked today (the intake's day) and answered", the same day as the card's own rule.
+
+### Q100-R2-L6 Low - the supersede and the "already answered" flash need their edge cases written down (§14.4)
+
+- The intake supersedes only when the new request is **stored**: not when it is `capped`, `stale`, a retry of the same
+  id, or dropped by `raise` (`parent_events.rs:1126-1160`: the hourly budget, a bad target). Write the supersede
+  after `raise` returns `Some`, in the same transaction.
+- A card whose request was superseded (the kid's older launcher asked again) is stale, but no parent answered it.
+  "{parent} har allerede svart." would name nobody (`answered_by` NULL). Give it its own flash ("{name} har spurt på
+  nytt." / "{name} asked again.") or simply land on the new card.
+- A lift's transaction must be `BEGIN IMMEDIATE` too, not only the card's. `record_lift` today writes on the pool with
+  no transaction, and its security event and `command_notify` are inside it (`handlers/lifts.rs:94-188`). In WAL, a
+  deferred transaction that reads the open request and then writes fails with `SQLITE_BUSY_SNAPSHOT` if the card's
+  transaction wrote in between, which `busy_timeout` doesn't retry. Say that `record_lift`'s core takes the caller's
+  `IMMEDIATE` transaction for every caller (`create_lift`, `rules_now`), with the event and the nudge after commit, as
+  the card's route does.
+
+### Q100-R2-L7 Low - the answer in Activity and the inbox: one read path is simpler (§14.4 "For every parent")
+
+"`extra_time_told` gains the answer, read from `time_request_answers` where the rows are read." Event rows are read
+in several places (the inbox, Activity, the digest), and `told` works only from the row's `params`. Writing the
+answer into the event's `params` in the answer's transaction (`json_set(params, '$.answer', …, '$.by', …)`;
+`ExtraTimeParams` gains two optional fields, `serde(default)`) keeps every read site as it is. Store the
+answering parent's id there, not a name, so the inbox can word it with display name or login at read time as
+designed.
+
+### Q100-R2-L8 Low - the PWA card's details: i18n keys, Safari 14.0, the mockup's path (§14.4)
+
+- i18n: the section's `aria-label` has nb only ("Forespørsel om mer skjermtid"; en "Request for more screen time").
+  The security event `time_request_no` needs `security.event.time_request_no` and its detail in both catalogs, and
+  `settings_pages.rs:1229`'s kind list. D9's sub-line and button words, the superseded flash (L6) and the catalog key
+  names for all of them should be listed as §8.4 lists the phone's.
+- The mockup lays the card out as a `display: flex; flex-direction: column; gap: 12px` column. Flex `gap` needs
+  Safari 14.1, and the floor is 14.0 (`style.css:1986`, `:2665`: "no flex gap: Safari 14.0"). Grid `gap` for the four
+  buttons is fine. Say "margins, not flex gap" for the column.
+- `Foresporsel.dc.html` and `Telefon.dc.html` are cited by name only and live in the session scratchpad. Commit them
+  under `docs/design/mockups/` (design 99's and 101's pattern) or link the artifact, or the build has no reference.
+- Where the card sits: "right after `</header>`" puts it above `#access`, `#oppsett` and `#attention`
+  (design-101 `device_detail.html:55-99`). That fits "the top" in PLAN and the mockup's note, but say it, because
+  Attention's alarms otherwise come first on the summary.
+
+### Q100-R2-L9 Low - the phone has no way to learn that the server holds no open request for it (§14.1, §12)
+
+The record stays Waiting until an answer or the day ends. If the server loses the request (a restore from a backup
+taken before the ask, a phone deleted and re-added, a dev reset), the phone waits all day with no card for any parent
+to answer, and the kid can't ask again. Rare, and §12 accepts the unanswered-request case. But one key in the
+`answer` block, `open: "<request id>" | null` (the server's open request of the phone's day), would let the phone
+drop a Waiting record the server doesn't hold. That makes the "request the server never stored" case close itself.
+Optional.
+
+### Q100-R2-L10 Low - the parent's name on the phone: say where it shows, and one source (§14.2, D11)
+
+- Design 62's display name was introduced for the PWA ("by Mamma" lines between parents). Now it shows on the kid's
+  screen. The account page's display-name field should say so in one line (nb + en), so a parent who typed a full
+  name knows. D11's no-name rule (never the login, which can be an e-mail) is right, and the name is already checked
+  for control and bidi characters (`security.rs:55-70`).
+- `answer.by` is a snapshot (`by_name`) while `lifts[].by` is read live. The same "yes" can then show two names after
+  a rename (the answer's note vs D10's lift note). Prefer the answer's for a lift that has an answer row; or snapshot
+  both.
+
+### Q100-R2-L11 Low - small leftovers
+
+- Q100-L4's fix (§2.2, :145) compares only the channel. Revision 2's note line changes the view on the **same**
+  channel (the answer arriving on a used-up day), and a shed update there isn't caught. My original suggestion's
+  "or a tag in `extras`" (a hash of the key) covers both.
+- "Sendes når telefonen er på nett" also shows for a server that answers 5xx or 401 (`RETRY`), when the phone is
+  online. That's acceptable as is, but the en "sends when the phone is online" has the same limitation.
+- PLAN's entry on `main` (50ea94467) still says "the time left … and 'Be om mer tid' move into the panel", which D1
+  reversed. Fix it with the revision's PLAN line.
+
+## The checklist
+
+- **Repo rule for the API**: server and launcher in one commit (step 2), `time_request.json` byte-identical (verified
+  today; the extended file goes in both), CI path lists already hold it (`server-ci.yml:73`, `launcher.yml:84`), root
+  `CLAUDE.md` paragraph named (§13 step 5, §14.5). Missing: `lock_now.json`, `rule_pause.json` (M3), and how
+  `answer`'s keys are pinned (M3). `intake_limits` isn't touched: no report body changes, and the capability rides in
+  `capabilities`, whose stored JSON is capped at 4096 bytes (`device_api.rs:1361-1364`; today's list is far under).
+  The walker in `intake_limits::the_field_tables_keep_every_contract_key` reads top-level `time_state`, `call_state`,
+  `calendar`, `report` and `capability`; the extended `time_request.json` must not name its new top-level keys
+  `report` or `calendar` (the planned names don't). Its `capability` (`time_answer_v1`) is only compared with
+  Snarveier's, so it is harmless.
+- **The migration**: 0149 is free (verified on every local branch and worktree). The schema is sound: PK
+  `(device_id, request_id)`, foreign keys with `CASCADE`/`SET NULL` (`foreign_keys(true)`, `main.rs:1943`), retention
+  by `LIFT_DAYS`. See M4 for the backfill and the frozen-file timing.
+- **First answer wins**: one `BEGIN IMMEDIATE`, the open check first, the insert's conflict as a backstop. That is
+  right for two cards. With a lift made elsewhere it is right only if every lift path is `IMMEDIATE` too (L6), and
+  which lifts may answer needs M2's rule.
+- **Old/new both ways**: an older launcher ignores the keys (`ignoreUnknownKeys`, its `Lift`/`TimePolicy` have
+  defaults, `TimeRules.kt:65-86`) and is superseded after its 30 minutes. This launcher on an older server keeps r13's
+  lift rule by the flag's absence (L4: where the flag lives). The release order (server first) is stated.
+- **The phone's state machine**: verified above. Offline, reboot, the day change, a clock set back and `superseded`
+  are consistent. The never-stored case is L9, and the timers the shade needs are L3.
+- **The parent's name**: display name only, never the login (D11), never the kid's name on the phone. The PWA's
+  words name the phone ("Emma", the placeholder design 101 uses too). nb + en for the phone's strings are listed
+  (§8.4), and the PWA's are partly listed (L8).
+- **The PWA card**: tokens for light/dark, the hourglass, a grid of four. Its form must follow the repo's form rule
+  (M1). Safari 14.0 is OK except flex gap (L8). The push's `#ask` is right while the card is up. A push opened after
+  the answer lands at the top of the summary, which is fine for a link (the "no jump" rule is about saves).
+- **D9-D12**: real choices. D10, D11 and D12 are sound as recommended, with L2's filter and L3's timers. D9 is sound
+  as an intent, but decide its target at the answer (M2).
+
+## Not verified
+
+No emulator, no `cargo test`, no Gradle run. Not checked by running: that the policy write after a nudge reaches
+`AnchorNotice.refresh` and `LockActivity`'s listener on the phone (followed by reading only as far as
+`TimeRequests.changed` -> `AnchorRefresh`). Not checked: that the anchor's network callback triggers a sync, which
+"the request goes when it comes back" relies on (`CommandListenerService.kt:224-239` registers one; its action wasn't
+followed). Also not checked: the WAL `SQLITE_BUSY_SNAPSHOT` behaviour cited in L6 (from SQLite's documentation, not
+run here), and whether "Emma", "Mamma" and "Pappa" differ from the family's real names, which I can't know.
