@@ -91,6 +91,18 @@
       ]
     }
   },
+  "policy_ended": {
+    "time_policy": {
+      "request_answers": true,
+      "lifts": [],
+      "answer": {
+        "request_id": "0123456789abcdef0123456789abcdef",
+        "answer": "yes",
+        "by": "Mamma",
+        "at_ms": 1793034600000
+      }
+    }
+  },
   "older_server": {
     "time_policy": {
       "lifts": [
@@ -256,6 +268,27 @@
       "state": "answered_yes",
       "shade_note": "given:30",
       "screen_note": "given:30",
+      "can_ask": true
+    },
+    {
+      "name": "a yes ended early: no time claimed, ask again",
+      "record": {
+        "id": "0123456789abcdef0123456789abcdef",
+        "asked_at_ms": 1793034120000,
+        "day": "2026-10-26",
+        "lift_id_at_ask": 7,
+        "state": "ASKED"
+      },
+      "count": {
+        "day": "2026-10-26",
+        "accepted": 1
+      },
+      "policy": "policy_ended",
+      "day": "2026-10-26",
+      "now_ms": 1793034660000,
+      "state": "answered_yes",
+      "shade_note": "none",
+      "screen_note": "none",
       "can_ask": true
     },
     {

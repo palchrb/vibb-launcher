@@ -212,9 +212,12 @@ object AnchorNotification {
         } catch (e: Exception) {
             Log.w(LOG_TAG, "The last view couldn't be built for the start: ${e.javaClass.simpleName}")
         }
-        val key = Key(AnchorView.Plain(PLAIN_NOTICE), locale(app), NOTIFICATION_CHANNEL_LISTENER)
+        // Code QA L5: an anchor restarted in a live process starts with the time part it has, not a bare "Vibb One".
+        val cached = notice
         runCatching { createListenerChannel(app) }
-        val plain = AnchorNotice.plain(app)
+        val withTime = cached?.let { runCatching { AnchorNotice.plain(app, it) }.getOrNull() }
+        val key = Key(AnchorView.Plain(cached?.takeIf { withTime != null } ?: PLAIN_NOTICE), locale(app), NOTIFICATION_CHANNEL_LISTENER)
+        val plain = withTime ?: AnchorNotice.plain(app)
         runCatching { plain.extras.putInt(EXTRA_VIEW_KEY, key.hashCode()) }
         synchronized(lock) { posted = key }
         queue.posted(SystemClock.elapsedRealtime())

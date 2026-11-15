@@ -150,16 +150,31 @@ class TimeRequestsTest {
         // This server: a newer lift that answered nothing closes nothing (M2: it couldn't unlock the request's state).
         val lifted = TimePolicy(requestAnswers = true, lifts = listOf(Lift(id = 8, target = TARGET_RULE, minutes = 30)))
         assertEquals(RequestState.Waiting(now), requestState(record(TimeRequestPhase.ASKED), null, day, lifted))
-        // An older server: a newer lift is the answer (r13's rule, §14.7).
+        // An older server: a newer lift is the answer (r13's rule, §14.7); screen time names its minutes.
         assertEquals(
             RequestState.Answered(false, null, 0, 30, canAskAgain = true),
-            requestState(record(TimeRequestPhase.ASKED), null, day, lifted.copy(requestAnswers = false)),
+            requestState(
+                record(TimeRequestPhase.ASKED), null, day,
+                TimePolicy(lifts = listOf(Lift(id = 8, target = TARGET_BUDGET, minutes = 30))),
+            ),
         )
         val three = TimeRequestCount(day, TIME_REQUESTS_A_DAY)
         assertEquals(RequestState.Capped, requestState(null, three, day, null))
         assertEquals("the third's wait still shows", RequestState.Waiting(now), requestState(record(TimeRequestPhase.ASKED), three, day, null))
         assertEquals("yesterday's three", RequestState.Idle, requestState(null, three.copy(day = "2026-10-25"), day, null))
         assertEquals(RequestState.Idle, requestState(null, TimeRequestCount(day, 2), day, null))
+        // Code QA L4: on an older server a rule pause (or the parent code's) closes it with no time claimed.
+        assertEquals(
+            RequestState.Answered(false, null, 0, null, canAskAgain = true),
+            requestState(record(TimeRequestPhase.ASKED), null, day, TimePolicy(lifts = listOf(Lift(id = 8, target = TARGET_RULE, minutes = 15)))),
+        )
+        assertEquals(
+            RequestState.Answered(false, null, 0, null, canAskAgain = true),
+            requestState(
+                record(TimeRequestPhase.ASKED), null, day,
+                TimePolicy(lifts = listOf(Lift(id = 8, target = TARGET_BUDGET, minutes = 15, phoneKey = "0123456789abcdef0123456789abcdef"))),
+            ),
+        )
         // An answer word this launcher doesn't know leaves the request open.
         val odd = answers.copy(answer = answers.answer!!.copy(answer = "later"))
         assertEquals(RequestState.Waiting(now), requestState(record(TimeRequestPhase.ASKED), null, day, odd))
@@ -220,7 +235,8 @@ class TimeRequestsTest {
         val lifted = TimePolicy(lifts = listOf(Lift(id = 8, target = TARGET_BUDGET, minutes = 15)))
         assertEquals("an older server's lift came while it waited", UploadStep.DROP, uploadStep(record(), null, day, lifted))
         assertEquals("this server's lift answers nothing by itself", UploadStep.SEND, uploadStep(record(), null, day, lifted.copy(requestAnswers = true)))
-        assertEquals("answered here already", UploadStep.NONE, uploadStep(record(), null, day, policy("policy_no")))
+        // Code QA L1: answered here already (the 200 lost, then a parent answered): counted as taken, nothing sent.
+        assertEquals("answered here already", UploadStep.COUNT, uploadStep(record(), null, day, policy("policy_no")))
         assertEquals("yesterday's", UploadStep.DROP, uploadStep(record(onDay = "2026-10-25"), null, day, null))
         assertEquals("no ledger day", UploadStep.DROP, uploadStep(record(), null, null, null))
         assertEquals(UploadStep.NONE, uploadStep(null, null, day, null))
@@ -247,5 +263,7 @@ class TimeRequestsTest {
         val glue = listOf("src/main", "app/src/main").map { File(it, "java/com/kidslauncher/mdm/timerules/TimeRequests.kt") }.first { it.exists() }.readText()
         assertTrue(glue.contains("recordAfterUpload(record(context), record.id, count(context), verdict) ?: return"))
         assertTrue(glue.contains("when (uploadStep(record, count(context), day, policy))"))
+        // Code QA L1: COUNT takes ACCEPTED's step for the record it read.
+        assertTrue(glue.contains("recordAfterUpload(record(context), record.id, count(context), TimeRequestVerdict.ACCEPTED) ?: return"))
     }
 }

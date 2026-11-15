@@ -291,7 +291,19 @@ pub async fn answer_with_lift(
         return Ok(false);
     };
     let asked = open.params.as_ref().map(|p| p.state.as_str());
-    if !fits(need(fresh, asked, zone, now), target, rule_id) {
+    let mut need = need(fresh, asked, zone, now);
+    // Code QA L7: a rule turned on now (design 93) is in force as its copy, a negative id; a pause of the rule it
+    // copies lifts the copy too (its twin), so it answers a request asked under the copy.
+    if let Need::Rules {
+        active_rule: Some(copy),
+    } = need
+        && copy < 0
+    {
+        need = Need::Rules {
+            active_rule: copied_rule(conn, device_id, copy).await?,
+        };
+    }
+    if !fits(need, target, rule_id) {
         return Ok(false);
     }
     write_answer(
@@ -302,6 +314,22 @@ pub async fn answer_with_lift(
         admin,
     )
     .await
+}
+
+/// The rule a turned-on rule's copy (`copy_id`, the negative id the phone runs it as: `-(time_lock_now.id)`) copies;
+/// `None` for a copy of a rule deleted since, or one this phone never had.
+pub async fn copied_rule(
+    conn: &mut SqliteConnection,
+    device_id: i64,
+    copy_id: i64,
+) -> Result<Option<i64>, sqlx::Error> {
+    let rule: Option<Option<i64>> =
+        sqlx::query_scalar("SELECT rule_id FROM time_lock_now WHERE id = ? AND device_id = ?")
+            .bind(-copy_id)
+            .bind(device_id)
+            .fetch_optional(&mut *conn)
+            .await?;
+    Ok(rule.flatten())
 }
 
 /// A request taken at intake closes the phone's other unanswered requests of the day (`superseded`, §14.4, QA R2-L6):
@@ -332,7 +360,9 @@ pub async fn supersede(
 
 /// The policy's `time_policy.answer` (§14.2): the newest answered request (yes or no, never `superseded`) asked in
 /// the phone's day (QA R2-L5: a request of yesterday answered after midnight is not today's), with the lift's minutes
-/// for a yes (QA R2-L1: the note never depends on the lift's delivery).
+/// for a yes (QA R2-L1: the note never depends on the lift's delivery). Code QA L8: a yes whose lift a parent ended
+/// early ("End now" on D9's pause) names no lift and no minutes - the phone then says nothing of time given (no
+/// "Mamma ga deg 30 min" for time taken back) and the kid may ask again; so does a backfilled rule pause (0149).
 pub async fn policy_answer(
     db: &SqlitePool,
     device_id: i64,
@@ -348,7 +378,9 @@ pub async fn policy_answer(
     );
     let row: Option<Row> = sqlx::query_as(
         "SELECT a.request_id, a.answer, a.by_name, \
-                CAST(strftime('%s', a.answered_at) AS INTEGER) * 1000, a.lift_id, l.minutes \
+                CAST(strftime('%s', a.answered_at) AS INTEGER) * 1000, \
+                CASE WHEN l.ended_early_at IS NULL THEN a.lift_id END, \
+                CASE WHEN l.ended_early_at IS NULL THEN l.minutes END \
          FROM time_request_answers a \
          JOIN parent_events e ON e.device_id = a.device_id AND e.kind = ? AND e.dedup_key = a.request_id \
          LEFT JOIN time_lifts l ON l.id = a.lift_id \
@@ -374,16 +406,23 @@ pub async fn policy_answer(
     )
 }
 
-/// Who answered the phone's newest answered request (the "already answered" flash): the parents' own word for them -
-/// the display name, else the login; the name at the answer for a parent gone since; "" for none.
-pub async fn last_answerer(db: &SqlitePool, device_id: i64) -> Result<String, sqlx::Error> {
+/// Who answered `request` (the stale card's own, code QA L6), else the phone's newest answered request (a link
+/// without it): the parents' own word for them - the display name, else the login; the name at the answer for a
+/// parent gone since; "" for none.
+pub async fn last_answerer(
+    db: &SqlitePool,
+    device_id: i64,
+    request: Option<&str>,
+) -> Result<String, sqlx::Error> {
     let name: Option<Option<String>> = sqlx::query_scalar(
         "SELECT COALESCE(NULLIF(TRIM(u.display_name), ''), u.username, a.by_name) \
          FROM time_request_answers a LEFT JOIN admin_users u ON u.id = a.answered_by \
-         WHERE a.device_id = ? AND a.answer IN ('yes', 'no') \
+         WHERE a.device_id = ? AND a.answer IN ('yes', 'no') AND (? IS NULL OR a.request_id = ?) \
          ORDER BY datetime(a.answered_at) DESC, a.rowid DESC LIMIT 1",
     )
     .bind(device_id)
+    .bind(request)
+    .bind(request)
     .fetch_optional(db)
     .await?;
     Ok(name.flatten().unwrap_or_default())

@@ -146,7 +146,13 @@ pub async fn answer(
         Outcome::Stale(Standing::Gone) => "request_gone",
         Outcome::Stale(Standing::AskedAgain | Standing::Open(_)) => "asked_again",
     };
-    Redirect::to(&format!("/devices/{id}?done={done}#quick")).into_response()
+    // Code QA L6: "… har allerede svart." names who answered this very card's request.
+    let request = if done == "answered_already" {
+        format!("&request={request}")
+    } else {
+        String::new()
+    };
+    Redirect::to(&format!("/devices/{id}?done={done}{request}#quick")).into_response()
 }
 
 fn server_error(lang: Lang, err: sqlx::Error) -> Response {

@@ -1037,6 +1037,7 @@
   "device.summary.ask.label": "Request for more screen time",
   "device.summary.ask.title": "{name} asks for more screen time",
   "device.summary.ask.pauses": "The buttons pause the rules in force.",
+  "device.summary.ask.adds": "No rule locks now: the buttons add screen time.",
   "device.summary.ask.add_min": "+{n} min",
   "device.summary.ask.add_hour": "+1 h",
   "device.summary.ask.no": "No",

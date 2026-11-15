@@ -919,3 +919,19 @@ file.
 | R2-L9 | Not built (optional `open` key) |
 | R2-L10 | The account page's name hint says it shows on the phone; a lift that answered a request carries the answer's name |
 | R2-L11 | The trailing check compares the channel and a view key in the extras (step 1); "sendes når …" also for a 5xx accepted; PLAN is the coordinator's |
+
+## 17. Code QA (`docs/review/qa-100-code.md`): what each finding became
+
+| Finding | Fix |
+|---|---|
+| L1 a lost 200, then an answer | `UploadStep.COUNT`: a PENDING record this server answered takes ACCEPTED's step (ASKED, count + 1), nothing sent |
+| L2 repeated announcements | The ask block's live regions get their text only when it changed |
+| L3 TalkBack focus after the tap | The pill stays focusable (a button only while clickable), so focus stays on it as it turns into the note |
+| L4 an older server's pause | Any newer lift still closes the request (§14.7); only a PWA screen-time lift is "Du fikk N min mer", a pause closes it with no words of time |
+| L5 `forStart`'s fallback | `AnchorNotice.plain(app, cached)`: the time part already cached, else the bare plain notice |
+| L6 the wrong parent named | The "already answered" redirect carries `&request=`; `last_answerer` names who answered that request |
+| L7 a copy's pause | `time_answers::copied_rule` maps a rule turned on now's negative id to the rule it copies; a pause of that rule answers |
+| L8 an ended-early yes | The policy's answer names no lift and no minutes once the lift was ended early: the phone shows no time given, and the kid may ask again ("Spør igjen" alone). Pinned by the contract's `policy_ended` row and its state row |
+| L9 the card's buttons | Asked under a rule a fresh report says is over: "Ingen regel låser nå: knappene gir mer skjermtid." (`device.summary.ask.adds`) |
+| L10 backfilled pauses | 0149 (unpushed, so changed in place) names a lift only for screen time and snapshots the giver's display name |
+| L11 the doc comment | `render_device`'s doc comment back on it |

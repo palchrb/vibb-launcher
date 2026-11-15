@@ -294,6 +294,12 @@ class TimeLockModelTest {
         assertTrue(body(activity, "override fun onStart()").contains("AnchorNotice.addListener(askListener)"))
         assertTrue(body(activity, "override fun onStop()").contains("AnchorNotice.removeListener(askListener)"))
         assertTrue(body(activity, "private fun render()").contains("TimeAsk.lockAskFor(this, it, ruleInForce = rule != null)"))
+        // Code QA L2/L3: a live region's text is set only when it changed; the pill keeps TalkBack's focus.
+        val renderAsk = body(activity, "private fun renderAsk(ask: LockAsk?)")
+        assertTrue(renderAsk, "if (button.text.toString() != text) button.text = text" in renderAsk)
+        assertTrue(renderAsk, "if (line.text.toString() != note.orEmpty()) line.text = note" in renderAsk)
+        assertTrue(renderAsk, "button.isFocusable = true" in renderAsk)
+        assertFalse(renderAsk, "isFocusable = clickable" in renderAsk)
     }
 
     /** Launcher round L6 (the user, 2026-10-26: the screen looked dated next to the lock glance): the glance's face. */

@@ -209,6 +209,8 @@ class TimeLeftNoticeTest {
         }
         assertTrue(forStart, forStart.contains("} catch (e: Exception) {"))
         assertTrue(forStart, forStart.indexOf("createListenerChannel(app)") in 0 until forStart.indexOf("AnchorNotice.plain(app)"))
+        // Code QA L5: the fallback carries the time part already cached, else the bare plain notice.
+        assertTrue(forStart, forStart.indexOf("createListenerChannel(app)") in 0 until forStart.indexOf("AnchorNotice.plain(app, it)"))
         // Design 99's old panel cancelled at the start (M9).
         assertTrue(body(poster, "fun anchorStarted(context: Context)").contains("cancel(DESIGN_99_PANEL_ID)"))
     }

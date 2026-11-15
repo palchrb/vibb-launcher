@@ -62,7 +62,7 @@
     <section id="ask" class="ask-card" aria-label="{{ self.t("device.summary.ask.label") }}" data-ask>
         <div class="ask-head">
             <span class="ask-tile" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" height="20" focusable="false"><path d="M7 3h10M7 21h10M8 3c0 5 8 5 8 9s-8 4-8 9M16 3c0 5-8 5-8 9s8 4 8 9" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-            <span class="ask-text"><strong class="ask-title">{{ self.tp("device.summary.ask.title", [("name", device.name.as_str())]) }}</strong><span class="ask-sub">{{ ask.sub }}</span>{% if ask.pauses %}<span class="ask-sub" data-ask-pauses>{{ self.t("device.summary.ask.pauses") }}</span>{% endif %}</span>
+            <span class="ask-text"><strong class="ask-title">{{ self.tp("device.summary.ask.title", [("name", device.name.as_str())]) }}</strong><span class="ask-sub">{{ ask.sub }}</span>{% if ask.pauses %}<span class="ask-sub" data-ask-pauses>{{ self.t("device.summary.ask.pauses") }}</span>{% endif %}{% if ask.adds %}<span class="ask-sub" data-ask-adds>{{ self.t("device.summary.ask.adds") }}</span>{% endif %}</span>
         </div>
         <form method="post" action="/devices/{{ device.id }}/time-request/answer#ask" class="ask-form">
             <input type="hidden" name="request" value="{{ ask.request }}">

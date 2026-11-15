@@ -60,7 +60,8 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   running check and the `notify` under `AnchorNotification.lock`, which the anchor's `onDestroy` takes before it clears
   its instance (Q100-L5). `onCreate`: `startForeground(1002, AnchorNotification.forStart(this))` literally first - the
   view this process posted last on that key's channel (made sure of; never `computePanel` or the shortcuts prefs, Q100-L7),
-  else, or on any exception, `AnchorNotice.plain` on the listener channel -, then `anchorStarted` (cancels design 99's
+  else, or on any exception, `AnchorNotice.plain` on the listener channel, with the time part already cached when there
+  is one (code QA L5) -, then `anchorStarted` (cancels design 99's
   old 1011 once, asks for a refresh) and `refreshNow` (CE prefs only after it). The plain notice has no
   `FOREGROUND_SERVICE_IMMEDIATE` (deferred ~10 s unless it has its action, Q100-L2), the panel has it. Not
   emulator-checked yet: design 100 §11. Refreshed from every `TimeRulesRuntime.recheck` with
@@ -74,7 +75,9 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   open at a time**, until a parent answers it or the phone's day ends (r13's 30 minutes are gone): pure `requestState(
   record, count, day, policy)` - a record of today is `Pending(at)`/`Waiting(at)` until the policy's
   `time_policy.answer` names its id (`Answered(no, by, at, minutes, canAskAgain)`; on an older server without
-  `time_policy.request_answers`, a lift newer than the one at the ask closes it as r13 did, §14.7), else `Capped` at
+  `time_policy.request_answers`, a lift newer than the one at the ask closes it as r13 did, §14.7 - only a PWA's
+  screen-time lift among them is "Du fikk N min mer", a rule pause closes it with no words of time, code QA L4), else
+  `Capped` at
   three, else `Idle`; `askStep` (enrolled, a budget today, outside the pause, Idle or Answered under three),
   `timeRequestAnswer` (§2.4's table: accepted, capped - the count set to three -, stale/other 4xx/unparsable dropped, 404
   dropped silently, 401/408/429/5xx/none kept and retried while it is of today) and `afterTimeRequestAnswer`. The note
@@ -88,7 +91,8 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   screen follow on time across a process death (QA R2-L3). `TimeRequests.upload` runs in `performMdmSync` right after
   `PowerEvents.upload` and posts only what the pure `uploadStep` says is still open - a request of today, offline all
   afternoon too; another day's, or one an older server's lift answered while it waited, is dropped unsent (Q-3); one
-  this server already answered stays (its answer shows) -; the answer writes only the record it sent
+  this server already answered is counted as taken, `COUNT` - its 200 was lost and a parent answered before the next
+  sync: ACCEPTED's step, so the day's count follows, code QA L1 -; the answer writes only the record it sent
   (`recordAfterUpload`); the tap asks `SyncRunner.request(.., "time_request")` and arms `TimeRuleAlarm` (Q-4). The
   tracker's minute tick refreshes from the budget it computed (`AnchorNotice.refresh(context, budget, policy, day, now)`,
   no snapshot, Q-5). The policy's keys (`time_policy.request_answers`, `answer`, `lifts[].by`/`at_ms`) are the shared

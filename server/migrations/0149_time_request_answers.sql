@@ -16,10 +16,14 @@ CREATE TABLE time_request_answers (
 
 -- Design QA R2-M4: before this, any lift made at or after a request answered it (design r13 §2.7). Those requests
 -- get their `yes` here - the first such lift of the phone (a phone-key pause never answered one: it has no parent) -
--- so the one rule from now on (an open request has no answer row) needs no second branch for the old rows.
+-- so the one rule from now on (an open request has no answer row) needs no second branch for the old rows. Code QA
+-- L10: only screen time names its lift (a rule pause that closed one under r13 gave no minutes: the phone shows no
+-- "Du fikk 15 min mer" for it), and `by_name` is the giver's display name now, as a new answer's.
 INSERT OR IGNORE INTO time_request_answers (device_id, request_id, answer, lift_id, answered_by, by_name, answered_at)
-SELECT e.device_id, e.dedup_key, 'yes', l.id,
-       (SELECT a.id FROM admin_users a WHERE a.username = l.created_by), NULL, l.created_at
+SELECT e.device_id, e.dedup_key, 'yes', CASE WHEN l.target = 'budget' THEN l.id END,
+       (SELECT a.id FROM admin_users a WHERE a.username = l.created_by),
+       (SELECT NULLIF(TRIM(a.display_name), '') FROM admin_users a WHERE a.username = l.created_by),
+       l.created_at
 FROM parent_events e
 JOIN time_lifts l ON l.id = (
     SELECT MIN(f.id) FROM time_lifts f

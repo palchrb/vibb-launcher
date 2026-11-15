@@ -402,12 +402,15 @@ class LockActivity : UIObjectActivity() {
         val note = (ask as? LockAsk.Note)?.let { com.kidslauncher.mdm.server.AnchorNotice.noteText(this, it.note) }
         fun pill(text: String, background: Int, color: Int, sizeSp: Float, clickable: Boolean) {
             button.visibility = View.VISIBLE
-            button.text = text
+            // Code QA L2: a live region speaks every text set - only a changed one is set (render runs on many signals).
+            if (button.text.toString() != text) button.text = text
             button.setBackgroundResource(background)
             button.setTextColor(ContextCompat.getColor(this, color))
             button.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, sizeSp)
             button.isClickable = clickable
-            button.isFocusable = clickable
+            // Code QA L3: always focusable - TalkBack's focus stays on the pill as "Be om mer tid" turns into "Spurt kl.
+            // … · sender …" after the tap (read out by its live region), never dropped to the top of the screen.
+            button.isFocusable = true
             button.accessibilityDelegate = if (clickable) ButtonRole else null
         }
         when {
@@ -422,7 +425,7 @@ class LockActivity : UIObjectActivity() {
                 if (note == null) button.visibility = View.GONE else pill(note, R.drawable.bg_lock_ask_dim, R.color.kid_core, 16f, clickable = false)
             }
             ask is LockAsk.Note -> {
-                line.text = note
+                if (line.text.toString() != note.orEmpty()) line.text = note
                 line.visibility = if (note == null) View.GONE else View.VISIBLE
                 if (ask.again == AgainPart.ASK_AGAIN) {
                     capped.visibility = View.GONE

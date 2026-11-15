@@ -166,6 +166,7 @@ object AnchorNotice {
         return noticeFor(context, snap.budget, snap.policy, snap.ledger?.day, snap.clocks.wallMs)
     }
 
-    /** The plain notice (the poster's `startForeground` fallback, [AnchorNotification.forStart]). */
-    fun plain(context: Context): Notification = build(context, PLAIN_NOTICE)
+    /** The plain notice with [time] - the poster's `startForeground` fallback ([AnchorNotification.forStart]): the
+     * time part it has cached, else the plain "Vibb One" (code QA L5). */
+    fun plain(context: Context, time: TimePart = PLAIN_NOTICE): Notification = build(context, time)
 }

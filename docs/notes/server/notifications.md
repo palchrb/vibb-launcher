@@ -397,13 +397,16 @@ Notifications on it). `docs/design/45-notifications-inbox-first.md`, `docs/desig
   NULL without one). A request is **open** while it is the newest `extra_time_request` (by id) asked in the phone's day
   (`time_answers::day_start`: the zone its newest report names, else Phone Setup's - the intake's day) and has no answer
   row (`time_answers::open_request`). One rule for every row: migration 0149 backfilled a `yes` for each request a lift
-  (not a phone-key pause) followed under r13's rule - the first such lift, `answered_by` from its `created_by` (QA R2-M4).
+  (not a phone-key pause) followed under r13's rule - the first such lift, `answered_by` from its `created_by` and
+  `by_name` its display name (QA R2-M4); `lift_id` only for screen time, so a rule pause that closed one is a yes the
+  phone words as no time given (code QA L10).
   `retention::prune` deletes answers older than `LIFT_DAYS` with the lifts.
 - **The card** on the summary (`DeviceDetailTemplate.ask`, `devices::ask_card`; `section#ask.ask-card`), right after
   design 101's `</header>` - above Access, Oppsett and Attention -, never the sheet's first child. "Anna ber om mer
   skjermtid" (`device.summary.ask.title`, the phone's name), the sub-line is the event's own words (`told_as`, "14:02 ·
   Skjermtiden er brukt opp"), and while its buttons pause rules a second line "Knappene setter reglene på pause."
-  (`device.summary.ask.pauses`, `data-ask-pauses`). One form `POST /devices/{id}/time-request/answer#ask` (QA R2-M1: the
+  (`device.summary.ask.pauses`, `data-ask-pauses`); asked under a rule that a fresh report says no longer locks, "Ingen
+  regel låser nå: knappene gir mer skjermtid." (`device.summary.ask.adds`, `data-ask-adds`; code QA L9). One form `POST /devices/{id}/time-request/answer#ask` (QA R2-M1: the
   card's own group, so `check_forms` passes and `scroll-restore.js` makes it a staying post) with the hidden `request`
   and four `button name="answer"` (`15`, `30`, `60`, `no`; "+15 min", "+30 min", "+1 t"/"+1 h", "Nei"/"No"). The old
   "Asked for more time at" note (`data-asked`, `device.summary.asked`) is gone.
@@ -419,20 +422,23 @@ Notifications on it). `docs/design/45-notifications-inbox-first.md`, `docs/desig
   new `time_request_no` for "Nei") and `command_notify`. It lands on `/devices/{id}?done=<code>#quick`: `extra`/`pause`
   (the lift's flash), `answer_no` "Du svarte nei." or `answer_no_seen` "Du svarte nei. Anna ser det på telefonen." when
   the phone's newest report claims `time_answer_v1` (`time_answers::CAPABILITY`, §14.7), and the stale card's
-  `answered_already` "{parent} har allerede svart." (`time_answers::last_answerer`: display name, else login),
+  `answered_already` "{parent} har allerede svart." (the redirect carries `&request=<id>`; `time_answers::last_answerer`
+  names who answered that very request - display name, else login - code QA L6),
   `asked_again` "{name} har spurt på nytt.", `request_gone` "Forespørselen er ikke åpen lenger." (refusals: red, nothing
   written).
 - **Every fitting lift answers** (QA R2-M2, R2-L6): `lifts::record_lift` (Quick actions, the Regler sheet) is one `BEGIN
   IMMEDIATE` transaction for every caller - the lift row (`insert_lift`) and, when it can unlock what locks
   (`time_answers::fits`: screen time for a spent budget; a pause of every rule, or of the rule the fresh report names, for
-  a rule), the open request's `yes` with that lift (`answer_with_lift`); the security line and the nudge after the commit.
+  a rule - a rule turned on now runs as its copy's negative id, mapped to the rule it copies by `copied_rule`, whose
+  pause lifts the copy through its twin, code QA L7), the open request's `yes` with that lift (`answer_with_lift`); the security line and the nudge after the commit.
   A rule pause leaves a used-up request open, and the card stays. Design 98's phone-key pause never answers (it has no
   parent and doesn't go through `record_lift`).
 - **The policy** (`device_api::build_time_policy`; the shared contract `time_request.json`'s `policy_*` rows): inside
   `time_policy` (QA R2-L4) `request_answers: true` (always: this server closes requests only by an answer), `answer`
   (`time_answers::policy_answer`: the newest yes/no - never `superseded` - of a request **asked** in the phone's day, QA
   R2-L5; `{request_id, answer, by?, at_ms, lift_id?, minutes?}`, `by` the display-name snapshot, absent without one - never
-  the login, D11 -, `minutes` from the lift, QA R2-L1), and every lift gains `at_ms` (`created_at`) and `by` (the
+  the login, D11 -, `minutes` from the lift, QA R2-L1; a yes whose lift was ended early names no lift and no minutes, so
+  the phone claims no time given - code QA L8, the contract's `policy_ended`), and every lift gains `at_ms` (`created_at`) and `by` (the
   answer's `by_name` for a lift that answered a request, QA R2-L10, else the giver's display name now; absent without
   one, for a removed parent and for the phone's own pauses). `policy_json_keys_snapshot` pins `time_policy`'s keys
   (`request_answers` added); `time_request::the_contract_policies` produces every `policy_*` row from a real flow and pins
@@ -442,7 +448,8 @@ Notifications on it). `docs/design/45-notifications-inbox-first.md`, `docs/desig
   svarte nei" (`events.extra_time_request.answer.given`/`.no`) to the non-push forms from the params.
 - Tests: `tests::time_request` (`the_contract_policies`, `the_card_shows_the_open_request_until_an_answer`,
   `no_with_and_without_the_capability`, `under_a_rule_the_minutes_pause_the_rules`, `the_first_answer_wins`,
-  `a_fitting_lift_answers_the_open_request`, `a_second_request_supersedes_the_first`,
+  `a_fitting_lift_answers_the_open_request`, `a_pause_of_the_copied_rule_answers_a_request_under_its_copy`,
+  `a_second_request_supersedes_the_first`,
   `the_migration_answers_the_requests_a_lift_answered`), `time_answers::tests` (`fits`, `need`),
   `summary::every_form_on_the_summary_returns_to_its_group` (the card's form first after the picture).
 

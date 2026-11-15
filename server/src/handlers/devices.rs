@@ -1046,12 +1046,14 @@ pub(crate) const DEFAULT_QUICK_CONTROLS: i64 = QUICK_CONTROL_WIFI
     | QUICK_CONTROL_SHORTCUTS;
 
 /// The answer card (design 100 §14.4): the request's id (the form's `request`), its sub-line - the
-/// event's own words, "14:02 · Skjermtiden er brukt opp" -, and whether its minute buttons pause the
-/// rules in force (D9, QA R2-M2: decided now, so the line says so when the ask's words differ).
+/// event's own words, "14:02 · Skjermtiden er brukt opp" -, and what its minute buttons do when that
+/// isn't what the words suggest (D9, QA R2-M2: decided now): `pauses` - they pause the rules in force;
+/// `adds` - asked under a rule that no longer locks, they add screen time (code QA L9).
 struct AskCard {
     request: String,
     sub: String,
     pauses: bool,
+    adds: bool,
 }
 
 #[derive(Template)]
@@ -2027,9 +2029,6 @@ pub(crate) async fn app_rows(
     })
 }
 
-/// The phone's summary (design 31 §3.2, step 10). The phone, its settings and its last report are a
-/// 500 on a DB error, as are the lifts (Today would read as "nothing today"); a Sections row whose
-/// read fails says "Couldn't read" (logged).
 /// The answer card for the phone's open request (design 100 §14.4), `None` without one: its
 /// sub-line is the event's own words (`told_as`), and its buttons pause the rules when a rule locks
 /// now (the fresh report's word, else the ask's: `time_answers::need`).
@@ -2055,6 +2054,7 @@ async fn ask_card(
         crate::time_answers::need(fresh.as_ref(), asked, zone, now),
         crate::time_answers::Need::Rules { .. }
     );
+    let adds = !pauses && asked == Some("rule");
     let params = open
         .params
         .as_ref()
@@ -2072,9 +2072,13 @@ async fn ask_card(
         request: open.id,
         sub,
         pauses,
+        adds,
     }))
 }
 
+/// The phone's summary (design 31 §3.2, step 10). The phone, its settings and its last report are a
+/// 500 on a DB error, as are the lifts (Today would read as "nothing today"); a Sections row whose
+/// read fails says "Couldn't read" (logged).
 async fn render_device(
     state: &AppState,
     admin_id: i64,
@@ -2408,7 +2412,11 @@ async fn render_device(
     };
     // Design 100 §14.4: "Mamma has already answered" names who did.
     let answerer = if query.get("done").map(String::as_str) == Some("answered_already") {
-        crate::time_answers::last_answerer(&state.db, id)
+        let request = query
+            .get("request")
+            .map(String::as_str)
+            .filter(|r| crate::handlers::device_api::time_request_id_ok(r));
+        crate::time_answers::last_answerer(&state.db, id, request)
             .await
             .unwrap_or_default()
     } else {

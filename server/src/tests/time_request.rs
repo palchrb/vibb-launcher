@@ -574,6 +574,36 @@ async fn the_contract_policies() {
         assert!(res.status.is_redirection(), "{row}: {}", res.text());
         assert_served(&contract, row, &app.policy(&token).await["time_policy"]);
     }
+    // Code QA L8: a yes under a rule (D9's pause), then "End now": the answer stays a yes but names no lift and no
+    // minutes, so the phone says nothing of time given.
+    let app = TestApp::new().await;
+    steady_zone(&app).await;
+    let cookie = app.admin_cookie_as("mamma", "Mamma").await;
+    let (id, token) = app.enrolled_device("Emma").await;
+    report(&app, &token, "BEDTIME", 10, 90).await;
+    let mut request = contract["request"].clone();
+    request["asked_at_ms"] = json!((Utc::now() - Duration::minutes(1)).timestamp_millis());
+    assert_eq!(
+        post(&app, &token, request).await.1,
+        json!({"accepted": true})
+    );
+    let res = answer(&app, &cookie, id, RID, "30").await;
+    assert_redirect(&res, &format!("/devices/{id}?done=pause"), Some("quick"));
+    let ended = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/lifts/1/end"),
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    assert!(ended.status.is_redirection(), "{}", ended.text());
+    assert_served(
+        &contract,
+        "policy_ended",
+        &app.policy(&token).await["time_policy"],
+    );
+
     let app = TestApp::new().await;
     let cookie = app.admin_cookie_as("mamma", "Mamma").await;
     let (id, token) = app.enrolled_device("Emma").await;
@@ -786,6 +816,33 @@ async fn under_a_rule_the_minutes_pause_the_rules() {
     assert_eq!(served["lifts"][0]["by"], "Mamma");
 }
 
+/// Code QA L9: asked under a rule that a fresh report says no longer locks, the card says its buttons add screen time
+/// (the sub-line keeps the ask's own words).
+#[tokio::test]
+async fn asked_under_a_rule_that_ended_the_minutes_add_time() {
+    let app = TestApp::new().await;
+    steady_zone(&app).await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("Anna").await;
+    report(&app, &token, "BEDTIME", 90, 90).await;
+    assert_eq!(
+        post(&app, &token, body(1, 0)).await.1,
+        json!({"accepted": true})
+    );
+    report(&app, &token, "SCREEN_TIME", 90, 90).await;
+    let html = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    let ask = card(&html).expect("the card");
+    assert!(ask.contains("data-ask-adds"), "{ask}");
+    assert!(
+        ask.contains("No rule locks now: the buttons add screen time."),
+        "{ask}"
+    );
+    assert!(!ask.contains("data-ask-pauses"), "{ask}");
+}
+
 /// The first answer wins (§14.4): the second parent's card writes nothing and says who answered; "Nei" after a
 /// yes too. One lift.
 #[tokio::test]
@@ -806,7 +863,7 @@ async fn the_first_answer_wins() {
         let res = answer(&app, &pappa, id, &request, value).await;
         assert_redirect(
             &res,
-            &format!("/devices/{id}?done=answered_already"),
+            &format!("/devices/{id}?done=answered_already&request={request}"),
             Some("quick"),
         );
     }
@@ -816,7 +873,30 @@ async fn the_first_answer_wins() {
         .unwrap();
     assert_eq!(lifts, 1);
     let html = app
-        .get_page(&format!("/devices/{id}?done=answered_already"), &pappa)
+        .get_page(
+            &format!("/devices/{id}?done=answered_already&request={request}"),
+            &pappa,
+        )
+        .await
+        .text();
+    assert!(html.contains("Mamma has already answered."), "{html}");
+    // Code QA L6: the stale card names who answered its own request, not the newest answer.
+    let second = format!("{:032x}", 2);
+    assert_eq!(
+        post(&app, &token, body(2, 0)).await.1,
+        json!({"accepted": true})
+    );
+    let res = answer(&app, &pappa, id, &second, "no").await;
+    assert_redirect(
+        &res,
+        &format!("/devices/{id}?done=answer_no"),
+        Some("quick"),
+    );
+    let html = app
+        .get_page(
+            &format!("/devices/{id}?done=answered_already&request={request}"),
+            &pappa,
+        )
         .await
         .text();
     assert!(html.contains("Mamma has already answered."), "{html}");
@@ -876,6 +956,89 @@ async fn a_fitting_lift_answers_the_open_request() {
     let answer = &app.policy(&token).await["time_policy"]["answer"];
     assert_eq!(answer["by"], "Mamma");
     assert_eq!(answer["minutes"], 15);
+}
+
+/// Code QA L7: a request asked under a rule turned on now (design 93's copy, run on the phone as a negative id) is
+/// answered by a pause of the rule it copies - the twin lifts the copy too; a pause of another rule isn't.
+#[tokio::test]
+async fn a_pause_of_the_copied_rule_answers_a_request_under_its_copy() {
+    let app = TestApp::new().await;
+    steady_zone(&app).await;
+    let cookie = app.admin_cookie_as("mamma", "Mamma").await;
+    let (id, token) = app.enrolled_device("Anna").await;
+    let days = r#"[{"start":1080,"end":1110},{"start":1080,"end":1110},{"start":1080,"end":1110},{"start":1080,"end":1110},{"start":1080,"end":1110},{"start":1080,"end":1110},{"start":1080,"end":1110}]"#;
+    for (rule, name) in [(41, "Middag"), (42, "Lekser")] {
+        sqlx::query(
+            "INSERT INTO time_rules (id, device_id, name, kind, calls_allowed, exempt_apps_json, days_json, \
+             sort_order) VALUES (?, ?, ?, 'custom', 1, '[]', ?, ?)",
+        )
+        .bind(rule)
+        .bind(id)
+        .bind(name)
+        .bind(days)
+        .bind(rule)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    }
+    let today = Zone::load(&app.db, crate::i18n::Lang::En)
+        .await
+        .today(Utc::now());
+    sqlx::query(
+        "INSERT INTO time_lock_now (id, device_id, rule_id, rule_name, zone, local_date, start_minute, \
+         end_minute, ends_at) VALUES (7, ?, 41, 'Middag', 'Europe/Oslo', ?, 0, 1439, datetime('now', '+2 hours'))",
+    )
+    .bind(id)
+    .bind(today.to_string())
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let res = app
+        .request(
+            Method::POST,
+            "/api/devices/status",
+            Some(&token),
+            Some(json!({
+                "lock_reason": "RULE",
+                "kiosk_engaged": true,
+                "capabilities": ["call_policy_v1", "time_rules_v1"],
+                "time_state": {
+                    "day": today.to_string(),
+                    "used_minutes": 10, "budget_minutes": 90, "extra_minutes": 0,
+                    "lock_reason": "RULE", "active_rule_id": -7, "calls_blocked": false, "lifts_active": [],
+                },
+            })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.text());
+    assert_eq!(
+        post(&app, &token, body(1, 0)).await.1,
+        json!({"accepted": true})
+    );
+    let request = format!("{:032x}", 1);
+    for rule in ["42", "41"] {
+        let res = app
+            .request_form(
+                Method::POST,
+                &format!("/devices/{id}/lifts"),
+                Some(&cookie),
+                &[("target", "rule"), ("rule", rule), ("minutes", "30")],
+            )
+            .await;
+        assert!(res.status.is_redirection(), "{}", res.text());
+        if rule == "42" {
+            assert_eq!(answer_row(&app, id, &request).await, None, "another rule");
+        }
+    }
+    let lift: i64 = sqlx::query_scalar("SELECT MAX(id) FROM time_lifts")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        answer_row(&app, id, &request).await,
+        Some(("yes".to_string(), Some(lift))),
+        "the rule the copy copies"
+    );
 }
 
 /// §14.4 (QA R2-L6): a newer request of the day supersedes the open one (an older launcher asks again after its 30
@@ -952,7 +1115,7 @@ async fn a_second_request_supersedes_the_first() {
 async fn the_migration_answers_the_requests_a_lift_answered() {
     let (db, _dir) = super::cleanup::migrated_before(149).await;
     let mamma: i64 = sqlx::query_scalar(
-        "INSERT INTO admin_users (username, password_hash) VALUES ('mamma', 'x') RETURNING id",
+        "INSERT INTO admin_users (username, password_hash, display_name) VALUES ('mamma', 'x', 'Mamma') RETURNING id",
     )
     .fetch_one(&db)
     .await
@@ -998,6 +1161,28 @@ async fn the_migration_answers_the_requests_a_lift_answered() {
         .await
         .unwrap();
     }
+    // Code QA L10: a rule pause that closed a request under r13 is a yes that names no lift (no minutes).
+    let ola: i64 = sqlx::query_scalar("INSERT INTO devices (name) VALUES ('Ola') RETURNING id")
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO parent_events (device_id, kind, dedup_key, title, summary, target, happened_at, created_at) \
+         VALUES (?, 'extra_time_request', 'r3', '', '', '/devices', datetime('now', '-3 hours'), \
+         datetime('now', '-3 hours'))",
+    )
+    .bind(ola)
+    .execute(&db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO time_lifts (device_id, target, rule_id, minutes, created_at, expires_at, created_by) \
+         VALUES (?, 'rule', NULL, 15, datetime('now', '-2 hours'), datetime('now', '-1 hours'), 'mamma')",
+    )
+    .bind(ola)
+    .execute(&db)
+    .await
+    .unwrap();
     super::cleanup::finish(&db).await;
     type Row = (String, String, Option<i64>, Option<i64>, Option<String>);
     let rows: Vec<Row> = sqlx::query_as(
@@ -1008,12 +1193,21 @@ async fn the_migration_answers_the_requests_a_lift_answered() {
     .unwrap();
     assert_eq!(
         rows,
-        [(
-            "r1".to_string(),
-            "yes".to_string(),
-            Some(2),
-            Some(mamma),
-            None
-        )]
+        [
+            (
+                "r1".to_string(),
+                "yes".to_string(),
+                Some(2),
+                Some(mamma),
+                Some("Mamma".to_string())
+            ),
+            (
+                "r3".to_string(),
+                "yes".to_string(),
+                None,
+                Some(mamma),
+                Some("Mamma".to_string())
+            ),
+        ]
     );
 }

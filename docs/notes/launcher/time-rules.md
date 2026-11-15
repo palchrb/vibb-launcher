@@ -51,7 +51,9 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   instants (`noteChangeMs`), so `recheck` refreshes the notice and the screen follows. A "yes" unlocks: the screen
   finishes as today. **After the unlock (D6)**: while the block shows a button, `unlockOpenRow(.., askButton =
   shownAsk.hasButton)` opens nothing - two things to do, the screen stays. TalkBack: the pill is a button ("Be om mer
-  tid, knapp", `ButtonRole`) only while clickable; the three views are polite live regions. The glance (the PIN lock's
+  tid, knapp", `ButtonRole`) only while clickable, and always focusable, so TalkBack's focus stays on it as it turns into
+  the dim note after the tap (code QA L3); the three views are polite live regions, their text set only when it changed
+  (render runs on many signals; code QA L2). The glance (the PIN lock's
   page) is unchanged: its card stays information only. Not emulator-checked yet: design 100 §11 check 8.
 - **Meldinger during a rule** (design 77 §6.7, step 2): reachable where the rule allows calls, as the phone book
   (`messagesUsableUnder`; the used-up budget keeps calls). The time-rule screen has a **Meldinger** row

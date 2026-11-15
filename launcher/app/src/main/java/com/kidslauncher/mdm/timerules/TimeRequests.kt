@@ -77,8 +77,14 @@ fun requestState(record: TimeRequestRecord?, count: TimeRequestCount?, day: Stri
         val answered = if (policy?.requestAnswers == true) {
             policy.answer?.takeIf { it.requestId == record.id }?.let { answerState(it, policy, canAskAgain) }
         } else {
-            policy?.lifts.orEmpty().filter { it.id > record.liftIdAtAsk }.maxByOrNull { it.id }?.let { lift ->
-                RequestState.Answered(no = false, by = cleanBy(lift.by), atMs = lift.atMs, minutes = lift.minutes, canAskAgain = canAskAgain)
+            // Code QA L4: any newer lift closes it (§14.7), but only screen time a parent gave is "Du fikk N min mer" - a
+            // rule pause or the parent code's pause closes it with no words of time.
+            val newer = policy?.lifts.orEmpty().filter { it.id > record.liftIdAtAsk }
+            newer.maxByOrNull { it.id }?.let { lift ->
+                val given = newer.filter { it.target == TARGET_BUDGET && it.phoneKey == null }.maxByOrNull { it.id }
+                RequestState.Answered(
+                    no = false, by = cleanBy((given ?: lift).by), atMs = (given ?: lift).atMs, minutes = given?.minutes, canAskAgain = canAskAgain,
+                )
             }
         }
         if (answered != null) return answered
@@ -164,8 +170,13 @@ enum class UploadStep {
      * while offline, §14.7): dropped unsent, so no stale push and no open request after the answer. */
     DROP,
 
-    /** Nothing to send (no record, one already taken, or one this server answered already - its answer shows). */
+    /** Nothing to send (no record, or one already taken). */
     NONE,
+
+    /** A PENDING record this server answered already: the server took it (its 200 was lost, a retry) and a parent
+     * answered before the next sync - counted as taken (ACCEPTED's step: ASKED, today's count + 1; code QA L1), nothing
+     * sent. Its answer shows. */
+    COUNT,
 }
 
 /** The step for [record] on the ledger's [day], with [policy] the policy just fetched. */
@@ -173,7 +184,7 @@ fun uploadStep(record: TimeRequestRecord?, count: TimeRequestCount?, day: String
     if (record == null || record.state != TimeRequestPhase.PENDING) return UploadStep.NONE
     return when (requestState(record, count, day, policy)) {
         is RequestState.Pending -> UploadStep.SEND
-        is RequestState.Answered -> if (policy?.requestAnswers == true) UploadStep.NONE else UploadStep.DROP
+        is RequestState.Answered -> if (policy?.requestAnswers == true) UploadStep.COUNT else UploadStep.DROP
         else -> UploadStep.DROP
     }
 }
@@ -301,6 +312,15 @@ object TimeRequests {
                 // Another day's, or answered meanwhile by an older server's lift: nothing sent.
                 synchronized(this) {
                     if (record(context)?.id == record.id) write(context, null, count(context))
+                }
+                changed(context)
+                return
+            }
+            UploadStep.COUNT -> {
+                // Code QA L1: the server took it - the day's count follows, so a fourth tap isn't offered.
+                synchronized(this) {
+                    val (next, count) = recordAfterUpload(record(context), record.id, count(context), TimeRequestVerdict.ACCEPTED) ?: return
+                    write(context, next, count)
                 }
                 changed(context)
                 return

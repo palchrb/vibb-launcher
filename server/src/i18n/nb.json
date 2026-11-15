@@ -1037,6 +1037,7 @@
   "device.summary.ask.label": "Forespørsel om mer skjermtid",
   "device.summary.ask.title": "{name} ber om mer skjermtid",
   "device.summary.ask.pauses": "Knappene setter reglene på pause.",
+  "device.summary.ask.adds": "Ingen regel låser nå: knappene gir mer skjermtid.",
   "device.summary.ask.add_min": "+{n} min",
   "device.summary.ask.add_hour": "+1 t",
   "device.summary.ask.no": "Nei",
