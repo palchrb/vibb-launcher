@@ -156,6 +156,12 @@ object BrowserConfig {
         return Result(ready)
     }
 
+    /** The login role holds now: the policy asks it and its lockdown was last written and read back (`on`) - so a
+     * Chrome unhidden by the apply is the role's, which [AppEnforcer.enforceOnNewPackage] leaves alone. */
+    fun roleReady(context: Context, role: com.kidslauncher.mdm.logins.LoginRole): Boolean =
+        role is com.kidslauncher.mdm.logins.LoginRole.On &&
+            context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_STATE, null) == "on"
+
     /** The report's `login_browser` (§6.2). */
     fun report(context: Context): com.kidslauncher.mdm.portal.LoginBrowserReport {
         val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)

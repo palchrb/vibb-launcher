@@ -1609,6 +1609,13 @@ object AppEnforcer {
         // Design 68: the camera rule for this package, managed calls or not, before it can be hidden below.
         enforceCameraOnPackage(context, packageName)
         if (!suspend) return false
+        // Design 102 §4.1: Chrome unhidden for its login role is the apply's own doing, not a new app - left to the plan
+        // (the emulator check, 2026-11-15: the unhide's onPackageAdded hid it again and asked a sync, every 0.4 s).
+        val loginRole = com.kidslauncher.mdm.logins.loginRoleOf(
+            decision.policy?.loginBrowser,
+            effectiveAllowlist(decision.policy?.allowlist, relockBlocked),
+        )
+        if (packageName == com.kidslauncher.mdm.logins.CHROME_PACKAGE && BrowserConfig.roleReady(context, loginRole)) return false
         // Hidden only if not allowed at all - the schedule lock alone just suspends.
         val hide = shouldSuspendNewPackage(
             packageName, decision, overrideActive, context.packageName, systemDialerPackage(context),
