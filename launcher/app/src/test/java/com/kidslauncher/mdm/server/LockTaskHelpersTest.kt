@@ -134,6 +134,32 @@ class LockTaskHelpersTest {
         assertEquals(null, lockTaskWhileLocked(null, 127, false, locked = false, ownPackage = "me.vibb.launcher", lockHelpers = emptySet(), routePin = settings).packages)
     }
 
+    /** Q99-H1: in lock task `setStatusBarDisabled` is only recorded, so the window closes the shade through the features:
+     * no NOTIFICATIONS (Android's DISABLE2_NOTIFICATION_SHADE) while Settings is pinned, every other bit as the plan has
+     * it, and the plan's features again once the window closes. */
+    @Test
+    fun `the route window drops the shade from the features and the close gives it back`() {
+        val settings = "com.android.settings"
+        val kiosk = setOf("me.vibb.launcher", "org.example.game")
+        fun pass(base: Int, pin: String?) =
+            lockTaskWhileLocked(kiosk, base, false, locked = false, ownPackage = "me.vibb.launcher", lockHelpers = emptySet(), routePin = pin)
+        // 127 (all) -> 125; the server's 111 (bit 64 on, D1) -> 109: KEYGUARD, the app block, Home, Recents, SYSTEM_INFO stay.
+        assertEquals(125, pass(127, settings).features)
+        assertEquals(109, pass(111, settings).features)
+        assertEquals(0, pass(111, settings).features and LOCK_TASK_FEATURE_NOTIFICATIONS)
+        assertEquals(LOCK_TASK_FEATURE_KEYGUARD or LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_IN_TASK, pass(111, settings).features and (LOCK_TASK_FEATURE_KEYGUARD or LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_IN_TASK))
+        // A plan without the shade stays as it is.
+        assertEquals(109, pass(109, settings).features)
+        // Closed: the plan's features, the shade back.
+        assertEquals(127, pass(127, null).features)
+        assertEquals(111, pass(111, null).features)
+        // LOCKED during the window: the lock's own features (no shade either), Settings left out.
+        val locked = lockTaskWhileLocked(kiosk, 111, false, locked = true, ownPackage = "me.vibb.launcher", lockHelpers = emptySet(), routePin = settings)
+        assertEquals(featuresWhileLocked(111, true), locked.features)
+        assertEquals(97, locked.features)
+        assertEquals(125, routeWindowFeatures(127))
+    }
+
     @Test
     fun `LOCKED takes the recents provider out of the kiosk list, unlocked puts it back (qa-16d-code 1)`() {
         val kiosk = setOf("me.vibb.launcher", "org.example.game", recents)
