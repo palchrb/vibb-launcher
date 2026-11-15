@@ -594,3 +594,14 @@ Emulator (`jelly36` restored clean, `wm density` stays 240; a new section in `do
 | Q99-L9 one default order | One order everywhere (§4.2, §4.3, §5.2, D4), and the default follows the role (§4.3) |
 | Q99-L10 a dimmed item's reason under a rule | In D10's cost (§3.3) and in the content description |
 | Q99-L11 gestures and buttons | The picker pads by the bar inset (§4.2); §10 tests 1 and 8 in both modes |
+
+## 14. Build notes (2026-11-15, `docs/testing/emulator.md` §6an)
+
+- **The kid can't hide the panel on a phone where Vibb One holds the dialer or SMS role.** Android locks a default
+  app's notification channels (`mImportanceLockedDefaultApp`): the long-press menu says "These notifications can't be
+  modified." The probe of §1 (S16) held no role. §2.6's hidden state, its report flag and "Vis i varsellisten igjen"
+  stay for a phone without those roles. D11 (blocked channels) is moot on such phones for the same reason.
+- **Names at large font sizes.** At font scale 1.3 the 9 sp floor is reached and the longest names are cut
+  ("Brightne…", "Lomme…"). The rule stays as written (§3.2); a lower floor or two lines are the alternatives.
+- **During a call** the CallStyle notification is first and the panel second and folded (the icons, usable).
+- The picker's refusal line stands in the count line's place (a line above the list moved the rows under the next tap).
