@@ -307,8 +307,15 @@ async fn the_summary_says_airplane_mode_and_holds_the_setup_card() {
     let html = app.get_page(&summary, &cookie).await.text();
     assert!(html.contains(" data-airplane title="), "{html}");
     assert!(html.contains("Airplane mode on since"), "{html}");
-    assert!(html.contains("data-airplane-line=\"was-on\""), "{html}");
-    assert!(html.contains("Airplane mode was on"));
+    // An ended period is no summary box any more (design 101): it is an Activity row.
+    assert!(!html.contains("data-airplane-line=\"was-on\""), "{html}");
+    assert!(!html.contains("Airplane mode was on"));
+    let activity = app
+        .get_page(&format!("{summary}/activity"), &cookie)
+        .await
+        .text();
+    assert!(activity.contains("Airplane mode on "), "{activity}");
+    assert!(!activity.contains("unread-dot"), "{activity}");
     assert!(
         !html.contains("data-airplane-line=\"role-lost\""),
         "never held: the card's step"
@@ -430,7 +437,7 @@ async fn the_summary_says_airplane_mode_and_holds_the_setup_card() {
         "{about}"
     );
 
-    // An emergency call ended the last period: its line instead of "was on".
+    // An emergency call ended the last period: its line on the summary.
     let ended = airplane(
         false,
         true,

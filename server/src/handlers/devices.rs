@@ -1062,12 +1062,10 @@ struct DeviceDetailTemplate {
     connection: crate::streams::ConnectionState,
     /// The avatar's dot (`phone_status::dot`), saying what `status` leads with.
     dot: &'static str,
-    /// The lines under the name (`phone_status::header`): "4 min screen time today" then "Test
-    /// since 22:19 · 100 %"; "No contact · last seen 12 min ago" then the rest; "Turned off
-    /// 21:14 · battery was 3 %" or "Offline · last seen 13:05" alone.
-    status: Vec<crate::phone_status::Line>,
-    /// Today's screen-time bar (its fill), while a limit is set and a line says the screen time.
-    meter: Option<i64>,
+    /// The one line under the picture (`phone_status::header`, joined by `one_line`, design 101): "Online · Test
+    /// since 22:19 · 100 %"; "No contact · last seen 12 min ago · 100 %"; "Turned off 21:14 · battery was 3 %" or
+    /// "Offline · last seen 13:05" alone.
+    status: crate::phone_status::Line,
     /// The Attention rows, the same list the Devices list counts.
     attention: Vec<crate::attention::AttentionItem>,
     /// Design 24b: the quick actions Lock again and Unlock for 2 h…, the foreign-app warning, the
@@ -2242,7 +2240,7 @@ async fn render_device(
 
     // The header (§3.2 item 1, §3.10; the user's pick C, 2026-11-01): the first fact that holds
     // (`phone_status`), the lock only while a rule locks, today's bar only for today's report.
-    let (lock, screen_time) = match latest
+    let (lock, screen_time, report_fresh) = match latest
         .as_ref()
         .and_then(|s| time_report(&s.reported_at, &s.lock_reason, s.time_state_json.as_deref()))
     {
@@ -2258,9 +2256,11 @@ async fn render_device(
                 &zone,
                 now,
             );
-            (badge, screen)
+            let fresh =
+                crate::time_state::report_is_fresh(&report, &connection, reported_at, &zone, now);
+            (badge, screen, fresh)
         }
-        _ => (None, None),
+        _ => (None, None, false),
     };
     let off = power_off.as_ref().filter(|_| device.enrolled_at.is_some());
     let dot = crate::phone_status::dot(&connection, off.is_some(), now).css();
@@ -2318,7 +2318,7 @@ async fn render_device(
     let airplane_lines =
         crate::airplane_mode::summary_lines(&zone, now, &policy, airplane.as_ref(), held_before);
     let setup = crate::airplane_mode::SetupCard::of(lang, &policy, latest.as_ref());
-    let meter = meter_of(screen_time.as_ref(), &status);
+    let status = crate::phone_status::one_line(status);
 
     // Activity (design 48); a failed read is no page, never a history that isn't true.
     let activity = match crate::handlers::activity::rows(
@@ -2382,6 +2382,13 @@ async fn render_device(
             latest: latest.as_ref(),
             rules: time_rules.as_deref().unwrap_or(&[]),
             query,
+            // Design 101 §4.1: a fresh report that says no rule locks (the screen-time lock is none).
+            // A rule list that couldn't be read says nothing (fail closed).
+            no_rule_now: report_fresh
+                && time_rules.is_ok()
+                && lock
+                    .as_ref()
+                    .is_none_or(|b| b.name_key == Some("devices.status.lock.screen_time")),
             rule_in_force: lock
                 .as_ref()
                 .filter(|b| {
@@ -2424,7 +2431,6 @@ async fn render_device(
             connection,
             dot,
             status,
-            meter,
             attention,
             qa,
             asked,

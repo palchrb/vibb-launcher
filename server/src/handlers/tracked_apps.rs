@@ -3295,6 +3295,9 @@ struct TrackedAppDetailTemplate {
     lang: Lang,
     title: String,
     app: TrackedApp,
+    /// The app's tile at the band's right (design 101 §7): as the list draws it, the logo, else the glyph, else the
+    /// letter; the launcher shows the Vibb mark.
+    tile: AppTile,
     /// The upload's result (refused, or done), shown in the Upload group (§3.0's flash).
     upload_note: Option<Flash>,
     /// The package confirmation's result, shown under the package row.
@@ -3592,13 +3595,24 @@ async fn render_detail_full(
         display.as_ref(),
     );
     form.open |= open == Some("display");
-    // Design 87 §8.2: "App logo" previews as the logo most phones sent (a failed read: the words, as before).
+    // Design 87 §8.2: "App logo" previews as the logo most phones sent, and design 101 §7's tile on the band reads the
+    // same list, once (a failed read is logged: the words, and the glyph or the letter, as on the list).
+    let logos = match crate::app_logos::catalog_logos(state).await {
+        Ok(logos) => logos,
+        Err(err) => {
+            tracing::error!(app_id = id, %err, "can't read the apps' logos");
+            HashMap::new()
+        }
+    };
     if !app.package_name.is_empty() {
-        form.logo = crate::app_logos::catalog_logos(state)
-            .await
-            .ok()
-            .and_then(|logos| logos.get(&app.package_name).cloned());
+        form.logo = logos.get(&app.package_name).cloned();
     }
+    let label = app
+        .display_label
+        .clone()
+        .filter(|label| !label.trim().is_empty())
+        .unwrap_or_else(|| app.name.clone());
+    let tile = app_tile(&app, &label, &logos);
     // The phones with the app ticked; the launcher is on every phone that is set up. A DB error
     // is a 500, never an empty list (design 37 §2.1).
     let devices: Result<Vec<crate::models::Device>, sqlx::Error> = if app.is_launcher {
@@ -3693,6 +3707,7 @@ async fn render_detail_full(
         TrackedAppDetailTemplate {
             lang,
             title: app.name.clone(),
+            tile,
             version: app
                 .latest_release_tag
                 .as_deref()

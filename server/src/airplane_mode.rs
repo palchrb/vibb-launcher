@@ -20,7 +20,7 @@ pub const CAPABILITY: &str = "airplane_mode_v1";
 /// A report with `going_on` alone says "on" this long (§6.2, Q98-L2): a turn-on that failed after its report sends
 /// another report at once, and one that never came back is no longer read as on.
 pub const GOING_ON_MS: i64 = 10 * 60_000;
-/// A period that ended at most this long ago is said on the summary ("Flymodus var på 21:03–07:10").
+/// A period that ended at most this long ago and was ended by the emergency call is said on the summary.
 pub const ENDED_SHOWN_MS: i64 = 12 * 60 * 60_000;
 
 /// At most this many periods are kept (the newest).
@@ -204,8 +204,8 @@ pub struct Line {
     pub warn: bool,
 }
 
-/// The summary's lines under the header (§6.2): the newest period that ended within [ENDED_SHOWN_MS] ("Flymodus var
-/// på 21:03–07:10", or "An emergency call turned airplane mode off at 14:02" when the call ended it), and the warning
+/// The summary's lines under the header (§6.2): "An emergency call turned airplane mode off at 14:02" when the call
+/// ended the newest period within [ENDED_SHOWN_MS] (any other ended period is an Activity row since design 101), and the warning
 /// while the kid's switch is on and the role, held before ([assistant_held_before]), is lost now. Empty for an older
 /// launcher.
 pub fn summary_lines(
@@ -227,13 +227,11 @@ pub fn summary_lines(
         .rev()
         .find_map(|p| p.off_ms.map(|off| (p, off)))
         .filter(|(_, off)| now_ms - off <= ENDED_SHOWN_MS)
-        && let (Some(on_at), Some(off_at)) = (
-            DateTime::from_timestamp_millis(period.on_ms),
-            DateTime::from_timestamp_millis(off),
-        )
+        && let Some(off_at) = DateTime::from_timestamp_millis(off)
     {
-        lines.push(if period.off_by.as_deref() == Some("emergency") {
-            Line {
+        // Only the emergency call's end is said on the summary; every ended period is an Activity row (design 101).
+        if period.off_by.as_deref() == Some("emergency") {
+            lines.push(Line {
                 key: "emergency",
                 title: t_params(
                     lang,
@@ -242,22 +240,8 @@ pub fn summary_lines(
                 ),
                 steps: None,
                 warn: false,
-            }
-        } else {
-            Line {
-                key: "was-on",
-                title: t_params(
-                    lang,
-                    "device.summary.airplane.was_on",
-                    &[
-                        ("from", &zone.since(on_at, now)),
-                        ("to", &zone.clock(off_at)),
-                    ],
-                ),
-                steps: None,
-                warn: false,
-            }
-        });
+            });
+        }
     }
     if policy.quick_controls_mask & crate::handlers::devices::QUICK_CONTROL_AIRPLANE != 0
         && !report.assistant

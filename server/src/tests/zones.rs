@@ -841,20 +841,22 @@ async fn here_now_the_fix_badge_and_the_summary_line() {
     // clock alone today.
     let lines = super::status_lines(&summary);
     assert!(
-        lines.last().is_some_and(|l| l.starts_with("Home since ")),
+        lines.last().is_some_and(|l| l.contains(" · Home since ")),
         "{lines:?}"
     );
     assert!(
         summary.contains("<span data-zone-now title=\""),
         "{summary}"
     );
+    // The zone's pin (design 101) comes before it, in the same part.
+    assert!(summary.contains("<svg class=\"pin\""), "{summary}");
     let nb = app
         .get_page(&format!("/devices/{id}?lang=nb"), &cookie)
         .await
         .text();
     let lines = super::status_lines(&nb);
     assert!(
-        lines.last().is_some_and(|l| l.starts_with("Home siden ")),
+        lines.last().is_some_and(|l| l.contains(" · Home siden ")),
         "{lines:?}"
     );
     // Notify Me About has the switch once.
