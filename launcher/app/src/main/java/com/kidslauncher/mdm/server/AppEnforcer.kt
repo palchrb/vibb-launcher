@@ -438,6 +438,11 @@ object AppEnforcer {
         // Cached for the lock's SOS yield (qa-25b-25f L3: never resolved at a lock stop).
         val sos = emergencySosPackage(context)
         com.kidslauncher.mdm.lock.PinLockRuntime.sosPackage = sos
+        // Design 102 §4.1 (Q102-M3): the browsers' managed config before the plan and the hide/unhide loop - Chrome's login
+        // role is unhidden and pinned only once its lockdown is written and read back; the pause and the override lift
+        // the lockdown (D9), whose end is a tightening.
+        val loginRole = com.kidslauncher.mdm.logins.loginRoleOf(policy?.loginBrowser, allowlist)
+        val browser = BrowserConfig.apply(context, dpm, admin, vpnFilterEnabled, loginRole, lockdownLifted = overrideActive)
         val plan = computeEnforcementPlan(
             allowlist = allowlist,
             kioskDesired = policy?.kioskDesired == true,
@@ -464,6 +469,7 @@ object AppEnforcer {
             recentsPackage = systemRecentsPackage(context),
             emergencySos = sos,
             webViewProvider = webViewProviderPackage(),
+            loginBrowser = com.kidslauncher.mdm.logins.CHROME_PACKAGE.takeIf { browser.ready },
         )
 
         // Set before the loop below can release the dialer, so its keypad is never usable for
@@ -636,8 +642,8 @@ object AppEnforcer {
         // no override is active AND no policy has ever been fetched, which has no admin choice yet
         // to respect.
         applyVpnRestrictions(context, vpnInputs, policy?.quickControlsMask, vpnShapeNow)
-        // The browsers' own secure DNS off with the filter (design 67 §2.1), lifted with it.
-        BrowserDoh.apply(context, dpm, admin, vpnFilterEnabled)
+        // The browsers' own secure DNS off with the filter (design 67 §2.1), lifted with it: BrowserConfig, before the
+        // plan (design 102 §4.1).
 
         applyPrivateDnsLock(dpm, admin)
 

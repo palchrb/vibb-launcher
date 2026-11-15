@@ -88,6 +88,9 @@ val STATUS_CAPABILITIES: List<String> = listOf(
     // Design 102 Part A: the policy's `captive_portal` (the Wi-Fi sign-in window, the parent code) and `captive_portal`
     // in every full report. The server's Sign-in page and Advanced's #wifi-signin row wait for it.
     com.kidslauncher.mdm.logins.CAPTIVE_PORTAL_CAPABILITY,
+    // Design 102 Part B: the policy's `login_browser` (Chrome only for logins, its lockdown read back before it is
+    // unhidden) and `login_browser` in every full report. The server's Sign-in page says "Krever nyere Vibb One" without it.
+    com.kidslauncher.mdm.logins.LOGIN_BROWSER_CAPABILITY,
 )
 
 /** A time rule's "Stille" switch (server migration 0121): `rules[].silent` is enforced. */

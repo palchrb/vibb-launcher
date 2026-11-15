@@ -606,6 +606,8 @@ private fun statusReportOf(
         // Design 102 §6.2: the Wi-Fi sign-in window's handler, today's use and the last sessions (the window's files
         // folded in first).
         captivePortal = com.kidslauncher.mdm.portal.PortalRuntime.report(context),
+        // Design 102 §6.2: Chrome's login role on this phone.
+        loginBrowser = BrowserConfig.report(context),
     )
 }
 

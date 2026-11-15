@@ -186,6 +186,11 @@ fun computeEnforcementPlan(
     smsMode: ChannelMode? = callState.smsMode,
     /** Design 77 D1: we hold the SMS role, so our engine receives every message. */
     ourSmsRoleActive: Boolean = false,
+    /** Design 102 §4.1: Chrome's login role, set only once its lockdown is written and read back
+     * (`BrowserConfig`): unhidden and unsuspended (a suspended app shows "app paused") though not allowed, pinned in
+     * the kiosk (M11, M12), suspended by a time-rule lock like any app (D7), never in the accessibility or input
+     * method lists and never among the lock's usable apps. A ticked Chrome is an allowed app and ignores the role. */
+    loginBrowser: String? = null,
 ): EnforcementPlan {
     val neverRestrict = setOfNotNull(ownPackage, systemDialer, recentsPackage, emergencySos, webViewProvider) + inputMethods + PLAY_NEVER_RESTRICT
     val features = lockTaskFeatures(serverLockTaskFeatures, blockActivityStart)
@@ -202,10 +207,11 @@ fun computeEnforcementPlan(
         is CallPolicyState.Managed -> !callState.rules.callsEnabled || !ourDialerActive
     }
 
+    val roleApp = loginBrowser?.takeIf { appsManaged && it !in allowed }
     val hide = mutableSetOf<String>()
     // The Play Store is never hidden: other apps' FCM (Element X) needs it installed, and hiding
     // broadcasts a removal.
-    if (appsManaged) controllable.filterTo(hide) { it !in allowed && it !in neverRestrict && it != PLAY_STORE }
+    if (appsManaged) controllable.filterTo(hide) { it !in allowed && it !in neverRestrict && it != PLAY_STORE && it != roleApp }
     if (suspendSmsApps) controllable.filterTo(hide) { it in smsPackages && it !in neverRestrict }
     val suspend = hide.toMutableSet()
     // The alarm apps are spared by the lock only, so an alarm set inside bedtime still rings (an alarm app that isn't
@@ -232,7 +238,7 @@ fun computeEnforcementPlan(
             setOf(ownPackage) + allowed.filter { it in lockUsableApps } +
                 allowed.filter { it == systemDialer && !callsBlockedByRule } + allowed.filter { it in alarmApps }
         } else {
-            allowed + ownPackage
+            allowed + ownPackage + setOfNotNull(roleApp)
         }
         val withoutDialer = if (callState.managed && systemDialer != null) pinned - systemDialer else pinned
         // The block bit has no emergency exemption: the resolved system helpers (emergency

@@ -167,5 +167,29 @@
     {"name": "another handle, the SSID unread", "record": {"ssid": "Hotel Fjord", "handle": 101, "boot": 7, "date": "2026-11-15"}, "today": "2026-11-15", "boot": 7, "handle": 205, "ssid": null, "match": false},
     {"name": "after a reboot", "record": {"ssid": "Hotel Fjord", "handle": 101, "boot": 7, "date": "2026-11-15"}, "today": "2026-11-15", "boot": 8, "handle": 101, "ssid": "Hotel Fjord", "match": false},
     {"name": "the next day", "record": {"ssid": "Hotel Fjord", "handle": 101, "boot": 7, "date": "2026-11-15"}, "today": "2026-11-16", "boot": 7, "handle": 101, "ssid": "Hotel Fjord", "match": false}
-  ]
+  ],
+  "bundles": [
+    {"name": "the filter on, no role: secure DNS off only", "filter_on": true, "lockdown": null, "installed": ["com.android.chrome", "com.brave.browser", "org.example"], "expect": {"com.android.chrome": {"DnsOverHttpsMode": {"string": "off"}}, "com.brave.browser": {"DnsOverHttpsMode": {"string": "off"}}}},
+    {"name": "the role on with the filter: the lockdown and secure DNS off, Chrome only", "filter_on": true, "lockdown": ["accounts.google.com", "school.example/login"], "installed": ["com.android.chrome", "com.brave.browser"], "expect": {"com.android.chrome": {"URLBlocklist": {"string": "[\"*\",\"chrome://*\"]"}, "URLAllowlist": {"string": "[\"accounts.google.com\",\"school.example/login\"]"}, "IncognitoModeAvailability": {"int": 1}, "BrowserSignin": {"int": 0}, "DefaultSearchProviderEnabled": {"bool": false}, "SearchSuggestEnabled": {"bool": false}, "ContextualSearchEnabled": {"bool": false}, "NTPContentSuggestionsEnabled": {"bool": false}, "PromotionalTabsEnabled": {"bool": false}, "AllowDinosaurEasterEgg": {"bool": false}, "TosDialogBehavior": {"int": 2}, "DownloadRestrictions": {"int": 3}, "PasswordManagerEnabled": {"bool": false}, "AutofillCreditCardEnabled": {"bool": false}, "PrintingEnabled": {"bool": false}, "ForceGoogleSafeSearch": {"bool": true}, "ForceYouTubeRestrict": {"int": 2}, "DeveloperToolsAvailability": {"int": 2}, "DnsOverHttpsMode": {"string": "off"}}, "com.brave.browser": {"DnsOverHttpsMode": {"string": "off"}}}},
+    {"name": "the role on, the filter off: the lockdown alone", "filter_on": false, "lockdown": ["accounts.google.com", "school.example/login"], "installed": ["com.android.chrome"], "expect": {"com.android.chrome": {"URLBlocklist": {"string": "[\"*\",\"chrome://*\"]"}, "URLAllowlist": {"string": "[\"accounts.google.com\",\"school.example/login\"]"}, "IncognitoModeAvailability": {"int": 1}, "BrowserSignin": {"int": 0}, "DefaultSearchProviderEnabled": {"bool": false}, "SearchSuggestEnabled": {"bool": false}, "ContextualSearchEnabled": {"bool": false}, "NTPContentSuggestionsEnabled": {"bool": false}, "PromotionalTabsEnabled": {"bool": false}, "AllowDinosaurEasterEgg": {"bool": false}, "TosDialogBehavior": {"int": 2}, "DownloadRestrictions": {"int": 3}, "PasswordManagerEnabled": {"bool": false}, "AutofillCreditCardEnabled": {"bool": false}, "PrintingEnabled": {"bool": false}, "ForceGoogleSafeSearch": {"bool": true}, "ForceYouTubeRestrict": {"int": 2}, "DeveloperToolsAvailability": {"int": 2}}}},
+    {"name": "a pause lifts the lockdown and the filter: empty", "filter_on": false, "lockdown": null, "installed": ["com.android.chrome"], "expect": {"com.android.chrome": {}}},
+    {"name": "Chrome absent: nothing for it", "filter_on": true, "lockdown": ["accounts.google.com", "school.example/login"], "installed": ["com.brave.browser"], "expect": {"com.brave.browser": {"DnsOverHttpsMode": {"string": "off"}}}}],
+  "plans": [
+    {"name": "the role ready", "allowlist": ["org.example.game"], "role_ready": true, "locked": false, "hidden": false, "suspended": false, "pinned": true},
+    {"name": "the role not ready (a failed write or read-back)", "allowlist": ["org.example.game"], "role_ready": false, "locked": false, "hidden": true, "suspended": true, "pinned": false},
+    {"name": "the role ready under a time rule's lock", "allowlist": ["org.example.game"], "role_ready": true, "locked": true, "hidden": false, "suspended": true, "pinned": false},
+    {"name": "Chrome ticked: a normal app", "allowlist": ["com.android.chrome"], "role_ready": false, "locked": false, "hidden": false, "suspended": false, "pinned": true}],
+  "tighten": [
+    {"name": "the role's first turn-on", "old": null, "new": ["idp.feide.no"], "tightened": true},
+    {"name": "a pause's end (the lockdown back)", "old": null, "new": ["idp.feide.no", "accounts.google.com"], "tightened": true},
+    {"name": "a site added", "old": ["idp.feide.no"], "new": ["idp.feide.no", "accounts.google.com"], "tightened": false},
+    {"name": "a swap of one site", "old": ["idp.feide.no", "accounts.google.com"], "new": ["idp.feide.no", "login.live.com"], "tightened": true},
+    {"name": "a site removed", "old": ["idp.feide.no", "accounts.google.com"], "new": ["idp.feide.no"], "tightened": true},
+    {"name": "the same sites", "old": ["idp.feide.no"], "new": ["idp.feide.no"], "tightened": false},
+    {"name": "a pause starts (the lockdown lifted)", "old": ["idp.feide.no"], "new": null, "tightened": false}],
+  "roles": [
+    {"name": "no login_browser", "policy": null, "allowlist": ["org.example.game"], "role": "off", "hosts": null},
+    {"name": "Chrome's, with its sites", "policy": {"package": "com.android.chrome", "hosts": ["idp.feide.no", "*", "Accounts.Google.com"]}, "allowlist": ["org.example.game"], "role": "on", "hosts": ["accounts.google.com", "idp.feide.no"]},
+    {"name": "another browser is refused (D8)", "policy": {"package": "org.mozilla.firefox", "hosts": ["idp.feide.no"]}, "allowlist": ["org.example.game"], "role": "wrong_package", "hosts": null},
+    {"name": "Chrome ticked ignores the role", "policy": {"package": "com.android.chrome", "hosts": ["idp.feide.no"]}, "allowlist": ["com.android.chrome"], "role": "off", "hosts": null}]
 }

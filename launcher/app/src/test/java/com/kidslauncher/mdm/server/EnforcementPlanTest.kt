@@ -36,6 +36,36 @@ class EnforcementPlanTest {
         lockUsableApps = usable, ruleBlocksCalls = noCalls, timeRulesSet = rules, budgetSet = budget,
     )
 
+    /** Design 102 §4.1: Chrome's login role, once its lockdown reads back - unhidden, unsuspended and pinned though not
+     * allowed; suspended by a lock like any app, never pinned then; never in the accessibility or input-method lists. */
+    @Test
+    fun `the login role's Chrome is unhidden and pinned, and suspended by a lock`() {
+        val chrome = "com.android.chrome"
+        val role = computeEnforcementPlan(listOf("org.example.game"), true, 0, false, controllable, OWN, DIALER, loginBrowser = chrome)
+        assertFalse(chrome in role.hide)
+        assertFalse(chrome in role.suspend)
+        assertTrue(chrome in role.kioskPackages!!)
+        assertFalse(chrome in role.permittedAccessibility!!)
+        assertFalse(chrome in role.permittedInputMethods!!)
+        assertTrue("org.example.music" in role.hide)
+        val locked = computeEnforcementPlan(listOf("org.example.game"), true, 0, false, controllable, OWN, DIALER, scheduleLocked = true, loginBrowser = chrome)
+        assertTrue(chrome in locked.suspend)
+        assertFalse(chrome in locked.hide)
+        assertFalse(chrome in locked.kioskPackages!!)
+    }
+
+    /** Design 102 §4.1 (Q102-M3): not ready (no read-back, a failed write, another package) - hidden and unpinned. */
+    @Test
+    fun `a login role that isn't ready leaves Chrome hidden and unpinned`() {
+        val chrome = "com.android.chrome"
+        val plan = plan(listOf("org.example.game"))
+        assertTrue(chrome in plan.hide)
+        assertFalse(chrome in plan.kioskPackages!!)
+        // Ticked, Chrome is an allowed app; the role adds nothing.
+        val ticked = computeEnforcementPlan(listOf(chrome), true, 0, false, controllable, OWN, DIALER, loginBrowser = chrome)
+        assertTrue(chrome in ticked.permittedAccessibility!!)
+    }
+
     @Test
     fun `the recents provider is never hidden or suspended - allowlist, SMS off, time-rule lock, kiosk (16d)`() {
         val recents = "com.oem.launcher"
