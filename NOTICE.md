@@ -26,8 +26,7 @@ Nunito's variable font from [google/fonts](https://github.com/google/fonts/tree/
 
 The app icons and music category icons a parent can pick (`launcher/app/src/main/res/drawable/app_glyph_*.xml`,
 `server/static/app-icons/*.svg`, `server/static/music-icons/*.svg` and `music/app/src/main/res/drawable/music_glyph_*.xml`,
-made by `scripts/material-symbols.sh`, and the music app's icon `music/app/src/main/res/drawable/ic_launcher_foreground.xml`,
-which uses the `music_note` glyph's path) are converted from Google's
+made by `scripts/material-symbols.sh`) are converted from Google's
 [Material Symbols](https://github.com/google/material-design-icons) (Rounded, filled), licensed
 under the Apache License 2.0 - see
 [`launcher/app/src/main/assets/licenses/Apache-2.0.txt`](launcher/app/src/main/assets/licenses/Apache-2.0.txt)
@@ -82,9 +81,11 @@ iPhone start-up images (`server/static/startup/`, drawn by `scripts/pwa-startup-
 PWA lock screen's breathing mark and its resting picture (`server/templates/partials/vibb_breath.html`,
 `server/static/vibb-rest.svg`, written by `vibb-icon.py` too), and
 the music app's launch splash (`music/app/src/main/res/drawable/splash_vibb_mark.xml`, `splash_wordmark.xml`, drawn by
-`scripts/music-splash.py`). The splash's wordmark "vibb music" is Nunito's glyph outlines as filled paths: artwork
-made with the font, which the OFL permits and doesn't cover (it is not Font Software); the Nunito paragraph above and
-the OFL text stand for the font itself.
+`scripts/music-splash.py`) and its app icon and notification small icon, three of the mark's rings with a play button
+(`music/app/src/main/res/drawable/ic_launcher_foreground.xml`, `ic_stat_vibb_music.xml`, drawn by
+`scripts/music-icon.py` after palchrb's own drawing). The splash's wordmark "vibb music" is Nunito's glyph outlines as
+filled paths: artwork made with the font, which the OFL permits and doesn't cover (it is not Font Software); the Nunito
+paragraph above and the OFL text stand for the font itself.
 
 The server's music sweep (`server/src/music_sweep.rs`, `server/src/music_sources.rs`, design 21b) reimplements in
 Rust, under the GPL-3.0 (or later), the behaviour of [palchrb/vibb](https://github.com/palchrb/vibb)'s

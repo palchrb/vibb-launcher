@@ -64,7 +64,16 @@ Moved from music/CLAUDE.md on 2026-11-01.
   hold), then fades over it (`splashHoldEnd`, `splashFadeDue`: pure, the composable feeds it ms since its first frame;
   once due it never turns back), so the wordmark is seen whole and still. Whether it is owed is
   `MusicViewModel.contentShown`: a configuration change shows none, a restored task after a process death shows it again.
-  The rings are still (the launcher's breathe AVD is one inhale; a loop would snap back each breath). A failed item's
+  The rings are still (the launcher's breathe AVD is one inhale; a loop would snap back each breath). The app icon
+  (2026-11-15, the user's own drawing `vibb-music-q7`, asked for identical): night rings on `vibb_peach`, the Vibb mark's
+  outer three rings (the launcher's `ic_launcher_foreground.xml` paths at 0.92, stroke 3.6 mark units) and a play
+  triangle with round corners, nudged right, where the inner ring and the dot were. `mipmap-anydpi-v26/ic_launcher.xml`:
+  background `@color/vibb_peach`, foreground and monochrome (themed icons) `res/drawable/ic_launcher_foreground.xml` -
+  the drawing's 60-unit canvas on the 72 dp visible area (1.2 dp a unit), the outer ring's outer edge 30.1 dp from the
+  centre, inside the 66 dp safe zone. The notification small icon (the media notification, `PlaybackService`, and the
+  new-episodes one, `sync/NewNotifier.kt`) is the same shape in white, `res/drawable/ic_stat_vibb_music.xml`. Both are
+  written by `scripts/music-icon.py` (`--selftest`); rendered at 1024 px the foreground matches the drawing to its
+  anti-aliasing. A failed item's
   real cause is logged (`VibbPlayer`, `logic/PlayFailure.kt`'s `failureLine`: Media3 and `Log` hide an
   `UnknownHostException`), and a name that can't be looked up says "Trenger internett" instead of "Kan ikke spilles nå"
   (`noNetwork`, `failureMessage`; never the guard's `PrivateAddressException`). Accepted residual: a host the parent's Web
