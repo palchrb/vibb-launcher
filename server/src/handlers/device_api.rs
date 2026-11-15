@@ -517,6 +517,11 @@ pub(crate) async fn build_policy(
         requested_at,
     });
 
+    // Design 102 §6.1: Chrome's login role and its sites; a DB error is a 500 (a lost list must never read as none -
+    // nor as more).
+    let login_browser = crate::logins::browser_policy(&state.db, &policy).await?;
+    let captive_portal = crate::logins::portal_policy(&policy);
+
     Ok(PolicyResponse {
         allowlist,
         weekday_start_minutes,
@@ -611,6 +616,8 @@ pub(crate) async fn build_policy(
         status_heartbeat_fields: crate::status_heartbeat::HEARTBEAT_FIELDS,
         status_gzip: true,
         rule_pause: true,
+        captive_portal,
+        login_browser,
         server_tls,
     })
 }
@@ -1065,6 +1072,38 @@ pub async fn dns_blocklist(
     }
 }
 
+/// Design 102 §5.2: which of `hosts` this phone's filter blocks - its delivered lists, walked by suffix as the phone's
+/// filter does. `None` when the lists can't be read (the page then says nothing).
+pub(crate) async fn filter_blocks(
+    state: &AppState,
+    device_id: i64,
+    hosts: &[String],
+) -> Option<std::collections::HashSet<String>> {
+    let categories = effective_blocklist(state, device_id).await.ok()?;
+    let listed: std::collections::HashSet<&str> = categories
+        .iter()
+        .flat_map(|c| c.domains.iter().map(String::as_str))
+        .collect();
+    Some(
+        hosts
+            .iter()
+            .filter(|host| {
+                let mut name = host.as_str();
+                loop {
+                    if listed.contains(name) {
+                        return true;
+                    }
+                    match name.split_once('.') {
+                        Some((_, parent)) => name = parent,
+                        None => return false,
+                    }
+                }
+            })
+            .cloned()
+            .collect(),
+    )
+}
+
 async fn effective_blocklist(
     state: &AppState,
     device_id: i64,
@@ -1482,6 +1521,17 @@ async fn status_intake(
         .as_ref()
         .and_then(crate::shortcuts::clean)
         .map(|value| value.to_string());
+    // Design 102 §6.2: Wi-Fi sign-in and Chrome's login role, cleaned field by field.
+    let captive_portal_json = report
+        .captive_portal
+        .as_ref()
+        .and_then(crate::logins::clean_portal)
+        .map(|value| value.to_string());
+    let login_browser_json = report
+        .login_browser
+        .as_ref()
+        .and_then(crate::logins::clean_browser)
+        .map(|value| value.to_string());
     // Design 64 step 2: the phone's zone watch, known keys only.
     let zone_watch_json = report
         .zone_watch
@@ -1519,8 +1569,8 @@ async fn status_intake(
           foreign_access_json, remote_wipe_ready, admin_policies_pending_json, relock_blocks_json, \
           relock_blocks_total, clock_format_applied, battery_level, battery_charging, dns_upstream_json, \
           write_settings_granted, zone_watch_json, tailnet_joined, sms_state_json, data_roaming_json, \
-          mobile_data_json, airplane_mode_json, shortcuts_json) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          mobile_data_json, airplane_mode_json, shortcuts_json, captive_portal_json, login_browser_json) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(device.id)
     .bind(&report.lock_reason)
@@ -1582,6 +1632,8 @@ async fn status_intake(
     .bind(&mobile_data_json)
     .bind(&airplane_mode_json)
     .bind(&shortcuts_json)
+    .bind(&captive_portal_json)
+    .bind(&login_browser_json)
     .execute(&state.db)
     .await
     .ok();
@@ -1691,6 +1743,14 @@ async fn status_intake(
         }
         if let Some(battery) = &report.battery {
             crate::parent_events::battery_report(&state, phone, battery).await;
+        }
+        // Design 102 §3.7: a wide Wi-Fi sign-in and the day's budget used up, each once.
+        if report
+            .capabilities
+            .iter()
+            .any(|c| c == crate::logins::PORTAL_CAPABILITY)
+        {
+            crate::logins::intake(&state, phone, captive_portal_json.as_deref()).await;
         }
         // Design 97 §6: the roaming notice, only from a launcher that judges where it is (`where`).
         let judges_where = report

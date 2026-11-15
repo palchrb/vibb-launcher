@@ -1359,6 +1359,23 @@ class PolicyResponseCompatTest {
     /** Security review S-L5: `bluetooth_any_device` (the server's `policy_json_keys_snapshot`, always sent) - off from an
      * older server, so the Bluetooth page pairs headphones and speakers only. */
     @Test
+    fun `captive_portal and login_browser decode, missing means on with the code and the role off (102)`() {
+        val policy = (decodeCached(
+            """{"captive_portal": {"enabled": false, "require_code": false, "minutes": 10, "day_openings": 4,
+                "day_minutes": 20, "grant": 2}, "login_browser": {"package": "com.android.chrome", "hosts": ["idp.feide.no"]}}""",
+        ) as CachedPolicy.Ok).policy
+        assertEquals(false, com.kidslauncher.mdm.logins.portalPolicyOf(policy).enabled)
+        assertEquals(2L, policy.captivePortal!!.grant)
+        assertEquals(listOf("idp.feide.no"), policy.loginBrowser!!.hosts)
+        val nullRole = (decodeCached("""{"login_browser": null}""") as CachedPolicy.Ok).policy
+        assertNull(nullRole.loginBrowser)
+        val older = (decodeCached(serverResponse) as CachedPolicy.Ok).policy
+        assertEquals(true, com.kidslauncher.mdm.logins.portalPolicyOf(older).enabled)
+        assertEquals(true, com.kidslauncher.mdm.logins.portalPolicyOf(older).requireCode)
+        assertNull(older.loginBrowser)
+    }
+
+    @Test
     fun `bluetooth_any_device decodes and is off without it`() {
         assertTrue(ServerJson.decodeFromString(PolicyResponse.serializer(), """{"bluetooth_any_device":true}""").bluetoothAnyDevice)
         assertFalse(ServerJson.decodeFromString(PolicyResponse.serializer(), "{}").bluetoothAnyDevice)

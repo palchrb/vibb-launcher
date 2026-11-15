@@ -41,6 +41,16 @@
         </div>
     </section>
 
+    {#- Design 102 §5: Wi-Fi sign-in and Chrome only for logins, a page of their own. -#}
+    <section id="logins" aria-label="{{ self.t("logins.page") }}">
+        <div class="group">
+            <a class="row" href="/devices/{{ device.id }}/logins" data-row="logins">
+                <span class="row-label">{{ self.t("logins.page") }}<span class="row-sub">{{ logins_sub }}</span></span>
+                <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </a>
+        </div>
+    </section>
+
     <section id="lists" aria-labelledby="lists-title">
         <h2 class="group-header" id="lists-title">{{ self.t("device.filter.lists") }}</h2>
         <div class="group">

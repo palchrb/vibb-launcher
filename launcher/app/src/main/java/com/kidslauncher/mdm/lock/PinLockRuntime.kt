@@ -696,6 +696,8 @@ object PinLockRuntime {
             lockOnTop = lockOnTopAfter(lockOnTop, LockTopEvent.SCREEN_ON_UNSHOWN)
         }
         if (lockedEdge && !chromeFirst) refreshChromeNow(context)
+        // Design 102 §3.3 (R2-M4): the PIN lock ends a Wi-Fi sign-in window that is open (it can't be opened while LOCKED).
+        if (lockedEdge) com.kidslauncher.mdm.portal.PortalRuntime.closeWindow(context, "lock")
         // Home was started first (design 16): the re-front check shows the lock if Home didn't.
         if (result.showLockLater) {
             // Design 16e: the mark's 3 s run from here, so the lock comes even if Home never draws;

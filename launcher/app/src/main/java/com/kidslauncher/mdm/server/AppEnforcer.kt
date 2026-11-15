@@ -346,6 +346,11 @@ object AppEnforcer {
         enforcePlayLinkBlocker(dpm, admin, context)
         // The call log opens the phone book (design 12), never lifted either.
         enforceCallLogPin(dpm, admin, context)
+        // Design 102 §3.2: Android's Wi-Fi sign-in goes to Vibb's entry, never to the stock login app. Off is the disabled
+        // entry (DONT_KILL_APP, PortalRuntime.setEntryEnabled), not a cleared preferred activity: a disabled component's
+        // persistent preferred activity is skipped, and Android's own handler is then the only one.
+        enforceCaptivePortalPin(dpm, admin, context)
+        com.kidslauncher.mdm.portal.PortalRuntime.setEntryEnabled(context, com.kidslauncher.mdm.logins.portalPolicyOf(policy).enabled)
 
         // Hardening that the server switched off is cleared first, before anything below can
         // throw - "Block USB debugging" off is how a parent gets adb back (QA step 4 #8). The
@@ -433,6 +438,11 @@ object AppEnforcer {
         // Cached for the lock's SOS yield (qa-25b-25f L3: never resolved at a lock stop).
         val sos = emergencySosPackage(context)
         com.kidslauncher.mdm.lock.PinLockRuntime.sosPackage = sos
+        // Design 102 §4.1 (Q102-M3): the browsers' managed config before the plan and the hide/unhide loop - Chrome's login
+        // role is unhidden and pinned only once its lockdown is written and read back; the pause and the override lift
+        // the lockdown (D9), whose end is a tightening.
+        val loginRole = com.kidslauncher.mdm.logins.loginRoleOf(policy?.loginBrowser, allowlist)
+        val browser = BrowserConfig.apply(context, dpm, admin, vpnFilterEnabled, loginRole, lockdownLifted = overrideActive)
         val plan = computeEnforcementPlan(
             allowlist = allowlist,
             kioskDesired = policy?.kioskDesired == true,
@@ -459,6 +469,7 @@ object AppEnforcer {
             recentsPackage = systemRecentsPackage(context),
             emergencySos = sos,
             webViewProvider = webViewProviderPackage(),
+            loginBrowser = com.kidslauncher.mdm.logins.CHROME_PACKAGE.takeIf { browser.ready },
         )
 
         // Set before the loop below can release the dialer, so its keypad is never usable for
@@ -631,8 +642,8 @@ object AppEnforcer {
         // no override is active AND no policy has ever been fetched, which has no admin choice yet
         // to respect.
         applyVpnRestrictions(context, vpnInputs, policy?.quickControlsMask, vpnShapeNow)
-        // The browsers' own secure DNS off with the filter (design 67 §2.1), lifted with it.
-        BrowserDoh.apply(context, dpm, admin, vpnFilterEnabled)
+        // The browsers' own secure DNS off with the filter (design 67 §2.1), lifted with it: BrowserConfig, before the
+        // plan (design 102 §4.1).
 
         applyPrivateDnsLock(dpm, admin)
 
@@ -1598,6 +1609,13 @@ object AppEnforcer {
         // Design 68: the camera rule for this package, managed calls or not, before it can be hidden below.
         enforceCameraOnPackage(context, packageName)
         if (!suspend) return false
+        // Design 102 §4.1: Chrome unhidden for its login role is the apply's own doing, not a new app - left to the plan
+        // (the emulator check, 2026-11-15: the unhide's onPackageAdded hid it again and asked a sync, every 0.4 s).
+        val loginRole = com.kidslauncher.mdm.logins.loginRoleOf(
+            decision.policy?.loginBrowser,
+            effectiveAllowlist(decision.policy?.allowlist, relockBlocked),
+        )
+        if (packageName == com.kidslauncher.mdm.logins.CHROME_PACKAGE && BrowserConfig.roleReady(context, loginRole)) return false
         // Hidden only if not allowed at all - the schedule lock alone just suspends.
         val hide = shouldSuspendNewPackage(
             packageName, decision, overrideActive, context.packageName, systemDialerPackage(context),
@@ -1712,6 +1730,24 @@ object AppEnforcer {
         enforceDefaultHome(dpm, admin, context)
         enforcePlayLinkBlocker(dpm, admin, context)
         enforceCallLogPin(dpm, admin, context)
+        enforceCaptivePortalPin(dpm, admin, context)
+    }
+
+    /**
+     * Design 102 §3.2 (Q102-M5): `android.net.conn.CAPTIVE_PORTAL` goes to [com.kidslauncher.mdm.portal.CaptivePortalEntry]
+     * - set on every [apply] and in `HomePin`'s re-seat with the other PPAs of ours, so a re-seat never leaves a moment
+     * where Android shows its chooser (the kid could pick the stock login app, which is unfiltered, M5-M6). Whether it
+     * is used is the entry's enabled state (Part A's switch); the stock login app is never pinned in the kiosk.
+     */
+    private fun enforceCaptivePortalPin(dpm: DevicePolicyManager, admin: ComponentName, context: Context) {
+        try {
+            val filter = IntentFilter(android.net.ConnectivityManager.ACTION_CAPTIVE_PORTAL_SIGN_IN).apply {
+                addCategory(Intent.CATEGORY_DEFAULT)
+            }
+            dpm.addPersistentPreferredActivity(admin, filter, ComponentName(context, com.kidslauncher.mdm.portal.CaptivePortalEntry::class.java))
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Failed to set the Wi-Fi sign-in's handler", e)
+        }
     }
 
     private fun enforceDefaultHome(dpm: DevicePolicyManager, admin: ComponentName, context: Context) {

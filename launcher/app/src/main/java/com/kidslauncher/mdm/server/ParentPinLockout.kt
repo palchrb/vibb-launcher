@@ -43,6 +43,10 @@ enum class ParentPinEntry(val wire: String) {
 
     /** Design 98 §4.4: the time-rule screen's Foreldrekode - the rule(s) in force paused, offline. */
     RULE_PAUSE("rule_pause"),
+
+    /** Design 102 §3.2: the Wi-Fi sign-in's keypad - one-shot: a match approves exactly this opening, on this network,
+     * and nothing after (no window). */
+    WIFI_SIGNIN("wifi_signin"),
 }
 
 sealed interface ParentPinResult {

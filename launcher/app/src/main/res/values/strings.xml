@@ -939,4 +939,27 @@
     <string name="shortcuts_picker_more_time_line">Shows on days with screen time</string>
     <string name="shortcuts_picker_move_up">Move %1$s up</string>
     <string name="shortcuts_picker_move_down">Move %1$s down</string>
+    <!-- Design 102 Part A: the Wi-Fi sign-in window, its entry, the Wi-Fi page's row and Home's line. -->
+    <string name="portal_title">Sign in to Wi-Fi</string>
+    <string name="portal_checking">Checking the network …</string>
+    <string name="portal_works">The network already works</string>
+    <string name="portal_code_needed">A grown-up types the parent code to sign in.</string>
+    <string name="portal_code_title">Parent code for Wi-Fi sign-in</string>
+    <string name="portal_no_code">No parent code is set – ask a grown-up</string>
+    <string name="portal_ask">Ask a grown-up about Wi-Fi sign-in</string>
+    <string name="portal_no_sign_in">This Wi-Fi doesn\'t need a sign-in now</string>
+    <string name="portal_not_now">Wi-Fi sign-in isn\'t possible now</string>
+    <string name="portal_close">Close</string>
+    <string name="portal_leaves">This link leaves the sign-in page</string>
+    <string name="portal_blocked">This page is blocked</string>
+    <string name="portal_tls">This page\'s connection isn\'t safe</string>
+    <string name="portal_no_download">Downloads aren\'t possible here</string>
+    <string name="portal_timeout">Signing in took too long. Try again, or ask a grown-up.</string>
+    <string name="portal_budget">You\'ve used today\'s Wi-Fi sign-ins. Ask a grown-up.</string>
+    <string name="wifi_networks_connected_sign_in">Connected – sign-in needed</string>
+    <string name="wifi_portal_sign_in">Sign in</string>
+    <string name="wifi_portal_sign_in_sub">This Wi-Fi wants you to sign in</string>
+    <string name="wifi_portal_reopen">Open the sign-in page</string>
+    <string name="wifi_portal_reopen_sub">Log out or see time left</string>
+    <string name="home_portal_line">This Wi-Fi wants you to sign in</string>
 </resources>

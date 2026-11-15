@@ -1,0 +1,96 @@
+{
+  "capabilities": {"captive_portal": "captive_portal_v1", "login_browser": "login_browser_v1"},
+  "policy": [
+    {
+      "name": "new_phone",
+      "captive_portal": {"enabled": true, "require_code": true, "minutes": 10, "day_openings": 4, "day_minutes": 20, "grant": 0},
+      "login_browser": null
+    },
+    {
+      "name": "wifi_off_code_off_grant_role_on",
+      "saves": "Wi-Fi sign-in off, the parent code off (Advanced), one more sign-in, the role on, Google ticked, own sites accounts.google.com (a preset's host too) and school.example/login",
+      "captive_portal": {"enabled": false, "require_code": false, "minutes": 10, "day_openings": 4, "day_minutes": 20, "grant": 1},
+      "login_browser": {"package": "com.android.chrome", "hosts": ["accounts.google.com", "accounts.youtube.com", "school.example/login"]}
+    },
+    {
+      "name": "preset_unticked",
+      "saves": "Google unticked: the own entry equal to its host stays",
+      "captive_portal": {"enabled": false, "require_code": false, "minutes": 10, "day_openings": 4, "day_minutes": 20, "grant": 1},
+      "login_browser": {"package": "com.android.chrome", "hosts": ["accounts.google.com", "school.example/login"]}
+    },
+    {
+      "name": "chrome_ticked",
+      "saves": "Chrome ticked under Apps: the role is refused, the policy carries none",
+      "captive_portal": {"enabled": false, "require_code": false, "minutes": 10, "day_openings": 4, "day_minutes": 20, "grant": 1},
+      "login_browser": null
+    }
+  ],
+  "older_server": {
+    "policy": {},
+    "captive_portal": {"enabled": true, "require_code": true, "minutes": 10, "day_openings": 4, "day_minutes": 20, "grant": 0},
+    "login_browser": null
+  },
+  "report": {
+    "captive_portal": {
+      "handler": "vibb",
+      "parent_code_set": true,
+      "today": {"openings": 1, "ms": 240000, "grant_used": 0},
+      "sessions": [
+        {"opened_ms": 1794000000000, "closed_ms": 1794000240000, "network": "Hotel Fjord", "first_host": "portal.example",
+          "outcome": "validated", "visited": ["portal.example", "nomadix.example"], "visited_count": 2, "blocked_hosts": ["ads.example"],
+          "blocked_frames": [], "start": "system", "approved": "code"},
+        {"opened_ms": 1794000600000, "closed_ms": 1794000900000, "network": null, "first_host": "10.1.0.1",
+          "outcome": "closed", "visited": ["10.1.0.1"], "visited_count": 1, "blocked_hosts": [], "blocked_frames": [],
+          "start": "revisit", "approved": "grant"}
+      ]
+    },
+    "login_browser": {"package": "com.android.chrome", "state": "on", "version_name": "133.0.6943.137", "written_ms": 1794000000000,
+      "reason": null, "cleared_ms": 1793990000000}
+  },
+  "report_off": {
+    "captive_portal": {"handler": "system", "parent_code_set": false, "today": {"openings": 0, "ms": 0, "grant_used": 0}, "sessions": []},
+    "login_browser": {"package": "com.android.chrome", "state": "off", "version_name": null, "written_ms": null, "reason": null, "cleared_ms": null}
+  },
+  "clean": [
+    {"part": "captive_portal", "in": "not an object", "stored": null},
+    {"part": "captive_portal",
+      "in": {"handler": "elsewhere", "today": {"openings": -1, "ms": "lots"}, "extra": 1, "sessions": [
+        {"opened_ms": 1794000000000, "closed_ms": 1, "network": "Kafé\u0007 Hjørnet", "first_host": "Portal.EXAMPLE",
+          "outcome": "validated", "visited": ["a.example", "a.example", "has space", 7], "visited_count": 0,
+          "blocked_hosts": [], "blocked_frames": ["b.example"], "start": "system", "approved": "none", "secret": "x"},
+        {"opened_ms": 1794000100000, "outcome": "exploded", "start": "system", "approved": "code"},
+        {"opened_ms": 1794000200000, "outcome": "lost", "start": "vibb", "approved": "pause"},
+        "not a session"
+      ]},
+      "stored": {"handler": "other", "parent_code_set": false, "today": {"openings": 0, "ms": 0, "grant_used": 0}, "sessions": [
+        {"opened_ms": 1794000000000, "closed_ms": null, "network": "Kafé Hjørnet", "first_host": "portal.example",
+          "outcome": "validated", "visited": ["a.example"], "visited_count": 1, "blocked_hosts": [],
+          "blocked_frames": ["b.example"], "start": "system", "approved": "none"},
+        {"opened_ms": 1794000200000, "closed_ms": null, "network": null, "first_host": null, "outcome": "lost", "visited": [],
+          "visited_count": 0, "blocked_hosts": [], "blocked_frames": [], "start": "vibb", "approved": "pause"}
+      ]}},
+    {"part": "login_browser", "in": {"package": "org.mozilla.firefox", "state": "on", "reason": "laser", "written_ms": "now"},
+      "stored": {"package": null, "state": "on", "version_name": null, "written_ms": null, "reason": null, "cleared_ms": null}},
+    {"part": "login_browser", "in": {"package": "com.android.chrome", "state": "exploded"}, "stored": null}
+  ],
+  "entries": [
+    {"in": "auth.dataporten.no", "entry": "auth.dataporten.no"},
+    {"in": "  Accounts.Google.com  ", "entry": "accounts.google.com"},
+    {"in": "https://school.example/login?x=1", "entry": "school.example/login"},
+    {"in": "http://school.example/", "entry": "school.example"},
+    {"in": ".idp.feide.no", "entry": ".idp.feide.no"},
+    {"in": "school.example:8443/sso", "entry": "school.example:8443/sso"},
+    {"in": "school.example/", "entry": "school.example"},
+    {"in": "*", "entry": null},
+    {"in": "*.google.com", "entry": null},
+    {"in": "school.example/login?x=1", "entry": null},
+    {"in": "vibbapp://callback", "entry": null},
+    {"in": "ftp://school.example", "entry": null},
+    {"in": "javascript:alert(1)", "entry": null},
+    {"in": "localhost", "entry": null},
+    {"in": "school example.no", "entry": null},
+    {"in": "school.example:99999", "entry": null},
+    {"in": "skole.bø.no", "entry": null},
+    {"in": "", "entry": null}
+  ]
+}

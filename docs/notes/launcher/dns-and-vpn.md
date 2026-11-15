@@ -204,8 +204,9 @@ Also found and fixed on the same test pass: **`CommandListenerService`'s SSE `Ok
 "Use secure DNS" switch in an allowed browser bypassed the whole filter). A VPN/DNS-level filter can't tell a DoH request
 from any other HTTPS, so three parts, all following `vpnFilterEnabled` (lifted by the override, the pause and the
 parent's switch) and claimed together as capability `dns_bypass_v1` (`DNS_BYPASS_CAPABILITY`):
-- **The managed config** (`server/BrowserDoh.kt`, the only part that really closes it, in browsers that read it):
-  `AppEnforcer.apply` calls `BrowserDoh.apply` right after `applyVpnRestrictions`; pure `browserDohPlan(filterOn,
+- **The managed config** (`server/BrowserConfig.kt`, `server/BrowserDoh.kt` until design 102 renamed and widened it
+  with Chrome's login role, `docs/notes/launcher/logins.md`; the only part that really closes it, in browsers that read
+  it): `AppEnforcer.applyHeld` calls `BrowserConfig.apply` before the plan since design 102 (Q102-M3); pure `browserDohPlan(filterOn,
   installed)` gives every installed (hidden ones too: `MATCH_UNINSTALLED_PACKAGES`) package of `BROWSER_DOH_PACKAGES`
   exactly `{"DnsOverHttpsMode": "off"}` (a String) while on and an empty bundle while off, written with
   `setApplicationRestrictions` only when it differs (`sameBundle`, shared with MusicSync). A fixed list, not the

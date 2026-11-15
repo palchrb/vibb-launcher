@@ -93,6 +93,13 @@ pub enum Kind {
     /// no [PushBudget] (the hour's border guard). Told from its parameters ([RoamingParams]); pruned with the phone's
     /// location history.
     RoamingStarted,
+    /// Design 102 §3.7: a Wi-Fi sign-in that went wide - more than 3 sites, a blocked frame, or the time ran out (a
+    /// report's `captive_portal.sessions`, `logins::wide`), keyed by the session's `opened_ms`. Told from its
+    /// parameters ([WifiSigninParams]); held at night (`logins::night_push`).
+    WifiSigninWide,
+    /// Design 102 §3.4: the day's code-free Wi-Fi sign-ins are used up (`logins::budget_spent`), keyed by the family's
+    /// local date. Shares [Kind::WifiSigninWide]'s switch.
+    WifiSigninBudget,
 }
 
 /// A kind's own push rate (design 77 §7, QA R2-M3), beside [EVENTS_AN_HOUR] and [URGENT_PUSHES_AN_HOUR]: a phone's
@@ -106,7 +113,7 @@ pub struct PushBudget {
 }
 
 impl Kind {
-    pub const ALL: [Kind; 21] = [
+    pub const ALL: [Kind; 23] = [
         Kind::EmergencyCall,
         Kind::PinUsed,
         Kind::PinLockout,
@@ -128,6 +135,8 @@ impl Kind {
         Kind::ContactRequest,
         Kind::MmscHost,
         Kind::RoamingStarted,
+        Kind::WifiSigninWide,
+        Kind::WifiSigninBudget,
     ];
 
     pub fn wire(self) -> &'static str {
@@ -153,6 +162,8 @@ impl Kind {
             Kind::ContactRequest => "contact_request",
             Kind::MmscHost => "mmsc_host",
             Kind::RoamingStarted => "roaming_started",
+            Kind::WifiSigninWide => "wifi_signin_wide",
+            Kind::WifiSigninBudget => "wifi_signin_budget",
         }
     }
 
@@ -222,6 +233,10 @@ impl Kind {
             Kind::ContactRequest => Some(("push_contact_request", "Asks for a new contact")),
             // Design 97 §6: on by default (migration 0145).
             Kind::RoamingStarted => Some(("push_roaming", "Roaming abroad")),
+            // Design 102 §3.7: on by default (migration 0150), one switch for both.
+            Kind::WifiSigninWide | Kind::WifiSigninBudget => {
+                Some(("push_wifi_signin", "Wi-Fi sign-in"))
+            }
         }
     }
 
@@ -401,6 +416,7 @@ impl Phone {
             Entry::Pause => "pause",
             Entry::InstallMode => "install_mode",
             Entry::RulePause => "rule_pause",
+            Entry::WifiSignin => "wifi_signin",
         };
         let params = PinParams {
             phone: self.name.clone(),
@@ -491,6 +507,60 @@ impl Phone {
                 Kind::RoamingStarted,
                 format!("{place}:{}", instant(at)),
                 at,
+                &params,
+            )
+        }
+    }
+
+    /// Design 102 §3.7: a Wi-Fi sign-in that went wide (`logins::wide`), keyed by its `opened_ms` (every report
+    /// repeats the last 10 sessions). The target is the Sign-in page's Wi-Fi group.
+    pub fn wifi_signin_wide(&self, session: &crate::logins::Session, push: Push) -> NewEvent {
+        let at = DateTime::from_timestamp_millis(session.opened_ms)
+            .unwrap_or(self.now)
+            .min(self.now);
+        let why = if session.visited_count > 3 {
+            "sites"
+        } else if !session.blocked_frames.is_empty() {
+            "frames"
+        } else {
+            "timeout"
+        };
+        let params = WifiSigninParams {
+            phone: self.name.clone(),
+            at: instant(at),
+            why: Some(why.to_string()),
+            sites: session.visited.clone(),
+            count: session.visited_count,
+        };
+        NewEvent {
+            target: format!("/devices/{}/logins#logins-wifi", self.id),
+            push,
+            ..self.with_params(
+                Kind::WifiSigninWide,
+                session.opened_ms.to_string(),
+                at,
+                &params,
+            )
+        }
+    }
+
+    /// Design 102 §3.4: today's code-free Wi-Fi sign-ins are used up (`logins::budget_spent`), once a day (`date`, the
+    /// family's local date). The target is the "one more" button.
+    pub fn wifi_signin_budget(&self, date: &str, push: Push) -> NewEvent {
+        let params = WifiSigninParams {
+            phone: self.name.clone(),
+            at: instant(self.now),
+            why: None,
+            sites: Vec::new(),
+            count: 0,
+        };
+        NewEvent {
+            target: format!("/devices/{}/logins#logins-wifi", self.id),
+            push,
+            ..self.with_params(
+                Kind::WifiSigninBudget,
+                format!("budget:{date}"),
+                self.now,
                 &params,
             )
         }
@@ -1579,6 +1649,53 @@ fn roaming_told(p: &RoamingParams, zone: &Zone, now: DateTime<Utc>) -> (String, 
         .map(|at| capitalized(&zone.at(at, now)))
         .unwrap_or_default();
     (crate::audit::clip(&title, TITLE_MAX).to_string(), summary)
+}
+
+/// A Wi-Fi sign-in event's parameters (design 102 §3.7): the phone's name, when, and for a wide session why
+/// (`sites`, `frames`, `timeout`), the sites visited and their true count.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WifiSigninParams {
+    pub phone: String,
+    pub at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub why: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sites: Vec<String>,
+    #[serde(default)]
+    pub count: i64,
+}
+
+/// A Wi-Fi sign-in event's words (design 102 §3.7): "Emma: the Wi-Fi sign-in visited 5 sites" / "14:02 · a.example,
+/// b.example" in the inbox, the time alone in the push.
+fn wifi_signin_told(
+    form: Form,
+    kind: Kind,
+    p: &WifiSigninParams,
+    zone: &Zone,
+    now: DateTime<Utc>,
+) -> (String, String) {
+    let lang = zone.lang();
+    let key = match (kind, p.why.as_deref()) {
+        (Kind::WifiSigninBudget, _) => "events.wifi_signin_budget.title",
+        (_, Some("sites")) => "events.wifi_signin_wide.sites",
+        (_, Some("frames")) => "events.wifi_signin_wide.frames",
+        _ => "events.wifi_signin_wide.timeout",
+    };
+    let count = p.count.to_string();
+    let title = fit_name(&p.phone, TITLE_MAX, |name| {
+        t_params(lang, key, &[("name", name), ("count", &count)])
+    });
+    let at = crate::display_time::parse_db_utc(&p.at)
+        .map(|at| capitalized(&zone.at(at, now)))
+        .unwrap_or_default();
+    let summary = match form {
+        Form::Inbox if !p.sites.is_empty() => format!("{at} · {}", p.sites.join(", ")),
+        _ => at,
+    };
+    (
+        crate::audit::clip(&title, TITLE_MAX).to_string(),
+        crate::audit::clip(&summary, SUMMARY_MAX).to_string(),
+    )
 }
 
 /// A zone event's parameters (design 64 §3.4, the user's decision 5): what the words are made of,
@@ -2721,6 +2838,9 @@ pub fn told_as(
         Kind::RoamingStarted => params
             .and_then(|p| serde_json::from_str::<RoamingParams>(p).ok())
             .map(|p| roaming_told(&p, zone, now)),
+        Kind::WifiSigninWide | Kind::WifiSigninBudget => params
+            .and_then(|p| serde_json::from_str::<WifiSigninParams>(p).ok())
+            .map(|p| wifi_signin_told(form, kind, &p, zone, now)),
         // An older row's words are stored (design 70 §4: one whose title is not empty).
         _ if !title.is_empty() => None,
         _ => params.and_then(|p| phone_event_told(form, kind, p, zone, now)),
@@ -3138,6 +3258,27 @@ mod tests {
             zone: Zone::from_setting("Europe/Oslo"),
             // 14:30 in Oslo.
             now: utc("2026-10-18 12:30:00"),
+        }
+    }
+
+    /// Design 102: a Wi-Fi sign-in that visited five sites, opened at `at`.
+    fn wide_signin(at: DateTime<Utc>) -> crate::logins::Session {
+        crate::logins::Session {
+            opened_ms: at.timestamp_millis(),
+            outcome: "validated".to_string(),
+            visited: [
+                "hotel.example",
+                "a.example",
+                "b.example",
+                "c.example",
+                "d.example",
+            ]
+            .map(String::from)
+            .to_vec(),
+            visited_count: 5,
+            start: "system".to_string(),
+            approved: "code".to_string(),
+            ..Default::default()
         }
     }
 
@@ -3858,6 +3999,19 @@ mod tests {
                 "14:02",
                 "/devices/3/mobile#abroad",
             ),
+            // Design 102 §3.7: told from its parameters, to the Sign-in page's Wi-Fi group.
+            (
+                phone.wifi_signin_wide(&wide_signin(two), Push::Now),
+                "Anna: the Wi-Fi sign-in visited 5 sites",
+                "14:02 · hotel.example, a.example, b.example, c.example, d.example",
+                "/devices/3/logins#logins-wifi",
+            ),
+            (
+                phone.wifi_signin_budget("2026-10-18", Push::Now),
+                "Anna has used today's Wi-Fi sign-ins",
+                "14:30",
+                "/devices/3/logins#logins-wifi",
+            ),
         ];
         for (event, title, summary, target) in &rows {
             // Nothing is stored as words any more (design 70 §4): every kind is told from its
@@ -4555,7 +4709,7 @@ mod tests {
         assert_eq!(zones.count(), 1);
         assert_eq!(
             switches.len(),
-            13,
+            14,
             "every switch once; the emergency call has none"
         );
         // "App updates": one switch for both kinds, the only one off by default.
@@ -4780,6 +4934,24 @@ mod tests {
             phone.roaming_started("ship", two),
             phone.roaming_started("us", two),
             phone.roaming_started("plain", two),
+            // Design 102 §3.7: each reason, and the budget.
+            phone.wifi_signin_wide(&wide_signin(two), Push::Now),
+            phone.wifi_signin_wide(
+                &crate::logins::Session {
+                    blocked_frames: vec!["video.example".to_string()],
+                    ..wide_signin(two)
+                },
+                Push::Now,
+            ),
+            phone.wifi_signin_wide(
+                &crate::logins::Session {
+                    visited_count: 1,
+                    outcome: "timeout".to_string(),
+                    ..wide_signin(two)
+                },
+                Push::Now,
+            ),
+            phone.wifi_signin_budget("2026-10-18", Push::Now),
         ];
         let kinds: std::collections::BTreeSet<&str> =
             events.iter().map(|e| e.kind.wire()).collect();

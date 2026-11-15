@@ -849,4 +849,27 @@
     <string name="shortcuts_picker_more_time_line">Vises når du har skjermtid i dag</string>
     <string name="shortcuts_picker_move_up">Flytt %1$s opp</string>
     <string name="shortcuts_picker_move_down">Flytt %1$s ned</string>
+    <!-- Design 102 Part A: the Wi-Fi sign-in window, its entry, the Wi-Fi page's row and Home's line. -->
+    <string name="portal_title">Logg på Wi-Fi</string>
+    <string name="portal_checking">Sjekker nettet …</string>
+    <string name="portal_works">Nettet virker allerede</string>
+    <string name="portal_code_needed">En voksen taster foreldrekoden for å logge på.</string>
+    <string name="portal_code_title">Foreldrekode for Wi-Fi-innlogging</string>
+    <string name="portal_no_code">Ingen foreldrekode er satt – spør en voksen</string>
+    <string name="portal_ask">Spør en voksen om Wi-Fi-innlogging</string>
+    <string name="portal_no_sign_in">Denne Wi-Fi-en trenger ikke innlogging nå</string>
+    <string name="portal_not_now">Wi-Fi-innlogging går ikke nå</string>
+    <string name="portal_close">Lukk</string>
+    <string name="portal_leaves">Denne lenken går ut av innloggingssiden</string>
+    <string name="portal_blocked">Denne siden er sperret</string>
+    <string name="portal_tls">Forbindelsen til denne siden er ikke trygg</string>
+    <string name="portal_no_download">Nedlasting går ikke her</string>
+    <string name="portal_timeout">Innloggingen tok for lang tid. Prøv igjen, eller spør en voksen.</string>
+    <string name="portal_budget">Du har brukt dagens Wi-Fi-innlogginger. Spør en voksen.</string>
+    <string name="wifi_networks_connected_sign_in">Tilkoblet – må logges på</string>
+    <string name="wifi_portal_sign_in">Logg på</string>
+    <string name="wifi_portal_sign_in_sub">Wi-Fi-en vil at du logger på</string>
+    <string name="wifi_portal_reopen">Åpne påloggingssiden</string>
+    <string name="wifi_portal_reopen_sub">Logg av eller se hvor lenge du har igjen</string>
+    <string name="home_portal_line">Wi-Fi-en vil at du logger på</string>
 </resources>

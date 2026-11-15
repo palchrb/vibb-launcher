@@ -373,4 +373,5 @@ Area notes, moved verbatim from this file on 2026-10-19; read only the ones your
 - `docs/notes/server/retention-and-crashes.md` - Retention; Crash reports; Removed monitoring
 - `docs/notes/server/zones.md` - Safe zones, step 1 (design 64): the fix stored once, the two-fix rule, zone events as key + parameters, retention, the security log; step 2: the policy's zones and the 30-min floor, `extra_locations` stored before one judging, `zone_watch` and the mock count; the pages are in pwa.md, "Locate: zones"
 - `docs/notes/server/status.md` - Architecture change in progress; Current status
+- `docs/notes/server/logins.md` - Wi-Fi sign-in and Chrome only for logins (design 102): migration 0150, `logins.rs`, the events, Device › Sign-in, Advanced's `#wifi-signin`
 - `docs/notes/server/calendar.md` - Dagen (design 69): the policy's `calendar`, the report's `calendar` and its sanitizer, the title rules' grammar, Device › Calendar and the rule editor's preview, `app_display.on_home`, the i18n layer's first pages; the calendar links (design 72: the model, `ics.rs`, the fetch, the endpoint, the page)

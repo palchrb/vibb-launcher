@@ -47,6 +47,11 @@ imported with full history (`git subtree`), so old commit hashes in the docs sti
   one SHA-256 over a manifest, converted to `res/drawable/weather_*.xml` with `WeatherSymbols.kt` and the names;
   `--selftest`, no network, also converts the vendored `scripts/yr-symbols-11.svg` to exactly the committed
   `weather_11.xml`; Python's standard library, run with `-I`; run by `launcher.yml`'s always-run changes job),
+  `fake-portal.py` (a fake captive portal for design 102's Wi-Fi sign-in window: one server answering the portal's
+  name and another site's, with modes - a 302 portal, meta refresh, script, a soft portal, a hotspot that 302s to a
+  search page, a Google walled garden, a full-page iframe, a same-site redirector, a form whose POST 302s to another
+  site, a reached site's POSTs that 302 and 307 to a third site; standard library, `--selftest`, run by `launcher.yml`'s always-run changes job; `docs/testing/emulator.md`
+  §6ap),
   `music-splash.py` (the music app's launch splash drawables: the Vibb mark read from the launcher's Home splash, "vibb
   music" from Nunito's outlines; `--selftest`), `webauthn-rs256-vector.py` (the server's RS256 passkey vector
   `server/testdata/webauthn/rs256.json`, made once with a throwaway key - public data only; design 74), `emoji-list.py`
@@ -337,6 +342,21 @@ checks its keys, bits and default order against `items` and `defaults` and encod
 page's sub-lines from the names, and `intake_limits` keeps the report's keys; both compare the copies. No policy key:
 bit 128 rides in `quick_controls_mask`.
 
+Wi-Fi sign-in and Chrome only for logins (design 102) is `server/testdata/login_windows.json`, byte-identical in
+`launcher/app/src/test/resources/`: `capabilities` (`captive_portal_v1`, `login_browser_v1`), `policy` (the top-level
+`captive_portal` and `login_browser` for a new phone and after the page's saves: the switch, Advanced's parent-code
+requirement, "one more", the role, a preset ticked and unticked with an own entry equal to its host kept, Chrome
+ticked), `older_server` (the launcher's reading of a policy with neither key: on, `require_code: true`, the role off),
+`report` and `report_off` (the exact `captive_portal` and `login_browser` of a status report), `clean` (the server's
+field-by-field cleaning) and `entries` (the add field's input to an entry or a refusal). The server's `tests::logins`
+saves through `POST /devices/{id}/logins` and produces each `policy` row, posts the reports and checks what is stored,
+and runs `clean` and `entries` (`logins::valid_entry`); `intake_limits` keeps the reports' keys; the launcher's
+`LoginWindowsTest` decodes `policy` and `older_server`, encodes `report` exactly and runs `entries` through its own
+check (`loginEntry`); both compare the copies. The window's and the role's own rules stay the launcher's alone, in
+`launcher/app/src/test/resources/login_rules.json` (`PortalRulesTest`, `LoginBrowserTest`). The policy's
+`captive_portal` and `login_browser` are pinned by `policy_json_keys_snapshot` and the launcher's
+`PolicyResponseCompatTest`.
+
 ## CI and releases
 
 - `.github/workflows/launcher.yml`, `server-ci.yml` and `music.yml` run on every push/PR, but their build job
@@ -344,7 +364,7 @@ bit 128 rides in `quick_controls_mask`.
   (`launcher.yml` also on `.github/actions/build-tsnet/` and the music files its tests read: the bridge, the
   shared snapshots, the three `spotify_hosts.json`, `server/testdata/time_status_report.json`,
   `dns_upstream_status.json`, `power_report.json`, `zone_status_report.json`, `launcher_tag_codes.json`,
-  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json`, `server_url_vectors.json`, `restrictions_pause.json`, `server_tls_report.json`, `sms_contract.json`, `contact_request.json`, `app_logos.json`, `lock_now.json`, `mobile_network.json`, `status_heartbeat.json`, `airplane_mode.json`, `rule_pause.json` and `shortcuts.json`, `music/gradle/` and `music.yml`, and the server's and music's `storytel_token_answers.json`, and `server/testdata/doh_hosts.txt`, and `scripts/yr-symbols.py` with its vendored `yr-symbols-11.svg` (the changes job runs its `--selftest` always); `music.yml` also on the shared
+  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json`, `server_url_vectors.json`, `restrictions_pause.json`, `server_tls_report.json`, `sms_contract.json`, `contact_request.json`, `app_logos.json`, `lock_now.json`, `mobile_network.json`, `status_heartbeat.json`, `airplane_mode.json`, `rule_pause.json`, `shortcuts.json` and `login_windows.json`, `music/gradle/` and `music.yml`, and the server's and music's `storytel_token_answers.json`, and `server/testdata/doh_hosts.txt`, and `scripts/yr-symbols.py` with its vendored `yr-symbols-11.svg` and `scripts/fake-portal.py` (the changes job runs both `--selftest`s always); `music.yml` also on the shared
   `server/testdata/music_*.json` and `spotify_hosts.json`, the launcher's copy of the bridge AIDL,
   `bridge_contract.json` and `spotify_hosts.json`, `server/testdata/spotify/`, `scripts/fake-sonos.py`,
   `scripts/fake-storytel.py`, `scripts/fake-spotify.py`, `scripts/fake-audio.py`, `scripts/music-splash.py`
@@ -353,7 +373,7 @@ bit 128 rides in `quick_controls_mask`.
   `server-ci.yml`'s build job also on the apps' `spotify_hosts.json` and `storytel_token_answers.json` copies and
   the launcher's `time_status_report.json`,
   `dns_upstream_status.json`, `power_report.json`, `zone_status_report.json`, `launcher_tag_codes.json`,
-  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json`, `server_url_vectors.json`, `restrictions_pause.json`, `server_tls_report.json`, `sms_contract.json`, `contact_request.json`, `app_logos.json`, `lock_now.json`, `mobile_network.json`, `status_heartbeat.json`, `airplane_mode.json`, `rule_pause.json` and `shortcuts.json`, and the launcher's `assets/dns/doh_hosts.txt`, and `scripts/mmsc-hosts.py` with its `scripts/mmsc-hosts-sample.xml` (the changes job runs its `--selftest` always);
+  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json`, `server_url_vectors.json`, `restrictions_pause.json`, `server_tls_report.json`, `sms_contract.json`, `contact_request.json`, `app_logos.json`, `lock_now.json`, `mobile_network.json`, `status_heartbeat.json`, `airplane_mode.json`, `rule_pause.json`, `shortcuts.json` and `login_windows.json`, and the launcher's `assets/dns/doh_hosts.txt`, and `scripts/mmsc-hosts.py` with its `scripts/mmsc-hosts-sample.xml` (the changes job runs its `--selftest` always);
   `server-ci.yml`'s
   `server-image` job only when `server/Dockerfile`, `server/.dockerignore`, `server/deploy/image-smoke.sh`, `server/deploy/distrusted-roots.txt` or
   the workflow changed). The server's Rust (`toolchain: 1.99.0`) is pinned in `server-ci.yml` and

@@ -154,6 +154,22 @@
         </form>
     </section>
 
+    {#- Design 102 revision 5 (the user's placement): the parent code for every Wi-Fi sign-in and reopen, on by
+        default. Its own form, saved by the Sign-in page's handler (section=wifi_signin) and answered back here
+        (#wifi-signin) - a save never jumps to the top. -#}
+    <section id="wifi-signin" aria-labelledby="wifi-signin-title">
+        <h2 class="group-header" id="wifi-signin-title">{{ self.t("logins.code.header") }}</h2>
+        <form method="post" action="/devices/{{ device.id }}/logins#wifi-signin" class="group">
+            <input type="hidden" name="section" value="wifi_signin">
+            <label class="row">
+                <span class="row-label">{{ self.t("logins.code.label") }}<span class="row-sub">{{ self.t("logins.code.sub") }}</span>{% if let Some(key) = wifi_signin.warning %}<span class="row-sub tone-orange" data-hint="wifi-signin">{{ self.t(key) }}</span>{% endif %}</span>
+                <input type="checkbox" role="switch" class="sw" name="on" value="on"{% if wifi_signin.require_code %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+            </label>
+            <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
+        </form>
+        <p class="group-footer">{{ self.t("logins.code.footer") }} <a href="/devices/{{ device.id }}/logins#logins-wifi">{{ self.t("logins.page") }}</a></p>
+    </section>
+
     {% if device.enrolled_at.is_some() %}
     <section id="app-screens" aria-labelledby="app-screens-title">
         <h2 class="group-header" id="app-screens-title">{{ self.t("device.advanced.app_screens") }}</h2>

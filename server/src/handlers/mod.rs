@@ -20,6 +20,7 @@ pub mod lifts;
 pub mod locate;
 pub mod lock;
 pub mod lock_glance;
+pub mod logins;
 pub mod mobile_page;
 pub mod music;
 pub mod music_api;

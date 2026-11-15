@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="{{ lang.code() }}">
+<head>
+{% include "partials/head.html" %}
+</head>
+<body>
+<div class="top-strip" aria-hidden="true"></div>
+{% let tab = "devices" %}
+{% include "partials/tab_bar.html" %}
+{% import "partials/band.html" as band %}
+<main class="container">
+    {% call band::phone(self.t("logins.page"), "/devices/" ~ device.id ~ "/filter", device.name, who) %}{% endcall %}
+    <div class="sheet">
+
+    {#- Design 102 §5: each form answers on its own group's anchor (#logins-wifi, #logins-apps, #logins-sites): with JS
+        scroll-restore.js keeps the place, without JS the <noscript> Save lands on the group - a save never jumps to the
+        top. The parent code's requirement is Advanced's own row (#wifi-signin); this page shows its state with a link. -#}
+    <section id="logins-wifi" aria-labelledby="logins-wifi-title">
+        <h2 class="group-header" id="logins-wifi-title">{{ self.t("logins.wifi.header") }}</h2>
+        <form method="post" action="/devices/{{ device.id }}/logins#logins-wifi" class="group">
+            <input type="hidden" name="section" value="wifi">
+            <label class="row">
+                <span class="row-label">{{ self.t("logins.wifi.label") }}<span class="row-sub">{{ self.t("logins.wifi.sub") }}</span>{% if reported && !portal_capable %}<span class="row-sub tone-orange" data-hint>{{ self.t("logins.needs_update") }}</span>{% endif %}</span>
+                <input type="checkbox" role="switch" class="sw" name="on" value="on"{% if wifi_on %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+            </label>
+            <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
+        </form>
+        {% if wifi_on %}
+        <div class="group">
+            <a class="row" href="/devices/{{ device.id }}/advanced#wifi-signin" data-row="wifi-code">
+                <span class="row-label">{% if require_code %}{{ self.t("logins.wifi.code_on") }}{% else %}{{ self.t("logins.wifi.code_off") }}{% endif %}</span>
+                <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </a>
+            {% if let Some(line) = today %}
+            <p class="row row-note" data-row="wifi-today">{{ line }}</p>
+            {% endif %}
+            <form method="post" action="/devices/{{ device.id }}/logins#logins-wifi" class="cell">
+                <input type="hidden" name="section" value="grant">
+                <button type="submit" class="row row-button" data-grant>{{ self.t("logins.wifi.grant") }}</button>
+            </form>
+            <p class="row row-note">{{ self.t("logins.wifi.grant_sub") }}</p>
+            {% if granted %}<p class="flash" role="status" data-flash="granted">{{ self.t("logins.wifi.granted") }}</p>{% endif %}
+        </div>
+        {% endif %}
+        <p class="group-footer">{{ self.t("logins.wifi.footer") }}</p>
+    </section>
+
+    {% if !recent.is_empty() %}
+    <section id="logins-recent" aria-labelledby="logins-recent-title">
+        <h2 class="group-header" id="logins-recent-title">{{ self.t("logins.recent.header") }}</h2>
+        <div class="group">
+            {% for r in recent %}
+            <div class="row" data-signin>
+                <span class="row-label">{{ r.network }}<span class="row-sub">{{ r.how }}</span>{% if !r.sites.is_empty() %}<span class="row-sub">{{ r.sites }}</span>{% endif %}{% if !r.blocked.is_empty() %}<span class="row-sub">{{ r.blocked }}</span>{% endif %}</span>
+                <span class="row-value row-value-keep">{{ r.when }}</span>
+            </div>
+            {% endfor %}
+        </div>
+    </section>
+    {% endif %}
+
+    <section id="logins-apps" aria-labelledby="logins-apps-title">
+        <h2 class="group-header" id="logins-apps-title">{{ self.t("logins.apps.header") }}</h2>
+        <form method="post" action="/devices/{{ device.id }}/logins#logins-apps" class="group">
+            <input type="hidden" name="section" value="apps">
+            <label class="row">
+                <span class="row-label">{{ self.t("logins.apps.label") }}<span class="row-sub">{{ self.t("logins.apps.sub") }}</span>{% if reported && !browser_capable %}<span class="row-sub tone-orange" data-hint>{{ self.t("logins.needs_update") }}</span>{% endif %}</span>
+                <input type="checkbox" role="switch" class="sw" name="on" value="on"{% if apps_on %} checked{% endif %}{% if chrome_ticked %} disabled{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+            </label>
+            {% if chrome_ticked %}
+            <p class="row row-note" data-row="chrome-ticked">{{ self.t("logins.apps.ticked") }}</p>
+            {% else if chrome_present == Some(false) %}
+            <p class="row row-note" data-row="no-chrome">{{ self.t("logins.apps.no_chrome") }}</p>
+            {% endif %}
+            {% if let Some(key) = apps_state %}
+            <div class="row" data-row="apps-state">
+                <span class="row-label">{{ self.t("logins.apps.state") }}</span>
+                <span class="row-value">{{ self.t(key) }}</span>
+            </div>
+            {% endif %}
+            <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
+        </form>
+        <p class="group-footer">{{ self.t("logins.apps.clear") }}</p>
+    </section>
+
+    <section id="logins-sites" aria-labelledby="logins-sites-title">
+        <h2 class="group-header" id="logins-sites-title">{{ self.t("logins.sites.header") }}</h2>
+        <div class="group">
+            {% for p in presets %}
+            <form method="post" action="/devices/{{ device.id }}/logins#logins-sites" class="cell" data-preset="{{ p.key }}">
+                <input type="hidden" name="section" value="preset">
+                <input type="hidden" name="preset" value="{{ p.key }}">
+                <label class="row">
+                    <span class="row-label">{{ p.name }}<span class="row-sub">{{ p.hosts }}</span></span>
+                    <input type="checkbox" role="switch" class="sw" name="on" value="on"{% if p.on %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                </label>
+                <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
+            </form>
+            {% endfor %}
+            {% if !blocked_presets.is_empty() %}
+            <p class="row row-note text-alarm" data-row="presets-blocked">{{ self.tp("logins.sites.presets_blocked", [("hosts", blocked_presets.join(", ").as_str())]) }} <a href="/devices/{{ device.id }}/filter#allowed">{{ self.t("logins.sites.allowed_link") }}</a></p>
+            {% endif %}
+        </div>
+        <h3 class="group-header">{{ self.t("logins.sites.own") }}</h3>
+        <div class="group">
+            {% for s in sites %}
+            <div class="row" data-site="{{ s.entry }}">
+                <span class="row-label">{{ s.entry }}{% if let Some(note) = s.note %}<span class="row-sub">{{ note }}</span>{% endif %}{% if s.blocked %}<span class="row-sub text-alarm" data-blocked>{{ self.t("logins.sites.blocked") }} <a href="/devices/{{ device.id }}/filter#allowed">{{ self.t("logins.sites.allowed_link") }}</a></span>{% endif %}</span>
+                <form method="post" action="/devices/{{ device.id }}/logins#logins-sites" class="row-end">
+                    <input type="hidden" name="section" value="site">
+                    <input type="hidden" name="action" value="remove">
+                    <input type="hidden" name="entry" value="{{ s.entry }}">
+                    <button type="submit" class="row-action row-danger" aria-label="{{ self.tp("logins.sites.remove_label", [("site", s.entry.as_str())]) }}">{{ self.t("logins.sites.remove") }}</button>
+                </form>
+            </div>
+            {% endfor %}
+            <form method="post" action="/devices/{{ device.id }}/logins#logins-sites" class="cell">
+                <input type="hidden" name="section" value="site">
+                <input type="hidden" name="action" value="add">
+                <div class="row">
+                    <input type="text" class="row-input" name="entry" placeholder="{{ self.t("logins.sites.example") }}" aria-label="{{ self.t("logins.sites.add_label") }}" required maxlength="255" autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="url">
+                </div>
+                <div class="row">
+                    <input type="text" class="row-input" name="note" placeholder="{{ self.t("logins.sites.note_placeholder") }}" aria-label="{{ self.t("logins.sites.note_label") }}" maxlength="60" autocomplete="off">
+                    <button type="submit" class="row-action">{{ self.t("logins.sites.add") }}</button>
+                </div>
+            </form>
+            {% if let Some(key) = site_notice %}<p class="flash flash-error" role="status" data-flash="site">{{ self.t(key) }}</p>{% endif %}
+        </div>
+        <p class="group-footer">{{ self.t("logins.sites.note") }}</p>
+    </section>
+
+    </div>
+</main>
+</body>
+</html>

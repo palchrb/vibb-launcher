@@ -17,6 +17,16 @@ class WifiNetworkAdapter(
     private val networks = mutableListOf<QuickControls.WifiNetworkInfo>()
     private var connectingSsid: String? = null
 
+    /** Design 102 §3.6: the connected network that wants a sign-in ("Tilkoblet – må logges på"). */
+    private var captiveSsid: String? = null
+
+    @SuppressLint("NotifyDataSetChanged")
+    fun setCaptiveSsid(ssid: String?) {
+        if (ssid == captiveSsid) return
+        captiveSsid = ssid
+        notifyDataSetChanged()
+    }
+
     @SuppressLint("NotifyDataSetChanged")
     fun submitList(newNetworks: List<QuickControls.WifiNetworkInfo>) {
         networks.clear()
@@ -57,6 +67,7 @@ class WifiNetworkAdapter(
 
         val statusText = when {
             network.ssid == connectingSsid -> context.getString(R.string.wifi_networks_connecting)
+            network.isConnected && network.ssid == captiveSsid -> context.getString(R.string.wifi_networks_connected_sign_in)
             network.isConnected -> context.getString(R.string.wifi_networks_connected)
             network.savedNetworkId != null -> context.getString(R.string.wifi_networks_saved)
             else -> null

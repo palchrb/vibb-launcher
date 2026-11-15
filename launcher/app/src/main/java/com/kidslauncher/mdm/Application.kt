@@ -185,6 +185,13 @@ class Application : android.app.Application() {
             com.kidslauncher.mdm.lock.BootCoverGuard.install(this)
             return
         }
+        // Design 102 §3.1: the Wi-Fi sign-in window's own process (`:portal`), bound to the portal's network - nothing of
+        // the main process's start-up runs there (Q102-M2): no lock runtime, receivers, alarms, assistant set-up or
+        // preferences. Its WebView keeps its own data directory. `instance` stays null.
+        if (com.kidslauncher.mdm.portal.isPortalProcess(getProcessName())) {
+            com.kidslauncher.mdm.portal.preparePortalProcess()
+            return
+        }
         instance = this
         // First, and on its own: the call services (screening, redirection, in-call) run in this
         // process and read the rules from memory. If anything below throws, they must still have
@@ -395,6 +402,10 @@ class Application : android.app.Application() {
                 android.util.Log.w("Application", "Airplane put-back failed: ${e.javaClass.simpleName}")
             }
         }.start()
+
+        // Design 102 §3.8: the reopen's records of an earlier boot go; the Wi-Fi is watched for Home's line and the Wi-Fi
+        // page. Never throws.
+        com.kidslauncher.mdm.portal.PortalRuntime.start(this)
 
         // Try to restore old preferences
         migratePreferencesToNewVersion(this)

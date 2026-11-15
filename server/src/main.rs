@@ -39,6 +39,7 @@ mod limits;
 mod lock;
 mod lock_glance;
 mod lock_now;
+mod logins;
 mod mmsc_hosts;
 mod mobile_network;
 mod models;
@@ -1143,6 +1144,11 @@ pub fn build_admin_router(
         .route(
             "/devices/{id}/mobile",
             get(handlers::mobile_page::view).post(handlers::mobile_page::save),
+        )
+        // Design 102 §5: Device › Sign-in (Wi-Fi sign-in and Chrome only for logins), and Advanced's #wifi-signin row.
+        .route(
+            "/devices/{id}/logins",
+            get(handlers::logins::view).post(handlers::logins::save),
         )
         // Step 6: Device › Apps (its forms: `/apps/toggle`, `/app-updates`, `/apps/display`,
         // `/apps/permissions`).
