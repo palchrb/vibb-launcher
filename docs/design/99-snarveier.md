@@ -10,6 +10,12 @@ High, 2 Medium, 11 Low; §13 says how each was handled). What changed: **four it
 grid; Flymodus from the shade starts its route only after a Vibb window has focus (§4.1); one pure fail-closed tap check
 (§2.1); the listeners live in the process, not the service (§2.3).
 
+**Superseded in part by design 100** (`docs/design/100-one-vibb-notification.md`, built in its step 1): there is no
+`ShortcutsService` any more. The panel is the anchor's own notification (id 1002) while it is shown, posted by one
+poster that swaps it with r13's plain notice; §2.1's "separate from the anchor" and §2.4 (the service's life) are
+replaced by design 100 §2, §2.3's throttle covers every post of id 1002, and the panel's small icon is the gear
+(`ic_stat_gear`).
+
 Approved by the user on 2026-11-14 (PLAN, "Snarveier"), after design 98 measured that the long-press panel can't work
 (§5b and §9.2 there: lock task always sets `DISABLE_SEARCH`, so the assist gesture never reaches Vibb). The user's
 words:

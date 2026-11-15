@@ -563,7 +563,7 @@ class KidVpnService : VpnService() {
 
     private fun buildNotification() =
         NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_VPN_FILTER)
-            .setSmallIcon(R.drawable.baseline_bug_report_24)
+            .setSmallIcon(R.drawable.ic_stat_vibb)
             // Shown only while the filter is starting or down (vpnHoldsForeground): "connecting".
             .setContentTitle(getString(R.string.notification_vpn_filter_title))
             .setOngoing(true)

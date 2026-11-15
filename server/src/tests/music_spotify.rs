@@ -292,6 +292,7 @@ fn migrations_from_73_in_order() {
             (146, "airplane mode".to_string()),
             (147, "rule pause".to_string()),
             (148, "shortcuts".to_string()),
+            (149, "time request answers".to_string()),
             (150, "login windows".to_string())
         ],
         "0073 (design 30), 0074 (Spotify), 0075 (the clock format), 0076 (the softer \

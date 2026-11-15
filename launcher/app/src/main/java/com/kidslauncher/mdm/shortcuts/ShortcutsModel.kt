@@ -84,7 +84,7 @@ data class ShortcutsPlatform(
     /** The kid's Mobildata row (`kidMobileRow`); HIDDEN without bit 32. */
     val mobile: KidMobileRow = KidMobileRow.HIDDEN,
     val brightness: Int = 128,
-    /** The anchor notice's time part (`timeLeftNotice`'s `ask`). */
+    /** The anchor notice's ask part (`timePart`'s `ask`, design 100 §14.3): usable, dimmed while a request is open, or none. */
     val ask: AskPart = AskPart.None,
     val music: ShortcutMusic? = null,
 )

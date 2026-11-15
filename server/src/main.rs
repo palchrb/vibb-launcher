@@ -75,6 +75,7 @@ mod storytel;
 mod streams;
 #[cfg(test)]
 mod tests;
+mod time_answers;
 mod time_rules;
 mod time_state;
 mod wallpapers;
@@ -1082,6 +1083,10 @@ pub fn build_admin_router(
         .route(
             "/devices/{id}/lifts/{lift_id}/end",
             post(handlers::lifts::end_lift),
+        )
+        .route(
+            "/devices/{id}/time-request/answer",
+            post(handlers::time_answer::answer),
         )
         .route(
             "/devices/{id}/rules-now",

@@ -34,6 +34,7 @@ import com.kidslauncher.mdm.server.LockReason
 import com.kidslauncher.mdm.server.reevaluateLockReasonFromCache
 import com.kidslauncher.mdm.server.currentPolicyDecision
 import com.kidslauncher.mdm.preferences.LauncherPreferences
+import com.kidslauncher.mdm.timerules.TimeAsk
 import com.kidslauncher.mdm.timerules.TimeRulesRuntime
 import com.kidslauncher.mdm.ui.home.AppIconLoader
 import com.kidslauncher.mdm.ui.home.KidAvatars
@@ -117,6 +118,14 @@ class LockActivity : UIObjectActivity() {
         binding.lockMore.setOnClickListener { openSheet() }
         // TalkBack reads it as a button ("Nødsamtale, knapp"), as the keypad's pill (design 34 P7).
         binding.lockEmergencyButton.accessibilityDelegate = ButtonRole
+        // Design 100 §8.4: "Be om mer tid" / "Spør igjen" - the one request path; `askStep` decides again inside, so a
+        // stale screen can't ask twice. The listener is set once here; renderAsk makes the pill clickable or not.
+        binding.lockAskButton.setOnClickListener {
+            if (shownAsk.hasButton) {
+                TimeAsk.askNow(this)
+                render()
+            }
+        }
     }
 
     /** Design 98 §4.3: the lock of the last render, for the sheet's rows. */
@@ -219,9 +228,14 @@ class LockActivity : UIObjectActivity() {
         com.kidslauncher.mdm.badges.AlarmNoticeReader.addListener(alarmListener)
         com.kidslauncher.mdm.timerules.ZenRuleRuntime.addListener(alarmListener)
         com.kidslauncher.mdm.assistant.AirplaneRuntime.addListener(airplaneListener)
+        // Design 100 §8.4 (Q100-H1): the request's changes - sent, taken, answered - on the main thread.
+        com.kidslauncher.mdm.server.AnchorNotice.addListener(askListener)
         readPinConfigured()
         render()
     }
+
+    /** The request for more time changed (design 100 §8.4): the ask block again, from a fresh read (nothing passed). */
+    private val askListener: () -> Unit = { if (!isFinishing) render() }
 
     /** The calendars or Dagen's policy changed: the Kalender row may come or go. */
     private val calendarListener: () -> Unit = { if (!isFinishing) render() }
@@ -247,7 +261,7 @@ class LockActivity : UIObjectActivity() {
         com.kidslauncher.mdm.lock.GlanceOpener.openHandedOver(this)
         val marked = takeUnlockMark() && PinLockRuntime.mode != com.kidslauncher.mdm.lock.LockMode.LOCKED
         if (isFinishing) return
-        val only = unlockOpenRow(marked, handedOver, shownRows) ?: return
+        val only = unlockOpenRow(marked, handedOver, shownRows, shownAsk.hasButton) ?: return
         Log.i("LockActivity", "One thing usable: opened after the unlock (${only.javaClass.simpleName})")
         open(only)
     }
@@ -273,6 +287,7 @@ class LockActivity : UIObjectActivity() {
         com.kidslauncher.mdm.badges.AlarmNoticeReader.removeListener(alarmListener)
         com.kidslauncher.mdm.timerules.ZenRuleRuntime.removeListener(alarmListener)
         com.kidslauncher.mdm.assistant.AirplaneRuntime.removeListener(airplaneListener)
+        com.kidslauncher.mdm.server.AnchorNotice.removeListener(askListener)
         // Design 98 §4.3/§4.4.1: the sheet never outlives the screen in view (a parent handing the phone back).
         sheetDialog?.dismiss()
         sheetDialog = null
@@ -344,6 +359,15 @@ class LockActivity : UIObjectActivity() {
             this, binding.lockRuleCard, glyphRes(lockGlyph(rule?.kind)), labelText(this, ruleLabel(rule?.kind, rule?.name.orEmpty())),
             end, sentences.joinToString(" ").takeIf { it.isNotEmpty() },
         )
+        // Design 100 §8.2 (D4): the ask block on the used-up budget's screen only (no rule named).
+        renderAsk(
+            try {
+                snap?.let { TimeAsk.lockAskFor(this, it, ruleInForce = rule != null) }
+            } catch (e: Exception) {
+                Log.w("LockActivity", "Couldn't work out the request for more time: ${e.javaClass.simpleName}")
+                null
+            },
+        )
         // Kalender (PLAN 2026-11-02): when every rule in force allows it and Home shows its tile (code QA L2: a phone
         // with no calendar set up gets no row, nor an empty Kalender after every unlock).
         val calendar = getString(R.string.day_title).takeIf { lock?.calendarUsable == true && CalendarStore.tileShown() }
@@ -355,6 +379,63 @@ class LockActivity : UIObjectActivity() {
         renderRows(
             timeLockRows(callsManaged, lock?.callsAllowed != false, getString(R.string.calls_phone_book), openableApps(rowPackages(lock?.usableApps.orEmpty())), calendar, alarm, messages),
         )
+    }
+
+    /** The ask block of the last render, for the tap and the open after an unlock (D6). */
+    private var shownAsk: LockAsk? = null
+
+    /**
+     * Design 100 §8.3: the ask block - the accent pill "Be om mer tid"; the open request's note in a dim pill (text, not
+     * clickable); the answer's line and the ringed "Spør igjen"; or the line and "Du har spurt tre ganger i dag.";
+     * gone for `null`. TalkBack: one stop for the note, one for the button ("…, knapp").
+     */
+    private fun renderAsk(ask: LockAsk?) {
+        shownAsk = ask
+        val line = binding.lockAskLine
+        val button = binding.lockAskButton
+        val capped = binding.lockAskCapped
+        if (ask == null) {
+            binding.lockAsk.visibility = View.GONE
+            return
+        }
+        binding.lockAsk.visibility = View.VISIBLE
+        val note = (ask as? LockAsk.Note)?.let { com.kidslauncher.mdm.server.AnchorNotice.noteText(this, it.note) }
+        fun pill(text: String, background: Int, color: Int, sizeSp: Float, clickable: Boolean) {
+            button.visibility = View.VISIBLE
+            // Code QA L2: a live region speaks every text set - only a changed one is set (render runs on many signals).
+            if (button.text.toString() != text) button.text = text
+            button.setBackgroundResource(background)
+            button.setTextColor(ContextCompat.getColor(this, color))
+            button.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, sizeSp)
+            button.isClickable = clickable
+            // Code QA L3: always focusable - TalkBack's focus stays on the pill as "Be om mer tid" turns into "Spurt kl.
+            // … · sender …" after the tap (read out by its live region), never dropped to the top of the screen.
+            button.isFocusable = true
+            button.accessibilityDelegate = if (clickable) ButtonRole else null
+        }
+        when {
+            ask == LockAsk.Button -> {
+                line.visibility = View.GONE
+                capped.visibility = View.GONE
+                pill(getString(R.string.anchor_ask_more_time), R.drawable.bg_lock_ask_fill, R.color.kid_ground, 17f, clickable = true)
+            }
+            ask is LockAsk.Note && ask.again == AgainPart.NONE -> {
+                line.visibility = View.GONE
+                capped.visibility = View.GONE
+                if (note == null) button.visibility = View.GONE else pill(note, R.drawable.bg_lock_ask_dim, R.color.kid_core, 16f, clickable = false)
+            }
+            ask is LockAsk.Note -> {
+                if (line.text.toString() != note.orEmpty()) line.text = note
+                line.visibility = if (note == null) View.GONE else View.VISIBLE
+                if (ask.again == AgainPart.ASK_AGAIN) {
+                    capped.visibility = View.GONE
+                    pill(getString(R.string.lock_ask_again), R.drawable.bg_lock_ask_outline, R.color.kid_accent, 17f, clickable = true)
+                } else {
+                    button.visibility = View.GONE
+                    capped.visibility = View.VISIBLE
+                }
+            }
+        }
     }
 
     /** The rows of the last [renderRows], for the open after an unlock. */

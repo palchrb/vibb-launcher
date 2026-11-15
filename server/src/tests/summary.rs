@@ -441,6 +441,17 @@ async fn every_form_on_the_summary_returns_to_its_group() {
                                     "reason": "outside_play", "found": "install", "at_ms": null }] }),
     )
     .await;
+    // Design 100 §14.4: the kid's open request, so the answer card is on the page.
+    let request = "ab".repeat(16);
+    let asked = app
+        .request(
+            Method::POST,
+            "/api/devices/time-request",
+            Some(&token),
+            Some(json!({"id": request, "asked_at_ms": Utc::now().timestamp_millis()})),
+        )
+        .await;
+    assert_eq!(asked.json(), json!({"accepted": true}));
     let summary = device_page(id, Section::Summary);
     let html = app.get_page(&summary, &cookie).await.text();
     // (action, what the parent picks, the expected Location and fragment)
@@ -486,6 +497,30 @@ async fn every_form_on_the_summary_returns_to_its_group() {
     let mut found = forms(&html);
     // The header's picture comes first: a multipart upload, `tests::avatars`.
     assert_eq!(found.remove(0).0, format!("/devices/{id}/avatar#avatar"));
+    // Then the answer card (design 100 §14.4, QA R2-M1): its action names the card itself (the staying post), and the
+    // answer lands on Quick actions with its flash - the card is gone then.
+    let (card, hidden) = found.remove(0);
+    assert_eq!(card, format!("/devices/{id}/time-request/answer#ask"));
+    assert_eq!(hidden, [("request".to_string(), request.clone())]);
+    let res = app
+        .request_form(
+            Method::POST,
+            card.split('#').next().unwrap(),
+            Some(&cookie),
+            &[("request", &request), ("answer", "15")],
+        )
+        .await;
+    assert_redirect(&res, &format!("{summary}?done=extra"), Some("quick"));
+    app.assert_lands(&res, &cookie).await;
+    let page = app
+        .get_page(&format!("{summary}?done=extra"), &cookie)
+        .await
+        .text();
+    assert!(
+        group(&page, "quick").contains("data-flash=\"quick\""),
+        "{page}"
+    );
+    assert!(!page.contains("id=\"ask\""), "answered: {page}");
     assert_eq!(
         found.iter().map(|(a, _)| a.as_str()).collect::<Vec<_>>(),
         table.iter().map(|(a, ..)| a.as_str()).collect::<Vec<_>>(),

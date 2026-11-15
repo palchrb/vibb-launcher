@@ -228,12 +228,37 @@ class QuietNotificationsTest {
             assertFalse(path, "notification_listener_text" in s)
         }
         // Design r13 §2.2: the builder is AnchorNotice's; the plain notice (no budget) is the title alone.
-        val build = body(source("AnchorNotice.kt"), "fun build(context: Context, notice: TimeLeftNotice)")
+        val build = body(source("AnchorNotice.kt"), "fun build(context: Context, time: TimePart)")
         assertTrue("null -> context.getString(R.string.notification_listener_title)" in build)
-        assertTrue("the asked line is the only body", "is AskPart.Asked -> builder.setContentText(" in build)
+        assertTrue("the note is the only body", "noteText(context, time.note)?.let { builder.setContentText(it) }" in build)
         assertEquals(1, Regex("setContentText").findAll(build).count())
         assertTrue("NOTIFICATION_CHANNEL_LISTENER" in build)
-        assertTrue("startForeground(COMMAND_LISTENER_NOTIFICATION_ID, AnchorNotice.plain(this))" in source("CommandListenerService.kt"))
+        // Design 100 §2.3: the plain builder never asks to be shown at once (the panel normally replaces it at boot;
+        // Android still shows one with an action at once, Q100-L2), and the anchor's start goes through the one poster.
+        assertFalse("FOREGROUND_SERVICE_IMMEDIATE" in build || "setForegroundServiceBehavior" in build)
+        assertTrue("startForeground(COMMAND_LISTENER_NOTIFICATION_ID, AnchorNotification.forStart(this))" in source("CommandListenerService.kt"))
+        // D7: the anchor's channel is named "Vibb One", the name the kid reads in the long-press sheet.
+        for (path in listOf("src/main/res/values/strings.xml", "src/main/res/values-nb/strings.xml")) {
+            assertEquals(path, "Vibb One", strings(path)["notification_channel_listener"])
+        }
+    }
+
+    @Test
+    fun `the small icons - the gear on the panel, the Vibb mark on the rest, every ic_stat drawable literal`() {
+        val main = "src/main/java/com/kidslauncher/mdm"
+        fun code(path: String) = file("$main/$path").readText()
+        assertTrue(".setSmallIcon(R.drawable.ic_stat_gear)" in code("shortcuts/ShortcutsNotification.kt"))
+        for (path in listOf("server/AnchorNotice.kt", "play/PlayRuntime.kt", "server/LocateCommands.kt", "assistant/AssistantSetup.kt", "server/KidVpnService.kt")) {
+            val icons = Regex("""setSmallIcon\(([^)]*)\)""").findAll(code(path)).map { it.groupValues[1] }.toList()
+            assertEquals(path, listOf("R.drawable.ic_stat_vibb"), icons)
+        }
+        // M10: a theme attribute doesn't resolve in SystemUI (an empty disc), so a status icon has literal colours.
+        val drawables = file("src/main/res/drawable").listFiles()!!.filter { it.name.startsWith("ic_stat_") }
+        assertEquals(setOf("ic_stat_gear.xml", "ic_stat_vibb.xml"), drawables.map { it.name }.toSet())
+        for (drawable in drawables) assertFalse(drawable.name, Regex("""="\?""").containsMatchIn(drawable.readText()))
+        // The app list's settings button keeps baseline_settings_24 (MIT code); the bug icon has no reader left.
+        assertTrue(file("src/main/res/drawable/baseline_settings_24.xml").exists())
+        assertFalse(listOf(File("src/main/res/drawable/baseline_bug_report_24.xml"), File("app/src/main/res/drawable/baseline_bug_report_24.xml")).any { it.exists() })
     }
 
     @Test

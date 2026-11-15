@@ -14,7 +14,17 @@
     <string name="anchor_time_left">%1$s igjen i dag</string>
     <string name="anchor_time_used_up">Skjermtiden er brukt opp i dag</string>
     <string name="anchor_ask_more_time">Be om mer tid</string>
-    <string name="anchor_asked_at">Spurt kl. %1$s</string>
+    <!-- Design 100 §8.4, §14.3: the request's note line (the panel, the plain notice's text, the time-rule screen). -->
+    <string name="ask_note_sending">Spurt kl. %1$s · sender …</string>
+    <string name="ask_note_offline">Spurt kl. %1$s · sendes når telefonen er på nett</string>
+    <string name="ask_note_waiting">Spurt kl. %1$s · venter på svar</string>
+    <string name="ask_note_no">%1$s svarte nei kl. %2$s</string>
+    <string name="ask_note_no_unnamed">Svaret ble nei kl. %1$s</string>
+    <string name="ask_note_given">%1$s ga deg %2$s</string>
+    <string name="ask_note_given_unnamed">Du fikk %1$s mer</string>
+    <!-- Design 100 §8.3: the time-rule screen's ask block ("Be om mer tid" is anchor_ask_more_time). -->
+    <string name="lock_ask_again">Spør igjen</string>
+    <string name="lock_ask_capped">Du har spurt tre ganger i dag.</string>
     <string name="lock_calls_emergency_only">Du kan bare ringe nødnumre nå.</string>
     <string name="lock_calls_allowed">Du kan fortsatt ringe kontaktene dine.</string>
     <string name="lock_alarm_stop">Slå av alarmen</string>
@@ -476,7 +486,7 @@
     <string name="notification_ring_title">Telefonen ringer</string>
     <string name="notification_ring_text">En forelder startet dette fra Finn enheten.</string>
     <string name="notification_ring_stop_action">Stopp ringingen</string>
-    <string name="notification_channel_listener">Finn enheten – bakgrunnstilkobling</string>
+    <string name="notification_channel_listener">Vibb One</string>
     <string name="notification_listener_title">Vibb One</string>
     <string name="notification_channel_vpn_filter">Innholdsfilter</string>
     <string name="vpn_session">Vibb One-filter</string>

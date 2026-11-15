@@ -240,19 +240,25 @@ object TimeRulesRuntime {
      * (design 24b S2: the window locks again then, one alarm for everything). */
     fun nextBoundary(context: Context): Instant? {
         val clocks = clocks()
-        // Design r13 §2.3 (R13-8): an open request for more time ends at its stored instant - one more boundary, so
-        // "Spurt" goes on time across a process death or a reboot.
-        val windowEnds = (windowEnds(clocks) + listOfNotNull(TimeRequests.openUntilMs(context)))
+        val windowEnds = windowEnds(clocks)
             .filter { it > clocks.wallMs }
             .map { Instant.ofEpochMilli(it) }
         val all = KidModeEnforcer.timePolicyOf(currentPolicyDecision().policy) ?: return windowEnds.minOrNull()
         val policy = all.inForceAt(clocks.wallMs)
         val records = liftRecords(context, policy.lifts, clocks)
+        // Design 100 (QA R2-L3, where r13's 30-minute instant was): the request's note changes by itself - "sendes når
+        // telefonen er på nett" 15 s after the tap, an answer's 30 minutes in the shade over - one more boundary, so the
+        // shade and the time-rule screen follow on time across a process death or a reboot.
+        val noteChange = try {
+            TimeRequests.noteChangeMs(context, ledger(context, policy, clocks, zone()).day, policy, clocks.wallMs)
+        } catch (e: Exception) {
+            null
+        }
         // Design 93 §9.1: a turned-on rule's absolute end is a boundary of its own.
         return nextBoundary(
             policy, Instant.ofEpochMilli(clocks.wallMs), zone(),
             liftExpiries(records, clocks) + windowEnds + untilInstants(policy, clocks.wallMs) +
-                PhonePauses.expiries(context, clocks),
+                PhonePauses.expiries(context, clocks) + listOfNotNull(noteChange?.let { Instant.ofEpochMilli(it) }),
         )
     }
 

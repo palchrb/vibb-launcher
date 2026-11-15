@@ -2,9 +2,11 @@ package com.kidslauncher.mdm.ui
 
 import com.kidslauncher.mdm.lock.RuleCardKind
 import com.kidslauncher.mdm.lock.ruleCardKind
+import com.kidslauncher.mdm.timerules.AskNote
 import com.kidslauncher.mdm.timerules.BudgetUse
 import com.kidslauncher.mdm.timerules.KIND_BEDTIME
 import com.kidslauncher.mdm.timerules.KIND_SCHOOL
+import com.kidslauncher.mdm.timerules.RequestState
 
 /*
  * The time-rule screen's content as pure rules (design 34 P6, `LockActivity`, `TimeLockModelTest`):
@@ -145,10 +147,50 @@ fun unlockMarkFresh(markedAtMs: Long, nowMs: Long): Boolean = markedAtMs > 0 && 
  * phone still unlocked) and the lock handed it no glance row ([handedOver], which opens instead). Otherwise none: the
  * card stays. The phone book (and Meldinger, the same reason) never opens by itself (the coordinator's decision on QA N5: a bedtime with calls and
  * nothing else would land every night unlock in it) but counts as a row, so it and one app keep the card; Emergency
- * call is no row and never counts.
+ * call is no row and never counts. Design 100 D6: while the ask block shows a button ([askButton]: "Be om mer tid" or
+ * "Spør igjen") there are two things to do, so none opens.
  */
-fun unlockOpenRow(marked: Boolean, handedOver: Boolean, rows: List<LockRow>): LockRow? =
-    if (marked && !handedOver) rows.singleOrNull()?.takeIf { it !is LockRow.PhoneBook && it !is LockRow.Messages && it !is LockRow.Alarm } else null
+fun unlockOpenRow(marked: Boolean, handedOver: Boolean, rows: List<LockRow>, askButton: Boolean = false): LockRow? =
+    if (marked && !handedOver && !askButton) {
+        rows.singleOrNull()?.takeIf { it !is LockRow.PhoneBook && it !is LockRow.Messages && it !is LockRow.Alarm }
+    } else {
+        null
+    }
+
+/** The ask block's second part under the note (design 100 §8.3): "Spør igjen", the day's three used, or nothing. */
+enum class AgainPart { ASK_AGAIN, CAPPED, NONE }
+
+/** The time-rule screen's ask block (design 100 §8.2): the [Button] "Be om mer tid", or the [Note] with its
+ * [AgainPart]. */
+sealed interface LockAsk {
+    data object Button : LockAsk
+
+    data class Note(val note: AskNote, val again: AgainPart) : LockAsk
+}
+
+/** The block shows a button ("Be om mer tid" or "Spør igjen"): the screen stays after the unlock (D6). */
+val LockAsk?.hasButton: Boolean
+    get() = this == LockAsk.Button || (this is LockAsk.Note && again == AgainPart.ASK_AGAIN)
+
+/**
+ * The ask block (design 100 §8.2, D4-D6): only on the used-up budget's screen - never while the screen names a rule
+ * ([ruleInForce]: more minutes don't open it, and bedtime mustn't invite a request every night), never without a
+ * budget today, in the pause or the override ([windowOpen]), or before enrolment. Idle: the button, or after time
+ * given without a request its note and "Spør igjen"; Pending/Waiting: the note alone; Answered: the note and "Spør
+ * igjen" while under the day's three, else the cap; Capped: the cap (with today's last answer when there is one).
+ * [note] is the screen's ([com.kidslauncher.mdm.timerules.NoteSurface.SCREEN]).
+ */
+fun lockAsk(ruleInForce: Boolean, budgetToday: Boolean, windowOpen: Boolean, enrolled: Boolean, state: RequestState, note: AskNote): LockAsk? =
+    if (ruleInForce || !budgetToday || windowOpen || !enrolled) {
+        null
+    } else {
+        when (state) {
+            RequestState.Idle -> if (note == AskNote.None) LockAsk.Button else LockAsk.Note(note, AgainPart.ASK_AGAIN)
+            is RequestState.Pending, is RequestState.Waiting -> LockAsk.Note(note, AgainPart.NONE)
+            is RequestState.Answered -> LockAsk.Note(note, if (state.canAskAgain) AgainPart.ASK_AGAIN else AgainPart.CAPPED)
+            RequestState.Capped -> LockAsk.Note(note, AgainPart.CAPPED)
+        }
+    }
 
 /**
  * E7 code QA 1: the packages the card offers as app rows - the rule's usable apps, and while the notification listener

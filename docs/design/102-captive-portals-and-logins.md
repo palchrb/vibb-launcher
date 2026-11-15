@@ -894,11 +894,11 @@ ALTER TABLE device_status ADD COLUMN login_browser_json TEXT;
      portal; a soft portal that passes https; a hotspot that 302s to a search page; a Google walled garden (gstatic
      passes, nothing else does); an iframe page; **a same-site redirector** (a tapped link 302s to another site); and
      **a form whose POST 302s** to another site.
-   - emulator.md §6ao.
+   - emulator.md §6ap.
 3. **Launcher Part B: the role** (M).
    - `BrowserConfig` before the hide loop, with the read-back.
    - `loginBrowser` in the plan, `loginRoleListable`, `chromeTightened` and the hide and unhide, the once-only clear.
-   - The report; `LoginBrowserTest`; emulator.md §6ap.
+   - The report; `LoginBrowserTest`; emulator.md §6aq.
 
 Steps 2 and 3 are independent of each other and both need step 1's contract. The launcher's half of the contract goes
 in the same commit as the server's.

@@ -98,6 +98,59 @@
                 android:id="@+id/lock_rule_card"
                 layout="@layout/view_lock_rule_card" />
 
+            <!-- Design 100 §8.3 (the phone mockup): the ask block, directly under the rule card and above the rows' card,
+                 14 dp under it, no card ground of its own - the used-up budget's screen only (`lockAsk`). The note
+                 line (the parent's answer, or time given), then the pill: "Be om mer tid" in the accent, the open
+                 request's note in a dim pill (text, not clickable), or "Spør igjen" with an accent ring; or the cap's
+                 line. Lines wrap, never cut; the changes are read out (polite live regions). Gone otherwise. -->
+            <LinearLayout
+                android:id="@+id/lock_ask"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <TextView
+                    android:id="@+id/lock_ask_line"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="12dp"
+                    android:accessibilityLiveRegion="polite"
+                    android:fontFamily="@font/nunito_bold"
+                    android:gravity="center_horizontal"
+                    android:textColor="@color/kid_core"
+                    android:textSize="16sp"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/lock_ask_button"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:accessibilityLiveRegion="polite"
+                    android:fontFamily="@font/nunito_extrabold"
+                    android:gravity="center"
+                    android:minHeight="52dp"
+                    android:paddingStart="20dp"
+                    android:paddingTop="10dp"
+                    android:paddingEnd="20dp"
+                    android:paddingBottom="10dp"
+                    android:textSize="17sp"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/lock_ask_capped"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:accessibilityLiveRegion="polite"
+                    android:fontFamily="@font/nunito_bold"
+                    android:gravity="center_horizontal"
+                    android:text="@string/lock_ask_capped"
+                    android:textColor="@color/kid_core_dim"
+                    android:textSize="16sp"
+                    android:visibility="gone" />
+            </LinearLayout>
+
             <!-- One card: a row per thing that still works (LockActivity fills it; gone when empty), 14 dp under the rule
                  card as the glance's rows. -->
             <LinearLayout

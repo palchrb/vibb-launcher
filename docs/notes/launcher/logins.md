@@ -85,7 +85,7 @@ The server's side is `docs/notes/server/status.md`, "Wi-Fi sign-in and logins (d
 - **Tests**: `PortalRulesTest` (`login_rules.json`: navigation, sites, schemes, approve, frames, passes, close, budget,
   open sessions, wifi rows, revisit), `LoginWindowsTest` (the shared `login_windows.json`), `ParentPinStoreTest` (the
   one-shot entry), `ServerTransportTest` (both configs, the tailnet fence, the DoH rule, the source scan).
-- **Checks owed**: `docs/testing/emulator.md` §6ao (E1-E7, E10-E13) with `scripts/fake-portal.py`, and the Jelly Star's
+- **Checks owed**: `docs/testing/emulator.md` §6ap (E1-E7, E10-E13) with `scripts/fake-portal.py`, and the Jelly Star's
   D-C1/D-C2.
 
 ## Part B: Chrome only for logins (`logins/`, `server/BrowserConfig.kt`)
@@ -123,6 +123,6 @@ The server's side is `docs/notes/server/status.md`, "Wi-Fi sign-in and logins (d
   blocklist; an https App Link callback's host must be on the list.
 - **The report**: `login_browser` (`BrowserConfig.report`: Chrome's package, `on`/`off`/`absent`/`failed` with the
   reason, its `versionName`, `written_ms`, `cleared_ms`), a full-report field; capability `login_browser_v1`.
-- **Checks owed**: `docs/testing/emulator.md` §6ap (E8, E9) and the Jelly Star's D-C3 to D-C6 (`chrome://policy` with a
+- **Checks owed**: `docs/testing/emulator.md` §6aq (E8, E9) and the Jelly Star's D-C3 to D-C6 (`chrome://policy` with a
   test bundle without `chrome://*`, typed `data:`/`view-source:`/`chrome://flags`/`javascript:`, "Add to Home screen"
   and "Install app", a real Feide or Google login, each preset's hosts).

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The time-rule screen's "Be om mer tid" (design 100 §8.3, the phone mockup): a full-width pill in the accent,
+     radius 26 dp (52 dp high), the press a dark veil over it. -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android" android:color="@color/kid_on_accent_press">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/kid_accent" />
+            <corners android:radius="26dp" />
+        </shape>
+    </item>
+</ripple>

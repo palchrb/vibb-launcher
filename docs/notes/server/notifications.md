@@ -365,8 +365,9 @@ Notifications on it). `docs/design/45-notifications-inbox-first.md`, `docs/desig
   never its name -, then today's screen time from `time_state`; never text from the request). `title`/`summary` empty;
   `told` words it: "Anna asks for more screen time" (`fit_name` to 60) / "17:21 · Screen time used up",
   "Yesterday 21:40 · Bedtime", "14:02 · 1 h 20 min left", "School", "A time rule", or the clock alone for `unknown`.
-  Target `/devices/{id}#quick` (the summary's Quick actions, where the tiles are; `/devices/{id}/time#extra` until
-  Device › Time Rules lost Extra Time Today on 2026-11-01 - migration 0115 repointed the stored rows). Kept
+  Target `/devices/{id}#ask` since design 100 (the summary's answer card; a push opened after the answer finds no
+  `#ask` and lands at the top); `#quick` before it (`/devices/{id}/time#extra` until Device › Time Rules lost Extra Time
+  Today on 2026-11-01 - migration 0115 repointed the stored rows; the stored `#quick` rows stay, harmless). Kept
   `EVENT_DAYS` (90) like every kind.
 - **The cap and the news rule** (in one `BEGIN IMMEDIATE` transaction): "today" is the phone's own day
   (`device_api::extra_time_day_zone`, qa-r13-rule-card-code Q-2: the zone its latest report names in `time_state.zone`,
@@ -378,17 +379,79 @@ Notifications on it). `docs/design/45-notifications-inbox-first.md`, `docs/desig
   after (inbox and Activity only). The phone keeps its own count of three too (design r13 D5).
 - **Activity**: `activity::without_own_clock` strips a leading or trailing own clock case-insensitively, so the day
   after "Yesterday 21:40 · Bedtime" against `when` "yesterday 21:40" shows "Bedtime".
-- **The summary** shows "Asked for more time at 17:21" (`data-asked`, a `.quick-note` at the top of Quick actions,
-  above the tiles; on Device › Time's Extra Time Today until 2026-11-01) while `parent_events::open_extra_time_request` finds one open: the phone's
-  newest request raised in the server zone's today, and no `time_lifts` row for the phone made at or after its
-  `created_at` (both the server's `datetime('now')`, compared through `datetime()`; any lift counts, one in the same
-  second as the request counts as its answer). A lift form already returns to `#quick`, so after +15 min the page lands
-  there with its flash and without the row.
-- Tests: `tests::time_request` (the contract's answers and copies, one row and the push by each parent's switch, the
-  same id twice, a retried third, the fourth capped, 31 min old unpushed, yesterday's stale, bad ids, the summary's
-  row until a lift and a lift before the request leaving it), `parent_events::tests` (the words per state, a long name,
-  the day after, the state from a report), `activity::tests` (the case-insensitive strip),
-  `migrations_73_to_96_in_order`.
+- **Superseded** (design 100 §14.4, QA R2-L6): a request stored at intake (only after `raise` returned `Some`, in the
+  same transaction - never a retry of the same id, a capped, stale or dropped one) writes `superseded` answers for the
+  phone's other unanswered requests of its day (`time_answers::supersede`): an older launcher asks again after its 30
+  minutes, and the card shows the newest. `EXTRA_TIME_NEWS_MINUTES` only decides the push now: this launcher keeps one
+  request open until it is answered or its day ends and sends it whenever it is back online, so a late one lands in
+  the card and the inbox without a push.
+- Tests (r13): `tests::time_request` (the contract's answers and copies, one row and the push by each parent's switch,
+  the same id twice, a retried third, the fourth capped, 31 min old unpushed, yesterday's stale, bad ids),
+  `parent_events::tests` (the words per state, a long name, the day after, the state from a report), `activity::tests`
+  (the case-insensitive strip), `migrations_73_to_96_in_order`.
+
+### The answer (design 100 §14, revision 2; migration `0149_time_request_answers.sql`; `src/time_answers.rs`, `handlers::time_answer`)
+
+- **One open request.** `time_request_answers (device_id, request_id, answer yes|no|superseded, lift_id, answered_by,
+  by_name, answered_at)`, PK `(device_id, request_id)`; `by_name` is the parent's display name at the answer (a snapshot;
+  NULL without one). A request is **open** while it is the newest `extra_time_request` (by id) asked in the phone's day
+  (`time_answers::day_start`: the zone its newest report names, else Phone Setup's - the intake's day) and has no answer
+  row (`time_answers::open_request`). One rule for every row: migration 0149 backfilled a `yes` for each request a lift
+  (not a phone-key pause) followed under r13's rule - the first such lift, `answered_by` from its `created_by` and
+  `by_name` its display name (QA R2-M4); `lift_id` only for screen time, so a rule pause that closed one is a yes the
+  phone words as no time given (code QA L10).
+  `retention::prune` deletes answers older than `LIFT_DAYS` with the lifts.
+- **The card** on the summary (`DeviceDetailTemplate.ask`, `devices::ask_card`; `section#ask.ask-card`), right after
+  design 101's `</header>` - above Access, Oppsett and Attention -, never the sheet's first child. "Anna ber om mer
+  skjermtid" (`device.summary.ask.title`, the phone's name), the sub-line is the event's own words (`told_as`, "14:02 ·
+  Skjermtiden er brukt opp"), and while its buttons pause rules a second line "Knappene setter reglene på pause."
+  (`device.summary.ask.pauses`, `data-ask-pauses`); asked under a rule that a fresh report says no longer locks, "Ingen
+  regel låser nå: knappene gir mer skjermtid." (`device.summary.ask.adds`, `data-ask-adds`; code QA L9). One form `POST /devices/{id}/time-request/answer#ask` (QA R2-M1: the
+  card's own group, so `check_forms` passes and `scroll-restore.js` makes it a staying post) with the hidden `request`
+  and four `button name="answer"` (`15`, `30`, `60`, `no`; "+15 min", "+30 min", "+1 t"/"+1 h", "Nei"/"No"). The old
+  "Asked for more time at" note (`data-asked`, `device.summary.asked`) is gone.
+- **The route** (`handlers::time_answer::answer`, in `settings_log::NOT_SAVES`): reads the phone's fresh report
+  (`time_answers::fresh_report`: `report_is_fresh` with the connection, Phone Setup's zone) and its day start, then one
+  `BEGIN IMMEDIATE`: `time_answers::standing` (the open request, or `Answered`, `AskedAgain` - superseded or no longer the
+  newest -, `Gone` - asked before the phone's today -, `Unknown`: 404 `error.no_such_request`); for minutes a lift through
+  `lifts::insert_lift` - **D9, decided at the answer** (QA R2-M2, `time_answers::need`): the fresh report's `TimeAsk::of`
+  a rule -> a pause of every rule (`target=rule`, `rule_id` NULL), else screen time; without a fresh report the request's
+  own `state` decides -; the answer row `ON CONFLICT DO NOTHING` (0 rows: rollback, "already answered" - two parents never
+  both give); the answer in the event's `params` (`json_set` `answer`, `by` - the PWA's name, display name else login, a
+  snapshot -, `minutes`; QA R2-L7). After the commit the security line (`lifts::lift_line`'s `time_lift` for a yes; the
+  new `time_request_no` for "Nei") and `command_notify`. It lands on `/devices/{id}?done=<code>#quick`: `extra`/`pause`
+  (the lift's flash), `answer_no` "Du svarte nei." or `answer_no_seen` "Du svarte nei. Anna ser det på telefonen." when
+  the phone's newest report claims `time_answer_v1` (`time_answers::CAPABILITY`, §14.7), and the stale card's
+  `answered_already` "{parent} har allerede svart." (the redirect carries `&request=<id>`; `time_answers::last_answerer`
+  names who answered that very request - display name, else login - code QA L6),
+  `asked_again` "{name} har spurt på nytt.", `request_gone` "Forespørselen er ikke åpen lenger." (refusals: red, nothing
+  written).
+- **Every fitting lift answers** (QA R2-M2, R2-L6): `lifts::record_lift` (Quick actions, the Regler sheet) is one `BEGIN
+  IMMEDIATE` transaction for every caller - the lift row (`insert_lift`) and, when it can unlock what locks
+  (`time_answers::fits`: screen time for a spent budget; a pause of every rule, or of the rule the fresh report names, for
+  a rule - a rule turned on now runs as its copy's negative id, mapped to the rule it copies by `copied_rule`, whose
+  pause lifts the copy through its twin, code QA L7), the open request's `yes` with that lift (`answer_with_lift`); the security line and the nudge after the commit.
+  A rule pause leaves a used-up request open, and the card stays. Design 98's phone-key pause never answers (it has no
+  parent and doesn't go through `record_lift`).
+- **The policy** (`device_api::build_time_policy`; the shared contract `time_request.json`'s `policy_*` rows): inside
+  `time_policy` (QA R2-L4) `request_answers: true` (always: this server closes requests only by an answer), `answer`
+  (`time_answers::policy_answer`: the newest yes/no - never `superseded` - of a request **asked** in the phone's day, QA
+  R2-L5; `{request_id, answer, by?, at_ms, lift_id?, minutes?}`, `by` the display-name snapshot, absent without one - never
+  the login, D11 -, `minutes` from the lift, QA R2-L1; a yes whose lift was ended early names no lift and no minutes, so
+  the phone claims no time given - code QA L8, the contract's `policy_ended`), and every lift gains `at_ms` (`created_at`) and `by` (the
+  answer's `by_name` for a lift that answered a request, QA R2-L10, else the giver's display name now; absent without
+  one, for a removed parent and for the phone's own pauses). `policy_json_keys_snapshot` pins `time_policy`'s keys
+  (`request_answers` added); `time_request::the_contract_policies` produces every `policy_*` row from a real flow and pins
+  `answer`'s and the lift's keys. `lock_now.json` and `rule_pause.json` gained the lifts' `at_ms`/`by` and the flag (QA
+  R2-M3).
+- **The other parent** sees the answer in the inbox and Activity: `extra_time_told` appends "· Mamma ga 30 min" / "· Pappa
+  svarte nei" (`events.extra_time_request.answer.given`/`.no`) to the non-push forms from the params.
+- Tests: `tests::time_request` (`the_contract_policies`, `the_card_shows_the_open_request_until_an_answer`,
+  `no_with_and_without_the_capability`, `under_a_rule_the_minutes_pause_the_rules`, `the_first_answer_wins`,
+  `a_fitting_lift_answers_the_open_request`, `a_pause_of_the_copied_rule_answers_a_request_under_its_copy`,
+  `a_second_request_supersedes_the_first`,
+  `the_migration_answers_the_requests_a_lift_answered`), `time_answers::tests` (`fits`, `need`),
+  `summary::every_form_on_the_summary_returns_to_its_group` (the card's form first after the picture).
 
 ## Push wording (2026-10-25)
 

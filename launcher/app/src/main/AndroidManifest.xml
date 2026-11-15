@@ -582,20 +582,12 @@
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Parental control enforcement (device owner): screen-time and time-rule signals, policy sync" />
+                android:value="Parental control enforcement (device owner): screen-time and time-rule signals, policy sync, the kid's quick controls" />
         </service>
 
-        <!-- Snarveier (design 99): the kid's quick panel in the shade - its foreground service (the panel is its
-             notification), the buttons' receiver (our own explicit, immutable broadcasts only) and Flymodus On's
-             window, which starts the route only once the shade has closed (§4.1). None is exported. -->
-        <service
-            android:name=".shortcuts.ShortcutsService"
-            android:exported="false"
-            android:foregroundServiceType="specialUse">
-            <property
-                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Kid's quick controls (device owner)" />
-        </service>
+        <!-- Snarveier (design 99; design 100: the panel is the anchor's notification above, no service of its own): the
+             buttons' receiver (our own explicit, immutable broadcasts only) and Flymodus On's window, which starts the
+             route only once the shade has closed (§4.1). None is exported. -->
         <receiver
             android:name=".shortcuts.ShortcutsReceiver"
             android:exported="false" />

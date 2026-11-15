@@ -528,7 +528,14 @@ async fn policy_json_keys_snapshot() {
     let time_policy = object["time_policy"].as_object().unwrap();
     let mut time_keys: Vec<&str> = time_policy.keys().map(String::as_str).collect();
     time_keys.sort_unstable();
-    assert_eq!(time_keys, ["daily_budget_minutes", "lifts", "rules"]);
+    // Design 100 §14.2: `request_answers` always (this server answers requests); `answer` only once a request of the
+    // phone's day is answered - its keys and a lift's `by`/`at_ms` are pinned by `time_request.json`'s `policy_*`
+    // rows (`time_request::the_contract_policies`), which the launcher decodes.
+    assert_eq!(
+        time_keys,
+        ["daily_budget_minutes", "lifts", "request_answers", "rules"]
+    );
+    assert_eq!(time_policy["request_answers"], serde_json::json!(true));
     // The launcher's TimeRule DTO: a rule's keys (`calendar_allowed` since 0119, Kalender usable
     // during the rule - the launcher's default is false, so an older server keeps it closed;
     // `silent` since 0121, the phone's own Do Not Disturb during the rule - also false by default;

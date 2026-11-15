@@ -22,7 +22,17 @@
     <string name="anchor_time_left">%1$s left today</string>
     <string name="anchor_time_used_up">Screen time is used up today</string>
     <string name="anchor_ask_more_time">Ask for more time</string>
-    <string name="anchor_asked_at">Asked at %1$s</string>
+    <!-- Design 100 §8.4, §14.3: the request's note line (the panel, the plain notice's text, the time-rule screen). -->
+    <string name="ask_note_sending">Asked at %1$s · sending…</string>
+    <string name="ask_note_offline">Asked at %1$s · sends when the phone is online</string>
+    <string name="ask_note_waiting">Asked at %1$s · waiting for an answer</string>
+    <string name="ask_note_no">%1$s said no at %2$s</string>
+    <string name="ask_note_no_unnamed">The answer was no at %1$s</string>
+    <string name="ask_note_given">%1$s gave you %2$s</string>
+    <string name="ask_note_given_unnamed">You got %1$s more</string>
+    <!-- Design 100 §8.3: the time-rule screen's ask block ("Be om mer tid" is anchor_ask_more_time). -->
+    <string name="lock_ask_again">Ask again</string>
+    <string name="lock_ask_capped">You\'ve asked three times today.</string>
     <!-- E7's L7: about calls only - the card's rows (Calendar, an allowed app) still work beside it. -->
     <string name="lock_calls_emergency_only">You can only call emergency numbers now.</string>
     <string name="lock_calls_allowed">You can still call your contacts.</string>
@@ -551,7 +561,7 @@
     <string name="notification_ring_title">Phone is ringing</string>
     <string name="notification_ring_text">A parent triggered this from Find My Device.</string>
     <string name="notification_ring_stop_action">Stop Ringing</string>
-    <string name="notification_channel_listener">Find My Device background connection</string>
+    <string name="notification_channel_listener">Vibb One</string>
     <string name="notification_listener_title">Vibb One</string>
     <string name="notification_channel_vpn_filter">Content filter</string>
     <!-- The VPN's name in Android's VPN settings and its key dialog (design 34 P11). -->

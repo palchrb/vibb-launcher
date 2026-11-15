@@ -236,11 +236,14 @@ class ShortcutsTest {
     // ---- the notification ----
 
     @Test
-    fun `the notification is colorized, immediate, secret, and its one activity is flymodus's window`() {
+    fun `the notification is colorized, immediate, secret, with no action, and its one activity is flymodus's window`() {
         val notification = code("shortcuts/ShortcutsNotification.kt")
         for (call in listOf(".setColorized(true)", "FOREGROUND_SERVICE_IMMEDIATE", ".setVisibility(Notification.VISIBILITY_SECRET)", ".setOngoing(true)")) {
             assertTrue(call, notification.contains(call))
         }
+        // Design 100 D1: no "Be om mer tid" in the panel - no action at all; the gear as its small icon (M10).
+        assertFalse(notification.contains("addAction") || notification.contains("Notification.Action"))
+        assertTrue(notification.contains(".setSmallIcon(R.drawable.ic_stat_gear)"))
         assertEquals(1, Regex("""PendingIntent\.getActivity\(""").findAll(notification).count())
         assertTrue(notification.contains("Intent(context, ShortcutAirplaneActivity::class.java)"))
         assertTrue(notification.contains("PendingIntent.FLAG_IMMUTABLE"))
@@ -248,15 +251,31 @@ class ShortcutsTest {
         val shortcuts = File(main, "java/com/kidslauncher/mdm/shortcuts").listFiles()!!.joinToString("\n") { it.readText() }
         assertEquals(1, Regex("""getActivity\(""").findAll(shortcuts).count())
         assertTrue(code("shortcuts/ShortcutsRuntime.kt").contains("lockscreenVisibility = android.app.Notification.VISIBILITY_SECRET"))
-        // One owner (Q99-L4): nothing stops the service from outside, and it is never sticky.
-        val all = File(main, "java").walk().filter { it.isFile && it.extension == "kt" }.joinToString("\n") { it.readText() }
-        assertFalse(Regex("""stopService\([^)]*ShortcutsService""").containsMatchIn(all))
-        assertTrue(code("shortcuts/ShortcutsService.kt").contains("return START_NOT_STICKY"))
         val manifest = File(main, "AndroidManifest.xml").readText()
-        for (name in listOf(".shortcuts.ShortcutsService", ".shortcuts.ShortcutsReceiver", ".shortcuts.ShortcutAirplaneActivity")) {
+        for (name in listOf(".shortcuts.ShortcutsReceiver", ".shortcuts.ShortcutAirplaneActivity")) {
             val entry = manifest.substringAfter("android:name=\"$name\"").substringBefore(">")
             assertTrue(name, entry.contains("android:exported=\"false\""))
         }
+    }
+
+    @Test
+    fun `no service of its own - the panel is the anchor's notification (design 100 §2)`() {
+        assertFalse(File(main, "java/com/kidslauncher/mdm/shortcuts/ShortcutsService.kt").exists())
+        val all = File(main, "java").walk().filter { it.isFile && it.extension == "kt" }.joinToString("\n") { it.readText() }
+        assertFalse(all.contains("ShortcutsService"))
+        assertFalse(File(main, "AndroidManifest.xml").readText().contains("ShortcutsService"))
+        // Snarveier starts and stops nothing: the anchor's life is design 07's.
+        val shortcuts = File(main, "java/com/kidslauncher/mdm/shortcuts").listFiles()!!.joinToString("\n") { it.readText() }
+        for (call in listOf("startForegroundService", "stopForeground", "startForeground(", ".notify(")) {
+            assertFalse(call, shortcuts.contains(call))
+        }
+        // Mer tid's state is set from the poster's time part before the model is built (Q100-L6).
+        val panelFor = code("shortcuts/ShortcutsRuntime.kt").substringAfter("fun panelFor(").substringBefore("\n    }")
+        assertTrue(panelFor, panelFor.indexOf("ask = part") in 0 until panelFor.indexOf("computePanel("))
+        // "Vis i varsellisten igjen" runs on the poster's thread, deleting only while the plain notice is up (Q100-L8).
+        val showAgain = code("shortcuts/ShortcutsRuntime.kt").substringAfter("fun showAgain(").substringBefore("\n    }")
+        assertTrue(showAgain, showAgain.contains("AnchorNotification.onPosterThread {"))
+        assertTrue(showAgain, showAgain.indexOf("if (!AnchorNotification.panelUp())") in 0 until showAgain.indexOf("deleteNotificationChannel("))
     }
 
     @Test

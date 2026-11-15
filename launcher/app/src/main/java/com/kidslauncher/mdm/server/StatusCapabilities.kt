@@ -85,6 +85,9 @@ val STATUS_CAPABILITIES: List<String> = listOf(
     // Design 97: the policy's `abroad` ("I utlandet"), `data_roaming.where` and `mobile_data.kid` in every report, and
     // the kid's Mobildata row (bit 32). The server's kid switch and the roaming notice wait for it.
     MOBILE_NETWORK_CAPABILITY,
+    // Design 100 §14.5: a parent's "Nei" and the answering parent's name shown on the phone (`time_policy.answer`); the
+    // server's "Nei" flash promises "… ser det på telefonen" only for a phone claiming it.
+    com.kidslauncher.mdm.timerules.TIME_ANSWER_CAPABILITY,
     // Design 102 Part A: the policy's `captive_portal` (the Wi-Fi sign-in window, the parent code) and `captive_portal`
     // in every full report. The server's Sign-in page and Advanced's #wifi-signin row wait for it.
     com.kidslauncher.mdm.logins.CAPTIVE_PORTAL_CAPABILITY,

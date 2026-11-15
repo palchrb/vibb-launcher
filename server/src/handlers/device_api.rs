@@ -700,10 +700,17 @@ async fn build_time_policy(
     // Design 93 §4.3: a pause of the turned-on rule lifts its copy too (its twin).
     let lifts =
         served.with_twins(crate::time_rules::deliverable_lifts(&state.db, policy.device_id).await?);
+    // Design 100 §14.2: the newest answer to a request for more time asked in the phone's day.
+    let day_start =
+        crate::time_answers::phone_day_start(&state.db, policy.device_id, chrono::Utc::now())
+            .await?;
+    let answer = crate::time_answers::policy_answer(&state.db, policy.device_id, day_start).await?;
     Ok(TimePolicy {
         rules,
         daily_budget_minutes,
         lifts,
+        request_answers: true,
+        answer,
     })
 }
 
@@ -2898,7 +2905,8 @@ pub fn time_request_id_ok(id: &str) -> bool {
 /// the day (rows of today other than this id) isn't stored (`capped`, one log line);
 /// else the event `extra_time_request` keyed by the id (a retry is one row, and a retried third
 /// request is no fourth), pushed only while it is news (asked under 30 min ago at intake), to every
-/// parent with "Asks for more time" on. Where the phone stood comes from its own latest report, when
+/// parent with "Asks for more time" on; a stored one closes the day's other open requests
+/// (`superseded`, design 100 §14.4: an older launcher asks again after its 30 minutes). Where the phone stood comes from its own latest report, when
 /// that is at most 15 minutes old.
 pub async fn time_request(
     State(state): State<AppState>,
@@ -2981,6 +2989,11 @@ pub async fn time_request(
             push,
         );
         let raised = parent_events::raise(&mut tx, &event).await?.is_some();
+        // Design 100 §14.4 (QA R2-L6): only a request stored now closes the day's older open ones - not a retry of
+        // the same id, a capped or stale one, or one `raise` dropped.
+        if raised {
+            crate::time_answers::supersede(&mut tx, device.id, &request.id, start_of_day).await?;
+        }
         tx.commit().await?;
         Ok(Some(raised))
     };

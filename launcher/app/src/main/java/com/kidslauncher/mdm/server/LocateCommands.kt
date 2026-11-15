@@ -588,7 +588,7 @@ object LocateCommands {
         )
 
         val notification = NotificationCompat.Builder(context, NOTIFICATION_CHANNEL_RING)
-            .setSmallIcon(R.drawable.baseline_settings_24)
+            .setSmallIcon(R.drawable.ic_stat_vibb)
             .setContentTitle(context.getString(R.string.notification_ring_title))
             .setContentText(context.getString(R.string.notification_ring_text))
             .setPriority(NotificationCompat.PRIORITY_HIGH)

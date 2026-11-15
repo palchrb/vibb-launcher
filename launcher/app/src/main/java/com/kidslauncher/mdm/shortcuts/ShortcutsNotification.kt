@@ -7,9 +7,8 @@ import android.content.Intent
 import android.view.View
 import android.widget.RemoteViews
 import com.kidslauncher.mdm.R
-
-/** The panel's notification id (design 99 §2.1): the foreground service's own. */
-const val SHORTCUTS_NOTIFICATION_ID = 1011
+import com.kidslauncher.mdm.server.AnchorNotice
+import com.kidslauncher.mdm.timerules.TimePart
 
 /** [ShortcutsReceiver]'s action and its only extra, the item's key (§2.1). */
 const val ACTION_SHORTCUT = "com.kidslauncher.mdm.action.SHORTCUT"
@@ -20,22 +19,26 @@ private val DISCS = intArrayOf(R.id.shortcut_disc_0, R.id.shortcut_disc_1, R.id.
 private val GLYPHS = intArrayOf(R.id.shortcut_glyph_0, R.id.shortcut_glyph_1, R.id.shortcut_glyph_2, R.id.shortcut_glyph_3)
 
 /**
- * Snarveier's notification (design 99 §2.1, §3): decorated custom views - one row of icons, no names, the same folded
- * and unfolded (revision 3) -, colorized in `kid_ground`, shown at once, ongoing and silent, secret on a lock screen,
- * no content intent. The small icon is the Vibb mark (`ic_stat_vibb`).
+ * Snarveier's view of the anchor's notification (design 99 §2.1, §3; design 100 §3): decorated custom views - one row
+ * of icons, no names (revision 3) -, colorized in `kid_ground`, shown at once, ongoing and silent, secret on a lock
+ * screen, no content intent and no action (design 100 D1). On a day with a screen-time budget the big view has the time
+ * line over the row ([time]'s text, r13's words) and the note under it ("Spurt kl. 14:02 · venter på svar", the
+ * parent's answer: `AnchorNotice.noteText`); the folded view is the
+ * row alone. The small icon is the gear (`ic_stat_gear`, white: design 100 M10). [AnchorNotification] posts it as id
+ * 1002, on the panel's channel.
  * Each cell's tap is an explicit, immutable broadcast to [ShortcutsReceiver] with the key alone; Flymodus On is the one
  * activity, [ShortcutAirplaneActivity] (§4.1).
  */
 object ShortcutsNotification {
-    fun build(context: Context, channelId: String, panel: ShortcutsPanel): Notification {
+    fun build(context: Context, channelId: String, panel: ShortcutsPanel, time: TimePart): Notification {
         val ground = context.getColor(R.color.kid_ground)
         return Notification.Builder(context, channelId)
-            .setSmallIcon(R.drawable.ic_stat_vibb)
+            .setSmallIcon(R.drawable.ic_stat_gear)
             .setStyle(Notification.DecoratedCustomViewStyle())
-            // The same row both ways: Android shows the top notification unfolded (S2), and the kid sees no change
-            // when it folds.
-            .setCustomContentView(views(context, panel))
-            .setCustomBigContentView(views(context, panel))
+            // The row both ways: Android shows the top notification unfolded (S2), and the kid sees no change in the
+            // row when it folds. The time and the note only unfolded (the folded content is 48 dp, design 99 S8).
+            .setCustomContentView(views(context, panel, R.layout.shortcuts_row))
+            .setCustomBigContentView(bigViews(context, panel, time))
             .setColor(ground)
             .setColorized(true)
             .setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
@@ -48,8 +51,24 @@ object ShortcutsNotification {
             .build()
     }
 
-    private fun views(context: Context, panel: ShortcutsPanel): RemoteViews {
-        val views = RemoteViews(context.packageName, R.layout.shortcuts_row)
+    /** The big view: without a budget today (or in the pause) exactly the row; else the time line, the note line when
+     * there is one, and the row (`shortcuts_panel_big.xml`). Text only, never a button (D1). */
+    private fun bigViews(context: Context, panel: ShortcutsPanel, time: TimePart): RemoteViews {
+        val text = time.text ?: return views(context, panel, R.layout.shortcuts_row)
+        val views = views(context, panel, R.layout.shortcuts_panel_big)
+        views.setTextViewText(R.id.shortcut_time_line, AnchorNotice.timeText(context, text))
+        val note = AnchorNotice.noteText(context, time.note)
+        if (note != null) {
+            views.setTextViewText(R.id.shortcut_note_line, note)
+            views.setViewVisibility(R.id.shortcut_note_line, View.VISIBLE)
+        } else {
+            views.setViewVisibility(R.id.shortcut_note_line, View.GONE)
+        }
+        return views
+    }
+
+    private fun views(context: Context, panel: ShortcutsPanel, layout: Int): RemoteViews {
+        val views = RemoteViews(context.packageName, layout)
         val ground = context.getColor(R.color.kid_ground)
         val white = 0xFFFFFFFF.toInt()
         for (i in 0 until SHORTCUTS_MAX) {

@@ -124,16 +124,21 @@
         "target": "rule",
         "rule_id": 2,
         "minutes": 30,
-        "expires_at_ms": 1794828600000
+        "expires_at_ms": 1794828600000,
+        "by": "Mamma",
+        "at_ms": 1794826800000
       },
       {
         "id": -5,
         "target": "rule",
         "rule_id": -1,
         "minutes": 30,
-        "expires_at_ms": 1794828600000
+        "expires_at_ms": 1794828600000,
+        "by": "Mamma",
+        "at_ms": 1794826800000
       }
-    ]
+    ],
+    "request_answers": true
   },
   "policy_end_locked": {
     "rules": [
@@ -282,16 +287,21 @@
         "target": "rule",
         "rule_id": 2,
         "minutes": 30,
-        "expires_at_ms": 1794828600000
+        "expires_at_ms": 1794828600000,
+        "by": "Mamma",
+        "at_ms": 1794826800000
       },
       {
         "id": -5,
         "target": "rule",
         "rule_id": -1,
         "minutes": 30,
-        "expires_at_ms": 1794828600000
+        "expires_at_ms": 1794828600000,
+        "by": "Mamma",
+        "at_ms": 1794826800000
       }
-    ]
+    ],
+    "request_answers": true
   },
   "cases": [
     {

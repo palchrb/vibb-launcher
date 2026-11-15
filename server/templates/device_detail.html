@@ -54,6 +54,26 @@
         {%- if self.disconnected() %}<a class="summary-link" href="/devices/{{ device.id }}/advanced#connection" data-connect-again>{{ self.t("device.summary.connect_again") }} &rsaquo;</a>{% endif %}
     </header>
 
+    {#- Design 100 §14.4: the kid's open request for more time, right after the header (never the sheet's first child)
+        and above Access, Oppsett and Attention, until a parent answers it or the phone's day ends. One form, four
+        answers; its action names the card (#ask) for the staying post, and the answer lands on #quick with its flash.
+        The request's push opens #ask. -#}
+    {% if let Some(ask) = ask %}
+    <section id="ask" class="ask-card" aria-label="{{ self.t("device.summary.ask.label") }}" data-ask>
+        <div class="ask-head">
+            <span class="ask-tile" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" height="20" focusable="false"><path d="M7 3h10M7 21h10M8 3c0 5 8 5 8 9s-8 4-8 9M16 3c0 5-8 5-8 9s8 4 8 9" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+            <span class="ask-text"><strong class="ask-title">{{ self.tp("device.summary.ask.title", [("name", device.name.as_str())]) }}</strong><span class="ask-sub">{{ ask.sub }}</span>{% if ask.pauses %}<span class="ask-sub" data-ask-pauses>{{ self.t("device.summary.ask.pauses") }}</span>{% endif %}{% if ask.adds %}<span class="ask-sub" data-ask-adds>{{ self.t("device.summary.ask.adds") }}</span>{% endif %}</span>
+        </div>
+        <form method="post" action="/devices/{{ device.id }}/time-request/answer#ask" class="ask-form">
+            <input type="hidden" name="request" value="{{ ask.request }}">
+            <button type="submit" name="answer" value="15" class="ask-button">{{ self.tp("device.summary.ask.add_min", [("n", "15")]) }}</button>
+            <button type="submit" name="answer" value="30" class="ask-button">{{ self.tp("device.summary.ask.add_min", [("n", "30")]) }}</button>
+            <button type="submit" name="answer" value="60" class="ask-button">{{ self.t("device.summary.ask.add_hour") }}</button>
+            <button type="submit" name="answer" value="no" class="ask-button ask-no">{{ self.t("device.summary.ask.no") }}</button>
+        </form>
+    </section>
+    {% endif %}
+
     {% if device.enrolled_at.is_none() %}
     {#- A phone not set up has no Attention rows; a managed one without a Parent PIN still needs it
         before setup (qa-31-s10-code L1). -#}
@@ -207,8 +227,6 @@
         <h2 class="group-header" id="quick-title">{{ self.t("device.summary.quick") }}</h2>
         {#- What the tiles say is the phone's word at its newest report: an old one says so (QA of pause-end-report M1). -#}
         {% if let Some(age) = relock.report_age %}<p class="quick-note" data-report-age>{{ self.tp("device.summary.report_age", [("age", age.as_str())]) }}</p>{% endif %}
-        {#- Design r13 §2.7: the kid's "Be om mer tid" still open (until a lift or the day's end); its push lands here. -#}
-        {% if let Some(at) = asked %}<p class="quick-note" data-asked>{{ self.tp("device.summary.asked", [("at", at.as_str())]) }}</p>{% endif %}
         <div class="qa-grid">
             <a class="qa{% if qa.open == Some("time") %} qa-chosen{% endif %}" href="/devices/{{ device.id }}?open=time#quick" data-sheet="time-sheet" aria-controls="time-sheet" aria-expanded="{% if qa.open == Some("time") %}true{% else %}false{% endif %}">
                 <span class="tile tile-teal"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><circle cx="8.5" cy="8.5" r="6.3" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8.5 5.4v6.2M5.4 8.5h6.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></span>

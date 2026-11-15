@@ -227,8 +227,8 @@ fn rows(
 ///   past their hour) - a lost phone that comes back weeks later must still be wiped or locked
 ///   (the policy's pop, `device_api::build_policy`). A delivered one is long past its re-delivery
 ///   window; an acknowledged or cancelled one is done (design 48 §1.6);
-/// - extra-time grants [LIFT_DAYS] after they ended, IP bans once they expired, a download's
-///   progress after [INSTALL_PROGRESS_MINUTES] (nothing reads them later; security review P6);
+/// - extra-time grants [LIFT_DAYS] after they ended (and the answers to requests for more time, design 100), IP
+///   bans once they expired, a download's progress after [INSTALL_PROGRESS_MINUTES] (nothing reads them later; security review P6);
 /// - a weather cell no phone asked for in `weather_cache::CELL_HOURS` (or the longest `location_retention_days` of any
 ///   phone, when that is shorter: code QA L3; design 75 §3.1; by age only - Location Off's erase is
 ///   `update_location_policy`'s);
@@ -483,6 +483,17 @@ pub async fn prune(db: &SqlitePool) -> Pruned {
         // Design 93 §3: a rule turned on now goes with the lifts.
         sqlx::query(
             "DELETE FROM time_lock_now WHERE ends_at < datetime('now', '-' || ? || ' days')",
+        )
+        .bind(LIFT_DAYS)
+        .execute(db)
+        .await,
+    ) + rows(
+        failed,
+        "time_request_answers",
+        // Design 100 §14.4: an answer to a request for more time goes with the lifts and the events.
+        sqlx::query(
+            "DELETE FROM time_request_answers \
+             WHERE answered_at < datetime('now', '-' || ? || ' days')",
         )
         .bind(LIFT_DAYS)
         .execute(db)

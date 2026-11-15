@@ -51,7 +51,7 @@ imported with full history (`git subtree`), so old commit hashes in the docs sti
   name and another site's, with modes - a 302 portal, meta refresh, script, a soft portal, a hotspot that 302s to a
   search page, a Google walled garden, a full-page iframe, a same-site redirector, a form whose POST 302s to another
   site; standard library, `--selftest`, run by `launcher.yml`'s always-run changes job; `docs/testing/emulator.md`
-  §6ao),
+  §6ap),
   `music-splash.py` (the music app's launch splash drawables: the Vibb mark read from the launcher's Home splash, "vibb
   music" from Nunito's outlines; `--selftest`), `webauthn-rs256-vector.py` (the server's RS256 passkey vector
   `server/testdata/webauthn/rs256.json`, made once with a throwaway key - public data only; design 74), `emoji-list.py`
@@ -131,11 +131,20 @@ The launcher's status body with `installed_apps[].version_code`/`version_name` (
 checked catalog app) is `server/testdata/installed_apps_report.json`, byte-identical in
 `launcher/app/src/test/resources/`: the launcher's `SyncScheduleTest` encodes exactly it, the server's
 `app_updates::the_installed_apps_contract_raises_app_updated` posts it, and both compare the copies.
-The launcher's `POST /api/devices/time-request` body and the three answers (design r13 §2.5) are
-`server/testdata/time_request.json`, byte-identical in `launcher/app/src/test/resources/`: the launcher's
-`TimeRequestsTest` encodes exactly its `request` and decodes each answer, the server's
-`time_request::the_contract_answers` posts it (its instant moved to a minute ago) and produces every answer row, and
-both compare the copies.
+The launcher's `POST /api/devices/time-request` body and the three answers (design r13 §2.5), and the parent's answer
+as the policy carries it (design 100 §14.5), are `server/testdata/time_request.json`, byte-identical in
+`launcher/app/src/test/resources/`: `request`, `answers`, `capability` (`time_answer_v1`: the launcher shows "Nei" and the
+name; the server reads it only for the "Nei" flash), `policy_no`/`policy_yes`/`policy_unnamed`/`policy_lift_only`/
+`policy_ended` (the `time_policy` fragment the server serves: `request_answers: true`, `answer {request_id, answer, by?,
+at_ms, lift_id?, minutes?}`, lifts with `by?`/`at_ms`; `policy_ended` a yes whose pause was ended early - no `lift_id`,
+no `minutes`), `older_server` (a policy without the flag: a newer lift closes the request) and `states` (the launcher's
+rows `{name, record, count, policy, day, now_ms} -> {state, shade_note, screen_note, can_ask}`). The launcher's
+`TimeRequestsTest` encodes exactly its `request`, decodes each answer and every policy row, and runs every `states` row;
+the server's `time_request::the_contract_answers` posts the request (its instant moved to a minute ago) and produces every
+answer row, and `time_request::the_contract_policies` produces every `policy_*` row from a real flow (the instants the
+run's); both compare the copies. These rows pin `time_policy.answer`'s and a lift's `by`/`at_ms` keys;
+`policy_json_keys_snapshot` pins `time_policy`'s own keys (`request_answers` among them) and the launcher's
+`PolicyResponseCompatTest` decodes them.
 Dagen's title rules (design 69 §3.4) are `server/testdata/calendar_title_rules.json` (`{"titles": [{rules, calendar,
 title, description?, shown}]}`, `shown: null` = hidden), byte-identical in `launcher/app/src/test/resources/`: the
 server's `calendar::tests::the_title_rules_vectors` and the launcher's `TitleRulesTest` run every row and compare the
@@ -262,7 +271,8 @@ report's answer.
 A rule turned on now (design 93, "Slå på nå") is `server/testdata/lock_now.json`, byte-identical in
 `launcher/app/src/test/resources/`: `capability` (`lock_now_v1`), `policy` (a `time_policy` the server serves: a copy of
 Leggetid first - negative `id`, one weekday's window, `until_ms`, `card_first: true` -, a scheduled Skole and Leggetid
-with `until_ms: null` and `card_first: false`, a pause of Leggetid and its twin for the copy), `policy_end_locked` (the
+with `until_ms: null` and `card_first: false`, a pause of Leggetid and its twin for the copy - every lift with design 100's
+`by` and `at_ms`, and the `time_policy`'s `request_answers: true`), `policy_end_locked` (the
 same with a Middag from the copy's end) and `cases` (`{policy, at, zone, locked, card_rule, card_until}`). The server's
 `lock_now::tests::the_contract` produces both policies from seeded rows at a fixed now (`LOCK_NOW_CONTRACT_WRITE=1`
 rewrites them); the launcher's `LockNowTest` decodes them and runs every case through `inForceAt`, `decideTimeLock`,
@@ -311,7 +321,7 @@ its pure functions; the server's `tests::airplane_mode` posts the reports and ch
 The parent code's pause of the rule in force on the phone (design 98 §4.4, Foreldrekode) is
 `server/testdata/rule_pause.json`, byte-identical in `launcher/app/src/test/resources/`: `capability` (`rule_pause_v1`),
 `lengths` (the PWA's `RULE_LIFT_MINUTES`), `policy` (the top-level `rule_pause: true`, a copy's `copy_of` and the lifts
-with `phone_key`), `request` (the exact `POST /api/devices/rule-pause` body), `answers` (each body's status and answer:
+with `phone_key` - since design 100 every lift with `at_ms`, the PWA's with `by`, and `time_policy.request_answers`), `request` (the exact `POST /api/devices/rule-pause` body), `answers` (each body's status and answer:
 accepted, a retry's same ids, `over`, `unknown_rule`, the refused 400s; its instants are moved to the last minutes),
 `phone_answers` (the phone's action for each: `acked`, `done`, `retry`), `plan_zone`/`plan_policy`/`plans` (the
 offered lengths and each rule's own end, a copy paused with the rule it copies) and `adopt` (whether a pause still

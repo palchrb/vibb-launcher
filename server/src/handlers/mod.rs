@@ -39,6 +39,7 @@ pub mod settings;
 pub mod settings_hub;
 pub mod sw;
 pub mod system_update;
+pub mod time_answer;
 pub mod tracked_apps;
 pub mod updates;
 pub mod wallpapers;

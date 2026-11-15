@@ -311,7 +311,7 @@ object AssistantSetup {
                 .putExtra(EXTRA_SETTINGS_SECTION, true)
             val tap = PendingIntent.getActivity(context, SETUP_NOTIFICATION_ID, open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
             val notification = Notification.Builder(context, NOTIFICATION_CHANNEL_SETUP)
-                .setSmallIcon(R.drawable.baseline_settings_24)
+                .setSmallIcon(R.drawable.ic_stat_vibb)
                 .setContentTitle(context.getString(R.string.setup_notice_title))
                 .setContentText(context.resources.getQuantityString(R.plurals.setup_notice_steps, left, left))
                 .setVisibility(Notification.VISIBILITY_SECRET)

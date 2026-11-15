@@ -1756,7 +1756,9 @@ pub fn zone_crossing(
 /// phone's own count): the fourth of the server zone's day is answered `capped` and not stored.
 pub const EXTRA_TIME_REQUESTS_A_DAY: i64 = 3;
 /// A request is news this long after the kid asked: pushed when younger at intake, else only in the
-/// inbox and Activity (design r13 §2.6); the phone stops sending it after the same 30 minutes.
+/// inbox and Activity (design r13 §2.6). Since design 100 the phone keeps one request open until a
+/// parent answers it or its day ends, and sends it whenever it is back online that day: a late one
+/// lands in the card and the inbox without a push.
 pub const EXTRA_TIME_NEWS_MINUTES: i64 = 30;
 
 /// Where the phone stood when the kid asked (design r13 §2.6), from the server's own latest report
@@ -1816,11 +1818,21 @@ pub struct ExtraTimeParams {
     pub left_minutes: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rule: Option<String>,
+    /// Design 100 §14.4 (QA R2-L7): the parent's answer, written into the params in the answer's
+    /// transaction - `yes` or `no` -, who gave it (the parents' own word: the display name, else the
+    /// login - a snapshot at the answer, so every read site words it from the params alone) and a
+    /// yes's minutes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub minutes: Option<i64>,
 }
 
 /// The kid's request for more screen time (design r13 §2.6): key the phone's own request `id`, so
-/// a retried POST gives one row; the words left to [told]. Target: Device › Time's Extra Time
-/// Today, with the lift buttons in view.
+/// a retried POST gives one row; the words left to [told]. Target: the summary's answer card
+/// (`#ask`, design 100 §14.4); once answered there is no `#ask` and the link lands at the top.
 pub fn extra_time_request(
     device_id: i64,
     phone: &str,
@@ -1841,6 +1853,9 @@ pub fn extra_time_request(
         state: word.to_string(),
         left_minutes,
         rule,
+        answer: None,
+        by: None,
+        minutes: None,
     };
     NewEvent {
         device_id: Some(device_id),
@@ -1848,7 +1863,7 @@ pub fn extra_time_request(
         dedup_key: id.to_string(),
         title: String::new(),
         summary: String::new(),
-        target: format!("/devices/{device_id}#quick"),
+        target: format!("/devices/{device_id}#ask"),
         detail: None,
         params: Some(serde_json::to_string(&params).expect("strings serialize")),
         push_title: String::new(),
@@ -1908,37 +1923,31 @@ fn extra_time_told(
         ),
         _ => None,
     };
-    (title, push_body(&at, state))
-}
-
-/// The request still open for the summary's "Asked for more time at 17:21" above Quick actions' tiles
-/// (design r13 §2.7; on Device › Time until its Extra Time Today went, 2026-11-01):
-/// when the kid asked, if the phone's newest `extra_time_request` was raised in the server zone's
-/// today and no lift for the phone was made since (`time_lifts.created_at` at or after the
-/// event's `created_at` - both the server's `datetime('now')`, compared through `datetime()`; any
-/// lift counts, and one in the same second as the request counts as its answer).
-pub async fn open_extra_time_request(
-    db: &SqlitePool,
-    device_id: i64,
-    zone: &Zone,
-    now: DateTime<Utc>,
-) -> Result<Option<DateTime<Utc>>, sqlx::Error> {
-    let row: Option<String> = sqlx::query_scalar(
-        "SELECT e.happened_at FROM parent_events e \
-         WHERE e.device_id = ?1 AND e.kind = 'extra_time_request' \
-         AND datetime(e.created_at) >= datetime(?2) \
-         AND e.id = (SELECT n.id FROM parent_events n WHERE n.device_id = ?1 \
-                     AND n.kind = 'extra_time_request' ORDER BY datetime(n.created_at) DESC, n.id DESC LIMIT 1) \
-         AND NOT EXISTS (SELECT 1 FROM time_lifts l WHERE l.device_id = ?1 \
-                         AND datetime(l.created_at) >= datetime(e.created_at))",
-    )
-    .bind(device_id)
-    .bind(crate::push::db_time(zone.start_of_today(now)))
-    .fetch_optional(db)
-    .await?;
-    Ok(row
-        .and_then(|at| crate::display_time::parse_db_utc(&at))
-        .map(|at| at.min(now)))
+    // Design 100 §14.4: the answer, for the other parent too ("… · Mamma ga 30 min", "… · Pappa svarte nei").
+    let answer = match (p.answer.as_deref(), p.by.as_deref()) {
+        (Some("yes"), Some(by)) => p.minutes.filter(|m| *m > 0).map(|m| {
+            t_params(
+                lang,
+                "events.extra_time_request.answer.given",
+                &[
+                    ("parent", by),
+                    ("minutes", &crate::display_time::duration(lang, m)),
+                ],
+            )
+        }),
+        (Some("no"), Some(by)) => Some(t_params(
+            lang,
+            "events.extra_time_request.answer.no",
+            &[("parent", by)],
+        )),
+        _ => None,
+    };
+    let summary = push_body(&at, state);
+    match answer {
+        Some(answer) if !summary.is_empty() => (title, format!("{summary} · {answer}")),
+        Some(answer) => (title, answer),
+        None => (title, summary),
+    }
 }
 
 /// A held message's parameters (design 77 D16, §7): the phone's name as it was when raised, when the phone received
@@ -3905,7 +3914,7 @@ mod tests {
                 extra_time_request(3, "Anna", "ab12", two, &TimeAsk::UsedUp, Push::Now),
                 "",
                 "",
-                "/devices/3#quick",
+                "/devices/3#ask",
             ),
             // App update notices (2026-10-25): told from their parameters too.
             (
@@ -4382,7 +4391,7 @@ mod tests {
     }
 
     /// Design r13 §2.6: a request for more time is told from its parameters - each state's words,
-    /// a long name cut to 60, the day after; its key is the phone's id, its target `#quick`.
+    /// a long name cut to 60, the day after; its key is the phone's id, its target `#ask` (design 100).
     #[test]
     fn a_request_for_more_time_is_told_from_its_parameters() {
         let phone = anna();
@@ -4447,7 +4456,7 @@ mod tests {
         let event = extra_time_request(3, "Anna", "ab12", at, &TimeAsk::UsedUp, Push::No);
         assert_eq!(event.kind, Kind::ExtraTimeRequest);
         assert_eq!(event.dedup_key, "ab12");
-        assert_eq!(event.target, "/devices/3#quick");
+        assert_eq!(event.target, "/devices/3#ask");
         assert!(event.title.is_empty() && event.summary.is_empty());
         assert_eq!(Kind::of("extra_time_request"), Some(Kind::ExtraTimeRequest));
         assert!(!Kind::ExtraTimeRequest.urgent());

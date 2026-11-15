@@ -4,20 +4,26 @@ import com.kidslauncher.mdm.server.ServerJson
 import com.kidslauncher.mdm.server.dto.TimeRequestAnswer
 import com.kidslauncher.mdm.server.dto.TimeRequestBody
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.long
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
 /**
- * Design r13 §2.4-2.5: the kid's request for more screen time - the shared contract
- * `time_request.json` (byte-identical with `server/testdata/`, whose `time_request::the_contract_answers`
- * posts its request and produces every answer row), and the phone's rules: [requestState] (the day, the 30
- * minutes, a newer lift, the cap), [askStep] and [timeRequestAnswer] for every row of §2.4's table.
+ * Design r13 §2.4-2.5, design 100 §14: the kid's request for more screen time - the shared contract
+ * `time_request.json` (byte-identical with `server/testdata/`, whose `time_request` tests post its request, produce
+ * every answer row and serve each `policy_*` row), and the phone's rules: [requestState] and [timePart] for every
+ * `states` row (one open request until an answer or the day's end, the answer by id, an older server's lift, the cap,
+ * D10's gift, D12's 30 minutes), [askStep], [uploadStep] and [timeRequestAnswer] for every row of §2.4's table.
  */
 class TimeRequestsTest {
     private val contract = javaClass.classLoader!!.getResource("time_request.json")!!.readText()
@@ -58,33 +64,130 @@ class TimeRequestsTest {
     private val now = 1_793_034_120_000L
 
     private fun record(phase: TimeRequestPhase = TimeRequestPhase.PENDING, onDay: String = day, liftId: Long = 7, askedAt: Long = now) =
-        TimeRequestRecord("0123456789abcdef0123456789abcdef", askedAt, askedAt + TIME_REQUEST_OPEN_MS, onDay, liftId, phase)
+        TimeRequestRecord(id = "0123456789abcdef0123456789abcdef", askedAtMs = askedAt, day = onDay, liftIdAtAsk = liftId, state = phase)
 
+    /** A contract row's `time_policy`, as the launcher decodes it. */
+    private fun policy(name: String): TimePolicy =
+        ServerJson.decodeFromString(TimePolicy.serializer(), parsed.getValue(name).jsonObject.getValue("time_policy").toString())
+
+    /** The contract's words for a state and a note. */
+    private fun stateWord(state: RequestState): String = when (state) {
+        RequestState.Idle -> "idle"
+        is RequestState.Pending -> "pending"
+        is RequestState.Waiting -> "waiting"
+        is RequestState.Answered -> if (state.no) "answered_no" else "answered_yes"
+        RequestState.Capped -> "capped"
+    }
+
+    private fun noteWord(note: AskNote): String = when (note) {
+        AskNote.None -> "none"
+        is AskNote.Sending -> if (note.offline) "offline" else "sending"
+        is AskNote.Waiting -> "waiting"
+        is AskNote.No -> listOfNotNull("no", note.by).joinToString(":")
+        is AskNote.Given -> listOfNotNull("given", note.by, note.minutes.toString()).joinToString(":")
+    }
+
+    /** Design 100 §14.2: each policy row decodes into the launcher's DTOs - the flag inside `time_policy` (QA R2-L4),
+     * the answer with its minutes (R2-L1), the lifts' `by` and `at_ms`; an older server has none of them. */
     @Test
-    fun `the state - the day, the 30 minutes, a newer lift, the cap`() {
-        assertEquals(RequestState.Idle, requestState(null, null, now, day, 7))
-        assertEquals(RequestState.Pending, requestState(record(), null, now + 60_000, day, 7))
-        assertEquals(RequestState.Asked(now), requestState(record(TimeRequestPhase.ASKED), null, now + 60_000, day, 7))
-        assertEquals("another day's record", RequestState.Idle, requestState(record(onDay = "2026-10-25"), null, now, day, 7))
-        assertEquals("its 30 minutes over", RequestState.Idle, requestState(record(), null, now + TIME_REQUEST_OPEN_MS, day, 7))
-        assertEquals(RequestState.Pending, requestState(record(), null, now + TIME_REQUEST_OPEN_MS - 1, day, 7))
-        assertEquals("a newer lift is the answer", RequestState.Idle, requestState(record(TimeRequestPhase.ASKED), null, now, day, 8))
-        assertEquals("no ledger day yet", RequestState.Idle, requestState(record(), null, now, null, 7))
-        val three = TimeRequestCount(day, TIME_REQUESTS_A_DAY)
-        assertEquals(RequestState.Capped, requestState(null, three, now, day, 7))
-        assertEquals("the third's Spurt still shows", RequestState.Asked(now), requestState(record(TimeRequestPhase.ASKED), three, now, day, 7))
-        assertEquals("answered: capped till midnight", RequestState.Capped, requestState(record(TimeRequestPhase.ASKED), three, now, day, 8))
-        assertEquals("yesterday's three", RequestState.Idle, requestState(null, three.copy(day = "2026-10-25"), now, day, 7))
-        assertEquals(RequestState.Idle, requestState(null, TimeRequestCount(day, 2), now, day, 7))
+    fun `every policy row decodes`() {
+        assertEquals(TIME_ANSWER_CAPABILITY, parsed.getValue("capability").jsonPrimitive.content)
+        assertTrue(TIME_ANSWER_CAPABILITY in com.kidslauncher.mdm.server.STATUS_CAPABILITIES)
+        val no = policy("policy_no")
+        assertTrue(no.requestAnswers)
+        assertEquals(TimeAnswer("0123456789abcdef0123456789abcdef", "no", "Pappa", 1_793_034_600_000), no.answer)
+        val yes = policy("policy_yes")
+        assertEquals(TimeAnswer("0123456789abcdef0123456789abcdef", "yes", "Mamma", 1_793_034_600_000, liftId = 1, minutes = 30), yes.answer)
+        assertEquals(Lift(1, TARGET_BUDGET, null, 30, 1_793_077_800_000, by = "Mamma", atMs = 1_793_034_600_000), yes.lifts.single())
+        val unnamed = policy("policy_unnamed")
+        assertNull(unnamed.answer!!.by)
+        assertNull(unnamed.lifts.single().by)
+        val liftOnly = policy("policy_lift_only")
+        assertNull(liftOnly.answer)
+        assertEquals("Mamma", liftOnly.lifts.single().by)
+        val older = policy("older_server")
+        assertEquals(false, older.requestAnswers)
+        assertNull(older.answer)
+        assertEquals(0L, older.lifts.single().atMs)
+    }
+
+    /** Design 100 §14.1, §14.3: every `states` row through [requestState], [timePart] for the shade and the screen, and
+     * the ask's part. */
+    @Test
+    fun `every state row`() {
+        val rows = parsed.getValue("states").jsonArray.map { it.jsonObject }
+        assertTrue(rows.size >= 10)
+        val budget = BudgetUse(usedMs = 90 * 60_000L, budgetMinutes = 90, extraMinutes = 0)
+        for (row in rows) {
+            val name = row.getValue("name").jsonPrimitive.content
+            val record = row.getValue("record").takeUnless { it is JsonNull }
+                ?.let { ServerJson.decodeFromString(TimeRequestRecord.serializer(), it.toString()) }
+            val count = row.getValue("count").takeUnless { it is JsonNull }
+                ?.let { ServerJson.decodeFromString(TimeRequestCount.serializer(), it.toString()) }
+            val policy = row.getValue("policy").takeUnless { it is JsonNull }?.let { policy(it.jsonPrimitive.content) }
+            val rowDay = row.getValue("day").jsonPrimitive.content
+            val nowMs = row.getValue("now_ms").jsonPrimitive.long
+            val dayStart = java.time.LocalDate.parse(rowDay).atStartOfDay(java.time.ZoneId.of("Europe/Oslo")).toInstant().toEpochMilli()
+            val state = requestState(record, count, rowDay, policy)
+            assertEquals(name, row.getValue("state").jsonPrimitive.content, stateWord(state))
+            val shade = timePart(budget, false, state, policy, nowMs)
+            val screen = timePart(budget, false, state, policy, nowMs, NoteSurface.SCREEN, dayStart)
+            assertEquals(name, row.getValue("shade_note").jsonPrimitive.content, noteWord(shade.note))
+            assertEquals(name, row.getValue("screen_note").jsonPrimitive.content, noteWord(screen.note))
+            assertEquals(name, row.getValue("can_ask").jsonPrimitive.boolean, shade.canAsk)
+            assertEquals(name, shade.canAsk, askStep(enrolled = true, budgetToday = true, windowOpen = false, state) == AskStep.ASK)
+        }
     }
 
     @Test
-    fun `the tap asks only while enrolled, with a budget, outside the pause and idle`() {
+    fun `the state - the day, one open request, the answer, an older server's lift, the cap`() {
+        val answers = policy("policy_no")
+        assertEquals(RequestState.Idle, requestState(null, null, day, answers))
+        assertEquals(RequestState.Pending(now), requestState(record(), null, day, null))
+        assertEquals("no 30 minutes: open all day", RequestState.Waiting(now), requestState(record(TimeRequestPhase.ASKED), null, day, NO_TIME_RULES.copy(requestAnswers = true)))
+        assertEquals("another day's record", RequestState.Idle, requestState(record(onDay = "2026-10-25"), null, day, null))
+        assertEquals("no ledger day yet", RequestState.Idle, requestState(record(), null, null, null))
+        // This server: a newer lift that answered nothing closes nothing (M2: it couldn't unlock the request's state).
+        val lifted = TimePolicy(requestAnswers = true, lifts = listOf(Lift(id = 8, target = TARGET_RULE, minutes = 30)))
+        assertEquals(RequestState.Waiting(now), requestState(record(TimeRequestPhase.ASKED), null, day, lifted))
+        // An older server: a newer lift is the answer (r13's rule, §14.7); screen time names its minutes.
+        assertEquals(
+            RequestState.Answered(false, null, 0, 30, canAskAgain = true),
+            requestState(
+                record(TimeRequestPhase.ASKED), null, day,
+                TimePolicy(lifts = listOf(Lift(id = 8, target = TARGET_BUDGET, minutes = 30))),
+            ),
+        )
+        val three = TimeRequestCount(day, TIME_REQUESTS_A_DAY)
+        assertEquals(RequestState.Capped, requestState(null, three, day, null))
+        assertEquals("the third's wait still shows", RequestState.Waiting(now), requestState(record(TimeRequestPhase.ASKED), three, day, null))
+        assertEquals("yesterday's three", RequestState.Idle, requestState(null, three.copy(day = "2026-10-25"), day, null))
+        assertEquals(RequestState.Idle, requestState(null, TimeRequestCount(day, 2), day, null))
+        // Code QA L4: on an older server a rule pause (or the parent code's) closes it with no time claimed.
+        assertEquals(
+            RequestState.Answered(false, null, 0, null, canAskAgain = true),
+            requestState(record(TimeRequestPhase.ASKED), null, day, TimePolicy(lifts = listOf(Lift(id = 8, target = TARGET_RULE, minutes = 15)))),
+        )
+        assertEquals(
+            RequestState.Answered(false, null, 0, null, canAskAgain = true),
+            requestState(
+                record(TimeRequestPhase.ASKED), null, day,
+                TimePolicy(lifts = listOf(Lift(id = 8, target = TARGET_BUDGET, minutes = 15, phoneKey = "0123456789abcdef0123456789abcdef"))),
+            ),
+        )
+        // An answer word this launcher doesn't know leaves the request open.
+        val odd = answers.copy(answer = answers.answer!!.copy(answer = "later"))
+        assertEquals(RequestState.Waiting(now), requestState(record(TimeRequestPhase.ASKED), null, day, odd))
+    }
+
+    @Test
+    fun `the tap asks only while enrolled, with a budget, outside the pause, idle or answered under three`() {
         assertEquals(AskStep.ASK, askStep(enrolled = true, budgetToday = true, windowOpen = false, RequestState.Idle))
         assertEquals(AskStep.IGNORE, askStep(false, true, false, RequestState.Idle))
         assertEquals(AskStep.IGNORE, askStep(true, false, false, RequestState.Idle))
         assertEquals(AskStep.IGNORE, askStep(true, true, true, RequestState.Idle))
-        for (state in listOf(RequestState.Pending, RequestState.Asked(1), RequestState.Capped)) {
+        assertEquals("ask again after an answer", AskStep.ASK, askStep(true, true, false, RequestState.Answered(true, "Pappa", 1, null, canAskAgain = true)))
+        for (state in listOf(RequestState.Pending(1), RequestState.Waiting(1), RequestState.Capped, RequestState.Answered(false, null, 1, 30, canAskAgain = false))) {
             assertEquals("$state", AskStep.IGNORE, askStep(true, true, false, state))
         }
     }
@@ -122,17 +225,31 @@ class TimeRequestsTest {
         assertEquals(0L, maxLiftId(null))
     }
 
-    /** qa-r13-rule-card-code Q-3: the sync posts only a request still open; one answered by a lift that came while it
-     * waited, another day's or an expired one is dropped unsent. */
+    /** qa-r13-rule-card-code Q-3, design 100 §14.1: the sync posts a request of today still open, offline all
+     * afternoon too; another day's, or one an older server's lift answered meanwhile, is dropped unsent; one this
+     * server answered already (the upload's own answer lost) is left - its answer shows. */
     @Test
-    fun `the upload sends only an open request`() {
-        assertEquals(UploadStep.SEND, uploadStep(record(), null, now + 60_000, day, 7))
-        assertEquals("a lift came while it waited", UploadStep.DROP, uploadStep(record(), null, now + 60_000, day, 8))
-        assertEquals("yesterday's", UploadStep.DROP, uploadStep(record(onDay = "2026-10-25"), null, now, day, 7))
-        assertEquals("its 30 minutes over", UploadStep.DROP, uploadStep(record(), null, now + TIME_REQUEST_OPEN_MS, day, 7))
-        assertEquals("no ledger day", UploadStep.DROP, uploadStep(record(), null, now, null, 7))
-        assertEquals(UploadStep.NONE, uploadStep(null, null, now, day, 7))
-        assertEquals("already taken", UploadStep.NONE, uploadStep(record(TimeRequestPhase.ASKED), null, now, day, 7))
+    fun `the upload sends only an open request of today`() {
+        assertEquals(UploadStep.SEND, uploadStep(record(), null, day, null))
+        assertEquals("hours later, still today", UploadStep.SEND, uploadStep(record(askedAt = now - 5 * 3_600_000L), null, day, NO_TIME_RULES.copy(requestAnswers = true)))
+        val lifted = TimePolicy(lifts = listOf(Lift(id = 8, target = TARGET_BUDGET, minutes = 15)))
+        assertEquals("an older server's lift came while it waited", UploadStep.DROP, uploadStep(record(), null, day, lifted))
+        assertEquals("this server's lift answers nothing by itself", UploadStep.SEND, uploadStep(record(), null, day, lifted.copy(requestAnswers = true)))
+        // Code QA L1: answered here already (the 200 lost, then a parent answered): counted as taken, nothing sent.
+        assertEquals("answered here already", UploadStep.COUNT, uploadStep(record(), null, day, policy("policy_no")))
+        assertEquals("yesterday's", UploadStep.DROP, uploadStep(record(onDay = "2026-10-25"), null, day, null))
+        assertEquals("no ledger day", UploadStep.DROP, uploadStep(record(), null, null, null))
+        assertEquals(UploadStep.NONE, uploadStep(null, null, day, null))
+        assertEquals("already taken", UploadStep.NONE, uploadStep(record(TimeRequestPhase.ASKED), null, day, null))
+    }
+
+    /** r13's stored record (with its 30 minutes) still decodes; a new one writes no `open_until_ms`. */
+    @Test
+    fun `an r13 record decodes, a new one has no 30 minutes`() {
+        val r13 = """{"id":"0123456789abcdef0123456789abcdef","asked_at_ms":1,"open_until_ms":1800001,"day":"2026-10-26","lift_id_at_ask":7,"state":"ASKED"}"""
+        val decoded = ServerJson.decodeFromString(TimeRequestRecord.serializer(), r13)
+        assertEquals(RequestState.Waiting(1), requestState(decoded, null, day, null))
+        assertFalse("open_until_ms" in ServerJson.encodeToString(TimeRequestRecord.serializer(), record()))
     }
 
     /** Mutation L15: the answer never overwrites a newer record written while the upload ran. */
@@ -145,6 +262,8 @@ class TimeRequestsTest {
         assertEquals(afterTimeRequestAnswer(sent, null, TimeRequestVerdict.ACCEPTED), recordAfterUpload(sent, sent.id, null, TimeRequestVerdict.ACCEPTED))
         val glue = listOf("src/main", "app/src/main").map { File(it, "java/com/kidslauncher/mdm/timerules/TimeRequests.kt") }.first { it.exists() }.readText()
         assertTrue(glue.contains("recordAfterUpload(record(context), record.id, count(context), verdict) ?: return"))
-        assertTrue(glue.contains("when (uploadStep(record, count(context), now, day, maxLiftId(policy)))"))
+        assertTrue(glue.contains("when (uploadStep(record, count(context), day, policy))"))
+        // Code QA L1: COUNT takes ACCEPTED's step for the record it read.
+        assertTrue(glue.contains("recordAfterUpload(record(context), record.id, count(context), TimeRequestVerdict.ACCEPTED) ?: return"))
     }
 }

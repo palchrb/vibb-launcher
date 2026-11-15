@@ -116,12 +116,13 @@ class CommandListenerService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        // First, unconditionally (ForegroundServiceDidNotStartInTimeException otherwise): the plain "Vibb One".
-        startForeground(COMMAND_LISTENER_NOTIFICATION_ID, AnchorNotice.plain(this))
+        startForeground(COMMAND_LISTENER_NOTIFICATION_ID, AnchorNotification.forStart(this))
+        // That first, unconditionally (ForegroundServiceDidNotStartInTimeException otherwise): the view this process
+        // posted last, or the plain "Vibb One" (design 100 §2.3; it never throws and reads no CE prefs). Then the one
+        // poster's refresh - the Snarveier panel when it is shown - and the time left, read from CE prefs only now (any
+        // fault leaves what is up).
         running = this
-        // Design r13 §2.3: this instance posted its own; then the time left, read from CE prefs only now (any fault
-        // leaves the plain notification).
-        AnchorNotice.reset(this)
+        AnchorNotification.anchorStarted(this)
         try {
             AnchorNotice.refreshNow(this)
         } catch (e: Exception) {
@@ -162,7 +163,10 @@ class CommandListenerService : Service() {
 
     override fun onDestroy() {
         stopped = true
-        if (running === this) running = null
+        // Design 100 Q100-L5: under the poster's lock, so no post of 1002 lands after this (one no service owns).
+        synchronized(AnchorNotification.lock) {
+            if (running === this) running = null
+        }
         handler.removeCallbacksAndMessages(null)
         networkCallback?.let { callback ->
             runCatching { getSystemService(ConnectivityManager::class.java)?.unregisterNetworkCallback(callback) }
@@ -408,7 +412,7 @@ class CommandListenerService : Service() {
         @Volatile
         private var running: CommandListenerService? = null
 
-        /** The anchor runs in this process (design r13 §2.3: its notice is posted only then). */
+        /** The anchor runs in this process (design r13 §2.3, design 100 §2.2: its notification is posted only then). */
         val isRunning: Boolean get() = running != null
 
         /**

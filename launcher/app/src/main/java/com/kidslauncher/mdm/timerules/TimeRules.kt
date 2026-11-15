@@ -71,6 +71,11 @@ data class Lift(
     /** Design 98 §4.4.3: the parent code's pause this phone posted. Such a lift lifts only through this phone's own
      * record of the key ([phonePauseLifts]), never through a [LiftRecord]; missing - the PWA's lifts - as before. */
     val phoneKey: String? = null,
+    /** Design 100 §14.2: the parent who gave it - their display name, `null` without one (D11: never the login), on a
+     * parent-code pause, or from an older server. */
+    val by: String? = null,
+    /** Design 100 §14.2: when it was given (epoch ms); 0 from an older server. */
+    val atMs: Long = 0,
 )
 
 const val TARGET_RULE = "rule"
@@ -82,7 +87,30 @@ data class TimePolicy(
     val rules: List<TimeRule> = emptyList(),
     val dailyBudgetMinutes: List<Int?> = emptyList(),
     val lifts: List<Lift> = emptyList(),
+    /** Design 100 §14.2 (QA R2-L4: inside `time_policy`, so it caches and copies with [answer]): this server answers
+     * requests for more time and closes them only by an answer. Missing - an older server - is false: a newer lift
+     * closes the open request (r13's rule, §14.7). */
+    val requestAnswers: Boolean = false,
+    /** Design 100 §14.2: the newest answered request asked on the phone's day, or `null`. */
+    val answer: TimeAnswer? = null,
 )
+
+/** `time_policy.answer` (design 100 §14.2, `time_request.json`): a parent's [answer] ("yes" or "no") to the request
+ * [requestId] (the phone's own id) at [atMs], by [by] (the display name, `null` without one - D11); a "yes" names the
+ * lift it made ([liftId]) and its [minutes] (QA R2-L1: the note never depends on the lift's delivery). */
+@Serializable
+data class TimeAnswer(
+    val requestId: String = "",
+    val answer: String = "",
+    val by: String? = null,
+    val atMs: Long = 0,
+    val liftId: Long? = null,
+    val minutes: Int? = null,
+)
+
+/** Design 100 §14.5: the launcher shows a parent's "Nei" and the answering parent's name (the server's flash says
+ * "… ser det på telefonen" only for a phone claiming it). */
+const val TIME_ANSWER_CAPABILITY = "time_answer_v1"
 
 /** Design 93 §9.1: the policy without the rules whose `untilMs` is at or before [nowMs] - a rule the parent turned on
  * now is gone from its end, whatever its weekday window says (no relock a week later, the phone offline). The phone's

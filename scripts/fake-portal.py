@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 """A fake captive portal for the emulator checks of design 102's Wi-Fi sign-in window (docs/testing/emulator.md
-§6ao, E1-E13). Python's standard library only; no network of its own beyond the port it listens on.
+§6ap, E1-E13). Python's standard library only; no network of its own beyond the port it listens on.
 
 One server answers two names (by the Host header), both pointing at the VM from the emulator:
 

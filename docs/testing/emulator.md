@@ -4483,9 +4483,45 @@ the run's server data again, enrolled with a typed code; `jelly36` restored afte
 | **Found:** the block didn't dim it | With 01e0bb93b the panel kept Flymodus usable after the block until another signal (a brightness change) refreshed it: the policy write the panel hears comes before `applyHardening` sets `DISALLOW_AIRPLANE_MODE`, and no broadcast an app can register for says a restriction changed (`ACTION_USER_RESTRICTIONS_CHANGED` isn't in the SDK). **Fixed:** `AppEnforcer.applyHardening` asks `ShortcutsRuntime.requestRefresh()` at its end. Checked again: the block off and on from the PWA, Flymodus "off" and "not available now" within the sync, no nudge |
 | The launcher's language (C99-L1) | `cmd locale set-app-locales ... nb-NO`: `Notification channels named again: nb-NO,en-US`, the channel `launcher:shortcuts` named "Snarveier", the header "Snarveier", the descriptions "Lommelykt, av", "Lyd, på", "Flymodus, ikke tilgjengelig nå", "Wi-Fi, på" |
 
-## 6ao. Wi-Fi sign-in: the window, the parent code, the reopen (design 102 Part A)
+## 6ao. One Vibb notification, and the request for more time answered (design 100) (2026-11-15)
 
-Owed: design 102 §11's E1-E7 and E10-E13 (E8-E9 are Part B, §6ap). Setup: **`jelly36`** restored clean (the sums, as
+Design 100 §11's checks. Setup: **`jelly36`** restored clean from `~/kid-look-1-avd-pre-start` (22 of 22 sums), started
+under `flock -o ~/build.lock` and `flock -o ~/emulator.lock` without `-wipe-data`, density 240 (the AVD's own). First
+main's debug launcher (design 99, 591da420d) as Device Owner (§4's adb lines), enrolled with a typed code on a server of
+the branch (migration 0149, `LAUNCHER_ADMIN_COMPONENT` the debug component) on design 99's data; then the branch's debug
+launcher (3a5dff456, later 401e03745) installed over it. Two parents: `admin` with the display name "Pappa" and a second
+one, "Mamma" (put in by SQL with the first's password and TOTP; its name taken away for one answer to see D11). The
+launcher's language from the PWA (Hjem-skjerm › language). Sizes from `uiautomator dump` (px / 1.5 = dp). The emulator's
+zone is UTC; a new day for the phone came from `cmd time_zone_detector suggest_telephony_time_zone` (Asia/Dubai, then
+waiting for its midnight), with Phone Setup's zone set to match (§3b). The PWA card in Playwright (Chromium 1140) at
+390 px. Afterwards `jelly36` restored again (22 of 22 sums, the same file list) and the server stopped.
+
+| Check | Result |
+|---|---|
+| 1 one notification | **Passed.** Main's build: 1011 (`launcher:shortcuts`, `ShortcutsService` in front) and 1002. After the update: **only `id=1002`**, on `launcher:shortcuts`, `CommandListenerService` `isForeground=true foregroundId=1002`, no `ShortcutsService`. Snarveier off from the PWA with the shade open: the same row turned into the plain notice in place (`launcher:command_listener`, `actions=1`), and at the next pull it sat at the bottom under "Silent". On again with the shade open: the panel in place, folded in "Silent"; at the next pull first and unfolded. Only 1002 at every step |
+| 2 the time line and the note | **Passed after a fix.** No budget: the panel 177 px = **118 dp**. A budget today: 206 px = **137 dp** (§3.2's 137). With a note: 234 px = **156 dp** (§3.2's ~157). Font scale 1.3: 215 px = 143 dp, with a note 251 px = 167 dp; "Skjermtiden er brukt opp i dag" wraps to two lines at 1.3, never cut (284 px = 189 dp with the note). No button under the row (D1). A Mer tid tap -> "Spurt kl. 7:35 · venter på svar" (the server took it in ~1 s, so "sender …" only flashed), the disc "Mer tid, spurt". nb and en ("1 t 22 min igjen i dag" / "1 h 27 min left today"). **Found:** Nunito didn't draw - SystemUI inflates RemoteViews in a restricted context, where a TextView ignores an app's font resource, so `@font/nunito_bold` drew the default regular face. **Fixed** (401e03745): the time line takes `TextAppearance.Material.Notification.Title` (the shade's own title face, bold-ish), the note `TextAppearance.Material.Notification`; checked again, the heights unchanged. **Found:** the note's clock had no AM/PM in 12 h ("Spurt kl. 7:35" at 19:35; the AVD's system locale is en-US): it used the clock face's format. **Fixed:** `ClockFormat.formatClock` (pinned). Not seen again on the device (the phone was capped by then); 24 h phones never showed it |
+| 3 Snarveier off | **Passed.** The plain notice: the title "1 h 26 min left today" / "4 min igjen i dag", the note as its text ("Mamma ga deg 15 min"), the action "Be om mer tid" / "Ask for more time" while the kid may ask; the Vibb mark |
+| 4 icons | **Passed** for the panel's gear (dark in a light disc, folded and unfolded), the plain notice's Vibb mark (rings, no empty disc, at the first swap after the update), the ring (`command/ring`: "Telefonen ringer" with the Vibb mark) and the assistant's setup notice ("Fullfør oppsettet av Vibb One", the Vibb mark; in the window the panel has no time line). Play's install mode and the filter's "kobler til …" not seen (the same `ic_stat_vibb`, pinned by the source test) |
+| 5 boot | **Passed as far as the AVD shows.** A calm reboot: the plain notice enqueued at 20:27:51.762 (the anchor's start, still at the keyguard), the panel 1.5 s later (53.237) - inside Android's FGS notification delay, and the shade at the keyguard shows neither (secret/private). The first reboot of the run was an ANR storm (load 54), the service started 95 s late, then the same swap in 1.4 s. The plain notice was never seen in a pulled shade |
+| 6 the update from design 99 | **Passed.** See 1: 1011 gone with `ShortcutsService`, one notification at 1002 |
+| 7 hiding | **Only the menu:** the long-press says "These notifications can't be modified." (Vibb One holds the dialer and SMS roles). The full form is owed (Q100-L9) |
+| 8 the time-rule screen (a budget of 1 min) | **Passed** in gesture navigation, nb. On a new day: "Be om mer tid" (the accent pill) under the rule card; a tap -> "Spurt kl. 12:02 · sender …". **Network off** (`svc wifi/data disable`): "sender …" until +14 s, "sendes når telefonen er på nett" from +18 s; network on: the request went at the SSE reconnect's sync (+34 s, `ACCEPTED`), "venter på svar". Pappa's "Nei" on the card -> "Pappa svarte nei kl. 7:36" and the ringed "Spør igjen"; "Spør igjen" -> "sender …" -> "venter på svar" (the dim pill). Mamma's +30 on the card -> the screen gone at the sync, the panel "Mamma ga deg 30 min". Given minutes run out -> the screen back with "Mamma ga deg 15 min" and "Spør igjen". The third answered request -> "Pappa svarte nei kl. 7:47" and "Du har spurt tre ganger i dag.", no button (the Mer tid disc leaves the panel while capped). Kveld turned on now with the budget used up: the screen names Kveld, no ask block (D4). **Not run:** D6 (one app row and a Child PIN; this phone has three rows and no Child PIN - `TimeLockModelTest` keeps `unlockOpenRow`), TalkBack, 3-button navigation and en on the screen (the zone jumps left the phone with lifts it kept, so the screen didn't come back in time) |
+| 8b the answer's rules | **Passed.** Quick actions' +15 (Mamma) while a used-up request was open: the card gone, the answer row `yes` with its lift, the screen gone, the panel "Mamma ga deg 15 min". A rule pause (`target=rule`, all) while one was open: the card stayed, no answer row, the phone still "venter på svar". Asked under Kveld turned on now (from the Mer tid disc): the card's sub-line "00:04 · En tidsregel" and "Knappene setter reglene på pause."; Mamma's +15 made a `rule` lift and the `yes` row, the rule paused, Home; with Mamma's name taken away the panel said "Du fikk 15 min mer" (D11) |
+| 9 locale | **Passed** for the panel (nb/en lines, the header "Snarveier"/"Shortcuts"), the plain notice's action and the channels (`launcher:shortcuts` "Snarveier", `launcher:command_listener` "Vibb One"). The screen's block in en not seen (see 8) |
+| 10 the PWA card | **Passed after a fix.** 390 px, light and dark, both parents, JS off: the card is the first thing after `</header>` (22 px under it), above Hurtighandlinger; four 77x44 px buttons ("+15 min", "+30 min", "+1 t"/"+1 h", "Nei"/"No"); the title "Emma ber om mer skjermtid", the sub-line the event's words ("19:45 · Skjermtiden er brukt opp"). Two parents in two browsers: Pappa's "Nei" (JS, the stay post) -> "You said no. Emma sees it on the phone." at `#quick`, scrolled 555 px, not the top; Mamma's stale "+30 min" -> "Pappa har allerede svart." at `#quick`, no lift. Activity: "Skjermtiden er brukt opp · Mamma ga 30 min ·" and "… · Pappa svarte nei ·". The events' target is `/devices/1#ask` (no push subscription on this server, so no push was opened). **Found:** an Attention row right after the card touched its ring (0 px). **Fixed** (401e03745): the card keeps the header's 20 px under it |
+
+**Also seen, not design 100's:** the rule card's TalkBack text "Kveld, til 1:04 a.m.." has a double period (an en-US 12 h
+"a.m." before the sentence's own). A gift made just before midnight stays in the panel's note up to 30 minutes into the
+new day (the shade's note has no day check, the screen's has).
+
+**Owed on the Jelly Star:** the swap and the sorting on its SystemUI (M1-M3); the gear in its header; the time line's
+face (the shade's title face now) and the heights; the deferred-plain replacement at boot with a pull right after the
+unlock; the screen's block with a child's finger, TalkBack ("Be om mer tid, knapp", the live announcements) and 3-button
+navigation; D6 with a Child PIN; hiding in its full form (a phone without the dialer and SMS roles, Q100-L9).
+
+## 6ap. Wi-Fi sign-in: the window, the parent code, the reopen (design 102 Part A)
+
+Owed: design 102 §11's E1-E7 and E10-E13 (E8-E9 are Part B, §6aq). Setup: **`jelly36`** restored clean (the sums, as
 §6an), the branch's debug launcher as Device Owner with a kiosk, a server of the branch with a parent code set on the
 phone, the phone enrolled; mobile data off. The fake portal on the VM: `python3 -I scripts/fake-portal.py --mode portal
 --port 8105` (`--selftest` first); point Android's probe at it with `settings put global captive_portal_http_url
@@ -4509,9 +4545,9 @@ an Accept. Logs: `adb logcat -s PortalWindow PortalRuntime ActivityTaskManager C
 | E12 | The keypad: a wrong code counts in the shared lockout (Settings' gate shows the same tries left), a right one opens this opening only; a second sign-in asks again; the budget spent and a right code still opens (D17); no parent code on the server: only a grant opens; the requirement off on Avansert opens without the keypad; Cancel keeps Android's notification; the PWA shows the `wifi_signin` PIN events |
 | E13 | After a reboot the reopen's row is gone; on a second AVD hotspot with another SSID it doesn't show |
 
-## 6ap. Chrome only for logins (design 102 Part B)
+## 6aq. Chrome only for logins (design 102 Part B)
 
-Owed: design 102 §11's E8 and E9. Setup as §6ao, Chrome installed (the Play image's), not ticked under Apps; on the
+Owed: design 102 §11's E8 and E9. Setup as §6ap, Chrome installed (the Play image's), not ticked under Apps; on the
 Sign-in page the role on with the Google preset and an own site; a test app with a Custom Tab login (the probe app of
 the design's §1 has one, or any allowed app with "Log in with Google"). Logs: `adb logcat -s BrowserConfig AppEnforcer`;
 `adb shell dumpsys device_policy | grep -A3 com.android.chrome` for the written restrictions.
