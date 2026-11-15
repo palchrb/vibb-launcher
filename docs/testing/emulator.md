@@ -4419,6 +4419,29 @@ phone Home asks for it at the first start). The emulator's network time is UTC, 
 **Also found:** after an Off the sync waited for the default network, which is the always-on VPN and read validated at
 once - the sync ran before Wi-Fi was up. Fixed: a real validated network. Not run: 6 (Bluetooth), 7 (Gboard's mic).
 
+### Addendum (2026-11-15): the shade during the window (Q99-H1)
+
+Design 99's QA (Q99-H1): `setStatusBarDisabled` is only recorded under lock task, so the window didn't close the shade.
+Fix: the window's features without `LOCK_TASK_FEATURE_NOTIFICATIONS`. Setup: `jelly36` restored clean (22 of 22 sums),
+under `flock -o ~/emulator.lock`; design 98's server and data, the phone enrolled again with a new code; the assistant role
+with `cmd role add-role-holder` (an adb shortcut). An on-device loop read `dumpsys device_policy` (`LockTaskPolicy` mFlags,
+Settings in the list), `dumpsys statusbar` (`mDisabled2`) and `dumpsys window` (`mCurrentFocus`) every 60-80 ms. The
+shade was opened with `cmd statusbar expand-notifications` right after the row's tap. Base features 127, `mDisabled2`
+0x11 (0x15 = the shade disabled too).
+
+| Run | Result |
+|---|---|
+| Before the fix | The old window emulated with the debug override (`add_features 2`). Settings stayed pinned 272-639 ms with `mDisabled2=0x11` and the shade open. A tap on Android's "Physical keyboards" notification 74 ms after the pin started `Settings$PhysicalKeyboardActivity` in the pinned package. It resumed at .077, step 7 cleared it (`clear-task-all`) at .098, and the hide killed it at .283 |
+| Kid Settings, the sheet | Fixed: at the pin `mFlags= 125 mDisabled2=0x15`, and the shade left focus within one sample. SystemUI got the disable (`QSDisableFlagsLog ... QiNgR`) at .638, 9 ms before Settings' unhide started its process (.647). `expand-notifications` before every sample: never open during the window, open 300 ms after it. After: 127, 0x11, the shade opens |
+| The close | **Found:** one sample read `pinned=1 mFlags= 127 mDisabled2=0x11`. A pass writes the features before the list, so the shade came back while Settings was still on it. Fixed: the close is two passes (`routeClosing`). After: `pinned=0 mFlags= 125`, then 127 (787/916 ms from the sheet, 1474/1617 ms from Kid Settings) |
+| A kill mid-window | `run-as ... kill -9` 252-280 ms after the pin, from the sheet and from Kid Settings. The new process logged "left open: putting it back" 0.2-0.6 s later. Settings left the list at 1.0-1.4 s (a plan-less pass, still 125). The put-back's `apply()` wrote 127 at 1.9-2.7 s. The marker was cleared, Settings hidden, and the shade opened again |
+| **Left** | A touch on the shade during SystemUI's ~300 ms collapse stops it, and the shade stays open for the window. In one run, three of five taps on the low-storage notification (`cmd devicestoragemonitor force-low -f`) started `MANAGE_STORAGE` with 0x15 in force. Storagemanager isn't pinned, so that start was blocked. A Settings-bound notification would have opened in the pinned Settings until step 7. A single tap 59 ms after the pin started nothing, but it left the shade open |
+
+Not run: Android's own "Wi-Fi stays on in airplane mode" notification (the clean AVD has no `wifi_apm_state`). A
+Settings-bound notification for the last row was not tried either: the shell can't make one on this image (`cmd
+notification post -c` is refused), and the keyboard notification is gone after its first tap. Undo the test helpers with
+`cmd devicestoragemonitor reset`, `allow_listener` for `BadgeListenerService`, and the override's `reset`.
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:
