@@ -216,7 +216,8 @@ so a button never moves when another leaves. The whole cell is the tap target (`
 ### 3.2 Unfolded: the icons with names (`shortcuts_names.xml`)
 
 - The same row, now 55 dp a cell at 320 dp. The same 36 dp disc and 20 dp glyph, then the item's name under it.
-- **The names' rule.** One line each, centred, white (`kid_core` for a dimmed item's). All four names get **one common
+- **The names' rule.** One line each, centred, white, in Nunito Bold (the launcher's font; a dimmed cell is dimmed as a
+  whole). All four names get **one common
   size**: the largest from 11 sp down to 9 sp at which every shown name fits its cell less 2 dp on each side, measured
   with the names' own font at post time (`TextPaint.measureText`; pure `shortcutNameSp`, `ShortcutsTest`). Should even
   9 sp not fit (only at the largest font sizes), the names stay at 9 sp and a name too long is cut with an ellipsis;
@@ -276,9 +277,9 @@ the tap: a rule that suspends Vibb music dims Musikk, and the tap check refuses 
 - **So Flymodus On is not a broadcast.** Its button is an explicit, immutable `PendingIntent.getActivity` for
   `ShortcutAirplaneActivity`. Android collapses the shade when a notification starts an activity, and the activity's
   window only gets focus once the shade has let it go.
-- `ShortcutAirplaneActivity.onCreate` runs the tap check (§2.1); refused, it finishes. In
-  `onWindowFocusChanged(true)`, the first time, it hands `AirplaneRoute.turnOn` to the shortcuts executor; when the
-  route returns, it finishes. No focus within 3 s (the kid held the shade open): it finishes without the route.
+- In `onWindowFocusChanged(true)`, the first time, `ShortcutAirplaneActivity` hands the tap to the shortcuts executor:
+  the tap check (§2.1) first, refused and nothing happens, then `AirplaneRoute.turnOn`; when that returns, it finishes.
+  (The window itself opens nothing, so the check runs once, at the focus, with the freshest inputs.) No focus within 3 s (the kid held the shade open): it finishes without the route.
   Focus means the shade is closed, so the window opens with no shade to touch.
 - Its own task, so finishing it returns to whatever was in front (Home, an app, the time-rule screen), never to Home
   by accident.
