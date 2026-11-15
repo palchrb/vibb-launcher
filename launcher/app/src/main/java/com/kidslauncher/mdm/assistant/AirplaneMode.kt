@@ -97,9 +97,10 @@ fun airplaneOnPlan(roleHeld: Boolean, serviceReady: Boolean, restricted: Boolean
     else -> AirplaneOn.GO
 }
 
-/** D3: Emergency Callback Mode, an emergency call within [RECENT_EMERGENCY_CALL_MS], or Vibb's own callback window. */
-fun emergencyBlocks(ecbm: Boolean, lastEmergencyMs: Long?, nowMs: Long, callbackWindowOpen: Boolean): Boolean =
-    ecbm || callbackWindowOpen || (lastEmergencyMs != null && nowMs - lastEmergencyMs in 0 until RECENT_EMERGENCY_CALL_MS)
+/** D3: Emergency Callback Mode, or an emergency call within [RECENT_EMERGENCY_CALL_MS]. Not Vibb's own 60-min callback
+ * window (the user, 2026-11-15: "112 10 min er greit. Dette er et edge case"). */
+fun emergencyBlocks(ecbm: Boolean, lastEmergencyMs: Long?, nowMs: Long): Boolean =
+    ecbm || (lastEmergencyMs != null && nowMs - lastEmergencyMs in 0 until RECENT_EMERGENCY_CALL_MS)
 
 /** Whether a turn-on now falls in the cool-down after the one that started at [lastStartMs]. */
 fun inCooldown(lastStartMs: Long?, nowMs: Long): Boolean = lastStartMs != null && nowMs - lastStartMs in 0 until AIRPLANE_COOLDOWN_MS

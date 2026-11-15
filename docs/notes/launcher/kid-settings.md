@@ -143,7 +143,7 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
 
 Vibb One holds the assistant role only for Flymodus (`assistant/`): the session acts on the route's one-time nonce,
 has no window and reads nothing (`AssistantInvariantsTest`). On: `AirplaneRoute.turnOn` - the refusals (role, the
-parent's `DISALLOW_AIRPLANE_MODE`, an emergency call or Vibb's callback window, the 10 s cool-down), a report-only post
+parent's `DISALLOW_AIRPLANE_MODE`, ECBM or an emergency call in the last 10 min (not Vibb's 60-min callback window - the user, 2026-11-15), the 10 s cool-down), a report-only post
 with `going_on`, Settings' `AirplaneModeVoiceActivity` (translucent or floating; on Android 16 floating) through
 `LockTaskChrome.routeWindow` (never while LOCKED) with Settings unhidden and hidden again, the DE marker put back after a
 process death. Off: `DISALLOW_AIRPLANE_MODE` set and cleared - no role needed. The kid's row (bit 64 with the role,

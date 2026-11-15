@@ -190,5 +190,5 @@ needs; the tests below were written but not run.
   goes first, then the oldest. `addFromGate` passes the posted keys from `phone_lifts_sync_v1`. `RulePauseTest` has
   the flight case and the cap order.
 
-Left as they are (open questions to the user): the post-112 refusal following the 60-minute callback window, and the
+Settled by the user on 2026-11-15: the refusal is ECBM + 10 min, the callback window dropped ("112 10 min er greit"); the clock rule stays ("Per i dag klarer ikke barnet å stille klokken på tlf selv"). Before that, left as they are (open questions to the user): the post-112 refusal following the 60-minute callback window, and the
 clock set back during a pause.

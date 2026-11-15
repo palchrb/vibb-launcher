@@ -45,10 +45,11 @@ class AirplaneRouteTest {
 
     @Test
     fun `the emergency refusal, the cool-down`() {
-        assertTrue(emergencyBlocks(ecbm = true, lastEmergencyMs = null, nowMs = 1_000_000, callbackWindowOpen = false))
-        assertTrue(emergencyBlocks(false, 1_000_000 - RECENT_EMERGENCY_CALL_MS + 1, 1_000_000, false))
-        assertFalse(emergencyBlocks(false, 1_000_000 - RECENT_EMERGENCY_CALL_MS, 1_000_000, false))
-        assertTrue(emergencyBlocks(false, null, 1_000_000, callbackWindowOpen = true))
+        assertTrue(emergencyBlocks(ecbm = true, lastEmergencyMs = null, nowMs = 1_000_000))
+        assertTrue(emergencyBlocks(false, 1_000_000 - RECENT_EMERGENCY_CALL_MS + 1, 1_000_000))
+        assertFalse(emergencyBlocks(false, 1_000_000 - RECENT_EMERGENCY_CALL_MS, 1_000_000))
+        // The user, 2026-11-15: ECBM + 10 min only - Vibb's 60-min callback window no longer refuses.
+        assertFalse(emergencyBlocks(false, null, 1_000_000))
         assertTrue(inCooldown(1_000, 1_000 + AIRPLANE_COOLDOWN_MS - 1))
         assertFalse(inCooldown(1_000, 1_000 + AIRPLANE_COOLDOWN_MS))
         assertFalse(inCooldown(null, 1_000))

@@ -104,12 +104,11 @@ object AirplaneRuntime {
         false
     }
 
-    /** D3: a turn-on is refused now (ECBM, a recent emergency call, Vibb's callback window). Reads the call log: never
-     * on the main thread ([rowState] for the rows). */
+    /** D3: a turn-on is refused now (ECBM, an emergency call in the last 10 min). Reads the call log: never on the main
+     * thread ([rowState] for the rows). */
     fun emergencyNow(context: Context, nowMs: Long = System.currentTimeMillis()): Boolean {
         val last = runCatching { com.kidslauncher.mdm.calls.CallSystem.lastEmergencyCallMs(context, nowMs) }.getOrNull()
-        val window = runCatching { com.kidslauncher.mdm.calls.CallSystem.callbackWindowUntil(context, nowMs) }.getOrNull()
-        val blocks = emergencyBlocks(ecbm(context), last, nowMs, window != null && window > nowMs)
+        val blocks = emergencyBlocks(ecbm(context), last, nowMs)
         emergencySeen = blocks to android.os.SystemClock.elapsedRealtime()
         return blocks
     }
