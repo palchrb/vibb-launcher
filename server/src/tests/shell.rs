@@ -1559,7 +1559,16 @@ fn the_app_shell_scrolls_main_not_the_document() {
         "position: fixed; z-index: 4000; top: 0; left: 0; right: 0; height: var(--top-strip); \
          background: var(--night); pointer-events: none;"
     );
-    assert!(!css.contains("body::before"), "the old strip");
+    // The old strip was a `body::before` rule; `.row-sheet-body::before` (the hairline) is not it.
+    assert!(
+        !css.lines().any(|line| {
+            let line = line.trim_start();
+            line.starts_with("body::before")
+                || line.contains(", body::before")
+                || line.contains(",body::before")
+        }),
+        "the old strip"
+    );
     assert!(
         compact.contains(":root{--top-strip:env(safe-area-inset-top,0px);}")
             && compact.contains(
