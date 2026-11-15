@@ -832,6 +832,8 @@ mod tests {
             minutes: 30,
             expires_at_ms: 5,
             phone_key: None,
+            by: None,
+            at_ms: 4,
         };
         let lifts = served.with_twins(vec![lift(11, Some(9)), lift(12, None), lift(13, Some(4))]);
         assert_eq!(lifts.len(), 4);
@@ -920,12 +922,16 @@ mod tests {
             minutes: 30,
             expires_at_ms: 1_794_828_600_000,
             phone_key: None,
+            by: Some("Mamma".into()),
+            at_ms: 1_794_826_800_000,
         };
         let served = |served: ServedRules| {
             serde_json::to_value(crate::time_rules::TimePolicy {
                 rules: served.policy().unwrap(),
                 daily_budget_minutes: vec![None; 7],
                 lifts: served.with_twins(vec![pause.clone()]),
+                request_answers: true,
+                answer: None,
             })
             .unwrap()
         };

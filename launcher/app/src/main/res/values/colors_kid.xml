@@ -47,6 +47,8 @@
          the card's rows (kid_ground_lift, as the contact sheet) end in a chevron of the light at 50 %.
          kid_message_button (the old saturated app buttons) is gone with them. -->
     <color name="kid_lock_kind_disc">#24F0A884</color>
+    <!-- Design 100 §8.3: the time-rule screen's dim pill (the open request, the ring of "Spør igjen"), the mockup's. -->
+    <color name="kid_lock_pill_dim">#2A2836</color>
     <color name="kid_lock_chevron">#80FBE4DC</color>
     <color name="kid_emergency">#E03131</color>
     <!-- The light neutral disc under a legacy (non-adaptive) icon drawn as itself (design 34 P1). -->

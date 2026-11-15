@@ -52,6 +52,24 @@ fun createWindowChannel(context: Context) {
 }
 
 /**
+ * The anchor's plain notice's channel (id 1002's when Snarveier isn't shown, design 100 §2.2, §5): MIN importance,
+ * silent - the mandatory notification of CommandListenerService's foreground service, not something meant to draw
+ * attention the way the ring channel deliberately does. Named "Vibb One" (D7), the name the kid reads in the long-press
+ * sheet. Also called right before every build of the plain notice (idempotent: it never undoes the kid's block) - a
+ * build on a channel that doesn't exist crashes the launcher once the foreground deferral ends (M7).
+ */
+fun createListenerChannel(context: Context) {
+    val notificationManager = context.getSystemService(NotificationManager::class.java) ?: return
+    notificationManager.createNotificationChannel(
+        NotificationChannel(
+            NOTIFICATION_CHANNEL_LISTENER,
+            context.getString(R.string.notification_channel_listener),
+            NotificationManager.IMPORTANCE_MIN
+        )
+    )
+}
+
+/**
  * The two call channels. Silent: Telecom plays the ringtone itself (we don't declare
  * IN_CALL_SERVICE_RINGING), these only carry the call UI and its full-screen intent. Also called
  * before each call notification (idempotent) - the call path runs before the first unlock, when
@@ -107,17 +125,7 @@ fun createNotificationChannels(context: Context) {
                 NotificationManager.IMPORTANCE_HIGH
             )
         )
-        // MIN importance, silent - this is the mandatory persistent notification for
-        // CommandListenerService's foreground service (Android requires one for any foreground
-        // service, no way around it), not something meant to draw attention the way the ring
-        // channel above deliberately does.
-        notificationManager.createNotificationChannel(
-            NotificationChannel(
-                NOTIFICATION_CHANNEL_LISTENER,
-                context.getString(R.string.notification_channel_listener),
-                NotificationManager.IMPORTANCE_MIN
-            )
-        )
+        createListenerChannel(context)
         // MIN importance, silent - same reasoning as the listener channel above: this is the
         // mandatory persistent notification for KidVpnService's foreground service, not something
         // meant to draw attention. Only while the filter isn't up and always-on (vpnHoldsForeground):

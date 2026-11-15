@@ -6,9 +6,13 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
 
 - **Anchor** (`CommandListenerService`, `specialUse` with subtype - `dataSync` is capped at 6 h/day and can't start from BOOT_COMPLETED on Android 15): all background syncs and the SSE stream, held whenever it runs (since design 19; read timeout 300 s vs. the server's keepalive, 240 s by default). It syncs once at start and arms the backstop. `SyncRunner.request` takes a timed partial wake lock, then `startForegroundService(ACTION_SYNC)` (also revives a dead anchor - device owners may start FGS from the background); runs coalesce (`SyncCoalescer`: a burst = one extra run), 10 min/5 min timeouts (APK downloads run inside; `CancellationException` is rethrown in the update loop), 11 min wake lock cap, released only when no run and no undelivered request is left. Every launched `apply()` is wrapped - an exception reaching the crash handler would end the call path. A re-check re-applies until the enforced Play key equals the current one (screen on right after screen off).
 - **Notifications in the shade** (PLAN "Fewer persistent notifications", 2026-10-21, branch `lfix-notifs`, code QA
-  `qa-lfix-notifs-code.md`): the anchor's is the phone's one standing notification - "Vibb One"
-  (`notification_listener_title`, en/nb), no body, MIN channel `launcher:command_listener`, id 1002; NMS shows a
-  foreground service's at LOW at least, so its status-bar icon stays while the anchor runs (Android has no hidden FGS).
+  `qa-lfix-notifs-code.md`): the anchor's is the phone's one standing notification, id 1002 - since design 100 the
+  Snarveier panel while it is shown (kid-settings.md, "Snarveier"), else "Vibb One" (`notification_listener_title`,
+  en/nb), no body, MIN channel `launcher:command_listener` (named "Vibb One" since design 100 D7, was "Find My Device
+  background connection"), the Vibb mark `ic_stat_vibb` as its small icon; NMS shows a foreground service's at LOW at
+  least, so its status-bar icon stays while the anchor runs (Android has no hidden FGS). The filter's "kobler til …",
+  Play's install mode, the ring and the assistant's setup notice carry `ic_stat_vibb` too (design 100 §4; every
+  `ic_stat_*` drawable has literal colours - a `?android:textColor` fill draws an empty disc in SystemUI, M10).
   `KidVpnService` goes foreground first in `onCreate` as before and drops it (`stopForeground(STOP_FOREGROUND_REMOVE)`,
   only on `VpnSettle.DROP` in `settleForeground`) once the tunnel is up **and** `isAlwaysOn` (a throw counts as not):
   AOSP's `Vpn.establish` binds an established VpnService from system_server with `BIND_AUTO_CREATE |
@@ -34,31 +38,66 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   §2, at the monorepo root): with a budget set today the same notification (id 1002, the MIN channel, its icon) has the
   time left as its title ("1 t 20 min igjen i dag", `anchor_time_left`; "Skjermtiden er brukt opp i dag") and one
   action "Be om mer tid"; with no budget today, in the pause or the override it is the plain "Vibb One". Pure
-  `timerules/TimeLeftNotice.kt` (`timeLeftNotice(budget, windowOpen, request)`, `leftMinutes` rounded up;
-  `TimeLeftNoticeTest`); glue `server/AnchorNotice.kt` (`build` - silent, ongoing, no time, only-alert-once; the action
-  `NotificationCompat.Action.Builder(..).setAuthenticationRequired(true)` to the explicit, non-exported
-  `timerules/TimeAskReceiver`; "Spurt kl. 14:02" (`anchor_asked_at`) is the content text, never a button, and there is
-  no action while a request is pending, taken or capped - R13-8). `refresh` posts `notify(1002, ..)` only while the
-  anchor runs (`CommandListenerService.isRunning`) and only a notice or locale other than the last posted
-  (`lastPosted`, reset in the anchor's `onCreate`). `onCreate`: `startForeground` with `AnchorNotice.plain` literally
-  first, then the reset and `refreshNow` (CE prefs only after it). Refreshed from every `TimeRulesRuntime.recheck` with
+  `timerules/TimeLeftNotice.kt` (since design 100 step 2 `timePart(budget, windowOpen, state, policy, now, surface,
+  dayStart)` -> `TimePart(text, note, ask)`, `leftMinutes` rounded up; `TimeLeftNoticeTest`); glue
+  `server/AnchorNotice.kt` (`build` - silent, ongoing, no time, only-alert-once; the action, only while `ask` is
+  `Action`, `NotificationCompat.Action.Builder(..).setAuthenticationRequired(true)` to the explicit, non-exported
+  `timerules/TimeAskReceiver`; the note (`noteText`: "Spurt kl. 14:02 · venter på svar", "Pappa svarte nei kl. 14:10",
+  `ask_note_*`) is the content text, never a button - R13-8). `refresh` computes the time part and hands it to the one
+  poster; it posts nothing itself.
+- **One poster of id 1002** (design 100 step 1, `docs/design/100-one-vibb-notification.md` §2): `server/AnchorNotification`
+  posts every view of the anchor's notification, on its own thread `anchor-post` (design 99's refresh thread). The view
+  is the pure `anchorView(panel, time)` (`server/AnchorView.kt`, `AnchorViewTest`): `Panel` while Snarveier is shown,
+  else `Plain` - also when the panel model is missing or `computePanel` throws (Q100-M1); one record, swapped between
+  the MIN listener channel and the panel's LOW channel by `notify` (M1-M3: one record and the foreground state kept, the
+  row changes in place with the shade open). It keeps its application context from its first caller (`forStart`,
+  `notice`, `ShortcutsRuntime.init`); sets Mer tid's state from the time part it posts with before it builds the panel
+  (`ShortcutsRuntime.panelFor`, Q100-L6); posts only a changed `(view, locale, channel)`, at most once a second with the
+  trailing post (`AnchorPostQueue`, M5); makes sure of the view's channel right before every build (`ensuredBuild`:
+  `createListenerChannel` or the panel's `ensureChannel` - a build on a missing channel crashes the launcher when the
+  deferral ends, M7); checks in the trailing slot (1.5 s after a post) that 1002 is up with the posted channel and view
+  key (`EXTRA_VIEW_KEY` in the extras) and posts again once on a mismatch (a shed update, Q100-L4/R2-L11); and does the
+  running check and the `notify` under `AnchorNotification.lock`, which the anchor's `onDestroy` takes before it clears
+  its instance (Q100-L5). `onCreate`: `startForeground(1002, AnchorNotification.forStart(this))` literally first - the
+  view this process posted last on that key's channel (made sure of; never `computePanel` or the shortcuts prefs, Q100-L7),
+  else, or on any exception, `AnchorNotice.plain` on the listener channel, with the time part already cached when there
+  is one (code QA L5) -, then `anchorStarted` (cancels design 99's
+  old 1011 once, asks for a refresh) and `refreshNow` (CE prefs only after it). The plain notice has no
+  `FOREGROUND_SERVICE_IMMEDIATE` (deferred ~10 s unless it has its action, Q100-L2), the panel has it. Not
+  emulator-checked yet: design 100 §11. Refreshed from every `TimeRulesRuntime.recheck` with
   its snapshot (counting or not, R13-3), from `ScreenTimeTracker.update`'s counting branch (the checkpoint's delay is
   then `checkpointDelayMs(remaining)` - the next minute flip + 200 ms; else `CHECKPOINT_MS`), the tap, the server's
   answer and the pause/override start (`AnchorRefresh.request`). **The request** (`timerules/TimeRequests.kt`,
-  `TimeRequestsTest`): DE prefs `time_request` (`record_v1`: `TimeRequestRecord(id 32 hex, askedAtMs, openUntilMs
-  +30 min, day = the ledger's, liftIdAtAsk, PENDING|ASKED)`, `count_v1`: `TimeRequestCount(day, accepted)` - the
-  phone's own three a day, D5), one `commit()` under its lock; pure `requestState` (an open record of today first -
-  Pending/Asked -, then Capped at three, else Idle: another day, its 30 minutes over, or a lift newer than the one at
-  the ask), `askStep` (enrolled, a budget today, outside the pause, Idle), `timeRequestAnswer` (§2.4's table: accepted,
-  capped - the count set to three -, stale/other 4xx/unparsable dropped, 404 dropped silently, 401/408/429/5xx/none
-  kept and retried until `openUntilMs`) and `afterTimeRequestAnswer`. `TimeRequests.upload` runs in `performMdmSync`
-  right after `PowerEvents.upload` and posts only what the pure `uploadStep` says is still open (a request a lift answered
-  while it waited, another day's or an expired one is dropped unsent, Q-3); the answer writes only the record it sent
+  `TimeRequestsTest`; design 100 step 2, `docs/design/100-one-vibb-notification.md` §14): DE prefs `time_request`
+  (`record_v1`: `TimeRequestRecord(id 32 hex, askedAtMs, day = the ledger's, liftIdAtAsk, PENDING|ASKED)` - r13's
+  `openUntilMs` stays a field with a default so an old record decodes, a new one doesn't write it -, `count_v1`:
+  `TimeRequestCount(day, accepted)` - the phone's own three a day, D5), one `commit()` under its lock. **One request
+  open at a time**, until a parent answers it or the phone's day ends (r13's 30 minutes are gone): pure `requestState(
+  record, count, day, policy)` - a record of today is `Pending(at)`/`Waiting(at)` until the policy's
+  `time_policy.answer` names its id (`Answered(no, by, at, minutes, canAskAgain)`; on an older server without
+  `time_policy.request_answers`, a lift newer than the one at the ask closes it as r13 did, §14.7 - only a PWA's
+  screen-time lift among them is "Du fikk N min mer", a rule pause closes it with no words of time, code QA L4), else
+  `Capped` at
+  three, else `Idle`; `askStep` (enrolled, a budget today, outside the pause, Idle or Answered under three),
+  `timeRequestAnswer` (§2.4's table: accepted, capped - the count set to three -, stale/other 4xx/unparsable dropped, 404
+  dropped silently, 401/408/429/5xx/none kept and retried while it is of today) and `afterTimeRequestAnswer`. The note
+  (`askNote`, §14.3): Pending "sender …" (15 s on: "sendes når telefonen er på nett", `SENDING_OFFLINE_MS`), Waiting
+  "venter på svar", the parent's answer ("Pappa svarte nei kl. 14:10", "Mamma ga deg 30 min"; without a display name
+  "Svaret ble nei kl. …"/"Du fikk 30 min mer", D11), and with nothing open time a parent gave without a request (D10:
+  `givenLift` - the PWA's newest `budget` lift with a positive id, no `phone_key` and an `at_ms`; the answer's name for
+  a lift that answered a request). D12: the shade shows an answer or a gift for 30 minutes (`ANSWER_NOTE_SHADE_MS`), the
+  time-rule screen as long as it is today's (`NoteSurface.SCREEN`). `noteChangeMs` (the 15-second mark, the 30
+  minutes' end) is one more `TimeRulesRuntime.nextBoundary` instant where r13's `openUntilMs` was, so the shade and the
+  screen follow on time across a process death (QA R2-L3). `TimeRequests.upload` runs in `performMdmSync` right after
+  `PowerEvents.upload` and posts only what the pure `uploadStep` says is still open - a request of today, offline all
+  afternoon too; another day's, or one an older server's lift answered while it waited, is dropped unsent (Q-3); one
+  this server already answered is counted as taken, `COUNT` - its 200 was lost and a parent answered before the next
+  sync: ACCEPTED's step, so the day's count follows, code QA L1 -; the answer writes only the record it sent
   (`recordAfterUpload`); the tap asks `SyncRunner.request(.., "time_request")` and arms `TimeRuleAlarm` (Q-4). The
   tracker's minute tick refreshes from the budget it computed (`AnchorNotice.refresh(context, budget, policy, day, now)`,
-  no snapshot, Q-5). The stored `openUntilMs` is
-  one more `TimeRulesRuntime.nextBoundary` instant, so "Spurt" ends on time across a process death. Not
-  emulator-checked yet: design r13 §2.9.
+  no snapshot, Q-5). The policy's keys (`time_policy.request_answers`, `answer`, `lifts[].by`/`at_ms`) are the shared
+  contract `time_request.json`'s `policy_*` rows; the launcher claims `time_answer_v1`. Not emulator-checked yet:
+  design 100 §11 check 8.
 - **Backstop** (`push/BackstopAlarm.kt`): `setAndAllowWhileIdle(ELAPSED_REALTIME_WAKEUP)`, request code 7, `backstopDelayMs`: 30 min, 15 while SSE is down (on the up->down edge, and only ever moved earlier then - a flapping stream must not push it out; each reconnect syncs once instead), sooner for an interval location policy, floor 9 min. Its sync request also reconnects a stalled or stale SSE stream (`checkStream`, design 19 below).
 - **Play** (pure `play/PlayPolicy.kt`, `PlayPolicyTest`; `play/PlayRuntime.kt`): Play services + GSF are in `neverRestrict` (other apps' FCM - Element X; ours is gone since design 19). The Play Store is never hidden but **suspended** while apps are managed (also during a lock, also if allowlisted) except in install mode and the nightly update window (02:00-04:00, only while the screen is off - screen-on ends it at once, screen-off resumes it); never pinned or shown on Home/drawer (`AppFilter`, `playPackageLaunchable`) except in install mode **and, in the drawer only, while the override or the pause is open (design 28: `PlayRuntime.storeListable` feeds `AppFilter`; Home's grid drops the store outside install mode with `playPackageOnHome` in `refreshApps`); a window's edges reload the app list** (`Application.initRest`'s `WindowRelock.addListener { loadApps() }` - not Play's suspension edge, which never comes on a GMS phone). Override/pause lift it like any app restriction. `shouldSuspendNewPackage` leaves Play packages to `apply()`; a vending (re)install re-applies. `AppEnforcer.lastEnforcedPlayState` + `PlayState.key()` make `reevaluateLockReasonFromCache` re-apply on install-mode start/end and window edges (screen on/off, `TimeRuleAlarm` also wakes for `PlayRuntime.nextEdge`).
 - **Install mode**: Settings -> "Install from Play" (Settings gate + the PIN again, shared lockout; refused unless managed, with a PIN, no time lock, Play installed - `canStartInstallMode`). 15 min by wall clock, elapsed realtime and boot count (`timedWindowActive`), CE prefs `play_state`; pins only the Play Store, unsuspends it, opens it; ongoing notification with "End now" (`InstallModeReceiver`). Ends on expiry (boundary alarm), "End now", reboot, or a time lock beginning (`apply` cancels it); then Home is brought to front. Reported as `install_mode.until_ms`.

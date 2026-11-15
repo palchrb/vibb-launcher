@@ -2431,3 +2431,19 @@ posted by `static/scroll-restore.js` (`?v=9`) itself, and the return replaces th
   items) or "Av" (bit 128 off); only from a launcher with `shortcuts_v1`.
 - Tests: `tests::shortcuts` (the contract: stored reports, `clean` rows, the table, the copies; the migration's bit;
   the form's keep on both sections; the sub-lines; the ⓘ and footer; About; nb and en).
+
+## The answer card (design 100 §14.4, 2026-11-15, `docs/design/100-one-vibb-notification.md`; details in `notifications.md` "The answer")
+
+- **Where.** `section#ask.ask-card` right after design 101's `</header>` (never the sheet's first child: the header's -52px
+  needs it first), so it is **above Access, Oppsett and Attention** - the kid waits, and the card is gone once a parent
+  answers (QA R2-L8: Attention's alarms come after it while it shows). It replaces the old `.quick-note data-asked` above
+  the tiles.
+- **Look** (the mockup `Foresporsel.dc.html`, approved "ser bra ut"): the card's ground `--surface` with an inset 2 px
+  `--tint-fill` ring, the hourglass on an `--orange-bg` tile in `--orange`, the title 17 px, the sub-line 14 px in
+  `--label-3`, a four-column **grid** of 44 px buttons (`.ask-button` in `--tint-fill`/`--on-tint-fill`, "Nei" `.ask-no`
+  in `--grey-bg`/`--grey-text`). Tokens only, so light and dark follow. The column is margins, never flex `gap` (the
+  Safari 14.0 floor); the grid's `gap` is fine.
+- **The form** posts to `/devices/{id}/time-request/answer#ask` (the card's own group: `check_forms` and
+  `scroll-restore.js`'s staying post, so a save never jumps to the top; without JS a plain post). The answer lands on
+  `#quick` with its flash; `#ask` is gone then, and the script lands on the server's `#quick`.
+- **The push** opens `/devices/{id}#ask`.

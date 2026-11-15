@@ -11,24 +11,26 @@ import kotlinx.serialization.Serializable
 import java.security.SecureRandom
 
 /*
- * The kid's request for more screen time (design r13 §2.4, `TimeRequestsTest`): the pure rules - the record, the
- * phone's own count of three a day (D5), the state the notice shows, the tap's step and the server's answer - and the
- * glue that keeps them in device-protected prefs and uploads with the sync. Nothing personal: an id, instants, counts.
+ * The kid's request for more screen time (design r13 §2.4, design 100 §14, `TimeRequestsTest`): the pure rules - the
+ * record, the phone's own count of three a day (D5), the state the notice and the time-rule screen show, the tap's step
+ * and the server's answer - and the glue that keeps them in device-protected prefs and uploads with the sync. One
+ * request is open at a time, until a parent answers it (the policy's `time_policy.answer`) or the phone's day ends.
+ * Nothing personal: an id, instants, counts.
  */
 
-/** Requests a day the phone sends at most (D5); the server answers a fourth `capped` anyway. */
+/** Requests a day the phone sends at most (D5); the server answers a fourth `capped` anyway. "Du har spurt tre ganger
+ * i dag." says three (`lock_ask_capped`, pinned in `TimeRequestsTest`). */
 const val TIME_REQUESTS_A_DAY = 3
 
-/** A request is open this long: "Spurt" shows and the phone retries the upload until then (§2.4). */
-const val TIME_REQUEST_OPEN_MS = 30 * 60_000L
-
 /** The request's own record. [day] is the ledger's day it was asked on, [liftIdAtAsk] the largest lift id in the
- * policy then (lift ids only grow on the server: any newer lift is the answer). */
+ * policy then (lift ids only grow on the server: on an older server any newer lift is the answer, §14.7).
+ * [openUntilMs] is r13's 30 minutes, gone in design 100 (§14.1): kept with a default so a stored `record_v1` still
+ * decodes; a new record leaves it 0 (not written) and nothing reads it. */
 @Serializable
 data class TimeRequestRecord(
     val id: String,
     val askedAtMs: Long,
-    val openUntilMs: Long,
+    val openUntilMs: Long = 0,
     val day: String,
     val liftIdAtAsk: Long,
     val state: TimeRequestPhase,
@@ -41,41 +43,84 @@ enum class TimeRequestPhase { PENDING, ASKED }
 @Serializable
 data class TimeRequestCount(val day: String, val accepted: Int)
 
-/** What the notice shows of the request. */
+/** Where the request stands (design 100 §14.1). */
 sealed interface RequestState {
+    /** Nothing open, the day's three not used: the kid may ask. */
     data object Idle : RequestState
 
-    data object Pending : RequestState
+    /** Tapped, not taken by the server yet (being sent, or offline). */
+    data class Pending(val atMs: Long) : RequestState
 
-    data class Asked(val atMs: Long) : RequestState
+    /** Taken by the server, no answer yet (r13's Asked). */
+    data class Waiting(val atMs: Long) : RequestState
 
+    /** A parent answered it: [no], or a yes of [minutes]; [by] the display name (`null` without one, D11); [atMs] when
+     * (0 from an older server). [canAskAgain]: the day's accepted count is under [TIME_REQUESTS_A_DAY]. */
+    data class Answered(val no: Boolean, val by: String?, val atMs: Long, val minutes: Int?, val canAskAgain: Boolean) : RequestState
+
+    /** The day's three were asked and nothing of today is open or answered on the phone. */
     data object Capped : RequestState
 }
 
 /**
- * The request's state at [nowMs] on the ledger's [day], with [maxLiftId] the largest lift id in the policy now. A
- * record of today that is still open - not past `openUntilMs`, no lift newer than the one at the ask - is Pending or
- * Asked (so "Spurt" shows after the day's third accepted request too); else Capped when today's accepted count is
- * [TIME_REQUESTS_A_DAY]; else Idle (no record, another day's, its 30 minutes over, or answered by a lift).
+ * The request's state on the ledger's [day] with [policy] (its answer and lifts; design 100 §14.1). A record of today
+ * is open - Pending or Waiting - until the policy carries a parent's answer to its id (this server, `request_answers`)
+ * or, on an older server, a lift newer than the one at the ask closes it (r13's rule, §14.7); then it is Answered. With
+ * no record of today: Capped when today's accepted count is [TIME_REQUESTS_A_DAY], else Idle. No time limit: the
+ * day's end closes it (another day's record is no record).
  */
-fun requestState(record: TimeRequestRecord?, count: TimeRequestCount?, nowMs: Long, day: String?, maxLiftId: Long): RequestState {
-    if (record != null && day != null && record.day == day && nowMs < record.openUntilMs && maxLiftId <= record.liftIdAtAsk) {
+fun requestState(record: TimeRequestRecord?, count: TimeRequestCount?, day: String?, policy: TimePolicy?): RequestState {
+    if (day == null) return RequestState.Idle
+    val accepted = count?.takeIf { it.day == day }?.accepted ?: 0
+    val canAskAgain = accepted < TIME_REQUESTS_A_DAY
+    if (record != null && record.day == day) {
+        val answered = if (policy?.requestAnswers == true) {
+            policy.answer?.takeIf { it.requestId == record.id }?.let { answerState(it, policy, canAskAgain) }
+        } else {
+            // Code QA L4: any newer lift closes it (§14.7), but only screen time a parent gave is "Du fikk N min mer" - a
+            // rule pause or the parent code's pause closes it with no words of time.
+            val newer = policy?.lifts.orEmpty().filter { it.id > record.liftIdAtAsk }
+            newer.maxByOrNull { it.id }?.let { lift ->
+                val given = newer.filter { it.target == TARGET_BUDGET && it.phoneKey == null }.maxByOrNull { it.id }
+                RequestState.Answered(
+                    no = false, by = cleanBy((given ?: lift).by), atMs = (given ?: lift).atMs, minutes = given?.minutes, canAskAgain = canAskAgain,
+                )
+            }
+        }
+        if (answered != null) return answered
         return when (record.state) {
-            TimeRequestPhase.PENDING -> RequestState.Pending
-            TimeRequestPhase.ASKED -> RequestState.Asked(record.askedAtMs)
+            TimeRequestPhase.PENDING -> RequestState.Pending(record.askedAtMs)
+            TimeRequestPhase.ASKED -> RequestState.Waiting(record.askedAtMs)
         }
     }
-    if (count != null && day != null && count.day == day && count.accepted >= TIME_REQUESTS_A_DAY) return RequestState.Capped
-    return RequestState.Idle
+    return if (canAskAgain) RequestState.Idle else RequestState.Capped
+}
+
+/** [answer] as an Answered state: "no", or "yes" with its minutes (the answer's own, else its lift's); `null` for an
+ * answer word this launcher doesn't know (the request stays open). */
+fun answerState(answer: TimeAnswer, policy: TimePolicy?, canAskAgain: Boolean): RequestState.Answered? {
+    val by = cleanBy(answer.by)
+    return when (answer.answer) {
+        "no" -> RequestState.Answered(true, by, answer.atMs, null, canAskAgain)
+        "yes" -> RequestState.Answered(
+            false, by, answer.atMs,
+            answer.minutes ?: policy?.lifts?.firstOrNull { it.id == answer.liftId }?.minutes,
+            canAskAgain,
+        )
+        else -> null
+    }
 }
 
 /** What a tap on "Be om mer tid" does. */
 enum class AskStep { ASK, IGNORE }
 
-/** [AskStep.ASK] only while enrolled, with a budget today, outside the pause and with nothing open or capped; a tap on
- * a stale notification otherwise does nothing. */
-fun askStep(enrolled: Boolean, budgetToday: Boolean, windowOpen: Boolean, state: RequestState): AskStep =
-    if (enrolled && budgetToday && !windowOpen && state == RequestState.Idle) AskStep.ASK else AskStep.IGNORE
+/** [AskStep.ASK] only while enrolled, with a budget today, outside the pause, with nothing open and the day's three not
+ * used (Idle, or Answered with [RequestState.Answered.canAskAgain]); a tap on a stale notification or screen otherwise
+ * does nothing. */
+fun askStep(enrolled: Boolean, budgetToday: Boolean, windowOpen: Boolean, state: RequestState): AskStep {
+    val askable = state == RequestState.Idle || (state is RequestState.Answered && state.canAskAgain)
+    return if (enrolled && budgetToday && !windowOpen && askable) AskStep.ASK else AskStep.IGNORE
+}
 
 /** The server's answer to the upload, as the phone acts on it (§2.4's table). */
 enum class TimeRequestVerdict {
@@ -92,7 +137,7 @@ enum class TimeRequestVerdict {
     /** 404, an old server: dropped, nothing shown - the action stays (D5). */
     NO_ROUTE,
 
-    /** 401, 408, 429, 5xx, no answer: kept, retried with the next sync until its 30 minutes are over. */
+    /** 401, 408, 429, 5xx, no answer: kept, retried with the next sync while it is of today (design 100 §14.1). */
     RETRY,
 }
 
@@ -116,24 +161,32 @@ fun timeRequestAnswer(code: Int?, body: String?): TimeRequestVerdict = when {
     else -> TimeRequestVerdict.DROPPED
 }
 
-/** What the sync does with the stored record (qa-r13-rule-card-code Q-3). */
+/** What the sync does with the stored record (qa-r13-rule-card-code Q-3, design 100 §14.1). */
 enum class UploadStep {
-    /** A PENDING record still open: post it. */
+    /** A PENDING record of today, still open: post it (offline all afternoon, it goes when the phone is back). */
     SEND,
 
-    /** A PENDING record no longer open - its 30 minutes over, another day's, or answered by a lift that came meanwhile
-     * (a lift while offline): dropped unsent, so no stale push and no "Asked" row after the answer. */
+    /** A PENDING record no longer to send - another day's, or answered by a lift on an older server meanwhile (a lift
+     * while offline, §14.7): dropped unsent, so no stale push and no open request after the answer. */
     DROP,
 
     /** Nothing to send (no record, or one already taken). */
     NONE,
+
+    /** A PENDING record this server answered already: the server took it (its 200 was lost, a retry) and a parent
+     * answered before the next sync - counted as taken (ACCEPTED's step: ASKED, today's count + 1; code QA L1), nothing
+     * sent. Its answer shows. */
+    COUNT,
 }
 
-/** The step for [record] at [nowMs] on the ledger's [day], with [maxLiftId] the policy's largest lift id now. */
-fun uploadStep(record: TimeRequestRecord?, count: TimeRequestCount?, nowMs: Long, day: String?, maxLiftId: Long): UploadStep = when {
-    record == null || record.state != TimeRequestPhase.PENDING -> UploadStep.NONE
-    requestState(record, count, nowMs, day, maxLiftId) == RequestState.Pending -> UploadStep.SEND
-    else -> UploadStep.DROP
+/** The step for [record] on the ledger's [day], with [policy] the policy just fetched. */
+fun uploadStep(record: TimeRequestRecord?, count: TimeRequestCount?, day: String?, policy: TimePolicy?): UploadStep {
+    if (record == null || record.state != TimeRequestPhase.PENDING) return UploadStep.NONE
+    return when (requestState(record, count, day, policy)) {
+        is RequestState.Pending -> UploadStep.SEND
+        is RequestState.Answered -> if (policy?.requestAnswers == true) UploadStep.COUNT else UploadStep.DROP
+        else -> UploadStep.DROP
+    }
 }
 
 /**
@@ -205,17 +258,18 @@ object TimeRequests {
         if (!edit.commit()) Log.w(LOG_TAG, "Couldn't save the request for more time")
     }
 
-    /** The state for [snap] (its ledger's day, its policy's lifts) at the snapshot's wall clock. */
+    /** The state for [snap] (its ledger's day, its policy's answer and lifts). */
     fun state(context: Context, snap: TimeRulesRuntime.Snapshot): RequestState =
-        state(context, snap.ledger?.day, snap.clocks.wallMs, maxLiftId(snap.policy))
+        state(context, snap.ledger?.day, snap.policy)
 
-    /** The state on the ledger's [day] at [nowMs], with [maxLiftId] the policy's largest lift id. */
-    fun state(context: Context, day: String?, nowMs: Long, maxLiftId: Long): RequestState =
-        requestState(record(context), count(context), nowMs, day, maxLiftId)
+    /** The state on the ledger's [day] with [policy]. */
+    fun state(context: Context, day: String?, policy: TimePolicy?): RequestState =
+        requestState(record(context), count(context), day, policy)
 
-    /** When an open request's 30 minutes end, for the boundary alarm (R13-8: a stored instant, no handler). */
-    fun openUntilMs(context: Context): Long? = try {
-        record(context)?.openUntilMs
+    /** When the shade's note changes next by itself, for the boundary alarm ([noteChangeMs], QA R2-L3: a stored
+     * instant, no handler). */
+    fun noteChangeMs(context: Context, day: String?, policy: TimePolicy?, nowMs: Long): Long? = try {
+        noteChangeMs(state(context, day, policy), policy, nowMs)
     } catch (e: Exception) {
         null
     }
@@ -234,28 +288,39 @@ object TimeRequests {
         }
         val now = snap.clocks.wallMs
         val day = snap.ledger?.day ?: return false
-        val record = TimeRequestRecord(newTimeRequestId(), now, now + TIME_REQUEST_OPEN_MS, day, maxLiftId(snap.policy), TimeRequestPhase.PENDING)
+        val record = TimeRequestRecord(
+            id = newTimeRequestId(), askedAtMs = now, day = day, liftIdAtAsk = maxLiftId(snap.policy), state = TimeRequestPhase.PENDING,
+        )
         write(context, record, count(context))
         return true
     }
 
     /**
-     * With the sync, after the status report (`performMdmSync`, behind the sync mutex): a PENDING record still open is
-     * posted, and [timeRequestAnswer] decides; an expired one goes unsent. The notice is refreshed after any change.
+     * With the sync, after the status report (`performMdmSync`, behind the sync mutex): a PENDING record of today still
+     * open is posted, and [timeRequestAnswer] decides; another day's, or one an older server's lift answered, goes
+     * unsent. The notice is refreshed after any change.
      */
     suspend fun upload(context: Context, api: MdmApi) {
         val record = record(context) ?: return
         if (record.state != TimeRequestPhase.PENDING) return
-        val now = System.currentTimeMillis()
-        // Q-3: the policy this sync just fetched - a lift that came while the request waited is its answer.
+        // Q-3: the policy this sync just fetched - an answer (or, on an older server, a lift) that came while it waited.
         val policy = com.kidslauncher.mdm.server.KidModeEnforcer.timePolicyOf(com.kidslauncher.mdm.server.currentPolicyDecision().policy)
         val day = policy?.let { TimeRulesRuntime.ledger(context, it).day }
-        when (uploadStep(record, count(context), now, day, maxLiftId(policy))) {
+        when (uploadStep(record, count(context), day, policy)) {
             UploadStep.NONE -> return
             UploadStep.DROP -> {
-                // Over, another day's, or answered meanwhile: nothing sent, the action back.
+                // Another day's, or answered meanwhile by an older server's lift: nothing sent.
                 synchronized(this) {
                     if (record(context)?.id == record.id) write(context, null, count(context))
+                }
+                changed(context)
+                return
+            }
+            UploadStep.COUNT -> {
+                // Code QA L1: the server took it - the day's count follows, so a fourth tap isn't offered.
+                synchronized(this) {
+                    val (next, count) = recordAfterUpload(record(context), record.id, count(context), TimeRequestVerdict.ACCEPTED) ?: return
+                    write(context, next, count)
                 }
                 changed(context)
                 return
@@ -284,7 +349,7 @@ object TimeRequests {
         changed(context)
     }
 
-    /** The record changed: the notice again, and the boundary alarm for the new `openUntilMs` (Q-4). */
+    /** The record changed: the notice again, and the boundary alarm for the note's next change (Q-4, QA R2-L3). */
     private fun changed(context: Context) {
         AnchorRefresh.request(context)
         TimeRuleAlarm.schedule(context)

@@ -1045,6 +1045,17 @@ pub(crate) const DEFAULT_QUICK_CONTROLS: i64 = QUICK_CONTROL_WIFI
     | QUICK_CONTROL_AIRPLANE
     | QUICK_CONTROL_SHORTCUTS;
 
+/// The answer card (design 100 §14.4): the request's id (the form's `request`), its sub-line - the
+/// event's own words, "14:02 · Skjermtiden er brukt opp" -, and what its minute buttons do when that
+/// isn't what the words suggest (D9, QA R2-M2: decided now): `pauses` - they pause the rules in force;
+/// `adds` - asked under a rule that no longer locks, they add screen time (code QA L9).
+struct AskCard {
+    request: String,
+    sub: String,
+    pauses: bool,
+    adds: bool,
+}
+
 #[derive(Template)]
 #[template(path = "device_detail.html")]
 struct DeviceDetailTemplate {
@@ -1076,9 +1087,9 @@ struct DeviceDetailTemplate {
     activity: crate::handlers::activity::Summary,
     /// Design 93: Quick Actions' three tiles, their sheets and the row while the phone is open for setup.
     qa: crate::handlers::quick_actions::QuickActions,
-    /// "17:21": the kid's request for more time still open (design r13 §2.7), above the tiles
-    /// until a lift or the day's end; a request's push opens `#quick`.
-    asked: Option<String>,
+    /// Design 100 §14.4: the kid's open request for more time - the answer card right after the
+    /// header, until a parent answers it or the phone's day ends; a request's push opens `#ask`.
+    ask: Option<AskCard>,
     /// A lift form's or the Regler sheet's flash (`?done=`): the summary group ("quick"), its words
     /// (a rule turned on now's name and end filled in, design 93), refused.
     done: Option<(&'static str, String, bool)>,
@@ -2018,6 +2029,53 @@ pub(crate) async fn app_rows(
     })
 }
 
+/// The answer card for the phone's open request (design 100 §14.4), `None` without one: its
+/// sub-line is the event's own words (`told_as`), and its buttons pause the rules when a rule locks
+/// now (the fresh report's word, else the ask's: `time_answers::need`).
+async fn ask_card(
+    state: &AppState,
+    device: &Device,
+    zone: &crate::display_time::Zone,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<Option<AskCard>, sqlx::Error> {
+    if device.enrolled_at.is_none() {
+        return Ok(None);
+    }
+    let day_start = crate::time_answers::phone_day_start(&state.db, device.id, now).await?;
+    let mut conn = state.db.acquire().await?;
+    let Some(open) = crate::time_answers::open_request(&mut conn, device.id, day_start).await?
+    else {
+        return Ok(None);
+    };
+    drop(conn);
+    let fresh = crate::time_answers::fresh_report(state, device, zone, now).await?;
+    let asked = open.params.as_ref().map(|p| p.state.as_str());
+    let pauses = matches!(
+        crate::time_answers::need(fresh.as_ref(), asked, zone, now),
+        crate::time_answers::Need::Rules { .. }
+    );
+    let adds = !pauses && asked == Some("rule");
+    let params = open
+        .params
+        .as_ref()
+        .and_then(|p| serde_json::to_string(p).ok());
+    let (_, sub) = crate::parent_events::told_as(
+        crate::parent_events::Form::Inbox,
+        crate::parent_events::Kind::ExtraTimeRequest.wire(),
+        String::new(),
+        zone.clock(open.at),
+        params.as_deref(),
+        zone,
+        now,
+    );
+    Ok(Some(AskCard {
+        request: open.id,
+        sub,
+        pauses,
+        adds,
+    }))
+}
+
 /// The phone's summary (design 31 §3.2, step 10). The phone, its settings and its last report are a
 /// 500 on a DB error, as are the lifts (Today would read as "nothing today"); a Sections row whose
 /// read fails says "Couldn't read" (logged).
@@ -2337,9 +2395,8 @@ async fn render_device(
             return crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.read_phone");
         }
     };
-    let asked = match crate::parent_events::open_extra_time_request(&state.db, id, &zone, now).await
-    {
-        Ok(asked) => asked.map(|at| zone.clock(at)),
+    let ask = match ask_card(state, &device, &zone, now).await {
+        Ok(ask) => ask,
         Err(err) => {
             tracing::error!(device_id = id, %err, "can't read the request for more time");
             return crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.read_phone");
@@ -2352,6 +2409,18 @@ async fn render_device(
             tracing::error!(device_id = id, %err, "can't read the rule turned on now");
             return crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.read_phone");
         }
+    };
+    // Design 100 §14.4: "Mamma has already answered" names who did.
+    let answerer = if query.get("done").map(String::as_str) == Some("answered_already") {
+        let request = query
+            .get("request")
+            .map(String::as_str)
+            .filter(|r| crate::handlers::device_api::time_request_id_ok(r));
+        crate::time_answers::last_answerer(&state.db, id, request)
+            .await
+            .unwrap_or_default()
+    } else {
+        String::new()
     };
     let done = query
         .get("done")
@@ -2366,7 +2435,12 @@ async fn render_device(
             let text = t_params(
                 lang,
                 key,
-                &[("rule", &rule), ("at", &at), ("name", &device.name)],
+                &[
+                    ("rule", &rule),
+                    ("at", &at),
+                    ("name", &device.name),
+                    ("parent", &answerer),
+                ],
             );
             (crate::handlers::lifts::summary_group(group), text, refused)
         });
@@ -2433,7 +2507,7 @@ async fn render_device(
             status,
             attention,
             qa,
-            asked,
+            ask,
             done,
             lifts,
             no_parent_pin: managed_without_pin(&policy),

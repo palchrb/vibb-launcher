@@ -29,6 +29,32 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   have opened the dialer or a browser. Back returns to the time-rule screen; Back/Home/other resumes don't
   open it again. Reminder ping stays silent under every rule, Recents unchanged. `TimeRulesTest`, `TimeLockModelTest`,
   `LockGlanceTest`, `DayTaskTest`, `PolicyResponseCompatTest`.
+- **"Be om mer tid" on the time-rule screen** (design 100 step 3, `docs/design/100-one-vibb-notification.md` §8): the
+  block `lock_ask` in `activity_lock.xml`, directly under the rule card and above the rows' card (14 dp, no card ground
+  of its own). Pure `lockAsk(ruleInForce, budgetToday, windowOpen, enrolled, state, note)` (`ui/TimeLockModel.kt`,
+  `TimeLockModelTest`): only on the used-up budget's screen - never while the screen names a rule (D4: more minutes
+  don't open a rule, and bedtime mustn't invite a request every night), without a budget today, in the pause or the
+  override, or before enrolment. Idle: the accent pill "Be om mer tid" (`anchor_ask_more_time`, 52 dp,
+  `bg_lock_ask_fill`); time given without a request: its note and "Spør igjen"; Pending/Waiting: the note in a dim pill
+  (`kid_lock_pill_dim`, text, not clickable - "Spurt kl. 14:02 · venter på svar", "· sendes når telefonen er på
+  nett" from 15 s); Answered: the note ("Pappa svarte nei kl. 14:10", "Mamma ga deg 30 min") and the ringed "Spør
+  igjen" (`lock_ask_again`, `bg_lock_ask_outline`) while under the day's three, else "Du har spurt tre ganger i dag."
+  (`lock_ask_capped`; `TIME_REQUESTS_A_DAY == 3` is pinned beside it). The screen's note has no time limit (D12,
+  `NoteSurface.SCREEN`; push-and-play.md, "The request"). The glue is `timerules/TimeAsk.kt`: `askNow` - the one
+  request path, shared with the notice's action (`TimeAskReceiver`) and the Mer tid disc (`ShortcutsRuntime.askForTime`;
+  nothing else calls `TimeRequests.ask`), `askStep` deciding again inside - and `lockAskFor(context, snap, ruleInForce)`
+  (keeps `OfflineOverride` out of `LockActivity`). `LockActivity` follows the request through `AnchorNotice`'s
+  listeners (`addListener` in `onStart`, removed in `onStop`): a changed time part or request state is posted to the
+  main `Handler` whatever thread `refresh` ran on (Q100-H1: a Mer tid tap in the shade runs it on the tap thread), also
+  while the anchor isn't running (`refreshNow` has no anchor check, Q100-L3); the listener only calls `render()`, which
+  re-reads everything. The note's own changes (the 15-second mark, an answer's 30 minutes in the shade) are boundary
+  instants (`noteChangeMs`), so `recheck` refreshes the notice and the screen follows. A "yes" unlocks: the screen
+  finishes as today. **After the unlock (D6)**: while the block shows a button, `unlockOpenRow(.., askButton =
+  shownAsk.hasButton)` opens nothing - two things to do, the screen stays. TalkBack: the pill is a button ("Be om mer
+  tid, knapp", `ButtonRole`) only while clickable, and always focusable, so TalkBack's focus stays on it as it turns into
+  the dim note after the tap (code QA L3); the three views are polite live regions, their text set only when it changed
+  (render runs on many signals; code QA L2). The glance (the PIN lock's
+  page) is unchanged: its card stays information only. Not emulator-checked yet: design 100 §11 check 8.
 - **Meldinger during a rule** (design 77 §6.7, step 2): reachable where the rule allows calls, as the phone book
   (`messagesUsableUnder`; the used-up budget keeps calls). The time-rule screen has a **Meldinger** row
   (`LockRow.Messages`, after the phone book, while `lock.callsAllowed` and Home shows the tile - `SmsHome.tileShown()`,

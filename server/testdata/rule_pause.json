@@ -13,10 +13,11 @@
       ],
       "daily_budget_minutes": [null, null, null, null, null, null, null],
       "lifts": [
-        {"id": 5, "target": "rule", "rule_id": 2, "minutes": 15, "expires_at_ms": 1794827100000},
-        {"id": 7, "target": "rule", "rule_id": 2, "minutes": 30, "expires_at_ms": 1794828000000, "phone_key": "0123456789abcdef0123456789abcdef"},
-        {"id": -7, "target": "rule", "rule_id": -1, "minutes": 30, "expires_at_ms": 1794828000000, "phone_key": "0123456789abcdef0123456789abcdef"}
-      ]
+        {"id": 5, "target": "rule", "rule_id": 2, "minutes": 15, "expires_at_ms": 1794827100000, "by": "Mamma", "at_ms": 1794826200000},
+        {"id": 7, "target": "rule", "rule_id": 2, "minutes": 30, "expires_at_ms": 1794828000000, "phone_key": "0123456789abcdef0123456789abcdef", "at_ms": 1794826200000},
+        {"id": -7, "target": "rule", "rule_id": -1, "minutes": 30, "expires_at_ms": 1794828000000, "phone_key": "0123456789abcdef0123456789abcdef", "at_ms": 1794826200000}
+      ],
+      "request_answers": true
     }
   },
   "request": {"key": "0123456789abcdef0123456789abcdef", "minutes": 30, "started_at_ms": 1794826200000,

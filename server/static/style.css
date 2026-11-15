@@ -3064,6 +3064,20 @@ details.pic-menu > summary::-webkit-details-marker { display: none; }
 .summary-state .pin { margin-right: 3px; vertical-align: -1px; }
 .state-dot { display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 50%; vertical-align: 0.1em; }
 .summary-link { display: inline-block; margin-top: 4px; padding: 10px 8px; font-size: 0.9375rem; text-decoration: none; }
+/* Design 100 §14.4: the answer card - the kid's open request right after the header, a 2 px peach ring on the card's
+   ground, the hourglass on an amber tile, four answers in one row. Margins, not flex gap (Safari 14.0); the grid's
+   gap is fine. Tokens only, so light and dark follow. */
+.ask-card { margin: 22px 0 20px; padding: 14px; border-radius: 16px; background: var(--surface); box-shadow: inset 0 0 0 2px var(--tint-fill); }
+.ask-head { display: flex; align-items: flex-start; }
+.ask-tile { display: flex; flex: none; align-items: center; justify-content: center; width: 36px; height: 36px; margin-right: 12px; border-radius: 10px; background: var(--orange-bg); color: var(--orange); }
+.ask-text { display: flex; flex-direction: column; min-width: 0; }
+.ask-title { font-size: 1.0625rem; font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }
+.ask-sub { margin-top: 3px; color: var(--label-3); font-size: 0.875rem; line-height: 1.35; }
+.ask-form { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 12px 0 0; }
+.ask-button { min-width: 0; height: 44px; margin: 0; padding: 0 4px; border: 0; border-radius: 12px; background: var(--tint-fill); color: var(--on-tint-fill); font: inherit; font-size: 0.9375rem; font-weight: 600; cursor: pointer; }
+.ask-button:hover { background: var(--tint-fill-hover); }
+.ask-button.ask-no { background: var(--grey-bg); color: var(--grey-text); }
+.ask-button.ask-no:hover { background: var(--row-active); }
 /* A tile that is a link (Locate) or a sheet's summary looks like the button tiles. */
 a.act, a.act:hover { text-decoration: none; }
 .act-strong { background: var(--tint-fill); color: var(--on-tint-fill); }

@@ -17,7 +17,6 @@ import android.media.AudioManager
 import android.net.wifi.WifiManager
 import android.os.Handler
 import android.os.Looper
-import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
 import androidx.core.content.ContextCompat
@@ -29,21 +28,18 @@ import com.kidslauncher.mdm.lock.PinLockRuntime
 import com.kidslauncher.mdm.music.MusicSessions
 import com.kidslauncher.mdm.music.MusicTrust
 import com.kidslauncher.mdm.preferences.LauncherPreferences
-import com.kidslauncher.mdm.push.SyncRunner
 import com.kidslauncher.mdm.server.AnchorNotice
+import com.kidslauncher.mdm.server.AnchorNotification
 import com.kidslauncher.mdm.server.CachedPolicy
 import com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
 import com.kidslauncher.mdm.server.MobileNetworkRuntime
-import com.kidslauncher.mdm.server.OfflineOverride
 import com.kidslauncher.mdm.server.QuickControlFeature
 import com.kidslauncher.mdm.server.QuickControls
-import com.kidslauncher.mdm.server.RestrictionsPause
 import com.kidslauncher.mdm.server.SoundChoice
 import com.kidslauncher.mdm.server.cachedPolicy
 import com.kidslauncher.mdm.server.currentPolicyDecision
 import com.kidslauncher.mdm.timerules.AskPart
-import com.kidslauncher.mdm.timerules.TimeRequests
-import com.kidslauncher.mdm.timerules.TimeRuleAlarm
+import com.kidslauncher.mdm.timerules.TimeAsk
 import com.kidslauncher.mdm.timerules.TimeRulesRuntime
 import com.kidslauncher.mdm.torch.Torch
 import kotlinx.serialization.builtins.ListSerializer
@@ -59,20 +55,18 @@ private const val KEY_CHANNEL = "channel_n"
 private const val CHANNEL_BASE = "launcher:shortcuts"
 
 /**
- * Snarveier's glue (design 99 §2.3-§2.6): reads the platform, builds the panel ([shortcutsModel]), starts and feeds
- * [ShortcutsService], keeps the kid's picks and the channel, and runs each tap through [shortcutTapAllowed].
+ * Snarveier's glue (design 99 §2.3-§2.6, design 100 §2): reads the platform, builds the panel ([shortcutsModel]) for
+ * the anchor's one notification ([AnchorNotification] posts it as id 1002's view while it is shown), keeps the kid's
+ * picks and the channel, and runs each tap through [shortcutTapAllowed]. It starts and stops nothing: the anchor's life
+ * is design 07's.
  *
- * - The platform's signals are heard **once per process** ([init] from `Application`, Q99-L3), not by the service, so a
- *   panel with nothing to show still hears the change that brings it back.
- * - A refresh runs on its own thread, posts only a changed panel, and at most one post a second ([shortcutPostDelay],
- *   Q99-L7: Android's update rate is per package, shared with the anchor and the VPN).
- * - Taps run one at a time on [taps], an app-level thread (Q99-L5) - a tap that lands while the service stops is
- *   still handled, and Flymodus's route can take seconds without holding up a refresh.
- * - Only this object starts the service; only the service stops itself (Q99-L4): nothing calls `stopService`.
+ * - The platform's signals are heard **once per process** ([init] from `Application`, Q99-L3), so a panel with nothing
+ *   to show still hears the change that brings it back. Each asks the poster for a refresh ([requestRefresh]).
+ * - Taps run one at a time on [taps], an app-level thread (Q99-L5): Flymodus's route can take seconds without holding
+ *   up a refresh.
  */
 object ShortcutsRuntime {
     private val main = Handler(Looper.getMainLooper())
-    private val refresher = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "shortcuts-refresh") }
 
     /** The taps' one thread (receiver, [ShortcutAirplaneActivity]). */
     val taps = Executors.newSingleThreadExecutor { r -> Thread(r, "shortcuts-tap") }
@@ -80,22 +74,13 @@ object ShortcutsRuntime {
     @Volatile
     private var appContext: Context? = null
 
-    /** The panel built last (refresh thread writes; the service reads it at its start). */
+    /** The panel built last (the poster's thread writes). */
     @Volatile
     var panel: ShortcutsPanel = ShortcutsPanel(false, false, emptyList())
         private set
 
-    /** What was posted last, with its locale and channel (refresh thread). */
-    private var posted: Triple<ShortcutsPanel, String, String>? = null
-    private var lastPostMs: Long? = null
-    private var refreshQueued = false
-    private val queueLock = Any()
-
-    /** A `startForegroundService` went out and its `onStartCommand` hasn't run (elapsed time; refresh thread). */
-    @Volatile
-    private var startAskedAtMs: Long? = null
-
-    /** The anchor notice's time part, kept from [AnchorNotice]'s every recompute ([noticeAsk]); `null` before the first. */
+    /** The anchor notice's time part, set by the poster from the time part it posts with ([panelFor], Q100-L6);
+     * `null` before the first. */
     @Volatile
     private var ask: AskPart? = null
 
@@ -113,6 +98,7 @@ object ShortcutsRuntime {
         initialised = true
         val app = context.applicationContext
         appContext = app
+        AnchorNotification.remember(app)
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_AIRPLANE_MODE_CHANGED)
             addAction(AudioManager.RINGER_MODE_CHANGED_ACTION)
@@ -153,111 +139,37 @@ object ShortcutsRuntime {
         if (key == keys.kidModePolicy() || key == keys.kidMobileOff()) requestRefresh()
     }
 
-    /** [AnchorNotice]'s notice was computed (a tap, the server's answer, the screen-time minute): Mer tid follows. */
-    fun noticeAsk(part: AskPart) {
-        if (part == ask) return
-        ask = part
-        requestRefresh()
-    }
-
     // ---- the refresh ----
 
-    /** Any signal: one refresh soon, at most one post a second. Any thread. */
-    fun requestRefresh() {
-        synchronized(queueLock) {
-            if (refreshQueued) return
-            refreshQueued = true
-        }
-        val delay = shortcutPostDelay(SystemClock.elapsedRealtime(), lastPostMs)
-        refresher.schedule({ refreshNow() }, delay, TimeUnit.MILLISECONDS)
-    }
+    /** Any signal: the anchor's notification refreshed soon ([AnchorNotification], at most one post a second). Any
+     * thread. */
+    fun requestRefresh() = AnchorNotification.requestRefresh()
 
-    private fun refreshNow() {
-        synchronized(queueLock) { refreshQueued = false }
-        val app = appContext ?: return
-        try {
-            val now = computePanel(app)
-            panel = now
-            main.post { watchMusic(app) }
-            val service = ShortcutsService.instance
-            when {
-                !now.shown -> {
-                    if (service != null) main.post { ShortcutsService.instance?.stopNow("not shown") }
-                    posted = null
-                }
-                service == null -> startService(app)
-                else -> post(app, now)
-            }
-        } catch (e: Exception) {
-            Log.w(LOG_TAG, "Refresh failed: ${e.javaClass.simpleName}")
-        }
+    /**
+     * The panel for the poster's next view ([AnchorNotification]'s thread): Mer tid's state first, from the very time
+     * part the view is posted with (Q100-L6), then the model. Throws what [computePanel] throws (the poster then posts
+     * the plain notice, Q100-M1).
+     */
+    fun panelFor(context: Context, part: AskPart): ShortcutsPanel {
+        val app = context.applicationContext
+        ask = part
+        val now = computePanel(app)
+        panel = now
+        main.post { watchMusic(app) }
+        return now
     }
-
-    private fun startService(app: Context) {
-        val asked = startAskedAtMs
-        val now = SystemClock.elapsedRealtime()
-        if (asked != null && now - asked < 10_000) return
-        startAskedAtMs = now
-        try {
-            ContextCompat.startForegroundService(app, Intent(app, ShortcutsService::class.java))
-            Log.i(LOG_TAG, "Starting the panel")
-        } catch (e: Exception) {
-            startAskedAtMs = null
-            Log.w(LOG_TAG, "Couldn't start the panel: ${e.javaClass.simpleName}")
-        }
-    }
-
-    /** The service's `onStartCommand` ran (main thread). */
-    fun serviceStarted() {
-        startAskedAtMs = null
-    }
-
-    /** The service is gone: forget what was posted, and decide again (it may be wanted back). */
-    fun serviceGone() {
-        refresher.execute { posted = null }
-        requestRefresh()
-    }
-
-    /** Posts [now] when it, the locale or the channel changed (refresh thread). */
-    private fun post(app: Context, now: ShortcutsPanel) {
-        val key = Triple(now, locale(app), channelId(app))
-        if (key == posted) return
-        try {
-            app.getSystemService(NotificationManager::class.java)
-                ?.notify(SHORTCUTS_NOTIFICATION_ID, ShortcutsNotification.build(app, key.third, now))
-            posted = key
-            lastPostMs = SystemClock.elapsedRealtime()
-        } catch (e: Exception) {
-            Log.w(LOG_TAG, "Couldn't post the panel: ${e.javaClass.simpleName}")
-        }
-    }
-
-    /** The notification for the service's `startForeground` (main thread): the panel built last, read once, so what
-     * is recorded as posted is what was built (C99-L2). */
-    fun notificationForStart(context: Context) = context.applicationContext.let { app ->
-        val shown = panel
-        val channel = channelId(app)
-        val language = locale(app)
-        ShortcutsNotification.build(app, channel, shown).also {
-            refresher.execute {
-                posted = Triple(shown, language, channel)
-                lastPostMs = SystemClock.elapsedRealtime()
-            }
-        }
-    }
-
-    /** What the posted views depend on besides the panel: the language (the content descriptions, the subtext). The
-     * discs are in dp, so the font scale changes nothing (revision 3: no names). */
-    private fun locale(context: Context): String = context.resources.configuration.locales[0]?.toLanguageTag().orEmpty()
 
     /**
      * The launcher's language changed (C99-L1: `Application.onConfigurationChanged`, after the other channels were
-     * named again; main thread): the channel in use takes its new name, and the panel is posted again in the new
-     * language (the post key's language differs).
+     * named again; main thread): the channel in use takes its new name, and the anchor's view is posted again in the new
+     * language (the post key's language differs) - the plain notice's too (design 100 §2.4).
      */
     fun languageChanged(context: Context) {
         val app = context.applicationContext
-        if (appContext == null) return
+        if (appContext == null) {
+            requestRefresh()
+            return
+        }
         try {
             val id = currentChannelId(app)
             val nm = app.getSystemService(NotificationManager::class.java)
@@ -321,7 +233,8 @@ object ShortcutsRuntime {
         )
     }
 
-    /** Mer tid before the anchor's first notice in this process: the same computation (TimeAskReceiver's inputs). */
+    /** Mer tid before the poster's first view in this process (a report, a tap): the same computation
+     * (TimeAskReceiver's inputs). */
     private fun askNow(app: Context): AskPart = try {
         val snap = TimeRulesRuntime.snapshot(app, currentPolicyDecision().policy)
         AnchorNotice.noticeFor(app, snap.budget, snap.policy, snap.ledger?.day, snap.clocks.wallMs).ask.also { ask = it }
@@ -365,19 +278,16 @@ object ShortcutsRuntime {
         requestRefresh()
     }
 
-    /** The channel in use: `launcher:shortcuts`, or `launcher:shortcuts.N` after the kid showed it again (§2.6). */
-    fun channelId(context: Context): String {
-        val id = currentChannelId(context)
-        ensureChannel(context, id)
-        return id
-    }
-
-    private fun currentChannelId(context: Context): String {
+    /** The channel in use: `launcher:shortcuts`, or `launcher:shortcuts.N` after the kid showed it again (§2.6). Read
+     * only: the poster makes sure of it right before each build ([ensureChannel], design 100 M7). */
+    fun currentChannelId(context: Context): String {
         val n = prefs(context).getInt(KEY_CHANNEL, 0)
         return if (n == 0) CHANNEL_BASE else "$CHANNEL_BASE.$n"
     }
 
-    private fun ensureChannel(context: Context, id: String) {
+    /** The panel's channel [id] exists afterwards (created when missing; an existing one - the kid's block included -
+     * is left as it is). */
+    fun ensureChannel(context: Context, id: String) {
         val nm = context.getSystemService(NotificationManager::class.java) ?: return
         if (nm.getNotificationChannel(id) != null) return
         createChannel(context, id)
@@ -403,15 +313,29 @@ object ShortcutsRuntime {
         false
     }
 
-    /** §2.6: "Vis i varsellisten igjen" - the blocked channel deleted, a new one by the next number. The kid's own
-     * button only; Vibb never does this by itself. */
+    /**
+     * §2.6: "Vis i varsellisten igjen" - the blocked channel deleted, a new one by the next number. The kid's own
+     * button only; Vibb never does this by itself. One task on the poster's thread (design 100 Q100-L8), so it is
+     * ordered against every build's ensure (M7): the delete only while the plain notice is up (AOSP refuses to delete a
+     * channel holding the foreground-service notification), then the bump. Waits for it (the picker calls it off the
+     * main thread and reads the state afterwards).
+     */
     fun showAgain(context: Context) {
-        val prefs = prefs(context)
-        val n = prefs.getInt(KEY_CHANNEL, 0)
-        val old = if (n == 0) CHANNEL_BASE else "$CHANNEL_BASE.$n"
-        runCatching { context.getSystemService(NotificationManager::class.java)?.deleteNotificationChannel(old) }
-        prefs.edit().putInt(KEY_CHANNEL, n + 1).commit()
-        Log.i(LOG_TAG, "Shown again on a new channel (${n + 1})")
+        val app = context.applicationContext
+        try {
+            AnchorNotification.onPosterThread {
+                val prefs = prefs(app)
+                val n = prefs.getInt(KEY_CHANNEL, 0)
+                val old = if (n == 0) CHANNEL_BASE else "$CHANNEL_BASE.$n"
+                if (!AnchorNotification.panelUp()) {
+                    runCatching { app.getSystemService(NotificationManager::class.java)?.deleteNotificationChannel(old) }
+                }
+                prefs.edit().putInt(KEY_CHANNEL, n + 1).commit()
+                Log.i(LOG_TAG, "Shown again on a new channel (${n + 1})")
+            }.get(5, TimeUnit.SECONDS)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Show again failed: ${e.javaClass.simpleName}")
+        }
         requestRefresh()
     }
 
@@ -477,15 +401,8 @@ object ShortcutsRuntime {
         }
     }
 
-    /** Mer tid: exactly the anchor's "Be om mer tid" (`TimeAskReceiver`). */
+    /** Mer tid: exactly the anchor's "Be om mer tid" - the one request path (design 100 §8.4). */
     private fun askForTime(app: Context) {
-        val snap = TimeRulesRuntime.snapshot(app, currentPolicyDecision().policy)
-        val windowOpen = OfflineOverride.isActive() || RestrictionsPause.isActive()
-        val asked = TimeRequests.ask(app, LauncherPreferences.mdm().enrolled(), windowOpen, snap)
-        AnchorNotice.refresh(app, snap)
-        if (asked) {
-            TimeRuleAlarm.schedule(app)
-            SyncRunner.request(app, "time_request")
-        }
+        TimeAsk.askNow(app)
     }
 }

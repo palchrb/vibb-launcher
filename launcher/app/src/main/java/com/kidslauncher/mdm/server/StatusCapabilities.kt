@@ -85,6 +85,9 @@ val STATUS_CAPABILITIES: List<String> = listOf(
     // Design 97: the policy's `abroad` ("I utlandet"), `data_roaming.where` and `mobile_data.kid` in every report, and
     // the kid's Mobildata row (bit 32). The server's kid switch and the roaming notice wait for it.
     MOBILE_NETWORK_CAPABILITY,
+    // Design 100 §14.5: a parent's "Nei" and the answering parent's name shown on the phone (`time_policy.answer`); the
+    // server's "Nei" flash promises "… ser det på telefonen" only for a phone claiming it.
+    com.kidslauncher.mdm.timerules.TIME_ANSWER_CAPABILITY,
 )
 
 /** A time rule's "Stille" switch (server migration 0121): `rules[].silent` is enforced. */
