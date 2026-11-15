@@ -106,7 +106,7 @@ fn every_template_with_the_bar_sets_its_tab() {
             "{file}: a landing page opens on the tab's band, no other page does"
         );
         assert_eq!(
-            ["sub", "phone", "editor"]
+            ["sub", "phone", "app", "editor"]
                 .iter()
                 .any(|kind| text.contains(&format!("{{% call band::{kind}("))),
             !landing,

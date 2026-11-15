@@ -1504,8 +1504,9 @@ async fn activity_shows_ended_pauses_and_extra_time_by_when_granted() {
     );
     // The summary's one row: the newest (the running pause is Quick's), its unit kept on.
     assert!(
-        group(&summary, "activity")
-            .contains(">Skole paused for 30\u{a0}min · yesterday 14:00</span>"),
+        group(&summary, "activity").contains(
+            ">Skole paused for 30\u{a0}min · <span class=\"nowrap\">yesterday 14:00</span></span>"
+        ),
         "{summary}"
     );
     for lift in [running, gone] {

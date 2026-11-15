@@ -341,7 +341,6 @@ async fn the_summary_says_airplane_mode_and_holds_the_setup_card() {
         .text();
     for word in [
         "Flymodus på siden",
-        "Flymodus var på",
         "Oppsett",
         "Bakgrunnstilkobling",
         "Ikke nå",

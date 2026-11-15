@@ -942,7 +942,7 @@ async fn the_device_page_says_off_since_until_the_start() {
         );
     assert!(
         html.contains(&format!(
-            "<span class=\"state-offline\" data-power-off title=\"{}\">Turned off {when}</span> · <span>battery was 2 %</span>",
+            "<span class=\"part\"><span class=\"state-offline\" data-power-off title=\"{}\">Turned off {when}</span></span> · <span class=\"part\"><span>battery was 2 %</span></span>",
             crate::display_time::Zone::load(&app.db, crate::i18n::Lang::En)
                 .await
                 .exact(DateTime::from_timestamp_millis(ms(shutdown)).unwrap())
