@@ -447,9 +447,12 @@ tailnet branch: one line, and one `ServerTransportTest` row.
     - A navigation **starts** with a GET seen in SOUL (with `hasGesture()` true for a tap, false for the page's own
       code or a meta refresh, R5), or with a POST seen in SIR (from the page).
     - Its **redirect hops** (SOUL with `isRedirect()`) belong to that start.
-    - **Not measured (R7, owed as E5)**: whether Chromium keeps `hasGesture()` on the redirect hops of a tapped link
-      or a form POST. The emulator was in use by another agent during revision 5, and the scripts are ready in the
-      scratchpad. The rule doesn't depend on it, because the window remembers how each chain started.
+    - **Measured (R7, the emulator check of 2026-11-15, emulator.md §6ap)**: `hasGesture()` is false on the redirect
+      hops of a tapped link and of a form POST, so the window's own chain tracking is what holds. A POST answered
+      with **307/308 reaches neither hook**, and neither does a history move: such a main-frame load is judged at its
+      commit (`onPageStarted`) - the filter's lists, and on another site as a redirect hop of the chain in flight -
+      and, refused, stopped with the window stepping back. The POST itself has reached the target by then (no page
+      is shown).
   - **Main-frame moves to another site**:
     - **A chain that began with a tap on a GET may not leave the tapped link's site**: any hop to another site is
       refused, whatever the hop's own flag says. This closes a portal site's same-site redirector
