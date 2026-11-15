@@ -244,6 +244,8 @@ pub enum Entry {
     InstallMode,
     /// Design 98 §4.4: the time-rule screen's Foreldrekode - a pause of the rule in force ("Regelskjermen").
     RulePause,
+    /// Design 102 §3.2: the Wi-Fi sign-in's keypad - one opening of the sign-in window (or a reopen), one-shot.
+    WifiSignin,
 }
 
 impl Entry {
@@ -255,6 +257,7 @@ impl Entry {
             "pause" => Entry::Pause,
             "install_mode" => Entry::InstallMode,
             "rule_pause" => Entry::RulePause,
+            "wifi_signin" => Entry::WifiSignin,
             _ => return None,
         })
     }
@@ -267,6 +270,7 @@ impl Entry {
             Entry::Pause => "pause",
             Entry::InstallMode => "install_mode",
             Entry::RulePause => "rule_pause",
+            Entry::WifiSignin => "wifi_signin",
         }
     }
 }
@@ -351,6 +355,7 @@ pub fn log_line(event: &PinEvent) -> security::Detail {
         Entry::Pause => "security.detail.pin.place.pause",
         Entry::InstallMode => "security.detail.pin.place.install_mode",
         Entry::RulePause => "security.detail.pin.place.rule_pause",
+        Entry::WifiSignin => "security.detail.pin.place.wifi_signin",
     };
     let with_at = |detail: security::Detail| match at {
         Some(at) => detail.at("at", at),
@@ -373,6 +378,7 @@ pub fn log_line(event: &PinEvent) -> security::Detail {
                 (Entry::InstallMode, false) => "security.detail.pin.install_mode",
                 (Entry::RulePause, true) => "security.detail.pin.rule_pause_until",
                 (Entry::RulePause, false) => "security.detail.pin.rule_pause",
+                (Entry::WifiSignin, _) => "security.detail.pin.wifi_signin",
             };
             with_until(with_at(security::Detail::words(key, &[])))
         }
@@ -633,6 +639,15 @@ mod tests {
             (
                 ev(Kind::Wrong, Entry::InstallMode, NOW),
                 "9 Oct 2025 08:53 UTC: wrong parent PIN for Play install mode.",
+            ),
+            // Design 102 §3.2: the Wi-Fi sign-in's keypad, one-shot.
+            (
+                unlocked(Entry::WifiSignin, None),
+                "9 Oct 2025 08:53 UTC: Wi-Fi sign-in opened with the parent code.",
+            ),
+            (
+                ev(Kind::Wrong, Entry::WifiSignin, NOW),
+                "9 Oct 2025 08:53 UTC: wrong parent PIN at the Wi-Fi sign-in.",
             ),
             (
                 PinEvent {

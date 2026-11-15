@@ -181,6 +181,11 @@ data class PolicyResponse(
     /** Design 98 §4.4.6: the server takes `POST /api/devices/rule-pause`; only then is Foreldrekode offered on the
      * time-rule screen. Missing (an older server) = never. */
     val rulePause: Boolean = false,
+    /** Design 102 §6.1: Wi-Fi sign-in - the switch, the parent code required, the limits, the "one more" counter.
+     * Missing (an older server) = on, with the code required ([com.kidslauncher.mdm.logins.portalPolicyOf]). */
+    val captivePortal: com.kidslauncher.mdm.logins.CaptivePortalPolicy? = null,
+    /** Design 102 §6.1: Chrome only for logins - its package and the sites; `null` (and missing) = the role off. */
+    val loginBrowser: com.kidslauncher.mdm.logins.LoginBrowserPolicy? = null,
 )
 
 /** `PolicyResponse.kidLock` - `security::hash_pin` on the server (PBKDF2-SHA256, see

@@ -136,6 +136,23 @@ pub struct DevicePolicy {
     /// (`airplane_mode::setup_key`); the card shows again once they change. `None` = never hidden.
     #[sqlx(default)]
     pub setup_card_hidden: Option<String>,
+    /// Design 102 (migration 0150): Wi-Fi sign-in on the phone (Part A, D1: on by default). Read through
+    /// `logins::portal_policy`; a missing row reads as on (`load_policy`).
+    #[sqlx(default)]
+    pub captive_portal_enabled: bool,
+    /// Design 102 D14: the parent's "one more sign-in now" counter, bumped by the page's button.
+    #[sqlx(default)]
+    pub captive_portal_grant: i64,
+    /// Design 102 revision 5: every sign-in and reopen needs the parent code on the phone (Advanced's `#wifi-signin`,
+    /// on by default).
+    #[sqlx(default)]
+    pub captive_portal_require_code: bool,
+    /// Design 102 Part B (D10: off by default): Chrome only for logins.
+    #[sqlx(default)]
+    pub login_browser_enabled: bool,
+    /// Design 102 D11: the ticked presets, a JSON array of `logins::PRESETS` keys (expanded at policy build).
+    #[sqlx(default)]
+    pub login_browser_presets: String,
     /// Device › Time Rules' "Own limit" switch: when set, this device uses its own
     /// `daily_budget_json` instead of the global one. Until migration 0115 it also swapped
     /// everyone's rules for the phone's own; since then each rule has its own switch
@@ -585,6 +602,13 @@ pub struct DeviceStatus {
     /// `shortcuts::report`, which wants the capability. `None` from older launchers.
     #[sqlx(default)]
     pub shortcuts_json: Option<String>,
+    /// Design 102 §6.2 (migration 0150): the report's `captive_portal`, cleaned (`logins::clean_portal`). `None` from
+    /// older launchers.
+    #[sqlx(default)]
+    pub captive_portal_json: Option<String>,
+    /// Design 102 §6.2: the report's `login_browser`, cleaned (`logins::clean_browser`).
+    #[sqlx(default)]
+    pub login_browser_json: Option<String>,
     /// The report's `call_state` (migrations/0022_calls.sql), its known keys (`device_api::CALL_STATE_FIELDS`). Read
     /// by handlers::calls::call_report on its own; design 98's Oppsett card reads the screening roles from it here.
     #[sqlx(default)]
@@ -1380,6 +1404,11 @@ pub struct PolicyResponse {
     /// Design 98 §4.4.6: this server takes `POST /api/devices/rule-pause`, so the phone offers Foreldrekode on the
     /// time-rule screen; always `true`. An older launcher ignores it.
     pub rule_pause: bool,
+    /// Design 102 §6.1: Wi-Fi sign-in (`logins::portal_policy`), always sent. An older launcher ignores it.
+    pub captive_portal: crate::logins::CaptivePortalPolicy,
+    /// Design 102 §6.1: Chrome only for logins (`logins::browser_policy`), `null` while the role is off or Chrome is
+    /// ticked as a normal app. Always the key. An older launcher ignores it.
+    pub login_browser: Option<crate::logins::LoginBrowserPolicy>,
     /// Design 76 D2: the certificate check for a launcher with `server_pin_v1` (`server_tls::policy`): `{}` while
     /// watching (no `enforce`: the phone keeps its flag), `{"enforce": true}` on, `{"enforce": false}` the parent's
     /// off. Left out for an older launcher.
@@ -1646,6 +1675,14 @@ pub struct StatusReportRequest {
     /// full-report field, not a heartbeat field. Absent from older launchers.
     #[serde(default)]
     pub shortcuts: Option<serde_json::Value>,
+    /// Design 102 §6.2 (capability `captive_portal_v1`): `{handler, parent_code_set, today, sessions}`, raw - cleaned
+    /// by `logins::clean_portal`. A full-report field. Absent from older launchers.
+    #[serde(default)]
+    pub captive_portal: Option<serde_json::Value>,
+    /// Design 102 §6.2 (capability `login_browser_v1`): `{package, state, version_name, written_ms, reason,
+    /// cleared_ms}`, raw - cleaned by `logins::clean_browser`. A full-report field. Absent from older launchers.
+    #[serde(default)]
+    pub login_browser: Option<serde_json::Value>,
     /// Design 76: the launcher's certificate check (`testdata/server_tls_report.json`'s `report`), raw - read
     /// within limits by `server_tls::sanitize`, so nothing in it can fail the report. Absent from older launchers.
     #[serde(default)]

@@ -441,6 +441,9 @@ pub(crate) async fn load_policy(
         Ok(policy) => Ok(policy.unwrap_or(DevicePolicy {
             device_id: id,
             vpn_filter_enabled: true,
+            // Design 102: migration 0150's defaults (D1, revision 5).
+            captive_portal_enabled: true,
+            captive_portal_require_code: true,
             ..Default::default()
         })),
         Err(err) => {
@@ -876,6 +879,8 @@ struct AdvancedTemplate {
     server_tls: Option<crate::server_tls::Card>,
     /// Design 93 §6.6: "Åpne for oppsett", the first row (a `window_relock_v1` phone only).
     setup: Option<crate::handlers::quick_actions::SetupCard>,
+    /// Design 102 revision 5: "Krev foreldrekode for Wi-Fi-innlogging" (`#wifi-signin`).
+    wifi_signin: crate::handlers::logins::CodeCard,
 }
 crate::i18n::words!(AdvancedTemplate);
 
@@ -994,6 +999,7 @@ pub async fn view_advanced(
             spotify_diag: spotify_diag_card(&policy, &zone, now),
             server_tls,
             setup,
+            wifi_signin: crate::handlers::logins::code_card(&policy, latest.as_ref()),
             device,
         }
         .render()
@@ -1733,6 +1739,8 @@ struct FilterTemplate {
     spotify_overridden: Vec<i64>,
     /// The site-wide blocked domains it overrides on this phone.
     spotify_global: Vec<String>,
+    /// Design 102 §5: the Sign-in row's sub-line ("Wi-Fi: på · Apper: av").
+    logins_sub: String,
 }
 crate::i18n::words!(FilterTemplate);
 
@@ -1893,6 +1901,7 @@ pub async fn view_filter(
             log_on: policy.dns_log_enabled,
             retention_days: crate::retention::DNS_LOG_RETENTION_DAYS,
             events,
+            logins_sub: crate::handlers::logins::row_sub(lang, &policy),
             device,
         }
         .render()
@@ -2084,6 +2093,8 @@ struct AppsTemplate {
     not_allowed: Vec<AppView>,
     /// The phone has reported its apps at least once.
     reported: bool,
+    /// Design 102 §5.2: Chrome is the phone's login browser (the role on, Chrome not ticked) - its row says so.
+    login_role: bool,
     /// Design 68: the phone reported its apps without `app_permissions_v1` - "Update Vibb One to manage apps'
     /// permissions" above the Allowed list.
     update_note: Option<&'static str>,
@@ -2458,6 +2469,7 @@ pub(crate) async fn render_apps(
                 && !has_capability(latest.as_ref(), crate::models::APP_PERMISSIONS_CAPABILITY))
             .then_some(crate::i18n::t(lang, "apps.perms.update_note")),
             reported: latest.is_some(),
+            login_role: policy.login_browser_enabled && !crate::logins::chrome_ticked(&policy),
             installing,
             wifi_only: policy.app_updates_wifi_only,
             network,

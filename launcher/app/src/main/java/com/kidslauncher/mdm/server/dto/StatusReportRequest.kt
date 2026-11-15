@@ -142,6 +142,11 @@ data class StatusReportRequest(
     /** Design 99 §6.1 (capability `shortcuts_v1`): Snarveier - posted now, hidden by the kid, the panel's keys. A
      * full-report field (not in `status_heartbeat_fields`). Pinned by `shortcuts.json` (`ShortcutsTest`). */
     val shortcuts: com.kidslauncher.mdm.shortcuts.ShortcutsReport? = null,
+    /** Design 102 §6.2 (capability `captive_portal_v1`): the Wi-Fi sign-in window's handler, today's use and the last
+     * sessions. A full-report field. Pinned by `login_windows.json` (`LoginWindowsTest`). */
+    val captivePortal: com.kidslauncher.mdm.portal.CaptivePortalReport? = null,
+    /** Design 102 §6.2 (capability `login_browser_v1`): Chrome's login role on the phone. A full-report field. */
+    val loginBrowser: com.kidslauncher.mdm.portal.LoginBrowserReport? = null,
 )
 
 /**

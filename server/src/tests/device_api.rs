@@ -338,6 +338,7 @@ async fn policy_json_keys_snapshot() {
             "boot_cover",
             "calendar",
             "call_policy",
+            "captive_portal",
             "data_roaming",
             "dns_filter_version",
             "dns_log_enabled",
@@ -351,6 +352,7 @@ async fn policy_json_keys_snapshot() {
             "lock_glance",
             "lock_media_apps",
             "lock_task_features",
+            "login_browser",
             "mobile_settings_locked",
             "music",
             "notification_auto_cancel",
@@ -384,6 +386,7 @@ async fn policy_json_keys_snapshot() {
         "bluetooth_any_device",
         "calendar",
         "call_policy",
+        "captive_portal",
         "dns_filter_version",
         "dns_log_enabled",
         "dns_upstream_provider",
@@ -412,6 +415,14 @@ async fn policy_json_keys_snapshot() {
     // Design 98 §4.4.6: this server takes the phone's parent-code pause; a lift's `phone_key` is pinned with it
     // (`tests::rule_pause`, `rule_pause.json`'s `policy`).
     assert_eq!(object["rule_pause"], serde_json::json!(true));
+    // Design 102 §6.1: Wi-Fi sign-in on with the parent code for a new phone, the login role off (`null`, a nullable
+    // field on the launcher's side); every row in `tests::logins` (`login_windows.json`'s `policy`).
+    assert_eq!(
+        object["captive_portal"],
+        serde_json::json!({"enabled": true, "require_code": true, "minutes": 10, "day_openings": 4,
+            "day_minutes": 20, "grant": 0})
+    );
+    assert!(object["login_browser"].is_null());
 
     // The launcher's CallPolicy DTO: every key present and non-null, also when unmanaged.
     let call_policy = object["call_policy"].as_object().unwrap();
