@@ -150,3 +150,9 @@ blank disc.
 | C99-L3 | No contract change: `device.home.shortcuts_none` is now "Ingen snarveier vises nå." / "No shortcuts are shown now.", true both when nothing is offered and when the kid chose none (the report can't tell them apart). `tests::shortcuts` and `docs/notes/server/pwa.md` follow; the row's save path is unchanged (`#quick-controls`, no jump) |
 | C99-L4 | `watchMusic` wants `panel.shown && panel.items.any { it.key == MUSIC }` |
 | C99-L5 | `torch_title`, `torch_state_on`, `torch_state_off` removed in both languages (no reader); `home-and-photos.md` and design 99 §7 say so |
+
+**Found in the emulator check** (`docs/testing/emulator.md` §6an, "Revision 3"): the parent's "Blokker flymodus" didn't
+dim Flymodus until another signal refreshed the panel - the policy write the panel hears comes before
+`AppEnforcer.applyHardening` sets `DISALLOW_AIRPLANE_MODE`, and no SDK broadcast says a restriction changed. A tap in
+that window would open the window and be refused there, C99-M1's cost again. Fixed: `applyHardening` asks
+`ShortcutsRuntime.requestRefresh()` at its end (set and cleared alike); checked both ways on the emulator.

@@ -725,6 +725,10 @@ object AppEnforcer {
         }
         if (plan.screenCaptureDisabled) syncScreenCapture(dpm, admin, true)
         clearHardening(context, dpm, admin, plan)
+        // Snarveier's Flymodus dims with "Blokker flymodus" (design 99): no broadcast an app can hear says a device
+        // owner's restriction changed, and the policy write the panel listens for comes before this pass (emulator
+        // check, 2026-11-15: it stayed undimmed until another signal).
+        com.kidslauncher.mdm.shortcuts.ShortcutsRuntime.requestRefresh()
     }
 
     /** `setScreenCaptureDisabled` only when it differs ([screenCaptureWrite]); a failure is logged

@@ -4468,6 +4468,21 @@ the same file list).
 | 9 reboot | **Passed.** The panel is back after the unlock (`Starting the panel` at the process start), the picks kept |
 | 10 the Jelly Star | Owed (§10 test 10) |
 
+**Revision 3** (no names, the Vibb mark in the header; design 99 §3, `docs/review/qa-99-code.md` "Fixes"), a short
+check of the new look only, 2026-11-15. Setup as above: `jelly36` clean (22 of 22 sums, the same file list) before,
+the branch's debug launcher (01e0bb93b, then with the hardening refresh below) as Device Owner with the assistant role,
+the run's server data again, enrolled with a typed code; `jelly36` restored afterwards (22 of 22 sums; the run's
+`data/misc/pstore/pstore.bin` removed, so the same file list). Sizes from `uiautomator dump` (px / 1.5 = dp).
+
+| Check | Result |
+|---|---|
+| Folded and unfolded | **The same row.** Unfolded (first on every pull): the header line "Vibb One (debug) · Shortcuts" over the row, cells 82-83 px = **55 dp**, discs 60 px = **40 dp**, glyphs 33 px = 22 dp, the row 72 px = 48 dp. Folded (a header tap): the small icon and the chevron beside the row, cells 67-68 px = **45 dp**, the same 40 dp discs, 7 px (~4.7 dp) between two discs, the row 48 dp. Only Android's header moves; the buttons are the same |
+| Font scale 1.3 | **No change** to the row: the same 40 dp discs and cells both ways (the header text grows and its app name is cut, Android's own) |
+| The header icon | The Vibb mark (`ic_stat_vibb`): Android draws its rings and core dark in a light disc, folded and unfolded. The gear before drew an empty disc |
+| A dimmed Flymodus | "Blokker flymodus" set in the PWA, the Clock app in front, the shade open: Flymodus at 40 %, "Airplane mode, not available now". A tap: `Tap on airplane refused: DIMMED` from the receiver, **the shade stayed open** (focus `NotificationShade`), no `ShortcutAirplaneActivity` (C99-M1) |
+| **Found:** the block didn't dim it | With 01e0bb93b the panel kept Flymodus usable after the block until another signal (a brightness change) refreshed it: the policy write the panel hears comes before `applyHardening` sets `DISALLOW_AIRPLANE_MODE`, and no broadcast an app can register for says a restriction changed (`ACTION_USER_RESTRICTIONS_CHANGED` isn't in the SDK). **Fixed:** `AppEnforcer.applyHardening` asks `ShortcutsRuntime.requestRefresh()` at its end. Checked again: the block off and on from the PWA, Flymodus "off" and "not available now" within the sync, no nudge |
+| The launcher's language (C99-L1) | `cmd locale set-app-locales ... nb-NO`: `Notification channels named again: nb-NO,en-US`, the channel `launcher:shortcuts` named "Snarveier", the header "Snarveier", the descriptions "Lommelykt, av", "Lyd, på", "Flymodus, ikke tilgjengelig nå", "Wi-Fi, på" |
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:

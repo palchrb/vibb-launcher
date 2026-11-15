@@ -610,3 +610,7 @@ Emulator (`jelly36` restored clean, `wm density` stays 240; a new section in `do
   the longest names were cut ("Brightne…", "Lomme…").
 - **During a call** the CallStyle notification is first and the panel second and folded (the icons, usable).
 - The picker's refusal line stands in the count line's place (a line above the list moved the rows under the next tap).
+- **Revision 3's check** (§6an, "Revision 3"): folded and unfolded show the same row of 40 dp discs (45 dp cells
+  folded, 55 dp unfolded), unchanged at font scale 1.3; the header shows the Vibb mark. It found that "Blokker
+  flymodus" didn't dim Flymodus until another signal (the restriction is set after the policy write the panel hears,
+  and no SDK broadcast says a restriction changed): `AppEnforcer.applyHardening` now asks for a refresh at its end.

@@ -185,7 +185,8 @@ the setup notification.
   the torch, `AirplaneRuntime`, the policy and `kidMobileOff` prefs; a `MusicSessions` listener while the panel holds
   Musikk (C99-L4). The launcher's own language (a per-app locale, no broadcast) reaches it from
   `Application.onConfigurationChanged` -> `ShortcutsRuntime.languageChanged`: the current channel is created again
-  (only renamed; a channel the kid turned off stays off) and the panel posted again (C99-L1). A refresh runs on its own thread and posts a changed panel at most once a second. Only it starts the service;
+  (only renamed; a channel the kid turned off stays off) and the panel posted again (C99-L1). The parent's restrictions
+  (Flymodus's "Blokker flymodus") have no broadcast: `AppEnforcer.applyHardening` asks for a refresh at its end. A refresh runs on its own thread and posts a changed panel at most once a second. Only it starts the service;
   only the service stops itself (`onStartCommand` always `startForeground`s first; `START_NOT_STICKY`).
 - **A tap** is a broadcast to the non-exported `ShortcutsReceiver` (`goAsync`, the key alone) or, for Flymodus On
   while usable and not busy (pure `shortcutOpensWindow`; a dimmed or busy Flymodus is a broadcast, refused with the
