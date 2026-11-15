@@ -1,9 +1,26 @@
 # Design 102: Wi-Fi sign-in pages and in-app logins without free Chrome
 
-Status: design, **revision 3**, 2026-11-15 (branch `design-102`). Not built. Revision 1 was b724662cd, revision 2
-3fb9ac2bf.
+Status: design, **revision 4**, 2026-11-15 (branch `design-102`). Not built. Revision 1 was b724662cd, revision 2
+3fb9ac2bf, revision 3 7ceedfb81.
 
-**Revision 3** takes the second design QA (`docs/review/qa-102-design.md`, "Revision 2": 2 High, 4 Medium, 6 Low). Both
+**Revision 4** takes the user's answers to the D-list (2026-11-15). What changed:
+
+- **D15 → (a): cleartext is allowed in Vibb One; the server rule stays in code.** The user: *"Er det viktig for oss å
+  stoppe all ukrypterte trafikk? Vi ville vel egentlig bare passe på at vibb one server kontakt ikke er http med mindre
+  tailscale er i bruk?"*
+  - The companion app is dropped. The window runs in Vibb One's own `:portal` process (revision 2's design).
+  - The server path keeps its rule in code (`serverUrlVerdict`, `ServerTransport`, `server_url_vectors.json`: https,
+    or http only to a Tailscale IP literal), re-pinned by tests.
+  - §3.1 lists every connection the launcher opens today, and the one cheap test that keeps them on https by code.
+- **D3 → (i)**, and **D1, D2, D4-D14 as recommended.**
+- **New: reopening the sign-in page (§3.8, D16).** The user's worry: *"Ulempen er vel om captive portal ender i en
+  slags portal man trenger for å feks logge av igjen eller lignende"*.
+  - On Vibb's Wi-Fi page, while the phone is on a network it signed in to today, a row "Åpne påloggingssiden" opens
+    that network's recorded portal page again.
+  - It never changes site, and it counts against the same daily budget.
+  - It doesn't widen the residue the user accepted under (i).
+
+**Revision 3** (history; its D15 recommendation (b) was not taken, see revision 4) takes the second design QA (`docs/review/qa-102-design.md`, "Revision 2": 2 High, 4 Medium, 6 Low). Both
 Highs were settled by measurement first (§1b). What changed:
 
 - **Cleartext (R2-H1, new D15).** Measured: a WebView under the launcher's network security config refuses every
@@ -69,7 +86,10 @@ Chrome"). The user's words:
      - another site only by the portal's own moves;
      - it **closes the moment the network works** (Android validates it, or Vibb's own https check passes);
      - 10 minutes per opening, 4 openings and 20 minutes a day.
-   - It runs in the companion app (D15 (b)) or in a process of Vibb One's own (D15 (a)).
+   - It runs in a process of Vibb One's own (`:portal`). Vibb One allows cleartext (http); its server connection
+     stays https by code (D15).
+   - Afterwards the kid can reopen the portal's own page (to log out, or to see time left) from the Wi-Fi page, the
+     same day, on that network (§3.8).
    - Android's own login app is not used. Measured, it follows any link to any site and gets around the DNS filter
      (§1 M4-M6).
 2. **In-app logins.** The kid's apps open a Custom Tab or the browser for a login ("Logg inn med Google/Feide/
@@ -210,71 +230,67 @@ Not measured: a real portal, Chrome's tab restore after a kill, and `chrome://po
 
 ## 3. Part A: the Wi-Fi sign-in window
 
-### 3.1 Where the window runs (D15, R2-H1)
+### 3.1 Where the window runs: `:portal`, with cleartext allowed (D15 = (a), the user's decision)
 
-A portal is http by nature (R1):
+**Why cleartext.** A portal is http by nature (R1):
 
 - Android's probe URL;
 - the intercepted redirect;
 - `CAPTIVE_PORTAL_URL`;
-- portals on IP literals (`http://1.1.1.1/login.html`, `192.168.x.y`).
+- portals on IP literals.
 
-Vibb One's network security config refuses all of it, for every process of the app. A config names hosts, never
-ranges. `shouldInterceptRequest` can't stand in for the network, because it gets no POST body. A proxy override
-doesn't help either: the cleartext check is on the URL's host before any proxy.
+Vibb One's network security config refused all of it. A config names hosts, never ranges.
 
-**(b), recommended: the companion app `me.vibb.portal`** (debug `me.vibb.portal.debug`), "Vibb Wi-Fi-innlogging" /
-"Vibb Wi-Fi sign-in".
+**S-M1's history, honestly.** The security review's S-M1 (2026-11-04) was about the **server path**: the phones'
+server address must be `https://`, or `http://` only to a Tailscale IP literal. That rule lives in code:
 
-- **What it is.** A small application module in the launcher's build, `launcher/portal/`, GPL. It holds:
-  - the entry and the window (§3.2, §3.3);
-  - its own network security config: `base-config cleartextTrafficPermitted="true"`, system CAs only;
-  - permissions `INTERNET` and `ACCESS_NETWORK_STATE`;
-  - no launcher activity, no token, no server address.
-- **How it is built.** It is signed with the launcher's key in the same workflow. The launcher's build embeds the
-  signed APK as an asset (`assets/portal/portal.apk`, a Gradle dependency of `mergeAssets`), and its versionCode is the
-  launcher's (`scripts/release-version.sh`).
-- **How it is installed.** `AppEnforcer.apply` installs it with `AppInstaller.installSilently` when it is missing or
-  older than the launcher. Before installing, it checks that the asset's signing certificate equals its own
-  (`getPackageArchiveInfo(…, GET_SIGNING_CERTIFICATES)`). It then sets `setUninstallBlocked(true)`.
-- **How it is enforced.**
-  - It is in `neverRestrict` and always in the kiosk list (a Vibb helper, like the recents provider).
-  - It never shows on Home (no launcher activity, and `kidListable` excludes it).
-  - It passes the install check, because its installer is Vibb.
-- **How the two talk**, through a signature permission Vibb One declares, `me.vibb.permission.PORTAL`
-  (`protectionLevel="signature"`). Only an app signed with Vibb's key can hold it.
-  - The entry asks Vibb One for the state snapshot through a `ContentProvider` guarded by it.
-  - The window sends its session back by an explicit broadcast to Vibb One's receiver, guarded by it.
-  - Vibb One's "close now" goes to the companion's receiver, guarded likewise.
-- **What it costs.**
-  - A second module in the launcher's Gradle build. No new dependency: WebView and OkHttp, already verified.
-  - A second signing step in `launcher-release.yml`.
-  - About 200 KB in the launcher's APK.
-  - One silent install at enrolment and at each launcher update.
-  - One more package that `docs/testing/emulator.md` and the security notes must name.
-  - One more entry in Android's Settings › Apps, where the kid sees "Vibb Wi-Fi-innlogging".
-- **What it gives.**
-  - S-M1 stays exactly as decided: no cleartext anywhere in Vibb One.
-  - The window is a process of its own with storage of its own. There is no `:portal` guard in Vibb One's
-    `Application`, no WebView data-directory suffix and no multi-process preferences.
-  - A bug in the window can't touch the launcher's state.
+- `serverUrlVerdict`;
+- `ServerTransport`'s `Closed`/`NOT_HTTPS`, which refuses before the bearer or a socket;
+- the shared vectors `server_url_vectors.json`.
 
-**(a): cleartext in Vibb One, the window in a `:portal` process.**
+The app-wide `cleartextTrafficPermitted="false"` was a **second safety net** under it: it made Android itself refuse
+any http, whatever the code did. The user, 2026-11-15: the intent was the server path. So the net goes, and the
+rule stays.
 
-- **The config.** `base-config cleartextTrafficPermitted="true"`, system CAs only, as now.
-- **S-M1 held in code only.** It would be carried by the code that already refuses a non-https server path before a
-  socket (`ServerTransport`'s `Closed`/`NOT_HTTPS`). `ServerTransportTest`'s pin of the config is rewritten to pin
-  that, plus a test that every server client refuses `http://` to a non-tailnet host.
-- **The `:portal` process.** Revision 2's design: the `isPortalProcess` guard in `Application.onCreate`, the
-  snapshot file, and a non-exported receiver each way.
-- **What it costs, honestly.** It **relaxes the user's S-M1 decision of 2026-11-04 for the whole app**: the platform
-  stops being the backstop.
-  - A future fetch over http would no longer be refused by Android: the weather, a catalog download URL the server
-    hands out, a WebView added later. Only our code and its tests would stand there.
-  - The launcher's own server path stays safe as long as `ServerTransport` and its test hold.
-  - The engineering is one line plus a test.
+**The config.**
 
-The rest of §3 is the same either way. "The window's process" means the companion under (b) and `:portal` under (a).
+- `base-config cleartextTrafficPermitted="true"`, **system CAs only**, as now. The release config never trusts a user
+  CA; the debug config keeps its `debug-overrides`.
+- The `tailnet-server.vibb.invalid` exception is no longer needed for cleartext. It stays: it is how the tailnet
+  client names its host, and removing it is churn.
+
+**What in the launcher opens network connections today** (read 2026-11-15), each https by code:
+
+| Connection | Where | Why it is never http |
+|---|---|---|
+| The server API, the SSE stream, the music files the launcher fetches | `MdmApi`, `CommandListenerService`, `music/MusicServer.kt`, all children of `ServerClients.base(path)` | `ServerTransport`: `serverUrlVerdict` gives https, tailnet http (an IP literal through tsnet) or closed. Pinned by `ServerTransportTest` ("every server client takes its way from the transport") |
+| Catalog APKs, the self-update, app logos, weather, calendar feeds, the music library | through `createMdmApi(serverUrl, …)`, the same transport | the same rule: the server hands out paths, and the phone fetches them from the server. Weather is fetched by the server from MET (design 75), calendar feeds by the server (design 72) |
+| The DNS filter's DoH upstream | `buildDohClient` (`UpstreamTransport.kt`) | `CustomUpstream` takes only an `https://` URL that OkHttp parses; the providers' URLs are constants |
+| The DoT upstream, the bootstrap lookups | raw sockets (`SSLSocketFactory`, UDP) | not HTTP; the security config never applied to them |
+| tsnet (Tailscale) | Go, inside the `.aar` | its own TLS and Noise; not covered by the config |
+| The sign-in window's https check | new, in `:portal` (§3.3) | fixed `https://` constants |
+| The sign-in window's WebView | new, in `:portal` | **the one place that may speak http**, by design |
+
+**The cheapest test that keeps it so** (`ServerTransportTest`, replacing the pin of the config). One source scan over
+`launcher/app/src/main/java`:
+
+- `OkHttpClient.Builder()` appears only in `ServerTransport.kt`, `UpstreamTransport.kt` and `portal/PortalCheck.kt`;
+- `HttpURLConnection`, `openConnection(` and `java.net.URL(` appear nowhere;
+- `WebView` appears only under `portal/`.
+
+A new HTTP client anywhere else fails the build until it is reviewed. The test keeps the existing checks: every server
+client takes its way from the transport, no user CA in the release config, and the vectors.
+
+**The `:portal` process** (revision 2's design, unchanged):
+
+- the window runs with `android:process=":portal"`;
+- `Application.onCreate` gets an `isPortalProcess` guard next to `isBootCoverProcess` and returns before the main
+  process's start-up;
+- `WebView.setDataDirectorySuffix("portal")` is called before the first WebView;
+- the window's state comes in as a snapshot file written by the main process (`noBackupFilesDir/portal/state.json`);
+- the session goes back by a file and an explicit broadcast to a non-exported receiver.
+
+"The window's process" in the rest of §3 is `:portal`.
 
 ### 3.2 Vibb becomes the handler
 
@@ -290,29 +306,28 @@ The rest of §3 is the same either way. "The window's process" means the compani
   - **One window at a time (R2-L2).** If a window is open, it brings that one to the front and starts nothing.
   - Otherwise it charges the opening to the budget and starts the window, which is not exported.
 
-  Under (b) the entry and the window are the companion's; under (a) the entry is in Vibb One's main process.
+  The entry runs in Vibb One's main process; the window in `:portal`.
 - **The binderless start.** Vibb's Wi-Fi page and Home line (§3.6) open the window with an explicit intent, after the
   same network, check, budget and one-window tests. They pass no `CaptivePortal` object (the system API
   `startCaptivePortalApp` isn't ours).
   - The window first loads Android's own probe URL (`http://connectivitycheck.gstatic.com/generate_204`), which the
-    portal intercepts and redirects. Under (b) that load is cleartext only in the companion.
+    portal intercepts and redirects.
   - It re-probes through the public `ConnectivityManager.reportNetworkConnectivity(network, true)`. NetworkMonitor
     rate-limits app requests, so this is best effort (E7). Vibb's own check closes the window either way.
 - **The persistent preferred activity.**
   - `AppEnforcer.applyHeld` adds it in every pass while the part is on: `addPersistentPreferredActivity(admin,
-    CAPTIVE_PORTAL filter, the entry)`. A device owner may point it at the companion's component.
+    CAPTIVE_PORTAL filter, the entry)`.
   - `reseatPreferredActivities` adds it too, with HOME's, the Play link blocker's and the call-log pin's.
-  - **Off is the disabled entry**: `setComponentEnabledSetting(entry, DISABLED, DONT_KILL_APP)` (R2-L1; under (a)
-    the flag keeps Home, the VPN and the call services alive). The package manager matches a persistent preferred
+  - **Off is the disabled entry**: `setComponentEnabledSetting(entry, DISABLED, DONT_KILL_APP)` (R2-L1: the flag
+    keeps Home, the VPN and the call services alive). The package manager matches a persistent preferred
     activity only against components in the resolve list, so a disabled entry falls through to Android's own handler.
     The stock app then stays refused by lock task, as today.
-- **Nothing extra is pinned** under (a): Vibb's package is always in the kiosk list. Under (b) the companion is pinned
-  as a helper. The stock login app is never pinned.
+- **Nothing extra is pinned**: Vibb's package is always in the kiosk list. The stock login app is never pinned.
 
 ### 3.3 The window
 
-- **Its state** comes from Vibb One at the start, never from preferences the window reads itself. Under (b) it comes
-  through the guarded provider; under (a) as a snapshot file. It holds:
+- **Its state** comes from Vibb One's main process at the start, as the snapshot file, never from preferences
+  `:portal` reads itself. It holds:
   - the filter's on/off;
   - the pause's or override's end time (`null` when none);
   - `minutes` and the time left today;
@@ -322,16 +337,15 @@ The rest of §3 is the same either way. "The window's process" means the compani
   These are exactly what `classifyDomain` takes (R2-L5). The parent's allowed domains are not a separate input:
   `classifyDomain` has none, and the server's compiled list already leaves them out (to confirm in the build).
   `DnsFilterEngine` gets a pure constructor from these inputs.
-- **Its result.** The session (§6.2) goes back by an explicit broadcast (under (b) guarded by the signature
-  permission, under (a) to a non-exported receiver). Vibb One folds it into the report and the budget.
+- **Its result.** The session (§6.2) goes back by an explicit broadcast to a non-exported receiver. Vibb One folds it
+  into the report and the budget.
 - **Vibb One → the window (R2-M4).** Vibb One sends "close now" (outcome `closed_by_vibb`) when:
   - the PIN lock engages;
   - the parent turns Part A off;
   - a pause or the override ends while a window opened in it is open. The snapshot also carries that end, so the
     window closes by itself if the message is lost.
 
-  Under (b) the receiver is the companion's, guarded by the signature permission; under (a) a receiver registered in
-  `:portal` (same uid). A changed filter list doesn't reach an open window: it lives 10 minutes at most.
+  The receiver is registered in `:portal`, not exported (same uid only). A changed filter list doesn't reach an open window: it lives 10 minutes at most.
 - **The look**: Vibb's kid page header.
   - Title "Logg på Wi-Fi" / "Sign in to Wi-Fi", the network's name when Android gives it, else "Wi-Fi".
   - Under it the current page's host, read-only.
@@ -454,6 +468,8 @@ is no way in.
    Wi-Fi wants you to sign in", and a tap opens the window. It is never a sound, a notification of ours or a badge.
    With the budget used up, it reads "Spør en voksen om Wi-Fi-innlogging" / "Ask a grown-up about Wi-Fi sign-in" and
    opens nothing.
+4. **After the sign-in, Vibb's Wi-Fi page** offers "Åpne påloggingssiden" / "Open the sign-in page" on a network it
+   signed in to today (§3.8).
 
 ### 3.7 The parent's side (Part A)
 
@@ -483,6 +499,48 @@ is no way in.
   - `wifi_signin_budget`: the day's budget ran out (key `budget:<local date>`). "Dagens Wi-Fi-innlogginger er brukt
     opp" / "Today's Wi-Fi sign-ins are used up", with the "one more" link.
   - Push: `Push::Now` outside the night, `Push::Held` until 07:00 inside it.
+
+### 3.8 Reopening the sign-in page (D16, the user's worry)
+
+Some portals keep a page for after the sign-in: log out, time left, buy more time. The window closes when the network
+works, so without this the kid can't get back to that page.
+
+- **What is recorded.** When a session ends `validated` or `passes`, Vibb One's main process keeps one record per
+  network:
+  - the network's identity: the `Network` handle, and the SSID when Android gives it;
+  - the first portal page's URL (where the portal's redirect landed);
+  - the session's portal sites (§3.3), at most 3;
+  - the local date.
+
+  The URL stays on the phone, since it may carry a session token; the report has `first_host` as before. Records
+  older than today go, and so do all records when Part A is turned off.
+- **The row.** On Vibb's Wi-Fi page, the connected network's row shows "Åpne påloggingssiden" / "Open the sign-in
+  page", sub-line "Logg av eller se hvor lenge du har igjen" / "Log out or see time left". It shows only while the
+  network matches a record of today: the same `Network` handle, or the same SSID (the Wi-Fi page turns Location on, so
+  the SSID is readable there).
+  - **Nothing to reopen on a network that was never captive**, or whose sign-in never ended in a working network.
+  - Not on Home: one line there is enough (§3.6).
+- **The mode (`start: "revisit"`).** The same window, bound to that network, opens on the recorded URL. Pure
+  `portalNavigation` gets a `revisit` input:
+  - **No site changes at all.** Main frames and frames may go only within the recorded portal sites, whether by
+    redirect, script, form post or tap. Anything else gets "Denne lenken går ut av innloggingssiden" / "This link
+    leaves the sign-in page".
+  - **No auto-close by Vibb's https check**: the network works, that is the point. `VALIDATED` doesn't close it either.
+  - It closes when the kid closes it, or on `timeout` (10 minutes), `budget`, `lost` or Vibb One's "close now".
+  - The filter's lists apply as in a sign-in.
+  - **It counts against the same daily budget** (an opening and its minutes), and it is **reported** as a session with
+    `start: "revisit"`. The parent sees it in the list, and a `timeout` raises `wifi_signin_wide` as for any session.
+  - The entry's tests are the same as a sign-in's, apart from the network check: a matching record, the budget, one
+    window, not LOCKED.
+- **H1 is not reopened.** A record exists only after a session Android or Vibb judged working.
+  - A rig whose "portal" is an ordinary website can get there: after the "sign-in" it answers Android's probe with a
+    204. Its record is then that one site (or the few sites the portal itself reached).
+  - Reopening gives exactly those sites, with no new ones, within the same 20 minutes a day, reported by name. That is
+    the residue the user accepted under (i).
+  - The one difference, no https auto-close, changes nothing on that rig: the rig blocked Vibb's check hosts during the
+    sign-in already.
+- **The cost** (D16). A log-out at the end of the day uses the same budget as the sign-ins. If it is spent, the kid
+  sees "Spør en voksen" / "Ask a grown-up", and the parent's "one more" lets one through.
 
 ## 4. Part B: Chrome only for logins
 
@@ -646,7 +704,7 @@ The switch, its sub-line, the recent sign-ins with the sites visited, today's us
 ### 6.2 The report (full-report fields)
 
 ```json
-"captive_portal": {"handler": "vibb", "companion": {"version_code": 0, "state": "installed"},
+"captive_portal": {"handler": "vibb",
   "today": {"openings": 1, "ms": 240000, "grant_used": 0},
   "sessions": [{"opened_ms": 0, "closed_ms": 0, "network": "Hotel Fjord", "first_host": "portal.example",
     "outcome": "validated", "visited": ["portal.example", "nomadix.com"], "visited_count": 2,
@@ -656,10 +714,10 @@ The switch, its sub-line, the recent sign-ins with the sites visited, today's us
 ```
 
 - `handler`: `vibb`, `system` or `other`.
-- `companion`: under D15 (b) only. Its `state` is `installed`, `missing` or `failed` (the PWA shows it).
 - `sessions`: the last 10.
   - `visited` holds at most 20 entries; `visited_count` is the true count (R2-M1).
   - `blocked_hosts` and `blocked_frames` hold at most 10 each.
+  - `start` is one of `system` (the notification), `vibb` (the Wi-Fi page or Home) or `revisit` (§3.8).
   - `outcome` is one of `validated`, `passes`, `closed`, `closed_by_vibb`, `timeout`, `budget`, `lost`.
 - `login_browser.state`: `on`, `off`, `absent` or `failed`, with a `reason`.
 - Capabilities: `captive_portal_v1` and `login_browser_v1`.
@@ -679,8 +737,8 @@ The file is byte-identical in `launcher/app/src/test/resources/`. It holds `capa
 The launcher-only rules are in `launcher/app/src/test/resources/login_rules.json` (`PortalRulesTest`,
 `LoginBrowserTest`):
 
-- `navigation`: frame or main frame, GET or POST, redirect or gesture, from and to a portal site or a leaf, a pause →
-  allow or refuse. It includes the open-redirector chain, the meta refresh and the iframe tap;
+- `navigation`: frame or main frame, GET or POST, redirect or gesture, from and to a portal site or a leaf, a pause, a
+  revisit → allow or refuse. It includes the open-redirector chain, the meta refresh and the iframe tap;
 - `frames`: an `Accept` header and `isForMainFrame` → a frame document or not;
 - `passes`: answers of the check hosts → pass or not;
 - `close`: validated, passes, minutes, the budget, "opened in a pause, the pause ends";
@@ -690,9 +748,9 @@ The launcher-only rules are in `launcher/app/src/test/resources/login_rules.json
 - `plans`;
 - `tighten`: a swap of one site, the role's first turn-on, a pause's end.
 
-Root `CLAUDE.md` gets the file's paragraph, `scripts/fake-portal.py` and, under (b), the companion module. The CI path
-lists and `launcher.yml`'s `fake-portal.py --selftest` are as revision 2. Under (b) `launcher.yml` also builds
-`:portal`, and `launcher-release.yml` signs it before the launcher.
+Root `CLAUDE.md` gets the file's paragraph and `scripts/fake-portal.py`. The CI path lists and `launcher.yml`'s
+`fake-portal.py --selftest` are as revision 2. `docs/notes/launcher/security.md`'s "Cleartext" paragraph is rewritten
+for D15 (§3.1).
 
 ### 6.4 Migration `0150_login_windows.sql`
 
@@ -728,15 +786,17 @@ ALTER TABLE device_status ADD COLUMN login_browser_json TEXT;
   redirects, WebSockets and WebRTC are not seen by the WebView's hooks.
 - **The window's filter** is Vibb's lists. The parent's own DNS upstream doesn't see the window's lookups, and the
   switch's sub-line says so.
-- **Cleartext (D15).** Under (b), Vibb One stays cleartext-free (S-M1 unchanged), and only the companion, which holds
-  no token and no server address, speaks http. Under (a), the whole app may, and S-M1 rests on `ServerTransport` and
-  its test.
+- **Cleartext (D15).**
+  - Android no longer refuses http in Vibb One.
+  - The server path refuses it in code (`serverUrlVerdict`, `ServerTransport`, the shared vectors).
+  - Every other HTTP client is https by code (§3.1's table).
+  - The source scan in `ServerTransportTest` fails the build on a new client anywhere else.
+  - The one http speaker is the sign-in window in `:portal`, which holds no token and no server client.
 - **Part B.** Only the parent's sites, in a Custom Tab or full Chrome.
   - Chrome is never unhidden before its lockdown reads back.
   - Each tightening ends the tabs that were open.
   - `URLBlocklist` filters navigations, not sub-resources; the DNS filter covers those.
-- **The entry** is guarded by `NETWORK_STACK` (R2, R4). The window is not exported. The companion's channels need
-  Vibb's signature.
+- **The entry** is guarded by `NETWORK_STACK` (R2, R4). The window and both receivers are not exported.
 - **Privacy**: the SSID (when readable), the portal's hosts and the sites visited go to the parent.
 - **The kid's name and "Spotify"** appear nowhere in this design's strings.
 
@@ -753,8 +813,7 @@ ALTER TABLE device_status ADD COLUMN login_browser_json TEXT;
   The PIN pause lifts the limits; nothing more.
 - **A filtering network blocks one of Vibb's check hosts.** The window then never closes early, but still validates,
   times out and counts in the budget.
-- **Under (b)**: a failed companion install (the PWA shows `companion.state`). The launcher's update and the
-  companion's are one step, and a launcher downgrade leaves a newer companion, harmless.
+- **A later http client** added outside the scanned files: the source scan fails the build until it is reviewed.
 - **Chrome's policy changes**: checked at each Chrome major (D-C3).
 - **The redirect-before-blocklist order** (M15) is Chromium's current code, not a promise.
 - **The re-probe's rate limit** (E7).
@@ -767,13 +826,13 @@ ALTER TABLE device_status ADD COLUMN login_browser_json TEXT;
    - The page and its saves (`section=wifi|apps|site|preset|grant`).
    - The policy keys, the report intake, the two Activity events, the filter page's row and the Apps page's Chrome row.
    - nb + en, `login_windows.json`, tests.
-2. **Launcher Part A: the window** (L, plus about M for the companion under (b)).
+2. **Launcher Part A: the window** (L).
    - The entry and window with the guard, the https check, the site rules and the reverse channel; pure
      `portalNavigation`, `frameDocument`, `portalPasses`, `portalBudget`, `wifiRowState`.
    - The preferred activity in `applyHeld` and `reseatPreferredActivities`.
-   - Under (b): the companion module, its embedding, signing and silent install, and the signature permission. Under
-     (a): the config change, the `ServerTransportTest` re-pin, the `:portal` guard.
-   - The Wi-Fi page's row and Home's line; the report and the capability; nb + en.
+   - The config change (cleartext allowed), `ServerTransportTest`'s source scan, the `:portal` guard, and
+     `security.md`'s rewrite.
+   - The Wi-Fi page's rows (sign in, and §3.8's reopen) and Home's line; the report and the capability; nb + en.
    - `scripts/fake-portal.py`, standard library, `--selftest`, with modes: a portal; a meta-refresh portal; a script
      portal; a soft portal that passes https; a hotspot that 302s to a search page; a Google walled garden (gstatic
      passes, nothing else does); an iframe page.
@@ -784,7 +843,7 @@ ALTER TABLE device_status ADD COLUMN login_browser_json TEXT;
    - The report; `LoginBrowserTest`; emulator.md §6ap.
 
 Steps 2 and 3 are independent of each other and both need step 1's contract. The launcher's half of the contract goes
-in the same commit as the server's. **Step 2 starts only after D15 is decided.**
+in the same commit as the server's.
 
 ## 10. Tests (lean)
 
@@ -805,8 +864,7 @@ in the same commit as the server's. **Step 2 starts only after D15 is decided.**
   - `LoginWindowsTest`.
   - `EnforcementPlanTest` (two rows).
   - `PolicyResponseCompatTest`.
-  - Under (a): `ServerTransportTest`'s new pin. Under (b): a test that the embedded asset's signer equals the
-    launcher's.
+  - `ServerTransportTest`: the source scan (§3.1), and the release config with cleartext on and system CAs only.
 
 ## 11. Checks owed
 
@@ -838,7 +896,13 @@ in the same commit as the server's. **Step 2 starts only after D15 is decided.**
   - a window opened in a pause closes at the pause's end;
   - a YouTube tab opened in a pause is gone after it, and a restored tab reloads blocked;
   - the role's first turn-on clears Chrome's history.
-- E10 (b): the companion installs silently at enrolment, updates with the launcher, and can't be uninstalled.
+- E10: the reopen (§3.8).
+  - After a `validated` sign-in, the Wi-Fi page offers "Åpne påloggingssiden" on that network and not on another.
+  - It opens the recorded page; a tap to another site is refused; it stays open on a working network.
+  - It counts in the budget.
+  - The row is gone the next day and after a Wi-Fi with no sign-in.
+- E11: with cleartext allowed in the config, the server path still refuses `http://` to a non-tailnet host (the
+  vectors on the device). The source scan fails on a planted `HttpURLConnection`.
 
 ### The Jelly Star (Android 16, the user's own Wi-Fi and apps)
 
@@ -855,50 +919,26 @@ in the same commit as the server's. **Step 2 starts only after D15 is decided.**
 - D-C5: a real Feide or Google login in a kid's app returns to the app.
 - D-C6: each preset's hosts.
 
-## 12. Decisions for the user (D-items, with the recommendation)
+## 12. Decisions (the user, 2026-11-15)
 
-| # | Question | Recommendation |
+| # | Question | Decision |
 |---|---|---|
-| D1 | Wi-Fi sign-in on by default for every phone? | **Yes**, with the parent's switch. On a kiosk phone it is new (today no sign-in works at all), but bounded: it closes when the network works, is capped and reported. With an older server the parent has no switch until the server is updated |
-| D2 | Limits | **10 minutes per opening; 4 openings and 20 minutes a day per phone**, plus the parent's "one more" (D14) |
-| D3 | Moving between sites inside the sign-in window | **(i)**: the portal's own moves (a redirect, the page's own code, a form post) from the portal's pages, links free within one site, no taps out. See below |
-| D4 | The window during a time rule | **Allowed** (a hotel at bedtime); every app stays held by the rule |
+| D1 | Wi-Fi sign-in on by default for every phone? | **Yes**, with the parent's switch |
+| D2 | Limits | **10 minutes per opening; 4 openings and 20 minutes a day per phone**, plus "one more" (D14) |
+| D3 | Moving between sites inside the sign-in window | **(i)**: only the portal's own moves (a redirect, the page's own code, a form post) from the portal's pages; links free within one site; no taps out. The accepted residue: a network built on purpose to fool Vibb can send the kid to one ordinary site, where the kid can tap around within that site; at most 20 minutes a day, and the parent sees the site in Activity |
+| D4 | The window during a time rule | **Allowed** |
 | D5 | Home's line "Wi-Fi-en vil at du logger på" | **Yes** |
-| D6 | What the parent sees | **Every sign-in with network, outcome, sites visited and blocked hosts**; an Activity event (pushed, held at night) for one that visited more than 3 sites, had a page or frame blocked or timed out, and when the day's budget runs out |
+| D6 | What the parent sees | **Every sign-in with network, outcome, sites visited and blocked hosts**, and the Activity events of §3.7 |
 | D7 | Chrome for logins during a time rule | **Suspended like every app** |
 | D8 | Which browser | **Chrome only**, enforced by the launcher |
 | D9 | The PIN pause and Chrome's URL lockdown | **Lifted with everything**, and Chrome's tabs ended at the pause's end |
 | D10 | Chrome for logins on by default? | **No** |
-| D11 | Presets | **Feide, Google, Microsoft, Apple**; no Facebook or Vipps/BankID presets |
+| D11 | Presets | **Feide, Google, Microsoft, Apple** |
 | D12 | A learning window | **Not now** |
-| D13 | Clear Chrome's data when the role is turned on (after a free phase, or with no record) | **Yes, once, automatically**, with the cost written under the switch |
-| D14 | The parent's "one more sign-in now" | **Yes**: one opening and 10 minutes at once, at most 3 a day |
-| D15 (new) | How the window may load http (Vibb One forbids it today) | **(b) the companion app inside Vibb One**. It keeps the "no http in Vibb One" rule from the security review exactly as decided. See below |
-
-**D3, the three options and what each leaves open** (the words for the user):
-
-- **(i) Recommended.** "Innloggingsvinduet kan bare gå til andre nettsteder når innloggingssiden selv sender det dit
-  (videresending eller skjema), aldri når barnet trykker på en lenke ut. Et nettsted det blir sendt til, kan bare sende
-  tilbake. Det som står igjen: et nett som er laget med vilje for å lure Vibb (for eksempel en bærbar PC satt opp som
-  hotspot) kan sende barnet til ett vanlig nettsted, og der kan barnet trykke seg rundt innenfor det nettstedet. Det er
-  høyst 20 minutter om dagen, og du ser nettstedet i Aktivitet." Ordinary hotel and café portals work, including those
-  that jump by script.
-- **(ii) Form posts only.** "Bare når barnet sender inn et skjema på innloggingssiden." **It doesn't shrink the
-  deliberate-hotspot residue**: such a page can post a form by itself. It breaks the many portals that move to their
-  sign-in page by redirect or script. Not recommended.
-- **(iii) Revision 2's rule** (any redirect or form post, from any site). "Videresendinger kan kjedes fra nettsted til
-  nettsted." Large sites' open redirectors would carry the kid onward, so the residue is wider than (i)'s. Not
-  recommended.
-
-**D15, the two ways, in plain words**:
-
-- **(b) Recommended.** "Innloggingsvinduet blir en liten egen app som Vibb One har med seg og installerer selv
-  ('Vibb Wi-Fi-innlogging'). Vibb One selv bruker fortsatt aldri ukryptert nett, slik du bestemte 4. november." Cost:
-  more build work (a second small app in the same release), one more app in Android's app list, and a silent install
-  at setup and at each update.
-- **(a)** "Vibb One får lov til ukryptert nett (http), og vi passer i koden på at serveren alltid er https." Cost:
-  little work. But the rule from the security review (that Android itself stops all http in Vibb One) falls away for
-  the whole app. A later mistake in a new download or web view would then not be caught by Android.
+| D13 | Clear Chrome's data when the role is turned on | **Yes, once, automatically**, with the cost under the switch |
+| D14 | The parent's "one more sign-in now" | **Yes**, at most 3 a day |
+| D15 | How the window may load http | **(a)**: cleartext allowed in Vibb One's config. The server path stays https, or http only to a Tailscale IP, enforced in code and tests (§3.1) |
+| D16 (new, open) | Reopening the portal's page after the sign-in (log out, time left) | **Recommended: yes, as §3.8.** On Vibb's Wi-Fi page, the same day, on a network that was signed in to. Only the recorded portal sites, no site changes, no auto-close, and the **same daily budget**: a log-out can find the day's sign-ins used up, and then the parent's "one more" is the way. Reported like a sign-in. It adds nothing to D3's accepted residue |
 
 ## 13. Design QA: how each finding was handled
 
@@ -908,7 +948,7 @@ in the same commit as the server's. **Step 2 starts only after D15 is decided.**
 |---|---|
 | H1 | Vibb's https close (§3.3), the site rule (§3.3, D3), the sites visited (§3.7, D6), the budget (§3.4, D2, D14). Revision 3 tightens all four (round 2) |
 | M1 | Migration 0150 (§6.4) |
-| M2 | Revision 2's `:portal` guard and snapshot; under D15 (b) the companion replaces them (§3.1) |
+| M2 | The `:portal` guard and snapshot (§3.1, §3.3) |
 | M3 | Written, read back typed, then unhidden; the package constant; typed keys (§4.1) |
 | M4 | Hide and unhide at each tightening; the once-only clear (§4.1, D13) |
 | M5 | `applyHeld` and `reseatPreferredActivities`; off is the disabled entry (§3.2) |
@@ -921,7 +961,7 @@ in the same commit as the server's. **Step 2 starts only after D15 is decided.**
 
 | Finding | Handling |
 |---|---|
-| R2-H1 | Measured (R1). D15: (b) the companion app (recommended) or (a) cleartext in Vibb One with S-M1 held in code (§3.1). The emulator checks go through hostnames |
+| R2-H1 | Measured (R1). The user chose D15 (a): cleartext allowed, the server rule in code, a source scan in `ServerTransportTest` (§3.1). The emulator checks go through hostnames |
 | R2-H2 | Measured (R2-R4). `NETWORK_STACK` is the guard; `getLaunchedFromUid` dropped (§3.2) |
 | R2-M1 | Portal sites and leaves; frames judged in SIR (R6); `visited_count`; the true residue in §7 and D3 |
 | R2-M2 | The page's own moves (`!hasGesture()`, measured R5) allowed from portal sites; fake-portal modes and E5 |
