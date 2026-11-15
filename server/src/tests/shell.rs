@@ -1330,6 +1330,20 @@ fn the_app_shell_scrolls_main_not_the_document() {
          background: linear-gradient(var(--night) 50%, var(--bg) 50%);"
     );
     assert_eq!(block(".container > .sheet"), "flex: 1 0 auto;");
+    // Design 101: the summary's picture lies half over a 38 px night gap. -52 px = the gap 38 + border 1 + padding 15 less
+    // the band's 22 px foot, so the picture's top is 20 px above the sheet's edge (QA M1). And nothing that holds the
+    // picture's sheet may be positioned: its panel and dim are placed against the body (the screen).
+    assert_eq!(block(".summary-sheet"), "margin-top: 38px;");
+    assert_eq!(
+        block(".summary-sheet > .summary-head"),
+        "margin-top: -52px;"
+    );
+    for held in [".sheet", ".summary-head", ".avatar-edit"] {
+        assert!(
+            !block(held).contains("position"),
+            "{held} must not be positioned (the picture sheet's containing block)"
+        );
+    }
     // main always has 1 px to scroll, so a short page's bounce is main's, never the document's.
     assert_eq!(
         block(".container:not(.container-fixed)::after"),
@@ -2191,7 +2205,7 @@ async fn every_confirm_has_a_cancel() {
     }
     assert!(confirms >= 32, "{confirms} confirms");
     let head = std::fs::read_to_string("templates/partials/head.html").unwrap();
-    assert!(head.contains("<script src=\"/static/confirm.js?v=1\" defer></script>"));
+    assert!(head.contains("<script src=\"/static/confirm.js?v=2\" defer></script>"));
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("phone").await;

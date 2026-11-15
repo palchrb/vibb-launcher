@@ -12,7 +12,7 @@
 {% import "partials/band.html" as band %}
 <main class="container">
     {% call band::sub(device.name, "/devices", self.t("nav.devices")) %}{% endcall %}
-    <div class="sheet">
+    <div class="sheet summary-sheet">
 
     {#- The phone's summary (design 31 §3.2): the header, Attention, the security warnings that need
         steps, Quick actions (with today's lifts and End now at its end), the blocked apps, the last
@@ -23,29 +23,35 @@
         {#- The phone's own picture (server round C): the avatar is the picker - a picture chosen is saved at once
             (data-autosave; without JS the <noscript> Save picture), and every form here lands back on #avatar. #}
         <div class="avatar-edit" id="avatar">
-            <form method="post" action="/devices/{{ device.id }}/avatar#avatar" enctype="multipart/form-data" class="avatar-form">
-                <input class="avatar-input" type="file" id="avatar-file" name="picture" accept="image/*" data-autosave{% if avatar_error.is_some() %} aria-invalid="true" aria-describedby="avatar-error"{% endif %}>
-                <label class="avatar-pick" for="avatar-file">
-                    <span class="avatar avatar-large {{ avatar }}" aria-hidden="true">{{ initial }}{% if let Some(src) = photo %}<img class="avatar-img" src="{{ src }}" alt="" decoding="async">{% endif %}<span class="avatar-dot dot-{{ dot }}"></span></span>
-                    <span class="visually-hidden">{% if photo.is_some() %}{{ self.tp("device.summary.change_picture_for", [("name", device.name.as_str())]) }}{% else %}{{ self.tp("device.summary.add_picture_for", [("name", device.name.as_str())]) }}{% endif %}</span>
-                </label>
-                <noscript><button type="submit" class="button-small avatar-save">{{ self.t("device.summary.save_picture") }}</button></noscript>
-            </form>
-            {% if photo.is_some() %}
-            <form method="post" action="/devices/{{ device.id }}/avatar/remove#avatar" class="avatar-form">
-                <button type="submit" class="avatar-remove" data-avatar-remove>{{ self.t("device.summary.remove_picture") }}</button>
-            </form>
-            {% else %}
-            <label class="avatar-add" for="avatar-file" aria-hidden="true">{{ self.t("device.summary.add_picture") }}</label>
-            {% endif %}
+            {#- Design 101 §2.3: a <details> (no <dialog>: iOS 14), the picture its summary. The panel and the backdrop are
+                out of flow and no ancestor of theirs is positioned (the summary itself is: it holds the pencil badge). -#}
+            <details class="pic-menu">
+                <summary class="pic-pick" aria-label="{% if photo.is_some() %}{{ self.tp("device.summary.change_picture_for", [("name", device.name.as_str())]) }}{% else %}{{ self.tp("device.summary.add_picture_for", [("name", device.name.as_str())]) }}{% endif %}">
+                    <span class="avatar avatar-large {{ avatar }}" aria-hidden="true">{{ initial }}{% if let Some(src) = photo %}<img class="avatar-img" src="{{ src }}" alt="" decoding="async">{% endif %}</span>
+                    <span class="pic-badge" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" focusable="false"><path d="M4 20h4L19 9l-4-4L4 16v4z M13.5 6.5l4 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+                </summary>
+                <span class="pic-backdrop" data-confirm-cancel hidden aria-hidden="true"></span>
+                <div class="pic-panel" role="group" aria-label="{{ self.tp("device.summary.picture_of", [("name", device.name.as_str())]) }}">
+                    <div class="pic-card">
+                        <p class="pic-note">{{ self.t("device.summary.picture_note") }}</p>
+                        <form method="post" action="/devices/{{ device.id }}/avatar#avatar" enctype="multipart/form-data" class="pic-form">
+                            <label class="pic-action"><input class="pic-file" type="file" id="avatar-file" name="picture" accept="image/*" data-autosave{% if avatar_error.is_some() %} aria-invalid="true" aria-describedby="avatar-error"{% endif %}>{% if photo.is_some() %}{{ self.t("device.summary.change_picture") }}{% else %}{{ self.t("device.summary.add_picture") }}{% endif %}</label>
+                            <noscript><button type="submit" class="pic-action">{{ self.t("device.summary.save_picture") }}</button></noscript>
+                        </form>
+                        {% if photo.is_some() %}<form method="post" action="/devices/{{ device.id }}/avatar/remove#avatar" class="pic-form">
+                            <button type="submit" class="pic-action pic-danger" data-avatar-remove>{{ self.t("device.summary.remove_picture") }}</button>
+                        </form>{% endif %}
+                    </div>
+                    {% include "partials/confirm_cancel.html" %}
+                </div>
+            </details>
             {% if let Some(error) = avatar_error %}<p class="field-error avatar-error" id="avatar-error" role="alert">{{ error }}</p>{% endif %}
         </div>
-        {#- The lines under the picture; the name is the band's title (design 84). The user's pick C, 2026-11-01 (phone_status::header): the first fact that holds,
-            then the zone and the battery; a phone turned off or offline has the first alone. -#}
-        {% for line in status %}<p class="summary-state"{% if loop.first %} data-status="{{ dot }}"{% endif %} data-line>{% call status_line::parts(line) %}{% endcall %}</p>
-        {% endfor %}
+        {#- The one line under the picture (design 101 §3): the dot, then the lead, the zone and the battery
+            (phone_status::header + one_line); the name is the band's title (design 84). Anything new at the top of the
+            summary (design 100's request card) goes right AFTER this header: the picture's -52px offset needs the header first. -#}
+        <p class="summary-state" data-status="{{ dot }}" data-line><span class="state-dot dot-{{ dot }}" aria-hidden="true"></span>{% call status_line::parts(status, true) %}{% endcall %}</p>
         {%- if self.disconnected() %}<a class="summary-link" href="/devices/{{ device.id }}/advanced#connection" data-connect-again>{{ self.t("device.summary.connect_again") }} &rsaquo;</a>{% endif %}
-        {% if let Some(percent) = meter %}<span class="meter summary-meter" aria-hidden="true"><i style="width: {{ percent }}%"></i></span>{% endif %}
     </header>
 
     {% if device.enrolled_at.is_none() %}

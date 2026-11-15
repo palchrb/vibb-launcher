@@ -19,6 +19,43 @@
             var summary = details.querySelector("summary");
             if (summary && summary.focus) summary.focus({ preventScroll: true });
         });
+
+        // Design 101 (the phone's picture sheet, `details.pic-menu`): it reads as a sheet over a dim, so Escape closes it
+        // and moves the focus back to the picture, a focus that leaves the panel closes it too (a menu's way; it is not
+        // a modal and keeps role="group"), and opening it focuses its first action. `toggle` does not bubble: capture.
+        function menu(node) {
+            return node && node.closest ? node.closest("details.pic-menu") : null;
+        }
+        function close(details) {
+            details.open = false;
+            var summary = details.querySelector("summary");
+            if (summary && summary.focus) summary.focus({ preventScroll: true });
+        }
+        doc.addEventListener("keydown", function (e) {
+            if (e.key !== "Escape" && e.key !== "Esc") return;
+            var details = menu(e.target);
+            if (!details || !details.open) return;
+            e.preventDefault();
+            close(details);
+        });
+        doc.addEventListener("focusout", function (e) {
+            var details = menu(e.target);
+            if (!details || !details.open) return;
+            var next = e.relatedTarget;
+            // No related target (a tap, a blur of the window): leave it to the tap's own handler.
+            if (!next || (details.contains && details.contains(next))) return;
+            details.open = false;
+        });
+        doc.addEventListener(
+            "toggle",
+            function (e) {
+                var details = e.target;
+                if (!details || !details.matches || !details.matches("details.pic-menu") || !details.open) return;
+                var first = details.querySelector(".pic-file, .pic-action");
+                if (first && first.focus) first.focus({ preventScroll: true });
+            },
+            true
+        );
     }
 
     if (typeof module !== "undefined" && module.exports) {

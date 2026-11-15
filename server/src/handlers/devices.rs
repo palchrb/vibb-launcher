@@ -1062,12 +1062,10 @@ struct DeviceDetailTemplate {
     connection: crate::streams::ConnectionState,
     /// The avatar's dot (`phone_status::dot`), saying what `status` leads with.
     dot: &'static str,
-    /// The lines under the name (`phone_status::header`): "4 min screen time today" then "Test
-    /// since 22:19 · 100 %"; "No contact · last seen 12 min ago" then the rest; "Turned off
-    /// 21:14 · battery was 3 %" or "Offline · last seen 13:05" alone.
-    status: Vec<crate::phone_status::Line>,
-    /// Today's screen-time bar (its fill), while a limit is set and a line says the screen time.
-    meter: Option<i64>,
+    /// The one line under the picture (`phone_status::header`, joined by `one_line`, design 101): "Online · Test
+    /// since 22:19 · 100 %"; "No contact · last seen 12 min ago · 100 %"; "Turned off 21:14 · battery was 3 %" or
+    /// "Offline · last seen 13:05" alone.
+    status: crate::phone_status::Line,
     /// The Attention rows, the same list the Devices list counts.
     attention: Vec<crate::attention::AttentionItem>,
     /// Design 24b: the quick actions Lock again and Unlock for 2 h…, the foreign-app warning, the
@@ -2318,7 +2316,7 @@ async fn render_device(
     let airplane_lines =
         crate::airplane_mode::summary_lines(&zone, now, &policy, airplane.as_ref(), held_before);
     let setup = crate::airplane_mode::SetupCard::of(lang, &policy, latest.as_ref());
-    let meter = meter_of(screen_time.as_ref(), &status);
+    let status = crate::phone_status::one_line(status);
 
     // Activity (design 48); a failed read is no page, never a history that isn't true.
     let activity = match crate::handlers::activity::rows(
@@ -2424,7 +2422,6 @@ async fn render_device(
             connection,
             dot,
             status,
-            meter,
             attention,
             qa,
             asked,

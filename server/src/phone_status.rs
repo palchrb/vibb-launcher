@@ -155,6 +155,8 @@ pub struct Part {
     /// The battery icon's fill in percent, drawn before the text, with `label` for a screen reader.
     pub icon: Option<i64>,
     pub label: Option<String>,
+    /// Design 101 §3.1: a pin glyph before the words (the zone's part alone).
+    pub pin: bool,
 }
 
 impl Part {
@@ -166,6 +168,7 @@ impl Part {
             hook,
             icon: None,
             label: None,
+            pin: false,
         }
     }
 
@@ -177,6 +180,11 @@ impl Part {
             text.split(|c: char| !c.is_alphanumeric())
                 .any(|word| word == label)
         })
+    }
+
+    fn pinned(mut self) -> Part {
+        self.pin = true;
+        self
     }
 
     fn titled(mut self, title: String) -> Part {
@@ -371,13 +379,18 @@ pub fn with_airplane(
     }
 }
 
-/// The summary header's lines under the name: one for a phone that can't be reached, else the
-/// lead and then the zone · the battery (the screen time when the lead is the battery); without
-/// contact "No contact · last seen 12 min ago" and then the rest of the row's line.
+/// The summary header's lines before they are joined by [one_line] (design 101 §3.1): the lead, then the zone · the
+/// battery; without contact "No contact · last seen 12 min ago" and then the rest of the row's line. The screen time
+/// is not part of the header (the Skjermtid tile says it). A phone turned off, offline or not reachable has the first
+/// line alone.
 pub fn header(facts: &Facts, zone: &Zone, now: DateTime<Utc>) -> Vec<Line> {
+    let facts = &Facts {
+        screen: None,
+        ..*facts
+    };
     let lead = lead(facts);
     if let Some(first) = no_contact_line(&lead, facts, zone, now) {
-        return [first, rest(&lead, facts, zone, now, true)]
+        return [first, rest(&lead, facts, zone, now, false)]
             .into_iter()
             .filter(|line| !line.is_empty())
             .collect();
@@ -387,20 +400,22 @@ pub fn header(facts: &Facts, zone: &Zone, now: DateTime<Utc>) -> Vec<Line> {
             .into_iter()
             .flatten()
             .collect(),
-        Lead::Low(_) => [zone_now(facts, zone, now), screen(facts, zone, true)]
-            .into_iter()
-            .flatten()
-            .collect(),
+        Lead::Low(_) => zone_now(facts, zone, now).into_iter().collect(),
         _ => Vec::new(),
     };
     let first = match lead {
-        Lead::Plain => vec![screen(facts, zone, true).unwrap_or_else(|| online_word(zone))],
+        Lead::Plain => vec![online_word(zone)],
         ref lead => lead_line(lead, facts, zone, now),
     };
     [first, second]
         .into_iter()
         .filter(|line| !line.is_empty())
         .collect()
+}
+
+/// The header's one line (design 101 §3.1): every line's parts in order.
+pub fn one_line(lines: Vec<Line>) -> Line {
+    lines.into_iter().flatten().collect()
 }
 
 /// The lead's own parts (not [Lead::Plain]'s, which has none).
@@ -501,8 +516,9 @@ fn zone_now(facts: &Facts, zone: &Zone, now: DateTime<Utc>) -> Option<Part> {
             Tone::Plain,
             Some("zone-now"),
         )
-        .titled(zone.exact(since)),
-        None => Part::new(names.to_string(), Tone::Plain, Some("zone-now")),
+        .titled(zone.exact(since))
+        .pinned(),
+        None => Part::new(names.to_string(), Tone::Plain, Some("zone-now")).pinned(),
     })
 }
 
@@ -560,21 +576,19 @@ mod tests {
         }
     }
 
-    fn both(facts: &Facts) -> [(String, Vec<String>); 2] {
+    fn both(facts: &Facts) -> [(String, String); 2] {
         [Lang::En, Lang::Nb].map(|lang| {
             let zone = Zone::from_setting("Europe/Oslo").in_lang(lang);
             (
                 words(&row(facts, &zone, now())),
-                header(facts, &zone, now()).iter().map(words).collect(),
+                words(&one_line(header(facts, &zone, now()))),
             )
         })
     }
 
-    fn pair(row: &str, header: &[&str]) -> (String, Vec<String>) {
-        (
-            row.to_string(),
-            header.iter().map(|l| l.to_string()).collect(),
-        )
+    /// The row's line and the header's one line (design 101: the screen time isn't in it).
+    fn pair(row: &str, header: &str) -> (String, String) {
+        (row.to_string(), header.to_string())
     }
 
     /// Each state in both languages, row and header, first match wins (the module's list).
@@ -595,11 +609,11 @@ mod tests {
             [
                 pair(
                     "4\u{a0}min today · 100 %",
-                    &["4\u{a0}min screen time today", "Test since 09:19 · 100 %"]
+                    "Online · Test since 09:19 · 100 %"
                 ),
                 pair(
                     "4\u{a0}min i dag · 100 %",
-                    &["4\u{a0}min skjermtid i dag", "Test siden 09:19 · 100 %"]
+                    "På nett · Test siden 09:19 · 100 %"
                 ),
             ]
         );
@@ -611,10 +625,7 @@ mod tests {
             both(&f)[1],
             pair(
                 "4\u{a0}min i dag · 62 %, lader",
-                &[
-                    "4\u{a0}min skjermtid i dag",
-                    "Test siden 09:19 · 62 %, lader"
-                ]
+                "På nett · Test siden 09:19 · 62 %, lader"
             )
         );
         // 5. Low battery (latched, not charging): it leads, the screen time follows.
@@ -628,17 +639,11 @@ mod tests {
             [
                 pair(
                     "Low battery, 9 % · 4\u{a0}min today",
-                    &[
-                        "Low battery, 9 %",
-                        "Test since 09:19 · 4\u{a0}min screen time today"
-                    ]
+                    "Low battery, 9 % · Test since 09:19"
                 ),
                 pair(
                     "Lavt batteri, 9 % · 4\u{a0}min i dag",
-                    &[
-                        "Lavt batteri, 9 %",
-                        "Test siden 09:19 · 4\u{a0}min skjermtid i dag"
-                    ]
+                    "Lavt batteri, 9 % · Test siden 09:19"
                 ),
             ]
         );
@@ -663,17 +668,11 @@ mod tests {
             [
                 pair(
                     "Leggetid until 07:00 · calls off · 9 %, charging",
-                    &[
-                        "Leggetid until 07:00 · calls off",
-                        "Test since 09:19 · 9 %, charging"
-                    ]
+                    "Leggetid until 07:00 · calls off · Test since 09:19 · 9 %, charging"
                 ),
                 pair(
                     "Leggetid til 07:00 · anrop av · 9 %, lader",
-                    &[
-                        "Leggetid til 07:00 · anrop av",
-                        "Test siden 09:19 · 9 %, lader"
-                    ]
+                    "Leggetid til 07:00 · anrop av · Test siden 09:19 · 9 %, lader"
                 ),
             ]
         );
@@ -688,11 +687,8 @@ mod tests {
         assert_eq!(
             both(&f2),
             [
-                pair("Offline · last seen 12:05", &["Offline · last seen 12:05"]),
-                pair(
-                    "Frakoblet · sist sett 12:05",
-                    &["Frakoblet · sist sett 12:05"]
-                ),
+                pair("Offline · last seen 12:05", "Offline · last seen 12:05"),
+                pair("Frakoblet · sist sett 12:05", "Frakoblet · sist sett 12:05"),
             ]
         );
         // 2. Turned off: before offline and everything after it.
@@ -706,11 +702,11 @@ mod tests {
             [
                 pair(
                     "Turned off yesterday 21:14 · battery was 3 %",
-                    &["Turned off yesterday 21:14 · battery was 3 %"]
+                    "Turned off yesterday 21:14 · battery was 3 %"
                 ),
                 pair(
                     "Slått av i går 21:14 · batteriet var 3 %",
-                    &["Slått av i går 21:14 · batteriet var 3 %"]
+                    "Slått av i går 21:14 · batteriet var 3 %"
                 ),
             ]
         );
@@ -730,7 +726,7 @@ mod tests {
         ] {
             let mut f3 = facts(&state);
             f3.off = Some(&off);
-            assert_eq!(both(&f3), [pair(en, &[en]), pair(nb, &[nb])]);
+            assert_eq!(both(&f3), [pair(en, en), pair(nb, nb)]);
         }
     }
 
@@ -743,7 +739,7 @@ mod tests {
         f.battery = None;
         assert_eq!(
             both(&f),
-            [pair("Online", &["Online"]), pair("På nett", &["På nett"])]
+            [pair("Online", "Online"), pair("På nett", "På nett")]
         );
         let away = ConnectionState::Away {
             last_contact: now(),
@@ -752,7 +748,7 @@ mod tests {
         let mut quiet = facts(&away);
         quiet.battery = None;
         // Away under 10 min reads as online, as its green dot says.
-        assert_eq!(both(&quiet)[1], pair("På nett", &["På nett"]));
+        assert_eq!(both(&quiet)[1], pair("På nett", "På nett"));
 
         let budget = ScreenTime {
             used: 72,
@@ -765,11 +761,11 @@ mod tests {
             [
                 pair(
                     "1\u{a0}h 12\u{a0}min of 1\u{a0}h 30\u{a0}min today",
-                    &["1\u{a0}h 12\u{a0}min of 1\u{a0}h 30\u{a0}min screen time today"]
+                    "Online"
                 ),
                 pair(
                     "1\u{a0}t 12\u{a0}min av 1\u{a0}t 30\u{a0}min i dag",
-                    &["1\u{a0}t 12\u{a0}min av 1\u{a0}t 30\u{a0}min skjermtid i dag"]
+                    "På nett"
                 ),
             ]
         );
@@ -874,8 +870,8 @@ mod tests {
         assert_eq!(
             both(&facts(&nine)),
             [
-                pair("100 %", &["Online", "100 %"]),
-                pair("100 %", &["På nett", "100 %"])
+                pair("100 %", "Online · 100 %"),
+                pair("100 %", "På nett · 100 %")
             ]
         );
         // From 10 min "No contact" leads, the rest of the row's line after it.
@@ -885,15 +881,15 @@ mod tests {
             [
                 pair(
                     "No contact · last seen 10 min ago · 100 %",
-                    &["No contact · last seen 10 min ago", "100 %"]
+                    "No contact · last seen 10 min ago · 100 %"
                 ),
                 pair(
                     "Ingen kontakt · sist sett for 10 min siden · 100 %",
-                    &["Ingen kontakt · sist sett for 10 min siden", "100 %"]
+                    "Ingen kontakt · sist sett for 10 min siden · 100 %"
                 ),
             ]
         );
-        // The mockup's Anna: a rule locks; the header's second line is the row's rest, no zone.
+        // The mockup's Anna: a rule locks; the header's line is the row's rest, no zone, no screen time.
         let twenty = away(20);
         let school = LockBadge {
             name: "Skole".to_string(),
@@ -919,10 +915,7 @@ mod tests {
             both(&f)[1],
             pair(
                 "Ingen kontakt · sist sett for 20 min siden · Skole til 14:30 · 64 %",
-                &[
-                    "Ingen kontakt · sist sett for 20 min siden",
-                    "Skole til 14:30 · 64 %"
-                ]
+                "Ingen kontakt · sist sett for 20 min siden · Skole til 14:30 · 64 %"
             )
         );
         f.lock = None;
@@ -930,10 +923,7 @@ mod tests {
             both(&f)[0],
             pair(
                 "No contact · last seen 20 min ago · 4\u{a0}min today · 64 %",
-                &[
-                    "No contact · last seen 20 min ago",
-                    "4\u{a0}min screen time today · 64 %"
-                ]
+                "No contact · last seen 20 min ago · 64 %"
             )
         );
         // Nothing else said: the lead alone, never "Online" after it.
@@ -943,7 +933,7 @@ mod tests {
             both(&quiet)[0],
             pair(
                 "No contact · last seen 20 min ago",
-                &["No contact · last seen 20 min ago"]
+                "No contact · last seen 20 min ago"
             )
         );
         // Turned off wins over "No contact".
@@ -957,7 +947,7 @@ mod tests {
             both(&f)[1],
             pair(
                 "Slått av 12:35 · batteriet var 100 %",
-                &["Slått av 12:35 · batteriet var 100 %"]
+                "Slått av 12:35 · batteriet var 100 %"
             )
         );
         // The parts: "No contact" in the away colour, the last contact's exact time in the title.
@@ -971,5 +961,51 @@ mod tests {
             (line[1].hook, line[1].title.as_deref()),
             (Some("seen"), Some("2026-11-01 12:40:00 CET"))
         );
+    }
+    /// Design 101 §3.1: the header is one line - roaming and airplane mode keep their places in it, the zone alone has
+    /// the pin, and a phone that is off, offline or unreachable has its word alone.
+    #[test]
+    fn the_header_is_one_line_with_roaming_and_airplane_in_place() {
+        let zone = Zone::from_setting("Europe/Oslo").in_lang(Lang::Nb);
+        let on = online();
+        let mut f = facts(&on);
+        f.zone_now = Some(("Skolen", Some(utc("2026-11-01 08:19:00"))));
+        let lines = header(&f, &zone, now());
+        let line = one_line(lines.clone());
+        assert_eq!(words(&line), "På nett · Skolen siden 09:19 · 100 %");
+        assert_eq!(
+            line.iter().map(|p| p.pin).collect::<Vec<_>>(),
+            [false, true, false]
+        );
+        // Roaming goes last, as on the second line before.
+        let roaming = with_roaming(
+            lines.clone(),
+            &f,
+            &zone,
+            now(),
+            Some(("Roamer i Sverige".to_string(), false)),
+        );
+        assert_eq!(
+            words(&one_line(roaming)),
+            "På nett · Skolen siden 09:19 · 100 % · Roamer i Sverige"
+        );
+        // Airplane mode with the phone still in touch goes last too; offline it replaces the line.
+        let plane = with_airplane(lines, &f, &zone, now(), Some(utc("2026-11-01 11:03:00")));
+        assert!(
+            words(&one_line(plane)).starts_with("På nett · Skolen siden 09:19 · 100 % · Flymodus"),
+        );
+        let gone = ConnectionState::Offline {
+            last_contact: utc("2026-11-01 11:05:00"),
+        };
+        let mut f2 = facts(&gone);
+        f2.zone_now = f.zone_now;
+        let plane = with_airplane(
+            header(&f2, &zone, now()),
+            &f2,
+            &zone,
+            now(),
+            Some(utc("2026-11-01 11:03:00")),
+        );
+        assert!(words(&one_line(plane)).starts_with("Flymodus"));
     }
 }

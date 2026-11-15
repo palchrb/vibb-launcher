@@ -79,7 +79,7 @@ async fn the_header_says_whether_the_phone_is_connected() {
     assert!(!head.contains("<h1"), "{head}");
     assert!(!head.contains("seen seen"), "{head}");
     assert!(
-        head.contains("<span class=\"state-offline\">Not seen yet</span></p>"),
+        head.contains("<span class=\"state-offline\">Not seen yet</span></span></p>"),
         "{head}"
     );
     assert_eq!(status_lines(head), ["Not seen yet"]);
@@ -98,19 +98,22 @@ async fn the_header_says_whether_the_phone_is_connected() {
     .await;
     let html = page().await;
     let head = header(&html);
-    assert!(head.contains("avatar-dot dot-online"), "{head}");
+    // One line (design 101): the dot at its start, the state's word, the battery; no dot on the picture.
+    assert!(head.contains("class=\"state-dot dot-online\""), "{head}");
+    assert!(!head.contains("avatar-dot"), "{head}");
     assert!(head.contains("data-status=\"online\""), "{head}");
-    assert_eq!(status_lines(head), ["Online", "100 %"]);
+    assert_eq!(head.matches("data-line>").count(), 1, "{head}");
+    assert_eq!(status_lines(head), ["Online · 100 %"]);
     assert!(!head.contains("seen"), "{head}");
     // A stream open: Online.
     let _stream = app.state.command_streams.open(id);
     let html = page().await;
     let head = header(&html);
     assert!(
-        head.contains("<span class=\"state-online\">Online</span>"),
+        head.contains("<span class=\"part\"><span class=\"state-online\">Online</span></span>"),
         "{head}"
     );
-    assert_eq!(status_lines(head), ["Online", "100 %"]);
+    assert_eq!(status_lines(head), ["Online · 100 %"]);
     let nb = app
         .get_page(
             &format!("{}?lang=nb", device_page(id, Section::Summary)),
@@ -118,7 +121,7 @@ async fn the_header_says_whether_the_phone_is_connected() {
         )
         .await
         .text();
-    assert_eq!(status_lines(header(&nb)), ["På nett", "100 %"]);
+    assert_eq!(status_lines(header(&nb)), ["På nett · 100 %"]);
     drop(_stream);
     // Disconnected: one line and the way back.
     sqlx::query("UPDATE devices SET token_hash = NULL WHERE id = ?")
@@ -161,9 +164,10 @@ async fn the_header_says_whether_the_phone_is_connected() {
     assert!(!head.contains("changes"), "{head}");
 }
 
-/// The lock only while a rule locks, the bar only with a limit and today's report on a line.
+/// Design 101 §3: one line - the lock (while a rule locks), the zone with its pin and the battery; no screen time and
+/// no bar in the header (the Skjermtid tile says it).
 #[tokio::test]
-async fn the_header_shows_the_lock_and_todays_screen_time() {
+async fn the_header_is_one_line_with_the_lock_zone_and_battery() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("Anna").await;
@@ -173,7 +177,8 @@ async fn the_header_shows_the_lock_and_todays_screen_time() {
         .to_string();
     app.post_status(
         &token,
-        json!({ "time_state": { "lock_reason": "NONE", "day": today, "used_minutes": 42,
+        json!({ "battery": { "level": 82, "charging": false, "low": false },
+                "time_state": { "lock_reason": "NONE", "day": today, "used_minutes": 42,
                                 "budget_minutes": 90 } }),
     )
     .await;
@@ -183,20 +188,13 @@ async fn the_header_shows_the_lock_and_todays_screen_time() {
         .text();
     let head = header(&html);
     assert!(!head.contains("data-lock"), "{head}");
-    assert_eq!(
-        status_lines(head),
-        ["42\u{a0}min of 1\u{a0}h 30\u{a0}min screen time today"]
-    );
-    assert!(
-        head.contains(
-            "<span data-screen-time>42\u{a0}min of 1\u{a0}h 30\u{a0}min screen time today</span>"
-        ),
-        "{head}"
-    );
-    assert!(head.contains("<i style=\"width: 46%\"></i>"), "{head}");
+    assert_eq!(status_lines(head), ["Online · 82 %"]);
+    assert!(!head.contains("screen-time"), "{head}");
+    assert!(!head.contains("meter"), "{head}");
     app.post_status(
         &token,
-        json!({ "time_state": { "lock_reason": "BEDTIME", "active_rule_name": "Leggetid",
+        json!({ "battery": { "level": 82, "charging": false, "low": false },
+                "time_state": { "lock_reason": "BEDTIME", "active_rule_name": "Leggetid",
                                 "day": today, "used_minutes": 42, "budget_minutes": 90 } }),
     )
     .await;
@@ -206,9 +204,39 @@ async fn the_header_shows_the_lock_and_todays_screen_time() {
         .text();
     let head = header(&html);
     assert!(head.contains("data-lock>Leggetid</span>"), "{head}");
-    // The lock leads; the screen time and its bar wait on Device › Time.
-    assert_eq!(status_lines(head), ["Leggetid"]);
+    // The lock leads, the battery follows, in one line; the parts are boxes (M2) and the dot opens the line.
+    assert_eq!(status_lines(head), ["Leggetid · 82 %"]);
+    assert!(head.contains("<span class=\"part\">"), "{head}");
+    assert!(
+        head.contains("aria-hidden=\"true\"></span><span class=\"part\">"),
+        "{head}"
+    );
     assert!(!head.contains("meter"), "{head}");
+}
+
+/// Design 101 §2.3: the picture opens its sheet (a `details.pic-menu`), never a link under it.
+#[tokio::test]
+async fn the_picture_opens_its_sheet() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("Anna").await;
+    let html = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    let head = header(&html);
+    assert!(head.contains("<details class=\"pic-menu\">"), "{head}");
+    assert!(head.contains("class=\"pic-badge\""), "{head}");
+    assert!(!head.contains("avatar-dot"), "{head}");
+    assert!(
+        !head.contains("avatar-remove") && !head.contains("avatar-add"),
+        "{head}"
+    );
+    assert!(head.contains(">Add picture</label>"), "{head}");
+    assert!(!head.contains("/avatar/remove"), "{head}");
+    assert!(head.contains("data-confirm-cancel"), "{head}");
+    assert_eq!(head.matches("data-autosave").count(), 1, "{head}");
+    // With a picture (Change picture, the remove form): `tests::avatars`.
 }
 
 /// §3.2 item 3, design 93: the three tiles (the rule tiles only with rules that apply), each a link
@@ -484,7 +512,7 @@ async fn a_phone_not_set_up_shows_connect_this_phone() {
         .get_page(&format!("/devices/{id}"), &cookie)
         .await
         .text();
-    assert!(header(&html).contains("<span class=\"state-offline\">Not set up</span></p>"));
+    assert!(header(&html).contains("<span class=\"state-offline\">Not set up</span></span></p>"));
     assert_eq!(status_lines(header(&html)), ["Not set up"]);
     let access = group(&html, "access");
     assert!(access.contains("Connect This Phone"), "{access}");

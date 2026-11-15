@@ -1051,7 +1051,7 @@ async fn a_phone_clock_behind_and_a_report_at_shutdown_still_say_off() {
         .await
         .text();
     assert!(summary.contains("data-power-off"), "{summary}");
-    assert!(summary.contains("avatar-dot dot-offline"), "{summary}");
+    assert!(summary.contains("state-dot dot-offline"), "{summary}");
     let list = app.get_page("/devices", &cookie).await.text();
     assert!(list.contains("data-power-off"), "{list}");
     assert!(list.contains("avatar-dot dot-offline"), "{list}");

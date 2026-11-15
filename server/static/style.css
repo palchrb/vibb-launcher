@@ -3007,29 +3007,44 @@ input.row-num { width: min(6.5em, 34vw); text-align: right; }
 
 /* ---- Design 31 step 10: the phone's summary ---- */
 
-/* The header (the DeviceSummary mockup): the large avatar with its dot, the name, the state line,
-   the lock badge and today's bar, centred. */
-/* The name is the band's title (design 84); as the sheet's first box the head starts 20 px under its edge. */
+/* The header (design 101, mockup A): the picture lies half over the night gap above the sheet's edge, the pencil badge in
+   its corner, the one status line under it. The summary's own sheet opens a 38px gap under the band (main's ground is
+   night there; the shared band is unchanged). The offset is measured from the sheet's content edge: 38px gap + 1px
+   border + 15px padding less the band's 22px foot = 32px under the band's box, and the picture's top should lie 20px
+   above the sheet's edge, so -52px (pinned in tests/shell.rs). Nothing that holds the pic-menu panel may be
+   positioned (.sheet, .summary-head, .avatar-edit): the panel and its dim are placed against the body. */
 .summary-head { display: flex; flex-direction: column; align-items: center; margin: 12px 0 20px; text-align: center; }
-.sheet > .summary-head:first-child { margin-top: 4px; }
-.avatar-large { width: 76px; height: 76px; font-size: 2.125rem; }
-.avatar-large .avatar-dot { width: 16px; height: 16px; border-width: 3px; right: 1px; bottom: 1px; border-color: var(--bg); }
-/* The header's avatar is the picture's picker (server round C): the file field is hidden but stays
-   focusable, its ring drawn round the avatar; "Add picture" or "Remove picture" under it. */
-.avatar-edit { position: relative; display: flex; flex-direction: column; align-items: center; }
-.avatar-form { margin: 0; }
-.avatar-pick { display: block; margin: 0; border-radius: 50%; font-weight: inherit; cursor: pointer; }
-.avatar-input { position: absolute; top: 0; left: 0; width: 1px; height: 1px; margin: 0; padding: 0; border: 0; opacity: 0; overflow: hidden; }
-.avatar-input:focus + .avatar-pick { outline: 2px solid var(--tint); outline-offset: 2px; }
-.avatar-input:focus:not(:focus-visible) + .avatar-pick { outline: none; }
-.avatar-add, .avatar-remove, .avatar-remove:hover { display: inline-block; margin: 2px 0 0; padding: 6px 8px; border: 0; border-radius: 8px; background: none; color: var(--tint); font: inherit; font-size: 0.875rem; font-weight: 600; cursor: pointer; }
-.avatar-remove:hover, .avatar-add:hover { color: var(--tint-hover); }
+.summary-sheet { margin-top: 38px; }
+.summary-sheet > .summary-head { margin-top: -52px; }
+.avatar-large { width: 88px; height: 88px; font-size: 2.5rem; box-shadow: 0 0 0 4px var(--bg); }
+.avatar-edit { display: flex; flex-direction: column; align-items: center; }
 .avatar-save { margin-top: 8px; }
 .avatar-error { margin: 4px 0 0; }
-.summary-state { margin: 3px 0 0; color: var(--label-2); font-size: 0.9375rem; line-height: 1.35; }
+details.pic-menu > summary { list-style: none; cursor: pointer; }
+details.pic-menu > summary::-webkit-details-marker { display: none; }
+.pic-pick { position: relative; display: block; border-radius: 50%; }
+.pic-pick:focus { outline: 2px solid var(--tint); outline-offset: 4px; }
+.pic-pick:focus:not(:focus-visible) { outline: none; }
+.pic-badge { position: absolute; right: -2px; bottom: -2px; display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%; background: var(--surface); color: var(--tint); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25); }
+.pic-backdrop { position: absolute; top: 0; right: 0; bottom: 0; left: 0; z-index: 11; background: rgba(12, 12, 20, 0.42); cursor: pointer; }
+.pic-panel { position: absolute; left: 10px; right: 10px; bottom: calc(14px + env(safe-area-inset-bottom, 0px)); z-index: 12; max-width: 560px; margin: 0 auto; text-align: center; }
+.pic-card { overflow: hidden; border-radius: 14px; background: var(--surface); }
+.pic-note { margin: 0; padding: 12px 16px; color: var(--label-2); font-size: 0.8125rem; line-height: 1.35; }
+.pic-form { position: relative; margin: 0; border-top: 1px solid var(--sep); }
+.pic-action { position: relative; display: block; box-sizing: border-box; width: 100%; min-height: 56px; margin: 0; padding: 16px; border: 0; border-radius: 0; background: transparent; color: var(--tint); font: inherit; font-size: 1.0625rem; font-weight: 400; line-height: 24px; text-align: center; cursor: pointer; }
+.pic-danger, .pic-danger:hover { color: var(--red-text); }
+.pic-file { position: absolute; top: 0; right: 0; bottom: 0; left: 0; z-index: 1; width: 100%; height: 100%; margin: 0; padding: 0; border: 0; opacity: 0; cursor: pointer; }
+.pic-action:focus-within { background: var(--row-active); }
+.pic-panel > .button-cancel, .pic-panel > .button-cancel:hover { box-sizing: border-box; min-height: 56px; margin-top: 8px; border-radius: 14px; background: var(--surface); font-weight: 600; }
+.pic-panel > .button-cancel:hover { background: var(--row-active); }
+.pic-panel > .button-cancel[hidden] { display: none; }
+/* The one status line: the dot, then the parts. A part never breaks inside (an inline box that wraps between parts and,
+   alone wider than the line, wraps inside at max-width 100%: no sideways scroll at 320px). */
+.summary-state { margin: 12px 0 0; color: var(--label-2); font-size: 0.9375rem; line-height: 1.35; }
+.summary-state .part { display: inline-block; max-width: 100%; vertical-align: top; }
+.summary-state .pin { margin-right: 3px; vertical-align: -1px; }
+.state-dot { display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 50%; vertical-align: 0.1em; }
 .summary-link { display: inline-block; margin-top: 4px; padding: 10px 8px; font-size: 0.9375rem; text-decoration: none; }
-.summary-meter { width: 220px; max-width: 100%; height: 6px; margin-top: 14px; border-radius: 3px; }
-.summary-meter > i { border-radius: 3px; }
 /* A tile that is a link (Locate) or a sheet's summary looks like the button tiles. */
 a.act, a.act:hover { text-decoration: none; }
 .act-strong { background: var(--tint-fill); color: var(--on-tint-fill); }

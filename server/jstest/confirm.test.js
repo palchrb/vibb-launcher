@@ -54,3 +54,72 @@ test("a click anywhere else leaves the confirm open", () => {
     assert.strictEqual(page.details.open, true);
     assert.deepStrictEqual(page.focused, []);
 });
+
+// Design 101: the picture's sheet (`details.pic-menu`) - Escape and a focus that leaves close it, opening focuses
+// the first action, and the backdrop (a non-button [data-confirm-cancel]) closes it like Avbryt.
+function fakeMenu() {
+    const focused = [];
+    const summary = { focus: (options) => focused.push(["summary", options]) };
+    const action = { focus: (options) => focused.push(["action", options]) };
+    const inside = {};
+    const details = {
+        open: false,
+        querySelector: (s) => (s === "summary" ? summary : s === ".pic-file, .pic-action" ? action : null),
+        matches: (s) => s === "details.pic-menu",
+        contains: (n) => n === inside || n === details,
+    };
+    const closest = (s) => (s === "details.pic-menu" ? details : null);
+    const backdrop = {
+        hidden: true,
+        closest: (s) => (s === "[data-confirm-cancel]" ? backdrop : s === "details" || s === "details.pic-menu" ? details : null),
+    };
+    const listeners = {};
+    const win = {
+        document: {
+            querySelectorAll: (s) => (s === "[data-confirm-cancel]" ? [backdrop] : []),
+            addEventListener: (type, fn, capture) => {
+                listeners[type] = { fn, capture };
+            },
+        },
+    };
+    return { win, details, summary, backdrop, inside, focused, listeners, target: { closest } };
+}
+
+test("the backdrop closes the picture sheet like Avbryt", () => {
+    const page = fakeMenu();
+    install(page.win);
+    assert.strictEqual(page.backdrop.hidden, false);
+    page.details.open = true;
+    page.listeners.click.fn({ target: page.backdrop, preventDefault() {} });
+    assert.strictEqual(page.details.open, false);
+});
+
+test("Escape closes an open picture sheet and focuses the picture", () => {
+    const page = fakeMenu();
+    install(page.win);
+    page.details.open = true;
+    let prevented = false;
+    page.listeners.keydown.fn({ key: "Escape", target: page.target, preventDefault: () => { prevented = true; } });
+    assert.ok(prevented);
+    assert.strictEqual(page.details.open, false);
+    assert.deepStrictEqual(page.focused, [["summary", { preventScroll: true }]]);
+});
+
+test("a focus that leaves the panel closes the sheet, one inside does not", () => {
+    const page = fakeMenu();
+    install(page.win);
+    page.details.open = true;
+    page.listeners.focusout.fn({ target: page.target, relatedTarget: page.inside });
+    assert.strictEqual(page.details.open, true);
+    page.listeners.focusout.fn({ target: page.target, relatedTarget: {} });
+    assert.strictEqual(page.details.open, false);
+});
+
+test("opening the picture sheet focuses its first action, with the capture-phase toggle", () => {
+    const page = fakeMenu();
+    install(page.win);
+    assert.strictEqual(page.listeners.toggle.capture, true);
+    page.details.open = true;
+    page.listeners.toggle.fn({ target: page.details });
+    assert.deepStrictEqual(page.focused, [["action", { preventScroll: true }]]);
+});
