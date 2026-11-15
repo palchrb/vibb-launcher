@@ -31,8 +31,10 @@ function el(tag, attrs = {}, children = []) {
         addEventListener(type, fn) {
             (this.listeners[type] = this.listeners[type] || []).push(fn);
         },
+        // The event goes up through the ancestors (setup() gives each node its parentNode).
         fire(type, target) {
-            (this.listeners[type] || []).forEach((fn) => fn({ target }));
+            const event = { target: target || this };
+            for (let n = this; n; n = n.parentNode) (n.listeners[type] || []).forEach((fn) => fn(event));
         },
         querySelectorAll(selector) {
             const found = [];
@@ -106,7 +108,10 @@ function addForm({ calls = [true, true], texts = [true, true] } = {}) {
 
 function setup(form) {
     const doc = el("document", {}, [form]);
+    const parent = (n) => n.children.forEach((c) => { c.parentNode = n; parent(c); });
+    parent(doc);
     install(doc);
+    return doc;
 }
 
 function change(parts, input, on) {
@@ -184,4 +189,20 @@ test("a contact's edit form only follows its Avansert - no mirror racing its aut
     adv.removeAttribute("open");
     adv.fire("toggle");
     assert.strictEqual(more.value, "");
+});
+
+// Design 103: the listeners are the document's, and a refresh in place (the server's `more` and `*_shown` back) has
+// them written again on handy:swapped.
+test("after handy:swapped more and the pair's class are written again", () => {
+    const parts = addForm();
+    const doc = setup(parts.form);
+    change(parts, parts.outbound, false);
+    parts.adv.setAttribute("open", "");
+    parts.adv.fire("toggle");
+    // The morph: the server's hidden values, the parent's open Avansert and switches kept.
+    parts.more.value = "";
+    parts.callsShown.value = "on";
+    doc.fire("handy:swapped");
+    assert.strictEqual(parts.more.value, "1");
+    assert.strictEqual(parts.callsShown.value, "custom");
 });

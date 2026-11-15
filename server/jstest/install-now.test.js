@@ -217,3 +217,28 @@ test("the app lock: no poll and no reload once it is due; a poll answered 423 go
     assert.strictEqual(locked.pending(), 0);
     due = false;
 });
+
+// Design 103: a changed state refreshes the page in place; the next poll is armed by handy:swapped; a save's hold
+// ends on handy:saved with none left.
+test("a changed state refreshes in place, and the polling goes on after the swap", async () => {
+    const win = fakeWindow({
+        rows: { "phone-3": fakeRow("waiting", "Install Now: waiting for the phone") },
+        answer: { phones: [{ id: 3, state: "working", sub: "The phone got it" }] },
+    });
+    const asked = [];
+    win.location.href = "https://vibb.example/apps/tracked/1#phone-3";
+    win.handySwap = { refresh: (url, opts) => { asked.push([url, typeof opts.fallback]); return true; } };
+    install(win);
+    await win.advance();
+    assert.deepStrictEqual(asked, [["https://vibb.example/apps/tracked/1#phone-3", "function"]]);
+    assert.strictEqual(win.reloads, 0);
+    assert.strictEqual(win.pending(), 0, "stopped while the refresh is out");
+    win.fire("doc", "handy:swapped");
+    assert.strictEqual(win.pending(), 1, "polls again");
+    // A save holds it until none is left on its way.
+    win.fire("doc", "submit", {});
+    await win.advance();
+    assert.strictEqual(win.pending(), 0);
+    (win.fire.bind(win))("doc", "handy:saved");
+    assert.strictEqual(win.pending(), 1);
+});

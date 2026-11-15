@@ -2,7 +2,8 @@
 // waits for the phone, ask the server every 5 s what the phones do and swap each row's sub-line
 // ("Downloading 40 of 80 MB", "Installing") in place (`textContent`, nothing moves). When a row's
 // state word changes - fetched, confirmed, answered - the buttons change too (Cancel goes, Install
-// Now comes back), so the page reloads, keeping the place as static/auto-reload.js does. It never
+// Now comes back), so the page is refreshed in place (design 103: `handySwap.refresh`, static/swap.js; the reload,
+// keeping the place as static/auto-reload.js does, only when that says no). It never
 // reloads once a save has started or while a <details> is open, it polls only while the page is
 // visible, and it gives up after 30 minutes of polling (a reload starts it again). The server loads
 // it only while a row waits. Without JS a reload shows the same. `?install=` (a POST's answer) is
@@ -30,7 +31,11 @@
         var doc = win.document;
         var group = doc.querySelector("[data-install-poll]");
         if (!group) return;
-        var url = group.getAttribute("data-install-poll");
+        // Read again at each poll: a refresh in place may bring another group, or none (nothing waits any more).
+        function pollUrl() {
+            var now = doc.querySelector("[data-install-poll]");
+            return now ? now.getAttribute("data-install-poll") : null;
+        }
         var leaving = false;
         var polls = 0;
         var timer = null;
@@ -45,6 +50,21 @@
             if (el && el.hasAttribute && el.hasAttribute("data-autosave")) stop();
         }, true);
         win.addEventListener("pagehide", stop);
+        // Design 103: a save lands in place now - once none is left on its way the polling goes on, and a refresh in
+        // place that still has a waiting row starts it again.
+        doc.addEventListener("handy:saved", function (e) {
+            if (e && e.detail && e.detail.pending) return;
+            leaving = false;
+            schedule();
+        });
+        doc.addEventListener("handy:swapped", function () {
+            if (refreshing) {
+                refreshing = false;
+                leaving = false;
+            }
+            schedule();
+        });
+        var refreshing = false;
 
         if (win.history && win.history.replaceState && /[?&]install=/.test(win.location.search)) {
             win.history.replaceState(null, "", win.location.pathname + win.location.hash);
@@ -79,6 +99,8 @@
                 lockNow();
                 return;
             }
+            var url = pollUrl();
+            if (!url) return;
             polls += 1;
             return win.fetch(url, { credentials: "same-origin", headers: { Accept: "application/json" } })
                 .then(function (response) {
@@ -108,10 +130,21 @@
                     lockNow();
                     return;
                 }
-                keepPlace();
                 leaving = true;
-                win.location.reload();
+                var swap = win.handySwap;
+                var taken = false;
+                try {
+                    taken = !!(swap && typeof swap.refresh === "function" &&
+                        swap.refresh(win.location.href, { fallback: reload }));
+                } catch (e) {}
+                if (taken) refreshing = true;
+                else reload();
             }
+        }
+
+        function reload() {
+            keepPlace();
+            win.location.reload();
         }
 
         // As static/auto-reload.js: the entry is the browser's ("auto") and scroll-restore's record

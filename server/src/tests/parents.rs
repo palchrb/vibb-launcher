@@ -600,7 +600,7 @@ async fn the_otp_is_shown_once_and_never_stored() {
     assert_eq!(res.headers.get(header::CACHE_CONTROL).unwrap(), "no-store");
     let html = res.text();
     assert!(html.contains("<body data-post-answer"));
-    assert!(html.contains("<script src=\"/static/reveal.js?v=4\"></script>"));
+    assert!(html.contains("<script src=\"/static/reveal.js?v=5\" data-swap-ready></script>"));
     let otp = otp_of(&html);
     assert_eq!(otp.len(), 24, "{otp}");
     let block = part(&html, "id=\"parent-otp\"", "</section>");

@@ -4,7 +4,8 @@
 // without a scroll. In the Regler sheet: "Alle regler" is hidden in Slå på nå, the rule's mode line and warnings follow
 // the chosen rule (each <option>'s data-line / data-warn), a length fills Til and typing in Til clears the lengths,
 // and every button says its action as a full sentence. Without JS the tiles are links the server answers with the sheet
-// open (?open=), and the buttons say "Slå på" / "Sett på pause". The words come from #quick's data-w-*. ES5.
+// open (?open=), and the buttons say "Slå på" / "Sett på pause". The words come from #quick's data-w-*. A refresh in place
+// (design 103) reads the page's parts again and redraws the derived words (`handy:swapped`). ES5.
 // Run its tests: node --test jstest/quick-sheets.test.js
 (function (root) {
     "use strict";
@@ -62,38 +63,47 @@
     }
 
     function install(doc) {
-        var section = doc.getElementById("quick");
-        if (!section) return;
-        var nowMinute = Number(section.getAttribute("data-now-minute")) || 0;
-        var midnight = section.getAttribute("data-w-midnight") || "00:00";
-        var mOn = doc.getElementById("m-on");
-        var mPause = doc.getElementById("m-pause");
-        var rulesForm = mOn ? mOn.form : null;
-        var timeSheet = doc.getElementById("time-sheet");
-        var timeForm = timeSheet ? timeSheet.querySelector("form") : null;
-
-        function mode() {
-            return mOn && mOn.checked ? "on" : "pause";
-        }
-
-        // The rule tile the Regler sheet belongs to: the one that opened it, then the mode chosen in it. While Slå på nå
-        // can't be chosen (a rule already on, no zone, the day's last minute) Slå på regel opens it in pause mode and
-        // stays the chosen tile, so it closes the sheet it opened. The server marks the tile it opened with.
+        // The page's parts, read again after a refresh in place (design 103: `handy:swapped`, static/swap.js), which
+        // may bring new nodes and always brings the server's words and the sheets as the server draws them.
+        var section, nowMinute, midnight, mOn, mPause, rulesForm, timeSheet, timeForm;
         var openedMode = null;
-        (function () {
+        var defaultLength = null;
+        function bind() {
+            section = doc.getElementById("quick");
+            if (!section) return false;
+            nowMinute = Number(section.getAttribute("data-now-minute")) || 0;
+            midnight = section.getAttribute("data-w-midnight") || "00:00";
+            mOn = doc.getElementById("m-on");
+            mPause = doc.getElementById("m-pause");
+            rulesForm = mOn ? mOn.form : null;
+            timeSheet = doc.getElementById("time-sheet");
+            timeForm = timeSheet ? timeSheet.querySelector("form") : null;
+            openedMode = null;
             var list = section.querySelectorAll("a.qa[data-sheet]");
             for (var i = 0; i < list.length; i++) {
                 if (list[i].classList.contains("qa-chosen") && list[i].hasAttribute("data-mode")) {
                     openedMode = list[i].getAttribute("data-mode");
                 }
             }
-        })();
+            // The length the page came with: Til emptied again falls back to it, so the form never posts neither.
+            defaultLength = rulesForm ? checkedOf(rulesForm, "on_len") : null;
+            updateRules();
+            updateTime();
+            return true;
+        }
+        if (!doc.getElementById("quick")) return;
+
+        function mode() {
+            return mOn && mOn.checked ? "on" : "pause";
+        }
+
+        // The rule tile the Regler sheet belongs to (`openedMode`, read in bind): the one that opened it, then the mode
+        // chosen in it. While Slå på nå can't be chosen (a rule already on, no zone, the day's last minute) Slå på regel
+        // opens it in pause mode and stays the chosen tile, so it closes the sheet it opened. The server marks the tile
+        // it opened with.
         function showsMode(tileMode) {
             return !tileMode || tileMode === (openedMode || mode());
         }
-
-        // The length the page came with: Til emptied again falls back to it, so the form never posts neither.
-        var defaultLength = rulesForm ? checkedOf(rulesForm, "on_len") : null;
 
         function setMode(wanted) {
             if (!mOn || !mPause) return;
@@ -236,6 +246,7 @@
         }
 
         doc.addEventListener("click", function (e) {
+            if (!section) return;
             var tile = closest(e.target, function (el) {
                 return el.hasAttribute("data-sheet");
             });
@@ -258,7 +269,7 @@
 
         doc.addEventListener("change", function (e) {
             var el = e.target;
-            if (!el || !el.form) return;
+            if (!section || !el || !el.form) return;
             if (el.form === rulesForm) {
                 if (el.name === "mode") openedMode = mode();
                 if (el.name === "on_len") {
@@ -274,7 +285,7 @@
 
         doc.addEventListener("input", function (e) {
             var el = e.target;
-            if (!el || el.form !== rulesForm || !el.hasAttribute("data-qa-til")) return;
+            if (!section || !el || el.form !== rulesForm || !el.hasAttribute("data-qa-til")) return;
             if (el.value) {
                 var lengths = rulesForm.querySelectorAll("input[name=on_len]");
                 for (var i = 0; i < lengths.length; i++) lengths[i].checked = false;
@@ -284,8 +295,8 @@
             updateRules();
         });
 
-        updateRules();
-        updateTime();
+        bind();
+        doc.addEventListener("handy:swapped", bind);
     }
 
     var api = { install: install, clock: clock, words: words };

@@ -619,3 +619,30 @@ test("a refused prompt says blocked and drops Turn On; another failure says try 
     // Enabled again after the failure, so a second try works.
     assert.strictEqual(page.parts["[data-offer-on]"].disabled, false);
 });
+
+// Design 103: a refresh in place brings the server's markup back; what this script set is set again on
+// handy:swapped, and a subscription's form posts the browser's way (data-native-post), a full page.
+test("what the script set comes back after handy:swapped; Turn On posts the browser's way", async () => {
+    const page = fakePage();
+    const listeners = {};
+    page.win.document.addEventListener = (type, fn) => { listeners[type] = fn; };
+    const attrs = {};
+    page.form.setAttribute = (n, v) => { attrs[n] = v; };
+    install(page.win);
+    await settle();
+    const state = page.nodes["push-state"];
+    const on = page.nodes["push-on"];
+    assert.strictEqual(state.textContent, "Av");
+    // The morph puts the server's words and marks back.
+    state.textContent = "Needs JavaScript";
+    on.hidden = true;
+    on.disabled = true;
+    listeners["handy:swapped"]({});
+    assert.strictEqual(state.textContent, "Av");
+    assert.strictEqual(on.hidden, false);
+    assert.strictEqual(on.disabled, false);
+    on.click();
+    await settle();
+    assert.deepStrictEqual(page.submitted, ["on"]);
+    assert.strictEqual(attrs["data-native-post"], "", "a full page, not a refresh in place");
+});

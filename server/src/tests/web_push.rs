@@ -483,7 +483,11 @@ async fn the_page_carries_no_secret_and_every_form_lands() {
             assert!(!text.contains(secret), "{secret} is on the {page} page");
         }
     }
-    assert!(html.contains("<script src=\"/static/notifications.js?v=5\" defer></script>"));
+    assert!(
+        html.contains(
+            "<script src=\"/static/notifications.js?v=6\" defer data-swap-ready></script>"
+        )
+    );
     assert!(!inbox.contains("notifications.js"));
     check_forms("/notifications/settings", &html);
     check_forms("/notifications", &inbox);
@@ -1276,7 +1280,11 @@ async fn the_first_opening_offers_notifications_on_devices() {
     );
     assert!(card.contains("<input type=\"hidden\" name=\"offer\" value=\"devices\">"));
     assert!(card.contains("Get notifications on this phone?") && card.contains("Not Now"));
-    assert!(html.contains("<script src=\"/static/notifications.js?v=5\" defer></script>"));
+    assert!(
+        html.contains(
+            "<script src=\"/static/notifications.js?v=6\" defer data-swap-ready></script>"
+        )
+    );
     assert!(!html.contains("id=\"push-offer-done\""));
     // The page is in Norwegian for a Norwegian reader.
     let nb = app.get_page("/devices?lang=nb", &cookie).await.text();

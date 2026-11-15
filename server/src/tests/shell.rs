@@ -1983,18 +1983,6 @@ fn every_page_script_is_swap_ready_or_listed() {
         "/static/map-full.js",
         "/static/zones.js",
     ];
-    // The page scripts design 103's step 3 makes ready: until then their pages reload as before.
-    const NOT_YET: &[&str] = &[
-        "/static/quick-sheets.js",
-        "/static/app-display.js",
-        "/static/contact-form.js",
-        "/static/notifications.js",
-        "/static/passkey.js",
-        "/static/reveal.js",
-        "/static/music-cards.js",
-        "/static/install-now.js",
-        "/static/photo-crop.js",
-    ];
     let tag = regex::Regex::new(r#"<script src="([^"?]+)[^"]*"[^>]*>"#).unwrap();
     let mut files = super::device_api::template_files();
     for entry in std::fs::read_dir("templates/partials").unwrap() {
@@ -2014,13 +2002,13 @@ fn every_page_script_is_swap_ready_or_listed() {
                 continue;
             }
             assert!(
-                MAPS.contains(&src) || NOT_YET.contains(&src),
+                MAPS.contains(&src),
                 "{}: {src} is neither data-swap-ready nor a map page's",
                 path.display()
             );
         }
     }
-    assert!(ready >= 4, "{ready} ready page scripts");
+    assert!(ready >= 20, "{ready} ready page scripts");
     let head = std::fs::read_to_string("templates/partials/head.html").unwrap();
     let swap = std::fs::read_to_string("static/swap.js").unwrap();
     for found in tag.captures_iter(&head) {

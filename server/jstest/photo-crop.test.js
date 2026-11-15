@@ -471,3 +471,16 @@ test("without a settable file input nothing changes: the input autosaves, Adjust
     assert.strictEqual(p.adjust.hidden, true);
     assert.deepStrictEqual(p.input.listeners, {});
 });
+
+// Design 103: a refresh in place brings the server's data-autosave and hidden Adjust back; they are undone again on
+// handy:swapped, and nothing is wired twice.
+test("after handy:swapped the picker doesn't autosave and Adjust shows, each wired once", () => {
+    const p = fakePage();
+    p.input.setAttribute("data-autosave", "");
+    p.adjust.hidden = true;
+    p.doc.fire("handy:swapped");
+    assert.ok(!p.input.hasAttribute("data-autosave"));
+    assert.strictEqual(p.adjust.hidden, false);
+    assert.strictEqual(p.input.listeners.change.length, 1);
+    assert.strictEqual(p.adjust.listeners.click.length, 1);
+});
