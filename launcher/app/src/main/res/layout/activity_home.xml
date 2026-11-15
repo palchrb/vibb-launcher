@@ -78,6 +78,23 @@
         android:textSize="15sp"
         android:visibility="gone" />
 
+    <!-- Design 102 §3.6 (D5): "Wi-Fi-en vil at du logger på" while the phone's Wi-Fi wants a sign-in - the same calm
+         line as the airplane one; a tap opens the sign-in's entry. "Spør en voksen om Wi-Fi-innlogging" opens nothing. -->
+    <TextView
+        android:id="@+id/home_portal_line"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:alpha="0.75"
+        android:background="?attr/selectableItemBackground"
+        android:fontFamily="@font/nunito_bold"
+        android:gravity="center_vertical"
+        android:minHeight="48dp"
+        android:paddingStart="4dp"
+        android:paddingEnd="4dp"
+        android:textColor="@color/kid_core"
+        android:textSize="15sp"
+        android:visibility="gone" />
+
     <!-- While a call exists the contacts row gives way to this card (user request after the
          emulator run): avatar, "Call with <name> · mm:ss", "Tap to go back" - a tap brings our
          call screen back. -->

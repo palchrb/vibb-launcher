@@ -283,6 +283,37 @@
             android:configChanges="orientation|screenSize|uiMode"
             android:excludeFromRecents="true"
             android:exported="false" />
+        <!-- Design 102 §3.2: Vibb's handler of Android's Wi-Fi sign-in intent, in the main process - guarded by the
+             NETWORK_STACK permission, which system_server's start holds and no installable app can (measured: the
+             system's start passes, another app's is refused). Enabled only while Part A is on (AppEnforcer, the device
+             owner's persistent preferred activity names it); disabled, Android's own handler is the only one. Vibb's own
+             ways in start it by an explicit intent from this process (the same uid passes). -->
+        <activity
+            android:name=".portal.CaptivePortalEntry"
+            android:configChanges="orientation|screenSize|uiMode"
+            android:enabled="false"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:permission="android.permission.NETWORK_STACK">
+            <intent-filter>
+                <action android:name="android.net.conn.CAPTIVE_PORTAL" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+        <!-- Design 102 §3.3: the Wi-Fi sign-in window, a WebView in its own process (`:portal`, bound to the portal's
+             network; Application.onCreate returns early there). Not exported: only the entry starts it. -->
+        <activity
+            android:name=".portal.PortalWindowActivity"
+            android:configChanges="orientation|screenSize|uiMode|keyboard|keyboardHidden"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:process=":portal"
+            android:theme="@style/launcherBaseTheme"
+            android:windowSoftInputMode="adjustResize" />
+        <!-- Design 102 §3.1: the window's session is in - an explicit broadcast from this app's `:portal` only. -->
+        <receiver
+            android:name=".portal.PortalSessionReceiver"
+            android:exported="false" />
         <activity
             android:name=".ui.kidsettings.KidSettingsActivity"
             android:configChanges="orientation|screenSize|uiMode"

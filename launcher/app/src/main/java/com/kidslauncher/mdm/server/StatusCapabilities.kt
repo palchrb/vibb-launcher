@@ -85,6 +85,9 @@ val STATUS_CAPABILITIES: List<String> = listOf(
     // Design 97: the policy's `abroad` ("I utlandet"), `data_roaming.where` and `mobile_data.kid` in every report, and
     // the kid's Mobildata row (bit 32). The server's kid switch and the roaming notice wait for it.
     MOBILE_NETWORK_CAPABILITY,
+    // Design 102 Part A: the policy's `captive_portal` (the Wi-Fi sign-in window, the parent code) and `captive_portal`
+    // in every full report. The server's Sign-in page and Advanced's #wifi-signin row wait for it.
+    com.kidslauncher.mdm.logins.CAPTIVE_PORTAL_CAPABILITY,
 )
 
 /** A time rule's "Stille" switch (server migration 0121): `rules[].silent` is enforced. */

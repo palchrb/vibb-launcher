@@ -143,18 +143,43 @@ waits for a device capture of the Play Protect / account-security channel ids.
   `Closed` (`NOT_HTTPS`, or `TAILNET_DOWN` while tsnet isn't up) = the client's first interceptor throws
   `ServerPathClosed` (an `IOException`) before the bearer or a socket; the stream doesn't open and retries every 30 s
   like an unenrolled phone. No other file calls `TsnetClient.proxy()` (pinned).
-- **Cleartext** (`res/xml/network_security_config.xml`, the manifest's `networkSecurityConfig`; `usesCleartextTraffic`
-  is gone): off for the whole app, system CAs only, one exception - the name `tailnet-server.vibb.invalid`
-  (`TAILNET_SERVER_HOST`). A network security config names hosts, never ranges, and OkHttp checks cleartext against the
-  URL's host, so the tailnet path's base URL names that host: its `Dns` answers it with the tailnet address and refuses
-  every other name, its `SocketFactory` makes SOCKS sockets to tsnet's proxy on loopback (a plain socket, not an HTTP
-  request: no loopback exception), `NO_PROXY`, no redirects, and an interceptor sends the real `Host`. The name is under
-  `.invalid` (RFC 6761) and no client but the tailnet one asks for it (another would ask the network's DNS, which a
-  hostile resolver could answer - nothing of ours does). A tailnet socket refuses when tsnet's proxy is no longer the
-  one its client was made with, and `TsnetClient.close()` drops the process `Authenticator` (QA L1: an app that binds
-  the freed loopback port gets neither the credential nor the request). The SOCKS request carries the IP, never a name
-  (`ServerTransportTest` runs it against a fake SOCKS5 proxy). `src/debug/res/xml/` adds `10.0.2.2`, and a debug build
-  alone takes `http://10.0.2.2[:port]` as the address (`EMULATOR_HOST`, the emulator loop).
+- **Cleartext** (`res/xml/network_security_config.xml` and the debug copy, the manifest's `networkSecurityConfig`;
+  `usesCleartextTraffic` is gone): **allowed app-wide since design 102 D15 (a)** (the user, 2026-11-15: "Vi ville vel
+  egentlig bare passe på at vibb one server kontakt ikke er http med mindre tailscale er i bruk"). The Wi-Fi sign-in
+  window (`portal/`, process `:portal`) must load a captive portal, which is http by nature (Android's probe URL, the
+  intercepted redirect, portals on IP literals), and a config names hosts, never ranges. `base-config` is
+  `cleartextTrafficPermitted="true"` with `tools:ignore="InsecureBaseConfiguration"` (as the music app since
+  qa-30-s3b), system CAs only (the release config never trusts a user CA; the debug one adds them under
+  `debug-overrides`). S-M1's rule was always the **server path**, and it lives in code:
+  - `serverUrlVerdict` (the shared `server_url_vectors.json`) and `ServerTransport`: an address that is neither
+    `https://` nor `http://` to a Tailscale IP literal gives `ServerPath.Closed` (`NOT_HTTPS`), which refuses before the
+    bearer or a socket; the direct path and (since R3-L2) the tailnet path each have an origin fence (scheme, host,
+    port), so an IP-literal `@Url` can't reach another host.
+  - The DoH client refuses a non-https URL itself (`DOH_HTTPS_ONLY` in `buildDohClient`); DoT and the bootstrap are raw
+    sockets (the config never applied); tsnet is Go with its own TLS and Noise; MMS goes through the system's MMS service.
+  - The sign-in window's https check (`portal/PortalCheck.kt`) has fixed `https://` constants; its probe of the phone's
+    own server is a plain request with no bearer and no design-76 pinner, not through `ServerTransport`.
+  - **The source scan** in `ServerTransportTest` (`every HTTP client, URL connection, WebView and media source is in a
+    named file`, on the music app's `SourceScanTest` pattern, comments stripped): `OkHttpClient(`/`OkHttpClient.Builder(`
+    only in `ServerTransport.kt`, `UpstreamTransport.kt` and `portal/PortalCheck.kt`; `.newBuilder()` only as the server
+    clients' `base.newBuilder()` and a request's or response's; `Retrofit.Builder(` only in `MdmApi.kt`/`MusicServer.kt`
+    (each with `.client(`); `java.net.URL`, `.openStream(`, `DownloadManager`, `HttpEngine` nowhere; `URLConnection` only
+    as `UpstreamTransport.kt`'s `HttpsURLConnection.getDefaultHostnameVerifier()`; `setDataSource(` only in
+    `KidSounds.kt`/`LocateCommands.kt` (a content or alarm `Uri`); `WebView(` and `android.webkit` only under `portal/`
+    (and `AppEnforcer.kt`'s `getCurrentWebViewPackage()`); `bearerInterceptor(` only in the server clients. A new token
+    or file fails the build until it is reviewed and named there. **A new library that does its own HTTP is not seen by
+    a source scan**: the gate for that is the dependency review (`gradle/verification-metadata.xml` fails the build on
+    any new or bumped dependency until its checksums are added and reviewed).
+  - The one http speaker is the sign-in window in `:portal`, which holds no token and no server client.
+
+  The tailnet path still names `tailnet-server.vibb.invalid` (`TAILNET_SERVER_HOST`, kept from the config's time): its
+  `Dns` answers it with the tailnet address and refuses every other name, its `SocketFactory` makes SOCKS sockets to
+  tsnet's proxy on loopback (a plain socket, not an HTTP request), `NO_PROXY`, no redirects, the origin fence, and an
+  interceptor sends the real `Host`. The name is under `.invalid` (RFC 6761) and no client but the tailnet one asks for
+  it. A tailnet socket refuses when tsnet's proxy is no longer the one its client was made with, and
+  `TsnetClient.close()` drops the process `Authenticator` (QA L1). The SOCKS request carries the IP, never a name
+  (`ServerTransportTest` runs it against a fake SOCKS5 proxy). A debug build alone takes `http://10.0.2.2[:port]` as the
+  address (`EMULATOR_HOST`, the emulator loop).
 - **The proxy is ours** (`launcher/mobile/tsembed/dial.go`, the security QA of S-M1, H1): tsnet's `Loopback()` SOCKS
   server dials with tsdial's `UserDial`, which takes netstack only for a current peer and dials any other address - a
   Tailscale one included - on an OS socket (tailscale.com v1.104.0 `net/tsdial/tsdial.go` `dialOneUser`; `Server.Dial`

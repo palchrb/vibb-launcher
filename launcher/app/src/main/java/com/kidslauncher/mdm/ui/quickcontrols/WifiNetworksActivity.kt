@@ -67,7 +67,52 @@ class WifiNetworksActivity : KidPageActivity() {
         binding.wifiNetworksList.layoutManager = LinearLayoutManager(this)
         binding.wifiNetworksList.adapter = adapter
 
+        binding.wifiNetworksPortal.setOnClickListener { portalTapped() }
         scan()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        com.kidslauncher.mdm.portal.PortalRuntime.addListener(portalListener)
+        renderPortal()
+    }
+
+    override fun onStop() {
+        com.kidslauncher.mdm.portal.PortalRuntime.removeListener(portalListener)
+        super.onStop()
+    }
+
+    private val portalListener: () -> Unit = { runOnUiThread { renderPortal() } }
+
+    private var portalRow = com.kidslauncher.mdm.portal.WifiPortalRow.NONE
+
+    /** Design 102 §3.6, §3.8: the connected Wi-Fi's sign-in row ([com.kidslauncher.mdm.portal.wifiRowState]). */
+    private fun renderPortal() {
+        if (isFinishing || isDestroyed) return
+        val row = com.kidslauncher.mdm.portal.PortalRuntime.row(this)
+        portalRow = row
+        adapter.setCaptiveSsid(com.kidslauncher.mdm.portal.PortalRuntime.wifi().takeIf { it.captive }?.ssid)
+        val (title, sub) = when (row) {
+            com.kidslauncher.mdm.portal.WifiPortalRow.SIGN_IN -> R.string.wifi_portal_sign_in to R.string.wifi_portal_sign_in_sub
+            com.kidslauncher.mdm.portal.WifiPortalRow.ASK -> R.string.portal_ask to null
+            com.kidslauncher.mdm.portal.WifiPortalRow.REVISIT -> R.string.wifi_portal_reopen to R.string.wifi_portal_reopen_sub
+            com.kidslauncher.mdm.portal.WifiPortalRow.NONE -> null to null
+        }
+        binding.wifiNetworksPortal.visibility = if (title == null) View.GONE else View.VISIBLE
+        binding.wifiNetworksPortal.isEnabled = row != com.kidslauncher.mdm.portal.WifiPortalRow.ASK
+        title?.let { binding.wifiNetworksPortalTitle.setText(it) }
+        binding.wifiNetworksPortalSub.visibility = if (sub == null) View.GONE else View.VISIBLE
+        sub?.let { binding.wifiNetworksPortalSub.setText(it) }
+    }
+
+    private fun portalTapped() {
+        when (portalRow) {
+            com.kidslauncher.mdm.portal.WifiPortalRow.SIGN_IN ->
+                com.kidslauncher.mdm.portal.CaptivePortalEntry.start(this, com.kidslauncher.mdm.portal.PortalKind.SIGN_IN)
+            com.kidslauncher.mdm.portal.WifiPortalRow.REVISIT ->
+                com.kidslauncher.mdm.portal.CaptivePortalEntry.start(this, com.kidslauncher.mdm.portal.PortalKind.REVISIT)
+            else -> Unit
+        }
     }
 
     override fun onDestroy() {

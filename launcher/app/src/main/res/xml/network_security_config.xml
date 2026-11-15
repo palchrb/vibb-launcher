@@ -1,17 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  The launcher's network security config (security review S-M1, the user's decision of 2026-11-04).
-  - Cleartext is off for the whole app, and only the system's CAs are trusted (never a user-installed one).
-  - The one exception is the name tailnet-server.vibb.invalid (server/ServerTransport.kt, TAILNET_SERVER_HOST): a
-    config names hosts, never address ranges, so a server at http://<tailnet IP> is given to OkHttp under that name.
-    Only that client resolves it - to the tailnet address, with sockets through tsnet's SOCKS proxy on loopback (the
-    proxy hop is a plain socket, not an HTTP request: no loopback exception is needed). The name is under `.invalid`
-    (RFC 6761) and no client but the tailnet one asks for it.
-  The debug build's copy (src/debug/res/xml/) also allows the emulator's host, 10.0.2.2. ServerTransportTest
-  pins both and the manifest's reference.
+  The launcher's network security config (design 102 D15 (a), the user's decision of 2026-11-15; before it security
+  review S-M1's of 2026-11-04).
+  - Cleartext is allowed app-wide: the Wi-Fi sign-in window (portal/, process :portal) must load a captive portal, which
+    is http by nature (Android's probe URL, the intercepted redirect, portals on IP literals), and a config names hosts,
+    never address ranges. The server path stays https by code - serverUrlVerdict and ServerTransport refuse a plain-http
+    server address (but to a Tailscale IP literal) before the bearer or a socket, pinned by the shared vectors
+    (server_url_vectors.json) - and every other client is https by code; ServerTransportTest's source scan fails the
+    build on a new HTTP client anywhere else, and a new library's own HTTP is caught by the dependency review
+    (gradle/verification-metadata.xml).
+  - Only the system's CAs are trusted (never a user-installed one).
+  - tailnet-server.vibb.invalid stays named (server/ServerTransport.kt, TAILNET_SERVER_HOST): the tailnet client gives
+    OkHttp that name for a server at http://<tailnet IP>, and only that client resolves it, through tsnet's proxy.
+  The debug build's copy (src/debug/res/xml/) also trusts user CAs, in a debug build only. ServerTransportTest pins both and the
+  manifest's reference.
 -->
-<network-security-config>
-    <base-config cleartextTrafficPermitted="false">
+<network-security-config xmlns:tools="http://schemas.android.com/tools">
+    <base-config cleartextTrafficPermitted="true" tools:ignore="InsecureBaseConfiguration">
         <trust-anchors>
             <certificates src="system" />
         </trust-anchors>

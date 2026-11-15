@@ -346,6 +346,11 @@ object AppEnforcer {
         enforcePlayLinkBlocker(dpm, admin, context)
         // The call log opens the phone book (design 12), never lifted either.
         enforceCallLogPin(dpm, admin, context)
+        // Design 102 §3.2: Android's Wi-Fi sign-in goes to Vibb's entry, never to the stock login app. Off is the disabled
+        // entry (DONT_KILL_APP, PortalRuntime.setEntryEnabled), not a cleared preferred activity: a disabled component's
+        // persistent preferred activity is skipped, and Android's own handler is then the only one.
+        enforceCaptivePortalPin(dpm, admin, context)
+        com.kidslauncher.mdm.portal.PortalRuntime.setEntryEnabled(context, com.kidslauncher.mdm.logins.portalPolicyOf(policy).enabled)
 
         // Hardening that the server switched off is cleared first, before anything below can
         // throw - "Block USB debugging" off is how a parent gets adb back (QA step 4 #8). The
@@ -1712,6 +1717,24 @@ object AppEnforcer {
         enforceDefaultHome(dpm, admin, context)
         enforcePlayLinkBlocker(dpm, admin, context)
         enforceCallLogPin(dpm, admin, context)
+        enforceCaptivePortalPin(dpm, admin, context)
+    }
+
+    /**
+     * Design 102 §3.2 (Q102-M5): `android.net.conn.CAPTIVE_PORTAL` goes to [com.kidslauncher.mdm.portal.CaptivePortalEntry]
+     * - set on every [apply] and in `HomePin`'s re-seat with the other PPAs of ours, so a re-seat never leaves a moment
+     * where Android shows its chooser (the kid could pick the stock login app, which is unfiltered, M5-M6). Whether it
+     * is used is the entry's enabled state (Part A's switch); the stock login app is never pinned in the kiosk.
+     */
+    private fun enforceCaptivePortalPin(dpm: DevicePolicyManager, admin: ComponentName, context: Context) {
+        try {
+            val filter = IntentFilter(android.net.ConnectivityManager.ACTION_CAPTIVE_PORTAL_SIGN_IN).apply {
+                addCategory(Intent.CATEGORY_DEFAULT)
+            }
+            dpm.addPersistentPreferredActivity(admin, filter, ComponentName(context, com.kidslauncher.mdm.portal.CaptivePortalEntry::class.java))
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Failed to set the Wi-Fi sign-in's handler", e)
+        }
     }
 
     private fun enforceDefaultHome(dpm: DevicePolicyManager, admin: ComponentName, context: Context) {

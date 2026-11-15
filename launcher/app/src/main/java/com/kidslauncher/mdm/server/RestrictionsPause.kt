@@ -138,7 +138,10 @@ object RestrictionsPause {
 
     fun clear() {
         val mdm = LauncherPreferences.mdm()
+        val wasOn = mdm.restrictionsPaused()
         mdm.restrictionsPaused(false)
         mdm.restrictionsPausedUntil(0)
+        // Design 102 §3.3 (R2-M4): a Wi-Fi sign-in window opened in the pause closes at its end.
+        if (wasOn) com.kidslauncher.mdm.portal.PortalRuntime.pauseEnded()
     }
 }

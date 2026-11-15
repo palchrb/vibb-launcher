@@ -346,6 +346,10 @@ class HomeActivity : UIObjectActivity() {
             Thread { com.kidslauncher.mdm.assistant.AirplaneRoute.turnOff(app) }.start()
             renderAirplaneLine()
         }
+        // Design 102 §3.6 (D5): Home's "Wi-Fi-en vil at du logger på" opens the sign-in's entry.
+        binding.homePortalLine.setOnClickListener {
+            com.kidslauncher.mdm.portal.CaptivePortalEntry.start(this, com.kidslauncher.mdm.portal.PortalKind.SIGN_IN)
+        }
         // Back to our call screen from the ongoing-call card.
         binding.homeCallCard.setOnClickListener {
             try {
@@ -459,6 +463,7 @@ class HomeActivity : UIObjectActivity() {
         com.kidslauncher.mdm.calls.OngoingCalls.addListener(callsListener)
         com.kidslauncher.mdm.server.WindowRelock.addListener(windowListener)
         com.kidslauncher.mdm.assistant.AirplaneRuntime.addListener(airplaneListener)
+        com.kidslauncher.mdm.portal.PortalRuntime.addListener(portalListener)
         com.kidslauncher.mdm.calendar.CalendarStore.addListener(calendarListener)
         com.kidslauncher.mdm.sms.SmsHome.addListener(messagesListener)
         com.kidslauncher.mdm.sms.SmsHome.refresh(this)
@@ -682,6 +687,7 @@ class HomeActivity : UIObjectActivity() {
         com.kidslauncher.mdm.calls.OngoingCalls.removeListener(callsListener)
         com.kidslauncher.mdm.server.WindowRelock.removeListener(windowListener)
         com.kidslauncher.mdm.assistant.AirplaneRuntime.removeListener(airplaneListener)
+        com.kidslauncher.mdm.portal.PortalRuntime.removeListener(portalListener)
         com.kidslauncher.mdm.calendar.CalendarStore.removeListener(calendarListener)
         com.kidslauncher.mdm.sms.SmsHome.removeListener(messagesListener)
         ElementMissedCallStore.removeListener(elementMissedListener)
@@ -739,6 +745,7 @@ class HomeActivity : UIObjectActivity() {
         if (!contentShown) return
         renderWindowBanner()
         renderAirplaneLine()
+        renderPortalLine()
         renderCallParts()
         refreshApps()
     }
@@ -761,6 +768,22 @@ class HomeActivity : UIObjectActivity() {
     }
 
     private val airplaneListener: () -> Unit = { renderAirplaneLine() }
+
+    /** Design 102 §3.6 (D5): one calm line while the phone's Wi-Fi wants a sign-in - never a sound or a badge. */
+    private fun renderPortalLine() {
+        if (!contentShown) return
+        val row = com.kidslauncher.mdm.portal.PortalRuntime.row(this)
+        val text = when (row) {
+            com.kidslauncher.mdm.portal.WifiPortalRow.SIGN_IN -> R.string.home_portal_line
+            com.kidslauncher.mdm.portal.WifiPortalRow.ASK -> R.string.portal_ask
+            else -> null
+        }
+        binding.homePortalLine.visibility = if (text == null) View.GONE else View.VISIBLE
+        binding.homePortalLine.isEnabled = row == com.kidslauncher.mdm.portal.WifiPortalRow.SIGN_IN
+        text?.let { binding.homePortalLine.setText(it) }
+    }
+
+    private val portalListener: () -> Unit = { runOnUiThread { renderPortalLine() } }
 
     /** Design 24b §1.3: "Open until 18:40 · Lock again" while a parent-PIN window is open. */
     private fun renderWindowBanner() {

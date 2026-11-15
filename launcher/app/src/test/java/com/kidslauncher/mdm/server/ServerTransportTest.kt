@@ -23,7 +23,8 @@ import org.junit.Assert.fail
 import org.junit.Test
 import org.w3c.dom.Element
 
-/** Security review S-M1: the server address rule (the shared vectors), the paths, and the cleartext exception. */
+/** Security review S-M1: the server address rule (the shared vectors), the paths, and the configs; design 102 D15 (a):
+ * cleartext allowed app-wide, the server path's rule in code, the tailnet fence, the DoH rule and the source scan. */
 class ServerTransportTest {
     private val text = javaClass.classLoader!!.getResource("server_url_vectors.json")!!.readText()
     private val socks = Proxy(Proxy.Type.SOCKS, InetSocketAddress("127.0.0.1", 1080))
@@ -165,9 +166,11 @@ class ServerTransportTest {
     // The network security configs and the manifest (the working directory is launcher/app).
 
     private fun cleartextDomains(path: String): List<String> {
-        val doc = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(File(path))
+        val doc = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }.newDocumentBuilder().parse(File(path))
         val base = doc.getElementsByTagName("base-config").item(0) as Element
-        assertEquals(path, "false", base.getAttribute("cleartextTrafficPermitted"))
+        // Design 102 D15 (a): cleartext allowed app-wide - the server path's rule is ServerTransport's code.
+        assertEquals(path, "true", base.getAttribute("cleartextTrafficPermitted"))
+        assertEquals(path, "InsecureBaseConfiguration", base.getAttributeNS("http://schemas.android.com/tools", "ignore"))
         val certificates = base.getElementsByTagName("certificates")
         assertEquals(path, 1, certificates.length)
         assertEquals(path, "system", (certificates.item(0) as Element).getAttribute("src"))
@@ -184,9 +187,9 @@ class ServerTransportTest {
     }
 
     @Test
-    fun `cleartext is off but for the tailnet name, and the emulator's host in debug`() {
+    fun `cleartext is allowed in both configs, system CAs only, the tailnet name kept`() {
         assertEquals(listOf(TAILNET_SERVER_HOST), cleartextDomains("src/main/res/xml/network_security_config.xml"))
-        assertEquals(listOf(TAILNET_SERVER_HOST, EMULATOR_HOST), cleartextDomains("src/debug/res/xml/network_security_config.xml"))
+        assertEquals(listOf(TAILNET_SERVER_HOST), cleartextDomains("src/debug/res/xml/network_security_config.xml"))
         assertTrue(TAILNET_SERVER_HOST.endsWith(".invalid"))
         // Design 76 (qa I-3): the release config never trusts a user CA; the debug one does, under debug-overrides
         // only (mitmproxy on the emulator), so the certificate check is what refuses there.
@@ -201,6 +204,128 @@ class ServerTransportTest {
         val manifest = File("src/main/AndroidManifest.xml").readText()
         assertTrue(manifest.contains("android:networkSecurityConfig=\"@xml/network_security_config\""))
         assertFalse(manifest.contains("usesCleartextTraffic"))
+    }
+
+    /** Design 102 R3-L2: the tailnet path's origin fence - another host (an IP-literal `@Url`) is refused before a
+     * socket, as on the direct path. */
+    @Test
+    fun `a tailnet client refuses another origin before a socket`() {
+        ServerSocket(0, 1, InetAddress.getLoopbackAddress()).use { listener ->
+            listener.soTimeout = 300
+            val proxy = Proxy(Proxy.Type.SOCKS, InetSocketAddress("127.0.0.1", listener.localPort))
+            val path = serverPath("http://100.101.102.103:3100", proxy, debug = false) as ServerPath.Tailnet
+            val client = OkHttpClient.Builder().toServer(path) { proxy }.retryOnConnectionFailure(false).build()
+            for (url in listOf("http://100.64.0.9:3100/apk", "http://$TAILNET_SERVER_HOST:3101/x", "https://$TAILNET_SERVER_HOST:3100/x")) {
+                try {
+                    client.newCall(Request.Builder().url(url).build()).execute()
+                    fail("$url went out")
+                } catch (expected: ServerOriginRefused) {
+                }
+            }
+            try {
+                listener.accept().close()
+                fail("the proxy got a connection")
+            } catch (expected: SocketTimeoutException) {
+            }
+        }
+    }
+
+    /** Design 102 R3-L2: the DoH client refuses a non-https URL itself. */
+    @Test
+    fun `the DoH client speaks https only`() {
+        val client = buildDohClient(IP_LITERAL_DNS) { true }
+        try {
+            client.newCall(Request.Builder().url("http://127.0.0.1:1/dns-query").build()).execute()
+            fail("http went out")
+        } catch (expected: java.io.IOException) {
+            assertEquals("the DoH client speaks https only", expected.message)
+        }
+    }
+
+    // Design 102 R3-M1: the source scan. Cleartext is allowed app-wide (D15 (a)), so this scan keeps every HTTP
+    // client, URL connection, WebView, media source and download in the files named here, each reviewed. A new token or
+    // file fails the build until it is named. A new library's own HTTP is not seen by a source scan: the dependency
+    // review (gradle/verification-metadata.xml) fails the build on any new or bumped dependency until it is reviewed.
+
+    /** Every Kotlin source under main, code only (comments stripped, as the music app's SourceScanTest). */
+    private val mainSources: Map<String, String> by lazy {
+        val root = File("src/main/java/com/kidslauncher/mdm")
+        root.walk().filter { it.isFile && it.extension == "kt" }.associate { file ->
+            file.relativeTo(root).path to file.readText()
+                .replace(Regex("/\\*.*?\\*/", RegexOption.DOT_MATCHES_ALL), "")
+                .replace(Regex("//[^\\n]*"), "")
+        }
+    }
+
+    /**
+     * Each token and where it may stand: a file (relative to `com/kidslauncher/mdm/`) or a directory (ending in `/`),
+     * with the exact text allowed there when only that use is (`|` between several; `null`: any use in that file).
+     */
+    private val allowed: List<Triple<String, Regex, Map<String, String?>>> = listOf(
+        Triple("OkHttpClient(", Regex("\\bOkHttpClient\\("), emptyMap()),
+        Triple(
+            "OkHttpClient.Builder(", Regex("OkHttpClient\\.Builder\\("),
+            mapOf("server/ServerTransport.kt" to null, "server/UpstreamTransport.kt" to null, "portal/PortalCheck.kt" to null),
+        ),
+        Triple(
+            ".newBuilder()", Regex("\\.newBuilder\\(\\)"),
+            mapOf(
+                // The server clients, children of ServerClients.base(path).
+                "server/MdmApi.kt" to "base.newBuilder()",
+                "server/CommandListenerService.kt" to "ServerClients.base(path).newBuilder()",
+                "music/MusicServer.kt" to "base.newBuilder()",
+                // A request's or a response's, never a client's.
+                "server/ServerAuth.kt" to "request.newBuilder()",
+                "server/ServerTransport.kt" to "request.newBuilder()",
+                "push/SseLastByte.kt" to "response.newBuilder()",
+            ),
+        ),
+        Triple("Retrofit.Builder(", Regex("Retrofit\\.Builder\\("), mapOf("server/MdmApi.kt" to null, "music/MusicServer.kt" to null)),
+        Triple("java.net.URL", Regex("java\\.net\\.URL\\b"), emptyMap()),
+        Triple(
+            "URLConnection", Regex("URLConnection"),
+            mapOf("server/UpstreamTransport.kt" to "import javax.net.ssl.HttpsURLConnection|HttpsURLConnection.getDefaultHostnameVerifier()"),
+        ),
+        Triple(".openStream(", Regex("\\.openStream\\("), emptyMap()),
+        Triple("DownloadManager", Regex("DownloadManager"), emptyMap()),
+        Triple("HttpEngine", Regex("HttpEngine"), emptyMap()),
+        Triple(
+            "setDataSource(", Regex("setDataSource\\("),
+            mapOf("ui/kidsettings/KidSounds.kt" to null, "server/LocateCommands.kt" to null),
+        ),
+        Triple("WebView(", Regex("\\bWebView\\("), mapOf("portal/" to null)),
+        Triple(
+            "android.webkit", Regex("android\\.webkit"),
+            mapOf("portal/" to null, "server/AppEnforcer.kt" to "android.webkit.WebView.getCurrentWebViewPackage()"),
+        ),
+        Triple(
+            "bearerInterceptor(", Regex("(?<!fun )bearerInterceptor\\("),
+            mapOf("server/MdmApi.kt" to null, "music/MusicServer.kt" to null),
+        ),
+    )
+
+    @Test
+    fun `every HTTP client, URL connection, WebView and media source is in a named file`() {
+        assertTrue(mainSources.size > 300)
+        val found = mutableListOf<String>()
+        for ((token, pattern, places) in allowed) {
+            for ((path, code) in mainSources) {
+                val place = places.entries.firstOrNull { (where, _) -> if (where.endsWith("/")) path.startsWith(where) else path == where }
+                val rest = when {
+                    place == null -> code
+                    place.value == null -> ""
+                    else -> place.value!!.split('|').fold(code) { text, use -> text.replace(use, "") }
+                }
+                if (pattern.containsMatchIn(rest)) found += "$path: $token"
+            }
+        }
+        assertEquals("unreviewed network code (name it here after a review)", emptyList<String>(), found)
+        // Retrofit only with its client set, never its own default one.
+        for (name in listOf("server/MdmApi.kt", "music/MusicServer.kt")) assertTrue(name, ".client(" in mainSources.getValue(name))
+        // The scan sees what it should: a planted `URL(x).readText()` and a no-argument client fail it.
+        assertTrue(allowed.first { it.first == "java.net.URL" }.second.containsMatchIn("import java.net.URL\nURL(x).readText()"))
+        assertTrue(allowed.first { it.first == "OkHttpClient(" }.second.containsMatchIn("val c = OkHttpClient()"))
+        assertFalse(allowed.first { it.first == "java.net.URL" }.second.containsMatchIn("java.net.URLDecoder.decode(x)"))
     }
 
     @Test

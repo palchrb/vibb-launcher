@@ -28,13 +28,16 @@ import okhttp3.Request
  *   LAN address stops talking to the server until the parent types the https address in Settings (behind the parent
  *   code) or scans a new setup QR.
  *
- * Cleartext (the manifest's network security config): off for the whole app, with one exception - the name
- * [TAILNET_SERVER_HOST]. A network security config names hosts, never address ranges, so the tailnet path gives OkHttp
- * that name instead of the IP: OkHttp checks cleartext against the URL's host, and its [Dns] for this client alone
- * answers the name with the tailnet address, and its sockets are SOCKS sockets to tsnet's proxy on loopback (the
- * proxy hop is a plain socket, never an HTTP request, so no loopback exception is needed). The name is under
+ * Cleartext: since design 102 D15 (a) the manifest's network security config allows it app-wide (the Wi-Fi sign-in
+ * window must load a captive portal's http), so the server path's rule is this file's code alone - [serverPath] gives
+ * a client of a plain-http address but a Tailscale IP literal [ServerPath.Closed], which refuses before the bearer or a
+ * socket, and each open path has its origin fence (the direct one and the tailnet one alike). The tailnet path gives
+ * OkHttp the name [TAILNET_SERVER_HOST] instead of the IP (kept from the config's time, when cleartext was off but for
+ * that name): its [Dns] for this client alone answers the name with the tailnet address, and its sockets are SOCKS
+ * sockets to tsnet's proxy on loopback (the proxy hop is a plain socket, never an HTTP request). The name is under
  * `.invalid` (RFC 6761) and no client but the tailnet one asks for it (the others use the system resolver, which
  * would forward the query to the network's DNS - a hostile resolver could answer it, but nothing of ours asks).
+ * `ServerTransportTest`'s source scan keeps every other HTTP client in the named files.
  *
  * The proxy itself (`mobile/tsembed`, dial.go) dials a Tailscale address only through netstack and only while it is a
  * current peer - never on the phone's own network (the security QA of S-M1, H1).
@@ -177,6 +180,9 @@ fun OkHttpClient.Builder.toServer(
         // The API never redirects; a redirect off the tailnet name has nowhere to go anyway.
         .followRedirects(false)
         .followSslRedirects(false)
+        // Design 102 R3-L2: the origin fence, as on the direct path - an IP-literal `@Url` the server named would
+        // otherwise reach tsnet's proxy (tailnet peers only, over http, with no bearer); the config refused it before.
+        .addInterceptor(tailnetFence(path))
         .addInterceptor(Interceptor { chain ->
             val request = chain.request()
             if (request.url.host == TAILNET_SERVER_HOST) {
@@ -337,6 +343,17 @@ private fun OkHttpClient.Builder.direct(path: ServerPath.Direct, pinning: Server
         chain.proceed(chain.request())
     })
     return this
+}
+
+/** The tailnet path's origin fence (R3-L2): `http`, [TAILNET_SERVER_HOST] and the base's port only, refused before a
+ * socket. */
+internal fun tailnetFence(path: ServerPath.Tailnet): Interceptor {
+    val origin = path.baseUrl.toHttpUrlOrNull()
+    return Interceptor { chain ->
+        val url = chain.request().url
+        if (origin == null || !sameOrigin(origin, url)) throw ServerOriginRefused(url.host)
+        chain.proceed(chain.request())
+    }
 }
 
 /** Answers nothing (a closed path's client, which never gets this far). */
