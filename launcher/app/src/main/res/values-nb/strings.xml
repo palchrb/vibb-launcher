@@ -476,7 +476,7 @@
     <string name="notification_ring_title">Telefonen ringer</string>
     <string name="notification_ring_text">En forelder startet dette fra Finn enheten.</string>
     <string name="notification_ring_stop_action">Stopp ringingen</string>
-    <string name="notification_channel_listener">Finn enheten – bakgrunnstilkobling</string>
+    <string name="notification_channel_listener">Vibb One</string>
     <string name="notification_listener_title">Vibb One</string>
     <string name="notification_channel_vpn_filter">Innholdsfilter</string>
     <string name="vpn_session">Vibb One-filter</string>

@@ -6,9 +6,13 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
 
 - **Anchor** (`CommandListenerService`, `specialUse` with subtype - `dataSync` is capped at 6 h/day and can't start from BOOT_COMPLETED on Android 15): all background syncs and the SSE stream, held whenever it runs (since design 19; read timeout 300 s vs. the server's keepalive, 240 s by default). It syncs once at start and arms the backstop. `SyncRunner.request` takes a timed partial wake lock, then `startForegroundService(ACTION_SYNC)` (also revives a dead anchor - device owners may start FGS from the background); runs coalesce (`SyncCoalescer`: a burst = one extra run), 10 min/5 min timeouts (APK downloads run inside; `CancellationException` is rethrown in the update loop), 11 min wake lock cap, released only when no run and no undelivered request is left. Every launched `apply()` is wrapped - an exception reaching the crash handler would end the call path. A re-check re-applies until the enforced Play key equals the current one (screen on right after screen off).
 - **Notifications in the shade** (PLAN "Fewer persistent notifications", 2026-10-21, branch `lfix-notifs`, code QA
-  `qa-lfix-notifs-code.md`): the anchor's is the phone's one standing notification - "Vibb One"
-  (`notification_listener_title`, en/nb), no body, MIN channel `launcher:command_listener`, id 1002; NMS shows a
-  foreground service's at LOW at least, so its status-bar icon stays while the anchor runs (Android has no hidden FGS).
+  `qa-lfix-notifs-code.md`): the anchor's is the phone's one standing notification, id 1002 - since design 100 the
+  Snarveier panel while it is shown (kid-settings.md, "Snarveier"), else "Vibb One" (`notification_listener_title`,
+  en/nb), no body, MIN channel `launcher:command_listener` (named "Vibb One" since design 100 D7, was "Find My Device
+  background connection"), the Vibb mark `ic_stat_vibb` as its small icon; NMS shows a foreground service's at LOW at
+  least, so its status-bar icon stays while the anchor runs (Android has no hidden FGS). The filter's "kobler til …",
+  Play's install mode, the ring and the assistant's setup notice carry `ic_stat_vibb` too (design 100 §4; every
+  `ic_stat_*` drawable has literal colours - a `?android:textColor` fill draws an empty disc in SystemUI, M10).
   `KidVpnService` goes foreground first in `onCreate` as before and drops it (`stopForeground(STOP_FOREGROUND_REMOVE)`,
   only on `VpnSettle.DROP` in `settleForeground`) once the tunnel is up **and** `isAlwaysOn` (a throw counts as not):
   AOSP's `Vpn.establish` binds an established VpnService from system_server with `BIND_AUTO_CREATE |
@@ -38,10 +42,27 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   `TimeLeftNoticeTest`); glue `server/AnchorNotice.kt` (`build` - silent, ongoing, no time, only-alert-once; the action
   `NotificationCompat.Action.Builder(..).setAuthenticationRequired(true)` to the explicit, non-exported
   `timerules/TimeAskReceiver`; "Spurt kl. 14:02" (`anchor_asked_at`) is the content text, never a button, and there is
-  no action while a request is pending, taken or capped - R13-8). `refresh` posts `notify(1002, ..)` only while the
-  anchor runs (`CommandListenerService.isRunning`) and only a notice or locale other than the last posted
-  (`lastPosted`, reset in the anchor's `onCreate`). `onCreate`: `startForeground` with `AnchorNotice.plain` literally
-  first, then the reset and `refreshNow` (CE prefs only after it). Refreshed from every `TimeRulesRuntime.recheck` with
+  no action while a request is pending, taken or capped - R13-8). `refresh` computes the notice and hands it to the one
+  poster; it posts nothing itself.
+- **One poster of id 1002** (design 100 step 1, `docs/design/100-one-vibb-notification.md` §2): `server/AnchorNotification`
+  posts every view of the anchor's notification, on its own thread `anchor-post` (design 99's refresh thread). The view
+  is the pure `anchorView(panel, notice)` (`server/AnchorView.kt`, `AnchorViewTest`): `Panel` while Snarveier is shown,
+  else `Plain` - also when the panel model is missing or `computePanel` throws (Q100-M1); one record, swapped between
+  the MIN listener channel and the panel's LOW channel by `notify` (M1-M3: one record and the foreground state kept, the
+  row changes in place with the shade open). It keeps its application context from its first caller (`forStart`,
+  `notice`, `ShortcutsRuntime.init`); sets Mer tid's state from the time part it posts with before it builds the panel
+  (`ShortcutsRuntime.panelFor`, Q100-L6); posts only a changed `(view, locale, channel)`, at most once a second with the
+  trailing post (`AnchorPostQueue`, M5); makes sure of the view's channel right before every build (`ensuredBuild`:
+  `createListenerChannel` or the panel's `ensureChannel` - a build on a missing channel crashes the launcher when the
+  deferral ends, M7); checks in the trailing slot (1.5 s after a post) that 1002 is up with the posted channel and view
+  key (`EXTRA_VIEW_KEY` in the extras) and posts again once on a mismatch (a shed update, Q100-L4/R2-L11); and does the
+  running check and the `notify` under `AnchorNotification.lock`, which the anchor's `onDestroy` takes before it clears
+  its instance (Q100-L5). `onCreate`: `startForeground(1002, AnchorNotification.forStart(this))` literally first - the
+  view this process posted last on that key's channel (made sure of; never `computePanel` or the shortcuts prefs, Q100-L7),
+  else, or on any exception, `AnchorNotice.plain` on the listener channel -, then `anchorStarted` (cancels design 99's
+  old 1011 once, asks for a refresh) and `refreshNow` (CE prefs only after it). The plain notice has no
+  `FOREGROUND_SERVICE_IMMEDIATE` (deferred ~10 s unless it has its action, Q100-L2), the panel has it. Not
+  emulator-checked yet: design 100 §11. Refreshed from every `TimeRulesRuntime.recheck` with
   its snapshot (counting or not, R13-3), from `ScreenTimeTracker.update`'s counting branch (the checkpoint's delay is
   then `checkpointDelayMs(remaining)` - the next minute flip + 200 ms; else `CHECKPOINT_MS`), the tap, the server's
   answer and the pause/override start (`AnchorRefresh.request`). **The request** (`timerules/TimeRequests.kt`,

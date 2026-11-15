@@ -242,7 +242,7 @@ object PlayRuntime {
             )
             val time = com.kidslauncher.mdm.ui.ClockFormat.formatUntil(context, untilMs)
             val notification = NotificationCompat.Builder(context, NOTIFICATION_CHANNEL_INSTALL_MODE)
-                .setSmallIcon(R.drawable.baseline_settings_24)
+                .setSmallIcon(R.drawable.ic_stat_vibb)
                 .setContentTitle(context.getString(R.string.notification_install_mode_title, time))
                 .setContentText(context.getString(R.string.notification_install_mode_text))
                 .setOngoing(true)

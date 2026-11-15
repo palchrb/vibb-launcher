@@ -46,9 +46,8 @@ class TimeLeftNoticeTest {
     private fun source(path: String) = file("java/com/kidslauncher/mdm/$path").readText()
 
     @Test
-    fun `one notification - the anchor's id and channel, the plain one literally first, the cache reset`() {
+    fun `one notification - the plain notice's builder and its action`() {
         val notice = source("server/AnchorNotice.kt")
-        assertTrue(notice.contains("notify(COMMAND_LISTENER_NOTIFICATION_ID, build(context, notice))"))
         assertTrue(notice.contains("NotificationCompat.Builder(context, NOTIFICATION_CHANNEL_LISTENER)"))
         for (call in listOf(".setOnlyAlertOnce(true)", ".setSilent(true)", ".setShowWhen(false)", ".setOngoing(true)")) {
             assertTrue(call, notice.contains(call))
@@ -63,20 +62,82 @@ class TimeLeftNoticeTest {
         val manifest = file("AndroidManifest.xml").readText()
         val entry = manifest.substringAfter("android:name=\".timerules.TimeAskReceiver\"").substringBefore("/>")
         assertTrue(entry, entry.contains("android:exported=\"false\""))
-        // Posted only while the anchor runs, and only a changed notice or locale.
-        assertTrue(notice.contains("if (!CommandListenerService.isRunning) return"))
-        assertTrue(notice.contains("val key = notice to locale"))
-        assertTrue(notice.contains("if (key == lastPosted) return"))
-        // onCreate: the plain notification first and unconditionally, then the reset, then the refresh.
+        // Design 100 §2.2: AnchorNotice computes and hands over; it posts nothing.
+        assertFalse(notice.contains(".notify("))
+        assertTrue(notice.contains("AnchorNotification.notice(context, noticeFor(context, budget, policy, day, nowMs))"))
+        // Q-4: the tap arms the boundary alarm for the request's 30 minutes.
+        val receiver = source("timerules/TimeAskReceiver.kt")
+        assertTrue(receiver.indexOf("TimeRuleAlarm.schedule(app)") in 0 until receiver.indexOf("SyncRunner.request(app, \"time_request\")"))
+    }
+
+    /** The body of `fun <signature>`: up to the closing brace at the function's indent. */
+    private fun body(text: String, signature: String): String {
+        val start = text.indexOf(signature)
+        assertTrue("$signature not found", start >= 0)
+        val indent = text.substring(text.lastIndexOf('\n', start) + 1, start)
+        val open = text.indexOf("{\n", start) + 2
+        return text.substring(open, text.indexOf("\n$indent}\n", open))
+    }
+
+    @Test
+    fun `one poster - only it posts 1002, a change at most once a second, only while the anchor runs`() {
+        val poster = source("server/AnchorNotification.kt")
+        // No other notify of 1002 anywhere (design 100 §2.2).
+        val java = file("java/com/kidslauncher/mdm")
+        val posting = java.walk().filter { it.isFile && it.extension == "kt" }
+            .filter { Regex("""notify\(\s*COMMAND_LISTENER_NOTIFICATION_ID""").containsMatchIn(it.readText()) }
+            .map { it.relativeTo(java).path }.toList()
+        assertEquals(listOf("server/AnchorNotification.kt"), posting)
+        assertEquals(1, Regex("""\.notify\(""").findAll(poster).count())
+        // The check and the notify are one step under the lock the anchor's onDestroy takes (Q100-L5).
+        val post = body(poster, "private fun post(app: Context, view: AnchorView)")
+        val locked = post.substringAfter("synchronized(lock) {\n")
+        assertTrue(post, locked.trimStart().startsWith("if (!CommandListenerService.isRunning) return"))
+        assertTrue(post, locked.indexOf(".notify(COMMAND_LISTENER_NOTIFICATION_ID, notification)") > 0)
+        val service = source("server/CommandListenerService.kt")
+        val onDestroy = body(service, "override fun onDestroy()")
+        assertTrue(onDestroy, Regex("""synchronized\(AnchorNotification\.lock\) \{\s*if \(running === this\) running = null\s*\}""").containsMatchIn(onDestroy))
+        // Only a changed view (the view, the locale, the channel) is posted.
+        assertTrue(post, post.contains("val key = Key(view, locale(app), channelOf(app, view))"))
+        assertTrue(post, post.contains("if (key == synchronized(lock) { posted }) return"))
+        // M7: every build goes through ensuredBuild, which makes sure of the view's channel before it builds.
+        assertEquals(1, Regex("""AnchorNotice\.build\(""").findAll(poster).count())
+        assertEquals(1, Regex("""ShortcutsNotification\.build\(""").findAll(poster).count())
+        val ensured = body(poster, "private fun ensuredBuild(context: Context, key: Key)")
+        for (build in listOf("AnchorNotice.build(", "ShortcutsNotification.build(")) {
+            assertTrue(build, ensured.indexOf("createListenerChannel(context)") in 0 until ensured.indexOf(build))
+            assertTrue(build, ensured.indexOf("ShortcutsRuntime.ensureChannel(context, key.channel)") in 0 until ensured.indexOf(build))
+        }
+        // Q100-M1: no panel model (it throws) is the plain notice with the time, never nothing.
+        val refresh = body(poster, "private fun refreshNow()")
+        assertTrue(refresh, refresh.contains("post(app, anchorView(panelFor(app, time), time))"))
+        val panelFor = poster.substringAfter("private fun panelFor(app: Context, time: TimeLeftNotice) = try {").substringBefore("\n    }\n")
+        assertTrue(panelFor, panelFor.contains("ShortcutsRuntime.panelFor(app, time.ask)"))
+        assertTrue(panelFor, panelFor.contains("} catch (e: Exception) {") && panelFor.trimEnd().endsWith("null"))
+        // Q100-L4/R2-L11: the trailing slot compares the channel and the view's key, and posts again once.
+        val verify = body(poster, "private fun verify()")
+        assertTrue(verify, verify.contains("up.channelId == key.channel && up.extras.getInt(EXTRA_VIEW_KEY) == key.hashCode()"))
+        assertTrue(verify, verify.contains("if (repostedFor == key) return"))
+    }
+
+    @Test
+    fun `the anchor's start - the poster's view literally first, from the last key, never the panel model`() {
         val service = source("server/CommandListenerService.kt")
         val onCreate = service.substringAfter("override fun onCreate() {").substringBefore("\n    }")
         val lines = onCreate.lines().map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("//") }
         assertEquals("super.onCreate()", lines[0])
-        assertEquals("startForeground(COMMAND_LISTENER_NOTIFICATION_ID, AnchorNotice.plain(this))", lines[1])
-        assertTrue(onCreate.indexOf("AnchorNotice.reset(this)") in 0 until onCreate.indexOf("AnchorNotice.refreshNow("))
-        // Q-4: the tap arms the boundary alarm for the request's 30 minutes.
-        val receiver = source("timerules/TimeAskReceiver.kt")
-        assertTrue(receiver.indexOf("TimeRuleAlarm.schedule(app)") in 0 until receiver.indexOf("SyncRunner.request(app, \"time_request\")"))
+        assertEquals("startForeground(COMMAND_LISTENER_NOTIFICATION_ID, AnchorNotification.forStart(this))", lines[1])
+        assertTrue(onCreate.indexOf("AnchorNotification.anchorStarted(this)") in 0 until onCreate.indexOf("AnchorNotice.refreshNow("))
+        // Q100-L7: no panel model, no prefs-reading channel id; every exception falls back to the plain notice.
+        val poster = source("server/AnchorNotification.kt")
+        val forStart = body(poster, "fun forStart(context: Context): Notification")
+        for (call in listOf("computePanel(", "channelId(", "currentChannelId(", "panelFor(")) {
+            assertFalse(call, forStart.contains(call))
+        }
+        assertTrue(forStart, forStart.contains("} catch (e: Exception) {"))
+        assertTrue(forStart, forStart.indexOf("createListenerChannel(app)") in 0 until forStart.indexOf("AnchorNotice.plain(app)"))
+        // Design 99's old panel cancelled at the start (M9).
+        assertTrue(body(poster, "fun anchorStarted(context: Context)").contains("cancel(DESIGN_99_PANEL_ID)"))
     }
 
     @Test
