@@ -382,7 +382,7 @@
         </div>
     </section>
     {#- "Åpne for oppsett" or "Lås igjen" waits for the phone, as on the summary (window_relock::waiting_for_phone). -#}
-    {% if let Some(s) = setup %}{% if s.wait_for_phone %}<script src="/static/auto-reload.js?v=9" defer></script>{% endif %}{% endif %}
+    {% if let Some(s) = setup %}{% if s.wait_for_phone %}<span hidden data-waits></span>{% endif %}{% endif %}
     </div>
 </main>
 </body>

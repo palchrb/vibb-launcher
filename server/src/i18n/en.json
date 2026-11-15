@@ -999,6 +999,7 @@
   "common.select_copy": "Select and copy it",
   "js.connecting": "Connecting…",
   "js.retry": "Try again",
+  "js.save_unknown": "No answer from the server. This is what is saved now.",
   "device.recent.cancel_label": "Cancel {what} asked for at {at}",
   "device.exceptions.title": "Exceptions",
   "device.exceptions.apps": "Apps that still work",

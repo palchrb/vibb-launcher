@@ -999,6 +999,7 @@
   "common.select_copy": "Merk og kopier",
   "js.connecting": "Kobler til …",
   "js.retry": "Prøv igjen",
+  "js.save_unknown": "Fikk ikke svar fra serveren. Her er det som er lagret nå.",
   "device.recent.cancel_label": "Avbryt {what}, bedt om {at}",
   "device.exceptions.title": "Unntak",
   "device.exceptions.apps": "Apper som fortsatt virker",

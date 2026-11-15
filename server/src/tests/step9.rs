@@ -98,7 +98,7 @@ async fn role_warnings_wait_for_a_newer_report_but_not_forever() {
     let html = page(&app, &cookie, &uri).await;
     assert!(html.contains("Waiting for the phone to confirm"), "{html}");
     assert!(!html.contains("Anyone can call this phone"));
-    assert!(html.contains("/static/auto-reload.js"));
+    assert!(html.contains("data-waits"));
 
     // Five minutes later without a newer report: the real warnings, plus "not confirmed".
     sql(
@@ -117,7 +117,7 @@ async fn role_warnings_wait_for_a_newer_report_but_not_forever() {
     let html = page(&app, &cookie, &uri).await;
     assert!(html.contains("reported since the change at"), "{html}");
     assert!(html.contains("Anyone can call this phone"));
-    assert!(!html.contains("/static/auto-reload.js"));
+    assert!(!html.contains("data-waits"));
 
     // A newer report that still disagrees is a warning, never "waiting".
     sql(
@@ -246,7 +246,7 @@ async fn an_error_page_never_reloads_itself() {
     assert!(
         page(&app, &cookie, &format!("/devices/{id}/calls"))
             .await
-            .contains("/static/auto-reload.js")
+            .contains("data-waits")
     );
     let res = app
         .request_form(
@@ -259,7 +259,7 @@ async fn an_error_page_never_reloads_itself() {
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
     let html = res.text();
     assert!(html.contains("Mamma"));
-    assert!(!html.contains("/static/auto-reload.js"));
+    assert!(!html.contains("data-waits"));
     // Nor does a contact's refused Matrix ID (design 31 step 8).
     let res = app
         .request_form(
@@ -283,5 +283,5 @@ async fn an_error_page_never_reloads_itself() {
         )
         .await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
-    assert!(!res.text().contains("/static/auto-reload.js"));
+    assert!(!res.text().contains("data-waits"));
 }

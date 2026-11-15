@@ -432,6 +432,9 @@ input[type="radio"] {
     overscroll-behavior-y: contain;
     touch-action: manipulation;
     padding: 0;
+    /* Design 103-16: no browser scroll anchoring - static/swap.js alone keeps the place over a refresh in place
+       (Chromium's own would move main at a time it can't predict; WebKit has none in a scroller). */
+    overflow-anchor: none;
 }
 
 /* With the floating bar (it comes first in the source) main runs to the screen's bottom edge and
@@ -1672,6 +1675,13 @@ button:hover {
 /* A save on its way (scroll-restore.js, 2026-11-14): its button disabled and quietly dimmed until the answer -
    a still state, no animation. */
 button[aria-busy="true"] {
+    opacity: 0.55;
+    cursor: progress;
+}
+
+/* Design 103 D1 (a): a save held while the server can't be reached (static/swap.js marks its busy form `data-held`):
+   its rows dimmed the same way, so a switch shows neither state as saved until the page shows what is stored. */
+form[aria-busy="true"][data-held] .row {
     opacity: 0.55;
     cursor: progress;
 }

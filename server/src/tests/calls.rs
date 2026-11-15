@@ -449,7 +449,7 @@ async fn contact_flags_are_scoped_to_the_device() {
     assert_eq!(super::input_checked(row, "inbound", "on"), Some(false));
     assert_eq!(super::input_checked(row, "outbound", "on"), Some(true));
     assert!(row.contains("<option value=\"element\" selected>"), "{row}");
-    assert!(!html.contains("/static/auto-reload.js"));
+    assert!(!html.contains("data-waits"));
     let address: Option<String> = sqlx::query_scalar(
         "SELECT message_address FROM device_contacts WHERE device_id = ? AND contact_id = ?",
     )

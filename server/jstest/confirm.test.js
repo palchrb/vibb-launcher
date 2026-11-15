@@ -129,3 +129,22 @@ test("opening the picture sheet by keyboard focuses its first action, with the c
     page.listeners.toggle.fn({ target: page.details });
     assert.deepStrictEqual(page.focused, [["action", { preventScroll: true }]]);
 });
+
+// Design 103: a refresh in place brings the server's hidden Cancels back; its pass runs again.
+test("the Cancels are shown again on handy:swapped", () => {
+    const shown = { hidden: true };
+    const listeners = {};
+    let buttons = [shown];
+    const win = {
+        document: {
+            querySelectorAll: (s) => (s === "[data-confirm-cancel]" ? buttons : []),
+            addEventListener: (type, fn) => { listeners[type] = fn; },
+        },
+    };
+    install(win);
+    assert.strictEqual(shown.hidden, false);
+    const fresh = { hidden: true };
+    buttons = [shown, fresh];
+    listeners["handy:swapped"]({ type: "handy:swapped" });
+    assert.strictEqual(fresh.hidden, false);
+});

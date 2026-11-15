@@ -1307,6 +1307,8 @@ fn the_app_shell_scrolls_main_not_the_document() {
         !main.contains("max-width"),
         "the scroller spans the window: {main}"
     );
+    // Design 103-16: swap.js alone keeps the place over a refresh in place.
+    assert!(main.contains("overflow-anchor: none;"), "{main}");
     // Design 103 §4: every row line is one rule's `::before` - a 1 px line, scaled to half on 2x+ screens by one block
     // after every list's rule; a list's own rule sets only its `left`, and no 0.5 px row border is left.
     let base_at = css
@@ -1938,7 +1940,8 @@ fn every_class_a_template_uses_is_in_style_css() {
 /// summary only - no template with a Leaflet map loads it, nor any other tab page.
 #[tokio::test]
 async fn pull_down_to_refresh_is_on_devices_and_the_summary_only() {
-    const SCRIPT: &str = "<script src=\"/static/pull-refresh.js?v=4\" defer></script>";
+    const SCRIPT: &str =
+        "<script src=\"/static/pull-refresh.js?v=5\" defer data-swap-ready></script>";
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("phone").await;
@@ -1966,6 +1969,71 @@ async fn pull_down_to_refresh_is_on_devices_and_the_summary_only() {
     }
 }
 
+/// Saves in place (design 103 §2.5, §2.9): every `<script src>` in a template outside the head partial carries
+/// `data-swap-ready` (its load pass runs again on `handy:swapped`, its listeners sit on nodes a save keeps) or is one
+/// of the map pages' scripts, which keep a real reload (D6) - so a new page script fails safe, as a reload. The head
+/// partial's own scripts are `static/swap.js`'s `HEAD_SCRIPTS`.
+#[test]
+fn every_page_script_is_swap_ready_or_listed() {
+    const MAPS: &[&str] = &[
+        "/static/leaflet/leaflet.js",
+        "/static/map-marker.js",
+        "/static/locate.js",
+        "/static/locate-all.js",
+        "/static/map-full.js",
+        "/static/zones.js",
+    ];
+    // The page scripts design 103's step 3 makes ready: until then their pages reload as before.
+    const NOT_YET: &[&str] = &[
+        "/static/quick-sheets.js",
+        "/static/app-display.js",
+        "/static/contact-form.js",
+        "/static/notifications.js",
+        "/static/passkey.js",
+        "/static/reveal.js",
+        "/static/music-cards.js",
+        "/static/install-now.js",
+        "/static/photo-crop.js",
+    ];
+    let tag = regex::Regex::new(r#"<script src="([^"?]+)[^"]*"[^>]*>"#).unwrap();
+    let mut files = super::device_api::template_files();
+    for entry in std::fs::read_dir("templates/partials").unwrap() {
+        let path = entry.unwrap().path();
+        if !path.ends_with("head.html") {
+            files.push(path);
+        }
+    }
+    let mut ready = 0;
+    for path in files {
+        let text = std::fs::read_to_string(&path).unwrap();
+        for found in tag.captures_iter(&text) {
+            let src = &found[1];
+            let whole = &found[0];
+            if whole.contains(" data-swap-ready") {
+                ready += 1;
+                continue;
+            }
+            assert!(
+                MAPS.contains(&src) || NOT_YET.contains(&src),
+                "{}: {src} is neither data-swap-ready nor a map page's",
+                path.display()
+            );
+        }
+    }
+    assert!(ready >= 4, "{ready} ready page scripts");
+    let head = std::fs::read_to_string("templates/partials/head.html").unwrap();
+    let swap = std::fs::read_to_string("static/swap.js").unwrap();
+    for found in tag.captures_iter(&head) {
+        let name = found[1]
+            .trim_start_matches("/static/")
+            .trim_end_matches(".js");
+        assert!(
+            swap.contains(&format!("\"{name}\": 1")),
+            "swap.js's HEAD_SCRIPTS lacks {name}"
+        );
+    }
+}
+
 /// 2026-10-21, a tap after being away never "does nothing": every page carries
 /// `static/reconnect.js` (deferred, from the head partial), and its ping `GET /ping` is an empty
 /// 204 that is never cached with a session and the login's redirect without one. The backup
@@ -1973,7 +2041,26 @@ async fn pull_down_to_refresh_is_on_devices_and_the_summary_only() {
 #[tokio::test]
 async fn every_page_carries_the_connecting_script_and_its_ping() {
     let head = std::fs::read_to_string("templates/partials/head.html").unwrap();
-    assert!(head.contains("<script src=\"/static/reconnect.js?v=13\" defer></script>"));
+    assert!(head.contains("<script src=\"/static/reconnect.js?v=14\" defer></script>"));
+    // Saves in place (design 103): swap.js un-deferred right after scroll-restore.js (which hands it a save's landing),
+    // and auto-reload.js on every page, armed only by the server's `data-waits` marker.
+    assert!(head.contains(
+        "<script src=\"/static/scroll-restore.js?v=10\"></script>\n\
+         <!-- Saves in place (design 103)"
+    ));
+    assert!(head.contains("<script src=\"/static/swap.js?v=1\"></script>"));
+    assert!(
+        head.find("/static/scroll-restore.js").unwrap() < head.find("/static/swap.js").unwrap()
+            && head.find("/static/swap.js").unwrap() < head.find("/static/autosave.js").unwrap()
+    );
+    assert!(head.contains("<script src=\"/static/auto-reload.js?v=10\" defer></script>"));
+    assert!(head.contains("<script src=\"/static/register-sw.js?v=7\" defer></script>"));
+    // The live region a refreshed flash is spoken in, and the lost save's words (103-12, §2.6).
+    let words = std::fs::read_to_string("templates/partials/js_words.html").unwrap();
+    assert!(
+        words.contains("<div id=\"swap-status\" class=\"visually-hidden\" role=\"status\"></div>")
+    );
+    assert!(words.contains("data-w-save-unknown=\"{{ self.t(\"js.save_unknown\") }}\""));
     // The tab-switch timing (Q28), off until `?timing=1`: on every page too, deferred.
     assert!(head.contains("<script src=\"/static/nav-timing.js?v=3\" defer></script>"));
     let app = TestApp::new().await;
@@ -1987,10 +2074,10 @@ async fn every_page_carries_the_connecting_script_and_its_ping() {
         "/settings".to_string(),
     ] {
         let html = app.get_page(&page, &cookie).await.text();
-        assert!(html.contains("/static/reconnect.js?v=13"), "{page}");
+        assert!(html.contains("/static/reconnect.js?v=14"), "{page}");
     }
     let signed_out = app.request(Method::GET, "/login", None, None).await;
-    assert!(signed_out.text().contains("/static/reconnect.js?v=13"));
+    assert!(signed_out.text().contains("/static/reconnect.js?v=14"));
     // About's Page timing row turns the timing on in this browser (code QA M2: the installed
     // iPhone app has no address bar), back to its own group.
     let about = app.get_page("/updates", &cookie).await.text();
@@ -2291,7 +2378,7 @@ async fn every_confirm_has_a_cancel() {
     }
     assert!(confirms >= 32, "{confirms} confirms");
     let head = std::fs::read_to_string("templates/partials/head.html").unwrap();
-    assert!(head.contains("<script src=\"/static/confirm.js?v=3\" defer></script>"));
+    assert!(head.contains("<script src=\"/static/confirm.js?v=4\" defer></script>"));
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("phone").await;

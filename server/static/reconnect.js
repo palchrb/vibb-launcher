@@ -39,6 +39,13 @@
 //   for, `window.handyLock.due()` (static/app-lock.js) is asked, and a due lock goes to /lock instead; a ping or the
 //   sign-in page's session check answered 423 (the server's lock) goes there too. The lock screen itself is left alone
 //   on a return (its own showing asks for the passkey, passkey.js), and the way to the lock from it keeps its `next`.
+// - saves in place (design 103 §2.7): a wait of kind "swap" has the bar, the chip, the pings and the restarts of a
+//   "load", but each restart is `handySwap.refresh(here)` (static/swap.js), never `location.reload()`, and falls back
+//   to the reload only when the refresh says no. swap.js hands a refresh whose GET failed (offline) to it
+//   (`handyReconnect.waitSwap`).
+//   `handy:swapped` ends every wait but a link's navigation; `handy:saved` with no save left (`pending` 0) ends the
+//   save's hold. A slow save's bar is a counter of its own (`handyReconnect.busy(+1/-1)`, scroll-restore.js), so no
+//   wait's end hides it.
 // No service-worker fetch handler: the network is never faked. ES5, no framework (§5.7: Chrome/
 // WebView 80, iOS Safari 14). Run its tests: node --test jstest/reconnect.test.js
 (function (root) {
@@ -498,6 +505,13 @@
         var wait = null;
         var hiddenAt = null;
         var saving = false;
+        // Slow saves on their way (design 103 D5): the bar shows while any is, whatever the wait does.
+        var busyCount = 0;
+
+        /** The thin bar: a wait's (once it has shown) or a slow save's. */
+        function barState() {
+            view.bar(busyCount > 0 || !!(wait && wait.barShown));
+        }
 
         function later(fn, ms) {
             return win.setTimeout(fn, ms);
@@ -513,10 +527,10 @@
             if (!wait) return;
             stop();
             view.mark(wait.link, false);
-            view.bar(false);
             view.offer(null);
             view.chip(false);
             wait = null;
+            barState();
         }
 
         function keepPlace() {
@@ -639,6 +653,15 @@
          * is made a GET of this address (`replaceState`), so a reload can never resend a form - a
          * belt to the `data-post-answer` rule (QA M1) - and loses a `notice=` already shown.
          */
+        /** The reload in place as before: the place kept, the entry a GET of this address, then reloaded. */
+        function reloadInPlace() {
+            keepPlace();
+            try {
+                win.history.replaceState(win.history.state, "", reloadUrl(win.location.href));
+            } catch (e) {}
+            win.location.reload();
+        }
+
         function go(w) {
             // A due lock (design 74 D3.3): the lock screen instead of the page, which the server would refuse.
             if (lockDue(win)) {
@@ -648,12 +671,17 @@
             }
             w.restarted = now();
             w.failed = false;
-            if (w.href === null) {
-                keepPlace();
+            if (w.kind === "swap") {
+                // Design 103 §2.7: the page refreshed in place; `handy:swapped` ends this wait.
+                var swap = win.handySwap;
+                var taken = false;
                 try {
-                    win.history.replaceState(win.history.state, "", reloadUrl(win.location.href));
+                    taken = !!(swap && typeof swap.refresh === "function" &&
+                        swap.refresh(w.href, { fallback: reloadInPlace }));
                 } catch (e) {}
-                win.location.reload();
+                if (!taken) reloadInPlace();
+            } else if (w.href === null) {
+                reloadInPlace();
             } else {
                 win.location.assign(w.href);
             }
@@ -709,12 +737,14 @@
          */
         function arm(w) {
             var elapsed = now() - w.started;
-            // A load that finishes first unloads the page (its timers die with it): no bar ever.
-            if (w.kind === "load" && !w.barShown) {
+            // A load that finishes first unloads the page (its timers die with it): no bar ever. A refresh in place
+            // ("swap") ends its wait on `handy:swapped` the same way.
+            var loading = w.kind === "load" || w.kind === "swap";
+            if (loading && !w.barShown) {
                 w.timers.push(later(function () {
                     if (wait !== w) return;
                     w.barShown = true;
-                    view.bar(true);
+                    barState();
                 }, Math.max(0, BAR_AFTER - elapsed)));
             }
             if (!w.chipShown) {
@@ -722,7 +752,7 @@
                     if (wait !== w) return;
                     w.chipShown = true;
                     view.chip(true);
-                    if (w.kind === "load") check(w);
+                    if (loading) check(w);
                 }, Math.max(0, CHIP_AFTER - elapsed)));
             }
             if (!w.offered) {
@@ -743,8 +773,8 @@
         }
 
         /**
-         * A wait: "load" for a navigation on its way (`href` null = the reload in place), "return"
-         * for the ping after being away (nothing shown unless it takes over 3 s).
+         * A wait: "load" for a navigation on its way (`href` null = the reload in place), "swap" for a refresh in place
+         * of `href` (design 103), "return" for the ping after being away (nothing shown unless it takes over 3 s).
          */
         function start(kind, href, link, home) {
             end();
@@ -764,7 +794,7 @@
                 timers: []
             };
             wait = w;
-            if (kind === "load") {
+            if (kind === "load" || kind === "swap") {
                 remember(href === null ? win.location.href : href);
                 view.mark(link, true);
             }
@@ -822,6 +852,14 @@
                 cameBack();
             }
         });
+        // Design 103: a refresh in place has landed - the page is fresh, so no wait but a link's navigation goes on.
+        doc.addEventListener("handy:swapped", function () {
+            if (wait && !(wait.kind === "load" && wait.href !== null)) end();
+        });
+        // The last save on its way has landed in place: reloads in place may come again.
+        doc.addEventListener("handy:saved", function (e) {
+            if (!e || !e.detail || !e.detail.pending) saving = false;
+        });
         win.addEventListener("online", function () {
             if (wait) check(wait);
         });
@@ -856,6 +894,22 @@
                 }
                 go(start("load", null, null));
                 return true;
+            },
+            /**
+             * swap.js's refresh found no server (its GET failed, design 103 §2.6): the "swap" wait takes over, its next
+             * answered ping refreshing again at once. A wait of this kind already running only learns that it failed.
+             */
+            waitSwap: function (href) {
+                if (wait && wait.kind === "swap") {
+                    wait.failed = true;
+                    return;
+                }
+                start("swap", href, null).failed = true;
+            },
+            /** A slow save's share of the thin bar (scroll-restore.js, design 103 D5). */
+            busy: function (n) {
+                busyCount = Math.max(0, busyCount + (n > 0 ? 1 : -1));
+                barState();
             }
         };
 

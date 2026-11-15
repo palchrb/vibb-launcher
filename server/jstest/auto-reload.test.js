@@ -1,4 +1,5 @@
-// Behaviour of static/auto-reload.js (design 31 steps 6 and 8, qa-31-s6-code M1/L1/N4).
+// Behaviour of static/auto-reload.js (design 31 steps 6 and 8, qa-31-s6-code M1/L1/N4; design 103-4: in the head,
+// armed by the server's `[data-waits]` marker, refreshing in place).
 // Run: node --test jstest/auto-reload.test.js
 "use strict";
 const test = require("node:test");
@@ -6,25 +7,32 @@ const assert = require("node:assert");
 const { install, DELAY } = require("../static/auto-reload.js");
 
 // A fake window: timers run by hand, listeners fired by hand, reloads and address changes counted.
-function fakeWindow({ search = "", openForm = false } = {}) {
+function fakeWindow({ search = "", openForm = false, waits = true } = {}) {
     const listeners = {};
-    const timers = [];
+    let timers = [];
     const win = {
         reloads: 0,
         replaced: [],
         openForm,
+        waits,
         document: {
             addEventListener: (type, fn) => {
                 (listeners["doc:" + type] = listeners["doc:" + type] || []).push(fn);
             },
             querySelector: (selector) =>
-                selector === "details[open]" && win.openForm ? {} : null,
+                selector === "[data-waits]" ? (win.waits ? {} : null)
+                : selector === "details[open]" && win.openForm ? {} : null,
         },
         addEventListener: (type, fn) => {
             (listeners["win:" + type] = listeners["win:" + type] || []).push(fn);
         },
         setTimeout: (fn, ms) => {
-            timers.push({ fn, ms });
+            const t = { fn, ms };
+            timers.push(t);
+            return t;
+        },
+        clearTimeout: (t) => {
+            timers = timers.filter((x) => x !== t);
         },
         location: {
             search,
@@ -50,6 +58,7 @@ function fakeWindow({ search = "", openForm = false } = {}) {
         },
     };
     // Runs the timers due now (each scheduled for DELAY), once.
+    win.pending = () => timers.length;
     win.advance = () => {
         const due = timers.splice(0);
         due.forEach((t) => {
@@ -57,8 +66,8 @@ function fakeWindow({ search = "", openForm = false } = {}) {
             t.fn();
         });
     };
-    win.fire = (where, type, target) => {
-        (listeners[where + ":" + type] || []).forEach((fn) => fn({ type, target }));
+    win.fire = (where, type, target, extra = {}) => {
+        (listeners[where + ":" + type] || []).forEach((fn) => fn(Object.assign({ type, target }, extra)));
     };
     return win;
 }
@@ -167,7 +176,7 @@ test("in the app shell the record holds <main>'s position", () => {
     win.location.hash = "";
     win.scrollY = 0;
     const main = { scrollTop: 640 };
-    win.document.querySelector = (selector) => (selector === "main" ? main : null);
+    win.document.querySelector = (selector) => (selector === "main" ? main : selector === "[data-waits]" ? {} : null);
     win.getComputedStyle = (el) => ({ overflowY: el === main ? "auto" : "visible" });
     install(win);
     win.advance();
@@ -233,11 +242,69 @@ test("a closed contact holding an open Avansert doesn't stop the reload; an open
 test("a shown Quick Actions sheet pauses the reload until it is closed (design 93)", () => {
     const win = fakeWindow();
     let sheet = true;
-    win.document.querySelector = (selector) => (selector === ".qa-sheet:not([hidden])" && sheet ? {} : null);
+    win.document.querySelector = (selector) =>
+        selector === "[data-waits]" ? {} : selector === ".qa-sheet:not([hidden])" && sheet ? {} : null;
     install(win);
     win.advance();
     assert.strictEqual(win.reloads, 0);
     sheet = false;
     win.advance();
     assert.strictEqual(win.reloads, 1);
+});
+
+// Design 103-4: the marker arms and disarms the tick; a save holds it until the last one has landed in place.
+test("no marker, no tick; a refresh in place that brings the marker starts it, one that takes it away stops it", () => {
+    const win = fakeWindow({ waits: false, search: "?notice=from_play" });
+    install(win);
+    assert.strictEqual(win.pending(), 0, "no marker: nothing armed");
+    assert.deepStrictEqual(win.replaced, [], "the notice strip only with the marker at load");
+    win.waits = true;
+    win.fire("doc", "handy:swapped", null);
+    assert.strictEqual(win.pending(), 1, "armed by the swap");
+    win.fire("doc", "handy:swapped", null);
+    assert.strictEqual(win.pending(), 1, "never twice");
+    win.waits = false;
+    win.fire("doc", "handy:swapped", null);
+    assert.strictEqual(win.pending(), 0, "disarmed");
+});
+
+test("the tick refreshes in place, and reloads only when the refresh says no", () => {
+    const win = fakeWindow();
+    const asked = [];
+    win.location.href = "https://vibb.example/devices/1/advanced";
+    win.handySwap = { refresh: (url, opts) => { asked.push([url, typeof opts.fallback]); return true; } };
+    install(win);
+    win.advance();
+    assert.deepStrictEqual(asked, [["https://vibb.example/devices/1/advanced", "function"]]);
+    assert.strictEqual(win.reloads, 0);
+    assert.strictEqual(win.pending(), 0, "the next tick waits for handy:swapped");
+    win.fire("doc", "handy:swapped", null);
+    assert.strictEqual(win.pending(), 1);
+    win.handySwap.refresh = () => false;
+    win.advance();
+    assert.strictEqual(win.reloads, 1);
+});
+
+test("a save holds the tick until handy:saved says none is left; then it is armed again", () => {
+    const win = fakeWindow();
+    install(win);
+    win.fire("doc", "change", autosave);
+    assert.strictEqual(win.pending(), 0);
+    win.fire("doc", "handy:saved", null, { detail: { forms: [], pending: 1 } });
+    assert.strictEqual(win.pending(), 0, "another save still out");
+    win.fire("doc", "handy:saved", null, { detail: { forms: [], pending: 0 } });
+    assert.strictEqual(win.pending(), 1, "armed again");
+    win.advance();
+    assert.strictEqual(win.reloads, 1);
+});
+
+test("a page back from the back-forward cache is armed again when the marker is there", () => {
+    const win = fakeWindow();
+    install(win);
+    win.fire("win", "pagehide", win);
+    assert.strictEqual(win.pending(), 0);
+    win.fire("win", "pageshow", win, { persisted: false });
+    assert.strictEqual(win.pending(), 0);
+    win.fire("win", "pageshow", win, { persisted: true });
+    assert.strictEqual(win.pending(), 1);
 });

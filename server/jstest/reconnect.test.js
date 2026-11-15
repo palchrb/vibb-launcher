@@ -1199,3 +1199,52 @@ test("a <details> the server reopens after a reload doesn't block it; one opened
     const inside = { nodeName: "DETAILS", hasAttribute: (n) => n === "open", parentNode: { nodeName: "FORM", parentNode: advanced } };
     assert.strictEqual(rc.shownOpen(doc([advanced, inside])), true);
 });
+
+// Design 103 §2.7: the reload in place is a "swap" wait - its restarts refresh in place (static/swap.js), never
+// location.reload(); handy:swapped ends it; handy:saved with no save left ends a save's hold; a slow save's bar is
+// a counter of its own.
+function withSwap(win, taken = true) {
+    win.refreshes = [];
+    win.handySwap = {
+        refresh: (url, opts) => {
+            win.refreshes.push([url, opts]);
+            return taken;
+        },
+    };
+    return win;
+}
+
+test("swap.js's offline hand-over starts a swap wait that refreshes once the server answers; a link's wait outlives a swap", async () => {
+    const win = withSwap(fakeWindow());
+    win.install();
+    win.handyReconnect.waitSwap("https://pi.example.ts.net/devices/1#restrictions");
+    win.advance(CHIP_AFTER);
+    assert.strictEqual(win.view.chip, true);
+    await answer(win);
+    assert.deepStrictEqual(win.refreshes.map((r) => r[0]), ["https://pi.example.ts.net/devices/1#restrictions"]);
+    win.fire("doc", "handy:swapped");
+    assert.strictEqual(win.view.chip, false);
+    // A tapped link's navigation is not ended by a refresh landing.
+    const a = link("/apps");
+    win.tap(a);
+    win.fire("doc", "handy:swapped");
+    assert.ok(win.view.marked.has(a));
+});
+
+test("a save's hold ends on handy:saved with none left; the busy bar survives a wait's end", () => {
+    const win = withSwap(fakeWindow());
+    win.install();
+    win.fire("doc", "change", { target: { hasAttribute: (n) => n === "data-autosave" } });
+    assert.strictEqual(win.handyReconnect.mayReload(), false);
+    win.fire("doc", "handy:saved", { detail: { forms: [], pending: 1 } });
+    assert.strictEqual(win.handyReconnect.mayReload(), false, "another save still out");
+    win.fire("doc", "handy:saved", { detail: { forms: [], pending: 0 } });
+    assert.strictEqual(win.handyReconnect.mayReload(), true);
+    // The bar's counter: a second save's start (which ends any wait) doesn't hide it.
+    win.handyReconnect.busy(1);
+    assert.strictEqual(win.view.bar, true);
+    win.fire("doc", "submit", {});
+    assert.strictEqual(win.view.bar, true);
+    win.handyReconnect.busy(-1);
+    assert.strictEqual(win.view.bar, false);
+});

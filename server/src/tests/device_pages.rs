@@ -1906,7 +1906,7 @@ async fn apps_holds_the_moved_forms() {
         "/apps/toggle",
         "/app-updates",
         "/apps/display",
-        "auto-reload.js",
+        "data-waits",
     ] {
         assert!(!summary.contains(gone), "{gone}");
     }
@@ -1986,7 +1986,7 @@ async fn apps_holds_the_moved_forms() {
         input_checked(&html, "app_updates_wifi_only", "on"),
         Some(true)
     );
-    assert!(!html.contains("auto-reload.js"));
+    assert!(!html.contains("data-waits"));
     every_auto_save_has_a_save_without_js(&html);
     for name in ["selected", "app_updates_wifi_only"] {
         assert!(autosaves(&html, name), "{name}");
@@ -2699,7 +2699,7 @@ async fn a_refused_name_save_never_reloads() {
         .await
         .text();
     assert!(page.contains("Installing 40%"));
-    assert!(page.contains("<script src=\"/static/auto-reload.js?v=9\" defer></script>"));
+    assert!(page.contains("<span hidden data-waits></span>"));
     let res = app
         .request_form(
             Method::POST,
@@ -2714,7 +2714,7 @@ async fn a_refused_name_save_never_reloads() {
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
     let html = res.text();
     assert!(html.contains("id=\"display-com.android.deskclock\" open"));
-    assert!(!html.contains("auto-reload.js"), "{html}");
+    assert!(!html.contains("data-waits"), "{html}");
 }
 
 /// A catalog app whose package is an older catalog's free text stays switchable, on and off, at
