@@ -28,22 +28,18 @@ import com.kidslauncher.mdm.lock.PinLockRuntime
 import com.kidslauncher.mdm.music.MusicSessions
 import com.kidslauncher.mdm.music.MusicTrust
 import com.kidslauncher.mdm.preferences.LauncherPreferences
-import com.kidslauncher.mdm.push.SyncRunner
 import com.kidslauncher.mdm.server.AnchorNotice
 import com.kidslauncher.mdm.server.AnchorNotification
 import com.kidslauncher.mdm.server.CachedPolicy
 import com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
 import com.kidslauncher.mdm.server.MobileNetworkRuntime
-import com.kidslauncher.mdm.server.OfflineOverride
 import com.kidslauncher.mdm.server.QuickControlFeature
 import com.kidslauncher.mdm.server.QuickControls
-import com.kidslauncher.mdm.server.RestrictionsPause
 import com.kidslauncher.mdm.server.SoundChoice
 import com.kidslauncher.mdm.server.cachedPolicy
 import com.kidslauncher.mdm.server.currentPolicyDecision
 import com.kidslauncher.mdm.timerules.AskPart
-import com.kidslauncher.mdm.timerules.TimeRequests
-import com.kidslauncher.mdm.timerules.TimeRuleAlarm
+import com.kidslauncher.mdm.timerules.TimeAsk
 import com.kidslauncher.mdm.timerules.TimeRulesRuntime
 import com.kidslauncher.mdm.torch.Torch
 import kotlinx.serialization.builtins.ListSerializer
@@ -405,15 +401,8 @@ object ShortcutsRuntime {
         }
     }
 
-    /** Mer tid: exactly the anchor's "Be om mer tid" (`TimeAskReceiver`). */
+    /** Mer tid: exactly the anchor's "Be om mer tid" - the one request path (design 100 §8.4). */
     private fun askForTime(app: Context) {
-        val snap = TimeRulesRuntime.snapshot(app, currentPolicyDecision().policy)
-        val windowOpen = OfflineOverride.isActive() || RestrictionsPause.isActive()
-        val asked = TimeRequests.ask(app, LauncherPreferences.mdm().enrolled(), windowOpen, snap)
-        AnchorNotice.refresh(app, snap)
-        if (asked) {
-            TimeRuleAlarm.schedule(app)
-            SyncRunner.request(app, "time_request")
-        }
+        TimeAsk.askNow(app)
     }
 }

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The time-rule screen's open request (design 100 §8.3): "Spurt kl. 14:02 · venter på svar" in a dim pill the
+     size of the button it replaces - text, not clickable. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="@color/kid_lock_pill_dim" />
+    <corners android:radius="26dp" />
+</shape>

@@ -30,6 +30,9 @@
     <string name="ask_note_no_unnamed">The answer was no at %1$s</string>
     <string name="ask_note_given">%1$s gave you %2$s</string>
     <string name="ask_note_given_unnamed">You got %1$s more</string>
+    <!-- Design 100 §8.3: the time-rule screen's ask block ("Be om mer tid" is anchor_ask_more_time). -->
+    <string name="lock_ask_again">Ask again</string>
+    <string name="lock_ask_capped">You\'ve asked three times today.</string>
     <!-- E7's L7: about calls only - the card's rows (Calendar, an allowed app) still work beside it. -->
     <string name="lock_calls_emergency_only">You can only call emergency numbers now.</string>
     <string name="lock_calls_allowed">You can still call your contacts.</string>

@@ -22,6 +22,9 @@
     <string name="ask_note_no_unnamed">Svaret ble nei kl. %1$s</string>
     <string name="ask_note_given">%1$s ga deg %2$s</string>
     <string name="ask_note_given_unnamed">Du fikk %1$s mer</string>
+    <!-- Design 100 §8.3: the time-rule screen's ask block ("Be om mer tid" is anchor_ask_more_time). -->
+    <string name="lock_ask_again">Spør igjen</string>
+    <string name="lock_ask_capped">Du har spurt tre ganger i dag.</string>
     <string name="lock_calls_emergency_only">Du kan bare ringe nødnumre nå.</string>
     <string name="lock_calls_allowed">Du kan fortsatt ringe kontaktene dine.</string>
     <string name="lock_alarm_stop">Slå av alarmen</string>

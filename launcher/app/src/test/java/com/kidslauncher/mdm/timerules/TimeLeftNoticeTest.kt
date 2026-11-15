@@ -109,10 +109,38 @@ class TimeLeftNoticeTest {
         assertTrue(entry, entry.contains("android:exported=\"false\""))
         // Design 100 §2.2: AnchorNotice computes and hands over; it posts nothing.
         assertFalse(notice.contains(".notify("))
-        assertTrue(notice.contains("AnchorNotification.notice(context, noticeFor(context, budget, policy, day, nowMs))"))
-        // Q-4: the tap arms the boundary alarm (the note's 15-second mark, QA R2-L3).
-        val receiver = source("timerules/TimeAskReceiver.kt")
-        assertTrue(receiver.indexOf("TimeRuleAlarm.schedule(app)") in 0 until receiver.indexOf("SyncRunner.request(app, \"time_request\")"))
+        assertTrue(notice.contains("AnchorNotification.notice(context, time)"))
+        // Q-4: the tap arms the boundary alarm (the note's 15-second mark, QA R2-L3) before the sync.
+        val ask = source("timerules/TimeAsk.kt")
+        assertTrue(ask.indexOf("TimeRuleAlarm.schedule(app)") in 0 until ask.indexOf("SyncRunner.request(app, \"time_request\")"))
+    }
+
+    /** Design 100 §8.4: one request path - the notice's action, the Mer tid disc and the time-rule screen ask through
+     * `TimeAsk.askNow`, and nothing else calls `TimeRequests.ask`. */
+    @Test
+    fun `one request path`() {
+        assertTrue(source("timerules/TimeAskReceiver.kt").contains("TimeAsk.askNow(context)"))
+        val shortcuts = source("shortcuts/ShortcutsRuntime.kt")
+        assertTrue(shortcuts.substringAfter("private fun askForTime(app: Context)").contains("TimeAsk.askNow(app)"))
+        assertTrue(source("ui/LockActivity.kt").contains("TimeAsk.askNow(this)"))
+        val java = file("java/com/kidslauncher/mdm")
+        val asking = java.walk().filter { it.isFile && it.extension == "kt" }
+            .filter { Regex("""TimeRequests\.ask\(""").containsMatchIn(it.readText()) }
+            .map { it.relativeTo(java).path }.toList()
+        assertEquals(listOf("timerules/TimeAsk.kt"), asking)
+    }
+
+    /** Q100-H1, Q100-L3: the listeners (the time-rule screen) are told on the main thread, whatever thread the refresh
+     * ran on, and also while the anchor isn't running - only the post needs it. */
+    @Test
+    fun `the listeners run on the main thread, the anchor or not`() {
+        val notice = source("server/AnchorNotice.kt")
+        val dispatch = body(notice, "private fun dispatch()")
+        assertTrue(dispatch, dispatch.trimStart().startsWith("main.post {"))
+        assertTrue(dispatch, dispatch.contains("for (listener in listeners)"))
+        assertEquals(1, Regex("""for \(listener in listeners\)""").findAll(notice).count())
+        assertTrue(notice.contains("private val main = android.os.Handler(android.os.Looper.getMainLooper())"))
+        assertFalse(body(notice, "fun refreshNow(context: Context)").contains("isRunning"))
     }
 
     /** The body of `fun <signature>`: up to the closing brace at the function's indent. */

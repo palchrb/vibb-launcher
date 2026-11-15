@@ -12,6 +12,7 @@ import com.kidslauncher.mdm.timerules.AskNote
 import com.kidslauncher.mdm.timerules.AskPart
 import com.kidslauncher.mdm.timerules.BudgetUse
 import com.kidslauncher.mdm.timerules.PLAIN_NOTICE
+import com.kidslauncher.mdm.timerules.RequestState
 import com.kidslauncher.mdm.timerules.TimeAskReceiver
 import com.kidslauncher.mdm.timerules.TimeLeftText
 import com.kidslauncher.mdm.timerules.TimePart
@@ -109,16 +110,54 @@ object AnchorNotice {
         refresh(context, snap.budget, snap.policy, snap.ledger?.day, snap.clocks.wallMs)
 
     /** The same from the parts the screen-time tracker has computed anyway (its minute tick): no snapshot. The poster
-     * posts it only while the anchor runs, and only a changed view; Snarveier's Mer tid follows the same notice. */
+     * posts it only while the anchor runs, and only a changed view; Snarveier's Mer tid follows the same notice. A
+     * changed time part or request state also tells the listeners ([addListener], design 100 §8.4). */
     @Synchronized
     fun refresh(context: Context, budget: BudgetUse?, policy: TimePolicy?, day: String?, nowMs: Long) {
-        AnchorNotification.notice(context, noticeFor(context, budget, policy, day, nowMs))
+        val state = TimeRequests.state(context, day, policy)
+        val time = timePart(budget, OfflineOverride.isActive() || RestrictionsPause.isActive(), state, policy, nowMs)
+        AnchorNotification.notice(context, time)
+        val seen = time to state
+        if (seen != lastSeen) {
+            lastSeen = seen
+            dispatch()
+        }
     }
 
-    /** A fresh snapshot, then [refresh] (the tap, the server's answer, the anchor's start, the pause's start). */
+    /** A fresh snapshot, then [refresh] (the tap, the server's answer, the anchor's start, the pause's start). Computed
+     * and dispatched to the listeners whether the anchor runs or not (Q100-L3): only the post needs the anchor, and
+     * the poster checks that itself. */
     fun refreshNow(context: Context) {
-        if (!CommandListenerService.isRunning) return
         refresh(context, TimeRulesRuntime.snapshot(context, currentPolicyDecision().policy))
+    }
+
+    /** The last time part and request state [refresh] computed: a change is told to the listeners. */
+    private var lastSeen: Pair<TimePart, RequestState>? = null
+
+    private val listeners = java.util.concurrent.CopyOnWriteArrayList<() -> Unit>()
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
+
+    /** The time-rule screen follows the request (design 100 §8.4): [listener] runs on the main thread after a changed
+     * time part or request state, whatever thread [refresh] ran on (Q100-H1: a Mer tid tap in the shade runs it on
+     * the tap thread). It re-reads everything itself; nothing is passed. */
+    fun addListener(listener: () -> Unit) {
+        listeners.addIfAbsent(listener)
+    }
+
+    fun removeListener(listener: () -> Unit) {
+        listeners.remove(listener)
+    }
+
+    private fun dispatch() {
+        main.post {
+            for (listener in listeners) {
+                try {
+                    listener()
+                } catch (e: Exception) {
+                    android.util.Log.w("AnchorNotice", "Listener failed: ${e.javaClass.simpleName}")
+                }
+            }
+        }
     }
 
     /** The notice from a fresh snapshot, nothing handed over (the poster's first view in a process). */
