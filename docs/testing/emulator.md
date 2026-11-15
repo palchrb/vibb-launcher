@@ -4442,6 +4442,47 @@ Settings-bound notification for the last row was not tried either: the shell can
 notification post -c` is refused), and the keyboard notification is gone after its first tap. Undo the test helpers with
 `cmd devicestoragemonitor reset`, `allow_listener` for `BadgeListenerService`, and the override's `reset`.
 
+## 6an. Snarveier, the kid's quick panel in the shade (design 99) (2026-11-15)
+
+Design 99 §10's tests. Setup: **`jelly36`** restored clean from `~/kid-look-1-avd-pre-start` (22 of 22 sums), started
+under `flock -o ~/emulator.lock` without `-wipe-data`, density 240 (the AVD's own), the branch's debug launcher as
+Device Owner (§4's adb lines), a server of the branch (`LAUNCHER_ADMIN_COMPONENT` the debug component) on design 98's
+data, the phone enrolled again with a typed code; migration 0148 set bit 128 on it. Sizes from `uiautomator dump`
+(px / 1.5 = dp); the names' widths from the screenshot's light pixels per quarter cell. The assistant role with `cmd
+role add-role-holder android.app.role.ASSISTANT` (an adb shortcut). Afterwards `jelly36` restored again (22 of 22 sums,
+the same file list).
+
+| Test | Result |
+|---|---|
+| 1 the panel | **Passed.** Posted at the enrolment's first sync (`Shortcuts: Starting the panel`), at the top under lock task, colorized, not bundled. Before the assistant step the default was Lommelykt, Lyd, Wi-Fi, Bluetooth (the default follows the role, Q99-L9). Unfolded on every pull: cells 82 px = **55 dp**, discs 36 dp, the names under them; a header tap folds it to the icons (cells 67 px = **45 dp**), the next pull unfolds it again |
+| 1 the names | **Passed** at font scale 1.0. en at 11 sp: Flashlight 42.7 dp, Bluetooth 42.7, Sound 27.3, Wi-Fi 20.7, Data 20.0 (of 51 dp). nb (the app's locale `nb-NO`) Lommelykt, Mobildata, Lysstyrke, Bluetooth: all four at one size of about 10 sp, Lommelykt 44.7 dp, Mobildata 40.7, Bluetooth 39.3, Lysstyrke 38.7 - none cut. **At font scale 1.3** the 9 sp floor is reached: en "Brightness" is cut ("Brightne…"), nb "Lommelykt" and "Mobildata" too. **Found:** a font-scale change didn't rebuild the panel; fixed (`ACTION_CONFIGURATION_CHANGED`, the scale in the post key) |
+| 1 with calls (Q99-L8) | **Passed.** During an ongoing call the CallStyle notification is first and unfolded, the panel second and **folded** (the icons, still usable), the missed call under it; nothing bundled. Three Meldinger threads not run: the three test SMS posted no notification on this data |
+| 2 taps, shade open | **Passed** for Lommelykt (the AVD has an emulated flash), Lyd (Lyd <-> Lydløs (vibrerer)), Wi-Fi, Bluetooth, Mobildata, Lysstyrke (lav -> middels -> høy, the glyph follows): each `Tap on <key>` in about 5 ms of the receiver, the disc follows, the shade stays open (focus `NotificationShade`). Mer tid (no budget on this phone) and Musikk (no Vibb music session) not run |
+| 2 under a time rule | **Passed.** Kveld turned on now from the PWA: the time-rule screen in front, the panel the same, Lommelykt, Lysstyrke and Bluetooth taps work, the rule stays |
+| 3 the status bar icon | **None** at LOW: no Vibb icon in the status bar (the gear seen early was Android's own keyboard notice) |
+| 4 the keyguard | **Passed.** Android's Swipe keyguard (no PIN): the panel isn't on the lock screen, nor in a shade pulled there (silent and `VISIBILITY_SECRET`); the missed call is. The receiver's keyguard refusal can't be reached from the shell (a non-exported receiver), so it rests on `ShortcutsTest`. Vibb's PIN lock not run (no Child PIN on this phone) |
+| 5 Flymodus from the shade | **Passed.** The Clock app in front, the shade open, a tap on Flymodus: our window had focus at ~290 ms (the shade gone), and only then the route: Settings pinned with `mDisabled2=0x15 mFlags=125` from 1.45 s, airplane mode on, the window closed (127, 0x11), and the Clock app in front again at 3.8 s. **Held shade:** the tap followed by a 4.5 s press on the shade - our window never got focus, "no focus within 3000 ms - nothing done", no window opened. Under the rule: the first try the route timed out on this slow AVD ("airplane mode not on", design 98's 1 s wait), the second on in 706 ms, the time-rule screen in front again. Off from the shade: a broadcast, the shade stayed open, off in ~160 ms |
+| 6 the parent's switch | **Passed.** The Home page's row unticked (`section=quick`, `shortcuts_row=1`): "Panel removed: not shown" at the sync, About This Phone "Shortcuts: Off"; ticked again: back. The save redirects to `#quick-controls`. The sub-line read "Emma chose: Flashlight, Brightness, Airplane mode, Bluetooth" |
+| 7 hiding | **Not possible on this phone:** the long-press menu says "These notifications can't be modified." Vibb One holds the dialer and SMS roles, and Android locks a default app's channels (`defaultAppLocked=true`, `mImportanceLockedDefaultApp=true` on every `launcher:` channel). design 99's probe (S16) wasn't a role holder. "Vis i varsellisten igjen" therefore not run |
+| 8 the picker | **Passed after a fix,** gesture and 3-button navigation: four of nine, Flytt opp/ned (the ends' buttons dimmed), the row's sub-line for Mer tid; in 3-button the last row ends at 755 px, the bar starts at 782. **Found:** the refusal of a fifth was a line added above the list, which moved every row under the next tap; fixed (it takes the count line's place) and checked again |
+| 9 reboot | **Passed.** The panel is back after the unlock (`Starting the panel` at the process start), the picks kept |
+| 10 the Jelly Star | Owed (§10 test 10) |
+
+**Revision 3** (no names, the Vibb mark in the header; design 99 §3, `docs/review/qa-99-code.md` "Fixes"), a short
+check of the new look only, 2026-11-15. Setup as above: `jelly36` clean (22 of 22 sums, the same file list) before,
+the branch's debug launcher (01e0bb93b, then with the hardening refresh below) as Device Owner with the assistant role,
+the run's server data again, enrolled with a typed code; `jelly36` restored afterwards (22 of 22 sums; the run's
+`data/misc/pstore/pstore.bin` removed, so the same file list). Sizes from `uiautomator dump` (px / 1.5 = dp).
+
+| Check | Result |
+|---|---|
+| Folded and unfolded | **The same row.** Unfolded (first on every pull): the header line "Vibb One (debug) · Shortcuts" over the row, cells 82-83 px = **55 dp**, discs 60 px = **40 dp**, glyphs 33 px = 22 dp, the row 72 px = 48 dp. Folded (a header tap): the small icon and the chevron beside the row, cells 67-68 px = **45 dp**, the same 40 dp discs, 7 px (~4.7 dp) between two discs, the row 48 dp. Only Android's header moves; the buttons are the same |
+| Font scale 1.3 | **No change** to the row: the same 40 dp discs and cells both ways (the header text grows and its app name is cut, Android's own) |
+| The header icon | The Vibb mark (`ic_stat_vibb`): Android draws its rings and core dark in a light disc, folded and unfolded. The gear before drew an empty disc |
+| A dimmed Flymodus | "Blokker flymodus" set in the PWA, the Clock app in front, the shade open: Flymodus at 40 %, "Airplane mode, not available now". A tap: `Tap on airplane refused: DIMMED` from the receiver, **the shade stayed open** (focus `NotificationShade`), no `ShortcutAirplaneActivity` (C99-M1) |
+| **Found:** the block didn't dim it | With 01e0bb93b the panel kept Flymodus usable after the block until another signal (a brightness change) refreshed it: the policy write the panel hears comes before `applyHardening` sets `DISALLOW_AIRPLANE_MODE`, and no broadcast an app can register for says a restriction changed (`ACTION_USER_RESTRICTIONS_CHANGED` isn't in the SDK). **Fixed:** `AppEnforcer.applyHardening` asks `ShortcutsRuntime.requestRefresh()` at its end. Checked again: the block off and on from the PWA, Flymodus "off" and "not available now" within the sync, no nudge |
+| The launcher's language (C99-L1) | `cmd locale set-app-locales ... nb-NO`: `Notification channels named again: nb-NO,en-US`, the channel `launcher:shortcuts` named "Snarveier", the header "Snarveier", the descriptions "Lommelykt, av", "Lyd, på", "Flymodus, ikke tilgjengelig nå", "Wi-Fi, på" |
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:

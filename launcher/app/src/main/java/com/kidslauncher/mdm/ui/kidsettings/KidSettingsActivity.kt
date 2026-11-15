@@ -69,6 +69,10 @@ import com.kidslauncher.mdm.ui.wallpaper.WallpaperFill
 import com.kidslauncher.mdm.ui.wallpaper.WallpaperGround
 import com.kidslauncher.mdm.ui.wallpaper.WallpaperRender
 import com.kidslauncher.mdm.ui.wallpaper.WallpaperStore
+import com.kidslauncher.mdm.shortcuts.ShortcutsNotification
+import com.kidslauncher.mdm.shortcuts.ShortcutsRuntime
+import com.kidslauncher.mdm.shortcuts.pickerStart
+import com.kidslauncher.mdm.shortcuts.shortcutCandidates
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -116,6 +120,7 @@ class KidSettingsActivity : UIObjectActivity() {
     private var soundValues: Map<SoundKind, SoundValue> = emptyMap()
     private var soundValuesJob: Job? = null
     private var pickerOpening = false
+    private var shortcutsJob: Job? = null
     /** The look the preview is drawn in ([renderLook]); null before the first draw. */
     private var previewLook: LookMode? = null
 
@@ -230,6 +235,12 @@ class KidSettingsActivity : UIObjectActivity() {
                 }
             }
         }
+        binding.kidSettingsShortcutsRow.setOnClickListener {
+            if (!pickerOpening) {
+                pickerOpening = true
+                ShortcutsPickerActivity.start(this)
+            }
+        }
         binding.kidSettingsHiddenRow.setOnClickListener {
             hiddenOpen = !hiddenOpen
             renderHidden()
@@ -309,6 +320,7 @@ class KidSettingsActivity : UIObjectActivity() {
         this.section = section
         renderLook()
         renderControls(section)
+        renderShortcuts()
         binding.kidSettingsLocationLine.visibility = if (model.sharesLocation) View.VISIBLE else View.GONE
         renderHidden()
     }
@@ -370,6 +382,37 @@ class KidSettingsActivity : UIObjectActivity() {
         LauncherPreferences.apps().hidden(LauncherPreferences.apps().hidden().orEmpty() - app.raw)
         hiddenApps = hiddenApps - app
         renderHidden()
+    }
+
+    /**
+     * Design 99 §4.2: the Snarveier row with bit 128 and at least one item the parent allows - the picks as the value,
+     * or "Skjult i varsellisten" while the kid has hidden the panel. The platform and the picks are read off the main
+     * thread; the newest read wins.
+     */
+    private fun renderShortcuts() {
+        shortcutsJob?.cancel()
+        val context = this
+        shortcutsJob = lifecycleScope.launch {
+            val read = withContext(Dispatchers.IO) {
+                val owner = dpm.isDeviceOwnerApp(packageName)
+                val bits = (cachedPolicy() as? CachedPolicy.Ok)?.policy?.quickControlsMask
+                if (!owner || bits == null || bits and com.kidslauncher.mdm.server.QuickControlFeature.SHORTCUTS == 0L) {
+                    null
+                } else {
+                    val platform = ShortcutsRuntime.platform(context, bits)
+                    val candidates = shortcutCandidates(bits, platform)
+                    Triple(candidates, pickerStart(ShortcutsRuntime.storedPicks(context), candidates), ShortcutsRuntime.hidden(context))
+                }
+            }
+            val shown = read != null && read.first.isNotEmpty()
+            binding.kidSettingsShortcutsSection.visibility = if (shown) View.VISIBLE else View.GONE
+            if (read == null || !shown) return@launch
+            binding.kidSettingsShortcutsValue.text = when {
+                read.third -> getString(R.string.kid_settings_shortcuts_hidden)
+                read.second.isEmpty() -> getString(R.string.kid_settings_shortcuts_none)
+                else -> read.second.joinToString(", ") { getString(ShortcutsNotification.fullNameRes(it)) }
+            }
+        }
     }
 
     private fun renderControls(section: ControlsSection) {

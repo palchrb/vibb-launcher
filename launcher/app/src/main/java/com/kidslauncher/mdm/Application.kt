@@ -276,6 +276,8 @@ class Application : android.app.Application() {
         } catch (e: Exception) {
             android.util.Log.w("Application", "The notification channels weren't named again", e)
         }
+        // Snarveier's channel and panel follow too (design 99, C99-L1): its channel is created apart from the others.
+        com.kidslauncher.mdm.shortcuts.ShortcutsRuntime.languageChanged(this)
     }
 
     /** Design 59 F3: when the unlocked setup began (elapsed realtime) - the unlock reaching this process; `BootHome`
@@ -507,6 +509,9 @@ class Application : android.app.Application() {
                 com.kidslauncher.mdm.music.MusicMedia.init(this)
                 // The flashlight (design 41): its camera, the platform's torch callback, the call-edge rule.
                 com.kidslauncher.mdm.torch.Torch.init(this)
+                // Snarveier (design 99): the panel's signals for the whole process, and its first refresh (it starts
+                // the panel's service when the policy's bit 128 and the kid's picks say so).
+                com.kidslauncher.mdm.shortcuts.ShortcutsRuntime.init(this)
                 // The lock's glance page (design 25): the parent's choice from the cached policy (off the
                 // main thread), and our missed-call notification known again if it is still on screen.
                 com.kidslauncher.mdm.badges.GlanceStore.loadAtStart()

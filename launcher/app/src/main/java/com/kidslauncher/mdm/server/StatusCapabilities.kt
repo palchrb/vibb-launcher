@@ -72,6 +72,9 @@ val STATUS_CAPABILITIES: List<String> = listOf(
     // Design 98: `airplane_mode` in every full report and the kid's Flymodus row (bit 64); the server's Home page shows
     // its switch only for a phone claiming it.
     com.kidslauncher.mdm.assistant.AIRPLANE_MODE_CAPABILITY,
+    // Design 99: Snarveier (bit 128) and `shortcuts` in every full report; the server's Home page shows its switch only
+    // for a phone claiming it.
+    com.kidslauncher.mdm.shortcuts.SHORTCUTS_CAPABILITY,
     // Design 98 §4.4: Foreldrekode's pause posted (`POST /api/devices/rule-pause`), `lifts[].phone_key` honoured.
     com.kidslauncher.mdm.timerules.RULE_PAUSE_CAPABILITY,
     // Design 94: the policy's `data_roaming` (DISALLOW_DATA_ROAMING, the relock) and `data_roaming` in every report.

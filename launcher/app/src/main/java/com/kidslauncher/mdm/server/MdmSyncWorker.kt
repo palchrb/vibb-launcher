@@ -602,6 +602,7 @@ private fun statusReportOf(
             outside = tlsSent,
         ),
         airplaneMode = com.kidslauncher.mdm.assistant.AirplaneRuntime.report(context, airplaneGoingOn),
+        shortcuts = com.kidslauncher.mdm.shortcuts.ShortcutsRuntime.report(context),
     )
 }
 

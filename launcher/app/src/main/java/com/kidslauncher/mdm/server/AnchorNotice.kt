@@ -99,8 +99,11 @@ object AnchorNotice {
     /** The same from the parts the screen-time tracker has computed anyway (its minute tick): no snapshot. */
     @Synchronized
     fun refresh(context: Context, budget: BudgetUse?, policy: TimePolicy?, day: String?, nowMs: Long) {
+        val notice = noticeFor(context, budget, policy, day, nowMs)
+        // Design 99: Snarveier's Mer tid follows the same notice (its action, or "Spurt").
+        com.kidslauncher.mdm.shortcuts.ShortcutsRuntime.noticeAsk(notice.ask)
         if (!CommandListenerService.isRunning) return
-        post(context, noticeFor(context, budget, policy, day, nowMs))
+        post(context, notice)
     }
 
     /** A fresh snapshot, then [refresh] (the tap, the server's answer, the anchor's start, the pause's start). */

@@ -2326,3 +2326,24 @@ posted by `static/scroll-restore.js` (`?v=9`) itself, and the return replaces th
   the stored event only (`parent_events::mark_emergency_airplane_off`, no second push).
 - Tests: `tests::airplane_mode` (the form's keep on both sections, the lines, the card's forms on `#oppsett`, About,
   the QR page, the emergency line; nb and en).
+
+## Snarveier (design 99 step 2, 2026-11-15, branch `design-99-server`, `docs/design/99-snarveier.md` §5-§6)
+
+- **Home Screen › Hurtigkontroller**: "Snarveier i varsellisten" (`quick_controls_mask` bit 128,
+  `devices::QUICK_CONTROL_SHORTCUTS`), the form's first row, only for a phone that reported `shortcuts_v1`; the form
+  then carries `shortcuts_row=1`, and `update_policy` takes bit 128 from the switch only with it - without it bit 128
+  is kept as 64 and 32 are (`kept_bits`). On for new phones (`DEFAULT_QUICK_CONTROLS`) and set on every existing phone
+  by `0148_shortcuts.sql` (D2). Its sub-line (`shortcuts::home_sub`, the kid named, never a pronoun): hidden by the kid
+  (with the bit on or off), else with the bit on what the kid chose ("Emma chose: Flashlight, Sound, ...", the
+  items' names from `shortcuts::ITEMS` in the page's language) or "No shortcuts are shown now." (no items: nothing
+  offered or none chosen, which the report can't tell apart - code QA C99-L3; it was "None of the switches below is
+  on.", untrue when the kid chose none). The
+  ⓘ gains the panel's paragraph (`data-shortcuts-info`) and the footer the sentence `device.home.quick_footer_shortcuts`
+  - a key of its own, shown only with the row, so an older launcher's page doesn't promise a panel it hasn't got.
+- **The report**: `shortcuts` (`{shown, hidden, items}`, a full-report field, not a heartbeat field), cleaned by
+  `shortcuts::clean` (the contract's `clean` rows) into `device_status.shortcuts_json`; read through
+  `shortcuts::report`, which wants the capability.
+- **About This Phone**: "Snarveier" in the software list - the items' names, "Skjult av Emma", "Ingen" (bit on, no
+  items) or "Av" (bit 128 off); only from a launcher with `shortcuts_v1`.
+- Tests: `tests::shortcuts` (the contract: stored reports, `clean` rows, the table, the copies; the migration's bit;
+  the form's keep on both sections; the sub-lines; the ⓘ and footer; About; nb and en).

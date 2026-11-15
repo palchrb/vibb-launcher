@@ -171,8 +171,6 @@ class HomeActivity : UIObjectActivity() {
     // already-filtered apps (QA step 5 #6).
     private val badgeRender = Runnable { renderGrid() }
 
-    /** The flashlight's state changed (design 41; its callback, main thread): the tile follows. */
-    private val torchListener: () -> Unit = { renderGrid() }
     /** Dagen's tile follows the calendars and the policy (design 69 §2.2). */
     private val calendarListener: () -> Unit = { renderGrid() }
     /** Meldinger's tile and badge, and the contacts' unread messages, follow the engine and the policy (design 77
@@ -461,7 +459,6 @@ class HomeActivity : UIObjectActivity() {
         com.kidslauncher.mdm.calls.OngoingCalls.addListener(callsListener)
         com.kidslauncher.mdm.server.WindowRelock.addListener(windowListener)
         com.kidslauncher.mdm.assistant.AirplaneRuntime.addListener(airplaneListener)
-        com.kidslauncher.mdm.torch.Torch.addListener(torchListener)
         com.kidslauncher.mdm.calendar.CalendarStore.addListener(calendarListener)
         com.kidslauncher.mdm.sms.SmsHome.addListener(messagesListener)
         com.kidslauncher.mdm.sms.SmsHome.refresh(this)
@@ -685,7 +682,6 @@ class HomeActivity : UIObjectActivity() {
         com.kidslauncher.mdm.calls.OngoingCalls.removeListener(callsListener)
         com.kidslauncher.mdm.server.WindowRelock.removeListener(windowListener)
         com.kidslauncher.mdm.assistant.AirplaneRuntime.removeListener(airplaneListener)
-        com.kidslauncher.mdm.torch.Torch.removeListener(torchListener)
         com.kidslauncher.mdm.calendar.CalendarStore.removeListener(calendarListener)
         com.kidslauncher.mdm.sms.SmsHome.removeListener(messagesListener)
         ElementMissedCallStore.removeListener(elementMissedListener)
@@ -861,7 +857,7 @@ class HomeActivity : UIObjectActivity() {
         val data = gridData
         gridAdapter.submit(
             homeGrid(
-                data.apps, showPhoneBook, BadgeStore.counts, com.kidslauncher.mdm.torch.Torch.state,
+                data.apps, showPhoneBook, BadgeStore.counts,
                 showDay = com.kidslauncher.mdm.calendar.CalendarStore.tileShown(),
                 messages = com.kidslauncher.mdm.sms.SmsHome.summary.unread.takeIf { com.kidslauncher.mdm.sms.SmsHome.tileShown() },
                 messagesLook = com.kidslauncher.mdm.appdisplay.AppDisplay.messagesLook(),

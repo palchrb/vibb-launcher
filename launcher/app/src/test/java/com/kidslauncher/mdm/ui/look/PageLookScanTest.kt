@@ -146,6 +146,7 @@ class PageLookScanTest {
                 "$root/ui/messages/MessagesActivity.kt", "$root/ui/messages/ThreadActivity.kt",
                 "$root/calls/PhoneBookActivity.kt", "$root/ui/quickcontrols/WifiNetworksActivity.kt",
                 "$root/ui/quickcontrols/BluetoothDevicesActivity.kt", "$root/ui/kidsettings/KidSoundPickerActivity.kt",
+                "$root/ui/kidsettings/ShortcutsPickerActivity.kt",
             ),
             pages.toSet(),
         )

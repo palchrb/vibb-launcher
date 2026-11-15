@@ -717,11 +717,12 @@ async fn a_new_device_starts_with_all_kid_settings_on() {
         .bind(device)
         .fetch_one(&app.db)
     };
-    assert_eq!(mask(id).await.unwrap(), 1 | 2 | 4 | 8 | 32 | 64);
+    assert_eq!(mask(id).await.unwrap(), 1 | 2 | 4 | 8 | 32 | 64 | 128);
     assert_eq!(
         crate::handlers::devices::DEFAULT_QUICK_CONTROLS,
-        1 | 2 | 4 | 8 | 32 | 64,
-        "Wi-Fi, Bluetooth, brightness, sound (design 18), Mobildata (design 97 D3), Flymodus (design 98 D1)"
+        1 | 2 | 4 | 8 | 32 | 64 | 128,
+        "Wi-Fi, Bluetooth, brightness, sound (design 18), Mobildata (design 97 D3), Flymodus (design 98 D1), \
+         Snarveier (design 99 D2)"
     );
     assert_eq!(mask(existing).await.unwrap(), 0);
     // The notification filter starts on for a new phone (2026-10-21); an existing one keeps its
@@ -751,8 +752,9 @@ async fn a_new_device_starts_with_all_kid_settings_on() {
     let policy = app
         .request(Method::GET, "/api/devices/policy", Some(&token), None)
         .await;
-    // Design 97 D3: the kid's Mobildata switch (bit 32) too; design 98 D1: and Flymodus (bit 64).
-    assert_eq!(policy.json()["quick_controls_mask"], 15 | 32 | 64);
+    // Design 97 D3: the kid's Mobildata switch (bit 32) too; design 98 D1: and Flymodus (bit 64); design 99 D2: and
+    // Snarveier (bit 128).
+    assert_eq!(policy.json()["quick_controls_mask"], 15 | 32 | 64 | 128);
     assert_eq!(policy.json()["notification_auto_cancel"], true);
 }
 

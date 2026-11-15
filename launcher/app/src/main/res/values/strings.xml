@@ -114,10 +114,6 @@
     <string name="contact_request_done">Done</string>
     <string name="contact_request_row_description">%1$s, %2$s</string>
     <string name="kid_settings_title">Settings</string>
-    <!-- The flashlight (design 41): Home's tile and the lock's button, and TalkBack's state words. -->
-    <string name="torch_title">Flashlight</string>
-    <string name="torch_state_on">on</string>
-    <string name="torch_state_off">off</string>
     <string name="calls_phone_book_empty">There\'s nobody to call yet. Emergency numbers (112, 110, 113) always work from the lock screen\'s Emergency button.</string>
     <string name="calls_off">Calls are turned off on this phone. Emergency numbers still work.</string>
     <string name="calls_call">Call</string>
@@ -897,4 +893,40 @@
     <string name="rule_pause_button">Pause it</string>
     <string name="rule_sheet_parent_code_title">Parent code</string>
     <string name="rule_pause_no_pin">No parent PIN is set on the server.</string>
+    <!-- Snarveier (design 99): the panel in the shade, the items' names (the picker and the buttons' content
+         descriptions; none under the buttons, revision 3), and Kid Settings' row and picker page. -->
+    <string name="shortcuts_channel">Shortcuts</string>
+    <string name="shortcuts_subtext">Shortcuts</string>
+    <string name="shortcut_full_torch">Flashlight</string>
+    <string name="shortcut_full_sound">Sound</string>
+    <string name="shortcut_full_airplane">Airplane mode</string>
+    <string name="shortcut_full_wifi">Wi-Fi</string>
+    <string name="shortcut_full_bluetooth">Bluetooth</string>
+    <string name="shortcut_full_mobile_data">Mobile data</string>
+    <string name="shortcut_full_brightness">Brightness</string>
+    <string name="shortcut_full_more_time">More time</string>
+    <string name="shortcut_full_music">Music</string>
+    <string name="shortcut_desc_on">%1$s, on</string>
+    <string name="shortcut_desc_off">%1$s, off</string>
+    <string name="shortcut_desc_sound_off">%1$s, silent (vibrate)</string>
+    <string name="shortcut_desc_level">%1$s, %2$s</string>
+    <string name="shortcut_level_low">low</string>
+    <string name="shortcut_level_medium">medium</string>
+    <string name="shortcut_level_high">high</string>
+    <string name="shortcut_desc_ask">%1$s, ask for more time</string>
+    <string name="shortcut_desc_asked">%1$s, asked</string>
+    <string name="shortcut_desc_unavailable">%1$s, not available now</string>
+    <string name="shortcut_desc_busy">%1$s, one moment</string>
+    <string name="kid_settings_shortcuts_heading">In the notifications</string>
+    <string name="kid_settings_shortcuts">Shortcuts</string>
+    <string name="kid_settings_shortcuts_hidden">Hidden in the notifications</string>
+    <string name="kid_settings_shortcuts_none">None chosen</string>
+    <string name="shortcuts_picker_line">Choose up to 4. They show at the top when you pull down from the top of the screen.</string>
+    <string name="shortcuts_picker_count">%1$d of %2$d chosen</string>
+    <string name="shortcuts_picker_full">You have chosen 4. Remove one first.</string>
+    <string name="shortcuts_picker_show_again">Show in the notifications again</string>
+    <string name="shortcuts_picker_hidden_line">You have hidden the shortcuts in the notifications.</string>
+    <string name="shortcuts_picker_more_time_line">Shows on days with screen time</string>
+    <string name="shortcuts_picker_move_up">Move %1$s up</string>
+    <string name="shortcuts_picker_move_down">Move %1$s down</string>
 </resources>

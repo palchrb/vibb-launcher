@@ -296,6 +296,13 @@
             android:excludeFromRecents="true"
             android:exported="false"
             android:theme="@style/KidPageTheme" />
+        <!-- Design 99 §4.2: the kid's Snarveier picker, a page in Home's task as the sound picker. -->
+        <activity
+            android:name=".ui.kidsettings.ShortcutsPickerActivity"
+            android:configChanges="orientation|screenSize|uiMode"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:theme="@style/KidPageTheme" />
         <activity
             android:name=".ui.quickcontrols.WifiNetworksActivity"
             android:configChanges="orientation|screenSize|uiMode"
@@ -546,6 +553,29 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Parental control enforcement (device owner): screen-time and time-rule signals, policy sync" />
         </service>
+
+        <!-- Snarveier (design 99): the kid's quick panel in the shade - its foreground service (the panel is its
+             notification), the buttons' receiver (our own explicit, immutable broadcasts only) and Flymodus On's
+             window, which starts the route only once the shade has closed (§4.1). None is exported. -->
+        <service
+            android:name=".shortcuts.ShortcutsService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Kid's quick controls (device owner)" />
+        </service>
+        <receiver
+            android:name=".shortcuts.ShortcutsReceiver"
+            android:exported="false" />
+        <activity
+            android:name=".shortcuts.ShortcutAirplaneActivity"
+            android:configChanges="orientation|screenSize|uiMode"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
         <!-- The backstop sync alarm (push/BackstopAlarm) - our own explicit PendingIntent only. -->
         <receiver

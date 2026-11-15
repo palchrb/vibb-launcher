@@ -99,10 +99,6 @@
     <string name="contact_request_done">Ferdig</string>
     <string name="contact_request_row_description">%1$s, %2$s</string>
     <string name="kid_settings_title">Innstillinger</string>
-    <!-- Lommelykten (design 41): Home-flisen og låsens knapp, og TalkBacks tilstandsord. -->
-    <string name="torch_title">Lommelykt</string>
-    <string name="torch_state_on">på</string>
-    <string name="torch_state_off">av</string>
     <string name="calls_phone_book_empty">Det er ingen å ringe ennå. Nødnumrene (112, 110, 113) virker alltid fra nødknappen på låseskjermen.</string>
     <string name="calls_off">Samtaler er slått av på denne telefonen. Nødnumrene virker fortsatt.</string>
     <string name="calls_call">Ring</string>
@@ -808,4 +804,39 @@
     <string name="rule_pause_button">Sett på pause</string>
     <string name="rule_sheet_parent_code_title">Foreldrekode</string>
     <string name="rule_pause_no_pin">Ingen foreldre-PIN er satt på serveren.</string>
+    <!-- Snarveier (design 99). -->
+    <string name="shortcuts_channel">Snarveier</string>
+    <string name="shortcuts_subtext">Snarveier</string>
+    <string name="shortcut_full_torch">Lommelykt</string>
+    <string name="shortcut_full_sound">Lyd</string>
+    <string name="shortcut_full_airplane">Flymodus</string>
+    <string name="shortcut_full_wifi">Wi-Fi</string>
+    <string name="shortcut_full_bluetooth">Bluetooth</string>
+    <string name="shortcut_full_mobile_data">Mobildata</string>
+    <string name="shortcut_full_brightness">Lysstyrke</string>
+    <string name="shortcut_full_more_time">Mer tid</string>
+    <string name="shortcut_full_music">Musikk</string>
+    <string name="shortcut_desc_on">%1$s, på</string>
+    <string name="shortcut_desc_off">%1$s, av</string>
+    <string name="shortcut_desc_sound_off">%1$s, lydløs (vibrerer)</string>
+    <string name="shortcut_desc_level">%1$s, %2$s</string>
+    <string name="shortcut_level_low">lav</string>
+    <string name="shortcut_level_medium">middels</string>
+    <string name="shortcut_level_high">høy</string>
+    <string name="shortcut_desc_ask">%1$s, be om mer tid</string>
+    <string name="shortcut_desc_asked">%1$s, spurt</string>
+    <string name="shortcut_desc_unavailable">%1$s, ikke tilgjengelig nå</string>
+    <string name="shortcut_desc_busy">%1$s, et øyeblikk</string>
+    <string name="kid_settings_shortcuts_heading">I varsellisten</string>
+    <string name="kid_settings_shortcuts">Snarveier</string>
+    <string name="kid_settings_shortcuts_hidden">Skjult i varsellisten</string>
+    <string name="kid_settings_shortcuts_none">Ingen valgt</string>
+    <string name="shortcuts_picker_line">Velg opptil 4. De vises øverst når du drar ned fra toppen av skjermen.</string>
+    <string name="shortcuts_picker_count">%1$d av %2$d valgt</string>
+    <string name="shortcuts_picker_full">Du har valgt 4. Fjern en først.</string>
+    <string name="shortcuts_picker_show_again">Vis i varsellisten igjen</string>
+    <string name="shortcuts_picker_hidden_line">Du har skjult snarveiene i varsellisten.</string>
+    <string name="shortcuts_picker_more_time_line">Vises når du har skjermtid i dag</string>
+    <string name="shortcuts_picker_move_up">Flytt %1$s opp</string>
+    <string name="shortcuts_picker_move_down">Flytt %1$s ned</string>
 </resources>
