@@ -534,19 +534,22 @@ mod tests {
             Some((2, "2026-11-16 21:00:00".into()))
         );
         assert_eq!(
-            next(&[school.clone()], &[], "2026-11-16 15:00"),
+            next(std::slice::from_ref(&school), &[], "2026-11-16 15:00"),
             Some((1, "2026-11-17 08:15:00".into()))
         );
         // Beyond 24 hours: a Friday evening with nothing until Monday.
-        assert_eq!(next(&[school.clone()], &[], "2026-11-20 15:00"), None);
+        assert_eq!(
+            next(std::slice::from_ref(&school), &[], "2026-11-20 15:00"),
+            None
+        );
         // A start this very minute is already in force: the next is tomorrow's, exactly 24 hours on.
         assert_eq!(
-            next(&[school.clone()], &[], "2026-11-16 08:15"),
+            next(std::slice::from_ref(&school), &[], "2026-11-16 08:15"),
             Some((1, "2026-11-17 08:15:00".into()))
         );
         // A window over midnight: running at 22:00, the next start is tomorrow's 21:00.
         assert_eq!(
-            next(&[nights.clone()], &[], "2026-11-16 22:00"),
+            next(std::slice::from_ref(&nights), &[], "2026-11-16 22:00"),
             Some((2, "2026-11-17 21:00:00".into()))
         );
         // A 24 h window starts at its start; the one already running (every day) never starts again.
@@ -556,7 +559,7 @@ mod tests {
             next(&[day(one_day)], &[], "2026-11-15 12:00"),
             Some((3, "2026-11-16 10:00:00".into()))
         );
-        let every = format!("[{}]", vec![r#"{"start":600,"end":600}"#; 7].join(","));
+        let every = format!("[{}]", [r#"{"start":600,"end":600}"#; 7].join(","));
         assert_eq!(next(&[day(&every)], &[], "2026-11-17 09:00"), None);
         // Two rules at one minute: school first, then bedtime, then the rest.
         let mut other = rule(4, "custom", SCHOOL, false);
@@ -603,7 +606,7 @@ mod tests {
         // The evening of QA M3: a pause of all rules from 19:00 for 2 h, Leggetid 21:00: it locks at 21:00 anyway.
         assert_eq!(
             next(
-                &[nights.clone()],
+                std::slice::from_ref(&nights),
                 &until(None, "2026-11-16 21:30"),
                 "2026-11-16 19:30"
             ),

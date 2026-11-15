@@ -613,12 +613,10 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `aria-label`, where the group was) holds each command `cancel_id` still has as its own row with Cancel (`back=summary`,
   `?cancel=…#activity` as before - the summary stays the one place one tap from Lock again, Unlock for 2 h, Allow these
   apps), then one row to the page: a grey tile with a list glyph, "Activity" / "Aktivitet", a one-line sub
-  (`.row-sub-line`, cut with "…") with the newest other row's words and clock ("All rules paused for 1 h · 20:37",
+  (`.row-sub-wrap`, two lines, the clock whole since design 101) with the newest other row's words and clock ("All rules paused for 1 h · 20:37",
   "Lock again · Cancelled · 13:41": a command's label and its outcome word, a lift's words, an event's title,
-  `Zone::at`, the exact time in `title`), a grey `.badge` with how many of the **week's** rows the page lists
-  (`Activity.in_window`: a command still cancellable from before the week, shown above with Cancel, is not one;
-  "50+" past the cap; `data-activity-count` is the badge's own text; spoken "12 in the last 7 days" / "More than 50
-  …"), a chevron; its hairline starts at the label (`.row-tile`, as a `.group-icons` row's; style.css v112). The row
+  `Zone::at`, the exact time in `title`), *(until design 101)* a grey `.badge` with how many of the **week's** rows the page lists - since design 101 an orange "2 nye" for this parent's unread events, only
+  while there are some, and the page marks them read ("The summary as mockup A") -, a chevron; its hairline starts at the label (`.row-tile`, as a `.group-icons` row's; style.css v112). The row
   shows while the week has a row, the section while it has a row, a waiting command or a Cancel's line; the flash sits
   in that group.
   **A duration's number and unit never part**: `time.duration.*` (`display_time::duration`, every lift row, the screen
@@ -1474,6 +1472,8 @@ man er inne på en device". Branch `pwa-fixes-b`.
 
 ## A phone's own picture (server round C, 2026-10-25, branch `pwa-fixes-c`, migration `0100_device_avatar.sql`)
 
+*Since design 101 the picker is a sheet under the picture ("The summary as mockup A" below): the avatar is the summary of a `details.pic-menu`, the file field a row in it, "Add picture" / "Remove picture" are the sheet's rows, and the status dot left the picture. The rest of this section (pipeline, where it shows, the route, the backup) stands.*
+
 - **The user** (2026-10-25: "Når kommer muligheten til å sette avatar?"): a phone can have its own picture instead of
   the letter tile. `devices.avatar_hash`, `photos::DEVICE_AVATARS` (its own store, lock and directory
   `data/device_avatars/`, `AppState.avatar_dir`), `handlers::device_avatar`.
@@ -1576,6 +1576,8 @@ man er inne på en device". Branch `pwa-fixes-b`.
 
 
 ## Tidier status on Devices and the summary (the user's pick C, 2026-11-01, branch `status-tidy`)
+
+*Since design 101 the summary's header is ONE line without the screen time and its bar (`phone_status::one_line`; "The summary as mockup A" below); the Devices row is as described here.*
 
 - **Why**: the row said "Online · seen for 7 min siden", "4 min today", "Battery 100 % · for 7 min siden" and the
   header added "At Test since 24. okt. 22:19" - the ages repeated what the dot says. The user picked mockup C, the
@@ -1850,6 +1852,8 @@ man er inne på en device". Branch `pwa-fixes-b`.
   user-facing word is hardcoded** (the user, 2026-10-26).
 
 ## The night band on every page (design 84, 2026-11-11, `docs/design/84-pwa-night-band.md`)
+
+*Design 101 added a sixth macro, `band::app` (an app's page, the app's tile at the right), and the summary's `.summary-sheet` gap under the band: "The summary as mockup A".*
 
 Every page in the app shell opens on one night band and holds everything else in a sheet with a rounded top (the
 user's pick F2b from a clickable lab). The older sections above describe the 44 px title bar, the large title under
@@ -2195,7 +2199,76 @@ pointer here.
   `locate_page::update_location_is_the_first_row_and_the_map_has_no_box`, `the_bubble_says_fresh_or_old`,
   `jstest/locate.test.js`.
 
+## The summary as mockup A (design 101, 2026-11-15, `docs/design/101-summary-page-a.md`, QA `docs/review/qa-101-design.md`)
+
+Server only: no launcher or API change, no migration. The user's "Vi går for a!".
+
+- **The picture over the band.** `device_detail.html` opens `<div class="sheet summary-sheet">`; `.summary-sheet { margin-top:
+  38px }` opens a night gap under the band (main's ground is night in its top half), and `.summary-sheet > .summary-head {
+  margin-top: -52px }` lifts the header into it. The number is measured from the sheet's content edge: gap 38 + 1 px border +
+  15 px padding less the band's 22 px foot = 32 px under the band's box, and the picture's top should lie 20 px above the
+  sheet's edge (the design said -36, which left it floating: QA M1). `shell::the_app_shell_scrolls_main_not_the_document` pins both
+  numbers. The rule is written for `.summary-sheet > .summary-head` without `:first-child` (QA L1): **anything new at the top
+  of the summary (design 100's request card) goes right after `</header>`**, never above it. The shared band is unchanged
+  (D6). `.avatar-large` is 88 px with a 4 px ring in `--bg` (invisible in dark, where `--bg` is the night: fine).
+- **The sheet** (`details.pic-menu`, no `<dialog>`: iOS 14). The summary is `.pic-pick` (`position: relative`, the pencil
+  `.pic-badge` in its corner; the summary is no ancestor of the panel), `list-style: none` and the marker hidden. The panel
+  (`.pic-panel`, `role="group"`: it traps no focus, so it does not claim to be modal) and `.pic-backdrop` (`data-confirm-cancel`,
+  `hidden` without JS, `cursor: pointer` for iOS taps, never a `display` that beats `hidden`) are `position: absolute` with four
+  longhands (no `inset`), z 12/11, against the **body**: so **nothing that holds them may be positioned** (`.sheet`,
+  `.summary-head`, `.avatar-edit`; the shell test checks it). Rows: Change/Add picture = a `<label class="pic-action">` with
+  the real `input.pic-file` over it (four longhands, `opacity: 0`: a tap is a tap on the input, which iOS needs; focus ring on
+  the row by `:focus-within`), Remove (`.pic-danger`, `data-avatar-remove`, posts at once, no confirm), then Avbryt (the
+  `confirm_cancel.html` include). The note "Bildet vises bare for foreldrene." is true: the picture is never sent to a phone
+  (it is served at the unguessable `/phone-avatars/{hash}` without a session). The forms still post to `/avatar#avatar` and
+  `/avatar/remove#avatar`: never the top.
+- **`confirm.js` (`?v=2`)** gained, for `details.pic-menu` only: Escape closes it and focuses the picture (`preventScroll`), a
+  `focusout` leaving the panel closes it (a menu's way), and a `toggle` listener **in the capture phase** (`toggle` does not
+  bubble) focuses the first action. The backdrop closes like Avbryt through the existing `[data-confirm-cancel]` click.
+  `jstest/confirm.test.js` has the four cases.
+- **One status line** (`phone_status::header` + `one_line`; `.summary-state`): the dot (`.state-dot dot-*`, `aria-hidden`), then
+  the lead (the leads and their order unchanged), the zone with its pin (`Part.pin`, a 12 px SVG before `data-zone-now`, only the
+  header's zone part) and the battery. The screen time is not in the header (the header builds from facts with `screen: None`), so
+  `DeviceDetailTemplate.meter` is gone; the Devices row keeps both. Roaming and airplane parts still work on the two internal
+  lines and are joined last. **Wrapping** (QA M2): the macro `status_line::parts(line, boxed)` wraps each part (icon, label,
+  text) in `<span class="part">` when `boxed` (the summary; the Devices row passes `false`), and `.summary-state .part` is
+  `display: inline-block; max-width: 100%`: the line wraps between parts, and a part alone wider than the column (a long lock
+  or zone name) wraps inside it, so main never scrolls sideways at 320 px. The battery icon stays in its part.
+- **The tiles** (`quick_actions.rs`): Skjermtid without a daily limit says "25 min brukt i dag" (D2; `qa.no_limit` went, nothing
+  at 0 min). Pause regler says **"Ingen regel nå"** only when `Inputs.no_rule_now` (a time report was read, it is today's **and
+  names its day**, the phone is online or away at most 15 minutes: `time_state::report_is_fresh`, which shares `report_stale`
+  with `lock_badge`; the screen-time lock counts as none: L5) **and** no running pause **and** `lock_now::in_force_by_schedule` is
+  false - no rule's window covers the phone's clock once pauses are taken out, because an online phone's report of any age
+  passes the freshness test and a rule may have started since (QA M4). Slå på regel says **"Neste: Leggetid 20:30"** /
+  "Neste: Skole i morgen 08:00" (`device.summary.qa.next`, `time.tomorrow`, wrapped in `qa.phone_time` when the phone's zone is
+  not Phone Setup's) from `lock_now::next_start` - the next scheduled start within 24 hours (D9), from the policy rows and the
+  phone's clock; skips a copy, unreadable days and a start inside a window of the same rule already running; **a start inside a
+  running pause (of that rule or of all rules) is the pause's end while the window still covers that minute, else skipped**,
+  because the phone locks when the lift ends (QA M3); ties: the earlier start, then school, bedtime, the rest, then
+  `sort_order`. Shown only while no rule is turned on now (`QuickActions.next_line`, grey; the on-line is `qa-on`). Tests:
+  `lock_now::tests::the_next_start`, `a_rule_in_force_by_its_schedule`,
+  `time_state::tests::a_report_is_fresh_when_it_names_today_and_the_phone_is_in_touch`, `summary::the_tiles_say_their_state`.
+- **Activity's row**: the grey count of the week's rows is replaced by an orange `.badge-warn` **"2 nye"** (`device.activity.new`,
+  spoken `new_spoken`; `data-activity-new`), only while this parent has unread **events** among the page's rows (commands, lifts and
+  turned-on rules have no read state). `activity::view` marks the events it lists read (`parent_events::mark_read` takes a JSON
+  array string) after the rows were built, so the rows keep their state: the page draws the inbox's `unread-dot` and its
+  visually-hidden word on those rows (QA M7). The page carries a hidden `data-unread` (what this parent still has unread after
+  marking: `register-sw.js`'s app badge, QA L6); unread events older than the week or past the cap are neither counted nor
+  marked, so the bell can stay above "2 nye". The sub-line is `.row-sub-wrap` (a two-line `-webkit-line-clamp`), the clock in a
+  `.nowrap` span (`.row-sub-line` went; `device.activity.count*` and `count_more` went with the old badge, and `Activity.more`).
+- **The app's tile on its band** (`band::app(title, href, parent, tile)`, the sixth macro; `tracked_app_detail.html` only - the
+  only per-app page): `AppTile` as `apps_list.html` draws it, the real logo (the launcher the Vibb mark) over the catalog glyph
+  over the letter, in `.band-who` at 28 px, `aria-hidden`, not a link. The handler reads `app_logos::catalog_logos` once for the
+  tile and the Name and icon preview (a failed read is logged: glyph or letter). CSS keys the glyph's 17 px on
+  `.band-who > .app-row-tile:not(.app-row-logo) > img` - **not `:only-child`**, which matches the logo's `<img>` too because the
+  letter is a text node (QA M5) - and gives the logo a light hairline on the night. Test: `app_logos::the_pages_show_the_logos`.
+- Cache: `style.css?v=115`, `confirm.js?v=2`. To measure before a merge (not run here): the gap and the picture under a 40-letter
+  name at 320 and 390 px, light and dark, scripts on and off; the sheet over the tab bar; an autosave keeping the place;
+  pull-to-refresh refused while the sheet is open; the iPhone's photo picker from the file row in the installed app.
+
 ## Quick Actions as three tiles, Åpne for oppsett on Avansert (design 93, `docs/design/93-lock-now-quick-actions.md` §6)
+
+*Design 101 added two state lines (Pause regler's "Ingen regel nå", Slå på regel's "Neste: …") and changed Skjermtid's "Ingen grense i dag" to "{used} brukt i dag": see "The summary as mockup A".*
 
 - **The tiles** (`handlers/quick_actions.rs` builds them, `device_detail.html`'s `#quick`): `.qa-grid`, three equal
   columns - **Skjermtid** (teal), **Pause regler** and **Slå på regel** (indigo; both left out while no rule applies) -,
