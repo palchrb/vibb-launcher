@@ -815,10 +815,18 @@
             saving = true;
             end();
         }
-        doc.addEventListener("submit", saveStarted, true);
+        // Design 103 §2.6: a flip of a form whose save is still held (scroll-restore.js's busy entry, `again`) only
+        // queues it - no save starts, and the "swap" wait that will bring it is never ended by it.
+        function queued(form) {
+            var stay = win.handyStay;
+            return !!(form && stay && typeof stay.entry === "function" && stay.entry(form));
+        }
+        doc.addEventListener("submit", function (e) {
+            if (!queued(e && e.target)) saveStarted();
+        }, true);
         doc.addEventListener("change", function (e) {
             var el = e && e.target;
-            if (el && el.hasAttribute && el.hasAttribute("data-autosave")) saveStarted();
+            if (el && el.hasAttribute && el.hasAttribute("data-autosave") && !queued(el.form)) saveStarted();
         }, true);
 
         function cameBack() {

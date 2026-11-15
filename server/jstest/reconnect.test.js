@@ -1248,3 +1248,19 @@ test("a save's hold ends on handy:saved with none left; the busy bar survives a 
     win.handyReconnect.busy(-1);
     assert.strictEqual(win.view.bar, false);
 });
+
+// Design 103 §2.6 (found in the browser pass): a flip of a held form only queues it (scroll-restore's busy entry), so
+// it never ends the "swap" wait that will bring it.
+test("a flip of a held form doesn't end the swap wait", () => {
+    const win = fakeWindow();
+    const form = {};
+    win.handyStay = { entry: (f) => (f === form ? { again: true } : null) };
+    win.install();
+    win.handyReconnect.waitSwap("https://pi.example.ts.net/devices/1#restrictions");
+    win.advance(CHIP_AFTER);
+    assert.strictEqual(win.view.chip, true);
+    win.fire("doc", "change", { target: { form, hasAttribute: (n) => n === "data-autosave" } });
+    assert.strictEqual(win.view.chip, true, "still waiting");
+    win.fire("doc", "change", { target: { form: {}, hasAttribute: (n) => n === "data-autosave" } });
+    assert.strictEqual(win.view.chip, false, "a new save ends it");
+});
