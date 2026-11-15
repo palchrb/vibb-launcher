@@ -1,33 +1,38 @@
 # Design 99: Snarveier, the kid's quick panel in the shade
 
-Status: design, revision 1, 2026-11-15 (branch `design-99`). Not built. §11 lists the decisions this design needs
-before it is built.
+Status: design, **revision 2**, 2026-11-15 (branch `design-99`), decided and in build. Revision 1 was 631e74067. Revision
+2 takes the user's decisions of 2026-11-15 (§11) and every finding of the design QA, `docs/review/qa-99-design.md` (1
+High, 2 Medium, 11 Low; §13 says how each was handled). What changed: **four items in one row**, not six with a 3 x 2
+grid; Flymodus from the shade starts its route only after a Vibb window has focus (§4.1); one pure fail-closed tap check
+(§2.1); the listeners live in the process, not the service (§2.3).
 
 Approved by the user on 2026-11-14 (PLAN, "Snarveier"), after design 98 measured that the long-press panel can't work
 (§5b and §9.2 there: lock task always sets `DISABLE_SEARCH`, so the assist gesture never reaches Vibb). The user's
 words:
 
-- *"Jeg likte best ... KONSEPT A · RUTENETT"*: up to six round buttons, filled peach when on.
+- *"Jeg likte best ... KONSEPT A · RUTENETT"*: round buttons, filled peach when on.
 - *"l oss droppe tlf nr der, jeg har jo allerede det på home menyen for key contacts"*: no call or contact items.
-- *"bør vi bruke det smale utseende med bare enkle ikoner så vi ikke bruker mye plass"*, and the same evening *"ditt
-  forslag om å utvide den ved å trykke på den er bra og det vil jeg ja"*: a narrow row of six small round icons, and
-  the 3 x 2 grid with names on a tap or drag.
+- *"bør vi bruke det smale utseende med bare enkle ikoner så vi ikke bruker mye plass"*: a narrow row of small round
+  icons.
 - *"Ja det er greit mtp lommelykt. Ønsker en på lock screen og"*: the flashlight moves from Home into Snarveier in the
   same round. The lock screen's torch button stays.
+- 2026-11-15, after revision 1's measurements (§11): **four items, not six, in one row.** Folded, the row of four icons.
+  Unfolded (Android always shows the top notification unfolded, S2), the same single row with each item's name under
+  it. No grid, no "⋯" cell.
 
-The approved mockup is `https://claude.ai/artifact/14trZrh8r52SwX3Geex1aD`, section 3 ("Snarveier i varsellisten").
+The approved mockup is `https://claude.ai/artifact/14trZrh8r52SwX3Geex1aD`, section 3 ("Snarveier i varsellisten");
+revision 2 keeps its look and drops its grid.
 
 **The short version.** Snarveier is one ongoing notification. It is the notification of a small foreground service of
 its own, **colorized** in the kid's dark ground. Only a colorized foreground-service notification stays at the top
 of the shade, and only it escapes Android 16's grouping, which otherwise folds it into a collapsed "Vibb One · 3"
-bundle with the launcher's other notifications (§1, measured). Each button is a broadcast to our own receiver. A tap
-works at once and the shade stays open, except Flymodus, whose route closes the shade for under a second (design
-98 §2.2). It is hidden on Android's keyguard, and Vibb's own lock disables the shade.
-
-**What Android decides, measured (§1):** Android **unfolds the top notification every time the shade opens**, and it
-forgets a fold when the shade closes. A Snarveier with a grid therefore opens as the grid, and a tap on its header
-folds it to the narrow row until the shade closes. That is the opposite of the user's wish, and no API changes it.
-D1 asks which way to go.
+bundle with the launcher's other notifications (§1, measured). It holds **up to four round buttons in one row**: the
+kid's picks from nine items, Lommelykt, Lyd, Flymodus and Wi-Fi by default. Android always opens the top notification
+unfolded, so the kid normally sees the row with a name under each button; a tap on the header folds it to the icons
+alone until the shade closes. Each button is a broadcast to our own receiver: a tap works at once and the shade stays
+open. Flymodus On is the one exception: the tap opens a small invisible Vibb window, the shade closes as it opens, and
+the route starts only once that window has focus (§4.1). Snarveier is hidden on Android's keyguard, every tap is refused
+there, and Vibb's own lock disables the shade.
 
 ## 1. Measured (`jelly36`, Android 16 Play image, 480 x 854 at 240 dpi = the Jelly Star's 320 x 569 dp, 2026-11-15)
 
@@ -61,9 +66,13 @@ What this means:
 
 - **Top and on its own needs the colorized foreground-service notification (S4, S5).** A plain notification ends up
   inside a collapsed bundle on every managed phone.
-- **Then it is always first, so Android always opens it unfolded (S2).** "Narrow by default, unfold on a tap" can't be
-  had with a grid. Either the grid opens and a tap folds it (D1 a), or there is no grid (D1 b).
-- The width is enough for six in the folded row only at 28 dp discs (S9), and the grid with names fits (S10).
+- **Then it is always first, so Android always opens it unfolded (S2).** Revision 2 makes that the normal view: the
+  unfolded notification is the same row as the folded one, with the names under the buttons. Nothing has to be
+  narrow by default any more, so S2 costs nothing.
+- **Four fit with room to spare.** Folded, 180 dp / 4 = 45 dp a cell, so a 36 dp disc fits in a 45 x 48 dp target
+  (S7, S8; six needed 28 dp discs, S9). Unfolded, 220 dp / 4 = 55 dp a cell for the disc and its name. Revision 1's 12
+  sp names were 52-61 dp wide (S10), too wide for 55 dp, so the names have their own rule (§3.2) and the build
+  measures them (§10, test 1).
 
 ## 2. The notification
 
@@ -76,19 +85,34 @@ What this means:
   time-left notice and the rule that it never becomes a second notification).
 - **The channel** `launcher:shortcuts` (and `launcher:shortcuts.N` after §2.6): `IMPORTANCE_LOW`, no sound, no
   vibration, `setShowBadge(false)`, lockscreen visibility `VISIBILITY_SECRET`. Name "Snarveier" / "Shortcuts".
-- **The notification**: `DecoratedCustomViewStyle`, the folded view (`setCustomContentView`, §3.1) and the grid
-  (`setCustomBigContentView`, §3.2; not with D1 b), `setColorized(true)` with `kid_ground` (`#0C0C14`),
+- **The notification**: `DecoratedCustomViewStyle`, the folded row (`setCustomContentView`, §3.1) and the row with
+  names (`setCustomBigContentView`, §3.2), `setColorized(true)` with `kid_ground` (`#0C0C14`),
   `setForegroundServiceBehavior(FOREGROUND_SERVICE_IMMEDIATE)` (S6), `setOngoing(true)`, `setOnlyAlertOnce(true)`,
   `setSilent(true)`, `setShowWhen(false)`, `setVisibility(VISIBILITY_SECRET)`, `CATEGORY_STATUS`, the launcher's
   small icon, `setSubText("Snarveier")` (the header reads "Vibb One · Snarveier"), no content intent (S13: a header tap
   folds, it never opens anything).
 - **`ShortcutsReceiver`**: not exported. Each button's `PendingIntent.getBroadcast` is explicit, `FLAG_IMMUTABLE`,
-  with the item's key as the only extra and a request code per key. The receiver trusts nothing but the key: it
-  re-reads the cached policy, the kid's picks and the platform state, and acts only when the pure model (§2.3) says
-  the item is in the panel and usable now. It hands the work to the service's single background executor at once
-  (Flymodus can take a few seconds), so the receiver returns at once.
-- **Taps are refused** (logged, nothing done) while the PIN lock is LOCKED, while not device owner, or when the item
-  isn't in the model. A stale notification can't act.
+  with the item's key as the only extra and a request code per key. The receiver trusts nothing but the key. It calls
+  `goAsync()` and hands the tap to `ShortcutsRuntime`'s one app-level background executor (Q99-L5), so a tap that lands
+  while the service is stopping, or before it exists, is still handled, one at a time. There the tap is checked by
+  `shortcutTapAllowed` (below) against the current inputs, and only then acted on.
+- **`ShortcutAirplaneActivity`**: the one button that opens a window, Flymodus On (§4.1). Not exported, translucent,
+  no UI of its own, its own task (`taskAffinity=""`, `excludeFromRecents`, `noHistory`). Its `PendingIntent.getActivity`
+  is explicit and immutable like the broadcasts. It is the only `getActivity` under `shortcuts/` (a source pin).
+- **The one tap check: pure `shortcutTapAllowed`** (`ShortcutsTest`, Q99-M1). Inputs:
+  - `key`, and the model built now (`shortcutsModel`, §2.3) from `currentPolicyDecision()`, the kid's picks and the
+    platform's state;
+  - `lockKnown`: `PinLockRuntime.decided` and a time-rule snapshot read without error (`TimeRulesRuntime.snapshot`).
+    A tap that lands in a process that is just starting, before either is known, is refused;
+  - `locked`: `PinLockRuntime.mode == LOCKED`;
+  - `keyguardLocked`: `KeyguardManager.isKeyguardLocked` (Q99-L1: a Swipe keyguard shows silent notifications);
+  - for Musikk, `musicUsable`: the music app usable now (`MusicSessions.usable`, the same gate as the lock tile's
+    `lockAppUsable`: not while a rule, the used-up budget or the camera lock suspends it).
+
+  It allows the tap only when every input is known, the phone isn't LOCKED, the keyguard isn't locked, and the item is
+  in the model, usable (not dimmed) and not busy. The parent's bit is part of the model: an item whose bit is off isn't
+  in it. Anything else is refused: logged, nothing done, and the panel is redrawn from the platform's state. A stale
+  notification can't act.
 
 ### 2.2 When it is shown (pure `shortcutsShown`, `ShortcutsTest`)
 
@@ -100,12 +124,14 @@ All of these:
 - at least one item in the panel (§4.3);
 - the kid hasn't hidden it (§2.6).
 
-**Never on the lock screen:**
+**Never usable on a lock screen:**
 
-- Android's keyguard: hidden by the notification's and the channel's `VISIBILITY_SECRET` (S14). Silent notifications
-  are hidden there by Android's default too.
-- Vibb's PIN lock (the glance): the shade can't open, because `LockTaskChrome` disables the status bar while LOCKED.
-  The receiver refuses taps while LOCKED as well (§2.1).
+- Android's keyguard: hidden by the notification's and the channel's `VISIBILITY_SECRET` on a secure keyguard (S14).
+  A Swipe keyguard (`KeyguardMode.UNTOUCHED` without a PIN on the phone) may show it, so the tap check refuses every tap
+  while `isKeyguardLocked` (§2.1).
+- Vibb's PIN lock (the glance): the shade can't open, because `featuresWhileLocked` drops
+  `LOCK_TASK_FEATURE_NOTIFICATIONS` while LOCKED (revision 1 named `setStatusBarDisabled`, which lock task only
+  records, Q99-H1). The tap check refuses taps while LOCKED as well.
 - The panel itself stays posted then: removing and re-posting it at every lock would make it jump and isn't needed.
 
 **Everywhere else it is the same panel:** Home, any allowed app, the time-rule screen (§4.5), and while the kiosk is
@@ -113,31 +139,36 @@ off (Åpne for oppsett, the pause; Quick Settings show then too).
 
 ### 2.3 Keeping the icons current (pure `shortcutsModel`, glue `ShortcutsRuntime`)
 
-`shortcutsModel(policy, picks, platform)` returns the panel: the items in order, each with `{key, on, level, usable,
-busy}`. `ShortcutsRuntime.refresh()` computes it and posts only when it differs from the last posted model (equality
-on the data class), coalesced to at most one post per 250 ms. Android sheds an app's notification updates beyond about
-five a second, so a burst of radio events must never reach it raw.
+`shortcutsModel(policy, picks, platform)` returns the panel: the items in order, at most four, each with `{key, on,
+level, usable, busy}`. `ShortcutsRuntime.refresh()` computes it and posts only when it differs from the last posted
+model (equality on the data class). **At most one post a second** (Q99-L7): Android's limit of about five updates a
+second is per package and shared with the anchor's and the VPN's notifications, so a burst of radio events must never
+reach it raw. The first change after a quiet second posts at once; the next waits for the rest of the second.
 
 `refresh()` runs on:
 
 - `apply()` (a new policy, the bit, the parent's restrictions), the kid's picks (§4.2), locale changes;
-- the platform's own signals, registered by `ShortcutsService` while it runs: the torch (`Torch.addListener`),
-  `ACTION_AIRPLANE_MODE_CHANGED`, `RINGER_MODE_CHANGED_ACTION` and `ACTION_INTERRUPTION_FILTER_CHANGED`,
-  `WIFI_STATE_CHANGED_ACTION`, `BluetoothAdapter.ACTION_STATE_CHANGED`, a `ContentObserver` on `SCREEN_BRIGHTNESS`, the
-  kid's Mobildata switch (`MobileNetworkRuntime`), the time request's state (`TimeRequests`), the music session
-  (`MusicMedia`), `AirplaneRoute.busy`;
+- the platform's own signals, registered **once per process by `ShortcutsRuntime.init` from `Application.initRest`**
+  (Q99-L3; the HOME process lives anyway), not by the service, so a panel with nothing to show still hears the change
+  that brings it back: the torch (`Torch.addListener`), `ACTION_AIRPLANE_MODE_CHANGED`, `RINGER_MODE_CHANGED_ACTION`
+  and `ACTION_INTERRUPTION_FILTER_CHANGED`, `WIFI_STATE_CHANGED_ACTION`, `BluetoothAdapter.ACTION_STATE_CHANGED`, a
+  `ContentObserver` on `SCREEN_BRIGHTNESS`, `ACTION_NOTIFICATION_CHANNEL_BLOCK_STATE_CHANGED` (§2.6), the kid's
+  Mobildata switch, the time request's state, `AirplaneRuntime`'s listener (the route's busy state, the role);
+- Vibb music's session: while the panel holds Musikk, `ShortcutsRuntime` is a `MusicSessions` listener (Vibb music
+  only), so the sessions are watched although neither Home nor the lock shows a music surface (Q99-L3);
 - each tap's end (a refused write flips back: the disc follows the platform's state, never the tap).
 
 ### 2.4 The service's life
 
-- Started (`startForegroundService`) by `ShortcutsRuntime.refresh()` when §2.2 says shown and it isn't running:
-  from `Application.initRest` (process start, boot), `apply()`, the kid's picks.
-- Stopped (`stopForeground(STOP_FOREGROUND_REMOVE)`, `stopSelf`) when §2.2 says not shown: the bit off, no item, not
-  device owner, hidden by the kid.
-- `START_STICKY`. After a process death, `initRest` decides again.
-- The `startForegroundService` / `stopService` race that `VpnForeground` guards against (a stop landing before
-  `startForeground`) gets the same guard: one owner (`ShortcutsRuntime`), the stop only after `startForeground` has
-  run.
+- Started (`startForegroundService`) by `ShortcutsRuntime.refresh()` when §2.2 says shown and no instance runs: from
+  `Application.initRest` (process start, boot), `apply()`, the kid's picks, and the signals above.
+- **One owner, no outside stop** (Q99-L4). `onStartCommand` always calls `startForeground` first, with the model
+  `ShortcutsRuntime` holds now, and then asks it again: not shown, and the service calls
+  `stopForeground(STOP_FOREGROUND_REMOVE)` and `stopSelf` itself. A running instance is told of a new model on the main
+  thread; when the model says not shown (the bit off, no item, not device owner, hidden by the kid), the instance stops
+  itself the same way. Nothing ever calls `stopService`, so the `startForegroundService` / stop race that `VpnForeground`
+  guards against can't happen.
+- `START_NOT_STICKY`. After a process death, `initRest` decides again.
 
 ### 2.5 The notification rule, badges, kiosk
 
@@ -145,8 +176,9 @@ five a second, so a burst of radio events must never reach it raw.
   Snarveier is ongoing and non-clearable anyway. Nothing changes there.
 - **Badges** ignore ongoing notifications and our own package (`badgeCounts`). Nothing changes there.
 - **Lock task**: the shade needs `LOCK_TASK_FEATURE_NOTIFICATIONS`, which is always in `DEFAULT_LOCK_TASK_FEATURES`.
-  No button opens an activity, so nothing new is pinned. The one exception is Flymodus's route, which opens Settings'
-  voice activity inside design 98's `routePin` window, through `LockTaskChrome` only (design 98 §2.2).
+  The broadcast buttons open no activity. Flymodus On opens our own `ShortcutAirplaneActivity` (our package is always
+  on the lock-task list), and its route opens Settings' voice activity inside design 98's `routePin` window, through
+  `LockTaskChrome` only (design 98 §2.2).
 - **The shade's "Manage" and the long-press menu's gear** open Settings, which lock task refuses (S16). Nothing new.
 
 ### 2.6 The kid hides Snarveier (S16)
@@ -166,32 +198,45 @@ choice:
 
 The ground is the colorized `kid_ground`. Off: a disc of white at 12 % with the glyph in white. On: a filled
 `kid_accent` peach disc with the glyph in `kid_ground`, as Home's torch tile today. No yellow, no animation (the
-launcher-look rule). Glyphs are Material Symbols (Apache-2.0) from `scripts/material-symbols.sh`, as the torch's are.
+launcher-look rule). Glyphs are Material Symbols (Apache-2.0) from `scripts/material-symbols.sh`, as the torch's are
+(`shortcut_glyph_<key>.xml`).
 
-### 3.1 Folded: one row (the `RemoteViews` `shortcuts_row.xml`)
+Both views are **four quarter cells** in one horizontal `LinearLayout`, each `layout_weight` 1. The items fill the
+cells from the left in the kid's order; with fewer than four, the cells on the right stay empty (invisible, not gone),
+so a button never moves when another leaves. The whole cell is the tap target (`setOnClickPendingIntent` on the cell).
 
-- One horizontal `LinearLayout`, one cell per item (1-6), each cell `layout_weight` 1 and the content's full 48 dp
-  height. The whole cell is the tap target (`setOnClickPendingIntent` on the cell), so with six it is 30 x 48 dp (S9).
-- The disc is **28 dp**, the glyph 16 dp. With fewer than six items the cells widen and the discs stay 28 dp,
-  centred in their cells.
-- Content descriptions: "Lommelykt, på" / "Flashlight, on" and so on, "Lysstyrke, middels" for the level.
-- 68 dp in all (S8).
+### 3.1 Folded: the icons (`shortcuts_row.xml`)
 
-### 3.2 Unfolded: the 3 x 2 grid (`shortcuts_grid.xml`; not with D1 b)
+- Cells of 45 x 48 dp at 320 dp (the content's full 48 dp height, S8). The disc is **36 dp**, the glyph 20 dp,
+  centred.
+- Content descriptions: "Lommelykt, på" / "Flashlight, on" and so on, "Lysstyrke, middels" for the level, and
+  "ikke tilgjengelig nå" / "not available now" for a dimmed item (Q99-L10).
+- About 68-76 dp in all (S8).
 
-- Two rows of three columns (73 dp each at 320 dp), filled in the kid's order, left to right then down. One to three
-  items make one row.
-- A 40 dp disc with a 22 dp glyph, then the name, 12 sp, one line, `autoSizeTextType="uniform"` down to 10 sp (for
-  large font sizes: "Lommelykt" is 61 dp at 1.0).
-- **No "På/Av" line by default** (D6): the peach fill says it and TalkBack reads the state. The grid is then 195 dp in
-  all, not 234 dp (S10).
-- Names in white, `kid_core` for a dimmed item's name.
+### 3.2 Unfolded: the icons with names (`shortcuts_names.xml`)
+
+- The same row, now 55 dp a cell at 320 dp. The same 36 dp disc and 20 dp glyph, then the item's name under it.
+- **The names' rule.** One line each, centred, white (`kid_core` for a dimmed item's). All four names get **one common
+  size**: the largest from 11 sp down to 9 sp at which every shown name fits its cell less 2 dp on each side, measured
+  with the names' own font at post time (`TextPaint.measureText`; pure `shortcutNameSp`, `ShortcutsTest`). Should even
+  9 sp not fit (only at the largest font sizes), the names stay at 9 sp and a name too long is cut with an ellipsis;
+  the content description still has the whole name. One common size keeps the row calm: no name is smaller than its
+  neighbour.
+- **Short names in the panel.** The panel's names are their own strings (`shortcut_name_*`), the same words as Kid
+  Settings' rows where those fit, shorter where not: nb Lommelykt, Lyd, Flymodus, Wi-Fi, Bluetooth, Mobildata,
+  Lysstyrke, Mer tid, Musikk; en Flashlight, Sound, Airplane, Wi-Fi, Bluetooth, Data, Brightness, More time, Music
+  ("Airplane mode" and "Mobile data" are two words, about 66 dp at 9 sp). The content descriptions and the picker use
+  the full names.
+- **No "På/Av" line** (D6): the peach fill says it and TalkBack reads the state.
+- Mer tid's name reads "Spurt" / "Asked" while a request waits.
 
 ### 3.3 Busy and not usable
 
 - **Busy** (Flymodus's route or its Off, §4.1): the disc at 50 % alpha, taps ignored until it ends.
-- **Not usable now** (a temporary state, the table in §4.1): the disc at 40 % alpha, the tap ignored, nothing else.
-  No toast (D10). Kid Settings' row says why.
+- **Not usable now** (a temporary state, the table in §4.1): the disc at 40 % alpha, the tap does nothing (D10). The
+  content description says "ikke tilgjengelig nå" (Q99-L10). Kid Settings' row says why where there is a row; under a
+  time rule Kid Settings can't be opened, and Mer tid and Musikk have no row there, so then nothing on screen says why.
+  That is the cost of D10's calm.
 - **The parent turned an item's switch off**: the item leaves the panel, and the others close up. It stays in the
   kid's picks and comes back when the switch does.
 
@@ -205,26 +250,41 @@ same switch that shows its row in Kid Settings, so "allowed" means one thing in 
 | Key | Name (nb / en) | On (peach) means | A tap does | The parent's gate | Not usable now (dimmed) when | Absent when | Cost |
 |---|---|---|---|---|---|---|---|
 | `torch` | Lommelykt / Flashlight | the torch is lit | `Torch.toggle` (design 41: no permission, 10-min auto-off, off when a call begins) | none (as Home's tile today) | - | no flash unit (the emulator) | XS |
-| `airplane` | Flymodus / Airplane mode | airplane mode is on | On: `AirplaneRoute.turnOn` (design 98 §2.2). Off: `AirplaneRoute.turnOff` | bit 64 and the assistant role | the route's refusals: emergency, cooldown; the parent's "Blokker flymodus" | bit 64 off or role not held, **unless airplane mode is on** (then it shows on, and a tap turns it off: design 98's Off-only rule) | S |
-| `sound` | Lyd / Sound | the ringer rings (`RINGER_MODE_NORMAL`) | Lyd <-> Lydløs (vibrerer), `QuickControls.setSound` (design 18: never Silent, never a DND) | bit 8 | Do Not Disturb is on (design 18's read-only case) | no vibrator | XS |
+| `sound` | Lyd / Sound | the ringer rings (`RINGER_MODE_NORMAL`) | Lyd <-> Lydløs (vibrerer), `QuickControls.setSound` (design 18: never Silent, never a DND) | bit 8 | Do Not Disturb is on (design 18's read-only case, `RuleSilence` included) | no vibrator (`soundState` null) | XS |
+| `airplane` | Flymodus / Airplane mode | airplane mode is on | On: `ShortcutAirplaneActivity`, then `AirplaneRoute.turnOn` (below). Off: `AirplaneRoute.turnOff`, a broadcast | bit 64 and the assistant role (`airplaneRow`) | the row's dimmed states: the parent's "Blokker flymodus", the emergency refusal, the cool-down | `airplaneRow` HIDDEN: bit 64 off or the role not held, **unless airplane mode is on** (then it shows on, and a tap turns it off: design 98's Off-only rule) | S |
 | `wifi` | Wi-Fi | Wi-Fi is on | `QuickControls.setWifiEnabled` | bit 1 | airplane mode is on (`setWifiEnabled` is refused then, design 98 §1.1) | - | XS |
 | `bluetooth` | Bluetooth | Bluetooth is on | `QuickControls.setBluetoothEnabled` | bit 2 | - | no adapter | XS |
-| `mobile_data` | Mobildata / Mobile data | apps may use mobile data | the kid's switch, `MobileNetworkRuntime.setKidOff` (design 97 §4.3) | bit 32 | `kidMobileRow` says set by the parent (Bare Vibb, Ingen data, abroad), or airplane mode is on | - | S |
+| `mobile_data` | Mobildata / Mobile data (panel: Data) | apps may use mobile data | the kid's switch, `MobileNetworkRuntime.setKidOff` (design 97 §4.3) | bit 32 | `kidMobileRow` is PARENT or PHONE_OFF (Bare Vibb, Ingen data, abroad, Android's own data off), or airplane mode is on | - | S |
 | `brightness` | Lysstyrke / Brightness | never peach (a level, not on/off) | the next of three steps, lav -> middels -> høy -> lav, `QuickControls.setBrightness` (manual mode, as the slider); the glyph shows the step (D5) | bit 4 | - | - | S |
-| `more_time` | Mer tid / More time | never peach | "Be om mer tid": the same path as the anchor's action (`TimeAskReceiver`'s `TimeRequests.ask`, then a sync) | none: shown exactly when the anchor's notice offers the action (a budget applies, requests are on, none waiting) | a request is waiting ("Spurt" / "Asked" as its name) | no budget today | S |
-| `music` | Musikk / Music | the music app is playing | play / pause of the music app's session (`MusicMedia`, as the glance tile) | none: the music app allowed | no session | the music app not installed | S |
+| `more_time` | Mer tid / More time | never peach | "Be om mer tid": the same path as the anchor's action (`TimeAskReceiver`'s `TimeRequests.ask`, then a sync) | none: shown exactly when the anchor's notice has its time part (`timeLeftNotice`'s `ask` is Action or Asked) | a request is waiting ("Spurt" / "Asked" as its name) | no budget today, or the pause or override runs | S |
+| `music` | Musikk / Music | Vibb music is playing | play / pause of **Vibb music's** session (`MusicSessions.playPause`, as Home's card; never another app's) | none: the music app installed | no session, or the music app isn't usable now (`MusicSessions.usable`: a rule, the used-up budget, the camera lock) | the music app not installed | S |
 
 The kid's Bluetooth item turns the radio on and off. Connecting headphones stays in Kid Settings › Bluetooth: an item
 can only toggle, it opens nothing.
 
-**Flymodus from the shade:**
+**Musikk under a rule** (Q99-M1). `apply()` pauses a suspended app's playing session before it suspends it, and the
+paused session stays registered, so "a session exists" says nothing. The gate is the music app's own usability, read at
+the tap: a rule that suspends Vibb music dims Musikk, and the tap check refuses a play then. A pause always goes (as
+`MusicSessions.playPause`), but a suspended app is paused already.
 
-- The route needs no activity of ours: the assistant's session starts Settings' voice activity itself. It worked with
-  the screen off and at the keyguard in design 98 (M5, M6).
-- It closes the shade: the route disables the status bar for its window (under a second, design 98 §2.2), which
-  collapses an open shade. That is acceptable, and the item shows busy until the window ends.
-- It is the first time the route runs while a third-party app is in front. The build checks that on the emulator
-  (§10 test 5).
+**Flymodus from the shade** (Q99-H1 and its addendum, design 98 §2.2):
+
+- Design 98's window drops `LOCK_TASK_FEATURE_NOTIFICATIONS`, and SystemUI then animates an open shade closed (~300 ms).
+  A touch on the shade during that animation stops it, and the shade stays open for the window with its notifications
+  clickable (`docs/testing/emulator.md` §6am, "Addendum"). From the shade the kid's finger is in the shade, so the route
+  must not start from the tap itself.
+- **So Flymodus On is not a broadcast.** Its button is an explicit, immutable `PendingIntent.getActivity` for
+  `ShortcutAirplaneActivity`. Android collapses the shade when a notification starts an activity, and the activity's
+  window only gets focus once the shade has let it go.
+- `ShortcutAirplaneActivity.onCreate` runs the tap check (§2.1); refused, it finishes. In
+  `onWindowFocusChanged(true)`, the first time, it hands `AirplaneRoute.turnOn` to the shortcuts executor; when the
+  route returns, it finishes. No focus within 3 s (the kid held the shade open): it finishes without the route.
+  Focus means the shade is closed, so the window opens with no shade to touch.
+- Its own task, so finishing it returns to whatever was in front (Home, an app, the time-rule screen), never to Home
+  by accident.
+- Off needs no Settings and no window: it stays a broadcast, and the shade stays open.
+- An item drawn as Off whose tap finds airplane mode on (or the reverse) does what the current state needs, or nothing:
+  the activity turns it off; a broadcast for Off with airplane mode already off is refused as stale.
 
 **Considered and left out:**
 
@@ -243,22 +303,25 @@ can only toggle, it opens nothing.
 
 ### 4.2 Picking and ordering: Kid Settings › Snarveier
 
-- **The row.** Kid Settings gets a row "Snarveier" with the picks as its sub-line ("Lommelykt, Flymodus, Lyd …") and a
-  chevron, in its own card at the top ("I varsellisten" / "In the notifications"). It shows while bit 128 is on and
-  there is at least one candidate. It is never PIN-gated: it changes no rule. Hidden (§2.6): the sub-line reads
+- **The row.** Kid Settings gets a row "Snarveier" with the picks as its sub-line ("Lommelykt, Lyd, Flymodus, Wi-Fi")
+  and a chevron, in its own card at the top ("I varsellisten" / "In the notifications"). It shows while bit 128 is on
+  and there is at least one candidate. It is never PIN-gated: it changes no rule. Hidden (§2.6): the sub-line reads
   "Skjult i varsellisten".
 - **The page** (`ui/kidsettings/ShortcutsPickerActivity`, the pattern of `KidSoundPickerActivity`, in Home's task):
-  - the title "Snarveier", the line "Velg opptil 6. De vises øverst når du drar ned fra toppen av skjermen." / "Choose
-    up to 6. They show at the top when you pull down from the top of the screen.";
-  - the count "4 av 6 valgt" / "4 of 6 chosen";
-  - one row per candidate the parent allows, as in §4.1, with its glyph, its name, a check box, and for the chosen ones
-    two 48 dp buttons "Flytt opp" / "Flytt ned" (glyphs, with content descriptions). Buttons, not dragging, so it
-    works the same with gesture and 3-button navigation and with TalkBack (the mockup's note);
+  - the title "Snarveier", the line "Velg opptil 4. De vises øverst når du drar ned fra toppen av skjermen." / "Choose
+    up to 4. They show at the top when you pull down from the top of the screen.";
+  - the count "3 av 4 valgt" / "3 of 4 chosen";
+  - one row per candidate the parent allows, as in §4.1, with its glyph, its full name, a check box, and for the
+    chosen ones two 48 dp buttons "Flytt opp" / "Flytt ned" (glyphs, with content descriptions). Buttons, not
+    dragging, so it works the same with gesture and 3-button navigation and with TalkBack (the mockup's note);
   - the chosen ones first, in their order; the rest under them, at 55 % opacity until checked;
-  - a seventh check is refused with the count line in `kid_accent` for a moment ("Du har valgt 6. Fjern en først.");
-  - an item that is allowed but not usable now (no budget today for Mer tid, no music session) is listed and can be
+  - a fifth check is refused with the count line in `kid_accent` for a moment ("Du har valgt 4. Fjern en først." /
+    "You have chosen 4. Remove one first.");
+  - an item that is allowed but not usable now (no budget today for Mer tid, no music playing) is listed and can be
     chosen. Its sub-line says when it shows ("Vises når du har skjermtid i dag" / "Shows on days with screen time");
-  - with the panel hidden (§2.6), the button "Vis i varsellisten igjen" at the top.
+  - with the panel hidden (§2.6), the button "Vis i varsellisten igjen" at the top;
+  - the list's last row clears the navigation bar: the page pads by `KidInsets`' bar inset, in gesture and 3-button
+    navigation alike (Q99-L11).
 - **Storage.** The picks are the launcher's alone: an ordered list of keys in CE prefs (`shortcuts_picks`).
   `null` means "the default" (§4.3) and is what a new phone has. The first edit writes the list. Unknown keys from a
   later build are kept and skipped. Nothing is sent to the server but the report (§6).
@@ -266,11 +329,14 @@ can only toggle, it opens nothing.
 ### 4.3 The panel's items, and the default for a new phone (pure, `ShortcutsTest`)
 
 - The panel = the picks (or the default order when `null`), keeping only the items **offered** now (§4.1's gate and
-  "absent" columns), the first six. A dimmed item keeps its place.
-- **The default order** (D4): `torch`, `sound`, `airplane`, `wifi`, `bluetooth`, `mobile_data`, `brightness`,
-  `more_time`, `music`. With the default untouched, the panel is the first six of these that are offered. On a new
+  "absent" columns), the first four. A dimmed item keeps its place.
+- **The default order** (D4): `torch`, `sound`, `airplane`, `wifi`, then `bluetooth`, `mobile_data`, `brightness`,
+  `more_time`, `music`. With the default untouched, the panel is the first four of these that are offered. On a new
   phone with the default mask (1, 2, 4, 8, 32, 64, 128) and the assistant step done, that is Lommelykt, Lyd,
-  Flymodus, Wi-Fi, Bluetooth, Mobildata. A phone without a flash gets Lysstyrke in sixth place.
+  Flymodus, Wi-Fi. A phone without a flash gets Bluetooth in fourth place.
+- **The default follows what is offered** (Q99-L9): before the assistant step, the default panel is Lommelykt, Lyd,
+  Wi-Fi, Bluetooth; when the role comes, Flymodus takes third place and Bluetooth leaves. That is what the default means;
+  once the kid has picked, the panel only changes with the parent's switches.
 - Once the kid has picked, nothing is added by itself: a new item the parent allows shows in the picker, not in the
   panel.
 
@@ -285,13 +351,15 @@ Snarveier adds no restriction and no new way past one:
 - The pause and the override change nothing in the panel.
 - Bit 128 off removes the panel at the next sync. Every item's own bit removes that item.
 
-### 4.5 Under a time rule
+### 4.5 Under a time rule (D9)
 
 - The shade stays reachable on the time-rule screen (it is in Home's locked task, and the notifications feature is
-  on). The panel is the same there (D9).
-- No item weakens a rule: rules are enforced on the phone, offline. Flymodus on is always allowed under a rule (design
-  98 D8). Mer tid is the time request the rule screen offers already. Musikk has no session while the music app is
-  outside the rule's usable apps, so it is dimmed then.
+  on). The panel is the same there.
+- **Said plainly:** this makes the device switches - Wi-Fi, Bluetooth, Lyd, Lysstyrke, Mobildata and Flymodus -
+  reachable under a time rule, where Kid Settings isn't today. None of them weakens a rule: rules are enforced on the
+  phone, offline, through suspended apps and the lock, and no switch touches either. Flymodus on is always allowed under
+  a rule (design 98 D8). Mer tid is the time request the rule screen offers already. Musikk is gated by the music app's
+  usability (§4.1), so a rule that suspends it dims it.
 - Kid Settings stays unreachable under a rule, as today, so the picks can't be changed then.
 
 ## 5. The parent's side
@@ -305,7 +373,8 @@ Snarveier adds no restriction and no new way past one:
 - **New phones:** in `DEFAULT_QUICK_CONTROLS` (D2).
 - **Existing phones:** migration `0148_shortcuts.sql` sets bit 128 on every phone (`quick_controls_mask | 128`), D2.
   Home's flashlight tile goes in the same launcher (§7), so a phone left without the bit would lose its flashlight
-  outside the lock screen. An older launcher ignores the bit. (Recheck the number at merge.)
+  outside the lock screen. An older launcher ignores the bit. (0148 is the next free number on `main` today; recheck
+  at merge.)
 
 ### 5.2 The PWA: the Home Screen page's quick controls (`/devices/{id}/home#quick-controls`)
 
@@ -315,17 +384,18 @@ Snarveier adds no restriction and no new way past one:
 - **The mask, as design 98's Q98-M9:** without `shortcuts_row`, `update_policy` keeps bit 128, as it keeps 32 and
   64: `kept_bits` gains `QUICK_CONTROL_SHORTCUTS` when the row is absent. With the row, the bit comes from the switch.
   A server test pins both, for `section=quick` and the whole form.
-- **A sub-line under the label, only when it says something** (from the report, §6):
-  - shown: "Emma har valgt: Lommelykt, Flymodus, Lyd, Wi-Fi" / "Emma chose: Flashlight, Airplane mode, Sound, Wi-Fi"
+- **A sub-line under the label, only when it says something** (from the report, §6). The kid is named, never given a
+  pronoun (Q99-L2):
+  - shown: "Emma har valgt: Lommelykt, Lyd, Flymodus, Wi-Fi" / "Emma chose: Flashlight, Sound, Airplane mode, Wi-Fi"
     (the item names in the PWA's language, from the contract's keys);
-  - hidden by the kid: "Emma har skjult Snarveier i varsellisten. Hun kan vise dem igjen under Innstillinger ›
-    Snarveier." / "Emma has hidden the shortcuts in the notifications. She can show them again under Settings ›
+  - hidden by the kid: "Emma har skjult Snarveier i varsellisten. Emma kan vise dem igjen under Innstillinger ›
+    Snarveier." / "Emma has hidden the shortcuts in the notifications. Emma can show them again under Settings ›
     Shortcuts.";
   - the bit on but nothing offered: "Ingen av bryterne under er slått på." / "None of the switches below is on."
-- **The ⓘ** gets: "Snarveier er et fast varsel øverst i varsellisten med inntil seks knapper. Emma velger dem selv
-  blant bryterne her og lommelykten. Det vises aldri på låseskjermen." / "Shortcuts is a fixed notification at the
-  top of the notifications with up to six buttons. Emma picks them herself from the switches here and the
-  flashlight. It never shows on the lock screen."
+- **The ⓘ** gets: "Snarveier er et fast varsel øverst i varsellisten med inntil fire knapper. Emma velger dem blant
+  bryterne her og lommelykten. Det vises aldri på låseskjermen." / "Shortcuts is a fixed notification at the top of the
+  notifications with up to four buttons. Emma picks them from the switches here and the flashlight. It never shows on
+  the lock screen."
 - **The footer** (`device.home.quick_footer`) gains: "Bryterne gjelder både Innstillinger og Snarveier." / "The
   switches apply to both Settings and Shortcuts."
 - A save autosaves on `#quick-controls` through the existing staying-POST path (`scroll-restore.js`, `X-Handy-Stay`),
@@ -333,7 +403,7 @@ Snarveier adds no restriction and no new way past one:
 
 ### 5.3 About This Phone
 
-One line in the settings list: "Snarveier: Lommelykt, Flymodus, Lyd" / "Shortcuts: Flashlight, Airplane mode, Sound",
+One line in the settings list: "Snarveier: Lommelykt, Lyd, Flymodus" / "Shortcuts: Flashlight, Sound, Airplane mode",
 or "Skjult av Emma" / "Hidden by Emma", or "Av" / "Off". Nothing on the summary's state lines.
 
 ## 6. The report and the contract
@@ -345,7 +415,7 @@ or "Skjult av Emma" / "Hidden by Emma", or "Av" / "Off". Nothing on the summary'
 ```
 
 - `shown`: the panel is posted now (§2.2). `hidden`: the kid turned the channel off (§2.6). `items`: the panel's keys
-  in order, dimmed ones included, at most six.
+  in order, dimmed ones included, at most four.
 - It changes rarely, so it stays out of `status_heartbeat_fields`; a change changes the report's hash and a full
   report goes (design 95-T2).
 - The launcher reports the capability `shortcuts_v1`.
@@ -356,17 +426,18 @@ or "Skjult av Emma" / "Hidden by Emma", or "Av" / "Off". Nothing on the summary'
 
 Byte-identical in `launcher/app/src/test/resources/`.
 
-- `capability` (`shortcuts_v1`), `bit` (128);
-- `items`: every key with its gating bit (`null` for `torch`, `more_time`, `music`) and its names in nb and en;
+- `capability` (`shortcuts_v1`), `bit` (128), `max_items` (4);
+- `items`: every key with its gating bit (`null` for `torch`, `more_time`, `music`) and its names in nb and en (the
+  full names, as the PWA and the picker show them);
 - `defaults`: the default order (§4.3);
-- `report`: the exact object above, and a hidden one;
-- `clean`: the server's cleaning - unknown keys dropped, duplicates dropped, cut to six, `shown` false when `hidden`
-  is true.
+- `report`: the exact object above, and `report_hidden`, a hidden one;
+- `clean`: the server's cleaning - unknown keys dropped, duplicates dropped, cut to four, `shown` false when `hidden`
+  is true, a non-object dropped.
 
 The launcher's `ShortcutsTest` checks its key enum, gating bits and default order against `items` and `defaults`,
 encodes `report` exactly and compares the copies. The server's `tests::shortcuts` posts `report`, checks what is
 stored, runs `clean`, renders §5.2's sub-lines from it and compares the copies. The panel's own rules (§2.2, §4.3, the
-table's dimmed cases) are the launcher's alone and are tested there.
+table's dimmed cases, `shortcutTapAllowed`) are the launcher's alone and are tested there.
 
 The root `CLAUDE.md` gets the contract paragraph, and `launcher.yml` and `server-ci.yml` get the file in their path
 lists (both copies). No policy key changes: bit 128 rides in the existing `quick_controls_mask`, already pinned by
@@ -388,118 +459,137 @@ Design 41 put two things on Home: the tile and its listener. Both go. Nothing el
 - `ui/home/HomeGridAdapter.kt`: both `when` branches.
 - `ui/HomeActivity.kt`: `torchListener`, its `addListener`/`removeListener`, and `Torch.state` in `renderGrid`.
 - Tests: `HomeModelTest` and `HomeRound7Test` lose the tile's cases. `TorchRulesTest`'s pinned callers of
-  `Torch.toggle` become the lock's button and `ShortcutsReceiver`'s torch item. `BootCoverManifestTest` and
+  `Torch.toggle` become the lock's button and the shortcuts' torch item. `BootCoverManifestTest` and
   `LockGlanceGuardTest` only need a check that they don't name the tile.
 - **Stays:** `torch/Torch.kt`, `TorchRules` (the 10-minute auto-off, off at a call), `TorchOffReceiver`, the lock
-  glance's button (`lock/GlancePanel.kt`, design 41 §1.3), the strings `torch_title`/`torch_state_on`/`_off` (now
-  Snarveier's), the glyphs, and the colour `kid_torch_tile` (`kid_lock_alarm_row` uses it).
-- Home gets one tile fewer. `docs/testing/emulator.md` §6 check 12 (Home's fold, 11 tiles in 3 columns) counts no flashlight tile, since the
-  emulator has no flash; its numbers stand, and the build checks the fold on the Jelly Star's count.
+  glance's button (`lock/GlancePanel.kt`, design 41 §1.3), the strings `torch_title`/`torch_state_on`/`_off`, the
+  glyphs, and the colour `kid_torch_tile` (`kid_lock_alarm_row` uses it).
+- Home gets one tile fewer. `docs/testing/emulator.md` §6 check 12 (Home's fold, 11 tiles in 3 columns) counts no
+  flashlight tile, since the emulator has no flash; its numbers stand, and the build checks the fold on the Jelly
+  Star's count.
 - `docs/notes/launcher/home-and-photos.md`'s "The flashlight on Home" section becomes "The flashlight" (Snarveier and
   the lock).
 
 ## 8. Security and privacy
 
 - Nothing new is reachable. Every button is a broadcast to our own non-exported receiver with an immutable intent,
-  and the receiver re-checks the policy, the lock and the item (§2.1). No button opens an activity. Flymodus's route
-  is design 98's, with its window.
-- Nothing is read from other apps. The panel shows only Vibb's own words and the platform's states.
+  or, for Flymodus On, our own non-exported activity, and every tap passes the one fail-closed check (§2.1). No
+  button opens another app. Flymodus's route is design 98's, with its window, started only once the shade is closed.
+- Nothing is read from other apps. The panel shows only Vibb's own words and the platform's states; Musikk drives
+  only Vibb music's session.
 - The report carries only item keys and two flags.
-- Snarveier is never on a lock screen (§2.2).
-- The kid can hide the panel (§2.6), which removes only her own buttons.
+- Snarveier is never usable on a lock screen (§2.2).
+- The kid can hide the panel (§2.6), which removes only the kid's own buttons.
 
 ## 9. Risks
 
 - **Android's unfolding (S2) is AOSP SystemUI's behaviour.** The Jelly Star's SystemUI may differ: an OEM may not
-  unfold the first notification, or may limit custom views differently. Device check (§10 test 8).
+  unfold the first notification, or may limit custom views differently. With one row in both views the cost is only
+  the names. Device check (§10 test 8).
 - **Grouping (S4) is new in Android 16** and could change in a later Android. The colorized foreground service is
   what escapes it today; if a later Android bundles that too, the panel would hide behind a tap. The report's `shown`
   and a device check on each Android update catch it.
-- **28 dp discs in 30 dp cells** (S9) are small for a child's finger in the folded row. The grid has 73 x 64 dp
-  targets. With D1 a the grid is what opens.
-- **Two foreground services in one process** (the anchor and Snarveier). The second costs a notification and a few
-  receivers, no wake lock and no work while idle.
+- **Three foreground services in one process** (the anchor, the VPN's `KidVpnService` while it holds its foreground
+  state, and Snarveier; Q99-L6). The third costs a notification, no receivers of its own (they are the process's,
+  §2.3), no wake lock and no work while idle.
 - **The long-press menu can turn off other Vibb One channels too** (S16), Meldinger and missed calls among them. That
-  is true today and not part of this design (D11).
+  is true today and not part of this design (D11, a separate item).
 
 ## 10. Tests
 
 Unit (`ShortcutsTest`, `ShortcutsPickerTest`, the changed Home and torch tests):
 
 - `shortcutsShown`: each condition of §2.2, the corrupt cache, not device owner, hidden.
-- `shortcutsModel`: the default order and the first six offered; picks kept and the unoffered skipped; each table row
-  of §4.1 (gates, dimmed cases, absent cases); Flymodus's Off-only case; the airplane-mode effects on Wi-Fi and
-  Mobildata; Mer tid's states; no automatic additions after a pick; equality, so an unchanged model posts nothing.
-- The receiver's refusals: LOCKED, unknown key, an item not in the model.
-- The picker: at most six, up and down at the ends, the order written, `null` until the first edit.
+- `shortcutsModel`: the default order and the first four offered; picks kept and the unoffered skipped; each table
+  row of §4.1 (gates, dimmed cases, absent cases); Flymodus's Off-only case; the airplane-mode effects on Wi-Fi and
+  Mobildata; Mer tid's states; Musikk's usability gate; the default following the role; no automatic additions after
+  a pick; equality, so an unchanged model posts nothing.
+- `shortcutTapAllowed`: lock state or time-rule snapshot unknown, LOCKED, the keyguard, an unknown key, an item not
+  in the model, dimmed, busy, Musikk with the music app unusable; the one allowed case per item.
+- `shortcutNameSp`: the common size, the 9 sp floor.
+- The coalescing: a burst posts once now and once a second later, never more.
+- The picker: at most four, up and down at the ends, the order written, `null` until the first edit.
 - The contract (§6.2) on both sides; the server's mask keep for `section=quick` and the whole form; the sub-lines.
-- Source pins: no `RemoteViews` click opens an activity (`getActivity` is never used under `shortcuts/`); the channel
-  is created with `VISIBILITY_SECRET`; `setColorized` and `FOREGROUND_SERVICE_IMMEDIATE` are set.
+- Source pins: the only `getActivity` under `shortcuts/` is `ShortcutAirplaneActivity`'s; the channel is created with
+  `VISIBILITY_SECRET`; `setColorized` and `FOREGROUND_SERVICE_IMMEDIATE` are set; nothing calls `stopService` on
+  `ShortcutsService`.
 
 Emulator (`jelly36` restored clean, `wm density` stays 240; a new section in `docs/testing/emulator.md`):
 
-1. The panel at the top under lock task with a message and the launcher's own notifications; not bundled; the grid
-   on the first pull (D1 a), the fold by a header tap, unfolded again on the next pull.
+1. The panel at the top under lock task, with three Meldinger threads, a missed call and an ongoing call (Q99-L8): not
+   bundled, and where the call and the panel sit. Unfolded with four names on the first pull; the names' measured
+   size and widths, nb and en; folded by a header tap; unfolded again on the next pull. In **gesture and 3-button
+   navigation** (Q99-L11).
 2. Each emulator-testable item's tap with the shade open: Lyd, Wi-Fi, Bluetooth, Mobildata, Lysstyrke, Mer tid,
-   Musikk; the disc follows the platform's state; a refused change flips back.
+   Musikk; the disc follows the platform's state; a refused change flips back. The same under a time rule.
 3. The status bar icon at LOW (S17).
-4. Android's keyguard with a PIN: no panel. Vibb's PIN lock: the shade doesn't open.
-5. Flymodus from the shade with a third-party app in front: the route runs, the shade closes, the item turns peach;
-   Off from the shade.
+4. Android's keyguard with a PIN: no panel; with Swipe: taps refused. Vibb's PIN lock: the shade doesn't open.
+5. Flymodus from the shade with a third-party app in front: the shade closes, the route starts only after the
+   activity's focus (`dumpsys device_policy`, `dumpsys statusbar`, `dumpsys window` as §6am's addendum read them), the
+   item turns peach, the app is in front again; Off from the shade.
 6. The parent's switch off: the panel goes at the next sync; an item's bit off: it leaves the panel.
 7. The kid hides it from the long-press menu: the report, the PWA line, "Vis igjen" brings it back on a new channel.
-8. **On the Jelly Star** (owed, the emulator can't): the torch item; the unfolding (S2) and grouping (S4) on its
-   SystemUI; the folded row at 28 dp with a child's finger.
+8. The picker in gesture and 3-button navigation: the last row above the bar, up and down, the fifth check refused.
+9. A reboot: the panel back after the unlock, the picks kept.
+10. **On the Jelly Star** (owed, the emulator can't): the torch item; the unfolding (S2) and grouping (S4) on its
+    SystemUI; the row with a child's finger.
 
-## 11. Decisions for the user
+## 11. Decisions (the user, 2026-11-15)
 
-- **D1. Narrow by default isn't possible with a grid (S2).** Android opens the top notification unfolded every time
-  the shade opens, and forgets a fold when it closes.
-  - **a. Recommended: the grid opens, a tap on its header folds it to the row.** The kid sees the names at once; it
-    takes 195 dp of the 537 dp shade (36 %), and the shade of a managed phone is otherwise nearly empty. A tap folds
-    it to the 68 dp row while the shade is open.
-  - b. Only the row, never a grid: 98 dp at the top (the row at full width under a header line), 68 dp folded. No
-    names on screen (TalkBack reads them).
-  - Not possible: the row by default with the grid on a tap. MIN importance gives a one-line header without buttons,
-    so every action takes two taps, at the bottom of the shade; a plain notification is bundled by Android 16 (S4).
-- **D2. Bit 128 on.** **Recommended: on for new phones, and on for every existing phone by migration 0148**, because
-  Home's flashlight tile goes in the same launcher. The alternative (existing phones keep their mask) leaves those
-  kids with the lock screen's torch only until the parent turns Snarveier on.
-- **D3. Mer tid and Musikk as items.** **Recommended: both.** Mer tid is the anchor notification's "Be om mer tid",
-  which today sits folded at the bottom of the shade; Musikk is play/pause of the music app's session. Each S. Without
-  them the list is the seven device switches.
-- **D4. The default order** for a phone where the kid hasn't picked. **Recommended:** Lommelykt, Lyd, Flymodus,
-  Wi-Fi, Bluetooth, Mobildata, then Lysstyrke, Mer tid, Musikk (the first six offered show).
-- **D5. Lysstyrke as three steps** (lav, middels, høy; a tap moves to the next, the glyph shows the step).
-  **Recommended: yes.** The slider stays in Kid Settings. Two steps or none are the alternatives.
-- **D6. A "På"/"Av" line under each name in the grid.** **Recommended: no.** The peach fill says it, TalkBack reads it,
-  and the line adds 39 dp (234 dp against 195 dp).
-- **D7. The parent sees what Emma picked** (§5.2's sub-line, About This Phone). **Recommended: yes**; it is the
-  report's `items`, part of the server's S.
-- **D8. When Emma hides Snarveier** from the long-press menu. **Recommended: her choice**: a line in the PWA, and "Vis
-  i varsellisten igjen" on her picker page. Vibb never brings it back by itself.
-- **D9. Under a time rule. Recommended: the same panel** (§4.5). No item weakens a rule. The alternative is no panel
-  while a rule is in force.
-- **D10. A dimmed item's tap. Recommended: nothing happens** (calm; Kid Settings says why). The alternative is a short
-  toast with the reason.
-- **D11. Outside this design, found while measuring (S16):** the long-press menu under the kiosk can turn off any of
-  Vibb One's notification channels, Meldinger and missed calls included. Today that goes unnoticed. **Recommended: a
-  small follow-up**: the report names a blocked channel, and the PWA says "Emma har slått av varsler for Meldinger".
-  Size S (both sides). Not in this design's sizes.
+- **D1. Four items in one row** (settled by the user, replacing revision 1's a/b and QA's c). Folded: four icons
+  (36 dp discs in 45 x 48 dp cells). Unfolded, which Android shows first: the same row with each item's name under it
+  (55 dp cells, §3.2's names rule). No 3 x 2 grid, no "⋯" cell.
+- **D2. Bit 128 on** for new phones (`DEFAULT_QUICK_CONTROLS`) and for every existing phone by migration 0148, because
+  Home's flashlight tile goes in the same launcher.
+- **D3. Mer tid and Musikk are items.**
+- **D4. The default order**: Lommelykt, Lyd, Flymodus, Wi-Fi, then Bluetooth, Mobildata, Lysstyrke, Mer tid, Musikk.
+  The first four offered show; the default follows what is offered (§4.3).
+- **D5. Lysstyrke has three steps** (lav, middels, høy; a tap moves to the next, the glyph shows the step). The slider
+  stays in Kid Settings.
+- **D6. No "På"/"Av" line.** The filled peach disc is on.
+- **D7. The parent sees what the kid picked**, or that the kid hid it (§5.2's sub-line, About This Phone).
+- **D8. Hiding is the kid's choice**: a line in the PWA, and "Vis i varsellisten igjen" on the kid's own picker page
+  only. Vibb never brings it back by itself.
+- **D9. The same panel under a time rule** (§4.5), said plainly: it makes the device switches reachable under a rule,
+  where Kid Settings isn't today; none weakens a rule.
+- **D10. A dimmed tap does nothing.** The content description says it isn't available now.
+- **D11. Blocked channels** (the long-press menu can turn off Meldinger and the missed calls): a separate later item,
+  not in this build.
 
 ## 12. Build steps and sizes
 
-1. Server: bit 128 and the default, migration 0148 (the bit on existing phones per D2, `device_status.shortcuts_json`),
+1. The contract `shortcuts.json` in both directories, the root `CLAUDE.md` paragraph, both workflows' path lists.
+2. Server: bit 128 and the default, migration 0148 (the bit on existing phones per D2, `device_status.shortcuts_json`),
    `shortcuts.rs` (capability, `clean`), the Home Screen row with `shortcuts_row` and the keep, the sub-lines, About
-   This Phone, i18n nb + en, the contract and `tests::shortcuts`. **S.**
-2. Launcher, the model: `shortcuts/ShortcutsModel.kt` (the items, `shortcutsShown`, `shortcutsModel`, the default),
-   the picks' storage, the contract test. **S.**
-3. Launcher, the notification: `ShortcutsService`, the channel, the two `RemoteViews` layouts, the glyphs,
-   `ShortcutsRuntime` (refresh, coalescing, the listeners, the channel re-creation), `ShortcutsReceiver` and the nine
-   items' actions, the report field and the capability. **M.**
-4. Launcher, Kid Settings: the row and `ShortcutsPickerActivity`, strings nb + en. **S.**
-5. Launcher, Home: the flashlight tile removed (§7) and its tests. **XS.**
-6. Docs: the area notes (`kid-settings.md` gains a Snarveier section, `home-and-photos.md` §7), the root `CLAUDE.md`
-   contract paragraph, the workflows' path lists, `docs/testing/emulator.md`'s new section.
+   This Phone, i18n nb + en, `tests::shortcuts`. **S.**
+3. Launcher, the model: `shortcuts/ShortcutsModel.kt` (the items, `shortcutsShown`, `shortcutsModel`,
+   `shortcutTapAllowed`, `shortcutNameSp`, the default), the picks' storage, the report field and the capability, the
+   contract test. In the same commit as the server's intake (an API change crosses both). **S.**
+4. Launcher, the notification: `ShortcutsService`, the channel, the two `RemoteViews` layouts, the glyphs,
+   `ShortcutsRuntime` (refresh, coalescing, the process's listeners, the channel re-creation), `ShortcutsReceiver`,
+   `ShortcutAirplaneActivity` and the nine items' actions. **M.**
+5. Launcher, Kid Settings: the row and `ShortcutsPickerActivity`, strings nb + en. **S.**
+6. Launcher, Home: the flashlight tile removed (§7) and its tests. **XS.**
+7. Docs: the area notes (`kid-settings.md` gains a Snarveier section, `home-and-photos.md` §7), the `launcher/CLAUDE.md`
+   index, `docs/testing/emulator.md`'s new section.
 
-**Sizes: launcher M (towards M-L with D3's two items), server S.**
+**Sizes: launcher M, server S.**
+
+## 13. Design QA (`docs/review/qa-99-design.md`): how each finding was handled
+
+| Finding | Handled |
+|---|---|
+| Q99-H1 the window's "status bar disabled" does nothing under the kiosk | Fixed in `main` before this revision (design 98 §2.2: the window's features drop `LOCK_TASK_FEATURE_NOTIFICATIONS`; §6am "Addendum"). What that left - a touch during SystemUI's ~300 ms collapse keeps the shade open - is why Flymodus On from the shade goes through `ShortcutAirplaneActivity` and starts the route only on its window's focus (§4.1). §2.2's wording is corrected |
+| Q99-M1 the tap check's inputs, Musikk's gate | One pure fail-closed `shortcutTapAllowed` with named inputs: the model, `lockKnown`, LOCKED, the keyguard, Musikk's usability (§2.1). Musikk drives Vibb music only and is gated by `MusicSessions.usable`, not by a session existing (§4.1) |
+| Q99-M2 D1 narrower than it is | Moot: the user chose four in one row, which needs no fold of its own (D1) |
+| Q99-L1 a Swipe keyguard | The tap check refuses while `isKeyguardLocked`; §10 test 4 adds Swipe |
+| Q99-L2 a pronoun for the kid | The PWA repeats the name (§5.2); the design's prose says "the kid" |
+| Q99-L3 listeners only while the service runs | The process's receivers from `initRest`, and a `MusicSessions` listener while Musikk is in the panel (§2.3) |
+| Q99-L4 `START_STICKY` against the one owner | `START_NOT_STICKY`; `onStartCommand` always calls `startForeground` and then asks `ShortcutsRuntime`; nothing calls `stopService` (§2.4) |
+| Q99-L5 the receiver's executor | `goAsync()` and an app-level single executor (§2.1) |
+| Q99-L6 three foreground services | §9 corrected |
+| Q99-L7 the shared update rate | One post a second at most (§2.3) |
+| Q99-L8 grouping with Meldinger and calls | §10 test 1 |
+| Q99-L9 one default order | One order everywhere (§4.2, §4.3, §5.2, D4), and the default follows the role (§4.3) |
+| Q99-L10 a dimmed item's reason under a rule | In D10's cost (§3.3) and in the content description |
+| Q99-L11 gestures and buttons | The picker pads by the bar inset (§4.2); §10 tests 1 and 8 in both modes |
