@@ -2240,7 +2240,7 @@ async fn render_device(
 
     // The header (§3.2 item 1, §3.10; the user's pick C, 2026-11-01): the first fact that holds
     // (`phone_status`), the lock only while a rule locks, today's bar only for today's report.
-    let (lock, screen_time) = match latest
+    let (lock, screen_time, report_fresh) = match latest
         .as_ref()
         .and_then(|s| time_report(&s.reported_at, &s.lock_reason, s.time_state_json.as_deref()))
     {
@@ -2256,9 +2256,11 @@ async fn render_device(
                 &zone,
                 now,
             );
-            (badge, screen)
+            let fresh =
+                crate::time_state::report_is_fresh(&report, &connection, reported_at, &zone, now);
+            (badge, screen, fresh)
         }
-        _ => (None, None),
+        _ => (None, None, false),
     };
     let off = power_off.as_ref().filter(|_| device.enrolled_at.is_some());
     let dot = crate::phone_status::dot(&connection, off.is_some(), now).css();
@@ -2380,6 +2382,11 @@ async fn render_device(
             latest: latest.as_ref(),
             rules: time_rules.as_deref().unwrap_or(&[]),
             query,
+            // Design 101 §4.1: a fresh report that says no rule locks (the screen-time lock is none).
+            no_rule_now: report_fresh
+                && lock
+                    .as_ref()
+                    .is_none_or(|b| b.name_key == Some("devices.status.lock.screen_time")),
             rule_in_force: lock
                 .as_ref()
                 .filter(|b| {

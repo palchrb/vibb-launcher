@@ -66,8 +66,6 @@ pub(crate) struct Activity {
     /// How many of [rows](Activity::rows) are of the window: all but the commands still cancellable
     /// that were asked before it.
     pub(crate) in_window: usize,
-    /// More rows in the window than [MAX_ROWS] (the badge says "50+").
-    pub(crate) more: bool,
     /// After a Cancel (`?cancel=`): the line in the group, and whether it was refused.
     pub(crate) flash: Option<(&'static str, bool)>,
 }
@@ -90,31 +88,27 @@ pub(crate) struct Summary {
     pub(crate) newest: Option<Newest>,
     /// How many of the week's rows the page lists (0: no row to it).
     pub(crate) count: usize,
-    /// The badge, also its `data-activity-count`: "12", or "50+" past the page's cap.
-    pub(crate) badge: String,
-    /// The badge as spoken: "12 in the last 7 days".
-    pub(crate) spoken: String,
+    /// This parent's unread events among them (design 101 §5.1): the orange badge's number, none shown at 0.
+    pub(crate) new: usize,
+    /// "2 nye" and, spoken, "2 nye hendelser".
+    pub(crate) new_words: String,
+    pub(crate) new_spoken: String,
     pub(crate) flash: Option<(&'static str, bool)>,
 }
 
 impl Summary {
     pub(crate) fn of(activity: Activity, lang: Lang) -> Summary {
         let count = activity.in_window;
-        let (badge, spoken) = if activity.more {
-            (
-                format!("{MAX_ROWS}+"),
-                t_params(
-                    lang,
-                    "device.activity.count_more",
-                    &[("count", &MAX_ROWS.to_string())],
-                ),
-            )
-        } else {
-            (
-                count.to_string(),
-                t_count(lang, "device.activity.count", count as i64, &[]),
-            )
-        };
+        // Commands, lifts and turned-on rules are a parent's own acts and have no read state: only events count.
+        let new = activity
+            .rows
+            .iter()
+            .filter(|row| matches!(row, ActivityRow::Event(e) if e.unread))
+            .count();
+        let (new_words, new_spoken) = (
+            t_count(lang, "device.activity.new", new as i64, &[]),
+            t_count(lang, "device.activity.new_spoken", new as i64, &[]),
+        );
         let mut waiting = Vec::new();
         let mut newest = None;
         for row in activity.rows {
@@ -128,8 +122,9 @@ impl Summary {
             waiting,
             newest,
             count,
-            badge,
-            spoken,
+            new,
+            new_words,
+            new_spoken,
             flash: activity.flash,
         }
     }
@@ -274,16 +269,23 @@ pub(crate) async fn rows(
     Ok(Activity {
         rows: all.into_iter().map(|(_, _, row)| row).collect(),
         in_window,
-        // Each table reads one row past the cap, so one more anywhere shows here.
-        more: capped > MAX_ROWS,
         flash: cancel_flash(zone.lang(), cancel),
     })
+}
+
+/// Marks `ids` (the events a page lists) read for `admin_id` and returns what is still unread for them.
+async fn mark_shown_read(state: &AppState, admin_id: i64, ids: &[i64]) -> Result<i64, sqlx::Error> {
+    let json = serde_json::to_string(ids).unwrap_or_else(|_| "[]".to_string());
+    crate::parent_events::mark_read(&state.db, admin_id, &json).await?;
+    crate::parent_events::unread_count(&state.db, admin_id).await
 }
 
 #[derive(Template)]
 #[template(path = "device_activity.html")]
 struct ActivityTemplate {
     lang: Lang,
+    /// What this parent still has unread after the page marked its events read: the app badge's `data-unread`.
+    unread: i64,
     /// The phone's small picture on the band (design 84, `band::phone`).
     who: crate::handlers::devices::BandAvatar,
     /// The tab's name: "Activity · Emma".
@@ -317,9 +319,28 @@ pub async fn view(
             return crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.read_phone");
         }
     };
+    // Design 101 §5.1: the page marks exactly the events it lists read for this parent (as the inbox does), after the
+    // rows were built with the state they had - their dot says which were new. The bell and the app badge count the
+    // same table; `unread` is the count left, for the app badge (`data-unread`), and may stay above the summary's "new".
+    let shown: Vec<i64> = activity
+        .rows
+        .iter()
+        .filter_map(|row| match row {
+            ActivityRow::Event(e) => Some(e.id),
+            _ => None,
+        })
+        .collect();
+    let unread = match mark_shown_read(&state, admin.id, &shown).await {
+        Ok(unread) => unread,
+        Err(err) => {
+            tracing::error!(device_id = id, %err, "can't mark the phone's events read");
+            return crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.read_phone");
+        }
+    };
     Html(
         ActivityTemplate {
             lang,
+            unread,
             who: crate::handlers::devices::BandAvatar::of(&device),
             title: format!("{} · {}", t(lang, "device.summary.activity"), device.name),
             device,

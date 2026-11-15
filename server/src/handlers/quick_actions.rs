@@ -10,7 +10,7 @@ use chrono::{DateTime, Utc};
 
 use crate::display_time::{Zone, parse_db_utc};
 use crate::i18n::{Lang, t, t_params};
-use crate::lock_now::{self, LockNowRow};
+use crate::lock_now::{self, LockNowRow, kind_rank};
 use crate::models::DeviceStatus;
 use crate::time_rules::TimeRuleRow;
 
@@ -75,6 +75,8 @@ pub(crate) struct QuickActions {
     pub time_line: Option<String>,
     pub pause_line: Option<String>,
     pub on_line: Option<String>,
+    /// "Neste: Leggetid 20:30" while no rule is turned on now (design 101 §4.2), grey.
+    pub next_line: Option<String>,
     pub running: Option<RunningView>,
     /// The running pauses, each "Leggetid på pause til 21:00" with its lift id (Avslutt nå).
     pub pauses: Vec<(i64, String)>,
@@ -156,14 +158,6 @@ pub(crate) fn mode_line(lang: Lang, rule: &TimeRuleRow, apps: &HashMap<String, S
     }
 }
 
-fn kind_rank(kind: &str) -> u8 {
-    match kind {
-        "school" => 0,
-        "bedtime" => 1,
-        _ => 2,
-    }
-}
-
 /// For a launcher without `lock_now_v1` (§4.2): the rule of the same or a stronger kind already in
 /// force at the phone's `now_local`, and its end - the card shows it, not the turned-on rule.
 fn already(
@@ -193,6 +187,9 @@ pub(crate) struct Inputs<'a> {
     pub query: &'a HashMap<String, String>,
     /// The lock badge, while it isn't stale and a rule (not the screen time) locks: its name.
     pub rule_in_force: Option<String>,
+    /// A time report was read, it is today's and the phone in touch (`time_state::report_is_fresh`), and no rule locks
+    /// - the screen-time lock counts as none (design 101 §4.1): the Pause tile may say "Ingen regel nå".
+    pub no_rule_now: bool,
     pub screen: Option<&'a crate::time_state::ScreenTime>,
     /// `RelockCard::lock_again` and whether the launcher takes the commands.
     pub lock_again: bool,
@@ -295,13 +292,38 @@ pub(crate) async fn build(
             )],
         ),
         Some(_) => t(lang, "device.summary.qa.used_up").to_string(),
-        None => t(lang, "device.summary.qa.no_limit").to_string(),
+        // Design 101 D2: without a daily limit the tile says what is used (the header no longer does).
+        None => t_params(
+            lang,
+            "device.summary.qa.used",
+            &[("used", &crate::display_time::duration(lang, screen.used))],
+        ),
     });
+    // The running pauses in the phone's own clock, for the lines that read the schedule (§4.1, §4.2).
+    let local_pauses: Vec<(Option<i64>, chrono::NaiveDateTime)> = tz
+        .map(|tz| {
+            pause_rows
+                .iter()
+                .filter_map(|(_, rule_id, _, expires)| {
+                    parse_db_utc(expires).map(|e| (*rule_id, e.with_timezone(&tz).naive_local()))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     let pause_line = pauses.first().map(|(_, words)| words.clone()).or_else(|| {
         input
             .rule_in_force
             .as_ref()
             .map(|name| t_params(lang, "device.summary.qa.rule_now", &[("rule", name)]))
+    });
+    // "Ingen regel nå": the fresh report says no rule locks, and the schedule agrees - no rule's window covers the
+    // phone's now (a pause out of it): a report from before a rule's start can't say it (QA M4).
+    let pause_line = pause_line.or_else(|| {
+        (input.no_rule_now
+            && lock.is_none()
+            && now_local
+                .is_some_and(|n| !lock_now::in_force_by_schedule(input.rules, &local_pauses, n)))
+        .then(|| t(lang, "device.summary.qa.no_rule_now").to_string())
     });
     let on_line = lock.as_ref().map(|l| {
         let line = t_params(
@@ -321,6 +343,35 @@ pub(crate) async fn build(
             t_params(lang, "device.summary.qa.waiting", &[("line", &line)])
         }
     });
+
+    // "Neste: Leggetid 20:30" / "Neste: Skole i morgen 08:00": the schedule's next start within 24 hours, from the
+    // policy and the phone's clock, while no rule is turned on now (design 101 §4.2).
+    let next_line = if on_line.is_some() {
+        None
+    } else {
+        tz.zip(now_local).and_then(|(tz, now_local)| {
+            let (rule, start) = lock_now::next_start(input.rules, &local_pauses, now_local)?;
+            let clock = start.format("%H:%M").to_string();
+            let at = if start.date() == now_local.date() {
+                clock
+            } else {
+                t_params(lang, "time.tomorrow", &[("clock", &clock)])
+            };
+            let at = if zone.name() == Some(tz.name()) {
+                at
+            } else {
+                t_params(lang, "device.summary.qa.phone_time", &[("at", &at)])
+            };
+            Some(t_params(
+                lang,
+                "device.summary.qa.next",
+                &[
+                    ("rule", &crate::time_rules::shown_name(lang, &rule.name)),
+                    ("at", &at),
+                ],
+            ))
+        })
+    };
 
     let running = lock.as_ref().map(|l| {
         let start = lock_now::end_words(lang, l.start_minute);
@@ -532,6 +583,7 @@ pub(crate) async fn build(
         time_line,
         pause_line,
         on_line,
+        next_line,
         running,
         pauses,
         extra_note,

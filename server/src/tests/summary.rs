@@ -284,6 +284,130 @@ async fn the_quick_actions_follow_the_phone() {
     assert!(!quick.contains("end-windows"), "{quick}");
 }
 
+/// The sub-line of the Quick Actions tile that opens `mode` ("pause" or "on"), "" when it only holds its space.
+fn tile_sub(quick: &str, mode: &str) -> String {
+    let tile = &quick[at(quick, &format!("data-mode=\"{mode}\""))..];
+    let tile = &tile[at(tile, "class=\"qa-sub\">") + "class=\"qa-sub\">".len()..];
+    let line = &tile[..at(tile, "</span>")];
+    if line == "&nbsp;" {
+        String::new()
+    } else {
+        line.to_string()
+    }
+}
+
+/// Design 101 §4 (QA M3, M4): Pause regler says "No rule now" only on a fresh report that no rule's window covers the
+/// phone's clock; Slå på regel says "Next: Skole 14:30" (or "tomorrow") from the policy and the phone's clock, its
+/// start after a running pause when the window still covers it, and a rule turned on now wins; Skjermtid without a
+/// limit says what is used.
+#[tokio::test]
+async fn the_tiles_say_their_state() {
+    use chrono::Timelike;
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    sqlx::query("UPDATE provisioning_settings SET time_zone = 'Europe/Oslo'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let (id, token) = app.enrolled_device("Emma").await;
+    let oslo: chrono_tz::Tz = "Europe/Oslo".parse().unwrap();
+    let local = Utc::now().with_timezone(&oslo);
+    let day = |date: chrono::NaiveDate| date.to_string();
+    let minute = i64::from(local.hour() * 60 + local.minute());
+    // A rule every day: one window starting 90 minutes from now (over midnight if need be), 30 minutes long.
+    let start = (minute + 90) % 1440;
+    let end = (start + 30) % 1440;
+    let days = (0..7)
+        .map(|_| format!("{{\"start\":{start},\"end\":{end}}}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let rule: i64 = sqlx::query_scalar(
+        "INSERT INTO time_rules (device_id, name, kind, calls_allowed, exempt_apps_json, days_json) \
+         VALUES (NULL, 'Skole', 'school', 1, '[]', ?) RETURNING id",
+    )
+    .bind(format!("[{days}]"))
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    let clock = format!("{:02}:{:02}", start / 60, start % 60);
+    let tomorrow = minute + 90 >= 1440;
+    let next = if tomorrow {
+        format!("Next: Skole {clock} tomorrow")
+    } else {
+        format!("Next: Skole {clock}")
+    };
+    let report = |day_of: chrono::NaiveDate, extra: serde_json::Value| {
+        let mut state = json!({ "lock_reason": "NONE", "day": day(day_of), "zone": "Europe/Oslo",
+                                "used_minutes": 25 });
+        for (key, value) in extra.as_object().unwrap() {
+            state[key] = value.clone();
+        }
+        json!({ "time_state": state, "capabilities": ["window_relock_v1"] })
+    };
+    let quick = || async {
+        let html = app
+            .get_page(&format!("/devices/{id}"), &cookie)
+            .await
+            .text();
+        group(&html, "quick").to_string()
+    };
+    // Today's fresh report, no rule locking and none covering now: "No rule now"; the next start; the used time.
+    app.post_status(&token, report(local.date_naive(), json!({})))
+        .await;
+    let q = quick().await;
+    assert_eq!(tile_sub(&q, "pause"), "No rule now", "{q}");
+    assert_eq!(tile_sub(&q, "on"), next, "{q}");
+    assert!(q.contains("used today"), "no limit, 25 min used: {q}");
+    assert!(!q.contains("No limit today"), "{q}");
+    // Yesterday's report can't say it; the start still comes from the policy.
+    app.post_status(
+        &token,
+        report(local.date_naive().pred_opt().unwrap(), json!({})),
+    )
+    .await;
+    let q = quick().await;
+    assert_eq!(tile_sub(&q, "pause"), "", "{q}");
+    assert_eq!(tile_sub(&q, "on"), next, "{q}");
+    // A report without a day isn't today's either.
+    app.post_status(
+        &token,
+        json!({ "time_state": { "lock_reason": "NONE", "zone": "Europe/Oslo" } }),
+    )
+    .await;
+    assert_eq!(tile_sub(&quick().await, "pause"), "");
+    // The schedule says a rule is in force (it began 10 minutes ago) although the report says none: nothing.
+    let began = (minute + 1440 - 10) % 1440;
+    sqlx::query("UPDATE time_rules SET days_json = ? WHERE id = ?")
+        .bind(format!(
+            "[{}]",
+            (0..7)
+                .map(|_| format!("{{\"start\":{began},\"end\":{}}}", (began + 60) % 1440))
+                .collect::<Vec<_>>()
+                .join(",")
+        ))
+        .bind(rule)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    app.post_status(&token, report(local.date_naive(), json!({})))
+        .await;
+    assert_eq!(tile_sub(&quick().await, "pause"), "");
+    // A rule turned on now wins over "Next": its own line.
+    sqlx::query(
+        "INSERT INTO time_lock_now (device_id, rule_id, rule_name, zone, local_date, start_minute, end_minute, \
+         ends_at) VALUES (?, ?, 'Skole', 'Europe/Oslo', ?, 600, 1439, datetime('now', '+1 hour'))",
+    )
+    .bind(id)
+    .bind(rule)
+    .bind(day(local.date_naive()))
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let q = quick().await;
+    assert!(tile_sub(&q, "on").starts_with("Skole on until"), "{q}");
+    assert!(!q.contains("Next: "), "{q}");
+}
+
 /// §5.1: every form on the summary, posted with what it carries, returns to the group it is in -
 /// the quick actions (End now at their end), the blocked apps - with the flash there; built from the rendered forms
 /// (a form that moves can't keep a stale target), each action's fragment the redirect's.
@@ -833,20 +957,16 @@ async fn activity_mixes_commands_and_events_newest_first_with_the_clock() {
     );
     let row = &activity[at(activity, "data-row=\"activity\"")..];
     assert!(row.contains("class=\"tile tile-grey\""), "{row}");
+    // The clock sits in its own nowrap span, so the sub-line is never cut in the middle of it.
     assert!(
         row.contains(&format!(
-            ">Lock again · Done · {}</span>",
+            ">Lock again · Done · <span class=\"nowrap\">{}</span></span>",
             this_minute.with_timezone(&oslo).format("%H:%M")
         )),
         "{row}"
     );
-    assert!(
-        row.contains(
-            "data-activity-count=\"4\"><span aria-hidden=\"true\">4</span>\
-             <span class=\"visually-hidden\">4 in the last 7 days</span>"
-        ),
-        "{row}"
-    );
+    // The page above was opened: it marked its events read, so no "new" badge (design 101 §5.1).
+    assert!(!row.contains("data-activity-new"), "{row}");
     super::settings_pages::check_forms(&format!("/devices/{id}"), &summary);
 }
 
@@ -941,8 +1061,8 @@ async fn an_event_row_shows_its_clock_once() {
 /// until 2026-11-13) - but a command that can still be cancelled is shown at any age, outside
 /// both, with its Cancel: on the summary as a row of its own above Activity's one row, back to the
 /// summary's `#activity`; on the page back to the page's, its line first in the group (code QA M1:
-/// in sight where the redirect lands). The summary's badge counts the week's rows only - 50, then
-/// "50+" past the cap. The line shows even when nothing else is left.
+/// in sight where the redirect lands). The summary's badge counts this parent's unread events of
+/// the week's fifty rows; the page marks them read. The line shows even when nothing else is left.
 #[tokio::test]
 async fn activity_keeps_a_week_fifty_rows_and_what_can_be_cancelled() {
     let app = TestApp::new().await;
@@ -970,20 +1090,18 @@ async fn activity_keeps_a_week_fifty_rows_and_what_can_be_cancelled() {
         }
     };
     add_events(1..=50).await;
-    let badge = |html: &str| {
-        let row = group(html, "activity");
-        let row = &row[at(row, "data-activity-count=")..];
-        row[..at(row, "</span></span>")].to_string()
-    };
-    // Exactly the cap: the week's fifty, not the eight-day-old command shown above with Cancel.
+    // Exactly the cap: the week's fifty events are new to this parent (not the eight-day-old command shown above with
+    // Cancel, nor the old event).
     let summary = app
         .get_page(&format!("/devices/{id}"), &cookie)
         .await
         .text();
-    assert_eq!(
-        badge(&summary),
-        "data-activity-count=\"50\"><span aria-hidden=\"true\">50</span>\
-         <span class=\"visually-hidden\">50 in the last 7 days"
+    assert!(
+        group(&summary, "activity").contains(
+            "data-activity-new=\"50\"><span aria-hidden=\"true\">50 new</span>\
+             <span class=\"visually-hidden\">50 new events</span>"
+        ),
+        "{summary}"
     );
     add_events(51..=52).await;
     let html = activity_page(&app, id, &cookie, "").await;
@@ -1003,8 +1121,9 @@ async fn activity_keeps_a_week_fifty_rows_and_what_can_be_cancelled() {
     );
     assert!(activity.contains("<input type=\"hidden\" name=\"back\" value=\"activity\">"));
 
-    // The summary: the waiting command as its own row with Cancel, then the one row, its badge
-    // past the cap; its words are the newest other row's.
+    // The summary: the waiting command as its own row with Cancel, then the one row; the page marked the fifty it
+    // lists read, so no badge (the two past the cap aren't in the summary's rows either); its words are the newest
+    // other row's.
     let summary = app
         .get_page(&format!("/devices/{id}"), &cookie)
         .await
@@ -1020,11 +1139,7 @@ async fn activity_keeps_a_week_fifty_rows_and_what_can_be_cancelled() {
     assert_eq!(activity.matches("data-command=").count(), 1, "{activity}");
     assert!(!activity.contains("data-event="), "{activity}");
     assert!(activity.contains(">Event 1 · "), "{activity}");
-    assert_eq!(
-        badge(&summary),
-        "data-activity-count=\"50+\"><span aria-hidden=\"true\">50+</span>\
-         <span class=\"visually-hidden\">More than 50 in the last 7 days"
-    );
+    assert!(!activity.contains("data-activity-new"), "{activity}");
 
     // The page's Cancel lands back on the page's group, with its line.
     let res = app
@@ -1097,13 +1212,18 @@ async fn activity_keeps_a_week_fifty_rows_and_what_can_be_cancelled() {
     );
 }
 
-/// The summary's one row (code QA L2, L3): its words are the newest row not already shown above with
-/// Cancel, escaped; a command still cancellable from before the week is shown with its Cancel but
-/// is no row of the week, so alone it leaves no row to the page. An unknown phone's page is a 404.
+/// The summary's one row (code QA L2, L3; design 101 §5): its words are the newest row not already shown above with
+/// Cancel, escaped, the clock in a nowrap span; "2 nye" counts this parent's unread events of the phone, never a
+/// command, and only while there are some; opening the Activity page marks what it lists read for this parent alone
+/// (the unread dot on its rows, QA M7; the app badge's count, L6). A command still cancellable from before the week is
+/// shown with its Cancel but is no row of the week, so alone it leaves no row to the page. An unknown phone's page is a
+/// 404.
 #[tokio::test]
-async fn the_summary_row_skips_what_waits_and_counts_the_week() {
+async fn the_summary_row_counts_what_is_new_to_this_parent() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
+    // A second parent, made first: a new parent starts with nothing unread (design 62 §4.1).
+    let other = app.admin_cookie_as("other", "Other").await;
     let (lily, _) = app.enrolled_device("Lily").await;
     let now = Utc::now();
     event(
@@ -1114,6 +1234,7 @@ async fn the_summary_row_skips_what_waits_and_counts_the_week() {
         "/devices",
     )
     .await;
+    event(&app, lily, "Second", now - Duration::minutes(9), "/devices").await;
     command(&app, lily, "end_windows", now, "").await;
     let summary = app
         .get_page(&format!("/devices/{lily}"), &cookie)
@@ -1125,14 +1246,60 @@ async fn the_summary_row_skips_what_waits_and_counts_the_week() {
         "{activity}"
     );
     let newest = &activity[at(activity, "data-newest")..];
-    let newest = &newest[..at(newest, "</span>")];
+    let newest = &newest[..at(newest, "</span></span>")];
     assert!(newest.contains(">&#60;b&#62;Jack"), "{newest}");
+    assert!(newest.contains(" · <span class=\"nowrap\">"), "{newest}");
     assert!(
         !newest.contains("Lock again"),
         "the waiting row is above: {newest}"
     );
     assert!(!activity.contains("<b>Jack"), "{activity}");
-    assert!(activity.contains("data-activity-count=\"2\""), "{activity}");
+    // Two unread events and a command (which has no read state): "2 new", spoken in full.
+    assert!(
+        activity.contains(
+            "data-activity-new=\"2\"><span aria-hidden=\"true\">2 new</span>\
+             <span class=\"visually-hidden\">2 new events</span>"
+        ),
+        "{activity}"
+    );
+    assert!(!activity.contains("data-activity-count"), "{activity}");
+    let nb = app
+        .get_page(&format!("/devices/{lily}?lang=nb"), &cookie)
+        .await
+        .text();
+    assert!(
+        nb.contains(">2 nye</span>") && nb.contains("2 nye hendelser"),
+        "{nb}"
+    );
+
+    // The page shows which are new (the dot and its word) and marks them read; the app badge's count is what is left.
+    let page = activity_page(&app, lily, &cookie, "").await;
+    assert_eq!(page.matches("class=\"unread-dot\"").count(), 2, "{page}");
+    assert!(
+        page.contains("<span class=\"visually-hidden\">Unread </span>"),
+        "{page}"
+    );
+    assert!(page.contains("<span hidden data-unread=\""), "{page}");
+    let summary = app
+        .get_page(&format!("/devices/{lily}"), &cookie)
+        .await
+        .text();
+    assert!(
+        !group(&summary, "activity").contains("data-activity-new"),
+        "read now"
+    );
+    // Read is read: a second look has no dots.
+    let again = activity_page(&app, lily, &cookie, "").await;
+    assert!(!again.contains("unread-dot"), "{again}");
+    // Another parent's state is untouched.
+    let theirs = app
+        .get_page(&format!("/devices/{lily}"), &other)
+        .await
+        .text();
+    assert!(
+        group(&theirs, "activity").contains("data-activity-new=\"2\""),
+        "{theirs}"
+    );
 
     // Only a command from before the week, still cancellable: its row and Cancel, no row to the page.
     let (jack, _) = app.enrolled_device("Jack").await;

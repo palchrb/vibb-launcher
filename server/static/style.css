@@ -986,13 +986,16 @@ summary.row:active {
     line-height: 1.3;
 }
 
-/* A sub-line kept to one line, cut with "…" (the summary's Activity row, 2026-11-13: the newest
-   row's words and clock). */
-.row-sub-line {
-    white-space: nowrap;
+/* A sub-line of two lines at most (the summary's Activity row, design 101 D5: the newest row's words and clock): the
+   prefixed clamp works from Chrome 80 and iOS 14; the clock sits in a .nowrap span, so it is never cut in the middle. */
+.row-sub-wrap {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
     overflow: hidden;
-    text-overflow: ellipsis;
 }
+
+.nowrap { white-space: nowrap; }
 
 /* Device › Calendar's "Colour" row (2026-10-27): the swatch before the label is the dot Dagen draws before the time.
    The eight values are calendar::COLORS's, the same ARGB the launcher's CalendarColor keeps; peach (the kid's own)

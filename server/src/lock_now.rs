@@ -132,6 +132,110 @@ pub fn minute_of(now_local: NaiveDateTime) -> i64 {
     i64::from(now_local.hour() * 60 + now_local.minute())
 }
 
+/// A rule's kind as a rank for ties (school, then bedtime, then the rest).
+pub fn kind_rank(kind: &str) -> u8 {
+    match kind {
+        "school" => 0,
+        "bedtime" => 1,
+        _ => 2,
+    }
+}
+
+/// A rule's 7 windows as the phone reads them, `None` when they don't read (a copy, id < 0, never counts).
+fn read_days(rule: &TimeRuleRow) -> Option<Vec<Option<DayWindow>>> {
+    if rule.id < 0 {
+        return None;
+    }
+    crate::time_rules::parse_days(&rule.days_json)
+        .map(|d| crate::time_rules::served_days(&d))
+        .ok()
+}
+
+/// The end of the latest running pause of `rule` (or of all rules, `None`) over the local time `at`, if one covers it.
+fn paused_until(
+    rule: &TimeRuleRow,
+    pauses: &[(Option<i64>, NaiveDateTime)],
+    at: NaiveDateTime,
+) -> Option<NaiveDateTime> {
+    pauses
+        .iter()
+        .filter(|(who, until)| (*who == Some(rule.id) || who.is_none()) && *until > at)
+        .map(|(_, until)| *until)
+        .max()
+}
+
+/// Whether a rule's own window covers `now_local` and no running pause lifts it (design 101 §4.1, QA M4): a rule that
+/// the schedule says is in force now. A rule whose days don't read counts as in force (the launcher fails closed), a
+/// copy never does.
+pub fn in_force_by_schedule(
+    rules: &[TimeRuleRow],
+    pauses: &[(Option<i64>, NaiveDateTime)],
+    now_local: NaiveDateTime,
+) -> bool {
+    rules
+        .iter()
+        .filter(|r| r.id >= 0)
+        .any(|rule| match read_days(rule) {
+            None => true,
+            Some(days) => {
+                !crate::time_state::covering_ends(&days, now_local).is_empty()
+                    && paused_until(rule, pauses, now_local).is_none()
+            }
+        })
+}
+
+/// The next scheduled start of one of `rules` after `now_local` and within 24 hours, on the phone's wall clock: (the
+/// rule, when it locks). Skips a copy (negative id) and a rule whose days don't read, a start inside a window of the
+/// same rule already running (`covering_ends` at the minute before), and a start inside a running pause (of that rule
+/// or of all rules, `pauses`: rule id or `None`, and the pause's end): the phone locks when the pause ends if the
+/// window still covers that minute (QA M3), so that is the start, else the start is skipped. Ties: the earlier start,
+/// then school, bedtime, the rest ([kind_rank]), then `sort_order`.
+pub fn next_start<'a>(
+    rules: &'a [TimeRuleRow],
+    pauses: &[(Option<i64>, NaiveDateTime)],
+    now_local: NaiveDateTime,
+) -> Option<(&'a TimeRuleRow, NaiveDateTime)> {
+    use chrono::Timelike;
+    let minute = now_local.with_second(0)?.with_nanosecond(0)?;
+    let horizon = minute + Duration::hours(24);
+    let one = Duration::minutes(1);
+    let mut best: Option<(&TimeRuleRow, NaiveDateTime)> = None;
+    for rule in rules {
+        let Some(days) = read_days(rule) else {
+            continue;
+        };
+        for offset in 0..=1 {
+            let Some(date) = minute.date().checked_add_days(chrono::Days::new(offset)) else {
+                continue;
+            };
+            let Some(window) = days[date.weekday().num_days_from_monday() as usize] else {
+                continue;
+            };
+            let start = local_at(date, window.start);
+            if start <= minute || start > horizon {
+                continue;
+            }
+            // Already running into this minute: the window goes on, it doesn't start.
+            if !crate::time_state::covering_ends(&days, start - one).is_empty() {
+                continue;
+            }
+            let at = match paused_until(rule, pauses, start) {
+                Some(end) if crate::time_state::covering_ends(&days, end).is_empty() => continue,
+                Some(end) => end,
+                None => start,
+            };
+            if at > horizon {
+                continue;
+            }
+            let key = |r: &TimeRuleRow, at: NaiveDateTime| (at, kind_rank(&r.kind), r.sort_order);
+            if best.is_none_or(|(b, b_at)| key(rule, at) < key(b, b_at)) {
+                best = Some((rule, at));
+            }
+        }
+    }
+    best
+}
+
 /// The end minute for a lock starting at `start` (§4.4): never past midnight, an end at exactly
 /// 24:00 stored as 1439. The refusal is its flash code.
 pub fn end_minute(start: i64, choice: Choice) -> Result<i64, &'static str> {
@@ -405,6 +509,146 @@ mod tests {
 
     const SCHOOL: &str = r#"[{"start":495,"end":870},{"start":495,"end":870},{"start":495,"end":870},{"start":495,"end":870},{"start":495,"end":870},null,null]"#;
     const NIGHTS: &str = r#"[{"start":1260,"end":420},{"start":1260,"end":420},{"start":1260,"end":420},{"start":1260,"end":420},{"start":1320,"end":480},{"start":1320,"end":480},{"start":1260,"end":420}]"#;
+
+    fn at(s: &str) -> NaiveDateTime {
+        NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M").unwrap()
+    }
+
+    /// Design 101 §4.2 (QA M3): the next scheduled start within 24 hours, on the phone's clock. 2026-11-16 is a Monday.
+    #[test]
+    fn the_next_start() {
+        let school = rule(1, "school", SCHOOL, false);
+        let nights = rule(2, "bedtime", NIGHTS, true);
+        let next = |rules: &[TimeRuleRow], pauses: &[(Option<i64>, NaiveDateTime)], now: &str| {
+            next_start(rules, pauses, at(now)).map(|(r, start)| (r.id, start.to_string()))
+        };
+        let both = [school.clone(), nights.clone()];
+        // Later today (the night's window of Sunday is running: its own start isn't the next one).
+        assert_eq!(
+            next(&both, &[], "2026-11-16 06:00"),
+            Some((1, "2026-11-16 08:15:00".into()))
+        );
+        // Tomorrow's start inside 24 hours, today's bedtime first.
+        assert_eq!(
+            next(&both, &[], "2026-11-16 10:00"),
+            Some((2, "2026-11-16 21:00:00".into()))
+        );
+        assert_eq!(
+            next(&[school.clone()], &[], "2026-11-16 15:00"),
+            Some((1, "2026-11-17 08:15:00".into()))
+        );
+        // Beyond 24 hours: a Friday evening with nothing until Monday.
+        assert_eq!(next(&[school.clone()], &[], "2026-11-20 15:00"), None);
+        // A start this very minute is already in force: the next is tomorrow's, exactly 24 hours on.
+        assert_eq!(
+            next(&[school.clone()], &[], "2026-11-16 08:15"),
+            Some((1, "2026-11-17 08:15:00".into()))
+        );
+        // A window over midnight: running at 22:00, the next start is tomorrow's 21:00.
+        assert_eq!(
+            next(&[nights.clone()], &[], "2026-11-16 22:00"),
+            Some((2, "2026-11-17 21:00:00".into()))
+        );
+        // A 24 h window starts at its start; the one already running (every day) never starts again.
+        let day = |days: &str| rule(3, "custom", days, false);
+        let one_day = r#"[{"start":600,"end":600},null,null,null,null,null,null]"#;
+        assert_eq!(
+            next(&[day(one_day)], &[], "2026-11-15 12:00"),
+            Some((3, "2026-11-16 10:00:00".into()))
+        );
+        let every = format!("[{}]", vec![r#"{"start":600,"end":600}"#; 7].join(","));
+        assert_eq!(next(&[day(&every)], &[], "2026-11-17 09:00"), None);
+        // Two rules at one minute: school first, then bedtime, then the rest.
+        let mut other = rule(4, "custom", SCHOOL, false);
+        other.sort_order = 0;
+        let mut bed = rule(5, "bedtime", SCHOOL, true);
+        bed.sort_order = 0;
+        assert_eq!(
+            next(
+                &[other.clone(), bed.clone(), school.clone()],
+                &[],
+                "2026-11-16 07:00"
+            )
+            .map(|(id, _)| id),
+            Some(1)
+        );
+        assert_eq!(
+            next(&[other, bed], &[], "2026-11-16 07:00").map(|(id, _)| id),
+            Some(5)
+        );
+        // A pause over the start: the start is the pause's end while the window still covers it (M3), else skipped;
+        // another rule's pause changes nothing.
+        let until = |rule: Option<i64>, end: &str| [(rule, at(end))];
+        let one = [school.clone()];
+        assert_eq!(
+            next(
+                &one,
+                &until(Some(1), "2026-11-16 09:00"),
+                "2026-11-16 07:00"
+            ),
+            Some((1, "2026-11-16 09:00:00".into()))
+        );
+        assert_eq!(
+            next(&one, &until(None, "2026-11-16 15:00"), "2026-11-16 07:00"),
+            None
+        );
+        assert_eq!(
+            next(
+                &one,
+                &until(Some(99), "2026-11-16 15:00"),
+                "2026-11-16 07:00"
+            ),
+            Some((1, "2026-11-16 08:15:00".into()))
+        );
+        // The evening of QA M3: a pause of all rules from 19:00 for 2 h, Leggetid 21:00: it locks at 21:00 anyway.
+        assert_eq!(
+            next(
+                &[nights.clone()],
+                &until(None, "2026-11-16 21:30"),
+                "2026-11-16 19:30"
+            ),
+            Some((2, "2026-11-16 21:30:00".into()))
+        );
+        // A copy and unreadable days are skipped.
+        let copy = rule(-1, "school", SCHOOL, false);
+        let bad = rule(6, "school", "[]", false);
+        assert_eq!(next(&[copy, bad], &[], "2026-11-16 06:00"), None);
+    }
+
+    /// Design 101 §4.1 (QA M4): a rule the schedule says is in force now, a pause lifting it, an unreadable rule
+    /// failing closed, a copy never counting.
+    #[test]
+    fn a_rule_in_force_by_its_schedule() {
+        let school = [rule(1, "school", SCHOOL, false)];
+        assert!(in_force_by_schedule(&school, &[], at("2026-11-16 10:00")));
+        assert!(!in_force_by_schedule(&school, &[], at("2026-11-16 15:00")));
+        assert!(!in_force_by_schedule(&school, &[], at("2026-11-21 10:00")));
+        assert!(!in_force_by_schedule(
+            &school,
+            &[(Some(1), at("2026-11-16 11:00"))],
+            at("2026-11-16 10:00")
+        ));
+        assert!(!in_force_by_schedule(
+            &school,
+            &[(None, at("2026-11-16 11:00"))],
+            at("2026-11-16 10:00")
+        ));
+        assert!(in_force_by_schedule(
+            &school,
+            &[(Some(9), at("2026-11-16 11:00"))],
+            at("2026-11-16 10:00")
+        ));
+        assert!(in_force_by_schedule(
+            &[rule(2, "school", "[]", false)],
+            &[],
+            at("2026-11-16 15:00")
+        ));
+        assert!(!in_force_by_schedule(
+            &[rule(-1, "school", SCHOOL, false)],
+            &[],
+            at("2026-11-16 10:00")
+        ));
+    }
 
     /// §4.4: the lengths and Til, never past midnight, 00:00 as "Ut dagen", 24:00 as 1439.
     #[test]
