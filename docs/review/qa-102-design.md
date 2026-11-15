@@ -500,3 +500,283 @@ The API and contract rule is met: one contract file, byte-identical in both dire
   - `shouldInterceptRequest` and sub-resource redirects.
 - **Chrome:** tab restore after the kill; `chrome://policy` under `chrome://*`.
 - **Real portals:** how many whitelist `*.gstatic.com`, and how many use client-side redirects (D-C2 should log both).
+
+## Revisions 3-4
+
+Checked against `design-102` 337c8e52a (the "Revision 4" and "Revision 3" summaries, §1b, §3.1-§3.8, §6, §7, §11-§13).
+Read: every HTTP client, URL connection, WebView, media source and download in `launcher/app/src/main/java`
+(`ServerTransport.kt` whole: `toServer`, `direct`'s origin fence, `TailnetServerDns`, `ServerClients`; `ServerAuth.kt`
+`bearerInterceptor`/`sameOrigin`; `MdmApi.kt` `createMdmApi` and `downloadTrackedApp`'s `@Url`; `AppDownloads.kt`;
+`CommandListenerService.buildClient`; `music/MusicServer.kt`; `UpstreamTransport.kt` `buildDohClient`/`resolveDoh`;
+`CustomUpstream.kt`'s `https://` check; `PublicResolver.kt`'s constants; `MusicSessions.kt`'s browser probe;
+`KidSounds.kt`, `LocateCommands.kt` (`MediaPlayer`); `AppEnforcer.kt:1248`, `EnforcementPlan.kt` (WebView mentions);
+`sms/mms/` (MMS goes through `SmsManager`, the system's MMS service)); the launcher's dependencies (`build.gradle.kts`:
+OkHttp, Retrofit, dnsjava - its resolvers unused -, pcap4j, zxing, androidx; no image loader, no Media3);
+both `network_security_config.xml` (main, debug), the manifest (`allowBackup="false"`, the two processes);
+`ServerTransportTest` (`every server client takes its way from the transport`, the config pin); the music app's
+config and `SourceScanTest` (the precedent: cleartext app-wide since qa-30-s3b, pinned by a source scan);
+`docs/notes/launcher/security.md` ("Cleartext"). For the parent-code decision: `server/ParentPin.kt` (`check`, the
+entries, `NotConfigured`, `ForeignAccessOn`, `Unavailable(untilSync)`), `server/PinVault.kt`,
+`lock/PinLockRuntime.checkParentCode`, the server's `parent_pin.rs` (`Entry::parse`, `clean_event`) and
+`handlers/parent_pin.rs:217` (an unknown entry is skipped with a warning). For the PWA: `/devices/{id}/advanced` and
+`templates/device_advanced.html` (its autosave groups). Migrations on every local branch: `main` and `design-102` end at
+0148, `design-100` has 0149, nothing claims 0150. No emulator, no `cargo test`.
+
+**Verdict: R2-H1 and R2-H2 are settled - the first by the user's D15 (a) and a true inventory, the second by
+measurement. Every launcher connection today is https by code, as §3.1's table says (verified, with two places where
+the network security config was the only fence for an input that is https today). The source scan that is meant to keep
+it so would fail on today's code and misses the common ways to add a cleartext call. The portal-site rule is right in
+shape, but its order of "a redirect is allowed" against "a tap is refused" is unstated, and with the obvious reading a
+portal site with a same-site redirector is one-hop free browsing - wider than D3's "one ordinary site". §3.8's reopen
+is sound in purpose but reopens up to three portal sites, which may be Facebook or Google, with no auto-close on a
+working network. The user's new parent-code decision (2026-11-15) is not in the design yet; it is sound on the
+launcher's existing `ParentPin`, and it changes the entry, the budget's role and the contract (below).**
+
+Counts: **0 High, 4 Medium, 6 Low.**
+
+### Q102-R3-M1 Medium - the source scan fails on today's code and misses the usual ways to add cleartext (§3.1, §10)
+
+D15 (a) removes Android's refusal, so this scan is the only thing between a later http call and the wire. As written:
+
+- **It fails on day one.** "`WebView` appears only under `portal/`": `AppEnforcer.kt:1248` calls
+  `android.webkit.WebView.getCurrentWebViewPackage()` (design 26c), and `EnforcementPlan.kt:152-183` names WebView in
+  comments. The builder will loosen it ad hoc.
+- **It misses**, each of which speaks http with the config's net gone:
+  - `OkHttpClient()` (the no-argument constructor) and `Retrofit.Builder()` without `.client(…)`, which makes its own
+    default client;
+  - `import java.net.URL` with `URL(x).readText()`/`readBytes()`/`openStream()` (Kotlin's extensions; no
+    `openConnection(` and no `java.net.URL(` in the source);
+  - `.newBuilder()` of the DoH client or `PortalCheck`'s client, used elsewhere;
+  - `DownloadManager`, `MediaPlayer.setDataSource(String)` or with an `http` `Uri`, `android.net.http.HttpEngine`
+    (API 34's platform Cronet);
+  - a `WebView` made outside `portal/` (the token to ban is `WebView(` and `android.webkit` imports, not the word).
+- **Fix**: copy the music app's `SourceScanTest` pattern (comments stripped by `code()`, a token list, one named
+  exception per file). Tokens outside the three allowed files: `OkHttpClient(`, `OkHttpClient.Builder(`,
+  `Retrofit.Builder(` (allowed only in `MdmApi.kt`/`MusicServer.kt` with `.client(`), `java.net.URL`,
+  `URLConnection`, `openStream(`, `DownloadManager`, `HttpEngine`, `setDataSource(` (allowed in `KidSounds.kt` and
+  `LocateCommands.kt`, which pass a content or alarm `Uri`), `WebView(`, `android.webkit` (allowed in `AppEnforcer.kt`
+  for `getCurrentWebViewPackage` only), `bearerInterceptor(` (only in the server clients). Say in §3.1 that a **new
+  library** that does its own HTTP is not seen by a source scan; the gate for that is the existing dependency review
+  (`verification-metadata.xml` fails the build on any new dependency).
+
+### Q102-R3-M2 Medium - "a 302 from a portal site" against "a tap is refused": a portal site's own redirector is a way out (§3.3, §7, D3)
+
+§3.3 allows a cross-site main-frame move "when the page's own move comes from a portal site: a 302 (`isRedirect`) …",
+and refuses "a tap to another site (`hasGesture()`) … everywhere". It doesn't say which wins for a 302 that follows a
+tap. A tapped link keeps its gesture through its redirects in Chromium (not measured: R5 measured the 302 after
+`loadUrl`, `gesture=false`), so the case is real:
+
+- On a portal site that has a **same-site redirector** (`google.com/url?q=`, `l.facebook.com/l.php` - the same
+  registrable domain -, `youtube.com/redirect`), a tap is same-site (free), and the 302 out is "from a portal site"
+  (allowed). The target is a leaf; BACK returns to the portal site and the kid taps the next one. With a search engine
+  as the rig's first page, that is the whole web one hop at a time, for 20 minutes a day under the lists - not D3's
+  "one ordinary site, where the kid can tap around within that site", which the user accepted.
+- A rig can make any site a portal site anyway (a script-submitted POST from its own page, §3.3 "every site reached
+  from a portal site by a form post").
+- **Fix**: measure `hasGesture()` on (a) a tapped link's 302 and (b) a form POST's 302 (E5, one more fake-portal mode:
+  a same-site redirector). Rule: a cross-site redirect whose navigation began with a gesture on a GET is refused; a
+  POST's redirect chain (SIR saw the main-frame POST from a portal site) is allowed. A `navigation` row for each. If
+  (b) also carries the gesture, the window remembers "a POST from a portal site is in flight" from SIR. Then D3's and
+  §7's sentence is true as written; otherwise rewrite them to the true residue. The parent-code default (below) shrinks
+  this to phones where the parent turned the code off.
+
+### Q102-R3-M3 Medium - the reopen reopens every portal site, with no close, on a working network (§3.8, D16)
+
+- The record keeps "the session's portal sites, at most 3", and revisit mode allows taps and moves "within the
+  recorded portal sites". A portal site is also any site reached by a form post (§3.3): a real portal's "Log in with
+  Facebook", a Google sign-in, a payment provider. On a network that works, with "no auto-close by Vibb's https check"
+  and no `VALIDATED` close, revisit is then a 10-minute window on facebook.com or google.com with free same-site taps,
+  every day the kid has budget. §3.8's "H1 is not reopened" argues only the rig, not a real portal of this kind.
+- **Fix**: revisit opens and keeps to **the first page's site only** (where the portal's redirect landed: the portal
+  operator's own page, which is where log-out and time left live). Record only that site. A `navigation` row: revisit,
+  a tap to a recorded form-post site → refused.
+- The recorded URL is handled right: it stays on the phone (a session token), the report carries `first_host` only,
+  the record goes at day's end and with Part A off, and the app has no backup (`allowBackup="false"`). Add: never
+  logged, and kept in `noBackupFilesDir` with the snapshot.
+
+### Q102-R3-M4 Medium - the parent-code decision (2026-11-15) is not in the design, and changes the entry, the budget and the contract
+
+The user: every Wi-Fi sign-in and every reopen needs the parent code on the phone by default (or the PWA's "Gi én
+innlogging til nå"), and a PWA switch turns the requirement off; the switch goes on the phone's **Avansert** page
+(`/devices/{id}/advanced`), not on the new `/devices/{id}/logins` page. D16 is yes. Revision 5 should carry it.
+
+**The parent-code path is sound on what exists:**
+
+- `ParentPin.check(context, entry, code)` works offline: PBKDF2 against the vault's Keystore-wrapped tag
+  (`PinVault.verify`), no network. Its escalating lockout (`ParentPinLockout.kt`) is one state for every entry, so the
+  Wi-Fi keypad can't be used to guess around the Settings gate's lockout (or the reverse). Every try is queued as a PIN
+  event with its entry and synced when the phone next can. `ForeignAccess` is checked when the keypad shows and again
+  before the verify.
+- **A new entry `ParentPinEntry.WIFI_SIGNIN("wifi_signin")`**, one-shot: no window (`windowDuration` null). A match
+  approves **exactly this opening, on this network**, nothing after (the one-shot rule for parent overrides). The
+  server gets `Entry::WifiSignin` in `parent_pin.rs` and its words in `parent_events.rs`, in the same commit. An older
+  server skips those events with a warning (`handlers/parent_pin.rs:217`): the parent on an older server doesn't see
+  wrong codes typed at the Wi-Fi keypad. Name it under compatibility.
+- **Where**: in Vibb One's main process (the vault, the lockout store and the Keystore key are main-process state),
+  never in `:portal`. Order: the network check, Vibb's https check (no code when the network already works), the code
+  or a grant, the budget, then the window.
+- **States the design must name**: `NotConfigured` (no parent code set) fails closed: the keypad says so, only a grant
+  or the switch off opens, and the Advanced page's switch row warns "Ingen foreldrekode er satt" / "No parent code is
+  set". `ForeignAccessOn`: refused, as at every gate. `Unavailable(untilSync)` (the key failed, a re-wrap needs a sync):
+  on a Wi-Fi-only phone the sync needs the sign-in. That is a deadlock, rare (a Keystore fault), and the same for the
+  pause. Name it as residue. Cancelling the keypad is `closed` with `reportCaptivePortalDismissed()`, so Android keeps
+  its notification.
+- **The PIN pause**: no code asked while it runs, as everything else is lifted.
+
+**What it changes in the design:**
+
+- **The entry (§3.2).** It is a theme-less trampoline today, and it must now show a keypad. A `Theme.NoDisplay`
+  activity must finish before `onResume`, so it can't host the keypad or wait seconds for the https check either. Make
+  the entry a visible, translucent main-process activity ("Sjekker nettet …", then the keypad), still guarded by
+  `NETWORK_STACK`, still holding the `CaptivePortal` binder from the extras.
+- **The budget (§3.4) - a choice for the user (D17).** The PWA's "one more" reaches the phone only through a sync. A
+  phone whose one network is the captive Wi-Fi (no SIM data, or abroad with roaming off, design 97: the hotel case)
+  can't get it until it is signed in. So with the code required, a budget that also binds code openings can strand a
+  family at a hotel after four tries. Recommended: **a correct code opens regardless of the day's openings and
+  minutes**: the parent is there, and the opening is reported with how it was approved. Each opening keeps its
+  10-minute cap. The day's budget, `wifi_signin_budget` and the grant then govern the **code-free** openings: the
+  switch off, or a grant. If the user wants the budget to bind code openings too, the code must at least act as the
+  offline "one more" when the budget is spent.
+- **The grant (D14)** is one code-free opening. Its button should say it reaches the phone only once the phone is
+  online ("virker når telefonen har nett, f.eks. mobildata").
+- **Kid-facing words**: Home's line and the Wi-Fi page's "Logg på" lead to the keypad. Its title: "Foreldrekode for
+  Wi-Fi-innlogging" / "Parent code for Wi-Fi sign-in". The reopen row (§3.8) asks the code too.
+- **The contract and the migration**:
+  - `captive_portal.require_code` (bool) in the policy, pinned by `policy_json_keys_snapshot` and
+    `PolicyResponseCompatTest`. `older_server` → `true`: fail closed, so a parent with an older server can't turn it
+    off until the server is updated.
+  - A session's `approved`: `code`, `grant`, `pause` or `none` (switch off).
+  - `0150` adds `captive_portal_require_code INTEGER NOT NULL DEFAULT 1`.
+  - `login_rules.json` gets `approve` rows: `{require_code, pin result, budget, grant, pause}` → keypad, open or refuse.
+- **The PWA**:
+  - The switch "Krev foreldrekode for Wi-Fi-innlogging" / "Require the parent code for Wi-Fi sign-in" sits on Avansert
+    as its own autosave row, with its own save section and an anchor, and the no-jump rule.
+  - §5/§5.1's Wi-Fi section on the logins page shows the state as a sub-line ("Krever foreldrekode – endres under
+    Avansert") with a link.
+  - "Krever nyere Vibb One" without the capability.
+  - §9 step 1 and §10's server tests gain the switch's save and its anchor.
+- **What it makes less important, not unnecessary.** With the code on, D3's residue (R3-M2) and §3.8's reach (R3-M3)
+  matter only on phones where the parent turned the code off. Keep the site rule, the https close, the 10 minutes and
+  the reporting: they are built anyway, and they still bound the window after the parent hands the phone back (the
+  parent typed the code to sign in, not to open a browser). D1's sub-line on the switch should mention the code.
+
+### Q102-R3-L1 Low - the debug config and stale text (§3.1, §1, §11)
+
+- The debug build has its own `src/debug/res/xml/network_security_config.xml` with `base-config
+  cleartextTrafficPermitted="false"`. §3.1 changes "the release config" only. Unless the debug base flips too, every
+  emulator check by hostname (E1, E3-E5, E10) fails with `ERR_CLEARTEXT_NOT_PERMITTED`. Say both files. Its `10.0.2.2`
+  domain-config becomes moot. Mark `tools:ignore="InsecureBaseConfiguration"` as the music app does.
+- §11's "never `10.0.2.2`, which the debug config exempts" no longer holds as a reason. A hostname still tests the
+  bound network's lookup, so keep the rule and change the reason.
+- §1's "Not measured: … an `android:permission`-guarded entry activity" is stale since R2/R4.
+- `ServerTransport.kt`'s file comment and the config's own comment describe the old net. Both go with
+  `security.md`'s rewrite.
+
+### Q102-R3-L2 Low - two inputs where the config was the only fence (§3.1)
+
+Both are https today, so there is no hole. "Https by code" should hold for each client, not depend on its inputs.
+
+- **The tailnet path has no origin fence.** `direct()` refuses any other scheme, host or port. The tailnet branch of
+  `toServer` passes a request for another host through: `TailnetServerDns` refuses other names, but an IP-literal
+  absolute `@Url` (`downloadTrackedApp`) goes to tsnet's proxy, which reaches only tailnet peers. There it is http with
+  no bearer (`bearerInterceptor` is same-origin). The config refused it before. Add the same origin interceptor to the
+  tailnet branch (one line, and a `ServerTransportTest` row).
+- **`buildDohClient`** takes any URL `resolveDoh` is given. The inputs are `https://` constants and
+  `CustomUpstream`'s `startsWith("https://")`. An interceptor that refuses a non-https URL makes it the client's rule.
+
+Unchanged by D15, as §3.1 says:
+
+- tsnet: Go, its own TLS and Noise; the SOCKS hop is a plain socket.
+- DoT and the bootstrap: raw sockets, which the config never covered.
+- The music app: its own package and config, already cleartext app-wide since qa-30-s3b, no `sharedUserId`; the
+  bridge is binder IPC.
+- User-CA trust: the release `trust-anchors` stay system-only, and `debug-overrides` apply to debug builds only.
+- MMS: through `SmsManager`, fetched by the system's MMS service, not under Vibb's config.
+
+### Q102-R3-L3 Low - the reopen's network identity (§3.8)
+
+- **`Network` handles restart at boot.** netIds are handed out from a counter that starts again at each boot. After
+  a reboot the same day, another Wi-Fi can carry a recorded handle, and the row shows on the wrong network: the window
+  then loads the recorded host on it (an IP-literal portal host such as `192.168.1.1` may be a home router's page). Drop
+  the records at boot, or key the handle with the boot count. Require the SSID to match as well when both are known.
+- **An SSID is free to copy.** A hotspot named like the hotel gets the reopen. Its DNS answers the recorded http host
+  with a site of its choosing - the R3-M2 residue, but without having to block Vibb's check hosts, since revisit never
+  auto-closes. It is bounded the same way (the budget, reported, the code by default). Say so in §7.
+- On the notification path with Location off, the record has no SSID. After a reconnect (a new handle) it never
+  matches. Read the SSID when the window's session ends, or accept it and say so.
+
+### Q102-R3-L4 Low - the https check's operators (§3.3, R2-M3)
+
+The rule is right. Two things to state:
+
+- "The phone's own server: any answer with a valid chain" is a plain probe from `:portal`, with no bearer, no design-76
+  pinner and not through `ServerTransport`. It is allowed by name in the scan (R3-M1).
+- With the server as one operator, a tailnet-only server never counts. A phone of such a family needs both Google's and
+  Cloudflare's hosts.
+
+### Q102-R3-L5 Low - "one window at a time" if only the main process dies (§3.2, §3.4)
+
+`:portal` can outlive a crash of the main process. The main process must then read "a window is open" from the
+session file, not from memory, or the entry starts a second window after a restart. One line in §3.2 and a `budget`
+row.
+
+### Q102-R3-L6 Low - where the PWA's controls live (§5, the user's placement)
+
+- The new page `/devices/{id}/logins` keeps Part A's switch, the recent sign-ins, today's use and "one more", and
+  Part B's role, presets and sites.
+- The code requirement goes on **Avansert**, per the user, as R3-M4 lays out, with the logins page pointing to it. Say
+  which page owns which save (`section=` on the logins handler, or the Advanced page's own form) and give each its
+  anchor.
+
+### Round 2's findings, as now designed
+
+| Finding | Verdict |
+|---|---|
+| R2-H1 | Settled by D15 (a). The inventory is true (verified client by client). The scan needs R3-M1, the debug config R3-L1, and two inputs R3-L2 |
+| R2-H2 | Settled. `NETWORK_STACK` is measured both ways (R2, R4), and `getLaunchedFromUid` is gone. A same-uid start of the entry still passes (owner uid), which is harmless. Under R3-M4 the entry becomes a visible activity under the same guard |
+| R2-M1 | Portal sites and leaves end the leaf's chain, and frames are judged in SIR (R6). The 302-after-a-tap order is open (R3-M2) |
+| R2-M2 | Right: `!hasGesture()` from a portal site, measured (R5) |
+| R2-M3 | Right: two operators, fresh each opening, the client's rules named (R3-L4) |
+| R2-M4 | Right: the main process's "close now" to a non-exported receiver in `:portal` (same uid only), plus the snapshot's end as the fallback |
+| R2-L1 | `DONT_KILL_APP`: right |
+| R2-L2 | Right. The latest date, one window (R3-L5), `grant` steps capped, a fresh install taking `grant` as used |
+| R2-L3 | Right: blocked frames only |
+| R2-L4 | Right: a set difference, "unknown" clears once, the cost under the switch |
+| R2-L5 | Right. "The compiled list already leaves the allowed domains out" is still to confirm in the build, as §3.3 says |
+| R2-L6 | Right. Add E5's same-site redirector (R3-M2) and the debug config (R3-L1) |
+
+**The API and contract rule** still holds:
+
+- one contract `login_windows.json`, byte-identical in both directories, with the launcher's half in step 1's commit;
+- the root `CLAUDE.md` paragraph and both CI path lists;
+- the policy keys pinned, and `login_browser` nullable.
+
+R3-M4 adds `require_code`, the session's `approved` and the PIN entry `wifi_signin` on both sides in the same commit.
+
+**Migration `0150`** is free on every branch. `design-100` holds 0149, so recheck the number at the merge, as §6.4
+says.
+
+**Tests** stay lean. The additions are R3-M1's token list in `ServerTransportTest`, the `navigation`/`approve` rows,
+the tailnet origin row, and the server's switch save.
+
+### The D-items
+
+| # | Verdict |
+|---|---|
+| D3 (i) | Sound as decided, once R3-M2's order is settled. If not, the text understates the residue |
+| D15 (a) | Sound. The music app has run this way since qa-30-s3b. It needs R3-M1's real scan to stay so |
+| D16 | Yes (the user). Sound with R3-M3: the first page's site only, plus R3-L3's identity, and the code (R3-M4) |
+| D17 (new, needed) | With the code required: does a correct code open past the day's budget? Recommended yes (R3-M4), since the PWA's grant can't reach a Wi-Fi-only phone |
+
+### Couldn't verify
+
+- `hasGesture()` on the redirects of a tapped link and of a form POST (R3-M2). This is from Chromium's behaviour as I
+  know it and needs E5.
+- That `DownloadManager` and `MediaPlayer`'s http source honour the caller's cleartext setting (so they were fenced
+  before D15). The scan bans them either way.
+- That netIds restart at each boot (R3-L3). This is from AOSP's `ConnectivityService`, not run here.
+- Whether OkHttp skips `Dns` for an IP-literal host on the tailnet path (R3-L2). Either way only tsnet's peers are
+  reachable.
+- That `https://cp.cloudflare.com/generate_204` answers an exact 204 with an empty body. E4 settles it.
+- `Theme.NoDisplay`'s finish-before-`onResume` rule against a check of several seconds (R3-M4). It is documented
+  platform behaviour, not run here.
