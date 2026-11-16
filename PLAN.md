@@ -32,7 +32,7 @@ findings, merge to `main`, full suite once.
 
 Last tags: `server-v0.81.0`, `launcher-v0.40.0-rc.3` and `music-v0.6.0-rc.6` (2026-11-16, all on 312345d9: designs 100-104 and the music app's new icon; the user signed `release` for all three). Every entry that was done and released by then moved to `docs/plan/plan-archive.md` ("Moved out of PLAN 2026-11-16"); its owed device checks are under "Waiting on the user or a device check" below.
 
-**Next tags: none approved.** On main for the next server tag (`server-v0.81.1`, server only): the summary's sheet where every page has it with the picture over the band (3a), the chosen tab icon's hole, Vibb One's tile at the launcher icon's scale (see "Done since the last release"). The stable `launcher-v0.40.0` (the QR's `releases/latest`, still 0.34.0) waits on the user's word that rc.3 runs well.
+**Next tags: APPROVED 2026-11-16 (the user: "Tag 81.1 først så resten sammen senere!"): `server-v0.81.1` now, on the "Server 0.81.1" commit; `launcher-v0.40.0-rc.4` + `music-v0.6.0-rc.7` together later, once launcher-fix-1 and compat-fix-1 are merged and green.** `server-v0.81.1` carries (server only): the summary's sheet where every page has it with the picture over the band (3a), the chosen tab icon's hole, Vibb One's tile at the launcher icon's scale (see "Done since the last release"). The stable `launcher-v0.40.0` (the QR's `releases/latest`, still 0.34.0) waits on the user's word that rc.3 runs well.
 
 One line per approved item that has no code yet. An item leaves this list in the commit that merges it (or the one right
 after), never later. Details stay in the entries below.
