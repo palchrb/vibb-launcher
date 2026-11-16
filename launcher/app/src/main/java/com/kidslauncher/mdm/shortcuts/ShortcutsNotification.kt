@@ -24,7 +24,7 @@ private val GLYPHS = intArrayOf(R.id.shortcut_glyph_0, R.id.shortcut_glyph_1, R.
  * screen, no content intent and no action (design 100 D1). On a day with a screen-time budget the big view has the time
  * line over the row ([time]'s text, r13's words) and the note under it ("Spurt kl. 14:02 · venter på svar", the
  * parent's answer: `AnchorNotice.noteText`); the folded view is the
- * row alone. The small icon is the gear (`ic_stat_gear`, white: design 100 M10). [AnchorNotification] posts it as id
+ * row alone. The small icon is the Vibb mark (`ic_stat_vibb`, literal colours: design 100 M10), as the plain notice's (the user, 2026-11-16). [AnchorNotification] posts it as id
  * 1002, on the panel's channel.
  * Each cell's tap is an explicit, immutable broadcast to [ShortcutsReceiver] with the key alone; Flymodus On is the one
  * activity, [ShortcutAirplaneActivity] (§4.1).
@@ -33,7 +33,7 @@ object ShortcutsNotification {
     fun build(context: Context, channelId: String, panel: ShortcutsPanel, time: TimePart): Notification {
         val ground = context.getColor(R.color.kid_ground)
         return Notification.Builder(context, channelId)
-            .setSmallIcon(R.drawable.ic_stat_gear)
+            .setSmallIcon(R.drawable.ic_stat_vibb)
             .setStyle(Notification.DecoratedCustomViewStyle())
             // The row both ways: Android shows the top notification unfolded (S2), and the kid sees no change in the
             // row when it folds. The time and the note only unfolded (the folded content is 48 dp, design 99 S8).

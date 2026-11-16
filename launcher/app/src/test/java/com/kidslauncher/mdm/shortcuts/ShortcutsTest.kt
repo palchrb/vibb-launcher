@@ -241,9 +241,9 @@ class ShortcutsTest {
         for (call in listOf(".setColorized(true)", "FOREGROUND_SERVICE_IMMEDIATE", ".setVisibility(Notification.VISIBILITY_SECRET)", ".setOngoing(true)")) {
             assertTrue(call, notification.contains(call))
         }
-        // Design 100 D1: no "Be om mer tid" in the panel - no action at all; the gear as its small icon (M10).
+        // Design 100 D1: no "Be om mer tid" in the panel - no action at all; the Vibb mark as its small icon (M10, 2026-11-16).
         assertFalse(notification.contains("addAction") || notification.contains("Notification.Action"))
-        assertTrue(notification.contains(".setSmallIcon(R.drawable.ic_stat_gear)"))
+        assertTrue(notification.contains(".setSmallIcon(R.drawable.ic_stat_vibb)"))
         assertEquals(1, Regex("""PendingIntent\.getActivity\(""").findAll(notification).count())
         assertTrue(notification.contains("Intent(context, ShortcutAirplaneActivity::class.java)"))
         assertTrue(notification.contains("PendingIntent.FLAG_IMMUTABLE"))
