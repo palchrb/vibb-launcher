@@ -251,10 +251,11 @@ async fn saves_seal_the_pin_and_keep_the_one_the_phone_confirmed() {
     assert!(policy["pending_command"].is_null());
 }
 
-/// N-B and §2.1: clearing the Child PIN forgets every copy, moves the rev on, sets Vibb One's lock
-/// and cancels a waiting `set_kid_pin`.
+/// N-B and §2.1: clearing the Child PIN forgets every copy, moves the rev on and cancels a waiting
+/// `set_kid_pin` - since 2026-11-16 only while Vibb One's lock is chosen: with Android's lock it is
+/// refused (nothing written, the command still waits), and the choice is never changed by it.
 #[tokio::test]
-async fn clearing_forgets_the_pin_sets_own_and_cancels_the_waiting_command() {
+async fn clearing_forgets_the_pin_and_cancels_the_waiting_command() {
     let (app, cookie, id, token) = setup().await;
     save(&app, &cookie, id, "1357").await;
     android(&app, id).await;
@@ -262,15 +263,41 @@ async fn clearing_forgets_the_pin_sets_own_and_cancels_the_waiting_command() {
     save(&app, &cookie, id, "2468").await;
     assert_eq!(pin_rows(&app, id).await.len(), 1);
 
+    let clear = [("clear_kid_pin", "on")];
+    let route = format!("/devices/{id}/kid-lock");
+    // Android's lock: refused, the PIN, its rev and the waiting command kept.
     let res = app
-        .request_form(
-            Method::POST,
-            &format!("/devices/{id}/kid-lock"),
-            Some(&cookie),
-            &[("clear_kid_pin", "on")],
-        )
+        .request_form(Method::POST, &route, Some(&cookie), &clear)
         .await;
-    assert_eq!(res.status, StatusCode::SEE_OTHER);
+    assert_eq!(
+        res.location(),
+        Some(format!("/devices/{id}/lock?notice=keyguard_needs_pin#child-pin").as_str())
+    );
+    let still = kept(&app, id).await;
+    assert_eq!(
+        (still.keyguard.as_str(), still.pin.as_deref(), still.rev),
+        ("android", Some("2468"), 2)
+    );
+    let rows = pin_rows(&app, id).await;
+    assert_eq!(
+        (rows.len(), rows[0].1, rows[0].2.as_deref()),
+        (1, false, None),
+        "still waiting"
+    );
+
+    // Vibb One's lock (set here in the database, so the waiting row stays as a race would leave it).
+    sqlx::query("UPDATE device_policy SET kid_keyguard = 'own' WHERE device_id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let res = app
+        .request_form(Method::POST, &route, Some(&cookie), &clear)
+        .await;
+    assert_eq!(
+        res.location(),
+        Some(format!("/devices/{id}/lock?notice=cleared#child-pin").as_str())
+    );
     assert_eq!(
         kept(&app, id).await,
         Kept {

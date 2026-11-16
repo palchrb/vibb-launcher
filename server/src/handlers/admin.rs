@@ -277,7 +277,7 @@ mod tests {
         "changed_elsewhere",
         "on_over",
         // Design 59: the Child PIN group's notices and the reveal's form action.
-        "keyguard_no_pin",
+        "keyguard_needs_pin",
         "pin_not_kept",
         "pin_not_sent",
         "pin_sent",

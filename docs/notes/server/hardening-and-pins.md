@@ -125,7 +125,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 
 Step 1 (the contract and the storage; step 2, the PWA's side, below):
 
-- **Columns**: `device_policy.kid_keyguard` (`'own'` default, `'android'`), `kid_pin_sealed`, `kid_pin_prev_sealed`,
+- **Columns**: `device_policy.kid_keyguard` (`'own'` the column default, `'android'`; since 2026-11-16 a phone added on
+  the Devices tab is created with `'android'`, below), `kid_pin_sealed`, `kid_pin_prev_sealed`,
   `kid_pin_prev_rev`, `kid_pin_rev` (0). **Policy**: `kid_lock` always carries `keyguard` (`"own"` for anything
   stored but `"android"`) and `pin_rev` (`kid_lock::policy_kid_lock`; inner keys pinned by
   `step10::kid_pin_saved_sent_and_safe_boot_blocked`, the launcher's `PolicyResponseCompatTest`).
@@ -138,8 +139,9 @@ Step 1 (the contract and the storage; step 2, the PWA's side, below):
 - **Save** (`update_kid_lock`, one transaction): the new sealed copy, `kid_pin_rev + 1`, and the PIN the phone last
   confirmed kept in `prev` - both prev columns keyed on `kid_pin_prev_rev IS NULL` (qa-59-revision M-2: a legacy PIN
   saved before 0085 stays `prev_rev` 0 with no sealed copy, "an earlier PIN", over any number of saves), then the
-  queue rule. **Clear**: hash, sealed and prev NULL, rev + 1, `kid_keyguard = 'own'`, a waiting `set_kid_pin`
-  cancelled (`kid_pin_cleared`), one transaction. **Status intake** (`kid_lock::after_lock_report`, a launcher with
+  queue rule. **Clear**: hash, sealed and prev NULL, rev + 1, a waiting `set_kid_pin` cancelled (`kid_pin_cleared`),
+  one transaction - since 2026-11-16 only while Vibb One's lock is chosen and without touching `kid_keyguard` (below;
+  until then it set `'own'`). **Status intake** (`kid_lock::after_lock_report`, a launcher with
   `android_keyguard_v1` only): prev NULLed once the phone reports `lock_state.pin_rev` = the current rev.
 - **`set_kid_pin`** (`kid_lock::queue_pin_command`, one `INSERT ... SELECT`): android, a sealed PIN, the last report's
   capabilities have `android_keyguard_v1` (no row at all for an older launcher) and no row waiting (never delivered and
@@ -168,10 +170,35 @@ Step 1 (the contract and the storage; step 2, the PWA's side, below):
 Step 2 (Lock Screen & PINs; `docs/notes/server/pwa.md`, "Lock Screen & PINs", has the page's forms):
 
 - **The switch** (`devices::update_kid_keyguard`, `POST /devices/{id}/kid-lock/keyguard`, `keyguard` = `own` |
-  `android`, else 400): only with a Child PIN (`UPDATE ... WHERE kid_pin_hash IS NOT NULL`, else flash
-  `keyguard_no_pin`); to android the queue rule runs in the same transaction (a kept PIN migrates the phone at once),
+  `android`, else 400): to android the queue rule runs in the same transaction (a kept PIN migrates the phone at once),
   to own a waiting `set_kid_pin` is cancelled (`keyguard_own`); a change logs `kid_keyguard_changed` ("device 3:
-  Android's lock"), every save nudges. Labelled for the test phase: Android's lock is the destination (PLAN).
+  Android's lock"), every save nudges. Since 2026-11-16 also without a Child PIN (it was refused then, flash
+  `keyguard_no_pin`, gone): the choice waits for the PIN, the row says "Starts when the Child PIN is set". The options
+  read "Android's lock" and "Vibb One's lock (being phased out)" (nb "Vibb Ones lås (fases ut)"); the "Test phase"
+  sub-line is gone.
+
+**Android's lock by default** (2026-11-16, the user: "vi bruker ikke noe annet enn androids pin lås, det er den vi
+bygger for!"; Vibb One's own lock goes in phase D):
+
+- **A new phone** (`devices::insert_device_with_policy`, the Devices tab's Add) is created with `kid_keyguard =
+  'android'`. No migration: 0085's column default stays `'own'`, so every phone made before keeps its stored choice,
+  and the test helper's plain `INSERT` still makes an own-lock phone. Step by step: no Child PIN - `kid_lock` is null,
+  no lock on the phone at all (as before, whichever lock is chosen; the launcher's `androidRequested(null)` is false);
+  the Child PIN saved - `kid_lock.keyguard: "android"`, and the queue rule sends the PIN at once to a phone that
+  reported `android_keyguard_v1`. Until Android's PIN is set the launcher's own keypad checks the same hash
+  (`androidFace` needs `deviceSecure`; design 59 §3.4's keypad migration is the path without a kept copy), so the
+  phone is never without a lock once the PIN exists; an older launcher reads `keyguard` as an unknown key and keeps
+  Vibb One's lock, with the page's "Update Vibb One" warning. The launcher was not changed.
+- **Remove Child PIN is refused while Android's lock is chosen**: removing it would roll the phone back to no lock at
+  all (design 59 §3.8, `kid_lock` null). The page shows a row instead of the confirm ("Android's lock needs a Child
+  PIN, so it can't be removed. To change it, save a new one above."; `data-row="remove-needs-pin"`), and a post from
+  an older page is refused by the `UPDATE`'s own `kid_keyguard != 'android'` (a parallel switch wins) with the flash
+  `keyguard_needs_pin`, nothing written, no `kid_pin_cleared`. With Vibb One's lock Remove works as before and leaves
+  the choice as it is - it no longer falls back to Vibb One's lock silently. To remove the Child PIN of a phone on
+  Android's lock the parent chooses Vibb One's lock first (two deliberate steps).
+- Tests: `android_lock_page::a_new_phone_gets_androids_lock_once_the_child_pin_is_set`,
+  `the_child_pin_stays_while_androids_lock_is_chosen`, `the_switch_saves_queues_and_cancels` (the switch before a
+  PIN), `kid_keyguard::clearing_forgets_the_pin_and_cancels_the_waiting_command`.
 - **Show Child PIN** (`device_pages::lock_action`, `POST /devices/{id}/lock#show-pin` with `action=reveal_kid_pin` and
   `password`; another action 400): `admin_auth::reauth` (the gated Argon2; three wrong in a row end every session of the
   account, the count - `admin_users.reauth_wrong` - shared with the password and 2FA forms and Add/Reset/Remove Parent;

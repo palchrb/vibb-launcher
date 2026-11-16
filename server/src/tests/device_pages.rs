@@ -667,10 +667,11 @@ async fn lock_forms_return_to_the_page() {
             &[("new_kid_pin", "7391")],
             (format!("{lock}?notice=saved"), Some("child-pin")),
         ),
-        // Design 59: the lock switch, back to its row.
+        // Design 59: the lock switch, back to its row (Vibb One's lock kept: with Android's, Remove Child PIN
+        // below is refused since 2026-11-16).
         (
             "kid-lock/keyguard#lock-keyguard",
-            &[("keyguard", "android")],
+            &[("keyguard", "own")],
             (lock.clone(), Some("lock-keyguard")),
         ),
         // "Show Child PIN…": answered with the page itself on its own path (no redirect, the

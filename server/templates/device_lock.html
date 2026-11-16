@@ -13,8 +13,10 @@
     <div class="sheet">
 
     {#- Child PIN: the row opens the change form (a Save button: a PIN is typed, not toggled);
-        Remove is a confirm (M6); the flash sits in the group, its id is the redirect's anchor.
-        Design 59: the lock switch (an auto-saving select, back to its row #lock-keyguard), "Show Child PIN…"
+        Remove is a confirm (M6) - while Vibb One's lock is chosen only: Android's lock needs a Child PIN, so with it a
+        row says so instead (2026-11-16); the flash sits in the group, its id is the redirect's anchor.
+        Design 59: the lock switch (an auto-saving select, back to its row #lock-keyguard; Android's lock for a new
+        phone, and with no Child PIN the choice waits for one), "Show Child PIN…"
         (posts to this page's own path and is answered with this page - no redirect, no anchor,
         so the PIN is in no address and scroll-restore.js keeps the place) and "Send the Child PIN
         again" (back to #child-pin). -#}
@@ -42,13 +44,13 @@
             </details>
             <form method="post" action="/devices/{{ device.id }}/kid-lock/keyguard#lock-keyguard" class="cell" id="lock-keyguard">
                 <label class="row">
-                    <span class="row-label">{{ self.t("device.lock.lock") }}<span class="row-sub">{% if child.pin_set %}{{ self.t("device.lock.lock_test") }}{% else %}{{ self.t("device.lock.child_first") }}{% endif %}</span></span>
-                    <select class="pick" name="keyguard" data-autosave{% if !child.pin_set %} disabled{% endif %}>
+                    <span class="row-label">{{ self.t("device.lock.lock") }}{% if !child.pin_set %}<span class="row-sub">{{ self.t("device.lock.lock_after_pin") }}</span>{% endif %}</span>
+                    <select class="pick" name="keyguard" data-autosave>
                         <option value="own"{% if !keyguard_android %} selected{% endif %}>{{ self.t("device.lock.own_lock") }}</option>
                         <option value="android"{% if keyguard_android %} selected{% endif %}>{{ self.t("device.lock.android_lock") }}</option>
                     </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 </label>
-                <noscript><button type="submit" class="row row-button"{% if !child.pin_set %} disabled{% endif %}>{{ self.t("device.lock.save_lock") }}</button></noscript>
+                <noscript><button type="submit" class="row row-button">{{ self.t("device.lock.save_lock") }}</button></noscript>
             </form>
             {% if child.pin_set %}
             {%- if let Some(r) = reveal_shown %}
@@ -93,7 +95,9 @@
                 <button type="submit" class="row row-button">{{ self.t("device.lock.send_again") }}</button>
             </form>
             {% endif %}
-            {% if child.pin_set %}
+            {% if child.pin_set && keyguard_android %}
+            <p class="row row-note" data-row="remove-needs-pin">{{ self.t("device.lock.remove_needs_pin") }}</p>
+            {% else if child.pin_set %}
             <details class="confirm cell">
                 <summary class="row">{{ self.t("device.lock.remove_child_pin") }}&hellip;</summary>
                 <form method="post" action="/devices/{{ device.id }}/kid-lock#child-pin" class="confirm-body">

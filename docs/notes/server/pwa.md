@@ -228,7 +228,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   2026-11-03), Notifications on the lock screen (Parent PIN's "Recent use" went on 2026-11-03, the user's ask).
 - **Forms** (POST routes unchanged): the Child PIN and Parent PIN rows are `<details class="edit">` with the field
   and a Save button (a PIN is typed, not toggled); Remove Child PIN… is a `<details>` confirm (M6) posting
-  `clear_kid_pin`; the Parent PIN's "Remove it instead" stays a checkbox in its form. "Turn off after" and
+  `clear_kid_pin` - with Vibb One's lock chosen only; with Android's a row says the lock needs a PIN instead
+  (2026-11-16, `hardening-and-pins.md`, "Android's lock by default"); the Parent PIN's "Remove it instead" stays a checkbox in its form. "Turn off after" and
   "Background" are inline `select.pick`s, each app a `select.pick` too since 2026-10-21 (below) - all
   `data-autosave` with a `<noscript>` Save.
 - **One select per app on the lock** (2026-10-21, the user's pick of the mockup's variant B): "Notifications on the
