@@ -53,7 +53,7 @@
                 <span class="device-row-name">{{ d.name }}</span>
                 {#- One line under the name (the user's pick C, 2026-11-01): the line the first fact that holds and the
                     dot the same (phone_status::dot: green in touch, orange "No contact", grey off or offline). -#}
-                <span class="row-sub device-line" data-status="{{ d.dot }}" data-line>{% call status_line::parts(d.line) %}{% endcall %}</span>
+                <span class="row-sub device-line" data-status="{{ d.dot }}" data-line>{% call status_line::parts(d.line, false) %}{% endcall %}</span>
                 {% if let Some(percent) = d.meter %}<span class="meter device-meter" aria-hidden="true"><i style="width: {{ percent }}%"></i></span>{% endif %}
             </span>
             {% if d.attention > 0 %}<span class="count" data-attention-count="{{ d.attention }}"><span aria-hidden="true">{{ d.attention }}</span><span class="visually-hidden">{{ self.tc("devices.list.to_check", d.attention, []) }}</span></span>{% endif %}
@@ -74,7 +74,7 @@
     </div>
 </main>
 {#- Pull down to refresh (2026-10-25): on the Devices list and a phone's summary only (static/pull-refresh.js), never a page with a map. -#}
-<script src="/static/pull-refresh.js?v=4" defer></script>
-{% if push_offer.is_some() %}<script src="/static/notifications.js?v=5" defer></script>{% endif %}
+<script src="/static/pull-refresh.js?v=5" defer data-swap-ready></script>
+{% if push_offer.is_some() %}<script src="/static/notifications.js?v=6" defer data-swap-ready></script>{% endif %}
 </body>
 </html>

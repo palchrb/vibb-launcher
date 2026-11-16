@@ -104,8 +104,7 @@ class HomeRound7Test {
         val a = GridTile.App(GridApp("k1", "Chat", "org.chat"), 0)
         assertEquals("app:k1", gridTileId(a))
         assertEquals(gridTileId(a), gridTileId(a.copy(badge = 3)))
-        assertEquals(gridTileId(GridTile.Flashlight(true)), gridTileId(GridTile.Flashlight(false)))
-        val ids = listOf(GridTile.PhoneBook, a, GridTile.Flashlight(false), GridTile.Settings).map(::gridTileId)
+        val ids = listOf(GridTile.PhoneBook, a, GridTile.Day, GridTile.Settings).map(::gridTileId)
         assertEquals(ids.size, ids.toSet().size)
     }
 
@@ -117,7 +116,6 @@ class HomeRound7Test {
         assertEquals("a new icon", TileChange.FULL, tileChange(a, a.copy(badge = 2), sameIcon = false))
         assertEquals("a new icon alone", TileChange.FULL, tileChange(a, a, sameIcon = false))
         assertEquals("a new name", TileChange.FULL, tileChange(a, a.copy(app = a.app.copy(label = "Prat")), sameIcon = true))
-        assertEquals("the torch", TileChange.FULL, tileChange(GridTile.Flashlight(false), GridTile.Flashlight(true), sameIcon = true))
         assertEquals(TileChange.SAME, tileChange(GridTile.Settings, GridTile.Settings, sameIcon = true))
     }
 

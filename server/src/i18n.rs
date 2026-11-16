@@ -650,6 +650,7 @@ mod tests {
         "devices_list.html",
         "device_detail.html",
         "device_about.html",
+        "device_activity.html",
         "device_add.html",
         "device_advanced.html",
         "device_apps.html",
@@ -658,6 +659,8 @@ mod tests {
         "device_filter.html",
         "device_home.html",
         "device_lock.html",
+        "device_mobile.html",
+        "device_logins.html",
         "device_time.html",
         "enroll_code.html",
         "provision_qr.html",
@@ -893,7 +896,8 @@ mod tests {
     }
 
     /// Every key in the catalogs is used (its plural stem for a counted one), but the closed sets worded by a key
-    /// built at runtime, each with its own test: `security.event.<id>`, `events.<kind>.*`, `time.*`.
+    /// built at runtime, each with its own test: `security.event.<id>`, `events.<kind>.*`, `time.*`,
+    /// `data_roaming.place.<cc>` (`mobile_network::tests::every_named_country_has_its_phrase_in_both_languages`).
     #[test]
     fn every_key_is_used() {
         let mut quoted = std::collections::HashSet::new();
@@ -910,6 +914,7 @@ mod tests {
         let unused: Vec<&String> = EN
             .keys()
             .filter(|key| !["security", "events", "time"].contains(&key.split('.').next().unwrap()))
+            .filter(|key| !key.starts_with("data_roaming.place."))
             .filter(|key| {
                 let stem = key
                     .strip_suffix(".one")

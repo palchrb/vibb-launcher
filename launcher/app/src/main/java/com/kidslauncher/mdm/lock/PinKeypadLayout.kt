@@ -13,7 +13,7 @@ import kotlin.math.abs
  *
  * Design 34 P7 (the spacing rule): one column with nothing overlaid - header, dots, keypad, a gap of
  * at least 16 dp, Emergency call (at least 48 dp, it wraps and grows with the font scale), "Parent
- * code" (at least 44 dp), the inset. Only the keys give way: min(72, (h - 3 x gap) / 4) dp of the
+ * code" (at least 48 dp since the screen-size fix S8), the inset. Only the keys give way: min(72, (h - 3 x gap) / 4) dp of the
  * keypad's measured height h, floor 32 dp. A digit never outgrows its key ([digitTextPx]).
  */
 object PinKeypadLayout {

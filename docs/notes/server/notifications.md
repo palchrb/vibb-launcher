@@ -230,13 +230,20 @@ Notifications on it). `docs/design/45-notifications-inbox-first.md`, `docs/desig
   `device_status` row, no security log line. Capability `power_v1` (an old launcher never calls it). Contract
   `testdata/power_report.json`, byte-identical in the launcher's test resources (root `CLAUDE.md`).
 - **The state machine** (pure `parent_events::power_events(&report, last_report, &phone) -> PowerPlan {events,
-  drop_held_off, release_held_off, dropped}`, applied in one transaction, then `push.wake()` if a row or a delivery
+  drop_held_off, quiet_start, release_held_off, dropped}`, applied in one transaction, then `push.wake()` if a row or a delivery
   changed): parts dropped first (an instant > 5 min in the server's future - that part only -, an `off` or an `on`
   older than 30 days - `POWER_MAX_AGE`, the `on` since the code QA's nit 2 -, an `off` later than its `on`; logged). Paired when `off.boot_count < on.boot_count`: one boot apart and
   (`reboot: true`, or `reboot` unknown and the phone's two instants <= `RESTART_GAP` = 3 min apart) is a **restart** -
   "Anna restarted" pushed, the off row (new: `Push::No`, " · told at the next start") and its still-`queued`
-  deliveries `dropped` with reason `restart` (`UPDATE ... WHERE event_id = <off> AND status = 'queued'`); otherwise
-  "Anna was turned on · 07:02 · off since 21:14, battery was 3 %" pushed, a new off row late and unpushed, and an
+  deliveries `dropped` with reason `restart` (`UPDATE ... WHERE event_id = <off> AND status = 'queued'`). **A quick
+  start** (2026-11-13, approved by the user): one boot apart and the phone's two instants <= `OFF_HOLD` = 5 min apart,
+  whatever `reboot` says, is quiet - the held off push dropped (reason `restart` for a restart, else `quick_start`) and
+  the start raised `Push::No` (`quiet_start`); both rows stay in the inbox, a restart's as above, a power-off's start
+  "Anna was turned off and on · Off 07:00–07:03 · battery 64 %" (nb "Annas mobil ble slått av og på · Av
+  07:00–07:03", `start: quick_off`; a power-off is no restart). The one exception: when the off's push already went
+  (a delivery `accepted` or `failed` - the start's upload came after the server's hold), the handler pushes the start
+  after all, worded "Anna: turned on" - never a "turned off" left standing alone. Otherwise (past 5 min, or a boot
+  between) "Anna was turned on · 07:02 · off since 21:14, battery was 3 %" pushed, a new off row late and unpushed, and an
   already-known off's held push - never tried yet - **released at once** (`next_try_at = NULL`), so the parent gets
   "turned off" before "turned on", never after (a deviation from the note, which left it untouched; design 38
   "Implementation status"). Unpaired: an `off` alone is a new row with its push held `OFF_HOLD` = 5 min from its
@@ -252,7 +259,7 @@ Notifications on it). `docs/design/45-notifications-inbox-first.md`, `docs/desig
   probably flat" (`battery_words`: probably flat at <= `FLAT_LEVEL` 3 not charging, else charging / not charging),
   reason `battery` "Anna shut down: battery flat" / `thermal-shutdown`, `thermal` "Anna shut down: too hot" (the level
   only), `reboot: true` "Anna is restarting" (`off_reason_words`: `userrequested` and anything else say nothing more,
-  never shown); `Phone::phone_on(on, at, &Start)`: `Restart` / `AfterOff` / `NoShutdownSeen(LastReport)` (probably
+  never shown); `Phone::phone_on(on, at, &Start)`: `Restart` / `QuickOff` / `AfterOff` / `NoShutdownSeen(LastReport)` (probably
   flat at <= `LAST_REPORT_FLAT_LEVEL` 10). Times by `Phone::at`, capitalised at the summary's start ("Yesterday
   21:14"); a missing battery leaves its clause out. Keys: `phone_off` = the instant (RFC 3339 ms UTC), `phone_on` =
   `boot:<devices.enrolled_at>:<boot_count>` (`Phone.enrolled_at`; a re-enrollment or a factory reset is another
@@ -262,7 +269,7 @@ Notifications on it). `docs/design/45-notifications-inbox-first.md`, `docs/desig
   wakes at the earliest; the TTL counts from `created_at`). **The sender claims a row** before its request
   (`push::claim`: `UPDATE ... SET token_hash, attempts + 1 WHERE id = ? AND status = 'queued'`) and skips it when that
   changed nothing - a restart's drop that commits after a pass read the row as due (qa-38-design N4).
-  `notifications::delivery_line` counts a `restart` or `superseded` drop as no delivery (no line, never "Not sent");
+  `notifications::delivery_line` counts a `restart`, `quick_start` or `superseded` drop as no delivery (no line, never "Not sent");
   during the hold the row reads "Sending".
 - **PWA**: the two switches on Notify Me About come from `Kind::switch()` (no template change; the form and its
   `#events` redirect are design 35's). The device page's header (`devices::render_device`, `data-power-off`): "Off
@@ -283,7 +290,8 @@ Notifications on it). `docs/design/45-notifications-inbox-first.md`, `docs/desig
   (the contract and its copy, H1's sequence - held, dropped, restarted -, the hold running out, the release before the
   "turned on", a known restart, the last report, the switch, re-enrollment, the 4xx answers, the device page's line,
   the claim; since the code QA's fix round a report ending "Off since", a superseded held push, the level range in
-  the route's own test), `music_spotify::migrations_73_to_95_in_order`.
+  the route's own test; since 2026-11-13 a quick power-off and on at 4 min - quiet, both in the inbox -, one at 6 min -
+  both pushed -, and a quick start after the off's push went), `music_spotify::migrations_73_to_95_in_order`.
 - **The shutdown's last position** (2026-10-25, design 38 "Last position", migration `0097_shutdown_fix.sql`): the
   `off` may carry `location {lat, lng, accuracy_m, at_ms, provider}` (`models::PowerLocation`, read leniently - a bad
   one is no position, never a refused body); `device_api::power` checks it as a report's fix
@@ -357,8 +365,9 @@ Notifications on it). `docs/design/45-notifications-inbox-first.md`, `docs/desig
   never its name -, then today's screen time from `time_state`; never text from the request). `title`/`summary` empty;
   `told` words it: "Anna asks for more screen time" (`fit_name` to 60) / "17:21 · Screen time used up",
   "Yesterday 21:40 · Bedtime", "14:02 · 1 h 20 min left", "School", "A time rule", or the clock alone for `unknown`.
-  Target `/devices/{id}#quick` (the summary's Quick actions, where the tiles are; `/devices/{id}/time#extra` until
-  Device › Time Rules lost Extra Time Today on 2026-11-01 - migration 0115 repointed the stored rows). Kept
+  Target `/devices/{id}#ask` since design 100 (the summary's answer card; a push opened after the answer finds no
+  `#ask` and lands at the top); `#quick` before it (`/devices/{id}/time#extra` until Device › Time Rules lost Extra Time
+  Today on 2026-11-01 - migration 0115 repointed the stored rows; the stored `#quick` rows stay, harmless). Kept
   `EVENT_DAYS` (90) like every kind.
 - **The cap and the news rule** (in one `BEGIN IMMEDIATE` transaction): "today" is the phone's own day
   (`device_api::extra_time_day_zone`, qa-r13-rule-card-code Q-2: the zone its latest report names in `time_state.zone`,
@@ -370,17 +379,79 @@ Notifications on it). `docs/design/45-notifications-inbox-first.md`, `docs/desig
   after (inbox and Activity only). The phone keeps its own count of three too (design r13 D5).
 - **Activity**: `activity::without_own_clock` strips a leading or trailing own clock case-insensitively, so the day
   after "Yesterday 21:40 · Bedtime" against `when` "yesterday 21:40" shows "Bedtime".
-- **The summary** shows "Asked for more time at 17:21" (`data-asked`, a `.quick-note` at the top of Quick actions,
-  above the tiles; on Device › Time's Extra Time Today until 2026-11-01) while `parent_events::open_extra_time_request` finds one open: the phone's
-  newest request raised in the server zone's today, and no `time_lifts` row for the phone made at or after its
-  `created_at` (both the server's `datetime('now')`, compared through `datetime()`; any lift counts, one in the same
-  second as the request counts as its answer). A lift form already returns to `#quick`, so after +15 min the page lands
-  there with its flash and without the row.
-- Tests: `tests::time_request` (the contract's answers and copies, one row and the push by each parent's switch, the
-  same id twice, a retried third, the fourth capped, 31 min old unpushed, yesterday's stale, bad ids, the summary's
-  row until a lift and a lift before the request leaving it), `parent_events::tests` (the words per state, a long name,
-  the day after, the state from a report), `activity::tests` (the case-insensitive strip),
-  `migrations_73_to_96_in_order`.
+- **Superseded** (design 100 §14.4, QA R2-L6): a request stored at intake (only after `raise` returned `Some`, in the
+  same transaction - never a retry of the same id, a capped, stale or dropped one) writes `superseded` answers for the
+  phone's other unanswered requests of its day (`time_answers::supersede`): an older launcher asks again after its 30
+  minutes, and the card shows the newest. `EXTRA_TIME_NEWS_MINUTES` only decides the push now: this launcher keeps one
+  request open until it is answered or its day ends and sends it whenever it is back online, so a late one lands in
+  the card and the inbox without a push.
+- Tests (r13): `tests::time_request` (the contract's answers and copies, one row and the push by each parent's switch,
+  the same id twice, a retried third, the fourth capped, 31 min old unpushed, yesterday's stale, bad ids),
+  `parent_events::tests` (the words per state, a long name, the day after, the state from a report), `activity::tests`
+  (the case-insensitive strip), `migrations_73_to_96_in_order`.
+
+### The answer (design 100 §14, revision 2; migration `0149_time_request_answers.sql`; `src/time_answers.rs`, `handlers::time_answer`)
+
+- **One open request.** `time_request_answers (device_id, request_id, answer yes|no|superseded, lift_id, answered_by,
+  by_name, answered_at)`, PK `(device_id, request_id)`; `by_name` is the parent's display name at the answer (a snapshot;
+  NULL without one). A request is **open** while it is the newest `extra_time_request` (by id) asked in the phone's day
+  (`time_answers::day_start`: the zone its newest report names, else Phone Setup's - the intake's day) and has no answer
+  row (`time_answers::open_request`). One rule for every row: migration 0149 backfilled a `yes` for each request a lift
+  (not a phone-key pause) followed under r13's rule - the first such lift, `answered_by` from its `created_by` and
+  `by_name` its display name (QA R2-M4); `lift_id` only for screen time, so a rule pause that closed one is a yes the
+  phone words as no time given (code QA L10).
+  `retention::prune` deletes answers older than `LIFT_DAYS` with the lifts.
+- **The card** on the summary (`DeviceDetailTemplate.ask`, `devices::ask_card`; `section#ask.ask-card`), right after
+  design 101's `</header>` - above Access, Oppsett and Attention -, never the sheet's first child. "Anna ber om mer
+  skjermtid" (`device.summary.ask.title`, the phone's name), the sub-line is the event's own words (`told_as`, "14:02 ·
+  Skjermtiden er brukt opp"), and while its buttons pause rules a second line "Knappene setter reglene på pause."
+  (`device.summary.ask.pauses`, `data-ask-pauses`); asked under a rule that a fresh report says no longer locks, "Ingen
+  regel låser nå: knappene gir mer skjermtid." (`device.summary.ask.adds`, `data-ask-adds`; code QA L9). One form `POST /devices/{id}/time-request/answer#ask` (QA R2-M1: the
+  card's own group, so `check_forms` passes and `scroll-restore.js` makes it a staying post) with the hidden `request`
+  and four `button name="answer"` (`15`, `30`, `60`, `no`; "+15 min", "+30 min", "+1 t"/"+1 h", "Nei"/"No"). The old
+  "Asked for more time at" note (`data-asked`, `device.summary.asked`) is gone.
+- **The route** (`handlers::time_answer::answer`, in `settings_log::NOT_SAVES`): reads the phone's fresh report
+  (`time_answers::fresh_report`: `report_is_fresh` with the connection, Phone Setup's zone) and its day start, then one
+  `BEGIN IMMEDIATE`: `time_answers::standing` (the open request, or `Answered`, `AskedAgain` - superseded or no longer the
+  newest -, `Gone` - asked before the phone's today -, `Unknown`: 404 `error.no_such_request`); for minutes a lift through
+  `lifts::insert_lift` - **D9, decided at the answer** (QA R2-M2, `time_answers::need`): the fresh report's `TimeAsk::of`
+  a rule -> a pause of every rule (`target=rule`, `rule_id` NULL), else screen time; without a fresh report the request's
+  own `state` decides -; the answer row `ON CONFLICT DO NOTHING` (0 rows: rollback, "already answered" - two parents never
+  both give); the answer in the event's `params` (`json_set` `answer`, `by` - the PWA's name, display name else login, a
+  snapshot -, `minutes`; QA R2-L7). After the commit the security line (`lifts::lift_line`'s `time_lift` for a yes; the
+  new `time_request_no` for "Nei") and `command_notify`. It lands on `/devices/{id}?done=<code>#quick`: `extra`/`pause`
+  (the lift's flash), `answer_no` "Du svarte nei." or `answer_no_seen` "Du svarte nei. Anna ser det på telefonen." when
+  the phone's newest report claims `time_answer_v1` (`time_answers::CAPABILITY`, §14.7), and the stale card's
+  `answered_already` "{parent} har allerede svart." (the redirect carries `&request=<id>`; `time_answers::last_answerer`
+  names who answered that very request - display name, else login - code QA L6),
+  `asked_again` "{name} har spurt på nytt.", `request_gone` "Forespørselen er ikke åpen lenger." (refusals: red, nothing
+  written).
+- **Every fitting lift answers** (QA R2-M2, R2-L6): `lifts::record_lift` (Quick actions, the Regler sheet) is one `BEGIN
+  IMMEDIATE` transaction for every caller - the lift row (`insert_lift`) and, when it can unlock what locks
+  (`time_answers::fits`: screen time for a spent budget; a pause of every rule, or of the rule the fresh report names, for
+  a rule - a rule turned on now runs as its copy's negative id, mapped to the rule it copies by `copied_rule`, whose
+  pause lifts the copy through its twin, code QA L7), the open request's `yes` with that lift (`answer_with_lift`); the security line and the nudge after the commit.
+  A rule pause leaves a used-up request open, and the card stays. Design 98's phone-key pause never answers (it has no
+  parent and doesn't go through `record_lift`).
+- **The policy** (`device_api::build_time_policy`; the shared contract `time_request.json`'s `policy_*` rows): inside
+  `time_policy` (QA R2-L4) `request_answers: true` (always: this server closes requests only by an answer), `answer`
+  (`time_answers::policy_answer`: the newest yes/no - never `superseded` - of a request **asked** in the phone's day, QA
+  R2-L5; `{request_id, answer, by?, at_ms, lift_id?, minutes?}`, `by` the display-name snapshot, absent without one - never
+  the login, D11 -, `minutes` from the lift, QA R2-L1; a yes whose lift was ended early names no lift and no minutes, so
+  the phone claims no time given - code QA L8, the contract's `policy_ended`), and every lift gains `at_ms` (`created_at`) and `by` (the
+  answer's `by_name` for a lift that answered a request, QA R2-L10, else the giver's display name now; absent without
+  one, for a removed parent and for the phone's own pauses). `policy_json_keys_snapshot` pins `time_policy`'s keys
+  (`request_answers` added); `time_request::the_contract_policies` produces every `policy_*` row from a real flow and pins
+  `answer`'s and the lift's keys. `lock_now.json` and `rule_pause.json` gained the lifts' `at_ms`/`by` and the flag (QA
+  R2-M3).
+- **The other parent** sees the answer in the inbox and Activity: `extra_time_told` appends "· Mamma ga 30 min" / "· Pappa
+  svarte nei" (`events.extra_time_request.answer.given`/`.no`) to the non-push forms from the params.
+- Tests: `tests::time_request` (`the_contract_policies`, `the_card_shows_the_open_request_until_an_answer`,
+  `no_with_and_without_the_capability`, `under_a_rule_the_minutes_pause_the_rules`, `the_first_answer_wins`,
+  `a_fitting_lift_answers_the_open_request`, `a_pause_of_the_copied_rule_answers_a_request_under_its_copy`,
+  `a_second_request_supersedes_the_first`,
+  `the_migration_answers_the_requests_a_lift_answered`), `time_answers::tests` (`fits`, `need`),
+  `summary::every_form_on_the_summary_returns_to_its_group` (the card's form first after the picture).
 
 ## Push wording (2026-10-25)
 
@@ -518,6 +589,19 @@ push varsel ... kanskje man kan få valget". Branch `pwa-fixes-b`.
   `testdata/installed_apps_report.json` (byte-identical in the launcher's test resources: its `SyncScheduleTest`
   encodes exactly it, `the_installed_apps_contract_raises_app_updated` posts it, both compare the copies; the code QA's
   Q-5).
+- **A release that waits or is held** (design 90 §17.3 H1/M5, `play-and-updates.md`, "Update holds and the per-app
+  wait"): no new kind and no new switch (the user's D1). `AppUpdateParams` gained `ready` (RFC 3339) and `held`
+  (`HeldParams {reason, groups}`), both `skip_serializing_if` none, so a row from before reads as before. A release found
+  waiting is told once when found (`app_update_waiting`, the release's own key `<app id>:<tag>@<asset id>` - so when it
+  ripens and is served it raises nothing more): "Signal 7.3.0 is available" / "14:02 · 7.2.0 → 7.3.0 · reaches the
+  phones Thu 14:02" (the time as known when found). A held release gets one more row under `<app id>:<tag>@<asset
+  id>:held` (`app_update_held`; else the found row's key would swallow it): "Signal 7.3.0 waits for your approval" /
+  "14:02 · asks for Contacts and Location · approve it on the app's page" (unreadable: "couldn't read what it asks for";
+  always ask: the version step), pushed - only with "App updates" on - as "Signal 7.3.0 asks for Contacts and 2 more" /
+  "Approve it or keep 7.2.0" (`app_update_held_told`). Approve raises nothing; a newer held release its own row. Both
+  target `/apps/tracked/{id}#update`. With "App updates" off (the default) a held release reaches the parent through
+  the inbox row, the app's page and the Apps tab badge - the phones keep their release meanwhile. Test:
+  `parent_events::tests::a_waiting_and_a_held_release_are_told`.
 - **The switch** "App updates" (`push_app_updates`, `parent_events::APP_UPDATES_SWITCH`, one for both kinds) is the one
   switch **off by default**: 0099's `DEFAULT 0` for every existing row, and `Kind::switch_default` for a parent with no
   row - `push::queue`'s `COALESCE(p.<switch>, <default>)` and Notify Me About's `read_switches`. Always in the inbox;

@@ -440,3 +440,33 @@ test("removed, refused, known or a failed answer: nothing more", async () => {
         assert.strictEqual(w.banner(), null);
     }
 });
+
+// Design 103-8: a refresh in place brings the server's empty sign-out field back - filled again, with one submit
+// listener; the bell's count read again; the push banner is the script's own (data-swap-keep).
+test("on handy:swapped the sign-out field is filled again with one listener, and the badge is read again", async () => {
+    const w = signOutWindow({ subscription: FAKE_ENDPOINT });
+    const docListeners = {};
+    let added = 0;
+    const form = w.win.document.querySelector("form[data-sign-out]");
+    const add = form.addEventListener;
+    form.addEventListener = (type, fn) => { added++; add(type, fn); };
+    let unread = 2;
+    const badges = [];
+    w.win.navigator.setAppBadge = (n) => { badges.push(n); return Promise.resolve(); };
+    w.win.navigator.clearAppBadge = () => { badges.push(0); return Promise.resolve(); };
+    w.win.document = {
+        querySelector: (s) => (s === "form[data-sign-out]" ? form : s === "[data-unread]" ? { getAttribute: () => String(unread) } : null),
+        addEventListener: (type, fn) => { (docListeners[type] = docListeners[type] || []).push(fn); },
+    };
+    install(w.win);
+    await ticks();
+    assert.strictEqual(w.field.value, FAKE_ENDPOINT);
+    w.field.value = "";
+    unread = 5;
+    docListeners["handy:swapped"].forEach((fn) => fn({}));
+    assert.strictEqual(w.field.value, FAKE_ENDPOINT, "filled again");
+    assert.strictEqual(added, 1, "one submit listener only");
+    assert.deepStrictEqual(badges, [2, 5]);
+    const script = require("node:fs").readFileSync(require("node:path").join(__dirname, "../static/register-sw.js"), "utf8");
+    assert.ok(script.includes('row.setAttribute("data-swap-keep", "")'));
+});

@@ -156,6 +156,36 @@ data class PolicyResponse(
      * nothing in it can fail the policy; missing or not a list (an older server, a `Fallback`) = none. Not in
      * `LastEnforcedPlan`. */
     val lockMediaApps: kotlinx.serialization.json.JsonElement? = null,
+    /** Design 94: `"off"` (data roaming off and locked, the server's default) or `"phone"` (the phone's choice);
+     * missing from an older server = the phone's choice; a value this build doesn't know locks
+     * ([com.kidslauncher.mdm.server.abroadChoice], [com.kidslauncher.mdm.server.roamingLocked]). Kept by [com.kidslauncher.mdm.server.LastEnforcedPlan]. */
+    val dataRoaming: String? = null,
+    /** Design 97: "I utlandet", `"off"`, `"vibb"` or `"home"`; read with [dataRoaming] through
+     * [com.kidslauncher.mdm.server.abroadChoice] (missing = an older server, revision 3's rule; an unknown value = Ingen
+     * data). Kept by [com.kidslauncher.mdm.server.LastEnforcedPlan]. */
+    val abroad: String? = null,
+    /** Design 95 rev. 3: "Mobildata for apper" - `"on"` or `"vibb"` (Bare Vibb: only Vibb uses cellular,
+     * [com.kidslauncher.mdm.server.parentSinkOn]); missing = on. Kept by [com.kidslauncher.mdm.server.LastEnforcedPlan]. */
+    val appsMobile: String? = null,
+    /** Design 95 rev. 3 item 3: Android's mobile-network settings locked (`DISALLOW_CONFIG_MOBILE_NETWORKS`); missing =
+     * not set. Kept by [com.kidslauncher.mdm.server.LastEnforcedPlan]. */
+    val mobileSettingsLocked: Boolean? = null,
+    /** Design 95 §3.5 (step 95-T2): the server expands heartbeat reports ([StatusReports]); missing (an older server)
+     * = never send one. */
+    val statusHeartbeat: Boolean = false,
+    /** Design 95 §3.5 (code QA M1): the heartbeat fields the server overlays; a heartbeat goes only while this is the
+     * launcher's own [com.kidslauncher.mdm.server.HEARTBEAT_FIELDS] ([com.kidslauncher.mdm.server.heartbeatOn]). */
+    val statusHeartbeatFields: List<String>? = null,
+    /** Design 95 §3.5: the server takes a gzip'd status report; missing = never gzip. */
+    val statusGzip: Boolean = false,
+    /** Design 98 §4.4.6: the server takes `POST /api/devices/rule-pause`; only then is Foreldrekode offered on the
+     * time-rule screen. Missing (an older server) = never. */
+    val rulePause: Boolean = false,
+    /** Design 102 §6.1: Wi-Fi sign-in - the switch, the parent code required, the limits, the "one more" counter.
+     * Missing (an older server) = on, with the code required ([com.kidslauncher.mdm.logins.portalPolicyOf]). */
+    val captivePortal: com.kidslauncher.mdm.logins.CaptivePortalPolicy? = null,
+    /** Design 102 §6.1: Chrome only for logins - its package and the sites; `null` (and missing) = the role off. */
+    val loginBrowser: com.kidslauncher.mdm.logins.LoginBrowserPolicy? = null,
 )
 
 /** `PolicyResponse.kidLock` - `security::hash_pin` on the server (PBKDF2-SHA256, see

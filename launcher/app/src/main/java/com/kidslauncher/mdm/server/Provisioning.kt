@@ -15,8 +15,10 @@ private const val LOG_TAG = "Provisioning"
  * that native flow has no trigger at all), so there is exactly one enroll code path regardless of
  * how Device Owner was granted - by this point it already has been, either way.
  *
- * Must be called off the main thread - [TsnetClient.connectFromPreferences] blocks (up to 30s)
- * establishing the tailnet connection before the enroll call runs. This is deliberate, not just a
+ * Must be called off the main thread - [TsnetClient.connectFromPreferences] blocks (one connect, up to
+ * its 30 s bound, longer only while another caller's connect holds its lock) establishing the tailnet
+ * connection before the enroll call runs; [Enrollment.enroll] doesn't try again, so the provisioning
+ * receiver's `goAsync` holds one connect, not two (code QA L2 of the upstream port). This is deliberate, not just a
  * blocking-call accident: a `server_url` on the `*.ts.net` domain is only resolvable *through*
  * that connection - [createMdmApi] goes over the device's normal (public) DNS/network path for an https address
  * if tsnet hasn't connected yet (never for http to a tailnet IP: [serverPath]), which can never resolve a MagicDNS hostname and previously
@@ -50,6 +52,6 @@ suspend fun applyProvisioningExtras(context: Context, extras: ProvisioningExtras
 
     // PLAN "QR enrolment requests a sync": the first policy now, not at the next backstop (up to 30 min away) - as
     // Settings' "Enroll now" does. Both QR paths (Android's provisioning and the in-app scanner) come through here.
-    return Enrollment.enroll(context, extras.serverUrl, extras.enrollmentCode)
+    return Enrollment.enroll(context, extras.serverUrl, extras.enrollmentCode, connectTailnet = false)
         .onSuccess { com.kidslauncher.mdm.push.SyncRunner.request(context, "enrolled") }
 }

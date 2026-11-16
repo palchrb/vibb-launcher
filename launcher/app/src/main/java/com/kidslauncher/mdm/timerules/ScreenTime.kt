@@ -130,7 +130,8 @@ data class LiftRecord(
  * dropped (a lift the server no longer sends has ended or was ended early). */
 fun updateLiftRecords(records: List<LiftRecord>, lifts: List<Lift>, clocks: Clocks): List<LiftRecord> {
     val known = records.associateBy { it.id }
-    return lifts.filter { it.target == TARGET_RULE }.map { lift ->
+    // Design 98 §4.4.3: a parent-code pause lifts only through the phone's own entry, never through a record.
+    return lifts.filter { it.target == TARGET_RULE && it.phoneKey == null }.map { lift ->
         known[lift.id] ?: run {
             val until = minOf(lift.expiresAtMs, clocks.wallMs + lift.minutes.coerceAtLeast(0) * 60_000L)
             LiftRecord(lift.id, until, clocks.elapsedMs, clocks.bootCount, (until - clocks.wallMs).coerceAtLeast(0))
@@ -144,7 +145,7 @@ fun liftRecordActive(record: LiftRecord, clocks: Clocks): Boolean =
 /** Which rules are lifted now: by rule lifts in [lifts] whose record is still active. */
 fun activeRuleLifts(records: List<LiftRecord>, lifts: List<Lift>, clocks: Clocks): RuleLifts {
     val byId = records.associateBy { it.id }
-    val active = lifts.filter { it.target == TARGET_RULE && byId[it.id]?.let { r -> liftRecordActive(r, clocks) } == true }
+    val active = lifts.filter { it.target == TARGET_RULE && it.phoneKey == null && byId[it.id]?.let { r -> liftRecordActive(r, clocks) } == true }
     return RuleLifts(all = active.any { it.ruleId == null }, ruleIds = active.mapNotNull { it.ruleId }.toSet())
 }
 
@@ -161,7 +162,7 @@ fun activeLiftIds(records: List<LiftRecord>, lifts: List<Lift>, ledger: ScreenTi
     val byId = records.associateBy { it.id }
     return lifts.filter { lift ->
         when (lift.target) {
-            TARGET_RULE -> byId[lift.id]?.let { liftRecordActive(it, clocks) } == true
+            TARGET_RULE -> lift.phoneKey == null && byId[lift.id]?.let { liftRecordActive(it, clocks) } == true
             TARGET_BUDGET -> lift.id in ledger.appliedBudgetLifts
             else -> false
         }

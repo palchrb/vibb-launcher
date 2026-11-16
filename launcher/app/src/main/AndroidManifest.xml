@@ -276,6 +276,44 @@
             android:taskAffinity="${applicationId}.day"
             android:theme="@style/KidPageLightTheme"
             android:windowSoftInputMode="adjustResize" />
+        <!-- Design 98 §4.4.1: Foreldrekode's choices from the time-rule screen's sheet, then the parent PIN; in Home's
+             locked task, never in recents, finished on stop. -->
+        <activity
+            android:name=".ui.RulePauseActivity"
+            android:configChanges="orientation|screenSize|uiMode"
+            android:excludeFromRecents="true"
+            android:exported="false" />
+        <!-- Design 102 §3.2: Vibb's handler of Android's Wi-Fi sign-in intent, in the main process - guarded by the
+             NETWORK_STACK permission, which system_server's start holds and no installable app can (measured: the
+             system's start passes, another app's is refused). Enabled only while Part A is on (AppEnforcer, the device
+             owner's persistent preferred activity names it); disabled, Android's own handler is the only one. Vibb's own
+             ways in start it by an explicit intent from this process (the same uid passes). -->
+        <activity
+            android:name=".portal.CaptivePortalEntry"
+            android:configChanges="orientation|screenSize|uiMode"
+            android:enabled="false"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:permission="android.permission.NETWORK_STACK">
+            <intent-filter>
+                <action android:name="android.net.conn.CAPTIVE_PORTAL" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+        <!-- Design 102 §3.3: the Wi-Fi sign-in window, a WebView in its own process (`:portal`, bound to the portal's
+             network; Application.onCreate returns early there). Not exported: only the entry starts it. -->
+        <activity
+            android:name=".portal.PortalWindowActivity"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|uiMode|keyboard|keyboardHidden|locale|layoutDirection|fontScale|density"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:process=":portal"
+            android:theme="@style/launcherBaseTheme"
+            android:windowSoftInputMode="adjustResize" />
+        <!-- Design 102 §3.1: the window's session is in - an explicit broadcast from this app's `:portal` only. -->
+        <receiver
+            android:name=".portal.PortalSessionReceiver"
+            android:exported="false" />
         <activity
             android:name=".ui.kidsettings.KidSettingsActivity"
             android:configChanges="orientation|screenSize|uiMode"
@@ -285,6 +323,13 @@
              exported, so only Kid Settings opens it, and as our own page it runs in the launcher's lock task. -->
         <activity
             android:name=".ui.kidsettings.KidSoundPickerActivity"
+            android:configChanges="orientation|screenSize|uiMode"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:theme="@style/KidPageTheme" />
+        <!-- Design 99 §4.2: the kid's Snarveier picker, a page in Home's task as the sound picker. -->
+        <activity
+            android:name=".ui.kidsettings.ShortcutsPickerActivity"
             android:configChanges="orientation|screenSize|uiMode"
             android:excludeFromRecents="true"
             android:exported="false"
@@ -421,6 +466,36 @@
                 <action android:name="android.telecom.CallRedirectionService" />
             </intent-filter>
         </service>
+        <!-- Design 98 §2.1: the Digital assistant role's three parts - only Flymodus's route (Settings'
+             AirplaneModeVoiceActivity through our own marked session). The parent chooses Vibb One once on Android's
+             own page (Settings' PIN-gated "Fullfør oppsett"). No assist data, no screenshot, no window, no microphone. -->
+        <service
+            android:name=".assistant.VibbAssistantService"
+            android:exported="true"
+            android:permission="android.permission.BIND_VOICE_INTERACTION">
+            <meta-data
+                android:name="android.voice_interaction"
+                android:resource="@xml/vibb_voice_interaction" />
+            <intent-filter>
+                <action android:name="android.service.voice.VoiceInteractionService" />
+            </intent-filter>
+        </service>
+        <service
+            android:name=".assistant.VibbSessionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_VOICE_INTERACTION" />
+        <!-- §3.2/§3.5: the default-apps window's and the Wi-Fi step's deadline (our own alarm only). -->
+        <receiver
+            android:name=".assistant.SetupDeadlineReceiver"
+            android:exported="false" />
+        <!-- The stub recognizer the role requires: every request answers ERROR_CLIENT at once. -->
+        <service
+            android:name=".assistant.VibbRecognizer"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.speech.RecognitionService" />
+            </intent-filter>
+        </service>
         <!-- Only our own notification PendingIntents (Answer / Hang up). -->
         <receiver
             android:name=".calls.CallActionReceiver"
@@ -507,8 +582,23 @@
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Parental control enforcement (device owner): screen-time and time-rule signals, policy sync" />
+                android:value="Parental control enforcement (device owner): screen-time and time-rule signals, policy sync, the kid's quick controls" />
         </service>
+
+        <!-- Snarveier (design 99; design 100: the panel is the anchor's notification above, no service of its own): the
+             buttons' receiver (our own explicit, immutable broadcasts only) and Flymodus On's window, which starts the
+             route only once the shade has closed (§4.1). None is exported. -->
+        <receiver
+            android:name=".shortcuts.ShortcutsReceiver"
+            android:exported="false" />
+        <activity
+            android:name=".shortcuts.ShortcutAirplaneActivity"
+            android:configChanges="orientation|screenSize|uiMode"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
         <!-- The backstop sync alarm (push/BackstopAlarm) - our own explicit PendingIntent only. -->
         <receiver

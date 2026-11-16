@@ -500,6 +500,68 @@ async fn the_pages_show_the_logos() {
     assert!(emma_page.contains(row_glyph), "{emma_page}");
     assert!(!emma_page.contains("<span class=\"app-row-tile\" aria-hidden=\"true\">N</span>"));
 
+    // Design 101 §7: an app's own page shows its tile at the band's right as the list does - the real logo over the
+    // glyph (QA M5: the logo tile is told by its class, not by :only-child), the glyph without a logo, the letter without
+    // either, the launcher the Vibb mark.
+    let band_of = |path: String| {
+        let (app, cookie) = (&app, &cookie);
+        async move {
+            let html = app.get_page(&path, cookie).await.text();
+            let band = &html[html.find("<header class=\"band").unwrap()..];
+            band[..band.find("</header>").unwrap()].to_string()
+        }
+    };
+    let page = format!("/apps/tracked/{catalog}");
+    let band = band_of(page.clone()).await;
+    assert!(
+        band.contains(
+            "<span class=\"band-who\" aria-hidden=\"true\"><span class=\"app-row-tile app-row-logo "
+        ),
+        "{band}"
+    );
+    assert!(
+        band.contains(&tile(&sha(&common))) && !band.contains(row_glyph),
+        "{band}"
+    );
+    sqlx::query("UPDATE tracked_apps SET package_name = 'org.example.nologo' WHERE id = ?")
+        .bind(catalog)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let band = band_of(page.clone()).await;
+    assert!(
+        band.contains(row_glyph) && !band.contains("app-row-logo"),
+        "{band}"
+    );
+    assert!(
+        band.contains("<span class=\"app-row-tile\" style=\"background: "),
+        "{band}"
+    );
+    sqlx::query("UPDATE tracked_apps SET display_icon = NULL WHERE id = ?")
+        .bind(catalog)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let band = band_of(page).await;
+    assert!(
+        !band.contains("<img src=\"/static/app-icons/") && !band.contains("app-row-logo"),
+        "{band}"
+    );
+    assert!(band.contains(">D</span></span>"), "{band}");
+    let launcher: i64 = sqlx::query_scalar(
+        "INSERT INTO tracked_apps (name, package_name, github_repo, is_launcher) \
+         VALUES ('Vibb One', 'me.vibb.launcher', 'o/l', 1) RETURNING id",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    let band = band_of(format!("/apps/tracked/{launcher}")).await;
+    assert!(
+        band.contains("app-row-logo")
+            && band.contains("<img src=\"/static/icons/vibb-one-tile.svg\""),
+        "{band}"
+    );
+
     // Deleting Lily's phone deletes the logo only it named.
     let res = app
         .request_form(

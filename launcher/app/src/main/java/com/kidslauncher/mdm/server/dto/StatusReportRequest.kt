@@ -129,6 +129,24 @@ data class StatusReportRequest(
     /** Design 77 §7 (capability `sms_engine_v1`): what the message engine did - see [SmsState]; `null` = the engine
      * couldn't be read (left out). No content. Pinned by `sms_contract.json` (`SmsContractTest`). */
     val smsState: SmsState? = null,
+    /** Design 94 §5 (capability `data_roaming_v1`): the roaming lock, where the phone roams, whether roaming data is
+     * in use; `null` = telephony unreadable (left out). Pinned by `mobile_network.json` (`MobileNetworkTest`). */
+    val dataRoaming: com.kidslauncher.mdm.server.DataRoamingReport? = null,
+    /** Design 95 rev. 3 (capability `mobile_data_v1`): Android's mobile-data switch, why only Vibb uses cellular, the
+     * mobile-network settings lock. Pinned by `mobile_network.json`. */
+    val mobileData: com.kidslauncher.mdm.server.MobileDataReport? = null,
+    /** Design 98 §5.1 (capability `airplane_mode_v1`): Flymodus, the assistant role, Wi-Fi in airplane mode and the
+     * periods. A full-report field (not in `status_heartbeat_fields`). Pinned by `airplane_mode.json`
+     * (`AirplaneModeTest`). */
+    val airplaneMode: com.kidslauncher.mdm.assistant.AirplaneModeReport? = null,
+    /** Design 99 §6.1 (capability `shortcuts_v1`): Snarveier - posted now, hidden by the kid, the panel's keys. A
+     * full-report field (not in `status_heartbeat_fields`). Pinned by `shortcuts.json` (`ShortcutsTest`). */
+    val shortcuts: com.kidslauncher.mdm.shortcuts.ShortcutsReport? = null,
+    /** Design 102 §6.2 (capability `captive_portal_v1`): the Wi-Fi sign-in window's handler, today's use and the last
+     * sessions. A full-report field. Pinned by `login_windows.json` (`LoginWindowsTest`). */
+    val captivePortal: com.kidslauncher.mdm.portal.CaptivePortalReport? = null,
+    /** Design 102 §6.2 (capability `login_browser_v1`): Chrome's login role on the phone. A full-report field. */
+    val loginBrowser: com.kidslauncher.mdm.portal.LoginBrowserReport? = null,
 )
 
 /**

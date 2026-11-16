@@ -326,9 +326,11 @@ async fn policy_json_keys_snapshot() {
     assert_eq!(
         keys,
         [
+            "abroad",
             "allowlist",
             "app_permissions",
             "app_updates_wifi_only",
+            "apps_mobile",
             "bedtime_end_minutes",
             "bedtime_start_minutes",
             "block_activity_start",
@@ -336,6 +338,8 @@ async fn policy_json_keys_snapshot() {
             "boot_cover",
             "calendar",
             "call_policy",
+            "captive_portal",
+            "data_roaming",
             "dns_filter_version",
             "dns_log_enabled",
             "dns_upstream",
@@ -348,6 +352,8 @@ async fn policy_json_keys_snapshot() {
             "lock_glance",
             "lock_media_apps",
             "lock_task_features",
+            "login_browser",
+            "mobile_settings_locked",
             "music",
             "notification_auto_cancel",
             "override_pin_hash",
@@ -355,7 +361,11 @@ async fn policy_json_keys_snapshot() {
             "packages_to_uninstall",
             "pending_command",
             "quick_controls_mask",
+            "rule_pause",
             "screen_timeout_seconds",
+            "status_gzip",
+            "status_heartbeat",
+            "status_heartbeat_fields",
             "time_policy",
             "update_fence",
             "vpn_filter_enabled",
@@ -369,10 +379,14 @@ async fn policy_json_keys_snapshot() {
     for non_null in [
         "app_permissions",
         "app_updates_wifi_only",
+        "apps_mobile",
+        "data_roaming",
+        "mobile_settings_locked",
         "block_activity_start",
         "bluetooth_any_device",
         "calendar",
         "call_policy",
+        "captive_portal",
         "dns_filter_version",
         "dns_log_enabled",
         "dns_upstream_provider",
@@ -387,13 +401,28 @@ async fn policy_json_keys_snapshot() {
         "notification_auto_cancel",
         "packages_to_uninstall",
         "quick_controls_mask",
+        "rule_pause",
         "screen_timeout_seconds",
+        "status_gzip",
+        "status_heartbeat",
+        "status_heartbeat_fields",
         "time_policy",
         "update_fence",
         "vpn_filter_enabled",
     ] {
         assert!(!object[non_null].is_null(), "{non_null} is null");
     }
+    // Design 98 §4.4.6: this server takes the phone's parent-code pause; a lift's `phone_key` is pinned with it
+    // (`tests::rule_pause`, `rule_pause.json`'s `policy`).
+    assert_eq!(object["rule_pause"], serde_json::json!(true));
+    // Design 102 §6.1: Wi-Fi sign-in on with the parent code for a new phone, the login role off (`null`, a nullable
+    // field on the launcher's side); every row in `tests::logins` (`login_windows.json`'s `policy`).
+    assert_eq!(
+        object["captive_portal"],
+        serde_json::json!({"enabled": true, "require_code": true, "minutes": 10, "day_openings": 4,
+            "day_minutes": 20, "grant": 0})
+    );
+    assert!(object["login_browser"].is_null());
 
     // The launcher's CallPolicy DTO: every key present and non-null, also when unmanaged.
     let call_policy = object["call_policy"].as_object().unwrap();
@@ -499,10 +528,18 @@ async fn policy_json_keys_snapshot() {
     let time_policy = object["time_policy"].as_object().unwrap();
     let mut time_keys: Vec<&str> = time_policy.keys().map(String::as_str).collect();
     time_keys.sort_unstable();
-    assert_eq!(time_keys, ["daily_budget_minutes", "lifts", "rules"]);
+    // Design 100 §14.2: `request_answers` always (this server answers requests); `answer` only once a request of the
+    // phone's day is answered - its keys and a lift's `by`/`at_ms` are pinned by `time_request.json`'s `policy_*`
+    // rows (`time_request::the_contract_policies`), which the launcher decodes.
+    assert_eq!(
+        time_keys,
+        ["daily_budget_minutes", "lifts", "request_answers", "rules"]
+    );
+    assert_eq!(time_policy["request_answers"], serde_json::json!(true));
     // The launcher's TimeRule DTO: a rule's keys (`calendar_allowed` since 0119, Kalender usable
     // during the rule - the launcher's default is false, so an older server keeps it closed;
-    // `silent` since 0121, the phone's own Do Not Disturb during the rule - also false by default).
+    // `silent` since 0121, the phone's own Do Not Disturb during the rule - also false by default;
+    // design 93's `until_ms` and `card_first`, a rule turned on now's end and card choice).
     sqlx::query(
         "INSERT INTO time_rules (name, kind, calls_allowed, exempt_apps_json, calendar_allowed, \
          silent, days_json) VALUES ('Skole', 'school', 0, '[]', 1, 1, \
@@ -523,14 +560,20 @@ async fn policy_json_keys_snapshot() {
         [
             "calendar_allowed",
             "calls_allowed",
+            "card_first",
             "days",
             "exempt_apps",
             "id",
             "kind",
             "name",
-            "silent"
+            "silent",
+            "until_ms"
         ]
     );
+    // Design 93 §9.3: a scheduled rule's absolute end and card choice, always explicit. Design 98 §4.4.2: `copy_of`
+    // only on a rule turned on now (`lock_now::tests::the_served_copy_and_twin`, `lock_now.json`).
+    assert_eq!(rule["until_ms"], serde_json::Value::Null);
+    assert_eq!(rule["card_first"], serde_json::json!(false));
     assert_eq!(rule["calendar_allowed"], serde_json::json!(true));
     assert_eq!(rule["silent"], serde_json::json!(true));
     assert_eq!(
@@ -692,11 +735,12 @@ async fn a_new_device_starts_with_all_kid_settings_on() {
         .bind(device)
         .fetch_one(&app.db)
     };
-    assert_eq!(mask(id).await.unwrap(), 1 | 2 | 4 | 8);
+    assert_eq!(mask(id).await.unwrap(), 1 | 2 | 4 | 8 | 32 | 64 | 128);
     assert_eq!(
         crate::handlers::devices::DEFAULT_QUICK_CONTROLS,
-        1 | 2 | 4 | 8,
-        "Wi-Fi, Bluetooth, brightness, sound (design 18)"
+        1 | 2 | 4 | 8 | 32 | 64 | 128,
+        "Wi-Fi, Bluetooth, brightness, sound (design 18), Mobildata (design 97 D3), Flymodus (design 98 D1), \
+         Snarveier (design 99 D2)"
     );
     assert_eq!(mask(existing).await.unwrap(), 0);
     // The notification filter starts on for a new phone (2026-10-21); an existing one keeps its
@@ -726,7 +770,9 @@ async fn a_new_device_starts_with_all_kid_settings_on() {
     let policy = app
         .request(Method::GET, "/api/devices/policy", Some(&token), None)
         .await;
-    assert_eq!(policy.json()["quick_controls_mask"], 15);
+    // Design 97 D3: the kid's Mobildata switch (bit 32) too; design 98 D1: and Flymodus (bit 64); design 99 D2: and
+    // Snarveier (bit 128).
+    assert_eq!(policy.json()["quick_controls_mask"], 15 | 32 | 64 | 128);
     assert_eq!(policy.json()["notification_auto_cancel"], true);
 }
 

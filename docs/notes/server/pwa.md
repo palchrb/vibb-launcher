@@ -600,6 +600,34 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   Test: `summary::activity_shows_ended_pauses_and_extra_time_by_when_granted`.
   Tests: `summary::quick_actions_*`, `end_now_lands_on_quick_actions_when_nothing_else_is_left`,
   `an_event_row_shows_its_clock_once`, `activity::tests`.
+- **Activity is one row on the summary, the list a page of its own (the user's pick B "Én rad, minimal",
+  2026-11-13: the list pushed the Settings rows far down)**: *supersedes the list in the summary's `#activity` above.*
+  `GET /devices/{id}/activity` (`activity::view`, `device_activity.html`; `band::phone`, back to `/devices/{id}`, the
+  phone's picture right and no bell, as every phone page; tab title "Activity · Emma") draws exactly the group the
+  summary drew - commands (Cancel while waiting, `back=activity` → `/devices/{id}/activity?cancel=done|too_late#activity`,
+  the line **first** in the group, where the redirect lands, never under fifty rows - code QA M1), lifts, events - newest first, the last 7 days, at most `activity::MAX_ROWS` = **50** rows
+  (each table reads 51, so `Activity.more` knows one more exists) plus every command still cancellable; then "Everything
+  for this phone ›" to the inbox and the footer "The last 7 days, newest first."; empty, one quiet row "Nothing in the
+  last 7 days" (Find Phone's Show all always leads here now, `locate::show_find` no longer reads Activity). 404 for an
+  unknown phone, 500 on a failed read. The summary's `#activity` (`activity::Summary::of`, no group header, an
+  `aria-label`, where the group was) holds each command `cancel_id` still has as its own row with Cancel (`back=summary`,
+  `?cancel=…#activity` as before - the summary stays the one place one tap from Lock again, Unlock for 2 h, Allow these
+  apps), then one row to the page: a grey tile with a list glyph, "Activity" / "Aktivitet", a one-line sub
+  (`.row-sub-wrap`, two lines, the clock whole since design 101) with the newest other row's words and clock ("All rules paused for 1 h · 20:37",
+  "Lock again · Cancelled · 13:41": a command's label and its outcome word, a lift's words, an event's title,
+  `Zone::at`, the exact time in `title`), *(until design 101)* a grey `.badge` with how many of the **week's** rows the page lists - since design 101 an orange "2 nye" for this parent's unread events, only
+  while there are some, and the page marks them read ("The summary as mockup A") -, a chevron; its hairline starts at the label (`.row-tile`, as a `.group-icons` row's; style.css v112). The row
+  shows while the week has a row, the section while it has a row, a waiting command or a Cancel's line; the flash sits
+  in that group.
+  **A duration's number and unit never part**: `time.duration.*` (`display_time::duration`, every lift row, the screen
+  time lines, the pushes and the security log that use it), the command label "Unlock for 2 h", the foreign-app step
+  "Unlock 2 h below" and Avansert's "Open for setup for 2 h" put a no-break space (U+00A0) between them, so "All rules
+  paused for 1 h" never leaves "h" alone on the next line. Tests:
+  `summary::activity_mixes_commands_and_events_newest_first_with_the_clock` (the page and the summary's row),
+  `activity_keeps_a_week_fifty_rows_and_what_can_be_cancelled` (50 then "50+", Cancel on both, the page's line first),
+  `the_summary_row_skips_what_waits_and_counts_the_week` (the newest line past a waiting row, escaped; an old waiting
+  command alone leaves no row; the 404),
+  `activity_shows_ended_pauses_and_extra_time_by_when_granted` (the no-break space, on both).
 
 ## The Apps tab (design 31 step 11, `docs/design/31-pwa-redesign.md` §3.3)
 
@@ -915,7 +943,19 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   No service-worker fetch handler was added (the network is never faked).
 - **The script** (ES5, deferred, from `partials/head.html` on every page, `?v=6` since the sign-in check below): a same-origin link tap (the tab bar,
   any link; not `download`, a `target` other than `_self`, a modified or handled click, a `#fragment` on this page, or
-  `data-no-wait`) marks the link (`.is-pending`, `aria-busy`) and shows a thin bar at the top (`.net-progress`) at once.
+  `data-no-wait`) marks the link (`.is-pending`, `aria-busy`) at once, and shows a thin bar at the top (`.net-progress`)
+  only once the page hasn't been left after **400 ms** (`BAR_AFTER`, 2026-11-12; the user: shown at once it was "et litt
+  unødvendig glimt som kan se ut som en feil"). The bar is a timer of the wait's own (`w.timers`, armed by `arm()`), so
+  `end()` (a save, back from the back-forward cache), `stop()` on `pagehide` and a page that arrives and unloads first
+  all leave it unshown; a wait re-armed after a `pagehide` shows it at once when its 400 ms have passed. Why 400 ms: a
+  page from the server near by (LAN, Tailscale) is usually there well before, so a fast change shows nothing, while a
+  real wait still gets its mark well under the second after which a tap feels unanswered. The link's mark stays
+  immediate: it is the tapped tab or row itself answering the tap, never a stray element. The reload in place (the
+  return's, pull-refresh.js's) gets the bar after the same 400 ms. `reconnect.js?v=13`. **Since design 103** (`?v=15`)
+  the reload in place is a wait of kind `"swap"`: the same bar, chip, pings and restarts, but every restart is
+  `handySwap.refresh(here)` (a refresh in place, "Saves in place" below), the reload only when the page can't be
+  swapped; `handy:swapped` ends the wait (a link's navigation goes on), a save that is only queued on a held form
+  doesn't end it, and a slow save's bar is a counter of its own (`handyReconnect.busy`), which no wait's end hides.
   Not left after 3 s: a small calm chip "Connecting…" (`.net-chip`, `role=status`; no alarm colour, no modal, the page
   usable under it), a ping (`GET /ping`, 4 s timeout) then and every 5 s, on `online` and when the page is visible
   again; once the server answers (any status below 500 - a signed-out session gets the login's redirect, which counts)
@@ -952,7 +992,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   checked by the QA: the reload is then a GET), so a reload can never resend a form; that URL drops a shown
   `notice=` (it would show again).
   `pageshow` from the back-forward cache clears everything (a first `pageshow` doesn't, so a tap during the load
-  keeps its bar).
+  keeps its wait and its bar after 400 ms).
 - **The CSS** (`style.css?v=39`): the bar and the chip are `position: absolute`, never fixed (design 43's rule, pinned
   by `the_app_shell_scrolls_main_not_the_document`); the bar's sweep is still under reduced motion.
 - **`GET /ping`** (`main::ping`, behind `require_full_auth`): an empty 204, `Cache-Control: no-store`.
@@ -1054,7 +1094,9 @@ man er inne på en device". Branch `pwa-fixes-b`.
   pull, and from then every move is `preventDefault`ed and moves the arrow (half the finger past the first 10 px, at
   most 40 px, fading in over its first 20). Past 70 px of finger travel (`THRESHOLD`) the arrow turns over
   (`is-armed`); a release there (asked `mayReload` again) shows the spinner (`is-refreshing`) and calls
-  `handyReconnect.reload()` - its `false` puts it away -, without reconnect.js a plain `location.reload()`. A release
+  `handyReconnect.reload()` - its `false` puts it away -, without reconnect.js a plain `location.reload()`. Since design
+  103 that is a refresh in place (reconnect.js's `"swap"` wait): the spinner goes on `handy:swapped`, or on
+  `handy:swapwait` when the chip takes over, and a save's hold ends on `handy:saved` with no save left. A release
   short of 70 px, a second finger, `touchcancel` or a back-forward-cache `pageshow` put it away. A tap, a scroll and a
   sideways swipe are never touched. `.container`'s `overscroll-behavior-y: contain` (on every page already) keeps the
   browser's own pull and chaining out; iOS' rubber band at main's top stays.
@@ -1436,6 +1478,8 @@ man er inne på en device". Branch `pwa-fixes-b`.
 
 ## A phone's own picture (server round C, 2026-10-25, branch `pwa-fixes-c`, migration `0100_device_avatar.sql`)
 
+*Since design 101 the picker is a sheet under the picture ("The summary as mockup A" below): the avatar is the summary of a `details.pic-menu`, the file field a row in it, "Add picture" / "Remove picture" are the sheet's rows, and the status dot left the picture. The rest of this section (pipeline, where it shows, the route, the backup) stands.*
+
 - **The user** (2026-10-25: "Når kommer muligheten til å sette avatar?"): a phone can have its own picture instead of
   the letter tile. `devices.avatar_hash`, `photos::DEVICE_AVATARS` (its own store, lock and directory
   `data/device_avatars/`, `AppState.avatar_dir`), `handlers::device_avatar`.
@@ -1484,6 +1528,11 @@ man er inne på en device". Branch `pwa-fixes-b`.
 ## Field focus and the filled button (the user's picks A and 3, 2026-10-25, branch `pwa-fixes-c`)
 
 - **The mockup** (https://claude.ai/artifact/CcNPzaNhQsCJitG3RJsmxb, the user: "A og 3 høres bra ut"). `style.css?v=54` (`?v=55` since the code QA's fix round).
+- **Softer since design 103** (§5, D13 a, `style.css?v=116`): the focused border is **1 px** of `--field-focus-line` -
+  light `#D9784C` (3.1:1 on the white fill and `--surface`), dark `#C08266` (6.1:1 on the night fill) - with no inset
+  shadow; `.row-time`/`.row-num` an inset 1 px, `.row-input`/`select.pick` a 1 px underline, all in that colour. The
+  fill and the keyboard's 2 px `--tint` ring are unchanged. A tapped `<summary>` drops its ring too (`.pointer-focus
+  summary:focus`: Safari before 15.4 drew it). What follows describes the first version (1.5 px of `--tint`).
 - **(A) A focused text field or select** (`input` text/tel/password/time/email/url/number/search, `select`,
   `textarea`; not the borderless ones that are a row's value - `.row-input`, `select.pick`): its own border takes
   `--tint` at 1.5 px (the 1 px border plus `box-shadow: inset 0 0 0 0.5px`, so nothing moves; the day's borderless
@@ -1538,6 +1587,8 @@ man er inne på en device". Branch `pwa-fixes-b`.
 
 
 ## Tidier status on Devices and the summary (the user's pick C, 2026-11-01, branch `status-tidy`)
+
+*Since design 101 the summary's header is ONE line without the screen time and its bar (`phone_status::one_line`; "The summary as mockup A" below); the Devices row is as described here.*
 
 - **Why**: the row said "Online · seen for 7 min siden", "4 min today", "Battery 100 % · for 7 min siden" and the
   header added "At Test since 24. okt. 22:19" - the ages repeated what the dot says. The user picked mockup C, the
@@ -1813,6 +1864,8 @@ man er inne på en device". Branch `pwa-fixes-b`.
 
 ## The night band on every page (design 84, 2026-11-11, `docs/design/84-pwa-night-band.md`)
 
+*Design 101 added a sixth macro, `band::app` (an app's page, the app's tile at the right), and the summary's `.summary-sheet` gap under the band: "The summary as mockup A".*
+
 Every page in the app shell opens on one night band and holds everything else in a sheet with a rounded top (the
 user's pick F2b from a clickable lab). The older sections above describe the 44 px title bar, the large title under
 it, the sticky editor bar and the back link's visible word: all four are gone, and each of those places has a
@@ -1827,7 +1880,7 @@ pointer here.
   |---|---|---|---|
   | `band::tab(title, tab)` | the round Vibb mark (`.band-mark`, 36 px, the app icon's artwork) | the call's body ("+" on Devices and Apps), then the bell - last by construction | the 5 tab pages |
   | `band::sub(title, href, parent)` | the back chevron | the call's body | 29 pages under a tab |
-  | `band::phone(title, href, parent, who)` | the back chevron | the phone's small picture, then the call's body | a phone's 10 pages |
+  | `band::phone(title, href, parent, who)` | the back chevron | the phone's small picture, then the call's body | a phone's 11 pages |
   | `band::editor(title, href, parent)` | the back chevron | the call's body: Save | the 4 editors |
   | `band::bare(title)` | the mark | nothing | `music_spotify_done` (no session) |
 
@@ -1852,7 +1905,8 @@ pointer here.
   down where the row is short of room and the rest is cut with an ellipsis (the user: a long phone name may be cut).
   A 40-letter phone name is cut on its own summary, at 390 px too.
 - **A phone's ten pages** (`device_about`, `device_advanced`, `device_apps`, `device_calendar`, `device_calls`,
-  `device_filter`, `device_home`, `device_lock`, `device_music`, `device_time`) say whose page it is with the phone's
+  `device_filter`, `device_home`, `device_lock`, `device_music`, `device_time`; `device_activity` the eleventh since
+  2026-11-13) say whose page it is with the phone's
   picture, since the name left the back link (the user's choice, "Enig i c!"): `devices::BandAvatar { initial,
   avatar, photo }` from the functions the list and the summary use (`BandAvatar::of(&Device)`, from the
   `Device` each handler reads once), drawn as `<span class="band-who" aria-hidden="true">` around the list's own `.avatar`
@@ -1983,6 +2037,15 @@ pointer here.
   `style.css?v=105`, `top-strip.js?v=1`. Tests: `shell::the_app_shell_scrolls_main_not_the_document` (the canvas rule,
   the nudge's colour, which templates mark `doc-scroll`, the script in the head), `jstest/top-strip.test.js`. Not yet
   seen on the iPhone.
+- **Retries after a return** (design 104, 2026-11-15, `docs/design/104-ios-status-bar.md`; the user: the fade still
+  comes back *"etter den har vært i bakgrunnen av og til"*): the installed app on the user's iPhone (iOS 27.2, added
+  again after 0.72.1) already has `default` - `status_bar.rs` gives `black-translucent` only to Safari 26 or older, so
+  the iOS 26.1 `black-translucent` scrim research does not apply to it, and the bar style is unchanged. What changed is
+  `static/top-strip.js` (`?v=2`): a return (`pageshow`, visible) nudges at once and again 300 ms, 1 s and 3 s later
+  (`RETRY_MS`), each one frame; a new return restarts the series and hidden cancels it, so they never stack. A field's
+  `focusout` and `visualViewport`'s `resize` re-arm one timer: a single nudge 300 ms after the last (`KEYBOARD_MS`).
+  Nothing else: the strip, its colour, the canvas. Tests: `jstest/top-strip.test.js`; the shell test pins `?v=2`.
+  Not seen on the iPhone yet.
 
 ## Every phone's own colour (design 85 step 1, 2026-11-12, branch `design-85`, migration `0138_device_avatar_tone.sql`)
 
@@ -2014,8 +2077,8 @@ pointer here.
 - **The user** chose mockup B (2026-11-11); O1-O3 decided 2026-11-12: fresh is "Here now"'s rule (twice the served
   interval under Regularly, an hour otherwise), and Update All skips Off, not set up and Disconnected.
 - **`/devices/locate`** with two phones or more and none chosen (or an unknown id) is the Alle view in place of the
-  old list: `<section id="all">` holds the map box (`.map-box.map-all`, `clamp(260px, 45vh, 420px)` - 60vh/520 until 2026-11-12, when the age row and Update Location
-  fell under the tab bar on an iPhone 15 -,
+  old list: `<section id="all">` holds the map box (`.map-box.map-all`, `clamp(280px, 55vh, 480px)` since the age box went (design 88 revision 2; 45vh/420 for a day before, 60vh/520 until 2026-11-12, when the age row and Update Location
+  fell under the tab bar on an iPhone 15) -,
   `data-locate-all`), the chips over its top (`nav.map-chips`: "All" `aria-current`, then each phone a link to its
   view with its 26 px avatar - hollow, `.avatar-hollow`, without a position - and an `aria-label` carrying what its
   marker shows, "Emma, 2 min ago, within 12 m" / "Lily, location is off"; one light look in both schemes, one line
@@ -2133,8 +2196,8 @@ pointer here.
 - **Find Phone**: the wipe-not-ready warning, the three tiles (`#actions`), "Recent Requests" (`#recent`):
   `locate::requests` through `find_rows` - every one still in flight (`locate::in_flight`, as Requests calls it), then the newest others up to
   `FIND_REQUESTS` (3) in all, so nothing in flight is hidden (code QA L2) -, the newest highlighted
-  (`.group-newest > .row[data-command]:first-child`), then Show all › Activity (`/devices/{id}#activity`, or plain
-  `/devices/{id}` while the summary's Activity is empty and so not on the page - code QA L1); Erase Phone… alone at the bottom (`row-button row-danger`) with
+  (`.group-newest > .row[data-command]:first-child`), then Show all › Activity (`/devices/{id}/activity` since
+  2026-11-13; it was the summary's `#activity`, or plain `/devices/{id}` while that was empty - code QA L1); Erase Phone… alone at the bottom (`row-button row-danger`) with
   the offline footer and ⓘ (`#erase`). A wrong name renders this page (200) with the confirm open.
 - **Where the forms land now**: Ring, Stop Ringing, Lock, Erase → `/devices/{id}/find#actions`; Cancel (any `back`
   but `summary`; the rows post `find`) → `/devices/{id}/find?cancel=…#recent`; the pickers →
@@ -2146,3 +2209,332 @@ pointer here.
   `the_rows_and_their_pages`, `links_to_the_moved_groups_resolve`; the tests that read the zones, the requests, the
   warnings or the pickers off Locate read the new pages (`zones`, `zone_watch`, `command_expiry`, `command_receipts`,
   `locations`, `cleanup`, `power`, `time_rules`, `weather`, `android_lock_page`, `install_now`, `parents`, `shell`).
+- **Revision 2** (the user, 2026-11-12, "Do it!"): the box under the map (the age row and Update Location) is gone.
+  The marker's bubble carries its lines - `data-shown-text` (age · accuracy · the zone), then the map box's
+  `data-fix-seen` (hidden), `-still`, `-aged`, `-before-off`, `-title` (exact time · provider · "test location"),
+  built as text by `static/locate.js`'s `bubble` (`?v=9`). Update Location is the first row of `locate-rows`
+  (`#update-location`, its redirect's fragment), with "No position yet." (`data-fix-none`), the phone's answer
+  (`data-row="locate-answer"`) and the wait's `#fix_wait` under its name; the mock count is a row after it. The map box
+  keeps ` data-waiting`; a new fix still reloads at `#location`. Tests:
+  `locate_page::update_location_is_the_first_row_and_the_map_has_no_box`, `the_bubble_says_fresh_or_old`,
+  `jstest/locate.test.js`.
+
+## The summary as mockup A (design 101, 2026-11-15, `docs/design/101-summary-page-a.md`, QA `docs/review/qa-101-design.md`)
+
+Server only: no launcher or API change, no migration. The user's "Vi går for a!".
+
+- **The picture over the band.** `device_detail.html` opens `<div class="sheet summary-sheet">`; `.summary-sheet { margin-top:
+  38px }` opens a night gap under the band (main's ground is night in its top half), and `.summary-sheet > .summary-head {
+  margin-top: -52px }` lifts the header into it. The number is measured from the sheet's content edge: gap 38 + 1 px border +
+  15 px padding less the band's 22 px foot = 32 px under the band's box, and the picture's top should lie 20 px above the
+  sheet's edge (the design said -36, which left it floating: QA M1). `shell::the_app_shell_scrolls_main_not_the_document` pins both
+  numbers. The rule is written for `.summary-sheet > .summary-head` without `:first-child` (QA L1): **anything new at the top
+  of the summary (design 100's request card) goes right after `</header>`**, never above it. The shared band is unchanged
+  (D6). `.avatar-large` is 88 px with a 4 px ring in `--bg` (invisible in dark, where `--bg` is the night: fine).
+- **The sheet** (`details.pic-menu`, no `<dialog>`: iOS 14). The summary is `.pic-pick` (`position: relative`, the pencil
+  `.pic-badge` in its corner; the summary is no ancestor of the panel), `list-style: none` and the marker hidden. The panel
+  (`.pic-panel`, `role="group"`: it traps no focus, so it does not claim to be modal) and `.pic-backdrop` (`data-confirm-cancel`,
+  `hidden` without JS, `cursor: pointer` for iOS taps, never a `display` that beats `hidden`) are `position: absolute` with four
+  longhands (no `inset`), z 12/11, against the **body**: so **nothing that holds them may be positioned** (`.sheet`,
+  `.summary-head`, `.avatar-edit`; the shell test checks it). Rows: Change/Add picture = a `<label class="pic-action">` with
+  the real `input.pic-file` over it (four longhands, `opacity: 0`: a tap is a tap on the input, which iOS needs; focus ring on
+  the row by `:focus-within`), Remove (`.pic-danger`, `data-avatar-remove`, posts at once, no confirm), then Avbryt (the
+  `confirm_cancel.html` include). The note "Bildet vises bare for foreldrene." is true: the picture is never sent to a phone
+  (it is served at the unguessable `/phone-avatars/{hash}` without a session). The forms still post to `/avatar#avatar` and
+  `/avatar/remove#avatar`: never the top.
+- **`confirm.js` (`?v=2`)** gained, for `details.pic-menu` only: Escape closes it and focuses the picture (`preventScroll`), a
+  `focusout` leaving the panel closes it (a menu's way), and a `toggle` listener **in the capture phase** (`toggle` does not
+  bubble) focuses the first action. The backdrop closes like Avbryt through the existing `[data-confirm-cancel]` click.
+  `jstest/confirm.test.js` has the four cases.
+- **One status line** (`phone_status::header` + `one_line`; `.summary-state`): the dot (`.state-dot dot-*`, `aria-hidden`), then
+  the lead (the leads and their order unchanged), the zone with its pin (`Part.pin`, a 12 px SVG before `data-zone-now`, only the
+  header's zone part) and the battery. The screen time is not in the header (the header builds from facts with `screen: None`), so
+  `DeviceDetailTemplate.meter` is gone; the Devices row keeps both. Roaming and airplane parts still work on the two internal
+  lines and are joined last. **Wrapping** (QA M2): the macro `status_line::parts(line, boxed)` wraps each part (icon, label,
+  text) in `<span class="part">` when `boxed` (the summary; the Devices row passes `false`), and `.summary-state .part` is
+  `display: inline-block; max-width: 100%`: the line wraps between parts, and a part alone wider than the column (a long lock
+  or zone name) wraps inside it, so main never scrolls sideways at 320 px. The battery icon stays in its part.
+- **The tiles** (`quick_actions.rs`): Skjermtid without a daily limit says "25 min brukt i dag" (D2; `qa.no_limit` went, nothing
+  at 0 min). Pause regler says **"Ingen regel nå"** only when `Inputs.no_rule_now` (a time report was read, it is today's **and
+  names its day**, the phone is online or away at most 15 minutes: `time_state::report_is_fresh`, which shares `report_stale`
+  with `lock_badge`; the screen-time lock counts as none: L5) **and** no running pause **and** `lock_now::in_force_by_schedule` is
+  false - no rule's window covers the phone's clock once pauses are taken out, because an online phone's report of any age
+  passes the freshness test and a rule may have started since (QA M4). Slå på regel says **"Neste: Leggetid 20:30"** /
+  "Neste: Skole i morgen 08:00" (`device.summary.qa.next`, `time.tomorrow`, wrapped in `qa.phone_time` when the phone's zone is
+  not Phone Setup's) from `lock_now::next_start` - the next scheduled start within 24 hours (D9), from the policy rows and the
+  phone's clock; skips a copy, unreadable days and a start inside a window of the same rule already running; **a start inside a
+  running pause (of that rule or of all rules) is the pause's end while the window still covers that minute, else skipped**,
+  because the phone locks when the lift ends (QA M3); ties: the earlier start, then school, bedtime, the rest, then
+  `sort_order`. Shown only while no rule is turned on now (`QuickActions.next_line`, grey; the on-line is `qa-on`). Tests:
+  `lock_now::tests::the_next_start`, `a_rule_in_force_by_its_schedule`,
+  `time_state::tests::a_report_is_fresh_when_it_names_today_and_the_phone_is_in_touch`, `summary::the_tiles_say_their_state`.
+- **Activity's row**: the grey count of the week's rows is replaced by an orange `.badge-warn` **"2 nye"** (`device.activity.new`,
+  spoken `new_spoken`; `data-activity-new`), only while this parent has unread **events** among the page's rows (commands, lifts and
+  turned-on rules have no read state). `activity::view` marks the events it lists read (`parent_events::mark_read` takes a JSON
+  array string) after the rows were built, so the rows keep their state: the page draws the inbox's `unread-dot` and its
+  visually-hidden word on those rows (QA M7). The page carries a hidden `data-unread` (what this parent still has unread after
+  marking: `register-sw.js`'s app badge, QA L6); unread events older than the week or past the cap are neither counted nor
+  marked, so the bell can stay above "2 nye". The sub-line is `.row-sub-wrap` (wraps, no clamp), the clock in a
+  `.nowrap` span (`.row-sub-line` went; `device.activity.count*` and `count_more` went with the old badge, and `Activity.more`).
+- **The app's tile on its band** (`band::app(title, href, parent, tile)`, the sixth macro; `tracked_app_detail.html` only - the
+  only per-app page): `AppTile` as `apps_list.html` draws it, the real logo (the launcher the Vibb mark) over the catalog glyph
+  over the letter, in `.band-who` at 28 px, `aria-hidden`, not a link. The handler reads `app_logos::catalog_logos` once for the
+  tile and the Name and icon preview (a failed read is logged: glyph or letter). CSS keys the glyph's 17 px on
+  `.band-who > .app-row-tile:not(.app-row-logo) > img` - **not `:only-child`**, which matches the logo's `<img>` too because the
+  letter is a text node (QA M5) - and gives the logo a light hairline on the night. Test: `app_logos::the_pages_show_the_logos`.
+- **Airplane periods in Activity (the user, 2026-11-15)**: the summary's grey "Flymodus var på 18:01–18:02" box
+  (`device.summary.airplane.was_on`) is gone; `airplane_mode::summary_lines` keeps the emergency line and the lost-role
+  warning, and the status line keeps "Flymodus på siden …" while on. Every ended period in the newest report (the launcher
+  keeps ten) that ended within the week is a read-only Activity row (`activity::airplane_row`, a `LiftRow` with no word:
+  "Flymodus på 18:01–18:02", `device.activity.airplane`, the exact start in `title`, `Zone::since`/`clock`); it is no event, so
+  no push and no unread count. Design 98's note says so.
+- **Code QA fixes**: `next_start` also offers the end of a pause over a window running now (M1) and builds a start from its
+  own minute, so 23:59 works (M2); a rule list that failed to read never says "Ingen regel nå" (L1); `confirm.js` (`?v=3`)
+  focuses the sheet's first action only after a keyboard open (`click.detail === 0`; a script focus after a tap drew the
+  pressed look); the Activity sub-line wraps without a line clamp (a clamp could hide a clock that wrapped to a third
+  line); the header's `screen_summary` words and `ScreenTime::words`' `summary` argument are gone.
+- Cache: `style.css?v=115`, `confirm.js?v=3`. To measure before a merge (not run here): the gap and the picture under a 40-letter
+  name at 320 and 390 px, light and dark, scripts on and off; the sheet over the tab bar; an autosave keeping the place;
+  pull-to-refresh refused while the sheet is open; the iPhone's photo picker from the file row in the installed app.
+
+## Quick Actions as three tiles, Åpne for oppsett on Avansert (design 93, `docs/design/93-lock-now-quick-actions.md` §6)
+
+*Design 101 added two state lines (Pause regler's "Ingen regel nå", Slå på regel's "Neste: …") and changed Skjermtid's "Ingen grense i dag" to "{used} brukt i dag": see "The summary as mockup A".*
+
+- **The tiles** (`handlers/quick_actions.rs` builds them, `device_detail.html`'s `#quick`): `.qa-grid`, three equal
+  columns - **Skjermtid** (teal), **Pause regler** and **Slå på regel** (indigo; both left out while no rule applies) -,
+  each an `<a class="qa">` to `?open=time` / `?open=rules&mode=pause|on` with `#quick`. Its state line shows only when it
+  says something (an empty one keeps its height): "48 min igjen i dag" / "Brukt opp i dag" / "Ingen grense i dag"; the
+  latest-ending running pause, else "Skole gjelder nå" from a badge that isn't stale and isn't the screen-time lock;
+  only a rule turned on now ("Skole på til 18:30 · venter" until a report after its start or change). The +15/+30/+1 h
+  tiles, Pause a rule…, Lock again, Unlock 2 h… and Locate are gone (Finn has its own tab).
+- **The sheets** render below the grid, `hidden` but the one `?open=` names. Skjermtid posts `target=budget` to
+  `/lifts` as before. Regler: what runs first (the turned-on rule with Avslutt nå, Forleng eller forkort and Lagre ny
+  tid; each running pause with Avslutt nå), then "Noe annet" (or "Regler"): one form to `/rules-now` whose `mode`
+  radios (`#m-on`, `#m-pause`, `.qa-mode`) are its first children, so `.when-on` / `.when-pause` switch with sibling
+  selectors only (Chrome 80 / iOS 14). `#m-on` is disabled while a rule is on (one at a time), without the phone's zone
+  and in the day's last minute. Each `<option>` carries its mode line and warnings (`data-line`, `data-warn`); "Skole
+  gjelder allerede til 14:30" only for a phone without `lock_now_v1`. A refusal's words show in the sheet it reopens.
+- **`static/quick-sheets.js`** (ES5, `jstest/quick-sheets.test.js`): a tile opens its sheet in place (no reload, the
+  address kept, the focus to the sheet's head without a scroll), the open tile or Lukk closes it, the other rule tile
+  only switches the mode; "Alle regler" leaves in Slå på nå; a length fills Til, typing Til clears the lengths; the
+  buttons say the sentence ("Slå på Skole til 18:30"), their words from `#quick`'s `data-w-*`. `auto-reload.js` (`?v=9`)
+  holds while a `.qa-sheet` is shown. Since design 103 (`?v=3`) it reads `#quick` again on `handy:swapped` and redraws
+  the words; a save in place closes a shown sheet, as the reload did.
+- **Open for setup**: while the report shows the restrictions pause or Play install mode, `#setup-open` sits inside
+  `#quick` above its header (where Attention's row lands): "Åpnet for oppsett til 17:10" (the newest answered
+  `start_pause` + 2 h), "Apper og Play Butikk er åpne" and Lås igjen (`/end-windows`); an older launcher's own words and
+  no action. **Avansert's first row** (`device_advanced.html`, `#setup`, a `window_relock_v1` phone only,
+  `quick_actions::setup_card`): since design 103 §3 one row that opens in place - `<details class="row-sheet">`, its
+  chevron turning down, no outline, no second tile or title, no Lukk - whose sheet holds one line ("Apper,
+  innstillinger og Play åpnes i 2 timer.", `device.advanced.setup.line`), the orange line while a rule is turned on,
+  and "Åpne nå" (`/start-pause`, the plain row button); while open the row says "til 17:10" and the sheet holds Lås
+  igjen, with the open line ("Åpnet for oppsett", Play's words) only when the row has no value. Both forms send
+  `back=advanced` and `window_relock::queue` returns to `/devices/{id}/advanced?notice=..#setup`, the flash in the
+  group; the page draws the `data-waits` marker while it waits (the 3 s refresh in place).
+- **Activity** lists each rule turned on that is over ("Skole slått på 16:30-18:30", "Sluttet 18:30" / "Avsluttet
+  17:10" / "Regelen ble fjernet") as a lift's row; Today keeps the running one with End now.
+
+## Device › Mobilnett (designs 94 and 95 revision 3, 2026-11-13, branch `mobilnett`, migration `0143_mobile_network.sql`)
+
+A settings page of the phone's own (the user: on a par with Lock Screen, not a group on Avansert), `GET
+/devices/{id}/mobile` (`handlers::mobile_page`, `device_mobile.html`), reached from the "Mobilnett" row on the phone's
+page, whose value shows only what differs from the defaults ("Bare Vibb", "Roaming: telefonens valg", "Mobildata av").
+Three groups, each one auto-saving form posting `POST /devices/{id}/mobile` with its `group` and landing on its own
+anchor (`#mobile-data`, `#data-roaming`, `#mobile-lock`), so a save never jumps to the top: "Mobildata" (radio rows På
+/ Bare Vibb with their subtitles, `apps_mobile`), "Dataroaming" (Av (låst) / Telefonens valg, `data_roaming`; the
+column allows `eea` for a later round, the page doesn't offer it), and "Lås mobilnett-innstillingene"
+(`mobile_settings_locked`, on by default). An unknown value or group is a 400 with nothing written; `settings_log`
+writes the line; each save nudges the phone. The radio rows are `.pick-row` (style.css v110).
+
+The choices are disabled with "Virker etter at Vibb One er oppdatert" while the latest report doesn't claim
+`mobile_data_v1` / `data_roaming_v1`; a phone not set up has them live. The phone's state, worded by
+`mobile_network::card` from the report's cleaned `data_roaming` and `mobile_data`, sits under each group: design 94
+§6.1's table (locked, unlocked in a pause, the phone's choice on/off, where it roams, the lingering session - "Bare
+Vibb bruker roamingdata fra før låsen" when the launcher sinks it - and a SIM still reading roaming on), "Mobildata:
+bare Vibb" and "Mobildata er slått av på telefonen". On the summary only the lines that say something show
+(`mobile_network::summary_lines`, `#mobile-state`, each leading to the page), and "Roamer i Sverige" ends the header's
+second line while the phone is in touch (`phone_status::with_roaming`). Pinned by `tests::mobile_network`.
+
+## A save leaves the history as it was (2026-11-14, branch `pwa-back`; code QA `docs/review/qa-pwa-back-code.md`)
+
+The user: Apps -> Vibb One -> "Sjekk nå", wait, swipe back -> the same app page again, not the Apps list. Every form
+posts and is answered with a 303 back to its page, and a POST navigation always adds a history entry, so each save -
+a button, an auto-saving switch - left one more entry for the same page. Now a form that comes back to its page is
+posted by `static/scroll-restore.js` (`?v=9`) itself, and the return replaces the page's own entry:
+
+- **Which forms**: a POST whose action (or the button's `formaction`) has a `#fragment` on this origin - every form
+  that stays on its page has one, the ones that leave it have none (`settings_pages::check_forms`, the fix round of
+  2026-10-06 above) - sent by a submit button (the window's `submit` listener, after every other one: a submit another
+  script took over, `defaultPrevented`, is left alone) or by `form.submit()` (the auto-saving controls, through the
+  existing hook). Left to the browser as before: no JS, no `fetch`, a browser without `SubmitEvent.submitter` or
+  `requestSubmit` (Safari before 16), a `target`, `data-native-post` - exactly the forms answered with a page, not a
+  redirect: Show Child PIN (`/devices/{id}/lock#show-pin`), the Vibb import's upload (`/music/import#import-preview`),
+  Add Parent and a parent's Reset (`/account/parents#parents`, `/account/parents/{id}/reset#parents`: the one-time
+  password) and the setup QR (`/devices/{id}/provision#qr`: a new code each time), marked whatever fields they hold and
+  pinned by `check_forms` both ways (`answered_with_a_page`) - and a form with a password, file, `assertion` or
+  `credential` field (a refusal posted again would count a password twice, spend a passkey's challenge or send a file
+  twice). Those keep the extra entry, as before.
+- **How**: `fetch` (the form's fields, urlencoded - multipart for a `multipart/form-data` form -, the button's name and
+  value, `redirect: "manual"`, header `X-Handy-Stay: 1`). `admin_auth::stay_answer` (a layer just outside
+  `csrf_guard`) answers such a POST's redirect as `204` with the `Location`, fragment and all, in `X-Handy-Location`
+  (a followed redirect hides its fragment, renders the page once for nothing and would take a one-shot session notice,
+  `music.rs`'s Storytel one, with it); cookies and the other headers stay; a GET, a POST without the header and every
+  answer that isn't a redirect pass as they are. The address is taken only when it is an http(s) one of this origin.
+  The same path: `history.replaceState` to that address, then `location.reload()` (a `location.replace` that differs
+  only in the fragment would only scroll); another path (an Add's `/new` -> `/5`): `location.assign`, a new entry as a
+  link makes. The form record is taken before and goes with the reload marked `stay`: the place comes back as ever,
+  and a `#fragment` the form's groups don't hold (the import's Confirm -> `#import`) is the anchor
+  (`scrollIntoView`), never the reload's place record (QA L2). The `handy-from` logic sees the same as with the
+  browser's POST.
+- **Busy, in order** (QA M1, L1): while a form's save is out the form has `aria-busy="true"` and its button is disabled
+  with `aria-busy` (style.css v113: dimmed to 0.55, `cursor: progress`, no animation); a second tap on it does nothing
+  (no second lift or ring), and an auto-saving switch flipped again meanwhile sends the form as it is then, after the
+  first answer. The page lands once, when the last save in flight has answered, at the last one's address.
+- **Any other answer** (QA H1): a refusal, where the server refused before acting - 400, 403, 404, 409, 422, 423 (the
+  lock), or a 200 (a refused form shown again; the forms answered with a page on success are `data-native-post`) - is
+  sent again the browser's way (`requestSubmit(submitter)`, which the listener lets pass, or the native
+  `form.submit()`), so that answer shows as before; a refusal writes nothing. No answer (the network, an app sent to the
+  background), a 5xx, a redirect past the server's stay answer (`opaqueredirect`: a sign-in portal in front of the
+  server), an address that isn't this origin's, or a `requestSubmit` that throws: never posted again - the server may
+  have acted - the page is loaded with a GET instead and shows what the server holds (no new words: an offline page is
+  the browser's own). A refusal among several saves in flight is shown once the rest have answered.
+- Tests: `jstest/scroll-restore.test.js` (`stayPost`'s rules, `stayLanding`'s origin and scheme, the fetch and its
+  body, the replace and reload, refusals sent again and lost answers never, the busy form and the second tap, several
+  saves in flight and a form's saves in order, the stay record's anchor), `admin_auth::tests::only_a_stay_posts_redirect_becomes_its_204`
+  (the 204 with `Set-Cookie`; a GET, a POST without the header, a 423 and a 403 pass),
+  `tests::tracked_apps::a_save_posted_by_the_page_learns_where_its_redirect_goes`, and `check_forms`'
+  `data-native-post` rule. The first version was seen in headless Chromium and WebKit against a stub server (a
+  button save and `form.submit()` keep `history.length`, Back after a save goes to the page before, a refusal shows, a
+  password form posts natively).
+
+## Flymodus, the Oppsett card (design 98 step 5, 2026-11-14, branch `design-98`, `docs/design/98-airplane-mode-assistant.md` §6)
+
+- **Home Screen › Hurtigkontroller**: the kid's "Flymodus" switch (`quick_controls_mask` bit 64,
+  `devices::QUICK_CONTROL_AIRPLANE`) only for a phone that reported `airplane_mode_v1`; the form then carries
+  `airplane_row=1`, and `update_policy` takes bit 64 from the switch only with it - without it (an older launcher's
+  page, an older tab) bit 64 is kept as bit 32 is (`(mask & kept_bits) | ?`). A new phone has it on (D1). Its sub-line
+  (`airplane_mode::home_sub`): the parent's "Blokker flymodus", the role not chosen yet, or no Wi-Fi in airplane mode.
+- **The summary**: "Flymodus på siden 21:03" is a header part (`phone_status::with_airplane`, hook `data-airplane`)
+  in place of "Offline"/"No contact", last on the second line while in touch; from `on` (the open period's start) or
+  a `going_on` report for 10 minutes (`airplane_mode::on_since`). Under Attention, `#airplane-state`: a period ended
+  within 12 h, the emergency call that ended it, and the role lost - "held before" is any stored report with
+  `assistant: true` (`airplane_mode::assistant_held_before`; it goes with `device_status`' retention, the card's step
+  stays).
+- **The Oppsett card** (`#oppsett`, `airplane_mode::setup_steps`, a launcher with `airplane_mode_v1` only - its words
+  name that launcher's notification): Bakgrunnstilkobling, Endre systeminnstillinger (bit 16 or a clock format),
+  Digital assistent (bit 64), Wi-Fi i flymodus (bit 64 and the role), Standardapper endret, Samtalefilter (calls managed
+  and `call_state.screening_role_held`/`redirection_role_held` false - the report's existing keys, D10). Åpne for
+  oppsett is the start-pause with `back=setup` (`?notice=setup_start_pause_sent#oppsett`); "Ikke nå" is
+  `POST /devices/{id}/setup-card/hide`, storing the needed set (`airplane_mode::setup_key`) in
+  `device_policy.setup_card_hidden` (`?notice=setup_hidden#oppsett`); the card shows for its flash alone too. The QR
+  page's Done step has "Åpne for oppsett nå" (D2) to the same place, flashed also before the phone reported.
+- **About This Phone**: "Digital assistent" (Vibb One / Ikke valgt with the steps) and "Wi-Fi i flymodus".
+- **The emergency line** (§7.1): `emergency_call`'s params get `airplane_off: true` when the same report's period has
+  `off_by: "emergency"` (`airplane_mode::emergency_off`), worded in the push and the inbox; a later report adds it to
+  the stored event only (`parent_events::mark_emergency_airplane_off`, no second push).
+- Tests: `tests::airplane_mode` (the form's keep on both sections, the lines, the card's forms on `#oppsett`, About,
+  the QR page, the emergency line; nb and en).
+
+## Snarveier (design 99 step 2, 2026-11-15, branch `design-99-server`, `docs/design/99-snarveier.md` §5-§6)
+
+- **Home Screen › Hurtigkontroller**: "Snarveier i varsellisten" (`quick_controls_mask` bit 128,
+  `devices::QUICK_CONTROL_SHORTCUTS`), the form's first row, only for a phone that reported `shortcuts_v1`; the form
+  then carries `shortcuts_row=1`, and `update_policy` takes bit 128 from the switch only with it - without it bit 128
+  is kept as 64 and 32 are (`kept_bits`). On for new phones (`DEFAULT_QUICK_CONTROLS`) and set on every existing phone
+  by `0148_shortcuts.sql` (D2). Its sub-line (`shortcuts::home_sub`, the kid named, never a pronoun): hidden by the kid
+  (with the bit on or off), else with the bit on what the kid chose ("Emma chose: Flashlight, Sound, ...", the
+  items' names from `shortcuts::ITEMS` in the page's language) or "No shortcuts are shown now." (no items: nothing
+  offered or none chosen, which the report can't tell apart - code QA C99-L3; it was "None of the switches below is
+  on.", untrue when the kid chose none). The
+  ⓘ gains the panel's paragraph (`data-shortcuts-info`) and the footer the sentence `device.home.quick_footer_shortcuts`
+  - a key of its own, shown only with the row, so an older launcher's page doesn't promise a panel it hasn't got.
+- **The report**: `shortcuts` (`{shown, hidden, items}`, a full-report field, not a heartbeat field), cleaned by
+  `shortcuts::clean` (the contract's `clean` rows) into `device_status.shortcuts_json`; read through
+  `shortcuts::report`, which wants the capability.
+- **About This Phone**: "Snarveier" in the software list - the items' names, "Skjult av Emma", "Ingen" (bit on, no
+  items) or "Av" (bit 128 off); only from a launcher with `shortcuts_v1`.
+- Tests: `tests::shortcuts` (the contract: stored reports, `clean` rows, the table, the copies; the migration's bit;
+  the form's keep on both sections; the sub-lines; the ⓘ and footer; About; nb and en).
+
+## The answer card (design 100 §14.4, 2026-11-15, `docs/design/100-one-vibb-notification.md`; details in `notifications.md` "The answer")
+
+- **Where.** `section#ask.ask-card` right after design 101's `</header>` (never the sheet's first child: the header's -52px
+  needs it first), so it is **above Access, Oppsett and Attention** - the kid waits, and the card is gone once a parent
+  answers (QA R2-L8: Attention's alarms come after it while it shows). It replaces the old `.quick-note data-asked` above
+  the tiles.
+- **Look** (the mockup `Foresporsel.dc.html`, approved "ser bra ut"): the card's ground `--surface` with an inset 2 px
+  `--tint-fill` ring, the hourglass on an `--orange-bg` tile in `--orange`, the title 17 px, the sub-line 14 px in
+  `--label-3`, a four-column **grid** of 44 px buttons (`.ask-button` in `--tint-fill`/`--on-tint-fill`, "Nei" `.ask-no`
+  in `--grey-bg`/`--grey-text`). Tokens only, so light and dark follow. The column is margins, never flex `gap` (the
+  Safari 14.0 floor); the grid's `gap` is fine.
+- **The form** posts to `/devices/{id}/time-request/answer#ask` (the card's own group: `check_forms` and
+  `scroll-restore.js`'s staying post, so a save never jumps to the top; without JS a plain post). The answer lands on
+  `#quick` with its flash; `#ask` is gone then, and the script lands on the server's `#quick`.
+- **The push** opens `/devices/{id}#ask`.
+
+## Saves in place (design 103, 2026-11-15, `docs/design/103-saves-in-place.md`, QA `docs/review/qa-103-design.md`)
+
+The user: switches on Avansert gave "forskjellige grader av synlig refresh" - every save reloaded the page. Now a save,
+the 3 s refresh, pull to refresh and the return after being away change only what differs, with no new document.
+
+- **`static/swap.js`** (`?v=1`, un-deferred in `head.html` right after `scroll-restore.js`, ES5):
+  `handySwap.refresh(url, {forms, byButton, lost, fallback})` fetches the page (`redirect: "manual"`, `no-store`),
+  parses it with `DOMParser` and morphs `main` (and an editor's `body > header.band`) in place; `false` means "do it
+  the old way". One pending landing record (a later refresh inherits the saved forms), the newest GET wins, nothing is
+  swapped or reloaded while a save is in flight (scroll-restore's `inflight`), an answer during parsing waits for
+  `DOMContentLoaded`. A real reload instead for: no `main`, another `html[lang]` or `data-lock-ms`, other stylesheets
+  or `script[src]` (a server update), a page script without `data-swap-ready`, anything but a 200 `text/html`, a sign-in
+  redirect; a 423 goes to the lock. A GET that fails holds the saved forms (`data-held`, dimmed rows) and hands over to
+  reconnect.js's `"swap"` wait (`handyReconnect.waitSwap`), `handy:swapwait`.
+- **The morph**: children matched by key - the id, else the tag and the first of `action`, `data-flash`,
+  `data-warning`, `data-mobile-line`, `data-choice`, `data-row`, `data-setup-step`, `for`, `name`, else the tag - with
+  a lookahead (a line that comes in before a form never replaces it; two forms that change places are moved; an id'd
+  node is moved, parked while its old parent is cleared). `<noscript>` is opaque (and emptied in an imported subtree:
+  DOMParser has scripting off), `<script>` never inserted, `data-swap-keep` (the push banner) left as it is,
+  `[data-flash]` always imported fresh and its text spoken through `#swap-status` (`partials/js_words.html`). An open
+  `<details>` stays as the parent had it, unless the button that saved sat in it (D4: the setup sheet closes). A busy
+  form's `aria-busy`/`data-held` and its button's `disabled` are left alone. Controls: a saved form takes the
+  server's values; one with a queued flip (`again`) or one changed and not saved keeps the parent's (the defaults move
+  to the server's); the focused field keeps its caret (in the saved form the server's value when it still holds what
+  was sent). A POST answer's `data-post-answer` goes from the body.
+- **The place**: before the morph the saved form's top and its id'd ancestors' (or, without a save, the first id'd
+  element below the top strip); after it the first of them still connected and drawn is put back where it was - a
+  closed `<details>` hides its content (both engines still give such content client rects, so `drawn` checks the
+  ancestors); a form that left a recorded ancestor (a row moved to another group) scrolls nothing. `main.container`
+  has `overflow-anchor: none`. The address is replaced without the one-shot words, scroll-restore's record cleared.
+- **Then**: `handy:swapped` (`detail.root`) - confirm.js, register-sw.js (badge, sign-out `endpoint` filled again, one
+  submit listener), reconnect.js, pull-refresh.js, auto-reload.js and every page script run their pass again - and,
+  for a save, `handy:saved` (`forms`, `pending`: the saves still out). `scroll-restore.js?v=10`'s `window.handyStay`
+  releases only the landed forms and sends a queued flip now; a lost answer (5xx, no answer) is a refresh in place
+  with the red line `js.save_unknown` in the form's group; a save with no answer after 400 ms shows the thin bar
+  (`handyReconnect.busy`).
+- **auto-reload.js** (`?v=10`) is in the head on every page and ticks only while main holds the server's
+  `<span hidden data-waits>` (the five places that loaded it: Avansert while it waits, Device › Apps installing, Calls
+  confirming, the summary after Lock again/Unlock, provisioning's launcher check); armed by a swap that brings the
+  marker, disarmed by one that takes it away, re-armed after `handy:saved` with none left and from the bfcache; the
+  tick is a refresh in place. The `notice=` strip runs only on a page that has the marker at load.
+- **Page scripts** (`data-swap-ready`, pinned by `shell::every_page_script_is_swap_ready_or_listed`): rule-kind,
+  calendar-preview, pull-refresh, quick-sheets, app-display, contact-form (document listeners), notifications (its
+  own settings through `own()`, its subscription forms post the browser's way), passkey, reveal, photo-crop (wired once
+  per node), music-cards, install-now (its reload a refresh). The map pages (Locate, Locations, a zone) keep a real
+  reload (D6).
+- **Not in place**: a form that leaves its page, a password/file/passkey form, `data-native-post`, a refusal (the
+  browser's own POST shows it, D2), a button save on iOS 14/15 (no `requestSubmit`/`submitter`).
+- **Tests**: `jstest/swap.test.js` (a small fake DOM: keys and lookahead, noscript, flash, keep, details, busy,
+  controls, the anchor chain, the swappable checks, the bookkeeping, DOMContentLoaded, the events),
+  `scroll-restore`/`auto-reload`/`reconnect`/`pull-refresh`/`confirm`/`register-sw` and each page script's jstest.
+  **The real-engine check** `node server/jstest/real/swap-real.js` (by hand, not CI; Chromium and WebKit through the
+  local Playwright, `HANDY_PW_CHROMIUM`/`HANDY_PW_WEBKIT`; "skipped" without Playwright) runs
+  `jstest/real/swap-fixture.html`: real dirty flags, `<option>` and radio, DOMParser's `<noscript>`, `form.elements`
+  after an import, a closed `<details>`, the anchor's delta and the hairlines at 24 fractional offsets.
+- **Owed on the iPhone**: the switches on Avansert, the hairlines at 3x, VoiceOver on `#swap-status`.
+
+## The hairlines: one rule (design 103 §4)
+
+Every row line is one `::before` rule (the group's five selectors, `.group-music`'s cards, `.wallpaper-item`,
+`.contact-body`, `.held-body`, `.group-lines`, `.row-sheet-body`): a 1 px `--sep-light` line; each list's own rule sets
+only its `left`; the 2dppx block - a 1 px `--sep` line `scaleY(0.5)` - is the last rule in `style.css`, so no list
+gets the border and the scaled line both. A 0.5 px border vanished at some fractional positions at 3x in WebKit (§1.3);
+the scaled line shows at every one (1 device px at 2x, 1.5 at 3x). `.all-show` (a Leaflet popup) keeps its own.
+Pinned by `shell::the_app_shell_scrolls_main_not_the_document`; measured by `jstest/real/swap-real.js`.

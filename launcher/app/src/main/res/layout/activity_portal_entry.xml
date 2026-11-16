@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Design 102 §3.2: the Wi-Fi sign-in's entry, in Vibb One's main process - "Sjekker nettet …", then the parent code's
+     keypad (a dialog over this page), or why nothing opens, with one Close. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/portal_entry_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/kid_ground"
+    android:orientation="vertical"
+    android:paddingStart="16dp"
+    android:paddingTop="24dp"
+    android:paddingEnd="16dp"
+    android:paddingBottom="16dp">
+
+    <TextView
+        android:id="@+id/portal_entry_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:accessibilityHeading="true"
+        android:fontFamily="@font/nunito_extrabold"
+        android:text="@string/portal_title"
+        android:textColor="@color/kid_ink"
+        android:textSize="22sp" />
+
+    <TextView
+        android:id="@+id/portal_entry_message"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:fontFamily="@font/nunito_bold"
+        android:text="@string/portal_checking"
+        android:textColor="@color/kid_ink"
+        android:textSize="17sp" />
+
+    <Space
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
+
+    <TextView
+        android:id="@+id/portal_entry_close"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@drawable/bg_home_window_lock_again"
+        android:clickable="true"
+        android:focusable="true"
+        android:fontFamily="@font/nunito_extrabold"
+        android:gravity="center"
+        android:minHeight="52dp"
+        android:text="@string/portal_close"
+        android:textColor="@color/kid_core"
+        android:textSize="17sp" />
+</LinearLayout>

@@ -122,6 +122,13 @@ object TsnetClient {
             ip
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Failed to connect to tailnet", e)
+            // Upstream siesta5787/kids-launcher-mdm 0d4201dab9: a joined node never retries on the same tsnet.Server.
+            // On Android it can't watch for network changes (netlink is SELinux-blocked for apps), so one started
+            // before the network was up stays in "Starting" for good - seen live upstream at LOCKED_BOOT_COMPLETED,
+            // ~2 s before Wi-Fi. The next attempt builds a fresh one on whatever network exists by then, from the node
+            // state in [stateDir]. A first join keeps its server ([tailnetFreshAfterFailure]). proxyChanged fires
+            // once, below.
+            if (tailnetFreshAfterFailure(authKey)) discard()
             null
         } catch (e: LinkageError) {
             // Security review S-L10: the aar is arm64-only - a missing or bad `.so` (UnsatisfiedLinkError,
@@ -368,6 +375,12 @@ object TsnetClient {
 
     fun close() {
         val before = proxyAddress
+        discard()
+        proxyChanged(before)
+    }
+
+    /** [close] without telling [proxyListener]: [connect]'s failure path tells it once, at its end. */
+    private fun discard() {
         try {
             client?.close()
         } catch (e: Exception) {
@@ -383,6 +396,5 @@ object TsnetClient {
             // it gets no credential (and ServerTransport's sockets refuse a proxy that isn't the current one).
             Authenticator.setDefault(null)
         }
-        proxyChanged(before)
     }
 }

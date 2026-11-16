@@ -22,6 +22,7 @@ import com.journeyapps.barcodescanner.ScanIntentResult
 import com.journeyapps.barcodescanner.ScanOptions
 import com.kidslauncher.mdm.BuildConfig
 import com.kidslauncher.mdm.R
+import com.kidslauncher.mdm.calls.managed
 import com.kidslauncher.mdm.copyToClipboard
 import com.kidslauncher.mdm.getDeviceInfo
 import com.kidslauncher.mdm.server.BatteryExemption
@@ -64,6 +65,9 @@ import kotlinx.coroutines.withContext
 private const val LOG_TAG = "SettingsFragmentLauncher"
 private const val BACKGROUND_CONNECTION = "settings_mdm_background_connection"
 private const val WRITE_SETTINGS = "settings_mdm_write_settings"
+private const val ASSISTANT = "settings_mdm_assistant"
+private const val WIFI_APM = "settings_mdm_wifi_apm"
+private const val CALL_FILTER = "settings_mdm_call_filter"
 private const val FINGERPRINT = "settings_mdm_fingerprint"
 private const val MEDIA_LOCK = "settings_mdm_media_lock"
 private const val APP_ACCESS = "settings_mdm_app_access"
@@ -116,6 +120,34 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
             com.kidslauncher.mdm.push.SyncRunner.request(context.applicationContext, "write_settings")
         }
         updateWriteSettingsRow()
+    }
+
+    /** Design 98 §3.2: Android's "Digital assistant app" page answered - the default-apps window ends now. */
+    private var assistantPageMissing = false
+    private val assistantLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        val app = context?.applicationContext ?: return@registerForActivityResult
+        com.kidslauncher.mdm.assistant.AssistantSetup.endPickWindow(app, "page")
+        com.kidslauncher.mdm.assistant.AssistantSetup.roleMaybeChanged(app)
+        updateAssistantRows()
+    }
+
+    /** Design 98 §3.5: the Wi-Fi panel opened by this screen; its return (or this screen's resume after a pause while
+     * the panel was up) ends the step. The route's own voice activity pauses this screen too, before the panel opens -
+     * that resume must not end the step (measured on jelly36). */
+    private var wifiPanelShown = false
+    private var wifiPanelPaused = false
+    private val wifiLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        endWifiStepNow("result")
+    }
+
+    /** Design 98 D10: the call-screening and call-redirection role requests, one after the other, in the window. */
+    private var callFilterQueue: List<Intent> = emptyList()
+    private val callFilterLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        val next = callFilterQueue.firstOrNull()
+        callFilterQueue = callFilterQueue.drop(1)
+        if (next != null && runCatching { launchCallFilter(next) }.isSuccess) return@registerForActivityResult
+        context?.applicationContext?.let { com.kidslauncher.mdm.assistant.AssistantSetup.endPickWindow(it, "call_filter") }
+        updateAssistantRows()
     }
 
     /** "Fingerprint" (the user, 2026-10-24): every enrolment page threw ActivityNotFoundException on the last tap. */
@@ -264,6 +296,69 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
                 }
             }
             updateWriteSettingsRow()
+            true
+        }
+
+        // Design 98 §3.3: "Digital assistent" - the default-apps window (§3.2), then Android's page, explicit to the system
+        // Settings component; only while the phone is open for setup.
+        findPreference<Preference>(ASSISTANT)?.setOnPreferenceClickListener {
+            val app = requireContext().applicationContext
+            if (!com.kidslauncher.mdm.assistant.AirplaneRuntime.roleHeld(app)) {
+                val pages = com.kidslauncher.mdm.assistant.AssistantSetup.assistantPageIntents(app)
+                assistantPageMissing = false
+                if (pages.isNotEmpty() && com.kidslauncher.mdm.assistant.AssistantSetup.setupWindowOpen()) {
+                    lifecycleScope.launch {
+                        withContext(Dispatchers.IO) { com.kidslauncher.mdm.assistant.AssistantSetup.openPickWindow(app) }
+                        assistantPageMissing = !openFirstPage(pages, assistantLauncher)
+                        updateAssistantRows()
+                    }
+                }
+            }
+            updateAssistantRows()
+            true
+        }
+        // §3.5: "Wi-Fi i flymodus" - airplane mode on, Android's Wi-Fi panel, then off again when the parent comes back.
+        findPreference<Preference>(WIFI_APM)?.setOnPreferenceClickListener {
+            val app = requireContext().applicationContext
+            if (com.kidslauncher.mdm.assistant.AirplaneRuntime.roleHeld(app) && com.kidslauncher.mdm.assistant.AssistantSetup.setupWindowOpen()) {
+                lifecycleScope.launch {
+                    val result = withContext(Dispatchers.IO) { com.kidslauncher.mdm.assistant.AssistantSetup.startWifiStep(app) }
+                    if (result != com.kidslauncher.mdm.assistant.AirplaneOn.GO) {
+                        Toast.makeText(app, R.string.settings_wifi_apm_failed, Toast.LENGTH_LONG).show()
+                    } else {
+                        try {
+                            (activity as? com.kidslauncher.mdm.ui.settings.SettingsActivity)?.ownPageOpening()
+                            wifiPanelShown = true
+                            wifiPanelPaused = false
+                            wifiLauncher.launch(com.kidslauncher.mdm.assistant.AssistantSetup.wifiPanelIntent())
+                            Toast.makeText(app, R.string.settings_wifi_apm_line, Toast.LENGTH_LONG).show()
+                        } catch (e: Exception) {
+                            Log.w(LOG_TAG, "Couldn't open the Wi-Fi panel", e)
+                            endWifiStepNow("no_panel")
+                        }
+                    }
+                    updateAssistantRows()
+                }
+            }
+            true
+        }
+        // D10: "Samtalefilter" - the two call-screening roles through Android's own request, inside the same window.
+        findPreference<Preference>(CALL_FILTER)?.setOnPreferenceClickListener {
+            val app = requireContext().applicationContext
+            if (com.kidslauncher.mdm.assistant.AssistantSetup.setupWindowOpen()) {
+                lifecycleScope.launch {
+                    val requests = withContext(Dispatchers.IO) {
+                        com.kidslauncher.mdm.assistant.AssistantSetup.openPickWindow(app)
+                        com.kidslauncher.mdm.assistant.AssistantSetup.screeningRoleIntents(app)
+                    }
+                    callFilterQueue = requests.drop(1)
+                    val first = requests.firstOrNull()
+                    if (first == null || runCatching { launchCallFilter(first) }.isFailure) {
+                        com.kidslauncher.mdm.assistant.AssistantSetup.endPickWindow(app, "call_filter")
+                    }
+                    updateAssistantRows()
+                }
+            }
             true
         }
 
@@ -432,11 +527,19 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
         super.onResume()
         // Re-read every time: a pause started or ended, or the dialog answered; and after each apply while shown.
         AppEnforcer.addAppliedListener(appliedListener)
+        // Design 98 §3.5: back from the Wi-Fi panel - the step ends (airplane mode off again).
+        if (wifiPanelShown && wifiPanelPaused) endWifiStepNow("resume")
         updateSystemPageRows()
+        // §3.3: the setup notification opens Settings at "Fullfør oppsett".
+        if (activity?.intent?.getBooleanExtra(com.kidslauncher.mdm.assistant.EXTRA_SETTINGS_SECTION, false) == true) {
+            activity?.intent?.removeExtra(com.kidslauncher.mdm.assistant.EXTRA_SETTINGS_SECTION)
+            scrollToPreference(BACKGROUND_CONNECTION)
+        }
         findPreference<Preference>(SERVER_CERT_ROW)?.summary = serverCertSummary(requireContext())
     }
 
     override fun onPause() {
+        if (wifiPanelShown) wifiPanelPaused = true
         AppEnforcer.removeAppliedListener(appliedListener)
         super.onPause()
     }
@@ -473,6 +576,7 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
     private fun updateSystemPageRows() {
         updateBatteryRow()
         updateWriteSettingsRow()
+        updateAssistantRows()
         updateFingerprintRow()
         updateMediaLockRow()
         updateAccessRows()
@@ -534,6 +638,59 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
         val context = context ?: return
         val row = findPreference<Preference>(MEDIA_LOCK) ?: return
         row.summary = getString(mediaLockText(pageAccess(MediaLockScreen.pageIntents(context), mediaLockPageMissing)))
+    }
+
+    private fun launchCallFilter(request: Intent) {
+        (activity as? com.kidslauncher.mdm.ui.settings.SettingsActivity)?.ownPageOpening()
+        callFilterLauncher.launch(request)
+    }
+
+    /** §3.5: the Wi-Fi step ends - airplane mode off again (background), then the rows. */
+    private fun endWifiStepNow(why: String) {
+        wifiPanelShown = false
+        wifiPanelPaused = false
+        val app = context?.applicationContext ?: return
+        lifecycleScope.launch {
+            withContext(Dispatchers.IO) { com.kidslauncher.mdm.assistant.AssistantSetup.endWifiStep(app, why) }
+            updateAssistantRows()
+        }
+    }
+
+    /** Design 98 §3.3: "Fullfør oppsett"'s rows - the assistant, Wi-Fi in airplane mode, the call filter. */
+    private fun updateAssistantRows() {
+        val context = context ?: return
+        val policy = (com.kidslauncher.mdm.server.cachedPolicy() as? com.kidslauncher.mdm.server.CachedPolicy.Ok)?.policy
+        val bit = (policy?.quickControlsMask ?: 0L) and com.kidslauncher.mdm.server.QuickControlFeature.AIRPLANE != 0L
+        val role = com.kidslauncher.mdm.assistant.AirplaneRuntime.roleHeld(context)
+        findPreference<Preference>(ASSISTANT)?.let { row ->
+            row.isVisible = com.kidslauncher.mdm.assistant.assistantRowShown(bit, role)
+            if (row.isVisible) {
+                val access = pageAccess(com.kidslauncher.mdm.assistant.AssistantSetup.assistantPageIntents(context), assistantPageMissing)
+                row.summary = getString(com.kidslauncher.mdm.assistant.assistantRowText(com.kidslauncher.mdm.assistant.assistantRowState(role, access)))
+            }
+        }
+        findPreference<Preference>(WIFI_APM)?.let { row ->
+            row.isVisible = role
+            if (role) {
+                val state = com.kidslauncher.mdm.assistant.wifiApmRowState(
+                    com.kidslauncher.mdm.assistant.AirplaneRuntime.wifiKept(context),
+                    com.kidslauncher.mdm.assistant.AssistantSetup.setupWindowOpen(),
+                )
+                row.summary = getString(com.kidslauncher.mdm.assistant.wifiApmRowText(state))
+            }
+        }
+        findPreference<Preference>(CALL_FILTER)?.let { row ->
+            row.isVisible = com.kidslauncher.mdm.assistant.screeningRowShown(
+                com.kidslauncher.mdm.calls.CallPolicyStore.callsState.managed,
+                com.kidslauncher.mdm.calls.CallSystem.screeningRoleHeld(context),
+                com.kidslauncher.mdm.calls.CallSystem.redirectionRoleHeld(context),
+            )
+            if (row.isVisible) {
+                row.summary = getString(
+                    if (com.kidslauncher.mdm.assistant.AssistantSetup.setupWindowOpen()) R.string.settings_call_filter_open else R.string.settings_call_filter_pause_first,
+                )
+            }
+        }
     }
 
     private fun updateWriteSettingsRow() {

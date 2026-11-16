@@ -79,24 +79,57 @@ pub async fn create_lift(
         .get("minutes")
         .and_then(|m| m.trim().parse::<i64>().ok())
         .unwrap_or(0);
+    let rule = form.get("rule").map(|r| r.trim()).unwrap_or("all");
+    match record_lift(&state, lang, id, &admin, target, rule, minutes).await {
+        Ok(done) => back_to(id, if target == "rule" { "pause" } else { "extra" }, done),
+        Err(refused) => refused,
+    }
+}
+
+/// [create_lift]'s core, shared with design 93's Regler sheet (`rules_now`, "Sett på pause"):
+/// checks the lift, writes its row, nudges the phone. `Ok` is the flash code (`pause`, `extra`, or
+/// `gone` for a rule no longer the phone's, with nothing written); `Err` is an error page. `rule`:
+/// "all" (or empty) or a rule id, read only for a rule pause. Design 100 §14.4: one `BEGIN
+/// IMMEDIATE` transaction (QA R2-L6: it reads the open request it may answer, as the answer card's
+/// does), in which a lift that can unlock what locks answers the phone's open request for more time
+/// `yes` (QA R2-M2: decided from the phone's fresh report, else from the request's own state); the
+/// security line and the nudge after the commit.
+#[allow(clippy::result_large_err)]
+pub(crate) async fn record_lift(
+    state: &AppState,
+    lang: Lang,
+    id: i64,
+    admin: &crate::models::AdminUser,
+    target: &str,
+    rule: &str,
+    minutes: i64,
+) -> Result<&'static str, Response> {
     if !time_rules::valid_lift(target, minutes) {
-        return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.unknown_lift");
+        return Err(crate::i18n::error(
+            lang,
+            StatusCode::BAD_REQUEST,
+            "error.unknown_lift",
+        ));
     }
 
     let (rule_id, rule_name) = if target == "rule" {
-        match form.get("rule").map(|r| r.trim()).unwrap_or("all") {
+        match rule {
             "all" | "" => (None, None),
             raw => {
                 let Ok(rule_id) = raw.parse::<i64>() else {
-                    return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.unknown_rule");
+                    return Err(crate::i18n::error(
+                        lang,
+                        StatusCode::BAD_REQUEST,
+                        "error.unknown_rule",
+                    ));
                 };
                 let rules = match time_rules::effective_rule_rows(&state.db, id).await {
                     Ok(rules) => rules,
-                    Err(err) => return server_error(lang, err, "failed to read time rules"),
+                    Err(err) => return Err(server_error(lang, err, "failed to read time rules")),
                 };
                 let Some(rule) = rules.into_iter().find(|r| r.id == rule_id) else {
                     // Deleted, or switched off for the phone, since the page loaded.
-                    return back_to(id, "pause", "gone");
+                    return Ok("gone");
                 };
                 (Some(rule.id), Some(rule.name))
             }
@@ -105,30 +138,109 @@ pub async fn create_lift(
         (None, None)
     };
 
+    // What decides whether the lift answers an open request, read before the transaction.
+    let now = chrono::Utc::now();
+    let zone = Zone::load(&state.db, lang).await;
+    let read = async {
+        let device =
+            sqlx::query_as::<_, crate::models::Device>("SELECT * FROM devices WHERE id = ?")
+                .bind(id)
+                .fetch_optional(&state.db)
+                .await?;
+        let fresh = match &device {
+            Some(device) => crate::time_answers::fresh_report(state, device, &zone, now).await?,
+            None => None,
+        };
+        let day_start = crate::time_answers::phone_day_start(&state.db, id, now).await?;
+        Ok::<_, sqlx::Error>((fresh, day_start))
+    };
+    let (fresh, day_start) = match read.await {
+        Ok(read) => read,
+        Err(err) => {
+            return Err(server_error(
+                lang,
+                err,
+                "failed to read the phone's request",
+            ));
+        }
+    };
+    let written = async {
+        let mut tx = state.db.begin_with("BEGIN IMMEDIATE").await?;
+        let lift_id = insert_lift(
+            &mut tx,
+            id,
+            target,
+            rule_id,
+            rule_name.as_deref(),
+            minutes,
+            &admin.username,
+        )
+        .await?;
+        crate::time_answers::answer_with_lift(
+            &mut tx,
+            id,
+            day_start,
+            fresh.as_ref(),
+            &zone,
+            now,
+            (lift_id, target, rule_id, minutes),
+            admin,
+        )
+        .await?;
+        tx.commit().await
+    };
+    if let Err(err) = written.await {
+        return Err(server_error(lang, err, "failed to record a lift"));
+    }
+    lift_line(state, admin, id, target, rule_name.as_deref(), minutes).await;
+    let _ = state.command_notify.send(id);
+    Ok(if target == "rule" { "pause" } else { "extra" })
+}
+
+/// A parent's lift row (`target` "rule" with `rule_id` - `None`: every rule - or "budget"), in the
+/// caller's transaction: a rule pause is sent while it runs, added screen time for
+/// [BUDGET_LIFT_DELIVERY_HOURS]. Its id.
+pub(crate) async fn insert_lift(
+    conn: &mut sqlx::SqliteConnection,
+    id: i64,
+    target: &str,
+    rule_id: Option<i64>,
+    rule_name: Option<&str>,
+    minutes: i64,
+    created_by: &str,
+) -> Result<i64, sqlx::Error> {
     let delivery = if target == "rule" {
         format!("+{minutes} minutes")
     } else {
         format!("+{BUDGET_LIFT_DELIVERY_HOURS} hours")
     };
-    if let Err(err) = sqlx::query(
+    sqlx::query_scalar(
         "INSERT INTO time_lifts (device_id, target, rule_id, rule_name, minutes, expires_at, \
-         created_by) VALUES (?, ?, ?, ?, ?, datetime('now', ?), ?)",
+         created_by) VALUES (?, ?, ?, ?, ?, datetime('now', ?), ?) RETURNING id",
     )
     .bind(id)
     .bind(target)
     .bind(rule_id)
-    .bind(&rule_name)
+    .bind(rule_name)
     .bind(minutes)
     .bind(&delivery)
-    .bind(&admin.username)
-    .execute(&state.db)
+    .bind(created_by)
+    .fetch_one(&mut *conn)
     .await
-    {
-        return server_error(lang, err, "failed to record a lift");
-    }
+}
 
+/// The security log's line for a parent's lift (after its commit): the rule paused, every rule, or
+/// the screen time added.
+pub(crate) async fn lift_line(
+    state: &AppState,
+    admin: &crate::models::AdminUser,
+    id: i64,
+    target: &str,
+    rule_name: Option<&str>,
+    minutes: i64,
+) {
     let device = id.to_string();
-    let detail = match (target, rule_name.as_deref()) {
+    let detail = match (target, rule_name) {
         ("rule", Some(rule)) => security::Detail::words(
             "security.detail.lift.rule",
             &[("device", &device), ("minutes", &minutes.to_string())],
@@ -152,12 +264,6 @@ pub async fn create_lift(
         Some(detail),
     )
     .await;
-    let _ = state.command_notify.send(id);
-    if target == "rule" {
-        back_to(id, "pause", "pause")
-    } else {
-        back_to(id, "extra", "extra")
-    }
 }
 
 /// "End now": an active rule pause stops being sent, and the phone drops it on its next sync. A
@@ -223,6 +329,27 @@ pub(crate) fn done_flash(code: &str) -> Option<(&'static str, &'static str, bool
         "gone" => ("pause", "device.summary.flash.gone", true),
         "ended" => ("lifts", "device.summary.flash.ended", false),
         "over" => ("lifts", "device.summary.flash.over", false),
+        // Design 100 §14.4: the answer card's answers - "Nei" (with the launcher's promise, `time_answer_v1`), and
+        // a stale card's three reasons, nothing written.
+        "answer_no" => ("extra", "device.summary.flash.answer_no", false),
+        "answer_no_seen" => ("extra", "device.summary.flash.answer_no_seen", false),
+        "answered_already" => ("extra", "device.summary.flash.answered_already", true),
+        "asked_again" => ("extra", "device.summary.flash.asked_again", true),
+        "request_gone" => ("extra", "device.summary.flash.request_gone", true),
+        // Design 93's Regler sheet: a rule turned on now, and its refusals (the sheet reopens).
+        "on" => ("pause", "device.summary.flash.on", false),
+        "on_changed" => ("pause", "device.summary.flash.on_changed", false),
+        "on_ended" => ("pause", "device.summary.flash.on_ended", false),
+        "on_over" => ("pause", "device.summary.flash.on_over", false),
+        "on_busy" => ("pause", "device.summary.flash.on_busy", true),
+        "changed_elsewhere" => ("pause", "device.summary.flash.changed_elsewhere", true),
+        "on_no_zone" => ("pause", "device.summary.flash.on_no_zone", true),
+        "on_needs_rule" => ("pause", "device.summary.flash.on_needs_rule", true),
+        "on_gone" => ("pause", "device.summary.flash.on_gone", true),
+        "til_past" => ("pause", "device.summary.flash.til_past", true),
+        "til_invalid" => ("pause", "device.summary.flash.til_invalid", true),
+        "past_midnight" => ("pause", "device.summary.flash.past_midnight", true),
+        "day_over" => ("pause", "device.summary.flash.day_over", true),
         _ => return None,
     })
 }
@@ -404,11 +531,15 @@ pub(crate) async fn today(
                 what,
                 when: created.map(|t| zone.when(t, now)).unwrap_or_default(),
                 exact: created.map(|t| zone.exact(t)).unwrap_or_default(),
-                by: lift
-                    .created_by
-                    .as_deref()
-                    .map(|by| names.of_username(by).to_string())
-                    .unwrap_or_default(),
+                // Design 98 §4.4.5: the parent code's pause on the phone has no parent; its source says so.
+                by: match &lift.phone_key {
+                    Some(_) => t(lang, "device.summary.lift.phone").to_string(),
+                    None => lift
+                        .created_by
+                        .as_deref()
+                        .map(|by| names.of_username(by).to_string())
+                        .unwrap_or_default(),
+                },
                 status: state.text(expires, zone, now),
                 can_end: lift.target == "rule" && active,
             }
@@ -480,11 +611,11 @@ mod tests {
     #[test]
     fn durations_read_short() {
         use crate::display_time::duration;
-        assert_eq!(duration(Lang::En, 15), "15 min");
-        assert_eq!(duration(Lang::En, 60), "1 h");
-        assert_eq!(duration(Lang::En, 120), "2 h");
-        assert_eq!(duration(Lang::En, 90), "1 h 30 min");
-        assert_eq!(duration(Lang::Nb, 90), "1 t 30 min");
+        assert_eq!(duration(Lang::En, 15), "15\u{a0}min");
+        assert_eq!(duration(Lang::En, 60), "1\u{a0}h");
+        assert_eq!(duration(Lang::En, 120), "2\u{a0}h");
+        assert_eq!(duration(Lang::En, 90), "1\u{a0}h 30\u{a0}min");
+        assert_eq!(duration(Lang::Nb, 90), "1\u{a0}t 30\u{a0}min");
     }
 
     #[test]
@@ -502,7 +633,18 @@ mod tests {
 
     #[test]
     fn every_done_code_names_a_group_of_the_page() {
-        for code in ["extra", "pause", "gone", "ended", "over"] {
+        for code in [
+            "extra",
+            "pause",
+            "gone",
+            "ended",
+            "over",
+            "answer_no",
+            "answer_no_seen",
+            "answered_already",
+            "asked_again",
+            "request_gone",
+        ] {
             let (group, text, _) = done_flash(code).unwrap();
             assert!(["extra", "pause", "lifts"].contains(&group), "{code}");
             assert_eq!(summary_group(group), "quick", "{code}");

@@ -29,6 +29,32 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   have opened the dialer or a browser. Back returns to the time-rule screen; Back/Home/other resumes don't
   open it again. Reminder ping stays silent under every rule, Recents unchanged. `TimeRulesTest`, `TimeLockModelTest`,
   `LockGlanceTest`, `DayTaskTest`, `PolicyResponseCompatTest`.
+- **"Be om mer tid" on the time-rule screen** (design 100 step 3, `docs/design/100-one-vibb-notification.md` §8): the
+  block `lock_ask` in `activity_lock.xml`, directly under the rule card and above the rows' card (14 dp, no card ground
+  of its own). Pure `lockAsk(ruleInForce, budgetToday, windowOpen, enrolled, state, note)` (`ui/TimeLockModel.kt`,
+  `TimeLockModelTest`): only on the used-up budget's screen - never while the screen names a rule (D4: more minutes
+  don't open a rule, and bedtime mustn't invite a request every night), without a budget today, in the pause or the
+  override, or before enrolment. Idle: the accent pill "Be om mer tid" (`anchor_ask_more_time`, 52 dp,
+  `bg_lock_ask_fill`); time given without a request: its note and "Spør igjen"; Pending/Waiting: the note in a dim pill
+  (`kid_lock_pill_dim`, text, not clickable - "Spurt kl. 14:02 · venter på svar", "· sendes når telefonen er på
+  nett" from 15 s); Answered: the note ("Pappa svarte nei kl. 14:10", "Mamma ga deg 30 min") and the ringed "Spør
+  igjen" (`lock_ask_again`, `bg_lock_ask_outline`) while under the day's three, else "Du har spurt tre ganger i dag."
+  (`lock_ask_capped`; `TIME_REQUESTS_A_DAY == 3` is pinned beside it). The screen's note has no time limit (D12,
+  `NoteSurface.SCREEN`; push-and-play.md, "The request"). The glue is `timerules/TimeAsk.kt`: `askNow` - the one
+  request path, shared with the notice's action (`TimeAskReceiver`) and the Mer tid disc (`ShortcutsRuntime.askForTime`;
+  nothing else calls `TimeRequests.ask`), `askStep` deciding again inside - and `lockAskFor(context, snap, ruleInForce)`
+  (keeps `OfflineOverride` out of `LockActivity`). `LockActivity` follows the request through `AnchorNotice`'s
+  listeners (`addListener` in `onStart`, removed in `onStop`): a changed time part or request state is posted to the
+  main `Handler` whatever thread `refresh` ran on (Q100-H1: a Mer tid tap in the shade runs it on the tap thread), also
+  while the anchor isn't running (`refreshNow` has no anchor check, Q100-L3); the listener only calls `render()`, which
+  re-reads everything. The note's own changes (the 15-second mark, an answer's 30 minutes in the shade) are boundary
+  instants (`noteChangeMs`), so `recheck` refreshes the notice and the screen follows. A "yes" unlocks: the screen
+  finishes as today. **After the unlock (D6)**: while the block shows a button, `unlockOpenRow(.., askButton =
+  shownAsk.hasButton)` opens nothing - two things to do, the screen stays. TalkBack: the pill is a button ("Be om mer
+  tid, knapp", `ButtonRole`) only while clickable, and always focusable, so TalkBack's focus stays on it as it turns into
+  the dim note after the tap (code QA L3); the three views are polite live regions, their text set only when it changed
+  (render runs on many signals; code QA L2). The glance (the PIN lock's
+  page) is unchanged: its card stays information only. Not emulator-checked yet: design 100 §11 check 8.
 - **Meldinger during a rule** (design 77 §6.7, step 2): reachable where the rule allows calls, as the phone book
   (`messagesUsableUnder`; the used-up budget keeps calls). The time-rule screen has a **Meldinger** row
   (`LockRow.Messages`, after the phone book, while `lock.callsAllowed` and Home shows the tile - `SmsHome.tileShown()`,
@@ -92,3 +118,36 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
 - **Location policy** (`server/LocationPolicies.kt`, `LocationPolicyTest`): `PolicyResponse.locationPolicy` off / on_request / interval (>= 10 min); `null` (older server) keeps the old 10-minute throttle. Off never touches LocationManager or the permissions; a `locate` command (Update Location on the server's Locate tab) takes a fresh fix and is answered after the status report with the fix's accuracy and age. Security review P-L2/P-L3 (round L4b): only `locate` forces a fix, never `ring`; a fix that had to switch system Location on switches it back off afterwards (in a `finally`; a mark committed before the switch - `location_switched_on_by_fix` - lets the next sync switch it off when the process died mid-fix, `restoreAfterDeadFix`, QA L2) unless the CONFIG_LOCATION hardening switch or the zone watch needs it on (`locationStaysOn`, `locationBackOff`); a cached or last-known fix older than the policy's interval (at least 10 min; "on_request" has its 30 min default) is never reported (`cachedFixMaxAgeMs`, `cachedFixReportable` - the zone watch's still re-send excepted, design 64 Q-3); mode "off" deletes the cached and the kept fix (`LocateCommands.clearCachedFix`). The server already stores an identical re-sent fix once (`zones::store_fix`: no row when one with the same `captured_at` and coordinates exists).
 - **Fix round (qa-step6-code.md)**: screen time counts whenever the screen is on and unlocked except while one of our free screens (`FREE_SCREENS`: lock screen, phone book, our in-call screen, Settings - not Home) is in front and not sharing the screen; calls elsewhere count (pure `screenTimeCounts`). `DISALLOW_CREATE_WINDOWS` while a budget is set (`EnforcementPlan.restrictCreateWindows`, lifted by override). Date/time stay locked and automatic time zone is forced whenever the time policy has any rule or budget, override or not, calls managed or not. An unreadable ledger fails closed (`unreadableLedger`: today used up, delivered budget lifts counted as applied, `time_state.ledger_unreadable`). Location "off" switches system location off (`systemLocationTarget`; CONFIG_LOCATION then keeps it off). `callsBlockedFor` is the pure per-source call-path answer (`TimeRulesStoreTest`).
 - **Not device-tested**: exact-alarm delivery in Doze, audio-mode call detection on the Jelly Star, the BFU call block (checklist in 06-time-rules.md).
+
+## A rule turned on now: `until_ms` and `card_first` (design 93, `docs/design/93-lock-now-quick-actions.md` §9)
+
+- **What the server sends**: a rule the parent turns on now ("Slå på nå") is one more entry in `time_policy.rules`, a
+  copy of the rule with one window on today's weekday, a negative `id`, `until_ms` (its end as epoch ms) and
+  `card_first: true`; every scheduled rule carries `until_ms: null` and `card_first: false`. A pause of that rule comes
+  with a twin lift for the copy (`rule_id` the copy's). `TimeRule.untilMs` / `cardFirst`; the cache keeps them
+  (`PolicyGate` drops only the lifts). Contract: `server/testdata/lock_now.json`, `LockNowTest`.
+- **`TimePolicy.inForceAt(nowMs)`** (`TimeRules.kt`): the policy without the rules whose `untilMs` is at or before now.
+  `TimeRulesRuntime` applies it where it takes the policy for a decision - `snapshot()` (so `decideTimeLock`, the card,
+  the silence, the suspension and the report all see the same rules), `callsBlockedNow()` and `nextBoundary()`, which
+  also takes every future `untilMs` as a boundary (`untilInstants`): the lock is decided again at that instant even when
+  the window's local end moved with a zone change. A copy cached a week offline never locks again. The phone's wall
+  clock decides, as for every window. The boot call blocks keep the copy's window (stricter, only before the first
+  unlock after a reboot).
+- **`cardRule`** (`lock/RuleCard.kt`): among the lock's rules, the first with `cardFirst` whose own occurrence end is a
+  certain unlock by `lockEnd` (which now takes the end to test, `end`, defaulting to `lock.until`); else the strongest
+  rule with the lock's end, as before. `cardPick(snap)` feeds the glance's card (`ruleCardOf`), the time-rule screen's
+  title and end (`LockActivity`) and the report's `active_rule_id`/`active_rule_name` (`timeStateOf`), so the card, the
+  screen and the PWA's badge name the same rule. The lock itself - which rules, their intersection, the `LockReason`,
+  calls, usable apps, Kalender, silence - is `decideTimeLock`'s, unchanged.
+- **`lock_now_v1`** in `STATUS_CAPABILITIES`: the server shows its rc.8 warning ("Skole gjelder allerede til 14:30")
+  only to a phone without it. Nothing is served differently.
+
+## Foreldrekode: the parent code's pause of the rule in force (design 98 §4.4)
+
+From the time-rule screen's sheet: `RulePauseActivity` (the PWA's lengths only), then `ParentPin.check(RULE_PAUSE, ..,
+minutes)`, which plans the pause again (`rulePausePlan`) and stores it in `phone_lifts_v1` (`PhonePauses.addFromGate`,
+the only writer). A pause lifts only through its own entry and window (`phonePauseLifts`, merged in
+`TimeRulesRuntime.ruleLifts`); a lift with `phone_key` never gets a `LiftRecord`. The queue posts each pause at the
+start of every sync, before the policy GET; a policy after the ack without a rule's row (key and rule id, the twin's
+negative id too) ends that rule's pause - "Avslutt nå" on one rule of two ends that one alone (code QA M1). An entry is
+pruned only once posted (or 7 days old), so an offline pause still reaches the parent (L5). `rule_pause.json`.

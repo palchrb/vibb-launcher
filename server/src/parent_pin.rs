@@ -242,6 +242,10 @@ pub enum Entry {
     Pause,
     /// Play install mode.
     InstallMode,
+    /// Design 98 §4.4: the time-rule screen's Foreldrekode - a pause of the rule in force ("Regelskjermen").
+    RulePause,
+    /// Design 102 §3.2: the Wi-Fi sign-in's keypad - one opening of the sign-in window (or a reopen), one-shot.
+    WifiSignin,
 }
 
 impl Entry {
@@ -252,6 +256,8 @@ impl Entry {
             "settings" => Entry::Settings,
             "pause" => Entry::Pause,
             "install_mode" => Entry::InstallMode,
+            "rule_pause" => Entry::RulePause,
+            "wifi_signin" => Entry::WifiSignin,
             _ => return None,
         })
     }
@@ -263,6 +269,8 @@ impl Entry {
             Entry::Settings => "settings",
             Entry::Pause => "pause",
             Entry::InstallMode => "install_mode",
+            Entry::RulePause => "rule_pause",
+            Entry::WifiSignin => "wifi_signin",
         }
     }
 }
@@ -346,6 +354,8 @@ pub fn log_line(event: &PinEvent) -> security::Detail {
         Entry::Settings => "security.detail.pin.place.settings",
         Entry::Pause => "security.detail.pin.place.pause",
         Entry::InstallMode => "security.detail.pin.place.install_mode",
+        Entry::RulePause => "security.detail.pin.place.rule_pause",
+        Entry::WifiSignin => "security.detail.pin.place.wifi_signin",
     };
     let with_at = |detail: security::Detail| match at {
         Some(at) => detail.at("at", at),
@@ -366,6 +376,9 @@ pub fn log_line(event: &PinEvent) -> security::Detail {
                 (Entry::Pause, false) => "security.detail.pin.pause",
                 (Entry::InstallMode, true) => "security.detail.pin.install_mode_until",
                 (Entry::InstallMode, false) => "security.detail.pin.install_mode",
+                (Entry::RulePause, true) => "security.detail.pin.rule_pause_until",
+                (Entry::RulePause, false) => "security.detail.pin.rule_pause",
+                (Entry::WifiSignin, _) => "security.detail.pin.wifi_signin",
             };
             with_until(with_at(security::Detail::words(key, &[])))
         }
@@ -627,6 +640,15 @@ mod tests {
                 ev(Kind::Wrong, Entry::InstallMode, NOW),
                 "9 Oct 2025 08:53 UTC: wrong parent PIN for Play install mode.",
             ),
+            // Design 102 §3.2: the Wi-Fi sign-in's keypad, one-shot.
+            (
+                unlocked(Entry::WifiSignin, None),
+                "9 Oct 2025 08:53 UTC: Wi-Fi sign-in opened with the parent code.",
+            ),
+            (
+                ev(Kind::Wrong, Entry::WifiSignin, NOW),
+                "9 Oct 2025 08:53 UTC: wrong parent PIN at the Wi-Fi sign-in.",
+            ),
             (
                 PinEvent {
                     level: Some(8),
@@ -634,7 +656,7 @@ mod tests {
                     ..ev(Kind::Lockout, Entry::Pause, NOW)
                 },
                 "9 Oct 2025 08:53 UTC: 5 wrong parent PINs in a row (the last for pausing \
-                 restrictions): the parent PIN is locked on the phone. For 24 h. Until 10 Oct 2025 \
+                 restrictions): the parent PIN is locked on the phone. For 24\u{a0}h. Until 10 Oct 2025 \
                  08:53 UTC. Saving a new parent PIN ends it once the phone checks in.",
             ),
             (
@@ -658,7 +680,7 @@ mod tests {
         assert_eq!(
             security::worded_in(&log_line(&lockout), crate::i18n::Lang::Nb),
             "9. okt. 2025 08:53 UTC: 5 feil foreldre-PIN-er på rad (den siste for pause i \
-             begrensningene): foreldre-PIN-en er sperret på telefonen. I 1 t. Til 9. okt. 2025 \
+             begrensningene): foreldre-PIN-en er sperret på telefonen. I 1\u{a0}t. Til 9. okt. 2025 \
              09:53 UTC. Lagrer du en ny foreldre-PIN, oppheves det neste gang telefonen melder seg."
         );
         assert_eq!(lockout_minutes(3), 60);

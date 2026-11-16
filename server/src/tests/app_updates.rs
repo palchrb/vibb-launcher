@@ -176,10 +176,10 @@ async fn a_report_with_the_new_release_raises_app_updated_once() {
     assert_eq!(rows[1].2, format!("{music}:60009"));
     assert_eq!(rows[1].3["from"], "0.5.0");
     assert_eq!(rows[1].3["to"], "0.6.0");
-    // Activity on Emma's summary shows it without the row's own clock.
+    // Emma's Activity shows it without the row's own clock.
     let cookie = app.admin_cookie().await;
     let html = app
-        .get_page(&format!("/devices/{emma}"), &cookie)
+        .get_page(&format!("/devices/{emma}/activity"), &cookie)
         .await
         .text();
     assert!(

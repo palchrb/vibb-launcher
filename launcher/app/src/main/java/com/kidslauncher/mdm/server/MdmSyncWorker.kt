@@ -86,10 +86,14 @@ private val syncMutex = Mutex()
  * the truth about whether it worked.
  */
 suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
+    // Design 98 §2.2: a Flymodus route's window left open by a process death or reboot is put back first.
+    com.kidslauncher.mdm.assistant.AirplaneRoute.putBackIfMarked(context)
     val mdm = LauncherPreferences.mdm()
     val serverUrl = mdm.serverUrl()
     val deviceToken = DeviceToken.get()
     if (serverUrl.isNullOrBlank() || deviceToken.isNullOrBlank()) {
+        // Design 95 code QA L3: not enrolled - no kept policy body (its PIN hashes) stays behind.
+        PolicyEtagStore.of(context).drop()
         return false
     }
 
@@ -118,10 +122,25 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     var ranCommand: PendingCommand? = null
     // Design 76: the policy response's own handshake (`null` without TLS) - the certificate check's flag and `seen`.
     var policyHandshake: okhttp3.Handshake? = null
-    val freshOutcome = when (val fetched = fetchPolicy(api) { policyHandshake = it.handshake }) {
+    // Design 95 §3.5: the raw body kept for this build, server and token (null: none, and the GET goes without
+    // `If-None-Match`); a 304 hands it back as if it had just arrived, a 200 is kept below once accepted.
+    val etags = PolicyEtagStore.of(context)
+    val owner = PolicyOwner.of(BuildConfig.VERSION_CODE, serverUrl, deviceToken)
+    var served: ServedPolicy? = null
+    // Design 98 §4.4.4: the parent code's pauses go before the policy GET, so this sync's policy carries them.
+    try {
+        com.kidslauncher.mdm.timerules.PhonePauses.upload(context, api)
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Log.w(LOG_TAG, "Rule pause upload failed: ${e.javaClass.simpleName}")
+    }
+    val policyGetStartedMs = System.currentTimeMillis()
+    val freshOutcome = when (val fetched = fetchPolicy(api, etags, owner, { served = it }) { policyHandshake = it.handshake }) {
         null -> FreshOutcome.UNREACHABLE
         is FreshDecode.Failed -> if (fetched === POLICY_SERVER_ERROR) FreshOutcome.SERVER_ERROR else {
             Log.w(LOG_TAG, "Server policy doesn't decode, keeping the current one: ${fetched.error}")
+            etags.drop()
             FreshOutcome.DECODE_FAILED
         }
         is FreshDecode.Ok -> when (
@@ -129,6 +148,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         ) {
             FreshVerdict.REJECT_SUSPECT -> {
                 Log.w(LOG_TAG, "Ignoring a server policy without an allowlist, call_policy, time_policy or channel modes on a managed phone")
+                etags.drop()
                 FreshOutcome.REJECTED_SUSPECT
             }
             FreshVerdict.ACCEPT -> {
@@ -141,6 +161,15 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
 
     if (freshPolicy != null) {
         storeAcceptedPolicy(context, freshPolicy)
+        // Design 98 §4.4.4: the parent code's pauses read this policy (an ack, or ended in the PWA after the ack).
+        com.kidslauncher.mdm.timerules.PhonePauses.policyAccepted(context, freshPolicy.timePolicy, policyGetStartedMs)
+        // Design 95 §3.5: an accepted 200 is kept with its ETag (a 304's body is the kept one already); one with a
+        // command is not (its Child PIN stays out of storage, design 59 §1), nor one without an ETag (an older server).
+        when (val step = keptBodyStep(served, freshPolicy)) {
+            is KeptBodyStep.Keep -> etags.keep(owner, step.etag, step.body)
+            KeptBodyStep.Drop -> etags.drop()
+            KeptBodyStep.Leave -> Unit
+        }
         // Design 76 D2: the certificate check's flag - from this fresh policy over its own connection only, never from
         // the cache (R-5): on only through the built-in set, off only through it or the tailnet.
         val pinnedBefore = ServerPinStore.enforce(context)
@@ -288,6 +317,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     val location = currentLocationReport(
         context, dpm, admin, forceFreshLocation, preciseFix, zoneFix != null, zonesOn, locationPolicy, lowBatteryFix,
         staysOn = locationStaysOn(locationPolicy, hardeningForcesOn, zonesOn),
+        explicit = commandFix,
     )
     val locationOff = locationPolicy?.mode == "off"
     // Location Off, or no zones watched: the queue is emptied before the report, which carries no
@@ -319,96 +349,39 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         // Design 76 D3: the outside sightings go in every report; they leave the phone only after a 2xx over a
         // connection that passed the built-in set, or over the tailnet (R-2).
         val tlsSent = ServerPinStore.ring(context)
-        val sent = api.sendStatus(
-            StatusReportRequest(
-                lockReason = reason.name,
-                kioskEngaged = mdm.kioskEnabled(),
-                installedApps = collectInstalledApps(context),
-                appVersion = BuildConfig.VERSION_NAME,
-                appVersionCode = BuildConfig.VERSION_CODE,
-                offlineOverrideUsed = mdm.offlineOverrideUsedPendingReport(),
-                location = location.report,
-                policyState = policyState(freshOutcome, cached, policyEverApplied),
-                restrictionsPaused = RestrictionsPause.isActive(),
-                capabilities = STATUS_CAPABILITIES,
-                callState = CallStateReport.build(context),
-                notificationListenerEnabled = BadgeStore.accessGranted(context),
-                timeState = TimeRulesRuntime.report(context, decision.policy, reason),
-                installMode = PlayRuntime.installModeReport(context),
-                playWindowActive = decision.policy?.allowlist != null && PlayRuntime.updateWindowActive(context),
-                playStoreSuspendable = PlayRuntime.storeSuspendable(context),
-                lockState = lockState,
-                screenTimeoutSeconds = ScreenTimeout.currentSeconds(context),
-                backupServiceEnabled = BackupService.reportedState(context),
-                ringerMode = ringerModeName(QuickControls.ringerMode(context)),
-                interruptionFilter = interruptionFilterName(QuickControls.interruptionFilter(context)),
-                updateFence = UpdateFence.report(context, decision.policy),
-                notificationCancels = com.kidslauncher.mdm.badges.NotificationRuleRuntime.report(),
-                appDownloads = try {
-                    AppDownloads.report(context)
+        // Design 95 §3.5: a heartbeat while only its fields moved and the server takes them, else the full report
+        // (gzip'd while the policy says so) - see StatusReports.kt.
+        val sent = sendReport(
+            report = statusReportOf(
+                context, reason, policyState(freshOutcome, cached, policyEverApplied), decision,
+                location, extraFixes, lockState, blocks, tlsSent,
+                seenOf(policyHandshake, ServerPinStore.network(context), System.currentTimeMillis()),
+            ),
+            heartbeat = heartbeatOn(decision.policy),
+            gzip = decision.policy?.statusGzip == true,
+            owner = HeartbeatAckStore.ownerOf(serverUrl, deviceToken),
+            acks = HeartbeatAckStore.of(context),
+            nowMs = System::currentTimeMillis,
+            // Design 87 (R2-L7): read at once (bounded) and closed; a body that fails to read is nothing wanted, and
+            // never makes a taken report a failed one.
+            read = { body ->
+                try {
+                    body?.use { it.byteStream().use(::readWantedLogosBody) }
                 } catch (e: Exception) {
-                    Log.w(LOG_TAG, "Download report failed", e)
+                    // `use` closed the body.
+                    Log.w(LOG_TAG, "The status answer's body didn't read: ${e.javaClass.simpleName}")
                     null
-                },
-                bootCover = try {
-                    com.kidslauncher.mdm.lock.BootCover.report(context)
-                } catch (e: Exception) {
-                    Log.w(LOG_TAG, "Boot cover report failed", e)
-                    null
-                },
-                musicState = try {
-                    com.kidslauncher.mdm.music.MusicStatus.report(context)
-                } catch (e: Exception) {
-                    Log.w(LOG_TAG, "Music report failed", e)
-                    null
-                },
-                batteryOptimizationExempt = BatteryExemption.exempt(context),
-                relock = WindowRelock.lastReport(context),
-                unseenBoots = BootWitness.report(context),
-                foreignAccess = ForeignAccess.report(context),
-                relockBlocks = blocks?.first,
-                relockBlocksTotal = blocks?.second,
-                remoteWipeReady = LocateCommands.remoteWipeReady(context),
-                adminPoliciesPending = AdminPolicies.pending(context),
-                clockFormatApplied = ClockFormatSetting.report(context, decision.policy),
-                // Design 36 §4.2: only while the VPN runs with the parent's own server.
-                dnsUpstream = KidVpnService.dnsUpstreamReport(),
-                battery = BatteryStatus.report(context).also { LowBatteryFix.observe(context, it) },
-                writeSettingsGranted = WriteSettingsAccess.granted(context),
-                // S-L10's fix round: the server shows Leave Tailnet only while this says true.
-                tailnetJoined = TsnetClient.joined(context),
-                extraLocations = extraFixes?.map { it.toReport() },
-                zoneWatch = ZoneWatch.report(context, still = location.still),
-                calendar = try {
-                    com.kidslauncher.mdm.calendar.CalendarStore.report(context)
-                } catch (e: Exception) {
-                    Log.w(LOG_TAG, "Calendar report failed: ${e.javaClass.simpleName}")
-                    null
-                },
-                smsState = try {
-                    com.kidslauncher.mdm.sms.SmsRuntime.report(context)
-                } catch (e: Exception) {
-                    Log.w(LOG_TAG, "SMS report failed", e)
-                    null
-                },
-                serverTls = ServerTlsReport(
-                    enforcing = ServerPinStore.enforce(context),
-                    seen = seenOf(policyHandshake, ServerPinStore.network(context), System.currentTimeMillis()),
-                    outside = tlsSent,
-                ),
-            )
-        )
-        // Design 87 (R2-L7): read at once (bounded) and closed; a 204, an empty or unreadable body is nothing wanted. A
-        // 200 is still a 2xx below - `sent.isSuccessful` is unchanged by the body, and a body that fails to read never
-        // makes a taken report a failed one.
+                }
+            },
+        ) { body, encoding -> api.sendStatus(body, encoding) }
+        // A 204, an empty or unreadable body is nothing wanted. A 200 is still a 2xx below - `sent.isSuccessful` is
+        // unchanged by the body.
         wantedLogos = try {
-            wantedLogosOf(sent.code(), sent.body()?.use { body -> body.byteStream().use(::readWantedLogosBody) })
+            wantedLogosOf(sent.code, sent.body)
         } catch (e: Exception) {
-            // `use` closed the body.
-            Log.w(LOG_TAG, "The status answer's body didn't read: ${e.javaClass.simpleName}")
             emptyList()
         }
-        if (sent.isSuccessful) ServerPinStore.reported(context, tlsSent, pinConnection(apiPath, sent.raw().handshake))
+        if (sent.isSuccessful) ServerPinStore.reported(context, tlsSent, pinConnection(apiPath, sent.raw.handshake))
         // Design 64 step 2: what the server took leaves the queue; a report it didn't take leaves
         // its fix there for the next one.
         afterZoneReport(context, extraFixes, location.fix, sent.isSuccessful, queueOff)
@@ -485,6 +458,158 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
 /** Status-report capability: the update fence, the pending self-update and the notification rule
  * (handy step 11). */
 const val KIOSK_ESCAPES_CAPABILITY = "kiosk_escapes_v1"
+
+/**
+ * Design 98 §2.2 step 2: a report-only post before a Flymodus turn-on - no policy GET, no apply(), the same heartbeat
+ * hash state, under [syncMutex]; [airplaneGoingOn] makes the parent's page say "Flymodus på". The caller bounds it
+ * (5 s). Returns whether the server took it.
+ */
+suspend fun postReportOnly(context: Context, airplaneGoingOn: Boolean): Boolean = syncMutex.withLock {
+    val mdm = LauncherPreferences.mdm()
+    val serverUrl = mdm.serverUrl()
+    val deviceToken = DeviceToken.get()
+    if (serverUrl.isNullOrBlank() || deviceToken.isNullOrBlank()) return false
+    try {
+        val api = createMdmApi(serverUrl, deviceToken, path = serverPathNow(serverUrl))
+        val decision = currentPolicyDecision()
+        val policy = decision.policy
+        val reason = mdm.lockReason()
+        val sent = sendReport(
+            report = statusReportOf(
+                context, reason, policyState(FreshOutcome.UNREACHABLE, cachedPolicy(), mdm.policyEverApplied()), decision,
+                LocationOutcome(LocationAction.NONE, null, null, null), null, com.kidslauncher.mdm.lock.PinLockRuntime.report(context),
+                WindowRelock.reportBlocks(context),
+                ServerPinStore.ring(context), null, airplaneGoingOn,
+            ),
+            heartbeat = heartbeatOn(policy),
+            gzip = policy?.statusGzip == true,
+            owner = HeartbeatAckStore.ownerOf(serverUrl, deviceToken),
+            acks = HeartbeatAckStore.of(context),
+            nowMs = System::currentTimeMillis,
+            read = { body ->
+                runCatching { body?.close() }
+                null
+            },
+        ) { body, encoding -> api.sendStatus(body, encoding) }
+        sent.isSuccessful
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Log.w(LOG_TAG, "The report-only post failed: ${e.javaClass.simpleName}")
+        false
+    }
+}
+
+/**
+ * The full status report (`POST /api/devices/status`) as this sync builds it - also the report-only post before a
+ * Flymodus turn-on ([postReportOnly], design 98 §2.2 step 2), with [airplaneGoingOn].
+ */
+private fun statusReportOf(
+    context: Context,
+    reason: LockReason,
+    policyState: String,
+    decision: PolicyToApply,
+    location: LocationOutcome,
+    extraFixes: List<QueuedFix>?,
+    lockState: com.kidslauncher.mdm.server.dto.LockStateReport,
+    blocks: Pair<List<com.kidslauncher.mdm.server.dto.RelockBlockReport>, Int>?,
+    tlsSent: List<OutsideRow>,
+    seen: ServerTlsSeen?,
+    airplaneGoingOn: Boolean = false,
+): StatusReportRequest {
+    val mdm = LauncherPreferences.mdm()
+    return StatusReportRequest(
+        lockReason = reason.name,
+        kioskEngaged = mdm.kioskEnabled(),
+        installedApps = collectInstalledApps(context),
+        appVersion = BuildConfig.VERSION_NAME,
+        appVersionCode = BuildConfig.VERSION_CODE,
+        offlineOverrideUsed = mdm.offlineOverrideUsedPendingReport(),
+        location = location.report,
+        policyState = policyState,
+        restrictionsPaused = RestrictionsPause.isActive(),
+        capabilities = STATUS_CAPABILITIES,
+        callState = CallStateReport.build(context),
+        notificationListenerEnabled = BadgeStore.accessGranted(context),
+        timeState = TimeRulesRuntime.report(context, decision.policy, reason),
+        installMode = PlayRuntime.installModeReport(context),
+        playWindowActive = decision.policy?.allowlist != null && PlayRuntime.updateWindowActive(context),
+        playStoreSuspendable = PlayRuntime.storeSuspendable(context),
+        lockState = lockState,
+        screenTimeoutSeconds = ScreenTimeout.currentSeconds(context),
+        backupServiceEnabled = BackupService.reportedState(context),
+        ringerMode = ringerModeName(QuickControls.ringerMode(context)),
+        interruptionFilter = interruptionFilterName(QuickControls.interruptionFilter(context)),
+        updateFence = UpdateFence.report(context, decision.policy),
+        notificationCancels = com.kidslauncher.mdm.badges.NotificationRuleRuntime.report(),
+        appDownloads = try {
+            AppDownloads.report(context)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Download report failed", e)
+            null
+        },
+        bootCover = try {
+            com.kidslauncher.mdm.lock.BootCover.report(context)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Boot cover report failed", e)
+            null
+        },
+        musicState = try {
+            com.kidslauncher.mdm.music.MusicStatus.report(context)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Music report failed", e)
+            null
+        },
+        batteryOptimizationExempt = BatteryExemption.exempt(context),
+        relock = WindowRelock.lastReport(context),
+        unseenBoots = BootWitness.report(context),
+        foreignAccess = ForeignAccess.report(context),
+        relockBlocks = blocks?.first,
+        relockBlocksTotal = blocks?.second,
+        remoteWipeReady = LocateCommands.remoteWipeReady(context),
+        adminPoliciesPending = AdminPolicies.pending(context),
+        clockFormatApplied = ClockFormatSetting.report(context, decision.policy),
+        // Design 36 §4.2: only while the VPN runs with the parent's own server.
+        dnsUpstream = KidVpnService.dnsUpstreamReport(),
+        battery = BatteryStatus.report(context).also { LowBatteryFix.observe(context, it) },
+        writeSettingsGranted = WriteSettingsAccess.granted(context),
+        // S-L10's fix round: the server shows Leave Tailnet only while this says true.
+        tailnetJoined = TsnetClient.joined(context),
+        extraLocations = extraFixes?.map { it.toReport() },
+        zoneWatch = ZoneWatch.report(context, still = location.still),
+        calendar = try {
+            com.kidslauncher.mdm.calendar.CalendarStore.report(context)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Calendar report failed: ${e.javaClass.simpleName}")
+            null
+        },
+        smsState = try {
+            com.kidslauncher.mdm.sms.SmsRuntime.report(context)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "SMS report failed", e)
+            null
+        },
+        dataRoaming = MobileNetworkRuntime.dataRoamingReport(context),
+        mobileData = try {
+            MobileNetworkRuntime.mobileDataReport(context)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Mobile data report failed: ${e.javaClass.simpleName}")
+            null
+        },
+        serverTls = ServerTlsReport(
+            enforcing = ServerPinStore.enforce(context),
+            seen = seen,
+            outside = tlsSent,
+        ),
+        airplaneMode = com.kidslauncher.mdm.assistant.AirplaneRuntime.report(context, airplaneGoingOn),
+        shortcuts = com.kidslauncher.mdm.shortcuts.ShortcutsRuntime.report(context),
+        // Design 102 §6.2: the Wi-Fi sign-in window's handler, today's use and the last sessions (the window's files
+        // folded in first).
+        captivePortal = com.kidslauncher.mdm.portal.PortalRuntime.report(context),
+        // Design 102 §6.2: Chrome's login role on this phone.
+        loginBrowser = BrowserConfig.report(context),
+    )
+}
 
 /** Drains whatever [KidVpnService] has queued via [BlockedEventLog] since the last successful
  * report - best-effort, same as the status report above; only clears the queue once the server
@@ -719,7 +844,8 @@ private class LocationOutcome(
  * else the cached fix, no LocationManager call; every due call and fresh fix stamps the beat. A
  * crossing's sync ([crossing], [forceFresh] through `ZoneWatch.takeFreshWanted`) and
  * `locate` always fix - [precise] (`locate`, a crossing's confirm) GPS first, a
- * crossing's first fix and the heartbeat `FRESH_BALANCED`. The kept slot becomes the reported fix
+ * crossing's first fix and the heartbeat `FRESH_BALANCED`; [explicit] (`locate` alone) the fused
+ * provider first, up to a minute ([preciseFix]). The kept slot becomes the reported fix
  * only at a due `KEPT` or a crossing's sync (Q-1); the motion gate arms only after a genuinely
  * fresh fix (Q-6).
  */
@@ -734,6 +860,7 @@ private suspend fun currentLocationReport(
     policy: LocationPolicy?,
     lowBatteryFix: LowFix,
     staysOn: Boolean,
+    explicit: Boolean,
 ): LocationOutcome {
     if (!dpm.isDeviceOwnerApp(context.packageName)) return LocationOutcome(LocationAction.NONE, null, null, null)
     LocateCommands.restoreAfterDeadFix(context, dpm, admin, staysOn)
@@ -765,7 +892,11 @@ private suspend fun currentLocationReport(
     }
     // P-L3: a cached fix older than the interval is never reported - but the still heartbeat's re-send (Q-3).
     val still = reportStill(zonesOn, action, motion, now, lastFreshFix)
-    val location = LocateCommands.currentLocation(context, dpm, admin, action, staysOn, cachedFixMaxAgeMs(policy, still))
+    // The parent's `locate` waits up to EXPLICIT_FIX_BOUND_MS here, under the sync mutex: rare and asked for, and its
+    // fix goes into this report; every other fix keeps its 15 s (preciseFix).
+    val location = LocateCommands.currentLocation(
+        context, dpm, admin, action, staysOn, cachedFixMaxAgeMs(policy, still), explicit = explicit,
+    )
         ?: return LocationOutcome(action, null, null, null)
     // A genuinely fresh fix of our own (not the cached or an old last-known fallback): the motion
     // sensor counts "moved" from here (Q-6).
@@ -1246,17 +1377,17 @@ private val POLICY_SERVER_ERROR = FreshDecode.Failed("server error")
 
 /** `null` when the server couldn't be reached (or answered a non-5xx error), [POLICY_SERVER_ERROR]
  * (compared by identity) on a 5xx, otherwise the decoded body or why it didn't decode. Doesn't
- * cache anything - only an accepted policy is cached, see [storeAcceptedPolicy]. */
-private suspend fun fetchPolicy(api: MdmApi, onResponse: (okhttp3.Response) -> Unit = {}): FreshDecode? {
+ * cache anything - only an accepted policy is cached, see [storeAcceptedPolicy]. Design 95 §3.5: a `304` for the
+ * kept body is that body ([fetchRevalidated]); [onServed] gets the body that was decoded. */
+private suspend fun fetchPolicy(
+    api: MdmApi,
+    etags: PolicyEtagStore,
+    owner: PolicyOwner,
+    onServed: (ServedPolicy) -> Unit,
+    onResponse: (okhttp3.Response) -> Unit = {},
+): FreshDecode? {
     return try {
-        val response = api.getPolicy()
-        onResponse(response.raw())
-        if (!response.isSuccessful) {
-            Log.w(LOG_TAG, "Policy fetch returned HTTP ${response.code()}, keeping the current policy")
-            response.errorBody()?.close()
-            return if (response.code() >= 500) POLICY_SERVER_ERROR else null
-        }
-        decodeFresh(response.body()?.use { it.string() })
+        fetchRevalidated({ api.getPolicy(it) }, etags, owner, POLICY_SERVER_ERROR, { Log.w(LOG_TAG, it) }, onServed, onResponse)
     } catch (e: Exception) {
         Log.w(LOG_TAG, "Policy fetch failed, falling back to cache", e)
         null
@@ -1277,6 +1408,8 @@ private fun storeAcceptedPolicy(context: Context, policy: PolicyResponse): Unit 
         .putString(keys.lastEnforcedPlan(), LastEnforcedPlan.encode(LastEnforcedPlan.of(policy)))
     if (policy.timePolicy != null) editor.putBoolean(keys.timePolicySeen(), true)
     if (policy.callPolicy?.hasChannelModes == true) editor.putBoolean(keys.channelModesSeen(), true)
+    // Design 97 D7: the kid's Mobildata switch hidden resets it to On.
+    if (policy.quickControlsMask and QuickControlFeature.MOBILE_DATA == 0L) editor.putBoolean(keys.kidMobileOff(), false)
     // What KidVpnService forwards to (it never fetches policy itself): the provider, and the
     // parent's own servers or none (design 36 §5.1) - with the policy, so they never disagree.
     editor.putString(keys.dnsUpstreamProvider(), policy.dnsUpstreamProvider)

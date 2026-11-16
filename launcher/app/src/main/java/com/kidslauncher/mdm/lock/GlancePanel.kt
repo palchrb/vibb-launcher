@@ -131,8 +131,9 @@ class GlancePanel(
     private val glance = ViewLockGlanceBinding.inflate(activity.layoutInflater, frame, true)
 
     /** The clock, the date and the alarm (launcher round L6: one face with the time-rule screen's), with design
-     * 59d step L's profile: Android's small clock's geometry on this phone, else `null` (the centred clock). The alarm
-     * sits on the date line when it holds it (the calmer glance, 2026-11-04), else on the line under the date. */
+     * 59d step L's profile: Android's small clock's geometry on this phone (measured or design 96's general one), else
+     * `null` (the centred clock). The alarm sits on the date line when it holds it (the calmer glance, 2026-11-04), else
+     * on the line under the date. */
     private val clockFace = LockClockFace(
         activity, glance.root, glance.lockGlanceTop, glance.lockGlanceClock, glance.lockGlanceDate, glance.lockGlanceAlarm,
         extra = listOf(glance.lockGlanceNext, glance.lockGlanceWeatherLine.root), logTag = LOG_TAG, dateRow = glance.lockGlanceDateRow,
@@ -144,7 +145,9 @@ class GlancePanel(
      * Design 59d §8.13: Android's gesture handle, drawn by us where SystemUI's is (lock task hides SystemUI's while we are
      * LOCKED). A view of its own in the lock's frame, over the page and under the VoIP ring card, on the window's bottom
      * edge ([glanceHandle], [glanceHandleViewHeightDp]); not clickable, so every touch on it reaches the page and its swipe.
-     * TalkBack's node for the unlock ([handleAction]).
+     * TalkBack's node for the unlock ([handleAction]). With 3-button navigation (screen-size fix S5, 2026-11-14: the pill
+     * lay in the bar under ◀, and a swipe from it went to the bar) it sits right above the bar instead, in room of its
+     * own under the page's content ([handleAboveButtons]).
      */
     private val handle: View = View(activity).also { view ->
         val pill = glanceHandle(profile)
@@ -177,7 +180,9 @@ class GlancePanel(
     private val clock = ClockLockPanel(activity, glance) { clockDirty = true; tileChanges.request() }
 
     /** The weather by the date and its day's card (design 75 §5.5): its own glue, as the tiles have theirs. */
-    private val weather = WeatherLockPanel(activity, glance, clockFace, { rowsHeld() }) { guarded("weather") { weatherChanged() } }
+    /** The layout listeners' work, run after the layout pass, not in it (E6 L1). */
+    private val afterLayout = AfterLayout(glance.root)
+    private val weather = WeatherLockPanel(activity, glance, clockFace, afterLayout, { rowsHeld() }) { guarded("weather") { weatherChanged() } }
     private var started = false
 
     /** The stage (memory only). */
@@ -253,7 +258,7 @@ class GlancePanel(
     private var clockWatch: ClockFormat.Watch? = null
 
     init {
-        KidInsets.apply(glance.root)
+        KidInsets.apply(glance.root, extraBottom = ::handleAboveButtons)
         handleAction(handle)
         glance.lockGlanceEmergency.setOnClickListener { onEmergency() }
         glance.lockGlanceTorch.setOnClickListener { torch?.toggle() }
@@ -262,7 +267,7 @@ class GlancePanel(
         // code) - a way to see the rest. It is no row: never dismissable, nothing captured.
         glance.lockGlanceMore.setOnClickListener { tapMore() }
         // Design 69 §5.1: the "Neste" line yields when the laid-out page leaves the third row too little room.
-        glance.lockGlanceTop.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> guarded("next") { fitNext() } }
+        glance.lockGlanceTop.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> afterLayout.add("next") { guarded("next") { fitNext() } } }
         openAction(glance.lockGlanceMore, activity.getString(R.string.lock_media_unlock))
         glance.lockTimerStop.setOnClickListener { ClockActions.stop(activity, ClockReader.stopIntent) }
         openAction(glance.lockTimerTile)
@@ -272,7 +277,7 @@ class GlancePanel(
         // system bars' padding (r9 §1: edge-to-edge, the bars arrive as padding at the same height - at the screen-on
         // of a lock started dark, a gesture <-> 3-button switch, QA Low 4; the bars move the profile's clock, r11 §1.2).
         glance.root.addOnLayoutChangeListener { _, _, top, _, bottom, _, _, _, _ ->
-            if (bottom - top > 0 && available(bottom - top) != placedFor) guarded("layout") { layoutNow() }
+            if (bottom - top > 0 && available(bottom - top) != placedFor) afterLayout.add("layout") { guarded("layout") { layoutNow() } }
         }
         // Bug 25b-B/C: a layout that changed the page skips the frame it was made in - the first frame
         // drawn is the laid-out page, never the clock and tile settling a moment later.
@@ -1575,6 +1580,21 @@ class GlancePanel(
     }
 
     // ---- the layout (r11 §1.2) ---------------------------------------------------------------------------
+
+    /**
+     * S5: with 3-button navigation ([KidInsets.buttonBarPx] > 0) the handle stands on the bar's top edge, and the page
+     * keeps the handle's height free under its content (the px returned, added to the root's bottom padding); with gesture
+     * navigation it stays on the window's bottom edge, as SystemUI's own, and nothing is added.
+     */
+    private fun handleAboveButtons(insets: android.view.WindowInsets): Int {
+        val buttons = KidInsets.buttonBarPx(insets)
+        val params = handle.layoutParams as FrameLayout.LayoutParams
+        if (params.bottomMargin != buttons) {
+            params.bottomMargin = buttons
+            handle.layoutParams = params
+        }
+        return if (buttons > 0) params.height else 0
+    }
 
     /** The page's room at [height]: the root less its paddings, which carry the visible system bars (`KidInsets`). */
     private fun available(height: Int): Int = glance.root.let { height - it.paddingTop - it.paddingBottom }

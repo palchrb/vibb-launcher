@@ -108,6 +108,27 @@ class ParentPinStoreTest {
 
     private fun kinds() = store.queue().map { it.kind }
 
+    /** Design 98 §4.4.1 (Q98-R3-L1): Foreldrekode adds a place to type the PIN, not tries - the one shared lockout. */
+    @Test
+    fun `four wrong tries at the PIN lock and a fifth at the rule pause lock out`() {
+        val now = at(1_000_000L)
+        repeat(4) { check("000000", now, ParentPinEntry.PIN_LOCK) }
+        assertEquals(ParentPinResult.LockedOut(15 * min), check("000000", now, ParentPinEntry.RULE_PAUSE))
+        assertEquals("rule_pause", store.queue().last().entry)
+        assertEquals(ParentPinResult.LockedOut(15 * min - min), check(pin, at(now.wallMs + min), ParentPinEntry.RULE_PAUSE))
+        assertTrue(started.isEmpty())
+    }
+
+    /** Design 102 §3.2: the Wi-Fi sign-in's code approves exactly this opening - no window, no end. */
+    @Test
+    fun `the Wi-Fi sign-in's code is one-shot - its use opens no window`() {
+        assertEquals(ParentPinResult.Ok, check(pin, at(1_000_000L), ParentPinEntry.WIFI_SIGNIN))
+        val used = store.queue().last()
+        assertEquals("wifi_signin" to PIN_EVENT_UNLOCKED, used.entry to used.kind)
+        assertNull(used.untilMs)
+        assertEquals(listOf<WindowStart?>(null), started.toList())
+    }
+
     @Test
     fun `five wrong tries lock every entry, and a lockout counts and logs nothing`() {
         val now = at(1_000_000L)
@@ -117,8 +138,9 @@ class ParentPinStoreTest {
         assertEquals(ParentPinResult.LockedOut(15 * min), check("000000", now, ParentPinEntry.PIN_LOCK))
         assertEquals(listOf("wrong", "wrong", "wrong", "wrong", "lockout"), kinds())
         assertEquals(listOf("pin_lock", "settings", "pause", "install_mode", "pin_lock"), store.queue().map { it.entry })
-        // The time lock's `override` is gone (2026-11-01, PWA only): four entries.
-        assertEquals(listOf("pin_lock", "settings", "pause", "install_mode"), ParentPinEntry.entries.map { it.wire })
+        // The time lock's `override` is gone (2026-11-01, PWA only); design 98's Foreldrekode is the fifth entry, design
+        // 102's Wi-Fi sign-in the sixth (the server's `Entry::WifiSignin`).
+        assertEquals(listOf("pin_lock", "settings", "pause", "install_mode", "rule_pause", "wifi_signin"), ParentPinEntry.entries.map { it.wire })
         val before = prefs.map.toMap()
         // Even the right PIN: refused without hashing, nothing counted, no event.
         assertEquals(ParentPinResult.LockedOut(10 * min), check(pin, at(now.wallMs + 5 * min), ParentPinEntry.PIN_LOCK))

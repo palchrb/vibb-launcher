@@ -159,6 +159,18 @@ data class LastEnforcedPlan(
     val screenTimeoutSeconds: Int? = null,
     /** "App updates only on Wi-Fi" (design 13), so an unusable cache doesn't spend mobile data. */
     val appUpdatesWifiOnly: Boolean? = null,
+    /** Design 94 §3: the parent's roaming choice. An older record without it reads `"off"` (fail closed, like the
+     * rest of the fallback); an older server's `null` stays `null` (the phone's choice). */
+    val dataRoaming: String? = "off",
+    /** Design 97: "I utlandet"; an older record has none and reads through [dataRoaming] ([abroadChoice]). */
+    val abroad: String? = null,
+    /** Design 95 rev. 3: Bare Vibb (`"vibb"`) or not; an older record or server reads as on. */
+    val appsMobile: String? = null,
+    /** Design 95 rev. 3 item 3: the mobile-network settings lock; an older record reads locked (fail closed). */
+    val mobileSettingsLocked: Boolean? = true,
+    /** Design 97 code QA L3: the Home Screen's switches, so a fallback keeps the kid's own Mobildata Off (bit 32); an
+     * older record reads none. */
+    val quickControlsMask: Long = 0,
 ) {
     fun toPolicy(): PolicyResponse = PolicyResponse(
         allowlist = allowlist,
@@ -175,6 +187,11 @@ data class LastEnforcedPlan(
         blockActivityStart = blockActivityStart,
         screenTimeoutSeconds = screenTimeoutSeconds,
         appUpdatesWifiOnly = appUpdatesWifiOnly,
+        dataRoaming = dataRoaming,
+        abroad = abroad,
+        appsMobile = appsMobile,
+        mobileSettingsLocked = mobileSettingsLocked,
+        quickControlsMask = quickControlsMask,
     )
 
     companion object {
@@ -193,6 +210,11 @@ data class LastEnforcedPlan(
             blockActivityStart = policy.blockActivityStart,
             screenTimeoutSeconds = policy.screenTimeoutSeconds,
             appUpdatesWifiOnly = policy.appUpdatesWifiOnly,
+            dataRoaming = policy.dataRoaming,
+            abroad = policy.abroad,
+            appsMobile = policy.appsMobile,
+            mobileSettingsLocked = policy.mobileSettingsLocked,
+            quickControlsMask = policy.quickControlsMask,
         )
 
         /** `null` if missing or unreadable. */

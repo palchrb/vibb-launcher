@@ -23,7 +23,8 @@ async fn fresh_policy_has_no_rules_unlimited_budget_and_on_request_location() {
     let p = app.policy(&token).await;
     assert_eq!(
         p["time_policy"],
-        json!({"rules": [], "daily_budget_minutes": [null, null, null, null, null, null, null], "lifts": []})
+        json!({"rules": [], "daily_budget_minutes": [null, null, null, null, null, null, null], "lifts": [],
+               "request_answers": true})
     );
     assert_eq!(
         p["location_policy"],
@@ -523,11 +524,11 @@ async fn lifts_are_recorded_delivered_and_end() {
     let page = app
         .get_page(&device_page(id, Section::Summary), &cookie)
         .await;
-    assert!(page.text().contains("Skole paused for 30 min"));
+    assert!(page.text().contains("Skole paused for 30\u{a0}min"));
     assert!(page.text().contains("End now"));
     // Added screen time is history: the security log has it, the summary shows only running
     // pauses (Device › Time Rules lost its Recent group on 2026-11-01).
-    assert!(!page.text().contains("+15 min screen time"));
+    assert!(!page.text().contains("+15\u{a0}min screen time"));
 
     // End the rule pause early: no longer delivered; ending it again changes nothing and lands
     // back (a second tap); a pause this phone never had is a 404.
@@ -609,7 +610,11 @@ async fn lifts_are_recorded_delivered_and_end() {
     let html = page.text();
     let quick = &html[html.find("id=\"quick\"").unwrap()..html.find("id=\"activity\"").unwrap()];
     assert!(!quick.contains("data-lift="), "{quick}");
-    let activity = &html[html.find("id=\"activity\"").unwrap()..];
+    let page = app
+        .get_page(&format!("/devices/{id}/activity"), &cookie)
+        .await
+        .text();
+    let activity = &page[page.find("id=\"activity\"").unwrap()..];
     assert!(activity.contains("data-lift="), "{activity}");
     assert!(!activity.contains("/end#"), "{activity}");
 }
@@ -755,7 +760,7 @@ async fn time_state_is_stored_and_shown() {
         "{text}"
     );
     assert!(text.contains(">42 of 90 min today<"), "{text}");
-    assert!(text.contains("Includes 30 min extra"));
+    assert!(text.contains("Includes 30\u{a0}min extra"));
     assert!(!text.contains("Vibb One too old for time rules"));
 
     // Not an object, or too big: not stored.
@@ -794,7 +799,7 @@ async fn update_location_now_queues_locate() {
         .await;
     assert_eq!(
         res.location(),
-        Some(format!("/devices/locate?device={id}&requested=1#location").as_str())
+        Some(format!("/devices/locate?device={id}&requested=1#update-location").as_str())
     );
     assert_eq!(nudges.try_recv().ok(), Some(id));
     let p = app.policy(&token).await;
@@ -805,7 +810,7 @@ async fn update_location_now_queues_locate() {
         .await;
     let text = page.text();
     assert!(text.contains("Waiting for a fresh fix"));
-    assert!(text.contains(">Update Location</button>"));
+    assert!(text.contains(">Update Location<"));
     // A newer fix reloads at the map, not the top (qa-31-s13-code L1): static/locate.js waits
     // while the map box says so (design 44).
     assert!(text.contains(" data-waiting>"));
@@ -829,8 +834,13 @@ async fn update_location_now_queues_locate() {
     let page = app
         .get_page(&format!("/devices/locate?device={id}"), &cookie)
         .await;
-    assert!(page.text().contains(">just now<"), "{}", page.text());
-    assert!(page.text().contains("Within 12 m"), "{}", page.text());
+    // The marker's bubble (design 88 revision 2).
+    assert!(
+        page.text()
+            .contains("data-shown-text=\"just now · within 12 m\""),
+        "{}",
+        page.text()
+    );
 }
 
 #[tokio::test]
@@ -1573,7 +1583,8 @@ async fn the_bedtime_is_served_after_the_rule_set_once_and_without_a_name() {
         rules[1],
         json!({"id": bedtime, "name": "", "kind": "bedtime", "calls_allowed": true,
                "exempt_apps": [], "calendar_allowed": false, "silent": false,
-               "days": serde_json::from_str::<serde_json::Value>(NIGHTS).unwrap()})
+               "days": serde_json::from_str::<serde_json::Value>(NIGHTS).unwrap(),
+               "until_ms": null, "card_first": false})
     );
     own_rules_on(&app, id).await;
     crate::time_rules::switch_like_0115(&app.db).await;

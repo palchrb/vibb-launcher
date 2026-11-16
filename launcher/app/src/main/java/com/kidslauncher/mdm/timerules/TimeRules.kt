@@ -40,7 +40,19 @@ data class TimeRule(
      * [ruleSilenceFor], our own Do Not Disturb rule ([ZenRuleRuntime]). Missing - an older server - is false. */
     val silent: Boolean = false,
     val days: List<TimeWindow?> = emptyList(),
+    /** Design 93 §9.1: a rule the parent turned on now ("Slå på nå") is gone from this instant (epoch ms), whatever its
+     * weekday window says. Null - a scheduled rule, or an older server - never ends. Kept in the cache with the rule. */
+    val untilMs: Long? = null,
+    /** Design 93 §9.2: the card shows this rule ahead of the kind order while its own end is a real unlock. True on a
+     * turned-on rule only; missing is false. */
+    val cardFirst: Boolean = false,
+    /** Design 98 §4.4.2: on a rule turned on now (a copy, negative [id]), the rule it copies - the parent code's pause
+     * pauses both, as the PWA's twin lift does. Missing - a scheduled rule, or an older server - pauses the copy alone. */
+    val copyOf: Long? = null,
 )
+
+/** Design 93 §9.3: the launcher honours `until_ms` and `card_first` (the server's `lock_now::CAPABILITY`). */
+const val LOCK_NOW_CAPABILITY = "lock_now_v1"
 
 const val KIND_SCHOOL = "school"
 const val KIND_BEDTIME = "bedtime"
@@ -56,6 +68,14 @@ data class Lift(
     val ruleId: Long? = null,
     val minutes: Int = 0,
     val expiresAtMs: Long = 0,
+    /** Design 98 §4.4.3: the parent code's pause this phone posted. Such a lift lifts only through this phone's own
+     * record of the key ([phonePauseLifts]), never through a [LiftRecord]; missing - the PWA's lifts - as before. */
+    val phoneKey: String? = null,
+    /** Design 100 §14.2: the parent who gave it - their display name, `null` without one (D11: never the login), on a
+     * parent-code pause, or from an older server. */
+    val by: String? = null,
+    /** Design 100 §14.2: when it was given (epoch ms); 0 from an older server. */
+    val atMs: Long = 0,
 )
 
 const val TARGET_RULE = "rule"
@@ -67,7 +87,42 @@ data class TimePolicy(
     val rules: List<TimeRule> = emptyList(),
     val dailyBudgetMinutes: List<Int?> = emptyList(),
     val lifts: List<Lift> = emptyList(),
+    /** Design 100 §14.2 (QA R2-L4: inside `time_policy`, so it caches and copies with [answer]): this server answers
+     * requests for more time and closes them only by an answer. Missing - an older server - is false: a newer lift
+     * closes the open request (r13's rule, §14.7). */
+    val requestAnswers: Boolean = false,
+    /** Design 100 §14.2: the newest answered request asked on the phone's day, or `null`. */
+    val answer: TimeAnswer? = null,
 )
+
+/** `time_policy.answer` (design 100 §14.2, `time_request.json`): a parent's [answer] ("yes" or "no") to the request
+ * [requestId] (the phone's own id) at [atMs], by [by] (the display name, `null` without one - D11); a "yes" names the
+ * lift it made ([liftId]) and its [minutes] (QA R2-L1: the note never depends on the lift's delivery). */
+@Serializable
+data class TimeAnswer(
+    val requestId: String = "",
+    val answer: String = "",
+    val by: String? = null,
+    val atMs: Long = 0,
+    val liftId: Long? = null,
+    val minutes: Int? = null,
+)
+
+/** Design 100 §14.5: the launcher shows a parent's "Nei" and the answering parent's name (the server's flash says
+ * "… ser det på telefonen" only for a phone claiming it). */
+const val TIME_ANSWER_CAPABILITY = "time_answer_v1"
+
+/** Design 93 §9.1: the policy without the rules whose `untilMs` is at or before [nowMs] - a rule the parent turned on
+ * now is gone from its end, whatever its weekday window says (no relock a week later, the phone offline). The phone's
+ * wall clock decides, as for every window. Applied wherever the runtime takes the policy for a decision. */
+fun TimePolicy.inForceAt(nowMs: Long): TimePolicy =
+    if (rules.none { r -> r.untilMs.let { it != null && it <= nowMs } }) this
+    else copy(rules = rules.filter { r -> r.untilMs.let { it == null || it > nowMs } })
+
+/** Design 93 §9.1: every rule's absolute end still ahead of [nowMs] - one more boundary each, so the lock is decided
+ * again at that instant even when the window's local end has moved (the phone changed zone since). */
+fun untilInstants(policy: TimePolicy?, nowMs: Long): List<Instant> =
+    policy?.rules.orEmpty().mapNotNull { r -> r.untilMs?.takeIf { it > nowMs }?.let { Instant.ofEpochMilli(it) } }
 
 /** No rules, no budget. */
 val NO_TIME_RULES = TimePolicy(dailyBudgetMinutes = List(7) { null })

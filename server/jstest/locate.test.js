@@ -3,7 +3,7 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert");
-const { install, countText, readSpan, trailColour, SPAN_KEY } = require("../static/locate.js");
+const { install, bubble, countText, readSpan, trailColour, SPAN_KEY } = require("../static/locate.js");
 
 /** A fake Leaflet that records what was drawn. */
 function fakeLeaflet() {
@@ -427,7 +427,8 @@ function markerLeaflet() {
             if (ready) added(); else waiting.push(added);
             return m;
         };
-        m.bindPopup = (node, popupOptions) => { L.calls.push(["popup", node.textContent, popupOptions && popupOptions.className]); return m; };
+        // The bubble (design 88 revision 2): its first line's words, then the node itself.
+        m.bindPopup = (node, popupOptions) => { L.calls.push(["popup", node.children[0].textContent, popupOptions && popupOptions.className, node]); return m; };
         m.openPopup = () => { L.calls.push(["open"]); return m; };
         L.last = m;
         return m;
@@ -472,7 +473,7 @@ test("the Locate page's newest fix is the phone's avatar with its tag and accura
     assert.strictEqual(av.textContent, "E");
     assert.strictEqual(tag.className, "all-tag");
     assert.strictEqual(tag.textContent, "10 min");
-    assert.deepStrictEqual(L.calls.find((c) => c[0] === "popup"), ["popup", "10 min ago · within 40 m", "all-popup"]);
+    assert.deepStrictEqual(L.calls.find((c) => c[0] === "popup").slice(0, 3), ["popup", "10 min ago · within 40 m", "all-popup"]);
     assert.ok(!L.calls.some((c) => c[0] === "open"), "the tag says the age; the bubble waits for a tap");
     // The chips have the top: the fit keeps 64 px clear there.
     assert.deepStrictEqual(L.calls.find((c) => c[0] === "fitOptions")[1], { maxZoom: 16, paddingTopLeft: [30, 64], paddingBottomRight: [30, 30] });
@@ -508,4 +509,51 @@ test("an old fix is the grey avatar with the clock tag and a dashed circle; a ne
     assert.deepStrictEqual(node.children.map((c) => c.className), ["avatar tone-sky"]);
     assert.ok(!L2.calls.some((c) => c[0] === "circle"));
     assert.strictEqual(L2.last.el.getAttribute("aria-label"), "Newest location");
+});
+
+// Design 88 revision 2: the box under the map went; the bubble says what only it said.
+test("the bubble says the fix's words, the hidden fresh/old word and every further line the box carries", () => {
+    const doc = { createElement: fakeNode };
+    const box = fakeAttrs({
+        "data-fix-seen": "Older position",
+        "data-fix-still": "Hasn't moved since 14:02",
+        "data-fix-aged": "Last seen 9 days ago",
+        "data-fix-before-off": "Last position before the phone went off",
+        "data-fix-title": "24 Oct 2026, 08:14:05 CEST · gps · test location",
+    });
+    const node = bubble(doc, box, "3 h ago · within 40 m · at School", true);
+    assert.strictEqual(node.className, "one-bubble");
+    const [first, ...rest] = node.children;
+    assert.strictEqual(first.textContent, "3 h ago · within 40 m · at School");
+    assert.strictEqual(first.children[0].className, "visually-hidden");
+    assert.strictEqual(first.children[0].textContent, " Older position");
+    assert.deepStrictEqual(rest.map((c) => [c.className, c.textContent]), [
+        ["one-still", "Hasn't moved since 14:02"],
+        ["one-aged", "Last seen 9 days ago"],
+        ["one-before-off", "Last position before the phone went off"],
+        ["one-title", "24 Oct 2026, 08:14:05 CEST · gps · test location"],
+    ]);
+    // Words the phone sent stay text, never markup (security review H2).
+    const odd = bubble(doc, fakeAttrs({ "data-fix-title": "<img src=x> · gps" }), "now", true);
+    assert.strictEqual(odd.children[1].textContent, "<img src=x> · gps");
+    assert.deepStrictEqual(odd.children[1].children, []);
+    // Only the lines that apply; a fix newer than the one rendered has its one line alone.
+    assert.strictEqual(bubble(doc, fakeAttrs({}), "now", true).children.length, 1);
+    const newer = bubble(doc, box, "Newest location", false);
+    assert.strictEqual(newer.children.length, 1);
+    assert.deepStrictEqual(newer.children[0].children, []);
+});
+
+test("the Locate page's marker opens that bubble", async () => {
+    const L = markerLeaflet();
+    const page = fakePage({
+        box: { ...MARK, "data-marker-fresh": "", "data-fix-seen": "Recent", "data-fix-still": "Hasn't moved since 14:02" },
+        answers: { "/devices/3/locations.json?since=12": [{ ...point(3, "2026-10-20T10:00:00.000Z"), accuracy_meters: 40 }] },
+    });
+    page.win.document.createElement = fakeNode;
+    install(page.win, L);
+    await settle();
+    const node = L.calls.find((c) => c[0] === "popup")[3];
+    assert.deepStrictEqual(node.children.map((c) => c.textContent), ["10 min ago · within 40 m", "Hasn't moved since 14:02"]);
+    assert.strictEqual(node.children[0].children[0].textContent, " Recent");
 });

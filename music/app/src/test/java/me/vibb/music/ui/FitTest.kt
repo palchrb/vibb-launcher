@@ -41,6 +41,32 @@ class FitTest {
     }
 
     @Test
+    fun `S2 - below the Jelly Star the narrow row fits the screen with its sides, previous and next at 48 dp, never overlapping`() {
+        // 270 dp (the narrow 4" class): 238 dp of room, the narrow row's 256 dp reaching 9 dp into each 16 dp side
+        val room = available(270f)
+        val row = controlRow(room)
+        assertEquals(CONTROLS_NARROW, row)
+        assertEquals(256, CONTROLS_NARROW.width)
+        assertTrue("previous and next keep the touch target", CONTROLS_NARROW.skip >= 48)
+        assertTrue("play the largest", CONTROLS_NARROW.play > CONTROLS_NARROW.skip && CONTROLS_NARROW.skip >= CONTROLS_NARROW.side)
+        assertEquals(9f, controlBleed(row, room), 0.001f)
+        val edges = controlEdges(row, room + 2 * controlBleed(row, room))
+        assertTrue("4 dp or more from the screen's edge", SCREEN_SIDE_DP - controlBleed(row, room) >= 4f)
+        for (i in 0 until edges.size - 1) assertTrue("no overlap", edges[i + 1].first - edges[i].second >= row.gap - 0.001f)
+        // the Jelly Star and up reach nowhere
+        for (screen in widths) assertEquals(0f, controlBleed(controlRow(available(screen)), available(screen)), 0f)
+        // narrower still: scaled down, within the room with the sides, never overlapping
+        for (screen in listOf(240f, 256f, 262f)) {
+            val r = available(screen)
+            val scaled = controlRow(r)
+            assertTrue("$screen: ${scaled.width}", scaled.width <= r + 2 * CONTROLS_BLEED_MAX_DP)
+            assertTrue(scaled.play >= scaled.skip && scaled.skip >= scaled.side)
+        }
+        val player = moduleFile("src/main/java/me/vibb/music/ui/PlayerScreen.kt").readText()
+        assertTrue(player.contains("Row(Modifier.bleed(controlBleed(row, maxWidth.value).dp).fillMaxWidth()"))
+    }
+
+    @Test
     fun `the player uses the rule and round buttons never give in`() {
         val player = moduleFile("src/main/java/me/vibb/music/ui/PlayerScreen.kt").readText()
         assertTrue(player.contains("val row = controlRow(maxWidth.value)"))
@@ -142,6 +168,39 @@ class FitTest {
         val jelly = flexWidths(288 - 16, listOf(1f, 1f, 1.2f), listOf(bar(liste), bar(sov), 0))
         assertTrue("Telefonen", jelly[2] >= bar(66.8f))
         assertTrue("The phone", jelly[2] >= bar(69.9f))
+    }
+
+    @Test
+    fun `S7 - the output's name stays whole while Liste and Sov have room to give`() {
+        val liste = 32.0f
+        val sov = 24.7f
+        val telefonen = 66.8f
+        // the Jelly Star at font 1.3 (the bar's text 1.3 times wider) and the 270 dp phone at 1.0
+        for ((room, scale) in listOf(288 - 16 to 1.3f, 238 - 16 to 1f)) {
+            val mins = listOf(bar(liste * scale), bar(sov * scale))
+            val own = bar(telefonen * scale)
+            val w = flexWidths(room, listOf(1f, 1f, 1.2f), mins + shrinkerMin(own, room, mins.sum()))
+            assertTrue("$room dp at $scale: Telefonen whole (${w[2]} >= $own)", w[2] >= own)
+            assertTrue(w[0] >= mins[0] && w[1] >= mins[1])
+            assertEquals(room, w.sum())
+        }
+        // a name that can't be whole asks for nothing: it gives way at its weighted share, as before (code QA L4)
+        assertEquals(0, shrinkerMin(100, 120, 130))
+        assertEquals(0, shrinkerMin(100, 120, 80))
+        assertEquals(40, shrinkerMin(40, 120, 80))
+        // a Sonos group too long to be whole at 411 dp (about 260 dp of text): Liste and Sov keep their weighted shares,
+        // not their bare content, and the name gives way as before
+        val room = available(411f).toInt() - 2 * 8
+        val mins = listOf(bar(liste), bar(sov))
+        val w = flexWidths(room, listOf(1f, 1f, 1.2f), mins + shrinkerMin(bar(260f), room, mins.sum()))
+        assertEquals(flexWidths(room, listOf(1f, 1f, 1.2f), mins + 0), w)
+        assertTrue("Liste has air", w[0] > mins[0] + 16)
+        // one that can be whole there ("Barnerommet i andre etasje", 184.7 dp) is, and the others still keep more than
+        // their bare content
+        val whole = flexWidths(room, listOf(1f, 1f, 1.2f), mins + shrinkerMin(bar(184.7f), room, mins.sum()))
+        assertTrue(whole[2] >= bar(184.7f) && whole[0] > mins[0] && whole[1] > mins[1])
+        val player = moduleFile("src/main/java/me/vibb/music/ui/PlayerScreen.kt").readText()
+        assertTrue(player.contains("if (shrinks[i]) shrinkerMin(w, available, fixed) else w"))
     }
 
     @Test
@@ -394,7 +453,11 @@ class FitTest {
     @Test
     fun `the episode carousel - the row fills the width, the picture fits its room, neighbours peek`() {
         // (width inside the sides, the box's height) -> the picture: the spec's table.
-        val cases = listOf(Triple(288f, 154f, 154f), Triple(288f, 240f, 200f), Triple(328f, 300f, 224f), Triple(379f, 300f, 224f), Triple(288f, 120f, 120f))
+        // S10: a wider phone's picture grows with the width (379 dp inside a 411 dp phone's sides: 291).
+        val cases = listOf(
+            Triple(288f, 154f, 154f), Triple(288f, 240f, 200f), Triple(328f, 300f, 240f), Triple(379f, 300f, 291f),
+            Triple(379f, 250f, 250f), Triple(288f, 120f, 120f),
+        )
         for ((width, room, expected) in cases) {
             val a = playerArt(width, room, carousel = true)
             assertEquals("$width x $room", expected, a, 0.001f)
@@ -410,6 +473,9 @@ class FitTest {
         assertEquals(29.9f, playerPull(224f), 0.1f)
         assertEquals("without the carousel: today's cover", 224f, playerArt(288f, 300f, carousel = false), 0.001f)
         assertEquals(154f, playerArt(288f, 154f, carousel = false), 0.001f)
+        assertEquals("the narrow class keeps today's cover", 224f, playerArt(238f, 300f, carousel = false), 0.001f)
+        assertEquals("a 411 dp phone: as the carousel's", 291f, playerArt(379f, 400f, carousel = false), 0.001f)
+        assertEquals("a tablet's width is capped", PLAYER_ART_MAX_DP.toFloat(), playerArt(560f, 900f, carousel = true), 0.001f)
         // A large font or display size: below 96 dp the single cover comes back (QA L2 b).
         assertTrue(playerCarousel(288f, 96f, true))
         assertTrue(!playerCarousel(288f, 95f, true))
@@ -419,16 +485,32 @@ class FitTest {
     @Test
     fun `the player's art replaces only the cover box`() {
         val player = moduleFile("src/main/java/me/vibb/music/ui/PlayerScreen.kt").readText()
-        assertTrue(player.contains("PlayerArt(now, notice, { noticeFit = it }, Modifier.weight(1f).fillMaxWidth(), onSkipTo, onTogglePlay)"))
+        // S10: the box is only as tall as the picture, in the group centred between the header and the bar
+        assertTrue(player.contains("PlayerArt(now, notice, { noticeFit = it }, Modifier.weight(1f, fill = false).fillMaxWidth(), onSkipTo, onTogglePlay)"))
+        assertTrue(player.contains("verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically)"))
         assertEquals("one picture, drawn by PlayerArt", 1, Regex("PlayerArt\\(").findAll(player).count())
         assertTrue("no cover of its own", !player.contains("Cover("))
     }
 
     @Test
     fun `covers decode at the player's size, never above the file (code QA L12)`() {
-        assertEquals("the Jelly Star (density 1.5)", 336, coverDecodePx(512, 1.5f))
-        assertEquals("a 2.625 phone: the whole file", 512, coverDecodePx(512, 2.625f))
-        assertEquals(300, coverDecodePx(300, 3f))
+        assertEquals("the Jelly Star (density 1.5)", 336, coverDecodePx(512, 1.5f, 320))
+        assertEquals("the narrow class (density 2)", 448, coverDecodePx(512, 2f, 270))
+        assertEquals("a 2.625 phone: the whole file", 512, coverDecodePx(512, 2.625f, 411))
+        assertEquals(300, coverDecodePx(300, 3f, 411))
+        // S10: a 411 dp phone at density 1.5 decodes for its 291 dp cover
+        assertEquals(437, coverDecodePx(512, 1.5f, 411))
+    }
+
+    @Test
+    fun `the player's cover grows with the width, a cover without art its glyph too (S10)`() {
+        assertEquals("320 dp and below: today's 224", 224f, playerArtMax(288f), 0.001f)
+        assertEquals(224f, playerArtMax(238f), 0.001f)
+        assertEquals("411 dp: the carousel's own limit", 291f, playerArtMax(379f), 0.001f)
+        assertEquals(PLAYER_ART_MAX_DP.toFloat(), playerArtMax(600f), 0.001f)
+        assertEquals("today's glyph up to 224", 104f, playerGlyph(150f), 0.001f)
+        assertEquals(104f, playerGlyph(224f), 0.001f)
+        assertEquals("in proportion above", 104f * 291 / 224, playerGlyph(291f), 0.001f)
     }
 
     // The library's fit (design 34 P10 b, QA L1; qa-34-s11-code L1, N2): the cover from the measured slot in whole

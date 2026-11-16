@@ -67,6 +67,25 @@ class PolicyResponseCompatTest {
         assertEquals(FreshDecode.Ok(policy), decodeFresh(serverResponse))
     }
 
+    /** Design 94 and design 95 rev. 3: the Mobilnett keys (the server's `policy_json_keys_snapshot` literal); missing
+     * (an older server) = roaming the phone's choice, apps on mobile data, the settings unlocked. */
+    @Test
+    fun `the Mobilnett keys decode, and missing means nothing is locked`() {
+        val policy = ServerJson.decodeFromString(
+            PolicyResponse.serializer(),
+            """{"abroad": "vibb", "data_roaming": "off", "apps_mobile": "vibb", "mobile_settings_locked": true}""",
+        )
+        assertEquals("off", policy.dataRoaming)
+        assertEquals(AbroadChoice.VIBB, abroadChoice(policy.abroad, policy.dataRoaming))
+        assertEquals("vibb", policy.appsMobile)
+        assertEquals(true, policy.mobileSettingsLocked)
+        val older = decodeCached(serverResponse).let { (it as CachedPolicy.Ok).policy }
+        assertEquals(AbroadChoice.LEGACY, abroadChoice(older.abroad, older.dataRoaming))
+        assertFalse(roamingLocked(abroadChoice(older.abroad, older.dataRoaming), lift = false))
+        assertFalse(parentSinkOn(older.appsMobile, overrideActive = false))
+        assertFalse(mobileSettingsLocked(older.mobileSettingsLocked, overrideActive = false))
+    }
+
     /** Design 68 §3.1: `app_permissions` (the server's `policy_json_keys_snapshot` literal) - read field by field by
      * `appPermissionsOf`, so nothing in it fails the policy; missing or not a list = touch nothing (`null`). */
     @Test
@@ -1191,12 +1210,46 @@ class PolicyResponseCompatTest {
         assertEquals(true, time.rules[0].silent)
         val notSilent = (decodeCached(withTime.replace(" \"silent\": true,", "")) as CachedPolicy.Ok).policy
         assertEquals(false, notSilent.timePolicy!!.rules[0].silent)
+        // Design 93 §9.3: a rule's `until_ms` and `card_first`; an older server's rule without them never ends and
+        // isn't the card's first.
+        assertNull(time.rules[0].untilMs)
+        assertEquals(false, time.rules[0].cardFirst)
+        val turnedOn = (decodeCached(
+            withTime.replace("\"silent\": true,", "\"silent\": true, \"until_ms\": 1794848400000, \"card_first\": true,"),
+        ) as CachedPolicy.Ok).policy
+        assertEquals(1794848400000L, turnedOn.timePolicy!!.rules[0].untilMs)
+        assertEquals(true, turnedOn.timePolicy!!.rules[0].cardFirst)
+        assertEquals(CachedPolicy.Ok(turnedOn), decodeCached(ServerJson.encodeToString(PolicyResponse.serializer(), turnedOn)))
         assertEquals(com.kidslauncher.mdm.timerules.TimeWindow(495, 840), time.rules[0].days[0])
         assertNull(time.rules[0].days[5])
         assertEquals(listOf(60, 60, 60, 60, 60, 120, null), time.dailyBudgetMinutes)
         assertEquals(4L, time.lifts[0].ruleId)
         assertNull(time.lifts[1].ruleId)
         assertEquals(1759650000000L, time.lifts[0].expiresAtMs)
+        // Design 98 §4.4: the PWA's lifts carry no phone key, an older server's rules no copy_of and no rule_pause.
+        assertNull(time.lifts[0].phoneKey)
+        assertNull(time.rules[0].copyOf)
+        assertEquals(false, policy.rulePause)
+        // Design 100 §14.2: an older server's lifts name no parent and no instant, and it answers no request.
+        assertNull(time.lifts[1].by)
+        assertEquals(0L, time.lifts[1].atMs)
+        assertEquals(false, time.requestAnswers)
+        assertNull(time.answer)
+        val answered = (decodeCached(
+            withTime.replace(
+                "\"minutes\": 15, \"expires_at_ms\": 1759690000000}]",
+                "\"minutes\": 15, \"expires_at_ms\": 1759690000000, \"by\": \"Mamma\", \"at_ms\": 1759646400000}],\n" +
+                    "\"request_answers\": true, \"answer\": {\"request_id\": \"0123456789abcdef0123456789abcdef\", \"answer\": \"yes\", " +
+                    "\"by\": \"Mamma\", \"at_ms\": 1759646400000, \"lift_id\": 10, \"minutes\": 15}",
+            ),
+        ) as CachedPolicy.Ok).policy.timePolicy!!
+        assertEquals("Mamma", answered.lifts[1].by)
+        assertEquals(1759646400000L, answered.lifts[1].atMs)
+        assertEquals(true, answered.requestAnswers)
+        assertEquals(
+            com.kidslauncher.mdm.timerules.TimeAnswer("0123456789abcdef0123456789abcdef", "yes", "Mamma", 1759646400000L, 10L, 15),
+            answered.answer,
+        )
         assertEquals(com.kidslauncher.mdm.server.dto.LocationPolicy("interval", 15), policy.locationPolicy)
         val reencoded = ServerJson.encodeToString(PolicyResponse.serializer(), policy)
         assertEquals(CachedPolicy.Ok(policy), decodeCached(reencoded))
@@ -1305,6 +1358,23 @@ class PolicyResponseCompatTest {
 
     /** Security review S-L5: `bluetooth_any_device` (the server's `policy_json_keys_snapshot`, always sent) - off from an
      * older server, so the Bluetooth page pairs headphones and speakers only. */
+    @Test
+    fun `captive_portal and login_browser decode, missing means on with the code and the role off (102)`() {
+        val policy = (decodeCached(
+            """{"captive_portal": {"enabled": false, "require_code": false, "minutes": 10, "day_openings": 4,
+                "day_minutes": 20, "grant": 2}, "login_browser": {"package": "com.android.chrome", "hosts": ["idp.feide.no"]}}""",
+        ) as CachedPolicy.Ok).policy
+        assertEquals(false, com.kidslauncher.mdm.logins.portalPolicyOf(policy).enabled)
+        assertEquals(2L, policy.captivePortal!!.grant)
+        assertEquals(listOf("idp.feide.no"), policy.loginBrowser!!.hosts)
+        val nullRole = (decodeCached("""{"login_browser": null}""") as CachedPolicy.Ok).policy
+        assertNull(nullRole.loginBrowser)
+        val older = (decodeCached(serverResponse) as CachedPolicy.Ok).policy
+        assertEquals(true, com.kidslauncher.mdm.logins.portalPolicyOf(older).enabled)
+        assertEquals(true, com.kidslauncher.mdm.logins.portalPolicyOf(older).requireCode)
+        assertNull(older.loginBrowser)
+    }
+
     @Test
     fun `bluetooth_any_device decodes and is off without it`() {
         assertTrue(ServerJson.decodeFromString(PolicyResponse.serializer(), """{"bluetooth_any_device":true}""").bluetoothAnyDevice)

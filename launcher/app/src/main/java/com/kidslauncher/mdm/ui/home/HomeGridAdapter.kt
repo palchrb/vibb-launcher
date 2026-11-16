@@ -19,7 +19,6 @@ import androidx.recyclerview.widget.RecyclerView
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.apps.AbstractDetailedAppInfo
 import com.kidslauncher.mdm.calls.PhoneBookActivity
-import com.kidslauncher.mdm.torch.Torch
 import com.kidslauncher.mdm.ui.kidsettings.KidSettingsActivity
 import com.kidslauncher.mdm.ui.list.apps.showAppContextMenu
 import com.kidslauncher.mdm.ui.wallpaper.InkChoice
@@ -119,8 +118,6 @@ class HomeGridAdapter(
                     // Dagen's own task (2026-10-27): the one intent the glance uses too.
                     GridTile.Day -> activity.startActivity(com.kidslauncher.mdm.ui.day.DayActivity.intent(activity))
                     GridTile.Settings -> activity.startActivity(Intent(activity, KidSettingsActivity::class.java))
-                    // Opens nothing: the torch's state comes back through its callback (renderGrid).
-                    is GridTile.Flashlight -> Torch.toggle(activity)
                     is GridTile.App -> {
                         val rect = Rect().also { v.getGlobalVisibleRect(it) }
                         infos[tile.app.key]?.getAction()?.invoke(activity, rect)
@@ -224,16 +221,6 @@ class HomeGridAdapter(
             }
             GridTile.Day -> glyphTile(holder, R.color.kid_day_tile, R.drawable.app_glyph_calendar_month, R.string.day_title)
             GridTile.Settings -> glyphTile(holder, R.color.kid_settings_tile, R.drawable.ic_kid_settings, R.string.kid_settings_title)
-            // Design 41: dark - the indigo tone; lit - a filled peach disc with the night glyph. One glyph
-            // for both (the user, 2026-10-23: no strike-through, the colours say the state). No yellow, no animation.
-            is GridTile.Flashlight -> {
-                if (tile.lit) {
-                    glyphTile(holder, R.color.kid_accent, R.drawable.torch_glyph_on, R.string.torch_title, glyphTint = R.color.kid_ground)
-                } else {
-                    glyphTile(holder, R.color.kid_torch_tile, R.drawable.torch_glyph_on, R.string.torch_title)
-                }
-                holder.itemView.stateDescription = context.getString(if (tile.lit) R.string.torch_state_on else R.string.torch_state_off)
-            }
             is GridTile.App -> {
                 holder.icon.imageTintList = null
                 holder.icon.setPadding(0, 0, 0, 0)

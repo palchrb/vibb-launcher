@@ -6042,7 +6042,7 @@ async fn the_music_tab_speaks_norwegian() {
             "Importer fra Vibb",
             "Kategorier",
             "1 av 2",
-            "/static/music-cards.js?v=4",
+            "/static/music-cards.js?v=5",
         ],
     );
     assert!(!tab.contains("Library") && !tab.contains("Upload your own files"));

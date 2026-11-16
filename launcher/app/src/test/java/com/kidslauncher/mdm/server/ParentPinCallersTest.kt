@@ -45,6 +45,15 @@ class ParentPinCallersTest {
         assertEquals(setOf("ParentPin.kt"), callers("startInstallMode("))
     }
 
+    /** Design 98 §4.4.1 (Q98-R3-M1): only the gate stores a parent-code pause (`phone_lifts_v1`). */
+    @Test
+    fun `only the gate writes phone_lifts_v1`() {
+        assertEquals(setOf("ParentPin.kt"), callers("PhonePauses.addFromGate("))
+        assertEquals(setOf("PhonePauses.kt"), sources.filterValues { "\"phone_lifts_v1\"" in it }.keys.map { File(it).name }.toSet())
+        // The rule pause's keypad passes the gate its choice; nothing else stores one.
+        assertTrue("ParentPinEntry.RULE_PAUSE" in sources.getValue("ui/RulePauseActivity.kt"))
+    }
+
     @Test
     fun `the old counter is read only by the store's migration`() {
         for (token in listOf("offlineOverrideFailedAttempts", "offlineOverrideLockedUntil")) {

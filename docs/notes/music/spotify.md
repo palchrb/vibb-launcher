@@ -129,7 +129,7 @@ Moved from music/CLAUDE.md on 2026-11-01.
     run's; the next item's start says otherwise by playing). The time row reads the live state, so it says "Kobler
     til…" under the still greyed cover meanwhile, and greyed play keeps its play glyph (`showsPause`; a tap still does
     what it did - here it pauses the attempt).
-  - **The notice fits its cover** (qa-music-cant-play M1, M2): the cover is 224 dp at most and shrinks (a shuffle row
+  - **The notice fits its cover** (qa-music-cant-play M1, M2): the cover is 224 dp at most on a 320 dp phone (more on a wider one, S10's `playerArtMax`) and shrinks (a shuffle row
     on the Jelly Star: 150 dp; a large font or display size; the carousel's pages down to 96 dp). The text is dp, not
     the font scale's sp (`NOTICE_TITLE_DP` 15, `NOTICE_HELP_DP` 12, as `SKIP_NUMBER_DP`: a fixed box), 6 dp at the
     sides, the title up to three lines, the help up to two. The overlay measures its words in its own box and

@@ -37,6 +37,11 @@
     <string name="settings_mdm_dns_upstream_custom_key" translatable="false">mdm.dns_upstream_custom</string>
     <string name="settings_mdm_blocked_dns_event_queue_json_key" translatable="false">mdm.blocked_dns_event_queue_json</string>
     <string name="settings_mdm_vpn_filter_enabled_key" translatable="false">mdm.vpn_filter_enabled</string>
+    <string name="settings_mdm_vpn_inputs_key" translatable="false">mdm.vpn_inputs</string>
+    <string name="settings_mdm_vpn_shape_key" translatable="false">mdm.vpn_shape</string>
+    <string name="settings_mdm_vpn_inputs_r4_key" translatable="false">mdm.vpn_inputs_r4</string>
+    <string name="settings_mdm_vpn_sink_reason_key" translatable="false">mdm.vpn_sink_reason</string>
+    <string name="settings_mdm_kid_mobile_off_key" translatable="false">mdm.kid_mobile_off</string>
     <string name="settings_mdm_device_token_key" translatable="false">mdm.device_token</string>
     <string name="settings_mdm_enrolled_key" translatable="false">mdm.enrolled</string>
     <string name="settings_mdm_kid_mode_policy_key" translatable="false">mdm.kid_mode_policy</string>
@@ -117,4 +122,6 @@
         <p><a href=\"https://github.com/googlefonts/nunito\">github.com/googlefonts/nunito</a></p>
         <p>SIL Open Font License, Version 1.1</p>
     ]]></string>
+    <!-- Design 98 §4.3: the time-rule screen's dim "···". -->
+    <string name="lock_more_glyph" translatable="false">···</string>
 </resources>

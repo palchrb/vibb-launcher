@@ -187,7 +187,7 @@ class TimeLockModelTest {
         val pending = resume.indexOf("GlanceOpener.handOverPending()")
         assertTrue(resume, pending in 0 until resume.indexOf("GlanceOpener.openHandedOver(this)"))
         assertTrue(resume, resume.indexOf("takeUnlockMark()") > resume.indexOf("GlanceOpener.openHandedOver(this)"))
-        assertTrue(resume.contains("unlockOpenRow(marked, handedOver, shownRows)"))
+        assertTrue(resume.contains("unlockOpenRow(marked, handedOver, shownRows, shownAsk.hasButton)"))
         assertTrue(resume.contains("open(only)"))
         assertTrue(activity.contains("view.root.setOnClickListener { open(row) }"))
         assertEquals("taken in onResume alone", 1, Regex("""(?<!fun )takeUnlockMark\(\)""").findAll(activity).count())
@@ -239,17 +239,84 @@ class TimeLockModelTest {
         assertTrue("this, binding.lockRuleCard, glyphRes(lockGlyph(rule?.kind))," in activity)
     }
 
+    /** Design 100 §8.2: the ask block - only on the used-up budget's screen, each request state to its block. */
+    @Test
+    fun `the ask block - the used-up screen only, each state to its block`() {
+        val idle = com.kidslauncher.mdm.timerules.RequestState.Idle
+        val none = com.kidslauncher.mdm.timerules.AskNote.None
+        assertEquals(LockAsk.Button, lockAsk(ruleInForce = false, budgetToday = true, windowOpen = false, enrolled = true, state = idle, note = none))
+        assertNull("a rule in force (D4)", lockAsk(true, true, false, true, idle, none))
+        assertNull("no budget today", lockAsk(false, false, false, true, idle, none))
+        assertNull("the pause or the override", lockAsk(false, true, true, true, idle, none))
+        assertNull("not enrolled", lockAsk(false, true, false, false, idle, none))
+        val gift = com.kidslauncher.mdm.timerules.AskNote.Given("Mamma", 30)
+        assertEquals("time given without a request", LockAsk.Note(gift, AgainPart.ASK_AGAIN), lockAsk(false, true, false, true, idle, gift))
+        val waiting = com.kidslauncher.mdm.timerules.AskNote.Waiting(1)
+        for (state in listOf(com.kidslauncher.mdm.timerules.RequestState.Pending(1), com.kidslauncher.mdm.timerules.RequestState.Waiting(1))) {
+            assertEquals("$state", LockAsk.Note(waiting, AgainPart.NONE), lockAsk(false, true, false, true, state, waiting))
+        }
+        val no = com.kidslauncher.mdm.timerules.AskNote.No("Pappa", 2)
+        val answered = com.kidslauncher.mdm.timerules.RequestState.Answered(true, "Pappa", 2, null, canAskAgain = true)
+        assertEquals(LockAsk.Note(no, AgainPart.ASK_AGAIN), lockAsk(false, true, false, true, answered, no))
+        assertEquals(LockAsk.Note(no, AgainPart.CAPPED), lockAsk(false, true, false, true, answered.copy(canAskAgain = false), no))
+        assertEquals(LockAsk.Note(none, AgainPart.CAPPED), lockAsk(false, true, false, true, com.kidslauncher.mdm.timerules.RequestState.Capped, none))
+        // A button keeps the screen after the unlock (D6); a note alone doesn't.
+        assertTrue(LockAsk.Button.hasButton)
+        assertTrue(LockAsk.Note(no, AgainPart.ASK_AGAIN).hasButton)
+        assertFalse(LockAsk.Note(waiting, AgainPart.NONE).hasButton)
+        assertFalse(LockAsk.Note(no, AgainPart.CAPPED).hasButton)
+        val absent: LockAsk? = null
+        assertFalse(absent.hasButton)
+        val music = LockRow.App("me.vibb.music", "Musikk")
+        assertEquals(music, unlockOpenRow(true, false, listOf(music), askButton = false))
+        assertNull("the ask's button keeps the screen (D6)", unlockOpenRow(true, false, listOf(music), askButton = true))
+        // The screen's words, nb and en; "tre"/"three" is the cap (Q100-L10).
+        assertEquals(3, com.kidslauncher.mdm.timerules.TIME_REQUESTS_A_DAY)
+        assertEquals("Du har spurt tre ganger i dag.", nb.getValue("lock_ask_capped"))
+        assertEquals("You've asked three times today.", en.getValue("lock_ask_capped"))
+        assertEquals("Spør igjen", nb.getValue("lock_ask_again"))
+        assertEquals("Ask again", en.getValue("lock_ask_again"))
+        for (key in listOf("ask_note_sending", "ask_note_offline", "ask_note_waiting", "ask_note_no", "ask_note_no_unnamed", "ask_note_given", "ask_note_given_unnamed")) {
+            assertTrue(key, key in nb && key in en)
+        }
+        // The block sits under the rule card, 14 dp, no card ground; its lines are read out and never cut.
+        val views = layout("activity_lock")
+        val block = views.byId("lock_ask")
+        assertEquals("14dp", block.attr("layout_marginTop"))
+        assertEquals("", block.attr("background"))
+        for (id in listOf("lock_ask_line", "lock_ask_button", "lock_ask_capped")) {
+            assertEquals(id, "polite", views.byId(id).attr("accessibilityLiveRegion"))
+            assertEquals(id, "", views.byId(id).attr("maxLines"))
+        }
+        assertEquals("52dp", views.byId("lock_ask_button").attr("minHeight"))
+        // Wiring: the screen asks through the one path and follows the request on the main thread from onStart to onStop.
+        val activity = code("java/com/kidslauncher/mdm/ui/LockActivity.kt")
+        assertTrue(body(activity, "override fun onStart()").contains("AnchorNotice.addListener(askListener)"))
+        assertTrue(body(activity, "override fun onStop()").contains("AnchorNotice.removeListener(askListener)"))
+        assertTrue(body(activity, "private fun render()").contains("TimeAsk.lockAskFor(this, it, ruleInForce = rule != null)"))
+        // Code QA L2/L3: a live region's text is set only when it changed; the pill keeps TalkBack's focus.
+        val renderAsk = body(activity, "private fun renderAsk(ask: LockAsk?)")
+        assertTrue(renderAsk, "if (button.text.toString() != text) button.text = text" in renderAsk)
+        assertTrue(renderAsk, "if (line.text.toString() != note.orEmpty()) line.text = note" in renderAsk)
+        assertTrue(renderAsk, "button.isFocusable = true" in renderAsk)
+        assertFalse(renderAsk, "isFocusable = clickable" in renderAsk)
+    }
+
     /** Launcher round L6 (the user, 2026-10-26: the screen looked dated next to the lock glance): the glance's face. */
     @Test
     fun `the screen - the glance's clock face and rule card, one card of rows, Emergency call at the bottom`() {
         val views = layout("activity_lock")
-        // No saturated full-width buttons: nothing on this screen is tinted a colour field or styled apart.
+        // Nothing on this screen is tinted a colour field or styled apart (design 100's ask pill draws its own ground).
         assertTrue(views.none { it.attr("backgroundTint").isNotEmpty() || it.attr("style").isNotEmpty() })
         // The order: the clock, the date, the alarm line, the rule card, the rows' card, then emergency at the bottom - and
-        // no code entry (2026-11-01, the parent lifts a rule from the PWA only), no title or icon of its own any more.
+        // no code entry (2026-11-01, the parent lifts a rule from the PWA only), no title or icon of its own any more. Design
+        // 98 §4.3: the dim "···" first (gone without a row; its sheet holds Flymodus and Foreldrekode, never a code field).
         val ids = views.map { it.attr("id").removePrefix("@+id/") }.filter { it.isNotEmpty() }
         assertEquals(
-            listOf("lock_top", "lock_clock", "lock_date", "lock_alarm", "lock_rule_card", "lock_rows", "lock_emergency_button"),
+            listOf(
+                "lock_top", "lock_more", "lock_clock", "lock_date", "lock_alarm", "lock_rule_card",
+                "lock_ask", "lock_ask_line", "lock_ask_button", "lock_ask_capped", "lock_rows", "lock_emergency_button",
+            ),
             ids,
         )
         // The rule name is the screen's heading (TalkBack's heading navigation), on this screen's card only.
@@ -302,11 +369,35 @@ class TimeLockModelTest {
         assertTrue("WallpaperStore.addListener(wallpaperListener)" in activity && "WallpaperStore.removeListener(wallpaperListener)" in activity)
         // A cold start holds the first frame for the ground as the PIN lock does (at most LOCK_GROUND_WAIT_MS).
         assertTrue("if (holdForLockGround(WallpaperStore.state.lockReady, since, now)) return false" in body(activity, "override fun onStart()"))
-        // The profile clock's box may reach into the status bar's padding: the root never clips it.
-        assertEquals("false", screen.first().attr("clipToPadding"))
+        // The profile clock (size-fixes code QA L7): its box sits in the scrolling part, which clips at the status bar's
+        // edge; the digits' ink stays inside it - the placement's floor keeps the ink below the block's top, and the block
+        // keeps its 8 dp top padding as the glance's.
+        assertEquals("8dp", screen.byId("lock_top").attr("paddingTop"))
+        assertTrue("floorPx = -(clock.baseline + ink.top).toFloat()" in code("java/com/kidslauncher/mdm/lock/LockClockFace.kt"))
         assertTrue("AlarmManager.ACTION_NEXT_ALARM_CLOCK_CHANGED" in activity && "unregisterReceiver(alarmChanged)" in activity)
         val panel = code("java/com/kidslauncher/mdm/lock/GlancePanel.kt")
         assertTrue("LockClockFace(" in panel && "RuleCardView.bind(" in panel)
+    }
+
+    /** Screen-size fix S1 (size-fixes code QA L6): Emergency call is never inside the scrolling part, where 3-button
+     * navigation on the Jelly Star put it under the bar - it is the root's last child, under a ScrollView that takes the
+     * rest of the height, so it is always laid out whole above the root's bottom padding (the navigation bar, KidInsets). */
+    @Test
+    fun `S1 - emergency call sits outside the scroll, under a weighted ScrollView, always shown`() {
+        val root = layout("activity_lock").first()
+        val children = (0 until root.childNodes.length).map { root.childNodes.item(it) }.filterIsInstance<Element>()
+        assertEquals(listOf("ScrollView", "TextView"), children.map { it.tagName })
+        assertEquals("vertical", root.attr("orientation"))
+        val scroll = children[0]
+        assertEquals("0dp", scroll.attr("layout_height"))
+        assertEquals("1", scroll.attr("layout_weight"))
+        assertEquals("@+id/lock_top", (0 until scroll.childNodes.length).map { scroll.childNodes.item(it) }.filterIsInstance<Element>().single().attr("id"))
+        val button = children[1]
+        assertEquals("@+id/lock_emergency_button", button.attr("id"))
+        assertEquals("", button.attr("visibility"))
+        assertEquals("", button.attr("maxLines"))
+        // The root carries the bars as padding (KidInsets on binding.root).
+        assertTrue("com.kidslauncher.mdm.ui.KidInsets.apply(binding.root)" in code("java/com/kidslauncher/mdm/ui/LockActivity.kt"))
     }
 
     @Test

@@ -4209,6 +4209,416 @@ nothing else.
 The Jelly Star's build (step 0's recording there is still owed before release), a real SIM's MMS, an Android 14
 phone's bars under a Lys page, TalkBack where the kiosk blocks it.
 
+## 6ak. Mobilnett: Bare Vibb, the roaming lock and the mobile-network settings lock (designs 94/95) (2026-11-13)
+
+**Steps, written with the build on 2026-11-13 (branch `mobilnett`); not run yet.** Design 95 revision 3: the VPN's
+three shapes (filter on Wi-Fi, the sink for Bare Vibb on cellular, the pass shape standing ready when the filter is
+off), one owner of always-on and lockdown, design 94's `DISALLOW_DATA_ROAMING` with its relock, and
+`DISALLOW_CONFIG_MOBILE_NETWORKS`. The PWA's page is Device › Mobilnett (`/devices/{id}/mobile`).
+
+Setup: **`jelly36`** (§3), the debug launcher of `mobilnett` as Device Owner, enrolled to a local server of the same
+branch, the kiosk on. Wi-Fi on at the start. For the roaming steps (D) the stock AVD reads `roaming=false` under
+`gsm data roaming` (the SIM and the network share MCC 310 and the name, `isSameNamedOperators`): use design 95 §1.1's
+private image copy with a Norwegian SIM (`-sysdir`, `CIMI 242010000000000`) and its APN (the probe added one with
+`addOverrideApn`; the launcher doesn't - add it through a throwaway DO-less step or Settings › APNs during Åpne for
+oppsett). A second app to test with: any allowed browser, or `me.vibb.probe.other` from the d95 scratchpad, fetching
+`https://1.1.1.1/cdn-cgi/trace` (an IP literal: TCP) and `https://www.google.com/generate_204` (a name: DNS).
+
+```
+adb logcat -s KidVpnService MobileNetwork AppEnforcer          # "Tunnel: sink", "Always-on: ... lockdown true (sink)"
+adb shell dumpsys connectivity | grep -iE "VPN|lockdown|always"  # the VPN network, its routes; lockdown
+adb shell settings get secure always_on_vpn_lockdown             # 1 only while the sink holds
+adb shell dumpsys user | grep -E "no_config_vpn|no_data_roaming|no_config_mobile_networks"
+adb shell run-as me.vibb.launcher.debug cat shared_prefs/*.xml | grep -E "vpn_inputs|vpn_shape"
+```
+
+### A. The filter still works on Wi-Fi (Mobildata: På)
+
+1. Wi-Fi on, Mobildata "På". `Tunnel: filter`; lockdown off; a blocked domain in the other app's browser is blocked as
+   before; an allowed one loads.
+2. The launcher is outside the VPN now in every shape: `adb shell dumpsys connectivity` lists the VPN's UID ranges
+   without the launcher's uid; a sync (`adb shell am broadcast` of the debug sync, or the PWA's nudge) works, and the
+   server's name resolves through the network's resolver (the server's log shows the request).
+3. **Split-horizon check** (design 95 §2.2): if the server's name only resolves through the parent's own DNS server
+   (design 36), note whether the sync still works; report it either way.
+
+### B. The sink on cellular, and the switch both ways
+
+1. PWA: Mobilnett › Mobildata › **Bare Vibb**. The page lands on `#mobile-data`, never at the top; the phone's state
+   line shows nothing new while on Wi-Fi.
+2. `adb shell svc wifi disable`. Within a second: `Tunnel: sink`, then `Always-on: ... lockdown true (sink)`
+   (the tunnel first, then lockdown). The other app: the IP literal fails at once (`ConnectException`, ~1 ms), the
+   name fails at once (`UnknownHostException`); nothing hangs for seconds.
+3. The launcher works: a PWA nudge (change a harmless setting) reaches the phone within seconds; Finn telefonen
+   answers (GPS only: the emulator's fix is fake anyway). The summary in the PWA shows "Mobildata: bare Vibb".
+4. **SSE and a sync survive the switch:** with the stream open (`adb logcat -s CommandListener`), switch Wi-Fi ->
+   cellular -> Wi-Fi twice; the stream is never reopened because of the switch (no "stream closed" at the switch),
+   and a sync started a moment before a switch completes.
+5. `adb shell svc wifi enable`: lockdown off first (`Always-on: ... lockdown false (filter)`), then `Tunnel: filter`;
+   the other app loads again.
+6. **Lockdown is never off while sinking:** during step 2-4, run a few syncs (`adb shell am broadcast ...` or wait for
+   the backstop) and a launcher process restart (`adb shell am crash me.vibb.launcher.debug` is refused for a DO; use
+   `adb shell am kill` while it is in the background, or a reboot): `always_on_vpn_lockdown` stays `1` the whole
+   time on cellular, and every `Always-on:` line on cellular says `lockdown true`.
+7. Filter off (Nettfilter off in the PWA) with Bare Vibb on: on Wi-Fi `Tunnel: pass` (no DNS filtering - a blocked
+   domain loads), on cellular `Tunnel: sink`. Check the pass shape doesn't break name resolution for other apps on
+   Wi-Fi (design 95's pass shape has no DNS server: Android must use the network's; **report if names fail**).
+8. Settings › Network › VPN: the VPN's settings are disabled by the admin while any shape runs.
+
+### C. The pause lifts it
+
+1. Bare Vibb on, cellular, sink up. Start "Åpne for oppsett" (PWA or the phone's parent PIN): the sink goes
+   (`Tunnel: filter` or the VPN stops when the filter is off), lockdown off, other apps get cellular, the VPN settings
+   unlock. The Mobilnett page says "Opphevet mens telefonen er åpnet for oppsett".
+2. End the pause: the sink comes back at once on cellular.
+
+### D. The roaming lock (design 94)
+
+1. Default "Av (låst)": `no_data_roaming` set; Settings › SIM › Roaming greyed out "controlled by admin";
+   `gsm data roaming` + `gsm voice roaming`: no data comes up. The PWA's page: "Av og låst på telefonen", and the
+   summary's header ends with "Roamer (US)" (or the country the image reads).
+2. The lingering session: start a pause, turn roaming on in Settings, let data come up on the roaming network, end the
+   pause. `no_data_roaming` is set again, `settings get global data_roaming` reads `0`, data stays up (Android's gap,
+   §2.4.1) - and now **the sink holds it** (`Tunnel: sink`, reason `roaming` in the report's `mobile_data.sink`): the
+   other app fails at once, the launcher still syncs. The PWA shows "Bare Vibb bruker roamingdata fra før låsen".
+   `gsm data home` then `roaming` (a re-evaluation) tears the session down; the sink goes with it.
+3. "Telefonens valg": the restriction is cleared and roaming is **not** turned on by us
+   (`settings get global data_roaming` unchanged). The page says "Telefonens valg: av".
+4. Single-SIM emulator: the relock (§2.4.2) isn't seen here; `adb logcat -s MobileNetwork` shows no "relocking" line.
+
+### E. The mobile-network settings lock
+
+1. Default on: `no_config_mobile_networks` set. Settings › Network & internet › SIMs is disabled "by the admin"; the
+   Quick Settings Internet tile's dialog has no mobile-data toggle.
+2. Start "Åpne for oppsett": both are back; turn **Mobildata off** in Settings. End the pause: the lock is back, data
+   stays off. The PWA's summary shows "Mobildata er slått av på telefonen" and the Mobilnett row "Mobildata av"
+   within a sync (on Wi-Fi). On cellular nothing reaches the server (true zero) until Wi-Fi.
+3. Switch "Lås mobilnett-innstillingene" off in the PWA: the restriction goes at the next sync; on again: back.
+
+### F. The update line
+
+1. With a launcher from `main` (before this round) reporting: the Mobilnett page's choices are disabled with "Virker
+   etter at Vibb One er oppdatert"; nothing is enforced on the phone.
+
+### The run of 2026-11-13 (`jelly36`, branch `mobilnett` at 1d0d4a9c, after the code QA fixes)
+
+Setup: `jelly36` wiped (a copy kept and put back afterwards), the debug launcher as Device Owner over adb, enrolled to
+a local server of the same commit, the PWA driven with form posts as the signed-in admin. The other app was
+`me.vibb.probe.other` (design 95's probe, let out with Allow these apps and ticked). Phase 1 on the stock image;
+phase 2 (D, M2) with a private `-sysdir` whose `iccprofile_for_sim0.xml` reads `CIMI 242010000000000` and `EF_AD` MNC
+length 2 (the AVD's own `modem_simulator/` copy is overwritten from the sysdir at every boot - edit the sysdir's), and
+an APN for 24201 added from the shell (`content insert --uri content://telephony/carriers ...`, allowed to the shell
+user; no device-owner override needed).
+
+| Check | Result |
+|---|---|
+| A.1 filter on Wi-Fi | **Passed.** `Tunnel: filter`, lockdown 0; a device-blocked `example.org` fails `UnknownHostException` in 7 ms, `generate_204` loads |
+| A.2 launcher outside the VPN | **Passed.** The VPN's `Uids: <{0-10216, 10218-...}>`, the launcher is 10217; syncs and reports go on |
+| A.3 split-horizon | Not run (no custom DNS server on the test server) |
+| B.2 the sink on cellular | **Passed.** `svc wifi disable` -> `Tunnel: sink` in 385 ms, lockdown on 19 ms later; the other app: IP literal `ConnectException` in 1 ms, a name `UnknownHostException` in 4 ms. Bytes in the gap not measured (QA 4) |
+| B.3 the launcher works on the sink | **Passed.** A PWA save reached the phone and its report was stored within 1 s; the summary shows "Mobildata: bare Vibb" |
+| B.4 SSE across shape switches | **Passed.** Four filter <-> sink switches on cellular (Bare Vibb off/on): the same stream thread, no reconnect, the server saw no new open. Note: `apply()` writes the sink's lockdown 4-30 ms before the service's tunnel (L2, fail closed) |
+| B.5 back to Wi-Fi | **Passed.** Lockdown off first, then `Tunnel: filter`; the other app loads |
+| B.6 lockdown never off while sinking / QA 2 (M1) | **Passed.** 20 Wi-Fi <-> cellular switches: every cellular read `lockdown=1 sink`, every Wi-Fi read `lockdown=0 filter`; no "Failed to establish VPN" (the 20 "read failed" lines are the old tunnels' loops ending); the launcher's threads 58 -> 57. A process kill while sinking: lockdown stayed 1 every second through the restart, `vpn_shape` sink, the other app refused |
+| B.7 / QA 5 the pass shape's DNS | **Passed.** Filter off + Bare Vibb: `Tunnel: pass`, the VPN has `DnsAddresses: [ ]`, and the other app resolves names (`generate_204` 204, `example.org` 200 - unfiltered, as the filter is off). Wi-Fi off: sink at once, lockdown on |
+| B.8 VPN settings locked | **Passed.** Settings › VPN: "Blocked by work policy" |
+| QA 6 (L1) hardening "Blokker VPN-innstillinger" off, sink up | **Passed - Android protects it anyway.** Without `no_config_vpn` the VPN page opens, but "Always-on VPN" and "Block connections without VPN" read "Controlled by admin" and a tap answers "Blocked by work policy": a user can't change a device owner's always-on or lockdown on Android 16 |
+| C.1 / C.2 the pause | **Passed.** Åpne for oppsett from the PWA: `Always-on: none, lockdown false (none)` (QA 8: the `NONE` write succeeds, no "Couldn't set always-on"), the other app gets cellular, `no_data_roaming` and `no_config_mobile_networks` lifted, the page says "Opphevet mens telefonen er åpnet for oppsett" / "Låst opp ...". Ending it: lockdown and the sink back within 1 s. (`no_config_vpn` stays: it was the hardening switch's, which only the server lifts) |
+| QA 1 (H1) reboot with no network | **Passed.** Bare Vibb, Wi-Fi off, `svc data disable`, reboot: from the first read after boot `lockdown=1`, `vpn_shape=sink`, `Tunnel: sink`. `svc data enable`: the other app's first five requests (one a second from the moment data came on) were all refused in 1-4 ms. Airplane mode + a process kill + airplane off: the same, 6 of 6 refused |
+| D.1 roaming locked | **Passed.** `gsm data roaming`: data goes down and stays down, `data_roaming` 0; the report `roaming: true, country: "us", network: "311740"`; the summary's header ends "Roaming (US)" in orange |
+| D.2 the lingering session | **Passed.** In a pause `data_roaming 1`, roaming data up; ending the pause: `data_roaming` 0 again, the roaming network stays up (Android's gap) and the sink holds it with Bare Vibb off (`mobile_data.sink: "roaming"`, `data_active: true`): the other app refused, the launcher reports. The page: "Bare Vibb bruker roamingdata fra før låsen". `gsm data home` -> `roaming` tears the session down |
+| QA 3 (M2) | **Passed.** Filter off, Bare Vibb off, the lock on, the lingering session up: Wi-Fi on -> `Tunnel: pass` (the cellular session stays up in the background); Wi-Fi off -> `Tunnel: sink`, lockdown 1, the other app refused on the lingering network |
+| D.3 Telefonens valg | **Passed.** The restriction goes, `data_roaming` stays 0 (nothing turned on), the page says "Telefonens valg: av" |
+| QA 7 (L6) | **Passed.** Telefonens valg, then Av and the page read at once: "Ikke på plass på telefonen ennå..." (`pending`), never "Låst opp mens ..."; after the sync "Av og låst på telefonen" |
+| E.1 the settings lock | **Passed.** Network & internet: "SIMs - Controlled by admin"; the Internet panel has no mobile-data toggle (`mobile_toggle` absent) |
+| E.2 data off, true zero | **Passed.** During the pause the toggle is back; "Turn off mobile data"; the pause ended: the lock is back, `mobile_data` 0, on Wi-Fi off "Active default network: none" and the other app gets nothing. The report `enabled: false`; the summary "Mobildata er slått av på telefonen" and the row "Only Vibb · Mobile data off" |
+| E.3 the switch | **Passed.** Off: `no_config_mobile_networks` gone at the sync; on: back |
+| F the update line | Not run (no older launcher installed; the page tests cover it) |
+
+**Found, open (not caused by the shapes, but felt more with them):** after the network the SSE stream ran on went
+away (cellular data switched off, or the roaming session torn down), the phone kept the dead stream until its 5-minute
+read timeout: twice the PWA's nudges were not heard for ~5 minutes although Wi-Fi was up and the server had a stream
+"open". Reports went on at syncs. Hypothesis: on the emulator the cellular interface keeps its address when data goes
+off, so netd destroys no sockets; on a phone the address goes and the socket with it - **[needs device test]**. Either
+way the stream should reconnect on a change of the default network (design 95 §3.5's ping interval, 95-T1's
+`ServerClients`). Once (D.1) the sink also held ~55 s after Wi-Fi came back before the watcher saw Wi-Fi as best -
+fail closed, but worth a look with the stream fix.
+
+**Fixed on `stream-reconnect` (2026-11-13):** `CommandListenerService` follows the default network
+(`sseReconnectOnNetwork`, settled 1.5 s): a stream on a network that went away is dropped with the shared pool's idle
+connections and opened on the new one; while backing off, a new network cuts the back-off short. Checked on `jelly36`
+(no device owner - the stream doesn't need one): the stream on cellular, `svc data disable; svc wifi enable` - the dead
+stream dropped 1.8 s after, the open with no network failed (`ENETUNREACH`), and the stream was up on Wi-Fi 5.9 s after
+the switch (before: ~5 min); a PWA nudge 15 s later arrived at once. Wi-Fi off with the stream on Wi-Fi: up on
+cellular after 2.2 s. One reconnect per change, no storm. The ~55 s sink hold was not reproduced and its cause is not
+clear (the shape watcher's best-matching callback, or Wi-Fi's validation under lockdown); left open, [needs device
+test].
+
+### What `jelly36` can't show
+
+The Jelly Star's dual-SIM relock (design 94 §2.4.2), VoLTE/MMS/Wi-Fi calling under lockdown and a real locate indoors
+with the sink (design 95 §2.4): [needs device test].
+
+## 6al. Mobilnett revision 4: "I utlandet", the roaming notice, the kid's switch (design 97) (2026-11-14)
+
+Design 97 §10's tests. Setup: **`jelly36`** restored clean from `~/kid-look-1-avd-pre-start`, started under `flock -o
+~/build.lock` with a private `-sysdir`: symlinks to the SDK image's files and a copy of its `data/`, whose
+`misc/modem_simulator/iccprofile_for_sim0.xml` reads `CIMI 242010000000000` and `EF_AD` `00000002` (MNC length 2), so the
+SIM is `24201` (no) on the network `311740` (us). An APN for 24201 from the shell (`content insert --uri
+content://telephony/carriers --bind numeric:s:24201 --bind mcc:s:242 --bind mnc:s:01 --bind apn:s:internet --bind
+type:s:default,supl ...`). The phone made through the PWA's own Add Phone (so a new phone's defaults: `abroad` `vibb`,
+mask 47), the debug launcher as Device Owner, enrolled from its Settings. The other app is design 95's probe rebuilt as
+`me.vibb.probe.other` with a `cellfetch` command (`requestNetwork(CELLULAR)`, then `network.openConnection` and a raw
+socket through `network.bindSocket`), let out with Allow these apps. `gsm data roaming` + `gsm voice roaming` makes the
+phone abroad; `gsm data home` + `gsm voice home` brings it home.
+
+**Emulator limits:** the network operator (`311740`) is fixed in the modem simulator, so a second country (Denmark) can't
+be faked - D6's per-country rule rests on `mobile_network::tests`. The modem forgets `gsm data roaming` at every radio
+power cycle (airplane mode, a reboot): it comes back registered at home. `cmd phone restart-modem` is refused to the
+shell and the console has no SIM power command, so no SIM reload.
+
+| Test | Result |
+|---|---|
+| 1 abroad, Bare Vibb | **Passed.** `Tunnel: sink`, lockdown 19 ms later; the other app's IP literal `ConnectException` in 2 ms, a name `UnknownHostException` in 4 ms. The report `where: "abroad"`, `sink: "abroad"`; one `roaming_started` (`us:<instant>`, to `/devices/1/mobile#abroad`). Three home/roaming flips with a sync each: still one notice, the place cleared at home and back to `us` |
+| 2 a flap and a reboot | **Passed after a fix.** Airplane mode under the sink: sink and lockdown held while no network was seen. **Found:** `gsm data unregistered` (out of service) kept the cellular network up with `-NOT_SUSPENDED+NOT_ROAMING` in one update and a stale operator, so `where` read home, the shape went to filter for ~25 s and the other app got a 200 in 69 ms (the emulator still passes traffic). Fixed in the build: a cellular network without `NOT_SUSPENDED` (or whose `where` is unknown) is a doubt that keeps the persisted sink; `getDataState()` was tried first and lags the callback by some ms both ways (it held the sink at home once). After: three flaps, lockdown 1 on every sample (203 of 203), the other app refused in 1-2 ms throughout; Wi-Fi, cellular abroad, cellular home (filter, 200) and abroad again all move as before. A reboot in airplane mode: lockdown 1 from the first read after boot, `Tunnel: sink` |
+| 3 the upgrade | **Passed.** `launcher-v0.40.0-rc.1` built as debug from the tag, run under the parent's Bare Vibb on cellular (`vpn_inputs` 1,1,1, sink). Its leftover second record removed, the server stopped, r4 installed over it: lockdown 1 and `vpn_shape` sink from the first read; the second record was written a second later by `apply()` from the cached policy; the other app refused. The other way (rc.1 over r4) kept the sink too |
+| 4 Android's switch | **Passed, but the SIM reload not run.** Ingen data: `data_roaming` 0, `no_data_roaming`, "Androids roamingbryter: av og låst". Bare Vibb: the restriction cleared, nothing written, "av – slå den på én gang …". Turned on during Åpne for oppsett ("åpnet for oppsett nå"); after: "på – låst, Emma kan ikke endre den"; still 1 after a reboot. Back to Ingen data: 0 and locked |
+| 5 national roaming | **Passed.** SIM `311480` (MNC length 3) on `311740`: `roaming: true, where: "home"`; under Bare Vibb the filter (no sink), the other app loads, no notice; under Ingen data "Nasjonal roaming: Ingen data stenger mobildata her …" (en too). Airplane mode abroad with Wi-Fi on: the report `where: "unknown"`, the place kept |
+| 6 the Wi-Fi bypass | **No leak.** Abroad, roaming data up, on Wi-Fi: `cellfetch` gets the cellular network in 1-2 ms, and binding to it fails `EPERM` for HTTP and a raw socket in 0-3 ms - under Bare Vibb (filter shape), Som hjemme (filter), and Bare Vibb with the filter off (pass shape). The control, Som hjemme with the filter off (no VPN): HTTP 200 in 58 ms, the raw connect in 12 ms |
+| 7 the kid's switch | **Passed.** Bit 32 alone (the Home form's `section=quick` with nothing ticked keeps it): the row in its card. Off: the line "Only Vibb One uses mobile data. Wi-Fi works as before."; Wi-Fi filter; cellular `sink`/`kid`, lockdown 1, the other app refused; the report `kid: "off"`; the PWA "Mobildata: bare Vibb – Emma har slått av", "Emma har slått mobildata av", the row value "Mobildata av (Emma)". The parent's Bare Vibb: Off at 50 %, "Set by mum and dad". The bit hidden from the PWA: no row, `kid_mobile_off` false; shown again: On |
+| 8 the pause | **Passed.** The abroad sink lifted 0.9 s after the PWA's POST (the other app 200), back 0.4 s after the end. During the pause the kid's row is the kid's own; its Off brought the `kid` sink with the pause running. Ingen data's lock lifted 1.3 s after the POST (the nudge and the policy fetch included) and came back at the end |
+| 9 the page | **Passed.** Each save on its anchor (`#abroad`, `#mobile-data` for both forms there, `#mobile-lock`); no bell; the Home form keeps bit 32 on `quick` and the whole form; its footer names the switch; nb and en, light and dark, at 390 px |
+
+## 6am. Flymodus through the Digital assistant role, the rule screen's sheet, Foreldrekode (design 98) (2026-11-14)
+
+Design 98 §12's tests. Setup: **`jelly36`** restored clean from `~/kid-look-1-avd-pre-start` (22 of 22 sums), started under
+`flock -o ~/build.lock` (no `-wipe-data`: the userdata partition needs 7.4 GB free), the branch's debug launcher as Device
+Owner, a server of the branch with `LAUNCHER_ADMIN_COMPONENT` set to the debug component, the phone made through the PWA's
+Add Phone (mask 111: bit 64 on, D1), enrolled with a typed code. The parent's Settings is reached through the drawer's
+settings button (swipe up past the grid), or the setup notification. `POST_NOTIFICATIONS` granted with `pm grant` (on a
+phone Home asks for it at the first start). The emulator's network time is UTC, and the launcher forces it.
+
+| Test | Result |
+|---|---|
+| 1 onboarding | **Passed.** The card's one step, Åpne for oppsett (`#oppsett`), the notification "1 step left", its tap to the PIN and the rows. The row's tap lifted `disallow_config_default_apps` before Android's page; Default digital assistant app › Vibb One › OK: the window closed 249 ms after `onReady` (the role at .841, closed .090), the restriction back, dialer and SMS ours, `assistant: true`, the step gone |
+| 1b moved roles | **Passed.** HOME chosen as Pixel Launcher during the window: the HOME role stayed Vibb's at once. Caller ID moved to Phone during a later window: `default_apps_changed: ["call_screening"]`, the card's "Default apps changed: Call screening" |
+| D10 Samtalefilter | **Passed.** The row (calls managed, roles not held) asks Android twice in the window; both roles ours, the window closed, the row gone. No adb |
+| 2 on and off under the kiosk | **Passed after a fix.** **Found:** Settings' `AirplaneModeVoiceActivity` uses `Theme.DeviceDefault.Light.Voice`, floating, not `windowIsTranslucent` - `route_missing`. Fixed: translucent or floating is accepted. Then: the window 309 ms (on at ~190 ms), still LOCKED in Home's task, Settings hidden again, the lock-task list without Settings, `mDisabled1` back to 0x6000000; the `going_on` report stored before the `on` report. Off from the row: `no_airplane_mode` not set afterwards. 2b (power during the route) and 2c not run |
+| 3 the parent's switch | **Passed.** "Blokker flymodus" on while on: off, `off_by: "parent"`, the row "Set by mum and dad" at 50 %; off again: the row works |
+| 4 Wi-Fi in airplane mode | **Passed after a fix.** `Settings.Panel.ACTION_WIFI` is a panel on Android 16 (`SettingsPanelActivity`), and Wi-Fi on there wrote `wifi_apm_state=1`. The step ended on the panel's answer (`wifi_kept: true`, airplane mode off) and on the pause's end. **Found:** the route's own voice activity paused and resumed Settings, which ended the step before the panel opened - fixed (only a resume after a pause while the panel is up). The deadline path not run. A later turn-on with Wi-Fi on: Wi-Fi stayed up and the summary read "Airplane mode on since …" from a live report |
+| 5 112 | **Passed after a fix.** **Found:** an emergency call's end of airplane mode is broadcast by `com.android.phone`, which the not-exported receiver missed (the period stayed open, no line). Exported (a protected broadcast). Then: off 109 ms after the call was placed, `off_by: "emergency"`, the event's `airplane_off: true` in the same intake ("The call turned airplane mode off."), and the row refused with the emergency line - **for an hour** (Vibb's callback window, §2.2 step 1), not 10 minutes |
+| 8 reboot | **Passed.** Rebooted in airplane mode with a pause running: on after boot, the role kept, the rule back, Off before the first sync. A period missed by a dead process was closed as `other` at the next start. Mid-route: the DE marker written by hand and the process killed - "left open: putting it back" 0.5 s before the first sync, the marker cleared (a real kill inside the 0.3 s window not run) |
+| 9 the role lost | **Passed.** "None" chosen in Android's own page during a setup window (allowed under the restriction, M2): `assistant: false` in a second (the service's `onShutdown`), the summary's warning, the card's step back |
+| 10 the assist gesture | **Passed.** Under the kiosk, unlocked and at the keyguard: `KEYCODE_ASSIST`, long-press power, the corner swipe - no session shown (`mShown=false`); at the keyguard `mDisabled1=0x7200000` (with `DISABLE_SEARCH`). During Åpne for oppsett: nothing opens (D9) |
+| 11 Off-only | **Passed.** Bit 64 off, airplane mode on during the setup window, then "Lås igjen": Kid Settings "Turn off airplane mode", Wi-Fi read-only, Mobildata "Airplane mode is on"; the tap turned it off |
+| 12 the PWA | **Passed.** The Home form keeps 32 and 64 without `airplane_row` (97) and clears 64 with the row unticked (47); every save lands on its anchor; no bell; nb and en |
+| 13 the sheet | **Passed** with gesture and 3-button navigation: "···" 8 dp under the status bar, clear of the clock; the sheet's last row above the navigation bar in both (818/782 px); Back and a tap outside close it; Flymodus on under the rule (423 ms, LOCKED, Settings hidden after), the rule stays |
+| 14 Foreldrekode | **Passed.** Offline: 15 and 30 min offered (the rule ends 23:59), a wrong PIN counted, the right one: Home, `phone_lifts_v1` with exactly its keys. Lekser started during the pause and locked at 23:20:01. The alarm at the pause's end (.168) fired at the next second. The choices closed at screen-off. Online: the post (200, acked) before the GET, the row (`created_by` NULL, `phone_key`), `lifts_active: [1]`, the summary, the sub-line, the Time page's ⓘ, the inbox's "The time-rule screen until …"; "Avslutt nå": locked at the next sync. Reboot, then online: posted, the rule stayed locked. The clock set back 10 min: the rule back at once. Two rules: "Pause Lekser and Kveld". "Avslutt nå" before the phone's next policy not run (the `adopt` rows) |
+| 15 Home's line | **Passed** in both modes: under the pause's banner, a tap turns airplane mode off |
+
+**Also found:** after an Off the sync waited for the default network, which is the always-on VPN and read validated at
+once - the sync ran before Wi-Fi was up. Fixed: a real validated network. Not run: 6 (Bluetooth), 7 (Gboard's mic).
+
+### Addendum (2026-11-15): the shade during the window (Q99-H1)
+
+Design 99's QA (Q99-H1): `setStatusBarDisabled` is only recorded under lock task, so the window didn't close the shade.
+Fix: the window's features without `LOCK_TASK_FEATURE_NOTIFICATIONS`. Setup: `jelly36` restored clean (22 of 22 sums),
+under `flock -o ~/emulator.lock`; design 98's server and data, the phone enrolled again with a new code; the assistant role
+with `cmd role add-role-holder` (an adb shortcut). An on-device loop read `dumpsys device_policy` (`LockTaskPolicy` mFlags,
+Settings in the list), `dumpsys statusbar` (`mDisabled2`) and `dumpsys window` (`mCurrentFocus`) every 60-80 ms. The
+shade was opened with `cmd statusbar expand-notifications` right after the row's tap. Base features 127, `mDisabled2`
+0x11 (0x15 = the shade disabled too).
+
+| Run | Result |
+|---|---|
+| Before the fix | The old window emulated with the debug override (`add_features 2`). Settings stayed pinned 272-639 ms with `mDisabled2=0x11` and the shade open. A tap on Android's "Physical keyboards" notification 74 ms after the pin started `Settings$PhysicalKeyboardActivity` in the pinned package. It resumed at .077, step 7 cleared it (`clear-task-all`) at .098, and the hide killed it at .283 |
+| Kid Settings, the sheet | Fixed: at the pin `mFlags= 125 mDisabled2=0x15`, and the shade left focus within one sample. SystemUI got the disable (`QSDisableFlagsLog ... QiNgR`) at .638, 9 ms before Settings' unhide started its process (.647). `expand-notifications` before every sample: never open during the window, open 300 ms after it. After: 127, 0x11, the shade opens |
+| The close | **Found:** one sample read `pinned=1 mFlags= 127 mDisabled2=0x11`. A pass writes the features before the list, so the shade came back while Settings was still on it. Fixed: the close is two passes (`routeClosing`). After: `pinned=0 mFlags= 125`, then 127 (787/916 ms from the sheet, 1474/1617 ms from Kid Settings) |
+| A kill mid-window | `run-as ... kill -9` 252-280 ms after the pin, from the sheet and from Kid Settings. The new process logged "left open: putting it back" 0.2-0.6 s later. Settings left the list at 1.0-1.4 s (a plan-less pass, still 125). The put-back's `apply()` wrote 127 at 1.9-2.7 s. The marker was cleared, Settings hidden, and the shade opened again |
+| **Left** | A touch on the shade during SystemUI's ~300 ms collapse stops it, and the shade stays open for the window. In one run, three of five taps on the low-storage notification (`cmd devicestoragemonitor force-low -f`) started `MANAGE_STORAGE` with 0x15 in force. Storagemanager isn't pinned, so that start was blocked. A Settings-bound notification would have opened in the pinned Settings until step 7. A single tap 59 ms after the pin started nothing, but it left the shade open |
+
+Not run: Android's own "Wi-Fi stays on in airplane mode" notification (the clean AVD has no `wifi_apm_state`). A
+Settings-bound notification for the last row was not tried either: the shell can't make one on this image (`cmd
+notification post -c` is refused), and the keyboard notification is gone after its first tap. Undo the test helpers with
+`cmd devicestoragemonitor reset`, `allow_listener` for `BadgeListenerService`, and the override's `reset`.
+
+## 6an. Snarveier, the kid's quick panel in the shade (design 99) (2026-11-15)
+
+Design 99 §10's tests. Setup: **`jelly36`** restored clean from `~/kid-look-1-avd-pre-start` (22 of 22 sums), started
+under `flock -o ~/emulator.lock` without `-wipe-data`, density 240 (the AVD's own), the branch's debug launcher as
+Device Owner (§4's adb lines), a server of the branch (`LAUNCHER_ADMIN_COMPONENT` the debug component) on design 98's
+data, the phone enrolled again with a typed code; migration 0148 set bit 128 on it. Sizes from `uiautomator dump`
+(px / 1.5 = dp); the names' widths from the screenshot's light pixels per quarter cell. The assistant role with `cmd
+role add-role-holder android.app.role.ASSISTANT` (an adb shortcut). Afterwards `jelly36` restored again (22 of 22 sums,
+the same file list).
+
+| Test | Result |
+|---|---|
+| 1 the panel | **Passed.** Posted at the enrolment's first sync (`Shortcuts: Starting the panel`), at the top under lock task, colorized, not bundled. Before the assistant step the default was Lommelykt, Lyd, Wi-Fi, Bluetooth (the default follows the role, Q99-L9). Unfolded on every pull: cells 82 px = **55 dp**, discs 36 dp, the names under them; a header tap folds it to the icons (cells 67 px = **45 dp**), the next pull unfolds it again |
+| 1 the names | **Passed** at font scale 1.0. en at 11 sp: Flashlight 42.7 dp, Bluetooth 42.7, Sound 27.3, Wi-Fi 20.7, Data 20.0 (of 51 dp). nb (the app's locale `nb-NO`) Lommelykt, Mobildata, Lysstyrke, Bluetooth: all four at one size of about 10 sp, Lommelykt 44.7 dp, Mobildata 40.7, Bluetooth 39.3, Lysstyrke 38.7 - none cut. **At font scale 1.3** the 9 sp floor is reached: en "Brightness" is cut ("Brightne…"), nb "Lommelykt" and "Mobildata" too. **Found:** a font-scale change didn't rebuild the panel; fixed (`ACTION_CONFIGURATION_CHANGED`, the scale in the post key) |
+| 1 with calls (Q99-L8) | **Passed.** During an ongoing call the CallStyle notification is first and unfolded, the panel second and **folded** (the icons, still usable), the missed call under it; nothing bundled. Three Meldinger threads not run: the three test SMS posted no notification on this data |
+| 2 taps, shade open | **Passed** for Lommelykt (the AVD has an emulated flash), Lyd (Lyd <-> Lydløs (vibrerer)), Wi-Fi, Bluetooth, Mobildata, Lysstyrke (lav -> middels -> høy, the glyph follows): each `Tap on <key>` in about 5 ms of the receiver, the disc follows, the shade stays open (focus `NotificationShade`). Mer tid (no budget on this phone) and Musikk (no Vibb music session) not run |
+| 2 under a time rule | **Passed.** Kveld turned on now from the PWA: the time-rule screen in front, the panel the same, Lommelykt, Lysstyrke and Bluetooth taps work, the rule stays |
+| 3 the status bar icon | **None** at LOW: no Vibb icon in the status bar (the gear seen early was Android's own keyboard notice) |
+| 4 the keyguard | **Passed.** Android's Swipe keyguard (no PIN): the panel isn't on the lock screen, nor in a shade pulled there (silent and `VISIBILITY_SECRET`); the missed call is. The receiver's keyguard refusal can't be reached from the shell (a non-exported receiver), so it rests on `ShortcutsTest`. Vibb's PIN lock not run (no Child PIN on this phone) |
+| 5 Flymodus from the shade | **Passed.** The Clock app in front, the shade open, a tap on Flymodus: our window had focus at ~290 ms (the shade gone), and only then the route: Settings pinned with `mDisabled2=0x15 mFlags=125` from 1.45 s, airplane mode on, the window closed (127, 0x11), and the Clock app in front again at 3.8 s. **Held shade:** the tap followed by a 4.5 s press on the shade - our window never got focus, "no focus within 3000 ms - nothing done", no window opened. Under the rule: the first try the route timed out on this slow AVD ("airplane mode not on", design 98's 1 s wait), the second on in 706 ms, the time-rule screen in front again. Off from the shade: a broadcast, the shade stayed open, off in ~160 ms |
+| 6 the parent's switch | **Passed.** The Home page's row unticked (`section=quick`, `shortcuts_row=1`): "Panel removed: not shown" at the sync, About This Phone "Shortcuts: Off"; ticked again: back. The save redirects to `#quick-controls`. The sub-line read "Emma chose: Flashlight, Brightness, Airplane mode, Bluetooth" |
+| 7 hiding | **Not possible on this phone:** the long-press menu says "These notifications can't be modified." Vibb One holds the dialer and SMS roles, and Android locks a default app's channels (`defaultAppLocked=true`, `mImportanceLockedDefaultApp=true` on every `launcher:` channel). design 99's probe (S16) wasn't a role holder. "Vis i varsellisten igjen" therefore not run |
+| 8 the picker | **Passed after a fix,** gesture and 3-button navigation: four of nine, Flytt opp/ned (the ends' buttons dimmed), the row's sub-line for Mer tid; in 3-button the last row ends at 755 px, the bar starts at 782. **Found:** the refusal of a fifth was a line added above the list, which moved every row under the next tap; fixed (it takes the count line's place) and checked again |
+| 9 reboot | **Passed.** The panel is back after the unlock (`Starting the panel` at the process start), the picks kept |
+| 10 the Jelly Star | Owed (§10 test 10) |
+
+**Revision 3** (no names, the Vibb mark in the header; design 99 §3, `docs/review/qa-99-code.md` "Fixes"), a short
+check of the new look only, 2026-11-15. Setup as above: `jelly36` clean (22 of 22 sums, the same file list) before,
+the branch's debug launcher (01e0bb93b, then with the hardening refresh below) as Device Owner with the assistant role,
+the run's server data again, enrolled with a typed code; `jelly36` restored afterwards (22 of 22 sums; the run's
+`data/misc/pstore/pstore.bin` removed, so the same file list). Sizes from `uiautomator dump` (px / 1.5 = dp).
+
+| Check | Result |
+|---|---|
+| Folded and unfolded | **The same row.** Unfolded (first on every pull): the header line "Vibb One (debug) · Shortcuts" over the row, cells 82-83 px = **55 dp**, discs 60 px = **40 dp**, glyphs 33 px = 22 dp, the row 72 px = 48 dp. Folded (a header tap): the small icon and the chevron beside the row, cells 67-68 px = **45 dp**, the same 40 dp discs, 7 px (~4.7 dp) between two discs, the row 48 dp. Only Android's header moves; the buttons are the same |
+| Font scale 1.3 | **No change** to the row: the same 40 dp discs and cells both ways (the header text grows and its app name is cut, Android's own) |
+| The header icon | The Vibb mark (`ic_stat_vibb`): Android draws its rings and core dark in a light disc, folded and unfolded. The gear before drew an empty disc |
+| A dimmed Flymodus | "Blokker flymodus" set in the PWA, the Clock app in front, the shade open: Flymodus at 40 %, "Airplane mode, not available now". A tap: `Tap on airplane refused: DIMMED` from the receiver, **the shade stayed open** (focus `NotificationShade`), no `ShortcutAirplaneActivity` (C99-M1) |
+| **Found:** the block didn't dim it | With 01e0bb93b the panel kept Flymodus usable after the block until another signal (a brightness change) refreshed it: the policy write the panel hears comes before `applyHardening` sets `DISALLOW_AIRPLANE_MODE`, and no broadcast an app can register for says a restriction changed (`ACTION_USER_RESTRICTIONS_CHANGED` isn't in the SDK). **Fixed:** `AppEnforcer.applyHardening` asks `ShortcutsRuntime.requestRefresh()` at its end. Checked again: the block off and on from the PWA, Flymodus "off" and "not available now" within the sync, no nudge |
+| The launcher's language (C99-L1) | `cmd locale set-app-locales ... nb-NO`: `Notification channels named again: nb-NO,en-US`, the channel `launcher:shortcuts` named "Snarveier", the header "Snarveier", the descriptions "Lommelykt, av", "Lyd, på", "Flymodus, ikke tilgjengelig nå", "Wi-Fi, på" |
+
+## 6ao. One Vibb notification, and the request for more time answered (design 100) (2026-11-15)
+
+Design 100 §11's checks. Setup: **`jelly36`** restored clean from `~/kid-look-1-avd-pre-start` (22 of 22 sums), started
+under `flock -o ~/build.lock` and `flock -o ~/emulator.lock` without `-wipe-data`, density 240 (the AVD's own). First
+main's debug launcher (design 99, 591da420d) as Device Owner (§4's adb lines), enrolled with a typed code on a server of
+the branch (migration 0149, `LAUNCHER_ADMIN_COMPONENT` the debug component) on design 99's data; then the branch's debug
+launcher (3a5dff456, later 401e03745) installed over it. Two parents: `admin` with the display name "Pappa" and a second
+one, "Mamma" (put in by SQL with the first's password and TOTP; its name taken away for one answer to see D11). The
+launcher's language from the PWA (Hjem-skjerm › language). Sizes from `uiautomator dump` (px / 1.5 = dp). The emulator's
+zone is UTC; a new day for the phone came from `cmd time_zone_detector suggest_telephony_time_zone` (Asia/Dubai, then
+waiting for its midnight), with Phone Setup's zone set to match (§3b). The PWA card in Playwright (Chromium 1140) at
+390 px. Afterwards `jelly36` restored again (22 of 22 sums, the same file list) and the server stopped.
+
+| Check | Result |
+|---|---|
+| 1 one notification | **Passed.** Main's build: 1011 (`launcher:shortcuts`, `ShortcutsService` in front) and 1002. After the update: **only `id=1002`**, on `launcher:shortcuts`, `CommandListenerService` `isForeground=true foregroundId=1002`, no `ShortcutsService`. Snarveier off from the PWA with the shade open: the same row turned into the plain notice in place (`launcher:command_listener`, `actions=1`), and at the next pull it sat at the bottom under "Silent". On again with the shade open: the panel in place, folded in "Silent"; at the next pull first and unfolded. Only 1002 at every step |
+| 2 the time line and the note | **Passed after a fix.** No budget: the panel 177 px = **118 dp**. A budget today: 206 px = **137 dp** (§3.2's 137). With a note: 234 px = **156 dp** (§3.2's ~157). Font scale 1.3: 215 px = 143 dp, with a note 251 px = 167 dp; "Skjermtiden er brukt opp i dag" wraps to two lines at 1.3, never cut (284 px = 189 dp with the note). No button under the row (D1). A Mer tid tap -> "Spurt kl. 7:35 · venter på svar" (the server took it in ~1 s, so "sender …" only flashed), the disc "Mer tid, spurt". nb and en ("1 t 22 min igjen i dag" / "1 h 27 min left today"). **Found:** Nunito didn't draw - SystemUI inflates RemoteViews in a restricted context, where a TextView ignores an app's font resource, so `@font/nunito_bold` drew the default regular face. **Fixed** (401e03745): the time line takes `TextAppearance.Material.Notification.Title` (the shade's own title face, bold-ish), the note `TextAppearance.Material.Notification`; checked again, the heights unchanged. **Found:** the note's clock had no AM/PM in 12 h ("Spurt kl. 7:35" at 19:35; the AVD's system locale is en-US): it used the clock face's format. **Fixed:** `ClockFormat.formatClock` (pinned). Not seen again on the device (the phone was capped by then); 24 h phones never showed it |
+| 3 Snarveier off | **Passed.** The plain notice: the title "1 h 26 min left today" / "4 min igjen i dag", the note as its text ("Mamma ga deg 15 min"), the action "Be om mer tid" / "Ask for more time" while the kid may ask; the Vibb mark |
+| 4 icons | **Passed** for the panel's gear (dark in a light disc, folded and unfolded), the plain notice's Vibb mark (rings, no empty disc, at the first swap after the update), the ring (`command/ring`: "Telefonen ringer" with the Vibb mark) and the assistant's setup notice ("Fullfør oppsettet av Vibb One", the Vibb mark; in the window the panel has no time line). Play's install mode and the filter's "kobler til …" not seen (the same `ic_stat_vibb`, pinned by the source test) |
+| 5 boot | **Passed as far as the AVD shows.** A calm reboot: the plain notice enqueued at 20:27:51.762 (the anchor's start, still at the keyguard), the panel 1.5 s later (53.237) - inside Android's FGS notification delay, and the shade at the keyguard shows neither (secret/private). The first reboot of the run was an ANR storm (load 54), the service started 95 s late, then the same swap in 1.4 s. The plain notice was never seen in a pulled shade |
+| 6 the update from design 99 | **Passed.** See 1: 1011 gone with `ShortcutsService`, one notification at 1002 |
+| 7 hiding | **Only the menu:** the long-press says "These notifications can't be modified." (Vibb One holds the dialer and SMS roles). The full form is owed (Q100-L9) |
+| 8 the time-rule screen (a budget of 1 min) | **Passed** in gesture navigation, nb. On a new day: "Be om mer tid" (the accent pill) under the rule card; a tap -> "Spurt kl. 12:02 · sender …". **Network off** (`svc wifi/data disable`): "sender …" until +14 s, "sendes når telefonen er på nett" from +18 s; network on: the request went at the SSE reconnect's sync (+34 s, `ACCEPTED`), "venter på svar". Pappa's "Nei" on the card -> "Pappa svarte nei kl. 7:36" and the ringed "Spør igjen"; "Spør igjen" -> "sender …" -> "venter på svar" (the dim pill). Mamma's +30 on the card -> the screen gone at the sync, the panel "Mamma ga deg 30 min". Given minutes run out -> the screen back with "Mamma ga deg 15 min" and "Spør igjen". The third answered request -> "Pappa svarte nei kl. 7:47" and "Du har spurt tre ganger i dag.", no button (the Mer tid disc leaves the panel while capped). Kveld turned on now with the budget used up: the screen names Kveld, no ask block (D4). **Not run:** D6 (one app row and a Child PIN; this phone has three rows and no Child PIN - `TimeLockModelTest` keeps `unlockOpenRow`), TalkBack, 3-button navigation and en on the screen (the zone jumps left the phone with lifts it kept, so the screen didn't come back in time) |
+| 8b the answer's rules | **Passed.** Quick actions' +15 (Mamma) while a used-up request was open: the card gone, the answer row `yes` with its lift, the screen gone, the panel "Mamma ga deg 15 min". A rule pause (`target=rule`, all) while one was open: the card stayed, no answer row, the phone still "venter på svar". Asked under Kveld turned on now (from the Mer tid disc): the card's sub-line "00:04 · En tidsregel" and "Knappene setter reglene på pause."; Mamma's +15 made a `rule` lift and the `yes` row, the rule paused, Home; with Mamma's name taken away the panel said "Du fikk 15 min mer" (D11) |
+| 9 locale | **Passed** for the panel (nb/en lines, the header "Snarveier"/"Shortcuts"), the plain notice's action and the channels (`launcher:shortcuts` "Snarveier", `launcher:command_listener` "Vibb One"). The screen's block in en not seen (see 8) |
+| 10 the PWA card | **Passed after a fix.** 390 px, light and dark, both parents, JS off: the card is the first thing after `</header>` (22 px under it), above Hurtighandlinger; four 77x44 px buttons ("+15 min", "+30 min", "+1 t"/"+1 h", "Nei"/"No"); the title "Emma ber om mer skjermtid", the sub-line the event's words ("19:45 · Skjermtiden er brukt opp"). Two parents in two browsers: Pappa's "Nei" (JS, the stay post) -> "You said no. Emma sees it on the phone." at `#quick`, scrolled 555 px, not the top; Mamma's stale "+30 min" -> "Pappa har allerede svart." at `#quick`, no lift. Activity: "Skjermtiden er brukt opp · Mamma ga 30 min ·" and "… · Pappa svarte nei ·". The events' target is `/devices/1#ask` (no push subscription on this server, so no push was opened). **Found:** an Attention row right after the card touched its ring (0 px). **Fixed** (401e03745): the card keeps the header's 20 px under it |
+
+**Also seen, not design 100's:** the rule card's TalkBack text "Kveld, til 1:04 a.m.." has a double period (an en-US 12 h
+"a.m." before the sentence's own). A gift made just before midnight stays in the panel's note up to 30 minutes into the
+new day (the shade's note has no day check, the screen's has).
+
+**Owed on the Jelly Star:** the swap and the sorting on its SystemUI (M1-M3); the gear in its header; the time line's
+face (the shade's title face now) and the heights; the deferred-plain replacement at boot with a pull right after the
+unlock; the screen's block with a child's finger, TalkBack ("Be om mer tid, knapp", the live announcements) and 3-button
+navigation; D6 with a Child PIN; hiding in its full form (a phone without the dialer and SMS roles, Q100-L9).
+
+## 6ap. Wi-Fi sign-in: the window, the parent code, the reopen (design 102 Part A)
+
+Owed: design 102 §11's E1-E7 and E10-E13 (E8-E9 are Part B, §6aq). Setup: **`jelly36`** restored clean (the sums, as
+§6an), the branch's debug launcher as Device Owner with a kiosk, a server of the branch with a parent code set on the
+phone, the phone enrolled; mobile data off. The fake portal on the VM: `python3 -I scripts/fake-portal.py --mode portal
+--port 8105` (`--selftest` first); point Android's probe at it with `settings put global captive_portal_http_url
+http://10-0-2-2.nip.io:8105/generate_204` and the same for `captive_portal_https_url` and `captive_portal_fallback_url`,
+`captive_portal_use_https 0` (adb shortcuts for the rig only; the kid's ways in need none). **Always through a hostname**
+(`nip.io`, the other site `sslip.io`), never `10.0.2.2`: the window's own lookup on the bound network is part of the
+check. Wi-Fi off and on (`svc wifi`) makes NetworkMonitor probe again; `curl http://10-0-2-2.nip.io:8105/reset` forgets
+an Accept. Logs: `adb logcat -s PortalWindow PortalRuntime ActivityTaskManager ConnectivityService NetworkMonitor`.
+
+| Check | What to see |
+|---|---|
+| E1 | The notification ("Sign in to Wi-Fi network", folded in the Silent bundle) under the kiosk opens Vibb's entry (`cmp=…/com.kidslauncher.mdm.portal.CaptivePortalEntry`, no violation): "Sjekker nettet …", the keypad, then the window in `:portal` (`ps -A | grep portal`). Accept closes it within ~2 s; the next report's `captive_portal.sessions` has `validated`, `approved: "code"` |
+| E2 | `resolveActivity` names the entry; a second ordinary app's `startActivity` of the entry gets "Permission Denial … requires android.permission.NETWORK_STACK" (not the shell) |
+| E3 | The first page waits for the filter's lists (code QA M1); a phone with no compiled list refuses every page. Vibb's real filter on, and Bare Vibb's sink on a SIM-less AVD: the portal loads by hostname in the window; a listed host (add the other site to Blocked domains) is "Denne siden er sperret" and counted |
+| E4 | `--mode soft` and `--mode hotspot`: the window closes as `passes` within 5 s (Vibb's check). `--mode walled`: does **not** close early - needs `cp.cloudflare.com` unreachable from the emulator (block it in the VM's resolver for the run); without that rig the rule rests on `login_rules.json`'s `passes` rows |
+| E5 | `--mode meta` and `--mode script` reach the login page; a tap on "Another site" and on `target=_blank` is refused ("Denne lenken går ut av innloggingssiden"); on the other site, `/away` (a leaf's redirect onward) is refused; `--mode iframe`: the frame shows our blocked page and the session's `blocked_frames` names it (a `wifi_signin_wide` event in the PWA); `--mode redirector`: the tapped `/out?to=` 302 to the other site is refused; `--mode formpost`: the POST's 302 to the other site is allowed and a tap back there works (a portal site). Log whether `hasGesture()` rides a tapped link's and a POST's redirect hops (R7). `--mode leafpost` (code QA): the login page refreshes itself to the other site's `/partner` (a leaf); its POSTs that 302 and 307 to example.com must not leave - record what the window does with each (a 307 may reach neither hook) |
+| E6 | Advanced's "Krev foreldrekode" off: four code-free openings, the fifth "Spør en voksen om Wi-Fi-innlogging" (and `wifi_signin_budget` once); "Gi én innlogging til nå" in the PWA lets one through after the sync |
+| E7 | The binderless start from the Wi-Fi page's "Logg på" and Home's line: the window loads Android's probe URL and the portal's redirect; note how often `reportNetworkConnectivity` re-probes (the rate limit) |
+| E10 | After a `validated` sign-in the Wi-Fi page offers "Åpne påloggingssiden" on that network and not on another; it opens the recorded page, a tap to the other site is refused, it stays open on a working network, counts in the budget (code off), asks the code (code on); the row is gone the next day (set the date) and after a Wi-Fi with no sign-in |
+| E11 | Cleartext allowed in both configs: Settings' server address `http://example.org` is still refused (the vectors on the device), and the sync never connects to it |
+| E12 | The keypad: a wrong code counts in the shared lockout (Settings' gate shows the same tries left), a right one opens this opening only; a second sign-in asks again; the budget spent and a right code still opens (D17); no parent code on the server: only a grant opens; the requirement off on Avansert opens without the keypad; Cancel keeps Android's notification; the PWA shows the `wifi_signin` PIN events |
+| E13 | After a reboot the reopen's row is gone; on a second AVD hotspot with another SSID it doesn't show |
+
+### Run (2026-11-15)
+
+Setup: **`jelly36`** restored clean from `~/kid-look-1-avd-pre-start` (22 of 22 sums, the same file list), started under
+`flock ~/build.lock` and `flock -o ~/emulator.lock` without `-wipe-data`, the branch's debug launcher (a5d7e521a, then
+ecb5f5cfa and e20a3fa8f) as Device Owner (§4's adb lines), a server of the branch on design 100's data (migration 0150; the phone
+renamed to a neutral name), enrolled with a typed code; parent code a 6-digit test value set in the PWA; parents
+"Pappa" and "Mamma". Mobile data off. The fake portal as above, always by hostname. The emulator died once mid-run (no error in its log) and was
+started again on the same state for the fixes' builds. Afterwards `jelly36` restored again (22 of 22 sums, the same file
+list).
+
+**The rig's https.** The emulator's Wi-Fi has real internet, so Vibb's https check (Google's and Cloudflare's 204 on
+the bound network) passes and every sign-in is refused as "Nettet virker allerede". The emulator ran with
+`-http-proxy http://127.0.0.1:3128` and a scratchpad proxy (not in the repo) playing the captive network: until the fake
+portal's Accept it refuses every port-443 CONNECT and answers every port-80 request with a 302 to the login page, as a
+real portal does (`captive`); `walled` refuses only Cloudflare's addresses; `hold` refuses 443 even after Accept (to keep
+a window open after a form post); `open` passes everything. Connections to 10.0.2.2 are always passed. The window's
+screenshots are the console's (`adb emu screenrecord screenshot`); the keypad is a secure window. Logs as above, with
+`adb logcat -b events | grep wm_finish_activity` for the window's end.
+
+| Check | Result |
+|---|---|
+| E1 | **Passed.** Android's "Sign in to Wi-Fi network · AndroidWifi" (in the Silent bundle, expanded first) under the kiosk: `START … act=android.net.conn.CAPTIVE_PORTAL … cmp=…/com.kidslauncher.mdm.portal.CaptivePortalEntry … from uid 1000`, no violation; the keypad ("Foreldrekode for Wi-Fi-innlogging"); after the code the window in `me.vibb.launcher.debug:portal`, on `10-0-2-2.nip.io` by hostname with Vibb's filter on. Accept: NetworkMonitor validated at .841, the window finished at 07.875 (~1.2 s after the tap), `:portal` died. The report: `outcome: validated`, `approved: code`, `start: system`, `handler: vibb` |
+| E2 | **Passed.** `cmd package resolve-activity -a android.net.conn.CAPTIVE_PORTAL` names the entry after the enrolment (the emulator half of D-C1). A second ordinary app (a scratchpad test app, let out through "Allow these apps" and ticked) starting the entry: `Permission Denial: starting Intent { cmp=…/CaptivePortalEntry } from … uid=10220 requires android.permission.NETWORK_STACK`, its `resolveActivity` naming the entry |
+| E3 | **Passed** for Vibb's real filter: the portal loads by hostname in the window with the filter VPN up; `sslip.io` added under Blocked domains: a tap to the other site is "Denne siden er sperret", no request reaches it, `blocked_hosts: ["10.0.2.2.sslip.io"]`. Not run: Bare Vibb's sink (this AVD has a SIM), the no-compiled-list case (`LISTS_FAILED`, pinned by the code) |
+| E4 | **Passed.** `--mode soft` and `--mode hotspot` with https open: the entry says "Nettet virker allerede" and asks no code (§3.2 step 2: the check runs before the code, so no window opens). The window's own close: opened with https held, then let through - closed as `passes` 1.5 s later. `--mode walled` (Cloudflare refused): Google's 204 passes every 5 s, Cloudflare's is refused, the window stays open; its "Log in with Google" link is a tap to another site and refused; Accept validates |
+| E5 | **Passed after a fix.** `meta` and `script` reach the login page (through the notification: their move is in the probe's answer). "Another site" and `target=_blank`: "Denne lenken går ut av innloggingssiden", no request to the other site. `tel:` opens Vibb's own phone book (`DIAL … pkg=me.vibb.launcher.debug`); its back arrow returns to the window. `iframe`: our page in the frame, `blocked_frames: ["10.0.2.2.sslip.io"]`, a `wifi_signin_wide` event (`why: frames`). `redirector`: the tapped `/out?to=` 302 refused. `formpost`: the POST's 302 to the other site allowed (`/welcome`); there `/away` (302 to example.com) refused; back on the portal a tap to the other site allowed (a portal site now). **`leafpost`:** with the window settled first (a tap on Terms, then Back, so the refresh makes `/partner` a leaf), its POST answered **302** to example.com is refused; its POST answered **307** loaded **example.com in the window** - neither hook sees a POST's 307 hop. **Fixed** (ecb5f5cfa): a main-frame load no hook judged (a 307/308 hop, a history move) is judged at its commit in `onPageStarted` - the filter's lists, and on another site as a redirect hop of the chain in flight; refused, it stops and the window steps back. Checked again: the 307 is refused, the window back on `/partner` with the line. The POST itself still reaches the third site (no page shown). Without the settling tap the refresh to `/partner` makes it the first site (the page moved itself before the kid acted, §3.3), and its POSTs may leave by design |
+| E5 R7 (measured) | The scratchpad probe app (a plain WebView logging both hooks), before Vibb was installed: a tapped link to `/go` - SOUL `gesture=true`, then its 302 hop SOUL `redirect=true gesture=false`; a form POST - SIR `method=POST`, then its 302 hop SOUL `redirect=true gesture=false`; a script's auto-POST the same; a form POST answered **307** - SIR for the POST only, **no SOUL and no SIR for the target**, which loaded. So `hasGesture()` does not ride redirect hops (the window's chain tracking is what holds) and a POST's 307 needs the commit check above. Also: a meta refresh within Chromium's ~5 s user activation after a tap reads `hasGesture() == true` and is judged as a tap (stricter) |
+| E6 | **Passed.** Avansert's "Krev foreldrekode" off (`POST …/logins` `section=wifi_signin`, 303 to `/devices/1/advanced#wifi-signin`): four code-free openings, the fifth "Spør en voksen om Wi-Fi-innlogging"; `wifi_signin_budget` raised once; "Gi én innlogging til nå" (303 to `#logins-wifi`) let one more through after the sync (`grant_used: 1`), the next refused again |
+| E7 | **Passed.** Home's line "Wi-Fi-en vil at du logger på" and the Wi-Fi page's "Logg på" (`Tilkoblet – må logges på`) open the entry; the window loads `http://connectivitycheck.gstatic.com/generate_204` and follows the portal's 302 to the login page. **The re-probe:** during continuous page loads NetworkMonitor logged "Forcing reevaluation for UID 10219" no closer than ~4 s apart (42.28, 46.27; 48.93, 56.93, 02.63), each a full probe of ~350-470 ms; the window's own limit is 3 s. **Found:** a binderless sign-in that closed as `passes` left Android's Wi-Fi `CAPTIVE_PORTAL` (no `CaptivePortal` to dismiss, the last page's re-probe skipped) - Home's line and "Logg på" stayed until NetworkMonitor's own recheck. **Fixed** (ecb5f5cfa): the `passes` close asks one re-probe; checked: the window finished at 59.519, "Forcing reevaluation" at 59.516 |
+| E10 | **Passed.** After a sign-in that worked the Wi-Fi page offers "Åpne påloggingssiden · Logg av eller se hvor lenge du har igjen" - also after a Wi-Fi off/on (the SSID match). It asks the code, opens the recorded login page, refuses a tap to the other site, allows Terms, and stays open on the validated network (> 14 s); `start: revisit`. With the code off it opens without the keypad and counts in the budget (openings 1-4 above were reopens). The next-day half not run |
+| E11 | **Passed.** Settings › Serveradresse `http://example.org`: "Telefonen bruker bare en serveradresse som begynner med https:// …", the address unchanged; no connection to example.org through the proxy |
+| E12 | **Passed, but for Cancel.** A wrong code: "Feil kode. Prøv igjen.", a `wrong` PIN event; the lockout is the shared one (two wrong at the Wi-Fi keypad, one at Settings' gate: the events' `failures` 1, 2, 3). A right code opens this opening only; every sign-in asks again. With the budget spent and the code required, a right code opens (D17). The parent code cleared in the PWA: the keypad disabled with "Ingen foreldrekode er satt – spør en voksen", Avansert's row "No parent code is set – sign-in works only with «Allow one more sign-in»"; a grant opens (`approved: grant`, `parent_code_set: false`). The requirement off opens without the keypad. The PWA's Activity: "Parent PIN used on …'s phone · Wi-Fi sign-in". **Cancel does not keep Android's notification on this image**: the notification is `AUTO_CANCEL` and NetworkMonitor re-probes after `reportCaptivePortalDismissed()` (still a portal) but doesn't post it again - Android's own behaviour for any handler. Home's line and the Wi-Fi page's row stay, so the kid still has a way in |
+| E13 | **Passed** for the reboot: after a restart on a working network the Wi-Fi page has no reopen row and `no_backup/portal/revisit.json` is gone. A second hotspot with another SSID not run (one access point on the AVD) |
+
+**Also found:** the Sign-in page's recent list wrapped a time as "02:4 / 7" beside a long sub-line; fixed (ecb5f5cfa,
+`row-value-keep`). On this enrolment the launcher held no location permission (not design 102's): the Wi-Fi page found
+no networks and the session's `network` was null; granted with `pm grant` for the rest of the run, after which the
+SSID shows in the window's title and the reopen matched after a reconnect.
+
+## 6aq. Chrome only for logins (design 102 Part B)
+
+Owed: design 102 §11's E8 and E9. Setup as §6ap, Chrome installed (the Play image's), not ticked under Apps; on the
+Sign-in page the role on with the Google preset and an own site; a test app with a Custom Tab login (the probe app of
+the design's §1 has one, or any allowed app with "Log in with Google"). Logs: `adb logcat -s BrowserConfig AppEnforcer`;
+`adb shell dumpsys device_policy | grep -A3 com.android.chrome` for the written restrictions.
+
+| Check | What to see |
+|---|---|
+| E8 the role | `BrowserConfig: Managed config written for com.android.chrome` before the apply's hide loop; the report says `login_browser.state: on` (the page "Klar"). A Custom Tab to a listed site opens (Chrome pinned, M12) with no first-run screen; a typed blocked site in full Chrome ("Open in Chrome browser") is "… is blocked"; typed words do nothing; the New Tab page's feed is gone; Chrome is on neither Home nor the drawer |
+| E8 refusals | Tick Chrome under Apps: the Sign-in page's switch is disabled with the reason, the policy's `login_browser` is null, Chrome is a normal app. A failed write (e.g. the policy's package changed by SQL to another browser): `failed`/`package`, Chrome hidden and unpinned |
+| E9 the pause | A Custom Tab of YouTube opened during a PIN pause (the lockdown lifted) is gone after the pause's end (Chrome hidden and unhidden in the same apply), and a restored tab reloads blocked |
+| E9 the clear (code QA L5: the role waits for the clear's success) | The role's first turn-on clears Chrome's history and sign-ins once (`cleared_ms` in the report); turning it off and on again doesn't clear again; ticking Chrome and then the role again does |
+| E9 the window | A Wi-Fi sign-in window opened in a pause closes at the pause's end (`closed_by_vibb`) - also when the pause ends early (Home's "Lock again", the PWA) more than 11 minutes after the opening, and no second window opens beside it meanwhile (code QA M2) |
+
+### Run (2026-11-15)
+
+Setup as §6ap's run, the proxy `open`. The role on from the Sign-in page (`section=apps`), the Google preset and an own
+site `10-0-2-2.nip.io`; the Custom Tab from the scratchpad test app (a plain `VIEW` to `com.android.chrome` with
+`android.support.customtabs.extra.SESSION`). Full Chrome was started with `am start -n com.android.chrome/…Main` (an adb
+shortcut: on this Chrome the tab's menu has no way there, see E8).
+
+| Check | Result |
+|---|---|
+| E8 the role | **Passed after a fix.** At the first apply: "Cleared com.android.chrome's data: true", then "Managed config written for com.android.chrome" and "Chrome's lockdown tightened: its tabs ended", before the plan's loop. **Found:** the role's unhide of Chrome fired `onPackageAdded`; `enforceOnNewPackage` hid it again as a new unallowed app and asked a sync, whose apply unhid it - "Sync for [package_added]" every 0.4 s, Chrome hidden most of the time. **Fixed** (e20a3fa8f): a Chrome the role holds is left to the plan there. Then: no `package_added` syncs, Chrome unhidden and in the lock-task list, on neither Home nor the drawer; the report `login_browser.state: on` with `cleared_ms` and `written_ms`. The Custom Tab to the listed site opened with no first-run screen (Chrome's `FirstRunActivity` started and passed through); a link to the unlisted other site: "10.0.2.2.sslip.io is blocked · Your organization doesn't allow you to view this site". **The tab's "⋮"** on Chrome 133 here: Go forward, Site information, Refresh, Find in page, Desktop site, Translate, "Running in Chrome" (a label) - **no "Open in Chrome browser"**, no Bookmark, Download, history or Add to Home screen (M13 had them). Full Chrome: the New Tab page has the tiles and **no Discover feed**; the YouTube tile "m.youtube.com is blocked"; a typed `wikipedia.org` "wikipedia.org is blocked"; typed words and Enter do nothing. **Seen:** full Chrome's first start showed two Privacy Sandbox prompts ("Turn on an ad privacy feature", then "Other ad privacy features") - no way out, but `PrivacySandboxPromptEnabled: false` (in Chrome 133's schema, M10) would spare them |
+| E8 refusals | **Passed** for a ticked Chrome: the Sign-in page's switch disabled with "Chrome is allowed as a normal app. Untick it under Apps to use it only for sign-in.", Chrome a normal app on Home. The failed write (`failed`/`package`) not run: the server always sends `com.android.chrome` and the policy has no column to change by SQL; `LoginBrowserTest` keeps the rows |
+| E9 the pause | **Passed.** In a PIN pause (lockdown lifted, the bundle written back to DoH only) a Custom Tab of `m.youtube.com` loaded. The pause ended from the PWA ("Lock again"): "Managed config written", "Chrome's lockdown tightened: its tabs ended", Chrome's process gone, Home in front under lock task. Full Chrome afterwards restored its last tab, which reloaded as "www.wikipedia.org is blocked"; the Custom Tab isn't restored |
+| E9 `chrome://policy` | **Blocked** after the first turn-on: "policy is blocked" - the bundle's `chrome://*` covers it. The typed bundle stays owed on the Jelly Star with a test bundle without `chrome://*` (D-C3) |
+| E9 the clear | **Passed.** The first turn-on cleared once (`cleared_ms`); off (Chrome hidden) and on again: written and tightened, no second clear; Chrome ticked, then unticked: "Cleared com.android.chrome's data: true" again, a new `cleared_ms` |
+| E9 the window | **Passed.** A sign-in window opened in a PIN pause (no keypad, `approved: pause`) stayed open past 11 minutes; at 12 minutes Android's notification tapped on top of it brought the same window forward (`REORDER_TO_FRONT`, one instance, code QA M2). The pause ended early from the PWA at 13 minutes: the window finished at once, `outcome: closed_by_vibb` |
+
+**Owed on the Jelly Star:** D-C1-D-C6 (real portals, `chrome://policy` with a test bundle, "Add to Home screen", a real
+Feide/Google login back to its app, the presets' hosts); E13's second hotspot; Android's sign-in notification and its
+Cancel on the Jelly Star's own build; the Bare Vibb sink with a SIM; "Open in Chrome browser" on the phone's Chrome.
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:

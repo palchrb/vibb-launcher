@@ -226,21 +226,17 @@ impl ScreenTime {
         })
     }
 
-    /// The status lines' words in `lang` (the user's pick C, 2026-11-01): "4 min today", "1 h 12
-    /// min of 1 h 30 min today", "42 min on 13 Oct" in the fallback zone; `summary` names it
-    /// ("4 min screen time today", the summary's header).
-    pub fn words(&self, lang: Lang, summary: bool) -> String {
+    /// The Devices row's words in `lang` (the user's pick C, 2026-11-01): "4 min today", "1 h 12
+    /// min of 1 h 30 min today", "42 min on 13 Oct" in the fallback zone. (The summary's header no longer says it,
+    /// design 101.)
+    pub fn words(&self, lang: Lang) -> String {
         let used = crate::display_time::duration(lang, self.used);
         let budget = self.budget.map(|b| crate::display_time::duration(lang, b));
-        let key = match (summary, &budget, &self.day) {
-            (false, None, None) => "devices.status.screen.today",
-            (false, Some(_), None) => "devices.status.screen.today_budget",
-            (false, None, Some(_)) => "devices.status.screen.on_day",
-            (false, Some(_), Some(_)) => "devices.status.screen.on_day_budget",
-            (true, None, None) => "devices.status.screen_summary.today",
-            (true, Some(_), None) => "devices.status.screen_summary.today_budget",
-            (true, None, Some(_)) => "devices.status.screen_summary.on_day",
-            (true, Some(_), Some(_)) => "devices.status.screen_summary.on_day_budget",
+        let key = match (&budget, &self.day) {
+            (None, None) => "devices.status.screen.today",
+            (Some(_), None) => "devices.status.screen.today_budget",
+            (None, Some(_)) => "devices.status.screen.on_day",
+            (Some(_), Some(_)) => "devices.status.screen.on_day_budget",
         };
         let budget = budget.unwrap_or_default();
         let day = self.day.clone().unwrap_or_default();
@@ -315,6 +311,38 @@ pub struct BadgeContext<'a> {
     pub calls_enforced: bool,
 }
 
+/// The report can't be trusted for what is true now (design 101 §4.1, shared with the lock badge): it is from another
+/// day - one without a day (an older launcher) can't be judged by it -, or the phone is not online and has been away
+/// more than [AWAY_STALE_MINUTES] (offline, off or unreachable at all).
+pub fn report_stale(
+    report: &TimeReport,
+    connection: &ConnectionState,
+    reported_at: DateTime<Utc>,
+    zone: &Zone,
+    now: DateTime<Utc>,
+) -> bool {
+    report.day.is_some_and(|day| !current_day(day, zone, now))
+        || match connection {
+            ConnectionState::Online { .. } => false,
+            ConnectionState::Away { .. } => {
+                now - reported_at > Duration::minutes(AWAY_STALE_MINUTES)
+            }
+            _ => true,
+        }
+}
+
+/// A report that can say "no rule locks now" (design 101 §4.1, QA M4): today's - it names its day, which an older
+/// launcher's doesn't - and not [stale](report_stale).
+pub fn report_is_fresh(
+    report: &TimeReport,
+    connection: &ConnectionState,
+    reported_at: DateTime<Utc>,
+    zone: &Zone,
+    now: DateTime<Utc>,
+) -> bool {
+    report.day.is_some() && !report_stale(report, connection, reported_at, zone, now)
+}
+
 /// The lock badge from the last report.
 pub fn lock_badge(
     report: &TimeReport,
@@ -323,15 +351,7 @@ pub fn lock_badge(
     now: DateTime<Utc>,
 ) -> Option<LockBadge> {
     let (name, name_key) = report.lock_name()?;
-    // A report from another day; one without a day (an older launcher) can't be judged by it.
-    let mut stale = report.day.is_some_and(|day| !current_day(day, zone, now))
-        || match ctx.connection {
-            ConnectionState::Online { .. } => false,
-            ConnectionState::Away { .. } => {
-                now - ctx.reported_at > Duration::minutes(AWAY_STALE_MINUTES)
-            }
-            _ => true,
-        };
+    let mut stale = report_stale(report, ctx.connection, ctx.reported_at, zone, now);
     let mut until = None;
     if !stale && let Some(end) = provable_end(report, ctx.rules, ctx.reported_at, zone) {
         let now_local = zone.local(now).naive_local();
@@ -403,7 +423,7 @@ fn provable_end(
 /// `[start, end)` on its day; `start > end` ends the next day, `start == end` lasts 24 h. A rule
 /// whose days aren't 7 entries is always on (the launcher's fail-closed rule): it covers
 /// everything and ends never, which refuses any end.
-fn covering_ends(days: &[Option<DayWindow>], at: NaiveDateTime) -> Vec<NaiveDateTime> {
+pub(crate) fn covering_ends(days: &[Option<DayWindow>], at: NaiveDateTime) -> Vec<NaiveDateTime> {
     if days.len() != 7 {
         return vec![NaiveDateTime::MAX];
     }
@@ -972,6 +992,32 @@ mod tests {
         };
         assert_eq!(badge(true), "Skole until 14:30 · calls off");
         assert_eq!(badge(false), "Skole until 14:30");
+    }
+
+    /// Design 101 §4.1 (QA M4): "no rule now" needs today's report that names its day, and a phone online or away
+    /// no more than [AWAY_STALE_MINUTES].
+    #[test]
+    fn a_report_is_fresh_when_it_names_today_and_the_phone_is_in_touch() {
+        let zone = oslo();
+        let now = utc("2026-10-13 10:00:00");
+        let today = report("Skole", "NONE", "2026-10-13");
+        let fresh = |r: &TimeReport, c: &ConnectionState, at: DateTime<Utc>| {
+            report_is_fresh(r, c, at, &zone, now)
+        };
+        assert!(fresh(&today, &online(now), now));
+        // Yesterday's, or one with no day at all (an older launcher): not fresh.
+        assert!(!fresh(
+            &report("Skole", "NONE", "2026-10-12"),
+            &online(now),
+            now
+        ));
+        assert!(!fresh(&report("Skole", "NONE", "x"), &online(now), now));
+        // Away: fresh for 15 minutes after the report, then not; offline never.
+        let away = ConnectionState::Away { last_contact: now };
+        assert!(fresh(&today, &away, now - Duration::minutes(15)));
+        assert!(!fresh(&today, &away, now - Duration::minutes(16)));
+        let gone = ConnectionState::Offline { last_contact: now };
+        assert!(!fresh(&today, &gone, now));
     }
 
     #[test]

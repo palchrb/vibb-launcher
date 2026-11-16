@@ -59,12 +59,15 @@ class Application : android.app.Application() {
     // TODO: only update specific apps
     private val launcherAppsCallback = object : LauncherApps.Callback() {
         override fun onPackageRemoved(p0: String?, p1: UserHandle?) {
+            if (p0 == com.kidslauncher.mdm.assistant.SETTINGS_PACKAGE && com.kidslauncher.mdm.assistant.AirplaneRoute.inFlight) return
             evictIcons(p0)
             loadApps(listOfNotNull(p0))
             clockAppChanged(p0)
         }
 
         override fun onPackageAdded(p0: String?, p1: UserHandle?) {
+            // Design 98 §2.2 step 4: Settings unhidden for a Flymodus turn-on's second is the route's, not an install.
+            if (p0 == com.kidslauncher.mdm.assistant.SETTINGS_PACKAGE && com.kidslauncher.mdm.assistant.AirplaneRoute.inFlight) return
             evictIcons(p0)
             loadApps(listOfNotNull(p0))
             clockAppChanged(p0)
@@ -93,6 +96,7 @@ class Application : android.app.Application() {
         }
 
         override fun onPackageChanged(p0: String?, p1: UserHandle?) {
+            if (p0 == com.kidslauncher.mdm.assistant.SETTINGS_PACKAGE && com.kidslauncher.mdm.assistant.AirplaneRoute.inFlight) return
             evictIcons(p0)
             loadApps(listOfNotNull(p0))
             clockAppChanged(p0)
@@ -179,6 +183,13 @@ class Application : android.app.Application() {
         // setup there either.
         if (com.kidslauncher.mdm.lock.isBootCoverProcess(getProcessName())) {
             com.kidslauncher.mdm.lock.BootCoverGuard.install(this)
+            return
+        }
+        // Design 102 §3.1: the Wi-Fi sign-in window's own process (`:portal`), bound to the portal's network - nothing of
+        // the main process's start-up runs there (Q102-M2): no lock runtime, receivers, alarms, assistant set-up or
+        // preferences. Its WebView keeps its own data directory. `instance` stays null.
+        if (com.kidslauncher.mdm.portal.isPortalProcess(getProcessName())) {
+            com.kidslauncher.mdm.portal.preparePortalProcess()
             return
         }
         instance = this
@@ -272,6 +283,8 @@ class Application : android.app.Application() {
         } catch (e: Exception) {
             android.util.Log.w("Application", "The notification channels weren't named again", e)
         }
+        // Snarveier's channel and panel follow too (design 99, C99-L1): its channel is created apart from the others.
+        com.kidslauncher.mdm.shortcuts.ShortcutsRuntime.languageChanged(this)
     }
 
     /** Design 59 F3: when the unlocked setup began (elapsed realtime) - the unlock reaching this process; `BootHome`
@@ -376,6 +389,23 @@ class Application : android.app.Application() {
     }
 
     private fun initRest() {
+        // Design 98 §2.2: a Flymodus route's window left open by a process death or a reboot is put back before
+        // anything else and before the first sync (the anchor's start sync waits on apply()'s monitor), and the
+        // airplane-mode periods catch up with the state (M7). Off the main thread.
+        Thread {
+            try {
+                com.kidslauncher.mdm.assistant.AirplaneRoute.putBackIfMarked(this)
+                com.kidslauncher.mdm.assistant.AirplaneRuntime.reconcile(this)
+                // §3.5: a Wi-Fi step left open by a process death ends (airplane mode off again).
+                com.kidslauncher.mdm.assistant.AssistantSetup.atProcessStart(this)
+            } catch (e: Exception) {
+                android.util.Log.w("Application", "Airplane put-back failed: ${e.javaClass.simpleName}")
+            }
+        }.start()
+
+        // Design 102 §3.8: the reopen's records of an earlier boot go; the Wi-Fi is watched for Home's line and the Wi-Fi
+        // page. Never throws.
+        com.kidslauncher.mdm.portal.PortalRuntime.start(this)
 
         // Try to restore old preferences
         migratePreferencesToNewVersion(this)
@@ -490,6 +520,9 @@ class Application : android.app.Application() {
                 com.kidslauncher.mdm.music.MusicMedia.init(this)
                 // The flashlight (design 41): its camera, the platform's torch callback, the call-edge rule.
                 com.kidslauncher.mdm.torch.Torch.init(this)
+                // Snarveier (design 99): the panel's signals for the whole process, and its first refresh (it starts
+                // the panel's service when the policy's bit 128 and the kid's picks say so).
+                com.kidslauncher.mdm.shortcuts.ShortcutsRuntime.init(this)
                 // The lock's glance page (design 25): the parent's choice from the cached policy (off the
                 // main thread), and our missed-call notification known again if it is still on screen.
                 com.kidslauncher.mdm.badges.GlanceStore.loadAtStart()
@@ -517,7 +550,11 @@ class Application : android.app.Application() {
                 // doc comment. Gated on the cached vpnFilterEnabled preference (PolicyResponse.vpnFilterEnabled,
                 // see AppEnforcer.applyVpnRestrictions) so a device a parent has turned filtering off for
                 // doesn't flash it back on for a moment on every launch before the first sync corrects it.
-                if (LauncherPreferences.mdm().vpnFilterEnabled()) {
+                // Design 95 rev. 3: the shape the last apply() decided - the sink and the pass shape start it too.
+                if (com.kidslauncher.mdm.server.MobileNetworkRuntime.storedShape()
+                        ?.let { it != com.kidslauncher.mdm.server.VpnShape.NONE }
+                        ?: LauncherPreferences.mdm().vpnFilterEnabled()
+                ) {
                     KidVpnService.start(this)
                 }
             } catch (e: Exception) {

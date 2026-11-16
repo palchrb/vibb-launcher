@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Design 98 §2.1: Vibb One as the Digital assistant, only for Flymodus's route. No screen reading: the service disables
+     the assist context and the screenshot (setDisabledShowContext), the session has no window and reads nothing
+     (AssistantInvariantsTest). supportsAssist is required for the role; never from the keyguard. -->
+<voice-interaction-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:sessionService="com.kidslauncher.mdm.assistant.VibbSessionService"
+    android:recognitionService="com.kidslauncher.mdm.assistant.VibbRecognizer"
+    android:supportsAssist="true"
+    android:supportsLaunchVoiceAssistFromKeyguard="false" />

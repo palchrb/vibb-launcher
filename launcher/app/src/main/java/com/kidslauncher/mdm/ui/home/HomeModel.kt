@@ -37,10 +37,6 @@ sealed interface GridTile {
 
     data class App(val app: GridApp, val badge: Int) : GridTile
 
-    /** The flashlight (design 41), right before [Settings] - only on a phone with a flash unit. The
-     * one tile that toggles instead of opening; no long-press menu. */
-    data class Flashlight(val lit: Boolean) : GridTile
-
     /** The kid's own settings (wallpaper, Wi-Fi, Bluetooth, brightness), always last. It has no
      * long-press menu - only [App] tiles do (QA 08 #10). */
     data object Settings : GridTile
@@ -58,13 +54,13 @@ fun showPhoneBookTile(state: CallPolicyState): Boolean = state !is CallPolicySta
  * The grid: the phone-book tile first (when [showPhoneBook], see [showPhoneBookTile]), Meldinger ([messages]: its
  * unread total, `null` = no tile; [messagesLook] its look), Dagen ([showDay]), then
  * [apps] by label (case-insensitive, stable), each with its unread count from [badges]
- * (0 = no badge), then the flashlight ([torch]; `null` = no flash unit, no tile) and the Settings tile.
+ * (0 = no badge), then the Settings tile. The flashlight's tile (design 41) went into Snarveier, the panel in the shade
+ * (design 99 §7); the lock keeps its torch button.
  */
 fun homeGrid(
     apps: List<GridApp>,
     showPhoneBook: Boolean,
     badges: Map<String, Int>,
-    torch: com.kidslauncher.mdm.torch.TorchState? = null,
     showDay: Boolean = false,
     messages: Int? = null,
     messagesLook: com.kidslauncher.mdm.appdisplay.MessagesLook = com.kidslauncher.mdm.appdisplay.MessagesLook(),
@@ -76,7 +72,6 @@ fun homeGrid(
     apps.sortedBy { it.label.lowercase() }.mapTo(tiles) { app ->
         GridTile.App(app, app.packageName?.let { badges[it] } ?: 0)
     }
-    if (torch != null) tiles += GridTile.Flashlight(torch.lit)
     tiles += GridTile.Settings
     return tiles
 }
@@ -239,7 +234,6 @@ fun gridTileId(tile: GridTile): String = when (tile) {
     GridTile.Day -> "day"
     is GridTile.Messages -> "messages"
     GridTile.Settings -> "settings"
-    is GridTile.Flashlight -> "flashlight"
     is GridTile.App -> "app:${tile.app.key}"
 }
 

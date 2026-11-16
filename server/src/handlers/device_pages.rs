@@ -441,6 +441,9 @@ pub(crate) async fn load_policy(
         Ok(policy) => Ok(policy.unwrap_or(DevicePolicy {
             device_id: id,
             vpn_filter_enabled: true,
+            // Design 102: migration 0150's defaults (D1, revision 5).
+            captive_portal_enabled: true,
+            captive_portal_require_code: true,
             ..Default::default()
         })),
         Err(err) => {
@@ -695,6 +698,42 @@ pub async fn view_about(
             ),
             None => {}
         }
+        // Design 98 §6.2: the Digital assistant role (Flymodus' route) and Wi-Fi in airplane mode, from a launcher
+        // with `airplane_mode_v1`.
+        if let Some(airplane) = crate::airplane_mode::report(status) {
+            software.push(if airplane.assistant {
+                Row::new("assistant", t(lang, "device.about.assistant"), "Vibb One")
+            } else {
+                Row::new(
+                    "assistant",
+                    t(lang, "device.about.assistant"),
+                    t(lang, "device.about.assistant_not_chosen"),
+                )
+                .class("row-value-action")
+                .detail(Some(t(lang, "device.airplane.assistant_steps")))
+            });
+            software.push(Row::new(
+                "wifi-airplane",
+                t(lang, "device.about.wifi_airplane"),
+                t(
+                    lang,
+                    match airplane.wifi_kept {
+                        Some(true) => "device.about.wifi_airplane_kept",
+                        Some(false) => "device.about.wifi_airplane_off",
+                        None => "device.about.wifi_airplane_not_set_up",
+                    },
+                ),
+            ));
+        }
+        // Design 99 §5.3: Snarveier - what the kid picked, hidden by the kid, or off - from a launcher with
+        // `shortcuts_v1`.
+        if let Some(shortcuts) = crate::shortcuts::report(status) {
+            software.push(Row::new(
+                "shortcuts",
+                t(lang, "device.about.shortcuts"),
+                crate::shortcuts::about_value(lang, &device.name, &policy, &shortcuts),
+            ));
+        }
     }
 
     // When "Block safe mode" went on, for the advice (QA 24b Low 12).
@@ -739,12 +778,8 @@ pub async fn view_about(
                 });
             // The active rule by its id, as the schedules page words it (design 70 §7).
             let report = if report.locking() && report.active_rule_id.is_some() {
-                let rules = crate::time_rules::effective_rule_rows(&state.db, id)
-                    .await
-                    .unwrap_or_else(|err| {
-                        tracing::error!(device_id = id, %err, "can't read the phone's rules");
-                        Vec::new()
-                    });
+                // Design 93 §4.5: the served rows, a rule turned on now named by its rule.
+                let rules = crate::lock_now::badge_rows(&state.db, id, chrono::Utc::now()).await;
                 report.named_by(&rules, lang)
             } else {
                 report
@@ -842,6 +877,10 @@ struct AdvancedTemplate {
     spotify_diag: Option<SpotifyDiagCard>,
     /// Design 76: the certificate check's group; `None` until the phone's last report has `server_pin_v1`.
     server_tls: Option<crate::server_tls::Card>,
+    /// Design 93 §6.6: "Åpne for oppsett", the first row (a `window_relock_v1` phone only).
+    setup: Option<crate::handlers::quick_actions::SetupCard>,
+    /// Design 102 revision 5: "Krev foreldrekode for Wi-Fi-innlogging" (`#wifi-signin`).
+    wifi_signin: crate::handlers::logins::CodeCard,
 }
 crate::i18n::words!(AdvancedTemplate);
 
@@ -913,6 +952,19 @@ pub async fn view_advanced(
         } else {
             None
         };
+    let setup = match crate::handlers::quick_actions::setup_card(
+        &state.db,
+        &device,
+        latest.as_ref(),
+        query.get("notice").map(String::as_str),
+        &zone,
+        now,
+    )
+    .await
+    {
+        Ok(setup) => setup,
+        Err(err) => return read_failed(lang, id, "the opening for setup", err),
+    };
     let escapes = escapes_card(&policy, latest.as_ref(), now_ms);
     let (escape_warnings, escape_rows): (Vec<Note>, Vec<Note>) = escapes
         .notes
@@ -946,6 +998,8 @@ pub async fn view_advanced(
             },
             spotify_diag: spotify_diag_card(&policy, &zone, now),
             server_tls,
+            setup,
+            wifi_signin: crate::handlers::logins::code_card(&policy, latest.as_ref()),
             device,
         }
         .render()
@@ -1516,6 +1570,14 @@ struct HomeTemplate {
     quick_touch: bool,
     /// Security review S-L5: the Bluetooth page pairs any device (`bluetooth_any_device`).
     bluetooth_any_device: bool,
+    /// Design 98 §6.1: the kid's Flymodus switch (bit 64), its row only for a launcher with `airplane_mode_v1` - its
+    /// sub-line when it says something (`airplane_mode::home_sub`).
+    airplane_row: Option<Option<String>>,
+    quick_airplane: bool,
+    /// Design 99 §5.2: Snarveier (bit 128), its row only for a launcher with `shortcuts_v1` - its sub-line when it says
+    /// something (`shortcuts::home_sub`).
+    shortcuts_row: Option<Option<String>>,
+    quick_shortcuts: bool,
 }
 crate::i18n::words!(HomeTemplate);
 
@@ -1547,6 +1609,17 @@ pub async fn view_home(State(state): State<AppState>, lang: Lang, Path(id): Path
         Err(err) => return read_failed(lang, id, "the last report", err),
     };
     let mask = policy.quick_controls_mask;
+    let airplane_row = latest
+        .as_ref()
+        .filter(|s| has_capability(Some(s), crate::airplane_mode::CAPABILITY))
+        .map(|s| {
+            let report = crate::airplane_mode::report(s).unwrap_or_default();
+            crate::airplane_mode::home_sub(lang, &device.name, &policy, &report)
+        });
+    let shortcuts_row = latest
+        .as_ref()
+        .and_then(crate::shortcuts::report)
+        .map(|report| crate::shortcuts::home_sub(lang, &device.name, &policy, &report));
     Html(
         HomeTemplate {
             lang,
@@ -1564,12 +1637,58 @@ pub async fn view_home(State(state): State<AppState>, lang: Lang, Path(id): Path
             quick_sound: mask & QUICK_CONTROL_SOUND != 0,
             quick_touch: mask & QUICK_CONTROL_TOUCH != 0,
             bluetooth_any_device: policy.bluetooth_any_device,
+            airplane_row,
+            quick_airplane: mask & crate::handlers::devices::QUICK_CONTROL_AIRPLANE != 0,
+            shortcuts_row,
+            quick_shortcuts: mask & crate::handlers::devices::QUICK_CONTROL_SHORTCUTS != 0,
             device,
         }
         .render()
         .unwrap(),
     )
     .into_response()
+}
+
+/// `POST /devices/{id}/setup-card/hide` (design 98 §6.2): the summary's Oppsett card's "Ikke nå" - stores the needed
+/// steps as they are now (`airplane_mode::setup_key`), so the card stays away until they change. Back to `#oppsett`
+/// with its flash. 404 for an unknown phone, 500 on a DB error.
+pub async fn hide_setup_card(
+    State(state): State<AppState>,
+    lang: Lang,
+    Path(id): Path<i64>,
+) -> Response {
+    let policy = match load_policy(&state, id).await {
+        Ok(policy) => policy,
+        Err((status, key)) => return crate::i18n::error(lang, status, key),
+    };
+    let latest = match load_latest(&state, id).await {
+        Ok(latest) => latest,
+        Err(err) => return read_failed(lang, id, "the last report", err),
+    };
+    let steps = crate::airplane_mode::setup_steps(lang, &policy, latest.as_ref());
+    let hidden = (!steps.is_empty()).then(|| crate::airplane_mode::setup_key(&steps));
+    match sqlx::query("UPDATE device_policy SET setup_card_hidden = ? WHERE device_id = ?")
+        .bind(hidden)
+        .bind(id)
+        .execute(&state.db)
+        .await
+    {
+        Ok(done) if done.rows_affected() == 0 => {
+            crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.device_not_found")
+        }
+        Ok(_) => {
+            axum::response::Redirect::to(&format!("/devices/{id}?notice=setup_hidden#oppsett"))
+                .into_response()
+        }
+        Err(err) => {
+            tracing::error!(device_id = id, %err, "can't hide the setup card");
+            crate::i18n::error(
+                lang,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "error.save_failed_log",
+            )
+        }
+    }
 }
 
 /// One blocklist on a phone's Web Filter page.
@@ -1620,6 +1739,8 @@ struct FilterTemplate {
     spotify_overridden: Vec<i64>,
     /// The site-wide blocked domains it overrides on this phone.
     spotify_global: Vec<String>,
+    /// Design 102 §5: the Sign-in row's sub-line ("Wi-Fi: på · Apper: av").
+    logins_sub: String,
 }
 crate::i18n::words!(FilterTemplate);
 
@@ -1780,6 +1901,7 @@ pub async fn view_filter(
             log_on: policy.dns_log_enabled,
             retention_days: crate::retention::DNS_LOG_RETENTION_DAYS,
             events,
+            logins_sub: crate::handlers::logins::row_sub(lang, &policy),
             device,
         }
         .render()
@@ -1971,6 +2093,8 @@ struct AppsTemplate {
     not_allowed: Vec<AppView>,
     /// The phone has reported its apps at least once.
     reported: bool,
+    /// Design 102 §5.2: Chrome is the phone's login browser (the role on, Chrome not ticked) - its row says so.
+    login_role: bool,
     /// Design 68: the phone reported its apps without `app_permissions_v1` - "Update Vibb One to manage apps'
     /// permissions" above the Allowed list.
     update_note: Option<&'static str>,
@@ -2345,6 +2469,7 @@ pub(crate) async fn render_apps(
                 && !has_capability(latest.as_ref(), crate::models::APP_PERMISSIONS_CAPABILITY))
             .then_some(crate::i18n::t(lang, "apps.perms.update_note")),
             reported: latest.is_some(),
+            login_role: policy.login_browser_enabled && !crate::logins::chrome_ticked(&policy),
             installing,
             wifi_only: policy.app_updates_wifi_only,
             network,

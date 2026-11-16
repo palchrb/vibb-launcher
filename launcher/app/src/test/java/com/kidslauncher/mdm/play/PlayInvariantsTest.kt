@@ -44,6 +44,8 @@ class PlayInvariantsTest {
                 "enforceDefaultHome(dpm, admin, context)",
                 "enforcePlayLinkBlocker(dpm, admin, context)",
                 "enforceCallLogPin(dpm, admin, context)",
+                // Design 102 §3.2 (Q102-M5): the Wi-Fi sign-in's handler, so a re-seat never shows Android's chooser.
+                "enforceCaptivePortalPin(dpm, admin, context)",
             ),
             body,
         )

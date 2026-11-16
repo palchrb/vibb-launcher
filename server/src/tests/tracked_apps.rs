@@ -496,6 +496,58 @@ async fn check_now_while_a_sync_runs_says_so() {
     assert_eq!(unknown.status, StatusCode::NOT_FOUND);
 }
 
+/// Check now, then Back, must not show the same app page again (the user, 2026-11-14): a save that
+/// `static/scroll-restore.js` posts itself (`X-Handy-Stay`) gets its redirect as a 204 naming the
+/// address, fragment and all, so the page replaces its own history entry with it
+/// (`admin_auth::stay_answer`); the browser's own POST still gets the 303, and an answer that isn't
+/// a redirect passes as it is.
+#[tokio::test]
+async fn a_save_posted_by_the_page_learns_where_its_redirect_goes() {
+    use crate::admin_auth::{STAY_HEADER, STAY_LOCATION_HEADER};
+    use axum::body::Body;
+    use axum::http::Request;
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let id = insert_app(&app, "Element X", None).await;
+    // A sync on its way: Check now answers at once, without the network.
+    let _running = app.state.app_syncs.start(id).expect("no sync runs yet");
+    let stayed = |uri: String| {
+        Request::builder()
+            .method(Method::POST)
+            .uri(uri)
+            .header(header::COOKIE, &cookie)
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .header(STAY_HEADER, "1")
+            .body(Body::empty())
+            .unwrap()
+    };
+    let res = app.send(stayed(format!("/apps/tracked/{id}/check"))).await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        res.headers
+            .get(STAY_LOCATION_HEADER)
+            .and_then(|v| v.to_str().ok()),
+        Some(format!("/apps/tracked/{id}#check").as_str())
+    );
+    assert!(res.location().is_none());
+    assert!(res.body.is_empty());
+
+    let plain = app
+        .request_form(
+            Method::POST,
+            &format!("/apps/tracked/{id}/check"),
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    assert!(plain.status.is_redirection());
+    assert!(plain.headers.get(STAY_LOCATION_HEADER).is_none());
+
+    let unknown = app.send(stayed("/apps/tracked/9999/check".into())).await;
+    assert_eq!(unknown.status, StatusCode::NOT_FOUND);
+    assert!(unknown.headers.get(STAY_LOCATION_HEADER).is_none());
+}
+
 /// A manual upload is stored under the app's directory, the row then names it (and its file
 /// name and size), and only then is the old file removed (qa-catalog #7); the answer redirects
 /// back to the page. Deleting the app removes its whole directory (#4).
@@ -996,7 +1048,7 @@ async fn app_downloads_are_stored_and_shown() {
         "{network}"
     );
     // Notes installs: the page reloads itself for the percentage.
-    assert!(page.contains("/static/auto-reload.js"));
+    assert!(page.contains("data-waits"));
 }
 
 /// Security review M10 (the phone side): a release the launcher refused to install - another
@@ -1490,6 +1542,25 @@ async fn every_form_on_the_app_pages_returns_to_its_page() {
         .execute(&app.db)
         .await
         .unwrap();
+    // Design 90: a held, a waiting and a declined release, so the `#update` group's forms render.
+    sqlx::query(
+        "UPDATE tracked_apps SET waiting_release_tag = 'v3', waiting_release_asset_id = 3, \
+         waiting_release_since = '2026-11-12T10:00:00Z', declined_release_tag = 'v1.5', \
+         declined_release_asset_id = 2 WHERE id = ?",
+    )
+    .bind(github)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO tracked_app_held_releases (tracked_app_id, release_tag, asset_id, file_path, \
+         sha256, reason, new_permissions, held_at) VALUES (?, 'v2', 4, '/nowhere/v2-4.apk', \
+         'cc', 'permissions', '[\"android.permission.READ_CONTACTS\"]', '2026-11-12 10:00:00')",
+    )
+    .bind(github)
+    .execute(&app.db)
+    .await
+    .unwrap();
     let manual: i64 = sqlx::query_scalar(
         "INSERT INTO tracked_apps (name, package_name, github_repo, source_type) \
          VALUES ('Notater', '', '', 'manual') RETURNING id",
@@ -1574,8 +1645,14 @@ async fn every_form_on_the_app_pages_returns_to_its_page() {
             let (group, open) = match route {
                 "" => (Some("details"), Some("source")),
                 "/display" => (Some("display"), Some("display")),
-                "/enabled" | "/include-prereleases" | "/is-launcher" => {
-                    (Some("updates"), Some("source"))
+                "/enabled"
+                | "/include-prereleases"
+                | "/is-launcher"
+                | "/always-ask"
+                | "/release-wait" => (Some("updates"), Some("source")),
+                // Design 90: the update group's forms (a check runs here: each answers busy).
+                "/held/approve" | "/held/decline" | "/declined/ask-again" | "/update-now" => {
+                    (Some("update"), None)
                 }
                 "/forget-package-name" => (Some("release"), Some("source")),
                 "/upload" => (Some("upload"), None),
@@ -1592,6 +1669,11 @@ async fn every_form_on_the_app_pages_returns_to_its_page() {
                 "/enabled" => &[("enabled", "on")],
                 "/include-prereleases" => &[("include_prereleases", "on")],
                 "/confirm-package" => &[("package", "me.vibb.testfixture")],
+                "/always-ask" => &[("always_ask", "on")],
+                "/release-wait" => &[("release_wait_hours", "24")],
+                "/held/approve" | "/held/decline" => &[("tag", "v2"), ("asset_id", "4")],
+                "/declined/ask-again" => &[("tag", "v1.5"), ("asset_id", "2")],
+                "/update-now" => &[("tag", "v3"), ("asset_id", "3")],
                 _ => &[],
             };
             let res = if route == "/upload" {
@@ -1631,6 +1713,9 @@ async fn every_form_on_the_app_pages_returns_to_its_page() {
                     &format!("{page}?notice=package_confirmed"),
                     Some("release"),
                 ),
+                ("/held/approve" | "/held/decline" | "/declined/ask-again" | "/update-now", _) => {
+                    assert_redirect(&res, &format!("{page}?held=busy"), Some("update"))
+                }
                 (_, Some(open)) => {
                     assert_redirect(&res, &format!("{page}?open={open}"), group);
                     // The page comes back with that <details> open.
@@ -1651,6 +1736,12 @@ async fn every_form_on_the_app_pages_returns_to_its_page() {
         "/confirm-package",
         "/forget-package-name",
         "/check",
+        "/held/approve",
+        "/held/decline",
+        "/declined/ask-again",
+        "/update-now",
+        "/release-wait",
+        "/always-ask",
     ] {
         assert!(seen.contains(route), "{route} was never rendered");
     }

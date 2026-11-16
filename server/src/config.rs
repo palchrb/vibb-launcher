@@ -96,6 +96,9 @@ pub struct ForkConfig {
     /// ([ForkConfig::met_user_agent]). 3-100 printable ASCII characters without quotes; anything else is logged and
     /// ignored. With it MET can tie the cells it is asked for to that address (DEPLOY.md).
     pub met_contact: Option<String>,
+    /// `STATUS_HEARTBEAT` (design 95 §3.5): `off` makes the policy say `status_heartbeat: false` and answers every
+    /// heartbeat `{"full_report": true}`, so the phones go back to plain full reports; anything else (or unset) = on.
+    pub status_heartbeat: bool,
 }
 
 pub const DEFAULT_SSE_KEEPALIVE_SECS: u64 = 240;
@@ -198,6 +201,9 @@ impl ForkConfig {
             })
             .and_then(|v| crate::i18n::Lang::from_code(&v.to_ascii_lowercase())),
             met_contact: read("MET_CONTACT", is_valid_contact),
+            status_heartbeat: vars
+                .get("STATUS_HEARTBEAT")
+                .is_none_or(|v| !v.trim().eq_ignore_ascii_case("off")),
         }
     }
 

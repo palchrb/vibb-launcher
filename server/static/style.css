@@ -31,8 +31,10 @@
     --tint-fill: #E8895E;
     --tint-fill-hover: #E07A4C;
     --on-tint-fill: #0C0C14;
-    /* A focused text field's fill (the user's pick A): white, its border --tint. */
+    /* A focused text field's fill (the user's pick A): white. */
     --field-focus: #FFFFFF;
+    /* Its 1 px edge (design 103 D13 a): a lighter peach, 3.1:1 on the white fill and --surface. */
+    --field-focus-line: #D9784C;
     --destructive: #D70015;
     --destructive-hover: #B0001A;
 
@@ -76,10 +78,11 @@
     --bar-glass: rgba(238, 236, 234, 0.72);
     --bar-shadow: inset 0 0 0 1px rgba(12, 12, 20, 0.08), 0 4px 18px rgba(12, 12, 20, 0.14);
     /* The floating bar's own height (.tab-bar: 8 px padding, a tab's 6 px padding, the 24 px icon
-       and its 3 px, the label's line at 0.75rem x 1.2) and the room main leaves under its last row:
+       and its 3 px, the label's line at --tab-label x 1.2) and the room main leaves under its last row:
        the bar, the 14 px under it, and above it the bottom fade's 24 px (.tab-fade), so the last row
        scrolls fully clear of the fade; the home indicator's inset is added there. */
-    --tab-bar-h: calc(55px + 0.9rem);
+    --tab-label: min(0.75rem, 3.5vw, 21px);
+    --tab-bar-h: calc(55px + 1.2 * var(--tab-label));
     --tab-fade-above: 24px;
     --tab-bar-room: calc(var(--tab-bar-h) + 14px + var(--tab-fade-above));
     /* The ground at 0 % (the fade's start): a transparent of the ground's own colour, never
@@ -159,6 +162,8 @@
         --on-tint-fill: #0C0C14;
         /* The field keeps its night fill; the peach border says it is focused. */
         --field-focus: #0C0C14;
+        /* A dimmer peach than --tint (6.1:1 on the night fill): a tap changes only the line's colour. */
+        --field-focus-line: #C08266;
         --destructive: #D70015;
         --destructive-hover: #E5172B;
 
@@ -232,6 +237,9 @@ body {
     background: var(--bg);
     color: var(--label);
     line-height: 1.5;
+    /* A word longer than its line ("Tofaktorinnlogging" at 200 % text on a 320 px screen) breaks rather than
+       reach past the screen: no page scrolls sideways at any text size. */
+    overflow-wrap: break-word;
     height: 100vh;
     height: 100dvh;
     overflow: hidden;
@@ -353,8 +361,8 @@ summary:focus:not(:focus-visible) {
 }
 
 /* A focused text field or select (the user's pick A, 2026-10-25; not the borderless ones that are
-   a row's value - .row-input, select.pick): its own border takes the tint at
-   1.5 px (the 1 px border and a 0.5 px inset shadow, so nothing moves) and its fill --field-focus.
+   a row's value - .row-input, select.pick): its own 1 px border takes --field-focus-line, a lighter
+   peach than --tint (design 103 D13), and its fill --field-focus. Nothing moves: the border is 1 px either way.
    A tap or a click shows no ring; the keyboard keeps the 2 px ring above. A browser counts every
    focus of a text field as :focus-visible, a tap too, so the rules above can't tell them apart:
    static/focus-mode.js marks <html> `pointer-focus` from a press until the keyboard moves focus. Without it
@@ -369,15 +377,14 @@ input[type="number"]:not(.row-num):not(.row-input):focus,
 input[type="search"]:not(.row-input):focus,
 select:not(.pick):focus,
 textarea:focus {
-    border-color: var(--tint);
-    box-shadow: inset 0 0 0 0.5px var(--tint);
+    border-color: var(--field-focus-line);
     background-color: var(--field-focus);
 }
 
-/* The day's small fields have no border of their own: the 1.5 px is all shadow. */
+/* The day's small fields have no border of their own: the 1 px is all shadow. */
 input.row-time:focus,
 input.row-num:focus {
-    box-shadow: inset 0 0 0 1.5px var(--tint);
+    box-shadow: inset 0 0 0 1px var(--field-focus-line);
     background-color: var(--field-focus);
 }
 
@@ -385,13 +392,15 @@ input.row-num:focus {
    to tint, so a focus shows a quiet tinted underline - a tap's only sign, the keyboard's ring on top. */
 input.row-input:focus,
 select.pick:focus {
-    box-shadow: inset 0 -1.5px 0 var(--tint);
+    box-shadow: inset 0 -1px 0 var(--field-focus-line);
 }
 
-/* A press marks pointer mode until the keyboard moves (static/focus-mode.js): no ring then. */
+/* A press marks pointer mode until the keyboard moves (static/focus-mode.js): no ring then. A summary too
+   (design 103 §3): Safari before 15.4 drops the :focus-visible reset whole and drew the ring after a tap. */
 .pointer-focus input:focus,
 .pointer-focus select:focus,
-.pointer-focus textarea:focus {
+.pointer-focus textarea:focus,
+.pointer-focus summary:focus {
     outline: none;
 }
 
@@ -423,6 +432,9 @@ input[type="radio"] {
     overscroll-behavior-y: contain;
     touch-action: manipulation;
     padding: 0;
+    /* Design 103-16: no browser scroll anchoring - static/swap.js alone keeps the place over a refresh in place
+       (Chromium's own would move main at a time it can't predict; WebKit has none in a scroller). */
+    overflow-anchor: none;
 }
 
 /* With the floating bar (it comes first in the source) main runs to the screen's bottom edge and
@@ -604,6 +616,24 @@ input[type="radio"] {
     width: 28px;
     height: 28px;
     font-size: 0.8125rem;
+}
+
+/* band::app (design 101 §7): the app's tile in the same place, 28 px. The glyph is keyed on the class - the letter is a
+   text node, so an <img> is :only-child in a logo tile too (QA M5); the logo keeps its fill (.app-row-logo img) and its
+   hairline is a light one on the night band. */
+.band-who > .app-row-tile {
+    width: 28px;
+    height: 28px;
+    font-size: 0.8125rem;
+}
+
+.band-who > .app-row-tile:not(.app-row-logo) > img {
+    width: 17px;
+    height: 17px;
+}
+
+.band-who > .app-row-logo {
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.14);
 }
 
 .band-who + .band-actions {
@@ -799,7 +829,9 @@ input[type="radio"] {
     border-radius: 16px;
     color: var(--tab-off);
     text-decoration: none;
-    font-size: 0.75rem;
+    /* Never wider than its tab at any text size (the longest, "Innstillinger", is about 5.1 em): a fifth of the bar
+       (the screen less 24 px, at most 560 px) holds the label at 3.5vw, at most 21 px. */
+    font-size: var(--tab-label);
     font-weight: 500;
     line-height: 1.2;
 }
@@ -815,8 +847,10 @@ input[type="radio"] {
 
 /* One icon per tab, the same outline and stroke in both states (the user, 2026-11-01). The chosen tab (and the one just
    tapped, .is-pending) turns it the bright peach and fills it ("fylt med fersken", pick A): .ti-body fills, .ti-fill
-   (the note's beam) appears, and .ti-detail (the phone's bar, the pin's dot, the gear's middle) is cut out in the
-   bar's own colour. */
+   (the note's beam) appears, and .ti-detail (the phone's bar) is drawn in the bar's own colour. The pin's and the gear's
+   rings merge into the fill and only their hole stays open (.ti-hole, the ring's inner radius: r less half the 2.1
+   stroke), so the hole is the same size in both states (the user, 2026-11-16: a cut-out of the ring's outer edge made
+   the middles grow). */
 .tab[aria-current="page"] .tab-icon,
 .tab.is-pending .tab-icon {
     color: var(--tab-on-icon);
@@ -832,6 +866,10 @@ input[type="radio"] {
 .tab[aria-current="page"] .ti-detail,
 .tab.is-pending .ti-detail {
     stroke: var(--bar);
+}
+
+.tab[aria-current="page"] .ti-hole,
+.tab.is-pending .ti-hole {
     fill: var(--bar);
 }
 
@@ -916,20 +954,42 @@ summary.row:active {
     margin: 0;
 }
 
-/* Hairlines between rows: 1px in a light colour, 0.5px only on 2x screens (§5.7). A .cell-rows is a
-   cell (a form) holding several rows, which get them too (Device › Time Rules' own limits). */
+/* Hairlines between rows (design 103 §4): every row line in the PWA is this one rule - a 1px line in a light
+   colour, and on 2x+ screens a 1px --sep line scaled to half (the block at the end of this file, after every
+   list's rule). A 0.5px border vanished at some fractional positions at 3x (WebKit); the scaled line never
+   does. Each list's own rule below sets only its `left`. A .cell-rows is a cell (a form) holding several rows,
+   which get them too (Device › Time Rules' own limits). */
+.group > .row ~ .row::before,
+.group > .row ~ .cell::before,
+.group > .cell ~ .row::before,
+.group > .cell ~ .cell::before,
+.group > .cell-rows > .row ~ .row::before,
+.group-music > .music-card ~ .music-card::before,
+.wallpaper-item > .cell::before,
+.contact-body .row::before,
+.contact-body .contact-field::before,
+.held-body .row::before,
+.group-lines .row ~ .row::before,
+.group-lines form + form .row:first-child::before,
+.group-lines div + form .row:first-child::before,
+.group-lines form > .cell::before,
+.group-lines form > .contact-field::before,
+.group-lines > details.cell::before,
+.row-sheet-body::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    right: 0;
+    pointer-events: none;
+    border-top: 1px solid var(--sep-light);
+}
+
 .group > .row ~ .row::before,
 .group > .row ~ .cell::before,
 .group > .cell ~ .row::before,
 .group > .cell ~ .cell::before,
 .group > .cell-rows > .row ~ .row::before {
-    content: "";
-    position: absolute;
-    top: 0;
     left: 16px;
-    right: 0;
-    border-top: 1px solid var(--sep-light);
-    pointer-events: none;
 }
 
 .group-icons > .row ~ .row::before,
@@ -939,23 +999,19 @@ summary.row:active {
     left: 57px;
 }
 
+/* A tile row in a plain group (the summary's Activity row under a waiting command, 2026-11-13): its
+   hairline starts at its label, as a .group-icons row's. */
+.group > .row ~ .row-tile::before,
+.group > .cell ~ .row-tile::before {
+    left: 57px;
+}
+
 .group-avatars > .row ~ .row::before,
 .group-avatars > .row ~ .cell::before,
 .group-avatars > .cell ~ .row::before,
 .group-avatars > .cell ~ .cell::before {
     left: 74px;
     left: var(--avatar-inset, 74px);
-}
-
-@media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 2dppx) {
-    .group > .row ~ .row::before,
-    .group > .row ~ .cell::before,
-    .group > .cell ~ .row::before,
-    .group > .cell ~ .cell::before,
-    .group > .cell-rows > .row ~ .row::before {
-        border-top-width: 0.5px;
-        border-top-color: var(--sep);
-    }
 }
 
 .row-label {
@@ -972,6 +1028,15 @@ summary.row:active {
     color: var(--label-2);
     line-height: 1.3;
 }
+
+/* The summary's Activity sub-line (design 101 D5: the newest row's words and clock): it wraps, and the clock sits in a
+   .nowrap span, so it is never cut in the middle and never clipped away (a line clamp would hide a clock that wraps
+   to a third line, code QA L5). */
+.row-sub-wrap {
+    display: block;
+}
+
+.nowrap { white-space: nowrap; }
 
 /* Device › Calendar's "Colour" row (2026-10-27): the swatch before the label is the dot Dagen draws before the time.
    The eight values are calendar::COLORS's, the same ARGB the launcher's CalendarColor keeps; peach (the kid's own)
@@ -1120,6 +1185,8 @@ select.pick {
     appearance: none;
     flex: 0 1 auto;
     width: auto;
+    /* Its longest choice is its least width (a flex item's own), held to 60 % of the row: never past the screen at any
+       text size, and the label gives way first - the choice shown is never cut at 100 % text. */
     max-width: 60%;
     margin: 0;
     padding: 4px 0;
@@ -1156,7 +1223,10 @@ select.pick {
 }
 
 .row-stacked > select.pick {
-    flex: 1 1 0%;
+    /* Its own line less the arrows' 16 px: wide enough never to share the label's line, and at large text never
+       wider than the row (min-width 0: its longest choice is cut by the picker itself). */
+    flex: 1 1 calc(100% - 16px);
+    min-width: 0;
     max-width: none;
     margin: 4px 0 0;
     text-align: left;
@@ -1198,6 +1268,8 @@ details.info > summary:not(.row) {
 }
 
 .info-panel {
+    /* A long link or address breaks rather than reach past the screen (the RCS form's link at 200 % text). */
+    overflow-wrap: anywhere;
     background: var(--info-bg);
     color: var(--info-text);
     border-radius: 10px;
@@ -1424,6 +1496,10 @@ div.attention {
 details.confirm > summary.row {
     justify-content: center;
     color: var(--red);
+    /* Its words are a bare text in the flex row: a long one may break, centred ("Tilbakestill tofaktorinnlogging"
+       at 200 % text). */
+    text-align: center;
+    overflow-wrap: anywhere;
 }
 
 .confirm-body {
@@ -1600,6 +1676,20 @@ button {
 button:hover {
     background: var(--tint-fill-hover);
     color: var(--on-tint-fill);
+}
+
+/* A save on its way (scroll-restore.js, 2026-11-14): its button disabled and quietly dimmed until the answer -
+   a still state, no animation. */
+button[aria-busy="true"] {
+    opacity: 0.55;
+    cursor: progress;
+}
+
+/* Design 103 D1 (a): a save held while the server can't be reached (static/swap.js marks its busy form `data-held`):
+   its rows dimmed the same way, so a switch shows neither state as saved until the page shows what is stored. */
+form[aria-busy="true"][data-held] .row {
+    opacity: 0.55;
+    cursor: progress;
 }
 
 .button-secondary,
@@ -2253,7 +2343,8 @@ code.key {
 }
 
 #source-manual:checked ~ .github-only,
-#source-fdroid:checked ~ .github-only {
+#source-fdroid:checked ~ .github-only,
+#source-manual:checked ~ .synced-only {
     display: none;
 }
 
@@ -2303,6 +2394,34 @@ code.key {
 #kind-link:focus:not(:focus-visible) ~ .group label[for="kind-link"],
 #kind-caldav:focus:not(:focus-visible) ~ .group label[for="kind-caldav"] {
     outline: none;
+}
+
+/* Device › Mobilnett (design 95 rev. 3): radio rows with a subtitle - the radio inside its row, hidden, a check on the
+   chosen one; each saves on change (autosave.js). */
+.pick-row {
+    position: relative;
+    cursor: pointer;
+}
+
+.pick-row > input[type="radio"] {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: 0;
+    opacity: 0;
+}
+
+.pick-row > input:checked ~ .choice-check {
+    visibility: visible;
+}
+
+.pick-row > input:focus-visible ~ .row-label {
+    outline: 2px solid var(--tint);
+    outline-offset: 2px;
+}
+
+.pick-row > input:disabled ~ .row-label {
+    opacity: 0.5;
 }
 
 @media (forced-colors: active) {
@@ -2457,7 +2576,7 @@ details.info[open] > summary .section-chev { -webkit-transform: rotate(90deg); t
 
 .group-music { --avatar-inset: 72px; }
 .music-card { position: relative; }
-.group-music > .music-card ~ .music-card::before { content: ""; position: absolute; top: 0; left: 72px; right: 0; border-top: 1px solid var(--sep-light); pointer-events: none; }
+.group-music > .music-card ~ .music-card::before { left: 72px; }
 .music-cover, .music-tile { flex: none; width: 44px; height: 44px; border-radius: 8px; object-fit: cover; }
 .music-tile { display: flex; align-items: center; justify-content: center; }
 .music-tile img { width: 26px; height: 26px; }
@@ -2506,7 +2625,8 @@ details.category-block[open] > summary .section-chev { -webkit-transform: rotate
 /* Its own stacking context: Leaflet's panes (z-index up to 1000) stay under the tab bar. */
 .map-box { position: relative; z-index: 0; overflow: hidden; height: 300px; margin: 0 0 12px; border-radius: 14px; background: var(--grey-bg); }
 /* The trail's span (design 44 §1.5): the segmented look, four in one line. */
-.span-pick a { flex: 1 1 0; padding: 0 4px; font-size: 0.875rem; }
+/* Never narrower than its longest word: at large text the four wrap onto two lines rather than run into each other. */
+.span-pick a { flex: 1 1 0; min-width: min-content; padding: 0 4px; font-size: 0.875rem; text-align: center; }
 .span-pick a[aria-checked="true"] { background: var(--surface); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); }
 /* A Locations row shows its fix on the map (static/locate.js makes it a button). */
 .row[data-fix][role="button"] { cursor: pointer; }
@@ -2591,7 +2711,8 @@ input.row-input {
    min-content items of E9 L8 made a ragged grid). Columns of at least 84px share the row equally - as many as the old
    76px items with their 4px margins fitted - and the label is 0.75rem, so the longest built-in word ("Kveldshimmel",
    ~75px at 12px in Arial's metrics, ~81px at 13px) fits a column's 80px or more and wraps between words only (E9 L8:
-   "Kveldshimm / el"). Only a single word longer than its column (a long uploaded name) still breaks (break-word).
+   "Kveldshimm / el"). Only a single word longer than its column (a long uploaded name, or any at 200 % text) still
+   breaks: `anywhere`, so the centred label's own width never passes its column's.
    No grid gap needed: the items' own margins (no flex gap: Safari 14.0). */
 .wallpaper-grid {
     display: grid;
@@ -2608,7 +2729,7 @@ input.row-input {
     font-size: 0.75rem;
     font-weight: 400;
     text-align: center;
-    overflow-wrap: break-word;
+    overflow-wrap: anywhere;
     cursor: pointer;
 }
 
@@ -2679,13 +2800,7 @@ input.row-input {
 }
 
 .wallpaper-item > .cell::before {
-    content: "";
-    position: absolute;
-    top: 0;
     left: 73px;
-    right: 0;
-    border-top: 1px solid var(--sep-light);
-    pointer-events: none;
 }
 
 /* Backups: Download above the backup's two confirms. */
@@ -2714,13 +2829,7 @@ input.row-input {
 
 .contact-body .row::before,
 .contact-body .contact-field::before {
-    content: "";
-    position: absolute;
-    top: 0;
     left: 16px;
-    right: 0;
-    border-top: 1px solid var(--sep-light);
-    pointer-events: none;
 }
 
 .contact-field {
@@ -2897,9 +3006,16 @@ input.row-num {
     background: var(--field-bg);
     font-size: 1rem;
 }
-input.row-num { width: 6.5em; text-align: right; }
-.row > .day-dash { margin-left: 6px; color: var(--label-2); }
-.row > .day-dash + input.row-time { margin-left: 6px; }
+/* At most a third of a narrow screen: at 200 % text 6.5em pushed the unit past a 320 px screen. */
+input.row-num { width: min(6.5em, 34vw); text-align: right; }
+/* A day's row: the day, then its from and until together - under the day when the row can't hold them (large text). */
+.day-row { flex-wrap: wrap; }
+/* Wraps only when its longest word and the times can't share the line. */
+.day-row > .row-label { flex: 1 1 0%; min-width: auto; word-break: normal; overflow-wrap: normal; }
+.day-times { display: flex; align-items: center; min-width: 0; max-width: 100%; margin-left: auto; }
+.day-times > input.row-time { flex: 0 1 auto; min-width: 0; }
+.day-times > .day-dash { margin-left: 6px; color: var(--label-2); }
+.day-times > .day-dash + input.row-time { margin-left: 6px; }
 .row-unit { flex: none; color: var(--label-2); font-size: 1rem; }
 /* A footer under the extra-time tiles (no group above it to tuck under). */
 .group-footer-after { margin-top: 0; }
@@ -2930,29 +3046,62 @@ input.row-num { width: 6.5em; text-align: right; }
 
 /* ---- Design 31 step 10: the phone's summary ---- */
 
-/* The header (the DeviceSummary mockup): the large avatar with its dot, the name, the state line,
-   the lock badge and today's bar, centred. */
-/* The name is the band's title (design 84); as the sheet's first box the head starts 20 px under its edge. */
+/* The header (design 101, mockup A; 3a, the user 2026-11-16): the picture's top reaches into the band's night, the pencil
+   badge in its corner, the one status line under it. The sheet starts where it does on every other page - the phone's
+   own pages (band::phone) keep their sheet's edge in the same place, so going from here to Apps moves nothing but the
+   content (a 38px gap here before: the sheet jumped on every step in and out). The band's solid night ends right at
+   the sheet's edge, so the picture lies in a layer over the band (.pic-pick's z-index 9: over the band's 8 and the
+   cap's 7, under the tab bar's 10 - it is centred, never near the cap's rounded corners). -29px from the sheet's content
+   edge (1px border + 15px padding) puts the picture's top 13px above the sheet's edge and its 4px ring 17px above it,
+   just under the title's line (a 22px title's box ends 18.8px above the edge), so a long name runs over the picture,
+   never into it. Pinned in tests/shell.rs. Nothing that holds the pic-menu panel may be positioned (.sheet,
+   .summary-head, .avatar-edit): the panel and its dim are placed against the body; .pic-pick only holds the badge. */
 .summary-head { display: flex; flex-direction: column; align-items: center; margin: 12px 0 20px; text-align: center; }
-.sheet > .summary-head:first-child { margin-top: 4px; }
-.avatar-large { width: 76px; height: 76px; font-size: 2.125rem; }
-.avatar-large .avatar-dot { width: 16px; height: 16px; border-width: 3px; right: 1px; bottom: 1px; border-color: var(--bg); }
-/* The header's avatar is the picture's picker (server round C): the file field is hidden but stays
-   focusable, its ring drawn round the avatar; "Add picture" or "Remove picture" under it. */
-.avatar-edit { position: relative; display: flex; flex-direction: column; align-items: center; }
-.avatar-form { margin: 0; }
-.avatar-pick { display: block; margin: 0; border-radius: 50%; font-weight: inherit; cursor: pointer; }
-.avatar-input { position: absolute; top: 0; left: 0; width: 1px; height: 1px; margin: 0; padding: 0; border: 0; opacity: 0; overflow: hidden; }
-.avatar-input:focus + .avatar-pick { outline: 2px solid var(--tint); outline-offset: 2px; }
-.avatar-input:focus:not(:focus-visible) + .avatar-pick { outline: none; }
-.avatar-add, .avatar-remove, .avatar-remove:hover { display: inline-block; margin: 2px 0 0; padding: 6px 8px; border: 0; border-radius: 8px; background: none; color: var(--tint); font: inherit; font-size: 0.875rem; font-weight: 600; cursor: pointer; }
-.avatar-remove:hover, .avatar-add:hover { color: var(--tint-hover); }
+.summary-sheet > .summary-head { margin-top: -29px; }
+.summary-sheet .pic-pick { z-index: 9; }
+.avatar-large { width: 88px; height: 88px; font-size: 2.5rem; box-shadow: 0 0 0 4px var(--bg); }
+.avatar-edit { display: flex; flex-direction: column; align-items: center; }
 .avatar-save { margin-top: 8px; }
 .avatar-error { margin: 4px 0 0; }
-.summary-state { margin: 3px 0 0; color: var(--label-2); font-size: 0.9375rem; line-height: 1.35; }
+details.pic-menu > summary { list-style: none; cursor: pointer; }
+details.pic-menu > summary::-webkit-details-marker { display: none; }
+.pic-pick { position: relative; display: block; border-radius: 50%; }
+.pic-pick:focus { outline: 2px solid var(--tint); outline-offset: 4px; }
+.pic-pick:focus:not(:focus-visible) { outline: none; }
+.pic-badge { position: absolute; right: -2px; bottom: -2px; display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%; background: var(--surface); color: var(--tint); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25); }
+.pic-backdrop { position: absolute; top: 0; right: 0; bottom: 0; left: 0; z-index: 11; background: rgba(12, 12, 20, 0.42); cursor: pointer; }
+.pic-panel { position: absolute; left: 10px; right: 10px; bottom: calc(14px + env(safe-area-inset-bottom, 0px)); z-index: 12; max-width: 560px; margin: 0 auto; text-align: center; }
+.pic-card { overflow: hidden; border-radius: 14px; background: var(--surface); }
+.pic-note { margin: 0; padding: 12px 16px; color: var(--label-2); font-size: 0.8125rem; line-height: 1.35; }
+.pic-form { position: relative; margin: 0; border-top: 1px solid var(--sep); }
+.pic-action { position: relative; display: block; box-sizing: border-box; width: 100%; min-height: 56px; margin: 0; padding: 16px; border: 0; border-radius: 0; background: transparent; color: var(--tint); font: inherit; font-size: 1.0625rem; font-weight: 400; line-height: 24px; text-align: center; cursor: pointer; }
+.pic-danger, .pic-danger:hover { color: var(--red-text); }
+.pic-file { position: absolute; top: 0; right: 0; bottom: 0; left: 0; z-index: 1; width: 100%; height: 100%; margin: 0; padding: 0; border: 0; opacity: 0; cursor: pointer; }
+.pic-action:focus-within { background: var(--row-active); }
+.pic-panel > .button-cancel, .pic-panel > .button-cancel:hover { box-sizing: border-box; min-height: 56px; margin-top: 8px; border-radius: 14px; background: var(--surface); font-weight: 600; }
+.pic-panel > .button-cancel:hover { background: var(--row-active); }
+.pic-panel > .button-cancel[hidden] { display: none; }
+/* The one status line: the dot, then the parts. A part never breaks inside (an inline box that wraps between parts and,
+   alone wider than the line, wraps inside at max-width 100%: no sideways scroll at 320px). */
+.summary-state { margin: 12px 0 0; color: var(--label-2); font-size: 0.9375rem; line-height: 1.35; }
+.summary-state .part { display: inline-block; max-width: 100%; vertical-align: top; }
+.summary-state .pin { margin-right: 3px; vertical-align: -1px; }
+.state-dot { display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 50%; vertical-align: 0.1em; }
 .summary-link { display: inline-block; margin-top: 4px; padding: 10px 8px; font-size: 0.9375rem; text-decoration: none; }
-.summary-meter { width: 220px; max-width: 100%; height: 6px; margin-top: 14px; border-radius: 3px; }
-.summary-meter > i { border-radius: 3px; }
+/* Design 100 §14.4: the answer card - the kid's open request right after the header, a 2 px peach ring on the card's
+   ground, the hourglass on an amber tile, four answers in one row. Margins, not flex gap (Safari 14.0); the grid's
+   gap is fine. Tokens only, so light and dark follow. */
+.ask-card { margin: 22px 0 20px; padding: 14px; border-radius: 16px; background: var(--surface); box-shadow: inset 0 0 0 2px var(--tint-fill); }
+.ask-head { display: flex; align-items: flex-start; }
+.ask-tile { display: flex; flex: none; align-items: center; justify-content: center; width: 36px; height: 36px; margin-right: 12px; border-radius: 10px; background: var(--orange-bg); color: var(--orange); }
+.ask-text { display: flex; flex-direction: column; min-width: 0; }
+.ask-title { font-size: 1.0625rem; font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }
+.ask-sub { margin-top: 3px; color: var(--label-3); font-size: 0.875rem; line-height: 1.35; }
+.ask-form { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 12px 0 0; }
+.ask-button { min-width: 0; height: 44px; margin: 0; padding: 0 4px; border: 0; border-radius: 12px; background: var(--tint-fill); color: var(--on-tint-fill); font: inherit; font-size: 0.9375rem; font-weight: 600; cursor: pointer; }
+.ask-button:hover { background: var(--tint-fill-hover); }
+.ask-button.ask-no { background: var(--grey-bg); color: var(--grey-text); }
+.ask-button.ask-no:hover { background: var(--row-active); }
 /* A tile that is a link (Locate) or a sheet's summary looks like the button tiles. */
 a.act, a.act:hover { text-decoration: none; }
 .act-strong { background: var(--tint-fill); color: var(--on-tint-fill); }
@@ -2964,6 +3113,49 @@ a.act, a.act:hover { text-decoration: none; }
 .act-sheet > summary.act::-webkit-details-marker { display: none; }
 .act-sheet-body { margin: 8px 0 0; border-radius: 12px; background: var(--surface); }
 .act-sheet > .confirm-body { padding-top: 16px; }
+
+/* Design 93: Quick Actions as three tiles in one row (Skjermtid, Pause regler, Slå på regel), each a link opening its
+   sheet below the row. A state line only when it says something; an empty one keeps its height so the tiles stay
+   level. The Regler sheet's mode radios are hoisted as the form's first children: the panels switch with sibling
+   selectors (no :has, no :focus-visible alone - Chrome 80 / iOS 14), so every mode-dependent row is a child of the form. */
+.qa-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-gap: 10px; gap: 10px; margin: 0 0 12px; }
+.qa { display: flex; flex-direction: column; align-items: flex-start; justify-content: flex-start; min-width: 0; min-height: 92px; margin: 0; padding: 12px; border: 0; border-radius: 14px; background: var(--surface); color: var(--label); font: inherit; text-align: left; text-decoration: none; cursor: pointer; }
+.qa > * + * { margin-top: 8px; }
+.qa:hover { background: var(--row-active); color: var(--label); }
+.qa .tile { width: 30px; height: 30px; border-radius: 8px; }
+.qa-label { display: block; font-size: 0.875rem; font-weight: 600; line-height: 1.2; overflow-wrap: anywhere; }
+.qa-sub { display: block; margin-top: 2px; color: var(--label-2); font-size: 0.75rem; font-weight: 400; line-height: 1.25; overflow-wrap: anywhere; }
+.qa-chosen { box-shadow: inset 0 0 0 2px var(--tint); }
+.qa-on .qa-sub { color: var(--tint); font-weight: 600; }
+.qa-sheet { margin: 0 0 12px; }
+.qa-sheet > .group + .group { margin-top: 8px; }
+.qa-head .tile { width: 29px; height: 29px; }
+.qa-head .row-label { font-weight: 600; }
+.qa-head .row-label:focus { outline: none; }
+.qa-head > .row-action { margin-left: auto; }
+.qa-head > a.row-action, .qa-head > a.row-action:hover { text-decoration: none; }
+.qa-row-tile { margin-right: 12px; }
+.qa-warn { color: var(--orange-text); }
+.qa-danger, .qa-danger:hover { color: var(--red-text); }
+#setup-open { margin-bottom: 12px; }
+.qa-form { position: relative; }
+.qa-mode { position: absolute; width: 1px; height: 1px; margin: 0; opacity: 0; pointer-events: none; }
+.when-on, .when-pause { display: none; }
+#m-on:checked ~ .when-on, #m-pause:checked ~ .when-pause { display: flex; }
+#m-on:checked ~ .qa-hva .face-on, #m-pause:checked ~ .qa-hva .face-pause { background: var(--surface); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); }
+#m-on:disabled ~ .qa-hva .face-on { opacity: 0.4; cursor: default; }
+#m-on:focus ~ .qa-hva .face-on, #m-pause:focus ~ .qa-hva .face-pause { outline: 2px solid var(--tint); outline-offset: -2px; }
+#m-on:focus:not(:focus-visible) ~ .qa-hva .face-on, #m-pause:focus:not(:focus-visible) ~ .qa-hva .face-pause { outline: none; }
+.qa-hva .segment { cursor: pointer; }
+/* Design 93 §6.6: a row that opens a sheet under it (Avansert's "Åpne for oppsett"). */
+.row-sheet > summary { list-style: none; cursor: pointer; }
+.row-sheet > summary::-webkit-details-marker { display: none; }
+.row-sheet > summary .chev { transition: transform 0.2s; }
+/* Open: the chevron turns down (design 103 D11; no outline - the turn is the open mark). */
+.row-sheet[open] > summary .chev { -webkit-transform: rotate(90deg); transform: rotate(90deg); }
+/* The line under the row is the lists' hairline (the one rule, its 2dppx block last in the file). */
+.row-sheet-body { position: relative; }
+.row-sheet-body::before { left: 57px; }
 /* The foreign-app warning's steps, inside its Attention block. */
 .attention-steps { margin: 8px 0 0; padding-left: 20px; font-size: 0.875rem; font-weight: 400; }
 .attention-steps li + li { margin-top: 4px; }
@@ -3391,13 +3583,7 @@ html.veiled body { background: var(--night) url("vibb-rest.svg") center / var(--
 /* Design 77 D16: a waiting message's actions under its row, each a full-width row with a hairline above. Add
    Contact's switches (R2-M1) sit in its form between the fields and the button. */
 .held-body .row::before {
-    content: "";
-    position: absolute;
-    top: 0;
     left: 16px;
-    right: 0;
-    border-top: 1px solid var(--sep-light);
-    pointer-events: none;
 }
 .add-switches { margin: 0 -16px 16px; }
 /* "Tillat avsendernavnet…" opens a confirm (D17's warning) but grants, not deletes: the tint, not the red. */
@@ -3472,13 +3658,7 @@ div.row[data-custom] > .row-value {
 .group-lines form > .cell::before,
 .group-lines form > .contact-field::before,
 .group-lines > details.cell::before {
-    content: "";
-    position: absolute;
-    top: 0;
     left: 16px;
-    right: 0;
-    border-top: 1px solid var(--sep-light);
-    pointer-events: none;
 }
 .group-lines .cell,
 .group-lines .contact-field {
@@ -3533,7 +3713,7 @@ details.own-edit[open] {
    which are light in both schemes, so they have one light look in both (as --map-trail). */
 /* Revision 3: the one-phone view's map (.map-one) has the same look and height. */
 /* 2026-11-12, the user: 60vh put the age row and Update Location under the tab bar on an iPhone 15. */
-.map-all, .map-one { height: clamp(260px, 45vh, 420px); }
+.map-all, .map-one { height: clamp(280px, 55vh, 480px); }
 /* Over the map's top (Leaflet's panes go up to 1000): one line that scrolls inside itself, its right
    end fading into the map - the page never scrolls sideways. */
 .map-chips { position: absolute; z-index: 1001; top: 0; right: 0; left: 0; display: flex; padding: 10px; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; -webkit-overflow-scrolling: touch; -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); }
@@ -3594,3 +3774,34 @@ details.own-edit[open] {
 .map-legend-over { display: none; }
 .map-full .map-legend-over { position: absolute; z-index: 1001; bottom: calc(26px + env(safe-area-inset-bottom, 0px)); left: max(10px, env(safe-area-inset-left, 0px)); display: flex; margin: 0; padding: 6px 12px; border-radius: 16px; background: #FFFFFF; color: #636366; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2); }
 .map-legend-over > span:last-child { margin-right: 0; }
+
+/* The hairlines on 2x+ screens (design 103 §4, D12 a): every row line's 1px --sep line scaled to half - 1 device px at
+   2x, 1.5 at 3x, the same at every fractional position. Last in the file, after every list's rule, so no list gets
+   a border and the scaled line both. */
+@media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 2dppx) {
+    .group > .row ~ .row::before,
+    .group > .row ~ .cell::before,
+    .group > .cell ~ .row::before,
+    .group > .cell ~ .cell::before,
+    .group > .cell-rows > .row ~ .row::before,
+    .group-music > .music-card ~ .music-card::before,
+    .wallpaper-item > .cell::before,
+    .contact-body .row::before,
+    .contact-body .contact-field::before,
+    .held-body .row::before,
+    .group-lines .row ~ .row::before,
+    .group-lines form + form .row:first-child::before,
+    .group-lines div + form .row:first-child::before,
+    .group-lines form > .cell::before,
+    .group-lines form > .contact-field::before,
+    .group-lines > details.cell::before,
+    .row-sheet-body::before {
+        border-top: 0;
+        height: 1px;
+        background: var(--sep);
+        -webkit-transform: scaleY(0.5);
+        transform: scaleY(0.5);
+        -webkit-transform-origin: 0 0;
+        transform-origin: 0 0;
+    }
+}

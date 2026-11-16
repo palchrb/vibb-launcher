@@ -87,6 +87,7 @@ fn provision_payload_uses_configured_values() {
         pwa_default_lang: None,
         github_api: "https://api.github.com".to_string(),
         met_contact: None,
+        status_heartbeat: true,
     };
     let payload = provisioning::provisioning_payload(
         &config,
@@ -989,7 +990,7 @@ async fn the_launcher_check_decides_the_qr() {
     assert!(!page.contains("data-row=\"qr\""));
     assert_eq!(code_hash(&app, id).await, before, "checking: a code");
     // A POST's answer never reloads itself (it would send the form again): Check Again is its way on.
-    assert!(!page.contains("auto-reload.js"));
+    assert!(!page.contains("data-waits"));
     assert!(page.contains("data-row=\"launcher-again\""), "{page}");
     // The page a GET drew reloads itself until the check ends.
     let response = provisioning::provision_form(State(checking()), crate::i18n::Lang::En, Path(id))
@@ -997,7 +998,7 @@ async fn the_launcher_check_decides_the_qr() {
         .into_response();
     let page = read_response(response).await.text();
     assert!(page.contains("data-launcher=\"checking\""), "{page}");
-    assert!(page.contains("auto-reload.js"), "{page}");
+    assert!(page.contains("data-waits"), "{page}");
     assert!(!page.contains("data-row=\"launcher-again\""), "{page}");
 }
 

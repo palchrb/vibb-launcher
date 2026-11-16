@@ -7,7 +7,8 @@
     `tab`: a tab's landing page; the bell comes after the page's actions, so it is last by construction (needs `bell`;
     `tab` is the page's own `{% let tab %}`). `sub`: a page under a tab. `phone`: one of a phone's own pages, with the
     phone's small picture (`who`, `devices::BandAvatar`) at the right - it says whose page this is, as the back
-    link's word did. `editor`: a page with Save; its band is a child of <body> and stays in place. `bare`: a page
+    link's word did. `app`: an app's own page (design 101 §7), with the app's tile at the right as the list draws it (the
+    real logo, else the catalog glyph, else the letter; `tile` is `tracked_apps::AppTile`). `editor`: a page with Save; its band is a child of <body> and stays in place. `bare`: a page
     with no session (the mark, nothing to tap). -#}
 {% macro size(title) %}{% if title.chars().count() > 24 %} {{ "band-xlong" }}{% else if title.chars().count() > 16 %} {{ "band-long" }}{% endif %}{% endmacro %}
 
@@ -45,6 +46,15 @@
         {% call back(href, parent) %}{% endcall %}
         <h1 class="page-title">{{ title }}</h1>
         <span class="band-who" aria-hidden="true"><span class="avatar {{ who.avatar }}">{{ who.initial }}{% if let Some(src) = who.photo %}<img class="avatar-img" src="{{ src }}" alt="" decoding="async">{% endif %}</span></span>
+        <div class="band-actions">{{ caller() }}</div>
+    </header>
+{%- endmacro %}
+
+{% macro app(title, href, parent, tile) -%}
+<header class="band{% call size(title) %}{% endcall %}">
+        {% call back(href, parent) %}{% endcall %}
+        <h1 class="page-title">{{ title }}</h1>
+        <span class="band-who" aria-hidden="true">{% if let Some(src) = tile.logo %}<span class="app-row-tile app-row-logo {{ tile.colour }}">{{ tile.letter }}<img src="{{ src }}" alt="" decoding="async"></span>{% else if let Some((icon, colour)) = tile.icon %}<span class="app-row-tile" style="background: {{ colour }}"><img src="/static/app-icons/{{ icon }}.svg" alt=""></span>{% else %}<span class="app-row-tile {{ tile.colour }}">{{ tile.letter }}</span>{% endif %}</span>
         <div class="band-actions">{{ caller() }}</div>
     </header>
 {%- endmacro %}

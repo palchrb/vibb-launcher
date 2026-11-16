@@ -92,6 +92,18 @@
                     <p class="group-footer">{{ self.t("apps.add.prereleases_footer") }}</p>
                 </details>
             </div>
+
+            {#- Design 90 (§17.3 M2): the app's wait, 48 suggested for every source; not for uploads. -#}
+            <div class="synced-only">
+                <div class="group">
+                    <label class="row">
+                        <span class="row-label">{{ self.t("apps.add.wait") }}</span>
+                        <input type="number" class="row-num" id="release_wait_hours" name="release_wait_hours" value="{{ release_wait_hours }}" min="0" max="336" step="1" inputmode="numeric"{% if error_field == "release_wait_hours" %} aria-invalid="true" aria-describedby="release_wait_hours-error" autofocus{% endif %}><span class="row-unit">&nbsp;{{ self.t("apps.wait.hours") }}</span>
+                    </label>
+                    {% if error_field == "release_wait_hours" %}{% if let Some(e) = error %}<p class="flash flash-error" id="release_wait_hours-error" data-flash="release_wait_hours">{{ e }}</p>{% endif %}{% endif %}
+                </div>
+                <p class="group-footer">{{ self.t("apps.wait.footer") }}{% if first_waits %} {{ self.t("apps.wait.first_footer") }}{% endif %}</p>
+            </div>
         </div>
 
         <button type="submit" class="button-wide">{{ self.t("apps.add.title") }}</button>

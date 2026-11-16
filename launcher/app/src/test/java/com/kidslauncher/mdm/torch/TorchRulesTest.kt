@@ -73,17 +73,19 @@ class TorchRulesTest {
         for (event in listOf("ACTION_SCREEN_OFF", "ACTION_SCREEN_ON", "ACTION_USER_PRESENT", "isInteractive")) {
             assertFalse(event, event in torch)
         }
-        // And nothing else switches it: only the alarm's receiver, Home's tile and the lock's button
-        // call it (a screen-off receiver elsewhere calling autoOff would break the rule).
+        // And nothing else switches it: only the alarm's receiver, Snarveier's torch item (design 99, which took
+        // Home's tile) and the lock's button call it (a screen-off receiver elsewhere calling autoOff would break the rule).
         val java = File(main, "java/com/kidslauncher/mdm")
         val callers = java.walk().filter { it.isFile && it.name.endsWith(".kt") }
             .filter { Regex("""Torch\.(autoOff|toggle)\(""").containsMatchIn(it.readText()) }
             .map { it.relativeTo(java).path }.toSet()
-        assertTrue(callers.toString(), callers.isNotEmpty() && callers.all { it in setOf("torch/Torch.kt", "ui/home/HomeGridAdapter.kt", "lock/GlancePanel.kt") })
+        assertTrue(callers.toString(), callers.isNotEmpty() && callers.all { it in setOf("torch/Torch.kt", "shortcuts/ShortcutsRuntime.kt", "lock/GlancePanel.kt") })
         assertEquals(1, Regex("""Torch\.autoOff\(""").findAll(torch).count())
         assertTrue("override fun onReceive(context: Context, intent: Intent) = Torch.autoOff(context)" in torch)
-        val adapter = File(java, "ui/home/HomeGridAdapter.kt").readText()
-        assertTrue("is GridTile.Flashlight -> Torch.toggle(activity)" in adapter)
+        val shortcuts = File(java, "shortcuts/ShortcutsRuntime.kt").readText()
+        assertTrue("ShortcutKey.TORCH -> main.post { Torch.toggle(app) }" in shortcuts)
+        // Design 99 §7: Home has no flashlight tile any more.
+        assertFalse("Torch" in File(java, "ui/home/HomeGridAdapter.kt").readText())
     }
 
     @Test

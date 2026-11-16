@@ -14,7 +14,17 @@
     <string name="anchor_time_left">%1$s igjen i dag</string>
     <string name="anchor_time_used_up">Skjermtiden er brukt opp i dag</string>
     <string name="anchor_ask_more_time">Be om mer tid</string>
-    <string name="anchor_asked_at">Spurt kl. %1$s</string>
+    <!-- Design 100 §8.4, §14.3: the request's note line (the panel, the plain notice's text, the time-rule screen). -->
+    <string name="ask_note_sending">Spurt kl. %1$s · sender …</string>
+    <string name="ask_note_offline">Spurt kl. %1$s · sendes når telefonen er på nett</string>
+    <string name="ask_note_waiting">Spurt kl. %1$s · venter på svar</string>
+    <string name="ask_note_no">%1$s svarte nei kl. %2$s</string>
+    <string name="ask_note_no_unnamed">Svaret ble nei kl. %1$s</string>
+    <string name="ask_note_given">%1$s ga deg %2$s</string>
+    <string name="ask_note_given_unnamed">Du fikk %1$s mer</string>
+    <!-- Design 100 §8.3: the time-rule screen's ask block ("Be om mer tid" is anchor_ask_more_time). -->
+    <string name="lock_ask_again">Spør igjen</string>
+    <string name="lock_ask_capped">Du har spurt tre ganger i dag.</string>
     <string name="lock_calls_emergency_only">Du kan bare ringe nødnumre nå.</string>
     <string name="lock_calls_allowed">Du kan fortsatt ringe kontaktene dine.</string>
     <string name="lock_alarm_stop">Slå av alarmen</string>
@@ -99,10 +109,6 @@
     <string name="contact_request_done">Ferdig</string>
     <string name="contact_request_row_description">%1$s, %2$s</string>
     <string name="kid_settings_title">Innstillinger</string>
-    <!-- Lommelykten (design 41): Home-flisen og låsens knapp, og TalkBacks tilstandsord. -->
-    <string name="torch_title">Lommelykt</string>
-    <string name="torch_state_on">på</string>
-    <string name="torch_state_off">av</string>
     <string name="calls_phone_book_empty">Det er ingen å ringe ennå. Nødnumrene (112, 110, 113) virker alltid fra nødknappen på låseskjermen.</string>
     <string name="calls_off">Samtaler er slått av på denne telefonen. Nødnumrene virker fortsatt.</string>
     <string name="calls_call">Ring</string>
@@ -302,6 +308,10 @@
     <string name="kid_settings_touch_sounds">Lyd ved trykk</string>
     <string name="kid_settings_touch_vibration">Vibrasjon ved trykk</string>
     <string name="kid_settings_touch_keyboard">Tastaturet har egen lyd og vibrasjon i sine innstillinger.</string>
+    <string name="kid_settings_mobile_data">Mobildata</string>
+    <string name="kid_settings_mobile_parent">Bestemt av mamma og pappa</string>
+    <string name="kid_settings_mobile_phone_off">Mobildata er slått av på telefonen</string>
+    <string name="kid_settings_mobile_off">Bare Vibb One bruker mobildata. Wi-Fi virker som før.</string>
     <string name="kid_settings_touch_read_only">Kan ikke endres på denne telefonen ennå.</string>
     <!-- Barnets ringetone og meldingslyd (2026-11-04). -->
     <string name="kid_settings_ringtone">Ringetone</string>
@@ -476,7 +486,7 @@
     <string name="notification_ring_title">Telefonen ringer</string>
     <string name="notification_ring_text">En forelder startet dette fra Finn enheten.</string>
     <string name="notification_ring_stop_action">Stopp ringingen</string>
-    <string name="notification_channel_listener">Finn enheten – bakgrunnstilkobling</string>
+    <string name="notification_channel_listener">Vibb One</string>
     <string name="notification_listener_title">Vibb One</string>
     <string name="notification_channel_vpn_filter">Innholdsfilter</string>
     <string name="vpn_session">Vibb One-filter</string>
@@ -755,4 +765,111 @@
     <!-- TalkBack sier «Dobbelttrykk for å» foran en klikketikett (kode-QA L2): infinitiv. -->
     <string name="weather_card_hint">se dagen</string>
     <string name="weather_card_close">lukke dagen</string>
+    <!-- Design 98 §3.3: «Fullfør oppsett» - assistenten, Wi-Fi i flymodus, samtalefilteret. -->
+    <string name="settings_assistant_title">Digital assistent</string>
+    <string name="settings_assistant_chosen">Vibb One er valgt</string>
+    <string name="settings_assistant_open">Velg Vibb One - trengs for Flymodus. Trykk: Standard digital assistent-app › Vibb One › OK. Android spør om assistenten kan lese skjermen. Vibb One leser den aldri.</string>
+    <string name="settings_assistant_pause_first">Velg Vibb One - trengs for Flymodus. Sett alle begrensninger på pause først, og trykk her</string>
+    <string name="settings_assistant_wait">Velg Vibb One - pausen starter, et øyeblikk …</string>
+    <string name="settings_assistant_no_page">Android har ingen side for dette på denne telefonen</string>
+    <string name="settings_wifi_apm_title">Wi-Fi i flymodus</string>
+    <string name="settings_wifi_apm_kept">Wi-Fi blir på i flymodus</string>
+    <string name="settings_wifi_apm_turns_off">Denne telefonen slår av Wi-Fi i flymodus</string>
+    <string name="settings_wifi_apm_not_set">Ikke satt opp</string>
+    <string name="settings_wifi_apm_start">Ikke satt opp - trykk: flymodus slås på, slå på Wi-Fi i panelet, og gå tilbake</string>
+    <string name="settings_wifi_apm_pause_first">Ikke satt opp - sett alle begrensninger på pause først, og trykk her</string>
+    <string name="settings_wifi_apm_line">Slå på Wi-Fi her, og gå tilbake</string>
+    <string name="settings_wifi_apm_failed">Fikk ikke slått på flymodus. Prøv igjen.</string>
+    <string name="settings_call_filter_title">Samtalefilter</string>
+    <string name="settings_call_filter_open">Ikke valgt - trykk og velg Vibb One (Android spør to ganger)</string>
+    <string name="settings_call_filter_pause_first">Ikke valgt - sett alle begrensninger på pause først, og trykk her</string>
+    <string name="notification_channel_setup">Oppsett</string>
+    <string name="setup_notice_title">Fullfør oppsettet av Vibb One</string>
+    <plurals name="setup_notice_steps">
+        <item quantity="one">%d steg igjen</item>
+        <item quantity="other">%d steg igjen</item>
+    </plurals>
+    <!-- Design 98 §4.1: barnets Flymodus-rad. -->
+    <string name="kid_settings_airplane">Flymodus</string>
+    <string name="kid_settings_airplane_off_only">Slå av flymodus</string>
+    <string name="kid_settings_airplane_parent">Bestemt av mamma og pappa</string>
+    <string name="kid_settings_airplane_turning_on">Slår på flymodus…</string>
+    <string name="kid_settings_airplane_turning_off">Slår av…</string>
+    <string name="kid_settings_airplane_emergency">Etter en nødsamtale kan ikke flymodus slås på ennå</string>
+    <string name="kid_settings_airplane_failed">Fikk ikke slått på flymodus. Prøv igjen.</string>
+    <string name="kid_settings_airplane_on_wifi">Ingen mobilnett. Wi-Fi er på. Nødsamtaler virker.</string>
+    <string name="kid_settings_airplane_on_offline">Ingen nett. Nødsamtaler virker.</string>
+    <string name="kid_settings_wifi_airplane">Kan ikke endres i flymodus</string>
+    <string name="kid_settings_mobile_airplane">Flymodus er på</string>
+    <string name="home_airplane_on">Flymodus er på · Trykk for å slå av</string>
+    <string name="lock_more">Mer</string>
+    <string name="rule_sheet_parent_code">Foreldrekode ›</string>
+    <string name="rule_pause_title_one">Sett %1$s på pause</string>
+    <string name="rule_pause_title_two">Sett %1$s og %2$s på pause</string>
+    <string name="rule_pause_15">15 min</string>
+    <string name="rule_pause_30">30 min</string>
+    <string name="rule_pause_60">1 time</string>
+    <string name="rule_pause_120">2 timer</string>
+    <string name="rule_pause_words">Gjelder bare denne regelen. Du ser pausen i appen når telefonen har nett igjen, og kan avslutte den der.</string>
+    <string name="rule_pause_button">Sett på pause</string>
+    <string name="rule_sheet_parent_code_title">Foreldrekode</string>
+    <string name="rule_pause_no_pin">Ingen foreldre-PIN er satt på serveren.</string>
+    <!-- Snarveier (design 99). -->
+    <string name="shortcuts_channel">Snarveier</string>
+    <string name="shortcuts_subtext">Snarveier</string>
+    <string name="shortcut_full_torch">Lommelykt</string>
+    <string name="shortcut_full_sound">Lyd</string>
+    <string name="shortcut_full_airplane">Flymodus</string>
+    <string name="shortcut_full_wifi">Wi-Fi</string>
+    <string name="shortcut_full_bluetooth">Bluetooth</string>
+    <string name="shortcut_full_mobile_data">Mobildata</string>
+    <string name="shortcut_full_brightness">Lysstyrke</string>
+    <string name="shortcut_full_more_time">Mer tid</string>
+    <string name="shortcut_full_music">Musikk</string>
+    <string name="shortcut_desc_on">%1$s, på</string>
+    <string name="shortcut_desc_off">%1$s, av</string>
+    <string name="shortcut_desc_sound_off">%1$s, lydløs (vibrerer)</string>
+    <string name="shortcut_desc_level">%1$s, %2$s</string>
+    <string name="shortcut_level_low">lav</string>
+    <string name="shortcut_level_medium">middels</string>
+    <string name="shortcut_level_high">høy</string>
+    <string name="shortcut_desc_ask">%1$s, be om mer tid</string>
+    <string name="shortcut_desc_asked">%1$s, spurt</string>
+    <string name="shortcut_desc_unavailable">%1$s, ikke tilgjengelig nå</string>
+    <string name="shortcut_desc_busy">%1$s, et øyeblikk</string>
+    <string name="kid_settings_shortcuts_heading">I varsellisten</string>
+    <string name="kid_settings_shortcuts">Snarveier</string>
+    <string name="kid_settings_shortcuts_hidden">Skjult i varsellisten</string>
+    <string name="kid_settings_shortcuts_none">Ingen valgt</string>
+    <string name="shortcuts_picker_line">Velg opptil 4. De vises øverst når du drar ned fra toppen av skjermen.</string>
+    <string name="shortcuts_picker_count">%1$d av %2$d valgt</string>
+    <string name="shortcuts_picker_full">Du har valgt 4. Fjern en først.</string>
+    <string name="shortcuts_picker_show_again">Vis i varsellisten igjen</string>
+    <string name="shortcuts_picker_hidden_line">Du har skjult snarveiene i varsellisten.</string>
+    <string name="shortcuts_picker_more_time_line">Vises når du har skjermtid i dag</string>
+    <string name="shortcuts_picker_move_up">Flytt %1$s opp</string>
+    <string name="shortcuts_picker_move_down">Flytt %1$s ned</string>
+    <!-- Design 102 Part A: the Wi-Fi sign-in window, its entry, the Wi-Fi page's row and Home's line. -->
+    <string name="portal_title">Logg på Wi-Fi</string>
+    <string name="portal_checking">Sjekker nettet …</string>
+    <string name="portal_works">Nettet virker allerede</string>
+    <string name="portal_code_needed">En voksen taster foreldrekoden for å logge på.</string>
+    <string name="portal_code_title">Foreldrekode for Wi-Fi-innlogging</string>
+    <string name="portal_no_code">Ingen foreldrekode er satt – spør en voksen</string>
+    <string name="portal_ask">Spør en voksen om Wi-Fi-innlogging</string>
+    <string name="portal_no_sign_in">Denne Wi-Fi-en trenger ikke innlogging nå</string>
+    <string name="portal_not_now">Wi-Fi-innlogging går ikke nå</string>
+    <string name="portal_close">Lukk</string>
+    <string name="portal_leaves">Denne lenken går ut av innloggingssiden</string>
+    <string name="portal_blocked">Denne siden er sperret</string>
+    <string name="portal_tls">Forbindelsen til denne siden er ikke trygg</string>
+    <string name="portal_no_download">Nedlasting går ikke her</string>
+    <string name="portal_timeout">Innloggingen tok for lang tid. Prøv igjen, eller spør en voksen.</string>
+    <string name="portal_budget">Du har brukt dagens Wi-Fi-innlogginger. Spør en voksen.</string>
+    <string name="wifi_networks_connected_sign_in">Tilkoblet – må logges på</string>
+    <string name="wifi_portal_sign_in">Logg på</string>
+    <string name="wifi_portal_sign_in_sub">Wi-Fi-en vil at du logger på</string>
+    <string name="wifi_portal_reopen">Åpne påloggingssiden</string>
+    <string name="wifi_portal_reopen_sub">Logg av eller se hvor lenge du har igjen</string>
+    <string name="home_portal_line">Wi-Fi-en vil at du logger på</string>
 </resources>

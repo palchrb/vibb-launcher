@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="{{ lang.code() }}">
+<head>
+{% include "partials/head.html" %}
+</head>
+<body>
+<div class="top-strip" aria-hidden="true"></div>
+{% let tab = "devices" %}
+{% include "partials/tab_bar.html" %}
+{% import "partials/band.html" as band %}
+<main class="container">
+    {% call band::phone(self.t("device.page.mobile"), "/devices/" ~ device.id, device.name, who) %}{% endcall %}
+    <div class="sheet">
+
+    {#- Design 95 rev. 3: Mobilnett, a page of the phone's own. Each group is one auto-saving form back to its anchor
+        (#mobile-data - the kid's switch is a form of its own there -, #abroad (design 97), #mobile-lock): with JS scroll-restore.js keeps the place, without JS the
+        <noscript> Save lands on the group - a save never jumps to the top. The radios are the rows (a check marks the
+        chosen one); a phone whose Vibb One doesn't do it yet has them disabled, with the update line. The state lines
+        under each group only when they say something (mobile_network::card). -#}
+    <section id="mobile-data" aria-labelledby="mobile-data-title">
+        <h2 class="group-header" id="mobile-data-title">{{ self.t("mobile.data.header") }}</h2>
+        {% for line in card.data_lines %}{% if line.warn %}
+        <div class="attention attention-action" data-mobile-line="{{ line.key }}"><span class="attention-text">{{ line.title }}{% if let Some(sub) = line.sub %}<span class="attention-sub">{{ sub }}</span>{% endif %}</span></div>
+        {% endif %}{% endfor %}
+        <form method="post" action="/devices/{{ device.id }}/mobile#mobile-data" class="group" role="radiogroup" aria-labelledby="mobile-data-title">
+            <input type="hidden" name="group" value="mobile-data">
+            <label class="row pick-row" data-choice="on">
+                <input type="radio" name="apps_mobile" value="on"{% if card.apps_mobile == "on" %} checked{% endif %}{% if card.reported && !card.mobile_capable %} disabled{% endif %} data-autosave>
+                <span class="row-label">{{ self.t("mobile.data.on") }}<span class="row-sub">{{ self.t("mobile.data.on_sub") }}</span></span>
+                <svg class="choice-check" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 8.5l3.5 3.5 7.5-8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </label>
+            <label class="row pick-row" data-choice="vibb">
+                <input type="radio" name="apps_mobile" value="vibb"{% if card.apps_mobile == "vibb" %} checked{% endif %}{% if card.reported && !card.mobile_capable %} disabled{% endif %} data-autosave>
+                <span class="row-label">{{ self.t("mobile.data.vibb") }}<span class="row-sub">{{ self.t("mobile.data.vibb_sub") }}</span></span>
+                <svg class="choice-check" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 8.5l3.5 3.5 7.5-8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </label>
+            <details class="info cell" data-info="only-vibb">
+                <summary class="row">
+                    <span class="row-label">{{ self.t("mobile.data.info_label") }}</span>
+                    <svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("common.more_info") }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>
+                </summary>
+                <div class="info-panel"><p>{{ self.t("mobile.data.info") }}</p></div>
+            </details>
+            {% for line in card.data_lines %}{% if !line.warn %}
+            <div class="row" data-mobile-line="{{ line.key }}"><span class="row-label">{{ line.title }}{% if let Some(sub) = line.sub %}<span class="row-sub">{{ sub }}</span>{% endif %}</span></div>
+            {% endif %}{% endfor %}
+            <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
+        </form>
+        <form method="post" action="/devices/{{ device.id }}/mobile#mobile-data" class="group" data-kid-mobile>
+            <input type="hidden" name="group" value="kid-mobile">
+            <label class="row">
+                <span class="row-label">{{ self.t("mobile.kid.label") }}<span class="row-sub">{{ self.tp("mobile.kid.sub", [("name", device.name.as_str())]) }}</span>{% if card.reported && !card.network_capable %}<span class="row-sub tone-orange" data-hint>{{ self.t("mobile.state.needs_update") }}</span>{% endif %}</span>
+                <input type="checkbox" role="switch" class="sw" name="on" value="on"{% if card.kid_shown %} checked{% endif %}{% if card.reported && !card.network_capable %} disabled{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+            </label>
+            <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
+        </form>
+        <p class="group-footer">{{ self.t("mobile.data.footer") }}</p>
+    </section>
+
+    <section id="abroad" aria-labelledby="abroad-title">
+        <h2 class="group-header" id="abroad-title">{{ self.t("mobile.abroad.header") }}</h2>
+        {% for line in card.abroad_lines %}{% if line.warn %}
+        <div class="attention attention-action" data-mobile-line="{{ line.key }}"><span class="attention-text">{{ line.title }}{% if let Some(sub) = line.sub %}<span class="attention-sub">{{ sub }}</span>{% endif %}</span></div>
+        {% endif %}{% endfor %}
+        {#- Design 97 §3.2: the radios need only data_roaming_v1 (the derived value works there); Bare Vibb on a phone
+            without mobile_network_v2 says it has no data abroad until Vibb One is updated. No "anbefalt" mark (D1). -#}
+        <form method="post" action="/devices/{{ device.id }}/mobile#abroad" class="group" role="radiogroup" aria-labelledby="abroad-title">
+            <input type="hidden" name="group" value="abroad">
+            <label class="row pick-row" data-choice="off">
+                <input type="radio" name="abroad" value="off"{% if card.abroad == "off" %} checked{% endif %}{% if card.reported && !card.roaming_capable %} disabled{% endif %} data-autosave>
+                <span class="row-label">{{ self.t("mobile.abroad.off") }}<span class="row-sub">{{ self.t("mobile.abroad.off_sub") }}{% if card.switch_on %} {{ self.t("mobile.abroad.off_sub_again") }}{% endif %}</span></span>
+                <svg class="choice-check" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 8.5l3.5 3.5 7.5-8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </label>
+            <label class="row pick-row" data-choice="vibb">
+                <input type="radio" name="abroad" value="vibb"{% if card.abroad == "vibb" %} checked{% endif %}{% if card.reported && !card.roaming_capable %} disabled{% endif %} data-autosave>
+                <span class="row-label">{{ self.t("mobile.abroad.vibb") }}<span class="row-sub">{{ self.t("mobile.abroad.vibb_sub") }}</span>{% if card.reported && card.roaming_capable && !card.network_capable %}<span class="row-sub tone-orange" data-hint="vibb-update">{{ self.t("mobile.abroad.vibb_update") }}</span>{% endif %}</span>
+                <svg class="choice-check" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 8.5l3.5 3.5 7.5-8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </label>
+            <label class="row pick-row" data-choice="home">
+                <input type="radio" name="abroad" value="home"{% if card.abroad == "home" %} checked{% endif %}{% if card.reported && !card.roaming_capable %} disabled{% endif %} data-autosave>
+                <span class="row-label">{{ self.t("mobile.abroad.home") }}<span class="row-sub">{{ self.t("mobile.abroad.home_sub") }}</span></span>
+                <svg class="choice-check" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 8.5l3.5 3.5 7.5-8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </label>
+            {% for line in card.abroad_lines %}{% if !line.warn %}
+            <div class="row" data-mobile-line="{{ line.key }}"><span class="row-label">{{ line.title }}{% if let Some(sub) = line.sub %}<span class="row-sub">{{ sub }}</span>{% endif %}</span></div>
+            {% endif %}{% endfor %}
+            <details class="info cell" data-info="abroad">
+                <summary class="row">
+                    <span class="row-label">{{ self.t("mobile.abroad.info_label") }}</span>
+                    <svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("common.more_info") }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>
+                </summary>
+                <div class="info-panel"><p>{{ self.t("mobile.abroad.info") }}</p></div>
+            </details>
+            <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
+        </form>
+        <p class="group-footer">{{ self.t("mobile.abroad.footer") }}</p>
+    </section>
+
+    <section id="mobile-lock" aria-label="{{ self.t("mobile.lock.label") }}">
+        <form method="post" action="/devices/{{ device.id }}/mobile#mobile-lock" class="group">
+            <input type="hidden" name="group" value="mobile-lock">
+            <label class="row">
+                <span class="row-label">{{ self.t("mobile.lock.label") }}<span class="row-sub">{{ self.t("mobile.lock.sub") }}</span>{% if card.reported && !card.mobile_capable %}<span class="row-sub tone-orange" data-hint>{{ self.t("mobile.state.needs_update") }}</span>{% endif %}</span>
+                <input type="checkbox" role="switch" class="sw" name="on" value="on"{% if card.settings_locked %} checked{% endif %}{% if card.reported && !card.mobile_capable %} disabled{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+            </label>
+            {% for line in card.lock_lines %}
+            <div class="row" data-mobile-line="{{ line.key }}"><span class="row-label">{{ line.title }}</span></div>
+            {% endfor %}
+            <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
+        </form>
+        <p class="group-footer">{{ self.t("mobile.lock.footer") }}</p>
+    </section>
+
+    </div>
+</main>
+</body>
+</html>

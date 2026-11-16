@@ -15,8 +15,9 @@ object KidInsets {
     const val MAX_TOP_EXTRA_DP = 8
 
     /** [ime]: the bottom takes the keyboard when it is taller than the navigation bar (a page with a text field: the
-     * window is edge to edge, so `adjustResize` alone does nothing on API 35+, design 79 QA L3). */
-    fun apply(root: View, ime: Boolean = false) {
+     * window is edge to edge, so `adjustResize` alone does nothing on API 35+, design 79 QA L3). [extraBottom]: more
+     * room at the bottom for these insets, in px (the glance's handle above a 3-button bar, screen-size fix S5). */
+    fun apply(root: View, ime: Boolean = false, extraBottom: ((WindowInsets) -> Int)? = null) {
         val left = root.paddingLeft
         val top = root.paddingTop
         val right = root.paddingRight
@@ -24,9 +25,16 @@ object KidInsets {
         root.setOnApplyWindowInsetsListener { view, insets ->
             val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
             val keyboard = if (ime) insets.getInsets(WindowInsets.Type.ime()).bottom else 0
-            view.setPadding(left + bars.left, top + bars.top, right + bars.right, bottom + maxOf(bars.bottom, keyboard))
+            val extra = extraBottom?.invoke(insets) ?: 0
+            view.setPadding(left + bars.left, top + bars.top, right + bars.right, bottom + maxOf(bars.bottom, keyboard) + extra)
             WindowInsets.CONSUMED
         }
         root.requestApplyInsets()
     }
+
+    /**
+     * The navigation bar's buttons at the bottom (px): its tappable inset, which only 3-button navigation has - with
+     * gesture navigation the bar is a gesture area and this is 0 (screen-size fix S5).
+     */
+    fun buttonBarPx(insets: WindowInsets): Int = insets.getInsets(WindowInsets.Type.tappableElement()).bottom
 }

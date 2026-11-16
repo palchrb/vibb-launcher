@@ -785,6 +785,9 @@ pub struct IndexVersion {
     /// SHA-256, which is refused, not skipped (S4 fix L3). Checked against the APK's at the first pin
     /// (`tracked_apps::check_fdroid_package`, Q32).
     pub signers: Option<Vec<String>>,
+    /// When the repo added the version (ms since the epoch; the index is signed): design 90's
+    /// wait counts from it. `None` when the index has none.
+    pub added: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -796,6 +799,10 @@ struct RawPackage {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RawVersion {
+    /// Any type: a value that isn't a whole number is no time (the wait counts from first sight),
+    /// never an unreadable index.
+    #[serde(default)]
+    added: Option<serde_json::Value>,
     file: RawFile,
     manifest: RawManifest,
     #[serde(default)]
@@ -922,6 +929,7 @@ pub(crate) fn package_versions(
                     .signer
                     .filter(|signer| !signer.sha256.is_empty())
                     .map(|signer| signer.sha256.iter().filter_map(|s| sha256_hex(s)).collect()),
+                added: version.added.as_ref().and_then(serde_json::Value::as_i64),
             })
         })
         .collect();

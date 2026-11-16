@@ -20,6 +20,8 @@
 #   TORCH_GLYPHS below)
 #   launcher/app/src/main/res/drawable/clock_glyph_<key>.xml   (the lock's timer tile and its Stopp button, design 42;
 #   CLOCK_GLYPHS below)
+#   launcher/app/src/main/res/drawable/shortcut_glyph_<key>.xml   (Snarveier's buttons and picker, design 99;
+#   SHORTCUT_GLYPHS below)
 #   music/app/src/main/res/drawable/player_glyph_<key>.xml   (the music player's 15 s back / 30 s on and the favourite
 #   heart, design 50; PLAYER_GLYPHS below)
 # Every converted file says what it was converted from (Apache-2.0 §4(b)).
@@ -64,6 +66,16 @@ timer e177e5b0c620eab0719b917e234e542a4e90b6d3ca23ced23c28c0c79f092b16
 stop 461106881100fa958bb90b2e1aae721e71f9f88b7de0b926c712b2c9c536c7a5
 replay 8ebbd8bec5423bb2d56b49763b223451f2149b55968fc9f63df1dddbaaa7045f
 forward_media 6129701a82b882a0092823ef3da19a857aa1ef891e7f158667cf7c671ec82855
+volume_up 62300695b3e149d7f61f74721bea9e36876158c88248eb3fda6c80a2891b889d
+vibration e7b61dca724f6c8acdd62c026fb7a1dc71e413ae0efb8d8e95fbdc849b32f451
+airplanemode_active 4f2a2b08cde2d3cfc83ec879b50d0bbadabe41cc11973f377eddcad60cba2cfb
+wifi f7c825d97360b22a97e7b5636fbf68ef08fab3de679811553d3eb07590163488
+bluetooth 3736a6c4fb26629b36b2ca6e2f28e5a61a72a4419c1ad18bfcf66bac4490e2de
+signal_cellular_alt b6f7db883b3ca6a83d115b3c3f3ab067ce05672575943936ac3345a31272c224
+brightness_low 5e3a84926f751949be088dba33e445f810017f5ac50b6d40a2d2820d14aa0b92
+brightness_medium 6c08b254162d49f913343d25144ea57218ae042a5e817e182002d434431f36c8
+brightness_high f0293c231724d9e6ad511b66465daa621c086c11c8106e88476dead94633fec4
+more_time b30b77839a4137f89c5b620b71ec47676806e594aac5f55bad87486a9d58993e
 HASHES
 
 while read -r name sha; do
@@ -130,7 +142,14 @@ LOCK_GLYPHS = {"hourglass": "hourglass_bottom", "bedtime": "bedtime", "school": 
 TORCH_GLYPHS = {"on": "flashlight_on"}
 # The clock on the lock (design 42): the timer tile's glyph and its Stopp button.
 CLOCK_GLYPHS = {"timer": "timer", "stop": "stop"}
-for prefix, glyphs in (("lock_glyph", LOCK_GLYPHS), ("torch_glyph", TORCH_GLYPHS), ("clock_glyph", CLOCK_GLYPHS)):
+# Snarveier (design 99 §3): the panel's buttons and the picker's rows - one glyph per item (the torch's is torch_glyph_on),
+# Lyd's two modes and Lysstyrke's three steps.
+SHORTCUT_GLYPHS = {"sound": "volume_up", "vibrate": "vibration", "airplane": "airplanemode_active", "wifi": "wifi",
+                   "bluetooth": "bluetooth", "mobile_data": "signal_cellular_alt", "brightness_low": "brightness_low",
+                   "brightness_medium": "brightness_medium", "brightness_high": "brightness_high",
+                   "more_time": "more_time", "music": "music_note"}
+for prefix, glyphs in (("lock_glyph", LOCK_GLYPHS), ("torch_glyph", TORCH_GLYPHS), ("clock_glyph", CLOCK_GLYPHS),
+                       ("shortcut_glyph", SHORTCUT_GLYPHS)):
     for key, name in glyphs.items():
         with open(f"launcher/app/src/main/res/drawable/{prefix}_{key}.xml", "w") as out:
             out.write('<?xml version="1.0" encoding="utf-8"?>\n'

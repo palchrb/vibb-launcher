@@ -1,4 +1,5 @@
 mod admin_auth;
+mod airplane_mode;
 mod apk;
 mod app_display;
 mod app_downloads;
@@ -13,6 +14,7 @@ mod caldav;
 mod calendar;
 mod calendar_feeds;
 mod calendar_kid_events;
+mod catalog_holds;
 mod config;
 mod crashes;
 mod device_routes;
@@ -36,7 +38,10 @@ mod launcher_check;
 mod limits;
 mod lock;
 mod lock_glance;
+mod lock_now;
+mod logins;
 mod mmsc_hosts;
+mod mobile_network;
 mod models;
 mod music;
 mod music_icons;
@@ -59,15 +64,18 @@ mod retention;
 mod security;
 mod server_tls;
 mod settings_log;
+mod shortcuts;
 mod sms;
 mod sound_mode;
 mod spotify;
 mod startup;
 mod status_bar;
+mod status_heartbeat;
 mod storytel;
 mod streams;
 #[cfg(test)]
 mod tests;
+mod time_answers;
 mod time_rules;
 mod time_state;
 mod wallpapers;
@@ -569,15 +577,18 @@ async fn main() {
     handlers::tracked_apps::ensure_launcher_row(&state).await;
     // Partial downloads a crash left behind - before the scheduled sync can start a new one.
     handlers::tracked_apps::remove_partial_downloads(&state.tracked_apps_dir).await;
+    // Design 90: release files neither served nor held, and held rows whose file is gone.
+    handlers::tracked_apps::remove_orphan_files(&state).await;
     // Cached F-Droid indexes no app's repo uses any more (qa-fdroid-source-code Q-8).
     handlers::tracked_apps::remove_unused_fdroid_indexes(&state).await;
-    // Hashes for cached files from before migration 0043 (design 13): the phones check them.
-    tokio::task::spawn(handlers::tracked_apps::backfill_release_hashes(
-        state.clone(),
-    ));
-    tokio::task::spawn(handlers::tracked_apps::run_scheduled_tracked_app_sync(
-        state.clone(),
-    ));
+    // Hashes for cached files from before migration 0043 (design 13): the phones check them; then
+    // the pins, versionCodes and (design 90) permissions - all before the hourly sync's first pass,
+    // so an app upgraded past 0141 has its accepted set before a release is judged (QA L1).
+    let catalog_state = state.clone();
+    tokio::task::spawn(async move {
+        handlers::tracked_apps::backfill_release_hashes(catalog_state.clone()).await;
+        handlers::tracked_apps::run_scheduled_tracked_app_sync(catalog_state).await;
+    });
     tokio::task::spawn(handlers::dns_filter::run_blocklist_refresh(state.clone()));
     // Blocked domains, location history and status history (src/retention.rs).
     tokio::task::spawn(retention::run_pruning(state.clone()));
@@ -1074,6 +1085,22 @@ pub fn build_admin_router(
             post(handlers::lifts::end_lift),
         )
         .route(
+            "/devices/{id}/time-request/answer",
+            post(handlers::time_answer::answer),
+        )
+        .route(
+            "/devices/{id}/rules-now",
+            post(handlers::rules_now::rules_now),
+        )
+        .route(
+            "/devices/{id}/lock-now/{lock_id}",
+            post(handlers::rules_now::change_lock),
+        )
+        .route(
+            "/devices/{id}/lock-now/{lock_id}/end",
+            post(handlers::rules_now::end_lock),
+        )
+        .route(
             "/devices/{id}/location-policy",
             post(handlers::locate::update_location_policy),
         )
@@ -1096,6 +1123,8 @@ pub fn build_admin_router(
             get(handlers::provisioning::provision_form).post(handlers::provisioning::provision_qr),
         )
         .route("/devices/{id}", get(handlers::devices::view_device))
+        // 2026-11-13: the phone's Activity, one row on the summary since.
+        .route("/devices/{id}/activity", get(handlers::activity::view))
         // Design 31 step 3: About This Phone and Advanced (their forms keep their POST routes).
         .route(
             "/devices/{id}/about",
@@ -1110,6 +1139,16 @@ pub fn build_admin_router(
         .route(
             "/devices/{id}/lock",
             get(handlers::device_pages::view_lock).post(handlers::device_pages::lock_action),
+        )
+        // Design 95 rev. 3: Device › Mobilnett, a page of its own (mobile data, data roaming, the settings lock).
+        .route(
+            "/devices/{id}/mobile",
+            get(handlers::mobile_page::view).post(handlers::mobile_page::save),
+        )
+        // Design 102 §5: Device › Sign-in (Wi-Fi sign-in and Chrome only for logins), and Advanced's #wifi-signin row.
+        .route(
+            "/devices/{id}/logins",
+            get(handlers::logins::view).post(handlers::logins::save),
         )
         // Step 6: Device › Apps (its forms: `/apps/toggle`, `/app-updates`, `/apps/display`,
         // `/apps/permissions`).
@@ -1165,6 +1204,10 @@ pub fn build_admin_router(
         .route(
             "/devices/{id}/start-pause",
             post(handlers::window_relock::start_pause),
+        )
+        .route(
+            "/devices/{id}/setup-card/hide",
+            post(handlers::device_pages::hide_setup_card),
         )
         .route(
             "/devices/{id}/regenerate-code",
@@ -1432,6 +1475,31 @@ pub fn build_admin_router(
         .route(
             "/apps/tracked/{id}/forget-package-name",
             post(handlers::tracked_apps::forget_package_name),
+        )
+        // Design 90: the held release's answers, Ask Again, Update Now, the wait and the switch.
+        .route(
+            "/apps/tracked/{id}/held/approve",
+            post(handlers::tracked_apps::approve_held),
+        )
+        .route(
+            "/apps/tracked/{id}/held/decline",
+            post(handlers::tracked_apps::decline_held),
+        )
+        .route(
+            "/apps/tracked/{id}/declined/ask-again",
+            post(handlers::tracked_apps::ask_again),
+        )
+        .route(
+            "/apps/tracked/{id}/update-now",
+            post(handlers::tracked_apps::update_now),
+        )
+        .route(
+            "/apps/tracked/{id}/release-wait",
+            post(handlers::tracked_apps::save_release_wait),
+        )
+        .route(
+            "/apps/tracked/{id}/always-ask",
+            post(handlers::tracked_apps::set_always_ask),
         )
         .route(
             "/apps/tracked/{id}/confirm-package",
@@ -1846,6 +1914,9 @@ pub fn build_admin_router(
         ))
         // Before the session is read: a cross-site form never acts (design 22 §3.2.5).
         .layer(from_fn_with_state(state.clone(), admin_auth::csrf_guard))
+        // A save posted by scroll-restore.js learns where its redirect goes, so the page can replace its own history
+        // entry (`admin_auth::stay_answer`, 2026-11-14).
+        .layer(axum::middleware::from_fn(admin_auth::stay_answer))
         // A POST's own page is marked so reconnect.js never reloads it (qa-srv-sweep-resume M1).
         .layer(axum::middleware::from_fn(admin_auth::mark_post_answer))
         // Every page's iPhone status bar style by Safari's version (`status_bar`, 2026-11-10).

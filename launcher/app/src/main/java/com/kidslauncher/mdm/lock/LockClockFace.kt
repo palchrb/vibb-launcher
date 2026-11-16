@@ -2,6 +2,7 @@ package com.kidslauncher.mdm.lock
 
 import android.app.AlarmManager
 import android.content.Context
+import android.content.res.Configuration
 import android.os.Build
 import android.text.Layout
 import android.text.SpannableStringBuilder
@@ -22,6 +23,7 @@ import android.widget.TextView
 import androidx.core.content.res.ResourcesCompat
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.ui.ClockFormat
+import java.text.DecimalFormatSymbols
 import java.time.ZoneId
 import java.util.Locale
 import kotlin.math.roundToInt
@@ -30,7 +32,8 @@ import kotlin.math.roundToInt
  * The lock's clock face - the clock, the date and the next alarm's line - as one piece shared by the glance page
  * ([GlancePanel]) and the time-rule screen (`ui/LockActivity`, launcher round L6: the two screens read as one design).
  * Without a clock profile the centred 56 sp clock and the long date; on a phone with one (design 59d step L,
- * [glanceClockProfile]) Android's small clock - Nunito Light at the profile's size, the short date capitalised, all
+ * [glanceClockProfile]; since design 96 every phone from 271 dp wide to a tablet's 600 dp has one, measured or general)
+ * Android's small clock - Nunito Light at the profile's size, the short date capitalised, all
  * left-aligned and placed in the window's coordinates under the keyguard status bar ([place]), so the clock stands in
  * the same spot on both screens. Information only: nothing here is a control.
  *
@@ -55,13 +58,23 @@ class LockClockFace(
 ) {
     /** What the face places where the date was: the glance's date row, else the date. */
     private val dateBox: View get() = dateRow ?: date
-    /** Design 59d step L: Android's small clock's geometry on this phone, else `null` (the centred clock). */
+    /** Design 59d step L: Android's small clock's geometry on this phone - measured, or since design 96 the general one
+     * from AOSP's dimensions -, else `null` (the centred clock: a screen too narrow, a tablet, landscape, right-to-left
+     * or digits Nunito Light doesn't draw - [glanceClockCopyAllowed]). */
     val profile: ClockGeometry? = try {
+        val config = context.resources.configuration
         val density = context.resources.displayMetrics.density
-        val widthDp = context.resources.configuration.screenWidthDp
-        glanceClockProfile(Build.MODEL, Build.MANUFACTURER, density, widthDp).also {
-            // JL-6: a phone with no profile says so once (nothing here is personal).
-            if (it == null) Log.i(logTag, "Glance clock: no profile (model ${Build.MODEL}, maker ${Build.MANUFACTURER}, density $density, width $widthDp dp) - the centred clock")
+        val widthDp = config.screenWidthDp
+        val sdk = Build.VERSION.SDK_INT
+        val copy = glanceClockCopyAllowed(
+            landscape = config.orientation == Configuration.ORIENTATION_LANDSCAPE,
+            rtl = config.layoutDirection == View.LAYOUT_DIRECTION_RTL,
+            zeroDigit = DecimalFormatSymbols.getInstance(config.locales[0] ?: Locale.getDefault()).zeroDigit,
+        )
+        (if (copy) glanceClockProfile(Build.MODEL, Build.MANUFACTURER, density, widthDp, sdk, config.smallestScreenWidthDp) else null).also {
+            // JL-6: a phone without a measured profile says so once, with what was looked at (nothing here is personal).
+            if (it == null) Log.i(logTag, "Glance clock: no profile (model ${Build.MODEL}, maker ${Build.MANUFACTURER}, density $density, width $widthDp dp, copy $copy) - the centred clock")
+            else if (it.general) Log.i(logTag, "Glance clock: no measured profile (model ${Build.MODEL}, maker ${Build.MANUFACTURER}, density $density, width $widthDp dp, sdk $sdk) - the general one")
         }
     } catch (e: Throwable) {
         null
@@ -342,7 +355,8 @@ class LockClockFace(
         val clockBottom = contentTop + clockTop + clock.measuredHeight
         val descent = (clock.measuredHeight - clock.baseline).toFloat()
         val dateStart = startMarginPx(p.dateStartDp * density, contentStart)
-        val dateTarget = profileBaselinePx(bar, p.dateBaselineBelowBarDp, density)
+        val dateScaledDp = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, p.dateSp, context.resources.displayMetrics) / density
+        val dateTarget = profileBaselinePx(bar, profileDateBaselineBelowBarDp(p, dateScaledDp), density)
         val baseline = if (box === date) date.baseline else box.baseline.takeIf { it >= 0 } ?: date.baseline
         moved = margins(box, dateStart, baselineMarginPx(dateTarget, clockBottom, baseline.toFloat(), floorPx = -descent)) || moved
         if (bar != placedBarPx) {

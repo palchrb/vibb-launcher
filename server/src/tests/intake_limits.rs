@@ -425,6 +425,56 @@ fn the_field_tables_keep_every_contract_key() {
             );
             checked += 1;
         }
+        // Design 98 §5.1: the report's `airplane_mode` (`airplane_mode.json`'s `report` and `report_open`), every key
+        // kept by the cleaning.
+        for key in ["report", "report_open"] {
+            if let Some(blob) = json
+                .get(key)
+                .and_then(|r| r.get("periods"))
+                .and(json.get(key))
+            {
+                let kept = crate::airplane_mode::clean(blob, chrono::Utc::now().timestamp_millis())
+                    .unwrap();
+                let kept: serde_json::Value = serde_json::from_str(&kept).unwrap();
+                assert_eq!(&kept, blob, "{}'s {key}", path.display());
+                checked += 1;
+            }
+        }
+        // Design 99 §6.1: the report's `shortcuts` (`shortcuts.json`'s `report` and `report_hidden`), every key kept by
+        // the cleaning.
+        if json.get("capability").and_then(|c| c.as_str()) == Some(crate::shortcuts::CAPABILITY) {
+            for key in ["report", "report_hidden"] {
+                let blob = &json[key];
+                let kept = crate::shortcuts::clean(blob).unwrap();
+                assert_eq!(&kept, blob, "{}'s {key}", path.display());
+                checked += 1;
+            }
+        }
+        // Design 102 §6.2: the report's `captive_portal` and `login_browser` (`login_windows.json`'s `report` and
+        // `report_off`), every key kept by the cleaning.
+        if json
+            .pointer("/capabilities/captive_portal")
+            .and_then(|c| c.as_str())
+            == Some(crate::logins::PORTAL_CAPABILITY)
+        {
+            for key in ["report", "report_off"] {
+                let portal = &json[key]["captive_portal"];
+                let browser = &json[key]["login_browser"];
+                assert_eq!(
+                    crate::logins::clean_portal(portal).as_ref(),
+                    Some(portal),
+                    "{}'s {key}",
+                    path.display()
+                );
+                assert_eq!(
+                    crate::logins::clean_browser(browser).as_ref(),
+                    Some(browser),
+                    "{}'s {key}",
+                    path.display()
+                );
+                checked += 1;
+            }
+        }
     }
     assert!(checked >= 1, "time_status_report.json carries a time_state");
 }

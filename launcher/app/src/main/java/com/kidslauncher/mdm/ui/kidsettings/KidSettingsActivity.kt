@@ -31,13 +31,22 @@ import android.widget.TextView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.kidslauncher.mdm.R
+import com.kidslauncher.mdm.assistant.AirplaneRoute
+import com.kidslauncher.mdm.assistant.AirplaneRowState
+import com.kidslauncher.mdm.assistant.AirplaneRuntime
+import com.kidslauncher.mdm.assistant.AssistantSetup
+import com.kidslauncher.mdm.assistant.airplaneLineRes
+import com.kidslauncher.mdm.assistant.airplaneRow
 import com.kidslauncher.mdm.apps.AbstractAppInfo
 import com.kidslauncher.mdm.apps.AppFilter.Companion.AppSetVisibility
 import com.kidslauncher.mdm.databinding.ItemKidHiddenAppBinding
 import com.kidslauncher.mdm.databinding.ActivityKidSettingsBinding
 import com.kidslauncher.mdm.preferences.LauncherPreferences
+import com.kidslauncher.mdm.server.CachedPolicy
+import com.kidslauncher.mdm.server.KidMobileRow
 import com.kidslauncher.mdm.server.LockReason
 import com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
+import com.kidslauncher.mdm.server.MobileNetworkRuntime
 import com.kidslauncher.mdm.server.QuickControls
 import com.kidslauncher.mdm.server.SoundChoice
 import com.kidslauncher.mdm.server.SoundNote
@@ -60,6 +69,10 @@ import com.kidslauncher.mdm.ui.wallpaper.WallpaperFill
 import com.kidslauncher.mdm.ui.wallpaper.WallpaperGround
 import com.kidslauncher.mdm.ui.wallpaper.WallpaperRender
 import com.kidslauncher.mdm.ui.wallpaper.WallpaperStore
+import com.kidslauncher.mdm.shortcuts.ShortcutsNotification
+import com.kidslauncher.mdm.shortcuts.ShortcutsRuntime
+import com.kidslauncher.mdm.shortcuts.pickerStart
+import com.kidslauncher.mdm.shortcuts.shortcutCandidates
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -107,6 +120,7 @@ class KidSettingsActivity : UIObjectActivity() {
     private var soundValues: Map<SoundKind, SoundValue> = emptyMap()
     private var soundValuesJob: Job? = null
     private var pickerOpening = false
+    private var shortcutsJob: Job? = null
     /** The look the preview is drawn in ([renderLook]); null before the first draw. */
     private var previewLook: LookMode? = null
 
@@ -143,6 +157,28 @@ class KidSettingsActivity : UIObjectActivity() {
         setManageEnabled(binding.kidSettingsWifiManage, checked)
     }
 
+    /** Design 97 §4.3: the kid's Mobildata switch - On is mobile data for every allowed app, Off only Vibb One. */
+    private val mobileListener = CompoundButton.OnCheckedChangeListener { _, checked ->
+        MobileNetworkRuntime.setKidOff(this, !checked)
+        renderControls(section ?: return@OnCheckedChangeListener)
+    }
+
+    /** Design 98 §4.1: the kid's Flymodus switch - On through the assistant's route, Off through the restriction's
+     * blink; off the main thread, the row busy meanwhile. A plain tap: gesture and 3-button navigation alike. */
+    private val airplaneListener = CompoundButton.OnCheckedChangeListener { _, checked ->
+        val app = applicationContext
+        Thread {
+            if (checked) AirplaneRoute.turnOn(app) else AirplaneRoute.turnOff(app)
+        }.start()
+        section?.let { renderControls(it) }
+    }
+
+    /** The row follows the route, the edges and the role (main thread). */
+    private val airplaneChanged: () -> Unit = { render() }
+
+    /** The Flymodus row's own redraw while its cool-down or failure line shows (code QA L3: one pending at most). */
+    private val airplaneRedraw = Runnable { section?.let { renderControls(it) } }
+
     private val bluetoothListener = CompoundButton.OnCheckedChangeListener { _, checked ->
         QuickControls.setBluetoothEnabled(this, dpm, admin, checked)
         setManageEnabled(binding.kidSettingsBluetoothManage, checked)
@@ -167,6 +203,7 @@ class KidSettingsActivity : UIObjectActivity() {
         com.kidslauncher.mdm.ui.KidHeader.bind(this, binding.kidSettingsHeader, R.string.kid_settings_title)
 
         binding.kidSettingsWifiSwitch.setOnCheckedChangeListener(wifiListener)
+        binding.kidSettingsAirplaneSwitch.setOnCheckedChangeListener(airplaneListener)
         binding.kidSettingsWifiManage.setOnClickListener {
             if (it.isEnabled) startActivity(Intent(this, WifiNetworksActivity::class.java))
         }
@@ -198,6 +235,12 @@ class KidSettingsActivity : UIObjectActivity() {
                 }
             }
         }
+        binding.kidSettingsShortcutsRow.setOnClickListener {
+            if (!pickerOpening) {
+                pickerOpening = true
+                ShortcutsPickerActivity.start(this)
+            }
+        }
         binding.kidSettingsHiddenRow.setOnClickListener {
             hiddenOpen = !hiddenOpen
             renderHidden()
@@ -222,6 +265,7 @@ class KidSettingsActivity : UIObjectActivity() {
             addAction(NotificationManager.ACTION_INTERRUPTION_FILTER_CHANGED)
         }
         ContextCompat.registerReceiver(this, soundReceiver, soundChanges, ContextCompat.RECEIVER_NOT_EXPORTED)
+        AirplaneRuntime.addListener(airplaneChanged)
     }
 
     override fun onResume() {
@@ -233,6 +277,9 @@ class KidSettingsActivity : UIObjectActivity() {
         render()
         loadHiddenApps()
         loadSoundValues()
+        // Design 98 §3.6: the assistant role read on the screen's resume; a change asks for one report.
+        val app = applicationContext
+        Thread { AssistantSetup.roleMaybeChanged(app) }.start()
     }
 
     override fun onStop() {
@@ -240,6 +287,8 @@ class KidSettingsActivity : UIObjectActivity() {
         WallpaperStore.removeListener(wallpaperListener)
         WallpaperStore.removeThumbnailListener(thumbnailListener)
         runCatching { unregisterReceiver(soundReceiver) }
+        AirplaneRuntime.removeListener(airplaneChanged)
+        binding.root.removeCallbacks(airplaneRedraw)
         super.onStop()
     }
 
@@ -257,6 +306,7 @@ class KidSettingsActivity : UIObjectActivity() {
         val wallpaper = WallpaperGround.apply(this, binding.root, ownGround = true)
         val model = kidSettingsModel(
             dpm.isDeviceOwnerApp(packageName), cachedPolicy(), wallpaper.choices, wallpaper.current,
+            roleHeld = AirplaneRuntime.roleHeld(this), airplaneOn = AirplaneRuntime.isOn(this),
         )
         renderInk(wallpaper.ink)
         renderWallpapers(model.wallpapers)
@@ -270,6 +320,7 @@ class KidSettingsActivity : UIObjectActivity() {
         this.section = section
         renderLook()
         renderControls(section)
+        renderShortcuts()
         binding.kidSettingsLocationLine.visibility = if (model.sharesLocation) View.VISIBLE else View.GONE
         renderHidden()
     }
@@ -333,6 +384,37 @@ class KidSettingsActivity : UIObjectActivity() {
         renderHidden()
     }
 
+    /**
+     * Design 99 §4.2: the Snarveier row with bit 128 and at least one item the parent allows - the picks as the value,
+     * or "Skjult i varsellisten" while the kid has hidden the panel. The platform and the picks are read off the main
+     * thread; the newest read wins.
+     */
+    private fun renderShortcuts() {
+        shortcutsJob?.cancel()
+        val context = this
+        shortcutsJob = lifecycleScope.launch {
+            val read = withContext(Dispatchers.IO) {
+                val owner = dpm.isDeviceOwnerApp(packageName)
+                val bits = (cachedPolicy() as? CachedPolicy.Ok)?.policy?.quickControlsMask
+                if (!owner || bits == null || bits and com.kidslauncher.mdm.server.QuickControlFeature.SHORTCUTS == 0L) {
+                    null
+                } else {
+                    val platform = ShortcutsRuntime.platform(context, bits)
+                    val candidates = shortcutCandidates(bits, platform)
+                    Triple(candidates, pickerStart(ShortcutsRuntime.storedPicks(context), candidates), ShortcutsRuntime.hidden(context))
+                }
+            }
+            val shown = read != null && read.first.isNotEmpty()
+            binding.kidSettingsShortcutsSection.visibility = if (shown) View.VISIBLE else View.GONE
+            if (read == null || !shown) return@launch
+            binding.kidSettingsShortcutsValue.text = when {
+                read.third -> getString(R.string.kid_settings_shortcuts_hidden)
+                read.second.isEmpty() -> getString(R.string.kid_settings_shortcuts_none)
+                else -> read.second.joinToString(", ") { getString(ShortcutsNotification.fullNameRes(it)) }
+            }
+        }
+    }
+
     private fun renderControls(section: ControlsSection) {
         val message = when (section) {
             ControlsSection.NotOwner -> R.string.kid_settings_not_owner
@@ -346,7 +428,11 @@ class KidSettingsActivity : UIObjectActivity() {
         val picksShown = renderPicks(rows?.sound == true)
         val touchShown = renderTouch(rows?.touch == true)
         // Mask 0: no card and no heading - there is simply nothing to show.
-        val anyRow = rows != null && (rows.wifi || rows.bluetooth || rows.brightness || soundShown || picksShown || touchShown)
+        val mobileShown = renderMobile(rows?.mobileData == true)
+        val airplaneShown = renderAirplane(rows)
+        val airplaneOn = AirplaneRuntime.isOn(this)
+        val anyRow = rows != null &&
+            (rows.wifi || rows.bluetooth || rows.brightness || soundShown || picksShown || touchShown || mobileShown || airplaneShown)
         binding.kidSettingsControlsHeading.visibility =
             if (section == ControlsSection.NoneEnabled || (rows != null && !anyRow)) View.GONE else View.VISIBLE
         binding.kidSettingsControlsMessage.visibility = if (message != null) View.VISIBLE else View.GONE
@@ -361,6 +447,10 @@ class KidSettingsActivity : UIObjectActivity() {
             binding.kidSettingsWifiSwitch.isChecked = on
             binding.kidSettingsWifiSwitch.setOnCheckedChangeListener(wifiListener)
             setManageEnabled(binding.kidSettingsWifiManage, on)
+            // Design 98 §4.1: Android refuses Wi-Fi changes in airplane mode - read-only with its line.
+            binding.kidSettingsWifiSwitch.isEnabled = !airplaneOn
+            binding.kidSettingsWifiSwitch.alpha = if (airplaneOn) 0.5f else 1.0f
+            binding.kidSettingsWifiLine.visibility = if (airplaneOn) View.VISIBLE else View.GONE
         }
         binding.kidSettingsBluetoothRow.visibility = if (rows?.bluetooth == true) View.VISIBLE else View.GONE
         if (rows?.bluetooth == true) {
@@ -374,6 +464,66 @@ class KidSettingsActivity : UIObjectActivity() {
         if (rows?.brightness == true) {
             binding.kidSettingsBrightnessSeekbar.progress = QuickControls.currentBrightness(this)
         }
+    }
+
+    /** Design 98 §4.1: the Flymodus row ([airplaneRow]) - the full row with bit 64 and the role, Off-only whenever
+     * airplane mode is on. Returns whether it shows. */
+    private fun renderAirplane(rows: ControlsSection.Rows?): Boolean {
+        val now = System.currentTimeMillis()
+        val restricted = AirplaneRuntime.restricted(this)
+        val on = rows != null && (rows.airplaneOffOnly || (rows.airplane && AirplaneRuntime.isOn(this)))
+        val wifiUp = QuickControls.isWifiEnabled(this)
+        val busy = AirplaneRoute.busy
+        val state = AirplaneRuntime.rowState(this, now) { error ->
+            airplaneRow(
+                bit = rows?.airplane == true,
+                role = rows?.airplane == true,
+                restricted = restricted,
+                on = on,
+                wifiUp = wifiUp,
+                busy = busy,
+                lastError = error?.first,
+                errorAgeMs = error?.let { now - it.second },
+            )
+        }
+        // The cool-down and a failure's line end by themselves: drawn again then - one pending redraw at most.
+        binding.root.removeCallbacks(airplaneRedraw)
+        binding.kidSettingsAirplaneRow.visibility = if (state != AirplaneRowState.HIDDEN) View.VISIBLE else View.GONE
+        if (state == AirplaneRowState.HIDDEN) return false
+        // Showing the state must not run the route.
+        binding.kidSettingsAirplaneSwitch.setOnCheckedChangeListener(null)
+        binding.kidSettingsAirplaneSwitch.isChecked = state.checked
+        binding.kidSettingsAirplaneSwitch.setOnCheckedChangeListener(airplaneListener)
+        binding.kidSettingsAirplaneSwitch.isEnabled = state.clickable
+        binding.kidSettingsAirplaneSwitch.alpha = if (state.dimmed) 0.5f else 1.0f
+        val line = airplaneLineRes(state)
+        binding.kidSettingsAirplaneLine.visibility = if (line != null) View.VISIBLE else View.GONE
+        line?.let { binding.kidSettingsAirplaneLine.setText(it) }
+        if (state == AirplaneRowState.COOLDOWN || state == AirplaneRowState.FAILED) binding.root.postDelayed(airplaneRedraw, 2_000)
+        return true
+    }
+
+    /** Design 97 §4.3: the kid's Mobildata row ([kidMobileRow]) when the parent's bit 32 is on. Returns whether it shows. */
+    private fun renderMobile(wanted: Boolean): Boolean {
+        val row = if (wanted) MobileNetworkRuntime.kidRowNow(this, (cachedPolicy() as? CachedPolicy.Ok)?.policy) else KidMobileRow.HIDDEN
+        binding.kidSettingsMobileRow.visibility = if (row != KidMobileRow.HIDDEN) View.VISIBLE else View.GONE
+        if (row == KidMobileRow.HIDDEN) return false
+        val clickable = row == KidMobileRow.ON || row == KidMobileRow.OFF
+        // Showing the state must not store a choice.
+        binding.kidSettingsMobileSwitch.setOnCheckedChangeListener(null)
+        binding.kidSettingsMobileSwitch.isChecked = row == KidMobileRow.ON
+        binding.kidSettingsMobileSwitch.setOnCheckedChangeListener(mobileListener)
+        binding.kidSettingsMobileSwitch.isEnabled = clickable
+        binding.kidSettingsMobileSwitch.alpha = if (clickable) 1.0f else 0.5f
+        val line = if (AirplaneRuntime.isOn(this)) R.string.kid_settings_mobile_airplane else when (row) {
+            KidMobileRow.PARENT -> R.string.kid_settings_mobile_parent
+            KidMobileRow.PHONE_OFF -> R.string.kid_settings_mobile_phone_off
+            KidMobileRow.OFF -> R.string.kid_settings_mobile_off
+            KidMobileRow.ON, KidMobileRow.HIDDEN -> null
+        }
+        binding.kidSettingsMobileLine.visibility = if (line != null) View.VISIBLE else View.GONE
+        line?.let { binding.kidSettingsMobileLine.setText(it) }
+        return true
     }
 
     /**
@@ -542,6 +692,7 @@ class KidSettingsActivity : UIObjectActivity() {
             binding.kidSettingsHeader.kidHeaderTitle, binding.kidSettingsWallpaperHeading, binding.kidSettingsWallpaperCaption,
             binding.kidSettingsLookHeading, binding.kidSettingsLookCaption,
             binding.kidSettingsControlsHeading, binding.kidSettingsControlsMessage, binding.kidSettingsWifiSwitch,
+            binding.kidSettingsMobileSwitch, binding.kidSettingsMobileLine,
             binding.kidSettingsBluetoothSwitch, binding.kidSettingsBrightnessLabel, binding.kidSettingsSoundLabel,
             binding.kidSettingsSoundNote, binding.kidSettingsTouchSounds, binding.kidSettingsTouchVibration,
             binding.kidSettingsTouchReadOnly, binding.kidSettingsTouchKeyboard, binding.kidSettingsLocationLine,

@@ -151,6 +151,18 @@ fun featuresWhileLocked(base: Int, locked: Boolean): Int =
     }
 
 /**
+ * The lock-task features while the Flymodus route's window pins Settings (design 98 §2.2 step 4, design 99's QA Q99-H1):
+ * [base] without the shade. In lock task `setStatusBarDisabled` is only recorded (the kiosk's lock task owns the status
+ * bar, `lock/StatusBarHealPlan.kt`), so the route's `statusBarDisabled` does nothing there; without
+ * [LOCK_TASK_FEATURE_NOTIFICATIONS] Android's LockTaskController sets `DISABLE2_NOTIFICATION_SHADE`, SystemUI collapses
+ * an open shade and the window can't open it - no notification (Android's "Wi-Fi stays on in airplane mode", a
+ * Settings nag) can be tapped through to the pinned Settings. Quick Settings is never on in lock task. Every other bit
+ * stays, KEYGUARD and the app block included. The window's close writes [base] again (the plan's pass; after a process
+ * death the put-back's apply()).
+ */
+fun routeWindowFeatures(base: Int): Int = base and LOCK_TASK_FEATURE_NOTIFICATIONS.inv()
+
+/**
  * What to set on the platform: lock-task [packages] (`null` = none, kiosk off and unlocked),
  * [features], `setStatusBarDisabled` ([statusBarDisabled]: a backstop while LOCKED - ineffective
  * while pinned - and the shade block of the update fence, step 11) and `DISALLOW_CREATE_WINDOWS`
@@ -183,6 +195,12 @@ data class LockTaskSetting(
  * with the kiosk off also pins that package and the permission controller (mic/camera prompts)
  * and sets the app-block bit, so the call app's other screens (links, viewers) can't open over the
  * lock. With the kiosk on the list is untouched (the app is allowlisted).
+ *
+ * [routePin] (design 98 §2.2 step 4): Settings for the second of a Flymodus turn-on - added to the kiosk's list with the
+ * shade closed and blocked ([routeWindowFeatures]), only while unlocked and the kiosk is on. A LOCKED pass leaves it out
+ * (the route then times out). [routeClosing]: the close's first pass - Settings out, the shade still blocked - so the
+ * shade is never back while Settings is pinnable (a pass writes the features before the list); the next pass, without
+ * it, gives the shade back.
  */
 fun lockTaskWhileLocked(
     kioskPackages: Set<String>?,
@@ -195,7 +213,13 @@ fun lockTaskWhileLocked(
     voipPackages: Set<String> = emptySet(),
     recentsPin: String? = null,
     sosNarrowed: Set<String>? = null,
+    routePin: String? = null,
+    routeClosing: Boolean = false,
 ): LockTaskSetting = when {
+    !locked && kioskPackages != null && routePin != null ->
+        LockTaskSetting(kioskPackages + routePin, routeWindowFeatures(baseFeatures), statusBarDisabled = true, createWindowsBlocked = restrictCreateWindows)
+    !locked && kioskPackages != null && routeClosing ->
+        LockTaskSetting(kioskPackages, routeWindowFeatures(baseFeatures), statusBarDisabled = true, createWindowsBlocked = restrictCreateWindows)
     !locked -> LockTaskSetting(kioskPackages, baseFeatures, statusBarDisabled = fenced, createWindowsBlocked = restrictCreateWindows)
     // qa-25b-25f H1: during the "sos" yield the kiosk's list shrinks to the kiosk-off one, so Android
     // removes every other locked task (an allowed app brought up in the SOS window).
@@ -220,10 +244,13 @@ fun lockTaskWhileLocked(
  * The kiosk list of a pass without a plan (LockTaskChrome's fallback), from the platform's
  * [platformPackages]: a LOCKED pass took the [recentsPin] out (qa-16d-code #1), so an unlocked one
  * puts it back whenever the app block is on ([features]) - the plan pins it then too. `null` pin
- * (unknown, or not pinnable): the platform's list as it is.
+ * (unknown, or not pinnable): the platform's list as it is. Never Settings (design 98 code QA L4): only
+ * the Flymodus route's window pins it, and that needs a plan - in the platform's list it is a window a
+ * process death left open, which the put-back's apply closes.
  */
 fun fallbackKioskPackages(platformPackages: Set<String>, recentsPin: String?, features: Int): Set<String> =
-    if (recentsPin != null && features and LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_IN_TASK != 0) platformPackages + recentsPin else platformPackages
+    (if (recentsPin != null && features and LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_IN_TASK != 0) platformPackages + recentsPin else platformPackages) -
+        com.kidslauncher.mdm.assistant.SETTINGS_PACKAGE
 
 /**
  * Whether `config_recentsComponentName`'s [packageName] may be trusted as the recents provider

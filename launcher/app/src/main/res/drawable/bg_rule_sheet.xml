@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Design 98 §4.3: the time-rule screen's sheet - kid_ground_lift, 16 dp corners. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="@color/kid_ground_lift" />
+    <corners android:radius="16dp" />
+</shape>

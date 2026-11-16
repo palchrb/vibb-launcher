@@ -728,7 +728,8 @@ Paths under `launcher/app/src/main/java/com/kidslauncher/mdm/lock/` unless named
   (`LockGlance.kt`) - `EMULATOR_PIXEL_CLOCK` (Google's `sdk_gphone*`), `JELLY_STAR_CLOCK` (Unihertz "Jelly Star"; built
   with the Pixel emulator's numbers, since 2026-10-23 the pure AOSP emulator image's - `AOSP_EMULATOR_CLOCK`,
   `2026-10-23-aosp-lock-look.md`; to confirm on the phone), only at 240 dpi; otherwise `null` and today's
-  centred clock. Measured on `handy36` at `wm density 240` from SystemUI's small clock (`lockscreen_use_double_line_clock
+  centred clock. *Since design 96 (`96-glance-general-clock.md`, 2026-11-14): otherwise the general profile from AOSP's
+  dimensions, the centred clock only below 271/274 dp or on a tablet's width.* Measured on `handy36` at `wm density 240` from SystemUI's small clock (`lockscreen_use_double_line_clock
   0`; the plain-lock run's frames and this run's): the digits' ink 92 px high from y 180 to a baseline at 273 px (the
   last ink row 272), the first digit's ink at x 53 for a "5", x 49 for a "1"; the date's capitals 17 px high on a
   baseline at 329 px, its ink at x 50. In Nunito SemiBold (digits 0.712 em high; the digits' side bearings run from

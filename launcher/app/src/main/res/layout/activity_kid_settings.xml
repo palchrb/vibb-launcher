@@ -25,6 +25,69 @@
             android:id="@+id/kid_settings_header"
             layout="@layout/include_kid_header" />
 
+        <!-- Design 99 §4.2: Snarveier, the kid's own panel in the shade - its own card at the top, with bit 128 and at
+             least one item the parent allows. The row is one button; its value is the picks or "Skjult i varsellisten". -->
+        <LinearLayout
+            android:id="@+id/kid_settings_shortcuts_section"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:layout_marginBottom="10dp"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <TextView
+                style="@style/KidSettingsHeading"
+                android:text="@string/kid_settings_shortcuts_heading" />
+
+            <LinearLayout
+                android:id="@+id/kid_settings_shortcuts_row"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:background="@drawable/bg_kid_card"
+                android:clickable="true"
+                android:focusable="true"
+                android:foreground="?android:attr/selectableItemBackground"
+                android:gravity="center_vertical"
+                android:minHeight="52dp"
+                android:orientation="horizontal"
+                android:paddingStart="14dp"
+                android:paddingTop="6dp"
+                android:paddingEnd="10dp"
+                android:paddingBottom="6dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="@font/nunito_bold"
+                    android:text="@string/kid_settings_shortcuts"
+                    android:textColor="@color/kid_ink"
+                    android:textSize="16sp" />
+
+                <TextView
+                    android:id="@+id/kid_settings_shortcuts_value"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="12dp"
+                    android:layout_weight="1"
+                    android:ellipsize="end"
+                    android:fontFamily="@font/nunito_extrabold"
+                    android:gravity="end"
+                    android:maxLines="2"
+                    android:textColor="@color/kid_ink"
+                    android:textSize="15sp" />
+
+                <ImageView
+                    android:layout_width="18dp"
+                    android:layout_height="18dp"
+                    android:layout_marginStart="6dp"
+                    android:importantForAccessibility="no"
+                    android:src="@drawable/ic_kid_chevron"
+                    android:tint="@color/kid_ink" />
+            </LinearLayout>
+        </LinearLayout>
+
         <LinearLayout
             android:id="@+id/kid_settings_wallpaper_section"
             android:layout_width="match_parent"
@@ -175,6 +238,35 @@
             android:orientation="vertical"
             android:visibility="gone">
 
+            <!-- Design 98 §4.1: the kid's Flymodus switch, first (it decides what the rows under it can do). Shown with
+                 bit 64 and the assistant role, and as an Off-only row whenever airplane mode is on. -->
+            <LinearLayout
+                android:id="@+id/kid_settings_airplane_row"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/kid_settings_airplane_switch"
+                    style="@style/KidSwitchRow"
+                    android:text="@string/kid_settings_airplane" />
+
+                <TextView
+                    android:id="@+id/kid_settings_airplane_line"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingStart="14dp"
+                    android:paddingEnd="14dp"
+                    android:paddingBottom="12dp"
+                    android:fontFamily="@font/nunito_bold"
+                    android:textColor="@color/kid_ink"
+                    android:textSize="13sp"
+                    android:visibility="gone" />
+
+                <View style="@style/KidDivider" />
+            </LinearLayout>
+
             <LinearLayout
                 android:id="@+id/kid_settings_wifi_row"
                 android:layout_width="match_parent"
@@ -187,10 +279,53 @@
                     style="@style/KidSwitchRow"
                     android:text="@string/quick_controls_wifi" />
 
+                <!-- Design 98 §4.1: read-only in airplane mode (Android refuses Wi-Fi changes then). -->
+                <TextView
+                    android:id="@+id/kid_settings_wifi_line"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingStart="14dp"
+                    android:paddingEnd="14dp"
+                    android:paddingBottom="12dp"
+                    android:fontFamily="@font/nunito_bold"
+                    android:textColor="@color/kid_ink"
+                    android:text="@string/kid_settings_wifi_airplane"
+                    android:textSize="13sp"
+                    android:visibility="gone" />
+
                 <TextView
                     android:id="@+id/kid_settings_wifi_manage"
                     style="@style/KidManageLink"
                     android:text="@string/quick_controls_manage_networks" />
+
+                <View style="@style/KidDivider" />
+            </LinearLayout>
+
+            <!-- Design 97 §4.3: the kid's own Mobildata switch (bit 32). Off = only Vibb One uses mobile data. Off at
+                 50 % and not clickable while the parent decides or Android's own mobile data is off, with its line. -->
+            <LinearLayout
+                android:id="@+id/kid_settings_mobile_row"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/kid_settings_mobile_switch"
+                    style="@style/KidSwitchRow"
+                    android:text="@string/kid_settings_mobile_data" />
+
+                <TextView
+                    android:id="@+id/kid_settings_mobile_line"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingStart="14dp"
+                    android:paddingEnd="14dp"
+                    android:paddingBottom="12dp"
+                    android:fontFamily="@font/nunito_bold"
+                    android:textColor="@color/kid_ink"
+                    android:textSize="13sp"
+                    android:visibility="gone" />
 
                 <View style="@style/KidDivider" />
             </LinearLayout>

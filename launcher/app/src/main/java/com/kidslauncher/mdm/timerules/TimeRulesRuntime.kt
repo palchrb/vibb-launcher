@@ -135,23 +135,37 @@ object TimeRulesRuntime {
         val records: List<LiftRecord>,
         val clocks: Clocks,
         val zone: ZoneId,
+        /** Design 98 §4.4: the policy's lift ids a parent-code pause on this phone stands behind (`lifts_active`). */
+        val phoneLiftIds: List<Long> = emptyList(),
     )
 
     /** [zone] is read once here and passed down; nothing below reads the system zone again. */
     fun snapshot(context: Context, policy: PolicyResponse?, overrideActive: Boolean = overrideActive(), zone: ZoneId = zone()): Snapshot {
         val clocks = clocks()
-        val tp = KidModeEnforcer.timePolicyOf(policy)
+        // Design 93 §9.1: a rule turned on now is gone from its `until_ms`.
+        val tp = KidModeEnforcer.timePolicyOf(policy)?.inForceAt(clocks.wallMs)
             ?: return Snapshot(UNLOCKED, null, null, null, emptyList(), clocks, zone)
         val ledger = ledger(context, tp, clocks, zone)
         val records = liftRecords(context, tp.lifts, clocks)
         val budget = budgetUse(ledger, tp)
         val at = LocalDateTime.ofInstant(Instant.ofEpochMilli(clocks.wallMs), zone)
         val lock = decideTimeLock(
-            tp, at, overrideActive, activeRuleLifts(records, tp.lifts, clocks), budget, messagingApps(context),
+            tp, at, overrideActive, ruleLifts(context, records, tp.lifts, clocks), budget, messagingApps(context),
             // Security review S-L8: only the music app with our signer is exempt from the budget.
             musicApps = com.kidslauncher.mdm.music.MusicTrust.installed(context).toSet(),
         )
-        return Snapshot(lock, tp, ledger, budget, records, clocks, zone)
+        return Snapshot(lock, tp, ledger, budget, records, clocks, zone, PhonePauses.activeLiftIds(context, tp.lifts, clocks))
+    }
+
+    /** The PWA's lifts through their records, and design 98's parent-code pauses through their own entries. */
+    fun ruleLifts(context: Context, records: List<LiftRecord>, lifts: List<Lift>, clocks: Clocks): RuleLifts {
+        val fromPolicy = activeRuleLifts(records, lifts, clocks)
+        val phone = try {
+            PhonePauses.liftedRuleIds(context, clocks)
+        } catch (e: Exception) {
+            emptySet()
+        }
+        return if (phone.isEmpty()) fromPolicy else fromPolicy.copy(ruleIds = fromPolicy.ruleIds + phone)
     }
 
     /** Lock listeners (design r13 §1.4): handed each re-check's snapshot after the lock reason and key are written.
@@ -183,12 +197,14 @@ object TimeRulesRuntime {
     /** The call path's live answer (TimeRulesStore.liveDecider): a no-calls rule is in force,
      * counting lifts and the override PIN/pause. */
     fun callsBlockedNow(): Boolean {
-        val context = appContext ?: return callsBlockedAt(TimeRulesStore.policy, LocalDateTime.now(), false, RuleLifts())
-        val tp = TimeRulesStore.policy ?: return false
+        val context = appContext ?: return callsBlockedAt(
+            TimeRulesStore.policy?.inForceAt(System.currentTimeMillis()), LocalDateTime.now(), false, RuleLifts(),
+        )
         val clocks = clocks()
+        val tp = TimeRulesStore.policy?.inForceAt(clocks.wallMs) ?: return false
         val records = liftRecords(context, tp.lifts, clocks)
         val at = LocalDateTime.ofInstant(Instant.ofEpochMilli(clocks.wallMs), zone())
-        return callsBlockedAt(tp, at, overrideActive(), activeRuleLifts(records, tp.lifts, clocks))
+        return callsBlockedAt(tp, at, overrideActive(), ruleLifts(context, records, tp.lifts, clocks))
     }
 
     /** The status report's `time_state`. */
@@ -197,7 +213,13 @@ object TimeRulesRuntime {
 
     /** The `time_state` of [snap] - pure: its `zone` is the snapshot's own (design 34 P13). */
     fun timeStateOf(snap: Snapshot, lockReason: LockReason): TimeState {
-        val top = snap.lock.rules.firstOrNull()
+        // Design 93 §9.2: the rule the card names (a turned-on rule with a certain end ahead of the kind order), so the
+        // PWA's badge names the same rule and end.
+        val top = try {
+            com.kidslauncher.mdm.lock.cardPick(snap).rule
+        } catch (e: Exception) {
+            snap.lock.rules.firstOrNull()
+        }
         return TimeState(
             day = snap.ledger?.day,
             usedMinutes = ((snap.ledger?.usedMs ?: 0) / 60_000L).toInt(),
@@ -207,7 +229,7 @@ object TimeRulesRuntime {
             activeRuleName = top?.name,
             callsBlocked = snap.lock.callsBlocked,
             lockReason = lockReason.name,
-            liftsActive = snap.ledger?.let { activeLiftIds(snap.records, snap.policy?.lifts.orEmpty(), it, snap.clocks) }.orEmpty(),
+            liftsActive = snap.ledger?.let { activeLiftIds(snap.records, snap.policy?.lifts.orEmpty(), it, snap.clocks) + snap.phoneLiftIds }.orEmpty(),
             ledgerUnreadable = snap.ledger?.unreadable == true,
             zone = snap.zone.id,
         )
@@ -218,14 +240,26 @@ object TimeRulesRuntime {
      * (design 24b S2: the window locks again then, one alarm for everything). */
     fun nextBoundary(context: Context): Instant? {
         val clocks = clocks()
-        // Design r13 §2.3 (R13-8): an open request for more time ends at its stored instant - one more boundary, so
-        // "Spurt" goes on time across a process death or a reboot.
-        val windowEnds = (windowEnds(clocks) + listOfNotNull(TimeRequests.openUntilMs(context)))
+        val windowEnds = windowEnds(clocks)
             .filter { it > clocks.wallMs }
             .map { Instant.ofEpochMilli(it) }
-        val policy = KidModeEnforcer.timePolicyOf(currentPolicyDecision().policy) ?: return windowEnds.minOrNull()
+        val all = KidModeEnforcer.timePolicyOf(currentPolicyDecision().policy) ?: return windowEnds.minOrNull()
+        val policy = all.inForceAt(clocks.wallMs)
         val records = liftRecords(context, policy.lifts, clocks)
-        return nextBoundary(policy, Instant.ofEpochMilli(clocks.wallMs), zone(), liftExpiries(records, clocks) + windowEnds)
+        // Design 100 (QA R2-L3, where r13's 30-minute instant was): the request's note changes by itself - "sendes når
+        // telefonen er på nett" 15 s after the tap, an answer's 30 minutes in the shade over - one more boundary, so the
+        // shade and the time-rule screen follow on time across a process death or a reboot.
+        val noteChange = try {
+            TimeRequests.noteChangeMs(context, ledger(context, policy, clocks, zone()).day, policy, clocks.wallMs)
+        } catch (e: Exception) {
+            null
+        }
+        // Design 93 §9.1: a turned-on rule's absolute end is a boundary of its own.
+        return nextBoundary(
+            policy, Instant.ofEpochMilli(clocks.wallMs), zone(),
+            liftExpiries(records, clocks) + windowEnds + untilInstants(policy, clocks.wallMs) +
+                PhonePauses.expiries(context, clocks) + listOfNotNull(noteChange?.let { Instant.ofEpochMilli(it) }),
+        )
     }
 
     /** The open override's and pause's ends: the earlier of the wall end and now plus the elapsed

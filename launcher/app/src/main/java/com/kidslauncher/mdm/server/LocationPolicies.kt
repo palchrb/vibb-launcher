@@ -17,7 +17,7 @@ enum class LocationAction {
     CACHED,
 
     /** A fresh fix now - the precise path, GPS first (a `locate` command, a crossing's
-     * confirming fix). */
+     * confirming fix); `locate`'s own is fused first at high accuracy, longer ([preciseFix]). */
     FRESH,
 
     /** Design 64 §4.4: a fresh fix now through the fused provider at balanced power (Wi-Fi/cell
@@ -105,3 +105,30 @@ fun cachedFixMaxAgeMs(policy: LocationPolicy?, still: Boolean): Long? =
 
 /** A cached (or last-known) fix [ageMs] old may be reported under [maxAgeMs] (`null` = any age). */
 fun cachedFixReportable(ageMs: Long, maxAgeMs: Long?): Boolean = maxAgeMs == null || ageMs <= maxAgeMs
+
+/**
+ * How [LocateCommands] asks for a [LocationAction.FRESH] fix (ported from upstream siesta5787/kids-launcher-mdm
+ * 619f2bfab6 + 395a926122: Find My Device came back empty indoors). [providers] in order, the first enabled one
+ * asked; [boundMs] the longest wait; [oneUpdate] a one-update `requestLocationUpdates` instead of `getCurrentLocation`,
+ * which the platform caps at 30 s whatever is asked (`duration=+30s0ms` in `dumpsys location`).
+ */
+data class PreciseFix(val providers: List<String>, val boundMs: Long, val oneUpdate: Boolean)
+
+/** The precise path's wait for the sync's own fixes (a crossing's confirm, a due interval without zones): today's. */
+const val PRECISE_FIX_BOUND_MS = 15_000L
+
+/** The parent's `locate` waits this long: a GPS-only phone indoors from a cold start needs over 30 s. */
+const val EXPLICIT_FIX_BOUND_MS = 60_000L
+
+/**
+ * [explicit]: the parent's `locate` command - the fused provider at high accuracy first (GPS and Wi-Fi/cell together,
+ * no Play Services through `LocationManager`; GPS-first never tried network, the only indoor source), then GPS, then
+ * network, one update within [EXPLICIT_FIX_BOUND_MS]. Every other precise fix keeps design 64's path - GPS first,
+ * `getCurrentLocation` within [PRECISE_FIX_BOUND_MS] - since it runs in the sync, under its mutex, unasked.
+ */
+fun preciseFix(explicit: Boolean): PreciseFix =
+    if (explicit) {
+        PreciseFix(listOf("fused", "gps", "network"), EXPLICIT_FIX_BOUND_MS, oneUpdate = true)
+    } else {
+        PreciseFix(listOf("gps", "network"), PRECISE_FIX_BOUND_MS, oneUpdate = false)
+    }

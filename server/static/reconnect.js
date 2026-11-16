@@ -2,8 +2,10 @@
 // background a while, the network to the server (often over Tailscale) may not be up yet, and an
 // installed PWA shows no loading indicator of its own - a tapped tab looked dead until the app was
 // restarted. This script, loaded from the head partial on every page:
-// - marks a tapped same-origin link (the tab bar, an ordinary link) and shows a thin progress bar at
-//   the top at once - not for a download, a `target`, a modified click or a #fragment on this page;
+// - marks a tapped same-origin link (the tab bar, an ordinary link) at once and shows a thin progress
+//   bar at the top only if the page hasn't been left after 400 ms (BAR_AFTER; 2026-11-12: a fast page
+//   change flashed it, which could look like a fault) - not for a download, a `target`, a modified
+//   click or a #fragment on this page;
 // - if the page hasn't been left after 3 s, shows a small calm chip "Connecting…" (no alarm colour,
 //   no modal, the page stays usable) and heals by itself: it pings the server (`GET /ping`, 204
 //   with a session, a redirect to the login without one: any answer means the server is there) at
@@ -37,12 +39,24 @@
 //   for, `window.handyLock.due()` (static/app-lock.js) is asked, and a due lock goes to /lock instead; a ping or the
 //   sign-in page's session check answered 423 (the server's lock) goes there too. The lock screen itself is left alone
 //   on a return (its own showing asks for the passkey, passkey.js), and the way to the lock from it keeps its `next`.
+// - saves in place (design 103 §2.7): the reload in place (pull to refresh, the return after being away) is a wait of
+//   kind "swap" - the bar, the chip, the pings and the restarts of a "load", but each restart is
+//   `handySwap.refresh(here)` (static/swap.js), never `location.reload()`, and falls back to the reload only when the
+//   refresh says no. swap.js hands a refresh whose GET failed (offline) to the same wait (`handyReconnect.waitSwap`).
+//   `handy:swapped` ends every wait but a link's navigation; `handy:saved` with no save left (`pending` 0) ends the
+//   save's hold. A slow save's bar is a counter of its own (`handyReconnect.busy(+1/-1)`, scroll-restore.js), so no
+//   wait's end hides it.
 // No service-worker fetch handler: the network is never faked. ES5, no framework (§5.7: Chrome/
 // WebView 80, iOS Safari 14). Run its tests: node --test jstest/reconnect.test.js
 (function (root) {
     "use strict";
 
     var CHIP_AFTER = 3000;
+    // The bar under the band only for a load that takes a while (the user, 2026-11-12: shown at once it was a needless
+    // flash that could look like a fault). 400 ms: a page from the server near by (LAN or Tailscale) is usually there
+    // well before, so a fast change shows nothing, and a real wait still gets its mark well under the second after
+    // which a tap feels unanswered. The tapped link's own mark stays immediate: it is the answer to the tap itself.
+    var BAR_AFTER = 400;
     var PING_EVERY = 5000;
     var PING_TIMEOUT = 4000;
     var OFFER_AFTER = 20000;
@@ -491,6 +505,13 @@
         var wait = null;
         var hiddenAt = null;
         var saving = false;
+        // Slow saves on their way (design 103 D5): the bar shows while any is, whatever the wait does.
+        var busyCount = 0;
+
+        /** The thin bar: a wait's (once it has shown) or a slow save's. */
+        function barState() {
+            view.bar(busyCount > 0 || !!(wait && wait.barShown));
+        }
 
         function later(fn, ms) {
             return win.setTimeout(fn, ms);
@@ -506,10 +527,10 @@
             if (!wait) return;
             stop();
             view.mark(wait.link, false);
-            view.bar(false);
             view.offer(null);
             view.chip(false);
             wait = null;
+            barState();
         }
 
         function keepPlace() {
@@ -632,6 +653,15 @@
          * is made a GET of this address (`replaceState`), so a reload can never resend a form - a
          * belt to the `data-post-answer` rule (QA M1) - and loses a `notice=` already shown.
          */
+        /** The reload in place as before: the place kept, the entry a GET of this address, then reloaded. */
+        function reloadInPlace() {
+            keepPlace();
+            try {
+                win.history.replaceState(win.history.state, "", reloadUrl(win.location.href));
+            } catch (e) {}
+            win.location.reload();
+        }
+
         function go(w) {
             // A due lock (design 74 D3.3): the lock screen instead of the page, which the server would refuse.
             if (lockDue(win)) {
@@ -641,12 +671,17 @@
             }
             w.restarted = now();
             w.failed = false;
-            if (w.href === null) {
-                keepPlace();
+            if (w.kind === "swap") {
+                // Design 103 §2.7: the page refreshed in place; `handy:swapped` ends this wait.
+                var swap = win.handySwap;
+                var taken = false;
                 try {
-                    win.history.replaceState(win.history.state, "", reloadUrl(win.location.href));
+                    taken = !!(swap && typeof swap.refresh === "function" &&
+                        swap.refresh(w.href, { fallback: reloadInPlace }));
                 } catch (e) {}
-                win.location.reload();
+                if (!taken) reloadInPlace();
+            } else if (w.href === null) {
+                reloadInPlace();
             } else {
                 win.location.assign(w.href);
             }
@@ -677,9 +712,10 @@
                         end();
                         return;
                     }
-                    // Away over 10 minutes: Devices, unless this already is Devices (then the reload in place).
+                    // Away over 10 minutes: Devices, unless this already is Devices (then the refresh in place,
+                    // design 103 D3).
                     var toHome = w.home && win.location.pathname !== HOME_PATH;
-                    var reload = toHome ? start("load", HOME_PATH, null) : start("load", null, null);
+                    var reload = toHome ? start("load", HOME_PATH, null) : start("swap", win.location.href, null);
                     go(reload);
                     return;
                 }
@@ -696,18 +732,28 @@
         }
 
         /**
-         * The wait's timers, from its start: the chip (and a navigation's first ping) at 3 s, "Try
+         * The wait's timers, from its start: a load's bar at 400 ms, the chip (and a navigation's first ping) at 3 s, "Try
          * again" at 20 s, a ping every 5 s from 8 s. Armed again when the page comes back after a
          * `pagehide` that stopped them (QA L5).
          */
         function arm(w) {
             var elapsed = now() - w.started;
+            // A load that finishes first unloads the page (its timers die with it): no bar ever. A refresh in place
+            // ("swap") ends its wait on `handy:swapped` the same way.
+            var loading = w.kind === "load" || w.kind === "swap";
+            if (loading && !w.barShown) {
+                w.timers.push(later(function () {
+                    if (wait !== w) return;
+                    w.barShown = true;
+                    barState();
+                }, Math.max(0, BAR_AFTER - elapsed)));
+            }
             if (!w.chipShown) {
                 w.timers.push(later(function () {
                     if (wait !== w) return;
                     w.chipShown = true;
                     view.chip(true);
-                    if (w.kind === "load") check(w);
+                    if (loading) check(w);
                 }, Math.max(0, CHIP_AFTER - elapsed)));
             }
             if (!w.offered) {
@@ -728,8 +774,8 @@
         }
 
         /**
-         * A wait: "load" for a navigation on its way (`href` null = the reload in place), "return"
-         * for the ping after being away (nothing shown unless it takes over 3 s).
+         * A wait: "load" for a navigation on its way (`href` null = the reload in place), "swap" for a refresh in place
+         * of `href` (design 103), "return" for the ping after being away (nothing shown unless it takes over 3 s).
          */
         function start(kind, href, link, home) {
             end();
@@ -743,15 +789,15 @@
                 failed: false,
                 slowRestarted: false,
                 asking: false,
+                barShown: false,
                 chipShown: false,
                 offered: false,
                 timers: []
             };
             wait = w;
-            if (kind === "load") {
+            if (kind === "load" || kind === "swap") {
                 remember(href === null ? win.location.href : href);
                 view.mark(link, true);
-                view.bar(true);
             }
             arm(w);
             if (kind === "return") check(w);
@@ -770,10 +816,18 @@
             saving = true;
             end();
         }
-        doc.addEventListener("submit", saveStarted, true);
+        // Design 103 §2.6: a flip of a form whose save is still held (scroll-restore.js's busy entry, `again`) only
+        // queues it - no save starts, and the "swap" wait that will bring it is never ended by it.
+        function queued(form) {
+            var stay = win.handyStay;
+            return !!(form && stay && typeof stay.entry === "function" && stay.entry(form));
+        }
+        doc.addEventListener("submit", function (e) {
+            if (!queued(e && e.target)) saveStarted();
+        }, true);
         doc.addEventListener("change", function (e) {
             var el = e && e.target;
-            if (el && el.hasAttribute && el.hasAttribute("data-autosave")) saveStarted();
+            if (el && el.hasAttribute && el.hasAttribute("data-autosave") && !queued(el.form)) saveStarted();
         }, true);
 
         function cameBack() {
@@ -807,6 +861,14 @@
                 cameBack();
             }
         });
+        // Design 103: a refresh in place has landed - the page is fresh, so no wait but a link's navigation goes on.
+        doc.addEventListener("handy:swapped", function () {
+            if (wait && !(wait.kind === "load" && wait.href !== null)) end();
+        });
+        // The last save on its way has landed in place: reloads in place may come again.
+        doc.addEventListener("handy:saved", function (e) {
+            if (!e || !e.detail || !e.detail.pending) saving = false;
+        });
         win.addEventListener("online", function () {
             if (wait) check(wait);
         });
@@ -825,7 +887,7 @@
 
         // The reload in place another script asks for (pull-refresh.js, 2026-10-25): the same rules
         // as the return's - no save on its way, no open <details>, nothing typed or picked - and the
-        // same way: the "load" wait (the bar, the chip after 3 s, the ping and the restart) over
+        // same way: the "load" wait (the bar after 400 ms, the chip after 3 s, the ping and the restart) over
         // go()'s kept place and GET entry. A POST's answer may be reloaded when asked: go() makes
         // the entry a GET first, so nothing is sent again.
         win.handyReconnect = {
@@ -839,8 +901,25 @@
                     toLock(win, herePath(win));
                     return true;
                 }
-                go(start("load", null, null));
+                // Design 103 D3: in place (a "swap" wait), the reload only when the page can't be swapped.
+                go(start("swap", win.location.href, null));
                 return true;
+            },
+            /**
+             * swap.js's refresh found no server (its GET failed, design 103 §2.6): the "swap" wait takes over, its next
+             * answered ping refreshing again at once. A wait of this kind already running only learns that it failed.
+             */
+            waitSwap: function (href) {
+                if (wait && wait.kind === "swap") {
+                    wait.failed = true;
+                    return;
+                }
+                start("swap", href, null).failed = true;
+            },
+            /** A slow save's share of the thin bar (scroll-restore.js, design 103 D5). */
+            busy: function (n) {
+                busyCount = Math.max(0, busyCount + (n > 0 ? 1 : -1));
+                barState();
             }
         };
 
@@ -862,6 +941,7 @@
         pathOf: pathOf,
         WANTED_MS: WANTED_MS,
         BOUNCE_MS: BOUNCE_MS,
+        BAR_AFTER: BAR_AFTER,
         CHIP_AFTER: CHIP_AFTER,
         PING_EVERY: PING_EVERY,
         PING_TIMEOUT: PING_TIMEOUT,

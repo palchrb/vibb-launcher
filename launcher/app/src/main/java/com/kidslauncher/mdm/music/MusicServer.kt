@@ -1,7 +1,6 @@
 package com.kidslauncher.mdm.music
 
-import com.kidslauncher.mdm.server.toServer
-import okhttp3.OkHttpClient
+import com.kidslauncher.mdm.server.retryOnStaleConnection
 import okhttp3.RequestBody
 import okhttp3.ResponseBody
 import retrofit2.Call
@@ -76,11 +75,14 @@ private interface MusicApi {
 fun createMusicServer(baseUrl: String, token: String): MusicServer {
     val path = com.kidslauncher.mdm.server.serverPathNow(baseUrl)
     val normalizedBaseUrl = path.baseUrl
-    val client = OkHttpClient.Builder()
-        .toServer(path)
+    // Design 95 §3.5: a child of the shared base client (one pool with the sync and the stream).
+    val base = com.kidslauncher.mdm.server.ServerClients.base(path)
+    val client = base.newBuilder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .addInterceptor(com.kidslauncher.mdm.server.bearerInterceptor(normalizedBaseUrl, token))
+        // Design 95 code QA M1: a GET that timed out on a reused connection goes once more on a fresh one.
+        .retryOnStaleConnection({ base.connectionPool })
         .build()
     val api = Retrofit.Builder()
         .baseUrl(normalizedBaseUrl)

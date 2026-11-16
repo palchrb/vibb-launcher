@@ -40,11 +40,14 @@ class AppFilter(
         }
         // Design 69 §4.4: an app the parent keeps off Home (a sync app) shows only in a window.
         val windowOpen = com.kidslauncher.mdm.server.OfflineOverride.isActive() || com.kidslauncher.mdm.server.RestrictionsPause.isActive()
+        // Design 102 §4.1: Chrome's login role is never on Home or in the drawer, in any state (the rule is GPL, logins/).
+        val loginRole = com.kidslauncher.mdm.logins.loginRolePackageNow()
         apps = apps.filter { info ->
             val packageName = (info.getRawInfo() as? AppInfo)?.packageName
             hiddenVisibility.predicate(hidden, info)
                     && !isMdmSuspended(info)
                     && kidListable(packageName, blockedDialer, recentsProvider, installMode, emergencySos)
+                    && com.kidslauncher.mdm.logins.loginRoleListable(packageName, loginRole)
                     && com.kidslauncher.mdm.appdisplay.onHomeListable(com.kidslauncher.mdm.appdisplay.AppDisplay.entry(packageName), windowOpen)
         }
 

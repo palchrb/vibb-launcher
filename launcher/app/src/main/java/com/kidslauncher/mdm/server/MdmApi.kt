@@ -11,11 +11,9 @@ import com.kidslauncher.mdm.server.dto.EnrollResponse
 import com.kidslauncher.mdm.server.dto.InstallProgressReport
 import com.kidslauncher.mdm.server.dto.ParentPinEventBatch
 import com.kidslauncher.mdm.server.dto.PowerReport
-import com.kidslauncher.mdm.server.dto.StatusReportRequest
 import com.kidslauncher.mdm.server.dto.TimeRequestBody
 import com.kidslauncher.mdm.server.dto.TrackedAppUpdate
 import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
 import okhttp3.ResponseBody
 import retrofit2.Call
 import retrofit2.Response
@@ -41,16 +39,18 @@ interface MdmApi {
     suspend fun enroll(@Body request: EnrollRequest): Response<EnrollResponse>
 
     /** Raw body: decoded with [decodeFresh] so a body the launcher can't read is told apart from
-     * an unreachable server (see `MdmSyncWorker.fetchPolicy`). */
+     * an unreachable server (see `MdmSyncWorker.fetchPolicy`). [ifNoneMatch] is the kept body's ETag (design 95
+     * §3.5, [PolicyEtagStore]; `null` leaves the header out): a `304` - not "successful" to Retrofit - is that body. */
     @GET("api/devices/policy")
-    suspend fun getPolicy(): Response<ResponseBody>
+    suspend fun getPolicy(@Header("If-None-Match") ifNoneMatch: String?): Response<ResponseBody>
 
     /** The raw answer (design 87 §4.2, R2-L7): to a report claiming `app_logos_v1` a `200` with the logos the server
      * wants ([com.kidslauncher.mdm.appdisplay.wantedLogosOf]), else `204`. The caller closes the body; every 2xx is
-     * "the server took the report". Streamed, so the caller's bound on what it reads is real. */
+     * "the server took the report". Streamed, so the caller's bound on what it reads is real. Design 95 §3.5: the body
+     * is [StatusReports]' JSON (a full report or a heartbeat), [encoding] `gzip` when it is gzip'd, else `null`. */
     @Streaming
     @POST("api/devices/status")
-    suspend fun sendStatus(@Body report: StatusReportRequest): Response<ResponseBody>
+    suspend fun sendStatus(@Body report: okhttp3.RequestBody, @Header("Content-Encoding") encoding: String?): Response<ResponseBody>
 
     /** One wanted logo, the raw `image/png` (design 87 §4.3) - see [com.kidslauncher.mdm.appdisplay.AppLogos.upload]. */
     @POST("api/devices/app-logos/{hash}")
@@ -125,6 +125,11 @@ interface MdmApi {
     @POST("api/devices/time-request")
     suspend fun sendTimeRequest(@Body request: TimeRequestBody): Response<ResponseBody>
 
+    /** Design 98 §4.4.4: the parent code's pause on the phone - the raw answer, read by `rulePauseAction`
+     * (`timerules/PhonePauses`). */
+    @POST("api/devices/rule-pause")
+    suspend fun postRulePause(@Body request: com.kidslauncher.mdm.timerules.RulePauseRequest): Response<ResponseBody>
+
     /** The kid's contact request from the phone book (design 77 §14): the raw answer, read by `contactRequestAnswer`
      * (an old server's 404 included) - see `calls/ContactRequests`. */
     @POST("api/devices/contact-request")
@@ -168,11 +173,13 @@ fun createMdmApi(
     token: String? = null,
     callTimeoutMs: Long? = null,
     path: ServerPath = serverPathNow(baseUrl),
+    ownPool: Boolean = false,
 ): MdmApi {
-    val clientBuilder = OkHttpClient.Builder()
-        // First: a closed path refuses before any other interceptor sees the request; on the direct path the origin
-        // fence and the certificate check come first (design 76).
-        .toServer(path)
+    // Design 95 §3.5: a child of the shared base client (one pool, one TLS context). The base is [toServer]'s:
+    // a closed path refuses before any other interceptor sees the request; on the direct path the origin fence and
+    // the certificate check come first (design 76); the bearer below is added after them.
+    val base = ServerClients.base(path)
+    val clientBuilder = base.newBuilder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(10, TimeUnit.SECONDS)
         .writeTimeout(10, TimeUnit.SECONDS)
@@ -183,6 +190,14 @@ fun createMdmApi(
 
     // Only to the server's own host (security review L8), never to an absolute URL elsewhere.
     if (token != null) clientBuilder.addInterceptor(bearerInterceptor(normalizedBaseUrl, token))
+    if (ownPool) {
+        // Design 95 code QA M1: the shutdown's POST has 3 s in all - no time to wait out a dead shared connection and
+        // retry, so it opens its own (as before design 95; TLS still resumes from the platform's session cache).
+        clientBuilder.connectionPool(okhttp3.ConnectionPool())
+    } else {
+        // Last: a GET or the status report that timed out on a reused connection goes once more on a fresh one.
+        clientBuilder.retryOnStaleConnection({ base.connectionPool })
+    }
 
     return Retrofit.Builder()
         .baseUrl(normalizedBaseUrl)

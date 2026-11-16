@@ -3,6 +3,8 @@ package com.kidslauncher.mdm.server
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.Network
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -16,9 +18,11 @@ import com.kidslauncher.mdm.push.BackstopAlarm
 import com.kidslauncher.mdm.push.LastByteInterceptor
 import com.kidslauncher.mdm.push.PushState
 import com.kidslauncher.mdm.push.SSE_DROP_WAKELOCK_MS
+import com.kidslauncher.mdm.push.SSE_NETWORK_SETTLE_MS
 import com.kidslauncher.mdm.push.SSE_READ_TIMEOUT_MS
 import com.kidslauncher.mdm.push.SyncRunner
 import com.kidslauncher.mdm.push.sseDropWakeLockDue
+import com.kidslauncher.mdm.push.sseReconnectOnNetwork
 import com.kidslauncher.mdm.push.sseStale
 import com.kidslauncher.mdm.push.syncOnSseReopen
 import java.util.concurrent.TimeUnit
@@ -88,12 +92,18 @@ class CommandListenerService : Service() {
     private var dropWakeLock: PowerManager.WakeLock? = null
     /** When the drop wake lock was last taken (elapsed realtime). */
     private var dropWakeLockAt: Long? = null
+    /** The default network as the callback last said (`networkHandle`, `null` = none) and the one the current stream
+     * opened on - main thread ([sseReconnectOnNetwork]). */
+    private var defaultNetwork: Long? = null
+    private var streamNetwork: Long? = null
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    private val networkSettled = Runnable { followNetwork() }
 
     private fun buildClient(path: ServerPath, stamp: AtomicLong): OkHttpClient {
-        val builder = OkHttpClient.Builder()
-            // Security review S-M1: the path read fresh per connect - the server may be reachable only through the
-            // embedded tailnet's proxy, which may come up after this service (CLAUDE.md, the "by lazy" staleness bug).
-            .toServer(path)
+        // Security review S-M1: the path read fresh per connect - the server may be reachable only through the
+        // embedded tailnet's proxy, which may come up after this service (CLAUDE.md, the "by lazy" staleness bug).
+        // Design 95 §3.5: a child of the shared base ([ServerClients]), so a sync can ride this stream's connection.
+        val builder = ServerClients.base(path).newBuilder()
             // The server sends a keepalive comment every SSE_KEEPALIVE_SECS (240 s by default,
             // never more); five minutes of silence means the stream is dead - reconnect.
             .readTimeout(SSE_READ_TIMEOUT_MS, TimeUnit.MILLISECONDS)
@@ -106,12 +116,13 @@ class CommandListenerService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        // First, unconditionally (ForegroundServiceDidNotStartInTimeException otherwise): the plain "Vibb One".
-        startForeground(COMMAND_LISTENER_NOTIFICATION_ID, AnchorNotice.plain(this))
+        startForeground(COMMAND_LISTENER_NOTIFICATION_ID, AnchorNotification.forStart(this))
+        // That first, unconditionally (ForegroundServiceDidNotStartInTimeException otherwise): the view this process
+        // posted last, or the plain "Vibb One" (design 100 §2.3; it never throws and reads no CE prefs). Then the one
+        // poster's refresh - the Snarveier panel when it is shown - and the time left, read from CE prefs only now (any
+        // fault leaves what is up).
         running = this
-        // Design r13 §2.3: this instance posted its own; then the time left, read from CE prefs only now (any fault
-        // leaves the plain notification).
-        AnchorNotice.reset(this)
+        AnchorNotification.anchorStarted(this)
         try {
             AnchorNotice.refreshNow(this)
         } catch (e: Exception) {
@@ -121,6 +132,9 @@ class CommandListenerService : Service() {
         // lock) live in PinLockRuntime since step 10 - registered for the whole process from
         // Application, not for this service's lifetime (QA 10 #4).
         connect()
+        watchDefaultNetwork()
+        // Design 98 §5.1: airplane mode's edges, written synchronously for the whole process.
+        com.kidslauncher.mdm.assistant.AirplaneRuntime.registerEdges(applicationContext)
         BackstopAlarm.schedule(applicationContext)
         // The sync at start runs from onStartCommand (always delivered after onCreate), so a cold
         // start through requestSync runs one sync, not two.
@@ -149,8 +163,15 @@ class CommandListenerService : Service() {
 
     override fun onDestroy() {
         stopped = true
-        if (running === this) running = null
+        // Design 100 Q100-L5: under the poster's lock, so no post of 1002 lands after this (one no service owns).
+        synchronized(AnchorNotification.lock) {
+            if (running === this) running = null
+        }
         handler.removeCallbacksAndMessages(null)
+        networkCallback?.let { callback ->
+            runCatching { getSystemService(ConnectivityManager::class.java)?.unregisterNetworkCallback(callback) }
+        }
+        networkCallback = null
         stopSse()
         releaseDropWakeLock()
         // Design 64 §4.3: the passive feed is the anchor's; the next sync's apply starts it again.
@@ -191,6 +212,51 @@ class CommandListenerService : Service() {
         val stale = eventSource
         eventSource = null
         stale?.cancel()
+        markDown()
+        handler.removeCallbacks(connectRunnable)
+        reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS
+        connect()
+    }
+
+    /**
+     * The default network's changes (the launcher is outside the VPN in every shape, so this is the physical network its
+     * sockets use), settled for [SSE_NETWORK_SETTLE_MS]: each change reaches [followNetwork] once. Main thread.
+     */
+    private fun watchDefaultNetwork() {
+        val cm = getSystemService(ConnectivityManager::class.java) ?: return
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) = changed(network.networkHandle)
+
+            override fun onLost(network: Network) {
+                if (defaultNetwork == network.networkHandle) changed(null)
+            }
+
+            private fun changed(handle: Long?) {
+                if (handle == defaultNetwork) return
+                defaultNetwork = handle
+                handler.removeCallbacks(networkSettled)
+                handler.postDelayed(networkSettled, SSE_NETWORK_SETTLE_MS)
+            }
+        }
+        try {
+            defaultNetwork = cm.activeNetwork?.networkHandle
+            cm.registerDefaultNetworkCallback(callback, handler)
+            networkCallback = callback
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't watch the default network: ${e.javaClass.simpleName}")
+        }
+    }
+
+    /** Main thread: the settled default network ([sseReconnectOnNetwork]). A stream on a network that is gone is
+     * dropped at once - not after its 5-min read timeout - with the shared pool's connections, and opened again on the
+     * new one (with no network the open fails and backs off until the next change). */
+    private fun followNetwork() {
+        if (stopped || !sseReconnectOnNetwork(eventSource != null, streamNetwork, defaultNetwork)) return
+        Log.i(LOG_TAG, "Default network changed - reconnecting the command stream")
+        val old = eventSource
+        eventSource = null
+        old?.cancel()
+        ServerClients.streamDropped()
         markDown()
         handler.removeCallbacks(connectRunnable)
         reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS
@@ -239,6 +305,7 @@ class CommandListenerService : Service() {
 
         val stamp = AtomicLong(SystemClock.elapsedRealtime())
         lastByte = stamp
+        streamNetwork = defaultNetwork
         eventSource = EventSources.createFactory(buildClient(path, stamp)).newEventSource(
             request,
             object : EventSourceListener() {
@@ -285,6 +352,8 @@ class CommandListenerService : Service() {
     private fun streamDown(source: EventSource) {
         if (source !== eventSource) return
         eventSource = null
+        // Design 95 §3.5: the shared pool's idle connections go with the stream, so no sync waits on a dead one.
+        ServerClients.streamDropped()
         markDown()
         scheduleReconnect()
     }
@@ -343,7 +412,7 @@ class CommandListenerService : Service() {
         @Volatile
         private var running: CommandListenerService? = null
 
-        /** The anchor runs in this process (design r13 §2.3: its notice is posted only then). */
+        /** The anchor runs in this process (design r13 §2.3, design 100 §2.2: its notification is posted only then). */
         val isRunning: Boolean get() = running != null
 
         /**

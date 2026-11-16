@@ -24,6 +24,8 @@ val STATUS_CAPABILITIES: List<String> = listOf(
     // Design 67: the browsers' managed config, the built-in secure-DNS hosts and Firefox's canary.
     DNS_BYPASS_CAPABILITY,
     BATTERY_CAPABILITY,
+    // Design 95 §3.5: heartbeat reports (StatusReports).
+    STATUS_HEARTBEAT_CAPABILITY,
     INSTALL_NOW_CAPABILITY,
     // The RC-to-RC fix: a same-code release under a newer name installs (launcherBuildAhead). Legacy since
     // launcher-v0.36.0-rc.4 (every build its own versionCode); kept for builds tagged before it.
@@ -64,6 +66,34 @@ val STATUS_CAPABILITIES: List<String> = listOf(
     com.kidslauncher.mdm.sms.MESSAGES_APP_CAPABILITY,
     // Design 87: `installed_apps[].logo` in every report, the answer's `wanted_logos` read and those logos uploaded.
     com.kidslauncher.mdm.server.dto.APP_LOGOS_CAPABILITY,
+    // Design 93: a rule's `until_ms` (gone from that instant) and `card_first` (the card names it while its end is a
+    // real unlock). The server shows its rc.8 warning ("Skole gjelder allerede…") only without it.
+    com.kidslauncher.mdm.timerules.LOCK_NOW_CAPABILITY,
+    // Design 98: `airplane_mode` in every full report and the kid's Flymodus row (bit 64); the server's Home page shows
+    // its switch only for a phone claiming it.
+    com.kidslauncher.mdm.assistant.AIRPLANE_MODE_CAPABILITY,
+    // Design 99: Snarveier (bit 128) and `shortcuts` in every full report; the server's Home page shows its switch only
+    // for a phone claiming it.
+    com.kidslauncher.mdm.shortcuts.SHORTCUTS_CAPABILITY,
+    // Design 98 §4.4: Foreldrekode's pause posted (`POST /api/devices/rule-pause`), `lifts[].phone_key` honoured.
+    com.kidslauncher.mdm.timerules.RULE_PAUSE_CAPABILITY,
+    // Design 94: the policy's `data_roaming` (DISALLOW_DATA_ROAMING, the relock) and `data_roaming` in every report.
+    DATA_ROAMING_CAPABILITY,
+    // Design 95 rev. 3: the policy's `apps_mobile` (Bare Vibb, the VPN's sink) and `mobile_settings_locked`
+    // (DISALLOW_CONFIG_MOBILE_NETWORKS), and `mobile_data` in every report. The server's Mobilnett page waits for it.
+    MOBILE_DATA_CAPABILITY,
+    // Design 97: the policy's `abroad` ("I utlandet"), `data_roaming.where` and `mobile_data.kid` in every report, and
+    // the kid's Mobildata row (bit 32). The server's kid switch and the roaming notice wait for it.
+    MOBILE_NETWORK_CAPABILITY,
+    // Design 100 §14.5: a parent's "Nei" and the answering parent's name shown on the phone (`time_policy.answer`); the
+    // server's "Nei" flash promises "… ser det på telefonen" only for a phone claiming it.
+    com.kidslauncher.mdm.timerules.TIME_ANSWER_CAPABILITY,
+    // Design 102 Part A: the policy's `captive_portal` (the Wi-Fi sign-in window, the parent code) and `captive_portal`
+    // in every full report. The server's Sign-in page and Advanced's #wifi-signin row wait for it.
+    com.kidslauncher.mdm.logins.CAPTIVE_PORTAL_CAPABILITY,
+    // Design 102 Part B: the policy's `login_browser` (Chrome only for logins, its lockdown read back before it is
+    // unhidden) and `login_browser` in every full report. The server's Sign-in page says "Krever nyere Vibb One" without it.
+    com.kidslauncher.mdm.logins.LOGIN_BROWSER_CAPABILITY,
 )
 
 /** A time rule's "Stille" switch (server migration 0121): `rules[].silent` is enforced. */

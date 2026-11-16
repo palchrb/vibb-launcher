@@ -29,8 +29,19 @@ sealed interface ControlsSection {
     /** [sound]: the parent's bit for the sound row (design 18); whether the row really shows is
      * also up to the phone ([com.kidslauncher.mdm.server.soundRowState]: no vibrator, no row).
      * [touch]: touch sounds and vibration (design r9 §4) - always shown with its bit, read-only
-     * without the app-op. */
-    data class Rows(val wifi: Boolean, val bluetooth: Boolean, val brightness: Boolean, val sound: Boolean, val touch: Boolean) : ControlsSection
+     * without the app-op. [mobileData]: the kid's own Mobildata switch (design 97 §4.3, bit 32). */
+    data class Rows(
+        val wifi: Boolean,
+        val bluetooth: Boolean,
+        val brightness: Boolean,
+        val sound: Boolean,
+        val touch: Boolean,
+        val mobileData: Boolean = false,
+        /** Design 98 §4.1: the kid's Flymodus switch - bit 64 with the assistant role. */
+        val airplane: Boolean = false,
+        /** Design 98 §4.1 (Q98-M5): airplane mode is on without the full row - a row that only turns it off. */
+        val airplaneOffOnly: Boolean = false,
+    ) : ControlsSection
 }
 
 /** For the log: which case the kid is looking at, and the mask when there is one. */
@@ -39,7 +50,9 @@ fun ControlsSection.describe(): String = when (this) {
     ControlsSection.NoPolicyYet -> "no accepted policy cached"
     ControlsSection.Unreadable -> "cached policy unreadable"
     ControlsSection.NoneEnabled -> "quick_controls_mask 0"
-    is ControlsSection.Rows -> "wifi=$wifi bluetooth=$bluetooth brightness=$brightness sound=$sound touch=$touch"
+    is ControlsSection.Rows ->
+        "wifi=$wifi bluetooth=$bluetooth brightness=$brightness sound=$sound touch=$touch mobileData=$mobileData " +
+            "airplane=$airplane airplaneOffOnly=$airplaneOffOnly"
 }
 
 /**
@@ -47,21 +60,29 @@ fun ControlsSection.describe(): String = when (this) {
  * policy the phone didn't accept (rejected as suspect, or undecodable) never reaches the cache,
  * so the switches stay those of the last accepted one until the next good sync.
  */
-fun controlsSection(isDeviceOwner: Boolean, cached: CachedPolicy): ControlsSection {
+fun controlsSection(isDeviceOwner: Boolean, cached: CachedPolicy, roleHeld: Boolean = false, airplaneOn: Boolean = false): ControlsSection {
     if (!isDeviceOwner) return ControlsSection.NotOwner
+    // Design 98 §4.1/§7.2: with airplane mode on there is always a way out, whatever the policy says.
+    val offOnly = ControlsSection.Rows(false, false, false, false, false, airplaneOffOnly = true)
     val mask = when (cached) {
-        CachedPolicy.Absent -> return ControlsSection.NoPolicyYet
-        is CachedPolicy.Corrupt -> return ControlsSection.Unreadable
+        CachedPolicy.Absent -> return if (airplaneOn) offOnly else ControlsSection.NoPolicyYet
+        is CachedPolicy.Corrupt -> return if (airplaneOn) offOnly else ControlsSection.Unreadable
         is CachedPolicy.Ok -> cached.policy.quickControlsMask
     }
+    val fullAirplane = mask and QuickControlFeature.AIRPLANE != 0L && roleHeld
     val rows = ControlsSection.Rows(
         wifi = mask and QuickControlFeature.WIFI != 0L,
         bluetooth = mask and QuickControlFeature.BLUETOOTH != 0L,
         brightness = mask and QuickControlFeature.BRIGHTNESS != 0L,
         sound = mask and QuickControlFeature.SOUND != 0L,
         touch = mask and QuickControlFeature.TOUCH != 0L,
+        mobileData = mask and QuickControlFeature.MOBILE_DATA != 0L,
+        airplane = fullAirplane,
+        airplaneOffOnly = airplaneOn && !fullAirplane,
     )
-    return if (rows.wifi || rows.bluetooth || rows.brightness || rows.sound || rows.touch) rows else ControlsSection.NoneEnabled
+    val any = rows.wifi || rows.bluetooth || rows.brightness || rows.sound || rows.touch || rows.mobileData ||
+        rows.airplane || rows.airplaneOffOnly
+    return if (any) rows else ControlsSection.NoneEnabled
 }
 
 /** Security review S-L5: the Bluetooth devices page may stay open only while [section] still shows the Bluetooth row
@@ -97,8 +118,10 @@ fun kidSettingsModel(
     cached: CachedPolicy,
     choices: List<Wallpaper>,
     current: Wallpaper,
+    roleHeld: Boolean = false,
+    airplaneOn: Boolean = false,
 ): KidSettingsModel = KidSettingsModel(
-    controlsSection(isDeviceOwner, cached),
+    controlsSection(isDeviceOwner, cached, roleHeld, airplaneOn),
     wallpaperTiles(choices, current),
     sharesLocation(isDeviceOwner, cached),
 )

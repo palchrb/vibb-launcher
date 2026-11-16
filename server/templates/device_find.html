@@ -37,7 +37,7 @@
 
     {#- The requests in flight or just gone wrong (design 48 §1.4): every one in flight,
         the newest others up to three in all, the newest highlighted; every command of the phone is
-        in its summary's Activity (Show all: #activity, or the summary when it has none). Shown
+        on its Activity page (Show all: /devices/{id}/activity). Shown
         while it has a row or the line after a Cancel, so a Cancel never lands on a hidden group. -#}
     {% if !recent.rows.is_empty() || recent.flash.is_some() %}
     <section id="recent" aria-labelledby="recent-title">

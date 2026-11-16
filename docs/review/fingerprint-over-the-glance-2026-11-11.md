@@ -113,7 +113,7 @@ Nothing there needs to change for route 6: a wake-and-unlock from the power key 
 
 ## Recommendation
 
-1. Build nothing for "the finger while the glance is lit". No honest route exists on the Jelly Star's Android 13;
+1. Build nothing for "the finger while the glance is lit". No honest route exists on the Jelly Star's Android 13 *(correction, design 96's code QA L6: a Jelly Star that runs Vibb One is on Android 16 - Unihertz went from 13 straight to 16, 2026-08-31; design 56 §1)*;
    the one real switch (route 1's package list) belongs to the phone's maker.
 2. Check route 6 on the Jelly Star (below). If press-and-keep works, the answer for the kid is a habit, and at most
    one calm hint line on the glance when a fingerprint is enrolled (launcher: a string in nb and en and a line in the

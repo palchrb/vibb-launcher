@@ -57,9 +57,12 @@ object ParentPin {
      * verdict, outside this object's lock: the provisional `wrong` committed before PBKDF2 must never
      * be what a sync uploads.
      */
-    fun check(context: Context, entry: ParentPinEntry, pin: String): ParentPinResult {
+    fun check(context: Context, entry: ParentPinEntry, pin: String, minutes: Int? = null): ParentPinResult {
         val app = context.applicationContext
         var lockoutAlreadyRunning = false
+        // Design 98 §4.4.1 step 3: the rule pause's plan, run again now (the rule may have ended meanwhile) - before
+        // this object's lock, which never holds another (the time rules' own). Nothing in force: nothing is stored.
+        val pause = if (entry == ParentPinEntry.RULE_PAUSE && minutes != null) rulePauseNow(app, minutes) else null
         val result = synchronized(this) {
             val vault = vault(app)
             if (!vault.configured()) return ParentPinResult.NotConfigured
@@ -82,8 +85,16 @@ object ParentPin {
                 now = now,
                 newId = ::newPinEventId,
                 storageFull = { storageFull(app) },
-                windowStart = { windowDuration(entry)?.let { BootClock.windowStart(it) } },
-                startWindow = { start -> if (start != null) startWindow(app, entry, start) },
+                windowStart = {
+                    if (entry == ParentPinEntry.RULE_PAUSE) pause?.second else windowDuration(entry)?.let { BootClock.windowStart(it) }
+                },
+                startWindow = { start ->
+                    if (entry == ParentPinEntry.RULE_PAUSE) {
+                        pause?.let { com.kidslauncher.mdm.timerules.PhonePauses.addFromGate(app, it.first, System.currentTimeMillis()) }
+                    } else if (start != null) {
+                        startWindow(app, entry, start)
+                    }
+                },
             )
         }
         if (SyncTriggers.pin(result, lockoutAlreadyRunning)) SyncRunner.request(app, "pin_event")
@@ -154,7 +165,34 @@ object ParentPin {
     private fun windowDuration(entry: ParentPinEntry): Long? = when (entry) {
         ParentPinEntry.PAUSE -> RESTRICTIONS_PAUSE_DURATION_MS
         ParentPinEntry.INSTALL_MODE -> INSTALL_MODE_DURATION_MS
-        ParentPinEntry.PIN_LOCK, ParentPinEntry.SETTINGS -> null
+        ParentPinEntry.PIN_LOCK, ParentPinEntry.SETTINGS, ParentPinEntry.RULE_PAUSE, ParentPinEntry.WIFI_SIGNIN -> null
+    }
+
+    /**
+     * Design 98 §4.4.2: the pause of the rule(s) in force for [minutes] at this instant ([com.kidslauncher.mdm.timerules.rulePausePlan]),
+     * with its window for the event's `until` (the latest rule end) - `null` when nothing is in force or the budget is
+     * used up as well.
+     */
+    private fun rulePauseNow(app: Context, minutes: Int): Pair<com.kidslauncher.mdm.timerules.PhonePause, WindowStart>? = try {
+        val snap = com.kidslauncher.mdm.timerules.TimeRulesRuntime.snapshot(app, currentPolicyDecision().policy)
+        val policy = snap.policy
+        if (policy == null || snap.lock.rules.isEmpty()) {
+            null
+        } else {
+            val at = java.time.LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(snap.clocks.wallMs), snap.zone)
+            val lifts = com.kidslauncher.mdm.timerules.TimeRulesRuntime.ruleLifts(app, snap.records, policy.lifts, snap.clocks)
+            val plan = com.kidslauncher.mdm.timerules.rulePausePlan(policy, at, snap.zone, lifts, snap.lock.budgetExhausted, minutes, snap.clocks.wallMs)
+            if (plan.rules.isEmpty()) {
+                null
+            } else {
+                val key = java.security.SecureRandom().let { r -> ByteArray(16).also(r::nextBytes) }.joinToString("") { "%02x".format(it) }
+                val pause = com.kidslauncher.mdm.timerules.phonePauseOf(key, minutes, plan.rules, snap.clocks)
+                pause to WindowStart(plan.rules.maxOf { it.untilMs }, snap.clocks.elapsedMs, snap.clocks.bootCount)
+            }
+        }
+    } catch (e: Exception) {
+        android.util.Log.w("ParentPin", "The rule pause couldn't be planned: ${e.javaClass.simpleName}")
+        null
     }
 
     /** The only callers of the two starters (ParentPinCallersTest). */
@@ -162,7 +200,7 @@ object ParentPin {
         when (entry) {
             ParentPinEntry.PAUSE -> RestrictionsPause.start(context, start)
             ParentPinEntry.INSTALL_MODE -> PlayRuntime.startInstallMode(context, start)
-            ParentPinEntry.PIN_LOCK, ParentPinEntry.SETTINGS -> Unit
+            ParentPinEntry.PIN_LOCK, ParentPinEntry.SETTINGS, ParentPinEntry.RULE_PAUSE, ParentPinEntry.WIFI_SIGNIN -> Unit
         }
     }
 }

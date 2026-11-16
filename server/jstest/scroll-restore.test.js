@@ -725,3 +725,453 @@ test("restoreTarget: a back record is the place over any #fragment, for 20 s", (
     assert.strictEqual(restoreTarget(back, "/apps", "#phone-3", MAX_AGE_MS, () => null), null);
     assert.strictEqual(restoreTarget(back, "/music", "#phone-3", 5, () => null), null);
 });
+
+// A save leaves the history as it was (the user, 2026-11-14: Check now, then Back, showed the same app page again).
+const { stayPost, stayLanding, STAY_HEADER, STAY_LOCATION } = require("../static/scroll-restore.js");
+
+const HERE = "https://vibb.example/apps/tracked/2";
+
+/** A fake form: `attrs` its attributes, `fields` its controls as [name, value, type]. */
+function fakeForm(attrs = {}, fields = []) {
+    const elements = fields.map(([name, value, type = "hidden"]) => ({ name, value, type }));
+    return {
+        attrs,
+        elements,
+        hasAttribute: (n) => n in attrs,
+        getAttribute: (n) => (n in attrs ? attrs[n] : null),
+        setAttribute: (n, v) => { attrs[n] = String(v); },
+        removeAttribute: (n) => { delete attrs[n]; },
+    };
+}
+
+/** A fake submit button. */
+function fakeButton(attrs = {}, name = "", value = "") {
+    return {
+        name,
+        value,
+        disabled: false,
+        attrs,
+        hasAttribute: (n) => n in attrs,
+        getAttribute: (n) => (n in attrs ? attrs[n] : null),
+        setAttribute: (n, v) => { attrs[n] = String(v); },
+        removeAttribute: (n) => { delete attrs[n]; },
+    };
+}
+
+const checkNow = () => fakeForm({ method: "post", action: "/apps/tracked/2/check#check" }, [["v", "1"]]);
+
+test("stayPost: a POST back to its page's #fragment is posted by the script, anything else by the browser", () => {
+    assert.deepStrictEqual(stayPost(checkNow(), null, HERE), {
+        url: "https://vibb.example/apps/tracked/2/check#check",
+        multipart: false,
+    });
+    assert.strictEqual(stayPost(checkNow(), null, HERE + "?from=apps#check").url, "https://vibb.example/apps/tracked/2/check#check");
+    const leaves = [
+        ["a GET", fakeForm({ method: "get", action: "/notifications#inbox" })],
+        ["no method", fakeForm({ action: "/x#y" })],
+        ["no fragment (a form that leaves its page)", fakeForm({ method: "post", action: "/apps/tracked/2/delete" })],
+        ["an empty fragment", fakeForm({ method: "post", action: "/x#" })],
+        ["another origin", fakeForm({ method: "post", action: "https://other.example/x#y" })],
+        ["a target", fakeForm({ method: "post", action: "/x#y", target: "_blank" })],
+        ["answered with a page", fakeForm({ method: "post", action: "/devices/3/lock#show-pin", "data-native-post": "" })],
+        ["a password", fakeForm({ method: "post", action: "/x#y" }, [["password", "", "password"]])],
+        ["a file", fakeForm({ method: "post", action: "/x#y", enctype: "multipart/form-data" }, [["cover", "", "file"]])],
+        ["a passkey's assertion", fakeForm({ method: "post", action: "/x#y" }, [["assertion", ""]])],
+        ["a new passkey", fakeForm({ method: "post", action: "/x#y" }, [["credential", ""]])],
+    ];
+    for (const [what, form] of leaves) assert.strictEqual(stayPost(form, null, HERE), null, what);
+    assert.strictEqual(stayPost(checkNow(), fakeButton({ formtarget: "_blank" }), HERE), null, "the button's target");
+    assert.strictEqual(stayPost(fakeForm({ action: "/x#y" }), fakeButton({ formmethod: "post" }), HERE).url, "https://vibb.example/x#y");
+    // The button's formaction wins: a fragment of its own (Device › Calendar's Remove), or none (it leaves the page).
+    const calendar = fakeForm({ method: "post", action: "/devices/3/calendar/x#sources" });
+    assert.strictEqual(
+        stayPost(calendar, fakeButton({ formaction: "/devices/3/calendar/calendars/a/remove#calendars" }), HERE).url,
+        "https://vibb.example/devices/3/calendar/calendars/a/remove#calendars"
+    );
+    assert.strictEqual(stayPost(calendar, fakeButton({ formaction: "/devices/3/calendar/links/a/remove" }), HERE), null);
+    assert.strictEqual(stayPost(fakeForm({ method: "POST", action: "/x#y", enctype: "multipart/form-data" }), null, HERE).multipart, true);
+});
+
+test("stayLanding: the same page is reloaded in its own entry, another page opened as a link", () => {
+    assert.deepStrictEqual(stayLanding("/apps/tracked/2#check", HERE), { reload: true, url: HERE + "#check" });
+    assert.deepStrictEqual(stayLanding("/apps/tracked/2?notice=x#check", HERE + "?from=apps#top"), {
+        reload: true,
+        url: HERE + "?notice=x#check",
+    });
+    assert.deepStrictEqual(stayLanding("/schedules/rules/5#rule", "https://vibb.example/schedules/rules/new"), {
+        reload: false,
+        url: "https://vibb.example/schedules/rules/5#rule",
+    });
+    // Only an http(s) address of this origin (code QA L3).
+    for (const to of ["https://other.example/apps/tracked/2", "javascript:alert(1)", "data:text/html,x", "http://vibb.example/apps"]) {
+        assert.strictEqual(stayLanding(to, HERE), null, to);
+    }
+});
+
+/** A window with fetch: `answer(url, init)` gives the fetch's answer (a promise's value, or throws to reject). */
+function stayWindow(answer) {
+    const w = fakeWindow({ mode: "main", path: "/apps/tracked/2" });
+    const { win } = w;
+    w.fetches = [];
+    w.went = [];
+    win.location.href = HERE;
+    win.location.assign = (url) => w.went.push(["assign", url]);
+    win.location.replace = (url) => w.went.push(["replace", url]);
+    win.location.reload = () => w.went.push(["reload", win.location.href]);
+    win.history.state = { s: 1 };
+    win.history.replaceState = (state, title, url) => {
+        w.went.push(["replaceState", url, state]);
+        win.location.href = url;
+    };
+    win.URLSearchParams = URLSearchParams;
+    win.FormData = function (form) {
+        this.pairs = form.elements.filter((f) => f.type !== "submit").map((f) => [f.name, f.value]);
+    };
+    win.FormData.prototype.append = function (k, v) { this.pairs.push([k, v]); };
+    win.FormData.prototype.forEach = function (fn) { this.pairs.forEach(([k, v]) => fn(v, k)); };
+    win.fetch = (url, init) => {
+        w.fetches.push([url, init]);
+        return new Promise((resolve) => resolve(answer(url, init)));
+    };
+    w.requested = [];
+    w.form = (attrs, fields) => {
+        const form = fakeForm(attrs, fields);
+        Object.setPrototypeOf(form, win.HTMLFormElement.prototype);
+        form.requestSubmit = (submitter) => {
+            w.requested.push(submitter);
+            // The browser fires the submit again; the script lets this one pass.
+            const again = { target: form, submitter: submitter || null, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } };
+            w.winListeners.submit(again);
+            assert.strictEqual(again.defaultPrevented, false, "the browser's own POST passes");
+        };
+        return form;
+    };
+    w.submit = (form, submitter = null, extra = {}) => {
+        const e = Object.assign({ target: form, submitter, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } }, extra);
+        w.winListeners.submit(e);
+        return e;
+    };
+    install(win, () => 1000);
+    return w;
+}
+
+const settle = () => new Promise((r) => setImmediate(r));
+const stayAnswer = (to) => ({ status: 204, type: "basic", headers: { get: (n) => (n === STAY_LOCATION ? to : null) } });
+const page = (status) => ({ status, type: "basic", headers: { get: () => null } });
+
+test("a save back to its page: posted by the script, its entry replaced with the answer's address and reloaded", async () => {
+    assert.strictEqual(STAY_HEADER, "X-Handy-Stay");
+    assert.strictEqual(STAY_LOCATION, "X-Handy-Location");
+    const w = stayWindow(() => stayAnswer("/apps/tracked/2#check"));
+    const form = w.form({ method: "post", action: "/apps/tracked/2/check#check" }, [["v", "1"]]);
+    const e = w.submit(form, fakeButton({}, "go", "now"));
+    assert.strictEqual(e.defaultPrevented, true, "not the browser's POST");
+    assert.strictEqual(w.fetches.length, 1);
+    const [url, init] = w.fetches[0];
+    assert.strictEqual(url, "https://vibb.example/apps/tracked/2/check#check");
+    assert.strictEqual(init.method, "POST");
+    assert.strictEqual(init.redirect, "manual");
+    assert.strictEqual(init.credentials, "same-origin");
+    assert.strictEqual(init.headers[STAY_HEADER], "1");
+    assert.ok(init.body instanceof URLSearchParams, "urlencoded, as the browser sends the form");
+    assert.strictEqual(init.body.toString(), "v=1&go=now", "the button's name and value too");
+    await settle();
+    assert.deepStrictEqual(w.went, [
+        ["replaceState", HERE + "#check", { s: 1 }],
+        ["reload", HERE + "#check"],
+    ]);
+    assert.deepStrictEqual(w.nativeSubmits, []);
+    assert.deepStrictEqual(w.requested, []);
+});
+
+test("an auto-saving switch (form.submit()) stays too; a save that lands on another page opens it as a link", async () => {
+    const w = stayWindow(() => stayAnswer("/schedules/rules/5#rule"));
+    const form = w.form({ method: "post", action: "/devices/1/x#x" }, [["on", "on"]]);
+    form.submit();
+    assert.strictEqual(w.fetches.length, 1);
+    assert.ok(w.store.has(KEY), "the place goes with it as before");
+    await settle();
+    assert.deepStrictEqual(w.went, [["assign", "https://vibb.example/schedules/rules/5#rule"]]);
+    assert.deepStrictEqual(w.nativeSubmits, []);
+});
+
+test("a refusal is sent again the browser's way, which shows it; no answer or a 5xx never posts again (code QA H1)", async () => {
+    for (const status of [400, 403, 404, 409, 422, 423, 200]) {
+        const w = stayWindow(() => page(status));
+        const form = w.form({ method: "post", action: "/apps/tracked/2/check#check" });
+        const button = fakeButton({}, "action", "x");
+        assert.strictEqual(w.submit(form, button).defaultPrevented, true);
+        await settle();
+        assert.deepStrictEqual(w.requested, [button], status + ": requestSubmit with its button");
+        assert.strictEqual(button.disabled, false, status + ": the button is live again for it");
+        assert.deepStrictEqual(w.went, [], String(status));
+        const hooked = w.form({ method: "post", action: "/x#x" });
+        hooked.submit();
+        await settle();
+        assert.deepStrictEqual(w.nativeSubmits, [hooked], status + ": form.submit()'s own");
+    }
+    // The server may have acted: the page with a GET, nothing posted again. A redirect past the stay
+    // answer (a sign-in portal) too.
+    const lost = [
+        () => page(500),
+        () => page(502),
+        () => page(504),
+        () => page(413),
+        () => { throw new Error("Load failed"); },
+        () => ({ status: 0, type: "opaqueredirect", headers: { get: () => null } }),
+        () => stayAnswer("javascript:alert(1)"),
+        () => stayAnswer("https://other.example/apps/tracked/2#check"),
+    ];
+    for (const answer of lost) {
+        const w = stayWindow(answer);
+        w.submit(w.form({ method: "post", action: "/apps/tracked/2/check#check" }), fakeButton({}, "go", "1"));
+        await settle();
+        assert.deepStrictEqual(w.requested, []);
+        assert.deepStrictEqual(w.nativeSubmits, []);
+        assert.deepStrictEqual(w.went, [["replaceState", HERE, { s: 1 }], ["reload", HERE]]);
+    }
+});
+
+test("a requestSubmit that throws (its button left the form): the page with a GET, nothing escapes", async () => {
+    const w = stayWindow(() => page(400));
+    const form = w.form({ method: "post", action: "/apps/tracked/2/check#check" });
+    form.requestSubmit = () => { throw new TypeError("not a submit button of this form"); };
+    w.submit(form, fakeButton({}, "go", "1"));
+    await settle();
+    assert.deepStrictEqual(w.went, [["replaceState", HERE, { s: 1 }], ["reload", HERE]]);
+});
+
+test("while a save is out its form is busy: a second tap does nothing, the button is disabled (code QA M1)", async () => {
+    let answer;
+    const w = stayWindow(() => new Promise((r) => { answer = r; }));
+    const form = w.form({ method: "post", action: "/devices/1/lifts#quick" });
+    const button = fakeButton({}, "minutes", "30");
+    assert.strictEqual(w.submit(form, button).defaultPrevented, true);
+    assert.strictEqual(form.attrs["aria-busy"], "true");
+    assert.strictEqual(button.disabled, true);
+    assert.strictEqual(button.attrs["aria-busy"], "true");
+    const again = w.submit(form, button);
+    assert.strictEqual(again.defaultPrevented, true, "not the browser's POST either");
+    assert.strictEqual(w.fetches.length, 1, "one lift, not two");
+    answer(stayAnswer("/apps/tracked/2#quick"));
+    await settle();
+    assert.deepStrictEqual(w.went.map((g) => g[0]), ["replaceState", "reload"]);
+});
+
+test("several saves out: the page lands once, after the last, at the last's address; a form's saves go in order (code QA L1)", async () => {
+    const answers = [];
+    const w = stayWindow(() => new Promise((r) => answers.push(r)));
+    const one = w.form({ method: "post", action: "/devices/1/apps/toggle#a" }, [["on", "on"]]);
+    const two = w.form({ method: "post", action: "/devices/1/apps/toggle#b" }, [["on", "on"]]);
+    one.submit();
+    two.submit();
+    one.elements[0].value = "off";
+    one.submit();
+    assert.strictEqual(w.fetches.length, 2, "one's second save waits for its first");
+    answers[0](stayAnswer("/apps/tracked/2#a"));
+    await settle();
+    assert.strictEqual(w.fetches.length, 3, "then it goes");
+    assert.strictEqual(w.fetches[2][1].body.toString(), "on=off", "with the form as it is now");
+    assert.deepStrictEqual(w.went, [], "nothing lands while saves are out");
+    answers[1](stayAnswer("/apps/tracked/2#b"));
+    await settle();
+    assert.deepStrictEqual(w.went, []);
+    answers[2](stayAnswer("/apps/tracked/2#a2"));
+    await settle();
+    assert.deepStrictEqual(w.went, [
+        ["replaceState", HERE + "#a2", { s: 1 }],
+        ["reload", HERE + "#a2"],
+    ]);
+    // A refusal among them still shows, once the rest are done.
+    const later = [];
+    const m = stayWindow((url) => new Promise((r) => later.push([url, r])));
+    const ok = m.form({ method: "post", action: "/devices/1/x#x" });
+    const bad = m.form({ method: "post", action: "/devices/1/y#y" });
+    ok.submit();
+    bad.submit();
+    later[1][1](page(400));
+    await settle();
+    assert.deepStrictEqual(m.nativeSubmits, []);
+    later[0][1](stayAnswer("/apps/tracked/2#x"));
+    await settle();
+    assert.deepStrictEqual(m.nativeSubmits, [bad]);
+    assert.deepStrictEqual(m.went, []);
+});
+
+test("a stay save's reload: a #fragment outside the form's groups is the anchor, not the old place (code QA L2)", () => {
+    // Music import's Confirm (#import-preview) lands on #import, a sibling the record doesn't hold.
+    const record = { path: "/music/import", y: 900, t: 990, tops: { "import-preview": 120 }, stay: true };
+    const w = fakeWindow({
+        mode: "main",
+        path: "/music/import",
+        hash: "#import",
+        stored: record,
+        places: { "/music/import": { y: 900, t: 980 } },
+        navType: "reload",
+        elements: { import: 40 },
+    });
+    const anchored = [];
+    const byId = w.win.document.getElementById;
+    w.win.document.getElementById = (id) => {
+        const el = byId(id);
+        if (el) el.scrollIntoView = (top) => anchored.push([id, top]);
+        return el;
+    };
+    install(w.win, () => 1000);
+    assert.deepStrictEqual(w.scrolls, [], "not the place record's 900");
+    assert.deepStrictEqual(anchored, [["import", true]]);
+    // Without the stay mark (a reload by hand) the place record as before.
+    const plain = fakeWindow({
+        mode: "main",
+        path: "/music/import",
+        hash: "#import",
+        stored: Object.assign({}, record, { stay: undefined }),
+        places: { "/music/import": { y: 900, t: 980 } },
+        navType: "reload",
+        elements: { import: 40 },
+    });
+    install(plain.win, () => 1000);
+    assert.deepStrictEqual(plain.scrolls, [[0, 900]]);
+});
+
+test("the reload carries the form record marked as a stay", async () => {
+    const w = stayWindow(() => stayAnswer("/apps/tracked/2#check"));
+    w.submit(w.form({ method: "post", action: "/apps/tracked/2/check#check" }), null);
+    // The submit's capture listener records the place (the fake keeps one listener per type).
+    w.listeners.submit({ target: { id: "check", parentNode: null, getBoundingClientRect: () => ({ top: 50 }) } });
+    await settle();
+    assert.strictEqual(JSON.parse(w.store.get(KEY)).stay, true);
+});
+
+test("the browser posts as before: a form that leaves its page, a submit taken over, no submitter, no fetch", () => {
+    const w = stayWindow(() => assert.fail("no fetch"));
+    const leaves = w.form({ method: "post", action: "/apps/tracked/2/delete" });
+    assert.strictEqual(w.submit(leaves).defaultPrevented, false);
+    leaves.submit();
+    assert.deepStrictEqual(w.nativeSubmits, [leaves]);
+    const stays = w.form({ method: "post", action: "/apps/tracked/2/check#check" });
+    w.submit(stays, null, { defaultPrevented: true });
+    assert.strictEqual(w.fetches.length, 0, "a submit another script took over");
+    const old = { target: stays, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } };
+    w.winListeners.submit(old);
+    assert.strictEqual(old.defaultPrevented, false, "a browser without `submitter`");
+    assert.strictEqual(w.fetches.length, 0);
+
+    const bare = fakeWindow({ path: "/apps/tracked/2" });
+    install(bare.win, () => 1000);
+    const form = fakeForm({ method: "post", action: "/apps/tracked/2/check#check" });
+    Object.setPrototypeOf(form, bare.win.HTMLFormElement.prototype);
+    const e = { target: form, submitter: null, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } };
+    bare.winListeners.submit(e);
+    assert.strictEqual(e.defaultPrevented, false);
+    form.submit();
+    assert.deepStrictEqual(bare.nativeSubmits, [form]);
+});
+
+// Design 103 §2.2: a landing on this page goes to swap.js (handySwap.refresh), the landed forms busy until its morph.
+function swapWindow(answer) {
+    const w = stayWindow(answer);
+    w.refreshes = [];
+    w.taken = true;
+    w.win.handySwap = {
+        refresh: (url, opts) => {
+            w.refreshes.push([url, opts]);
+            return w.taken;
+        },
+    };
+    return w;
+}
+
+test("a landing on this page is refreshed in place with its forms and buttons; a refresh that says no is the reload", async () => {
+    const w = swapWindow(() => stayAnswer("/apps/tracked/2?notice=checked#check"));
+    const form = w.form({ method: "post", action: "/apps/tracked/2/check#check" });
+    const button = fakeButton({}, "go", "1");
+    w.submit(form, button);
+    await settle();
+    assert.strictEqual(w.refreshes.length, 1);
+    const [url, opts] = w.refreshes[0];
+    assert.strictEqual(url, "https://vibb.example/apps/tracked/2?notice=checked#check");
+    assert.deepStrictEqual(opts.forms, [form]);
+    assert.deepStrictEqual(opts.byButton, [button]);
+    assert.strictEqual(opts.lost, false);
+    assert.deepStrictEqual(w.went, [], "no reload");
+    assert.strictEqual(form.attrs["aria-busy"], "true", "still busy until the morph");
+    assert.strictEqual(button.disabled, true);
+    // The morph is done: swap.js releases the landed forms.
+    w.win.handyStay.landed([form]);
+    assert.strictEqual(form.attrs["aria-busy"], undefined);
+    assert.strictEqual(button.disabled, false);
+    // A refresh that says no: the reload as before, with its record.
+    const no = swapWindow(() => stayAnswer("/apps/tracked/2#check"));
+    no.taken = false;
+    no.submit(no.form({ method: "post", action: "/apps/tracked/2/check#check" }), null);
+    await settle();
+    assert.deepStrictEqual(no.went.map((g) => g[0]), ["replaceState", "reload"]);
+    // And its fallback is that same reload.
+    const fb = swapWindow(() => stayAnswer("/apps/tracked/2#check"));
+    fb.submit(fb.form({ method: "post", action: "/apps/tracked/2/check#check" }), null);
+    await settle();
+    fb.refreshes[0][1].fallback();
+    assert.deepStrictEqual(fb.went.map((g) => g[0]), ["replaceState", "reload"]);
+});
+
+test("103-3: a flip in the gap is queued and sent after the morph; only the landed entries are released", async () => {
+    const answers = [];
+    const w = swapWindow(() => new Promise((r) => answers.push(r)));
+    const sw = w.form({ method: "post", action: "/devices/1/hardening#restrictions" }, [["a", "on"]]);
+    sw.submit();
+    answers[0](stayAnswer("/apps/tracked/2#restrictions"));
+    await settle();
+    assert.strictEqual(w.refreshes.length, 1, "landed: the GET is out");
+    // The gap: the same switch flipped again, and another form saved.
+    sw.elements[0].value = "off";
+    sw.submit();
+    assert.strictEqual(w.fetches.length, 1, "queued, not sent");
+    assert.strictEqual(w.win.handyStay.entry(sw).again, true);
+    const other = w.form({ method: "post", action: "/devices/1/other#other" });
+    const button = fakeButton({}, "x", "1");
+    w.submit(other, button);
+    assert.strictEqual(w.win.handyStay.inflight(), 1);
+    assert.strictEqual(w.win.handyStay.isSubmitter(button), true);
+    // The morph lands for the first form only.
+    w.win.handyStay.landed([sw]);
+    assert.strictEqual(w.fetches.length, 3, "the queued flip is sent now");
+    assert.strictEqual(w.fetches[2][1].body.toString(), "a=off");
+    assert.strictEqual(other.attrs["aria-busy"], "true", "the other save keeps its marks");
+    assert.strictEqual(button.disabled, true);
+    assert.strictEqual(sw.attrs["aria-busy"], "true", "busy again for its new save");
+    assert.strictEqual(w.win.handyStay.inflight(), 2);
+});
+
+test("an answer not had refreshes in place with the red line; the 400 ms bar is a counter of its own", async () => {
+    const w = swapWindow(() => page(502));
+    const timers = [];
+    w.win.setTimeout = (fn, ms) => { timers.push([fn, ms]); return timers.length; };
+    w.win.clearTimeout = (id) => { timers[id - 1] = null; };
+    const bars = [];
+    w.win.handyReconnect = { busy: (n) => bars.push(n) };
+    const form = w.form({ method: "post", action: "/apps/tracked/2/check#check" });
+    w.submit(form, fakeButton({}, "go", "1"));
+    assert.strictEqual(timers[0][1], 400);
+    timers[0][0]();
+    assert.deepStrictEqual(bars, [1], "slow: the bar");
+    await settle();
+    assert.strictEqual(w.refreshes[0][0], HERE);
+    assert.strictEqual(w.refreshes[0][1].lost, true);
+    assert.deepStrictEqual(w.went, [], "no reload, no POST again");
+    w.win.handyStay.landed([form]);
+    assert.deepStrictEqual(bars, [1, -1], "its share goes with its marks");
+    // A fast save never shows it.
+    const fast = swapWindow(() => stayAnswer("/apps/tracked/2#check"));
+    const t2 = [];
+    fast.win.setTimeout = (fn, ms) => { t2.push(fn); return t2.length; };
+    fast.win.clearTimeout = (id) => { t2[id - 1] = null; };
+    const b2 = [];
+    fast.win.handyReconnect = { busy: (n) => b2.push(n) };
+    const f2 = fast.form({ method: "post", action: "/apps/tracked/2/check#check" });
+    f2.submit();
+    await settle();
+    fast.win.handyStay.landed([f2]);
+    assert.strictEqual(t2[0], null, "the timer cleared");
+    assert.deepStrictEqual(b2, []);
+});

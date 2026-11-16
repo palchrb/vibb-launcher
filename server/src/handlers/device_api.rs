@@ -221,19 +221,70 @@ impl From<sqlx::Error> for PolicyError {
 /// `DevicePolicy::default()` (kiosk off, no allowlist), which the launcher applied as "no
 /// restrictions". The launcher treats any non-2xx as "no fresh policy" and keeps enforcing its
 /// cached one.
+///
+/// Design 95 §3.5 (step 95-T1): the answer carries a weak `ETag` over the exact bytes served -
+/// hashed after [build_policy], so after its `pop_command` and every time-dependent part - and an
+/// `If-None-Match` naming it gets a `304` with no body. The request still counts as the phone's
+/// last access and the pop still happens; the body would only repeat one the phone holds. Never
+/// gzip'd (the PIN hashes, design 95 §3.3) and `no-store` as before. An older launcher sends no
+/// `If-None-Match` and always gets the 200.
 pub async fn policy(
     State(state): State<AppState>,
     Extension(AuthedDevice(device)): Extension<AuthedDevice>,
+    headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
-    match build_policy(&state, device.id).await {
-        // `no-store`, as every device answer without its own (`limits`): also the one with the
-        // Child PIN in it (design 59 §2.1).
-        Ok(policy) => Json(policy).into_response(),
+    let policy = match build_policy(&state, device.id).await {
+        Ok(policy) => policy,
         Err(err) => {
             tracing::error!(device_id = device.id, %err, "failed to build device policy");
-            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
+    };
+    let body = match serde_json::to_vec(&policy) {
+        Ok(body) => body,
+        Err(err) => {
+            tracing::error!(device_id = device.id, %err, "failed to encode device policy");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
+    let etag = policy_etag(&body);
+    // `no-store`, as every device answer without its own (`limits`): also the one with the
+    // Child PIN in it (design 59 §2.1). Set here, so the ETag doesn't turn it into `no-cache`.
+    let cache = [
+        (header::ETAG, etag.clone()),
+        (header::CACHE_CONTROL, "no-store".to_string()),
+    ];
+    if policy_etag_matches(&headers, &etag) {
+        return (StatusCode::NOT_MODIFIED, cache).into_response();
     }
+    (
+        cache,
+        [(header::CONTENT_TYPE, "application/json".to_string())],
+        body,
+    )
+        .into_response()
+}
+
+/// The policy answer's weak ETag (design 95 §3.5): the first 128 bits of the served bytes'
+/// SHA-256, as hex.
+pub(crate) fn policy_etag(body: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(body);
+    format!("W/\"{}\"", hex::encode(&digest[..16]))
+}
+
+/// Whether `If-None-Match` names exactly `etag` (weak comparison, a list read). Never `*`: the
+/// phone sends only a tag it holds the body of, and a `304` to anything else would leave it
+/// without the policy it was told it has.
+pub(crate) fn policy_etag_matches(headers: &axum::http::HeaderMap, etag: &str) -> bool {
+    let ours = etag.trim_start_matches("W/");
+    headers
+        .get_all(header::IF_NONE_MATCH)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(','))
+        .map(|tag| tag.trim().trim_start_matches("W/"))
+        .any(|tag| tag == ours)
 }
 
 /// `DevicePolicyManager.LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_IN_TASK`.
@@ -466,6 +517,11 @@ pub(crate) async fn build_policy(
         requested_at,
     });
 
+    // Design 102 §6.1: Chrome's login role and its sites; a DB error is a 500 (a lost list must never read as none -
+    // nor as more).
+    let login_browser = crate::logins::browser_policy(&state.db, &policy).await?;
+    let captive_portal = crate::logins::portal_policy(&policy);
+
     Ok(PolicyResponse {
         allowlist,
         weekday_start_minutes,
@@ -549,6 +605,19 @@ pub(crate) async fn build_policy(
         calendar,
         app_permissions,
         lock_media_apps,
+        abroad: crate::mobile_network::abroad_choice(&policy.abroad).to_string(),
+        data_roaming: crate::mobile_network::derived_roaming(crate::mobile_network::abroad_choice(
+            &policy.abroad,
+        ))
+        .to_string(),
+        apps_mobile: crate::mobile_network::apps_choice(&policy.apps_mobile).to_string(),
+        mobile_settings_locked: policy.mobile_settings_locked,
+        status_heartbeat: state.config.status_heartbeat,
+        status_heartbeat_fields: crate::status_heartbeat::HEARTBEAT_FIELDS,
+        status_gzip: true,
+        rule_pause: true,
+        captive_portal,
+        login_browser,
         server_tls,
     })
 }
@@ -606,7 +675,7 @@ pub(crate) async fn pop_command(
 }
 
 /// The device's effective rules (`time_rules::effective_rule_rows`: everyone's and its own, each
-/// unless switched off for it, then its bedtime) and budget (its own while
+/// unless switched off for it, then its bedtime; a rule turned on now as one more, design 93) and budget (its own while
 /// `custom_schedule_enabled` - the Own limit switch since migration 0115 -, else the global one)
 /// and the lifts still to deliver. Anything stored that doesn't validate is an error (500): the
 /// phone keeps its cached rules instead of getting fewer.
@@ -615,12 +684,10 @@ async fn build_time_policy(
     policy: &DevicePolicy,
     global: Option<&GlobalSchedule>,
 ) -> Result<TimePolicy, PolicyError> {
-    let rules = crate::time_rules::effective_rule_rows(&state.db, policy.device_id)
-        .await?
-        .iter()
-        .map(|row| row.to_policy())
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(PolicyError::CorruptTimePolicy)?;
+    // Design 93 §4.5: a rule turned on now is one more rule, a copy with its own `until_ms`.
+    let served =
+        crate::lock_now::served_rule_rows(&state.db, policy.device_id, chrono::Utc::now()).await?;
+    let rules = served.policy().map_err(PolicyError::CorruptTimePolicy)?;
     let budget_json = if policy.custom_schedule_enabled {
         policy.daily_budget_json.as_str()
     } else {
@@ -630,11 +697,20 @@ async fn build_time_policy(
     };
     let daily_budget_minutes =
         crate::time_rules::parse_budget(budget_json).map_err(PolicyError::CorruptTimePolicy)?;
-    let lifts = crate::time_rules::deliverable_lifts(&state.db, policy.device_id).await?;
+    // Design 93 §4.3: a pause of the turned-on rule lifts its copy too (its twin).
+    let lifts =
+        served.with_twins(crate::time_rules::deliverable_lifts(&state.db, policy.device_id).await?);
+    // Design 100 §14.2: the newest answer to a request for more time asked in the phone's day.
+    let day_start =
+        crate::time_answers::phone_day_start(&state.db, policy.device_id, chrono::Utc::now())
+            .await?;
+    let answer = crate::time_answers::policy_answer(&state.db, policy.device_id, day_start).await?;
     Ok(TimePolicy {
         rules,
         daily_budget_minutes,
         lifts,
+        request_answers: true,
+        answer,
     })
 }
 
@@ -996,6 +1072,38 @@ pub async fn dns_blocklist(
     }
 }
 
+/// Design 102 §5.2: which of `hosts` this phone's filter blocks - its delivered lists, walked by suffix as the phone's
+/// filter does. `None` when the lists can't be read (the page then says nothing).
+pub(crate) async fn filter_blocks(
+    state: &AppState,
+    device_id: i64,
+    hosts: &[String],
+) -> Option<std::collections::HashSet<String>> {
+    let categories = effective_blocklist(state, device_id).await.ok()?;
+    let listed: std::collections::HashSet<&str> = categories
+        .iter()
+        .flat_map(|c| c.domains.iter().map(String::as_str))
+        .collect();
+    Some(
+        hosts
+            .iter()
+            .filter(|host| {
+                let mut name = host.as_str();
+                loop {
+                    if listed.contains(name) {
+                        return true;
+                    }
+                    match name.split_once('.') {
+                        Some((_, parent)) => name = parent,
+                        None => return false,
+                    }
+                }
+            })
+            .cloned()
+            .collect(),
+    )
+}
+
 async fn effective_blocklist(
     state: &AppState,
     device_id: i64,
@@ -1229,11 +1337,50 @@ pub(crate) fn known_fields(value: &serde_json::Value, fields: &[(&str, Field)]) 
     (!kept.is_empty()).then(|| Value::Object(kept).to_string())
 }
 
+/// `POST /api/devices/status`. Design 95 §3.5 (step 95-T2): a heartbeat is first expanded into the full report it
+/// stands for (`status_heartbeat`), or answered `{"full_report": true}`; a full report with a `hash` is kept for the
+/// heartbeats after it. Either way one full report runs through [status_intake], so nothing the server derives from a
+/// report knows whether a heartbeat came.
 pub async fn status(
     State(state): State<AppState>,
     Extension(AuthedDevice(device)): Extension<AuthedDevice>,
-    Json(mut report): Json<StatusReportRequest>,
-) -> impl IntoResponse {
+    Json(body): Json<serde_json::Value>,
+) -> axum::response::Response {
+    use crate::status_heartbeat::{self, Intake};
+    let enabled = state.config.status_heartbeat;
+    let (report, keep) = match status_heartbeat::take(&state.db, device.id, body, enabled).await {
+        Intake::Full { report, keep } => (report, Some(keep)),
+        Intake::Expanded(report) => (report, None),
+        Intake::FullReportWanted => return status_heartbeat::full_report_wanted(),
+    };
+    let report: StatusReportRequest = match serde_json::from_value(report) {
+        Ok(report) => report,
+        // As the `Json` extractor answers a body of the wrong shape.
+        Err(err) => {
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                format!("Failed to deserialize the JSON body into the target type: {err}"),
+            )
+                .into_response();
+        }
+    };
+    let db = state.db.clone();
+    let response = status_intake(state, device, report).await;
+    // A full report's body is kept (or what was kept forgotten) only once the intake took it; a heartbeat leaves it.
+    if let Some(keep) = keep
+        && response.status().is_success()
+    {
+        status_heartbeat::keep(&db, device.id, keep.as_ref()).await;
+    }
+    response
+}
+
+/// One full status report, as the phone sent it or as a heartbeat stands for it.
+async fn status_intake(
+    state: AppState,
+    device: crate::security::DeviceRef,
+    mut report: StatusReportRequest,
+) -> axum::response::Response {
     // Security review M7: what a phone (or anything holding its token) sends is stored only within
     // limits - at most MAX_INSTALLED_APPS apps with real package names, short labels, and short
     // free-text fields. Everything below works on the capped report.
@@ -1288,7 +1435,8 @@ pub async fn status(
 
     let install_mode_until_ms = report.install_mode.map(|m| m.until_ms);
     // Handy's lock (step 10): what the phone says about it - only the known fields are kept, so
-    // no unlock times or PIN material can be stored whatever a launcher sends.
+    // no unlock times or PIN material can be stored whatever a launcher sends (the heartbeat's kept body takes the
+    // same sanitizer, `status_heartbeat::kept_body`).
     let lock_state_json = report.lock_state.as_ref().and_then(|state| {
         crate::kid_lock::sanitize_lock_state(state, chrono::Utc::now().timestamp_millis())
     });
@@ -1353,6 +1501,37 @@ pub async fn status(
         .dns_upstream
         .as_ref()
         .and_then(|value| crate::dns_server::sanitize_dns_upstream(value, arrived_ms));
+    // Design 94 §5 and design 95 rev. 3: the roaming lock and Bare Vibb, cleaned field by field.
+    let data_roaming_json = report
+        .data_roaming
+        .as_ref()
+        .and_then(crate::mobile_network::clean_roaming);
+    let mobile_data_json = report
+        .mobile_data
+        .as_ref()
+        .and_then(crate::mobile_network::clean_mobile);
+    // Design 98 §5.1: Flymodus, its role and its periods, cleaned field by field.
+    let airplane_mode_json = report
+        .airplane_mode
+        .as_ref()
+        .and_then(|value| crate::airplane_mode::clean(value, arrived_ms));
+    // Design 99 §6.1: Snarveier's state, cleaned (known items only, at most four).
+    let shortcuts_json = report
+        .shortcuts
+        .as_ref()
+        .and_then(crate::shortcuts::clean)
+        .map(|value| value.to_string());
+    // Design 102 §6.2: Wi-Fi sign-in and Chrome's login role, cleaned field by field.
+    let captive_portal_json = report
+        .captive_portal
+        .as_ref()
+        .and_then(crate::logins::clean_portal)
+        .map(|value| value.to_string());
+    let login_browser_json = report
+        .login_browser
+        .as_ref()
+        .and_then(crate::logins::clean_browser)
+        .map(|value| value.to_string());
     // Design 64 step 2: the phone's zone watch, known keys only.
     let zone_watch_json = report
         .zone_watch
@@ -1389,8 +1568,9 @@ pub async fn status(
           battery_optimization_exempt, relock_json, unseen_boots_count, unseen_boots_last_at_ms, \
           foreign_access_json, remote_wipe_ready, admin_policies_pending_json, relock_blocks_json, \
           relock_blocks_total, clock_format_applied, battery_level, battery_charging, dns_upstream_json, \
-          write_settings_granted, zone_watch_json, tailnet_joined, sms_state_json) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          write_settings_granted, zone_watch_json, tailnet_joined, sms_state_json, data_roaming_json, \
+          mobile_data_json, airplane_mode_json, shortcuts_json, captive_portal_json, login_browser_json) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(device.id)
     .bind(&report.lock_reason)
@@ -1448,6 +1628,12 @@ pub async fn status(
     .bind(&zone_watch_json)
     .bind(report.tailnet_joined)
     .bind(&sms_state_json)
+    .bind(&data_roaming_json)
+    .bind(&mobile_data_json)
+    .bind(&airplane_mode_json)
+    .bind(&shortcuts_json)
+    .bind(&captive_portal_json)
+    .bind(&login_browser_json)
     .execute(&state.db)
     .await
     .ok();
@@ -1527,15 +1713,56 @@ pub async fn status(
         let previous_call = previous
             .as_ref()
             .and_then(|p| emergency_call_at(p.call_state_json.as_deref()));
-        if let Some(at) = crate::parent_events::new_emergency_call(
-            emergency_call_at(call_state_json.as_deref()),
-            previous_call,
-            phone.now,
-        ) {
-            crate::parent_events::raise_logged(&state, &phone.emergency_call(at)).await;
+        let reported_call = emergency_call_at(call_state_json.as_deref());
+        // Design 98 §7.1: this report says the call turned airplane mode off (a period with `off_by: "emergency"`).
+        let airplane_off = reported_call.is_some_and(|call| {
+            crate::airplane_mode::emergency_off(
+                airplane_mode_json.as_deref(),
+                call.timestamp_millis(),
+            )
+        });
+        if let Some(at) =
+            crate::parent_events::new_emergency_call(reported_call, previous_call, phone.now)
+        {
+            crate::parent_events::raise_logged(
+                &state,
+                &phone.emergency_call_with(at, airplane_off),
+            )
+            .await;
+        } else if airplane_off && let Some(call) = reported_call {
+            // A later report brings the period: the inbox's line only, no second push.
+            if let Err(err) = crate::parent_events::mark_emergency_airplane_off(
+                &state.db,
+                device.id,
+                call.min(phone.now),
+            )
+            .await
+            {
+                tracing::error!(device_id = device.id, %err, "can't add the airplane line to the emergency call");
+            }
         }
         if let Some(battery) = &report.battery {
             crate::parent_events::battery_report(&state, phone, battery).await;
+        }
+        // Design 102 §3.7: a wide Wi-Fi sign-in and the day's budget used up, each once.
+        if report
+            .capabilities
+            .iter()
+            .any(|c| c == crate::logins::PORTAL_CAPABILITY)
+        {
+            crate::logins::intake(&state, phone, captive_portal_json.as_deref()).await;
+        }
+        // Design 97 §6: the roaming notice, only from a launcher that judges where it is (`where`).
+        let judges_where = report
+            .capabilities
+            .iter()
+            .any(|c| c == crate::mobile_network::NETWORK_CAPABILITY);
+        if let Some(roaming) = data_roaming_json
+            .as_deref()
+            .filter(|_| judges_where)
+            .and_then(|json| serde_json::from_str(json).ok())
+        {
+            crate::mobile_network::roaming_intake(&state, phone, &roaming).await;
         }
     }
     if let Some(line) =
@@ -2504,12 +2731,32 @@ pub async fn power(
             }
             None => None,
         };
-        let plan = crate::parent_events::power_events(&report, last.as_ref(), &phone);
+        let mut plan = crate::parent_events::power_events(&report, last.as_ref(), &phone);
         for why in &plan.dropped {
             tracing::warn!(device_id = device.id, why, "dropped part of a power report");
         }
         let mut tx = state.db.begin().await?;
         let mut changed = false;
+        // The `off`'s still-queued pushes: dropped by a restart or a quick start, else sent now -
+        // before the "turned on" (only one never tried: a retry keeps its backoff).
+        let off_deliveries = "event_id = (SELECT id FROM parent_events \
+             WHERE device_id = ? AND kind = 'phone_off' AND dedup_key = ?) AND status = 'queued'";
+        // A quick start is quiet, unless the off's push already went (the start's upload came
+        // after the server's hold): then its "turned on" goes too.
+        if let (true, Some((key, _))) = (plan.quiet_start, &plan.drop_held_off) {
+            let off_went: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM push_deliveries WHERE event_id = \
+                 (SELECT id FROM parent_events WHERE device_id = ? AND kind = 'phone_off' \
+                  AND dedup_key = ?) AND status IN ('accepted', 'failed'))",
+            )
+            .bind(device.id)
+            .bind(key)
+            .fetch_one(&mut *tx)
+            .await?;
+            if off_went && let Some(start) = plan.events.last_mut() {
+                start.push = crate::parent_events::Push::Now;
+            }
+        }
         for event in &plan.events {
             let raised = crate::parent_events::raise(&mut tx, event).await?;
             changed |= raised.is_some();
@@ -2532,15 +2779,12 @@ pub async fn power(
                     > 0;
             }
         }
-        // The `off`'s still-queued pushes: dropped by a restart, else sent now - before the
-        // "turned on" (only one never tried: a retry keeps its backoff).
-        let off_deliveries = "event_id = (SELECT id FROM parent_events \
-             WHERE device_id = ? AND kind = 'phone_off' AND dedup_key = ?) AND status = 'queued'";
-        if let Some(key) = &plan.drop_held_off {
+        if let Some((key, reason)) = &plan.drop_held_off {
             changed |= sqlx::query(&format!(
-                "UPDATE push_deliveries SET status = 'dropped', reason = 'restart', \
+                "UPDATE push_deliveries SET status = 'dropped', reason = ?, \
                  next_try_at = NULL WHERE {off_deliveries}"
             ))
+            .bind(*reason)
             .bind(device.id)
             .bind(key)
             .execute(&mut *tx)
@@ -2661,7 +2905,8 @@ pub fn time_request_id_ok(id: &str) -> bool {
 /// the day (rows of today other than this id) isn't stored (`capped`, one log line);
 /// else the event `extra_time_request` keyed by the id (a retry is one row, and a retried third
 /// request is no fourth), pushed only while it is news (asked under 30 min ago at intake), to every
-/// parent with "Asks for more time" on. Where the phone stood comes from its own latest report, when
+/// parent with "Asks for more time" on; a stored one closes the day's other open requests
+/// (`superseded`, design 100 §14.4: an older launcher asks again after its 30 minutes). Where the phone stood comes from its own latest report, when
 /// that is at most 15 minutes old.
 pub async fn time_request(
     State(state): State<AppState>,
@@ -2744,6 +2989,11 @@ pub async fn time_request(
             push,
         );
         let raised = parent_events::raise(&mut tx, &event).await?.is_some();
+        // Design 100 §14.4 (QA R2-L6): only a request stored now closes the day's older open ones - not a retry of
+        // the same id, a capped or stale one, or one `raise` dropped.
+        if raised {
+            crate::time_answers::supersede(&mut tx, device.id, &request.id, start_of_day).await?;
+        }
         tx.commit().await?;
         Ok(Some(raised))
     };

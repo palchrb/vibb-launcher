@@ -3,6 +3,7 @@
 //! requests sent straight to the router - no network, no background tasks.
 
 mod admin_auth;
+mod airplane_mode;
 mod android_lock_page;
 mod app_display;
 mod app_lock;
@@ -17,6 +18,7 @@ mod calendar;
 mod calendar_feeds;
 mod calls;
 mod calls_simpler;
+mod catalog_holds;
 mod catalog_pins;
 mod cleanup;
 mod command_expiry;
@@ -45,7 +47,10 @@ mod listeners;
 mod locate_page;
 mod locations;
 mod lock_glance;
+mod lock_now;
+mod logins;
 mod mmsc_hosts;
+mod mobile_network;
 pub(crate) mod music;
 mod music_art;
 pub(crate) mod music_spotify;
@@ -57,16 +62,20 @@ mod parents;
 mod passkey_only;
 mod passkeys;
 mod play;
+mod policy_etag;
 mod power;
 mod provisioning;
+mod rule_pause;
 pub(crate) mod seeded_family;
 mod server_tls;
 mod settings_log;
 pub(crate) mod settings_pages;
 mod shell;
+mod shortcuts;
 mod sms;
 mod sms_page;
 mod sound_mode;
+mod status_heartbeat;
 mod step10;
 mod step11;
 mod step9;
@@ -174,6 +183,7 @@ impl TestApp {
             .collect();
         let mut config = ForkConfig::for_tests();
         config.pwa_default_lang = ForkConfig::from_vars(&vars).pwa_default_lang;
+        config.status_heartbeat = ForkConfig::from_vars(&vars).status_heartbeat;
         let passkeys = crate::webauthn::PasskeyConfig::from_vars(&vars)
             .expect("the test's PASSKEY_RP_ID/PASSKEY_ORIGINS");
         Self::with_net_config(crate::net::NetConfig::from_vars(&vars), config, passkeys).await

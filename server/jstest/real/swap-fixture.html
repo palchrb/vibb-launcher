@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>swap.js fixture</title>
+<!-- Design 103-7: the browser semantics jstest/swap.test.js's fake can only assume, run in Chromium and WebKit by
+     jstest/real/swap-real.js. Each pair is a current <main> (the page on screen, a <template>, `data-part="cur"`) and a
+     new page's HTML as raw text (`data-part="next"`, a `text/html` script block: a <template> would parse its
+     <noscript> with scripting on and hand back escaped text); the runner builds the one, parses the other with
+     DOMParser and morphs with swap.js's own `morph`. The hairline group measures style.css's row lines at fractional offsets. -->
+<link rel="stylesheet" href="../../static/style.css">
+<script src="../../static/swap.js"></script>
+<style>
+    /* The fixture scrolls the document: style.css's shell is for the PWA's pages. */
+    html, body { height: auto; overflow: visible; display: block; }
+    #stage { padding: 16px; }
+    #hairlines { padding: 0 16px; }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<div id="hairlines"><div id="sp" style="height:0px"></div><div class="group" id="g"></div></div>
+
+<template data-pair="controls" data-part="cur">
+    <form id="saved" action="/saved#s"><input type="checkbox" name="sw" value="on"><input type="text" name="t" value="old"><select name="sel"><option value="a" selected>a</option><option value="b">b</option></select></form>
+    <form id="other" action="/other#o"><input type="checkbox" name="sw" value="on"><input type="text" name="t" value="old"><select name="sel"><option value="a" selected>a</option><option value="b">b</option></select><input type="radio" name="r" value="1" checked><input type="radio" name="r" value="2"></form>
+</template>
+<script type="text/html" data-pair="controls" data-part="next">
+    <!DOCTYPE html><html lang="en"><body><main>
+    <form id="saved" action="/saved#s"><input type="checkbox" name="sw" value="on"><input type="text" name="t" value="server"><select name="sel"><option value="a" selected>a</option><option value="b">b</option></select></form>
+    <form id="other" action="/other#o"><input type="checkbox" name="sw" value="on" checked><input type="text" name="t" value="server"><select name="sel"><option value="a">a</option><option value="b">b</option><option value="c" selected>c</option></select><input type="radio" name="r" value="1" checked><input type="radio" name="r" value="2"></form>
+    </main></body></html>
+</script>
+
+<template data-pair="focused" data-part="cur">
+    <form id="lone" action="/lone#lone"><label><input type="checkbox" id="sw" name="sw" value="on"> Switch</label><select id="sel" name="sel"><option value="a" selected>a</option><option value="b">b</option></select><textarea id="ta" name="ta">old</textarea></form>
+</template>
+<script type="text/html" data-pair="focused" data-part="next">
+    <!DOCTYPE html><html lang="en"><body><main>
+    <form id="lone" action="/lone#lone"><label><input type="checkbox" id="sw" name="sw" value="on"> Switch</label><select id="sel" name="sel"><option value="a" selected>a</option><option value="b">b</option></select><textarea id="ta" name="ta">new</textarea></form>
+    </main></body></html>
+</script>
+
+<template data-pair="noscript" data-part="cur">
+    <form id="one" action="/one#one"><input type="checkbox" name="a" value="on"><noscript></noscript></form>
+</template>
+<script type="text/html" data-pair="noscript" data-part="next">
+    <!DOCTYPE html><html lang="en"><body><main>
+    <form id="one" action="/one#one"><input type="checkbox" name="a" value="on"><noscript><button type="submit">Save</button></noscript></form>
+    <form id="two" action="/two#two"><input type="checkbox" name="b" value="on"><input type="text" name="c" value="x"><noscript><button type="submit">Save</button></noscript></form>
+    </main></body></html>
+</script>
+
+<template data-pair="sheet" data-part="cur">
+    <div style="height:120px"></div>
+    <section id="setup"><div class="group group-icons">
+        <details class="row-sheet" id="setup-sheet" open><summary class="row"><span class="row-label">Open for setup</span></summary>
+            <div class="row-sheet-body"><p class="row row-note">Apps, Settings and Play open for 2 hours.</p>
+                <form id="open-now" method="post" action="/devices/1/start-pause#setup" class="cell"><button type="submit" class="row row-button" id="go">Open now</button></form></div>
+        </details>
+    </div></section>
+    <section id="restrictions"><form action="/devices/1/hardening#restrictions"><div class="group"><label class="row"><span class="row-label">Factory reset</span><input type="checkbox" name="f" value="on"></label></div></form></section>
+</template>
+<script type="text/html" data-pair="sheet" data-part="next">
+    <!DOCTYPE html><html lang="en"><body><main>
+    <div style="height:120px"></div>
+    <section id="setup"><div class="group group-icons">
+        <details class="row-sheet" id="setup-sheet"><summary class="row"><span class="row-label">Open for setup</span><span class="row-value">until 17:10</span></summary>
+            <div class="row-sheet-body"><form method="post" action="/devices/1/end-windows#setup" class="cell"><button type="submit" class="row row-button">Lock again</button></form></div>
+        </details>
+        <p class="flash" role="status" data-flash="setup">Sent.</p>
+    </div></section>
+    <section id="restrictions"><div class="attention" data-warning="google-backup" style="height:64px">Backup is on</div><form action="/devices/1/hardening#restrictions"><div class="group"><label class="row"><span class="row-label">Factory reset</span><input type="checkbox" name="f" value="on"></label></div></form></section>
+    </main></body></html>
+</script>
+</body>
+</html>

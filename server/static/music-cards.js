@@ -3,7 +3,8 @@
 // swap only the status blocks (.music-status). A card that holds the focus (an open select, a
 // focused button) is never touched, and the view is kept still: the top of the first visible card
 // is noted before a swap and the page is scrolled by the difference afterwards (iOS Safari has no
-// scroll anchoring). The page works without this - a reload shows the same.
+// scroll anchoring). The page works without this - a reload shows the same. A refresh in place (design 103,
+// static/swap.js) brings the server's blocks; when it brings a busy one and the polling had stopped, it starts again.
 // Run the scroll's test: node --test jstest/music-cards.test.js
 (function (root) {
     "use strict";
@@ -80,7 +81,14 @@
         }
     }
 
+    var waiting = false;
+    function later() {
+        waiting = true;
+        setTimeout(tick, EVERY_MS);
+    }
+
     function tick() {
+        waiting = false;
         var ids = busyIds();
         if (!ids.length || Date.now() - started > FOR_MS) return;
         fetch(cardsUrl(ids, document.documentElement.getAttribute("lang")), {
@@ -90,10 +98,15 @@
             .then(function (response) { return response.ok ? response.json() : null; })
             .then(function (data) {
                 if (data && data.cards) swap(data.cards);
-                setTimeout(tick, EVERY_MS);
+                later();
             })
-            .catch(function () { setTimeout(tick, EVERY_MS); });
+            .catch(later);
     }
 
-    setTimeout(tick, EVERY_MS);
+    later();
+    document.addEventListener("handy:swapped", function () {
+        if (waiting || !busyIds().length) return;
+        started = Date.now();
+        later();
+    });
 })(this);

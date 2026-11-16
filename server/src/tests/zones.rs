@@ -441,6 +441,8 @@ async fn zone_events_go_with_the_location_history() {
         ("zone_arrived", "a"),
         ("zone_left", "b"),
         ("unseen_boot", "c"),
+        // Design 97 §6: a roaming notice names the country - it goes with them.
+        ("roaming_started", "d"),
     ] {
         sqlx::query(
             "INSERT INTO parent_events (device_id, kind, dedup_key, title, summary, target, \
@@ -459,14 +461,14 @@ async fn zone_events_go_with_the_location_history() {
         .await
         .unwrap();
     crate::retention::prune(&app.db).await;
-    assert_eq!(count(&app, "SELECT COUNT(*) FROM parent_events").await, 3);
+    assert_eq!(count(&app, "SELECT COUNT(*) FROM parent_events").await, 4);
     // 7 days: the zone events go, the other kind keeps its 90 days.
     sqlx::query("UPDATE device_policy SET location_retention_days = 7")
         .execute(&app.db)
         .await
         .unwrap();
     let pruned = crate::retention::prune(&app.db).await;
-    assert_eq!(pruned.parent_events, 2);
+    assert_eq!(pruned.parent_events, 3);
     let left: Vec<String> = sqlx::query_scalar("SELECT kind FROM parent_events")
         .fetch_all(&app.db)
         .await
@@ -818,10 +820,10 @@ async fn here_now_the_fix_badge_and_the_summary_line() {
         .get_page(&format!("/devices/locate?device={id}"), &cookie)
         .await
         .text();
-    assert!(html.contains("Within 20 m · At Home"), "{html}");
+    // The marker's bubble says it (design 88 revision 2: the age box went).
     assert!(
         html.contains("· within 20 m · at Home\""),
-        "the popup's words"
+        "the popup's words: {html}"
     );
     // Design 88: the Zones row says it, the Zones page's row too.
     assert!(html.contains("3 · Here now: Home"), "{html}");
@@ -839,20 +841,22 @@ async fn here_now_the_fix_badge_and_the_summary_line() {
     // clock alone today.
     let lines = super::status_lines(&summary);
     assert!(
-        lines.last().is_some_and(|l| l.starts_with("Home since ")),
+        lines.last().is_some_and(|l| l.contains(" · Home since ")),
         "{lines:?}"
     );
     assert!(
         summary.contains("<span data-zone-now title=\""),
         "{summary}"
     );
+    // The zone's pin (design 101) comes before it, in the same part.
+    assert!(summary.contains("<svg class=\"pin\""), "{summary}");
     let nb = app
         .get_page(&format!("/devices/{id}?lang=nb"), &cookie)
         .await
         .text();
     let lines = super::status_lines(&nb);
     assert!(
-        lines.last().is_some_and(|l| l.starts_with("Home siden ")),
+        lines.last().is_some_and(|l| l.contains(" · Home siden ")),
         "{lines:?}"
     );
     // Notify Me About has the switch once.
@@ -1040,7 +1044,7 @@ async fn here_now_needs_the_newest_fix_to_agree_and_be_fresh() {
         app.get_page(&locate, &cookie)
             .await
             .text()
-            .contains("Within 20 m · At Home"),
+            .contains("· within 20 m · at Home\""),
         "the fix itself is still inside"
     );
     assert!(

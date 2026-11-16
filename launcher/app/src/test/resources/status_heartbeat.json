@@ -1,0 +1,27 @@
+{
+  "capability": "status_heartbeat_v1",
+  "policy": {"status_heartbeat": true, "status_heartbeat_fields": ["lock_reason", "battery", "time_state", "location", "extra_locations", "zone_watch", "server_tls", "data_roaming", "mobile_data"], "status_gzip": true},
+  "fields_tag": "6f4648e7235f433b",
+  "heartbeat_fields": ["lock_reason", "battery", "time_state", "location", "extra_locations", "zone_watch", "server_tls", "data_roaming", "mobile_data"],
+  "full": {
+    "lock_reason": "NONE",
+    "kiosk_engaged": true,
+    "installed_apps": [{"package_name": "org.example.app", "label": "Example", "preinstalled": false, "installer": "me.vibb.launcher", "version_code": 7}],
+    "app_version": "0.40.0",
+    "app_version_code": 400009,
+    "capabilities": ["status_heartbeat_v1"],
+    "battery": {"level": 80, "charging": false, "low": false},
+    "server_tls": {"enforcing": false, "seen": {"in_set": true, "name": "ISRG Root X1", "pin": "C5+lpZ7tcVwmwQIMcRtPbsQtWLABXhQzejna0wHFr8M=", "network": "wifi", "at_ms": 1794560000000}, "outside": []},
+    "hash": "1122709a83ad11a2e09f7d2dc2199f54defeba6112b1a937fb67be2c392a4219"
+  },
+  "heartbeat": {
+    "heartbeat": true,
+    "hash": "1122709a83ad11a2e09f7d2dc2199f54defeba6112b1a937fb67be2c392a4219",
+    "fields_tag": "6f4648e7235f433b",
+    "lock_reason": "TIME_RULE",
+    "battery": {"level": 79, "charging": true, "low": false},
+    "server_tls": {"enforcing": false, "seen": {"in_set": true, "name": "ISRG Root X1", "pin": "C5+lpZ7tcVwmwQIMcRtPbsQtWLABXhQzejna0wHFr8M=", "network": "wifi", "at_ms": 1794561800000}, "outside": []}
+  },
+  "heartbeat_other_fields": {"heartbeat": true, "hash": "1122709a83ad11a2e09f7d2dc2199f54defeba6112b1a937fb67be2c392a4219", "fields_tag": "0000000000000000", "lock_reason": "NONE"},
+  "answers": {"full_report": {"full_report": true}}
+}

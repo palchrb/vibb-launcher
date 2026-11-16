@@ -7,7 +7,7 @@ const rc = require("../static/reconnect.js");
 // The ten minutes are app-lock.js's (it runs first and picks the lock's `next` itself); reconnect.js reads them from
 // `window.handyLock.homeAfter`.
 const { HOME_AFTER } = require("../static/app-lock.js");
-const { install, navigationTarget, CHIP_AFTER, PING_EVERY, PING_TIMEOUT, OFFER_AFTER, AWAY_MS } = rc;
+const { install, navigationTarget, BAR_AFTER, CHIP_AFTER, PING_EVERY, PING_TIMEOUT, OFFER_AFTER, AWAY_MS } = rc;
 
 const HERE = "https://pi.example.ts.net/devices/1?tab=apps#apps";
 
@@ -219,15 +219,20 @@ async function answer(win, status = 204) {
     await settle();
 }
 
-test("a tap marks the link and shows the bar at once; nothing else while the page comes", async () => {
+test("a tap marks the link at once and shows the bar only after 400 ms; nothing else while the page comes", async () => {
     const win = fakeWindow();
     win.install();
     const tab = link("/apps");
     win.tap(tab);
     assert.ok(win.view.marked.has(tab));
-    assert.strictEqual(win.view.bar, true);
+    assert.strictEqual(win.view.bar, false, "no bar at once: a fast page change shows none");
+    assert.strictEqual(BAR_AFTER, 400);
+    win.advance(BAR_AFTER - 1);
+    assert.strictEqual(win.view.bar, false, "no bar before 400 ms");
+    win.advance(1);
+    assert.strictEqual(win.view.bar, true, "the bar once the load takes a while");
     assert.strictEqual(win.view.chip, false);
-    win.advance(CHIP_AFTER - 1);
+    win.advance(CHIP_AFTER - BAR_AFTER - 1);
     assert.strictEqual(win.view.chip, false, "no chip before 3 s");
     assert.strictEqual(win.pings.length, 0, "no ping before 3 s");
     assert.deepStrictEqual(win.assigned, [], "the browser's own navigation goes on");
@@ -330,7 +335,38 @@ test("a first pageshow (not from the cache) doesn't clear a tap made while the p
     win.install();
     win.tap(link("/apps"));
     win.fire("win", "pageshow", { persisted: false });
+    win.advance(BAR_AFTER);
     assert.strictEqual(win.view.bar, true);
+});
+
+test("the bar never shows once its wait has ended, and a pagehide holds it", () => {
+    // Ended before 400 ms (a save started, back from the back-forward cache): no bar after it.
+    for (const ending of [
+        (win) => win.fire("doc", "submit", { target: {} }),
+        (win) => win.fire("win", "pageshow", { persisted: true }),
+    ]) {
+        const win = fakeWindow();
+        win.install();
+        const tab = link("/apps");
+        win.tap(tab);
+        win.advance(BAR_AFTER - 100);
+        ending(win);
+        win.advance(60000);
+        assert.strictEqual(win.view.bar, false);
+        assert.ok(!win.view.marked.has(tab));
+    }
+    // The page left (pagehide stops the timers; a page that finished unloads with them): nothing shows meanwhile.
+    const left = fakeWindow();
+    left.install();
+    left.tap(link("/apps"));
+    left.advance(BAR_AFTER - 100);
+    left.fire("win", "pagehide");
+    left.advance(60000);
+    assert.strictEqual(left.view.bar, false, "no bar after the pagehide");
+    // Back while the load is still on its way: the bar, now that it has taken a while.
+    left.show();
+    left.advance(0);
+    assert.strictEqual(left.view.bar, true, "re-armed on the return, already due");
 });
 
 test("ignored clicks show nothing", () => {
@@ -479,6 +515,8 @@ test("back after long, the server not there yet: the chip after 3 s, the reload 
     win.advance(PING_EVERY - 1000); // the next ping, before its own timeout;
     await answer(win);
     assert.strictEqual(win.reloads, 1);
+    assert.strictEqual(win.view.bar, false, "not at once");
+    win.advance(BAR_AFTER);
     assert.strictEqual(win.view.bar, true, "the reload is a navigation on its way");
 });
 
@@ -517,7 +555,9 @@ test("handyReconnect: a reload asked for (pull-refresh.js) is the reload in plac
     assert.strictEqual(win.handyReconnect.mayReload(), true);
     assert.strictEqual(win.handyReconnect.reload(), true);
     assert.deepStrictEqual(win.steps, ["replace https://pi.example.ts.net/devices/1", "reload"]);
-    assert.strictEqual(win.view.bar, true, "the bar while it comes");
+    assert.strictEqual(win.view.bar, false, "no bar at once");
+    win.advance(BAR_AFTER);
+    assert.strictEqual(win.view.bar, true, "the bar while it comes, after 400 ms");
     assert.strictEqual(JSON.parse(win.stored["handy-scroll"]).y, 420, "the place kept");
     // Slow: the chip after 3 s, the ping, the same reload again once the server answers after a miss.
     win.advance(CHIP_AFTER);
@@ -1158,4 +1198,110 @@ test("a <details> the server reopens after a reload doesn't block it; one opened
     assert.strictEqual(rc.shownOpen(doc([advanced])), false);
     const inside = { nodeName: "DETAILS", hasAttribute: (n) => n === "open", parentNode: { nodeName: "FORM", parentNode: advanced } };
     assert.strictEqual(rc.shownOpen(doc([advanced, inside])), true);
+});
+
+// Design 103 §2.7: the reload in place is a "swap" wait - its restarts refresh in place (static/swap.js), never
+// location.reload(); handy:swapped ends it; handy:saved with no save left ends a save's hold; a slow save's bar is
+// a counter of its own.
+function withSwap(win, taken = true) {
+    win.refreshes = [];
+    win.handySwap = {
+        refresh: (url, opts) => {
+            win.refreshes.push([url, opts]);
+            return taken;
+        },
+    };
+    return win;
+}
+
+test("swap.js's offline hand-over starts a swap wait that refreshes once the server answers; a link's wait outlives a swap", async () => {
+    const win = withSwap(fakeWindow());
+    win.install();
+    win.handyReconnect.waitSwap("https://pi.example.ts.net/devices/1#restrictions");
+    win.advance(CHIP_AFTER);
+    assert.strictEqual(win.view.chip, true);
+    await answer(win);
+    assert.deepStrictEqual(win.refreshes.map((r) => r[0]), ["https://pi.example.ts.net/devices/1#restrictions"]);
+    win.fire("doc", "handy:swapped");
+    assert.strictEqual(win.view.chip, false);
+    // A tapped link's navigation is not ended by a refresh landing.
+    const a = link("/apps");
+    win.tap(a);
+    win.fire("doc", "handy:swapped");
+    assert.ok(win.view.marked.has(a));
+});
+
+test("a save's hold ends on handy:saved with none left; the busy bar survives a wait's end", () => {
+    const win = withSwap(fakeWindow());
+    win.install();
+    win.fire("doc", "change", { target: { hasAttribute: (n) => n === "data-autosave" } });
+    assert.strictEqual(win.handyReconnect.mayReload(), false);
+    win.fire("doc", "handy:saved", { detail: { forms: [], pending: 1 } });
+    assert.strictEqual(win.handyReconnect.mayReload(), false, "another save still out");
+    win.fire("doc", "handy:saved", { detail: { forms: [], pending: 0 } });
+    assert.strictEqual(win.handyReconnect.mayReload(), true);
+    // The bar's counter: a second save's start (which ends any wait) doesn't hide it.
+    win.handyReconnect.busy(1);
+    assert.strictEqual(win.view.bar, true);
+    win.fire("doc", "submit", {});
+    assert.strictEqual(win.view.bar, true);
+    win.handyReconnect.busy(-1);
+    assert.strictEqual(win.view.bar, false);
+});
+
+// Design 103 §2.6 (found in the browser pass): a flip of a held form only queues it (scroll-restore's busy entry), so
+// it never ends the "swap" wait that will bring it.
+test("a flip of a held form doesn't end the swap wait", () => {
+    const win = fakeWindow();
+    const form = {};
+    win.handyStay = { entry: (f) => (f === form ? { again: true } : null) };
+    win.install();
+    win.handyReconnect.waitSwap("https://pi.example.ts.net/devices/1#restrictions");
+    win.advance(CHIP_AFTER);
+    assert.strictEqual(win.view.chip, true);
+    win.fire("doc", "change", { target: { form, hasAttribute: (n) => n === "data-autosave" } });
+    assert.strictEqual(win.view.chip, true, "still waiting");
+    win.fire("doc", "change", { target: { form: {}, hasAttribute: (n) => n === "data-autosave" } });
+    assert.strictEqual(win.view.chip, false, "a new save ends it");
+});
+
+// Design 103 step 4 (D3): pull to refresh and the return after being away refresh in place.
+test("a reload asked for is a refresh in place; its wait's restart refreshes again, and handy:swapped ends it", async () => {
+    const win = withSwap(fakeWindow());
+    win.install();
+    assert.strictEqual(win.handyReconnect.reload(), true);
+    assert.deepStrictEqual(win.refreshes.map((r) => r[0]), ["https://pi.example.ts.net/devices/1"]);
+    assert.strictEqual(typeof win.refreshes[0][1].fallback, "function");
+    win.advance(BAR_AFTER);
+    assert.strictEqual(win.view.bar, true, "a slow refresh shows the bar");
+    win.advance(CHIP_AFTER - BAR_AFTER);
+    assert.strictEqual(win.view.chip, true);
+    // The ping fails (no network), then the server answers: the refresh again, never a reload.
+    win.pings[win.pings.length - 1].reject(new Error("offline"));
+    await settle();
+    win.advance(PING_EVERY);
+    await answer(win);
+    assert.strictEqual(win.refreshes.length, 2);
+    assert.strictEqual(win.reloads, 0);
+    win.fire("doc", "handy:swapped");
+    assert.strictEqual(win.view.bar, false);
+    assert.strictEqual(win.view.chip, false);
+    // A refresh that says no: the reload in place as before.
+    const no = withSwap(fakeWindow(), false);
+    no.install();
+    no.handyReconnect.reload();
+    assert.strictEqual(no.reloads, 1);
+});
+
+test("back after a minute away, the server answering: the page is refreshed in place, never reloaded", async () => {
+    const win = withSwap(fakeWindow());
+    win.install();
+    win.hide();
+    win.advance(AWAY_MS + 1000);
+    win.show();
+    await answer(win);
+    assert.deepStrictEqual(win.refreshes.map((r) => r[0]), ["https://pi.example.ts.net/devices/1"]);
+    assert.strictEqual(win.reloads, 0);
+    win.fire("doc", "handy:swapped");
+    assert.strictEqual(win.view.chip, false);
 });

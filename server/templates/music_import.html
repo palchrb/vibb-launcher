@@ -12,7 +12,7 @@
     {% call band::sub(self.t("music.import.title"), "/music", self.t("nav.music")) %}{% endcall %}
     <div class="sheet">
 
-    <form method="post" action="/music/import#import-preview" enctype="multipart/form-data" class="group form-group" id="import">
+    <form method="post" action="/music/import#import-preview" enctype="multipart/form-data" class="group form-group" id="import" data-native-post>
         {#- Without a preview, a refused file lands here (the form posts to #import-preview). -#}
         <div class="field"{% if import.preview.is_none() %} id="import-preview"{% endif %}>
             <label class="field-label" for="import_file">{{ self.t("music.import.file") }}</label>

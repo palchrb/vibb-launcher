@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ui.kidsettings.ShortcutsPickerActivity (design 99 §4.2), opened by Kid Settings' "Snarveier": the shared header,
+     the line, "Vis i varsellisten igjen" while the kid has hidden the panel, the count, and one card of the items the
+     parent allows (item_shortcut_pick: a check box, and "Flytt opp"/"Flytt ned" buttons on the chosen ones - buttons,
+     not dragging, so gesture and 3-button navigation and TalkBack work alike). KidInsets pads the bottom by the
+     navigation bar, so the last row clears it in both modes (Q99-L11). -->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/shortcuts_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/kid_page_ground"
+    android:fillViewport="true"
+    tools:context=".ui.kidsettings.ShortcutsPickerActivity">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingStart="16dp"
+        android:paddingTop="4dp"
+        android:paddingEnd="16dp"
+        android:paddingBottom="16dp">
+
+        <include
+            android:id="@+id/shortcuts_header"
+            layout="@layout/include_kid_header" />
+
+        <TextView
+            android:id="@+id/shortcuts_line"
+            style="@style/KidSoundCaption"
+            android:layout_marginTop="4dp"
+            android:text="@string/shortcuts_picker_line" />
+
+        <LinearLayout
+            android:id="@+id/shortcuts_hidden_box"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/shortcuts_hidden_line"
+                style="@style/KidSoundCaption"
+                android:text="@string/shortcuts_picker_hidden_line" />
+
+            <Button
+                android:id="@+id/shortcuts_show_again"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:backgroundTint="@color/kid_page_accent_fill"
+                android:fontFamily="@font/nunito_extrabold"
+                android:minHeight="48dp"
+                android:text="@string/shortcuts_picker_show_again"
+                android:textAllCaps="false"
+                android:textColor="@color/kid_on_accent"
+                android:textSize="16sp" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/shortcuts_count"
+            style="@style/KidSoundCaption"
+            android:maxLines="1"
+            android:layout_marginTop="12dp"
+            android:accessibilityLiveRegion="polite" />
+
+        <TextView
+            android:id="@+id/shortcuts_full"
+            style="@style/KidSoundCaption"
+            android:layout_marginTop="12dp"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:accessibilityLiveRegion="polite"
+            android:alpha="1"
+            android:text="@string/shortcuts_picker_full"
+            android:textColor="@color/kid_page_accent"
+            android:visibility="gone" />
+
+        <LinearLayout
+            android:id="@+id/shortcuts_list"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/bg_kid_page_card"
+            android:divider="@drawable/bg_lock_row_divider"
+            android:orientation="vertical"
+            android:paddingStart="4dp"
+            android:paddingTop="2dp"
+            android:paddingEnd="4dp"
+            android:paddingBottom="2dp"
+            android:showDividers="middle" />
+    </LinearLayout>
+</ScrollView>

@@ -537,8 +537,16 @@ class ArtInFlight {
  * policy's downloads switch is on; no readable music object ([music] null) = Wi-Fi only.
  * `MusicFileDownloads.gate` only feeds it.
  */
-fun ownFileGate(caps: NetCaps?, music: MusicPolicy?, nowMs: Long, haveBytes: Long, totalBytes: Long, allocatableBytes: Long?): DownloadGate =
-    downloadGate(caps, wifiOnly = music?.downloadMobileData != true, anyNetworkAt = null, nowMs = nowMs, haveBytes = haveBytes, totalBytes = totalBytes, allocatableBytes = allocatableBytes)
+fun ownFileGate(
+    caps: NetCaps?,
+    music: MusicPolicy?,
+    nowMs: Long,
+    haveBytes: Long,
+    totalBytes: Long,
+    allocatableBytes: Long?,
+    mobileHeld: Boolean = false,
+): DownloadGate =
+    downloadGate(caps, wifiOnly = music?.downloadMobileData != true, anyNetworkAt = null, nowMs = nowMs, haveBytes = haveBytes, totalBytes = totalBytes, allocatableBytes = allocatableBytes, mobileHeld = mobileHeld)
 
 /**
  * Cover files to delete: every one that is neither a library cover nor wanted (held until the music app copied it),

@@ -20,16 +20,12 @@
         return form.querySelector("[name=\"" + name + "\"]");
     }
 
-    /** Keeps the form's `more` in step with its Avansert. */
+    /** Puts the form's `more` in step with its Avansert. */
     function followAdvanced(form) {
         var adv = form.querySelector("details[data-adv]");
         var more = form.querySelector("input[data-more]");
         if (!adv || !more) return;
-        function sync() {
-            more.value = adv.hasAttribute("open") ? "1" : "";
-        }
-        adv.addEventListener("toggle", sync);
-        sync();
+        more.value = adv.hasAttribute("open") ? "1" : "";
     }
 
     /** The class of a channel's pair in Add Contact: "on", "off" or "custom". */
@@ -69,9 +65,9 @@
         }
     }
 
-    /** Add Contact: the two-way switches and the one-way pairs kept in agreement. */
-    function mirror(form) {
-        form.addEventListener("change", function (e) {
+    /** Add Contact: the two-way switches and the one-way pairs kept in agreement after a change of `el`. */
+    function mirror(form, e) {
+        (function () {
             var el = e && e.target;
             if (!el || !el.name) return;
             var channel = null;
@@ -90,15 +86,45 @@
                 }
             }
             if (channel) agree(form, channel);
-        });
+        })();
     }
 
-    function install(doc) {
-        var forms = doc.querySelectorAll("form[data-contact-form], form[data-add-contact]");
-        for (var i = 0; i < forms.length; i++) {
-            followAdvanced(forms[i]);
-            if (forms[i].hasAttribute("data-add-contact")) mirror(forms[i]);
+    var FORMS = "form[data-contact-form], form[data-add-contact]";
+
+    function formOf(el) {
+        for (var n = el; n; n = n.parentNode) {
+            if (String(n.nodeName || "").toUpperCase() === "FORM") return n;
         }
+        return null;
+    }
+
+    // The listeners are the document's (design 103): a refresh in place (static/swap.js) may bring new forms, and
+    // brings the server's `more` and `*_shown` back - both are written again on `handy:swapped`.
+    function install(doc) {
+        function all() {
+            var forms = doc.querySelectorAll(FORMS);
+            for (var i = 0; i < forms.length; i++) {
+                followAdvanced(forms[i]);
+                if (forms[i].hasAttribute("data-add-contact")) {
+                    agree(forms[i], "calls");
+                    agree(forms[i], "texts");
+                }
+            }
+        }
+        // `toggle` doesn't bubble: captured.
+        doc.addEventListener("toggle", function (e) {
+            var adv = e && e.target;
+            if (!adv || !adv.hasAttribute || !adv.hasAttribute("data-adv")) return;
+            var form = formOf(adv);
+            if (form && (form.hasAttribute("data-contact-form") || form.hasAttribute("data-add-contact"))) followAdvanced(form);
+        }, true);
+        doc.addEventListener("change", function (e) {
+            var form = formOf(e && e.target);
+            if (form && form.hasAttribute && form.hasAttribute("data-add-contact")) mirror(form, e);
+        });
+        doc.addEventListener("handy:swapped", all);
+        var forms = doc.querySelectorAll(FORMS);
+        for (var i = 0; i < forms.length; i++) followAdvanced(forms[i]);
     }
 
     var api = { install: install, classOf: classOf, agree: agree };

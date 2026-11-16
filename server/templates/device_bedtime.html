@@ -30,9 +30,9 @@
                 {% for r in rule.rows %}
                 <div class="row day-row" data-nights="{{ r.index }}">
                     <span class="row-label">{{ r.label }}</span>
-                    <input type="time" class="row-time" name="n{{ r.index }}_start" value="{{ r.start }}" aria-label="{{ self.tp("device.bedtime.from", [("nights", r.label)]) }}"{% if r.error.is_some() %} aria-invalid="true" aria-describedby="n{{ r.index }}-error" autofocus{% endif %}>
+                    <span class="day-times"><input type="time" class="row-time" name="n{{ r.index }}_start" value="{{ r.start }}" aria-label="{{ self.tp("device.bedtime.from", [("nights", r.label)]) }}"{% if r.error.is_some() %} aria-invalid="true" aria-describedby="n{{ r.index }}-error" autofocus{% endif %}>
                     <span class="day-dash" aria-hidden="true">&ndash;</span>
-                    <input type="time" class="row-time" name="n{{ r.index }}_end" value="{{ r.end }}" aria-label="{{ self.tp("device.bedtime.until", [("nights", r.label)]) }}"{% if r.error.is_some() %} aria-invalid="true" aria-describedby="n{{ r.index }}-error"{% endif %}>
+                    <input type="time" class="row-time" name="n{{ r.index }}_end" value="{{ r.end }}" aria-label="{{ self.tp("device.bedtime.until", [("nights", r.label)]) }}"{% if r.error.is_some() %} aria-invalid="true" aria-describedby="n{{ r.index }}-error"{% endif %}></span>
                 </div>
                 {% if let Some(why) = r.error %}<p class="flash flash-error" id="n{{ r.index }}-error" data-flash="nights-{{ r.index }}">{{ why }}</p>{% endif %}
                 {% endfor %}

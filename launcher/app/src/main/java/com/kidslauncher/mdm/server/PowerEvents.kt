@@ -432,7 +432,7 @@ object PowerEvents {
             val wanted = clientKeyOf(mdm.serverUrl(), DeviceToken.get(), TsnetClient.proxyAddress, ServerPinStore.enforce(context))
             synchronized(this) {
                 if (!rebuildNeeded(prepared?.key, wanted)) return
-                prepared = wanted?.let { Prepared(it, createMdmApi(it.baseUrl, it.token, callTimeoutMs = SHUTDOWN_POST_TIMEOUT_MS)) }
+                prepared = wanted?.let { Prepared(it, createMdmApi(it.baseUrl, it.token, callTimeoutMs = SHUTDOWN_POST_TIMEOUT_MS, ownPool = true)) }
             }
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Couldn't prepare the shutdown client: ${e.javaClass.simpleName}")

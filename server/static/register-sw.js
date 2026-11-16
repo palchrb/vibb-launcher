@@ -26,6 +26,19 @@
         }
         signOut(win);
         pushSync(win);
+        badge(win);
+        // A refresh in place (design 103, static/swap.js): the bell's count again, the sign-out field filled again.
+        var doc = win.document;
+        if (doc.addEventListener) {
+            doc.addEventListener("handy:swapped", function () {
+                badge(win);
+            });
+        }
+    }
+
+    /** The app's badge: the bell's unread count where the page has the bell and the browser has badges. */
+    function badge(win) {
+        var nav = win.navigator;
         var bell = win.document.querySelector("[data-unread]");
         if (!bell || !nav.setAppBadge) return;
         var unread = parseInt(bell.getAttribute("data-unread"), 10) || 0;
@@ -38,49 +51,63 @@
     // `endpoint` once it is known - the server deletes that row with the session -, and on submit
     // the browser unsubscribes first. The form goes when that is done or after SIGN_OUT_WAIT ms,
     // whichever is first. No worker or no subscription: the field stays empty, as without JS.
+    // A refresh in place (design 103-8) brings the server's empty field back: the fill runs again on `handy:swapped`,
+    // apart from the submit listener, which a form gets once (a second one would post twice).
     var SIGN_OUT_WAIT = 300;
 
     function signOut(win) {
         var nav = win.navigator;
-        var form = win.document.querySelector("form[data-sign-out]");
-        if (!form || !("serviceWorker" in nav) || !nav.serviceWorker.ready) return;
-        var field = form.querySelector("input[name=endpoint]");
-        if (!field) return;
+        var doc = win.document;
+        if (!("serviceWorker" in nav) || !nav.serviceWorker.ready) return;
         var found = null;
-        var lookup = Promise.resolve(nav.serviceWorker.ready)
-            .then(function (reg) {
-                return reg && reg.pushManager ? reg.pushManager.getSubscription() : null;
-            })
-            .then(function (sub) {
-                if (sub && sub.endpoint) {
-                    found = sub;
-                    field.value = sub.endpoint;
-                }
-            })
-            .catch(function () {});
-        var sending = false;
-        form.addEventListener("submit", function (e) {
-            if (sending) return;
-            sending = true;
-            e.preventDefault();
-            var gone = false;
-            function go() {
-                if (gone) return;
-                gone = true;
-                form.submit();
+        var lookup = null;
+        function fill() {
+            var form = doc.querySelector("form[data-sign-out]");
+            var field = form ? form.querySelector("input[name=endpoint]") : null;
+            if (!field) return;
+            if (!lookup) {
+                lookup = Promise.resolve(nav.serviceWorker.ready)
+                    .then(function (reg) {
+                        return reg && reg.pushManager ? reg.pushManager.getSubscription() : null;
+                    })
+                    .then(function (sub) {
+                        if (sub && sub.endpoint) {
+                            found = sub;
+                            field.value = sub.endpoint;
+                        }
+                    })
+                    .catch(function () {});
+            } else if (found) {
+                field.value = found.endpoint;
             }
-            win.setTimeout(go, SIGN_OUT_WAIT);
-            lookup.then(function () {
-                if (!found) return go();
-                try {
-                    var done = found.unsubscribe();
-                    if (done && done.then) done.then(go, go);
-                    else go();
-                } catch (err) {
-                    go();
+            if (form.handySignOut) return;
+            form.handySignOut = true;
+            var sending = false;
+            form.addEventListener("submit", function (e) {
+                if (sending) return;
+                sending = true;
+                e.preventDefault();
+                var gone = false;
+                function go() {
+                    if (gone) return;
+                    gone = true;
+                    form.submit();
                 }
+                win.setTimeout(go, SIGN_OUT_WAIT);
+                lookup.then(function () {
+                    if (!found) return go();
+                    try {
+                        var done = found.unsubscribe();
+                        if (done && done.then) done.then(go, go);
+                        else go();
+                    } catch (err) {
+                        go();
+                    }
+                });
             });
-        });
+        }
+        fill();
+        if (doc.addEventListener) doc.addEventListener("handy:swapped", fill);
     }
 
     // This browser's notifications, checked at a signed-in page's load (Push never lost silently, 2026-11-04: the
@@ -251,6 +278,8 @@
         row.className = "attention push-banner";
         row.id = "push-banner";
         row.setAttribute("role", "status");
+        // The script's own row: a refresh in place (design 103, static/swap.js) leaves it where it is.
+        row.setAttribute("data-swap-keep", "");
         var text = doc.createElement("span");
         text.className = "attention-text";
         text.textContent = words.off || "";

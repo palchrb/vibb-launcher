@@ -117,10 +117,13 @@ open class DayActivity : KidPageActivity() {
         binding.dayAdd.setOnClickListener { startActivity(EventEditActivity.newIntent(this, shownDay())) }
     }
 
-    /** The "+" while the kid may add events and their calendar is there to write to (§1b). */
+    /** The "+" while the kid may add events and their calendar is there to write to (§1b): it floats over the list, as
+     * Google Calendar's (the user, 2026-11-14, after trying S9's strip), and each page leaves room under its last card
+     * so that card scrolls clear of it ([pageBottomDp]). */
     private fun renderAdd() {
         val shown = CalendarStore.kidCalendar() != null && CalendarStore.canWrite(this)
         binding.dayAdd.visibility = if (shown) android.view.View.VISIBLE else android.view.View.GONE
+        adapter.pageBottom((pageBottomDp(shown) * resources.displayMetrics.density).toInt())
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -312,6 +315,19 @@ open class DayActivity : KidPageActivity() {
     }
 }
 
+/** The floating "+" (`activity_day.xml`'s `day_add`): its side and its margin from the pager's bottom (dp). */
+const val ADD_BUTTON_DP = 56
+const val ADD_MARGIN_DP = 20
+
+/** A page's bottom air without the "+", and the room under the last card while it floats there (dp): the "+" and its
+ * margin, and 20 dp more, so the last card scrolls clear of it in portrait and landscape alike. */
+const val PAGE_AIR_DP = 12
+const val ADD_FLOATING_ROOM_DP = 96
+
+/** A page's bottom padding (dp): the floating "+"'s room while it [shown], else the air alone (S9's code QA M2: no
+ * empty 96 dp where there is no "+"). */
+fun pageBottomDp(shown: Boolean): Int = if (shown) ADD_FLOATING_ROOM_DP else PAGE_AIR_DP
+
 /** The pager: [Int.MAX_VALUE] pages, page `p` is day `anchor + (p - CENTER)`. Each page reads its day lazily and shows
  * nothing until it lands; a reload keeps the old rows until the new ones come. */
 class DayPagerAdapter(
@@ -326,6 +342,22 @@ class DayPagerAdapter(
 
     private val bound = LinkedHashSet<Page>()
 
+    /** Every page made (a handful: the pager keeps its neighbours and a small pool), for [pageBottom]. */
+    private val made = ArrayList<Page>()
+    private var bottomPx = -1
+
+    /** Each page's bottom padding ([pageBottomDp]): the floating "+"'s room, or the air alone. */
+    fun pageBottom(px: Int) {
+        if (px == bottomPx) return
+        bottomPx = px
+        made.forEach(::applyBottom)
+    }
+
+    private fun applyBottom(page: Page) {
+        val list = page.list
+        if (bottomPx >= 0 && list.paddingBottom != bottomPx) list.setPadding(list.paddingLeft, list.paddingTop, list.paddingRight, bottomPx)
+    }
+
     override fun getItemCount(): Int = Int.MAX_VALUE
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Page {
@@ -333,6 +365,8 @@ class DayPagerAdapter(
         list.layoutManager = LinearLayoutManager(parent.context)
         val page = Page(list)
         list.adapter = page.rows
+        made += page
+        applyBottom(page)
         return page
     }
 

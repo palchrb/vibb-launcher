@@ -41,6 +41,19 @@ object QuickControlFeature {
     /** Touch sounds and vibration (design r9 §4): Android's two switches for taps. Off on a new phone
      * (the parent grants "Modify system settings" first). */
     const val TOUCH: Long = 16
+
+    /** Design 97 §4.3: the kid's own Mobildata switch (Off = only Vibb uses mobile data). In a new phone's default
+     * mask (D3). */
+    const val MOBILE_DATA: Long = 32
+
+    /** Design 98 §4.1: the kid's own Flymodus switch, shown only while Vibb One holds the assistant role. In a new
+     * phone's default mask (D1). */
+    const val AIRPLANE: Long = 64
+
+    /** Design 99: Snarveier, the kid's quick panel in the shade (`shortcuts/`). Not a Kid Settings switch: the kid's
+     * picker row shows with it. In a new phone's default mask and set on every phone by the server's migration 0148
+     * (D2), since Home's flashlight tile went into the panel. */
+    const val SHORTCUTS: Long = 128
 }
 
 /**

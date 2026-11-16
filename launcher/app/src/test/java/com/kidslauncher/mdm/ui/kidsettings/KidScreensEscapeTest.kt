@@ -57,6 +57,8 @@ class KidScreensEscapeTest {
         "ui/kidsettings", "ui/quickcontrols", "ui/wallpaper", "server/QuickControls.kt", "server/BluetoothAudio.kt",
         "ui/HomeActivity.kt", "ui/home", "calls/PhoneBookActivity.kt", "calls/PhoneBookAdapter.kt", "ui/day", "calendar",
         "actions", "ui/messages",
+        // Design 99: Snarveier - the panel in the shade, its receiver and Flymodus's window (the picker is in ui/kidsettings).
+        "shortcuts",
         // Design 79 (QA L4): the card, the list's model, the contact request, the search.
         "calls/ContactSheet.kt", "calls/PhoneBookList.kt", "calls/ContactRequestForm.kt", "calls/ContactRequests.kt", "ui/search",
         // Design 79 step 4: the kid's pictures - the screen, the framing, the sheet, the store and the picker's new home.

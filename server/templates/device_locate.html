@@ -20,10 +20,10 @@
     </div>
     {%- else if let Some(view) = selected %}
 
-    {#- Where it is: the span pick, the map, the last fix, the phone's answer, the wait, Update
-        Location; the rows under it (design 88). Update Location returns here (#location), so the
-        map and the waiting line are in view. The pick is a view choice (design 44 §1.5):
-        static/locate.js redraws in place and remembers it; without JS the links show the span here. -#}
+    {#- Where it is: the span pick, the map, the legend. The fix's words are the marker's bubble's
+        (design 88 revision 2: `data-fix-*` beside `data-shown-text`, static/locate.js); Update
+        Location is the rows' first. The pick is a view choice (design 44 §1.5): static/locate.js
+        redraws in place and remembers it; without JS the links show the span here. -#}
     <section id="location" aria-label="{{ self.t("locate.location_aria") }}">
         <div class="phone-switch span-pick" role="radiogroup" aria-label="{{ self.t("locate.span.aria") }}" data-span-pick>
             {% for (hours, words) in crate::handlers::locate::SPANS %}
@@ -33,8 +33,8 @@
         {#- Design 85 revision 3: the Alle view's look - the chips over the map's top (with two phones
             or more; "All" back to every phone, this one current), the newest fix as the phone's
             marker (`data-marker-*`, static/locate.js), the legend under the map and as the full
-            screen's strip. -#}
-        <div class="map-box map-one" data-map-full data-locate="{{ view.map.device_id }}" data-shown="{{ view.map.shown }}" data-shown-text="{{ view.map.shown_text }}" data-newest-age="{{ view.map.newest_age }}" data-span="{{ view.map.span }}" data-lang="{{ lang.code() }}" data-w-newest="{{ self.t("locate.fix.newest") }}" data-marker-tone="{{ view.marker.tone }}" data-marker-initial="{{ view.marker.initial }}"{% if let Some(src) = view.marker.photo %} data-marker-photo="{{ src }}"{% endif %}{% if let Some(tag) = view.marker.tag %} data-marker-tag="{{ tag }}"{% endif %}{% if view.marker.fresh %} data-marker-fresh{% endif %} data-marker-label="{{ view.marker.label }}"{% if !view.chips.is_empty() %} data-chips{% endif %}{% if view.waiting_for_fix %} data-waiting{% endif %}{% if view.has_zones %} data-zones{% endif %}>
+            screen's strip. Design 88 revision 2: the bubble's further lines (`data-fix-*`). -#}
+        <div class="map-box map-one" data-map-full data-locate="{{ view.map.device_id }}" data-shown="{{ view.map.shown }}" data-shown-text="{{ view.map.shown_text }}"{% if let Some(fix) = view.fix %}{% if !fix.seen_word.is_empty() %} data-fix-seen="{{ fix.seen_word }}"{% endif %}{% if let Some(still) = fix.still %} data-fix-still="{{ still }}"{% endif %}{% if let Some(aged) = fix.aged %} data-fix-aged="{{ aged }}"{% endif %}{% if fix.before_off %} data-fix-before-off="{{ self.t("locate.fix.before_off") }}"{% endif %}{% if !fix.exact.is_empty() %} data-fix-title="{{ fix.exact }}"{% endif %}{% endif %} data-newest-age="{{ view.map.newest_age }}" data-span="{{ view.map.span }}" data-lang="{{ lang.code() }}" data-w-newest="{{ self.t("locate.fix.newest") }}" data-marker-tone="{{ view.marker.tone }}" data-marker-initial="{{ view.marker.initial }}"{% if let Some(src) = view.marker.photo %} data-marker-photo="{{ src }}"{% endif %}{% if let Some(tag) = view.marker.tag %} data-marker-tag="{{ tag }}"{% endif %}{% if view.marker.fresh %} data-marker-fresh{% endif %} data-marker-label="{{ view.marker.label }}"{% if !view.chips.is_empty() %} data-chips{% endif %}{% if view.waiting_for_fix %} data-waiting{% endif %}{% if view.has_zones %} data-zones{% endif %}>
             {% if !view.chips.is_empty() %}
             <nav class="map-chips" aria-label="{{ self.t("locate.all.phones_aria") }}">
                 <a class="map-chip" href="/devices/locate">{{ self.t("locate.all.chip") }}</a>
@@ -48,34 +48,6 @@
             <button type="button" class="map-tool map-tool-open" data-full-open hidden aria-label="{{ self.t("locate.map.full") }}" title="{{ self.t("locate.map.full") }}"><svg viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M12 3h5v5M17 3l-5.5 5.5M8 17H3v-5M3 17l5.5-5.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button><button type="button" class="map-tool map-tool-close" data-full-close hidden aria-label="{{ self.t("locate.map.full_close") }}" title="{{ self.t("locate.map.full_close") }}"><svg viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M5 5l10 10M15 5L5 15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>
         </div>
         <p class="map-legend"><span><span class="seen-dot seen-fresh" aria-hidden="true"></span>{{ self.t("locate.all.fresh") }}</span><span><span class="seen-dot seen-old" aria-hidden="true"></span>{{ self.t("locate.all.old") }}</span></p>
-        <div class="group">
-            {% if let Some(fix) = view.fix %}
-            <div class="row" data-row="fix">
-                <span class="row-label"><span class="fix-age" title="{{ fix.exact }}">{% if !fix.seen_class.is_empty() %}<span class="seen-dot {{ fix.seen_class }}" aria-hidden="true"></span>{% endif %}{{ fix.age }}{% if !fix.seen_word.is_empty() %}<span class="visually-hidden"> {{ fix.seen_word }}</span>{% endif %}</span><span class="row-sub">{{ fix.accuracy }}</span>{% if let Some(still) = fix.still %}<span class="row-sub" data-fix-still>{{ still }}</span>{% endif %}{% if let Some(aged) = fix.aged %}<span class="row-sub" data-fix-aged>{{ aged }}</span>{% endif %}{% if fix.before_off %}<span class="row-sub" data-fix-before-off>{{ self.t("locate.fix.before_off") }}</span>{% endif %}</span>
-            </div>
-            {% else %}
-            <p class="row row-note" data-row="fix">{% if view.location_off %}{{ self.t("locate.fix.none_off") }}{% else %}{{ self.t("locate.fix.none") }}{% endif %}</p>
-            {% endif %}
-            {% if let Some(a) = view.answer %}
-            {#- 2026-10-25: only while asked, 10 min after a found answer, a failure until the next fix (locate::answer_state). -#}
-            <div class="row" data-row="locate-answer" data-state="{{ a.state }}">
-                <span class="row-label"><span{% if let Some(raw) = a.answer.raw %} title="{{ raw }}"{% endif %}>{{ a.answer.text }}</span></span>
-                {% if !a.when.is_empty() %}<span class="row-value" title="{{ a.exact }}">{{ a.when }}</span>{% endif %}
-            </div>
-            {% endif %}
-            {% if view.waiting_for_fix %}
-            <p id="fix_wait" class="row row-note" role="status" data-w-answered="{{ self.t("locate.wait.answered") }}" data-w-no-answer="{{ self.t("locate.wait.no_answer") }}">{{ self.t("locate.wait") }}&hellip;</p>
-            {% endif %}
-            {#- Design 64 step 2 (decision 14): a release launcher ignores a mock fix and counts it. -#}
-            {% if let Some(mock) = view.mock_ignored %}
-            <div class="row" data-row="mock-ignored">
-                <span class="row-label">{{ mock }}<span class="row-sub">{{ self.t("locate.mock.sub") }}</span></span>
-            </div>
-            {% endif %}
-            <form method="post" action="/devices/{{ view.device.id }}/command/locate#location" class="cell">
-                <button type="submit" class="row row-button">{{ self.t("locate.command.locate") }}</button>
-            </form>
-        </div>
     </section>
 
     {% if view.location_off %}
@@ -85,8 +57,27 @@
     {% endif %}
 
     {#- Design 88: the rest is a page each, one group of rows - every kept fix (design 44 §1.4), the
-        zones, Ring/Lock/Erase with their requests, the location settings. -#}
+        zones, Ring/Lock/Erase with their requests, the location settings. Update Location first
+        (revision 2): it returns here (#update-location, never the top), where the wait shows; under
+        its name "No position yet" without a fix, the phone's answer (locate::answer_state) and the
+        wait's line. -#}
     <div class="group group-icons" data-group="locate-rows">
+        <form method="post" action="/devices/{{ view.device.id }}/command/locate#update-location" id="update-location" class="cell">
+            <button type="submit" class="row" data-row="update-location">
+                <span class="tile tile-blue"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><path d="M14.2 8.5a5.7 5.7 0 1 1-1.7-4.05" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M13.2 1.6v3.3H9.9" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><circle cx="8.5" cy="8.5" r="1.9" fill="currentColor"/></svg></span>
+                <span class="row-label">{{ self.t("locate.command.locate") }}
+                    {%- if view.fix.is_none() %}<span class="row-sub" data-fix-none>{% if view.location_off %}{{ self.t("locate.fix.none_off") }}{% else %}{{ self.t("locate.fix.none") }}{% endif %}</span>{% endif %}
+                    {%- if let Some(a) = view.answer %}<span class="row-sub" data-row="locate-answer" data-state="{{ a.state }}"><span{% if let Some(raw) = a.answer.raw %} title="{{ raw }}"{% endif %}>{{ a.answer.text }}</span>{% if !a.when.is_empty() %} · <span title="{{ a.exact }}" data-answer-when>{{ a.when }}</span>{% endif %}</span>{% endif %}
+                    {%- if view.waiting_for_fix %}<span id="fix_wait" class="row-sub" role="status" data-w-answered="{{ self.t("locate.wait.answered") }}" data-w-no-answer="{{ self.t("locate.wait.no_answer") }}">{{ self.t("locate.wait") }}&hellip;</span>{% endif %}</span>
+            </button>
+        </form>
+        {#- Design 64 step 2 (decision 14): a release launcher ignores a mock fix and counts it. -#}
+        {% if let Some(mock) = view.mock_ignored %}
+        <div class="row" data-row="mock-ignored">
+            <span class="tile tile-graphite"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><path d="M8.5 15.2s-4.6-4.4-4.6-8a4.6 4.6 0 0 1 9.2 0c0 3.6-4.6 8-4.6 8z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M2.5 2.5l12 12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></span>
+            <span class="row-label">{{ mock }}<span class="row-sub">{{ self.t("locate.mock.sub") }}</span></span>
+        </div>
+        {% endif %}
         <a class="row" href="/devices/{{ view.device.id }}/locations?span={{ view.span }}" data-row="locations">
             <span class="tile tile-teal"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><path d="M3 13.5c2-1 2.5-4 5.5-4.5s3-4.5 5.5-5.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="3.2" cy="13.3" r="1.7" fill="currentColor"/><circle cx="13.8" cy="3.6" r="1.7" fill="currentColor"/></svg></span>
             <span class="row-label">{{ self.t("locate.locations.title") }}</span>
@@ -114,7 +105,7 @@
 
     <script src="/static/leaflet/leaflet.js"></script>
     <script src="/static/map-marker.js?v=1"></script>
-    <script src="/static/locate.js?v=8"></script>
+    <script src="/static/locate.js?v=9"></script>
     <script src="/static/map-full.js?v=2"></script>
     {%- else if let Some(all) = all %}
 

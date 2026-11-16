@@ -490,6 +490,9 @@ fun buildDohClient(dns: okhttp3.Dns, protect: (Socket) -> Boolean): OkHttpClient
     .callTimeout(UPSTREAM_BUDGET.totalMs.toLong(), TimeUnit.MILLISECONDS)
     .followRedirects(false)
     .followSslRedirects(false)
+    // Design 102 R3-L2: https by the client's own rule, whatever URL it is given - cleartext is allowed app-wide since
+    // D15 (a); today's inputs are https constants and CustomUpstream's `https://` check.
+    .addInterceptor(DOH_HTTPS_ONLY)
     // Each call's own connect timeout (a bootstrap look-up's 1 s, §5.3) from its Budget tag.
     .addInterceptor { chain ->
         val budget = chain.request().tag(Budget::class.java)
@@ -505,6 +508,12 @@ fun buildDohClient(dns: okhttp3.Dns, protect: (Socket) -> Boolean): OkHttpClient
         }
     }
     .build()
+
+/** The DoH client's own https rule (design 102 R3-L2): a non-https URL is refused before a socket. */
+internal val DOH_HTTPS_ONLY = okhttp3.Interceptor { chain ->
+    if (!chain.request().url.isHttps) throw java.io.IOException("the DoH client speaks https only")
+    chain.proceed(chain.request())
+}
 
 /** One attempt at [target] - DoH through [client] (asked for at the first DoH use), DoT through [protect]ed sockets to its [addresses],
  * kept in [dotPool] (S-L9; the transport [CustomDns] and [PublicResolver] are given). */

@@ -73,7 +73,7 @@
                     <span class="row-label">{{ self.t("device.lock.show_child_pin") }}&hellip;</span>
                     <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 </summary>
-                <form method="post" action="/devices/{{ device.id }}/lock#show-pin" class="edit-body">
+                <form method="post" action="/devices/{{ device.id }}/lock#show-pin" class="edit-body" data-native-post>
                     <input type="hidden" name="action" value="reveal_kid_pin">
                     {% include "partials/reauth_passkey.html" %}
                     <label class="field-label" for="reveal_password"{% if passkey_only %} hidden{% endif %}>{{ self.t("device.lock.your_password") }}</label>
@@ -314,8 +314,8 @@
         </div>
         <p class="group-footer">{{ self.t("device.lock.notifications_footer") }}</p>
     </section>
-    {% if reveal_answer %}<script src="/static/reveal.js?v=4"></script>{% endif %}
-    {% if passkey_reauth %}<script src="/static/passkey.js?v=8" defer></script>{% endif %}
+    {% if reveal_answer %}<script src="/static/reveal.js?v=5" data-swap-ready></script>{% endif %}
+    {% if passkey_reauth %}<script src="/static/passkey.js?v=9" defer data-swap-ready></script>{% endif %}
     </div>
 </main>
 </body>

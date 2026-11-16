@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The time-rule screen's "Spør igjen" (design 100 §8.3): the dim pill with a 1.5 dp accent ring. -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android" android:color="@color/kid_divider">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/kid_lock_pill_dim" />
+            <stroke android:width="1.5dp" android:color="@color/kid_accent" />
+            <corners android:radius="26dp" />
+        </shape>
+    </item>
+</ripple>

@@ -616,11 +616,11 @@ mod tests {
     #[test]
     fn a_duration_in_both_languages() {
         for (minutes, en, nb) in [
-            (0, "0 min", "0 min"),
-            (45, "45 min", "45 min"),
-            (60, "1 h", "1 t"),
-            (90, "1 h 30 min", "1 t 30 min"),
-            (150, "2 h 30 min", "2 t 30 min"),
+            (0, "0\u{a0}min", "0\u{a0}min"),
+            (45, "45\u{a0}min", "45\u{a0}min"),
+            (60, "1\u{a0}h", "1\u{a0}t"),
+            (90, "1\u{a0}h 30\u{a0}min", "1\u{a0}t 30\u{a0}min"),
+            (150, "2\u{a0}h 30\u{a0}min", "2\u{a0}t 30\u{a0}min"),
         ] {
             assert_eq!(duration(Lang::En, minutes), en);
             assert_eq!(duration(Lang::Nb, minutes), nb);

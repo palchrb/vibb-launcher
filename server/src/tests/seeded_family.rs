@@ -15,6 +15,8 @@ pub struct Family {
     pub cookie: String,
     /// The phone with the rich report.
     pub anna: i64,
+    /// Anna's device token (her policy is the fullest one: `tests::policy_etag`).
+    pub anna_token: String,
     /// The phone with the other problems.
     pub ola: i64,
     /// Enrolled never: Connect This Phone.
@@ -370,6 +372,22 @@ pub async fn seed(app: &TestApp, lang: crate::i18n::Lang) -> Family {
         ),
         // Design 83: a contact's picture names an MMS address the parent must allow.
         parent_events::mmsc_host(anna, &phone.name, 1, "Mormor", ago(122)),
+        // Design 97 §6: the phone's first network abroad.
+        phone.roaming_started("se", ago(123)),
+        // Design 102 §3.7: a Wi-Fi sign-in that went wide, and the day's sign-ins used up.
+        phone.wifi_signin_wide(
+            &crate::logins::Session {
+                opened_ms: ago(124).timestamp_millis(),
+                outcome: "timeout".to_string(),
+                visited: vec!["hotel.example".to_string()],
+                visited_count: 1,
+                start: "system".to_string(),
+                approved: "code".to_string(),
+                ..Default::default()
+            },
+            parent_events::Push::Now,
+        ),
+        phone.wifi_signin_budget("2026-11-01", parent_events::Push::Now),
     ];
     let kinds: std::collections::BTreeSet<&str> = events.iter().map(|e| e.kind.wire()).collect();
     assert_eq!(kinds.len(), parent_events::Kind::ALL.len(), "every kind");
@@ -533,6 +551,7 @@ pub async fn seed(app: &TestApp, lang: crate::i18n::Lang) -> Family {
     Family {
         cookie,
         anna,
+        anna_token,
         ola,
         liv,
         rule,

@@ -60,7 +60,7 @@
             <p class="row row-note" data-row="keep-open">{{ self.t("devices.qr.keep_open") }}</p>
             {% endif %}
             {% endif %}
-            <form method="post" action="/devices/{{ device.id }}/provision#qr" class="cell form-group">
+            <form method="post" action="/devices/{{ device.id }}/provision#qr" class="cell form-group" data-native-post>
                 <div class="field">
                     <label class="field-label" for="wifi_ssid">{{ self.t("devices.qr.wifi") }}</label>
                     <input type="text" id="wifi_ssid" name="wifi_ssid" value="{{ wifi_ssid }}" placeholder="{{ self.t("common.optional") }}" autocomplete="off" autocapitalize="none" spellcheck="false"{% if error_field == "wifi_ssid" %} aria-invalid="true" aria-describedby="wifi-error" autofocus{% endif %}>
@@ -75,6 +75,12 @@
             </form>
             {% if !qr_svg.is_empty() && !enrolled %}
             <a class="row row-button" href="/devices/{{ device.id }}" data-row="done">{{ self.t("devices.code.done") }}</a>
+            {#- Design 98 D2: open the phone for setup from here (the start-pause, back=setup): its setup steps and the
+                Google account, landing on the summary's Oppsett card. -#}
+            <form method="post" action="/devices/{{ device.id }}/start-pause#oppsett" class="cell" data-row="open-setup">
+                <input type="hidden" name="back" value="setup">
+                <button type="submit" class="row row-button">{{ self.t("devices.qr.open_setup") }}</button>
+            </form>
             {% endif %}
             {% endif %}
         </div>

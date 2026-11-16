@@ -24,8 +24,11 @@
 // as the server judged the fix shown, the accuracy circle; the box's `data-marker-*` carry the
 // phone's row (`tone`, `initial`, `photo`, `tag`, `fresh`, `label`), `data-chips` while the
 // phones' chips lie over the map's top. A newer fix than the one shown is drawn fresh, without a
-// tag (the server hasn't worded it). The Locations page keeps Leaflet's pin. ES5. Run its tests:
-// node --test jstest/locate.test.js
+// tag (the server hasn't worded it). The Locations page keeps Leaflet's pin. Since design 88
+// revision 2 the bubble alone tells the fix (the box under the map went): `data-shown-text`, the
+// legend's word for screen readers (`data-fix-seen`), then a line each for `data-fix-still`,
+// `-aged`, `-before-off` and `-title` (the exact time, the provider, "test location"). ES5. Run its
+// tests: node --test jstest/locate.test.js
 (function (root) {
     "use strict";
 
@@ -97,6 +100,39 @@
             if (value && value.trim()) return value.trim();
         } catch (e) {}
         return fallback;
+    }
+
+    // The bubble's lines after the first, in this order, from the map box's `data-fix-<name>`.
+    var BUBBLE_LINES = ["still", "aged", "before-off", "title"];
+
+    /**
+     * The one-phone marker's bubble (design 88 revision 2): `text` first, with the legend's word
+     * hidden for screen readers, then the box's further lines - all the server's words, set as
+     * text. A fix newer than the one rendered (`shownFix` false) has only `text`.
+     */
+    function bubble(doc, box, text, shownFix) {
+        var el = doc.createElement("div");
+        el.className = "one-bubble";
+        var first = doc.createElement("div");
+        first.textContent = text;
+        el.appendChild(first);
+        if (!shownFix) return el;
+        var seen = box.getAttribute("data-fix-seen");
+        if (seen) {
+            var hidden = doc.createElement("span");
+            hidden.className = "visually-hidden";
+            hidden.textContent = " " + seen;
+            first.appendChild(hidden);
+        }
+        for (var i = 0; i < BUBBLE_LINES.length; i++) {
+            var words = box.getAttribute("data-fix-" + BUBBLE_LINES[i]);
+            if (!words) continue;
+            var line = doc.createElement("div");
+            line.className = "one-" + BUBBLE_LINES[i];
+            line.textContent = words;
+            el.appendChild(line);
+        }
+        return el;
     }
 
     /**
@@ -236,7 +272,7 @@
         }
 
         // The newest fix as the Alle view draws a phone: its accuracy circle, its avatar and tag;
-        // its words in the white bubble, opened by a tap (the tag says the age at a glance).
+        // its words in the white bubble (bubble()), opened by a tap (the tag says the age at a glance).
         function drawMark(last, popup, colour) {
             var shownFix = last.captured_at === shown;
             var row = {
@@ -262,7 +298,7 @@
                 el.setAttribute("aria-label", shownFix && mark.label ? mark.label : popup.textContent);
             };
             marker.on("add", speak);
-            marker.addTo(layer).bindPopup(popup, { className: "all-popup", autoPanPaddingTopLeft: [10, chips ? 64 : 10] });
+            marker.addTo(layer).bindPopup(bubble(doc, box, popup.textContent, shownFix), { className: "all-popup", autoPanPaddingTopLeft: [10, chips ? 64 : 10] });
             speak();
         }
 
@@ -407,7 +443,7 @@
         return { choose: choose, map: map, zonesLoaded: zonesLoaded };
     }
 
-    var api = { install: install, countText: countText, readSpan: readSpan, trailColour: trailColour, drawZones: drawZones, SPAN_KEY: SPAN_KEY, SPANS: SPANS };
+    var api = { install: install, bubble: bubble, countText: countText, readSpan: readSpan, trailColour: trailColour, drawZones: drawZones, SPAN_KEY: SPAN_KEY, SPANS: SPANS };
     if (typeof module !== "undefined" && module.exports) {
         module.exports = api;
     } else if (root.document) {

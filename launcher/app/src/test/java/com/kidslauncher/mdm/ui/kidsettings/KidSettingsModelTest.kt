@@ -23,8 +23,19 @@ class KidSettingsModelTest {
         // The sound bit (design 18) alone is a card, not NoneEnabled (QA #6); so is the touch bit (design r9 §4).
         assertEquals(ControlsSection.Rows(wifi = false, bluetooth = false, brightness = false, sound = true, touch = false), controlsSection(true, ok(8)))
         assertEquals(ControlsSection.Rows(wifi = false, bluetooth = false, brightness = false, sound = false, touch = true), controlsSection(true, ok(16)))
+        // Design 97 (Q97-L1): the kid's Mobildata bit alone is a card too.
+        assertEquals(
+            ControlsSection.Rows(wifi = false, bluetooth = false, brightness = false, sound = false, touch = false, mobileData = true),
+            controlsSection(true, ok(32)),
+        )
         // Unknown bits alone are nothing.
-        assertEquals(ControlsSection.NoneEnabled, controlsSection(true, ok(32)))
+        assertEquals(ControlsSection.NoneEnabled, controlsSection(true, ok(64)))
+        // Design 98 §4.1: bit 64 alone without the role is no card; with the role the full row; airplane mode on with
+        // mask 0 is a card with the Off-only row - also before any policy.
+        assertEquals(ControlsSection.NoneEnabled, controlsSection(true, ok(64), roleHeld = false, airplaneOn = false))
+        assertEquals(ControlsSection.Rows(false, false, false, false, false, airplane = true), controlsSection(true, ok(64), roleHeld = true))
+        assertEquals(ControlsSection.Rows(false, false, false, false, false, airplaneOffOnly = true), controlsSection(true, ok(0), airplaneOn = true))
+        assertEquals(ControlsSection.Rows(false, false, false, false, false, airplaneOffOnly = true), controlsSection(true, CachedPolicy.Absent, airplaneOn = true))
         assertEquals(ControlsSection.NoneEnabled, controlsSection(true, ok(0)))
     }
 

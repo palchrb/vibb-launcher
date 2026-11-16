@@ -346,17 +346,39 @@ object AppEnforcer {
         enforcePlayLinkBlocker(dpm, admin, context)
         // The call log opens the phone book (design 12), never lifted either.
         enforceCallLogPin(dpm, admin, context)
+        // Design 102 §3.2: Android's Wi-Fi sign-in goes to Vibb's entry, never to the stock login app. Off is the disabled
+        // entry (DONT_KILL_APP, PortalRuntime.setEntryEnabled), not a cleared preferred activity: a disabled component's
+        // persistent preferred activity is skipped, and Android's own handler is then the only one.
+        enforceCaptivePortalPin(dpm, admin, context)
+        com.kidslauncher.mdm.portal.PortalRuntime.setEntryEnabled(context, com.kidslauncher.mdm.logins.portalPolicyOf(policy).enabled)
 
         // Hardening that the server switched off is cleared first, before anything below can
         // throw - "Block USB debugging" off is how a parent gets adb back (QA step 4 #8). The
         // restrictions that stay on are (re)set at the end, after the always-on VPN.
         CallPolicyStore.ensureLoaded(context)
         val managedForHardening = hardeningManaged(policy?.allowlist, CallPolicyStore.state.managed)
+        // The VPN's shape (design 95 rev. 3): the filter, Bare Vibb's sink on cellular (the parent's choice, or a roaming
+        // session that outlived the roaming lock), the pass shape that stands ready for it - all lifted by the override
+        // and the pause. Only true-by-default (filtering on) with no policy yet, as before. Design 97: "I utlandet"'s
+        // abroad sink (lifted too) and the kid's own Off (no lift, D4).
+        val vpnFilterEnabled = if (overrideActive) false else (policy?.vpnFilterEnabled ?: true)
+        val abroad = abroadChoice(policy?.abroad, policy?.dataRoaming)
+        val vpnInputs = VpnInputs(
+            filterOn = vpnFilterEnabled,
+            parentSink = parentSinkOn(policy?.appsMobile, overrideActive),
+            roamingLocked = roamingLocked(abroad, overrideActive),
+            abroadArmed = abroadArmed(abroad, overrideActive),
+            kidOff = MobileNetworkRuntime.kidOff(policy?.quickControlsMask),
+        )
+        val bestNetNow = MobileNetworkRuntime.bestNet(context)
+        val vpnShapeNow = applyShape(vpnInputs, bestNetNow, MobileNetworkRuntime.storedShape())
+        MobileNetworkRuntime.holdSinkReason(vpnInputs, bestNetNow, vpnShapeNow)
         // Security review S-L11: DISALLOW_CONFIG_VPN also while the Web filter is on (a filter-only phone) - lifted
-        // with the filter by the override and the pause, as the filter is.
+        // with the filter by the override and the pause, as the filter is. Design 95 §2.2: and with the sink and the
+        // pass shape, lifted with them.
         val hardening = withFilterVpnLock(
             hardeningPlan(policy?.hardening, managedForHardening), policy?.hardening,
-            filterOn = policy != null && !overrideActive && policy.vpnFilterEnabled,
+            filterOn = policy != null && vpnConfigLocked(vpnShapeNow),
         )
         clearHardening(context, dpm, admin, hardening)
         // Design 64 step 2: an unmanaged phone (un-enrolled from the server's side, or never
@@ -383,6 +405,8 @@ object AppEnforcer {
         applySmsRole(context, dpm, admin, callsState, smsMode, allowRelease = false)
         // Inside a sync the status report right after this tells the server anyway (qa-09-code #10).
         if (!fromSync) signalRoleChange(context)
+        // Design 98 §3.6: the assistant role read on every pass; a change asks for one report.
+        if (!fromSync) com.kidslauncher.mdm.assistant.AssistantSetup.roleMaybeChanged(context)
 
         // A time rule or the used-up budget: suspend everything but our own package, the system
         // dialer and the lock's usable apps (see computeEnforcementPlan), from the same decision
@@ -414,6 +438,11 @@ object AppEnforcer {
         // Cached for the lock's SOS yield (qa-25b-25f L3: never resolved at a lock stop).
         val sos = emergencySosPackage(context)
         com.kidslauncher.mdm.lock.PinLockRuntime.sosPackage = sos
+        // Design 102 §4.1 (Q102-M3): the browsers' managed config before the plan and the hide/unhide loop - Chrome's login
+        // role is unhidden and pinned only once its lockdown is written and read back; the pause and the override lift
+        // the lockdown (D9), whose end is a tightening.
+        val loginRole = com.kidslauncher.mdm.logins.loginRoleOf(policy?.loginBrowser, allowlist)
+        val browser = BrowserConfig.apply(context, dpm, admin, vpnFilterEnabled, loginRole, lockdownLifted = overrideActive)
         val plan = computeEnforcementPlan(
             allowlist = allowlist,
             kioskDesired = policy?.kioskDesired == true,
@@ -440,6 +469,7 @@ object AppEnforcer {
             recentsPackage = systemRecentsPackage(context),
             emergencySos = sos,
             webViewProvider = webViewProviderPackage(),
+            loginBrowser = com.kidslauncher.mdm.logins.CHROME_PACKAGE.takeIf { browser.ready },
         )
 
         // Set before the loop below can release the dialer, so its keypad is never usable for
@@ -594,6 +624,13 @@ object AppEnforcer {
         // Security review S-L5: no Bluetooth file transfer (OPP) to or from a friend's phone or a PC while managed -
         // audio devices are untouched. Lifted by the override and the pause, like every restriction of ours.
         setRestriction(dpm, admin, UserManager.DISALLOW_BLUETOOTH_SHARING, bluetoothSharingRestricted(managedForHardening, overrideActive))
+        // Design 94: data roaming off and locked - since design 97 under "I utlandet"'s Ingen data, the parent's explicit
+        // choice per phone, so whether or not the phone is managed in hardening's sense; lifted by the override and the
+        // pause. Then the relock of a SIM that still reads roaming on (§2.4.2). Vibb never turns roaming on (D9).
+        MobileNetworkRuntime.applyDataRoaming(context, dpm, admin, vpnInputs.roamingLocked)
+        // Design 95 rev. 3 item 3: Android's mobile-network settings locked (the parent's switch, on by default), so
+        // mobile data the parent turned off in Android stays off; lifted by the override and the pause.
+        MobileNetworkRuntime.applyMobileSettingsLock(dpm, admin, mobileSettingsLocked(policy?.mobileSettingsLocked, overrideActive))
 
         // Same "fully open" treatment as everything else while an override is active - confirmed
         // live this needs to include the VPN filter too: the whole point of the offline-override PIN
@@ -604,10 +641,9 @@ object AppEnforcer {
         // filtering choice) - wrong in practice, reverted. Only true-by-default (filtering on) when
         // no override is active AND no policy has ever been fetched, which has no admin choice yet
         // to respect.
-        val vpnFilterEnabled = if (overrideActive) false else (policy?.vpnFilterEnabled ?: true)
-        applyVpnRestrictions(context, dpm, admin, vpnFilterEnabled)
-        // The browsers' own secure DNS off with the filter (design 67 §2.1), lifted with it.
-        BrowserDoh.apply(context, dpm, admin, vpnFilterEnabled)
+        applyVpnRestrictions(context, vpnInputs, policy?.quickControlsMask, vpnShapeNow)
+        // The browsers' own secure DNS off with the filter (design 67 §2.1), lifted with it: BrowserConfig, before the
+        // plan (design 102 §4.1).
 
         applyPrivateDnsLock(dpm, admin)
 
@@ -625,6 +661,9 @@ object AppEnforcer {
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Notification rule refresh failed", e)
         }
+        // Design 98 §3: a default-apps window that is over closes for good (HOME re-seated, the roles compared), a Wi-Fi
+        // step left by a pause that ended ends, and the setup notification follows. Never throws.
+        com.kidslauncher.mdm.assistant.AssistantSetup.afterApply(context)
     }
 
     /**
@@ -687,10 +726,20 @@ object AppEnforcer {
             if (QuickControls.isLocationEnabled(context) != wanted) QuickControls.setLocationEnabled(dpm, admin, wanted)
         }
         for ((restriction, set) in plan.restrictions) {
+            // Design 98 §2.4: the parent's "Blokker flymodus" going on ends the kid's airplane mode - `off_by: parent`.
+            if (set && restriction == HardeningRestriction.AIRPLANE_MODE && com.kidslauncher.mdm.assistant.AirplaneRuntime.isOn(context) &&
+                !com.kidslauncher.mdm.assistant.AirplaneRuntime.restricted(context)
+            ) {
+                com.kidslauncher.mdm.assistant.AirplaneRuntime.vibbEnding(com.kidslauncher.mdm.assistant.AirplaneBy.PARENT)
+            }
             if (set) setRestriction(dpm, admin, restriction.userManagerKey(), true)
         }
         if (plan.screenCaptureDisabled) syncScreenCapture(dpm, admin, true)
         clearHardening(context, dpm, admin, plan)
+        // Snarveier's Flymodus dims with "Blokker flymodus" (design 99): no broadcast an app can hear says a device
+        // owner's restriction changed, and the policy write the panel listens for comes before this pass (emulator
+        // check, 2026-11-15: it stayed undimmed until another signal).
+        com.kidslauncher.mdm.shortcuts.ShortcutsRuntime.requestRefresh()
     }
 
     /** `setScreenCaptureDisabled` only when it differs ([screenCaptureWrite]); a failure is logged
@@ -946,7 +995,8 @@ object AppEnforcer {
         // Design 77: the SMS role's lock counts too (lockDefaultAppsFor).
         setRestriction(
             dpm, admin, UserManager.DISALLOW_CONFIG_DEFAULT_APPS,
-            lockDefaultAppsFor(state.managed, CallSystem.dialerRoleHeld(context), smsMode, SmsRuntime.roleHeld(context)),
+            lockDefaultAppsFor(state.managed, CallSystem.dialerRoleHeld(context), smsMode, SmsRuntime.roleHeld(context)) &&
+                !com.kidslauncher.mdm.assistant.AssistantSetup.assistantPickOpen(context),
         )
         val heldAfter = CallSystem.dialerRoleHeld(context)
         // Handed back: our fixed permissions return to DEFAULT (no revoke, no kill) - qa-09-code #4. Not while the SMS
@@ -1023,7 +1073,8 @@ object AppEnforcer {
         val heldAfter = SmsRuntime.roleHeld(context)
         setRestriction(
             dpm, admin, UserManager.DISALLOW_CONFIG_DEFAULT_APPS,
-            lockDefaultAppsFor(callsState.managed, CallSystem.dialerRoleHeld(context), smsMode, heldAfter),
+            lockDefaultAppsFor(callsState.managed, CallSystem.dialerRoleHeld(context), smsMode, heldAfter) &&
+                !com.kidslauncher.mdm.assistant.AssistantSetup.assistantPickOpen(context),
         )
         signalSmsRoleChange(context, heldAfter)
     }
@@ -1397,7 +1448,11 @@ object AppEnforcer {
      * what makes Android auto-start/restart the service as needed, independent of anything this app
      * does itself.
      *
-     * Lockdown is deliberately NOT enabled here - unconditional, not gated on any policy field,
+     * Design 95 rev. 3: [MobileNetworkRuntime.writeAlwaysOn] is now the one writer ([alwaysOnFor]); lockdown is on
+     * only in the sink shape (Bare Vibb on cellular), whose routes take everything. In the filter and pass shapes
+     * lockdown stays off for the reason below.
+     *
+     * Lockdown is deliberately NOT enabled for the filter shape,
      * because it's actively wrong for this VPN's design, not just risky. Confirmed live: with
      * lockdown on, once this VPN becomes the system default network, `dumpsys connectivity` showed
      * its routes as only the one fake-DNS-server address plus an explicit `::/0 unreachable` -
@@ -1416,7 +1471,7 @@ object AppEnforcer {
      * unfiltered through the OS's normal path if the service is ever down, which is an acceptable
      * gap next to bricking the device's entire network.
      *
-     * [vpnFilterEnabled] is [PolicyResponse.vpnFilterEnabled] - a per-device admin toggle for the
+     * [inputs]' `filterOn` is [PolicyResponse.vpnFilterEnabled] - a per-device admin toggle for the
      * filter itself (independent of the lockdown discussion above). When off, both the always-on
      * designation and the running service are torn down; when on, both are (re)established. Also
      * caches the value so [com.kidslauncher.mdm.Application.onCreate]'s cold-start
@@ -1424,23 +1479,16 @@ object AppEnforcer {
      * whether to start the service at all, rather than always starting and then immediately
      * stopping it again once this function runs on the first sync.
      */
-    private fun applyVpnRestrictions(
-        context: Context,
-        dpm: DevicePolicyManager,
-        admin: ComponentName,
-        vpnFilterEnabled: Boolean,
-    ) {
-        LauncherPreferences.mdm().vpnFilterEnabled(vpnFilterEnabled)
+    private fun applyVpnRestrictions(context: Context, inputs: VpnInputs, quickControlsMask: Long?, shape: VpnShape) {
+        MobileNetworkRuntime.storeInputs(inputs, quickControlsMask)
         try {
-            if (vpnFilterEnabled) {
-                dpm.setAlwaysOnVpnPackage(admin, context.packageName, false)
-                KidVpnService.start(context)
-            } else {
-                dpm.setAlwaysOnVpnPackage(admin, null, false)
-                KidVpnService.stop(context)
-            }
+            // The single owner (design 95 §2.2): the decided shape is recorded, always-on written for it alone.
+            MobileNetworkRuntime.writeAlwaysOn(context, shape)
+            // Code QA L2: keep this start - the service's reshape() then writes its own decision last, so the two
+            // writers of always-on settle on the service's view of the network.
+            if (shape != VpnShape.NONE) KidVpnService.start(context) else KidVpnService.stop(context)
         } catch (e: Exception) {
-            Log.w(LOG_TAG, "Failed to apply VPN filter enabled state", e)
+            Log.w(LOG_TAG, "Failed to apply the VPN's shape", e)
         }
     }
 
@@ -1561,6 +1609,13 @@ object AppEnforcer {
         // Design 68: the camera rule for this package, managed calls or not, before it can be hidden below.
         enforceCameraOnPackage(context, packageName)
         if (!suspend) return false
+        // Design 102 §4.1: Chrome unhidden for its login role is the apply's own doing, not a new app - left to the plan
+        // (the emulator check, 2026-11-15: the unhide's onPackageAdded hid it again and asked a sync, every 0.4 s).
+        val loginRole = com.kidslauncher.mdm.logins.loginRoleOf(
+            decision.policy?.loginBrowser,
+            effectiveAllowlist(decision.policy?.allowlist, relockBlocked),
+        )
+        if (packageName == com.kidslauncher.mdm.logins.CHROME_PACKAGE && BrowserConfig.roleReady(context, loginRole)) return false
         // Hidden only if not allowed at all - the schedule lock alone just suspends.
         val hide = shouldSuspendNewPackage(
             packageName, decision, overrideActive, context.packageName, systemDialerPackage(context),
@@ -1675,6 +1730,24 @@ object AppEnforcer {
         enforceDefaultHome(dpm, admin, context)
         enforcePlayLinkBlocker(dpm, admin, context)
         enforceCallLogPin(dpm, admin, context)
+        enforceCaptivePortalPin(dpm, admin, context)
+    }
+
+    /**
+     * Design 102 §3.2 (Q102-M5): `android.net.conn.CAPTIVE_PORTAL` goes to [com.kidslauncher.mdm.portal.CaptivePortalEntry]
+     * - set on every [apply] and in `HomePin`'s re-seat with the other PPAs of ours, so a re-seat never leaves a moment
+     * where Android shows its chooser (the kid could pick the stock login app, which is unfiltered, M5-M6). Whether it
+     * is used is the entry's enabled state (Part A's switch); the stock login app is never pinned in the kiosk.
+     */
+    private fun enforceCaptivePortalPin(dpm: DevicePolicyManager, admin: ComponentName, context: Context) {
+        try {
+            val filter = IntentFilter(android.net.ConnectivityManager.ACTION_CAPTIVE_PORTAL_SIGN_IN).apply {
+                addCategory(Intent.CATEGORY_DEFAULT)
+            }
+            dpm.addPersistentPreferredActivity(admin, filter, ComponentName(context, com.kidslauncher.mdm.portal.CaptivePortalEntry::class.java))
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Failed to set the Wi-Fi sign-in's handler", e)
+        }
     }
 
     private fun enforceDefaultHome(dpm: DevicePolicyManager, admin: ComponentName, context: Context) {

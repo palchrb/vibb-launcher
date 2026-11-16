@@ -1,4 +1,4 @@
-# Launcher notes: kid Settings: sound, touch feedback, ringtone, Bluetooth headphones
+# Launcher notes: kid Settings: sound, touch feedback, ringtone, Bluetooth headphones, Snarveier
 
 Moved from launcher/CLAUDE.md on 2026-11-01.
 
@@ -138,3 +138,84 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   `HiddenAppsTest`. The list is filtered again on every resume, policy and change of the hidden set.
 - Not device-tested: the card in nb/en at font scale 1.0/2.0, TalkBack on the row and the apps, a hide on Home then
   the swipe left.
+
+## Flymodus through the Digital assistant role (design 98)
+
+Vibb One holds the assistant role only for Flymodus (`assistant/`): the session acts on the route's one-time nonce,
+has no window and reads nothing (`AssistantInvariantsTest`). On: `AirplaneRoute.turnOn` - the refusals (role, the
+parent's `DISALLOW_AIRPLANE_MODE`, ECBM or an emergency call in the last 10 min (not Vibb's 60-min callback window - the user, 2026-11-15), the 10 s cool-down), a report-only post
+with `going_on`, Settings' `AirplaneModeVoiceActivity` (translucent or floating; on Android 16 floating) through
+`LockTaskChrome.routeWindow` (never while LOCKED) with Settings unhidden and hidden again, the DE marker put back after a
+process death. The window closes and blocks the shade through the lock-task features, without
+`LOCK_TASK_FEATURE_NOTIFICATIONS` (`routeWindowFeatures`, Q99-H1, 2026-11-15): under lock task `setStatusBarDisabled` is
+only recorded, so the window's `statusBarDisabled` does nothing there. The close is two passes: Settings out with the
+shade still blocked (`routeClosing`), then the plan's features; after a process death the put-back's `apply()` writes them
+(a plan-less pass keeps the platform's features). Left: a touch during SystemUI's ~300 ms collapse keeps the shade open
+and clickable for the window; the close contains a page started then (design 98 §2.2 step 4, emulator.md §6am). Off: `DISALLOW_AIRPLANE_MODE` set and cleared - no role needed. The kid's row (bit 64 with the role,
+Off-only whenever airplane mode is on), Home's line, the time-rule screen's "···" sheet. `AirplaneRuntime` keeps the
+periods (the edge receiver is exported: an emergency call's edge comes from `com.android.phone`; `on_by` is `kid` within
+5 s of the kid's route showing its session, the Wi-Fi setup step's edge `other`). The rows' emergency refusal is read off
+the main thread and cached 5 s (`AirplaneRuntime.rowState`); the route reads it fresh. A plan-less chrome pass never
+keeps Settings in the kiosk list (`fallbackKioskPackages`). "Fullfør oppsett"
+(`AssistantSetup`): the default-apps window, Wi-Fi in airplane mode (each with its own deadline alarm), Samtalefilter,
+the setup notification.
+`docs/design/98-airplane-mode-assistant.md`, `docs/testing/emulator.md` §6am.
+
+## Snarveier, the kid's quick panel in the shade (design 99, `docs/design/99-snarveier.md`)
+
+- **What it is.** One ongoing notification: since design 100 (`docs/design/100-one-vibb-notification.md`, step 1) the
+  anchor's own, id 1002 (`CommandListenerService`'s foreground notification), posted by the one poster
+  `server/AnchorNotification` while the panel is shown - else that notification is r13's plain notice
+  (push-and-play.md, "One poster of id 1002"). Design 99's `ShortcutsService` (id 1011) is gone: Snarveier starts and
+  stops no service, it only decides what the anchor's notification shows. Colorized in `kid_ground`,
+  `FOREGROUND_SERVICE_IMMEDIATE`, `VISIBILITY_SECRET`, on the LOW channel `launcher:shortcuts` (`.N` after the kid
+  showed it again); `notify(1002)` moves the one record between that channel and the listener's (M1). Only a colorized
+  FGS notification stays at the top of Android 16's shade and out of its "Vibb One · 3" bundle (§1, S4/S5). Up to
+  **four** round buttons in one row, four quarter cells, **no names** (revision 3, the user 2026-11-15: "Må vi ha navn
+  under logoen? Det har ikke ios"): `shortcuts_row.xml` is the content view; the big view is the same row, and on a day
+  with a screen-time budget `shortcuts_panel_big.xml` - the time line over it (r13's words, "1 t 20 min igjen i dag" /
+  "Skjermtiden er brukt opp i dag", 14 sp `nunito_bold`, two lines at most) and the note line (13 sp, white 70 %) when
+  there is one: "Spurt kl. 14:02 · venter på svar", the parent's answer for 30 minutes ("Pappa svarte nei kl. 14:10",
+  "Mamma ga deg 30 min"), or time given without a request (design 100 step 2, §14.3; push-and-play.md, "The
+  request"). No action in the panel (design 100 D1: "Be om mer tid" is the Mer tid disc's - usable while the kid may
+  ask, dimmed "Mer tid, spurt" while a request is open, gone at the day's three).
+  Folded, the row alone (the time is then hidden: accepted). 40 dp discs, 22 dp glyphs, in the 48 dp content height
+  (45 dp cells folded, 55 dp unfolded at 320 dp); the discs are dp only. Off: white at 12 %, on: the peach disc with the
+  glyph in `kid_ground`; dimmed 40 %, busy 50 %. The names (`shortcut_full_*`) are the picker's and each cell's content
+  description. The small icon is the gear, `ic_stat_gear` (`baseline_settings_24`'s path with a literal white fill:
+  the theme-attribute gear draws an empty disc in SystemUI, design 100 M10).
+- **Items** (`ShortcutsModel.kt`, pure, `ShortcutsTest`): torch, sound (bit 8), airplane (bit 64 + the role via
+  `airplaneRow`, Off-only when on), wifi (1), bluetooth (2), mobile_data (32, `kidMobileRow`), brightness (4, three steps
+  40/128/230), more_time (the anchor notice's `ask` part, set by the poster from the time part it posts with -
+  `ShortcutsRuntime.panelFor`, design 100 Q100-L6),
+  music (Vibb music's own session only, gated by `MusicSessions.usable`). The panel = the kid's picks (`null` = the
+  default order torch, sound, airplane, wifi, bluetooth, mobile_data, brightness, more_time, music) offered now, the first
+  four. Shown with device owner, an `Ok` cache, bit **128** (`QuickControlFeature.SHORTCUTS`), an item, not hidden.
+- **The glue** (`ShortcutsRuntime`): the platform's signals are the process's (`init` from `Application.initRest`'s
+  tail, after the torch): airplane, ringer, DND, Wi-Fi, Bluetooth, channel block state, locale, a brightness observer,
+  the torch, `AirplaneRuntime`, the policy and `kidMobileOff` prefs; a `MusicSessions` listener while the panel holds
+  Musikk (C99-L4). The launcher's own language (a per-app locale, no broadcast) reaches it from
+  `Application.onConfigurationChanged` -> `ShortcutsRuntime.languageChanged`: the current channel is created again
+  (only renamed; a channel the kid turned off stays off) and the panel posted again (C99-L1). The parent's restrictions
+  (Flymodus's "Blokker flymodus") have no broadcast: `AppEnforcer.applyHardening` asks for a refresh at its end. Every
+  signal asks the anchor's one poster for a refresh (`ShortcutsRuntime.requestRefresh` -> `AnchorNotification`): it
+  posts a changed view at most once a second, only while the anchor runs; a panel wanted while the anchor isn't running
+  shows when it comes back.
+- **A tap** is a broadcast to the non-exported `ShortcutsReceiver` (`goAsync`, the key alone) or, for Flymodus On
+  while usable and not busy (pure `shortcutOpensWindow`; a dimmed or busy Flymodus is a broadcast, refused with the
+  shade left open - C99-M1, D10), `ShortcutAirplaneActivity` (translucent, its own task, `noHistory`): Android closes the shade to start it, and the
+  route starts only on its window's first focus, so no finger is left in a collapsing shade (design 98's ~300 ms gap);
+  no focus in 3 s - nothing. Every tap runs on `ShortcutsRuntime.taps` through the pure fail-closed
+  `shortcutTapAllowed`: an unknown key, the lock mode undecided or the time rules unreadable, LOCKED, Android's keyguard
+  (a Swipe keyguard shows silent notifications), not in the panel, dimmed, busy, Musikk's app unusable -> refused, logged.
+- **Hidden** (§2.6): the long-press menu's "Turn off" on the channel is the kid's choice; the report says `hidden`, Kid
+  Settings' row "Skjult i varsellisten", and the anchor's notification goes back to the plain notice (with the time
+  left) on the listener channel (design 100 §2.4, §5; the swap on a user's block is still to be checked, §11 check 7).
+  Only the picker's "Vis i varsellisten igjen" deletes the channel and makes `launcher:shortcuts.N+1` - one task on the
+  poster's thread, the delete only while the plain notice is up (Q100-L8).
+- **Kid Settings' row** "Snarveier" (its own card "I varsellisten" at the top, with bit 128 and a candidate) opens
+  `ui/kidsettings/ShortcutsPickerActivity` (a page in Home's task): check boxes, up to four, "Flytt opp"/"Flytt ned"
+  buttons on the chosen rows (no dragging: gesture and 3-button navigation alike), a fifth refused with a line. The
+  picks are CE prefs `shortcuts`/`picks` (a JSON list; unknown keys kept).
+- **The report** `shortcuts: {shown, hidden, items}` (capability `shortcuts_v1`, a full-report field), the contract
+  `shortcuts.json` (root `CLAUDE.md`).

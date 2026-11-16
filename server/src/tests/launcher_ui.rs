@@ -379,7 +379,9 @@ async fn photo_is_reencoded_and_reaches_the_device() {
         words("device.calls.adjust_crop")
     )));
     assert!(page.contains("<input type=\"hidden\" name=\"view\" value=\"\" data-photo-view>"));
-    assert!(page.contains("<script src=\"/static/photo-crop.js?v=3\" defer></script>"));
+    assert!(
+        page.contains("<script src=\"/static/photo-crop.js?v=4\" defer data-swap-ready></script>")
+    );
     assert!(page.contains(&format!(
         "data-side=\"{}\" data-max-bytes=\"{}\"",
         crate::photos::MAX_SIDE,

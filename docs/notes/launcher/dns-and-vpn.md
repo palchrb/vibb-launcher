@@ -30,6 +30,8 @@ Also found and fixed on the same test pass: **`CommandListenerService`'s SSE `Ok
 
 **Confirmed live and fully working on both test phones (Pixel 4a 5G, Moto G Play) as of 2026-08-08**: ad-blocking, policy sync, the new per-device filter toggle (both the server checkbox and the local pause-restrictions switch), and the blocked-domain log at `/dns/log` all verified end to end. Not yet built (deliberately deferred, tracked as a backlog task): the QR-code/interactive-login flow for the tsnet auth key mentioned above. Also not yet cleaned up: the server's `com.tailscale.ipn` tracked-app row still silently auto-updates the now-unused standalone Tailscale app - harmless, minor, low priority.
 
+**A stop before the start's `startForeground` (ported from upstream siesta5787/kids-launcher-mdm c88216cfe0, 2026-11-12).** `stopService` on a `startForegroundService` start that hasn't been answered crashes the launcher with `ForegroundServiceDidNotStartInTimeException` (upstream hit it live: a sync's `apply()` started the filter, the pause's `apply()` stopped it before `onCreate`). `KidVpnService.stop` calls `stopService` only once `onCreate` ran and no foreground start awaits its `onStartCommand` (pure `vpnStopsNow`, `QuietNotificationsTest`; the pending count is ours - upstream checked only `created`, which leaves the plain start's foreground fallback into a running instance open); otherwise the queued start stops itself in `onStartCommand`, after answering, from the cached `vpnFilterEnabled` (`applyVpnRestrictions` writes it before every start and stop; a failed read counts as on), and `onCreate` builds no tunnel meanwhile. `onRevoke`'s `stopSelf()` waits the same way (code QA L1): with a foreground start pending, that start's `onStartCommand` stops the service, its state being stopped.
+
 ## A custom DNS server with a parent-chosen backup (design 36 steps 1-3, `docs/design/36-custom-dns.md`, at the monorepo root)
 
 - **What it does**: with Settings › Web Filter › "Custom server" the VPN forwards every query **the phone's lists let
@@ -76,7 +78,14 @@ Also found and fixed on the same test pass: **`CommandListenerService`'s SSE `Ok
   the server; one silent to the deadline - the watchdog's close or the read's own timeout (QA L1) - is silence after
   the write, as on a fresh one. A `give` also closes every server's connections idle past the limit (QA L4). The pool is evicted on a
   network change and closed at stop (off the main thread); the one deadline per attempt (`DotDeadline`, the
-  handshake included) and the trickle-proof `readFully` stay. DoH: `buildDohClient` - **one OkHttpClient per `CustomDns`, from a fresh
+  handshake included) and the trickle-proof `readFully` stay. **A new DoT connection resumes the last TLS session**
+  (design 95 D7, measured 2026-11-14 - no code of ours): `openDot`'s `SSLSocketFactory.getDefault()` is the process's
+  one Conscrypt context, whose client session cache keys a session by the host string given to `createSocket` (the
+  name, or the IP literal) and the port, and offers it as a TLS 1.3 PSK (~2.2 KB a connection instead of ~5 KB with
+  the chain; Cloudflare every time, Quad9 every other, Google never). A session is cached only from a handshake that
+  passed the system CAs (and, for a name, the name check), and the IP check runs on every connection, resumed too (a
+  resumed session keeps its peer certificates). Keep `openDot` on the default factory and the peer host in `createSocket`: a new `SSLContext` per
+  connection, or `createSocket` without the host, would lose it. DoH: `buildDohClient` - **one OkHttpClient per `CustomDns`, from a fresh
   `OkHttpClient.Builder()` (never `newBuilder()` of the API/SSE clients, which carry tsnet's SOCKS proxy)**,
   `Proxy.NO_PROXY`, `ProtectedSocketFactory` (sockets protected before they connect), `BootstrapDns` as its `Dns`,
   1.5 s connect / 2.5 s call, no redirects, no cache, no cookies, system CAs; a per-call `EventListener` (`CallMarks`)
@@ -195,8 +204,9 @@ Also found and fixed on the same test pass: **`CommandListenerService`'s SSE `Ok
 "Use secure DNS" switch in an allowed browser bypassed the whole filter). A VPN/DNS-level filter can't tell a DoH request
 from any other HTTPS, so three parts, all following `vpnFilterEnabled` (lifted by the override, the pause and the
 parent's switch) and claimed together as capability `dns_bypass_v1` (`DNS_BYPASS_CAPABILITY`):
-- **The managed config** (`server/BrowserDoh.kt`, the only part that really closes it, in browsers that read it):
-  `AppEnforcer.apply` calls `BrowserDoh.apply` right after `applyVpnRestrictions`; pure `browserDohPlan(filterOn,
+- **The managed config** (`server/BrowserConfig.kt`, `server/BrowserDoh.kt` until design 102 renamed and widened it
+  with Chrome's login role, `docs/notes/launcher/logins.md`; the only part that really closes it, in browsers that read
+  it): `AppEnforcer.applyHeld` calls `BrowserConfig.apply` before the plan since design 102 (Q102-M3); pure `browserDohPlan(filterOn,
   installed)` gives every installed (hidden ones too: `MATCH_UNINSTALLED_PACKAGES`) package of `BROWSER_DOH_PACKAGES`
   exactly `{"DnsOverHttpsMode": "off"}` (a String) while on and an empty bundle while off, written with
   `setApplicationRestrictions` only when it differs (`sameBundle`, shared with MusicSync). A fixed list, not the
@@ -239,3 +249,41 @@ parent's switch) and claimed together as capability `dns_bypass_v1` (`DNS_BYPASS
   tunnel is design 67's non-goal.
 - Tests: `DnsFilterEngineTest` (the file's lines, hits and misses, the order, the load before the early return),
   `NxdomainTest`, `BrowserDohTest`, `SyncScheduleTest` (the capability), `CustomDnsGuardsTest` (the canary before the lists).
+
+## Three shapes, one owner of always-on (design 95 revision 3, "Bare Vibb", 2026-11-13)
+
+`KidVpnService` has three `Builder` shapes, decided by the pure `vpnShape` (`MobileNetwork.kt`) from the inputs
+`apply()` stores (`vpn_inputs`: the filter switch, the parent's Bare Vibb, the roaming lock - each with the lifts
+applied) and the best non-VPN network the service's watcher sees:
+
+- **filter** - today's DNS filter (the one route to `192.0.2.2`), lockdown off;
+- **sink** - `0.0.0.0/0` and `::/0` into the tunnel (a ULA `/128` for v6), DNS answered `REFUSED`, TCP answered with
+  RST+ACK, the rest dropped (`SinkPackets`, synchronous in the read loop, outside the DNS path's admission limit);
+  lockdown on. Wanted on cellular while the parent's Bare Vibb holds, or while a roaming session outlived the roaming
+  lock (design 95 §6 item 2 (d));
+- **pass** - no routes and no DNS server: nothing changes for apps, but the service and its watcher stay up so the sink
+  starts the moment Wi-Fi drops (the filter off, with Bare Vibb on or the roaming lock on - code QA M2, so a roaming
+  session that outlived the lock and survives a stay on Wi-Fi is sunk when Wi-Fi drops).
+
+**The launcher is excluded in every shape** (`addDisallowedApplication(packageName)`), so tsnet too: none of its
+sockets move at a switch, the SSE stream and a sync survive it, and the launcher's own lookups (the server's name)
+now use the network's resolver instead of the filter - a dead filter upstream no longer takes the sync with it. A
+server name only the parent's own DNS server resolves (split-horizon) would need a look.
+
+**One owner of always-on** (`MobileNetworkRuntime.writeAlwaysOn`, `alwaysOnFor`): `apply()`, the service's switch and
+the cold start write exactly what the decided shape needs, recorded first (`vpn_shape`), only on a change. Lockdown
+only in the sink. To the sink: the tunnel first, then lockdown; away from it: lockdown off first. `apply()` never
+writes lockdown off on a doubt about the network (`applyShape`: no network seen and the last shape the sink keeps
+it); a network lost in the watcher keeps the shape too (a Wi-Fi -> cellular switch passes through "none" for ~60 ms).
+While the sink is wanted, the launcher's own downloads (catalog APKs, the self-update, the music files it fetches)
+wait for Wi-Fi (`downloadGate`'s `mobileHeld`); Install Now still goes.
+
+Code QA fixes (2026-11-13, `docs/review/qa-95-mobilnett-code.md`): the service decides with `apply()`'s rule
+(`serviceShape` = `applyShape` with its watcher's network), so a start with no network yet (a boot, airplane mode)
+keeps the recorded sink and its lockdown instead of writing them off (H1). Every switch goes through `switchTo`: a
+failed `establish()` toward the sink still writes the sink's lockdown (other apps cut, fail closed) and is retried,
+5 s doubling to 5 min (M1). Two writers of always-on remain (`apply()` and the service, L2): `apply()` always ends in
+`KidVpnService.start`, whose `reshape()` writes the service's own decision last - keep that start. The parent's
+explicit hardening switch "Blokker VPN-innstillinger" off (`disallow_config_vpn: false`) still wins over the sink's
+`DISALLOW_CONFIG_VPN` (L1, kept by design): a restriction the parent lifted stays lifted, so in that combination Bare
+Vibb is not tamper-proof against Settings › VPN.

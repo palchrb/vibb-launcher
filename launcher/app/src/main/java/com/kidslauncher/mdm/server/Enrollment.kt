@@ -21,10 +21,17 @@ fun enrollFailureOf(httpCode: Int): EnrollFailure = EnrollFailure(refused = http
  * `*.ts.net` server resolves only through it, and in the deadlock no sync or stream retries it).
  */
 object Enrollment {
-    suspend fun enroll(context: Context, serverUrl: String, code: String): Result<Unit> = withContext(Dispatchers.IO) {
+    /** [connectTailnet] false: the caller has just tried the tailnet in this flow ([applyProvisioningExtras]) - a
+     * second attempt would only double the wait (code QA L2 of the upstream port). */
+    suspend fun enroll(
+        context: Context,
+        serverUrl: String,
+        code: String,
+        connectTailnet: Boolean = true,
+    ): Result<Unit> = withContext(Dispatchers.IO) {
         try {
             // No-ops when connected or when no key is set.
-            TsnetClient.connectFromPreferences(context)
+            if (connectTailnet) TsnetClient.connectFromPreferences(context)
             val response = createMdmApi(serverUrl).enroll(EnrollRequest(code))
             val body = response.body()
             if (!response.isSuccessful || body == null) return@withContext Result.failure(enrollFailureOf(response.code()))
@@ -33,6 +40,11 @@ object Enrollment {
                 return@withContext Result.failure(EnrollFailure(refused = false, "the token couldn't be stored"))
             }
             mdm.enrolled(true)
+            // Design 95 (code QA L3): the old enrollment's kept policy body (its PIN hashes) goes; the token hash would
+            // refuse it anyway.
+            PolicyEtagStore.of(context).drop()
+            // And the last full report the old enrollment's server took (design 95 §3.5): the next one is full.
+            HeartbeatAckStore.of(context).clear()
             // A new enrollment: the queued parent-PIN events were about the old one (design 24).
             ParentPin.clearEvents(context)
             // And the commands it ran and the answers it queued (QA of the launcher wave, Medium 1).

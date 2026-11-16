@@ -172,11 +172,11 @@ class PinLockLayoutTest {
         assertEquals("wrap_content", byId("pin_emergency").getAttributeNS(ns, "layout_height"))
         assertEquals("wrap_content", byId("pin_parent_code").getAttributeNS(ns, "layout_height"))
         assertTrue(byId("pin_emergency").dim("minHeight") >= 48f)
-        assertTrue(byId("pin_parent_code").dim("minHeight") >= 44f)
+        assertTrue(byId("pin_parent_code").dim("minHeight") >= 48f)
         for (scale in listOf(1f, 1.3f, 2f)) {
             val width = contentWidthDp(320f)
             assertTrue("Emergency call >= 48 dp at $scale", height(byId("pin_emergency"), scale, width) >= 48f)
-            assertTrue("Parent code >= 44 dp at $scale", height(byId("pin_parent_code"), scale, width) >= 44f)
+            assertTrue("Parent code >= 48 dp at $scale (screen-size fix S8)", height(byId("pin_parent_code"), scale, width) >= 48f)
         }
         // The label wraps rather than being cut: no line limit, no single line, no ellipsis.
         val label = byId("pin_emergency_label")

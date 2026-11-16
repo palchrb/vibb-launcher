@@ -116,6 +116,8 @@ fn switch_key(column: &str) -> &'static str {
         "push_extra_time" => "settings.notifications.switch.extra_time",
         "push_sms_held" => "settings.notifications.switch.sms_held",
         "push_contact_request" => "settings.notifications.switch.contact_request",
+        "push_roaming" => "settings.notifications.switch.roaming",
+        "push_wifi_signin" => "settings.notifications.switch.wifi_signin",
         crate::parent_events::APP_UPDATES_SWITCH => "settings.notifications.switch.app_updates",
         _ => "settings.notifications.switch.unknown",
     }
@@ -844,13 +846,19 @@ async fn delivery_lines(
 /// confirmed", "Pushed to 2 devices · opened on 1" when any was opened, else "Pushed to 2 devices
 /// · shown on 1" (delivered ones counted), "Sending", "In a
 /// summary" (its summary was accepted), "Not sent"; nothing when no push was made. A folded delivery's status is its
-/// summary's ([delivery_lines]). A push a restart dropped (design 38: the held `phone_off` the
-/// next start's "restarted" replaced) or a newer shutdown superseded counts as none - the row says
+/// summary's ([delivery_lines]). A push a restart or a quick start dropped (design 38: the held
+/// `phone_off` the next start folded) or a newer shutdown superseded counts as none - the row says
 /// nothing, never "Not sent".
 pub fn delivery_line(lang: Lang, deliveries: &[DeliveryState]) -> Option<String> {
     let deliveries: Vec<&DeliveryState> = deliveries
         .iter()
-        .filter(|d| !(d.0 == "dropped" && matches!(d.1.as_deref(), Some("restart" | "superseded"))))
+        .filter(|d| {
+            !(d.0 == "dropped"
+                && matches!(
+                    d.1.as_deref(),
+                    Some("restart" | "quick_start" | "superseded")
+                ))
+        })
         .collect();
     let folded = |d: &&DeliveryState| d.1.as_deref() == Some("folded");
     let accepted: Vec<&DeliveryState> = deliveries

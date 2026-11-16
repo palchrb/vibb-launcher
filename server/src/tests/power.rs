@@ -429,7 +429,7 @@ async fn a_known_restart_says_no_last_position() {
         .get_page(&format!("/devices/locate?device={id}"), &cookie)
         .await
         .text();
-    assert!(page.contains("data-row=\"fix\""), "{page}");
+    assert!(page.contains(" data-fix-title=\""), "{page}");
     assert!(!page.contains("data-fix-before-off"), "a known restart");
 }
 
@@ -468,7 +468,7 @@ async fn the_shutdowns_position_goes_with_the_location_retention() {
 }
 
 /// qa-38-design H1: the shutdown's POST got through, then the next boot's start - within the
-/// gap a restart (one push), past it two.
+/// gap a restart, quiet within the hold (2026-11-13: no push at all).
 #[tokio::test]
 async fn a_restart_drops_the_held_off_push() {
     let (app, id, token) = setup().await;
@@ -494,7 +494,7 @@ async fn a_restart_drops_the_held_off_push() {
     let inbox = app.get_page("/notifications", &cookie).await.text();
     assert_eq!(delivery_lines(&inbox), ["Sending"]);
 
-    // The start 90 s after the shutdown: "restarted", the held push dropped, never sent.
+    // The start 90 s after the shutdown: "restarted", the held push dropped, nothing sent.
     let start = shutdown + Duration::seconds(90);
     let body = json!({ "off": off(shutdown, 41, json!({})), "on": on(start, 42) });
     assert_eq!(post(&app, &token, body).await, StatusCode::NO_CONTENT);
@@ -506,13 +506,10 @@ async fn a_restart_drops_the_held_off_push() {
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[1].1, "Anna's phone restarted");
     assert!(rows[1].2.ends_with(" · battery 60 %"), "{rows:?}");
-    assert_eq!(
-        send_at(&app, now + Duration::minutes(6)).await,
-        ["Anna's phone: restarted"]
-    );
-    // The off row has no delivery line (not "Not sent"): only the start's.
+    assert!(send_at(&app, now + Duration::minutes(6)).await.is_empty());
+    // The off row has no delivery line (not "Not sent"), nor the start's.
     let inbox = app.get_page("/notifications", &cookie).await.text();
-    assert_eq!(delivery_lines(&inbox), ["Delivered to iPhone · Safari"]);
+    assert!(delivery_lines(&inbox).is_empty(), "{inbox}");
 }
 
 /// The inbox rows' delivery lines.
@@ -546,20 +543,76 @@ async fn an_off_without_a_quick_start_is_pushed_after_the_hold() {
     assert!(rows[1].2.contains(" · off since "), "{rows:?}");
 }
 
-/// A power-off and a start inside the hold, not a restart (the phone said so): the held push goes
-/// at once, before the "turned on" - never after it.
+/// A power-off (the phone said it was no restart) and a start 4 minutes later on the phone's
+/// clock (2026-11-13): quiet - the held push dropped, the start unpushed, both in the inbox.
 #[tokio::test]
-async fn a_quick_start_after_a_power_off_sends_the_off_first() {
-    let (app, _, token) = setup().await;
+async fn a_quick_power_off_and_on_is_quiet() {
+    let (app, id, token) = setup().await;
     let now = Utc::now();
-    let shutdown = now - Duration::minutes(2);
+    let shutdown = now - Duration::minutes(4) - Duration::seconds(10);
     let power_off = off(shutdown, 41, json!({ "reboot": false }));
     post(&app, &token, json!({ "off": power_off.clone() })).await;
-    let body = json!({ "off": power_off, "on": on(now - Duration::seconds(5), 42) });
+    let start = shutdown + Duration::minutes(4);
+    let body = json!({ "off": power_off, "on": on(start, 42) });
+    post(&app, &token, body).await;
+    assert_eq!(
+        deliveries(&app, "phone_off").await,
+        [("dropped".to_string(), Some("quick_start".to_string()), None)]
+    );
+    assert!(deliveries(&app, "phone_on").await.is_empty());
+    assert!(send_at(&app, now + Duration::minutes(6)).await.is_empty());
+    let rows = events(&app, id).await;
+    assert_eq!(
+        (rows[0].1.as_str(), rows[1].1.as_str()),
+        (
+            "Anna's phone was turned off",
+            "Anna's phone was turned off and on"
+        )
+    );
+    assert!(rows[1].2.starts_with("Off "), "{rows:?}");
+    let inbox = app
+        .get_page("/notifications", &app.admin_cookie().await)
+        .await
+        .text();
+    assert!(delivery_lines(&inbox).is_empty(), "{inbox}");
+}
+
+/// The same with the start 6 minutes after the shutdown: past the hold, so both are pushed - the
+/// held off at once, before the "turned on", never after it.
+#[tokio::test]
+async fn a_power_off_past_the_hold_pushes_both() {
+    let (app, _, token) = setup().await;
+    let now = Utc::now();
+    let shutdown = now - Duration::minutes(6) - Duration::seconds(5);
+    let power_off = off(shutdown, 41, json!({ "reboot": false }));
+    post(&app, &token, json!({ "off": power_off.clone() })).await;
+    let start = shutdown + Duration::minutes(6);
+    let body = json!({ "off": power_off, "on": on(start, 42) });
     post(&app, &token, body).await;
     assert_eq!(
         send_at(&app, now).await,
         ["Anna's phone: turned off", "Anna's phone: turned on"]
+    );
+}
+
+/// A quick start whose upload came after the server's hold ran out (the off already pushed): its
+/// "turned on" goes too - never a "turned off" left standing alone.
+#[tokio::test]
+async fn a_quick_start_after_the_off_was_pushed_is_pushed() {
+    let (app, _, token) = setup().await;
+    let now = Utc::now();
+    let shutdown = now - Duration::minutes(8);
+    let power_off = off(shutdown, 41, json!({ "reboot": false }));
+    post(&app, &token, json!({ "off": power_off.clone() })).await;
+    assert_eq!(
+        send_at(&app, now + Duration::minutes(5) + Duration::seconds(3)).await,
+        ["Anna's phone: turned off"]
+    );
+    let body = json!({ "off": power_off, "on": on(shutdown + Duration::minutes(2), 42) });
+    post(&app, &token, body).await;
+    assert_eq!(
+        send_at(&app, now + Duration::minutes(6)).await,
+        ["Anna's phone: turned on"]
     );
 }
 
@@ -889,7 +942,7 @@ async fn the_device_page_says_off_since_until_the_start() {
         );
     assert!(
         html.contains(&format!(
-            "<span class=\"state-offline\" data-power-off title=\"{}\">Turned off {when}</span> · <span>battery was 2 %</span>",
+            "<span class=\"part\"><span class=\"state-offline\" data-power-off title=\"{}\">Turned off {when}</span></span> · <span class=\"part\"><span>battery was 2 %</span></span>",
             crate::display_time::Zone::load(&app.db, crate::i18n::Lang::En)
                 .await
                 .exact(DateTime::from_timestamp_millis(ms(shutdown)).unwrap())
@@ -998,7 +1051,7 @@ async fn a_phone_clock_behind_and_a_report_at_shutdown_still_say_off() {
         .await
         .text();
     assert!(summary.contains("data-power-off"), "{summary}");
-    assert!(summary.contains("avatar-dot dot-offline"), "{summary}");
+    assert!(summary.contains("state-dot dot-offline"), "{summary}");
     let list = app.get_page("/devices", &cookie).await.text();
     assert!(list.contains("data-power-off"), "{list}");
     assert!(list.contains("avatar-dot dot-offline"), "{list}");

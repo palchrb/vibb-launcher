@@ -112,6 +112,16 @@ pub struct PolicyTimeRule {
     /// launcher without it ignores the key; a missing key is not silent.
     pub silent: bool,
     pub days: Vec<Option<DayWindow>>,
+    /// Design 93 §9.1: a rule turned on now ends for good at this instant (epoch ms), whatever its
+    /// weekday window says; `null` on a scheduled rule. A launcher without `lock_now_v1` ignores it.
+    pub until_ms: Option<i64>,
+    /// Design 93 §9.2: the card shows this rule ahead of the kind order while its end is a real
+    /// unlock; true on a turned-on rule only.
+    pub card_first: bool,
+    /// Design 98 §4.4.2: on a rule turned on now (a copy), the rule it copies - the phone's parent-code pause pauses
+    /// both, as the PWA's twin lift does. Absent on a scheduled rule; an older launcher ignores it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub copy_of: Option<i64>,
 }
 
 /// `PolicyResponse.time_policy.lifts[]`. `rule_id` null with target "rule" = every rule.
@@ -122,6 +132,33 @@ pub struct PolicyLift {
     pub rule_id: Option<i64>,
     pub minutes: i64,
     pub expires_at_ms: i64,
+    /// Design 98 §4.4.3: the parent code's pause on the phone (`POST /api/devices/rule-pause`) - the phone lifts it
+    /// only through its own record of that key. Absent on the PWA's lifts; an older launcher ignores it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub phone_key: Option<String>,
+    /// Design 100 §14.2: who gave it - the parent's display name (the answer's own snapshot when the lift answered a
+    /// request, QA R2-L10); absent without one (D11: never the login), on the phone's own pauses and for a parent
+    /// gone since. The phone's "Mamma ga deg 30 min" (D10).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub by: Option<String>,
+    /// When it was given (`time_lifts.created_at`, epoch ms): the phone shows a lift's note for 30 minutes (D10, D12).
+    pub at_ms: i64,
+}
+
+/// `PolicyResponse.time_policy.answer` (design 100 §14.2): the newest answered request for more time asked in the
+/// phone's day - its own `request_id`, `yes` or `no`, the parent's display name (absent without one, D11), when, and
+/// for a yes the lift it made and its minutes (QA R2-L1). Absent when there is none.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct PolicyAnswer {
+    pub request_id: String,
+    pub answer: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub by: Option<String>,
+    pub at_ms: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lift_id: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub minutes: Option<i64>,
 }
 
 /// `PolicyResponse.time_policy` - always sent.
@@ -131,6 +168,13 @@ pub struct TimePolicy {
     /// 7 entries, Monday first; null = unlimited.
     pub daily_budget_minutes: Vec<Option<i64>>,
     pub lifts: Vec<PolicyLift>,
+    /// Design 100 §14.2 (QA R2-L4: inside `time_policy`, so it caches with the answer): this server answers requests
+    /// for more time and closes them only by an answer. Always true; an older server's absence keeps the launcher's
+    /// r13 rule (a newer lift closes the request).
+    pub request_answers: bool,
+    /// The newest answer of the phone's day ([PolicyAnswer]); absent when none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub answer: Option<PolicyAnswer>,
 }
 
 /// `PolicyResponse.location_policy` - always sent. `interval_minutes` is the served one (design
@@ -185,6 +229,9 @@ impl TimeRuleRow {
             days: served_days(
                 &parse_days(&self.days_json).map_err(|e| format!("rule {}: {e}", self.id))?,
             ),
+            until_ms: None,
+            card_first: false,
+            copy_of: None,
         })
     }
 }
@@ -263,6 +310,10 @@ pub struct TimeLiftRow {
     pub expires_at: String,
     pub created_by: Option<String>,
     pub ended_early_at: Option<String>,
+    /// Design 98 §4.4.5 (migration 0147): the parent code's pause posted by the phone (`created_by` NULL then) - the
+    /// pages word its source from it.
+    #[sqlx(default)]
+    pub phone_key: Option<String>,
 }
 
 pub fn valid_minute(m: i64) -> bool {
@@ -983,28 +1034,56 @@ pub async fn rules_off(
     Ok(ids.into_iter().collect())
 }
 
+/// A `time_lifts` row as [deliverable_lifts] reads it: id, target, rule, minutes, expiry (ms), the phone's key, who gave
+/// it, when (ms).
+type LiftRow = (
+    i64,
+    String,
+    Option<i64>,
+    i64,
+    i64,
+    Option<String>,
+    Option<String>,
+    i64,
+);
+
 /// Lifts the phone should still see: not ended early, not expired.
 pub async fn deliverable_lifts(
     db: &SqlitePool,
     device_id: i64,
 ) -> Result<Vec<PolicyLift>, sqlx::Error> {
-    let rows: Vec<(i64, String, Option<i64>, i64, i64)> = sqlx::query_as(
-        "SELECT id, target, rule_id, minutes, CAST(strftime('%s', expires_at) AS INTEGER) * 1000 \
-         FROM time_lifts WHERE device_id = ? AND ended_early_at IS NULL \
-         AND expires_at > datetime('now') ORDER BY id",
+    // Design 100 §14.2: `by` is the answer's snapshot for a lift that answered a request (QA R2-L10: one name for one
+    // "yes"), else the giver's display name now (none for a removed parent or the phone's own pause).
+    let rows: Vec<LiftRow> = sqlx::query_as(
+        "SELECT l.id, l.target, l.rule_id, l.minutes, \
+                CAST(strftime('%s', l.expires_at) AS INTEGER) * 1000, l.phone_key, \
+                CASE WHEN EXISTS (SELECT 1 FROM time_request_answers a \
+                                  WHERE a.device_id = l.device_id AND a.lift_id = l.id) \
+                     THEN (SELECT a.by_name FROM time_request_answers a \
+                           WHERE a.device_id = l.device_id AND a.lift_id = l.id LIMIT 1) \
+                     ELSE (SELECT NULLIF(TRIM(u.display_name), '') FROM admin_users u \
+                           WHERE u.username = l.created_by AND u.removed_at IS NULL) END, \
+                CAST(strftime('%s', l.created_at) AS INTEGER) * 1000 \
+         FROM time_lifts l WHERE l.device_id = ? AND l.ended_early_at IS NULL \
+         AND l.expires_at > datetime('now') ORDER BY l.id",
     )
     .bind(device_id)
     .fetch_all(db)
     .await?;
     Ok(rows
         .into_iter()
-        .map(|(id, target, rule_id, minutes, expires_at_ms)| PolicyLift {
-            id,
-            target,
-            rule_id,
-            minutes,
-            expires_at_ms,
-        })
+        .map(
+            |(id, target, rule_id, minutes, expires_at_ms, phone_key, by, at_ms)| PolicyLift {
+                id,
+                target,
+                rule_id,
+                minutes,
+                expires_at_ms,
+                phone_key,
+                by: by.filter(|b| !b.trim().is_empty()),
+                at_ms,
+            },
+        )
         .collect())
 }
 

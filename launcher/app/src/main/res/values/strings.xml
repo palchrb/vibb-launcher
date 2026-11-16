@@ -22,7 +22,17 @@
     <string name="anchor_time_left">%1$s left today</string>
     <string name="anchor_time_used_up">Screen time is used up today</string>
     <string name="anchor_ask_more_time">Ask for more time</string>
-    <string name="anchor_asked_at">Asked at %1$s</string>
+    <!-- Design 100 §8.4, §14.3: the request's note line (the panel, the plain notice's text, the time-rule screen). -->
+    <string name="ask_note_sending">Asked at %1$s · sending…</string>
+    <string name="ask_note_offline">Asked at %1$s · sends when the phone is online</string>
+    <string name="ask_note_waiting">Asked at %1$s · waiting for an answer</string>
+    <string name="ask_note_no">%1$s said no at %2$s</string>
+    <string name="ask_note_no_unnamed">The answer was no at %1$s</string>
+    <string name="ask_note_given">%1$s gave you %2$s</string>
+    <string name="ask_note_given_unnamed">You got %1$s more</string>
+    <!-- Design 100 §8.3: the time-rule screen's ask block ("Be om mer tid" is anchor_ask_more_time). -->
+    <string name="lock_ask_again">Ask again</string>
+    <string name="lock_ask_capped">You\'ve asked three times today.</string>
     <!-- E7's L7: about calls only - the card's rows (Calendar, an allowed app) still work beside it. -->
     <string name="lock_calls_emergency_only">You can only call emergency numbers now.</string>
     <string name="lock_calls_allowed">You can still call your contacts.</string>
@@ -114,10 +124,6 @@
     <string name="contact_request_done">Done</string>
     <string name="contact_request_row_description">%1$s, %2$s</string>
     <string name="kid_settings_title">Settings</string>
-    <!-- The flashlight (design 41): Home's tile and the lock's button, and TalkBack's state words. -->
-    <string name="torch_title">Flashlight</string>
-    <string name="torch_state_on">on</string>
-    <string name="torch_state_off">off</string>
     <string name="calls_phone_book_empty">There\'s nobody to call yet. Emergency numbers (112, 110, 113) always work from the lock screen\'s Emergency button.</string>
     <string name="calls_off">Calls are turned off on this phone. Emergency numbers still work.</string>
     <string name="calls_call">Call</string>
@@ -344,6 +350,10 @@
     <string name="kid_settings_touch_sounds">Touch sounds</string>
     <string name="kid_settings_touch_vibration">Vibrate on touch</string>
     <string name="kid_settings_touch_keyboard">The keyboard has its own sound and vibration in its settings.</string>
+    <string name="kid_settings_mobile_data">Mobile data</string>
+    <string name="kid_settings_mobile_parent">Set by mum and dad</string>
+    <string name="kid_settings_mobile_phone_off">Mobile data is off on the phone</string>
+    <string name="kid_settings_mobile_off">Only Vibb One uses mobile data. Wi-Fi works as before.</string>
     <string name="kid_settings_touch_read_only">Can\'t be changed on this phone yet.</string>
     <!-- The kid's ringtone and message sound (2026-11-04): the rows, their value when none is set or unnamed, the picker's lines. -->
     <string name="kid_settings_ringtone">Ringtone</string>
@@ -551,7 +561,7 @@
     <string name="notification_ring_title">Phone is ringing</string>
     <string name="notification_ring_text">A parent triggered this from Find My Device.</string>
     <string name="notification_ring_stop_action">Stop Ringing</string>
-    <string name="notification_channel_listener">Find My Device background connection</string>
+    <string name="notification_channel_listener">Vibb One</string>
     <string name="notification_listener_title">Vibb One</string>
     <string name="notification_channel_vpn_filter">Content filter</string>
     <!-- The VPN's name in Android's VPN settings and its key dialog (design 34 P11). -->
@@ -844,4 +854,112 @@
     <!-- TalkBack says "Double-tap to" before a click label (code QA L2): infinitives. -->
     <string name="weather_card_hint">see the day</string>
     <string name="weather_card_close">close the day</string>
+    <!-- Design 98 §3.3: "Fullfør oppsett" - the assistant, Wi-Fi in airplane mode, the call filter. -->
+    <string name="settings_assistant_title">Digital assistant</string>
+    <string name="settings_assistant_chosen">Vibb One is chosen</string>
+    <string name="settings_assistant_open">Choose Vibb One - needed for Flymodus. Tap: Default digital assistant app › Vibb One › OK. Android asks whether the assistant may read the screen. Vibb One never does.</string>
+    <string name="settings_assistant_pause_first">Choose Vibb One - needed for Flymodus. Pause all restrictions first, then tap here</string>
+    <string name="settings_assistant_wait">Choose Vibb One - the pause is starting, a moment…</string>
+    <string name="settings_assistant_no_page">Android has no page for this on this phone</string>
+    <string name="settings_wifi_apm_title">Wi-Fi in airplane mode</string>
+    <string name="settings_wifi_apm_kept">Wi-Fi stays on in airplane mode</string>
+    <string name="settings_wifi_apm_turns_off">This phone turns off Wi-Fi in airplane mode</string>
+    <string name="settings_wifi_apm_not_set">Not set up</string>
+    <string name="settings_wifi_apm_start">Not set up - tap: airplane mode goes on, turn on Wi-Fi in the panel, then go back</string>
+    <string name="settings_wifi_apm_pause_first">Not set up - pause all restrictions first, then tap here</string>
+    <string name="settings_wifi_apm_line">Turn on Wi-Fi here, then go back</string>
+    <string name="settings_wifi_apm_failed">Couldn\'t turn on airplane mode. Try again.</string>
+    <string name="settings_call_filter_title">Call filter</string>
+    <string name="settings_call_filter_open">Not chosen - tap and choose Vibb One (Android asks twice)</string>
+    <string name="settings_call_filter_pause_first">Not chosen - pause all restrictions first, then tap here</string>
+    <string name="notification_channel_setup">Setup</string>
+    <string name="setup_notice_title">Finish setting up Vibb One</string>
+    <plurals name="setup_notice_steps">
+        <item quantity="one">%d step left</item>
+        <item quantity="other">%d steps left</item>
+    </plurals>
+    <!-- Design 98 §4.1: the kid's Flymodus row. -->
+    <string name="kid_settings_airplane">Airplane mode</string>
+    <string name="kid_settings_airplane_off_only">Turn off airplane mode</string>
+    <string name="kid_settings_airplane_parent">Set by mum and dad</string>
+    <string name="kid_settings_airplane_turning_on">Turning on airplane mode…</string>
+    <string name="kid_settings_airplane_turning_off">Turning off…</string>
+    <string name="kid_settings_airplane_emergency">Airplane mode can\'t be turned on right after an emergency call</string>
+    <string name="kid_settings_airplane_failed">Couldn\'t turn on airplane mode. Try again.</string>
+    <string name="kid_settings_airplane_on_wifi">No mobile network. Wi-Fi is on. Emergency calls still work.</string>
+    <string name="kid_settings_airplane_on_offline">No network. Emergency calls still work.</string>
+    <string name="kid_settings_wifi_airplane">Can\'t be changed in airplane mode</string>
+    <string name="kid_settings_mobile_airplane">Airplane mode is on</string>
+    <string name="home_airplane_on">Airplane mode is on · Tap to turn off</string>
+    <string name="lock_more">More</string>
+    <string name="rule_sheet_parent_code">Parent code ›</string>
+    <string name="rule_pause_title_one">Pause %1$s</string>
+    <string name="rule_pause_title_two">Pause %1$s and %2$s</string>
+    <string name="rule_pause_15">15 min</string>
+    <string name="rule_pause_30">30 min</string>
+    <string name="rule_pause_60">1 hour</string>
+    <string name="rule_pause_120">2 hours</string>
+    <string name="rule_pause_words">Applies to this rule only. You\'ll see the pause in the app when the phone is online again, and can end it there.</string>
+    <string name="rule_pause_button">Pause it</string>
+    <string name="rule_sheet_parent_code_title">Parent code</string>
+    <string name="rule_pause_no_pin">No parent PIN is set on the server.</string>
+    <!-- Snarveier (design 99): the panel in the shade, the items' names (the picker and the buttons' content
+         descriptions; none under the buttons, revision 3), and Kid Settings' row and picker page. -->
+    <string name="shortcuts_channel">Shortcuts</string>
+    <string name="shortcuts_subtext">Shortcuts</string>
+    <string name="shortcut_full_torch">Flashlight</string>
+    <string name="shortcut_full_sound">Sound</string>
+    <string name="shortcut_full_airplane">Airplane mode</string>
+    <string name="shortcut_full_wifi">Wi-Fi</string>
+    <string name="shortcut_full_bluetooth">Bluetooth</string>
+    <string name="shortcut_full_mobile_data">Mobile data</string>
+    <string name="shortcut_full_brightness">Brightness</string>
+    <string name="shortcut_full_more_time">More time</string>
+    <string name="shortcut_full_music">Music</string>
+    <string name="shortcut_desc_on">%1$s, on</string>
+    <string name="shortcut_desc_off">%1$s, off</string>
+    <string name="shortcut_desc_sound_off">%1$s, silent (vibrate)</string>
+    <string name="shortcut_desc_level">%1$s, %2$s</string>
+    <string name="shortcut_level_low">low</string>
+    <string name="shortcut_level_medium">medium</string>
+    <string name="shortcut_level_high">high</string>
+    <string name="shortcut_desc_ask">%1$s, ask for more time</string>
+    <string name="shortcut_desc_asked">%1$s, asked</string>
+    <string name="shortcut_desc_unavailable">%1$s, not available now</string>
+    <string name="shortcut_desc_busy">%1$s, one moment</string>
+    <string name="kid_settings_shortcuts_heading">In the notifications</string>
+    <string name="kid_settings_shortcuts">Shortcuts</string>
+    <string name="kid_settings_shortcuts_hidden">Hidden in the notifications</string>
+    <string name="kid_settings_shortcuts_none">None chosen</string>
+    <string name="shortcuts_picker_line">Choose up to 4. They show at the top when you pull down from the top of the screen.</string>
+    <string name="shortcuts_picker_count">%1$d of %2$d chosen</string>
+    <string name="shortcuts_picker_full">You have chosen 4. Remove one first.</string>
+    <string name="shortcuts_picker_show_again">Show in the notifications again</string>
+    <string name="shortcuts_picker_hidden_line">You have hidden the shortcuts in the notifications.</string>
+    <string name="shortcuts_picker_more_time_line">Shows on days with screen time</string>
+    <string name="shortcuts_picker_move_up">Move %1$s up</string>
+    <string name="shortcuts_picker_move_down">Move %1$s down</string>
+    <!-- Design 102 Part A: the Wi-Fi sign-in window, its entry, the Wi-Fi page's row and Home's line. -->
+    <string name="portal_title">Sign in to Wi-Fi</string>
+    <string name="portal_checking">Checking the network …</string>
+    <string name="portal_works">The network already works</string>
+    <string name="portal_code_needed">A grown-up types the parent code to sign in.</string>
+    <string name="portal_code_title">Parent code for Wi-Fi sign-in</string>
+    <string name="portal_no_code">No parent code is set – ask a grown-up</string>
+    <string name="portal_ask">Ask a grown-up about Wi-Fi sign-in</string>
+    <string name="portal_no_sign_in">This Wi-Fi doesn\'t need a sign-in now</string>
+    <string name="portal_not_now">Wi-Fi sign-in isn\'t possible now</string>
+    <string name="portal_close">Close</string>
+    <string name="portal_leaves">This link leaves the sign-in page</string>
+    <string name="portal_blocked">This page is blocked</string>
+    <string name="portal_tls">This page\'s connection isn\'t safe</string>
+    <string name="portal_no_download">Downloads aren\'t possible here</string>
+    <string name="portal_timeout">Signing in took too long. Try again, or ask a grown-up.</string>
+    <string name="portal_budget">You\'ve used today\'s Wi-Fi sign-ins. Ask a grown-up.</string>
+    <string name="wifi_networks_connected_sign_in">Connected – sign-in needed</string>
+    <string name="wifi_portal_sign_in">Sign in</string>
+    <string name="wifi_portal_sign_in_sub">This Wi-Fi wants you to sign in</string>
+    <string name="wifi_portal_reopen">Open the sign-in page</string>
+    <string name="wifi_portal_reopen_sub">Log out or see time left</string>
+    <string name="home_portal_line">This Wi-Fi wants you to sign in</string>
 </resources>

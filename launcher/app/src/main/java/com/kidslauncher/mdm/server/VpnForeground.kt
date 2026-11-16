@@ -126,3 +126,16 @@ class VpnTunnelState<T : Any>(
 /** [KidVpnService.start]'s kind: plain whenever an instance runs (`null` = none). */
 fun vpnStartKind(running: VpnTunnelState<*>?): VpnStartKind =
     if (running != null && !running.stopped) VpnStartKind.PLAIN else VpnStartKind.FOREGROUND
+
+/**
+ * Whether [KidVpnService.stop] may call `stopService` now (upstream siesta5787/kids-launcher-mdm
+ * c88216cfe0). A `stopService` that lands while a `startForegroundService` still waits for its
+ * `startForeground` crashes the whole launcher with `ForegroundServiceDidNotStartInTimeException`
+ * - Android counts a stop before the answer as no answer. Seen upstream: a sync's `apply()`
+ * started the filter, the pause's `apply()` stopped it before `onCreate`. So only once [created]
+ * (`onCreate`'s startForeground done) and with no [foregroundStartsPending] (a foreground start
+ * whose `onStartCommand` hasn't run - the plain start's fallback into a running instance). Else
+ * the queued start stops the service itself: `onStartCommand` reads the cached `vpnFilterEnabled`,
+ * which every caller of stop has cleared. With neither, nothing runs and nothing is queued.
+ */
+fun vpnStopsNow(created: Boolean, foregroundStartsPending: Int): Boolean = created && foregroundStartsPending == 0

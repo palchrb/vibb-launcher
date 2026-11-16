@@ -16,6 +16,39 @@
         android:id="@+id/wifi_networks_header"
         layout="@layout/include_kid_header" />
 
+    <!-- Design 102 §3.6, §3.8: the connected Wi-Fi's sign-in - "Tilkoblet – må logges på" with "Logg på", "Spør en voksen
+         om Wi-Fi-innlogging", or after a sign-in today "Åpne påloggingssiden". Gone otherwise. -->
+    <LinearLayout
+        android:id="@+id/wifi_networks_portal"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:background="?attr/selectableItemBackground"
+        android:clickable="true"
+        android:focusable="true"
+        android:minHeight="48dp"
+        android:orientation="vertical"
+        android:paddingTop="8dp"
+        android:paddingBottom="8dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/wifi_networks_portal_title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="@font/nunito_bold"
+            android:textColor="@color/kid_page_ink"
+            android:textSize="16sp" />
+
+        <TextView
+            android:id="@+id/wifi_networks_portal_sub"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="@color/kid_page_ink_dim"
+            android:textSize="14sp"
+            android:visibility="gone" />
+    </LinearLayout>
+
     <TextView
         android:id="@+id/wifi_networks_status_message"
         android:layout_width="match_parent"

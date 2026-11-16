@@ -121,6 +121,38 @@ pub struct DevicePolicy {
     #[sqlx(default)]
     pub bluetooth_any_device: bool,
     pub vpn_filter_enabled: bool,
+    /// Design 95 rev. 3 (migration 0143): "Mobildata for apper", "on" or "vibb" (Bare Vibb).
+    #[sqlx(default)]
+    pub apps_mobile: String,
+    /// Design 97 (migration 0145): "I utlandet" - "off" (Ingen data), "vibb" (Bare Vibb, a new phone's default) or
+    /// "home" (Som hjemme). Read through [crate::mobile_network::abroad_choice]; the policy's `data_roaming` is derived
+    /// from it, and design 94's `data_roaming` column (migration 0143) is no longer read or written.
+    #[sqlx(default)]
+    pub abroad: String,
+    /// Design 95 rev. 3 item 3 (migration 0143): `DISALLOW_CONFIG_MOBILE_NETWORKS` on the phone, on by default.
+    #[sqlx(default)]
+    pub mobile_settings_locked: bool,
+    /// Design 98 §6.2 (migration 0146): the Oppsett card's "Ikke nå" - the needed steps as they were then
+    /// (`airplane_mode::setup_key`); the card shows again once they change. `None` = never hidden.
+    #[sqlx(default)]
+    pub setup_card_hidden: Option<String>,
+    /// Design 102 (migration 0150): Wi-Fi sign-in on the phone (Part A, D1: on by default). Read through
+    /// `logins::portal_policy`; a missing row reads as on (`load_policy`).
+    #[sqlx(default)]
+    pub captive_portal_enabled: bool,
+    /// Design 102 D14: the parent's "one more sign-in now" counter, bumped by the page's button.
+    #[sqlx(default)]
+    pub captive_portal_grant: i64,
+    /// Design 102 revision 5: every sign-in and reopen needs the parent code on the phone (Advanced's `#wifi-signin`,
+    /// on by default).
+    #[sqlx(default)]
+    pub captive_portal_require_code: bool,
+    /// Design 102 Part B (D10: off by default): Chrome only for logins.
+    #[sqlx(default)]
+    pub login_browser_enabled: bool,
+    /// Design 102 D11: the ticked presets, a JSON array of `logins::PRESETS` keys (expanded at policy build).
+    #[sqlx(default)]
+    pub login_browser_presets: String,
     /// Device › Time Rules' "Own limit" switch: when set, this device uses its own
     /// `daily_budget_json` instead of the global one. Until migration 0115 it also swapped
     /// everyone's rules for the phone's own; since then each rule has its own switch
@@ -555,8 +587,32 @@ pub struct DeviceStatus {
     /// launchers.
     #[sqlx(default)]
     pub tailnet_joined: Option<bool>,
-    // call_state_json (migrations/0022_calls.sql) is read directly by
-    // handlers::calls::call_report.
+    /// Design 94 §5 (migration 0143): the report's `data_roaming`, cleaned (`mobile_network::clean_roaming`). `None`
+    /// from older launchers.
+    #[sqlx(default)]
+    pub data_roaming_json: Option<String>,
+    /// Design 95 rev. 3 (migration 0143): the report's `mobile_data`, cleaned (`mobile_network::clean_mobile`).
+    #[sqlx(default)]
+    pub mobile_data_json: Option<String>,
+    /// Design 98 §5.1 (migration 0146): the report's `airplane_mode`, cleaned (`airplane_mode::clean`); read through
+    /// `airplane_mode::report`, which wants the capability. `None` from older launchers.
+    #[sqlx(default)]
+    pub airplane_mode_json: Option<String>,
+    /// Design 99 §6.1 (migration 0148): the report's `shortcuts`, cleaned (`shortcuts::clean`); read through
+    /// `shortcuts::report`, which wants the capability. `None` from older launchers.
+    #[sqlx(default)]
+    pub shortcuts_json: Option<String>,
+    /// Design 102 §6.2 (migration 0150): the report's `captive_portal`, cleaned (`logins::clean_portal`). `None` from
+    /// older launchers.
+    #[sqlx(default)]
+    pub captive_portal_json: Option<String>,
+    /// Design 102 §6.2: the report's `login_browser`, cleaned (`logins::clean_browser`).
+    #[sqlx(default)]
+    pub login_browser_json: Option<String>,
+    /// The report's `call_state` (migrations/0022_calls.sql), its known keys (`device_api::CALL_STATE_FIELDS`). Read
+    /// by handlers::calls::call_report on its own; design 98's Oppsett card reads the screening roles from it here.
+    #[sqlx(default)]
+    pub call_state_json: Option<String>,
 }
 
 /// The launcher's longest "pause all restrictions" (`RESTRICTIONS_PAUSE_DURATION_MS`, 2 hours from the PIN or the
@@ -685,6 +741,21 @@ pub struct TrackedApp {
     /// phone reports once it runs the release (`tracked_apps::catalog_release_installed`). `None`
     /// before it is read or when the APK's can't be.
     pub latest_release_version_code: Option<i64>,
+    /// Design 90 (migrations/0141, `catalog_holds`): the stored release's declared permissions
+    /// (JSON array, `None` unread), the sensitive names the parent let through for the app (JSON
+    /// array, `None` unknown - counted as none), "Ask me before every update", the hours a new
+    /// GitHub or F-Droid release waits, the release waiting out that wait (its source's time and
+    /// the wait's anchor, UTC RFC 3339) and the release the parent declined.
+    pub latest_release_permissions: Option<String>,
+    pub accepted_permissions: Option<String>,
+    pub always_ask: bool,
+    pub release_wait_hours: i64,
+    pub waiting_release_tag: Option<String>,
+    pub waiting_release_asset_id: Option<i64>,
+    pub waiting_release_published_at: Option<String>,
+    pub waiting_release_since: Option<String>,
+    pub declined_release_tag: Option<String>,
+    pub declined_release_asset_id: Option<i64>,
 }
 
 impl TrackedApp {
@@ -1312,6 +1383,32 @@ pub struct PolicyResponse {
     /// app (`app_permissions::lock_media_apps`). A failing query sends `[]` (it only hides a tile). An older launcher
     /// ignores it.
     pub lock_media_apps: Vec<String>,
+    /// Design 97: "I utlandet", `"off"`, `"vibb"` or `"home"`, always sent. An older launcher ignores it.
+    pub abroad: String,
+    /// Design 94: `"off"` (data roaming off and locked) or `"phone"` (the phone's choice), always sent. Since design 97
+    /// derived from `abroad` for an older launcher (`mobile_network::derived_roaming`): it never gets more than chosen.
+    pub data_roaming: String,
+    /// Design 95 rev. 3: "Mobildata for apper", `"on"` or `"vibb"` (Bare Vibb), always sent.
+    pub apps_mobile: String,
+    /// Design 95 rev. 3 item 3: Android's mobile-network settings locked on the phone, always sent.
+    pub mobile_settings_locked: bool,
+    /// Design 95 §3.5 (step 95-T2): this server expands heartbeat reports (`status_heartbeat`), `true` unless
+    /// `STATUS_HEARTBEAT=off` (`ForkConfig::status_heartbeat`). A
+    /// launcher with `status_heartbeat_v1` sends hashes and heartbeats only while it says so; an older one ignores it.
+    pub status_heartbeat: bool,
+    /// Design 95 §3.5 (code QA M1): the heartbeat's fields this server overlays (`status_heartbeat::HEARTBEAT_FIELDS`);
+    /// a launcher sends heartbeats only while its own list is the same.
+    pub status_heartbeat_fields: &'static [&'static str],
+    /// Design 95 §3.5: this server takes a gzip'd status report (`Content-Encoding: gzip`), always `true`.
+    pub status_gzip: bool,
+    /// Design 98 §4.4.6: this server takes `POST /api/devices/rule-pause`, so the phone offers Foreldrekode on the
+    /// time-rule screen; always `true`. An older launcher ignores it.
+    pub rule_pause: bool,
+    /// Design 102 §6.1: Wi-Fi sign-in (`logins::portal_policy`), always sent. An older launcher ignores it.
+    pub captive_portal: crate::logins::CaptivePortalPolicy,
+    /// Design 102 §6.1: Chrome only for logins (`logins::browser_policy`), `null` while the role is off or Chrome is
+    /// ticked as a normal app. Always the key. An older launcher ignores it.
+    pub login_browser: Option<crate::logins::LoginBrowserPolicy>,
     /// Design 76 D2: the certificate check for a launcher with `server_pin_v1` (`server_tls::policy`): `{}` while
     /// watching (no `enforce`: the phone keeps its flag), `{"enforce": true}` on, `{"enforce": false}` the parent's
     /// off. Left out for an older launcher.
@@ -1561,6 +1658,31 @@ pub struct StatusReportRequest {
     /// `report`). Absent from older launchers.
     #[serde(default)]
     pub tailnet_joined: Option<bool>,
+    /// Design 94 §5 (capability `data_roaming_v1`): `{locked, roaming, country, network, enabled, data_active,
+    /// modems}`, raw - cleaned field by field by `mobile_network::clean_roaming`, so nothing in it can fail the report.
+    /// Absent from older launchers.
+    #[serde(default)]
+    pub data_roaming: Option<serde_json::Value>,
+    /// Design 95 rev. 3 (capability `mobile_data_v1`): `{enabled, sink, settings_locked}`, raw - cleaned by
+    /// `mobile_network::clean_mobile`. Absent from older launchers.
+    #[serde(default)]
+    pub mobile_data: Option<serde_json::Value>,
+    /// Design 98 §5.1 (capability `airplane_mode_v1`): `{on, going_on, assistant, wifi_kept, last_error,
+    /// default_apps_changed, periods}`, raw - cleaned by `airplane_mode::clean`. Absent from older launchers.
+    #[serde(default)]
+    pub airplane_mode: Option<serde_json::Value>,
+    /// Design 99 §6.1 (capability `shortcuts_v1`): `{shown, hidden, items}`, raw - cleaned by `shortcuts::clean`. A
+    /// full-report field, not a heartbeat field. Absent from older launchers.
+    #[serde(default)]
+    pub shortcuts: Option<serde_json::Value>,
+    /// Design 102 §6.2 (capability `captive_portal_v1`): `{handler, parent_code_set, today, sessions}`, raw - cleaned
+    /// by `logins::clean_portal`. A full-report field. Absent from older launchers.
+    #[serde(default)]
+    pub captive_portal: Option<serde_json::Value>,
+    /// Design 102 §6.2 (capability `login_browser_v1`): `{package, state, version_name, written_ms, reason,
+    /// cleared_ms}`, raw - cleaned by `logins::clean_browser`. A full-report field. Absent from older launchers.
+    #[serde(default)]
+    pub login_browser: Option<serde_json::Value>,
     /// Design 76: the launcher's certificate check (`testdata/server_tls_report.json`'s `report`), raw - read
     /// within limits by `server_tls::sanitize`, so nothing in it can fail the report. Absent from older launchers.
     #[serde(default)]

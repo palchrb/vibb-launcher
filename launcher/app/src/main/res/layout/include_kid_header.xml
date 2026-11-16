@@ -36,7 +36,9 @@
         android:layout_weight="1"
         android:orientation="vertical">
 
-        <TextView
+        <!-- A word is never cut (WholeWordTextView, screen-size fix S4: "Meldin…" beside "Ny melding" on the Jelly Star at
+             font 1.3): a title word too wide for the room makes the title a little smaller. -->
+        <com.kidslauncher.mdm.ui.WholeWordTextView
             android:id="@+id/kid_header_title"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

@@ -41,7 +41,7 @@ class PageManifestTest {
     /** The pages with one class, in Home's task (R9): the phone book and kid Settings' three lists. */
     private val oneClass = setOf(
         ".calls.PhoneBookActivity", ".ui.quickcontrols.WifiNetworksActivity", ".ui.quickcontrols.BluetoothDevicesActivity",
-        ".ui.kidsettings.KidSoundPickerActivity",
+        ".ui.kidsettings.KidSoundPickerActivity", ".ui.kidsettings.ShortcutsPickerActivity",
     )
 
     @Test

@@ -47,8 +47,16 @@ imported with full history (`git subtree`), so old commit hashes in the docs sti
   one SHA-256 over a manifest, converted to `res/drawable/weather_*.xml` with `WeatherSymbols.kt` and the names;
   `--selftest`, no network, also converts the vendored `scripts/yr-symbols-11.svg` to exactly the committed
   `weather_11.xml`; Python's standard library, run with `-I`; run by `launcher.yml`'s always-run changes job),
+  `fake-portal.py` (a fake captive portal for design 102's Wi-Fi sign-in window: one server answering the portal's
+  name and another site's, with modes - a 302 portal, meta refresh, script, a soft portal, a hotspot that 302s to a
+  search page, a Google walled garden, a full-page iframe, a same-site redirector, a form whose POST 302s to another
+  site, a reached site's POSTs that 302 and 307 to a third site; standard library, `--selftest`, run by `launcher.yml`'s always-run changes job; `docs/testing/emulator.md`
+  §6ap),
   `music-splash.py` (the music app's launch splash drawables: the Vibb mark read from the launcher's Home splash, "vibb
-  music" from Nunito's outlines; `--selftest`), `webauthn-rs256-vector.py` (the server's RS256 passkey vector
+  music" from Nunito's outlines; `--selftest`), `music-icon.py` (the music app's icon and notification small icon, the
+  user's drawing `vibb-music-q7`: the Vibb mark's outer three rings read from the launcher's `ic_launcher_foreground.xml`
+  and a round-cornered play triangle, its geometry measured on the drawing; `--selftest` checks the outer ring inside the
+  safe zone), `webauthn-rs256-vector.py` (the server's RS256 passkey vector
   `server/testdata/webauthn/rs256.json`, made once with a throwaway key - public data only; design 74), `emoji-list.py`
   (the launcher's `assets/sms/emoji-16.0.txt` from Unicode's `emoji-test.txt` 16.0, its SHA-256 pinned; design 81),
   `mmsc-hosts.py` (the server's `server/testdata/mmsc_hosts.txt`, design 83 §3: each operator's MMS server hosts from
@@ -126,11 +134,20 @@ The launcher's status body with `installed_apps[].version_code`/`version_name` (
 checked catalog app) is `server/testdata/installed_apps_report.json`, byte-identical in
 `launcher/app/src/test/resources/`: the launcher's `SyncScheduleTest` encodes exactly it, the server's
 `app_updates::the_installed_apps_contract_raises_app_updated` posts it, and both compare the copies.
-The launcher's `POST /api/devices/time-request` body and the three answers (design r13 §2.5) are
-`server/testdata/time_request.json`, byte-identical in `launcher/app/src/test/resources/`: the launcher's
-`TimeRequestsTest` encodes exactly its `request` and decodes each answer, the server's
-`time_request::the_contract_answers` posts it (its instant moved to a minute ago) and produces every answer row, and
-both compare the copies.
+The launcher's `POST /api/devices/time-request` body and the three answers (design r13 §2.5), and the parent's answer
+as the policy carries it (design 100 §14.5), are `server/testdata/time_request.json`, byte-identical in
+`launcher/app/src/test/resources/`: `request`, `answers`, `capability` (`time_answer_v1`: the launcher shows "Nei" and the
+name; the server reads it only for the "Nei" flash), `policy_no`/`policy_yes`/`policy_unnamed`/`policy_lift_only`/
+`policy_ended` (the `time_policy` fragment the server serves: `request_answers: true`, `answer {request_id, answer, by?,
+at_ms, lift_id?, minutes?}`, lifts with `by?`/`at_ms`; `policy_ended` a yes whose pause was ended early - no `lift_id`,
+no `minutes`), `older_server` (a policy without the flag: a newer lift closes the request) and `states` (the launcher's
+rows `{name, record, count, policy, day, now_ms} -> {state, shade_note, screen_note, can_ask}`). The launcher's
+`TimeRequestsTest` encodes exactly its `request`, decodes each answer and every policy row, and runs every `states` row;
+the server's `time_request::the_contract_answers` posts the request (its instant moved to a minute ago) and produces every
+answer row, and `time_request::the_contract_policies` produces every `policy_*` row from a real flow (the instants the
+run's); both compare the copies. These rows pin `time_policy.answer`'s and a lift's `by`/`at_ms` keys;
+`policy_json_keys_snapshot` pins `time_policy`'s own keys (`request_answers` among them) and the launcher's
+`PolicyResponseCompatTest` decodes them.
 Dagen's title rules (design 69 §3.4) are `server/testdata/calendar_title_rules.json` (`{"titles": [{rules, calendar,
 title, description?, shown}]}`, `shown: null` = hidden), byte-identical in `launcher/app/src/test/resources/`: the
 server's `calendar::tests::the_title_rules_vectors` and the launcher's `TitleRulesTest` run every row and compare the
@@ -254,6 +271,95 @@ The apps' real logos (design 87) are `server/testdata/app_logos.json`, byte-iden
 `WantedLogos`, hashes the PNG and reads the rows; both compare the copies. No policy key: the wanted list rides on the
 report's answer.
 
+A rule turned on now (design 93, "Slå på nå") is `server/testdata/lock_now.json`, byte-identical in
+`launcher/app/src/test/resources/`: `capability` (`lock_now_v1`), `policy` (a `time_policy` the server serves: a copy of
+Leggetid first - negative `id`, one weekday's window, `until_ms`, `card_first: true` -, a scheduled Skole and Leggetid
+with `until_ms: null` and `card_first: false`, a pause of Leggetid and its twin for the copy - every lift with design 100's
+`by` and `at_ms`, and the `time_policy`'s `request_answers: true`), `policy_end_locked` (the
+same with a Middag from the copy's end) and `cases` (`{policy, at, zone, locked, card_rule, card_until}`). The server's
+`lock_now::tests::the_contract` produces both policies from seeded rows at a fixed now (`LOCK_NOW_CONTRACT_WRITE=1`
+rewrites them); the launcher's `LockNowTest` decodes them and runs every case through `inForceAt`, `decideTimeLock`,
+`cardRule` and `lockEnd`; both compare the copies. Every rule's `until_ms` and `card_first` are pinned by
+`policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTest`.
+
+The round "Mobilnett" (design 94, data roaming; design 95 revision 3, Bare Vibb and the mobile-network settings lock;
+design 97, "I utlandet", `where` and the kid's switch) is
+`server/testdata/mobile_network.json`, byte-identical in `launcher/app/src/test/resources/`: `capabilities`
+(`data_roaming_v1`, `mobile_data_v1`, `mobile_network_v2`), `policy` (the top-level `abroad`, the `data_roaming` derived
+from it, `apps_mobile` and `mobile_settings_locked` for a new phone and after each save), `abroad_choice` (the launcher's
+reading of `abroad` and an older server's `data_roaming`), the rule rows `roaming_locked` and `settings_locked`
+(each with the pause's lift), `where` (the launcher's home/abroad/unknown from telephony), `shapes` (the VPN's shape,
+the sink's reason and lockdown from the filter switch, the choices, the kid's switch, a lift, the network and a held
+sink with no network - the launcher's alone), `kid_row` (the kid's Mobildata row), `report` (the exact `data_roaming`
+and `mobile_data` of a status report) and `clean`/`clean_mobile` (the server's field-by-field cleaning). The server's
+`tests::mobile_network::the_contract` saves the choices through `POST /devices/{id}/mobile` and produces each
+`policy` row, posts `report` and checks what is stored, runs the cleaning rows; the launcher's `MobileNetworkTest`
+decodes the policy rows, runs every rule, `where`, shape and kid-row row through `abroadChoice`, `roamingLocked`,
+`mobileSettingsLocked`, `whereOf`, `parentSinkOn`, `applyShape`, `sinkReason`, `reportedSink`, `alwaysOnFor` and
+`kidMobileRow`, and encodes `report` exactly; both compare the copies. The policy's four keys are pinned by `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTest`.
+
+The heartbeat report (design 95 §3.5, step 95-T2) is `server/testdata/status_heartbeat.json`, byte-identical in
+`launcher/app/src/test/resources/`: `capability` (`status_heartbeat_v1`), `policy` (the top-level `status_heartbeat`,
+`status_heartbeat_fields` and `status_gzip`), `heartbeat_fields` (what a heartbeat carries and the phone's hash leaves
+out) and `fields_tag` (their name in a heartbeat), `full` (a full report with its `hash`), `heartbeat` (the heartbeat
+that names it), `heartbeat_other_fields` (one naming another list) and `answers` (`{"full_report": true}`). The hash is the
+phone's alone (`StatusReports.kt`'s `reportHash`); the server keeps the full body under it (`device_report_base`) and
+expands a heartbeat into that report before the one intake runs (`status_heartbeat`). The launcher's `StatusReportsTest`
+encodes `full` and `heartbeat` exactly from one report, checks the hash and the fields list and reads the answer; the
+server's `tests::status_heartbeat` posts `full` and `heartbeat` and checks what is stored and every refusal; both
+compare the copies. The policy's three keys are pinned by `policy_json_keys_snapshot` and `StatusReportsTest`.
+
+Flymodus through the Digital assistant role (design 98) is `server/testdata/airplane_mode.json`, byte-identical in
+`launcher/app/src/test/resources/`: `capability` (`airplane_mode_v1`) and `bit` (64 in `quick_controls_mask`), `rows`
+(the kid's Flymodus row and the section from `{mask, role, restricted, on, wifi_up, busy, last_error, error_age_ms}`,
+the Off-only rows included), `report` and `report_open` (the exact `airplane_mode` of a status report), `clean` (the
+server's field-by-field cleaning), `emergency` (`line`: a call and a period to the emergency event's airplane line;
+`off_by`: the phone's attribution of an end), `rules` (`on`: the turn-on plan, a rule in force changing nothing;
+`edges`: no airplane action at any time-rule edge), `home_line` (Home's "Flymodus er på") and `sheet` (the time-rule
+screen's "···" and its rows). The launcher's `AirplaneModeTest` encodes the reports exactly and runs every row through
+its pure functions; the server's `tests::airplane_mode` posts the reports and checks what is stored, runs `clean` and
+`emergency.line`, and `intake_limits` keeps the reports' keys; both compare the copies. No policy key: bit 64 rides in
+`quick_controls_mask`.
+
+The parent code's pause of the rule in force on the phone (design 98 §4.4, Foreldrekode) is
+`server/testdata/rule_pause.json`, byte-identical in `launcher/app/src/test/resources/`: `capability` (`rule_pause_v1`),
+`lengths` (the PWA's `RULE_LIFT_MINUTES`), `policy` (the top-level `rule_pause: true`, a copy's `copy_of` and the lifts
+with `phone_key` - since design 100 every lift with `at_ms`, the PWA's with `by`, and `time_policy.request_answers`), `request` (the exact `POST /api/devices/rule-pause` body), `answers` (each body's status and answer:
+accepted, a retry's same ids, `over`, `unknown_rule`, the refused 400s; its instants are moved to the last minutes),
+`phone_answers` (the phone's action for each: `acked`, `done`, `retry`), `plan_zone`/`plan_policy`/`plans` (the
+offered lengths and each rule's own end, a copy paused with the rule it copies) and `adopt` (whether a pause still
+lifts: before the post, acked, ended in the app before any policy carried it, a reboot, pruned, the clock set back).
+The launcher's `RulePauseTest` encodes `request` exactly and runs every row through `rulePausePlan`,
+`rulePauseAction` and `phonePauseLifts`; the server's `tests::rule_pause` posts the bodies and produces every answer,
+checks the `time_lifts` rows and the security event, and serves `policy`'s lift keys; both compare the copies.
+`lock_now.json`'s copy rows carry `copy_of`. The policy's `rule_pause`, `lifts[].phone_key` and `rules[].copy_of` are
+pinned by `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTest`.
+
+Snarveier, the kid's quick panel in the shade (design 99), is `server/testdata/shortcuts.json`, byte-identical in
+`launcher/app/src/test/resources/`: `capability` (`shortcuts_v1`), `bit` (128 in `quick_controls_mask`), `max_items`
+(4), `items` (each key with its gating bit, `null` for none, and its names in nb and en), `defaults` (the default order),
+`report` and `report_hidden` (the exact `shortcuts` of a status report) and `clean` (the server's cleaning: unknown keys
+and duplicates dropped, cut to four, never shown while hidden, a non-object dropped). The launcher's `ShortcutsTest`
+checks its keys, bits and default order against `items` and `defaults` and encodes the reports exactly; the server's
+`tests::shortcuts` posts the reports and checks what is stored, runs every `clean` row and renders the Home Screen
+page's sub-lines from the names, and `intake_limits` keeps the report's keys; both compare the copies. No policy key:
+bit 128 rides in `quick_controls_mask`.
+
+Wi-Fi sign-in and Chrome only for logins (design 102) is `server/testdata/login_windows.json`, byte-identical in
+`launcher/app/src/test/resources/`: `capabilities` (`captive_portal_v1`, `login_browser_v1`), `policy` (the top-level
+`captive_portal` and `login_browser` for a new phone and after the page's saves: the switch, Advanced's parent-code
+requirement, "one more", the role, a preset ticked and unticked with an own entry equal to its host kept, Chrome
+ticked), `older_server` (the launcher's reading of a policy with neither key: on, `require_code: true`, the role off),
+`report` and `report_off` (the exact `captive_portal` and `login_browser` of a status report), `clean` (the server's
+field-by-field cleaning) and `entries` (the add field's input to an entry or a refusal). The server's `tests::logins`
+saves through `POST /devices/{id}/logins` and produces each `policy` row, posts the reports and checks what is stored,
+and runs `clean` and `entries` (`logins::valid_entry`); `intake_limits` keeps the reports' keys; the launcher's
+`LoginWindowsTest` decodes `policy` and `older_server`, encodes `report` exactly and runs `entries` through its own
+check (`loginEntry`); both compare the copies. The window's and the role's own rules stay the launcher's alone, in
+`launcher/app/src/test/resources/login_rules.json` (`PortalRulesTest`, `LoginBrowserTest`). The policy's
+`captive_portal` and `login_browser` are pinned by `policy_json_keys_snapshot` and the launcher's
+`PolicyResponseCompatTest`.
+
 ## CI and releases
 
 - `.github/workflows/launcher.yml`, `server-ci.yml` and `music.yml` run on every push/PR, but their build job
@@ -261,16 +367,17 @@ report's answer.
   (`launcher.yml` also on `.github/actions/build-tsnet/` and the music files its tests read: the bridge, the
   shared snapshots, the three `spotify_hosts.json`, `server/testdata/time_status_report.json`,
   `dns_upstream_status.json`, `power_report.json`, `zone_status_report.json`, `launcher_tag_codes.json`,
-  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json`, `server_url_vectors.json`, `restrictions_pause.json`, `server_tls_report.json`, `sms_contract.json`, `contact_request.json` and `app_logos.json`, `music/gradle/` and `music.yml`, and the server's and music's `storytel_token_answers.json`, and `server/testdata/doh_hosts.txt`, and `scripts/yr-symbols.py` with its vendored `yr-symbols-11.svg` (the changes job runs its `--selftest` always); `music.yml` also on the shared
+  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json`, `server_url_vectors.json`, `restrictions_pause.json`, `server_tls_report.json`, `sms_contract.json`, `contact_request.json`, `app_logos.json`, `lock_now.json`, `mobile_network.json`, `status_heartbeat.json`, `airplane_mode.json`, `rule_pause.json`, `shortcuts.json` and `login_windows.json`, `music/gradle/` and `music.yml`, and the server's and music's `storytel_token_answers.json`, and `server/testdata/doh_hosts.txt`, and `scripts/yr-symbols.py` with its vendored `yr-symbols-11.svg` and `scripts/fake-portal.py` (the changes job runs both `--selftest`s always); `music.yml` also on the shared
   `server/testdata/music_*.json` and `spotify_hosts.json`, the launcher's copy of the bridge AIDL,
   `bridge_contract.json` and `spotify_hosts.json`, `server/testdata/spotify/`, `scripts/fake-sonos.py`,
   `scripts/fake-storytel.py`, `scripts/fake-spotify.py`, `scripts/fake-audio.py`, `scripts/music-splash.py`
-  (with the launcher's `splash_vibb_breathe.xml` it draws from) and `scripts/sonos-ws-probe.py` (its capture
+  (with the launcher's `splash_vibb_breathe.xml` it draws from), `scripts/music-icon.py` (with the launcher's
+  `ic_launcher_foreground.xml` it reads the rings from) and `scripts/sonos-ws-probe.py` (its capture
   scrubber), whose `--selftest`s it runs after the build, the server's and the launcher's `storytel_token_answers.json` and `server/testdata/storytel/`;
   `server-ci.yml`'s build job also on the apps' `spotify_hosts.json` and `storytel_token_answers.json` copies and
   the launcher's `time_status_report.json`,
   `dns_upstream_status.json`, `power_report.json`, `zone_status_report.json`, `launcher_tag_codes.json`,
-  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json`, `server_url_vectors.json`, `restrictions_pause.json`, `server_tls_report.json`, `sms_contract.json`, `contact_request.json` and `app_logos.json`, and the launcher's `assets/dns/doh_hosts.txt`, and `scripts/mmsc-hosts.py` with its `scripts/mmsc-hosts-sample.xml` (the changes job runs its `--selftest` always);
+  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json`, `server_url_vectors.json`, `restrictions_pause.json`, `server_tls_report.json`, `sms_contract.json`, `contact_request.json`, `app_logos.json`, `lock_now.json`, `mobile_network.json`, `status_heartbeat.json`, `airplane_mode.json`, `rule_pause.json`, `shortcuts.json` and `login_windows.json`, and the launcher's `assets/dns/doh_hosts.txt`, and `scripts/mmsc-hosts.py` with its `scripts/mmsc-hosts-sample.xml` (the changes job runs its `--selftest` always);
   `server-ci.yml`'s
   `server-image` job only when `server/Dockerfile`, `server/.dockerignore`, `server/deploy/image-smoke.sh`, `server/deploy/distrusted-roots.txt` or
   the workflow changed). The server's Rust (`toolchain: 1.99.0`) is pinned in `server-ci.yml` and

@@ -24,6 +24,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
 import androidx.lifecycle.Observer
+import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.GridLayoutManager
 import android.app.role.RoleManager
 import com.kidslauncher.mdm.Application
@@ -171,8 +172,6 @@ class HomeActivity : UIObjectActivity() {
     // already-filtered apps (QA step 5 #6).
     private val badgeRender = Runnable { renderGrid() }
 
-    /** The flashlight's state changed (design 41; its callback, main thread): the tile follows. */
-    private val torchListener: () -> Unit = { renderGrid() }
     /** Dagen's tile follows the calendars and the policy (design 69 §2.2). */
     private val calendarListener: () -> Unit = { renderGrid() }
     /** Meldinger's tile and badge, and the contacts' unread messages, follow the engine and the policy (design 77
@@ -342,6 +341,16 @@ class HomeActivity : UIObjectActivity() {
             binding.homeWindowBanner.visibility = View.GONE
             com.kidslauncher.mdm.server.WindowRelock.lockAgainAsync(this, com.kidslauncher.mdm.server.RelockTrigger.LOCK_AGAIN)
         }
+        // Design 98 §4.2: Home's "Flymodus er på" line - a tap turns airplane mode off (no role, no Settings needed).
+        binding.homeAirplaneLine.setOnClickListener {
+            val app = applicationContext
+            Thread { com.kidslauncher.mdm.assistant.AirplaneRoute.turnOff(app) }.start()
+            renderAirplaneLine()
+        }
+        // Design 102 §3.6 (D5): Home's "Wi-Fi-en vil at du logger på" opens the sign-in's entry.
+        binding.homePortalLine.setOnClickListener {
+            com.kidslauncher.mdm.portal.CaptivePortalEntry.start(this, com.kidslauncher.mdm.portal.PortalKind.SIGN_IN)
+        }
         // Back to our call screen from the ongoing-call card.
         binding.homeCallCard.setOnClickListener {
             try {
@@ -454,7 +463,8 @@ class HomeActivity : UIObjectActivity() {
         WallpaperStore.addListener(wallpaperListener)
         com.kidslauncher.mdm.calls.OngoingCalls.addListener(callsListener)
         com.kidslauncher.mdm.server.WindowRelock.addListener(windowListener)
-        com.kidslauncher.mdm.torch.Torch.addListener(torchListener)
+        com.kidslauncher.mdm.assistant.AirplaneRuntime.addListener(airplaneListener)
+        com.kidslauncher.mdm.portal.PortalRuntime.addListener(portalListener)
         com.kidslauncher.mdm.calendar.CalendarStore.addListener(calendarListener)
         com.kidslauncher.mdm.sms.SmsHome.addListener(messagesListener)
         com.kidslauncher.mdm.sms.SmsHome.refresh(this)
@@ -677,7 +687,8 @@ class HomeActivity : UIObjectActivity() {
         refreshHandler.removeCallbacks(badgeRender)
         com.kidslauncher.mdm.calls.OngoingCalls.removeListener(callsListener)
         com.kidslauncher.mdm.server.WindowRelock.removeListener(windowListener)
-        com.kidslauncher.mdm.torch.Torch.removeListener(torchListener)
+        com.kidslauncher.mdm.assistant.AirplaneRuntime.removeListener(airplaneListener)
+        com.kidslauncher.mdm.portal.PortalRuntime.removeListener(portalListener)
         com.kidslauncher.mdm.calendar.CalendarStore.removeListener(calendarListener)
         com.kidslauncher.mdm.sms.SmsHome.removeListener(messagesListener)
         ElementMissedCallStore.removeListener(elementMissedListener)
@@ -734,9 +745,54 @@ class HomeActivity : UIObjectActivity() {
     private fun render() {
         if (!contentShown) return
         renderWindowBanner()
+        renderAirplaneLine()
+        renderPortalLine()
         renderCallParts()
         refreshApps()
     }
+
+    /** Design 98 §4.2: one calm line while airplane mode is on ([com.kidslauncher.mdm.assistant.homeAirplaneLine]). */
+    private fun renderAirplaneLine() {
+        if (!contentShown) return
+        val line = com.kidslauncher.mdm.assistant.homeAirplaneLine(
+            on = com.kidslauncher.mdm.assistant.AirplaneRuntime.isOn(this),
+            restricted = com.kidslauncher.mdm.assistant.AirplaneRuntime.restricted(this),
+            busy = com.kidslauncher.mdm.assistant.AirplaneRoute.busy == "off",
+        )
+        binding.homeAirplaneLine.visibility = if (line == null) View.GONE else View.VISIBLE
+        binding.homeAirplaneLine.isEnabled = line == com.kidslauncher.mdm.assistant.HomeAirplaneLine.ON
+        when (line) {
+            com.kidslauncher.mdm.assistant.HomeAirplaneLine.ON -> binding.homeAirplaneLine.setText(R.string.home_airplane_on)
+            com.kidslauncher.mdm.assistant.HomeAirplaneLine.BUSY -> binding.homeAirplaneLine.setText(R.string.kid_settings_airplane_turning_off)
+            null -> {}
+        }
+    }
+
+    private val airplaneListener: () -> Unit = { renderAirplaneLine() }
+
+    /** Design 102 §3.6 (D5): one calm line while the phone's Wi-Fi wants a sign-in - never a sound or a badge. */
+    private fun renderPortalLine() {
+        if (!contentShown) return
+        val app = applicationContext
+        // The row reads the budget and the records (files and preferences): off the main thread (code QA L9).
+        lifecycleScope.launch {
+            val row = withContext(Dispatchers.IO) { com.kidslauncher.mdm.portal.PortalRuntime.row(app) }
+            if (contentShown && !isDestroyed) showPortalLine(row)
+        }
+    }
+
+    private fun showPortalLine(row: com.kidslauncher.mdm.portal.WifiPortalRow) {
+        val text = when (row) {
+            com.kidslauncher.mdm.portal.WifiPortalRow.SIGN_IN -> R.string.home_portal_line
+            com.kidslauncher.mdm.portal.WifiPortalRow.ASK -> R.string.portal_ask
+            else -> null
+        }
+        binding.homePortalLine.visibility = if (text == null) View.GONE else View.VISIBLE
+        binding.homePortalLine.isEnabled = row == com.kidslauncher.mdm.portal.WifiPortalRow.SIGN_IN
+        text?.let { binding.homePortalLine.setText(it) }
+    }
+
+    private val portalListener: () -> Unit = { runOnUiThread { renderPortalLine() } }
 
     /** Design 24b §1.3: "Open until 18:40 · Lock again" while a parent-PIN window is open. */
     private fun renderWindowBanner() {
@@ -833,7 +889,7 @@ class HomeActivity : UIObjectActivity() {
         val data = gridData
         gridAdapter.submit(
             homeGrid(
-                data.apps, showPhoneBook, BadgeStore.counts, com.kidslauncher.mdm.torch.Torch.state,
+                data.apps, showPhoneBook, BadgeStore.counts,
                 showDay = com.kidslauncher.mdm.calendar.CalendarStore.tileShown(),
                 messages = com.kidslauncher.mdm.sms.SmsHome.summary.unread.takeIf { com.kidslauncher.mdm.sms.SmsHome.tileShown() },
                 messagesLook = com.kidslauncher.mdm.appdisplay.AppDisplay.messagesLook(),

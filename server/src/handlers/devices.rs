@@ -6,7 +6,6 @@ use axum::{Extension, Form};
 use serde::Deserialize;
 
 use crate::AppState;
-use crate::handlers::activity::ActivityRow;
 use crate::i18n::{Lang, Words, t, t_count, t_params};
 use crate::models::{Device, DevicePolicy, DeviceStatus, InstalledApp, TrackedApp};
 use crate::security::{self, CurrentAdmin};
@@ -382,9 +381,8 @@ pub(crate) async fn time_glance(
     // locks the phone. A rule whose days don't read is kept as "always on" (no end).
     let mut rules = Vec::new();
     if report.active_rule_id.is_some() && report.locking() {
-        rules = crate::time_rules::effective_rule_rows(&state.db, device_id)
-            .await
-            .unwrap_or_default();
+        // Design 93 §4.5: the served rows, so a rule turned on now is named and can show its end.
+        rules = crate::lock_now::badge_rows(&state.db, device_id, now).await;
     }
     let (lock, screen) = badge_and_screen(
         &report,
@@ -1024,9 +1022,39 @@ pub(crate) const QUICK_CONTROL_SOUND: i64 = 8;
 /// "Modify system settings" app-op the clock format uses, so the bit is **not** in the default: the
 /// parent turns it on after granting it. A launcher before r9 ignores the bit.
 pub(crate) const QUICK_CONTROL_TOUCH: i64 = 16;
-/// A new device's `quick_controls_mask`: every switch on but touch (`insert_device_with_policy`).
-pub(crate) const DEFAULT_QUICK_CONTROLS: i64 =
-    QUICK_CONTROL_WIFI | QUICK_CONTROL_BLUETOOTH | QUICK_CONTROL_BRIGHTNESS | QUICK_CONTROL_SOUND;
+/// The kid's own Mobildata switch (design 97 §4.3): Off = only Vibb uses mobile data. Set on the Mobilnett page
+/// (`group=kid-mobile`), never by the Home Screen form, which keeps it. In a new device's default (D3); an existing
+/// phone's mask is not changed. A launcher before design 97 ignores the bit.
+pub(crate) const QUICK_CONTROL_MOBILE_DATA: i64 = 32;
+/// The kid's own Flymodus switch (design 98 §6.1): shown on the phone once Vibb One is the Digital assistant. Set by
+/// the Home Screen form only while it shows the row (`airplane_row`, a launcher with `airplane_mode_v1`), else kept.
+/// In a new device's default (D1); an existing phone's mask is not changed. A launcher before design 98 ignores it.
+pub(crate) const QUICK_CONTROL_AIRPLANE: i64 = 64;
+/// Snarveier, the kid's quick panel in the shade (design 99 §5.1): its items follow the bits above. Set by the Home
+/// Screen form only while it shows the row (`shortcuts_row`, a launcher with `shortcuts_v1`), else kept. In a new
+/// device's default and set on every existing phone by migration 0148 (D2: Home's flashlight tile goes in the same
+/// launcher). A launcher before design 99 ignores it.
+pub(crate) const QUICK_CONTROL_SHORTCUTS: i64 = 128;
+/// A new device's `quick_controls_mask`: every switch on but touch (`insert_device_with_policy`), the kid's Mobildata
+/// switch included (design 97 D3), Flymodus (design 98 D1) and Snarveier (design 99 D2).
+pub(crate) const DEFAULT_QUICK_CONTROLS: i64 = QUICK_CONTROL_WIFI
+    | QUICK_CONTROL_BLUETOOTH
+    | QUICK_CONTROL_BRIGHTNESS
+    | QUICK_CONTROL_SOUND
+    | QUICK_CONTROL_MOBILE_DATA
+    | QUICK_CONTROL_AIRPLANE
+    | QUICK_CONTROL_SHORTCUTS;
+
+/// The answer card (design 100 §14.4): the request's id (the form's `request`), its sub-line - the
+/// event's own words, "14:02 · Skjermtiden er brukt opp" -, and what its minute buttons do when that
+/// isn't what the words suggest (D9, QA R2-M2: decided now): `pauses` - they pause the rules in force;
+/// `adds` - asked under a rule that no longer locks, they add screen time (code QA L9).
+struct AskCard {
+    request: String,
+    sub: String,
+    pauses: bool,
+    adds: bool,
+}
 
 #[derive(Template)]
 #[template(path = "device_detail.html")]
@@ -1045,29 +1073,26 @@ struct DeviceDetailTemplate {
     connection: crate::streams::ConnectionState,
     /// The avatar's dot (`phone_status::dot`), saying what `status` leads with.
     dot: &'static str,
-    /// The lines under the name (`phone_status::header`): "4 min screen time today" then "Test
-    /// since 22:19 · 100 %"; "No contact · last seen 12 min ago" then the rest; "Turned off
-    /// 21:14 · battery was 3 %" or "Offline · last seen 13:05" alone.
-    status: Vec<crate::phone_status::Line>,
-    /// Today's screen-time bar (its fill), while a limit is set and a line says the screen time.
-    meter: Option<i64>,
+    /// The one line under the picture (`phone_status::header`, joined by `one_line`, design 101): "Online · Test
+    /// since 22:19 · 100 %"; "No contact · last seen 12 min ago · 100 %"; "Turned off 21:14 · battery was 3 %" or
+    /// "Offline · last seen 13:05" alone.
+    status: crate::phone_status::Line,
     /// The Attention rows, the same list the Devices list counts.
     attention: Vec<crate::attention::AttentionItem>,
     /// Design 24b: the quick actions Lock again and Unlock for 2 h…, the foreign-app warning, the
     /// blocked apps with Allow these apps…, the last relock's findings.
     relock: crate::handlers::window_relock::RelockCard,
-    /// Activity (design 48): the phone's commands and events, with Cancel back here.
-    activity: crate::handlers::activity::Activity,
-    /// Pause a rule…'s rules (the phone's effective ones); empty: no tile.
-    pause_rules: Vec<(i64, String)>,
-    /// "17:21": the kid's request for more time still open (design r13 §2.7), above the tiles
-    /// until a lift or the day's end; a request's push opens `#quick`.
-    asked: Option<String>,
-    /// A lift form's flash (`?done=`): the summary group ("quick"), text, refused.
-    done: Option<(&'static str, &'static str, bool)>,
-    /// The last report has the phone's restrictions paused: said at the top of Quick actions,
-    /// where the Attention row lands (qa-31-s10-code M1).
-    paused: bool,
+    /// Activity (design 48): one row to its page, and the commands that can still be cancelled
+    /// with Cancel back here (the user's pick B, 2026-11-13).
+    activity: crate::handlers::activity::Summary,
+    /// Design 93: Quick Actions' three tiles, their sheets and the row while the phone is open for setup.
+    qa: crate::handlers::quick_actions::QuickActions,
+    /// Design 100 §14.4: the kid's open request for more time - the answer card right after the
+    /// header, until a parent answers it or the phone's day ends; a request's push opens `#ask`.
+    ask: Option<AskCard>,
+    /// A lift form's or the Regler sheet's flash (`?done=`): the summary group ("quick"), its words
+    /// (a rule turned on now's name and end filled in, design 93), refused.
+    done: Option<(&'static str, String, bool)>,
     /// Managed without a Parent PIN: a phone not set up says so (it has no Attention rows,
     /// qa-31-s10-code L1).
     no_parent_pin: bool,
@@ -1094,6 +1119,15 @@ struct DeviceDetailTemplate {
     lock_value: &'static str,
     home_value: String,
     filter_value: &'static str,
+    /// Device › Mobilnett's row (design 95 rev. 3): its value only when it says something ("Bare Vibb · Roaming på").
+    mobile_value: Option<String>,
+    /// Design 95 rev. 3: Mobilnett's lines on the summary - only when they say something (mobile data off on the phone,
+    /// only Vibb on cellular now, a roaming warning), each leading to the page.
+    mobile_lines: Vec<crate::mobile_network::Line>,
+    /// Design 98 §6.2: Flymodus' lines - a period ended within 12 h, the one an emergency call ended, the role lost.
+    airplane_lines: Vec<crate::airplane_mode::Line>,
+    /// Design 98 §6.2: the Oppsett card (`#oppsett`), while a step the phone needs isn't done.
+    setup: crate::airplane_mode::SetupCard,
     about_value: Option<String>,
 }
 crate::i18n::words!(DeviceDetailTemplate);
@@ -1101,15 +1135,16 @@ crate::i18n::words!(DeviceDetailTemplate);
 impl DeviceDetailTemplate {
     /// The flash of summary group [group]: a command's (`?notice=`) or a lift's (`?done=`), worded, and
     /// whether it is a refusal.
-    fn flash(&self, group: &str) -> Option<(&'static str, bool)> {
+    fn flash(&self, group: &str) -> Option<(String, bool)> {
         self.relock
             .flash_in(group)
-            .map(|key| (key, false))
-            .or(self
-                .done
-                .filter(|(g, _, _)| *g == group)
-                .map(|(_, key, refused)| (key, refused)))
-            .map(|(key, refused)| (t(self.lang, key), refused))
+            .map(|key| (t(self.lang, key).to_string(), false))
+            .or_else(|| {
+                self.done
+                    .as_ref()
+                    .filter(|(g, _, _)| *g == group)
+                    .map(|(_, text, refused)| (text.clone(), *refused))
+            })
     }
 
     /// Access removed: the header says so and links to Advanced › Connection (L2).
@@ -1994,6 +2029,53 @@ pub(crate) async fn app_rows(
     })
 }
 
+/// The answer card for the phone's open request (design 100 §14.4), `None` without one: its
+/// sub-line is the event's own words (`told_as`), and its buttons pause the rules when a rule locks
+/// now (the fresh report's word, else the ask's: `time_answers::need`).
+async fn ask_card(
+    state: &AppState,
+    device: &Device,
+    zone: &crate::display_time::Zone,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<Option<AskCard>, sqlx::Error> {
+    if device.enrolled_at.is_none() {
+        return Ok(None);
+    }
+    let day_start = crate::time_answers::phone_day_start(&state.db, device.id, now).await?;
+    let mut conn = state.db.acquire().await?;
+    let Some(open) = crate::time_answers::open_request(&mut conn, device.id, day_start).await?
+    else {
+        return Ok(None);
+    };
+    drop(conn);
+    let fresh = crate::time_answers::fresh_report(state, device, zone, now).await?;
+    let asked = open.params.as_ref().map(|p| p.state.as_str());
+    let pauses = matches!(
+        crate::time_answers::need(fresh.as_ref(), asked, zone, now),
+        crate::time_answers::Need::Rules { .. }
+    );
+    let adds = !pauses && asked == Some("rule");
+    let params = open
+        .params
+        .as_ref()
+        .and_then(|p| serde_json::to_string(p).ok());
+    let (_, sub) = crate::parent_events::told_as(
+        crate::parent_events::Form::Inbox,
+        crate::parent_events::Kind::ExtraTimeRequest.wire(),
+        String::new(),
+        zone.clock(open.at),
+        params.as_deref(),
+        zone,
+        now,
+    );
+    Ok(Some(AskCard {
+        request: open.id,
+        sub,
+        pauses,
+        adds,
+    }))
+}
+
 /// The phone's summary (design 31 §3.2, step 10). The phone, its settings and its last report are a
 /// 500 on a DB error, as are the lifts (Today would read as "nothing today"); a Sections row whose
 /// read fails says "Couldn't read" (logged).
@@ -2216,44 +2298,85 @@ async fn render_device(
 
     // The header (§3.2 item 1, §3.10; the user's pick C, 2026-11-01): the first fact that holds
     // (`phone_status`), the lock only while a rule locks, today's bar only for today's report.
-    let (lock, screen_time) = match latest
+    let (lock, screen_time, report_fresh) = match latest
         .as_ref()
         .and_then(|s| time_report(&s.reported_at, &s.lock_reason, s.time_state_json.as_deref()))
     {
         Some((reported_at, report)) if device.enrolled_at.is_some() => {
+            // Design 93 §4.5: the badge reads the served rows (a rule turned on now among them).
+            let served = crate::lock_now::badge_rows(&state.db, id, now).await;
             let (badge, screen) = badge_and_screen(
                 &report,
                 reported_at,
-                time_rules.as_deref().unwrap_or(&[]),
+                &served,
                 &connection,
                 facts.calls_enforced,
                 &zone,
                 now,
             );
-            (badge, screen)
+            let fresh =
+                crate::time_state::report_is_fresh(&report, &connection, reported_at, &zone, now);
+            (badge, screen, fresh)
         }
-        _ => (None, None),
+        _ => (None, None, false),
     };
     let off = power_off.as_ref().filter(|_| device.enrolled_at.is_some());
     let dot = crate::phone_status::dot(&connection, off.is_some(), now).css();
-    let status = crate::phone_status::header(
-        &crate::phone_status::Facts {
-            connection: &connection,
-            off,
-            lock: lock.as_ref(),
-            battery: latest.as_ref().and_then(|s| {
-                crate::phone_status::Battery::of(s.battery_level, s.battery_charging)
-            }),
-            low_latched: device.battery_low_since.is_some(),
-            screen: screen_time.as_ref(),
-            zone_now: zone_now
-                .as_ref()
-                .map(|(names, since)| (names.as_str(), *since)),
-        },
+    let header_facts = crate::phone_status::Facts {
+        connection: &connection,
+        off,
+        lock: lock.as_ref(),
+        battery: latest
+            .as_ref()
+            .and_then(|s| crate::phone_status::Battery::of(s.battery_level, s.battery_charging)),
+        low_latched: device.battery_low_since.is_some(),
+        screen: screen_time.as_ref(),
+        zone_now: zone_now
+            .as_ref()
+            .map(|(names, since)| (names.as_str(), *since)),
+    };
+    // Design 94 §6.2: "Roamer i Sverige" last on the second line, while the phone is in touch.
+    let status = crate::phone_status::with_roaming(
+        crate::phone_status::header(&header_facts, &zone, now),
+        &header_facts,
         &zone,
         now,
+        latest
+            .as_ref()
+            .and_then(|s| crate::mobile_network::summary_roaming(lang, s)),
     );
-    let meter = meter_of(screen_time.as_ref(), &status);
+    // Design 98 §6.2: "Flymodus på siden 21:03" in place of "not heard from" (last on the second line while in touch).
+    let status = crate::phone_status::with_airplane(
+        status,
+        &header_facts,
+        &zone,
+        now,
+        latest
+            .as_ref()
+            .filter(|_| device.enrolled_at.is_some())
+            .and_then(|s| crate::airplane_mode::on_since(s, now)),
+    );
+    let airplane = latest.as_ref().and_then(crate::airplane_mode::report);
+    let held_before = match &airplane {
+        Some(report) if !report.assistant => {
+            match crate::airplane_mode::assistant_held_before(&state.db, id).await {
+                Ok(held) => held,
+                Err(err) => {
+                    tracing::error!(device_id = id, %err, "can't read the phone's earlier reports");
+                    return crate::i18n::error(
+                        lang,
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "error.read_phone",
+                    );
+                }
+            }
+        }
+        _ => false,
+    };
+    let airplane_lines =
+        crate::airplane_mode::summary_lines(&zone, now, &policy, airplane.as_ref(), held_before);
+    let setup = crate::airplane_mode::SetupCard::of(lang, &policy, latest.as_ref());
+    let status = crate::phone_status::one_line(status);
 
     // Activity (design 48); a failed read is no page, never a history that isn't true.
     let activity = match crate::handlers::activity::rows(
@@ -2266,27 +2389,108 @@ async fn render_device(
     )
     .await
     {
-        Ok(activity) => activity,
+        Ok(activity) => crate::handlers::activity::Summary::of(activity, lang),
         Err(err) => {
             tracing::error!(device_id = id, %err, "can't read the phone's activity");
             return crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.read_phone");
         }
     };
-    let paused = latest
-        .as_ref()
-        .is_some_and(|s| s.paused_at(now.timestamp_millis()));
-    let asked = match crate::parent_events::open_extra_time_request(&state.db, id, &zone, now).await
-    {
-        Ok(asked) => asked.map(|at| zone.clock(at)),
+    let ask = match ask_card(state, &device, &zone, now).await {
+        Ok(ask) => ask,
         Err(err) => {
             tracing::error!(device_id = id, %err, "can't read the request for more time");
             return crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.read_phone");
         }
     };
+    // Design 93: a rule turned on now's flash names its rule and end (the newest on-lock's).
+    let newest_lock = match crate::lock_now::newest(&state.db, id).await {
+        Ok(lock) => lock,
+        Err(err) => {
+            tracing::error!(device_id = id, %err, "can't read the rule turned on now");
+            return crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.read_phone");
+        }
+    };
+    // Design 100 §14.4: "Mamma has already answered" names who did.
+    let answerer = if query.get("done").map(String::as_str) == Some("answered_already") {
+        let request = query
+            .get("request")
+            .map(String::as_str)
+            .filter(|r| crate::handlers::device_api::time_request_id_ok(r));
+        crate::time_answers::last_answerer(&state.db, id, request)
+            .await
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
     let done = query
         .get("done")
         .and_then(|code| crate::handlers::lifts::done_flash(code))
-        .map(|(group, key, refused)| (crate::handlers::lifts::summary_group(group), key, refused));
+        .map(|(group, key, refused)| {
+            let (rule, at) = newest_lock.as_ref().map_or_else(Default::default, |l| {
+                (
+                    crate::time_rules::shown_name(lang, &l.rule_name),
+                    crate::lock_now::end_words(lang, l.end_minute),
+                )
+            });
+            let text = t_params(
+                lang,
+                key,
+                &[
+                    ("rule", &rule),
+                    ("at", &at),
+                    ("name", &device.name),
+                    ("parent", &answerer),
+                ],
+            );
+            (crate::handlers::lifts::summary_group(group), text, refused)
+        });
+    // Design 93: a refusal from the Regler sheet shows in the sheet it reopens; otherwise in Today's group.
+    let refusal = done
+        .as_ref()
+        .filter(|(_, _, refused)| *refused)
+        .map(|(_, text, _)| text.clone());
+    let qa = match crate::handlers::quick_actions::build(
+        &state.db,
+        crate::handlers::quick_actions::Inputs {
+            device_id: id,
+            latest: latest.as_ref(),
+            rules: time_rules.as_deref().unwrap_or(&[]),
+            query,
+            // Design 101 §4.1: a fresh report that says no rule locks (the screen-time lock is none).
+            // A rule list that couldn't be read says nothing (fail closed).
+            no_rule_now: report_fresh
+                && time_rules.is_ok()
+                && lock
+                    .as_ref()
+                    .is_none_or(|b| b.name_key == Some("devices.status.lock.screen_time")),
+            rule_in_force: lock
+                .as_ref()
+                .filter(|b| {
+                    b.at_last_report.is_none()
+                        && b.name_key != Some("devices.status.lock.screen_time")
+                })
+                .map(|b| {
+                    b.name_key
+                        .map(|key| t(lang, key).to_string())
+                        .unwrap_or_else(|| b.name.clone())
+                }),
+            screen: screen_time.as_ref(),
+            lock_again: relock.lock_again,
+            relock_capable: crate::handlers::window_relock::takes_commands(latest.as_ref()),
+            refusal,
+            zone: &zone,
+            now,
+        },
+    )
+    .await
+    {
+        Ok(qa) => qa,
+        Err(err) => {
+            tracing::error!(device_id = id, %err, "can't read the quick actions");
+            return crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "error.read_phone");
+        }
+    };
+    let done = if qa.sheet_flash.is_some() { None } else { done };
     Html(
         DeviceDetailTemplate {
             lang,
@@ -2301,18 +2505,11 @@ async fn render_device(
             connection,
             dot,
             status,
-            meter,
             attention,
-            pause_rules: time_rules
-                .as_deref()
-                .unwrap_or(&[])
-                .iter()
-                .map(|r| (r.id, crate::time_rules::shown_name(lang, &r.name)))
-                .collect(),
-            asked,
+            qa,
+            ask,
             done,
             lifts,
-            paused,
             no_parent_pin: managed_without_pin(&policy),
             relock,
             activity,
@@ -2363,6 +2560,20 @@ async fn render_device(
                     "common.off"
                 },
             ),
+            mobile_value: crate::mobile_network::row_value(
+                lang,
+                &device.name,
+                &policy,
+                latest.as_ref(),
+            ),
+            mobile_lines: crate::mobile_network::summary_lines(
+                lang,
+                &device.name,
+                &policy,
+                latest.as_ref(),
+            ),
+            airplane_lines,
+            setup,
             device,
         }
         .render()
@@ -2829,6 +3040,24 @@ pub async fn update_policy(
     if fields.contains_key("quick_control_touch") {
         quick_controls_mask |= QUICK_CONTROL_TOUCH;
     }
+    // Design 98 §6.1 (Q98-M9): bit 64 is this form's only while it shows the Flymodus row (`airplane_row`); a form
+    // without it (an older launcher's page, an older tab) keeps the stored bit, as it keeps 32.
+    let airplane_row = fields.contains_key("airplane_row");
+    if airplane_row && fields.contains_key("quick_control_airplane") {
+        quick_controls_mask |= QUICK_CONTROL_AIRPLANE;
+    }
+    // Design 99 §5.2: bit 128 (Snarveier) the same way, only while the form shows its row (`shortcuts_row`).
+    let shortcuts_row = fields.contains_key("shortcuts_row");
+    if shortcuts_row && fields.contains_key("quick_control_shortcuts") {
+        quick_controls_mask |= QUICK_CONTROL_SHORTCUTS;
+    }
+    let mut kept_bits = QUICK_CONTROL_MOBILE_DATA;
+    if !airplane_row {
+        kept_bits |= QUICK_CONTROL_AIRPLANE;
+    }
+    if !shortcuts_row {
+        kept_bits |= QUICK_CONTROL_SHORTCUTS;
+    }
 
     // Security review S-L5: pairing any Bluetooth device, not only headphones and speakers (a quick-controls field).
     let bluetooth_any_device = fields.contains_key("bluetooth_any_device");
@@ -2838,12 +3067,15 @@ pub async fn update_policy(
     // form's SQL never touches it. A part the form didn't carry binds NULL and keeps its value.
     let result = sqlx::query(
         "UPDATE device_policy SET kiosk_desired = 1, lock_task_features = ?, \
-         quick_controls_mask = COALESCE(?, quick_controls_mask), \
+         quick_controls_mask = COALESCE((quick_controls_mask & ?) | ?, quick_controls_mask), \
          bluetooth_any_device = COALESCE(?, bluetooth_any_device), \
          vpn_filter_enabled = COALESCE(?, vpn_filter_enabled), updated_at = datetime('now') \
          WHERE device_id = ?",
     )
     .bind(lock_task_features)
+    // Design 97 §5: bit 32 (the kid's Mobildata switch) is the Mobilnett page's; this form keeps it. Design 98: and bit
+    // 64 while the form has no Flymodus row; design 99: and bit 128 while it has no Snarveier row.
+    .bind(kept_bits)
     .bind(quick.then_some(quick_controls_mask))
     .bind(quick.then_some(bluetooth_any_device))
     .bind(filter.then_some(vpn_filter_enabled))

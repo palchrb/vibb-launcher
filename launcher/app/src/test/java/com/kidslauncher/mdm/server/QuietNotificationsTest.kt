@@ -172,10 +172,10 @@ class QuietNotificationsTest {
         assertEquals(listOf("try {", "startForeground(VPN_FILTER_NOTIFICATION_ID, buildNotification())", "state.enteredForeground()"), enter.take(3))
         // onStartCommand: the extra answered first, settled last.
         val onStart = statements(body(vpn, "override fun onStartCommand("))
-        assertEquals("if (intent?.getBooleanExtra(EXTRA_FOREGROUND, false) == true) enterForeground()", onStart[0])
+        assertEquals(listOf("if (intent?.getBooleanExtra(EXTRA_FOREGROUND, false) == true) {", "enterForeground()"), onStart.take(2))
         assertEquals(listOf("settleForeground()", "return START_STICKY"), onStart.takeLast(2))
         // establish() records the tunnel in the state; nothing else holds it.
-        assertTrue("state.established(established, SystemClock.elapsedRealtime())" in body(vpn, "private fun startVpn()"))
+        assertTrue("state.established(established, SystemClock.elapsedRealtime())" in body(vpn, "private fun establish("))
         assertFalse(Regex("""\bpfd\b""").containsMatchIn(vpn))
         // The read loop: a thrown read and an end of stream both post tunnelLost(fd).
         val loop = body(vpn, "private fun readLoop(")
@@ -199,7 +199,7 @@ class QuietNotificationsTest {
         // The stop: the state first; the revoke posts to main.
         assertEquals("val fd = state.stop()", statements(body(vpn, "private fun stopSelfCleanly()"))[0])
         val revoke = body(vpn, "override fun onRevoke()")
-        assertTrue(Regex("""main\.post \{\s*stopSelfCleanly\(\)\s*stopSelf\(\)\s*\}""").containsMatchIn(revoke))
+        assertTrue(Regex("""main\.post \{\s*stopSelfCleanly\(\)\s*if \(vpnStopsNow\(created, foregroundStartsPending\.get\(\)\)\) stopSelf\(\)\s*\}""").containsMatchIn(revoke))
         assertTrue(statements(revoke).none { it.startsWith("super.onRevoke(") })
     }
 
@@ -228,12 +228,37 @@ class QuietNotificationsTest {
             assertFalse(path, "notification_listener_text" in s)
         }
         // Design r13 §2.2: the builder is AnchorNotice's; the plain notice (no budget) is the title alone.
-        val build = body(source("AnchorNotice.kt"), "fun build(context: Context, notice: TimeLeftNotice)")
+        val build = body(source("AnchorNotice.kt"), "fun build(context: Context, time: TimePart)")
         assertTrue("null -> context.getString(R.string.notification_listener_title)" in build)
-        assertTrue("the asked line is the only body", "is AskPart.Asked -> builder.setContentText(" in build)
+        assertTrue("the note is the only body", "noteText(context, time.note)?.let { builder.setContentText(it) }" in build)
         assertEquals(1, Regex("setContentText").findAll(build).count())
         assertTrue("NOTIFICATION_CHANNEL_LISTENER" in build)
-        assertTrue("startForeground(COMMAND_LISTENER_NOTIFICATION_ID, AnchorNotice.plain(this))" in source("CommandListenerService.kt"))
+        // Design 100 §2.3: the plain builder never asks to be shown at once (the panel normally replaces it at boot;
+        // Android still shows one with an action at once, Q100-L2), and the anchor's start goes through the one poster.
+        assertFalse("FOREGROUND_SERVICE_IMMEDIATE" in build || "setForegroundServiceBehavior" in build)
+        assertTrue("startForeground(COMMAND_LISTENER_NOTIFICATION_ID, AnchorNotification.forStart(this))" in source("CommandListenerService.kt"))
+        // D7: the anchor's channel is named "Vibb One", the name the kid reads in the long-press sheet.
+        for (path in listOf("src/main/res/values/strings.xml", "src/main/res/values-nb/strings.xml")) {
+            assertEquals(path, "Vibb One", strings(path)["notification_channel_listener"])
+        }
+    }
+
+    @Test
+    fun `the small icons - the gear on the panel, the Vibb mark on the rest, every ic_stat drawable literal`() {
+        val main = "src/main/java/com/kidslauncher/mdm"
+        fun code(path: String) = file("$main/$path").readText()
+        assertTrue(".setSmallIcon(R.drawable.ic_stat_gear)" in code("shortcuts/ShortcutsNotification.kt"))
+        for (path in listOf("server/AnchorNotice.kt", "play/PlayRuntime.kt", "server/LocateCommands.kt", "assistant/AssistantSetup.kt", "server/KidVpnService.kt")) {
+            val icons = Regex("""setSmallIcon\(([^)]*)\)""").findAll(code(path)).map { it.groupValues[1] }.toList()
+            assertEquals(path, listOf("R.drawable.ic_stat_vibb"), icons)
+        }
+        // M10: a theme attribute doesn't resolve in SystemUI (an empty disc), so a status icon has literal colours.
+        val drawables = file("src/main/res/drawable").listFiles()!!.filter { it.name.startsWith("ic_stat_") }
+        assertEquals(setOf("ic_stat_gear.xml", "ic_stat_vibb.xml"), drawables.map { it.name }.toSet())
+        for (drawable in drawables) assertFalse(drawable.name, Regex("""="\?""").containsMatchIn(drawable.readText()))
+        // The app list's settings button keeps baseline_settings_24 (MIT code); the bug icon has no reader left.
+        assertTrue(file("src/main/res/drawable/baseline_settings_24.xml").exists())
+        assertFalse(listOf(File("src/main/res/drawable/baseline_bug_report_24.xml"), File("app/src/main/res/drawable/baseline_bug_report_24.xml")).any { it.exists() })
     }
 
     @Test
@@ -248,5 +273,26 @@ class QuietNotificationsTest {
         val build = source("KidVpnService.kt").substringAfter("private fun buildNotification() =").substringBefore(".build()")
         assertTrue(".setContentTitle(getString(R.string.notification_vpn_filter_title))" in build)
         assertFalse("setContentText" in build)
+    }
+
+    @Test
+    fun `a stop before the start is answered is left to the queued start`() {
+        // Upstream c88216cfe0: stopService before startForeground crashes the launcher.
+        assertFalse("not created yet", vpnStopsNow(created = false, foregroundStartsPending = 1))
+        assertFalse("a foreground start into a running instance, unanswered", vpnStopsNow(created = true, foregroundStartsPending = 1))
+        assertTrue(vpnStopsNow(created = true, foregroundStartsPending = 0))
+        assertFalse("nothing runs, nothing queued", vpnStopsNow(created = false, foregroundStartsPending = 0))
+        val service = source("KidVpnService.kt")
+        val stop = body(service, "fun stop(context: Context)")
+        assertTrue("if (vpnStopsNow(created, foregroundStartsPending.get())) {" in stop)
+        // The queued start stops itself once answered, before any tunnel.
+        val command = statements(body(service, "override fun onStartCommand("))
+        val answered = command.indexOf("enterForeground()")
+        val check = command.indexOf("if (wantedShape() == VpnShape.NONE || state.stopped) {")
+        assertTrue(answered in 0 until check)
+        assertTrue(check < command.indexOf("if (state.tunnel == null) startVpn() else reshape()"))
+        assertTrue("if (wantedShape() != VpnShape.NONE) startVpn()" in body(service, "override fun onCreate()"))
+        // Code QA L1: a revoke's stopSelf() waits for an unanswered start the same way.
+        assertTrue("if (vpnStopsNow(created, foregroundStartsPending.get())) stopSelf()" in body(service, "override fun onRevoke()"))
     }
 }

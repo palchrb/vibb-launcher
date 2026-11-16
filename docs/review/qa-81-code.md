@@ -457,7 +457,7 @@ Not done from my list, but not claimed either:
   at all. The user should decide that first; it belongs to the lock (design 10), not to design 81.
 
 **Android's "notification cooldown" is not a concern for the Jelly Star.** The pass saw it soften a reaction that
-came 10 s after a message. Cooldown is an Android 15+ feature, and the Jelly Star runs Android 13/14, so the pass's
+came 10 s after a message. Cooldown is an Android 15+ feature, and the Jelly Star runs Android 13/14 *(correction, design 96's code QA L6: on Vibb One it runs Android 16 - Unihertz went from 13 straight to 16, 2026-08-31, and `minSdk` is 34; design 56 §1)*, so the pass's
 observation doesn't carry over to it.
 
 ### Not checked in this verification

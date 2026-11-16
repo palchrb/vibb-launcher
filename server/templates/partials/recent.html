@@ -1,7 +1,7 @@
 {#- A command's row (`locate::CommandRow`): what was asked, when and how it went, Cancel while it
-    waits. The Cancel posts `back` (`find`, `summary`) and lands on `group`, where the line after
-    it shows: Find Phone's requests (#recent, design 88) or the summary's Activity (#activity,
-    design 48 §1.5). -#}
+    waits. The Cancel posts `back` (`find`, `summary`, `activity`) and lands on `group`, where the
+    line after it shows: Find Phone's requests (#recent, design 88), the summary's Activity
+    (#activity, design 48 §1.5) or the phone's Activity page (#activity, 2026-11-13). -#}
 {% macro row(c, device_id, back, group) %}
             <div class="row" data-command="{{ c.kind }}">
                 <span class="row-label">{{ c.label }}{% if let Some(detail) = c.detail %}<span class="row-sub"{% if let Some(raw) = c.detail_title %} title="{{ raw }}"{% endif %}>{{ detail }}</span>{% endif %}</span>

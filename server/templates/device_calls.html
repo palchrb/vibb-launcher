@@ -715,20 +715,18 @@
     </details>
     {% endif %}
     {% if auto_refresh %}
-    <script src="/static/auto-reload.js?v=8" defer></script>
+    <span hidden data-waits></span>
     {% endif %}
-    <script src="/static/contact-form.js?v=1" defer></script>
-    {% if !contacts.is_empty() %}
-    <script src="/static/photo-crop.js?v=3" defer></script>
-    {% endif %}
+    <script src="/static/contact-form.js?v=2" defer data-swap-ready></script>
+    <script src="/static/photo-crop.js?v=4" defer data-swap-ready></script>
     </div>
 </main>
 {#- A contact photo's crop (static/photo-crop.js): a chosen photo, or "Adjust crop"'s kept original (or a photo
     from before migration 0123 its stored square), in the phone's circle; Save puts the chosen square into the
     form's `view` and submits it with the photo (an adjust: with `original` and no file; a pre-0123 one: the cut
     square as the file). The original's sizes and the decoder's limits come from `photos`. Outside <main>, so a touch
-    on it never scrolls the page. Hidden for good without JS. -#}
-{% if !contacts.is_empty() %}
+    on it never scrolls the page. Hidden for good without JS. On every Calls page with its script (design 103's code QA
+    L7), so the first contact added or the last removed keeps the script list and saves in place. -#}
 <div class="crop-backdrop" data-crop-dialog data-side="{{ crate::photos::MAX_SIDE }}" data-max-bytes="{{ crate::photos::MAX_UPLOAD_BYTES }}" data-original-long="{{ crate::photos::ORIGINAL_LONG }}" data-original-short="{{ crate::photos::ORIGINAL_SHORT }}" data-original-pixels="{{ crate::photos::ORIGINAL_PIXELS }}" data-max-input-side="{{ crate::photos::MAX_INPUT_SIDE }}" data-max-input-pixels="{{ crate::photos::MAX_INPUT_PIXELS }}" hidden>
     <div class="crop-dialog" role="dialog" aria-modal="true" aria-labelledby="crop-title" aria-describedby="crop-hint">
         <h2 class="crop-title" id="crop-title">{{ self.t("device.calls.crop.title") }}</h2>
@@ -747,6 +745,5 @@
         </div>
     </div>
 </div>
-{% endif %}
 </body>
 </html>

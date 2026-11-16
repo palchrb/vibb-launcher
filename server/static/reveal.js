@@ -72,18 +72,27 @@
         doc.addEventListener("visibilitychange", function () {
             if (doc.visibilityState === "hidden") forget(doc);
         });
-        var buttons = doc.querySelectorAll("[data-copy-secret]");
-        for (var i = 0; i < buttons.length; i++) {
-            (function (button) {
-                button.hidden = false;
-                button.addEventListener("click", function () {
-                    copySecret(win, function (copied) {
-                        button.textContent = w(button, copied ? "copied" : "select");
+        // The Copy buttons; again on `handy:swapped` (design 103, static/swap.js: the server's `hidden` comes back), each
+        // wired once.
+        function wire() {
+            var buttons = doc.querySelectorAll("[data-copy-secret]");
+            for (var i = 0; i < buttons.length; i++) {
+                (function (button) {
+                    button.hidden = false;
+                    if (button.handyCopy) return;
+                    button.handyCopy = true;
+                    button.addEventListener("click", function () {
+                        copySecret(win, function (copied) {
+                            button.textContent = w(button, copied ? "copied" : "select");
+                        });
                     });
-                });
-            })(buttons[i]);
+                })(buttons[i]);
+            }
         }
+        wire();
+        doc.addEventListener("handy:swapped", wire);
     }
+
 
     var api = { install: install, forget: forget, copySecret: copySecret };
     if (typeof module !== "undefined" && module.exports) {

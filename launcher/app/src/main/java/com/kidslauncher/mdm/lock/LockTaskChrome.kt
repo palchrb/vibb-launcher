@@ -88,6 +88,38 @@ object LockTaskChrome {
         }
     }
 
+    /** Design 98 §2.2 step 4: Settings for a Flymodus turn-on's window - an input like [sosNarrowing], set and cleared
+     * only by [com.kidslauncher.mdm.assistant.AirplaneRoute] through [routeWindow]. Never pinned while LOCKED. */
+    @Volatile
+    private var routePin: String? = null
+
+    /** The window's close is in its first pass ([routeWindow]): Settings out, the shade still blocked. Under the monitor. */
+    private var routeClosing = false
+
+    /** The route's window opens ([pkg]) or closes (`null`): one pass now - a close two (Q99-H1: a pass writes the
+     * features before the list, so the first takes Settings out with the shade still blocked, the second gives the shade
+     * back; seen on the emulator, docs/testing/emulator.md §6am "Addendum"). Any thread but main. Only from a plan: a
+     * pass without one reads the platform's list back and couldn't take Settings out again, so it opens nothing (returns
+     * false - the route then refuses). */
+    fun routeWindow(context: Context, pkg: String?): Boolean = synchronized(this) {
+        if (plan == null) {
+            routePin = null
+            return false
+        }
+        if (pkg == null && routePin != null) {
+            routePin = null
+            routeClosing = true
+            try {
+                applyNow(context)
+            } finally {
+                routeClosing = false
+            }
+        }
+        routePin = pkg
+        applyNow(context)
+        true
+    }
+
     private fun sosNarrowed(context: Context, locked: Boolean, kioskOn: Boolean): Set<String>? =
         if (sosNarrowing && locked && kioskOn) sosNarrowedPackages(context.packageName, helpers, PinLockRuntime.sosPackage) else null
 
@@ -256,6 +288,8 @@ object LockTaskChrome {
             voipPackages = if (locked && !kioskOn) voipPackages() else emptySet(),
             recentsPin = current.recentsPin,
             sosNarrowed = sosNarrowed(context, locked, kioskOn),
+            routePin = routePin,
+            routeClosing = routeClosing,
         )
         return apply(context, dpm, setting, heal, kioskOn = kioskOn, locked = locked)
     }

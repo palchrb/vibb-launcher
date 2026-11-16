@@ -9,8 +9,10 @@ import com.kidslauncher.mdm.timerules.Lift
 import com.kidslauncher.mdm.timerules.LiftRecord
 import com.kidslauncher.mdm.timerules.RuleLifts
 import com.kidslauncher.mdm.timerules.TARGET_RULE
+import com.kidslauncher.mdm.timerules.activeSpan
 import com.kidslauncher.mdm.timerules.TimeLock
 import com.kidslauncher.mdm.timerules.TimePolicy
+import com.kidslauncher.mdm.timerules.TimeRule
 import com.kidslauncher.mdm.timerules.TimeRulesRuntime
 import com.kidslauncher.mdm.timerules.budgetMinutesFor
 import com.kidslauncher.mdm.timerules.decideTimeLock
@@ -57,18 +59,19 @@ data class RuleCard(val kind: RuleCardKind, val name: String?, val until: LocalD
 /**
  * The card for the lock in force: null unless [reason] (the enforced `mdm.lockReason()`) and [lock] (the snapshot's
  * decision) both lock, with the same reason - the pref is what enforcement and the time-rule screen go by, the snapshot
- * gives the details; a moment where they disagree shows no card. The strongest rule's kind and name
- * (`lock.rules.first()`), else SCREEN_TIME with no name and no end.
+ * gives the details; a moment where they disagree shows no card. [chosen]'s kind and name ([cardRule]'s, by default
+ * the strongest rule, `lock.rules.first()`), else SCREEN_TIME with no name and no end.
  */
-fun ruleCard(reason: LockReason, lock: TimeLock, end: LocalDateTime?): RuleCard? {
+fun ruleCard(reason: LockReason, lock: TimeLock, end: LocalDateTime?, chosen: TimeRule? = lock.rules.firstOrNull()): RuleCard? {
     if (reason == LockReason.NONE || !lock.locked || reason != lock.reason) return null
-    val rule = lock.rules.firstOrNull() ?: return RuleCard(RuleCardKind.SCREEN_TIME, null, null)
+    val rule = chosen ?: return RuleCard(RuleCardKind.SCREEN_TIME, null, null)
     val name = (ruleLabel(rule.kind, rule.name) as? RuleLabel.Named)?.name
     return RuleCard(ruleCardKind(rule.kind), name, end)
 }
 
 /**
- * The lock's certain end at [at], or null. [TimeLock.until] (the strongest rule's occurrence end) when all of:
+ * The lock's certain end at [at], or null. [end] - by default [TimeLock.until], the strongest rule's occurrence end;
+ * [cardRule] tests a turned-on rule's own end (design 93 §9.2) - when all of:
  * - it is a single instant in [zone] (not in a DST gap or overlap);
  * - the decision at `until` is unlocked, with the policy, the rule lifts in force *at* `until` ([liftsAtEnd]) and the
  *   budget of `until`'s own day: today's [budget] when `until.toLocalDate() == ledgerDay`, else a fresh day's
@@ -85,9 +88,10 @@ fun lockEnd(
     ledgerDay: LocalDate?,
     zone: ZoneId,
     at: LocalDateTime,
+    end: LocalDateTime? = lock.until,
 ): LocalDateTime? {
     if (!lock.locked || lock.rules.isEmpty() || lock.reason == LockReason.SCREEN_TIME) return null
-    val until = lock.until ?: return null
+    val until = end ?: return null
     if (zone.rules.getValidOffsets(until).size != 1) return null
     val day = until.toLocalDate()
     val remaining = budget?.remainingMs
@@ -112,17 +116,46 @@ fun ruleLiftsAt(records: List<LiftRecord>, lifts: List<Lift>, clocks: Clocks, at
     return RuleLifts(all = active.any { it.ruleId == null }, ruleIds = active.mapNotNull { it.ruleId }.toSet())
 }
 
-/** [lockEnd] for a snapshot: the lifts at the end built from its records, its budget, its ledger's day and zone. */
-fun lockEndOf(snap: TimeRulesRuntime.Snapshot): LocalDateTime? {
-    val policy = snap.policy ?: return null
-    val until = snap.lock.until ?: return null
-    val at = until.atZone(snap.zone).toInstant()
-    val now = LocalDateTime.ofInstant(Instant.ofEpochMilli(snap.clocks.wallMs), snap.zone)
-    return lockEnd(
-        policy, snap.lock, ruleLiftsAt(snap.records, policy.lifts, snap.clocks, at), snap.budget, snap.ledger?.date(), snap.zone, now,
-    )
+/** The rule the card names and its certain end (design 93 §9.2). */
+data class CardPick(val rule: TimeRule?, val end: LocalDateTime?)
+
+/**
+ * Design 93 §9.2: among [lock]'s rules, the first with `cardFirst` (a rule the parent turned on now) whose own end - its
+ * occurrence covering [at] - is a certain unlock by [endAt] (`lockEnd` with that end); else the strongest rule with
+ * the lock's end, as before. The lock itself is untouched: only the card, the time-rule screen's title and the
+ * report's `active_rule_id` follow it.
+ */
+fun cardRule(lock: TimeLock, at: LocalDateTime, endAt: (LocalDateTime?) -> LocalDateTime?): CardPick {
+    for (rule in lock.rules) {
+        if (!rule.cardFirst) continue
+        val own = activeSpan(rule, at)?.end ?: continue
+        endAt(own)?.let { return CardPick(rule, it) }
+    }
+    return CardPick(lock.rules.firstOrNull(), endAt(lock.until))
 }
 
-/** The glance's card for [reason] and [snap] (r13 §1.1's glue). */
-fun ruleCardOf(reason: LockReason, snap: TimeRulesRuntime.Snapshot): RuleCard? =
-    if (reason == LockReason.NONE) null else ruleCard(reason, snap.lock, lockEndOf(snap))
+/** [cardRule] for a snapshot: [lockEnd] with the lifts at the end built from its records, its budget, its ledger's day
+ * and zone. */
+fun cardPick(snap: TimeRulesRuntime.Snapshot): CardPick {
+    val policy = snap.policy ?: return CardPick(snap.lock.rules.firstOrNull(), null)
+    val now = LocalDateTime.ofInstant(Instant.ofEpochMilli(snap.clocks.wallMs), snap.zone)
+    return cardRule(snap.lock, now) { until ->
+        until?.let {
+            val at = it.atZone(snap.zone).toInstant()
+            lockEnd(
+                policy, snap.lock, ruleLiftsAt(snap.records, policy.lifts, snap.clocks, at), snap.budget,
+                snap.ledger?.date(), snap.zone, now, it,
+            )
+        }
+    }
+}
+
+/** The card's certain end for a snapshot ([cardPick]'s). */
+fun lockEndOf(snap: TimeRulesRuntime.Snapshot): LocalDateTime? = cardPick(snap).end
+
+/** The glance's card for [reason] and [snap] (r13 §1.1's glue), naming [cardPick]'s rule. */
+fun ruleCardOf(reason: LockReason, snap: TimeRulesRuntime.Snapshot): RuleCard? {
+    if (reason == LockReason.NONE) return null
+    val pick = cardPick(snap)
+    return ruleCard(reason, snap.lock, pick.end, pick.rule)
+}

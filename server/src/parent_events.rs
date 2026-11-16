@@ -88,6 +88,18 @@ pub enum Kind {
     /// and no [PushBudget]: at most four are open until a parent answers. Told from its parameters
     /// ([MmscHostParams]).
     MmscHost,
+    /// Design 97 §6: the phone crossed into another country abroad or onto a ship's or plane's network (a report's
+    /// `data_roaming`, `mobile_network::roaming_edge`), keyed by the place and the crossing's instant. Its own switch,
+    /// no [PushBudget] (the hour's border guard). Told from its parameters ([RoamingParams]); pruned with the phone's
+    /// location history.
+    RoamingStarted,
+    /// Design 102 §3.7: a Wi-Fi sign-in that went wide - more than 3 sites, a blocked frame, or the time ran out (a
+    /// report's `captive_portal.sessions`, `logins::wide`), keyed by the session's `opened_ms`. Told from its
+    /// parameters ([WifiSigninParams]); held at night (`logins::night_push`).
+    WifiSigninWide,
+    /// Design 102 §3.4: the day's code-free Wi-Fi sign-ins are used up (`logins::budget_spent`), keyed by the family's
+    /// local date. Shares [Kind::WifiSigninWide]'s switch.
+    WifiSigninBudget,
 }
 
 /// A kind's own push rate (design 77 §7, QA R2-M3), beside [EVENTS_AN_HOUR] and [URGENT_PUSHES_AN_HOUR]: a phone's
@@ -101,7 +113,7 @@ pub struct PushBudget {
 }
 
 impl Kind {
-    pub const ALL: [Kind; 20] = [
+    pub const ALL: [Kind; 23] = [
         Kind::EmergencyCall,
         Kind::PinUsed,
         Kind::PinLockout,
@@ -122,6 +134,9 @@ impl Kind {
         Kind::SmsHeld,
         Kind::ContactRequest,
         Kind::MmscHost,
+        Kind::RoamingStarted,
+        Kind::WifiSigninWide,
+        Kind::WifiSigninBudget,
     ];
 
     pub fn wire(self) -> &'static str {
@@ -146,6 +161,9 @@ impl Kind {
             Kind::SmsHeld => "sms_held",
             Kind::ContactRequest => "contact_request",
             Kind::MmscHost => "mmsc_host",
+            Kind::RoamingStarted => "roaming_started",
+            Kind::WifiSigninWide => "wifi_signin_wide",
+            Kind::WifiSigninBudget => "wifi_signin_budget",
         }
     }
 
@@ -213,6 +231,12 @@ impl Kind {
             }
             // Design 77 §14: on by default (migration 0133).
             Kind::ContactRequest => Some(("push_contact_request", "Asks for a new contact")),
+            // Design 97 §6: on by default (migration 0145).
+            Kind::RoamingStarted => Some(("push_roaming", "Roaming abroad")),
+            // Design 102 §3.7: on by default (migration 0150), one switch for both.
+            Kind::WifiSigninWide | Kind::WifiSigninBudget => {
+                Some(("push_wifi_signin", "Wi-Fi sign-in"))
+            }
         }
     }
 
@@ -337,11 +361,20 @@ impl Phone {
         }
     }
 
-    /// An emergency call the phone reported (`call_state.last_emergency_call_at`).
+    /// An emergency call the phone reported (`call_state.last_emergency_call_at`), without design 98's line (the
+    /// tests' form; the intake raises [Phone::emergency_call_with]).
+    #[cfg(test)]
     pub fn emergency_call(&self, at: DateTime<Utc>) -> NewEvent {
-        let params = PhoneAtParams {
+        self.emergency_call_with(at, false)
+    }
+
+    /// [Phone::emergency_call] with design 98 §7.1's line: `airplane_off` when the same report says the call ended
+    /// airplane mode (`airplane_mode::emergency_off`) - told in the inbox and the push, never from phone text.
+    pub fn emergency_call_with(&self, at: DateTime<Utc>, airplane_off: bool) -> NewEvent {
+        let params = EmergencyCallParams {
             phone: self.name.clone(),
             at: instant(at),
+            airplane_off,
         };
         NewEvent {
             target: format!("/devices/{}/calls", self.id),
@@ -358,6 +391,14 @@ impl Phone {
         let at = DateTime::from_timestamp_millis(event.occurred_at_ms).unwrap_or(self.now);
         let (kind, until) = match event.kind {
             PinKind::Wrong => return None,
+            // Design 98 §4.4.5: the time-rule screen's pause says until when, as its security-log line does.
+            PinKind::Unlocked if event.entry == Entry::RulePause => (
+                Kind::PinUsed,
+                event
+                    .until_ms
+                    .and_then(DateTime::from_timestamp_millis)
+                    .map(instant),
+            ),
             PinKind::Unlocked => (Kind::PinUsed, None),
             PinKind::Lockout => (
                 Kind::PinLockout,
@@ -374,6 +415,8 @@ impl Phone {
             Entry::Settings => "settings",
             Entry::Pause => "pause",
             Entry::InstallMode => "install_mode",
+            Entry::RulePause => "rule_pause",
+            Entry::WifiSignin => "wifi_signin",
         };
         let params = PinParams {
             phone: self.name.clone(),
@@ -449,6 +492,80 @@ impl Phone {
         }
     }
 
+    /// Design 97 §6: the phone crossed into `place` abroad (a country code, `ship`, or `plain` for none readable) at
+    /// `at`. The place is stored as a code and worded when read, in the reader's language; the target is the Mobilnett
+    /// page's "I utlandet".
+    pub fn roaming_started(&self, place: &str, at: DateTime<Utc>) -> NewEvent {
+        let params = RoamingParams {
+            phone: self.name.clone(),
+            at: instant(at),
+            place: Some(place.to_string()).filter(|p| p != "plain"),
+        };
+        NewEvent {
+            target: format!("/devices/{}/mobile#abroad", self.id),
+            ..self.with_params(
+                Kind::RoamingStarted,
+                format!("{place}:{}", instant(at)),
+                at,
+                &params,
+            )
+        }
+    }
+
+    /// Design 102 §3.7: a Wi-Fi sign-in that went wide (`logins::wide`), keyed by its `opened_ms` (every report
+    /// repeats the last 10 sessions). The target is the Sign-in page's Wi-Fi group.
+    pub fn wifi_signin_wide(&self, session: &crate::logins::Session, push: Push) -> NewEvent {
+        let at = DateTime::from_timestamp_millis(session.opened_ms)
+            .unwrap_or(self.now)
+            .min(self.now);
+        let why = if session.visited_count > 3 {
+            "sites"
+        } else if !session.blocked_frames.is_empty() {
+            "frames"
+        } else {
+            "timeout"
+        };
+        let params = WifiSigninParams {
+            phone: self.name.clone(),
+            at: instant(at),
+            why: Some(why.to_string()),
+            sites: session.visited.clone(),
+            count: session.visited_count,
+        };
+        NewEvent {
+            target: format!("/devices/{}/logins#logins-wifi", self.id),
+            push,
+            ..self.with_params(
+                Kind::WifiSigninWide,
+                session.opened_ms.to_string(),
+                at,
+                &params,
+            )
+        }
+    }
+
+    /// Design 102 §3.4: today's code-free Wi-Fi sign-ins are used up (`logins::budget_spent`), once a day (`date`, the
+    /// family's local date). The target is the "one more" button.
+    pub fn wifi_signin_budget(&self, date: &str, push: Push) -> NewEvent {
+        let params = WifiSigninParams {
+            phone: self.name.clone(),
+            at: instant(self.now),
+            why: None,
+            sites: Vec::new(),
+            count: 0,
+        };
+        NewEvent {
+            target: format!("/devices/{}/logins#logins-wifi", self.id),
+            push,
+            ..self.with_params(
+                Kind::WifiSigninBudget,
+                format!("budget:{date}"),
+                self.now,
+                &params,
+            )
+        }
+    }
+
     /// The battery latched low at `since` (§2.5).
     pub fn low_battery(
         &self,
@@ -497,9 +614,11 @@ impl Phone {
         }
     }
 
-    /// The boot's start (design 38 §3.2), always pushed at once: told as "Anna restarted" / "07:02
-    /// · battery 64 %", "Anna was turned on" / "07:02 · off since 21:14, battery was 3 %", or with
-    /// no shutdown seen the newest report before the boot.
+    /// The boot's start (design 38 §3.2), pushed at once (a quick start's push [power_events]
+    /// takes away): told as "Anna restarted" / "07:02 · battery 64 %", "Anna was turned on" /
+    /// "07:02 · off since 21:14, battery was 3 %", "Anna was turned off and on" / "Off 07:00–07:03
+    /// · battery 64 %" (a power-off within [OFF_HOLD], 2026-11-13), or with no shutdown seen the
+    /// newest report before the boot.
     pub fn phone_on(&self, on: &PowerOn, at: DateTime<Utc>, start: &Start) -> NewEvent {
         // Design 59 §2.3: with Android's lock the phone waits at "type the PIN to start" after a
         // restart; "· unlocked 07:15" once that took more than [UNLOCK_SAID_AFTER].
@@ -510,6 +629,7 @@ impl Phone {
             .map(instant);
         let (start_code, off_at, off_battery, last) = match start {
             Start::Restart => ("restart", None, None, None),
+            Start::QuickOff { at: off_at } => ("quick_off", Some(instant(*off_at)), None, None),
             Start::AfterOff { off, at: off_at } => (
                 "after_off",
                 Some(instant(*off_at)),
@@ -550,6 +670,37 @@ impl Phone {
 pub struct PhoneAtParams {
     pub phone: String,
     pub at: String,
+}
+
+/// An emergency call (design 35; the first two keys are [PhoneAtParams]'s): since design 98 §7.1 `airplane_off`, the call
+/// turned airplane mode off - set at the raise when the same report says so, or later by
+/// [mark_emergency_airplane_off] (the inbox's line then, no second push). Absent (false) on every older row.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct EmergencyCallParams {
+    pub phone: String,
+    pub at: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub airplane_off: bool,
+}
+
+/// Design 98 §7.1: a later report brings the period an emergency call ended - its event (keyed by the call's instant)
+/// gets the line in the inbox; no second push (a push not sent yet carries it). `true` when a row changed.
+pub async fn mark_emergency_airplane_off(
+    db: &SqlitePool,
+    device_id: i64,
+    call_at: DateTime<Utc>,
+) -> Result<bool, sqlx::Error> {
+    let done = sqlx::query(
+        "UPDATE parent_events SET params = json_set(params, '$.airplane_off', json('true')) \
+         WHERE device_id = ? AND kind = ? AND dedup_key = ? AND params IS NOT NULL \
+         AND json_valid(params) AND json_extract(params, '$.airplane_off') IS NULL",
+    )
+    .bind(device_id)
+    .bind(Kind::EmergencyCall.wire())
+    .bind(instant(call_at))
+    .execute(db)
+    .await?;
+    Ok(done.rows_affected() > 0)
 }
 
 /// A parent-PIN use or lockout: where the PIN was typed (`override`, `pin_lock`, `settings`,
@@ -607,8 +758,8 @@ pub struct PhoneOffParams {
 }
 
 /// A boot's start (design 38 §3.2): the battery now, the unlock when it was late (design 59
-/// §2.3), how the start is told (`restart`, `after_off` with the shutdown's instant and battery,
-/// `no_shutdown` with the newest report before the boot).
+/// §2.3), how the start is told (`restart`, `quick_off` with the shutdown's instant, `after_off`
+/// with the shutdown's instant and battery, `no_shutdown` with the newest report before the boot).
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PhoneOnParams {
     pub phone: String,
@@ -631,7 +782,8 @@ pub struct PhoneOnParams {
 }
 
 /// A `phone_off`'s push waits this long on the server's clock for the next boot's `phone_on`
-/// (design 38 §3.3): a restart's start drops it. Apart from [RESTART_GAP], since the start's
+/// (design 38 §3.3), and a start this close after the shutdown on the phone's two instants is
+/// quiet (2026-11-13): it drops the held push and pushes nothing itself, whatever the restart flag. Apart from [RESTART_GAP], since the start's
 /// upload comes only after the boot, the unlock, the network and tsnet's connect (qa-38-design N2;
 /// if the Jelly Star's check times it above this, raise this, not the gap).
 pub const OFF_HOLD: chrono::Duration = chrono::Duration::minutes(5);
@@ -730,7 +882,14 @@ pub struct LastReport {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Start {
     Restart,
-    AfterOff { off: PowerOff, at: DateTime<Utc> },
+    /// A power-off (not a restart) and a start within [OFF_HOLD]: "turned off and on".
+    QuickOff {
+        at: DateTime<Utc>,
+    },
+    AfterOff {
+        off: PowerOff,
+        at: DateTime<Utc>,
+    },
     NoShutdownSeen(Option<LastReport>),
 }
 
@@ -740,8 +899,12 @@ pub enum Start {
 pub struct PowerPlan {
     /// Raised in order (the `off` first).
     pub events: Vec<NewEvent>,
-    /// A restart: the `phone_off` with this key has its still-queued pushes `dropped`, `restart`.
-    pub drop_held_off: Option<String>,
+    /// A restart or a quick start: the `phone_off` with this key has its still-queued pushes
+    /// `dropped` with this reason (`restart`, `quick_start`).
+    pub drop_held_off: Option<(String, &'static str)>,
+    /// A quick start (within [OFF_HOLD]), raised unpushed: pushed after all when the off's push
+    /// already went (its upload came after the server's hold) - never a "turned off" left alone.
+    pub quiet_start: bool,
     /// A start after a real shutdown: the `phone_off` with this key, if its held push hasn't gone
     /// yet, goes now - before the "turned on", never after it.
     pub release_held_off: Option<String>,
@@ -752,7 +915,8 @@ pub struct PowerPlan {
 /// The state machine of one shutdown and the start after it (design 38 §3.3), pure over the body,
 /// the newest report before the boot and the phone. An `off` and an `on` pair when the off's boot
 /// is earlier; a pair one boot apart is a restart when the phone said so, or said nothing and the
-/// two instants are at most [RESTART_GAP] apart.
+/// two instants are at most [RESTART_GAP] apart; and quiet (no push at all) when the two instants
+/// are at most [OFF_HOLD] apart, whatever the flag (2026-11-13).
 pub fn power_events(report: &PowerReport, last: Option<&LastReport>, phone: &Phone) -> PowerPlan {
     let mut plan = PowerPlan::default();
     let in_reach = |at_ms: i64| {
@@ -789,16 +953,26 @@ pub fn power_events(report: &PowerReport, last: Option<&LastReport>, phone: &Pho
         });
     match (off, on) {
         (Some((off, off_at)), Some((on, on_at))) if off.boot_count < on.boot_count => {
-            let restart = off.boot_count + 1 == on.boot_count
+            let next_boot = off.boot_count + 1 == on.boot_count;
+            let quick = next_boot && on_at - off_at <= OFF_HOLD;
+            let restart = next_boot
                 && match off.reboot {
                     Some(reboot) => reboot,
                     None => on_at - off_at <= RESTART_GAP,
                 };
             let key = instant(off_at);
             plan.events.push(phone.phone_off(off, off_at, true));
-            if restart {
-                plan.events.push(phone.phone_on(on, on_at, &Start::Restart));
-                plan.drop_held_off = Some(key);
+            if restart || quick {
+                let (start, reason) = if restart {
+                    (Start::Restart, "restart")
+                } else {
+                    (Start::QuickOff { at: off_at }, "quick_start")
+                };
+                let event = phone.phone_on(on, on_at, &start);
+                let push = if quick { Push::No } else { event.push };
+                plan.events.push(NewEvent { push, ..event });
+                plan.drop_held_off = Some((key, reason));
+                plan.quiet_start = quick;
             } else {
                 let start = Start::AfterOff {
                     off: off.clone(),
@@ -1439,6 +1613,91 @@ fn fit_name(name: &str, max: usize, words: impl Fn(&str) -> String) -> String {
     words(&format!("{}…", cut.trim_end()))
 }
 
+/// A roaming notice's parameters (design 97 §6): the phone's name, when, and the place as a code - a country code,
+/// `ship`, or none.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RoamingParams {
+    pub phone: String,
+    pub at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub place: Option<String>,
+}
+
+/// A roaming notice's words (design 97 §6): "Emma is roaming in Sweden" / "14:02" - the named country's phrase, the ship
+/// notice, "(US)" for a country not named, or plainly. The push says the same.
+fn roaming_told(p: &RoamingParams, zone: &Zone, now: DateTime<Utc>) -> (String, String) {
+    let lang = zone.lang();
+    let (key, param) = match p.place.as_deref() {
+        Some("ship") => ("events.roaming_started.ship", None),
+        Some(cc) => match crate::mobile_network::place_phrase(lang, cc) {
+            Some(phrase) => ("events.roaming_started.title", Some(("place", phrase))),
+            None => (
+                "events.roaming_started.elsewhere",
+                Some(("country", cc.to_ascii_uppercase())),
+            ),
+        },
+        None => ("events.roaming_started.plain", None),
+    };
+    let title = fit_name(&p.phone, TITLE_MAX, |name| {
+        let mut params = vec![("name", name)];
+        if let Some((k, v)) = &param {
+            params.push((k, v.as_str()));
+        }
+        t_params(lang, key, &params)
+    });
+    let summary = crate::display_time::parse_db_utc(&p.at)
+        .map(|at| capitalized(&zone.at(at, now)))
+        .unwrap_or_default();
+    (crate::audit::clip(&title, TITLE_MAX).to_string(), summary)
+}
+
+/// A Wi-Fi sign-in event's parameters (design 102 §3.7): the phone's name, when, and for a wide session why
+/// (`sites`, `frames`, `timeout`), the sites visited and their true count.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WifiSigninParams {
+    pub phone: String,
+    pub at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub why: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sites: Vec<String>,
+    #[serde(default)]
+    pub count: i64,
+}
+
+/// A Wi-Fi sign-in event's words (design 102 §3.7): "Emma: the Wi-Fi sign-in visited 5 sites" / "14:02 · a.example,
+/// b.example" in the inbox, the time alone in the push.
+fn wifi_signin_told(
+    form: Form,
+    kind: Kind,
+    p: &WifiSigninParams,
+    zone: &Zone,
+    now: DateTime<Utc>,
+) -> (String, String) {
+    let lang = zone.lang();
+    let key = match (kind, p.why.as_deref()) {
+        (Kind::WifiSigninBudget, _) => "events.wifi_signin_budget.title",
+        (_, Some("sites")) => "events.wifi_signin_wide.sites",
+        (_, Some("frames")) => "events.wifi_signin_wide.frames",
+        _ => "events.wifi_signin_wide.timeout",
+    };
+    let count = p.count.to_string();
+    let title = fit_name(&p.phone, TITLE_MAX, |name| {
+        t_params(lang, key, &[("name", name), ("count", &count)])
+    });
+    let at = crate::display_time::parse_db_utc(&p.at)
+        .map(|at| capitalized(&zone.at(at, now)))
+        .unwrap_or_default();
+    let summary = match form {
+        Form::Inbox if !p.sites.is_empty() => format!("{at} · {}", p.sites.join(", ")),
+        _ => at,
+    };
+    (
+        crate::audit::clip(&title, TITLE_MAX).to_string(),
+        crate::audit::clip(&summary, SUMMARY_MAX).to_string(),
+    )
+}
+
 /// A zone event's parameters (design 64 §3.4, the user's decision 5): what the words are made of,
 /// stored instead of the words - the zone's and the phone's names as they were when it was
 /// raised, the direction, and when (the first fix of the pair, RFC 3339).
@@ -1497,7 +1756,9 @@ pub fn zone_crossing(
 /// phone's own count): the fourth of the server zone's day is answered `capped` and not stored.
 pub const EXTRA_TIME_REQUESTS_A_DAY: i64 = 3;
 /// A request is news this long after the kid asked: pushed when younger at intake, else only in the
-/// inbox and Activity (design r13 §2.6); the phone stops sending it after the same 30 minutes.
+/// inbox and Activity (design r13 §2.6). Since design 100 the phone keeps one request open until a
+/// parent answers it or its day ends, and sends it whenever it is back online that day: a late one
+/// lands in the card and the inbox without a push.
 pub const EXTRA_TIME_NEWS_MINUTES: i64 = 30;
 
 /// Where the phone stood when the kid asked (design r13 §2.6), from the server's own latest report
@@ -1557,11 +1818,21 @@ pub struct ExtraTimeParams {
     pub left_minutes: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rule: Option<String>,
+    /// Design 100 §14.4 (QA R2-L7): the parent's answer, written into the params in the answer's
+    /// transaction - `yes` or `no` -, who gave it (the parents' own word: the display name, else the
+    /// login - a snapshot at the answer, so every read site words it from the params alone) and a
+    /// yes's minutes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub minutes: Option<i64>,
 }
 
 /// The kid's request for more screen time (design r13 §2.6): key the phone's own request `id`, so
-/// a retried POST gives one row; the words left to [told]. Target: Device › Time's Extra Time
-/// Today, with the lift buttons in view.
+/// a retried POST gives one row; the words left to [told]. Target: the summary's answer card
+/// (`#ask`, design 100 §14.4); once answered there is no `#ask` and the link lands at the top.
 pub fn extra_time_request(
     device_id: i64,
     phone: &str,
@@ -1582,6 +1853,9 @@ pub fn extra_time_request(
         state: word.to_string(),
         left_minutes,
         rule,
+        answer: None,
+        by: None,
+        minutes: None,
     };
     NewEvent {
         device_id: Some(device_id),
@@ -1589,7 +1863,7 @@ pub fn extra_time_request(
         dedup_key: id.to_string(),
         title: String::new(),
         summary: String::new(),
-        target: format!("/devices/{device_id}#quick"),
+        target: format!("/devices/{device_id}#ask"),
         detail: None,
         params: Some(serde_json::to_string(&params).expect("strings serialize")),
         push_title: String::new(),
@@ -1649,37 +1923,31 @@ fn extra_time_told(
         ),
         _ => None,
     };
-    (title, push_body(&at, state))
-}
-
-/// The request still open for the summary's "Asked for more time at 17:21" above Quick actions' tiles
-/// (design r13 §2.7; on Device › Time until its Extra Time Today went, 2026-11-01):
-/// when the kid asked, if the phone's newest `extra_time_request` was raised in the server zone's
-/// today and no lift for the phone was made since (`time_lifts.created_at` at or after the
-/// event's `created_at` - both the server's `datetime('now')`, compared through `datetime()`; any
-/// lift counts, and one in the same second as the request counts as its answer).
-pub async fn open_extra_time_request(
-    db: &SqlitePool,
-    device_id: i64,
-    zone: &Zone,
-    now: DateTime<Utc>,
-) -> Result<Option<DateTime<Utc>>, sqlx::Error> {
-    let row: Option<String> = sqlx::query_scalar(
-        "SELECT e.happened_at FROM parent_events e \
-         WHERE e.device_id = ?1 AND e.kind = 'extra_time_request' \
-         AND datetime(e.created_at) >= datetime(?2) \
-         AND e.id = (SELECT n.id FROM parent_events n WHERE n.device_id = ?1 \
-                     AND n.kind = 'extra_time_request' ORDER BY datetime(n.created_at) DESC, n.id DESC LIMIT 1) \
-         AND NOT EXISTS (SELECT 1 FROM time_lifts l WHERE l.device_id = ?1 \
-                         AND datetime(l.created_at) >= datetime(e.created_at))",
-    )
-    .bind(device_id)
-    .bind(crate::push::db_time(zone.start_of_today(now)))
-    .fetch_optional(db)
-    .await?;
-    Ok(row
-        .and_then(|at| crate::display_time::parse_db_utc(&at))
-        .map(|at| at.min(now)))
+    // Design 100 §14.4: the answer, for the other parent too ("… · Mamma ga 30 min", "… · Pappa svarte nei").
+    let answer = match (p.answer.as_deref(), p.by.as_deref()) {
+        (Some("yes"), Some(by)) => p.minutes.filter(|m| *m > 0).map(|m| {
+            t_params(
+                lang,
+                "events.extra_time_request.answer.given",
+                &[
+                    ("parent", by),
+                    ("minutes", &crate::display_time::duration(lang, m)),
+                ],
+            )
+        }),
+        (Some("no"), Some(by)) => Some(t_params(
+            lang,
+            "events.extra_time_request.answer.no",
+            &[("parent", by)],
+        )),
+        _ => None,
+    };
+    let summary = push_body(&at, state);
+    match answer {
+        Some(answer) if !summary.is_empty() => (title, format!("{summary} · {answer}")),
+        Some(answer) => (title, answer),
+        None => (title, summary),
+    }
 }
 
 /// A held message's parameters (design 77 D16, §7): the phone's name as it was when raised, when the phone received
@@ -1932,6 +2200,23 @@ pub struct AppUpdateParams {
     pub at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub phone: Option<String>,
+    /// Design 90 (§17.3 M5): a release found waiting out the app's wait - when it reaches the
+    /// phones (RFC 3339), as known when it was found. Rows from before it have none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ready: Option<String>,
+    /// Design 90: the release is held for the parent's approval - why and the groups it newly asks
+    /// for (`catalog_holds::GROUPS`' keys).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub held: Option<HeldParams>,
+}
+
+/// Why a release waits for the parent (`catalog_holds::Reason::key`) and the groups it newly asks
+/// for, in their order.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct HeldParams {
+    pub reason: String,
+    #[serde(default)]
+    pub groups: Vec<String>,
 }
 
 /// A version is kept to this many characters in the parameters, an app's name to this many.
@@ -1954,6 +2239,8 @@ fn app_update_params(
         to: clip(to, VERSION_MAX),
         at: instant(at),
         phone: phone.map(str::to_string),
+        ready: None,
+        held: None,
     };
     serde_json::to_string(&params).expect("strings serialize")
 }
@@ -1984,6 +2271,51 @@ pub fn app_update_available(
         push: Push::Now,
         budget_key: None,
     }
+}
+
+/// Design 90 (§17.3 H1, M5): a new release found waiting out the app's wait - the same key as
+/// [app_update_available], so the release served when it ripens raises nothing more; its words say
+/// when it reaches the phones (`ready`).
+pub fn app_update_waiting(
+    app_id: i64,
+    app: &str,
+    release: &str,
+    from: Option<&str>,
+    to: &str,
+    ready: DateTime<Utc>,
+    at: DateTime<Utc>,
+) -> NewEvent {
+    let mut event = app_update_available(app_id, app, release, from, to, at);
+    event.target = format!("/apps/tracked/{app_id}#update");
+    event.params = event.params.map(|params| {
+        let mut params: AppUpdateParams = serde_json::from_str(&params).expect("just written");
+        params.ready = Some(instant(ready));
+        serde_json::to_string(&params).expect("strings serialize")
+    });
+    event
+}
+
+/// Design 90 (§17.3 H1): a release held for the parent's approval - the same kind under its own
+/// key `<app id>:<release>:held`, so it is told even when the release was told as found; one row
+/// per held release. Target: the app's update group.
+pub fn app_update_held(
+    app_id: i64,
+    app: &str,
+    release: &str,
+    from: Option<&str>,
+    to: &str,
+    held: HeldParams,
+    at: DateTime<Utc>,
+) -> NewEvent {
+    let mut event = app_update_available(app_id, app, release, from, to, at);
+    event.dedup_key = format!("{app_id}:{release}:held");
+    event.target = format!("/apps/tracked/{app_id}#update");
+    event.params = event.params.map(|params| {
+        let mut params: AppUpdateParams = serde_json::from_str(&params).expect("just written");
+        params.held = Some(held);
+        serde_json::to_string(&params).expect("strings serialize")
+    });
+    event
 }
 
 /// A phone's report shows a catalog app's release installed (2026-10-25): key `<app id>:<the
@@ -2032,6 +2364,9 @@ fn app_update_told(
     let lang = zone.lang();
     let (app, to) = (p.app.as_str(), p.to.as_str());
     let phone = p.phone.as_deref().unwrap_or("");
+    if let (Kind::AppUpdateAvailable, Some(held)) = (kind, &p.held) {
+        return app_update_held_told(form, p, held, &at, lang);
+    }
     let key = format!("events.{}.{}.title", kind.wire(), form.key());
     // The catalog app's name is cut for a new release, the phone's for an installed one.
     let title = match kind {
@@ -2042,6 +2377,18 @@ fn app_update_told(
             t_params(lang, &key, &[("phone", &phone_of(lang, n)), ("app", app)])
         }),
     };
+    // Design 90: a release found waiting says when it reaches the phones.
+    let reaches = p
+        .ready
+        .as_deref()
+        .and_then(crate::display_time::parse_db_utc)
+        .map(|ready| {
+            t_params(
+                lang,
+                "events.app_update.reaches",
+                &[("when", &zone.until(ready, now))],
+            )
+        });
     let body = match form {
         Form::Inbox => push_body(&at, p.from.as_ref().map(|from| format!("{from} → {to}"))),
         Form::Push => push_body(
@@ -2049,7 +2396,89 @@ fn app_update_told(
             Some(t_params(lang, "events.app_update.version", &[("to", to)])),
         ),
     };
+    let body = match reaches {
+        Some(reaches) if body.is_empty() => reaches,
+        Some(reaches) => format!("{body} · {reaches}"),
+        None => body,
+    };
     (crate::audit::clip(&title, TITLE_MAX).to_string(), body)
+}
+
+/// A held release's words (design 90 §17.3 M5): the inbox's "Signal 7.3.0 waits for your
+/// approval" / "14:02 · asks for Contacts and Location · approve it on the app's page", the push's
+/// "Signal 7.3.0 asks for Contacts and 2 more" / "Approve it or keep 7.2.0".
+fn app_update_held_told(
+    form: Form,
+    p: &AppUpdateParams,
+    held: &HeldParams,
+    at: &str,
+    lang: Lang,
+) -> (String, String) {
+    let (app, to) = (p.app.as_str(), p.to.as_str());
+    let groups: Vec<&str> = held.groups.iter().map(String::as_str).collect();
+    let asks = held.reason == "permissions" && !groups.is_empty();
+    match form {
+        Form::Inbox => {
+            let title = fit_name(app, TITLE_MAX, |a| {
+                t_params(
+                    lang,
+                    "events.app_update_held.inbox.title",
+                    &[("app", a), ("to", to)],
+                )
+            });
+            let what = match held.reason.as_str() {
+                _ if asks => Some(t_params(
+                    lang,
+                    "events.app_update.asks",
+                    &[(
+                        "groups",
+                        &crate::catalog_holds::groups_sentence(lang, &groups),
+                    )],
+                )),
+                "unreadable" => Some(t(lang, "events.app_update.unreadable").to_string()),
+                _ => p.from.as_ref().map(|from| format!("{from} → {to}")),
+            };
+            let line = [
+                what,
+                Some(t(lang, "events.app_update.approve_on_page").to_string()),
+            ]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" · ");
+            (
+                crate::audit::clip(&title, TITLE_MAX).to_string(),
+                push_body(at, Some(line)),
+            )
+        }
+        Form::Push => {
+            let title = if asks {
+                let groups = crate::catalog_holds::groups_short(lang, &groups);
+                fit_name(app, TITLE_MAX, |a| {
+                    t_params(
+                        lang,
+                        "events.app_update_held.push.title",
+                        &[("app", a), ("to", to), ("groups", &groups)],
+                    )
+                })
+            } else {
+                fit_name(app, TITLE_MAX, |a| {
+                    t_params(
+                        lang,
+                        "events.app_update_held.inbox.title",
+                        &[("app", a), ("to", to)],
+                    )
+                })
+            };
+            let body = match &p.from {
+                Some(from) => {
+                    t_params(lang, "events.app_update.approve_or_keep", &[("from", from)])
+                }
+                None => t(lang, "events.app_update.approve").to_string(),
+            };
+            (crate::audit::clip(&title, TITLE_MAX).to_string(), body)
+        }
+    }
 }
 
 /// A passkey added (design 74 D1.2): the parent's name and the passkey's as they were, and when.
@@ -2406,6 +2835,12 @@ pub fn told_as(
         Kind::ServerTlsOff | Kind::ServerTlsSeen => params
             .and_then(|p| serde_json::from_str::<ServerTlsParams>(p).ok())
             .map(|p| server_tls_told(form, kind, &p, zone, now)),
+        Kind::RoamingStarted => params
+            .and_then(|p| serde_json::from_str::<RoamingParams>(p).ok())
+            .map(|p| roaming_told(&p, zone, now)),
+        Kind::WifiSigninWide | Kind::WifiSigninBudget => params
+            .and_then(|p| serde_json::from_str::<WifiSigninParams>(p).ok())
+            .map(|p| wifi_signin_told(form, kind, &p, zone, now)),
         // An older row's words are stored (design 70 §4: one whose title is not empty).
         _ if !title.is_empty() => None,
         _ => params.and_then(|p| phone_event_told(form, kind, p, zone, now)),
@@ -2517,7 +2952,7 @@ fn phone_event_told(
         |stored: &str| crate::display_time::parse_db_utc(stored).map(|at| (at, zone.at(at, now)));
     Some(match kind {
         Kind::EmergencyCall => {
-            let p: PhoneAtParams = serde_json::from_str(params).ok()?;
+            let p: EmergencyCallParams = serde_json::from_str(params).ok()?;
             let (at, when) = at_of(&p.at)?;
             let summary = match form {
                 Form::Inbox if zone.is_today(at, now) => t_params(
@@ -2527,24 +2962,44 @@ fn phone_event_told(
                 ),
                 _ => capitalized(&when),
             };
+            // Design 98 §7.1: "The call turned airplane mode off.", in the inbox and the push.
+            let summary = if p.airplane_off {
+                format!(
+                    "{summary} · {}",
+                    t(lang, "events.emergency_call.airplane_off")
+                )
+            } else {
+                summary
+            };
             (titled(lang, &title_key(""), &p.phone), summary)
         }
         Kind::PinUsed => {
             let p: PinParams = serde_json::from_str(params).ok()?;
             let (_, when) = at_of(&p.at)?;
-            let summary = match form {
-                Form::Inbox => t_params(
+            let entry = t(lang, &format!("events.pin_used.entry.{}", p.entry)).to_string();
+            // Design 98 §4.4.5: the time-rule screen's pause - its end in the inbox, its place in the push too.
+            let until = p
+                .until
+                .as_deref()
+                .and_then(crate::display_time::parse_db_utc)
+                .map(|until| zone.until(until, now));
+            let summary = match (form, until) {
+                (Form::Inbox, Some(until)) => t_params(
+                    lang,
+                    "events.pin_used.inbox.summary_until",
+                    &[("entry", &entry), ("until", &until), ("at", &when)],
+                ),
+                (Form::Inbox, None) => t_params(
                     lang,
                     "events.pin_used.inbox.summary",
-                    &[
-                        (
-                            "entry",
-                            t(lang, &format!("events.pin_used.entry.{}", p.entry)),
-                        ),
-                        ("at", &when),
-                    ],
+                    &[("entry", &entry), ("at", &when)],
                 ),
-                Form::Push => capitalized(&when),
+                (Form::Push, _) if p.entry == "rule_pause" => t_params(
+                    lang,
+                    "events.pin_used.push.summary",
+                    &[("entry", &entry), ("at", &when)],
+                ),
+                (Form::Push, _) => capitalized(&when),
             };
             (titled(lang, &title_key(""), &p.phone), summary)
         }
@@ -2672,10 +3127,11 @@ fn phone_event_told(
         Kind::PhoneOn => {
             let p: PhoneOnParams = serde_json::from_str(params).ok()?;
             let (_, when) = at_of(&p.at)?;
-            let variant = if p.start == "restart" {
-                ".restart"
-            } else {
-                ".on"
+            // A quick start is pushed only when the off's push went before it: "turned on" then.
+            let variant = match (p.start.as_str(), form) {
+                ("restart", _) => ".restart",
+                ("quick_off", Form::Inbox) => ".quick_off",
+                _ => ".on",
             };
             let title = titled(lang, &title_key(variant), &p.phone);
             if form == Form::Push {
@@ -2689,7 +3145,16 @@ fn phone_event_told(
                     ),
                 ));
             }
-            let mut parts = vec![capitalized(&when)];
+            let mut parts = vec![
+                match (p.start.as_str(), p.off_at.as_deref().and_then(at_of)) {
+                    ("quick_off", Some((_, off_at))) => capitalized(&t_params(
+                        lang,
+                        "events.phone_on.off_between",
+                        &[("from", &off_at), ("to", &when)],
+                    )),
+                    _ => capitalized(&when),
+                },
+            ];
             if let Some((_, unlocked)) = p.unlocked.as_deref().and_then(at_of) {
                 parts.push(t_params(
                     lang,
@@ -2698,7 +3163,7 @@ fn phone_event_told(
                 ));
             }
             match p.start.as_str() {
-                "restart" => {
+                "restart" | "quick_off" => {
                     if let Some(level) = p.battery {
                         parts.push(battery_level(lang, level));
                     }
@@ -2793,6 +3258,27 @@ mod tests {
             zone: Zone::from_setting("Europe/Oslo"),
             // 14:30 in Oslo.
             now: utc("2026-10-18 12:30:00"),
+        }
+    }
+
+    /// Design 102: a Wi-Fi sign-in that visited five sites, opened at `at`.
+    fn wide_signin(at: DateTime<Utc>) -> crate::logins::Session {
+        crate::logins::Session {
+            opened_ms: at.timestamp_millis(),
+            outcome: "validated".to_string(),
+            visited: [
+                "hotel.example",
+                "a.example",
+                "b.example",
+                "c.example",
+                "d.example",
+            ]
+            .map(String::from)
+            .to_vec(),
+            visited_count: 5,
+            start: "system".to_string(),
+            approved: "code".to_string(),
+            ..Default::default()
         }
     }
 
@@ -3096,7 +3582,8 @@ mod tests {
         );
 
         // Paired one boot apart: a restart within the 3-minute gap (the flag unknown), or with the
-        // flag whatever the gap; not with the flag false, nor past the gap.
+        // flag whatever the gap; not with the flag false, nor past the gap. Within the 5-minute
+        // hold on the phone's instants either is quiet (2026-11-13): no push at all.
         let pair = |off_s: &str, off_boot, reboot, on_s: &str, on_boot| {
             power_events(
                 &report(
@@ -3107,22 +3594,22 @@ mod tests {
                 &phone,
             )
         };
-        let restart = |plan: &PowerPlan| {
+        let folded = |plan: &PowerPlan, on_push, reason: &str, title: &str| {
             assert_eq!(
                 shape(plan),
-                (
-                    vec![(off_kind, Push::No), (on_kind, Push::Now)],
-                    true,
-                    false
-                )
+                (vec![(off_kind, Push::No), (on_kind, on_push)], true, false)
             );
-            assert_eq!(inbox(&phone, &plan.events[1]).0, "Anna's phone restarted");
+            assert_eq!(plan.drop_held_off.as_ref().unwrap().1, reason);
+            assert_eq!(plan.quiet_start, on_push == Push::No);
+            assert_eq!(inbox(&phone, &plan.events[1]).0, title);
             assert!(
                 inbox(&phone, &plan.events[0])
                     .1
                     .ends_with(" · told at the next start")
             );
         };
+        let restarted = "Anna's phone restarted";
+        let off_and_on = "Anna's phone was turned off and on";
         let after_off = |plan: &PowerPlan| {
             assert_eq!(
                 shape(plan),
@@ -3142,35 +3629,54 @@ mod tests {
                     .contains("off since 14:00, battery was 3 %")
             );
         };
-        restart(&pair(
-            "2026-10-18 12:00:00",
-            41,
-            None,
-            "2026-10-18 12:03:00",
-            42,
-        ));
-        restart(&pair(
-            "2026-10-18 12:00:00",
-            41,
-            Some(true),
-            "2026-10-18 12:20:00",
-            42,
-        ));
-        after_off(&pair(
-            "2026-10-18 12:00:00",
-            41,
-            None,
-            "2026-10-18 12:03:01",
-            42,
-        ));
-        after_off(&pair(
-            "2026-10-18 12:00:00",
-            41,
-            Some(false),
-            "2026-10-18 12:01:00",
-            42,
-        ));
-        // A boot between the two is never a restart (unseen_boot tells it).
+        let quick = |reboot, on_s| pair("2026-10-18 12:00:00", 41, reboot, on_s, 42);
+        folded(
+            &quick(None, "2026-10-18 12:03:00"),
+            Push::No,
+            "restart",
+            restarted,
+        );
+        folded(
+            &quick(Some(true), "2026-10-18 12:05:00"),
+            Push::No,
+            "restart",
+            restarted,
+        );
+        folded(
+            &quick(Some(true), "2026-10-18 12:20:00"),
+            Push::Now,
+            "restart",
+            restarted,
+        );
+        // A power-off and a start at 4 minutes: quiet, told as "turned off and on" with the span.
+        for reboot in [None, Some(false)] {
+            let plan = quick(reboot, "2026-10-18 12:04:00");
+            folded(&plan, Push::No, "quick_start", off_and_on);
+            assert_eq!(inbox(&phone, &plan.events[1]).1, "Off 14:00–14:04");
+            let event = &plan.events[1];
+            let nb = told(
+                event.kind.wire(),
+                String::new(),
+                String::new(),
+                event.params.as_deref(),
+                &phone.zone.in_lang(Lang::Nb),
+                phone.now,
+            );
+            assert_eq!(
+                (nb.0.as_str(), nb.1.as_str()),
+                ("Annas mobil ble slått av og på", "Av 14:00–14:04")
+            );
+        }
+        folded(
+            &quick(Some(false), "2026-10-18 12:05:00"),
+            Push::No,
+            "quick_start",
+            off_and_on,
+        );
+        // At 6 minutes: both pushed, as before.
+        after_off(&quick(Some(false), "2026-10-18 12:05:01"));
+        after_off(&quick(None, "2026-10-18 12:06:00"));
+        // A boot between the two is never a restart nor quiet (unseen_boot tells it).
         after_off(&pair(
             "2026-10-18 12:00:00",
             40,
@@ -3181,7 +3687,7 @@ mod tests {
         // The drop and the release name the off's key.
         let plan = pair("2026-10-18 12:00:00", 41, None, "2026-10-18 12:01:00", 42);
         assert_eq!(
-            plan.drop_held_off.as_deref(),
+            plan.drop_held_off.map(|(key, _)| key).as_deref(),
             Some("2026-10-18T12:00:00.000Z")
         );
         // Not paired (the off isn't of an earlier boot): each told alone.
@@ -3408,7 +3914,7 @@ mod tests {
                 extra_time_request(3, "Anna", "ab12", two, &TimeAsk::UsedUp, Push::Now),
                 "",
                 "",
-                "/devices/3#quick",
+                "/devices/3#ask",
             ),
             // App update notices (2026-10-25): told from their parameters too.
             (
@@ -3469,7 +3975,7 @@ mod tests {
                     Push::Now,
                 ),
                 "Anna: message from sender name «DNB»",
-                "14:02 · Allow within 23 h",
+                "14:02 · Allow within 23\u{a0}h",
                 "/devices/3/calls#held-ab12",
             ),
             // Design 77 §14: the kid's contact request, to its row on the Calls page.
@@ -3485,6 +3991,26 @@ mod tests {
                 "Anna: a picture from Mamma is waiting",
                 "The phone wants to fetch it from an address you need to approve.",
                 "/devices/3/calls#mmsc",
+            ),
+            // Design 97 §6: told from its parameters, to the Mobilnett page's "I utlandet".
+            (
+                phone.roaming_started("se", two),
+                "Anna is roaming in Sweden",
+                "14:02",
+                "/devices/3/mobile#abroad",
+            ),
+            // Design 102 §3.7: told from its parameters, to the Sign-in page's Wi-Fi group.
+            (
+                phone.wifi_signin_wide(&wide_signin(two), Push::Now),
+                "Anna: the Wi-Fi sign-in visited 5 sites",
+                "14:02 · hotel.example, a.example, b.example, c.example, d.example",
+                "/devices/3/logins#logins-wifi",
+            ),
+            (
+                phone.wifi_signin_budget("2026-10-18", Push::Now),
+                "Anna has used today's Wi-Fi sign-ins",
+                "14:30",
+                "/devices/3/logins#logins-wifi",
             ),
         ];
         for (event, title, summary, target) in &rows {
@@ -3680,7 +4206,7 @@ mod tests {
             (
                 extra_time_request(3, "Anna", "ab13", two, &TimeAsk::Left(80), Push::Now),
                 "Anna: asks for more time",
-                "14:02 · 1 h 20 min left",
+                "14:02 · 1\u{a0}h 20\u{a0}min left",
             ),
             (
                 extra_time_request(
@@ -3758,7 +4284,7 @@ mod tests {
             ("Anna: kom til Home", "14:02"),
             ("Anna: dro fra School", "14:02"),
             ("Anna: ber om mer tid", "14:02"),
-            ("Anna: ber om mer tid", "14:02 · 1 t 20 min igjen"),
+            ("Anna: ber om mer tid", "14:02 · 1\u{a0}t 20\u{a0}min igjen"),
             ("Anna: ber om mer tid", "14:02"),
             ("Signal: oppdatering tilgjengelig", "14:02 · versjon 7.2.0"),
             ("Annas mobil: Vibb One oppdatert", "14:02 · versjon 0.36.0"),
@@ -3865,7 +4391,7 @@ mod tests {
     }
 
     /// Design r13 §2.6: a request for more time is told from its parameters - each state's words,
-    /// a long name cut to 60, the day after; its key is the phone's id, its target `#quick`.
+    /// a long name cut to 60, the day after; its key is the phone's id, its target `#ask` (design 100).
     #[test]
     fn a_request_for_more_time_is_told_from_its_parameters() {
         let phone = anna();
@@ -3892,11 +4418,11 @@ mod tests {
         );
         assert_eq!(
             tell("Anna", TimeAsk::Left(80), later).1,
-            "17:21 · 1 h 20 min left"
+            "17:21 · 1\u{a0}h 20\u{a0}min left"
         );
         assert_eq!(
             tell("Anna", TimeAsk::Left(45), later).1,
-            "17:21 · 45 min left"
+            "17:21 · 45\u{a0}min left"
         );
         assert_eq!(
             tell("Anna", TimeAsk::Rule("SCHOOL".into()), later).1,
@@ -3930,7 +4456,7 @@ mod tests {
         let event = extra_time_request(3, "Anna", "ab12", at, &TimeAsk::UsedUp, Push::No);
         assert_eq!(event.kind, Kind::ExtraTimeRequest);
         assert_eq!(event.dedup_key, "ab12");
-        assert_eq!(event.target, "/devices/3#quick");
+        assert_eq!(event.target, "/devices/3#ask");
         assert!(event.title.is_empty() && event.summary.is_empty());
         assert_eq!(Kind::of("extra_time_request"), Some(Kind::ExtraTimeRequest));
         assert!(!Kind::ExtraTimeRequest.urgent());
@@ -4067,6 +4593,115 @@ mod tests {
         );
     }
 
+    /// Design 90 (§17.3 M5): a release found waiting says when it reaches the phones, a held one
+    /// waits for the parent under its own key; a row from before it reads as before.
+    #[test]
+    fn a_waiting_and_a_held_release_are_told() {
+        let phone = anna();
+        let two = utc("2026-10-18 12:02:00");
+        let thursday = utc("2026-10-22 12:02:00");
+        let told_in = |lang: Lang, form: Form, event: &NewEvent| {
+            told_as(
+                form,
+                event.kind.wire(),
+                event.title.clone(),
+                event.summary.clone(),
+                event.params.as_deref(),
+                &phone.zone.in_lang(lang),
+                two,
+            )
+        };
+        let waiting = app_update_waiting(
+            9,
+            "Signal",
+            "v7.3.0@42",
+            Some("7.2.0"),
+            "7.3.0",
+            thursday,
+            two,
+        );
+        assert_eq!(
+            waiting.dedup_key, "9:v7.3.0@42",
+            "the found row's key: served raises nothing"
+        );
+        let (title, line) = told_in(Lang::En, Form::Inbox, &waiting);
+        assert_eq!(title, "Signal 7.3.0 is available");
+        assert!(
+            line.starts_with("14:02 · 7.2.0 → 7.3.0 · reaches the phones Thu"),
+            "{line}"
+        );
+        let (_, line) = told_in(Lang::Nb, Form::Inbox, &waiting);
+        assert!(line.contains("kommer til telefonene"), "{line}");
+
+        let held = |reason: &str, groups: &[&str]| {
+            app_update_held(
+                9,
+                "Signal",
+                "v7.3.0@42",
+                Some("7.2.0"),
+                "7.3.0",
+                HeldParams {
+                    reason: reason.to_string(),
+                    groups: groups.iter().map(|g| g.to_string()).collect(),
+                },
+                two,
+            )
+        };
+        let asks = held("permissions", &["contacts", "location", "camera"]);
+        assert_eq!(asks.dedup_key, "9:v7.3.0@42:held");
+        assert_eq!(asks.target, "/apps/tracked/9#update");
+        assert_eq!(
+            told_in(Lang::En, Form::Inbox, &asks),
+            (
+                "Signal 7.3.0 waits for your approval".to_string(),
+                "14:02 · asks for Contacts, Location and Camera · approve it on the app's page"
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            told_in(Lang::Nb, Form::Inbox, &asks).1,
+            "14:02 · ber om tilgang til kontakter, posisjon og kamera · godkjenn på appens side"
+        );
+        assert_eq!(
+            told_in(Lang::En, Form::Push, &asks),
+            (
+                "Signal 7.3.0 asks for Contacts and 2 more".to_string(),
+                "Approve it or keep 7.2.0".to_string()
+            )
+        );
+        assert_eq!(
+            told_in(Lang::Nb, Form::Push, &asks),
+            (
+                "Signal 7.3.0 ber om tilgang til kontakter og 2 til".to_string(),
+                "Godkjenn eller behold 7.2.0".to_string()
+            )
+        );
+        assert_eq!(
+            told_in(Lang::En, Form::Inbox, &held("unreadable", &[])).1,
+            "14:02 · couldn't read what it asks for · approve it on the app's page"
+        );
+        assert_eq!(
+            told_in(Lang::Nb, Form::Inbox, &held("always_ask", &[])).1,
+            "14:02 · 7.2.0 → 7.3.0 · godkjenn på appens side"
+        );
+        // A row raised on 2026-10-25 (no `ready`, no `held`) reads as before.
+        let old = r#"{"app_id":9,"app":"Signal","from":"7.1.4","to":"7.2.0","at":"2026-10-18T12:02:00Z"}"#;
+        assert_eq!(
+            told(
+                "app_update_available",
+                String::new(),
+                String::new(),
+                Some(old),
+                &phone.zone,
+                two
+            ),
+            (
+                "Signal 7.2.0 is available".to_string(),
+                "14:02 · 7.1.4 → 7.2.0".to_string()
+            )
+        );
+    }
+
     #[test]
     fn two_kinds_share_the_zones_switch() {
         let switches = Kind::switches();
@@ -4074,7 +4709,7 @@ mod tests {
         assert_eq!(zones.count(), 1);
         assert_eq!(
             switches.len(),
-            12,
+            14,
             "every switch once; the emergency call has none"
         );
         // "App updates": one switch for both kinds, the only one off by default.
@@ -4294,6 +4929,29 @@ mod tests {
             contact_request(3, &phone.name, "ab17", "Bestemor Østby", "+4791234567", two),
             // Design 83: a long contact name.
             mmsc_host(3, &phone.name, 18, "Bestemor Østby på Hadeland", two),
+            // Design 97 §6: each form of the place.
+            phone.roaming_started("is", two),
+            phone.roaming_started("ship", two),
+            phone.roaming_started("us", two),
+            phone.roaming_started("plain", two),
+            // Design 102 §3.7: each reason, and the budget.
+            phone.wifi_signin_wide(&wide_signin(two), Push::Now),
+            phone.wifi_signin_wide(
+                &crate::logins::Session {
+                    blocked_frames: vec!["video.example".to_string()],
+                    ..wide_signin(two)
+                },
+                Push::Now,
+            ),
+            phone.wifi_signin_wide(
+                &crate::logins::Session {
+                    visited_count: 1,
+                    outcome: "timeout".to_string(),
+                    ..wide_signin(two)
+                },
+                Push::Now,
+            ),
+            phone.wifi_signin_budget("2026-10-18", Push::Now),
         ];
         let kinds: std::collections::BTreeSet<&str> =
             events.iter().map(|e| e.kind.wire()).collect();
@@ -4365,7 +5023,7 @@ mod tests {
             told_nb(&events[15]).1,
             "14:02 · låst opp 14:23 · av siden i går 19:14, batteriet var 3 %"
         );
-        assert_eq!(told_nb(&events[21]).1, "14:02 · 1 t 20 min igjen");
+        assert_eq!(told_nb(&events[21]).1, "14:02 · 1\u{a0}t 20\u{a0}min igjen");
         assert_eq!(
             inbox_detail(
                 &Phone {
@@ -4501,7 +5159,7 @@ mod tests {
             inbox(&phone, &number),
             (
                 "Anna: message from unknown number +4791234567".to_string(),
-                "14:02 · Allow within 23 h".to_string()
+                "14:02 · Allow within 23\u{a0}h".to_string()
             )
         );
         assert_eq!(number.target, "/devices/3/calls#held-ab12");
@@ -4562,7 +5220,7 @@ mod tests {
             ),
             (
                 "Anna: melding fra ukjent nummer +4791234567".to_string(),
-                "14:02 · Tillat innen 23 t".to_string()
+                "14:02 · Tillat innen 23\u{a0}t".to_string()
             )
         );
         assert_eq!(Kind::SmsHeld.switch().unwrap().0, "push_sms_held");

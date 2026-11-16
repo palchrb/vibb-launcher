@@ -79,6 +79,9 @@ class CustomDnsGuardsTest {
         // Design 67 §3.2 (S-M2): the field only while the tunnel is up - a dead read loop sends none.
         val report = vpn.substringAfter("private fun upstreamReport(): DnsUpstreamReport? {").substringBefore("\n    }\n")
         assertTrue(report.trimStart().startsWith("if (state.stopped || state.tunnel == null) return null"))
-        assertTrue(vpn.indexOf("state.established(established") in 0 until vpn.indexOf("syncCustom()"))
+        // The tunnel is recorded (in establish) before syncCustom runs (design 95: establish is its own function).
+        val start = vpn.substringAfter("private fun startVpn() {").substringBefore("\n    }\n")
+        assertTrue(start.indexOf("switchTo(wanted)") in 0 until start.indexOf("syncCustom()"))
+        assertTrue("state.established(established" in vpn.substringAfter("private fun establish(").substringBefore("\n    }\n"))
     }
 }

@@ -370,6 +370,8 @@ data class ClockGeometry(
     val dateSp: Float,
     /** Design 59d §8.13: SystemUI's gesture handle on that phone. */
     val handle: GlanceHandle = DEFAULT_GLANCE_HANDLE,
+    /** Design 96: computed from AOSP's dimensions ([generalClockProfile]), not measured on this kind of phone. */
+    val general: Boolean = false,
 )
 
 /** The density the profiles were measured at (the Jelly Star's 240 dpi; the emulator at `wm density 240`). */
@@ -393,6 +395,19 @@ const val KEYGUARD_STATUS_BAR_MIN_DP = 40f
  */
 fun keyguardStatusBarPx(statusBarPx: Int, cutoutTopPx: Int, density: Float): Float =
     maxOf(statusBarPx.toFloat(), cutoutTopPx.toFloat(), KEYGUARD_STATUS_BAR_MIN_DP * density)
+
+/** How far Android's date's baseline moves per dp the font scale grows the date (design 96 §6, code QA L1): SystemUI
+ * keeps the date's top where it is, so the baseline moves by the date font's ascent share of the growth - of the size
+ * as Android scales it, non-linearly since Android 14 (`FontScaleConverterFactory`: 16 sp is 20.2 dp at 1.3, 28 dp at
+ * 2.0). Measured: on `jelly36` (Android 16) 4.0, 9.3 and 11.3 dp at 1.3, 1.8 and 2.0, on the Android 14 image 3.8 and
+ * 11.1 dp at 1.3 and 2.0 - 0.91 to 0.95 of the growth, so 0.93. The clock does not move (it is in dp). */
+const val DATE_GROWTH_SHIFT = 0.93f
+
+/** The date's baseline under the keyguard status bar (dp) when the date is [dateScaledDp] tall as the font scale makes
+ * its [ClockGeometry.dateSp] (`TypedValue.applyDimension(COMPLEX_UNIT_SP, ..)` over the density): the profile's,
+ * measured at 1.0, plus [DATE_GROWTH_SHIFT] of the growth (design 96). */
+fun profileDateBaselineBelowBarDp(p: ClockGeometry, dateScaledDp: Float): Float =
+    p.dateBaselineBelowBarDp + (dateScaledDp - p.dateSp) * DATE_GROWTH_SHIFT
 
 /** Where (px from the window's top) a profile's baseline [belowBarDp] under the keyguard status bar [barPx] lands. */
 fun profileBaselinePx(barPx: Float, belowBarDp: Float, density: Float): Float = barPx + belowBarDp * density
@@ -453,19 +468,43 @@ val JELLY_STAR_CLOCK = AOSP_EMULATOR_CLOCK.copy(name = "Jelly Star")
 
 /**
  * The clock profile for this phone ([model] and [manufacturer] as `Build` reports them, [density] the display's,
- * [widthDp] the screen's width in dp): the emulator's Pixel image (`sdk_gphone*` by Google), the pure AOSP emulator
- * image ("Android SDK built for ..." by "unknown") or the Jelly Star, only at
- * 240 dpi **and** 320 dp wide; anything else is `null`, and the glance keeps its own centred clock (56/40 sp, the long
- * date). No PWA switch.
- *
- * Why both keys (the code QA's JL-6): SystemUI lays its clock out in dp, so the width in dp is what makes the numbers
- * fit (34 dp plus Nunito's widest "00:00" at 86 dp); the density pins the place the frames were measured at, so a
- * "Display size" change or another density falls back cleanly instead of guessing. Both known phones are 480 px at 240
- * dpi = 320 dp; a second density joins once it is measured. The Jelly Star's model string isn't verified yet
- * (`getprop ro.product.model` on the phone), so spaces, underscores and case are ignored ("Jelly Star", "JellyStar",
- * "Jelly_Star"); a phone that matches nothing is logged once (`GlancePanel`).
+ * [widthDp] the screen's width in dp, [sdk] `Build.VERSION.SDK_INT`, [smallestWidthDp] the configuration's smallest
+ * width): a measured profile where one matches ([measuredClockProfile]), else the general
+ * one computed from AOSP SystemUI's own dimensions ([generalClockProfile], design 96; also below Android 16, where the
+ * measured profiles - all taken on Android 16 - don't hold) - `null` only when that one fails
+ * its sanity bound (a screen too narrow for Android's 86 dp clock, or a tablet's width), and the glance keeps its own
+ * centred clock (56 sp, the long date). No PWA switch. The face logs which one it took once (`LockClockFace`).
  */
-fun glanceClockProfile(model: String?, manufacturer: String?, density: Float, widthDp: Int): ClockGeometry? {
+fun glanceClockProfile(
+    model: String?,
+    manufacturer: String?,
+    density: Float,
+    widthDp: Int,
+    sdk: Int = KEYGUARD_BLUEPRINT_SDK,
+    smallestWidthDp: Int = widthDp,
+): ClockGeometry? =
+    measuredClockProfile(model, manufacturer, density, widthDp).takeIf { sdk >= KEYGUARD_BLUEPRINT_SDK }
+        ?: generalClockProfile(manufacturer, widthDp, sdk, smallestWidthDp)
+
+/**
+ * Whether the face may copy Android's clock at all (code QA L4/L5; else the centred clock): not in landscape (Android's
+ * keyguard on a phone doesn't rotate; the time-rule screen can), not right-to-left (Android mirrors its clock to the
+ * right edge; ours is placed from the left), and only with the Latin digits Nunito Light draws ([zeroDigit] is the
+ * locale's zero - Arabic-Indic "٠" or Persian "۰" fall back to another font, and the bound's width no longer holds).
+ */
+fun glanceClockCopyAllowed(landscape: Boolean, rtl: Boolean, zeroDigit: Char): Boolean = !landscape && !rtl && zeroDigit == '0'
+
+/**
+ * The measured profiles: the emulator's Pixel image (`sdk_gphone*` by Google), the pure AOSP emulator image ("Android
+ * SDK built for ..." by "unknown") or the Jelly Star, only at 240 dpi **and** 320 dp wide; anything else is `null`.
+ *
+ * Why both keys (the code QA's JL-6): the density and the width pin the place the frames were measured at, so a
+ * "Display size" change or another density goes to the general profile instead of guessing (design 96: it computes the
+ * same numbers in dp, so the clock stays where it was). Both known phones are 480 px at 240 dpi = 320 dp. The Jelly
+ * Star's model string isn't verified yet (`getprop ro.product.model` on the phone), so spaces, underscores and case are
+ * ignored ("Jelly Star", "JellyStar", "Jelly_Star").
+ */
+fun measuredClockProfile(model: String?, manufacturer: String?, density: Float, widthDp: Int): ClockGeometry? {
     if (abs(density - GLANCE_CLOCK_PROFILE_DENSITY) > 0.01f || widthDp != GLANCE_CLOCK_PROFILE_WIDTH_DP) return null
     val name = model.orEmpty().trim()
     val bare = name.lowercase(Locale.ROOT).filter { it.isLetterOrDigit() }
@@ -478,6 +517,104 @@ fun glanceClockProfile(model: String?, manufacturer: String?, density: Float, wi
         else -> null
     }
 }
+
+// ---- the general profile, from AOSP SystemUI's dimensions (design 96) ------------------------------
+
+/** AOSP `small_clock_text_size` (SystemUI `customization/res/values/dimens.xml`, Android 14-16): the small clock's size,
+ * in dp - "dp is intentional, to prevent any further scaling", so it never follows the font scale. */
+const val AOSP_SMALL_CLOCK_TEXT_DP = 86f
+
+/** AOSP `keyguard_clock_top_margin` (SystemUI `res/values/dimens.xml`, Android 14-16): the small clock's top under the
+ * keyguard status bar (`ClockPreviewConfig.getSmallClockTopPadding`: this plus `getStatusBarHeaderHeightKeyguard`). */
+const val AOSP_KEYGUARD_CLOCK_TOP_MARGIN_DP = 18f
+
+/** AOSP `clock_padding_start` (28 dp) plus `status_view_margin_horizontal` (0 dp on phones): the small clock's box from
+ * the window's start (`ClockSection.applyDefaultConstraints`). */
+const val AOSP_CLOCK_PADDING_START_DP = 28f
+
+/** The small clock's baseline under its own top (dp; measured, not an AOSP dimension - it is the clock font's ascent):
+ * 110 px at 1.5 on both the Pixel image (Google Sans Flex) and the pure AOSP image, so the baseline sits 91.3 dp under
+ * the keyguard status bar on both (59d §8.15). */
+const val SMALL_CLOCK_BASELINE_IN_VIEW_DP = 73.3f
+
+/** The date's baseline under the clock's (dp; measured on the Pixel image: 56 px at 1.5 - AOSP's own face has no date). */
+const val DATE_BELOW_CLOCK_BASELINE_DP = 37.4f
+
+/** The first digit's ink right of the clock's box (dp; measured): Google Sans Flex's on a Google phone (34 dp - 28),
+ * the pure AOSP image's font on every other maker's (37.3 - 28). AOSP leaves the font to the maker
+ * (`config_clockFontFamily`). */
+const val GOOGLE_CLOCK_BEARING_DP = 6f
+const val AOSP_CLOCK_BEARING_DP = 9.3f
+
+/** AOSP `below_clock_padding_start` (SystemUI `res-keyguard/values/dimens.xml`, `KeyguardSmartspaceViewModel.
+ * getDateWeatherStartMargin`): the date's start, 32 dp for every maker - it does not follow the clock font's bearing
+ * (code QA L2; the Pixel's measured date sits there too). */
+const val AOSP_BELOW_CLOCK_PADDING_START_DP = 32f
+
+/** AOSP's gesture handle (`navigation_home_handle_width` 108 dp, `navigation_handle_radius` 2 dp so 4 dp high,
+ * `navigation_handle_bottom` 10 dp), white at 92 % as measured on both emulator images (59d §8.13). */
+val AOSP_GLANCE_HANDLE = GlanceHandle(widthDp = 108f, heightDp = 4f, bottomDp = 10f, alpha = 0.92f)
+
+/** Nunito Light's clock: tabular digits, so any "HH:mm" is 2.619 em wide; the smallest first digit's side bearing is a
+ * "4"'s 0.053 em (the box starts at most that much left of the ink). Read from `res/font/nunito_light.ttf`. */
+const val NUNITO_LIGHT_CLOCK_EM = 2.619f
+const val NUNITO_LIGHT_MIN_BEARING_EM = 0.053f
+
+/** The clock face's side padding (`lock_glance_top`, the time-rule screen's `lock_top`): the clock must end inside it. */
+const val CLOCK_FACE_SIDE_PADDING_DP = 16f
+
+/** AOSP's `sw600dp` resources (a tablet's split shade, other margins) start at this smallest width: no general profile
+ * there (code QA L4: the smallest width, as the qualifier, not the current one). */
+const val AOSP_TABLET_WIDTH_DP = 600
+
+/** Android 16 (API 36): SystemUI lays the keyguard out by its blueprint (`ClockSection`, the clock's top at the bar plus
+ * [AOSP_KEYGUARD_CLOCK_TOP_MARGIN_DP]) - what every measured profile saw. */
+const val KEYGUARD_BLUEPRINT_SDK = 36
+
+/** Before it (Android 14 and 15, the legacy `KeyguardStatusView` laid out by `KeyguardClockPositionAlgorithm`) the small
+ * clock and the date sit this much lower - [AOSP_KEYGUARD_CLOCK_TOP_MARGIN_DP] again; measured on the Android 15 and the
+ * Android 14 Google APIs images (design 96 §6): the clock's baseline 109.3 dp under the keyguard bar, the date's 146.7.
+ * The SDK stands in for SystemUI's build flag (`MigrateClocksToBlueprint`): a maker's build that differs from Google's
+ * there gets the wrong 18 dp, so the face logs the SDK with the general profile. */
+const val LEGACY_KEYGUARD_EXTRA_TOP_DP = 18f
+
+/**
+ * Design 96: Android's small clock on any phone, from AOSP SystemUI's dimensions - all in dp, with no phone-size
+ * qualifier below `sw600dp` (Android 14-16), so the same numbers hold at every density and width: the box at
+ * [AOSP_CLOCK_PADDING_START_DP], the baseline [AOSP_KEYGUARD_CLOCK_TOP_MARGIN_DP] + [SMALL_CLOCK_BASELINE_IN_VIEW_DP]
+ * under the keyguard status bar ([keyguardStatusBarPx]), [AOSP_SMALL_CLOCK_TEXT_DP]; the date
+ * [DATE_BELOW_CLOCK_BASELINE_DP] under it at [AOSP_BELOW_CLOCK_PADDING_START_DP], 16 sp;
+ * [AOSP_GLANCE_HANDLE]. The font's bearing is the maker's: Google's for a Google phone, the AOSP image's for every other
+ * maker. Below Android 16 ([sdk]) the clock and the date sit [LEGACY_KEYGUARD_EXTRA_TOP_DP] lower. It reproduces the
+ * measured profiles (59d step L, all Android 16) to 0.1 dp - but for the AOSP image's date start (35.3 dp, carried over
+ * from the Pixel's rule on a face without a date; AOSP says 32). `null` when Nunito Light's widest clock would not end
+ * inside the face's padding, or on a tablet ([generalClockFits]) - the centred clock then.
+ */
+fun generalClockProfile(manufacturer: String?, widthDp: Int, sdk: Int = KEYGUARD_BLUEPRINT_SDK, smallestWidthDp: Int = widthDp): ClockGeometry? {
+    val google = manufacturer.orEmpty().trim().equals("Google", ignoreCase = true)
+    val inkStart = AOSP_CLOCK_PADDING_START_DP + if (google) GOOGLE_CLOCK_BEARING_DP else AOSP_CLOCK_BEARING_DP
+    if (!generalClockFits(inkStart, AOSP_SMALL_CLOCK_TEXT_DP, widthDp, smallestWidthDp)) return null
+    val legacy = sdk < KEYGUARD_BLUEPRINT_SDK
+    val clockBaseline = AOSP_KEYGUARD_CLOCK_TOP_MARGIN_DP + SMALL_CLOCK_BASELINE_IN_VIEW_DP + if (legacy) LEGACY_KEYGUARD_EXTRA_TOP_DP else 0f
+    return ClockGeometry(
+        name = (if (google) "general Pixel" else "general AOSP") + if (legacy) " (API $sdk)" else "",
+        clockInkStartDp = inkStart,
+        clockBaselineBelowBarDp = clockBaseline,
+        clockDp = AOSP_SMALL_CLOCK_TEXT_DP,
+        dateStartDp = AOSP_BELOW_CLOCK_PADDING_START_DP,
+        dateBaselineBelowBarDp = clockBaseline + DATE_BELOW_CLOCK_BASELINE_DP,
+        dateSp = 16f,
+        handle = AOSP_GLANCE_HANDLE,
+        general = true,
+    )
+}
+
+/** Whether Nunito Light's widest clock at [clockDp], its first digit's ink at [inkStartDp], ends inside the face's
+ * padding on a screen [widthDp] wide (from 271 dp for a Google phone, 274 for the others), on a phone (a smallest width
+ * [smallestWidthDp] below `sw600dp`). */
+fun generalClockFits(inkStartDp: Float, clockDp: Float, widthDp: Int, smallestWidthDp: Int = widthDp): Boolean =
+    smallestWidthDp < AOSP_TABLET_WIDTH_DP &&
+        inkStartDp + (NUNITO_LIGHT_CLOCK_EM - NUNITO_LIGHT_MIN_BEARING_EM) * clockDp <= widthDp - CLOCK_FACE_SIDE_PADDING_DP
 
 /** The date's skeleton: Android's short date as the profile's ("Fre. 23. okt.", "Fri, Oct 23"), else the long one. */
 fun glanceDateSkeleton(profile: Boolean): String = if (profile) "EEEdMMM" else "EEEEdMMMM"

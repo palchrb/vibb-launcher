@@ -42,6 +42,12 @@ const NOT_SAVES: &[&str] = &[
     "/devices/{id}/kid-pin/send",
     "/devices/{id}/lifts",
     "/devices/{id}/lifts/{lift_id}/end",
+    // Design 100: the answer card's answer (a lift's line, or its own `time_request_no`).
+    "/devices/{id}/time-request/answer",
+    // Design 93's Regler sheet: a pause or a rule turned on now, and its change and end (their own events).
+    "/devices/{id}/rules-now",
+    "/devices/{id}/lock-now/{lock_id}",
+    "/devices/{id}/lock-now/{lock_id}/end",
     "/apps/tracked/{id}/check",
     "/apps/tracked/{id}/install-now/{device_id}",
     "/apps/tracked/{id}/install-now/{device_id}/cancel/{command_id}",
@@ -55,6 +61,8 @@ const NOT_SAVES: &[&str] = &[
     "/notifications/read-all",
     // Hides a session banner, like a read mark (code QA L1).
     "/account/dismiss-warning",
+    // Design 98: the Oppsett card's "Ikke nå" hides a card, like a read mark.
+    "/devices/{id}/setup-card/hide",
     "/notifications/subscriptions/{id}/test",
     "/backups/create",
     "/backups/upload",

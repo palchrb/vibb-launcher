@@ -177,6 +177,8 @@ pub struct Pruned {
     /// The unanswered questions about an MMS address (design 83 §4), `mmsc_hosts::OPEN_DAYS` after a report last
     /// named them.
     pub mmsc_hosts: u64,
+    /// The heartbeat's kept bodies past `status_heartbeat::MAX_AGE_HOURS` (design 95 §3.5, code QA L2).
+    pub report_bases: u64,
     /// The tables whose statement failed in this pass (logged; security review L9): every other
     /// table was pruned all the same.
     pub failed: Vec<&'static str>,
@@ -217,7 +219,7 @@ fn rows(
 ///   [SIGN_IN_NAME_HOURS];
 /// - the phones' parent-PIN events after `parent_pin::PIN_EVENT_DAYS` (by when they arrived);
 /// - a zone's arrivals and departures with the phone's location history (`location_retention_days`,
-///   by when they were stored; design 64 decision 6);
+///   by when they were stored; design 64 decision 6), and a roaming notice, which names the country (design 97 §6);
 /// - the parent's events after `parent_events::EVENT_DAYS`, push deliveries after [PUSH_DAYS] (design 35 §2.4),
 ///   subscriptions a push service ended after [PUSH_GONE_DAYS] (a parent's Remove notes stay);
 /// - commands asked more than [COMMAND_DAYS] ago, except one the phone may still get: never
@@ -225,14 +227,15 @@ fn rows(
 ///   past their hour) - a lost phone that comes back weeks later must still be wiped or locked
 ///   (the policy's pop, `device_api::build_policy`). A delivered one is long past its re-delivery
 ///   window; an acknowledged or cancelled one is done (design 48 §1.6);
-/// - extra-time grants [LIFT_DAYS] after they ended, IP bans once they expired, a download's
-///   progress after [INSTALL_PROGRESS_MINUTES] (nothing reads them later; security review P6);
+/// - extra-time grants [LIFT_DAYS] after they ended (and the answers to requests for more time, design 100), IP
+///   bans once they expired, a download's progress after [INSTALL_PROGRESS_MINUTES] (nothing reads them later; security review P6);
 /// - a weather cell no phone asked for in `weather_cache::CELL_HOURS` (or the longest `location_retention_days` of any
 ///   phone, when that is shorter: code QA L3; design 75 §3.1; by age only - Location Off's erase is
 ///   `update_location_policy`'s);
 /// - a held or blocked sender `sms::HELD_KEEP_DAYS` after the phone received it (design 77 §7);
 /// - an unanswered question about an MMS address `mmsc_hosts::OPEN_DAYS` after a report last named it (design 83 §4;
-///   an answered one stays: it is the parent's setting).
+///   an answered one stays: it is the parent's setting);
+/// - a heartbeat's kept body past `status_heartbeat::MAX_AGE_HOURS`, never expanded again (design 95 §3.5).
 ///
 /// Each statement runs on its own: one that fails is logged and named in [Pruned::failed], and the
 /// rest of the pass goes on (security review L9).
@@ -379,18 +382,20 @@ pub async fn prune(db: &SqlitePool) -> Pruned {
     .execute(db)
     .await);
     // A zone's arrivals and departures are location records (design 64 decision 6): they go
-    // with the phone's location history, not after the inbox's 90 days.
+    // with the phone's location history, not after the inbox's 90 days - and so does a roaming
+    // notice, which names the country (design 97 §6, Q97-M5).
     let zone_rows = rows(
         failed,
         "parent_events",
         sqlx::query(
-            "DELETE FROM parent_events WHERE kind IN (?, ?) \
+            "DELETE FROM parent_events WHERE kind IN (?, ?, ?) \
            AND created_at < datetime('now', '-' || MAX(1, COALESCE( \
                  (SELECT p.location_retention_days FROM device_policy p \
                   WHERE p.device_id = parent_events.device_id), ?)) || ' days')",
         )
         .bind(crate::parent_events::Kind::ZoneArrived.wire())
         .bind(crate::parent_events::Kind::ZoneLeft.wire())
+        .bind(crate::parent_events::Kind::RoamingStarted.wire())
         .bind(DEFAULT_LOCATION_RETENTION_DAYS)
         .execute(db)
         .await,
@@ -472,6 +477,27 @@ pub async fn prune(db: &SqlitePool) -> Pruned {
         .bind(LIFT_DAYS)
         .execute(db)
         .await,
+    ) + rows(
+        failed,
+        "time_lock_now",
+        // Design 93 §3: a rule turned on now goes with the lifts.
+        sqlx::query(
+            "DELETE FROM time_lock_now WHERE ends_at < datetime('now', '-' || ? || ' days')",
+        )
+        .bind(LIFT_DAYS)
+        .execute(db)
+        .await,
+    ) + rows(
+        failed,
+        "time_request_answers",
+        // Design 100 §14.4: an answer to a request for more time goes with the lifts and the events.
+        sqlx::query(
+            "DELETE FROM time_request_answers \
+             WHERE answered_at < datetime('now', '-' || ? || ' days')",
+        )
+        .bind(LIFT_DAYS)
+        .execute(db)
+        .await,
     );
     let bans = rows(
         failed,
@@ -539,6 +565,12 @@ pub async fn prune(db: &SqlitePool) -> Pruned {
             .execute(db)
             .await,
     );
+    // Design 95 §3.5: a kept body no heartbeat can use any more.
+    let report_bases = rows(
+        failed,
+        "device_report_base",
+        crate::status_heartbeat::prune(db).await,
+    );
     // (No local is named `*_events`: `admin::every_written_event_has_a_label` reads the table names
     // next to such a `let` as event ids.)
     Pruned {
@@ -558,6 +590,7 @@ pub async fn prune(db: &SqlitePool) -> Pruned {
         sms_held,
         contact_requests,
         mmsc_hosts,
+        report_bases,
         failed: std::mem::take(failed),
     }
 }

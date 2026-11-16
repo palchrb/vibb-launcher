@@ -354,7 +354,7 @@
                 for every row, only the labels differ while it isn't ready. -#}
             <details class="confirm cell" id="reset-{{ p.id }}"{% if self.parent_reset_error(p.id).is_some() %} open{% endif %}>
                 <summary class="row">{% if p.waiting %}{{ self.t("account.parents.new_otp_open") }}{% else %}{{ self.t("account.parents.reset_open") }}{% endif %}</summary>
-                <form method="post" action="/account/parents/{{ p.id }}/reset#parents" class="confirm-body">
+                <form method="post" action="/account/parents/{{ p.id }}/reset#parents" class="confirm-body" data-native-post>
                     {#- Design 74 §6.3: the passkeys go with every Reset, a waiting row's too (qa-passkeys-1 B-L4). -#}
                     <p>{% if p.waiting %}{{ self.tp("account.parents.new_otp_confirm", [("name", p.name.as_str())]) }}{% else %}{{ self.tp("account.parents.reset_confirm", [("name", p.name.as_str())]) }}{% endif %}{% if p.passkeys > 0 %} {{ self.tp("account.parents.reset_passkeys", [("name", p.name.as_str())]) }}{% endif %}</p>
                     <input type="text" autocomplete="username" value="{{ username }}" hidden>
@@ -386,7 +386,7 @@
                     <span class="row-label">{{ self.t("account.add.open") }}</span>
                     <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 </summary>
-                <form method="post" action="/account/parents#parents" class="edit-body">
+                <form method="post" action="/account/parents#parents" class="edit-body" data-native-post>
                     <label class="field-label" for="new_username">{{ self.t("account.add.username") }}</label>
                     <input type="text" id="new_username" name="new_username" value="{{ add_typed.0 }}" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="64" required{% if self.error_for("new_username").is_some() %} aria-invalid="true" aria-describedby="new_username-error" autofocus{% else %} aria-describedby="new_username-hint"{% endif %}>
                     {% if let Some(why) = self.error_for("new_username") %}<p class="field-error" id="new_username-error">{{ why }}</p>{% else %}<p class="field-hint" id="new_username-hint">{{ self.t("account.add.username_hint") }}</p>{% endif %}
@@ -409,7 +409,7 @@
     </section>
     </div>
 </main>
-{% if otp.is_some() %}<script src="/static/reveal.js?v=4"></script>{% endif %}
-<script src="/static/passkey.js?v=8" defer></script>
+{% if otp.is_some() %}<script src="/static/reveal.js?v=5" data-swap-ready></script>{% endif %}
+<script src="/static/passkey.js?v=9" defer data-swap-ready></script>
 </body>
 </html>

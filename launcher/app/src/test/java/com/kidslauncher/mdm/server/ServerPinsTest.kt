@@ -233,7 +233,7 @@ class ServerPinsTest {
         assertTrue(fresh.substringBefore("CallPolicyStore.refresh(context)").contains(
             "nextFlag(ServerPinStore.enforce(context), enforceOf(freshPolicy.serverTls), pinConnection(apiPath, policyHandshake))",
         ))
-        assertTrue(sync.contains("fetchPolicy(api) { policyHandshake = it.handshake }"))
+        assertTrue(sync.contains("fetchPolicy(api, etags, owner, { served = it }) { policyHandshake = it.handshake }"))
         // The cached policy's readers never set the flag.
         for (name in listOf("cachedPolicy", "currentPolicyDecision", "reevaluateLockReasonFromCache")) {
             val body = sync.substringAfter("fun $name(", "").substringBefore("\nfun ").substringBefore("\nprivate fun ")
@@ -255,7 +255,7 @@ class ServerPinsTest {
         // OkHttp's pinner is set up in one place: the transport's direct path.
         assertEquals(mapOf("ServerTransport.kt" to 1), callers("certificatePinner("))
         // The report: the ring sent, dropped by the report's own connection.
-        assertTrue(sync.contains("if (sent.isSuccessful) ServerPinStore.reported(context, tlsSent, pinConnection(apiPath, sent.raw().handshake))"))
+        assertTrue(sync.contains("if (sent.isSuccessful) ServerPinStore.reported(context, tlsSent, pinConnection(apiPath, sent.raw.handshake))"))
         assertTrue(SERVER_PIN_CAPABILITY in STATUS_CAPABILITIES)
     }
 
