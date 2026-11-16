@@ -28,7 +28,7 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
 
 - **Ours, not Telecom's**: `calls/MissedCallReceiver` takes `TelecomManager.ACTION_SHOW_MISSED_CALLS_NOTIFICATION` (exported, no `android:permission` - protected broadcast with READ_PHONE_STATE; not direct-boot-aware), so Telecom sends us the broadcast instead of posting its own notification (its tap opened nothing, or the system dialer's call log with its keypad). The count is only a trigger; `calls/MissedCallNotifier` (one background thread, `goAsync`, queued requests run once) posts `launcher:missed_calls` (DEFAULT, no FSI) id 1006.
 - **Content** (pure `calls/MissedCallNotice.kt`, `MissedCallNoticeTest`): missed calls of `phoneBookView(effectiveState())` contacts that still count for the badges **and** are unread in the call log (`new = 1`) up to the newest unread missed `_id` read before the log ("Tapt anrop fra Pappa" / "2 tapte anrop fra Pappa" / "3 tapte anrop" + "Pappa, Mamma"). Alerts only for an `_id` newer than any alerted (CE prefs `missed_call_notice`); boot re-sends and updates are silent. The tap opens the phone book (a call-log `VIEW` sent explicitly to its entry, `PhoneBookEntryActivity`, since 2026-11-16), or with one contact its sheet (`PhoneBookActivity.EXTRA_MISSED_CONTACT`, read once, only for a number in the view). Without managed rules (fail-closed, or unmanaged while a dialer role the parent granted by hand is still ours) a plain "N tapte anrop" from the log's unread missed rows (`plainMissedCallNotice`, ids and dates only - `canKeepMissedCalls`: managed **or** our dialer role); unmanaged, its tap is passed on to the system dialer.
-- **Clearing**: the phone book resumed, any contact sheet, the tap or a swipe (delete intent -> `MissedCallDismissReceiver`, not exported; the post's own range) cancel ours, mark the covered rows read (`new = 0, is_read = 1` - Telecom skips that for a dialer with the receiver, else they come back at every boot) and call `cancelMissedCallsNotification()`; Telecom's count 0 only cancels ours, and not when ours shows calls newer than our last reset (`zeroCountCancels`, ids). Recomputed per broadcast and 3 s + 10 s after our call ends (update/clear only). Nothing is marked read automatically unless the rules are managed, readable and calls are on now (a no-calls time rule leaves only emergency contacts in the view). Cancelled - range forgotten - on the dialer-role hand-back. The phone book's pass-on reads `CallPrefs.systemDialer`, cached by `apply()` (no Telecom call on the main thread).
+- **Clearing**: the phone book resumed (on either tab, Kontakter or Siste - design 106 §3.4), any contact sheet, the tap or a swipe (delete intent -> `MissedCallDismissReceiver`, not exported; the post's own range) cancel ours, mark the covered rows read (`new = 0, is_read = 1` - Telecom skips that for a dialer with the receiver, else they come back at every boot) and call `cancelMissedCallsNotification()`; Telecom's count 0 only cancels ours, and not when ours shows calls newer than our last reset (`zeroCountCancels`, ids). Recomputed per broadcast and 3 s + 10 s after our call ends (update/clear only). Nothing is marked read automatically unless the rules are managed, readable and calls are on now (a no-calls time rule leaves only emergency contacts in the view). Cancelled - range forgotten - on the dialer-role hand-back. The phone book's pass-on reads `CallPrefs.systemDialer`, cached by `apply()` (no Telecom call on the main thread).
 - **Call log -> phone book**: the phone book's entry `PhoneBookEntryActivity` (before 2026-11-16 `PhoneBookActivity` itself) has its own `VIEW` `vnd.android.cursor.dir/calls` filter and `AppEnforcer.enforceCallLogPin` makes it the persistent preferred activity in every `apply()` next to the Play link blocker - cleared only by `HomePin`'s re-seat, which adds every PPA of ours back in the same pass (design 59d step M, `PlayInvariantsTest`); while calls are unmanaged it passes the intent on to the system dialer. A privileged dialer whose call-log filter has priority > 0 would still win (device check).
 - **Not device-tested**: the checklist in the 12 doc ("Implementation status"); the smoke test's "Missed call" step covers ours vs `TelecomMissedCalls` on the emulator.
 
@@ -43,9 +43,21 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
 
 - **What Element X posts** (its Android source, develop bb79064b, read 2026-11-02; since v0.4.15 - no device capture): an unanswered call cancels the ring (a fixed id, `CATEGORY_CALL`, CallStyle, no room on it) and posts or updates the room's MessagingStyle notification with `category = "missed_call"` - tag = the room ID (`<room>|<thread>` in a thread), each message bundle's `sender_person` key = the sender's MXID, `EXTRA_MESSAGING_PERSON`'s key = the kid's MXID, `isGroupConversation` false for a DM, shortcut `<session>-<room>`. The text still says "Incoming call" - never read. The category stays `missed_call` while the call's event is among the room's pending events and goes back to `message` when it drops out; opening the room in Element X cancels the notification. **With an app PIN in the kid's Element X every notification is one generic fallback (no tag, no category): nothing to read, no mark.**
 - **Who** (pure `calls/ElementMissedCalls.kt`, `ElementMissedCallsTest`): `elementMissedCallContact(category, ElementDmFacts, state, rooms)` - `missed_call` (`glanceMissedCall`), managed rules, `group == false`; the contact whose learned DM room (design 15, `ElementRoomStore.rooms`) is the tag's room (a thread tag's room part; the same session when the facts name one), else the newest `sender_person` key that isn't the kid's own; either way a phone-book contact whose Message button is Element under that MXID (`elementContactIds`). Group rooms, a missing group flag, strangers and the PIN fallback mark nobody - the notification still counts in Element X's own app badge on Home, as before. `ElementDmReader.missedCallContact` reads it (the design 15 facts plus `notification.category`; `ElementRoomsTest`'s allowlist grew by those names), right after `learn`, so a room this very post teaches is known.
-- **Memory only**: `ElementMissedCallStore` keeps notification key -> `ElementMissedCall(mxid, sinceMs)` (`afterElementPost`: a post without a contact - another app, a group, `message` again - drops the key; the same contact again keeps the time it turned into a missed call; `afterElementRemoval`; `afterElementSweep` at the listener's connect keeps what is still active; cleared at disconnect; judged again - the listener's sweep through `ElementMissedCallStore.rejudge` - when a `CallPolicyStore.refresh` changes the phone-book Element contacts, pure `elementMissedRejudgeDue`, so a contact added or moved to Element X after the call still gets the mark, from the notification's last post). `toString()` of `ElementMissedCall`/`ElementPost` names no MXID or key; ElementDmReader returns at once for a category other than `missed_call`. Fed by `BadgeListenerService` (`ElementPost(sbn.key, ElementDmReader.missedCallContact(this, sbn), sbn.postTime)`); nothing stored, logged or sent (scan test).
+- **Memory only** (the live store; since design 106 Siste keeps a small record of its own, below): `ElementMissedCallStore` keeps notification key -> `ElementMissedCall(mxid, sinceMs)` (`afterElementPost`: a post without a contact - another app, a group, `message` again - drops the key; the same contact again keeps the time it turned into a missed call; `afterElementRemoval`; `afterElementSweep` at the listener's connect keeps what is still active; cleared at disconnect; judged again - the listener's sweep through `ElementMissedCallStore.rejudge` - when a `CallPolicyStore.refresh` changes the phone-book Element contacts, pure `elementMissedRejudgeDue`, so a contact added or moved to Element X after the call still gets the mark, from the notification's last post). `toString()` of `ElementMissedCall`/`ElementPost` names no MXID or key; ElementDmReader returns at once for a category other than `missed_call`. Fed by `BadgeListenerService` (`ElementPost(sbn.key, ElementDmReader.missedCallContact(this, sbn), sbn.postTime)`); nothing stored, logged or sent (scan test).
 - **Shown** (`MissedCallsRepo.contactMissed`: `contactMissed(summaries(..), elementMissedSummaries(ElementMissedCallStore.calls, rules, seenMarks))` -> `ContactMissed(phone, element)`, `count` = both): the missed-call badge on Home's contact buttons and the phone book's avatars (and TalkBack's "Pappa, 1 missed call") count both; the contact sheet's missed line has the phone's own line, then "1 missed call in Element X today 13:05" / "1 tapt anrop i Element X i dag 13:05" (`missed_calls_in_app_at`, the app's shown label - design 14's name, the same the Message button's "Message opens in" names). Each room's notification is one call (several calls in one room can't be told apart without the text). Home and the phone book listen to the store and reload.
 - **Cleared**: the notification goes away (read or swiped in Element X) or flips back to `message`, or the kid opens the contact's sheet (the phone book's own seen mark, `MissedCallsRepo.markSeen`: a room's call counts only when it turned into a missed call after the mark). Limit: a second call missed into a room whose notification still holds the first (after the kid opened the contact) isn't marked again - its time is the first's; Element X's own badge still shows it. After a process restart (or the listener's rebind) a call's time is its notification's last post, so a contact opened before it can show the mark again if the room had a newer message. Our missed-call notification (design 12) stays the phone's own calls only.
+- **Siste's record** (design 106 §3.3, Q3): the live store forgets a call once the kid opens the room, so each of its
+  changes (`posted`/`removed`/`swept`/`cleared`, named as `ElementLogChange`) also goes to `ElementCallLogStore` - CE
+  prefs `element_call_log`, key `v1`: per call the contact's number (resolved through the rules when written), its
+  `sinceMs`, the SHA-256 of the notification key cut to 128 bits (`elementKeyHash`; no room ID) and `open`. The rule is
+  the pure `elementCallLogAfter` (`ElementCallLogTest`): a new key adds an open record unless an open one with the same
+  hash and number is there (the connect sweep after a restart - the same call; its time raised to the live `sinceMs`); a
+  key leaving the store, or changing contact, closes its record; a sweep closes every open record whose key isn't
+  active; an unbind closes nothing. Pruned at every write (14 days, 50 records), at each CE `CallPolicyStore.refresh`
+  (`pruneElementCallLog`: unmanaged = all, a contact no longer a phone-book Element contact) and filtered on every read
+  (`shownElementCallLog`). `toString` names neither number nor hash; nothing is logged or sent. Known limit: with the
+  process dead while the kid opens the room and a second call is missed in it, the sweep finds the open record and
+  Siste shows one row, not two (the badge reads the live store, unaffected).
 - **Not device-tested**: an unanswered 1:1 Element Call on the Jelly Star (PLAN Round L5).
 
 ## VoIP calls over the PIN lock (design 17, `docs/design/17-voip-calls-over-lock.md`, at the monorepo root)
@@ -579,7 +591,8 @@ layout, sizes, order or behaviour moved. The card, the thread, the call screens 
   resumed and focused (updated after every layout, scroll, resume, pause and focus change); at `onStop` (not a
   rotation) the visit's contacts get `MissedCallsRepo.markSeen(marks)` (one write, one word to Home - code QA N6) - up to
   the newest call the row showed;
-  the mark only moves forward (`seenMarkAfter`). The card, the row's Ring and Melding and the card's Melding mark it
+  the mark only moves forward (`seenMarkAfter`). Since design 106 a red row in Siste seen for 1 s marks too, when the kid
+  leaves Siste ("Two badges and Siste", below). The card, the row's Ring and Melding and the card's Melding mark it
   seen at once. `MissedCallsRepo.addSeenListener` tells Home (resumed before the phone book stops), so Home's badge goes
   with the row. The notification and the lock glance's rows still go when the phone book **opens** (unchanged).
   An incoming call's screen over the phone book ends the visit (its `onStop`), so the call's return starts a new one.
@@ -626,7 +639,7 @@ layout, sizes, order or behaviour moved. The card, the thread, the call screens 
   last; Meldinger's hits are ranked like the phone book's (A-Å within a rank), not newest first; the request's picture
   draft is deleted when the form closes without Send (Avbryt, Back, calls going off), when a returned draft finds the
   form closed, when the phone book finishes, and at its first resume every draft but the form's and none younger than an hour (code QA L3 and its second pass: never between a draft being written and the form taking it); the
-  row's badge is the count alone. The code QA's open points, decided: (a) the request rows stay hidden while calls are
+  row's badge is the count alone (since design 106 two pills, each with its glyph). The code QA's open points, decided: (a) the request rows stay hidden while calls are
   off; (c) an incoming call's screen ends the visit; (d) no long-press hint for now; (e) the emergency avatar keeps
   its 3 dp ring.
 - **Not device-tested yet:** the Jelly Star (fling through 50 rows and count accidental presses, §9; whether a kid
@@ -699,6 +712,72 @@ and the task's card was Home's, which is excluded from Recents.
   and `PlayInvariantsTest` (the call-log filter and pin on the entry).
 - Seen on the emulator (`docs/testing/emulator.md` §6av: Android 16 and 14 - on 14 all but the update from an older
   build's pin). **Not device-tested yet:** the Jelly Star - Home's slide, the Recents card in the kiosk, a real call's end.
+
+## Two badges and Siste (design 106; branch `a5-b2`)
+
+Design `docs/design/106-contact-badges-and-recent-calls.md` (revision 2, Q1-Q8 decided as recommended, 2026-11-16),
+mockups A5 and B2. Launcher only; no server change.
+
+- **A5, two pills** (`ContactBadge(missed, unread)` with `missedText`/`unreadText`, `HomeModelTest`): the rust pill
+  (`kid_badge`, the phone-x glyph) counts missed calls - the phone's and Element X's, `ContactMissed.count`; the teal pill
+  (`kid_messages_tile`, the Meldinger tile's teal, white 5.4:1, the new `ic_kid_badge_message` - `ic_kid_message`'s
+  bubble with a 3-unit stroke) counts unread SMS (`SmsHome.unreadFrom`: incoming and unread only - sent SMS never count).
+  Nothing adds the two. `KidAvatars.bindContactBadge(missedView, unreadView, badge, BadgeSize.HOME|ROW|SHEET)` binds both
+  and sizes the glyph in code (15/12/18 dp). Home: rust at the frame's top end as before, teal at the bottom end with 2 dp
+  margin - the green call badge's place (`contact_unread_badge`; `UNREAD_BADGE_OVERHANG_DP`, `contactRoomDp` unchanged);
+  both lifted to the avatar's elevation in `PressFeedback.contact`. The phone book's row: `docs/notes/launcher/ui-polish.md`,
+  "The phone book's row". The sheet: rust top end 6 dp in, teal bottom end (`sheet_unread_badge`). The green call badge
+  (`contact_call_badge`, `bindCallBadge`, `bg_kid_call_badge`, `kid_call_badge`) is gone. TalkBack is unchanged (the
+  pills are `importantForAccessibility="no"`; the avatar's sentence and the sheet's lines say both in words).
+- **B2, the switch** (`activity_phone_book.xml`): "Kontakter | Siste" under the header, above the search - P9's control,
+  two `RadioButton`s in a `RadioGroup` ("Velg liste"), 44 dp on `kid_page_tile` (in Lys with the `kid_page_edge`
+  hairline), each half the whole height's tap target with its fill 4 dp in (`bg_phone_book_tab`: the chosen half
+  `kid_page_accent_fill` under `kid_on_accent`, the other none in `kid_page_ink_dim`, `kid_page_tab_text`), Nunito 800
+  16 sp, wrapping with the font scale. Shown only with `phoneBookSwitchShown` (`canAsk` and the form closed). Both
+  buttons `saveEnabled="false"`: the activity alone holds the tab. Siste's badge is drawn inline after the word
+  (`RecentBadgeSpan`, a 20 dp rust pill with 12 sp white) only while Kontakter is chosen; it is `recentBadge` - the sum
+  of `ContactMissed.count` over the book's contacts, so always the sum of the rust pills; the button's description
+  carries it ("Siste, 2 tapte anrop").
+- **The tab rule** (pure, `PhoneBookListTest`): every visit starts on Kontakter (`tabAtVisitStart`, design 79's visit
+  boundary: `onStart` without a restored tab) - Home's tile, Recents, back from a call, another app or the picture screen,
+  a reopen after the process died (Q5). Only a configuration change (font size, language; a rotation doesn't recreate
+  the page) keeps Siste: `onSaveInstanceState` saves the tab and Siste's sightings before the visit's early return, only
+  while `isChangingConfigurations`. An ask by `onNewIntent` (our notification, the glance's row, the call log, a `tel:`
+  link) and calls going off in `render()` move the book to Kontakter first (`tabAfter`), Siste's marks written (Q7, M3,
+  L1). On Siste the search pill and the "+" hide; showing Siste clears the query and the keyboard and starts the list
+  at its top. Back (`phoneBookBack`): the keyboard, the form, the search's text, then Siste back to Kontakter
+  (`SHOW_CONTACTS`), then leave (Q8); the callback is enabled while Siste shows (`phoneBookBackEnabled`).
+- **What Siste shows** (pure `calls/RecentCalls.kt`, `RecentCallsTest`): `MissedCallsRepo.load` does one call-log read
+  for the badges and Siste (`CallsSnapshot`); the query now asks only for INCOMING, OUTGOING, MISSED and
+  ANSWERED_EXTERNALLY (blocked spam can't use up the 500 rows). `recentCalls`: only the phone book's (outbound)
+  contacts, matched as the badges match; incoming and answered-elsewhere as "Ringte deg", outgoing as "Du ringte",
+  missed as "Tapt anrop" in `kid_page_alert`; blocked, rejected (the kid's decline and our backstop alike, Q6) and
+  voicemail never; Element X missed calls from the record above ("Tapt anrop i Element X", Q2); 14 days (Q1); adjacent
+  rows of one contact, kind, source and day merge ("Ringte deg (2)"). A phone row is unseen when it holds one of
+  `unseenMissedCalls`' rows, an Element X row when the live store has its hash for its contact after the seen mark -
+  exactly what the badge counts. Days by the local zone: "I dag", "I går", the weekday two to six days back, else the
+  weekday and date (`dayLabel`, `EEEEdMMM`); reloaded on `ACTION_DATE_CHANGED`/`ACTION_TIMEZONE_CHANGED`. With the log
+  unreadable Siste says nothing (never "no calls"); read and empty, "Ingen anrop de siste 14 dagene" in the info line.
+- **The list** (`RecentCallsAdapter`, `item_recent_day.xml`, `item_recent_call.xml`): one flat list - a day heading
+  (13 sp, an accessibility heading) and its rows, each row's tile by its place in the day (`bg_recent_first|middle|last|
+  single`, plain shapes; the press a `kid_page_ripple` foreground clipped to the same shape, `fg_recent_*`), a 1 dp
+  `kid_page_divider` between rows and 10 dp after a day. A row: the 36 dp avatar (no pills: the row is the event), the
+  name, a 13 dp glyph (`ic_kid_missed_call`, and Material Symbols `call_received`/`call_made` as `ic_kid_call_in`/
+  `ic_kid_call_out`, from `scripts/material-symbols.sh`) and its word, the time (`ClockFormat.formatTime`) at the end -
+  under the word from font scale 1.3. TalkBack: one node, role button, "Mamma, 2 tapte anrop, i dag 14:02", "Pappa,
+  ringte deg 2 ganger, i går 18:30" (its own plural, never the visible "(2)"). A tap opens `ContactSheet` for the
+  contact, as a Kontakter row does - never a call, no "Ring via Element". `onStop` empties it as the contacts list.
+- **Seen in Siste** (§3.4, Q4): a red, unseen row at least half on screen for 1 s while Siste shows and the book is
+  resumed and focused - Siste's own `TopSightings`, fed `recentVisible` (per contact the newest of its visible rows, so a
+  row scrolled away never raises the mark). The marks are written when the kid leaves Siste - the switch to Kontakter
+  (then a reload, so the badges follow at once), an ask, calls going off, or the visit's end (`onStop`, not a
+  configuration change) - per contact up to the call its row showed (`seenMarkAfter`). Opening Siste alone marks
+  nothing. A seen row stays red (Siste is history); in Kontakter the contact keeps its place for the visit and loses its
+  red line. The notification still goes when the book resumes, on either tab.
+- **Android 14-17**: no API above 34; the call log's columns and types are unchanged through 37, READ_CALL_LOG from the
+  Device Owner's grant and the dialer role as before; the pills are our own views. Emulator gate: `docs/testing/
+  emulator.md` §6aw (Android 16 and 14). Debug only: `ElementCallDebugReceiver` (`src/debug`) posts and removes a
+  missed Element X call through the live store.
 
 ## The lock glance's Meldinger row, step 5 (design 77 §6.8; branch `sms-glance`)
 

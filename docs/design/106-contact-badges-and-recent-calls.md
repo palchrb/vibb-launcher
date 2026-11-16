@@ -1,6 +1,7 @@
 # 106 - Two badges on the contacts, and "Siste" in the phone book (revision 2)
 
-Round `a5-b2`, 2026-11-16. Launcher only; no server change. **Status: design, revision 2.** PLAN: "Missed calls and
+Round `a5-b2`, 2026-11-16. Launcher only; no server change. **Status: built on branch `a5-b2` (2026-11-16), Q1-Q8 as
+recommended, emulator gate passed on Android 16 and 14; awaiting code QA.** What the build decided is in "Built", at the end. PLAN: "Missed calls and
 messages on Home's contacts, and a call log in the phone book" (approved 2026-11-16, mockups A5 and B2 in the board
 `contact-badges/board.html`). Every decision below the line "Decided by the user" stands; this note settles the rest.
 The Q list at the end holds the choices with a cost the kid or the parent can see. Revision 2 answers the design QA
@@ -482,3 +483,20 @@ The day labels' weekday and date come from the locale. Reused: `contact_missed`,
    alternative is Siste when there are several callers.
 8. **Back on Siste goes to Kontakter first.** This is one more Back press to leave, as in Meldinger's "Ny melding". I
    recommend **yes**: the kid always comes back to where the book opens.
+
+## Built (2026-11-16, branch `a5-b2`)
+
+Notes: `docs/notes/launcher/calls.md`, "Two badges and Siste (design 106)"; emulator gate `docs/testing/emulator.md` §6aw
+(Android 16 on `jelly36`, Android 14 on `compat34`). Decided in the build, where the design left it open:
+- The record's hash is SHA-256 cut to 128 bits (`elementKeyHash`); its codec is JSON under the prefs key `v1`.
+- A row's divider starts at the text (56 dp in), so a day reads as one card; the switch's track has no padding of its
+  own - each half's fill is inset 4 dp, so a half takes taps over the whole height.
+- The switch's words are a page colour of their own (`res/color/kid_page_tab_text.xml`, the two page tokens).
+- TalkBack's missed word is lower-cased mid-sentence ("Pappa, tapt anrop, i dag 7:04").
+- **Open look question, for the user:** in a phone book row the rust pill, now wider with its glyph, reaches the start of
+  the name (its end edge is where it was before: 10 dp past the avatar, at the text column's start). Not changed; the
+  user decides (screenshot from the gate, Mamma's row with both pills in Lys).
+- Seen on the emulator, not changed: Recents' overview opened from the book itself keeps the page resumed (Android's
+  live tile), so its card brings back the same visit, still on Siste - design 79's visit boundary; via Home and then
+  Recents it is a new visit, on Kontakter. With Element X not installed the Element X row's label is the package name,
+  as the sheet's line (`AppDisplay.shownLabel`).

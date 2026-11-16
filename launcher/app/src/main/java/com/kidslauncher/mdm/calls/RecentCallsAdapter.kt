@@ -157,7 +157,8 @@ class RecentCallsAdapter(private val onRow: (RecentRow) -> Unit) : ListAdapter<R
         private fun spokenWord(context: Context, row: RecentRow): String {
             val res = context.resources
             return when (row.kind) {
-                RecentKind.MISSED -> missedWord(context, row)
+                // Mid-sentence: "Pappa, tapt anrop, i dag 7:04".
+                RecentKind.MISSED -> missedWord(context, row).replaceFirstChar { it.lowercase(context.resources.configuration.locales[0]) }
                 RecentKind.IN -> res.getQuantityString(R.plurals.recent_described_in, row.count, row.count)
                 RecentKind.OUT -> res.getQuantityString(R.plurals.recent_described_out, row.count, row.count)
             }
