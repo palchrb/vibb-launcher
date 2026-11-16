@@ -2207,6 +2207,13 @@ async fn render_device(
         && time_rules
             .as_ref()
             .is_ok_and(|rules| rules.iter().any(|r| !r.calls_allowed));
+    let dnd_is_rules_own = crate::attention::dnd_is_rules_own(
+        &state.db,
+        id,
+        latest.as_ref(),
+        time_rules.as_deref().unwrap_or(&[]),
+    )
+    .await;
     let relock = crate::handlers::window_relock::card(
         &state.db,
         id,
@@ -2255,6 +2262,7 @@ async fn render_device(
             relock: &relock,
             call_problems: &call_problems,
             incoming_calls_not_blocked: incoming_calls_unblocked,
+            dnd_is_rules_own,
             connection,
             music_ticked: music_ticked.as_deref().unwrap_or(&[]),
             spotify_account,
