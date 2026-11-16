@@ -97,8 +97,62 @@ a boot the shutdown didn't arm (step M's case below the boot cover) can't hang o
   (the Play Store as verifier, a carrier app) is still retried at every pass as before.
 - **What else changes on 17**: Flymodus's route window (design 98) finds Settings unhidden, so it neither unhides nor
   hides it again - it only pins it for the window. SystemUI's Settings links (`launcher-fix-1`'s sink) resolve to
-  Settings' own activities, which win over the sink's priority -1, so the sink is never reached: under the kiosk (with
+  Settings' own activities, which win over the sink's priority -999, so the sink is never reached: under the kiosk (with
   the app-block bit) the start becomes Android's BlockedAppActivity, "App is not available - Settings is not available
   right now" with OK, back to where the kid was - no SystemUI crash (checked with `am start` of
   `APP_NOTIFICATION_SETTINGS` on 37.2, `docs/testing/emulator.md` §6as); in the pause they open Settings, as on 14-16.
   Snarveier (design 99) has no Settings link of its own; its notification's gear is the case above.
+
+## SystemUI's Settings links while Settings is hidden (the gear bug, fix round `launcher-fix-1`, 2026-11-16)
+
+`AppEnforcer.apply` hides `com.android.settings` while managed (`EnforcementPlan`'s `hide`; Settings can't be
+suspended). SystemUI's `StatusBarNotificationActivityStarter` starts the notification long-press menu's gear ("More
+settings", `android.settings.APP_NOTIFICATION_SETTINGS`), the shade's Manage (`NOTIFICATION_SETTINGS`) and History
+(`NOTIFICATION_SETTINGS` + `NOTIFICATION_HISTORY`) through `TaskStackBuilder.startActivities`, which throws
+`ActivityNotFoundException` when nothing resolves: SystemUI died and restarted, and Android's keyguard came up (the kiosk
+stayed locked, Vibb One's process was untouched). Found on `jelly36` (`docs/testing/emulator.md` §6ar), the same on
+Android 14.
+
+**What reaches that path, per release** (read in AOSP's `android14-release` to `android17-release`, and
+`android16-qpr2-release`: `NotificationGutsManager`, `StatusBarNotificationActivityStarter`, the 16+ `SettingsIntent`
+with its `FooterViewModel`/`EmptyShadeViewModel` callers, and 14/15's `NotificationStackScrollLayoutController`):
+`startNotificationGutsIntent` - the app's and a channel's notification page, conversations, bubbles, 16 QPR2+'s
+`NOTIFICATION_BUNDLES`, the app-ops links (`APPLICATION_DETAILS_SETTINGS` and `MANAGE_APP_OVERLAY_PERMISSION`, both with a
+`package:` URI; `MANAGE_APP_PERMISSIONS` goes to the permission controller, which has no launcher icon and is never
+hidden), and the Notification Assistant's own feedback intent (not Settings's; nothing to catch); `startHistoryIntent`
+(14, 15) and `startSettingsIntent` (16+) - Manage, History, and the empty shade's text, which on 16+ links to Modes
+(`ZEN_MODE_SETTINGS`, or `AUTOMATIC_ZEN_RULE_SETTINGS` over `ZEN_MODE_SETTINGS` when one mode hides the notifications - a
+time rule's own mode can). Every one of them is in the sink.
+
+**The sink** `server/SettingsSinkActivity` (exported, no permission - SystemUI starts it; `Theme.NoDisplay`,
+`noHistory`, `excludeFromRecents`, its own empty `taskAffinity`; a plain `Activity`, since an AppCompat one throws under
+`Theme.NoDisplay`) answers `SettingsSink.ACTIONS` and, with a `package:` URI, `SettingsSink.PACKAGE_ACTIONS`, at
+**priority -999**, category DEFAULT. It only finishes in `onCreate`: it opens nothing, reads nothing from the intent but
+the action (logged only when it is one of ours) and validates nothing. While Settings is visible (the restrictions
+pause, "Åpne for oppsett") Settings' own filters win and no chooser shows: priority 1 on every emulator image checked
+(Android 14's AOSP image, 16's Pixel image, 17); -999 keeps a tie with any other handler unlikely. Android 14's Settings
+has no `AUTOMATIC_ZEN_RULE_SETTINGS` filter, so there the sink answers it even in the pause (nothing on 14 sends it).
+`SettingsSinkTest` pins both filters to the lists, the attributes (and the absent risky ones), a plain `Activity`, and a
+body that reads only the action and finishes.
+
+**Where the kid lands, and why it can't pass the PIN lock.** `TaskStackBuilder` starts the first intent with
+`NEW_TASK | CLEAR_TASK | TASK_ON_HOME`, so after the sink the kid is on Home, not back in the app they were in (as with
+a visible Settings, which also returns to Home). The empty affinity keeps `CLEAR_TASK` off Home's own task. While the PIN
+lock is up, its lock-task features leave out NOTIFICATIONS and the status bar is disabled, so no shade can reach the sink
+there - a later change that adds NOTIFICATIONS while LOCKED would make the gear a way from the PIN lock to Home, and must
+be reviewed with that in mind.
+
+**The other SystemUI paths don't crash** (checked on `jelly36` with Settings disabled and lock task off, §6ar): Quick
+Settings tiles' long-press (Internet, Bluetooth, Airplane, Alarm), their dialogs (the Internet dialog's network,
+Bluetooth's "Pair new device", Modes' Settings and a mode), the Quick Settings footer's gear, the clock and date, and
+the volume panel's Settings go through SystemUI's `ActivityStarter`, which starts through the activity task manager and
+only logs `result code=-91`; a notification's own tap (a `PendingIntent` to Settings, e.g. "Physical keyboards
+configured") is the same. Under the kiosk none of these are reachable anyway: lock task keeps Quick Settings closed and
+hides the volume dialog's settings button, on Home and on Android's keyguard. A new crashing path is one more action in
+`SettingsSink` and the manifest.
+
+**Checked on** Android 14 (`google_apis`, API 34) and 16 (`jelly36`, the Play image): the crash before, the sink after,
+the pause. Android 17 (`google_apis`, API 37.2) only in part (§6ar): there the platform refuses to hide Settings at all
+("Platform refused to hide com.android.settings"), so the gear and Manage reach Settings, which lock task blocks with
+Android's "App is not available" - no crash, but not the quiet sink either; Settings' filters sit at priority 1 above the
+sink there too. Whether Settings can be hidden on the Jelly Star's own Android 17 is owed.

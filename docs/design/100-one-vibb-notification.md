@@ -258,7 +258,8 @@ Unfolded (the normal view: always first, so Android unfolds it, design 99 S2):
   (design 99), which is usable while `canAsk` and dimmed with "Mer tid, spurt" while a request is open.
 - **Without a budget today, in the pause or the override:** no time line and no note. The panel is exactly design 99's.
 - **The row** is unchanged (design 99 §3, revision 3).
-- **Small icon: the gear**, a new `ic_stat_gear.xml`: a copy of `baseline_settings_24`'s path with
+- **Small icon: the gear** (**superseded 2026-11-16**: the panel carries the Vibb mark `ic_stat_vibb` like the plain
+  notice, the user's choice; `ic_stat_gear.xml` deleted - fix round `launcher-fix-1`), a new `ic_stat_gear.xml`: a copy of `baseline_settings_24`'s path with
   `fillColor="#FFFFFFFF"` instead of `?android:textColor` (M10's measured look; Material Symbols' settings glyph,
   Apache-2.0, as the original).
 
@@ -290,7 +291,7 @@ Today's gear drew an empty disc.
 
 | Notification | Today | After |
 |---|---|---|
-| The panel (id 1002, panel view) | `ic_stat_vibb` | **`ic_stat_gear`** (new, white fill; M10) |
+| The panel (id 1002, panel view) | `ic_stat_vibb` | **`ic_stat_gear`** (new, white fill; M10) - back to `ic_stat_vibb` on 2026-11-16 (`launcher-fix-1`) |
 | The plain anchor (id 1002, plain view, `AnchorNotice.build`) | `baseline_settings_24` (draws empty, M10) | `ic_stat_vibb` |
 | Play's install mode (`play/PlayRuntime.kt:245`) | `baseline_settings_24` | `ic_stat_vibb` |
 | The ring (`server/LocateCommands.kt:591`) | `baseline_settings_24` | `ic_stat_vibb` |

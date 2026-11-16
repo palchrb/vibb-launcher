@@ -182,8 +182,9 @@ the setup notification.
   Folded, the row alone (the time is then hidden: accepted). 40 dp discs, 22 dp glyphs, in the 48 dp content height
   (45 dp cells folded, 55 dp unfolded at 320 dp); the discs are dp only. Off: white at 12 %, on: the peach disc with the
   glyph in `kid_ground`; dimmed 40 %, busy 50 %. The names (`shortcut_full_*`) are the picker's and each cell's content
-  description. The small icon is the gear, `ic_stat_gear` (`baseline_settings_24`'s path with a literal white fill:
-  the theme-attribute gear draws an empty disc in SystemUI, design 100 M10).
+  description. The header is the app's name alone (the sub-text "Snarveier" removed 2026-11-16, the user: "bare behold Vibb One"). The small icon is the Vibb mark, `ic_stat_vibb`, as the plain notice's (since 2026-11-16, the user; it was the gear
+  `ic_stat_gear`, now deleted). Its colours are literal: a theme attribute draws an empty disc in SystemUI (design 100
+  M10); checked filled in the status bar and the shade header on Android 14 and 16; Android 17 draws the app's launcher icon in the header instead (`docs/testing/emulator.md` §6ar).
 - **Items** (`ShortcutsModel.kt`, pure, `ShortcutsTest`): torch, sound (bit 8), airplane (bit 64 + the role via
   `airplaneRow`, Off-only when on), wifi (1), bluetooth (2), mobile_data (32, `kidMobileRow`), brightness (4, three steps
   40/128/230), more_time (the anchor notice's `ask` part, set by the poster from the time part it posts with -
@@ -203,7 +204,7 @@ the setup notification.
   shows when it comes back.
 - **A tap** is a broadcast to the non-exported `ShortcutsReceiver` (`goAsync`, the key alone) or, for Flymodus On
   while usable and not busy (pure `shortcutOpensWindow`; a dimmed or busy Flymodus is a broadcast, refused with the
-  shade left open - C99-M1, D10), `ShortcutAirplaneActivity` (translucent, its own task, `noHistory`): Android closes the shade to start it, and the
+  shade left open - C99-M1, D10), `ShortcutAirplaneActivity` (translucent, its own task, `noHistory`; since 2026-11-16 a one-pixel window, `claimNoBars`, on `ShortcutWindowTheme`'s transparent bars: under `Theme.Translucent.NoTitleBar` the window's decor painted the legacy black bar backgrounds for its whole life and they moved with it as it closed, and a full-screen window of a dark theme would turn the status icons and gesture handle white over a light wallpaper; one pixel claims no bars, so they stay as the app in front left them - `ShortcutWindowTest`; checked on Android 14 and 16 over a dark and a light wallpaper, on 17 over a dark one): Android closes the shade to start it, and the
   route starts only on its window's first focus, so no finger is left in a collapsing shade (design 98's ~300 ms gap);
   no focus in 3 s - nothing. Every tap runs on `ShortcutsRuntime.taps` through the pure fail-closed
   `shortcutTapAllowed`: an unknown key, the lock mode undecided or the time rules unreadable, LOCKED, Android's keyguard

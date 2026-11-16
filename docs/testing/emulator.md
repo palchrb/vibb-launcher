@@ -4619,6 +4619,61 @@ shortcut: on this Chrome the tab's menu has no way there, see E8).
 Feide/Google login back to its app, the presets' hosts); E13's second hotspot; Android's sign-in notification and its
 Cancel on the Jelly Star's own build; the Bare Vibb sink with a SIM; "Open in Chrome browser" on the phone's Chrome.
 
+## 6ar. Settings links in the shade, Flymodus's window, the panel's header (fix round `launcher-fix-1`, 2026-11-16)
+
+Setup: **`jelly36`** restored clean from `~/kid-look-1-avd-pre-start` (22 of 22 sums), started under `flock -o
+~/emulator.lock` and `~/build.lock` without `-wipe-data`; a server of the branch on the gear-bug run's data (bit 64 and
+128, the airplane block switched off in Advanced › Restrictions); main's debug launcher (8ddf461b1) as Device Owner (§4's
+adb lines, the assistant role with `cmd role add-role-holder`), enrolled with a typed code, kiosk LOCKED; then the
+branch's build over it with `adb install -r`. The bars measured on `screenrecord` frames (pure-black rows at x 460 against
+Home's ground); the successful Flymodus recorded from the host (`adb emu screenrecord`), because the guest's
+`screenrecord` slows the route past design 98's 1 s wait. Afterwards `jelly36` restored again (22 of 22 sums, the same
+file list).
+
+| Check | Result |
+|---|---|
+| Before (main) | The long-press menu's gear: `ActivityNotFoundException` for `APP_NOTIFICATION_SETTINGS`, SystemUI killed, Android's keyguard. Flymodus from the panel: black rows 0-35 and 818-853 for the window's whole life (~5 s, the voice activity included), sliding down at its close (rows 4-39, 34-69, then gone). The header "Vibb One (debug) • Snarveier" |
+| The gear (kiosk) | **Passed.** `START ... cmp=.../SettingsSinkActivity`, "SettingsSink: A Settings page while Settings is hidden: android.settings.APP_NOTIFICATION_SETTINGS"; no crash, no keyguard, Home focused, lock task LOCKED |
+| Manage (kiosk, and from Android's keyguard) | **Passed.** `NOTIFICATION_SETTINGS` to the sink; from the keyguard after its swipe the same |
+| History | **Passed** (notification history on, Settings disabled with `pm disable-user`, lock task off in the pause): `NOTIFICATION_SETTINGS` and `NOTIFICATION_HISTORY` both to the sink |
+| The pause | **Passed.** Started from the PWA: Settings visible at priority 1, the sink at -1; the gear opened Settings' app-notification page and Manage its notification page, no chooser. Ended from the PWA: Settings hidden again, LOCKED |
+| Other paths (Settings disabled, lock task off) | **No crash:** Quick Settings long-press on Internet (`WIFI_SETTINGS`), Bluetooth, Airplane (`result code=-91`), Alarm (the clock); the Internet dialog's network (`WIFI_DETAILS_SETTINGS`), Bluetooth's "Pair new device", Modes' Settings and a mode (`AUTOMATIC_ZEN_RULE_SETTINGS`); the footer's gear (`SETTINGS`); the clock and date; the volume panel's Settings (`SOUND_SETTINGS`); a system notification's own tap (`HARD_KEYBOARD_SETTINGS`). In the kiosk Quick Settings and the volume dialog's settings button aren't shown at all |
+| Flymodus (the branch) | **Passed.** No black rows at top or bottom in any frame after the shade closed, through the voice activity and the close; airplane mode on (`Route window 1220 ms, airplane mode on`). Settings' `AirplaneModeVoiceActivity` (floating) shows no bars of its own |
+| The header | **Passed.** "Vibb One (debug)" alone |
+
+Screenshots: the scratchpad's `launcher-fix-1/shots/` (`01`-`04` before, `11`-`16` after, `30`-`32` the pause, `40`-`44`
+the other paths).
+
+**Code QA round** (`docs/review/qa-launcher-fix-1-code.md`; the versions rule of 2026-11-16). The window is one pixel now
+(M1), the sink has the 14-17 actions at priority -999 (M2, L2), and the panel's small icon is the Vibb mark. Run on
+three images, each a fresh phone (`-wipe-data`) of its own AVD made from the compatibility check's configs (`fix34`,
+`fix370`: 480x854 at 240 dpi, `hw.mainKeys = no`) or `jelly36` restored as above; main's build first, then the branch's
+with `adb install -r`; the rest as above. Bars and icon colours measured on host recordings (`adb emu screenrecord`): the
+dark rows in the top and bottom 40 px at x 460, and the brightest and darkest pixel in the status bar's icon strip.
+
+| Check | Android 14 (API 34, `google_apis`) | Android 16 (`jelly36`) | Android 17 (API 37, `google_apis`) |
+|---|---|---|---|
+| Before (main) | The gear: `ActivityNotFoundException`, SystemUI killed, the keyguard. Flymodus: black rows 0-35 and 818-853 for the window's life | From the first run above: the same crash and black rows | **Not reachable:** the platform refuses to hide Settings on this image (`AppEnforcer`: "Platform refused to hide com.android.settings"), so nothing crashes; the shade's Notification settings opened Android's "App is not available" (Settings blocked by lock task) with main and the branch alike |
+| The gear, Manage (kiosk) | **Passed.** Both to the sink; Home focused, LOCKED, no keyguard | **Passed.** Both to the sink, Home focused, no keyguard | Settings visible (see Before): Settings at priority 1 above the sink at -999 for every action, the package actions included; the long-press menu didn't open by `input` on this image |
+| History (kiosk, history on) | **Passed.** `NOTIFICATION_SETTINGS` and `NOTIFICATION_HISTORY` to the sink | Passed in the first run above | Not run (the system restarts, below) |
+| The pause | **Passed.** Settings at priority 1 for every action, the sink at -999 (`pm query-activities`, the package actions with `-d package:`); the gear and Manage opened Settings's pages, no chooser. `AUTOMATIC_ZEN_RULE_SETTINGS` has no Settings filter on 14 (the sink answers it) | Passed in the first run above | Not run; the priorities as above |
+| Flymodus, dark Home | **Passed.** No dark rows after the shade closed, Home drawn throughout (Settings's own voice activity flashes white for ~0.2 s on 14, before and after alike). Three early runs (after a reinstall and the gear checks) showed the whole screen black for the window's life, Home not drawn; not seen again in eight runs, one of them right after a reinstall and one right after the sink | **Passed.** No dark rows, Home drawn throughout | **Passed** once: no dark rows, airplane mode on in 390 ms (3-button navigation, below) |
+| Flymodus, light wallpaper (M1) | **Passed.** The full-screen window of the first commit turned the status icons white for its life (the strip's darkest pixel 236, against 95 for Home's dark icons); the one-pixel window keeps them dark (93-95) | **Passed.** The icons dark (94) through the window | Not run |
+| The small icon | **Passed.** The Vibb mark, filled (dark rings on a light disc) in the shade header; in the status bar the rings at LOW | **Passed.** The same: filled in the header and in the status bar, on the dark and the light wallpaper | Android 17 draws the app's launcher icon in the header (the Vibb mark there); no status icon at LOW. The header reads "Vibb One (debug)" alone |
+
+**Android 17 on this VM:** the API 37.0 and 37.2 images abort in gfxstream (`Assertion failed:
+!rcEnc->featureInfo()->hasReadColorBufferDma`) whenever a frame is read back - `screencap`, SystemUI's navigation-handle
+region sampling and system_server's task snapshots - with `-feature -GLDMA,-GLDMA2`, `-gpu guest` and `-gpu off` alike;
+surfaceflinger or system_server dies and the phone restarts. 3-button navigation (`cmd overlay enable-exclusive
+--category com.android.internal.systemui.navbar.threebutton`) and host screenshots (`adb emu screenrecord screenshot`)
+avoid the first two; a task snapshot still killed system_server after the Flymodus run. So 17's rows are partial.
+
+**Found on Android 14, outside this round:** a reboot of the enrolled API 34 phone never finished booting (user 0 stays
+`BOOTING`, `sys.boot_completed` unset after 7 minutes; no HOME resolves before the first unlock - Settings' FallbackHome is
+hidden and Vibb's HOME isn't direct-boot aware). Seen twice (`fix34`, and the compatibility check's `compat34`); the logcat
+is in the scratchpad (`launcher-fix-1/logcat-34-stuck-boot.txt`). `jelly36` (16) reboots fine (§6an).
+
+
 ## 6as. Android 14-17: Settings off the lists, the media button's hold, lint (compat-fix-1, 2026-11-16)
 
 The fixes of `docs/testing/2026-11-16-android-14-17.md`, on `compat372` (API 37.2, CP41.260831.015), `compat34` (API

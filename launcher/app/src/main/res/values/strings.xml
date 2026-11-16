@@ -906,7 +906,6 @@
     <!-- Snarveier (design 99): the panel in the shade, the items' names (the picker and the buttons' content
          descriptions; none under the buttons, revision 3), and Kid Settings' row and picker page. -->
     <string name="shortcuts_channel">Shortcuts</string>
-    <string name="shortcuts_subtext">Shortcuts</string>
     <string name="shortcut_full_torch">Flashlight</string>
     <string name="shortcut_full_sound">Sound</string>
     <string name="shortcut_full_airplane">Airplane mode</string>

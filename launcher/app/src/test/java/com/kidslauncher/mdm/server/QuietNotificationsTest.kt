@@ -244,17 +244,16 @@ class QuietNotificationsTest {
     }
 
     @Test
-    fun `the small icons - the gear on the panel, the Vibb mark on the rest, every ic_stat drawable literal`() {
+    fun `the small icons - the Vibb mark on the panel and the rest, every ic_stat drawable literal`() {
         val main = "src/main/java/com/kidslauncher/mdm"
         fun code(path: String) = file("$main/$path").readText()
-        assertTrue(".setSmallIcon(R.drawable.ic_stat_gear)" in code("shortcuts/ShortcutsNotification.kt"))
-        for (path in listOf("server/AnchorNotice.kt", "play/PlayRuntime.kt", "server/LocateCommands.kt", "assistant/AssistantSetup.kt", "server/KidVpnService.kt")) {
+        for (path in listOf("shortcuts/ShortcutsNotification.kt", "server/AnchorNotice.kt", "play/PlayRuntime.kt", "server/LocateCommands.kt", "assistant/AssistantSetup.kt", "server/KidVpnService.kt")) {
             val icons = Regex("""setSmallIcon\(([^)]*)\)""").findAll(code(path)).map { it.groupValues[1] }.toList()
             assertEquals(path, listOf("R.drawable.ic_stat_vibb"), icons)
         }
         // M10: a theme attribute doesn't resolve in SystemUI (an empty disc), so a status icon has literal colours.
         val drawables = file("src/main/res/drawable").listFiles()!!.filter { it.name.startsWith("ic_stat_") }
-        assertEquals(setOf("ic_stat_gear.xml", "ic_stat_vibb.xml"), drawables.map { it.name }.toSet())
+        assertEquals(setOf("ic_stat_vibb.xml"), drawables.map { it.name }.toSet())
         for (drawable in drawables) assertFalse(drawable.name, Regex("""="\?""").containsMatchIn(drawable.readText()))
         // The app list's settings button keeps baseline_settings_24 (MIT code); the bug icon has no reader left.
         assertTrue(file("src/main/res/drawable/baseline_settings_24.xml").exists())

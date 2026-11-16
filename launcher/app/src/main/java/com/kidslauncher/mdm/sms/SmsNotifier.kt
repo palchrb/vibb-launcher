@@ -53,6 +53,9 @@ private const val SHOWN_MESSAGES = 5
 /** Design 81 D12: a reaction's line quotes at most this many characters of its bubble. */
 private const val QUOTE_MAX = 40
 
+/** The messages' notifications' small icon: Meldinger's own glyph as the parent chose it (a white vector, drawn as the status-bar silhouette). */
+fun smsSmallIcon(look: com.kidslauncher.mdm.appdisplay.MessagesLook): Int = look.glyph
+
 /**
  * The notification of an accepted message (§6.8): `MessagingStyle` with the contact's name and photo (our own
  * cached copy, decoded by us - never an MMS picture's bytes), a public version that says only "New message", and a
@@ -131,11 +134,11 @@ object SmsNotifier {
             val channel = smsChannel(silent, reaction, passesFilter(context))
             val quiet = channel == NOTIFICATION_CHANNEL_MESSAGES_SILENT
             val public = NotificationCompat.Builder(context, channel)
-                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setSmallIcon(smsSmallIcon(com.kidslauncher.mdm.appdisplay.AppDisplay.messagesLook()))
                 .setContentTitle(context.getString(if (smsPublicIsReaction(shown)) R.string.sms_notification_public_reaction else R.string.sms_notification_public))
                 .build()
             val builder = NotificationCompat.Builder(context, channel)
-                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setSmallIcon(smsSmallIcon(com.kidslauncher.mdm.appdisplay.AppDisplay.messagesLook()))
                 .setStyle(style)
                 .setCategory(NotificationCompat.CATEGORY_MESSAGE)
                 // Design 77 §6.7 (code QA of step 2, M3): no "Open link" / "Call" / "Directions" / "Copy" chips the
@@ -232,7 +235,7 @@ object SmsNotifier {
         try {
             createChannels(context)
             val notification = NotificationCompat.Builder(context, NOTIFICATION_CHANNEL_MESSAGES_SILENT)
-                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setSmallIcon(smsSmallIcon(com.kidslauncher.mdm.appdisplay.AppDisplay.messagesLook()))
                 .setContentTitle(context.getString(R.string.sms_reply_not_sent))
                 .setAllowSystemGeneratedContextualActions(false)
                 .setAutoCancel(true)
