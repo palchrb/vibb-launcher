@@ -793,8 +793,8 @@ class GuardsTest {
         )
         assertTrue(service.contains("log = ::spotifyLog,"))
         assertEquals(
-            "the service's one log line: the web player's, debug builds and the parent's diagnostic log only (qa-26c-step5a-code L8, 2026-11-01)",
-            1,
+            "the service's log lines: the web player's, debug builds and the parent's diagnostic log only (qa-26c-step5a-code L8, 2026-11-01), and the media button hold's refused start (compat-fix-1 QA L3)",
+            2,
             Regex("""\bLog\.""").findAll(service).count(),
         )
         assertTrue(

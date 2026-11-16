@@ -14,8 +14,9 @@ import android.util.Log
  * list": it stays visible and unsuspended whatever the plan says. Two things follow, both general (any package, not a
  * Settings special case):
  * - Home, the drawer and our Settings' system-page rows leave out what the enforcement plan wants hidden or suspended,
- *   read from the plan, not from the platform's state ([plannedOffLists]) - a refused package is then never a dead
- *   tile, and a page in it never a row that opens nothing.
+ *   read from the plan, not from the platform's state ([plannedOffLists]; before a process's first `apply` the last
+ *   plan stored, [storePlan]) - a refused package is then never a dead tile, and a page in it never a row that opens
+ *   nothing.
  * - `AppEnforcer.apply` stops asking again: a package refused because it is exempt ([exemptFromSuspension]) is
  *   recorded for this boot and this OS build ([refusalsNow]), logged once, and asked again after a reboot or an OS
  *   update. Any other refusal is still retried at every pass, as before.
@@ -47,11 +48,12 @@ fun restrictCallDue(want: Boolean, current: Boolean, packageName: String, refuse
 /**
  * Whether [packageName] stays off Home, the drawer and our system-page rows because the enforcement plan wants it
  * hidden or suspended - whatever the platform did with it. [planSuspend]/[planHide]: the last plan in this process
- * (`null` before the first `apply`); until then the record of exempt refusals on this boot ([refusedNow]) stands in.
+ * (`null` before the first `apply`); until then the last plan stored ([storedOff], QA M1: across a process start and a
+ * reboot - `null` when none was ever stored) stands in.
  */
-fun plannedOffLists(packageName: String, planSuspend: Set<String>?, planHide: Set<String>?, refusedNow: Set<String>): Boolean =
+fun plannedOffLists(packageName: String, planSuspend: Set<String>?, planHide: Set<String>?, storedOff: Set<String>?): Boolean =
     if (planSuspend == null && planHide == null) {
-        packageName in refusedNow
+        packageName in storedOff.orEmpty()
     } else {
         packageName in planSuspend.orEmpty() || packageName in planHide.orEmpty()
     }
@@ -63,6 +65,7 @@ object PlatformRefusals {
     private const val KEY_FINGERPRINT = "fingerprint"
     private const val KEY_SUSPEND = "suspend"
     private const val KEY_HIDE = "hide"
+    private const val KEY_PLAN_OFF = "plan_off"
 
     /** The app-op's name (`AppOpsManager.OPSTR_SYSTEM_EXEMPT_FROM_SUSPENSION`, a system API since Android 14). */
     const val OP_EXEMPT_FROM_SUSPENSION = "android:system_exempt_from_suspension"
@@ -71,6 +74,13 @@ object PlatformRefusals {
 
     @Volatile
     private var cached: PlatformRefusalRecord? = null
+
+    /** The last plan's off-set as stored ([storePlan]); read once per process. */
+    @Volatile
+    private var planOff: Set<String>? = null
+
+    @Volatile
+    private var planOffRead = false
 
     private fun prefs(context: Context) = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
@@ -136,12 +146,44 @@ object PlatformRefusals {
         false
     }
 
-    /** [plannedOffLists] with the last plan of this process and this boot's record. */
+    /** QA M1: every `apply` stores its plan's hidden and suspended packages (written only when they changed), so the
+     * lists are right before the first `apply` of a process - after a reboot or a process death in a pause too. */
+    fun storePlan(context: Context, suspend: Set<String>, hide: Set<String>) {
+        val off = suspend + hide
+        if (storedPlan(context) == off) return
+        planOff = off
+        try {
+            prefs(context).edit().putStringSet(KEY_PLAN_OFF, off).apply()
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't store the plan's off-set: ${e.javaClass.simpleName}")
+        }
+    }
+
+    private fun storedPlan(context: Context): Set<String>? {
+        if (!planOffRead) {
+            planOff = try {
+                prefs(context).getStringSet(KEY_PLAN_OFF, null)?.toSet()
+            } catch (e: Exception) {
+                null
+            }
+            planOffRead = true
+        }
+        return planOff
+    }
+
+    /** QA L1: the recorded refusals whose package still holds the app-op - an op revoked during the boot makes the call
+     * again. One app-op read per recorded package (a handful of system-uid ones). */
+    fun stillExempt(context: Context, record: PlatformRefusalRecord): PlatformRefusalRecord {
+        if (record.suspend.isEmpty() && record.hide.isEmpty()) return record
+        val exempt = (record.suspend + record.hide).filterTo(mutableSetOf()) { exemptFromSuspension(context, it) }
+        return record.copy(suspend = record.suspend intersect exempt, hide = record.hide intersect exempt)
+    }
+
+    /** [plannedOffLists] with the last plan of this process, else the last plan stored. */
     fun plannedOff(context: Context, packageName: String): Boolean {
         val suspend = AppEnforcer.lastPlanSuspend
         val hide = AppEnforcer.lastPlanHide
-        // The record is read only before the first plan (the lists ask once per app).
-        val refused = if (suspend == null && hide == null) now(context).let { it.suspend + it.hide } else emptySet()
-        return plannedOffLists(packageName, suspend, hide, refused)
+        val stored = if (suspend == null && hide == null) storedPlan(context) else null
+        return plannedOffLists(packageName, suspend, hide, stored)
     }
 }

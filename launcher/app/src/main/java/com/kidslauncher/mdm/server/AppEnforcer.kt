@@ -497,8 +497,10 @@ object AppEnforcer {
 
         lastPlanSuspend = plan.suspend
         lastPlanHide = plan.hide
-        // What the platform refused on this boot because the package is exempt (Android 17's Settings): not asked again.
-        val refused = PlatformRefusals.now(context)
+        PlatformRefusals.storePlan(context, plan.suspend, plan.hide)
+        // What the platform refused on this boot because the package is exempt (Android 17's Settings): not asked again
+        // while it still is (QA L1).
+        val refused = PlatformRefusals.stillExempt(context, PlatformRefusals.now(context))
         // Every app's playing sessions, read at most once per pass and only once a package is about to be suspended
         // (2026-11-04: each is paused before its suspension; without listener access none).
         val playingSessions by lazy { com.kidslauncher.mdm.music.MusicSessions.playingSessions(context) }

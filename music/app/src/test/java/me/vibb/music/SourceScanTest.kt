@@ -476,7 +476,10 @@ class SourceScanTest {
         val service = code(moduleFile("src/main/java/me/vibb/music/playback/PlaybackService.kt"))
         val logs = service.lines().filter { it.contains("Log.") }
         assertEquals(
-            listOf("if (spotifyDiagLogOn(BuildConfig.DEBUG, PlayerHub.spotifyDiagUntilS, System.currentTimeMillis())) Log.d(SPOTIFY_LOG_TAG, message)"),
+            listOf(
+                "if (e !is android.app.ForegroundServiceStartNotAllowedException) Log.w(TAG, \"No foreground hold: \${e.javaClass.simpleName}\")",
+                "if (spotifyDiagLogOn(BuildConfig.DEBUG, PlayerHub.spotifyDiagUntilS, System.currentTimeMillis())) Log.d(SPOTIFY_LOG_TAG, message)",
+            ),
             logs.map { it.trim() },
         )
         assertTrue(service.contains("log = ::spotifyLog,"))

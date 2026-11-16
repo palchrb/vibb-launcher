@@ -470,20 +470,22 @@ class PlaybackService : MediaSessionService() {
     private fun holdForeground() {
         val now = SystemClock.elapsedRealtime()
         val current = hold
-        if (current != null) {
-            hold = holdPressedAgain(current, now)
-            lookAtHold(HOLD_CHECK_MS)
-            return
-        }
-        if (foregroundServiceType != 0) return // already in the foreground (0: not; the NONE constant is deprecated)
-        try {
-            startForeground(MEDIA_NOTIFICATION_ID, mediaNotificationUp() ?: holdPlaceholder(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
-        } catch (e: Exception) {
-            // Not started for the foreground (a plain start from the background): nothing is owed.
-            return
-        }
-        hold = holdStarted(now)
+        // Already in the foreground (0: not; the NONE constant is deprecated): this start is answered.
+        val inForeground = foregroundServiceType != 0
+        // QA L2: a second press during the hold after Media3 left the foreground is a start to answer too.
+        if (!inForeground && !enterForeground()) return
+        hold = if (current != null) holdPressedAgain(current, now) else if (inForeground) return else holdStarted(now)
         lookAtHold(HOLD_CHECK_MS)
+    }
+
+    /** Into the foreground with Media3's notification if it is up, else the placeholder. False when Android refuses (a
+     * plain start from the background: nothing is owed; anything else is logged, QA L3). */
+    private fun enterForeground(): Boolean = try {
+        startForeground(MEDIA_NOTIFICATION_ID, mediaNotificationUp() ?: holdPlaceholder(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+        true
+    } catch (e: Exception) {
+        if (e !is android.app.ForegroundServiceStartNotAllowedException) Log.w(TAG, "No foreground hold: ${e.javaClass.simpleName}")
+        false
     }
 
     /** A resumption asked during the hold: counted, and heard when [future] settles. */
@@ -519,7 +521,10 @@ class PlaybackService : MediaSessionService() {
             HoldVerdict.DONE -> Unit
             HoldVerdict.RELEASE_DETACH -> stopForeground(STOP_FOREGROUND_DETACH)
             HoldVerdict.RELEASE_STOP -> {
+                // QA L3: a placeholder Media3 detached first is no longer the foreground one - cancelled by its id.
+                val placeholder = holdShown() == HoldShown.PLACEHOLDER
                 stopForeground(STOP_FOREGROUND_REMOVE)
+                if (placeholder) getSystemService(NotificationManager::class.java)?.cancel(MEDIA_NOTIFICATION_ID)
                 stopSelf()
             }
         }
@@ -3173,6 +3178,10 @@ class PlaybackService : MediaSessionService() {
         /** Media3's notification id and channel: the media button's hold puts its placeholder there (compat-fix-1). */
         const val MEDIA_NOTIFICATION_ID = DefaultMediaNotificationProvider.DEFAULT_NOTIFICATION_ID
         const val MEDIA_CHANNEL_ID = DefaultMediaNotificationProvider.DEFAULT_CHANNEL_ID
+
+        /** The media button hold's one log line: a foreground start Android refused for another reason than the
+         * background (a broken manifest, a wrong type - QA L3). */
+        const val TAG = "VibbPlayback"
 
         /** Marks the hold's placeholder, so the hold knows it from Media3's notification. */
         const val EXTRA_HOLD_PLACEHOLDER = "me.vibb.music.HOLD_PLACEHOLDER"

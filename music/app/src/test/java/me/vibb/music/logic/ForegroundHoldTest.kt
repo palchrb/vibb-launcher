@@ -70,6 +70,13 @@ class ForegroundHoldTest {
         val service = moduleFile("src/main/java/me/vibb/music/playback/PlaybackService.kt").readText()
         assertTrue("if (intent?.action == Intent.ACTION_MEDIA_BUTTON) holdForeground()" in service)
         assertTrue("startForeground(MEDIA_NOTIFICATION_ID," in service)
+        // QA L2: a press during the hold after Media3 left the foreground enters it again; L3: a detached placeholder
+        // is cancelled at the stop.
+        val press = service.substringAfter("private fun holdForeground() {").substringBefore("\n    }\n")
+        assertTrue("if (!inForeground && !enterForeground()) return" in press)
+        assertTrue(press.indexOf("enterForeground()") < press.indexOf("holdPressedAgain(current, now)"))
+        val stop = service.substringAfter("HoldVerdict.RELEASE_STOP -> {").substringBefore("stopSelf()")
+        assertTrue("if (placeholder) getSystemService(NotificationManager::class.java)?.cancel(MEDIA_NOTIFICATION_ID)" in stop)
         val resumption = service.substringAfter("override fun onPlaybackResumption(").substringBefore("// --- starting a queue ---")
         // Both returns hand the future to the hold: the refusal before the coroutine and the coroutine's.
         assertEquals(2, Regex("""\.also \{ holdOn\(it\) \}""").findAll(resumption).count())

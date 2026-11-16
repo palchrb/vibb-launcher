@@ -36,13 +36,16 @@ class PlatformRefusalsTest {
     @Test
     fun `the lists follow the plan, not the platform`() {
         // Managed: the plan wants Settings off - off Home whatever Android did with it.
-        assertTrue(plannedOffLists(settings, planSuspend = setOf(settings), planHide = setOf(settings), refusedNow = emptySet()))
-        assertTrue(plannedOffLists(settings, planSuspend = emptySet(), planHide = setOf(settings), refusedNow = emptySet()))
-        // The pause: the plan releases it, so it shows although this boot's record holds a refusal.
-        assertFalse(plannedOffLists(settings, planSuspend = emptySet(), planHide = emptySet(), refusedNow = setOf(settings)))
-        // Before the first apply in this process the record stands in.
-        assertTrue(plannedOffLists(settings, planSuspend = null, planHide = null, refusedNow = setOf(settings)))
-        assertFalse(plannedOffLists("com.example.game", planSuspend = null, planHide = null, refusedNow = setOf(settings)))
+        assertTrue(plannedOffLists(settings, planSuspend = setOf(settings), planHide = setOf(settings), storedOff = null))
+        assertTrue(plannedOffLists(settings, planSuspend = emptySet(), planHide = setOf(settings), storedOff = null))
+        // The pause: the plan releases it, so it shows whatever was stored before.
+        assertFalse(plannedOffLists(settings, planSuspend = emptySet(), planHide = emptySet(), storedOff = setOf(settings)))
+        // QA M1, before the first apply in a process the stored plan stands in: after a reboot (17: Settings visible, the
+        // last plan had it off) it stays off; after a process death in a pause (the plan stored then released it) it shows.
+        assertTrue(plannedOffLists(settings, planSuspend = null, planHide = null, storedOff = setOf(settings)))
+        assertFalse(plannedOffLists(settings, planSuspend = null, planHide = null, storedOff = setOf("com.example.game")))
+        // Never stored (a new phone): nothing is held back.
+        assertFalse(plannedOffLists(settings, planSuspend = null, planHide = null, storedOff = null))
     }
 
     @Test
@@ -54,5 +57,17 @@ class PlatformRefusalsTest {
         assertTrue("PlatformRefusals.Call.SUSPEND" in enforcer && "PlatformRefusals.Call.HIDE" in enforcer)
         assertTrue("PlatformRefusals.plannedOff(context, packageName)" in File(src, "apps/AppFilter.kt").readText())
         assertTrue("plannedOff = PlatformRefusals.plannedOff(context, it.packageName)" in File(src, "server/BatteryExemption.kt").readText())
+        // M1: every apply stores its plan; L1: a recorded refusal is skipped only while the op still holds.
+        assertTrue("PlatformRefusals.storePlan(context, plan.suspend, plan.hide)" in enforcer)
+        assertTrue("val refused = PlatformRefusals.stillExempt(context, PlatformRefusals.now(context))" in enforcer)
+        // L7: only an exempt package is recorded - the op is read first.
+        val refused = File(src, "server/PlatformRefusals.kt").readText().substringAfter("fun refused(").substringBefore("\n    }\n")
+        assertTrue(refused.indexOf("if (!exemptFromSuspension(context, packageName)) return false") in 0 until refused.indexOf("val record = now(context)"))
+        // L7: Home listens for a changed plan while started, and stops listening.
+        val home = File(src, "ui/HomeActivity.kt").readText()
+        assertTrue("com.kidslauncher.mdm.server.AppEnforcer.addAppliedListener(planListener)" in home)
+        assertTrue("com.kidslauncher.mdm.server.AppEnforcer.removeAppliedListener(planListener)" in home)
+        // L4: the PIN-gated Settings' top gear asks the plan too.
+        assertTrue("com.kidslauncher.mdm.server.PlatformRefusals.plannedOff(this, target)" in File(src, "ui/settings/SettingsActivity.kt").readText())
     }
 }

@@ -81,7 +81,9 @@ a boot the shutdown didn't arm (step M's case below the boot cover) can't hang o
 - **The lists follow the plan** (`server/PlatformRefusals.kt`, `PlatformRefusalsTest`): `AppFilter` (Home, the drawer,
   Kid Settings' hidden apps) leaves out every package the last plan wants hidden or suspended
   (`AppEnforcer.lastPlanSuspend`/`lastPlanHide`, `plannedOffLists`), whatever the platform did - general, not a
-  Settings case. Before the first `apply` in a process the record of this boot's refusals stands in. Home filters
+  Settings case. Before the first `apply` in a process the last plan stored stands in (`PlatformRefusals.storePlan`,
+  every apply, QA M1: right after a reboot and after a process death in the pause). The PIN-gated Settings' top gear
+  asks the plan too (QA L4). Home filters
   again after an `apply` whose sets changed (`HomeActivity.planListener`): a refused package sends no package callback.
   `dialogTarget` leaves such a package out too (`ResolvedDialog.plannedOff`), so the PIN-gated Settings' system-page
   rows (Background connection, Modify system settings, App access, fingerprint, media on the lock screen, the
@@ -90,7 +92,8 @@ a boot the shutdown didn't arm (step M's case below the boot cover) can't hang o
 - **No retry until a reboot or an OS update**: a refusal of a package that holds the app-op is recorded
   (`PlatformRefusals.refused`, prefs `platform_refusals`: the boot count and `Build.FINGERPRINT`) with one log line
   ("Android refuses to suspend ... not asked again until a reboot or an OS update"); `apply` skips that restricting call
-  while the record matches this boot and build (`restrictCallDue`). A release is always made, and any other refusal
+  while the record matches this boot and build and the package still holds the app-op (`restrictCallDue`,
+  `stillExempt`, QA L1). A release is always made, and any other refusal
   (the Play Store as verifier, a carrier app) is still retried at every pass as before.
 - **What else changes on 17**: Flymodus's route window (design 98) finds Settings unhidden, so it neither unhides nor
   hides it again - it only pins it for the window. SystemUI's Settings links (`launcher-fix-1`'s sink) resolve to
