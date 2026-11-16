@@ -31,6 +31,9 @@ at all times, so alarms fire and sound as today.
   keyguard dismissed first. Dismissing it is the UNLOCKED edge, and that edge takes the clock out of the list. The
   ringing screen over the glance therefore works exactly as today: the bedtime morning alarm, Doze, a timer, an alarm
   behind another app's alarm clock. None of it depends on timing or on `getNextAlarmClock`.
+- **Android's keyguard counts as LOCKED** (code QA L1). With Android's PIN lock as the kid's lock, Vibb's own lock
+  need not be LOCKED while Android's keyguard is; `KeyguardManager.isKeyguardLocked` puts the clocks in too, and
+  USER_PRESENT (the keyguard dismissed) runs a pass that takes them out.
 - **The screen dark: covers the gap.** This covers the time between screen-off and Android's keyguard locking, and a
   phone without a lock. A full-screen intent in the dark finds the clock allowed. The dark part ends
   `ALARM_SCREEN_SETTLE_MS` after the screen comes on, so a ring that woke the screen reaches the keyguard state first.
@@ -146,8 +149,11 @@ non-activity buttons still work, and the content tap is refused.
   and 37.2 (QA M3). The Jelly (16) gets a `dumpsys` look after the release.
 - **Firing another app's `PendingIntent`.** Non-activity sends need no background-activity-start allowance. The
   `MODE_BACKGROUND_ACTIVITY_START_DENIED` option is API 34. The send is unchanged on 14-17.
-- **A full-screen intent with the phone in use** is a heads-up on 14-17. No full-screen launch is attempted while
-  unlocked and lit, so the unpinned clock loses nothing there.
+- **A full-screen intent with the phone in use** is a heads-up on 14-17. With the kiosk's NOTIFICATIONS feature off
+  lock task suppresses the heads-up, and SystemUI then launches nothing either (API 34: `InterruptionStateProvider`
+  "No FullScreenIntent: NO_FSI_NO_HUN_OR_KEYGUARD"; code QA L4): no `BlockedAppActivity`, the mode screen stays in
+  front with its row. Either way no full-screen launch is attempted while unlocked and lit, so the unpinned clock
+  loses nothing there.
 - **No API above 34. No feature bit changes.**
 
 ## 6. Recents

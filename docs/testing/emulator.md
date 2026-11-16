@@ -4773,6 +4773,13 @@ steps 1 and 3-4 without a ring: the rule took Fossify out of the list with the c
 screen-off put it back in (LOCKED), the PIN unlock took it out again. The rings and the row's buttons ran on 34 only;
 the bar under the row (the pills moved under the label after the 34 run) is not seen on an emulator yet.
 
+**After the code QA** (`compat34`, android mode, the branch's build): an alarm at screen-off under Skole rang over
+Android's keyguard and was still `AlarmActivity`, Fossify in the list, 3 s and 11 s in; its slider's Dismiss stopped
+it; the PIN unlock took Fossify out of the list. **L4**: `lock_task_features` 61 (NOTIFICATIONS off; `statusbar`
+`mDisabled2=0x15`), a ring unlocked and lit: no heads-up and no full-screen launch (SystemUI "No FullScreenIntent:
+NO_FSI_NO_HUN_OR_KEYGUARD"), no `BlockedAppActivity`, `LockActivity` stayed resumed with "The alarm is ringing" over
+Snooze and Dismiss as one card block (screenshot), and the row's Dismiss stopped it.
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:

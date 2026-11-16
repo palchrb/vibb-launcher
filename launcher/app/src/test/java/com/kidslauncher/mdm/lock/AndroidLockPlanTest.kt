@@ -413,7 +413,9 @@ class AndroidLockPlanTest {
         assertTrue(runtime.contains("ContextCompat.registerReceiver(\n            app,\n            userPresentReceiver,\n            IntentFilter(Intent.ACTION_USER_PRESENT),\n            ContextCompat.RECEIVER_EXPORTED,\n        )"))
         assertEquals("one exported receiver in the runtime", 1, Regex("\\bRECEIVER_EXPORTED").findAll(runtime).count())
         val receiver = runtime.substringAfter("private val userPresentReceiver").substringBefore("\n    }\n")
-        assertTrue(receiver.contains("if (intent.action != Intent.ACTION_USER_PRESENT || !AndroidLock.faceOn) return"))
+        assertTrue(receiver.contains("if (intent.action != Intent.ACTION_USER_PRESENT) return"))
+        // Design 105 (code QA L1): the rule's clock pass first, whatever the face; the face's work only as the face.
+        assertTrue(receiver.indexOf("refreshChrome(context.applicationContext)") in 0 until receiver.indexOf("if (!AndroidLock.faceOn) return"))
         assertTrue(receiver.indexOf("AndroidLock.userPresent()") < receiver.indexOf("AndroidLock.step(app, FaceTrigger.USER_PRESENT)"))
         // The mark counts only since our lock last went LOCKED.
         assertTrue(body(runtime, "dispatch").contains("AndroidLock.lockedAgain()"))

@@ -226,6 +226,8 @@ class LockActivity : UIObjectActivity() {
         com.kidslauncher.mdm.sms.SmsHome.addListener(calendarListener)
         com.kidslauncher.mdm.sms.SmsHome.refresh(this)
         com.kidslauncher.mdm.badges.AlarmNoticeReader.addListener(alarmListener)
+        // Design 105 (code QA L2): a chrome pass may change the rule's clock pins - the alarm row follows.
+        PinLockRuntime.addChromeListener(alarmListener)
         com.kidslauncher.mdm.timerules.ZenRuleRuntime.addListener(alarmListener)
         com.kidslauncher.mdm.assistant.AirplaneRuntime.addListener(airplaneListener)
         // Design 100 §8.4 (Q100-H1): the request's changes - sent, taken, answered - on the main thread.
@@ -285,6 +287,7 @@ class LockActivity : UIObjectActivity() {
         CalendarStore.removeListener(calendarListener)
         com.kidslauncher.mdm.sms.SmsHome.removeListener(calendarListener)
         com.kidslauncher.mdm.badges.AlarmNoticeReader.removeListener(alarmListener)
+        PinLockRuntime.removeChromeListener(alarmListener)
         com.kidslauncher.mdm.timerules.ZenRuleRuntime.removeListener(alarmListener)
         com.kidslauncher.mdm.assistant.AirplaneRuntime.removeListener(airplaneListener)
         com.kidslauncher.mdm.server.AnchorNotice.removeListener(askListener)
@@ -518,17 +521,24 @@ class LockActivity : UIObjectActivity() {
                 }
             }
             // Design 105 §3: the alarm row with stops is a label with its bar of buttons under it, no button itself.
+            // Code QA L3: one child of the card (its dividers go between children), the row over its bar.
             val stopBar = if (row is LockRow.Alarm && row.stops.isNotEmpty()) alarmStopBar(view, row) else null
-            if (stopBar == null) view.root.setOnClickListener { open(row) }
-            container.addView(view.root)
-            if (stopBar != null) container.addView(stopBar)
+            if (stopBar == null) {
+                view.root.setOnClickListener { open(row) }
+                container.addView(view.root)
+            } else {
+                val block = android.widget.LinearLayout(this).apply { orientation = android.widget.LinearLayout.VERTICAL }
+                block.addView(view.root)
+                block.addView(stopBar)
+                container.addView(block)
+            }
         }
         icons.load(::iconsDrawn)
     }
 
     /** Design 105 §3: the alarm row with its stops - the row is a label only (no button, no chevron; TalkBack reads
      * "Alarmen ringer"), and under it a bar of one ringed pill per stop with the notification's own title (each read as
-     * "…, knapp"), lined up with the label. Returns the bar, added after the row. */
+     * "…, knapp"), lined up with the label. Returns the bar; the row and the bar are one child of the card. */
     private fun alarmStopBar(view: ItemLockRowBinding, row: LockRow.Alarm): View? {
         val key = row.key ?: return null
         view.root.isClickable = false
@@ -539,8 +549,10 @@ class LockActivity : UIObjectActivity() {
         view.lockRowLabel.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
         view.lockRowChevron.visibility = View.GONE
         val dp = { v: Float -> KidAvatars.dp(this, v) }
+        // Code QA L3: two pills share the line, each half of it; three or more stack, one per line.
+        val stacked = row.stops.size > 2
         val bar = android.widget.LinearLayout(this).apply {
-            orientation = android.widget.LinearLayout.HORIZONTAL
+            orientation = if (stacked) android.widget.LinearLayout.VERTICAL else android.widget.LinearLayout.HORIZONTAL
             // The row's start padding, icon and label margin (14 + 34 + 12 dp): the pills start under the label.
             setPadding(dp(60f), 0, dp(10f), dp(10f))
         }
@@ -553,16 +565,22 @@ class LockActivity : UIObjectActivity() {
                 typeface = androidx.core.content.res.ResourcesCompat.getFont(this@LockActivity, R.font.nunito_bold)
                 gravity = android.view.Gravity.CENTER
                 minHeight = dp(48f)
-                minWidth = dp(88f)
                 maxLines = 1
-                setPadding(dp(16f), dp(6f), dp(16f), dp(6f))
+                ellipsize = android.text.TextUtils.TruncateAt.END
+                setPadding(dp(12f), dp(6f), dp(12f), dp(6f))
                 isFocusable = true
                 accessibilityDelegate = ButtonRole
+                // TalkBack reads the whole title, cut or not.
+                contentDescription = label
                 setOnClickListener { PinLockRuntime.stopRingingAlarm(this@LockActivity, key, index) }
             }
-            val params = android.widget.LinearLayout.LayoutParams(
-                android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
-            ).apply { if (index > 0) marginStart = dp(8f) }
+            val params = if (stacked) {
+                android.widget.LinearLayout.LayoutParams(android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT)
+                    .apply { if (index > 0) topMargin = dp(8f) }
+            } else {
+                android.widget.LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                    .apply { if (index > 0) marginStart = dp(8f) }
+            }
             bar.addView(button, params)
         }
         return bar

@@ -255,11 +255,21 @@ fun lockTaskWhileLocked(
 /**
  * Design 105 §2.1: the screen counts as dark for the rule's clocks ([lockTaskWhileLocked]'s `dark`) while it is off
  * ([interactive] false), and for [com.kidslauncher.mdm.lock.ALARM_SCREEN_SETTLE_MS] after it came on ([screenOnAtMs],
- * elapsed realtime; `null` = no screen-on seen in this process - on since before it), so a ring that woke the screen
- * reaches the keyguard's LOCKED first.
+ * elapsed realtime), so a ring that woke the screen reaches the keyguard first. `null` = no screen-on since the last
+ * screen-off (code QA L1: interactive before SCREEN_ON arrived) - dark too; a process that starts with the screen on
+ * notes its start as settled.
  */
 fun clockDark(interactive: Boolean, screenOnAtMs: Long?, nowMs: Long): Boolean =
-    !interactive || (screenOnAtMs != null && nowMs - screenOnAtMs < com.kidslauncher.mdm.lock.ALARM_SCREEN_SETTLE_MS)
+    !interactive || screenOnAtMs == null || nowMs - screenOnAtMs < com.kidslauncher.mdm.lock.ALARM_SCREEN_SETTLE_MS
+
+/**
+ * Design 105 §2.1 (code QA L1): whether a not-LOCKED pass puts the rule's clocks in the list - while [clockDark], or
+ * while Android's keyguard is locked ([keyguardLocked]): with Android's PIN lock as the kid's lock Vibb's own lock is
+ * never LOCKED, and the keyguard gives no reach either (any clock screen but the ringing one needs it dismissed, and
+ * its dismissal is USER_PRESENT, which runs a pass).
+ */
+fun ruleClocksIn(interactive: Boolean, screenOnAtMs: Long?, nowMs: Long, keyguardLocked: Boolean): Boolean =
+    keyguardLocked || clockDark(interactive, screenOnAtMs, nowMs)
 
 /**
  * The kiosk list of a pass without a plan (LockTaskChrome's fallback), from the platform's

@@ -14,7 +14,7 @@ import com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
 import com.kidslauncher.mdm.server.StatusBarLatch
 import com.kidslauncher.mdm.server.UpdateFence
 import com.kidslauncher.mdm.server.chromeWriteOrder
-import com.kidslauncher.mdm.server.clockDark
+import com.kidslauncher.mdm.server.ruleClocksIn
 import com.kidslauncher.mdm.server.fallbackKioskPackages
 import com.kidslauncher.mdm.server.lockTaskWhileLocked
 import com.kidslauncher.mdm.server.sosNarrowedPackages
@@ -87,7 +87,8 @@ object LockTaskChrome {
     @Volatile
     private var recentsPinKnown = false
 
-    /** Design 105 §2.2: the last screen-on (elapsed realtime) - [clockDark]'s settle; `null` until one in this process. */
+    /** Design 105 §2.2: the last screen-on (elapsed realtime) - [ruleClocksIn]'s settle; `null` from a screen-off until
+     * the next screen-on (code QA L1), and until [PinLockRuntime] notes the process's start. */
     @Volatile
     private var screenOnAtMs: Long? = null
 
@@ -146,13 +147,12 @@ object LockTaskChrome {
         if (sosNarrowing && locked && kioskOn) sosNarrowedPackages(context.packageName, helpers, PinLockRuntime.sosPackage) else null
 
     /**
-     * Design 105 §2.2: the screen came on ([on], at [atMs], elapsed realtime) or went off - [PinLockRuntime]'s screen
-     * receiver, main thread. Only notes it; returns whether the rule's clocks are out of the list ([ruleClockPins] not
-     * empty), so the caller runs a pass: at a screen-off at once, at a screen-on once [ALARM_SCREEN_SETTLE_MS] has passed.
+     * Design 105 §2.2: the screen came on ([on], at [atMs], elapsed realtime) or went off (cleared, code QA L1) -
+     * [PinLockRuntime]'s screen receiver and its start, main thread. Only notes it; the caller runs the passes (at a
+     * screen-off at once, at every screen-on once [ALARM_SCREEN_SETTLE_MS] has passed - code QA M1).
      */
-    fun screenChanged(on: Boolean, atMs: Long): Boolean {
-        if (on) screenOnAtMs = atMs
-        return ruleClockPins.isNotEmpty()
+    fun screenChanged(on: Boolean, atMs: Long) {
+        screenOnAtMs = if (on) atMs else null
     }
 
     /** Design 105 §3: the clocks a time rule keeps out of the kiosk's list while unlocked and lit - the plan's, before the
@@ -177,14 +177,19 @@ object LockTaskChrome {
         }
     }
 
-    /** [clockDark] now: the screen off, or on for less than the settle. */
+    /** [ruleClocksIn] now: the screen off or not settled, or Android's keyguard locked. */
     private fun dark(context: Context): Boolean {
         val interactive = try {
             context.getSystemService(PowerManager::class.java)?.isInteractive ?: true
         } catch (e: Exception) {
             true
         }
-        return clockDark(interactive, screenOnAtMs, SystemClock.elapsedRealtime())
+        val keyguardLocked = try {
+            context.getSystemService(android.app.KeyguardManager::class.java)?.isKeyguardLocked ?: true
+        } catch (e: Exception) {
+            true
+        }
+        return ruleClocksIn(interactive, screenOnAtMs, SystemClock.elapsedRealtime(), keyguardLocked)
     }
 
     /** Whether the kiosk is on as far as we know (the plan, else the last pinned state). */

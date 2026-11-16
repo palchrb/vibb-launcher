@@ -194,14 +194,18 @@ class LockTaskHelpersTest {
         assertEquals(kiosk + clock, fallbackKioskPackages(kiosk + clock, null, 127))
     }
 
-    /** Design 105 §2.1: dark is the screen off, or lit for less than the settle (1.5 s). */
+    /** Design 105 §2.1: dark is the screen off, or lit for less than the settle (1.5 s), or interactive before the
+     * screen-on was noted (code QA L1); Android's keyguard locked puts the clocks in as well. */
     @Test
-    fun `clockDark - off, lit inside and past the settle`() {
+    fun `clockDark and ruleClocksIn - off, lit inside and past the settle, the keyguard`() {
         assertTrue(clockDark(interactive = false, screenOnAtMs = null, nowMs = 10_000))
         assertTrue(clockDark(interactive = false, screenOnAtMs = 1_000, nowMs = 100_000))
         assertTrue(clockDark(interactive = true, screenOnAtMs = 10_000, nowMs = 11_499))
         assertFalse(clockDark(interactive = true, screenOnAtMs = 10_000, nowMs = 11_500))
-        assertFalse("on since before the process", clockDark(interactive = true, screenOnAtMs = null, nowMs = 10_000))
+        assertTrue("no screen-on since the last off", clockDark(interactive = true, screenOnAtMs = null, nowMs = 10_000))
+        assertTrue("Android's keyguard, lit and settled", ruleClocksIn(true, 10_000, 20_000, keyguardLocked = true))
+        assertFalse(ruleClocksIn(true, 10_000, 20_000, keyguardLocked = false))
+        assertTrue(ruleClocksIn(false, null, 20_000, keyguardLocked = false))
     }
 
     @Test

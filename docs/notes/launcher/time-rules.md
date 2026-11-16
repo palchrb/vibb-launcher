@@ -163,16 +163,19 @@ the parent ticks it on that rule (Leggetid too; no default tick).
   `EnforcementPlan.ruleClockPins`. They stay spared from suspension, so alarms ring. A ticked clock stays pinned; the
   used-up budget alone, the pause, the override and Foreldrekode are unchanged.
 - **The chrome** (`lockTaskWhileLocked(ruleClockPins, dark)`): the kiosk-on LOCKED row adds the pins always, the
-  not-LOCKED rows (the Flymodus route's included) only while `dark` (`clockDark`: the screen off, or lit for less than
-  `ALARM_SCREEN_SETTLE_MS`); the SOS-narrowed row and the kiosk off are unchanged. So the ringing screen still comes
+  not-LOCKED rows (the Flymodus route's included) only while `dark` (`ruleClocksIn`: Android's keyguard locked, or
+  `clockDark` - the screen off, lit for less than `ALARM_SCREEN_SETTLE_MS`, or interactive with no screen-on noted
+  since the last screen-off); the SOS-narrowed row and the kiosk off are unchanged. So the ringing screen still comes
   over the glance (LOCKED) and in the dark; unlocked and lit lock task refuses every way into the clock (Recents,
   a notification's content tap, `SHOW_ALARMS` - with the block bit on), and removing the package clears its task
   (AOSP `updateLockTaskPackages`, lock task LOCKED). `PinLockRuntime`'s screen receiver tells `LockTaskChrome.screenChanged`
-  and runs a pass at a screen-off (unless LOCKED) and one `ALARM_SCREEN_SETTLE_MS` after a screen-on; `dark` and LOCKED
+  and runs a pass at a screen-off (unless LOCKED), one `ALARM_SCREEN_SETTLE_MS` after every screen-on and one at
+  USER_PRESENT (each only while a rule keeps clocks out); `dark` and LOCKED
   are read under the monitor in every pass (`PowerManager.isInteractive`). Before the first apply the last pins come
   from the pref `rule_clock_pins` (`fallbackKioskPackages`: out unlocked and lit, in LOCKED or dark).
 - **A ring while unlocked**: the time-rule screen's alarm row ("Alarmen ringer") shows the ringing notification's
-  own non-activity actions as buttons with their titles (`alarmRowActions`; Fossify: Slumre a service, Avvis a
+  own non-activity actions as pills under it, one child of the card (two side by side, three or more stacked,
+  ellipsized), with their titles; the screen redraws at every chrome pass (`alarmRowActions`; Fossify: Slumre a service, Avvis a
   broadcast), kept by `AlarmNoticeReader` next to the full-screen intent and sent through `ClockActions.stop` (a
   broadcast or a service, background starts denied) after the listener confirms the key is still active. While the
   clock is out of the list the screen never sends or opens its ringing screen (`pinnedClocks()`), and

@@ -18,15 +18,18 @@ private const val LOG_TAG = "ClockActions"
  * (a broadcast) or Snooze (a service) - so a service is sent too, never an activity.
  */
 object ClockActions {
-    fun stop(context: Context, intent: PendingIntent?) {
-        if (intent == null || intent.isActivity || !(intent.isBroadcast || intent.isService || intent.isForegroundService)) return
-        try {
+    /** Returns whether the send went out (code QA of design 105: a refused or failed send is no stop). */
+    fun stop(context: Context, intent: PendingIntent?): Boolean {
+        if (intent == null || intent.isActivity || !(intent.isBroadcast || intent.isService || intent.isForegroundService)) return false
+        return try {
             val options = ActivityOptions.makeBasic()
                 .setPendingIntentBackgroundActivityStartMode(ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_DENIED)
                 .toBundle()
             intent.send(context, 0, null, null, null, null, options)
+            true
         } catch (e: Throwable) {
             Log.w(LOG_TAG, "Clock stop failed: ${e.javaClass.simpleName}")
+            false
         }
     }
 }

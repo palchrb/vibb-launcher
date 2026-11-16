@@ -540,6 +540,8 @@ object PinLockRuntime {
         val app = context.applicationContext
         appContext = app
         processStartElapsed = SystemClock.elapsedRealtime()
+        // Design 105 (code QA L1): a start with the screen on counts as settled; off, the first screen-on notes it.
+        if (interactive(app)) LockTaskChrome.screenChanged(on = true, processStartElapsed - ALARM_SCREEN_SETTLE_MS)
         // Bug 25b-H: one of our own screens in front (Home, the time-rule screen) is never the SOS.
         (app as? android.app.Application)?.registerActivityLifecycleCallbacks(ownScreens)
         decide(app)
@@ -936,8 +938,12 @@ object PinLockRuntime {
     }
 
     /** Design 105 §2.2: the screen-on's pass once the settle is over ([LockTaskChrome.screenChanged]) - it reads the lock
-     * and the screen as they are then. */
-    private val clockSettlePass = Runnable { appContext?.let { refreshChrome(it) } }
+     * and the screen as they are then; posted at every screen-on and run only while a rule keeps clocks out (code QA M1:
+     * a rule applied inside the settle). */
+    private val clockSettlePass = Runnable {
+        val app = appContext ?: return@Runnable
+        if (LockTaskChrome.ruleClockPins.isNotEmpty()) refreshChrome(app)
+    }
 
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -964,7 +970,8 @@ object PinLockRuntime {
                 // Design 105 §2.2: a rule's clocks are back in the kiosk's list while dark - one pass now (a LOCKED edge's
                 // pass above already added them; LOCKED keeps them in).
                 handler.removeCallbacks(clockSettlePass)
-                if (LockTaskChrome.screenChanged(on = false, SystemClock.elapsedRealtime()) && !chromeLocked) refreshChromeNow(app)
+                LockTaskChrome.screenChanged(on = false, SystemClock.elapsedRealtime())
+                if (LockTaskChrome.ruleClockPins.isNotEmpty() && !chromeLocked) refreshChromeNow(app)
                 // Design 59 §3.3: as Android's face, Android must be locked under the glance - checked once it slept.
                 handler.removeCallbacks(androidSleepCheck)
                 if (AndroidLock.faceOn && mode == LockMode.LOCKED) handler.postDelayed(androidSleepCheck, ANDROID_SLEEP_CHECK_MS)
@@ -990,9 +997,8 @@ object PinLockRuntime {
                     lastScreenOnElapsed = SystemClock.elapsedRealtime()
                     // Design 105 §2.2: lit past the settle, a rule's clocks leave the list again unless LOCKED by then.
                     handler.removeCallbacks(clockSettlePass)
-                    if (LockTaskChrome.screenChanged(on = true, SystemClock.elapsedRealtime())) {
-                        handler.postDelayed(clockSettlePass, ALARM_SCREEN_SETTLE_MS + CLOCK_SETTLE_PASS_MARGIN_MS)
-                    }
+                    LockTaskChrome.screenChanged(on = true, SystemClock.elapsedRealtime())
+                    handler.postDelayed(clockSettlePass, ALARM_SCREEN_SETTLE_MS + CLOCK_SETTLE_PASS_MARGIN_MS)
                     // Design 59b §6: one line per screen-on with the keyguard read (the screen-off has its lock-up's).
                     AndroidLock.note(app, "screen-on")
                     // A screen-on well after a notice wake is the kid's own (power): the 15 s end (qa-l7-b-code 3).
@@ -1053,7 +1059,10 @@ object PinLockRuntime {
      */
     private val userPresentReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            if (intent.action != Intent.ACTION_USER_PRESENT || !AndroidLock.faceOn) return
+            if (intent.action != Intent.ACTION_USER_PRESENT) return
+            // Design 105 (code QA L1): Android's keyguard is gone - a rule's clocks leave the list (whatever the face).
+            if (LockTaskChrome.ruleClockPins.isNotEmpty()) refreshChrome(context.applicationContext)
+            if (!AndroidLock.faceOn) return
             val app = context.applicationContext
             // S3-2: Android's keyguard is done only with the screen on - a late broadcast after a screen-off (it
             // rides the background queue) never marks the next wake.

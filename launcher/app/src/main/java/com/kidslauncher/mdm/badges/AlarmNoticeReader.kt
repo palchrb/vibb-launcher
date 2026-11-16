@@ -197,7 +197,6 @@ object AlarmNoticeReader {
             false
         } else {
             ClockActions.stop(context, intent)
-            true
         }
     } catch (e: Throwable) {
         Log.w(LOG_TAG, "Alarm stop failed: ${e.javaClass.simpleName}")
