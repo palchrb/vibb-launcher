@@ -1,177 +1,214 @@
-# 105 - The clock during a rule
+# 105 - The clock during a rule (revision 2)
 
 Round `clock-in-rule`, 2026-11-16. Launcher only. Approved by the user ("Ja gjør det"); PLAN "The clock opens from
-Recents during a rule".
+Recents during a rule". Revision 2 answers `docs/review/qa-105-design.md` (section 9 maps each finding).
+
+**The user's decision on Q1** ("nei dette får foreldre bestemme selv, enig i det"): during a rule the clock is usable
+only when the parent ticks it on that rule. This includes Leggetid, and nothing is ticked by default. Q2 (kiosk off)
+is moot, because the kid's phone runs with the kiosk on.
 
 ## 1. The bug and its cause (checked against the code)
 
 On the Jelly Star (Android 16, android mode, kiosk on), during Skole, the kid pressed Recents on the mode screen and
-picked Fossify Clock. The clock opened and stayed open.
+picked Fossify Clock. The clock opened and stayed open. This is how the code was built to behave:
+- **The clock is spared.** The schedule lock keeps the clock apps out of suspension, so an alarm set inside bedtime
+  still rings (QA step 4 #2). This is `alarmAppPackages` (`server/AppEnforcer.kt:195`; `sparedAlarmApps`,
+  `EnforcementPlan.kt:419`, used at `:223`).
+- **The clock is pinned.** While allowed, the clock apps are also pinned in the kiosk during the lock
+  (`EnforcementPlan.kt:239`, bug 2026-11-02). Without the pin, lock task refused the ringing screen's new task. The
+  plan's doc (`:121-124`) accepted that "the kid can reach the clock app ... during the rule". The user withdraws that.
+- **Nothing brings the mode screen back.** `LockActivity` has no loss-of-front check. The launcher can't see which app
+  is in front: it has no usage access and no accessibility service, and none should be added.
 
-This is how the code was built to behave:
-- The schedule lock spares the clock apps from suspension, so an alarm set inside bedtime still rings (QA step 4 #2).
-  The spared set is `alarmAppPackages` (`server/AppEnforcer.kt:195`): every system `SHOW_ALARMS` handler, plus Fossify
-  Clock with its pinned signer (`sparedAlarmApps`, `EnforcementPlan.kt:419`). See also `EnforcementPlan.kt:223`.
-- While allowed, the clock apps are also pinned in the kiosk during the lock (`EnforcementPlan.kt:238-239`, bug
-  2026-11-02). Without the pin, lock task refused the ringing screen's new task, so the alarm rang with no Stop.
-  The plan's doc says it outright (`EnforcementPlan.kt:121-124`): "The kid can reach the clock app ... during the rule
-  through it ... - accepted". The user now withdraws that acceptance.
-- Every other app is suspended, so its Recents thumbnail can't be started.
+## 2. The mechanism: pin the clock only while the phone is locked or dark
 
-Nothing re-fronts the time-rule screen: `LockActivity` (`ui/LockActivity.kt`) has no loss-of-front check. The re-front
-in `lock/RefrontPolicy.kt` belongs to the PIN lock while it is LOCKED. The launcher also has no way to read which app is
-in front: it holds no usage access and no accessibility service, and none should be added.
+During a **rule**, the allowed clock apps are in the kiosk's lock-task list only while the PIN lock is LOCKED or the
+screen is dark. While the phone is unlocked and lit, they are out of the list. The clock stays spared from suspension
+at all times, so alarms fire and sound as today.
 
-## 2. The mechanism: pin the clock only while it may ring
+- **LOCKED: no reach.** While LOCKED, `featuresWhileLocked` (`LockTaskHelpers.kt:145`) already removes HOME, OVERVIEW
+  and NOTIFICATIONS. In android mode, any clock activity other than the showWhenLocked ringing screen needs Android's
+  keyguard dismissed first. Dismissing it is the UNLOCKED edge, and that edge takes the clock out of the list. The
+  ringing screen over the glance therefore works exactly as today: the bedtime morning alarm, Doze, a timer, an alarm
+  behind another app's alarm clock. None of it depends on timing or on `getNextAlarmClock`.
+- **The screen dark: covers the gap.** This covers the time between screen-off and Android's keyguard locking, and a
+  phone without a lock. A full-screen intent in the dark finds the clock allowed. The dark part ends
+  `ALARM_SCREEN_SETTLE_MS` after the screen comes on, so a ring that woke the screen reaches the keyguard state first.
+- **Unlocked and lit: no pin, even while a clock rings.** This closes the chain in QA's H1. Section 3 shows that a
+  ring can be stopped without the clock in front.
+- **Outside the list, lock task refuses every way into the clock.** That covers a Recents thumbnail
+  (`startActivityFromRecents`), a notification's content tap and `SHOW_ALARMS` from any app. This holds with the
+  block bit on, the default since migration 0029. With the block bit off (a parent's Advanced choice), an exempt app
+  can start a clock activity inside its own allowed task, as it already can for any non-suspended package (design 16).
+  That is the known cost of turning the block bit off, not new here.
+- **Leaving the list closes the task.** When a package leaves the list, AOSP's
+  `LockTaskController.updateLockTaskPackages` terminates its locked tasks, but only while the lock-task state is
+  LOCKED. The kiosk is that state, `mLockTaskModeState=LOCKED` (emulator.md §6as). We already rely on this
+  (`lock-and-glance.md`, "removing a package clears its task"; the SOS narrowing, `LockTaskHelpers.kt:224`). So a
+  clock task open at the unlock, or at a rule's start, is gone at the next pass. Fossify's `AlarmActivity.onDestroy`
+  doesn't stop the ring, which lives in `AlarmService`, so the ring goes on and section 3 stops it.
 
-During a **rule**, the allowed clock apps leave the kiosk's lock-task list. They come back only for an **alarm
-window**, and leave again when the window closes. The clock stays spared from suspension at all times, so alarms
-still fire and sound exactly as today.
+### 2.1 Pure parts
 
-Why this mechanism:
-- **The platform enforces it.** Outside the window, Android refuses every way into the clock under lock task: a
-  Recents thumbnail, a notification tap, the status bar's next-alarm, `SHOW_ALARMS` from any app.
-- **AOSP closes what is open.** When a package leaves the list, AOSP clears its locked task
-  (`LockTaskController.updateLockTaskPackages`, "terminate locked tasks that have recently lost allowlist
-  authorization"). We already rely on this in `lock-and-glance.md` ("removing a package clears its task") and in the
-  SOS narrowing (`LockTaskHelpers.kt:224`). So a clock left open after its ring, or opened during the window, is
-  closed when the window ends. The mode screen (or the glance) is in front again with no re-front code.
-- **It needs no front-app reading** and adds no gesture rule.
-- **There is a precedent.** `LockTaskChrome` already takes runtime pin inputs outside the plan: `sosYield`
-  (`lock/LockTaskChrome.kt:83`) and `routeWindow` (`:104`). The clock window is a third one of the same shape.
+- **`computeEnforcementPlan` takes a new input `ruleLocked`.** AppEnforcer passes `lock.rules.isNotEmpty()` next to
+  `lockUsableApps` (`AppEnforcer.kt:466`).
+- **While `locked && ruleLocked`, the clocks move out of the kiosk list.** The list drops `allowed ∩ alarmApps` except
+  `lockUsableApps`, so a ticked clock stays pinned and gets its row. The dropped set goes into a new plan field,
+  `ruleClockPins`. Suspension is unchanged.
+- **The used-up budget alone is unchanged.** It has no rule and no exempt list to tick, so the clock stays pinned.
+- **The pause, the override and Foreldrekode are unchanged.** `locked` is false, or the rule is lifted.
+- **The list is built in `lockTaskWhileLocked` (`LockTaskHelpers.kt:205`), which takes `ruleClockPins` and `dark`.**
+  - The kiosk-on LOCKED row adds the pins always.
+  - The not-LOCKED rows add them only while `dark`.
+  - The SOS-narrowed row and kiosk off are unchanged.
+- **`clockDark(interactive, screenOnAtMs, nowMs)` decides `dark`:** not interactive, or lit for less than
+  `ALARM_SCREEN_SETTLE_MS`.
 
-Rejected: **re-fronting the mode screen** when the clock comes to front (without front-app access we can't tell the
-clock from an allowed exempt app reached from Recents or the shade); **suspending the clock** (a suspended app "will
-not ring the device" and its notifications are hidden - QA step 4 #2's reason for sparing it); **taking Recents away**
-(the user's say, section 4; it also leaves the shade and the next-alarm taps open).
+### 2.2 Glue
 
-### 2.1 Who is pinned when (pure, `computeEnforcementPlan`)
+- **Screen changes.** `LockTaskChrome` keeps the screen state, written by `PinLockRuntime`'s existing screen receiver
+  (`PinLockRuntime.kt:564`). At `SCREEN_OFF` it runs one pass at once. At `SCREEN_ON` it posts one pass for after the
+  settle.
+- **LOCKED changes.** These already run `refresh`.
+- **Every pass reads the current state under the monitor.** `locked` and `dark` are read inside `applyNow`, so a late
+  pass can't land a stale open (QA L4). There is no PackageManager work, as with `sosYield`
+  (`LockTaskChrome.kt:83`).
+- **Before the first apply** (`plan == null`, QA L3), the last `ruleClockPins` are stored with the kiosk prefs.
+  `fallbackKioskPackages` (`:251`) takes them out of the platform's list on an unlocked, lit pass, and adds them on a
+  LOCKED or dark one.
+- **No new triggers.** Gone are the boundary instants, `ACTION_NEXT_ALARM_CLOCK_CHANGED`, the listener-driven `follow`
+  and the fallback send.
 
-- `locked` (`EnforcementPlan.kt:198`) **and the lock has a rule** (a new input `ruleLocked`, AppEnforcer passing
-  `lock.rules.isNotEmpty()` next to `lockUsableApps` at `AppEnforcer.kt:466`; `TimeLock`, `TimeRules.kt:201`): the
-  kiosk list drops `allowed ∩ alarmApps`, unless a package is also in `lockUsableApps` (ticked on every active rule -
-  then it stays pinned and gets its row, as any exempt app). These packages go into a new plan field
-  `ruleClockPins = (allowed ∩ alarmApps) - lockUsableApps`.
-- **The used-up budget alone** (SCREEN_TIME, no rule) is unchanged: the clock stays pinned. The user asked about
-  rules, and the budget lock has no exempt list a parent could tick. Without this, a kid out of screen time couldn't
-  set tomorrow's alarm.
-- **Not locked, the pause, the override** (`locked` false) **and the phone's Foreldrekode pause** (the rule lifted,
-  so no rule in the lock): unchanged. The clock is pinned while it is allowed.
-- **Suspension is unchanged** (`EnforcementPlan.kt:223`).
-- **A clock that isn't allowed** is hidden, as today.
+## 3. A ring while unlocked during a rule: stopped without the clock
 
-### 2.2 The window (pure, a new `ruleClockWindow` in `lock/RefrontPolicy.kt`)
+**Fossify Clock (FossifyOrg/Clock main, read 2026-11-16).** `AlarmNotificationHelper.buildActiveAlarmNotification`
+builds the ringing notification:
+- Its content intent and full-screen intent are `AlarmActivity`, an activity.
+- **Dismiss** is `getStopAlarmPendingIntent`: `PendingIntent.getBroadcast` to `StopAlarmReceiver`, which calls
+  `stopAlarm`. It is also the notification's `deleteIntent`.
+- **Snooze** is `getSnoozePendingIntent`: `PendingIntent.getService` to `SnoozeService` while `useSameSnooze`, which
+  defaults to true (`BaseConfig`). Only with that setting off is it `getActivity` to `SnoozeReminderActivity`, the
+  picker.
 
-The window is open when **any** of these holds:
-- **The notification listener isn't connected** (`AlarmNoticeReader.listening()`). Today's behaviour stays: without
-  the listener no ring is seen, and the card offers the clock as its row (`lockRowPackages`, `TimeLockModel.kt:202`).
-  The PWA already gets `notification_listener_enabled` in the report.
-- **A clock rings and alarms aren't silenced.** "Rings" means a lock clock package has a ringing-shaped notification
-  posted (`AlarmNotices.ringing`), with no time bound and whether consumed or not. Alarms are silenced when
-  `ZenRuleRuntime.silencesAlarms()` (`ZenRuleRuntime.kt:153`) is true. This covers the alarm row's condition
-  (`alarmToStop`, `PinLockRuntime.kt:1389`), so the row's tap (`openRingingAlarm`) and the screen re-sends always find
-  the clock pinned.
-- **A lock clock's next alarm clock is near and alarms aren't silenced.** The trigger time and creator are as
-  `rememberAlarm` reads them. "Near" means `now` in `[trigger - ALARM_PIN_LEAD_MS, trigger + ALARM_RING_MS)`, with
-  `ALARM_PIN_LEAD_MS` = 2 min and `ALARM_RING_MS` from `RefrontPolicy.kt:222`. This is the pre-pin: the ringing
-  screen's first full-screen launch finds the clock already allowed. That launch is the bedtime morning alarm with the
-  screen off, which has no second chance until a power press.
+So both of the kid's stops are non-activity sends. Lock task doesn't gate them.
 
-Glue: a small `RuleClockWindow.follow(context)` computes the window and calls `LockTaskChrome.clockWindow(open)` only
-on a change. That is one pass under the monitor with no PackageManager work, as `sosYield` does. `lockTaskWhileLocked`
-(`LockTaskHelpers.kt:205`) takes the plan's `ruleClockPins` as part of the kiosk list in the not-LOCKED rows and the
-kiosk-on LOCKED row while the window is open. The SOS-narrowed row and kiosk off are unchanged.
+**The mode screen's alarm row** ("Slå av alarmen", `LockActivity.kt:375/456`) fires those actions while the clock
+isn't pinned, instead of opening the ringing screen:
+- The row shows each **non-activity** action of the ringing notification as a button, with the notification's own
+  title (Fossify: "Slumre", "Avvis"). This is pure `alarmRowActions(actions)` over the existing `ClockAction`
+  (`ClockTile.kt:141`).
+- A button is sent the way `ClockActions.stop` sends: a non-activity `PendingIntent` only, checked again before the
+  send, with background activity starts denied. Today that function takes broadcasts only; it gains services
+  (`PendingIntent.isService` / `isForegroundService`, API 31, so no gate is needed).
+- The row needs the reader to keep the ringing notification's actions next to its full-screen intent.
 
-`follow` runs from `AlarmNoticeReader`'s listener (a ring starts or stops, the listener connects or disconnects),
-`ZenRuleRuntime`'s listener, `ACTION_NEXT_ALARM_CLOCK_CHANGED`, `TimeRulesRuntime.recheck` (`:287`) and every
-`applyPlan`.
+**Two sends stop while the clock isn't pinned.** `LockActivity`'s `alarmScreenSend` (`:78`) and `openRingingAlarm`
+both do nothing then, so no refused send spends a ring (QA L5 moot). With the clock ticked on the rule, both work as
+today.
 
-`nextBoundary` (`TimeRulesRuntime.kt:241`) adds `trigger - lead` and `trigger + ALARM_RING_MS` while a rule locks.
-These go through the same `setExactAndAllowWhileIdle` boundary alarm. Our boundary may arrive late in Doze, or the next
-alarm clock may be another app's, which hides a clock's alarm behind it. Either way the clock's own launch can be
-refused. **The fallback:** when a ring opens the window, `PinLockRuntime` asks the resumed screen in charge to run its
-settle-send once. That screen is the PIN lock or glance while LOCKED, or `LockActivity`'s `alarmScreenSend`
-(`LockActivity.kt:78`). The send itself is the existing `sendAlarmScreen` (`PinLockRuntime.kt:1364`): capped,
-never over a call, and SCREEN_ON in the dark.
+**A clock with no non-activity action.** This is unverified for the Jelly's system clock; see the device check. AOSP
+DeskClock's actions are `getService` sends. For such a clock the row isn't shown. The ring then stops at the clock's
+own silence-after, or on the heads-up's buttons, or when the kid presses power twice: LOCKED pins the clock and the
+glance sends the ringing screen, as it does today (`alarmScreenStep`).
 
-### 2.3 The cases
+**No question for the user.** The kid's clock (Fossify) stops from the card, so no clock is pinned while unlocked and
+no Q3 is needed.
+
+**Without the notification listener** (QA M2), nothing about the pin depends on it any more. The clock is never open
+while unlocked. Two things follow:
+- `lockRowPackages` (`TimeLockModel.kt:202`) stops adding the clocks while they aren't pinned. It keeps adding them
+  when the clock is ticked or there is no rule.
+- The card can't show the stop row. A ring stops in the shade, at the clock's silence-after, or with two power presses.
+  A PWA line for `notification_listener_enabled: false` ("the mode screen can't stop an alarm") would be a server
+  template change: a follow-up, not this round.
+
+**Without `USE_FULL_SCREEN_INTENT`** (QA L6), the alarm isn't ringing-shaped, so the row isn't shown. The shade's
+non-activity buttons still work, and the content tap is refused.
+
+## 4. The cases
 
 | Case | What happens |
 |---|---|
-| Alarm fires while the kid is in an allowed exempt app | Pre-pinned. Android shows the alarm as a heads-up (screen on). Its tap opens the ringing screen. The exempt app is never interrupted by us. Without the pre-pin, the tap works once the ring's pass has landed (well under a second). |
-| The snooze/dismiss screen | Pinned while the notification rings. Stop or Snooze removes it, the window closes, AOSP clears the clock's task, and the mode screen or glance is in front. A snooze's new alarm clock opens the window again 2 min before it. |
-| A timer finishing | AOSP's and Google's timer has the ringing shape, so the ring opens the window, followed by the fallback send. Fossify's timer has no full-screen intent (`CATEGORY_EVENT`). It is stopped from its notification action or the glance's Stopp (`ClockActions`, a broadcast) and needs no pin. Its content tap is refused: that would be opening the clock. |
-| The alarm screen stays after the ring stops | Once the notification is gone and `trigger + ALARM_RING_MS` has passed, the window closes and AOSP clears the task. |
-| A silent rule silences alarms (a silent rule that isn't a bedtime) | The window stays closed, as the lock already treats such an alarm (`alarmRingingNow`'s `alarmsSilenced`). Android suppresses the full-screen intent itself. If the rule ends mid-ring, the listener's `follow` opens the window. |
-| Bedtime vs. school | The same rule for both. Bedtime's default "Silent with alarms" doesn't silence alarms, so the window works. See Q1 for the cost at bedtime. |
-| The parent's pause or override | `locked` is false, so the clock is pinned while it is allowed, as today. |
-| Android mode vs. own mode | Both use the kiosk list. In own mode the PIN lock's "alarm" yield still lets the ringing screen through (pinned by the ring). Own mode with the kiosk off pins `pinLockHelpers`' clock while LOCKED, unchanged. |
-| The clock ticked on the rule | It is in `lockUsableApps`: pinned all through the rule, with a row on the card. |
-| The rule begins with the clock open | AOSP clears the clock's task at the first pass, as with every other app at a rule's start. |
+| Recents -> clock, unlocked, rule | Refused; there is no clock task to show. |
+| Alarm while the kid is in an exempt app | A heads-up (screen on). Its Avvis or Slumre buttons work. The content tap is refused. The mode screen's row works too. |
+| Bedtime morning alarm, screen off, Doze | LOCKED pins the clock, so the ringing screen comes over the glance as today. |
+| Kid unlocks while it rings | The clock task is cleared. The ring goes on. The row's Avvis or Slumre stops it. |
+| Snooze | A service send. The next ring is handled the same way. |
+| Fossify timer ends | No full-screen intent. Its Dismiss broadcast is the glance's Stopp (`ClockActions`). The mode screen is unchanged. |
+| A silent rule silences alarms | No ring and no row, as today. |
+| The clock ticked on the rule | Pinned all rule long, with its row. Alarm sends work as today. |
+| Pause, override, budget alone | As today. |
+| Own mode | LOCKED is the PIN lock: the same. |
 
-**Residual: kiosk off.** No lock task means the clock is spared and reachable during a rule, as today. Q2 asks the
-user about it.
+## 5. Compatibility (Android 14-17)
 
-## 3. Compatibility (Android 14-17)
+- **Lock-task clearing and the Recents refusal.** Both are in AOSP `LockTaskController` and checked by the gate on 34
+  and 37.2 (QA M3). The Jelly (16) gets a `dumpsys` look after the release.
+- **Firing another app's `PendingIntent`.** Non-activity sends need no background-activity-start allowance. The
+  `MODE_BACKGROUND_ACTIVITY_START_DENIED` option is API 34. The send is unchanged on 14-17.
+- **A full-screen intent with the phone in use** is a heads-up on 14-17. No full-screen launch is attempted while
+  unlocked and lit, so the unpinned clock loses nothing there.
+- **No API above 34. No feature bit changes.**
 
-- **Lock-task task clearing on list removal.** In AOSP `LockTaskController` since Android 9 and unchanged through 16.
-  The SOS narrowing relies on it. To check on API 37.2 (the emulator check).
-- **A full-screen intent of an unpinned package under lock task is refused.** Seen on 16 (bug 2026-11-02). The
-  pre-pin removes the dependency on timing. With the screen on and the phone in use, Android 14-17 all show a
-  full-screen intent as a heads-up. Alarm apps keep `USE_FULL_SCREEN_INTENT` on 14+.
-- **The boundary alarm** is the existing `USE_EXACT_ALARM` path. `setAlarmClock` brings the device out of idle shortly
-  before the clock's alarm on every version, so our earlier boundary lands as well as a rule edge does.
-- **No API above 34. No feature bits change.** `featuresWhileLocked` (`LockTaskHelpers.kt:145`) is untouched.
+## 6. Recents
 
-## 4. Recents and the lock-task features
+The kiosk keeps the server's features while unlocked, OVERVIEW included (16d, the user's rule). This design removes
+no gesture and doesn't need to.
 
-Today the kiosk takes the server's features unchanged while unlocked, OVERVIEW included. Design 16's drop of OVERVIEW
-was reverted in 16d by the user's rule, and the recents provider is pinned as a helper instead (`EnforcementPlan.kt`
-doc, "The lock-task features are the server's"). While LOCKED, `featuresWhileLocked` removes NOTIFICATIONS, HOME and
-OVERVIEW.
+## 7. Server and PWA
 
-Turning OVERVIEW off during a rule would close only the Recents path. The shade's clock notifications and the status
-bar's alarm would stay open. It would also remove a stock gesture. **This design removes no gesture and doesn't
-need to.**
+Nothing in this round. Clock apps have launcher icons, so they are in `installed_apps`. `scope_apps`
+(`server/src/handlers/schedules.rs:723-763`) offers them as a rule's and Leggetid's Exceptions when allowlisted. The
+server's tests already seed `org.fossify.clock` as an exempt app (`lock_now.rs:520`). The PWA listener line is a
+follow-up (section 3).
 
-## 5. Questions for the user (before the build)
-
-- **Q1 (visible cost, bedtime):** In bed, under Leggetid, the kid can no longer open the clock to set or change
-  tomorrow's alarm unless the parent ticks the clock on Leggetid. Should the clock be ticked on Leggetid by default
-  (new phones and existing Leggetid rules)? Or is it the parent's tick alone? Recommendation: the parent's tick, with
-  a line in the release notes.
-- **Q2 (kiosk off):** With the kiosk off, the clock stays reachable during a rule. Is that acceptable as the parent's
-  choice? Closing it would need front-app access, which we don't want.
-
-## 6. Server and PWA
-
-Nothing is needed. Clock apps have launcher icons, so they are `controllablePackages` and in the report's
-`installed_apps`. `scope_apps` (`server/src/handlers/schedules.rs:723-763`) offers every reported package that is
-allowlisted in a rule's and Leggetid's Exceptions (`exceptions`, `:651`). The server already seeds `org.fossify.clock`
-as an exempt app in its tests (`server/src/lock_now.rs:520`). No policy key or contract file changes.
-
-## 7. Tests
+## 8. Tests
 
 Unit tests (pure):
-1. `EnforcementPlanTest`: rule plus kiosk with an allowed, not usable clock - not pinned, not suspended, in
-   `ruleClockPins`; a usable clock - pinned, not in pins; budget only, unlocked, override - pinned as allowed; a clock
-   not allowed - hidden, not in pins.
-2. `RefrontPolicyTest` for `ruleClockWindow`: not listening, ringing, inside `[trigger - lead, trigger +
-   ALARM_RING_MS)` - open; ringing but silenced, before or after that range, no trigger - closed.
-3. `LockTaskHelpersTest`: pins added to the not-LOCKED and kiosk-on LOCKED rows only while open; SOS-narrowed and
-   kiosk-off rows unchanged.
-4. `TimeRulesTest` (the boundary's pure part): the two clock instants are taken only while a rule locks.
+1. **`EnforcementPlanTest`:**
+   - rule plus kiosk, with an allowed clock not usable: not in the list, not suspended, in `ruleClockPins`;
+   - a usable clock: pinned, not in the pins;
+   - budget only, unlocked, override: pinned as allowed;
+   - a clock that isn't allowed: hidden.
+2. **`LockTaskHelpersTest`:**
+   - the pins in the kiosk-on LOCKED row always, and in the not-LOCKED row only while `dark`;
+   - SOS-narrowed and kiosk-off rows unchanged;
+   - `fallbackKioskPackages` with the stored pins.
+3. **`clockDark` rows:** off, lit inside and past the settle.
+4. **`alarmRowActions`:**
+   - Fossify's shape gives two buttons;
+   - its snooze as an activity gives one;
+   - only activities gives no row;
+   - plus `lockRowPackages` with pinned, unpinned and ticked clocks.
 
-Emulator check: a new `docs/testing/emulator.md` §6au on `compat34` and `compat372`. Read state with `dumpsys` only,
-since 37.2 dies on screencap.
-- Kiosk on, android mode, Skole in force without the clock: `dumpsys device_policy` has no clock in the lock-task
-  packages. Recents shows no clock. `am start -a android.intent.action.SHOW_ALARMS` is refused.
-- An alarm set 4 min ahead before the rule: at trigger - 2 min the clock is in the list. With the screen off, the
-  ringing screen comes up by itself. After Stop, the clock is gone from the list and the mode screen is the resumed
-  activity.
-- The clock ticked on Skole: its row is shown and it opens.
+Emulator, a new `docs/testing/emulator.md` §6au on `compat34` and `compat372`. Use `dumpsys` and `uiautomator` only,
+since 37.2 dies on screencap. Fossify installed and allowed, kiosk on, android mode.
+1. **The clock is cleared at the rule's start.** Open the clock, then "Slå på nå" Skole. `dumpsys activity recents` and
+   `activities` show no clock task, and `LockActivity` is `mResumedActivity`.
+2. **The bug's path.** `input keyevent KEYCODE_APP_SWITCH`, then tap the clock's thumbnail if one is listed (bounds
+   from `uiautomator dump`). The tap is refused, and there is still no clock task. `am start -a
+   android.intent.action.SHOW_ALARMS` is refused.
+3. **The ring while LOCKED.** Set an alarm 3 min ahead before the rule, press power, then
+   `dumpsys deviceidle force-idle`. `dumpsys device_policy` lists the clock. At the ring, `AlarmActivity` is over the
+   glance. Snooze once.
+4. **Unlock while the snoozed alarm rings.** Unlock with the PIN while it rings. The clock task is gone, the ring goes
+   on, and the row shows Slumre and Avvis. Avvis stops it (`dumpsys notification` has no ringing alarm).
+5. **The clock ticked on Skole.** Its row is shown and it opens.
 
-## 8. Docs to change with the code
+Device check after the release (Jelly, 16): `dumpsys notification --noredact` on the system clock's ringing alarm
+gives each action's `PendingIntent` type (section 3, QA L6).
 
-`EnforcementPlan.kt:117-124`'s doc and `alarmAppPackages`' doc; a bullet "The clock during a rule" in
-`docs/notes/launcher/time-rules.md`; the kiosk-list line in `lock-and-glance.md`.
+## 9. QA findings
+
+| Finding | How it is handled |
+|---|---|
+| H1 | Fixed: no pin while unlocked and lit, rings included; stops via non-activity actions (section 3). |
+| M1 | Fixed: pinned while LOCKED or dark; no pre-pin. |
+| M2 | Fixed: the pin no longer depends on the listener; the PWA line is a follow-up (a server change). |
+| M3 | Fixed: §6au steps 1-4 on 34 and 37.2; a Jelly look. |
+| L1 | Moot: every clock is pinned only while LOCKED or dark, where there is no reach. |
+| L2 | Explained: §2's claim qualified for the block bit off. |
+| L3 | Fixed: stored pins in the fallback. |
+| L4 | Fixed or moot: no alarm-changed trigger; state read under the monitor. |
+| L5 | Moot: no sends while unpinned. |
+| L6 | Explained, with a device check. |
