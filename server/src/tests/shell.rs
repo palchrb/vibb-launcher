@@ -1400,13 +1400,15 @@ fn the_app_shell_scrolls_main_not_the_document() {
          background: linear-gradient(var(--night) 50%, var(--bg) 50%);"
     );
     assert_eq!(block(".container > .sheet"), "flex: 1 0 auto;");
-    // Design 101: the summary's picture lies half over a 38 px night gap. -52 px = the gap 38 + border 1 + padding 15 less
-    // the band's 22 px foot, so the picture's top is 20 px above the sheet's edge (QA M1). And nothing that holds the
-    // picture's sheet may be positioned: its panel and dim are placed against the body (the screen).
+    // Design 101: the summary's picture lies half over a 38 px night gap. The sheet's content edge is 32 px under the
+    // band's box (the gap 38 + border 1 + padding 15 less the band's 22 px foot); -44 px puts the picture's top 12 px
+    // above the band's box, so its 4 px ring stays under the band's solid part (which ends 22 px above its box's bottom
+    // and covers anything higher - at -52 px the ring was cut flat). And nothing that holds the picture's sheet may be
+    // positioned: its panel and dim are placed against the body (the screen).
     assert_eq!(block(".summary-sheet"), "margin-top: 38px;");
     assert_eq!(
         block(".summary-sheet > .summary-head"),
-        "margin-top: -52px;"
+        "margin-top: -44px;"
     );
     for held in [".sheet", ".summary-head", ".avatar-edit"] {
         assert!(

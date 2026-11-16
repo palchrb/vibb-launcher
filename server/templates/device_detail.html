@@ -49,7 +49,7 @@
         </div>
         {#- The one line under the picture (design 101 §3): the dot, then the lead, the zone and the battery
             (phone_status::header + one_line); the name is the band's title (design 84). Anything new at the top of the
-            summary (design 100's request card) goes right AFTER this header: the picture's -52px offset needs the header first. -#}
+            summary (design 100's request card) goes right AFTER this header: the picture's -44px offset needs the header first. -#}
         <p class="summary-state" data-status="{{ dot }}" data-line><span class="state-dot dot-{{ dot }}" aria-hidden="true"></span>{% call status_line::parts(status, true) %}{% endcall %}</p>
         {%- if self.disconnected() %}<a class="summary-link" href="/devices/{{ device.id }}/advanced#connection" data-connect-again>{{ self.t("device.summary.connect_again") }} &rsaquo;</a>{% endif %}
     </header>
