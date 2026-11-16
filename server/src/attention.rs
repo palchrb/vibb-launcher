@@ -423,11 +423,53 @@ pub struct Sources<'a> {
     pub call_problems: &'a [CallProblem],
     /// Calls aren't managed while a no-calls rule is in force (Device › Time's warning).
     pub incoming_calls_not_blocked: bool,
+    /// The Do Not Disturb the report shows is a silent rule's own ([dnd_is_rules_own]): no row.
+    pub dnd_is_rules_own: bool,
     pub connection: ConnectionState,
     /// The music entries switched on for the phone (`music::ticked_entries`).
     pub music_ticked: &'a [i64],
     /// The Spotify account it plays as, from the accounts table (`music::spotify_account_warnings`).
     pub spotify_account: crate::handlers::music::SpotifyAccountWarnings,
+}
+
+/// Whether the reported Do Not Disturb is the launcher's own for a silent time rule: the report's
+/// `active_rule_id` names a rule whose `silent` is on (a "Slå på nå" copy, a negative id, by its
+/// original's `silent`) and the filter is `priority`, which is what that rule sets. Anything that
+/// can't be read is "no", so the row shows.
+pub async fn dnd_is_rules_own(
+    db: &sqlx::SqlitePool,
+    device_id: i64,
+    latest: Option<&DeviceStatus>,
+    rules: &[crate::time_rules::TimeRuleRow],
+) -> bool {
+    let Some(latest) = latest else { return false };
+    if latest.interruption_filter.as_deref() != Some("priority") {
+        return false;
+    }
+    let Some(active) = latest
+        .time_state_json
+        .as_deref()
+        .and_then(crate::time_state::TimeReport::parse)
+        .and_then(|report| report.active_rule_id)
+    else {
+        return false;
+    };
+    let original = if active < 0 {
+        match sqlx::query_scalar::<_, Option<i64>>(
+            "SELECT rule_id FROM time_lock_now WHERE id = ? AND device_id = ?",
+        )
+        .bind(-active)
+        .bind(device_id)
+        .fetch_optional(db)
+        .await
+        {
+            Ok(Some(Some(rule_id))) => rule_id,
+            _ => return false,
+        }
+    } else {
+        active
+    };
+    rules.iter().any(|rule| rule.id == original && rule.silent)
 }
 
 /// Reads what [items] needs. A read that fails counts as "nothing to say" for its row (logged by
@@ -492,12 +534,13 @@ pub async fn facts(state: &AppState, device: &Device, connection: ConnectionStat
             Vec::new()
         }
     };
-    let incoming_calls_not_blocked = !policy.calls_managed()
-        && crate::time_rules::effective_rule_rows(&state.db, id)
-            .await
-            .unwrap_or_default()
-            .iter()
-            .any(|rule| !rule.calls_allowed);
+    // Read once for both the calls row and the Do Not Disturb row.
+    let rules = crate::time_rules::effective_rule_rows(&state.db, id)
+        .await
+        .unwrap_or_default();
+    let incoming_calls_not_blocked =
+        !policy.calls_managed() && rules.iter().any(|rule| !rule.calls_allowed);
+    let dnd_is_rules_own = dnd_is_rules_own(&state.db, id, latest, &rules).await;
     let music_ticked = crate::handlers::music::ticked_entries(&state.db, id)
         .await
         .unwrap_or_else(|err| {
@@ -518,6 +561,7 @@ pub async fn facts(state: &AppState, device: &Device, connection: ConnectionStat
             relock: &relock,
             call_problems: &call_problems,
             incoming_calls_not_blocked,
+            dnd_is_rules_own,
             connection,
             music_ticked: &music_ticked,
             spotify_account,
@@ -560,12 +604,13 @@ pub fn facts_of(s: &Sources, now_ms: i64) -> Facts {
         ),
         restrictions_paused: latest.is_some_and(|st| st.paused_at(now_ms)),
         foreign_access: s.relock.foreign.is_some(),
-        do_not_disturb: crate::sound_mode::state(
-            None,
-            latest.and_then(|st| st.interruption_filter.as_deref()),
-        )
-        .dnd
-        .is_some_and(crate::sound_mode::Dnd::is_on),
+        do_not_disturb: !s.dnd_is_rules_own
+            && crate::sound_mode::state(
+                None,
+                latest.and_then(|st| st.interruption_filter.as_deref()),
+            )
+            .dnd
+            .is_some_and(crate::sound_mode::Dnd::is_on),
         google_backup: latest.and_then(|st| st.backup_service_enabled) == Some(true),
         no_parent_pin: crate::handlers::devices::managed_without_pin(policy),
         easy_parent_pin: policy.override_pin_hash.is_some()

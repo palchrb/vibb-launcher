@@ -548,3 +548,58 @@ async fn every_call_warning_is_typed() {
     );
     assert_eq!(rows.len(), report.findings.len(), "{:?}", report.findings);
 }
+
+/// A silent time rule makes the launcher turn on its own Do Not Disturb (priority only): the rule's own, so not an
+/// Attention row; anything else Do Not Disturb is.
+#[tokio::test]
+async fn a_silent_rules_own_do_not_disturb_is_no_row() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = clean_phone(&app, "Emma").await;
+    let add = |name: &'static str, silent: bool| {
+        sqlx::query_scalar::<_, i64>(
+            "INSERT INTO time_rules (name, kind, calls_allowed, exempt_apps_json, silent, days_json) \
+             VALUES (?, 'school', 0, '[]', ?, '[null,null,null,null,null,null,null]') RETURNING id",
+        )
+        .bind(name)
+        .bind(silent)
+        .fetch_one(&app.db)
+    };
+    let silent = add("Skole", true).await.unwrap();
+    let loud = add("Middag", false).await.unwrap();
+    let state = |rule: i64, filter: &str| {
+        json!({
+            "interruption_filter": filter,
+            "time_state": {"lock_reason": "SCHOOL", "active_rule_id": rule, "active_rule_name": "Skole"},
+        })
+    };
+    let dnd = ["do-not-disturb"];
+    // A silent rule in force with priority: its own.
+    report(&app, &token, state(silent, "priority")).await;
+    assert_eq!(rows(&app, &cookie, id).await, Vec::<String>::new());
+    // A non-silent rule, or a stricter filter: raised.
+    report(&app, &token, state(loud, "priority")).await;
+    assert_eq!(rows(&app, &cookie, id).await, dnd);
+    report(&app, &token, state(silent, "none")).await;
+    assert_eq!(rows(&app, &cookie, id).await, dnd);
+    report(&app, &token, state(silent, "alarms")).await;
+    assert_eq!(rows(&app, &cookie, id).await, dnd);
+    // No rule in force: raised.
+    report(&app, &token, json!({"interruption_filter": "priority"})).await;
+    assert_eq!(rows(&app, &cookie, id).await, dnd);
+    // "Slå på nå" copy of the silent rule (negative id): the original's `silent`.
+    sqlx::query(
+        "INSERT INTO time_lock_now (id, device_id, rule_id, rule_name, zone, local_date, \
+         start_minute, end_minute, ends_at) VALUES (7, ?, ?, 'Skole', 'Europe/Oslo', \
+         '2026-11-16', 720, 1080, '2099-01-01 00:00:00')",
+    )
+    .bind(id)
+    .bind(silent)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    report(&app, &token, state(-7, "priority")).await;
+    assert_eq!(rows(&app, &cookie, id).await, Vec::<String>::new());
+    report(&app, &token, state(-7, "none")).await;
+    assert_eq!(rows(&app, &cookie, id).await, dnd);
+}
