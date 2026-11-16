@@ -51,6 +51,7 @@ mod music_secret;
 mod music_sources;
 mod music_sweep;
 mod net;
+mod notification_channels;
 mod parent_events;
 mod parent_pin;
 mod parents;

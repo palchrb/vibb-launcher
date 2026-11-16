@@ -629,6 +629,20 @@ pub async fn view_about(
                 .detail(dnd.detail(lang)),
             );
         }
+        // Design 107 §5.2: the Vibb One notifications turned off on the phone, from a launcher with
+        // `notification_channels_v1` that sent its reading.
+        if let Some(channels) = crate::notification_channels::report(status) {
+            let row = crate::notification_channels::about(lang, &policy, &channels);
+            sound.push(
+                Row::new(
+                    "notifications",
+                    t(lang, "device.about.notifications"),
+                    row.value,
+                )
+                .class(if row.orange { "row-value-action" } else { "" })
+                .detail(row.detail),
+            );
+        }
 
         if let Some(full) = status.app_version.as_deref().filter(|v| !v.is_empty()) {
             let short = short_version(full);

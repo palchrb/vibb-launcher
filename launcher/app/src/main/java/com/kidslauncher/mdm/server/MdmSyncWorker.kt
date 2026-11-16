@@ -608,6 +608,8 @@ private fun statusReportOf(
         captivePortal = com.kidslauncher.mdm.portal.PortalRuntime.report(context),
         // Design 102 §6.2: Chrome's login role on this phone.
         loginBrowser = BrowserConfig.report(context),
+        // Design 107 §2: the channels turned off, read now (a block-state broadcast only asked for this sync sooner).
+        notificationChannels = com.kidslauncher.mdm.notify.NotificationChannelsReader.read(context),
     )
 }
 

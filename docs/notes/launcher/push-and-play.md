@@ -157,3 +157,16 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   to a heartbeat drops the ack. A report over 1 KiB is gzip'd while the policy says `status_gzip`. An older server
   says neither: no hash, no heartbeat, no gzip, the ack cleared. Enrollment clears the ack. Claimed as
   `status_heartbeat_v1`.
+
+## A notification channel turned off asks for a sync (design 107 §3)
+
+- `NotificationChannelsWatch.init` (from `Application.initRest`'s tail, once per process) registers one runtime receiver
+  (`RECEIVER_NOT_EXPORTED`) for `ACTION_NOTIFICATION_CHANNEL_BLOCK_STATE_CHANGED`,
+  `ACTION_NOTIFICATION_CHANNEL_GROUP_BLOCK_STATE_CHANGED` and `ACTION_APP_BLOCK_STATE_CHANGED` (Android sends them only
+  to the owning package, when a user's change crosses NONE). Each asks `SyncRunner.request(app,
+  "notification_channels")`; `SyncRunner` coalesces the burst of one Apply. The receiver reads no extra (L5: a refused
+  change still sends the broadcast); the report's own read is the truth. A missed broadcast waits for the next sync
+  (the backstop, an SSE nudge, a process start).
+- Two of our own changes send no broadcast (an app's own delete and re-create, design 100 M6), so they ask for the sync
+  themselves: Snarveier's "Vis i varsellisten igjen" (`ShortcutsRuntime.showAgain`) and the Settings row's return from
+  Android's page when the read changed.

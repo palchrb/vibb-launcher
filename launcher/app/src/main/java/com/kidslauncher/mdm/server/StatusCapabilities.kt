@@ -94,6 +94,9 @@ val STATUS_CAPABILITIES: List<String> = listOf(
     // Design 102 Part B: the policy's `login_browser` (Chrome only for logins, its lockdown read back before it is
     // unhidden) and `login_browser` in every full report. The server's Sign-in page says "Krever nyere Vibb One" without it.
     com.kidslauncher.mdm.logins.LOGIN_BROWSER_CAPABILITY,
+    // Design 107: `notification_channels` in every full report; the server's About › Sound row and its Attention row
+    // wait for it.
+    com.kidslauncher.mdm.notify.NOTIFICATION_CHANNELS_CAPABILITY,
 )
 
 /** A time rule's "Stille" switch (server migration 0121): `rules[].silent` is enforced. */

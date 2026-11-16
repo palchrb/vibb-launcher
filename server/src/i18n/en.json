@@ -4656,5 +4656,22 @@
   "events.pin_used.entry.wifi_signin": "Wi-Fi sign-in",
   "security.detail.pin.wifi_signin": "{at}: Wi-Fi sign-in opened with the parent code.",
   "security.detail.pin.place.wifi_signin": "at the Wi-Fi sign-in",
-  "settings.notifications.switch.wifi_signin": "Wi-Fi sign-in"
+  "settings.notifications.switch.wifi_signin": "Wi-Fi sign-in",
+  "device.about.notifications": "Notifications",
+  "device.about.notifications.all_on": "All on",
+  "device.about.notifications.all_off": "All off",
+  "device.about.notifications.off": "Off: {names}",
+  "device.about.notifications.more": "{names} and {count} more",
+  "device.about.notifications.quoted": "“{name}”",
+  "device.about.notifications.lead": "These Vibb One notifications are turned off on the phone.",
+  "device.about.notifications.lead_all_off": "All Vibb One notifications are turned off on the phone. No Vibb One notices show.",
+  "device.about.notifications.effect.messages": "{name}: new messages make no sound and don't show in the notification shade or on the lock screen. The count on Messages on Home still shows.",
+  "device.about.notifications.effect.missed_calls": "{name}: a missed call doesn't show in the notification shade. The badge on the contact still shows.",
+  "device.about.notifications.effect.calls": "{name}: an incoming call doesn't show in the notification shade. The phone still rings, and the call screen opens.",
+  "device.about.notifications.effect.command_listener": "The {name} channel (time left): while the shortcuts aren't shown, the time left doesn't show in the notification shade either.",
+  "device.about.notifications.effect.ring": "{name}: the stop button doesn't show while the phone rings. It still rings; stop it under Find Phone.",
+  "device.about.notifications.effect.window": "{name}: the notice with “Lock again” doesn't show while the phone is open.",
+  "device.about.notifications.fix": "To turn them on again: on the phone, open Vibb One's Settings (parent code), turn on “Pause all restrictions”, then tap “Vibb One notifications” on the same page. Turn on the ones named above, then turn the pause off again.",
+  "device.attention.notifications_off": "Notifications off: {names}",
+  "device.attention.notifications_all_off": "All Vibb One notifications are off"
 }

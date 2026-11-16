@@ -65,6 +65,7 @@ import kotlinx.coroutines.withContext
 private const val LOG_TAG = "SettingsFragmentLauncher"
 private const val BACKGROUND_CONNECTION = "settings_mdm_background_connection"
 private const val WRITE_SETTINGS = "settings_mdm_write_settings"
+private const val NOTIFICATIONS = "settings_mdm_notifications"
 private const val ASSISTANT = "settings_mdm_assistant"
 private const val WIFI_APM = "settings_mdm_wifi_apm"
 private const val CALL_FILTER = "settings_mdm_call_filter"
@@ -120,6 +121,22 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
             com.kidslauncher.mdm.push.SyncRunner.request(context.applicationContext, "write_settings")
         }
         updateWriteSettingsRow()
+    }
+
+    /** Design 107 §6: the channels' report before Android's notification page opened - a change on return is reported
+     * at once (a sync), so the PWA's row follows. */
+    private var notificationsBeforePage: com.kidslauncher.mdm.notify.NotificationChannelsReport? = null
+    private var notificationsPageMissing = false
+    private val notificationsLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        val app = context?.applicationContext ?: return@registerForActivityResult
+        val before = notificationsBeforePage
+        lifecycleScope.launch {
+            val now = withContext(Dispatchers.IO) { com.kidslauncher.mdm.notify.NotificationChannelsReader.read(app) }
+            if (now != before) {
+                com.kidslauncher.mdm.push.SyncRunner.request(app, com.kidslauncher.mdm.notify.NOTIFICATION_CHANNELS_SYNC_REASON)
+            }
+            updateNotificationsRow()
+        }
     }
 
     /** Design 98 §3.2: Android's "Digital assistant app" page answered - the default-apps window ends now. */
@@ -279,6 +296,21 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
                 }
             }
             updateBatteryRow()
+            true
+        }
+
+        // Design 107 §6: Android's notification page for Vibb One, on the write-settings row's path - it resolves only
+        // during the pause (Android's Settings is hidden in the kiosk), so a tap outside one opens nothing and the
+        // summary says what to do.
+        findPreference<Preference>(NOTIFICATIONS)?.setOnPreferenceClickListener {
+            val app = requireContext().applicationContext
+            val pages = com.kidslauncher.mdm.notify.NotificationChannelsReader.pageIntents(app)
+            notificationsPageMissing = false
+            if (pages.isNotEmpty()) {
+                notificationsBeforePage = com.kidslauncher.mdm.notify.NotificationChannelsReader.read(app)
+                notificationsPageMissing = !openFirstPage(pages, notificationsLauncher)
+            }
+            updateNotificationsRow()
             true
         }
 
@@ -576,6 +608,7 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
     private fun updateSystemPageRows() {
         updateBatteryRow()
         updateWriteSettingsRow()
+        updateNotificationsRow()
         updateAssistantRows()
         updateFingerprintRow()
         updateMediaLockRow()
@@ -690,6 +723,32 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
                     if (com.kidslauncher.mdm.assistant.AssistantSetup.setupWindowOpen()) R.string.settings_call_filter_open else R.string.settings_call_filter_pause_first,
                 )
             }
+        }
+    }
+
+    /** Design 107 §6: shown only while a channel other than Snarveier's, or the whole app, is turned off (the report's
+     * read, off the main thread); its summary names them in the phone's words and says what a tap does now. */
+    private fun updateNotificationsRow() {
+        val app = context?.applicationContext ?: return
+        lifecycleScope.launch {
+            val (report, pages) = withContext(Dispatchers.IO) {
+                com.kidslauncher.mdm.notify.NotificationChannelsReader.read(app) to
+                    com.kidslauncher.mdm.notify.NotificationChannelsReader.pageIntents(app)
+            }
+            if (context == null) return@launch
+            val row = findPreference<Preference>(NOTIFICATIONS) ?: return@launch
+            val text = com.kidslauncher.mdm.notify.notificationsRowText(report, pageAccess(pages, notificationsPageMissing))
+            row.isVisible = text != null
+            text ?: return@launch
+            val what = if (text.allOff) {
+                getString(R.string.settings_notifications_all_off)
+            } else {
+                getString(
+                    R.string.settings_notifications_off,
+                    text.off.joinToString(", ") { getString(R.string.settings_notifications_quoted, getString(it.nameRes)) },
+                )
+            }
+            row.summary = getString(R.string.settings_notifications_summary, what, getString(text.action))
         }
     }
 

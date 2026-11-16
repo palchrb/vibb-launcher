@@ -99,6 +99,7 @@ pub const REPORT_KEYS: &[&str] = &[
     "shortcuts",
     "captive_portal",
     "login_browser",
+    "notification_channels",
 ];
 
 /// A kept body older than this is never expanded (the phone sends a full report every 6 h anyway); retention deletes it.

@@ -4656,5 +4656,22 @@
   "events.pin_used.entry.wifi_signin": "Wi-Fi-innlogging",
   "security.detail.pin.wifi_signin": "{at}: Wi-Fi-innlogging åpnet med foreldrekoden.",
   "security.detail.pin.place.wifi_signin": "ved Wi-Fi-innloggingen",
-  "settings.notifications.switch.wifi_signin": "Wi-Fi-innlogging"
+  "settings.notifications.switch.wifi_signin": "Wi-Fi-innlogging",
+  "device.about.notifications": "Varsler",
+  "device.about.notifications.all_on": "Alle på",
+  "device.about.notifications.all_off": "Alle av",
+  "device.about.notifications.off": "Av: {names}",
+  "device.about.notifications.more": "{names} og {count} til",
+  "device.about.notifications.quoted": "«{name}»",
+  "device.about.notifications.lead": "Disse varslene fra Vibb One er slått av på telefonen.",
+  "device.about.notifications.lead_all_off": "Alle varsler fra Vibb One er slått av på telefonen. Ingen varsler fra Vibb One vises.",
+  "device.about.notifications.effect.messages": "{name}: nye meldinger gir ingen lyd og vises ikke i varsellisten eller på låseskjermen. Tallet på Meldinger på Hjem-skjermen vises fortsatt.",
+  "device.about.notifications.effect.missed_calls": "{name}: et tapt anrop vises ikke i varsellisten. Merket på kontakten vises fortsatt.",
+  "device.about.notifications.effect.calls": "{name}: et innkommende anrop vises ikke i varsellisten. Telefonen ringer fortsatt, og samtaleskjermen åpnes.",
+  "device.about.notifications.effect.command_listener": "Kanalen {name} (tid igjen): når Snarveier ikke vises, vises heller ikke tiden som er igjen i varsellisten.",
+  "device.about.notifications.effect.ring": "{name}: stoppknappen vises ikke mens telefonen ringer. Den ringer likevel; stopp den under Finn telefonen.",
+  "device.about.notifications.effect.window": "{name}: varselet med «Lås igjen» vises ikke mens telefonen er åpen.",
+  "device.about.notifications.fix": "Slik slår du dem på igjen: åpne Innstillinger i Vibb One på telefonen (foreldrekode), slå på «Sett alle begrensninger på pause», og trykk så «Varsler fra Vibb One» på samme side. Slå på de som er nevnt over, og slå av pausen igjen.",
+  "device.attention.notifications_off": "Varsler slått av: {names}",
+  "device.attention.notifications_all_off": "Alle varsler fra Vibb One er av"
 }

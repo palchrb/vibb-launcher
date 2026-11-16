@@ -64,3 +64,28 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   sync (`app_access`). Display over other apps and battery "Unrestricted" get no row (§2.2). `KidScreensEscapeTest`
   stays green: the intents live in `server/`, behind the gate.
 - Not device-tested: `docs/testing/emulator.md` §6v (the probe, Element X's camera, Immich, Etar) and the Jelly Star run.
+
+## Vibb One's own notifications turned off (design 107, `docs/design/107-blocked-channels.md`)
+
+- **The report**: every full report carries `notification_channels` (`notify/NotificationChannels.kt`, contract
+  `notification_channels.json`, `NotificationChannelsTest`; capability `notification_channels_v1`): `all_off`
+  (`NotificationManagerCompat.areNotificationsEnabled()` false) and `blocked`, the table's keys (`ReportedChannel`,
+  each channel's id without `launcher:`) of the channels at `IMPORTANCE_NONE` or in a blocked group, in the table's
+  order. One read at each report build (`NotificationChannelsReader.read`: `notificationChannels`,
+  `notificationChannelGroups`, the app switch; the pure `channelsReport`); any failure leaves the field out (the PWA
+  then shows nothing). Snarveier counts only as the channel in use (`ShortcutsRuntime.currentChannelId`); an older
+  `.N` id, an unknown id and Android 16's reserved `android.app.*` channels are skipped; a channel that doesn't exist is
+  not off. Silent (LOW) channels aren't reported (Q6). Not a heartbeat field: a change is in the hash, so it goes as a
+  full report.
+- **The role lock**: while Vibb holds the dialer role (`calls_mode`/`sms_mode` other than unmanaged/unmanaged) every
+  `launcher:` channel is locked (`NON_BLOCKABLE_DEFAULT_ROLES`), so the long-press sheet can't turn one off; the report
+  matters on an unmanaged phone, after a failed role take, for a block that survives the role (gate §6ax step 3),
+  another SystemUI and Android 17.
+- **Settings' "Vibb One notifications" row** (`settings_mdm_notifications`, after "Modify system settings"; the same
+  page-row pattern): shown only while a channel other than Snarveier's, or the whole app, is off (the same reader, off
+  the main thread; `notificationsRowText`). Its summary names them in the phone's words, quoted, then by
+  `SystemPageAccess`: "Trykk for å slå på", "Sett alle begrensninger på pause først", the wait and no-page words. The
+  page is `ACTION_APP_NOTIFICATION_SETTINGS` with `EXTRA_APP_PACKAGE` through `systemPageIntent`, so in the kiosk
+  nothing resolves and a tap opens nothing; in the pause Android's page opens, and the return asks for a sync when the
+  read changed. Re-read on resume, after a tap, at the pause's start and after each apply (`updateSystemPageRows`).
+  Vibb never raises a channel the kid turned off (Q4): no remote re-enable.
