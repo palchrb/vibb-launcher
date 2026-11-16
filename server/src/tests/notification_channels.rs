@@ -187,7 +187,8 @@ async fn the_info_says_what_is_lost_and_how_to_fix_it() {
     let about = format!("/devices/{id}/about");
     let fix_en = "To turn them on again: on the phone, open Vibb One's Settings (parent code), turn on “Pause all \
                   restrictions”, then tap “Vibb One notifications” on the same page. Turn on the ones named above, then \
-                  turn the pause off again.";
+                  turn the pause off again. If a switch is grey, first set Calls and SMS to “Not managed” under Calls \
+                  and SMS, and set them back afterwards.";
     let anchor_en = "The “Vibb One” channel (time left): while the shortcuts aren't shown, the time left doesn't show \
                      in the notification shade either.";
     for bit in [true, false] {
@@ -238,7 +239,10 @@ async fn the_info_says_what_is_lost_and_how_to_fix_it() {
     let detail = about_detail(&nb).unwrap();
     assert!(detail.starts_with("Disse varslene fra Vibb One er slått av på telefonen. «Meldinger»: nye meldinger gir ingen lyd"), "{detail}");
     assert!(
-        detail.ends_with("Slå på de som er nevnt over, og slå av pausen igjen."),
+        detail.ends_with(
+            "Slå på de som er nevnt over, og slå av pausen igjen. Er en bryter grå, sett først Samtaler og SMS til \
+             «Ikke styrt» under Anrop og SMS, og sett dem tilbake etterpå."
+        ),
         "{detail}"
     );
     let summary = app

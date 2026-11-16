@@ -1,6 +1,6 @@
 # 107 - Blocked notification channels, named in the PWA (revision 2)
 
-Round `blocked-channels`, 2026-11-16. Launcher and server. **Status: design, revision 2.** PLAN: "Blocked notification
+Round `blocked-channels`, 2026-11-16. Launcher and server. **Status: built** (2026-11-16, branch `blocked-channels`; gate `docs/testing/emulator.md` §6ax; "Built" at the end). PLAN: "Blocked notification
 channels named in the PWA" (approved 2026-11-15, design 99 D11, size S). The status report names every Vibb One
 notification channel that is turned off, and the phone's page in the PWA says so. The Q list at the end holds the choices
 with a cost the parent or the kid can see. The user hasn't answered it yet.
@@ -501,3 +501,25 @@ Revision 1's network-off fallback step is dropped (L11): the unit tests cover th
   that opens the phone. The About row and Attention say it.
 - **Q6. Channels the kid made "Silent"** (still shown, no sound). **Recommended: not reported.** That is the same kind
   of choice as the ringer mode, and reporting it would turn a normal setting into a warning.
+
+## Built (2026-11-16)
+
+As designed, with Q1-Q6 as recommended, and three changes from the gate (§6ax, Android 14 and 16):
+
+- **The receiver is `RECEIVER_EXPORTED`** (§3 said not exported). The long-press sheet's change reaches Android from
+  SystemUI, so the block-state broadcast goes out with SystemUI's uid, and Android drops it at enqueue for a
+  not-exported receiver ("Exported Denial"); only a change on Settings' own page arrived. The three actions are protected
+  broadcasts and the receiver only asks for a sync, so exporting it opens nothing. Snarveier's own receiver
+  (`ShortcutsRuntime.init`, design 99) has the same drop for its refresh on a block; left as it is here.
+- **A stale block can't be raised while the role is held** (L7's second prediction failed): Android's page greys the
+  locked channel's switch, and the app switch while POST_NOTIFICATIONS is policy-fixed. §11's fallback is in: the
+  `.fix` text ends "If a switch is grey, first set Calls and SMS to “Not managed” under Calls and SMS, and set them back
+  afterwards" (nb likewise), checked on both images.
+- **The app-wide switch takes on an unmanaged phone and kills the process** (the permission revoke); no
+  `ACTION_APP_BLOCK_STATE_CHANGED` was seen for it, and the process start's sync carries `all_off`.
+
+Also: the PWA quotes the names in the page's quotes («» on nb pages, “” on en) in About's value and the ⓘ, and leaves
+them unquoted in the Attention title (§5.3's example); the phone's row quotes them in the phone's language. With
+`all_off` the ⓘ is `.lead_all_off`, then the named channels' sentences, then the fix. Owed: Android 17 and the Jelly
+Star (§9).
+

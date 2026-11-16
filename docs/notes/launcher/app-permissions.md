@@ -89,3 +89,7 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   nothing resolves and a tap opens nothing; in the pause Android's page opens, and the return asks for a sync when the
   read changed. Re-read on resume, after a tap, at the pause's start and after each apply (`updateSystemPageRows`).
   Vibb never raises a channel the kid turned off (Q4): no remote re-enable.
+- **A stale block under the role** (gate §6ax step 3, Android 14 and 16): a channel turned off while the role was away stays
+  at NONE when Vibb takes the dialer role again, now locked - and Android's page then greys its switch too, so it can't
+  be turned on in a pause either. The fix is to hand the role back first (calls and SMS to "Ikke styrt" in the PWA),
+  turn it on in the pause, and manage them again; the PWA's ⓘ says so.

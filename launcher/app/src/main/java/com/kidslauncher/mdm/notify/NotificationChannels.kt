@@ -169,9 +169,13 @@ object NotificationChannelsReader {
 
 /**
  * §3: a channel, a channel group or the whole app turned off or on by the user asks for a sync, so the parent's page
- * follows within seconds; the report's read is the truth. Registered once per process from `Application.initRest`
- * (`RECEIVER_NOT_EXPORTED`: Android sends these only to the owning package). [SyncRunner] coalesces the burst of one
- * Apply in the long-press sheet (one broadcast per changed channel).
+ * follows within seconds; the report's read is the truth. Registered once per process from `Application.initRest`.
+ * [SyncRunner] coalesces the burst of one Apply in the long-press sheet (one broadcast per changed channel).
+ *
+ * `RECEIVER_EXPORTED` on purpose (gate §6ax, Android 14 and 16): a change from the long-press sheet is sent with
+ * SystemUI's uid, not the system's, and Android drops it at enqueue for a `RECEIVER_NOT_EXPORTED` receiver ("Exported
+ * Denial"); only a change in Settings' own page arrived. The three actions are protected broadcasts (only the system
+ * and privileged apps may send them), and the receiver only asks for a sync, so nothing else can use it.
  */
 object NotificationChannelsWatch {
     private const val LOG_TAG = "NotificationChannels"
@@ -197,7 +201,7 @@ object NotificationChannelsWatch {
                 }
             },
             filter,
-            ContextCompat.RECEIVER_NOT_EXPORTED,
+            ContextCompat.RECEIVER_EXPORTED,
         )
     }
 }

@@ -164,7 +164,9 @@ class NotificationChannelsTest {
             assertTrue(action, "addAction(NotificationManager.$action)" in watch)
         }
         assertTrue("SyncRunner.request(context.applicationContext, NOTIFICATION_CHANNELS_SYNC_REASON)" in watch)
-        assertTrue("RECEIVER_NOT_EXPORTED" in watch)
+        // Exported: the long-press sheet's broadcast comes with SystemUI's uid and is dropped for a not-exported
+        // receiver (gate §6ax); the actions are protected broadcasts.
+        assertTrue("ContextCompat.RECEIVER_EXPORTED," in watch)
         val code = watch.lines().filterNot { it.trim().startsWith("//") || it.trim().startsWith("*") }
         assertTrue(code.none { "Extra" in it || "extras" in it })
         val app = File(main, "java/com/kidslauncher/mdm/Application.kt").readText()

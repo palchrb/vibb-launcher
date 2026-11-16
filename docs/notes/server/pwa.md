@@ -2555,7 +2555,8 @@ Pinned by `shell::the_app_shell_scrolls_main_not_the_document`; measured by `jst
   "Av: «Meldinger», «Tapte anrop»" (up to four names, from five three and "og N til"). Orange (`row-value-action`) for
   "Alle av" or an orange channel (Meldinger, Tapte anrop, Samtaler). The ⓘ (only when something is off): the lead, a
   sentence for each named channel with an effect (`effect` keys), the fix (the pause and the phone's "Varsler fra Vibb
-  One" row). No row from an older launcher.
+  One" row, and - since a channel blocked before the dialer role came back stays locked with a grey switch, gate §6ax -
+  calls and SMS to "Ikke styrt" first if a switch is grey). No row from an older launcher.
 - **Attention** (`Kind::NotificationsOff`, Action, key `notifications-off`, right after `NoNotificationAccess`, to
   `/about#sound`): a blocked Meldinger or Tapte anrop while its feature counts ("Varsler slått av: Meldinger, Tapte
   anrop", the names unquoted), or the app-wide switch off while SMS or calls are managed ("Alle varsler fra Vibb One er

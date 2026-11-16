@@ -4671,7 +4671,7 @@
   "device.about.notifications.effect.command_listener": "The {name} channel (time left): while the shortcuts aren't shown, the time left doesn't show in the notification shade either.",
   "device.about.notifications.effect.ring": "{name}: the stop button doesn't show while the phone rings. It still rings; stop it under Find Phone.",
   "device.about.notifications.effect.window": "{name}: the notice with “Lock again” doesn't show while the phone is open.",
-  "device.about.notifications.fix": "To turn them on again: on the phone, open Vibb One's Settings (parent code), turn on “Pause all restrictions”, then tap “Vibb One notifications” on the same page. Turn on the ones named above, then turn the pause off again.",
+  "device.about.notifications.fix": "To turn them on again: on the phone, open Vibb One's Settings (parent code), turn on “Pause all restrictions”, then tap “Vibb One notifications” on the same page. Turn on the ones named above, then turn the pause off again. If a switch is grey, first set Calls and SMS to “Not managed” under Calls and SMS, and set them back afterwards.",
   "device.attention.notifications_off": "Notifications off: {names}",
   "device.attention.notifications_all_off": "All Vibb One notifications are off"
 }

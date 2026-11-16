@@ -4671,7 +4671,7 @@
   "device.about.notifications.effect.command_listener": "Kanalen {name} (tid igjen): når Snarveier ikke vises, vises heller ikke tiden som er igjen i varsellisten.",
   "device.about.notifications.effect.ring": "{name}: stoppknappen vises ikke mens telefonen ringer. Den ringer likevel; stopp den under Finn telefonen.",
   "device.about.notifications.effect.window": "{name}: varselet med «Lås igjen» vises ikke mens telefonen er åpen.",
-  "device.about.notifications.fix": "Slik slår du dem på igjen: åpne Innstillinger i Vibb One på telefonen (foreldrekode), slå på «Sett alle begrensninger på pause», og trykk så «Varsler fra Vibb One» på samme side. Slå på de som er nevnt over, og slå av pausen igjen.",
+  "device.about.notifications.fix": "Slik slår du dem på igjen: åpne Innstillinger i Vibb One på telefonen (foreldrekode), slå på «Sett alle begrensninger på pause», og trykk så «Varsler fra Vibb One» på samme side. Slå på de som er nevnt over, og slå av pausen igjen. Er en bryter grå, sett først Samtaler og SMS til «Ikke styrt» under Anrop og SMS, og sett dem tilbake etterpå.",
   "device.attention.notifications_off": "Varsler slått av: {names}",
   "device.attention.notifications_all_off": "Alle varsler fra Vibb One er av"
 }

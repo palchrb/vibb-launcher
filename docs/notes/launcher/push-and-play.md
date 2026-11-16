@@ -161,9 +161,16 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
 ## A notification channel turned off asks for a sync (design 107 §3)
 
 - `NotificationChannelsWatch.init` (from `Application.initRest`'s tail, once per process) registers one runtime receiver
-  (`RECEIVER_NOT_EXPORTED`) for `ACTION_NOTIFICATION_CHANNEL_BLOCK_STATE_CHANGED`,
+  (`RECEIVER_EXPORTED`) for `ACTION_NOTIFICATION_CHANNEL_BLOCK_STATE_CHANGED`,
   `ACTION_NOTIFICATION_CHANNEL_GROUP_BLOCK_STATE_CHANGED` and `ACTION_APP_BLOCK_STATE_CHANGED` (Android sends them only
-  to the owning package, when a user's change crosses NONE). Each asks `SyncRunner.request(app,
+  to the owning package, when a user's change crosses NONE). **Exported on purpose** (gate §6ax): a change from the
+  long-press sheet is sent with SystemUI's uid, and Android drops it at enqueue for a not-exported receiver ("Exported
+  Denial", in `dumpsys activity broadcasts history`); only Settings' own page (the system uid) reached one. The actions
+  are protected broadcasts, and the receiver only asks for a sync. (Snarveier's own receiver in `ShortcutsRuntime.init`
+  lists the channel action too and is not exported, so its refresh on a block never comes from this broadcast.)
+- The app-wide switch turned off revokes POST_NOTIFICATIONS, and Android kills the process for it (exit reason
+  `PERMISSION CHANGE`); no `ACTION_APP_BLOCK_STATE_CHANGED` was seen, and the process start's sync carries the report
+  (§6ax). Each asks `SyncRunner.request(app,
   "notification_channels")`; `SyncRunner` coalesces the burst of one Apply. The receiver reads no extra (L5: a refused
   change still sends the broadcast); the report's own read is the truth. A missed broadcast waits for the next sync
   (the backstop, an SSE nudge, a process start).
