@@ -447,7 +447,8 @@ class LockActivity : UIObjectActivity() {
             // Calls aren't part of the lock unless the rule says so (school): every other app is suspended, but the
             // phone book (our own package) still calls the allowed contacts. With calls unmanaged only Emergency call
             // remains.
-            is LockRow.PhoneBook -> startActivity(PhoneBookActivity.intent(this))
+            // On the page itself (code QA H1): anything left above it in its task is closed, and its rule check runs.
+            is LockRow.PhoneBook -> startActivity(PhoneBookActivity.intent(this, toPage = true))
             // Its own task (MessagesScreens.listIntent), as Kalender's; Back from it comes back here.
             is LockRow.Messages -> startActivity(com.kidslauncher.mdm.ui.messages.MessagesScreens.listIntent(this))
             // Its own task (`DayActivity.intent`); Back from it comes back here.

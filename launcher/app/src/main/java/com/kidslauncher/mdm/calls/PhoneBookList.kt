@@ -16,6 +16,12 @@ import java.text.Collator
  * among themselves. An emergency number with an unseen missed call sits in the top like any other contact.
  */
 
+/** Under a time rule the phone book is usable where the rule allows calls - where the time-rule screen offers its row
+ * (`timeLockRows`) and where Meldinger is usable ("as the phone book", `messagesUsableUnder`); the used-up budget keeps
+ * calls, so it keeps the phone book. `null` = no time policy. Since its own task (2026-11-16) Recents can bring it over
+ * the time-rule screen, so its resume asks this ([PhoneBookActivity.redirectIfLocked]). */
+fun phoneBookUsableUnder(lock: com.kidslauncher.mdm.timerules.TimeLock?): Boolean = lock == null || !lock.locked || lock.callsAllowed
+
 /** A top row counts as seen when it was on screen this long while the phone book was resumed and focused (§3.2). */
 const val PHONE_BOOK_SEEN_MS = 1_000L
 

@@ -172,7 +172,9 @@ object ContactSheet {
     fun openMessage(activity: Activity, message: MessageIntent) {
         for (uri in message.uris) {
             try {
-                activity.startActivity(Intent(message.action, Uri.parse(uri)).setPackage(message.packageName))
+                // A task of its own (code QA H1 of the phone book's task): in the phone book's task the app would stay
+                // usable there under a rule that suspends it - suspension and the kiosk judge a task by its root.
+                activity.startActivity(Intent(message.action, Uri.parse(uri)).setPackage(message.packageName).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                 return
             } catch (e: Exception) {
                 // Not found, or refused (SecurityException): try the next form (Element X: the

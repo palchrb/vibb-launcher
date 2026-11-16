@@ -180,13 +180,14 @@ const val CHECKPOINT_MS = 60_000L
 fun checkpointDelayMs(remainingMs: Long?): Long =
     if (remainingMs != null && remainingMs > 0) ((remainingMs - 1) % 60_000L) + 1 + 200 else CHECKPOINT_MS
 
-/** Our screens whose time is free: the lock screen, the phone book, our in-call screen and
- * Settings. Home is not on the list - other apps can be visible over it (picture-in-picture,
+/** Our screens whose time is free: the lock screen, the phone book (either look's class, since its own task on
+ * 2026-11-16), our in-call screen and Settings. Home is not on the list - other apps can be visible over it (picture-in-picture,
  * overlays), QA step 6 #2. */
 val FREE_SCREENS = setOf(
     "com.kidslauncher.mdm.ui.LockActivity",
     "com.kidslauncher.mdm.lock.PinLockActivity",
     "com.kidslauncher.mdm.calls.PhoneBookActivity",
+    "com.kidslauncher.mdm.calls.LightPhoneBookActivity",
     "com.kidslauncher.mdm.calls.InCallActivity",
     "com.kidslauncher.mdm.ui.settings.SettingsActivity",
 )

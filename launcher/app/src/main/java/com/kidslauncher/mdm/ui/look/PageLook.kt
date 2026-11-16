@@ -72,9 +72,10 @@ fun mayChange(pageTaskStarted: Int): Boolean = pageTaskStarted <= 0
  * longer than a page takes to be created, short enough that a start that never made one doesn't hold it for long. */
 const val START_IN_FLIGHT_MS = 5_000L
 
-/** A task a change closes, by its root activity's class name: Kalender's and Meldinger's, whichever of a page's two
- * classes is the root. */
-fun closesTask(rootClassName: String?): Boolean = PageKind.DAY.has(rootClassName) || PageKind.MESSAGES.has(rootClassName)
+/** A task a change closes, by its root activity's class name: Kalender's, Meldinger's and the phone book's, whichever
+ * of a page's two classes is the root. */
+fun closesTask(rootClassName: String?): Boolean =
+    PageKind.DAY.has(rootClassName) || PageKind.MESSAGES.has(rootClassName) || PageKind.PHONE_BOOK.has(rootClassName)
 
 /** The kid's look as this process holds it, and the three moments it moves. Main thread. */
 internal class LookState(private val host: LookHost) {

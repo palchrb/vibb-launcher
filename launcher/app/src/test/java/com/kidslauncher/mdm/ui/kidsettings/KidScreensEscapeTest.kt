@@ -56,6 +56,8 @@ class KidScreensEscapeTest {
     private val guarded = listOf(
         "ui/kidsettings", "ui/quickcontrols", "ui/wallpaper", "server/QuickControls.kt", "server/BluetoothAudio.kt",
         "ui/HomeActivity.kt", "ui/home", "calls/PhoneBookActivity.kt", "calls/PhoneBookAdapter.kt", "ui/day", "calendar",
+        // The phone book's light twin and its look-less entry (its own task, 2026-11-16).
+        "calls/LightPages.kt", "calls/PhoneBookEntryActivity.kt",
         "actions", "ui/messages",
         // Design 99: Snarveier - the panel in the shade, its receiver and Flymodus's window (the picker is in ui/kidsettings).
         "shortcuts",
@@ -160,7 +162,7 @@ class KidScreensEscapeTest {
         val sheet = code("calls/ContactSheet.kt")
         // The message app (openMessage) and, since step 4, the kid's picture screen - nothing else.
         assertEquals(2, Regex("""startActivity\(""").findAll(sheet).count())
-        assertTrue(sheet.contains("activity.startActivity(Intent(message.action, Uri.parse(uri)).setPackage(message.packageName))"))
+        assertTrue(sheet.contains("activity.startActivity(Intent(message.action, Uri.parse(uri)).setPackage(message.packageName).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))"))
         assertTrue(sheet.contains("activity.startActivity(KidPhotoActivity.forContact(activity, contact, camera))"))
         // Code QA M1: "Bilde av …" is kept and closes with the card (so Home's closeOverlays() closes both).
         assertTrue(sheet.contains("opened(sheet)") && sheet.contains("photoSheet?.dismiss()"))

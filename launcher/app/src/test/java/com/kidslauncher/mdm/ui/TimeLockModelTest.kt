@@ -447,7 +447,7 @@ class TimeLockModelTest {
                 assertFalse("$dir $name", name in s)
             }
         }
-        assertTrue("startActivity(PhoneBookActivity.intent(this))" in activity)
+        assertTrue("startActivity(PhoneBookActivity.intent(this, toPage = true))" in activity)
         assertTrue("startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))" in activity)
         // The rows come from the lock's own decision, filtered as before (launchable, not suspended).
         assertTrue("timeLockRows(callsManaged, lock?.callsAllowed != false," in activity)

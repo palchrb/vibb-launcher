@@ -101,7 +101,8 @@ class PlayInvariantsTest {
         val pin = enforcer.substringAfter("private fun enforceCallLogPin(").substringBefore("\n    }\n")
         assertTrue("addDataType(CALL_LOG_TYPE)" in pin)
         assertTrue("Intent.CATEGORY_DEFAULT" in pin)
-        assertTrue("PhoneBookActivity::class.java" in pin)
+        // The look-less entry since 2026-11-16 (the page is a class per look, design 78 §12.2 R7).
+        assertTrue("PhoneBookEntryActivity::class.java" in pin)
     }
 
     /** A source file's code without its comment lines, so a commented-out call doesn't pass a scan
