@@ -4667,7 +4667,11 @@ dark rows in the top and bottom 40 px at x 460, and the brightest and darkest pi
 region sampling and system_server's task snapshots - with `-feature -GLDMA,-GLDMA2`, `-gpu guest` and `-gpu off` alike;
 surfaceflinger or system_server dies and the phone restarts. 3-button navigation (`cmd overlay enable-exclusive
 --category com.android.internal.systemui.navbar.threebutton`) and host screenshots (`adb emu screenrecord screenshot`)
-avoid the first two; a task snapshot still killed system_server after the Flymodus run. So 17's rows are partial.
+avoid the first two; a task snapshot still killed system_server after the Flymodus run. So 17's rows are partial. Retried 2026-11-16 with
+emulator 37.2.13 and the canary 37.3.9 (`sdkmanager --channel=3 emulator`): `compat372` with `-wipe-data` still aborts
+the same way at its first boot (surfaceflinger's RegionSampling, three times within a minute), so nothing more was run;
+the stable 37.2.13 is back (`sdkmanager --uninstall emulator`, then `sdkmanager --channel=0 emulator` - a plain
+`sdkmanager emulator` keeps the newer canary).
 
 **Found on Android 14, outside this round:** a reboot of the enrolled API 34 phone never finished booting (user 0 stays
 `BOOTING`, `sys.boot_completed` unset after 7 minutes; no HOME resolves before the first unlock - Settings' FallbackHome is
@@ -4766,7 +4770,8 @@ rule=1 on_len=60`. Read the list in `dumpsys activity activities` (`LockTaskCont
 6. **Ticked on Skole**: the rule again with `exempt_apps_json ["org.fossify.clock"]` - in the list, its row "Clock"
    opens `MainActivity`.
 
-**`compat372` (API 37.2) could not run**: on every app transition system_server aborts in its
+**`compat372` (API 37.2) could not run** (nor with emulator 37.2.13 or the canary 37.3.9, retried the same day - see
+"Android 17 on this VM"): on every app transition system_server aborts in its
 `TaskSnapshotPersister` (`hasReadColorBufferDma`), and with gesture navigation surfaceflinger's RegionSampling too -
 with `-gpu swiftshader_indirect`, `guest` (lavapipe), `swangle_indirect` and `-feature -GLDMA,-GLDMA2,-GLDirectMem`
 (3-button navigation stops only the surfaceflinger one). **`handy36` (API 36, `-read-only -wipe-data`) instead**,
