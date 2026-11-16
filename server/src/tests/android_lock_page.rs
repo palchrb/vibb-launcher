@@ -98,24 +98,26 @@ async fn events(app: &TestApp, kind: &str) -> Vec<Option<String>> {
         .collect()
 }
 
-/// §2.3: the switch needs a Child PIN, saves, logs a change, queues the PIN for a phone that can
-/// take it and cancels it again on the way back; every answer lands on the Child PIN group.
+/// §2.3: the switch saves (since 2026-11-16 also before a Child PIN, the choice waiting for it),
+/// logs a change, queues the PIN for a phone that can take it and cancels it again on the way back;
+/// every answer lands on the Child PIN group.
 #[tokio::test]
 async fn the_switch_saves_queues_and_cancels() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("Anna").await;
-    // No Child PIN: refused, nothing written, the select disabled.
+    // No Child PIN: saved, nothing to send, and the row says the choice waits for the PIN.
     let res = switch(&app, &cookie, id, "android").await;
     assert_eq!(
         res.location(),
-        Some(format!("/devices/{id}/lock?notice=keyguard_no_pin#lock-keyguard").as_str())
+        Some(format!("/devices/{id}/lock#lock-keyguard").as_str())
     );
-    assert!(
-        page(&app, &cookie, id)
-            .await
-            .contains("name=\"keyguard\" data-autosave disabled")
-    );
+    let html = page(&app, &cookie, id).await;
+    assert!(html.contains("name=\"keyguard\" data-autosave>"), "enabled");
+    assert!(html.contains("<option value=\"android\" selected>Android's lock</option>"));
+    assert!(html.contains("Starts when the Child PIN is set"));
+    assert!(pin_rows(&app, id).await.is_empty());
+    switch(&app, &cookie, id, "own").await;
     let res = app
         .request_form(
             Method::POST,
@@ -185,6 +187,8 @@ async fn the_switch_saves_queues_and_cancels() {
     assert_eq!(
         events(&app, "kid_keyguard_changed").await,
         [
+            Some(format!("phone {id}: Android's lock")),
+            Some(format!("phone {id}: Vibb One's lock")),
             Some(format!("phone {id}: Android's lock")),
             Some(format!("phone {id}: Vibb One's lock")),
         ]
@@ -557,4 +561,169 @@ async fn the_page_words_the_phone_against_the_choice() {
         !summary.contains("Lock is off on the phone"),
         "Android's PIN is the gate"
     );
+}
+
+/// 2026-11-16 (the user: "vi bruker ikke noe annet enn androids pin lås"): a phone added on the Devices tab gets
+/// Android's lock. Without a Child PIN the policy has no `kid_lock` (no lock at all, as before), the select is
+/// enabled with the choice waiting for the PIN; the first Child PIN makes the policy's `keyguard` "android" and
+/// queues the PIN for a phone that can take it. A phone made before (the column default) keeps Vibb One's lock.
+#[tokio::test]
+async fn a_new_phone_gets_androids_lock_once_the_child_pin_is_set() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let res = app
+        .request_form(
+            Method::POST,
+            "/devices/new",
+            Some(&cookie),
+            &[("name", "Emma")],
+        )
+        .await;
+    assert!(res.status.is_redirection(), "{}", res.text());
+    let id: i64 = sqlx::query_scalar("SELECT id FROM devices WHERE name = 'Emma'")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(stored_keyguard(&app, id).await, "android");
+    let code = app.new_code(id, crate::enrollment::Kind::Qr).await;
+    let res = app
+        .request(
+            Method::POST,
+            "/api/devices/enroll",
+            None,
+            Some(json!({ "enrollment_code": code })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK);
+    let token = res.json()["device_token"].as_str().unwrap().to_string();
+
+    // No Child PIN: no lock on the phone, and no word of Android's lock to it either.
+    assert!(app.policy(&token).await["kid_lock"].is_null());
+    report(&app, &token, &CAPS, json!({ "active": false })).await;
+    let html = page(&app, &cookie, id).await;
+    assert!(html.contains("<option value=\"android\" selected>Android's lock</option>"));
+    assert!(html.contains("<option value=\"own\">Vibb One's lock (being phased out)</option>"));
+    assert!(html.contains("name=\"keyguard\" data-autosave>"), "enabled");
+    assert!(html.contains("Starts when the Child PIN is set"));
+    assert!(!html.contains("Test phase"));
+    assert!(!html.contains("name=\"clear_kid_pin\""), "no PIN to remove");
+
+    // The Child PIN: Android's lock from the first policy that carries it.
+    for (route, field, pin) in [
+        ("parent-pin", "new_pin", "5829317"),
+        ("kid-lock", "new_kid_pin", "4826"),
+    ] {
+        let res = app
+            .request_form(
+                Method::POST,
+                &format!("/devices/{id}/{route}"),
+                Some(&cookie),
+                &[(field, pin)],
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::SEE_OTHER, "{route}");
+    }
+    assert_eq!(stored_keyguard(&app, id).await, "android");
+    assert_eq!(pin_rows(&app, id).await.len(), 1, "the PIN goes out");
+    let html = page(&app, &cookie, id).await;
+    assert!(!html.contains("Starts when the Child PIN is set"));
+    assert!(html.contains("Sending the PIN"));
+    let policy = app.policy(&token).await;
+    assert_eq!(policy["kid_lock"]["keyguard"], "android");
+    assert_eq!(policy["pending_command"]["command"], "set_kid_pin");
+
+    // A phone made before keeps its stored choice: no migration.
+    let (old, old_token) = app.enrolled_device("Mamma's old phone").await;
+    for (route, field, pin) in [
+        ("parent-pin", "new_pin", "5829317"),
+        ("kid-lock", "new_kid_pin", "4826"),
+    ] {
+        app.request_form(
+            Method::POST,
+            &format!("/devices/{old}/{route}"),
+            Some(&cookie),
+            &[(field, pin)],
+        )
+        .await;
+    }
+    assert_eq!(app.policy(&old_token).await["kid_lock"]["keyguard"], "own");
+}
+
+/// 2026-11-16: the Child PIN can't be removed while Android's lock is chosen - the page has no Remove form there,
+/// a row says why, and a post from an older page is refused with nothing written (the choice is never changed by
+/// it). With Vibb One's lock, Remove works as before and leaves the choice as it was. The labels in Norwegian.
+#[tokio::test]
+async fn the_child_pin_stays_while_androids_lock_is_chosen() {
+    let (app, cookie, id, token) = setup().await;
+    switch(&app, &cookie, id, "android").await;
+    let html = page(&app, &cookie, id).await;
+    assert!(!html.contains("name=\"clear_kid_pin\""), "{html}");
+    assert!(html.contains(
+        "data-row=\"remove-needs-pin\">Android's lock needs a Child PIN. \
+         To change it, save a new one above; to remove it, choose Vibb One's lock first."
+    ));
+
+    let clear = |id: i64| format!("/devices/{id}/kid-lock");
+    let res = app
+        .request_form(
+            Method::POST,
+            &clear(id),
+            Some(&cookie),
+            &[("clear_kid_pin", "on")],
+        )
+        .await;
+    assert_eq!(
+        res.location(),
+        Some(format!("/devices/{id}/lock?notice=keyguard_needs_pin#child-pin").as_str())
+    );
+    let policy = app.policy(&token).await;
+    assert_eq!(policy["kid_lock"]["keyguard"], "android");
+    assert!(events(&app, "kid_pin_cleared").await.is_empty());
+    let flashed = plain(
+        app.get_page(
+            &format!("/devices/{id}/lock?notice=keyguard_needs_pin"),
+            &cookie,
+        )
+        .await
+        .text(),
+    );
+    assert!(flashed.contains("Not removed: Android's lock needs a Child PIN."));
+
+    let nb = plain(
+        app.get_page(&format!("/devices/{id}/lock?lang=nb"), &cookie)
+            .await
+            .text(),
+    );
+    assert!(nb.contains("<option value=\"own\">Vibb Ones lås (fases ut)</option>"));
+    assert!(nb.contains("Androids lås trenger en barne-PIN"));
+    assert!(!nb.contains("Testfase"));
+
+    // Vibb One's lock: Remove is there again and works; the choice stays.
+    switch(&app, &cookie, id, "own").await;
+    let html = page(&app, &cookie, id).await;
+    assert!(html.contains("name=\"clear_kid_pin\""));
+    assert!(!html.contains("data-row=\"remove-needs-pin\""));
+    let res = app
+        .request_form(
+            Method::POST,
+            &clear(id),
+            Some(&cookie),
+            &[("clear_kid_pin", "on")],
+        )
+        .await;
+    assert_eq!(
+        res.location(),
+        Some(format!("/devices/{id}/lock?notice=cleared#child-pin").as_str())
+    );
+    assert!(app.policy(&token).await["kid_lock"].is_null());
+    assert_eq!(stored_keyguard(&app, id).await, "own");
+}
+
+/// `device_policy.kid_keyguard` as stored.
+async fn stored_keyguard(app: &TestApp, id: i64) -> String {
+    sqlx::query_scalar("SELECT kid_keyguard FROM device_policy WHERE device_id = ?")
+        .bind(id)
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
 }

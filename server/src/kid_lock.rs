@@ -1142,7 +1142,8 @@ pub fn flash_text(lang: Lang, code: &str) -> Option<(&'static str, bool)> {
         "pin_sent" => ("device.lock.flash.pin_sent", false),
         "pin_not_sent" => ("device.lock.flash.pin_not_sent", true),
         "pin_not_kept" => ("device.lock.flash.pin_not_kept", true),
-        "keyguard_no_pin" => ("device.lock.flash.keyguard_no_pin", true),
+        // 2026-11-16: Remove Child PIN while Android's lock is chosen (a page from before the switch).
+        "keyguard_needs_pin" => ("device.lock.flash.keyguard_needs_pin", true),
         "invalid" => ("device.lock.flash.invalid", true),
         "needs_override" => ("device.lock.flash.needs_override", true),
         "same_as_override" => ("device.lock.flash.same_as_override", true),

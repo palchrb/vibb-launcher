@@ -1079,3 +1079,25 @@ dismisses it). On a boot whose `top.log` shows `ResolverActivity` (BFU behind th
     `boot_cover_android`), as before. Own mode with the switch on: 16b/16e unchanged (the 3 s mark).
 12. Rollback to own mode: the marker goes at the next apply with the parent's choice, and the next reboot has no
     locked-boot start. During the NO_TOKEN escrow (Android's PIN still set) the marker stays.
+
+## Android's lock as the default (2026-11-16, branch `android-lock-default`)
+
+The user, 2026-11-16: "vi bruker ikke noe annet enn androids pin lås, det er den vi bygger for!" - approved: "Ja gjør
+det, det er bra!". Server only; the launcher and the contract are unchanged. Vibb One's own lock is still removed in
+phase D, not here. Details: `docs/notes/server/hardening-and-pins.md`, "Android's lock by default".
+
+- **A new phone gets Android's lock.** `insert_device_with_policy` stores `kid_keyguard = 'android'`; 0085's column
+  default stays `'own'`, so existing phones keep what they have (no migration). Without a Child PIN the policy's
+  `kid_lock` is null - no lock, as before, and the launcher reads no keyguard (`androidRequested(null)` is false). The
+  first Child PIN sends `kid_lock.keyguard: "android"`; our keypad checks the same hash until Android's PIN is set (by
+  `set_kid_pin` at once, or §3.4's keypad migration), so the phone is never unlocked in between. An older launcher
+  ignores the key and keeps Vibb One's lock (the page warns).
+- **The switch works without a Child PIN** (§2.3 said "disabled without a Child PIN"): the choice waits for the PIN,
+  the row says "Starts when the Child PIN is set". The "Test phase" sub-line is gone; Vibb One's option reads
+  "Vibb One's lock (being phased out)" / "Vibb Ones lås (fases ut)".
+- **Clearing the Child PIN** (§2.1 set `kid_keyguard = 'own'`): refused while Android's lock is chosen, since a clear
+  rolls the phone back to no lock at all (§3.8); the page shows why instead of Remove, an older page's post gets the
+  flash `keyguard_needs_pin`. With Vibb One's lock it works as before and the choice stays. To remove the PIN of a
+  phone on Android's lock, choose Vibb One's lock first. Whether Remove should go entirely (phase D) is the user's.
+- **Android 14-17**: nothing on the phone changed. The phone runs the design 59 paths it already has (`androidFace`,
+  `set_kid_pin`, §3.4's keypad migration) on a new phone as it did on a switched one; no new platform API.

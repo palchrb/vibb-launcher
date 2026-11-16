@@ -315,7 +315,7 @@ async fn nb_pages_have_no_english() {
         "pin_sent",
         "pin_not_sent",
         "pin_not_kept",
-        "keyguard_no_pin",
+        "keyguard_needs_pin",
         "invalid",
         "needs_override",
         "same_as_override",
