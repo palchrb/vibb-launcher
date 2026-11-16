@@ -37,7 +37,64 @@
             android:visibility="gone" />
     </FrameLayout>
 
-    <!-- Design 79 §4: the search pill from 8 contacts, under the header, not scrolling. -->
+    <!-- Design 106 §3.5 (B2): "Kontakter | Siste" - P9's control, two RadioButtons in a RadioGroup (TalkBack: "Kontakter,
+         valgt, 1 av 2"), 44 dp, on the page's tile; shown only while the kid can ask and the form is closed. Neither
+         button saves its state: the activity alone holds the tab (a visit always starts on Kontakter). -->
+    <RadioGroup
+        android:id="@+id/phone_book_tabs"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:layout_marginBottom="4dp"
+        android:background="@drawable/bg_phone_book_tabs"
+        android:contentDescription="@string/phone_book_tabs"
+        android:minHeight="44dp"
+        android:orientation="horizontal"
+        android:visibility="gone">
+
+        <RadioButton
+            android:id="@+id/phone_book_tab_contacts"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:background="@drawable/bg_phone_book_tab"
+            android:button="@null"
+            android:checked="true"
+            android:fontFamily="@font/nunito_extrabold"
+            android:gravity="center"
+            android:hyphenationFrequency="normal"
+            android:minHeight="44dp"
+            android:paddingStart="12dp"
+            android:paddingTop="10dp"
+            android:paddingEnd="12dp"
+            android:paddingBottom="10dp"
+            android:saveEnabled="false"
+            android:text="@string/phone_book_tab_contacts"
+            android:textColor="@color/kid_page_tab_text"
+            android:textSize="16sp" />
+
+        <RadioButton
+            android:id="@+id/phone_book_tab_recent"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:background="@drawable/bg_phone_book_tab"
+            android:button="@null"
+            android:fontFamily="@font/nunito_extrabold"
+            android:gravity="center"
+            android:hyphenationFrequency="normal"
+            android:minHeight="44dp"
+            android:paddingStart="12dp"
+            android:paddingTop="10dp"
+            android:paddingEnd="12dp"
+            android:paddingBottom="10dp"
+            android:saveEnabled="false"
+            android:text="@string/phone_book_tab_recent"
+            android:textColor="@color/kid_page_tab_text"
+            android:textSize="16sp" />
+    </RadioGroup>
+
+    <!-- Design 79 §4: the search pill from 8 contacts, under the header, not scrolling (Kontakter only, design 106). -->
     <include
         android:id="@+id/phone_book_search"
         layout="@layout/view_kid_search" />
@@ -59,6 +116,16 @@
         android:layout_marginTop="4dp"
         android:layout_weight="1"
         android:clipToPadding="false" />
+
+    <!-- Design 106 §3.6: Siste, one flat list of day headings and call rows, in the contacts list's place. -->
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/phone_book_recent"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_marginTop="4dp"
+        android:layout_weight="1"
+        android:clipToPadding="false"
+        android:visibility="gone" />
 
     <!-- "Fant ingenting", and "Be om å legge til «…»" while the kid can ask. -->
     <include

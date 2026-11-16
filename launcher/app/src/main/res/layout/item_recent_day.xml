@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Design 106 §3.6: a Siste day's heading ("I dag", "I går", "Lørdag", "Mandag 3. nov.") - an item of its own, a
+     heading for TalkBack, 6 dp above its first row. -->
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/recent_day"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:accessibilityHeading="true"
+    android:fontFamily="@font/nunito_extrabold"
+    android:paddingStart="4dp"
+    android:paddingEnd="4dp"
+    android:paddingBottom="6dp"
+    android:textColor="@color/kid_page_ink_dim"
+    android:textSize="13sp" />

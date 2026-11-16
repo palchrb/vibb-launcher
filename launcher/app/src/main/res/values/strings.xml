@@ -82,6 +82,42 @@
         <item quantity="other">%d results</item>
     </plurals>
     <string name="phone_book_ask_named">Ask to add “%1$s”</string>
+    <!-- Design 106 §3 (B2): the phone book's "Contacts | Recent" switch and the Recent list. -->
+    <string name="phone_book_tabs">Choose list</string>
+    <string name="phone_book_tab_contacts">Contacts</string>
+    <string name="phone_book_tab_recent">Recent</string>
+    <plurals name="phone_book_recent_badge">
+        <item quantity="one">Recent, %d missed call</item>
+        <item quantity="other">Recent, %d missed calls</item>
+    </plurals>
+    <string name="recent_today">Today</string>
+    <string name="recent_yesterday">Yesterday</string>
+    <plurals name="recent_missed">
+        <item quantity="one">Missed call</item>
+        <item quantity="other">%d missed calls</item>
+    </plurals>
+    <plurals name="recent_missed_in_app">
+        <item quantity="one">Missed call in %2$s</item>
+        <item quantity="other">%1$d missed calls in %2$s</item>
+    </plurals>
+    <plurals name="recent_in">
+        <item quantity="one">Called you</item>
+        <item quantity="other">Called you (%d)</item>
+    </plurals>
+    <plurals name="recent_out">
+        <item quantity="one">You called</item>
+        <item quantity="other">You called (%d)</item>
+    </plurals>
+    <plurals name="recent_described_in">
+        <item quantity="one">called you</item>
+        <item quantity="other">called you %d times</item>
+    </plurals>
+    <plurals name="recent_described_out">
+        <item quantity="one">you called</item>
+        <item quantity="other">you called %d times</item>
+    </plurals>
+    <string name="recent_row">%1$s, %2$s, %3$s</string>
+    <string name="recent_empty">No calls in the last 14 days</string>
     <!-- Design 79 §5: the kid's own picture of a contact, on the phone only. -->
     <string name="kid_photo_title">Picture of %1$s</string>
     <string name="kid_photo_pick">Choose a picture</string>

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- A contact as a round avatar (photo or initial) with its missed-call badge: 76 dp on Home
-     (with the green call badge), 64 dp in the phone book - KidAvatars sizes it.
+<!-- A contact on Home as a round avatar (photo or initial) with its two pills (design 106, A5): the rust missed-call
+     pill at the top end, the teal unread-messages pill at the bottom end; 76 or 64 dp - KidAvatars sizes it.
      Depth is the avatar's own elevation with an oval outline (PressFeedback.depth: 2 dp, 4 dp on Home), so the
      frame and this item keep clipChildren=false for the shadow. contact_ring is Home's white 3 dp ring
      (mockup A) over the photo's or the disc's edge, so a photo on a busy wallpaper has an edge; it stays gone
@@ -9,7 +9,6 @@
      avatar's clipChildren=false. It is a child of the avatar, so the press scale and shade cover it too; both
      badges are lifted to the avatar's elevation in PressFeedback.contact and sit after it, so they draw above. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="wrap_content"
     android:layout_height="wrap_content"
     android:background="?android:attr/selectableItemBackground"
@@ -61,27 +60,23 @@
                 android:visibility="gone" />
         </FrameLayout>
 
-        <!-- The green call badge (Home only), on the frame - not inside the avatar, whose bounds
-             clipped it (emulator run 2026-10-06). Its right edge sits 4 dp past the avatar's, all
-             within the frame; the ring takes the wallpaper's ink (KidAvatars.bindCallBadge). -->
-        <ImageView
-            android:id="@+id/contact_call_badge"
-            android:layout_width="28dp"
-            android:layout_height="28dp"
+        <!-- Design 106 §2.2 (A5): the teal pill with the unread messages, where the green call badge was (bottom end,
+             its end edge 4 dp past the avatar's, within the frame); it grows inward over the avatar. -->
+        <TextView
+            android:id="@+id/contact_unread_badge"
+            style="@style/KidMessageBadge"
             android:layout_gravity="bottom|end"
             android:layout_marginEnd="2dp"
-            android:background="@drawable/bg_kid_call_badge"
-            android:importantForAccessibility="no"
-            android:padding="7dp"
-            android:src="@drawable/ic_kid_phone"
-            android:visibility="gone" />
+            android:drawablePadding="3dp"
+            android:importantForAccessibility="no" />
 
+        <!-- The rust pill with the missed calls (phone and Element X), at the top end. -->
         <TextView
             android:id="@+id/contact_badge"
             style="@style/KidBadge"
             android:layout_gravity="top|end"
             android:drawablePadding="3dp"
-            app:drawableStartCompat="@drawable/ic_kid_missed_call" />
+            android:importantForAccessibility="no" />
     </FrameLayout>
 
     <!-- A name is never cut between letters ("Mamm/a" at 2.0, N7): WholeWordTextView. Its 4 dp sides keep the text

@@ -435,6 +435,15 @@
         <item name="android:textColor">@color/kid_badge_ink</item>
     </style>
 
+    <!-- Design 106 §2.2 (A5): the unread-messages pill, Meldinger's teal with white ink (5.4:1), on Home and on a page. -->
+    <style name="KidMessageBadge" parent="KidBadge">
+        <item name="android:background">@drawable/bg_kid_message_badge</item>
+    </style>
+
+    <style name="KidPageMessageBadge" parent="KidPageBadge">
+        <item name="android:background">@drawable/bg_kid_page_message_badge</item>
+    </style>
+
     <style name="KidSheetButton">
         <item name="android:layout_width">0dp</item>
         <item name="android:layout_height">64dp</item>

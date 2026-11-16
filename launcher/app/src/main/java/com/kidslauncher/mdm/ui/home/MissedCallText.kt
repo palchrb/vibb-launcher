@@ -39,16 +39,19 @@ object MissedCallText {
         return context.resources.getQuantityString(R.plurals.missed_short, count, whenText, count)
     }
 
-    private fun whenText(context: Context, summary: MissedSummary, zone: ZoneId): String {
-        val at = Instant.ofEpochMilli(summary.lastAtMs).atZone(zone)
-        val time = com.kidslauncher.mdm.ui.ClockFormat.formatTime(context, summary.lastAtMs, zone)
+    private fun whenText(context: Context, summary: MissedSummary, zone: ZoneId): String = spokenWhen(context, summary.lastAtMs, zone)
+
+    /** "i dag 14:02", "i går 18:30", "3. nov. 14:02" - the card's time, and Siste's row in TalkBack (design 106 §3.6). */
+    fun spokenWhen(context: Context, atMs: Long, zone: ZoneId = ZoneId.systemDefault()): String {
+        val at = Instant.ofEpochMilli(atMs).atZone(zone)
+        val time = com.kidslauncher.mdm.ui.ClockFormat.formatTime(context, atMs, zone)
         return when (relativeDay(at.toLocalDate().toEpochDay(), LocalDate.now(zone).toEpochDay())) {
             RelativeDay.TODAY -> context.getString(R.string.missed_when_today, time)
             RelativeDay.YESTERDAY -> context.getString(R.string.missed_when_yesterday, time)
             RelativeDay.EARLIER -> {
                 val locale = context.resources.configuration.locales[0]
                 val day = android.text.format.DateFormat.format(
-                    DateFormat.getBestDateTimePattern(locale, "dMMM"), Date(summary.lastAtMs)
+                    DateFormat.getBestDateTimePattern(locale, "dMMM"), Date(atMs)
                 )
                 context.getString(R.string.missed_when_date, day, time)
             }

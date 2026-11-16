@@ -50,24 +50,45 @@
             android:layout_height="match_parent"
             android:importantForAccessibility="no" />
 
+        <!-- Design 106 §2.2 (A5): the rust missed-call pill at the top end, the teal unread-messages pill at the bottom
+             end (where the one pill was); both glyphs are set in code (18 dp), TalkBack reads the lines instead. -->
         <TextView
             android:id="@+id/sheet_badge"
             android:layout_width="wrap_content"
             android:layout_height="30dp"
-            android:layout_gravity="bottom|end"
+            android:layout_gravity="top|end"
+            android:layout_marginTop="6dp"
             android:layout_marginEnd="2dp"
-            android:layout_marginBottom="6dp"
             android:background="@drawable/bg_kid_badge_sheet"
             android:drawablePadding="3dp"
             android:fontFamily="@font/nunito_extrabold"
             android:gravity="center"
+            android:importantForAccessibility="no"
             android:minWidth="34dp"
             android:paddingStart="8dp"
             android:paddingEnd="8dp"
             android:textColor="@color/kid_ink"
             android:textSize="15sp"
-            android:visibility="gone"
-            app:drawableStartCompat="@drawable/ic_kid_missed_call" />
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/sheet_unread_badge"
+            android:layout_width="wrap_content"
+            android:layout_height="30dp"
+            android:layout_gravity="bottom|end"
+            android:layout_marginEnd="2dp"
+            android:layout_marginBottom="6dp"
+            android:background="@drawable/bg_kid_message_badge_sheet"
+            android:drawablePadding="3dp"
+            android:fontFamily="@font/nunito_extrabold"
+            android:gravity="center"
+            android:importantForAccessibility="no"
+            android:minWidth="34dp"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
+            android:textColor="@color/kid_ink"
+            android:textSize="15sp"
+            android:visibility="gone" />
     </FrameLayout>
 
     <TextView

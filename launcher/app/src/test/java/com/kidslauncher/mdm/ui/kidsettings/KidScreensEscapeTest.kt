@@ -65,6 +65,8 @@ class KidScreensEscapeTest {
         "calls/ContactSheet.kt", "calls/PhoneBookList.kt", "calls/ContactRequestForm.kt", "calls/ContactRequests.kt", "ui/search",
         // Design 79 step 4: the kid's pictures - the screen, the framing, the sheet, the store and the picker's new home.
         "calls/KidPhotoActivity.kt", "calls/PhotoCropView.kt", "calls/KidPhotoSheet.kt", "calls/KidContactPhotos.kt", "ui/pictures",
+        // Design 106: Siste - its model, its list and the tab's badge.
+        "calls/RecentCalls.kt", "calls/RecentCallsAdapter.kt", "calls/RecentBadgeSpan.kt",
     )
 
     /** Design 77 §6.7: the one allowed way out - "Del" on a received picture opens the system's share sheet (a kiosk
@@ -168,7 +170,7 @@ class KidScreensEscapeTest {
         assertTrue(sheet.contains("opened(sheet)") && sheet.contains("photoSheet?.dismiss()"))
         assertEquals(1, Regex("""CallSystem\.placeCall\(""").findAll(sheet).count())
         assertEquals(1, Regex("""MessagesScreens\.startThread\(""").findAll(sheet).count())
-        for (path in listOf("calls/PhoneBookList.kt", "calls/PhoneBookAdapter.kt", "ui/search/SearchFold.kt")) {
+        for (path in listOf("calls/PhoneBookList.kt", "calls/PhoneBookAdapter.kt", "ui/search/SearchFold.kt", "calls/RecentCalls.kt", "calls/RecentCallsAdapter.kt")) {
             val text = code(path)
             for (token in listOf("startActivity", "Intent(", "placeCall", "PendingIntent")) assertTrue("$path $token", !text.contains(token))
         }

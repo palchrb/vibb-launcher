@@ -1,14 +1,17 @@
 package com.kidslauncher.mdm.calls
 
 import android.app.ActivityManager
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.os.Bundle
 import android.os.SystemClock
 import android.util.Log
 import android.view.View
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AlertDialog
+import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.kidslauncher.mdm.R
@@ -29,6 +32,7 @@ import com.kidslauncher.mdm.ui.search.KidSearchField
 import com.kidslauncher.mdm.ui.search.PhoneBookBack
 import com.kidslauncher.mdm.ui.search.listCollator
 import com.kidslauncher.mdm.ui.search.phoneBookBack
+import com.kidslauncher.mdm.ui.search.phoneBookBackEnabled
 import com.kidslauncher.mdm.ui.search.searching
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -48,6 +52,12 @@ import kotlinx.coroutines.withContext
  * top while it is in front, a new missed call joins); a top row on screen for a second while the phone book is resumed
  * and focused ([TopSightings]) is marked seen when the kid leaves ([onStop], not for a rotation) - up to the call it
  * showed. The next visit lists it in its place. The card, Ring and Melding mark it seen at once.
+ *
+ * **Siste** (design 106 §3, B2): a "Kontakter | Siste" switch under the header ([phoneBookSwitchShown]); Siste lists
+ * the phone book's contacts' calls of the last 14 days by day ([recentCalls], [RecentCallsAdapter]) from the same read
+ * as the badges ([MissedCallsRepo.load]). Every visit starts on Kontakter ([tabAtVisitStart]); only a configuration
+ * change keeps Siste, and an ask by [onNewIntent] or calls going off moves the book back ([tabAfter]). A red row on
+ * screen for a second marks its contact seen when the kid leaves Siste ([recentVisible], its own [TopSightings]).
  *
  * A `tel:` number from another app is checked with [decideOutgoing]: allowed asks "Call X?", anything else says it
  * isn't allowed.
@@ -74,18 +84,20 @@ open class PhoneBookActivity : KidPageActivity() {
     private lateinit var search: KidSearchField
 
     /** Back (QA N4, code QA L10): the keyboard first (stock Android), then the request form, then the search's text,
-     * then the phone book leaves ([phoneBookBack]). Enabled only while there is a form or a query - with neither, the
-     * system closes the keyboard and leaves as everywhere. */
+     * then Siste back to Kontakter (design 106 Q8), then the phone book leaves ([phoneBookBack]). Enabled only while
+     * there is a form, a query or Siste ([phoneBookBackEnabled]) - with none, the system closes the keyboard and leaves
+     * as everywhere. */
     private val back = object : OnBackPressedCallback(false) {
         override fun handleOnBackPressed() {
             val ime = binding.root.rootWindowInsets?.isVisible(android.view.WindowInsets.Type.ime()) == true
-            when (phoneBookBack(ime, requestForm.isOpen, search.query)) {
+            when (phoneBookBack(ime, requestForm.isOpen, search.query, tab == PhoneBookTab.RECENT)) {
                 PhoneBookBack.HIDE_KEYBOARD -> search.hideKeyboard()
                 PhoneBookBack.CLOSE_FORM -> {
                     requestForm.close()
                     render()
                 }
                 PhoneBookBack.CLEAR_SEARCH -> search.clear()
+                PhoneBookBack.SHOW_CONTACTS -> showTab(PhoneBookTab.CONTACTS)
                 PhoneBookBack.LEAVE -> {}
             }
         }
@@ -122,10 +134,39 @@ open class PhoneBookActivity : KidPageActivity() {
     private var visitRestored = false
     private var resumed = false
 
+    /** Design 106 §3: Siste's list, the tab the activity alone holds, Siste's own sightings and the last load. */
+    private lateinit var recentAdapter: RecentCallsAdapter
+    private var tab = PhoneBookTab.CONTACTS
+
+    /** The tab came back through a configuration change: [onStart] keeps it (§3.5, M1). */
+    private var tabRestored = false
+    private var recentSightings = TopSightings()
+    private var snapshot: CallsSnapshot? = null
+
+    /** Siste was just shown: its list starts at its top. */
+    private var recentToTop = false
+
+    /** The switch is being set by the code, not the kid. */
+    private var settingTab = false
+
+    /** What [render] last decided: the kid can ask, and the Kontakter info line. */
+    private var canAskNow = false
+    private var contactsInfo: String? = null
+    private var elementLabel = ""
+
+    /** Design 106 §3.5: Siste's record of missed Element X calls changed. */
+    private val recordListener: () -> Unit = { loadMissedCalls() }
+
+    /** L7: "I dag" and "I går" move with the date and the zone. */
+    private val dateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) = loadMissedCalls()
+    }
+
     /** The contact whose sheet the missed-call notification asked for, opened once the missed calls are loaded. */
     private var pendingSheet: String? = null
     private val photoListener: () -> Unit = {
         if (::adapter.isInitialized) adapter.photosChanged()
+        if (::recentAdapter.isInitialized) recentAdapter.photosChanged()
         if (::requestForm.isInitialized) requestForm.bindPicture()
     }
 
@@ -180,6 +221,20 @@ open class PhoneBookActivity : KidPageActivity() {
             override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) = noteSightings()
         })
         list.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> noteSightings() }
+        // Design 106 §3.6: Siste - a row opens the contact's sheet, as a Kontakter row does; never a call.
+        recentAdapter = RecentCallsAdapter { row -> ContactSheet.show(this, row.contact, missed[row.contact.number]) { loadMissedCalls() } }
+        binding.phoneBookRecent.apply {
+            layoutManager = LinearLayoutManager(this@PhoneBookActivity)
+            adapter = recentAdapter
+            itemAnimator = null
+            addOnScrollListener(object : RecyclerView.OnScrollListener() {
+                override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) = noteSightings()
+            })
+            addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> noteSightings() }
+        }
+        binding.phoneBookTabs.setOnCheckedChangeListener { _, id ->
+            if (!settingTab) showTab(if (id == R.id.phone_book_tab_recent) PhoneBookTab.RECENT else PhoneBookTab.CONTACTS)
+        }
         // The keyboard (the request form): the page's bottom takes it (design 79 §3.5, QA L3).
         KidInsets.apply(binding.root, ime = true)
         binding.phoneBookPlus.setOnClickListener { requestForm.open() }
@@ -207,6 +262,15 @@ open class PhoneBookActivity : KidPageActivity() {
         SmsHome.addListener(messagesListener)
         ContactRequests.addListener(requestsListener)
         CallPolicyStore.addListener(policyListener)
+        ElementCallLogStore.addListener(recordListener)
+        ContextCompat.registerReceiver(
+            this, dateReceiver,
+            IntentFilter().apply {
+                addAction(Intent.ACTION_DATE_CHANGED)
+                addAction(Intent.ACTION_TIMEZONE_CHANGED)
+            },
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
         try {
             contentResolver.registerContentObserver(android.provider.CallLog.Calls.CONTENT_URI, true, callLogObserver)
         } catch (e: Exception) {
@@ -219,6 +283,14 @@ open class PhoneBookActivity : KidPageActivity() {
             sightings = TopSightings()
         }
         visitRestored = false
+        // Design 106 §3.5 (Q5): every visit starts on Kontakter - Home's tile, Recents, back from a call or another
+        // app, a reopen after the process died; only a configuration change brings Siste back.
+        if (!tabRestored) recentSightings = TopSightings()
+        val start = tabAtVisitStart(tabRestored, tab)
+        tabRestored = false
+        tab = start
+        recentToTop = start == PhoneBookTab.RECENT
+        applyTab()
     }
 
     override fun onResume() {
@@ -258,11 +330,17 @@ open class PhoneBookActivity : KidPageActivity() {
         SmsHome.removeListener(messagesListener)
         ContactRequests.removeListener(requestsListener)
         CallPolicyStore.removeListener(policyListener)
+        ElementCallLogStore.removeListener(recordListener)
+        unregisterReceiver(dateReceiver)
         contentResolver.unregisterContentObserver(callLogObserver)
         if (!isChangingConfigurations && ::requestForm.isInitialized) {
             // The visit ends: the top rows it showed are seen (design 79 §3.2 rule 1) - Home's badge goes now too, with
             // one reload for the whole visit (code QA N6).
             MissedCallsRepo.markSeen(this, sightings.seen(SystemClock.elapsedRealtime()))
+            // Design 106 §3.4: and Siste's red rows the kid saw, if the visit ended on Siste.
+            writeRecentMarks()
+            recentAdapter.submitList(null)
+            snapshot = null
             sightings = TopSightings()
             visitTop = null
             answersCounted.clear()
@@ -288,6 +366,16 @@ open class PhoneBookActivity : KidPageActivity() {
         super.onSaveInstanceState(outState)
         if (!::requestForm.isInitialized) return
         requestForm.save(outState)
+        // Design 106 §3.5 (M1): the tab and Siste's sightings only for a configuration change (a font size or language) -
+        // before the early return below; a process death brings nothing of Siste back.
+        if (isChangingConfigurations) {
+            outState.putString(STATE_TAB, tab.name)
+            val seen = recentSightings.state(SystemClock.elapsedRealtime())
+            outState.putStringArray(STATE_RECENT_NUMBERS, seen.map { it.number }.toTypedArray())
+            outState.putLongArray(STATE_RECENT_AT, seen.map { it.atMs }.toLongArray())
+            outState.putLongArray(STATE_RECENT_MS, seen.map { it.accumulatedMs }.toLongArray())
+            outState.putLongArray(STATE_RECENT_UP_TO, seen.map { it.seenUpToMs ?: Long.MIN_VALUE }.toLongArray())
+        }
         val top = visitTop ?: return
         outState.putStringArray(STATE_TOP_NUMBERS, top.keys.toTypedArray())
         outState.putLongArray(STATE_TOP_TIMES, top.values.toLongArray())
@@ -298,8 +386,10 @@ open class PhoneBookActivity : KidPageActivity() {
         outState.putLongArray(STATE_SEEN_UP_TO, seen.map { it.seenUpToMs ?: Long.MIN_VALUE }.toLongArray())
     }
 
-    /** A rotation keeps the visit's order and what it has seen (design 79 §3.2). */
+    /** A rotation keeps the visit's order and what it has seen (design 79 §3.2); a configuration change keeps the tab
+     * and Siste's sightings (design 106 §3.5). */
     private fun restoreVisit(state: Bundle?) {
+        restoreTab(state)
         val numbers = state?.getStringArray(STATE_TOP_NUMBERS) ?: return
         val times = state.getLongArray(STATE_TOP_TIMES) ?: return
         if (numbers.size != times.size) return
@@ -314,9 +404,26 @@ open class PhoneBookActivity : KidPageActivity() {
         visitRestored = true
     }
 
+    private fun restoreTab(state: Bundle?) {
+        val saved = state?.getString(STATE_TAB)?.let { name -> PhoneBookTab.entries.firstOrNull { it.name == name } } ?: return
+        tab = saved
+        tabRestored = true
+        val numbers = state.getStringArray(STATE_RECENT_NUMBERS).orEmpty()
+        val at = state.getLongArray(STATE_RECENT_AT) ?: LongArray(0)
+        val ms = state.getLongArray(STATE_RECENT_MS) ?: LongArray(0)
+        val upTo = state.getLongArray(STATE_RECENT_UP_TO) ?: LongArray(0)
+        if (at.size == numbers.size && ms.size == numbers.size && upTo.size == numbers.size) {
+            recentSightings.restore(numbers.indices.map { SightingState(numbers[it], at[it], ms[it], upTo[it].takeIf { v -> v != Long.MIN_VALUE }) })
+        }
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        // Design 106 §3.5 (M3, Q7): an ask (our notification, the glance's row, the call log, a tel: link) reaching the
+        // book in front writes Siste's marks and moves it to Kontakter first.
+        val asked = intent.hasExtra(EXTRA_ASK_NUMBER) || intent.hasExtra(EXTRA_MISSED_CONTACT)
+        if (tabAfter(tab, switchShown = true, asked = asked) != tab) showTab(PhoneBookTab.CONTACTS)
         takeAsked(intent)
     }
 
@@ -347,14 +454,21 @@ open class PhoneBookActivity : KidPageActivity() {
         val state = CallPolicyStore.effectiveState()
         val generation = loads.begin()
         CoroutineScope(Dispatchers.Main).launch {
-            val result = withContext(Dispatchers.IO) { MissedCallsRepo.contactMissed(this@PhoneBookActivity, state) }
+            // Design 106 §3.1: one read for the badges and Siste.
+            val loaded = withContext(Dispatchers.IO) {
+                val view = phoneBookView(state) { CallSystem.isEmergencyOutgoing(this@PhoneBookActivity, it) }
+                MissedCallsRepo.load(this@PhoneBookActivity, state, view)
+            }
             if (!isDestroyed && loads.isLatest(generation)) {
+                val result = loaded.missed
                 missed = result
+                snapshot = loaded
                 // The visit's top: fixed by its first load, joined by later ones (design 79 §3.2). A new visit starts at
                 // the list's top - never wherever the last visit's rows took the scroll (emulator run: a call in between).
                 if (visitTop == null) toTop = true
                 visitTop = visitTopAfter(visitTop, result)
                 filter()
+                bindRecent()
                 openPendingSheet()
             }
         }
@@ -394,6 +508,11 @@ open class PhoneBookActivity : KidPageActivity() {
         val rules = (state as? CallPolicyState.Managed)?.rules
         val canAsk = requestForm.canAsk()
         if (requestForm.isOpen && !canAsk) requestForm.close()
+        canAskNow = canAsk
+        // Design 106 §3.5 (L1): calls going off (or the form opening) leaves Siste for Kontakter, its marks written.
+        val switchShown = phoneBookSwitchShown(canAsk, requestForm.isOpen)
+        binding.phoneBookTabs.visibility = if (switchShown) View.VISIBLE else View.GONE
+        if (tabAfter(tab, switchShown, asked = false) != tab) showTab(PhoneBookTab.CONTACTS)
         bindHeader(canAsk)
         val view = phoneBookView(state) { CallSystem.isEmergencyOutgoing(this, it) }
         val info = when {
@@ -402,8 +521,8 @@ open class PhoneBookActivity : KidPageActivity() {
             view.contacts.isEmpty() -> getString(R.string.calls_phone_book_empty)
             else -> null
         }
-        binding.phoneBookInfo.visibility = if (info == null) View.GONE else View.VISIBLE
-        binding.phoneBookInfo.text = info
+        contactsInfo = info
+        bindInfo()
         adapter.layout = rowLayout(contentWidthDp(), resources.configuration.fontScale)
         val emergency = view.contacts.mapNotNullTo(mutableSetOf()) { c -> c.number.takeIf { CallSystem.isEmergencyOutgoing(this, it) } }
         // The apps' usability asked once per package, each app's label read once (code QA M2).
@@ -412,6 +531,7 @@ open class PhoneBookActivity : KidPageActivity() {
         val asked = HashMap<String, Boolean>()
         val usable: (String) -> Boolean = { pkg -> asked.getOrPut(pkg) { base(pkg) } }
         val rooms = ElementRoomStore.lookup(this)
+        elementLabel = AppDisplay.shownLabel(this, MessagePackages.ELEMENT_X).toString()
         val calls = OngoingCalls.states
         val labels = HashMap<String, String>()
         val actions = HashMap<String, ContactActions>()
@@ -438,8 +558,8 @@ open class PhoneBookActivity : KidPageActivity() {
     /** The rows from the cached [inputs], the missed calls, the visit's top and the query - the search's keystroke,
      * a missed-call load. */
     private fun filter() {
-        // Back follows the form and the query at once, also while the visit's first load is pending (code QA L10).
-        back.isEnabled = requestForm.isOpen || search.query.isNotEmpty()
+        // Back follows the form, the query and Siste at once, also while the visit's first load is pending (code QA L10).
+        back.isEnabled = phoneBookBackEnabled(requestForm.isOpen, search.query, tab == PhoneBookTab.RECENT)
         val inputs = inputs ?: return
         // The list waits for the visit's first missed calls (its top), so it never reorders under the kid's finger.
         val top = visitTop ?: return
@@ -448,12 +568,13 @@ open class PhoneBookActivity : KidPageActivity() {
             inputs.view, inputs.emergency, missed, inputs.unread, top, inputs.requests, query,
             listCollator(resources.configuration.locales[0]), inputs.canAsk,
         )
-        // The pill hides while the form is up (QA N4).
-        search.setShown(list.search && !requestForm.isOpen)
+        // The pill hides while the form is up (QA N4), and on Siste (design 106 §3.5: search only in Kontakter).
+        val contacts = tab == PhoneBookTab.CONTACTS
+        search.setShown(list.search && !requestForm.isOpen && contacts)
         val hits = list.rows.count { it is PhoneBookRow.Contact || it is PhoneBookRow.Waiting }
         search.announce(if (searching(query) && list.search) hits else null)
         bindEmpty(list)
-        binding.phoneBookList.visibility = if (requestForm.isOpen || list.nothingFound) View.GONE else View.VISIBLE
+        binding.phoneBookList.visibility = if (requestForm.isOpen || list.nothingFound || !contacts) View.GONE else View.VISIBLE
         val items = list.rows.map { row ->
             if (row !is PhoneBookRow.Contact) return@map PhoneBookItem(row)
             val key = rowKey(row.contact)
@@ -489,7 +610,7 @@ open class PhoneBookActivity : KidPageActivity() {
      * query as the name. */
     private fun bindEmpty(list: PhoneBookList) {
         val empty = binding.phoneBookEmpty
-        empty.root.visibility = if (list.nothingFound && !requestForm.isOpen) View.VISIBLE else View.GONE
+        empty.root.visibility = if (list.nothingFound && !requestForm.isOpen && tab == PhoneBookTab.CONTACTS) View.VISIBLE else View.GONE
         val ask = list.askName
         empty.kidSearchAsk.visibility = if (ask == null) View.GONE else View.VISIBLE
         empty.kidSearchAsk.text = ask?.let { getString(R.string.phone_book_ask_named, it) }
@@ -508,7 +629,7 @@ open class PhoneBookActivity : KidPageActivity() {
         } else {
             KidHeader.bind(this, header, R.string.calls_phone_book, back = R.string.kid_back)
         }
-        val plus = canAsk && !requestForm.isOpen
+        val plus = canAsk && !requestForm.isOpen && tab == PhoneBookTab.CONTACTS
         binding.phoneBookPlus.visibility = if (plus) View.VISIBLE else View.GONE
         // The title never runs under the "+" (font scale 2.0).
         header.root.setPaddingRelative(0, 0, if (plus) resources.getDimensionPixelSize(R.dimen.phone_book_plus_room) else 0, 0)
@@ -537,6 +658,99 @@ open class PhoneBookActivity : KidPageActivity() {
             if (answers.any { answersCounted.add(it.request.id) }) requestForm.answersShown()
         }
         sightings.update(visible, active, SystemClock.elapsedRealtime())
+        // Design 106 §3.4: Siste's red, unseen rows - per contact the newest of its visible ones.
+        val recent = binding.phoneBookRecent
+        val recentActive = resumed && hasWindowFocus() && tab == PhoneBookTab.RECENT && recent.visibility == View.VISIBLE
+        val shown = mutableListOf<Pair<RecentRow, Boolean>>()
+        if (recentActive) {
+            for (i in 0 until recent.childCount) {
+                val child = recent.getChildAt(i)
+                val row = recentAdapter.rowAt(recent.getChildAdapterPosition(child)) ?: continue
+                val onScreen = minOf(child.bottom, recent.height) - maxOf(child.top, 0)
+                shown += row to (child.height > 0 && onScreen * 2 >= child.height)
+            }
+        }
+        recentSightings.update(recentVisible(shown), recentActive, SystemClock.elapsedRealtime())
+    }
+
+    // ---- Siste (design 106 §3) ----
+
+    /** The kid (the switch, Back) or the book (an ask, calls going off) moves to [next]. Leaving Siste writes its marks
+     * and reloads, so the badges follow at once (L3); showing it clears the search and starts it at its top. */
+    private fun showTab(next: PhoneBookTab) {
+        if (next == tab) {
+            applyTab()
+            return
+        }
+        if (tab == PhoneBookTab.RECENT) writeRecentMarks()
+        tab = next
+        if (next == PhoneBookTab.RECENT) {
+            search.clear()
+            recentToTop = true
+        }
+        applyTab()
+        if (next == PhoneBookTab.CONTACTS) loadMissedCalls()
+    }
+
+    /** Siste's sightings become seen marks (one write, up to each contact's newest row it showed), and start again. */
+    private fun writeRecentMarks() {
+        MissedCallsRepo.markSeen(this, recentSightings.seen(SystemClock.elapsedRealtime()))
+        recentSightings = TopSightings()
+    }
+
+    /** The page for [tab]: the switch, the lists, the search and the "+", the info line, Back. */
+    private fun applyTab() {
+        if (!::requestForm.isInitialized) return
+        settingTab = true
+        binding.phoneBookTabs.check(if (tab == PhoneBookTab.RECENT) R.id.phone_book_tab_recent else R.id.phone_book_tab_contacts)
+        settingTab = false
+        binding.phoneBookRecent.visibility = if (tab == PhoneBookTab.RECENT && !requestForm.isOpen) View.VISIBLE else View.GONE
+        bindHeader(canAskNow)
+        filter()
+        bindRecent()
+    }
+
+    /** The Siste tab's badge and description, the info line, and - on Siste - its rows from the last load. */
+    private fun bindRecent() {
+        val loaded = snapshot
+        val count = loaded?.badge ?: 0
+        val label = getString(R.string.phone_book_tab_recent)
+        // The badge only while Kontakter is chosen (the mockup): on Siste the rows say it.
+        val badge = if (tab == PhoneBookTab.CONTACTS) com.kidslauncher.mdm.ui.home.badgeText(count) else null
+        binding.phoneBookTabRecent.text = if (badge == null) {
+            label
+        } else {
+            android.text.SpannableStringBuilder(label).append("\u2060")
+                .append(badge, RecentBadgeSpan(this), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+        binding.phoneBookTabRecent.contentDescription =
+            if (badge == null) label else resources.getQuantityString(R.plurals.phone_book_recent_badge, count, count)
+        bindInfo()
+        if (tab != PhoneBookTab.RECENT || loaded == null) return
+        recentAdapter.timeBelow = recentTimeBelow(resources.configuration.fontScale)
+        recentAdapter.elementLabel = elementLabel
+        val items = recentItems(loaded.recent, java.time.LocalDate.now(), inputs?.emergency.orEmpty())
+        recentAdapter.submitList(items) {
+            if (recentToTop) {
+                binding.phoneBookRecent.stopScroll()
+                (binding.phoneBookRecent.layoutManager as LinearLayoutManager).scrollToPositionWithOffset(0, 0)
+            }
+            recentToTop = false
+            noteSightings()
+        }
+    }
+
+    /** The info line: Kontakter's ("calls are off", an empty book), or on Siste "Ingen anrop de siste 14 dagene" - only
+     * once the log was read (§3.1, L6: an unreadable log never says "no calls"). */
+    private fun bindInfo() {
+        val loaded = snapshot
+        val info = when {
+            tab == PhoneBookTab.CONTACTS -> contactsInfo
+            loaded != null && loaded.logRead && loaded.recent.isEmpty() -> getString(R.string.recent_empty)
+            else -> null
+        }
+        binding.phoneBookInfo.visibility = if (info == null) View.GONE else View.VISIBLE
+        binding.phoneBookInfo.text = info
     }
 
     /** A row's Ring (design 79 §3.5): an emergency number asks first ("Ringe Ambulanse?" - a one-tap 112 from a
@@ -617,6 +831,11 @@ open class PhoneBookActivity : KidPageActivity() {
         private const val STATE_SEEN_AT = "visit_seen_at"
         private const val STATE_SEEN_MS = "visit_seen_ms"
         private const val STATE_SEEN_UP_TO = "visit_seen_up_to"
+        private const val STATE_TAB = "phone_book_tab"
+        private const val STATE_RECENT_NUMBERS = "recent_seen_numbers"
+        private const val STATE_RECENT_AT = "recent_seen_at"
+        private const val STATE_RECENT_MS = "recent_seen_ms"
+        private const val STATE_RECENT_UP_TO = "recent_seen_up_to"
 
         /**
          * The one way to open the phone book from inside the process - Home's tile and the time-rule screen's row: a

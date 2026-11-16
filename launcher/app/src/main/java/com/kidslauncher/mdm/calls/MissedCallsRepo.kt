@@ -14,6 +14,10 @@ import androidx.core.content.edit
  * rows feed the missed-call notification ([missedCallNotice], [MissedCallNotifier]), which also
  * marks the log read.
  */
+/** Design 106 §3.1: one read for the phone book - the badges ([missed]), Siste ([recent]), the Siste tab's badge
+ * ([badge]) and whether the call log was read at all ([logRead]). */
+data class CallsSnapshot(val missed: Map<String, ContactMissed>, val recent: List<RecentDay>, val badge: Int, val logRead: Boolean)
+
 object MissedCallsRepo {
     private const val LOG_TAG = "MissedCalls"
     private const val PREFS = "missed_calls_seen"
@@ -38,6 +42,35 @@ object MissedCallsRepo {
         val rules = (state as? CallPolicyState.Managed)?.rules ?: return emptyMap()
         val element = elementMissedSummaries(ElementMissedCallStore.calls, rules, seenMarks(context))
         return contactMissed(summaries(context, state, nowMs), element)
+    }
+
+    /**
+     * Design 106 §3.1: what the phone book shows - the badges ([contactMissed]'s map) and Siste ([recentCalls]) from one
+     * call-log read, with the Siste tab's badge ([recentBadge]) over [view]'s contacts. [CallsSnapshot.logRead]: the log
+     * could be read, so an empty Siste may say "no calls". Empty unless calls are managed. Background thread.
+     */
+    fun load(
+        context: Context,
+        state: CallPolicyState,
+        view: PhoneBookView,
+        nowMs: Long = System.currentTimeMillis(),
+        zone: java.time.ZoneId = java.time.ZoneId.systemDefault(),
+    ): CallsSnapshot {
+        val rules = (state as? CallPolicyState.Managed)?.rules ?: return CallsSnapshot(emptyMap(), emptyList(), 0, logRead = false)
+        val logRead = readable(context)
+        val log = if (logRead) queryLog(context, nowMs - WINDOW_MS) else emptyList()
+        val seen = seenMarks(context)
+        val unseen = unseenMissedCalls(log, rules.contacts, rules.defaultCc, seen)
+        val phone = unseen.mapValues { (_, missed) -> MissedSummary(missed.size, missed.maxOf { it.atMs }) }
+        val entries = ElementMissedCallStore.entries
+        val missed = contactMissed(phone, elementMissedSummaries(entries.values, rules, seen))
+        // The live calls by their key's hash: a Siste row is unseen exactly when the badge counts it (§3.2, M2).
+        val live = entries.mapNotNull { (key, call) ->
+            elementContactNumber(rules, call.mxid)?.let { elementKeyHash(key) to LiveElementCall(it, call.sinceMs) }
+        }.toMap()
+        val records = ElementCallLogStore.shown(context, state, nowMs)
+        val recent = recentCalls(log, records, view.contacts, rules.defaultCc, unseen, live, seen, nowMs, zone)
+        return CallsSnapshot(missed, recent, recentBadge(missed, view.contacts), logRead)
     }
 
     /** The call log of the last 14 days, newest first (with `_id` and `new`); empty when it can't be read. */
@@ -175,8 +208,12 @@ object MissedCallsRepo {
         context.contentResolver.query(
             CallLog.Calls.CONTENT_URI,
             arrayOf(CallLog.Calls.NUMBER, CallLog.Calls.TYPE, CallLog.Calls.DATE, CallLog.Calls._ID, CallLog.Calls.NEW),
-            "${CallLog.Calls.DATE} >= ?",
-            arrayOf(sinceMs.toString()),
+            // Design 106 §3.1: only the types anyone reads - blocked spam from strangers can't use up the 500 rows.
+            "${CallLog.Calls.DATE} >= ? AND ${CallLog.Calls.TYPE} IN (?, ?, ?, ?)",
+            arrayOf(
+                sinceMs.toString(), CallLog.Calls.INCOMING_TYPE.toString(), CallLog.Calls.OUTGOING_TYPE.toString(),
+                CallLog.Calls.MISSED_TYPE.toString(), CallLog.Calls.ANSWERED_EXTERNALLY_TYPE.toString(),
+            ),
             // No LIMIT in the sort order: the call-log provider uses strict SQL grammar.
             "${CallLog.Calls.DATE} DESC",
         )?.use { cursor ->

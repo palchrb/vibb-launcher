@@ -217,18 +217,15 @@ object PressFeedback {
     /**
      * A contact (`item_kid_contact`, Home's row or the phone book): depth on the avatar, the press
      * on it, the ripple and focus ring around it. The avatar sits [CONTACT_AVATAR_TOP_DP] below the
-     * item's top in both (4 dp padding + the frame's 6 dp for the badge). The call badge is lifted
-     * with it so it stays drawn above the avatar (no shadow of its own); the missed-call badge gets
-     * that from `KidBadge` at 2 dp - so [elevationDp] above that (Home's [HOME_AVATAR_ELEVATION_DP]) lifts the
-     * missed-call badge to the avatar too, else the avatar's shadow and body would draw over it.
+     * item's top in both (4 dp padding + the frame's 6 dp for the badge). Both pills (design 106: the rust missed-call
+     * one and the teal unread one) are lifted to the avatar's elevation so they stay drawn above it - `KidBadge` gives
+     * them 2 dp and no shadow, so with [elevationDp] above that (Home's [HOME_AVATAR_ELEVATION_DP]) the avatar's
+     * shadow and body would otherwise draw over them.
      */
     fun contact(item: View, avatarPx: Int, elevationDp: Float = PressMotion.ELEVATION_DP) {
         val avatar = item.findViewById<View>(R.id.contact_avatar)
         depth(avatar, elevationDp)
-        item.findViewById<View>(R.id.contact_call_badge)?.apply {
-            outlineProvider = null
-            elevation = avatar.elevation
-        }
+        item.findViewById<View>(R.id.contact_unread_badge)?.elevation = avatar.elevation
         item.findViewById<View>(R.id.contact_badge)?.elevation = avatar.elevation
         cellBackground(item, avatarPx, KidAvatars.dp(item.context, CONTACT_AVATAR_TOP_DP))
         attach(item, avatar, scrolling = true)
