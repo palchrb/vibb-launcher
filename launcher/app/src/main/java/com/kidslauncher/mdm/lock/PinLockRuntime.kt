@@ -43,6 +43,9 @@ private const val LOG_TAG = "PinLock"
 /** Status-report capability: this launcher has handy's own PIN lock and reads `kid_lock`. */
 const val PIN_LOCK_CAPABILITY = "pin_lock_v1"
 
+/** Design 105 §2.2: the screen-on's clock pass runs this long past [ALARM_SCREEN_SETTLE_MS], so it reads the screen lit. */
+private const val CLOCK_SETTLE_PASS_MARGIN_MS = 100L
+
 /**
  * [PinLockRuntime.verifyCommandPin]'s check (design 59 §3.5, Q59-1), outside the object so the JVM test runs it: the
  * PIN against [kidLock]'s own hash and salt - the fresh policy's -, exactly its length in digits. Reads and writes no
@@ -537,6 +540,8 @@ object PinLockRuntime {
         val app = context.applicationContext
         appContext = app
         processStartElapsed = SystemClock.elapsedRealtime()
+        // Design 105 (code QA L1): a start with the screen on counts as settled; off, the first screen-on notes it.
+        if (interactive(app)) LockTaskChrome.screenChanged(on = true, processStartElapsed - ALARM_SCREEN_SETTLE_MS)
         // Bug 25b-H: one of our own screens in front (Home, the time-rule screen) is never the SOS.
         (app as? android.app.Application)?.registerActivityLifecycleCallbacks(ownScreens)
         decide(app)
@@ -932,6 +937,14 @@ object PinLockRuntime {
         if (Looper.myLooper() == Looper.getMainLooper()) block() else handler.post(block)
     }
 
+    /** Design 105 §2.2: the screen-on's pass once the settle is over ([LockTaskChrome.screenChanged]) - it reads the lock
+     * and the screen as they are then; posted at every screen-on and run only while a rule keeps clocks out (code QA M1:
+     * a rule applied inside the settle). */
+    private val clockSettlePass = Runnable {
+        val app = appContext ?: return@Runnable
+        if (LockTaskChrome.ruleClockPins.isNotEmpty()) refreshChrome(app)
+    }
+
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             val app = context.applicationContext
@@ -954,6 +967,11 @@ object PinLockRuntime {
                     silencedRing = VoipCalls.ringId
                 }
                 dispatch(app, LockEvent.ScreenOff(ourCall(), systemCall(app), VoipCalls.phase))
+                // Design 105 §2.2: a rule's clocks are back in the kiosk's list while dark - one pass now (a LOCKED edge's
+                // pass above already added them; LOCKED keeps them in).
+                handler.removeCallbacks(clockSettlePass)
+                LockTaskChrome.screenChanged(on = false, SystemClock.elapsedRealtime())
+                if (LockTaskChrome.ruleClockPins.isNotEmpty() && !chromeLocked) refreshChromeNow(app)
                 // Design 59 §3.3: as Android's face, Android must be locked under the glance - checked once it slept.
                 handler.removeCallbacks(androidSleepCheck)
                 if (AndroidLock.faceOn && mode == LockMode.LOCKED) handler.postDelayed(androidSleepCheck, ANDROID_SLEEP_CHECK_MS)
@@ -977,6 +995,10 @@ object PinLockRuntime {
                 handler.removeCallbacks(screenOffWork)
                 if (intent.action == Intent.ACTION_SCREEN_ON) {
                     lastScreenOnElapsed = SystemClock.elapsedRealtime()
+                    // Design 105 §2.2: lit past the settle, a rule's clocks leave the list again unless LOCKED by then.
+                    handler.removeCallbacks(clockSettlePass)
+                    LockTaskChrome.screenChanged(on = true, SystemClock.elapsedRealtime())
+                    handler.postDelayed(clockSettlePass, ALARM_SCREEN_SETTLE_MS + CLOCK_SETTLE_PASS_MARGIN_MS)
                     // Design 59b §6: one line per screen-on with the keyguard read (the screen-off has its lock-up's).
                     AndroidLock.note(app, "screen-on")
                     // A screen-on well after a notice wake is the kid's own (power): the 15 s end (qa-l7-b-code 3).
@@ -1037,7 +1059,10 @@ object PinLockRuntime {
      */
     private val userPresentReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            if (intent.action != Intent.ACTION_USER_PRESENT || !AndroidLock.faceOn) return
+            if (intent.action != Intent.ACTION_USER_PRESENT) return
+            // Design 105 (code QA L1): Android's keyguard is gone - a rule's clocks leave the list (whatever the face).
+            if (LockTaskChrome.ruleClockPins.isNotEmpty()) refreshChrome(context.applicationContext)
+            if (!AndroidLock.faceOn) return
             val app = context.applicationContext
             // S3-2: Android's keyguard is done only with the screen on - a late broadcast after a screen-off (it
             // rides the background queue) never marks the next wake.
@@ -1365,7 +1390,8 @@ object PinLockRuntime {
         val app = context.applicationContext
         val reader = com.kidslauncher.mdm.badges.AlarmNoticeReader
         val telecom = telecomInCall(app)
-        val clocks = clockPackages()
+        // Design 105 §3: the time-rule screen never sends a screen a rule keeps out of the kiosk's list (it is refused).
+        val clocks = if (timeRuleScreen) pinnedClocks() else clockPackages()
         // The PIN lock's send opens the yield, so it keeps to the yield's bound (E7 code QA 2); past it the PIN, then the
         // time-rule screen, reaches the ringing screen.
         val key = reader.screenKey(clocks, inYield = !timeRuleScreen, timeRule = timeRuleScreen)
@@ -1387,13 +1413,36 @@ object PinLockRuntime {
     /** E7's M1: the time-rule screen's alarm row - an allowed clock's alarm rings, its screen kept, not silenced by a
      * silent rule ([alarmRingingNow]'s rule: nobody hears it). Main thread. */
     fun alarmToStop(): Boolean = !com.kidslauncher.mdm.timerules.ZenRuleRuntime.silencesAlarms() &&
-        com.kidslauncher.mdm.badges.AlarmNoticeReader.openable(clockPackages())
+        com.kidslauncher.mdm.badges.AlarmNoticeReader.openable(pinnedClocks())
+
+    /** Design 105 §3: the clocks a rule keeps out of the kiosk's list while unlocked ([LockTaskChrome.ruleClockPins]) -
+     * none while LOCKED, which pins them. */
+    fun unpinnedClocks(): Set<String> = if (mode == LockMode.LOCKED) emptySet() else LockTaskChrome.ruleClockPins
+
+    /** The lock's clock apps less [unpinnedClocks]: the ones whose ringing screen the time-rule screen may send or open. */
+    private fun pinnedClocks(): Set<String> = clockPackages() - unpinnedClocks()
+
+    /** Design 105 §3: the time-rule screen's alarm buttons - a ringing alarm of a clock a rule keeps out of the list, its
+     * non-activity actions; null = none (no row, also while a silent rule silences alarms). Main thread. */
+    fun alarmStops(): com.kidslauncher.mdm.badges.AlarmNoticeReader.AlarmStops? =
+        if (com.kidslauncher.mdm.timerules.ZenRuleRuntime.silencesAlarms()) {
+            null
+        } else {
+            com.kidslauncher.mdm.badges.AlarmNoticeReader.stops(clockPackages() intersect unpinnedClocks())
+        }
+
+    /** Design 105 §3: the kid tapped the alarm row's button [index] for [key] ([alarmStops]) - its Dismiss or Snooze sent,
+     * never an activity. Main thread. */
+    fun stopRingingAlarm(context: Context, key: String, index: Int) {
+        val sent = com.kidslauncher.mdm.badges.AlarmNoticeReader.sendStop(context, key, index, clockPackages())
+        Log.i(LOG_TAG, if (sent) "The ringing alarm's action sent from its row" else "The ringing alarm's action couldn't be sent")
+    }
 
     /** E7's M1: the kid tapped the alarm row - the ringing screen, uncapped (a tap can't loop), from [context], the
      * visible time-rule screen; the screen's own send then skips that ring (E7b's L1). Main thread. */
     fun openRingingAlarm(context: Context) {
         val reader = com.kidslauncher.mdm.badges.AlarmNoticeReader
-        val clocks = clockPackages()
+        val clocks = pinnedClocks()
         val key = reader.screenKey(clocks, capped = false) ?: return
         noteOwnStart("the ringing alarm's screen")
         val sent = reader.sendScreen(context, key, clocks)

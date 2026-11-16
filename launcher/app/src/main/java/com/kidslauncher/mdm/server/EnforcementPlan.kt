@@ -40,6 +40,11 @@ data class EnforcementPlan(
     /** The recents provider when it is in [kioskPackages] - taken out while the PIN lock is LOCKED
      * ([lockTaskWhileLocked], qa-16d-code #1). */
     val recentsPin: String? = null,
+    /** Design 105 §2.1: during a time rule with the kiosk on, the allowed clock apps the rule doesn't leave usable - out
+     * of [kioskPackages], added back by [lockTaskWhileLocked] only while the PIN lock is LOCKED or the screen is dark.
+     * Still spared from suspension, so their alarms ring. Empty otherwise (no rule, the budget alone, a window, the kiosk
+     * off). */
+    val ruleClockPins: Set<String> = emptySet(),
     /** Packages that must be unsuspended and unhidden whatever their current state, every cycle. */
     val neverRestrict: Set<String>,
     /**
@@ -121,7 +126,11 @@ data class EnforcementPlan(
  *   plus an allowlisted system dialer while calls are unmanaged, and (bug 2026-11-02) the allowed [alarmApps]: their
  *   ringing screen is a new task of their own, which lock task refuses for a package off the list - the alarm rang and
  *   Stop never came up. The kid can reach the clock app (alarms, timer, stopwatch) during the rule through it, as
- *   with the kiosk off (`pinLockHelpers`' clock app) - accepted.
+ *   with the kiosk off (`pinLockHelpers`' clock app). Design 105 (the user withdrew that): during a time **rule**
+ *   ([ruleLocked]) the allowed clocks the rule doesn't leave usable leave the kiosk list ([EnforcementPlan.ruleClockPins])
+ *   and are pinned only while the PIN lock is LOCKED or the screen is dark ([lockTaskWhileLocked]) - no reach there,
+ *   and the ringing screen still comes over the glance; unlocked and lit, lock task refuses every way into the clock
+ *   and the list's change closes its task. The used-up budget alone (no rule, nothing to tick) keeps them pinned.
  * - [lockUsableApps]: while [scheduleLocked], the apps the lock leaves usable - a rule's exempt
  *   apps, or the contacts' messaging apps once the screen-time budget is used up (handy step 6,
  *   `decideTimeLock`). They are spared by the lock and pinned, but still only if the allowlist
@@ -191,6 +200,8 @@ fun computeEnforcementPlan(
      * the kiosk (M11, M12), suspended by a time-rule lock like any app (D7), never in the accessibility or input
      * method lists and never among the lock's usable apps. A ticked Chrome is an allowed app and ignores the role. */
     loginBrowser: String? = null,
+    /** Design 105 §2.1: the lock in force has a time rule (`lock.rules.isNotEmpty()`), not only the used-up budget. */
+    ruleLocked: Boolean = false,
 ): EnforcementPlan {
     val neverRestrict = setOfNotNull(ownPackage, systemDialer, recentsPackage, emergencySos, webViewProvider) + inputMethods + PLAY_NEVER_RESTRICT
     val features = lockTaskFeatures(serverLockTaskFeatures, blockActivityStart)
@@ -228,6 +239,8 @@ fun computeEnforcementPlan(
     val playSuspended = playStoreSuspended(appsManaged, locked, playState) || (locked && !playState.updateWindow)
     if (playSuspended && PLAY_STORE in controllable) suspend += PLAY_STORE
     val installModePin = playState.installMode && !locked && PLAY_STORE in controllable
+    // Design 105 §2.1: during a rule the clocks a parent didn't tick leave the list; the chrome pins them while LOCKED or dark.
+    val clocksOut = if (locked && ruleLocked) allowed.filter { it in alarmApps && it !in lockUsableApps }.toSet() else emptySet()
 
     val kiosk = if (appsManaged && kioskDesired) {
         // During the lock: our package and the lock's usable apps, plus an allowlisted system
@@ -236,7 +249,7 @@ fun computeEnforcementPlan(
         // screen is refused by lock task, so the alarm rang with no way to Stop it.
         val pinned = if (locked) {
             setOf(ownPackage) + allowed.filter { it in lockUsableApps } +
-                allowed.filter { it == systemDialer && !callsBlockedByRule } + allowed.filter { it in alarmApps }
+                allowed.filter { it == systemDialer && !callsBlockedByRule } + allowed.filter { it in alarmApps && it !in clocksOut }
         } else {
             allowed + ownPackage + setOfNotNull(roleApp)
         }
@@ -263,6 +276,8 @@ fun computeEnforcementPlan(
         hide = hide,
         kioskPackages = kiosk,
         recentsPin = recentsPackage?.takeIf { kiosk != null && it in kiosk },
+        // A clock the list still pins otherwise (a helper, say) is no pin of the rule's.
+        ruleClockPins = if (kiosk == null) emptySet() else clocksOut - kiosk,
         // As the server sent them: OVERVIEW stays (design 16d; Recents is pinned with the helpers).
         lockTaskFeatures = features,
         neverRestrict = neverRestrict,

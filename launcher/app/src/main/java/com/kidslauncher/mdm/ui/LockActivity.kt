@@ -226,6 +226,8 @@ class LockActivity : UIObjectActivity() {
         com.kidslauncher.mdm.sms.SmsHome.addListener(calendarListener)
         com.kidslauncher.mdm.sms.SmsHome.refresh(this)
         com.kidslauncher.mdm.badges.AlarmNoticeReader.addListener(alarmListener)
+        // Design 105 (code QA L2): a chrome pass may change the rule's clock pins - the alarm row follows.
+        PinLockRuntime.addChromeListener(alarmListener)
         com.kidslauncher.mdm.timerules.ZenRuleRuntime.addListener(alarmListener)
         com.kidslauncher.mdm.assistant.AirplaneRuntime.addListener(airplaneListener)
         // Design 100 §8.4 (Q100-H1): the request's changes - sent, taken, answered - on the main thread.
@@ -285,6 +287,7 @@ class LockActivity : UIObjectActivity() {
         CalendarStore.removeListener(calendarListener)
         com.kidslauncher.mdm.sms.SmsHome.removeListener(calendarListener)
         com.kidslauncher.mdm.badges.AlarmNoticeReader.removeListener(alarmListener)
+        PinLockRuntime.removeChromeListener(alarmListener)
         com.kidslauncher.mdm.timerules.ZenRuleRuntime.removeListener(alarmListener)
         com.kidslauncher.mdm.assistant.AirplaneRuntime.removeListener(airplaneListener)
         com.kidslauncher.mdm.server.AnchorNotice.removeListener(askListener)
@@ -373,11 +376,14 @@ class LockActivity : UIObjectActivity() {
         val calendar = getString(R.string.day_title).takeIf { lock?.calendarUsable == true && CalendarStore.tileShown() }
         // E7's M1: a ringing alarm's row first, whatever the rule.
         val alarm = getString(R.string.lock_alarm_stop).takeIf { PinLockRuntime.alarmToStop() }
+        // Design 105 §3: a clock the rule keeps out of the kiosk's list can't open - its own Dismiss and Snooze instead.
+        val stops = if (alarm == null) PinLockRuntime.alarmStops() else null
         // Design 77 §6.7: Meldinger where the rule allows calls, while Home shows its tile (design 82 W1, W2: under
         // the parent's name, and not while it is off Home).
         val messages = com.kidslauncher.mdm.appdisplay.AppDisplay.messagesName(this).takeIf { com.kidslauncher.mdm.sms.SmsHome.tileShown() }
         renderRows(
-            timeLockRows(callsManaged, lock?.callsAllowed != false, getString(R.string.calls_phone_book), openableApps(rowPackages(lock?.usableApps.orEmpty())), calendar, alarm, messages),
+            timeLockRows(callsManaged, lock?.callsAllowed != false, getString(R.string.calls_phone_book), openableApps(rowPackages(lock?.usableApps.orEmpty())),
+                calendar, alarm ?: stops?.let { getString(R.string.lock_alarm_ringing) }, messages, stops?.labels.orEmpty(), stops?.key),
         )
     }
 
@@ -454,7 +460,7 @@ class LockActivity : UIObjectActivity() {
             // Its own task (`DayActivity.intent`); Back from it comes back here.
             is LockRow.Calendar -> startActivity(com.kidslauncher.mdm.ui.day.DayActivity.intent(this))
             // The clock's own ringing screen (Stop, Snooze); Stop brings this screen back.
-            is LockRow.Alarm -> PinLockRuntime.openRingingAlarm(this)
+            is LockRow.Alarm -> if (row.stops.isEmpty()) PinLockRuntime.openRingingAlarm(this)
             is LockRow.App -> {
                 val launch = packageManager.getLaunchIntentForPackage(row.packageName) ?: return
                 try {
@@ -469,7 +475,7 @@ class LockActivity : UIObjectActivity() {
     /** E7 code QA 1: the rule's usable apps, and the lock's clock apps while the notification listener isn't connected
      * ([lockRowPackages]). */
     private fun rowPackages(usable: Set<String>): Set<String> =
-        lockRowPackages(usable, PinLockRuntime.clockPackages(), com.kidslauncher.mdm.badges.AlarmNoticeReader.listening())
+        lockRowPackages(usable, PinLockRuntime.clockPackages(), com.kidslauncher.mdm.badges.AlarmNoticeReader.listening(), PinLockRuntime.unpinnedClocks())
 
     /** The usable apps that can actually be opened (installed, launchable, not suspended - the
      * allowlist still decides, through AppEnforcer's suspension), with the parent's names (design 14). */
@@ -515,10 +521,70 @@ class LockActivity : UIObjectActivity() {
                     showAppIcon(view.lockRowIcon, icons.cached(row.packageName))
                 }
             }
-            view.root.setOnClickListener { open(row) }
-            container.addView(view.root)
+            // Design 105 §3: the alarm row with stops is a label with its bar of buttons under it, no button itself.
+            // Code QA L3: one child of the card (its dividers go between children), the row over its bar.
+            val stopBar = if (row is LockRow.Alarm && row.stops.isNotEmpty()) alarmStopBar(view, row) else null
+            if (stopBar == null) {
+                view.root.setOnClickListener { open(row) }
+                container.addView(view.root)
+            } else {
+                val block = android.widget.LinearLayout(this).apply { orientation = android.widget.LinearLayout.VERTICAL }
+                block.addView(view.root)
+                block.addView(stopBar)
+                container.addView(block)
+            }
         }
         icons.load(::iconsDrawn)
+    }
+
+    /** Design 105 §3: the alarm row with its stops - the row is a label only (no button, no chevron; TalkBack reads
+     * "Alarmen ringer"), and under it a bar of one ringed pill per stop with the notification's own title (each read as
+     * "…, knapp"), lined up with the label. Returns the bar; the row and the bar are one child of the card. */
+    private fun alarmStopBar(view: ItemLockRowBinding, row: LockRow.Alarm): View? {
+        val key = row.key ?: return null
+        view.root.isClickable = false
+        view.root.isFocusable = false
+        view.root.background = null
+        view.root.contentDescription = null
+        view.root.accessibilityDelegate = null
+        view.lockRowLabel.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+        view.lockRowChevron.visibility = View.GONE
+        val dp = { v: Float -> KidAvatars.dp(this, v) }
+        // Code QA L3: two pills share the line, each half of it; three or more stack, one per line.
+        val stacked = row.stops.size > 2
+        val bar = android.widget.LinearLayout(this).apply {
+            orientation = if (stacked) android.widget.LinearLayout.VERTICAL else android.widget.LinearLayout.HORIZONTAL
+            // The row's start padding, icon and label margin (14 + 34 + 12 dp): the pills start under the label.
+            setPadding(dp(60f), 0, dp(10f), dp(10f))
+        }
+        row.stops.forEachIndexed { index, label ->
+            val button = TextView(this).apply {
+                text = label
+                setBackgroundResource(R.drawable.bg_lock_ask_outline)
+                setTextColor(ContextCompat.getColor(this@LockActivity, R.color.kid_accent))
+                setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 16f)
+                typeface = androidx.core.content.res.ResourcesCompat.getFont(this@LockActivity, R.font.nunito_bold)
+                gravity = android.view.Gravity.CENTER
+                minHeight = dp(48f)
+                maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.END
+                setPadding(dp(12f), dp(6f), dp(12f), dp(6f))
+                isFocusable = true
+                accessibilityDelegate = ButtonRole
+                // TalkBack reads the whole title, cut or not.
+                contentDescription = label
+                setOnClickListener { PinLockRuntime.stopRingingAlarm(this@LockActivity, key, index) }
+            }
+            val params = if (stacked) {
+                android.widget.LinearLayout.LayoutParams(android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT)
+                    .apply { if (index > 0) topMargin = dp(8f) }
+            } else {
+                android.widget.LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                    .apply { if (index > 0) marginStart = dp(8f) }
+            }
+            bar.addView(button, params)
+        }
+        return bar
     }
 
     private fun glyphIcon(icon: ImageView, colour: Int, glyph: Int) {

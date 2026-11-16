@@ -38,6 +38,8 @@
     <string name="lock_calls_allowed">You can still call your contacts.</string>
     <!-- E7's M1: the time-rule screen's row while an allowed clock's alarm rings - it opens the clock's ringing screen. -->
     <string name="lock_alarm_stop">Turn off the alarm</string>
+    <!-- Design 105 §3: the alarm row while a rule keeps the clock unpinned - the ringing alarm's own buttons follow. -->
+    <string name="lock_alarm_ringing">The alarm is ringing</string>
     <!-- %1$s: today's allowance, budget + extra minutes, by durationText ("1 h 30 min"). -->
     <string name="lock_budget_allowance">You\'ve used today\'s %1$s.</string>
     <string name="lock_budget_none">There\'s no screen time today.</string>

@@ -28,6 +28,8 @@
     <string name="lock_calls_emergency_only">Du kan bare ringe nødnumre nå.</string>
     <string name="lock_calls_allowed">Du kan fortsatt ringe kontaktene dine.</string>
     <string name="lock_alarm_stop">Slå av alarmen</string>
+    <!-- Design 105 §3: the alarm row while a rule keeps the clock unpinned - the ringing alarm's own buttons follow. -->
+    <string name="lock_alarm_ringing">Alarmen ringer</string>
     <string name="lock_budget_allowance">Du har brukt dagens %1$s.</string>
     <string name="lock_budget_none">Ingen skjermtid i dag.</string>
     <string name="duration_unit_hours">t</string>

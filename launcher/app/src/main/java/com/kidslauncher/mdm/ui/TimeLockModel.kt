@@ -99,8 +99,10 @@ sealed interface LockRow {
     /** Kalender, our own day view ("Kalender"; PLAN 2026-11-02). */
     data class Calendar(override val label: String) : LockRow
 
-    /** E7's M1: an allowed clock's alarm rings - its ringing screen, with Stop and Snooze. */
-    data class Alarm(override val label: String) : LockRow
+    /** E7's M1: an allowed clock's alarm rings - its ringing screen, with Stop and Snooze. Design 105 §3: while a rule
+     * keeps the clock out of the kiosk's list, its [stops] instead - the notification's own non-activity actions'
+     * titles ("Slumre", "Avvis") as buttons of ring [key]; the row itself opens nothing then. */
+    data class Alarm(override val label: String, val stops: List<String> = emptyList(), val key: String? = null) : LockRow
 
     data class App(val packageName: String, override val label: String) : LockRow
 }
@@ -113,6 +115,7 @@ sealed interface LockRow {
  * the phone ([calendarLabel], null = no row; PLAN 2026-11-02), then every usable [apps] entry sorted
  * by its name (QA #6 of design 14) - the music app among them under a budget lock. Every app is a
  * row: [apps] comes from the lock's set of packages, and two apps the parent named alike both stay.
+ * Design 105 §3: [alarmStops] (of ring [alarmKey]) make the alarm row's buttons.
  */
 fun timeLockRows(
     callsManaged: Boolean,
@@ -122,9 +125,11 @@ fun timeLockRows(
     calendarLabel: String? = null,
     alarmLabel: String? = null,
     messagesLabel: String? = null,
+    alarmStops: List<String> = emptyList(),
+    alarmKey: String? = null,
 ): List<LockRow> {
     val rows = mutableListOf<LockRow>()
-    if (alarmLabel != null) rows += LockRow.Alarm(alarmLabel)
+    if (alarmLabel != null) rows += LockRow.Alarm(alarmLabel, alarmStops, alarmKey)
     if (callsManaged && callsAllowed) rows += LockRow.PhoneBook(phoneBookLabel)
     if (messagesLabel != null && callsAllowed) rows += LockRow.Messages(messagesLabel)
     if (calendarLabel != null) rows += LockRow.Calendar(calendarLabel)
@@ -197,7 +202,8 @@ fun lockAsk(ruleInForce: Boolean, budgetToday: Boolean, windowOpen: Boolean, enr
  * isn't connected ([listening]: no access, or not yet rebound after an update or a restart) the lock's clock apps too
  * ([clockPackages]): without the listener no ringing alarm is seen, so its screen is neither sent nor offered, and the
  * clock app itself is the kid's way to it. No loophole: the screen's openable-apps filter keeps only a launchable clock
- * that isn't suspended - one the rule spares as an allowed alarm app.
+ * that isn't suspended - one the rule spares as an allowed alarm app. Design 105 §3: never a clock a rule keeps out of
+ * the kiosk's list ([unpinned] - it would be refused); a clock the parent ticked on the rule is in [usable] anyway.
  */
-fun lockRowPackages(usable: Set<String>, clockPackages: Set<String>, listening: Boolean): Set<String> =
-    if (listening) usable else usable + clockPackages
+fun lockRowPackages(usable: Set<String>, clockPackages: Set<String>, listening: Boolean, unpinned: Set<String> = emptySet()): Set<String> =
+    if (listening) usable else usable + (clockPackages - unpinned)

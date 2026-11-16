@@ -526,6 +526,40 @@ class EnforcementPlanTest {
         assertTrue(clock in plan(listOf(clock), alarm = clock).kioskPackages.orEmpty())
     }
 
+    /** Design 105 §2.1: during a rule the clocks the parent didn't tick leave the kiosk's list for the chrome's pins - still
+     * spared from suspension; a ticked clock stays pinned; the budget alone, unlocked and a window pin it as allowed. */
+    @Test
+    fun `a rule moves an allowed clock it doesn't leave usable to the rule clock pins`() {
+        val clock = "org.example.game"
+        val allowed = listOf(clock, "org.example.music")
+        val rule = computeEnforcementPlan(allowed, true, 0, false, controllable, OWN, DIALER, scheduleLocked = true, alarmApps = setOf(clock), ruleLocked = true)
+        assertFalse(clock in rule.kioskPackages!!)
+        assertFalse(clock in rule.suspend)
+        assertEquals(setOf(clock), rule.ruleClockPins)
+        // Ticked on the rule: pinned, no pin of the chrome's.
+        val ticked = computeEnforcementPlan(
+            allowed, true, 0, false, controllable, OWN, DIALER, scheduleLocked = true, alarmApps = setOf(clock), lockUsableApps = setOf(clock), ruleLocked = true,
+        )
+        assertTrue(clock in ticked.kioskPackages!!)
+        assertTrue(ticked.ruleClockPins.isEmpty())
+        // The budget alone and unlocked: pinned as allowed, no pins; the override: no kiosk, no pins.
+        for ((case, p) in listOf(
+            "budget" to computeEnforcementPlan(allowed, true, 0, false, controllable, OWN, DIALER, scheduleLocked = true, alarmApps = setOf(clock)),
+            "unlocked" to computeEnforcementPlan(allowed, true, 0, false, controllable, OWN, DIALER, alarmApps = setOf(clock), ruleLocked = true),
+        )) {
+            assertTrue(case, clock in p.kioskPackages!!)
+            assertTrue(case, p.ruleClockPins.isEmpty())
+        }
+        val window = computeEnforcementPlan(allowed, true, 0, true, controllable, OWN, DIALER, scheduleLocked = true, alarmApps = setOf(clock), ruleLocked = true)
+        assertFalse(clock in window.suspend)
+        assertTrue(window.ruleClockPins.isEmpty())
+        // Not allowed: hidden, never a pin; the kiosk off: no pins.
+        val notAllowed = computeEnforcementPlan(listOf("org.example.music"), true, 0, false, controllable, OWN, DIALER, scheduleLocked = true, alarmApps = setOf(clock), ruleLocked = true)
+        assertTrue(clock in notAllowed.hide)
+        assertTrue(notAllowed.ruleClockPins.isEmpty())
+        assertTrue(computeEnforcementPlan(allowed, false, 0, false, controllable, OWN, DIALER, scheduleLocked = true, alarmApps = setOf(clock), ruleLocked = true).ruleClockPins.isEmpty())
+    }
+
     @Test
     fun `keyboards are never suspended or hidden`() {
         val ime = "com.android.chrome"

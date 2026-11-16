@@ -7,8 +7,11 @@ import android.service.notification.StatusBarNotification
 import android.util.Log
 import com.kidslauncher.mdm.lock.AlarmNotices
 import com.kidslauncher.mdm.lock.AlarmPost
+import com.kidslauncher.mdm.lock.ClockAction
+import com.kidslauncher.mdm.lock.ClockActions
 import com.kidslauncher.mdm.lock.PinLockRuntime
 import com.kidslauncher.mdm.lock.VisibleSender
+import com.kidslauncher.mdm.lock.alarmRowActions
 import com.kidslauncher.mdm.lock.ringingAlarmShape
 
 private const val LOG_TAG = "AlarmNoticeReader"
@@ -25,13 +28,22 @@ private const val LOG_TAG = "AlarmNoticeReader"
  * listener's callbacks and the screens' checks); every entry point catches everything, so a fault here never reaches
  * the lock's crash guard. Without the listener: nothing kept, the lock's fixed window after the alarm's time decides
  * alone, and nothing is sent.
+ * Design 105 §3: of such a ringing notification also its non-activity actions ([alarmRowActions]: Fossify's Snooze and
+ * Dismiss) with their titles, kept next to its full-screen intent ([Kept]) - the time-rule screen's buttons while a rule
+ * keeps the clock out of the kiosk's list ([stops], [sendStop]: through [ClockActions.stop], never an activity).
  */
 object AlarmNoticeReader {
+    /** One kept ringing notification: its full-screen intent and its non-activity actions (title, intent). */
+    private class Kept(val screen: PendingIntent, val stops: List<Pair<String, PendingIntent>>)
+
+    /** Design 105 §3: the ringing alarm the time-rule screen offers buttons for - its [key] and the buttons' [labels]. */
+    data class AlarmStops(val key: String, val labels: List<String>)
+
     @Volatile
     private var notices = AlarmNotices()
 
-    /** The lock's clock apps' ringing-shaped notifications' full-screen intents, by key. */
-    private val screens = HashMap<String, PendingIntent>()
+    /** The lock's clock apps' ringing-shaped notifications' full-screen intents (and stops), by key. */
+    private val screens = HashMap<String, Kept>()
 
     /** The listener's `getActiveNotifications(keys)` while it is connected; null = no answer. */
     private var lookup: ((Array<String>) -> List<StatusBarNotification>?)? = null
@@ -145,7 +157,7 @@ object AlarmNoticeReader {
      * activity intent one of [clockPackages] created (code QA N1) - and counts it ([AlarmNotices.resent]). A cancelled
      * intent (re-posted meanwhile) or a refused one is a counted try that went nowhere. */
     fun sendScreen(context: Context, key: String, clockPackages: Set<String>): Boolean {
-        val intent = screens[key] ?: return false
+        val intent = screens[key]?.screen ?: return false
         val sent = try {
             if (!intent.isActivity || intent.creatorPackage !in clockPackages) {
                 Log.i(LOG_TAG, "Alarm screen not sent: not the clock's activity")
@@ -162,6 +174,35 @@ object AlarmNoticeReader {
         return sent
     }
 
+    /** Design 105 §3: the newest ringing alarm of [clockPackages] with a kept screen and at least one stop - the
+     * time-rule screen's buttons; null = none (no row). */
+    fun stops(clockPackages: Set<String>): AlarmStops? = try {
+        val withStops = screens.filterValues { it.stops.isNotEmpty() }.keys
+        notices.screenKey(clockPackages, kept = withStops, capped = false)?.let { key ->
+            AlarmStops(key, screens[key]?.stops.orEmpty().map { it.first })
+        }
+    } catch (e: Throwable) {
+        Log.w(LOG_TAG, "Alarm stops read failed: ${e.javaClass.simpleName}")
+        null
+    }
+
+    /** Design 105 §3: the kid's button [index] of [key]'s stops - sent only while the listener still has [key] active
+     * (asked right now, as [screenKey]) and only an intent one of [clockPackages] created, through [ClockActions.stop]
+     * (a broadcast or a service, background starts denied). Returns whether it went. */
+    fun sendStop(context: Context, key: String, index: Int, clockPackages: Set<String>): Boolean = try {
+        val active = lookup?.invoke(arrayOf(key))
+        val intent = screens[key]?.stops?.getOrNull(index)?.second
+        if (active == null || active.none { it.key == key } || intent == null || intent.creatorPackage !in clockPackages) {
+            Log.i(LOG_TAG, "Alarm stop not sent: no longer ringing, or not the clock's")
+            false
+        } else {
+            ClockActions.stop(context, intent)
+        }
+    } catch (e: Throwable) {
+        Log.w(LOG_TAG, "Alarm stop failed: ${e.javaClass.simpleName}")
+        false
+    }
+
     private fun shape(sbn: StatusBarNotification): Boolean {
         val n = sbn.notification ?: return false
         return ringingAlarmShape(n.category, n.fullScreenIntent != null)
@@ -170,8 +211,24 @@ object AlarmNoticeReader {
     private fun post(sbn: StatusBarNotification) = AlarmPost(sbn.key, sbn.packageName, shape(sbn), sbn.notification?.`when` ?: 0L)
 
     /** Kept only of the lock's clock apps (code QA N2). */
-    private fun screen(sbn: StatusBarNotification): PendingIntent? =
-        if (shape(sbn) && sbn.packageName in PinLockRuntime.clockPackages()) sbn.notification?.fullScreenIntent else null
+    private fun screen(sbn: StatusBarNotification): Kept? {
+        val screen = if (shape(sbn) && sbn.packageName in PinLockRuntime.clockPackages()) sbn.notification?.fullScreenIntent else null
+        return screen?.let { Kept(it, stopsOf(sbn)) }
+    }
+
+    /** Design 105 §3: a kept ringing notification's non-activity actions with a title ([alarmRowActions]). */
+    private fun stopsOf(sbn: StatusBarNotification): List<Pair<String, PendingIntent>> {
+        val actions = sbn.notification?.actions.orEmpty()
+        val kinds = actions.map { a ->
+            val intent = a?.actionIntent
+            ClockAction(intent?.isActivity != false, intent?.isBroadcast == true, intent?.isService == true || intent?.isForegroundService == true)
+        }
+        return alarmRowActions(kinds).mapNotNull { i ->
+            val title = actions[i]?.title?.toString()?.trim()
+            val intent = actions[i]?.actionIntent
+            if (title.isNullOrEmpty() || intent == null) null else title to intent
+        }
+    }
 
     /** Runs [change] on [screens]; when their keys changed, every listener is told. */
     private inline fun tellingChanges(change: () -> Unit) {

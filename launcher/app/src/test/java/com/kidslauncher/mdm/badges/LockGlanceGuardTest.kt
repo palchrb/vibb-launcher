@@ -521,7 +521,7 @@ class LockGlanceGuardTest {
         assertTrue(alarmReader.contains("ringingAlarmShape(n.category, n.fullScreenIntent != null)"))
         assertFalse("ongoing is no part of the shape (code QA H1)", alarmReader.contains("isOngoing"))
         for (forbidden in listOf(
-            "extras", "EXTRA_", "contentIntent", "actions", "deleteIntent", "contentView", "RemoteViews", "getParcelable",
+            "extras", "EXTRA_", "contentIntent", "deleteIntent", "contentView", "RemoteViews", "getParcelable",
             "startActivity", "Intent(", "SharedPreferences", "cancelNotification", "tickerText",
         )) {
             assertFalse("AlarmNoticeReader uses $forbidden", alarmReader.contains(forbidden))
@@ -531,6 +531,16 @@ class LockGlanceGuardTest {
         assertEquals(2, Regex("""\bfullScreenIntent\b""").findAll(alarmReader).count())
         assertTrue(alarmReader.contains("if (shape(sbn) && sbn.packageName in PinLockRuntime.clockPackages()) sbn.notification?.fullScreenIntent else null"))
         assertTrue(alarmReader.contains("if (!intent.isActivity || intent.creatorPackage !in clockPackages) {"))
+        // Design 105 §3: the actions are read only of a kept ringing screen (its non-activity ones, alarmRowActions), and
+        // sent only through ClockActions.stop after the listener's look at the key.
+        assertEquals(1, Regex("""\.actions\b""").findAll(alarmReader).count())
+        assertTrue(body(alarmReader, "stopsOf").contains("sbn.notification?.actions.orEmpty()"))
+        assertTrue(alarmReader.contains("return screen?.let { Kept(it, stopsOf(sbn)) }"))
+        assertTrue(body(alarmReader, "stopsOf").contains("alarmRowActions(kinds)"))
+        val stop = body(alarmReader, "sendStop")
+        assertTrue(stop.contains("val active = lookup?.invoke(arrayOf(key))"))
+        assertTrue(stop.contains("intent.creatorPackage !in clockPackages"))
+        assertTrue(stop.contains("ClockActions.stop(context, intent)"))
         assertEquals(1, Regex("""\.send\(""").findAll(alarmReader).count())
         assertTrue(alarmReader.contains("intent.send(context, 0, null, null, null, null, VisibleSender.options())"))
         assertTrue(body(alarmReader, "screenKey").contains("notices = notices.reconciled(active.mapTo(mutableSetOf()) { it.key })"))
@@ -545,11 +555,11 @@ class LockGlanceGuardTest {
         assertEquals(
             listOf(
                 "addListener", "removeListener", "attach", "connected", "disconnected", "listening", "posted", "removed", "ringing", "lockResumed",
-                "clocksKnown", "sendCameToNothing", "sentFromTimeRule", "screenOn", "openable", "screenKey", "sendScreen",
+                "clocksKnown", "sendCameToNothing", "sentFromTimeRule", "screenOn", "openable", "screenKey", "sendScreen", "stops", "sendStop",
             ),
             publicFuns,
         )
-        val caught = setOf("ringing", "openable", "screenKey", "sendScreen")
+        val caught = setOf("ringing", "openable", "screenKey", "sendScreen", "stops", "sendStop")
         for (name in publicFuns - caught - setOf("addListener", "removeListener", "listening")) assertTrue(name, body(alarmReader, name).contains("= guarded {"))
         for (name in caught) assertTrue(name, body(alarmReader, name).contains("} catch (e: Throwable) {"))
         // E7's M1: every change of the kept screens tells the listeners (the time-rule screen's alarm row), each caught.
@@ -575,7 +585,7 @@ class LockGlanceGuardTest {
         // sends it once per resume after the settle, from its visible window, and a pause drops it.
         val send = body(runtime, "sendAlarmScreen")
         // E7 code QA 2: the PIN lock's send keeps to the yield's bound, the time-rule screen's has none.
-        assertTrue(send.contains("val clocks = clockPackages()") && send.contains("reader.screenKey(clocks, inYield = !timeRuleScreen, timeRule = timeRuleScreen)"))
+        assertTrue(send.contains("val clocks = if (timeRuleScreen) pinnedClocks() else clockPackages()") && send.contains("reader.screenKey(clocks, inYield = !timeRuleScreen, timeRule = timeRuleScreen)"))
         assertTrue(send.contains("val inCharge = if (timeRuleScreen) mode != LockMode.LOCKED else mode == LockMode.LOCKED"))
         assertTrue(send.contains("key, inCharge, interactive(app), ourCall() || telecom || emergencyFlowNow(telecom),"))
         // The time-rule screen has no yield to check.
@@ -611,7 +621,7 @@ class LockGlanceGuardTest {
         assertTrue(body(timeRule, "onPause").contains("handler.removeCallbacks(alarmScreenSend)"))
         assertTrue(body(timeRule, "onStart").contains("AlarmNoticeReader.addListener(alarmListener)"))
         assertTrue(body(timeRule, "onStop").contains("AlarmNoticeReader.removeListener(alarmListener)"))
-        assertTrue(timeRule.contains("is LockRow.Alarm -> PinLockRuntime.openRingingAlarm(this)"))
+        assertTrue(timeRule.contains("is LockRow.Alarm -> if (row.stops.isEmpty()) PinLockRuntime.openRingingAlarm(this)"))
         assertFalse("process-wide, not the instance's (E7b's L1)", timeRule.contains("alarmScreenSent"))
         // E7 code QA 3: the resume after a send from here (the kid back from the ringing screen) sends nothing.
         // E7 code QA 5: a silent rule's flip re-renders the row.
@@ -619,10 +629,14 @@ class LockGlanceGuardTest {
         assertTrue(body(timeRule, "onStop").contains("ZenRuleRuntime.removeListener(alarmListener)"))
         // E7 code QA 1: without the listener the clock apps are offered as rows (through the openable-apps filter).
         assertTrue(timeRule.contains("openableApps(rowPackages(lock?.usableApps.orEmpty()))"))
-        assertTrue(timeRule.contains("lockRowPackages(usable, PinLockRuntime.clockPackages(), com.kidslauncher.mdm.badges.AlarmNoticeReader.listening())"))
+        assertTrue(timeRule.contains("lockRowPackages(usable, PinLockRuntime.clockPackages(), com.kidslauncher.mdm.badges.AlarmNoticeReader.listening(), PinLockRuntime.unpinnedClocks())"))
         assertTrue(timeRule.contains("getString(R.string.lock_alarm_stop).takeIf { PinLockRuntime.alarmToStop() }"))
         assertTrue(body(runtime, "alarmToStop").contains("!com.kidslauncher.mdm.timerules.ZenRuleRuntime.silencesAlarms() &&"))
-        assertTrue(body(runtime, "alarmToStop").contains("AlarmNoticeReader.openable(clockPackages())"))
+        // Design 105 §3: never a clock a rule keeps out of the kiosk's list - its stops instead.
+        assertTrue(body(runtime, "alarmToStop").contains("AlarmNoticeReader.openable(pinnedClocks())"))
+        assertTrue(body(runtime, "alarmStops").contains("AlarmNoticeReader.stops(clockPackages() intersect unpinnedClocks())"))
+        assertTrue(body(runtime, "openRingingAlarm").contains("val clocks = pinnedClocks()"))
+        assertTrue(body(runtime, "sendAlarmScreen").contains("val clocks = if (timeRuleScreen) pinnedClocks() else clockPackages()"))
         val tap = body(runtime, "openRingingAlarm")
         assertTrue(tap.contains("reader.screenKey(clocks, capped = false) ?: return"))
         assertTrue(tap.indexOf("noteOwnStart(") in 0 until tap.indexOf("reader.sendScreen(context, key, clocks)"))
@@ -632,7 +646,7 @@ class LockGlanceGuardTest {
     fun `Stopp sends one broadcast with background starts denied, never an activity (design 42)`() {
         val actions = code("ClockActions.kt")
         assertEquals(1, Regex("""\.send\(""").findAll(actions).count())
-        assertTrue(actions.contains("if (intent == null || intent.isActivity || !intent.isBroadcast) return"))
+        assertTrue(actions.contains("if (intent == null || intent.isActivity || !(intent.isBroadcast || intent.isService || intent.isForegroundService)) return"))
         assertTrue(actions.contains(".setPendingIntentBackgroundActivityStartMode(ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_DENIED)"))
         assertTrue(actions.contains("intent.send(context, 0, null, null, null, null, options)"))
         assertTrue(body(actions, "stop").contains("catch (e: Throwable)"))

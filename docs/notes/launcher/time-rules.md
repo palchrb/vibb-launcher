@@ -151,3 +151,35 @@ the only writer). A pause lifts only through its own entry and window (`phonePau
 start of every sync, before the policy GET; a policy after the ack without a rule's row (key and rule id, the twin's
 negative id too) ends that rule's pause - "Avslutt nå" on one rule of two ends that one alone (code QA M1). An entry is
 pruned only once posted (or 7 days old), so an offline pause still reaches the parent (L5). `rule_pause.json`.
+
+## The clock during a rule (design 105, `docs/design/105-clock-during-a-rule.md`)
+
+The bug: during Skole the kid opened Fossify Clock from Recents on the mode screen and kept it, because the allowed clocks
+were pinned in the kiosk all rule long (bug 2026-11-02). The user's decision: the clock is usable during a rule only when
+the parent ticks it on that rule (Leggetid too; no default tick).
+
+- **The plan** (`computeEnforcementPlan`, `ruleLocked = lock.rules.isNotEmpty()` from `AppEnforcer`): while a rule
+  locks with the kiosk on, the allowed clock apps not among the lock's usable apps leave `kioskPackages` and go to
+  `EnforcementPlan.ruleClockPins`. They stay spared from suspension, so alarms ring. A ticked clock stays pinned; the
+  used-up budget alone, the pause, the override and Foreldrekode are unchanged.
+- **The chrome** (`lockTaskWhileLocked(ruleClockPins, dark)`): the kiosk-on LOCKED row adds the pins always, the
+  not-LOCKED rows (the Flymodus route's included) only while `dark` (`ruleClocksIn`: Android's keyguard locked, or
+  `clockDark` - the screen off, lit for less than `ALARM_SCREEN_SETTLE_MS`, or interactive with no screen-on noted
+  since the last screen-off); the SOS-narrowed row and the kiosk off are unchanged. So the ringing screen still comes
+  over the glance (LOCKED) and in the dark; unlocked and lit lock task refuses every way into the clock (Recents,
+  a notification's content tap, `SHOW_ALARMS` - with the block bit on), and removing the package clears its task
+  (AOSP `updateLockTaskPackages`, lock task LOCKED). `PinLockRuntime`'s screen receiver tells `LockTaskChrome.screenChanged`
+  and runs a pass at a screen-off (unless LOCKED), one `ALARM_SCREEN_SETTLE_MS` after every screen-on and one at
+  USER_PRESENT (each only while a rule keeps clocks out); `dark` and LOCKED
+  are read under the monitor in every pass (`PowerManager.isInteractive`). Before the first apply the last pins come
+  from the pref `rule_clock_pins` (`fallbackKioskPackages`: out unlocked and lit, in LOCKED or dark).
+- **A ring while unlocked**: the time-rule screen's alarm row ("Alarmen ringer") shows the ringing notification's
+  own non-activity actions as pills under it, one child of the card (two side by side, three or more stacked,
+  ellipsized), with their titles; the screen redraws at every chrome pass (`alarmRowActions`; Fossify: Slumre a service, Avvis a
+  broadcast), kept by `AlarmNoticeReader` next to the full-screen intent and sent through `ClockActions.stop` (a
+  broadcast or a service, background starts denied) after the listener confirms the key is still active. While the
+  clock is out of the list the screen never sends or opens its ringing screen (`pinnedClocks()`), and
+  `lockRowPackages` never offers it without the listener. A clock with only activity actions gets no row: the shade,
+  its own silence-after, or two power presses (LOCKED pins it and the glance sends the ringing screen).
+- **Not device-tested**: the Jelly's system clock's action types (`dumpsys notification --noredact`), and Android 16's
+  lock-task clearing on the Jelly (a `dumpsys` look after the release). Emulator: `docs/testing/emulator.md` §6au.

@@ -38,7 +38,9 @@
         android:textColor="@color/kid_core"
         android:textSize="16sp" />
 
+    <!-- Design 105 §3: gone on the alarm row with its stops (LockActivity.alarmStopBar). -->
     <ImageView
+        android:id="@+id/lock_row_chevron"
         android:layout_width="20dp"
         android:layout_height="20dp"
         android:layout_marginStart="8dp"

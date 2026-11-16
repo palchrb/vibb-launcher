@@ -154,6 +154,12 @@ class TimeLockModelTest {
         val clocks = setOf("com.google.android.deskclock")
         assertEquals(setOf("org.signal"), lockRowPackages(setOf("org.signal"), clocks, listening = true))
         assertEquals(setOf("org.signal", "com.google.android.deskclock"), lockRowPackages(setOf("org.signal"), clocks, listening = false))
+        // Design 105 §3: never a clock a rule keeps unpinned; a ticked one (usable) stays.
+        assertEquals(setOf("org.signal"), lockRowPackages(setOf("org.signal"), clocks, listening = false, unpinned = clocks))
+        assertEquals(clocks, lockRowPackages(clocks, clocks, listening = false, unpinned = emptySet()))
+        // The alarm row with its stops opens nothing after an unlock either.
+        val stops = timeLockRows(true, true, "Telefonbok", emptyList(), alarmLabel = "Alarmen ringer", alarmStops = listOf("Slumre", "Avvis"), alarmKey = "k")
+        assertEquals(LockRow.Alarm("Alarmen ringer", listOf("Slumre", "Avvis"), "k"), stops.first())
     }
 
     /** PLAN "one usable thing opens straight after the PIN" (2026-11-02): only the card's only row, only on the unlock's

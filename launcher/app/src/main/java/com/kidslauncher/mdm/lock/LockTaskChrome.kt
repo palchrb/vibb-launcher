@@ -3,6 +3,8 @@ package com.kidslauncher.mdm.lock
 import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
+import android.os.PowerManager
+import android.os.SystemClock
 import android.os.UserManager
 import android.util.Log
 import com.kidslauncher.mdm.preferences.LauncherPreferences
@@ -12,6 +14,7 @@ import com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
 import com.kidslauncher.mdm.server.StatusBarLatch
 import com.kidslauncher.mdm.server.UpdateFence
 import com.kidslauncher.mdm.server.chromeWriteOrder
+import com.kidslauncher.mdm.server.ruleClocksIn
 import com.kidslauncher.mdm.server.fallbackKioskPackages
 import com.kidslauncher.mdm.server.lockTaskWhileLocked
 import com.kidslauncher.mdm.server.sosNarrowedPackages
@@ -34,12 +37,22 @@ private const val LOG_TAG = "LockTaskChrome"
  * Design 16d decision 1: [healStatusBar] flips SYSTEM_INFO for a moment and [endStatusBarHeal]
  * writes the computed features back, so SystemUI gets lock task's status-bar flags again
  * ([statusBarHealFeatures]) - the same pass, only its lock-task features write differs.
+ * Design 105 §2.2: the plan's rule clock pins ([EnforcementPlan.ruleClockPins]) and the screen ([screenChanged]) are
+ * inputs too - the clocks are in the kiosk's list during a rule only while LOCKED or dark ([clockDark]).
  */
 object LockTaskChrome {
 
-    private data class Plan(val kioskPackages: Set<String>?, val features: Int, val restrictCreateWindows: Boolean, val recentsPin: String?)
+    private data class Plan(
+        val kioskPackages: Set<String>?,
+        val features: Int,
+        val restrictCreateWindows: Boolean,
+        val recentsPin: String?,
+        val ruleClockPins: Set<String> = emptySet(),
+    )
 
-    /** The last plan from apply() in this process (`null` until the first apply). */
+    /** The last plan from apply() in this process (`null` until the first apply). Written under the monitor; read outside
+     * it too ([hasPlan], [ruleClockPins]). */
+    @Volatile
     private var plan: Plan? = null
     @Volatile
     private var helpers: Set<String>? = null
@@ -73,6 +86,16 @@ object LockTaskChrome {
     private var recentsPin: String? = null
     @Volatile
     private var recentsPinKnown = false
+
+    /** Design 105 §2.2: the last screen-on (elapsed realtime) - [ruleClocksIn]'s settle; `null` from a screen-off until
+     * the next screen-on (code QA L1), and until [PinLockRuntime] notes the process's start. */
+    @Volatile
+    private var screenOnAtMs: Long? = null
+
+    /** Design 105 (QA L3): the last plan's rule clock pins as stored ([storeClockPins]), for the passes before the first
+     * apply in this process; read once. */
+    @Volatile
+    private var storedClockPins: Set<String>? = null
 
     /** The "sos" yield runs (qa-25b-25f H1): a LOCKED pass with the kiosk on writes [sosNarrowedPackages]. */
     @Volatile
@@ -123,6 +146,52 @@ object LockTaskChrome {
     private fun sosNarrowed(context: Context, locked: Boolean, kioskOn: Boolean): Set<String>? =
         if (sosNarrowing && locked && kioskOn) sosNarrowedPackages(context.packageName, helpers, PinLockRuntime.sosPackage) else null
 
+    /**
+     * Design 105 §2.2: the screen came on ([on], at [atMs], elapsed realtime) or went off (cleared, code QA L1) -
+     * [PinLockRuntime]'s screen receiver and its start, main thread. Only notes it; the caller runs the passes (at a
+     * screen-off at once, at every screen-on once [ALARM_SCREEN_SETTLE_MS] has passed - code QA M1).
+     */
+    fun screenChanged(on: Boolean, atMs: Long) {
+        screenOnAtMs = if (on) atMs else null
+    }
+
+    /** Design 105 §3: the clocks a time rule keeps out of the kiosk's list while unlocked and lit - the plan's, before the
+     * first apply the stored ones. The time-rule screen neither sends their ringing screen nor offers them as rows. */
+    val ruleClockPins: Set<String>
+        get() = plan?.ruleClockPins ?: storedPins()
+
+    private fun storedPins(): Set<String> = storedClockPins ?: try {
+        LauncherPreferences.mdm().ruleClockPins().orEmpty().split(',').filter { it.isNotBlank() }.toSet()
+    } catch (e: Exception) {
+        emptySet()
+    }.also { storedClockPins = it }
+
+    /** The plan's pins kept for a later process's first passes - written only when they changed. */
+    private fun storeClockPins(pins: Set<String>) {
+        if (pins == storedPins()) return
+        storedClockPins = pins
+        try {
+            LauncherPreferences.mdm().ruleClockPins(pins.sorted().joinToString(","))
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't store the rule clock pins", e)
+        }
+    }
+
+    /** [ruleClocksIn] now: the screen off or not settled, or Android's keyguard locked. */
+    private fun dark(context: Context): Boolean {
+        val interactive = try {
+            context.getSystemService(PowerManager::class.java)?.isInteractive ?: true
+        } catch (e: Exception) {
+            true
+        }
+        val keyguardLocked = try {
+            context.getSystemService(android.app.KeyguardManager::class.java)?.isKeyguardLocked ?: true
+        } catch (e: Exception) {
+            true
+        }
+        return ruleClocksIn(interactive, screenOnAtMs, SystemClock.elapsedRealtime(), keyguardLocked)
+    }
+
     /** Whether the kiosk is on as far as we know (the plan, else the last pinned state). */
     val kioskOn: Boolean
         get() = plan?.let { it.kioskPackages != null } ?: LauncherPreferences.mdm().kioskEnabled()
@@ -134,6 +203,7 @@ object LockTaskChrome {
         restrictCreateWindows: Boolean,
         recentsPin: String?,
         pinLockHelpers: () -> Set<String>,
+        ruleClockPins: Set<String> = emptySet(),
     ) {
         // Resolved on apply's background thread whenever the kiosk is off, so the screen-off fast
         // path never has to query PackageManager - and before taking the monitor (qa-16c-code #1):
@@ -142,7 +212,8 @@ object LockTaskChrome {
         // Also with the kiosk on: the "sos" yield narrows the kiosk's list to them (qa-25b-25f H1).
         val resolved = runCatching(pinLockHelpers).getOrNull()
         synchronized(this) {
-            plan = Plan(kioskPackages, features, restrictCreateWindows, recentsPin)
+            plan = Plan(kioskPackages, features, restrictCreateWindows, recentsPin, ruleClockPins)
+            storeClockPins(ruleClockPins)
             this.recentsPin = recentsPin
             recentsPinKnown = true
             if (resolved != null && ticket > helpersTicket) {
@@ -290,6 +361,8 @@ object LockTaskChrome {
             sosNarrowed = sosNarrowed(context, locked, kioskOn),
             routePin = routePin,
             routeClosing = routeClosing,
+            ruleClockPins = current.ruleClockPins,
+            dark = current.ruleClockPins.isNotEmpty() && dark(context),
         )
         return apply(context, dpm, setting, heal, kioskOn = kioskOn, locked = locked)
     }
@@ -317,8 +390,11 @@ object LockTaskChrome {
         }
         // A LOCKED pass took the recents pin out; unlocked it goes back in (qa-16d-code #1).
         val pin = recentsPin
+        // Design 105 (QA L3): the stored rule clock pins out unlocked and lit, in while LOCKED or dark.
+        val clockPins = storedPins()
+        val clocksIn = clockPins.isNotEmpty() && (locked || dark(context))
         val setting = lockTaskWhileLocked(
-            if (kiosk) fallbackKioskPackages(packages, pin, features) else null,
+            if (kiosk) fallbackKioskPackages(packages, pin, features, clockPins, clocksIn) else null,
             features,
             // Unlocking without a plan keeps whatever is set; the apply that follows corrects it.
             restrictCreateWindows = createWindows,
