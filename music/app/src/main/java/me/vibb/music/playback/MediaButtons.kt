@@ -23,7 +23,9 @@ object Resumable {
 /**
  * A headset or car kit's PLAY with nothing to resume (before the first play, after a queue played
  * to its end) must not start the foreground service: Media3 would never post its notification and
- * Android would kill the app (qa-21-step2-code M2, androidx/media #1528). Such a press is ignored.
+ * Android would kill the app (qa-21-step2-code M2, androidx/media #1528). Such a press is ignored. A stored queue
+ * can still give nothing (gone from the library, the app suspended, a room that never starts): the service holds the
+ * foreground itself from the press on and stops silently then (compat-fix-1, `logic/ForegroundHold.kt`).
  */
 @OptIn(UnstableApi::class)
 class KidMediaButtonReceiver : MediaButtonReceiver() {

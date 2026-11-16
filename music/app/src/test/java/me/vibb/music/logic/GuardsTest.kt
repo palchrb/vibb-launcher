@@ -918,7 +918,7 @@ class GuardsTest {
         assertTrue(service.contains("val a = activeFor(snap, rows, entry, plan.keys, plan.shuffled, RendererKind.SONOS, favourites) ?: return null"))
         val resumption = service.substringAfter("override fun onPlaybackResumption(").substringBefore("return future")
         val spotify = resumption.substringAfter("} else if (isSpotify(restored.active.entry)) {").substringBefore("} else {")
-        assertTrue(spotify.contains("start(a, QueuePlan(a.items.map { it.key }, index, pos))\n                        future.setException(UnsupportedOperationException(\"playing on Spotify\"))"))
+        assertTrue(spotify.contains("start(a, QueuePlan(a.items.map { it.key }, index, pos))\n                        future.setException(ResumptionRefused(Unresumable.ON_SPOTIFY))"))
         assertFalse(spotify.contains("future.set("))
         val local = resumption.substringAfter("} else if (isSpotify(restored.active.entry)) {").substringAfter("} else {")
         assertTrue("Media3's items go to the phone's own player", local.indexOf("usePhoneRenderer(a.entry)") in 0 until local.indexOf("future.set("))
