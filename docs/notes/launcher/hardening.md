@@ -65,3 +65,29 @@ them), all whether or not the phone is managed in hardening's sense (the parent'
   `DISALLOW_CONFIG_VPN` holds while any shape runs (`vpnConfigLocked`), so it is lifted with them.
 
 The rules are pure (`MobileNetwork.kt`), pinned by `mobile_network.json` (`MobileNetworkTest`).
+
+## SystemUI's Settings links while Settings is hidden (the gear bug, fix round `launcher-fix-1`, 2026-11-16)
+
+`AppEnforcer.apply` hides `com.android.settings` while managed (`EnforcementPlan`'s `hide`; Settings can't be
+suspended). SystemUI's `StatusBarNotificationActivityStarter` starts the notification long-press menu's gear ("More
+settings", `android.settings.APP_NOTIFICATION_SETTINGS`), the shade's Manage (`NOTIFICATION_SETTINGS`) and History
+(`NOTIFICATION_SETTINGS` + `NOTIFICATION_HISTORY`) through `TaskStackBuilder.startActivities`, which throws
+`ActivityNotFoundException` when nothing resolves: SystemUI died and restarted, and Android's keyguard came up (the kiosk
+stayed locked, Vibb One's process was untouched). Found on `jelly36` (`docs/testing/emulator.md` §6ar).
+
+**The sink** `server/SettingsSinkActivity` (exported, no permission - SystemUI starts it; `Theme.NoDisplay`,
+`noHistory`, `excludeFromRecents`, its own empty `taskAffinity`) answers `SettingsSink.ACTIONS` - the gear's pages (the
+app, a channel, a conversation, bubbles), Manage, History and the all-apps list - at **priority -1**, category DEFAULT.
+It only finishes in `onCreate`: it opens nothing, reads nothing from the intent (no extras, no data, the action logged
+only when it is one of ours) and validates nothing. While Settings is visible (the restrictions pause, "Åpne for
+oppsett") Settings' own filters (priority 1 on the emulator's Pixel build) win and no chooser shows. `SettingsSinkTest`
+pins the filter to the list, the attributes, and a body that only finishes.
+
+**The other SystemUI paths don't crash** (checked on `jelly36` with Settings disabled and lock task off, §6ar): Quick
+Settings tiles' long-press (Internet, Bluetooth, Airplane, Alarm), their dialogs (the Internet dialog's network,
+Bluetooth's "Pair new device", Modes' Settings and a mode), the Quick Settings footer's gear, the clock and date, and
+the volume panel's Settings go through SystemUI's `ActivityStarter`, which starts through the activity task manager and
+only logs `result code=-91`; a notification's own tap (a `PendingIntent` to Settings, e.g. "Physical keyboards
+configured") is the same. Under the kiosk none of these are reachable anyway: lock task keeps Quick Settings closed and
+hides the volume dialog's settings button, on Home and on Android's keyguard. So only the notification starter's actions
+are in the sink; a new crashing path is one more action in `SettingsSink.ACTIONS` and the manifest.

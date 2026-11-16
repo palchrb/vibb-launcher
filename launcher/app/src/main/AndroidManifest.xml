@@ -543,6 +543,29 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
+        <!-- The gear bug (2026-11-16, hardening.md "SystemUI's Settings links while Settings is hidden"): SystemUI's
+             notification gear, Manage and History start these Settings pages and crash on ActivityNotFoundException
+             while Settings is hidden. A sink that only finishes; priority -1, so a visible Settings wins without a
+             chooser. Exported without a permission (SystemUI starts it); it reads nothing from the intent. -->
+        <activity
+            android:name=".server.SettingsSinkActivity"
+            android:configChanges="uiMode"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.NoDisplay">
+            <intent-filter android:priority="-1">
+                <action android:name="android.settings.APP_NOTIFICATION_SETTINGS" />
+                <action android:name="android.settings.CHANNEL_NOTIFICATION_SETTINGS" />
+                <action android:name="android.settings.NOTIFICATION_SETTINGS" />
+                <action android:name="android.settings.NOTIFICATION_HISTORY" />
+                <action android:name="android.settings.ALL_APPS_NOTIFICATION_SETTINGS" />
+                <action android:name="android.settings.CONVERSATION_SETTINGS" />
+                <action android:name="android.settings.APP_NOTIFICATION_BUBBLE_SETTINGS" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
 
         <receiver
             android:name=".server.MdmDeviceAdminReceiver"
@@ -598,7 +621,7 @@
             android:exported="false"
             android:noHistory="true"
             android:taskAffinity=""
-            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+            android:theme="@style/ShortcutWindowTheme" />
 
         <!-- The backstop sync alarm (push/BackstopAlarm) - our own explicit PendingIntent only. -->
         <receiver

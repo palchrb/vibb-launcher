@@ -4619,6 +4619,31 @@ shortcut: on this Chrome the tab's menu has no way there, see E8).
 Feide/Google login back to its app, the presets' hosts); E13's second hotspot; Android's sign-in notification and its
 Cancel on the Jelly Star's own build; the Bare Vibb sink with a SIM; "Open in Chrome browser" on the phone's Chrome.
 
+## 6ar. Settings links in the shade, Flymodus's window, the panel's header (fix round `launcher-fix-1`, 2026-11-16)
+
+Setup: **`jelly36`** restored clean from `~/kid-look-1-avd-pre-start` (22 of 22 sums), started under `flock -o
+~/emulator.lock` and `~/build.lock` without `-wipe-data`; a server of the branch on the gear-bug run's data (bit 64 and
+128, the airplane block switched off in Advanced › Restrictions); main's debug launcher (8ddf461b1) as Device Owner (§4's
+adb lines, the assistant role with `cmd role add-role-holder`), enrolled with a typed code, kiosk LOCKED; then the
+branch's build over it with `adb install -r`. The bars measured on `screenrecord` frames (pure-black rows at x 460 against
+Home's ground); the successful Flymodus recorded from the host (`adb emu screenrecord`), because the guest's
+`screenrecord` slows the route past design 98's 1 s wait. Afterwards `jelly36` restored again (22 of 22 sums, the same
+file list).
+
+| Check | Result |
+|---|---|
+| Before (main) | The long-press menu's gear: `ActivityNotFoundException` for `APP_NOTIFICATION_SETTINGS`, SystemUI killed, Android's keyguard. Flymodus from the panel: black rows 0-35 and 818-853 for the window's whole life (~5 s, the voice activity included), sliding down at its close (rows 4-39, 34-69, then gone). The header "Vibb One (debug) • Snarveier" |
+| The gear (kiosk) | **Passed.** `START ... cmp=.../SettingsSinkActivity`, "SettingsSink: A Settings page while Settings is hidden: android.settings.APP_NOTIFICATION_SETTINGS"; no crash, no keyguard, Home focused, lock task LOCKED |
+| Manage (kiosk, and from Android's keyguard) | **Passed.** `NOTIFICATION_SETTINGS` to the sink; from the keyguard after its swipe the same |
+| History | **Passed** (notification history on, Settings disabled with `pm disable-user`, lock task off in the pause): `NOTIFICATION_SETTINGS` and `NOTIFICATION_HISTORY` both to the sink |
+| The pause | **Passed.** Started from the PWA: Settings visible at priority 1, the sink at -1; the gear opened Settings' app-notification page and Manage its notification page, no chooser. Ended from the PWA: Settings hidden again, LOCKED |
+| Other paths (Settings disabled, lock task off) | **No crash:** Quick Settings long-press on Internet (`WIFI_SETTINGS`), Bluetooth, Airplane (`result code=-91`), Alarm (the clock); the Internet dialog's network (`WIFI_DETAILS_SETTINGS`), Bluetooth's "Pair new device", Modes' Settings and a mode (`AUTOMATIC_ZEN_RULE_SETTINGS`); the footer's gear (`SETTINGS`); the clock and date; the volume panel's Settings (`SOUND_SETTINGS`); a system notification's own tap (`HARD_KEYBOARD_SETTINGS`). In the kiosk Quick Settings and the volume dialog's settings button aren't shown at all |
+| Flymodus (the branch) | **Passed.** No black rows at top or bottom in any frame after the shade closed, through the voice activity and the close; airplane mode on (`Route window 1220 ms, airplane mode on`). Settings' `AirplaneModeVoiceActivity` (floating) shows no bars of its own |
+| The header | **Passed.** "Vibb One (debug)" alone |
+
+Screenshots: the scratchpad's `launcher-fix-1/shots/` (`01`-`04` before, `11`-`16` after, `30`-`32` the pause, `40`-`44`
+the other paths).
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:

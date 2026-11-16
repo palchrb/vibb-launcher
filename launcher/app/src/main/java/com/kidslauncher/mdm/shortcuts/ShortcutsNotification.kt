@@ -47,7 +47,6 @@ object ShortcutsNotification {
             .setShowWhen(false)
             .setVisibility(Notification.VISIBILITY_SECRET)
             .setCategory(Notification.CATEGORY_STATUS)
-            .setSubText(context.getString(R.string.shortcuts_subtext))
             .build()
     }
 

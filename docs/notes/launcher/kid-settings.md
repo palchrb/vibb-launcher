@@ -182,7 +182,7 @@ the setup notification.
   Folded, the row alone (the time is then hidden: accepted). 40 dp discs, 22 dp glyphs, in the 48 dp content height
   (45 dp cells folded, 55 dp unfolded at 320 dp); the discs are dp only. Off: white at 12 %, on: the peach disc with the
   glyph in `kid_ground`; dimmed 40 %, busy 50 %. The names (`shortcut_full_*`) are the picker's and each cell's content
-  description. The small icon is the gear, `ic_stat_gear` (`baseline_settings_24`'s path with a literal white fill:
+  description. The header is the app's name alone (the sub-text "Snarveier" removed 2026-11-16, the user: "bare behold Vibb One"). The small icon is the gear, `ic_stat_gear` (`baseline_settings_24`'s path with a literal white fill:
   the theme-attribute gear draws an empty disc in SystemUI, design 100 M10).
 - **Items** (`ShortcutsModel.kt`, pure, `ShortcutsTest`): torch, sound (bit 8), airplane (bit 64 + the role via
   `airplaneRow`, Off-only when on), wifi (1), bluetooth (2), mobile_data (32, `kidMobileRow`), brightness (4, three steps
@@ -203,7 +203,7 @@ the setup notification.
   shows when it comes back.
 - **A tap** is a broadcast to the non-exported `ShortcutsReceiver` (`goAsync`, the key alone) or, for Flymodus On
   while usable and not busy (pure `shortcutOpensWindow`; a dimmed or busy Flymodus is a broadcast, refused with the
-  shade left open - C99-M1, D10), `ShortcutAirplaneActivity` (translucent, its own task, `noHistory`): Android closes the shade to start it, and the
+  shade left open - C99-M1, D10), `ShortcutAirplaneActivity` (translucent, its own task, `noHistory`; `ShortcutWindowTheme` since 2026-11-16: transparent bars drawn edge to edge, no window animation - `Theme.Translucent.NoTitleBar` drew black status and navigation bars for the window's life and slid them away at its close, `ShortcutWindowTest`): Android closes the shade to start it, and the
   route starts only on its window's first focus, so no finger is left in a collapsing shade (design 98's ~300 ms gap);
   no focus in 3 s - nothing. Every tap runs on `ShortcutsRuntime.taps` through the pure fail-closed
   `shortcutTapAllowed`: an unknown key, the lock mode undecided or the time rules unreadable, LOCKED, Android's keyguard

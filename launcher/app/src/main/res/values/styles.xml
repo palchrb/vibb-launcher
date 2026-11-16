@@ -218,6 +218,26 @@
         <item name="android:buttonStyle">@style/PlayLinkBlockedButton</item>
     </style>
 
+    <!-- Snarveier's Flymodus window (ShortcutAirplaneActivity, design 99 §4.1): nothing on it, so nothing of it may
+         show. Theme.Translucent.NoTitleBar drew black status and navigation bars (a legacy theme does not draw the bar
+         backgrounds itself) and slid them away with its exit animation (the user on rc.3, 2026-11-16). Transparent
+         bars drawn by the window, edge to edge, no contrast scrim, no window animation. -->
+    <style name="ShortcutWindowTheme" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowIsFloating">false</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:enforceStatusBarContrast">false</item>
+        <item name="android:enforceNavigationBarContrast">false</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">always</item>
+        <item name="android:windowAnimationStyle">@null</item>
+    </style>
+
     <style name="PlayLinkBlockedButton" parent="@android:style/Widget.Material.Button.Colored">
         <item name="android:textColor">@color/kid_ground</item>
     </style>
