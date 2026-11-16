@@ -54,6 +54,7 @@
     <string name="settings_mdm_time_policy_seen_key" translatable="false">mdm.time_policy_seen</string>
     <string name="settings_mdm_channel_modes_seen_key" translatable="false">mdm.channel_modes_seen</string>
     <string name="settings_mdm_kiosk_enabled_key" translatable="false">mdm.kiosk_enabled</string>
+    <string name="settings_mdm_rule_clock_pins_key" translatable="false">mdm.rule_clock_pins</string>
     <string name="settings_mdm_override_pin_hash_key" translatable="false">mdm.override_pin_hash</string>
     <string name="settings_mdm_override_pin_salt_key" translatable="false">mdm.override_pin_salt</string>
     <string name="settings_mdm_offline_override_active_key" translatable="false">mdm.offline_override_active</string>

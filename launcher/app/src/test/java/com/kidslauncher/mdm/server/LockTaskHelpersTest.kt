@@ -167,6 +167,43 @@ class LockTaskHelpersTest {
         assertEquals(null, lockTaskWhileLocked(null, 111, false, locked = false, ownPackage = "me.vibb.launcher", lockHelpers = emptySet(), routeClosing = true).packages)
     }
 
+    /** Design 105 §2.1: the rule's clocks are in the kiosk-on LOCKED row always, in the not-LOCKED rows only while dark;
+     * the SOS-narrowed row and the kiosk off don't take them; the fallback uses the stored ones. */
+    @Test
+    fun `the rule clock pins are in the list while LOCKED or dark only`() {
+        val own = "me.vibb.launcher"
+        val clock = "org.fossify.clock"
+        val kiosk = setOf(own, "org.example.game")
+        val pins = setOf(clock)
+        fun packages(locked: Boolean, dark: Boolean, kioskPackages: Set<String>? = kiosk, sos: Set<String>? = null, route: String? = null, closing: Boolean = false) =
+            lockTaskWhileLocked(kioskPackages, 127, false, locked, own, setOf("com.android.phone"), sosNarrowed = sos, routePin = route, routeClosing = closing, ruleClockPins = pins, dark = dark).packages
+        assertEquals(kiosk + clock, packages(locked = true, dark = false))
+        assertEquals(kiosk + clock, packages(locked = true, dark = true))
+        assertEquals(kiosk, packages(locked = false, dark = false))
+        assertEquals(kiosk + clock, packages(locked = false, dark = true))
+        assertEquals(kiosk + settings, packages(locked = false, dark = false, route = settings))
+        assertEquals(kiosk + clock + settings, packages(locked = false, dark = true, route = settings))
+        assertEquals(kiosk, packages(locked = false, dark = false, closing = true))
+        // SOS-narrowed and the kiosk off: as before.
+        assertEquals(setOf(own, "com.android.phone"), packages(locked = true, dark = true, sos = setOf("com.android.phone")))
+        assertEquals(setOf(own, "com.android.phone"), packages(locked = true, dark = true, kioskPackages = null))
+        assertEquals(null, packages(locked = false, dark = true, kioskPackages = null))
+        // The fallback: out unlocked and lit, in LOCKED or dark.
+        assertEquals(kiosk, fallbackKioskPackages(kiosk + clock, null, 127, pins, clocksIn = false))
+        assertEquals(kiosk + clock, fallbackKioskPackages(kiosk, null, 127, pins, clocksIn = true))
+        assertEquals(kiosk + clock, fallbackKioskPackages(kiosk + clock, null, 127))
+    }
+
+    /** Design 105 §2.1: dark is the screen off, or lit for less than the settle (1.5 s). */
+    @Test
+    fun `clockDark - off, lit inside and past the settle`() {
+        assertTrue(clockDark(interactive = false, screenOnAtMs = null, nowMs = 10_000))
+        assertTrue(clockDark(interactive = false, screenOnAtMs = 1_000, nowMs = 100_000))
+        assertTrue(clockDark(interactive = true, screenOnAtMs = 10_000, nowMs = 11_499))
+        assertFalse(clockDark(interactive = true, screenOnAtMs = 10_000, nowMs = 11_500))
+        assertFalse("on since before the process", clockDark(interactive = true, screenOnAtMs = null, nowMs = 10_000))
+    }
+
     @Test
     fun `LOCKED takes the recents provider out of the kiosk list, unlocked puts it back (qa-16d-code 1)`() {
         val kiosk = setOf("me.vibb.launcher", "org.example.game", recents)

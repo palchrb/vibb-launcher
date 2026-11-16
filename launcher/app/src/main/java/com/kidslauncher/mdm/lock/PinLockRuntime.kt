@@ -43,6 +43,9 @@ private const val LOG_TAG = "PinLock"
 /** Status-report capability: this launcher has handy's own PIN lock and reads `kid_lock`. */
 const val PIN_LOCK_CAPABILITY = "pin_lock_v1"
 
+/** Design 105 §2.2: the screen-on's clock pass runs this long past [ALARM_SCREEN_SETTLE_MS], so it reads the screen lit. */
+private const val CLOCK_SETTLE_PASS_MARGIN_MS = 100L
+
 /**
  * [PinLockRuntime.verifyCommandPin]'s check (design 59 §3.5, Q59-1), outside the object so the JVM test runs it: the
  * PIN against [kidLock]'s own hash and salt - the fresh policy's -, exactly its length in digits. Reads and writes no
@@ -932,6 +935,10 @@ object PinLockRuntime {
         if (Looper.myLooper() == Looper.getMainLooper()) block() else handler.post(block)
     }
 
+    /** Design 105 §2.2: the screen-on's pass once the settle is over ([LockTaskChrome.screenChanged]) - it reads the lock
+     * and the screen as they are then. */
+    private val clockSettlePass = Runnable { appContext?.let { refreshChrome(it) } }
+
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             val app = context.applicationContext
@@ -954,6 +961,10 @@ object PinLockRuntime {
                     silencedRing = VoipCalls.ringId
                 }
                 dispatch(app, LockEvent.ScreenOff(ourCall(), systemCall(app), VoipCalls.phase))
+                // Design 105 §2.2: a rule's clocks are back in the kiosk's list while dark - one pass now (a LOCKED edge's
+                // pass above already added them; LOCKED keeps them in).
+                handler.removeCallbacks(clockSettlePass)
+                if (LockTaskChrome.screenChanged(on = false, SystemClock.elapsedRealtime()) && !chromeLocked) refreshChromeNow(app)
                 // Design 59 §3.3: as Android's face, Android must be locked under the glance - checked once it slept.
                 handler.removeCallbacks(androidSleepCheck)
                 if (AndroidLock.faceOn && mode == LockMode.LOCKED) handler.postDelayed(androidSleepCheck, ANDROID_SLEEP_CHECK_MS)
@@ -977,6 +988,11 @@ object PinLockRuntime {
                 handler.removeCallbacks(screenOffWork)
                 if (intent.action == Intent.ACTION_SCREEN_ON) {
                     lastScreenOnElapsed = SystemClock.elapsedRealtime()
+                    // Design 105 §2.2: lit past the settle, a rule's clocks leave the list again unless LOCKED by then.
+                    handler.removeCallbacks(clockSettlePass)
+                    if (LockTaskChrome.screenChanged(on = true, SystemClock.elapsedRealtime())) {
+                        handler.postDelayed(clockSettlePass, ALARM_SCREEN_SETTLE_MS + CLOCK_SETTLE_PASS_MARGIN_MS)
+                    }
                     // Design 59b §6: one line per screen-on with the keyguard read (the screen-off has its lock-up's).
                     AndroidLock.note(app, "screen-on")
                     // A screen-on well after a notice wake is the kid's own (power): the 15 s end (qa-l7-b-code 3).

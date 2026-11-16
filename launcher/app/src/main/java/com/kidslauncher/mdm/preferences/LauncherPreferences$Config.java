@@ -80,6 +80,10 @@ import eu.jonahbauer.android.preference.annotations.Preferences;
                         // there is no local toggle). HomeActivity reads this to decide whether to
                         // call startLockTask()/stopLockTask().
                         @Preference(name = "kiosk_enabled", type = boolean.class, defaultValue = "false"),
+                        // Design 105 (QA L3): the last plan's rule clock pins (EnforcementPlan.ruleClockPins),
+                        // comma-separated, written by LockTaskChrome.applyPlan - its passes before the first apply
+                        // of a process take them out of the platform's list unlocked and lit, and add them LOCKED or dark.
+                        @Preference(name = "rule_clock_pins", type = String.class, defaultValue = ""),
                         // Cached from the last successful policy sync (PolicyResponse.overridePinHash/
                         // Salt) so LockActivity can verify a locally-entered offline override PIN
                         // with zero network at all. Null means no PIN is configured for this device.

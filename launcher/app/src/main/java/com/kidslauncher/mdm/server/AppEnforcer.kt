@@ -466,6 +466,8 @@ object AppEnforcer {
             alarmApps = alarmAppPackages(context),
             inputMethods = keptInputMethods(enabledImes, systemImes, allowlist),
             lockUsableApps = lock.usableApps,
+            // Design 105 §2.1: a rule (not the used-up budget alone) keeps the clocks it doesn't leave usable unpinned.
+            ruleLocked = lock.rules.isNotEmpty(),
             ruleBlocksCalls = lock.callsBlocked,
             timeRulesSet = timePolicy != null && (timePolicy.rules.isNotEmpty() || hasBudget(timePolicy)),
             budgetSet = timePolicy != null && hasBudget(timePolicy),
@@ -613,6 +615,7 @@ object AppEnforcer {
             context, plan.kioskPackages, plan.lockTaskFeatures, plan.restrictCreateWindows,
             recentsPin = plan.recentsPin,
             pinLockHelpers = { resolvePinLockHelpers(context) },
+            ruleClockPins = plan.ruleClockPins,
         )
 
         // The keyguard features (B2's camera bit) are written by the PIN lock's configure above - the one

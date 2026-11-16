@@ -201,6 +201,13 @@ data class LockTaskSetting(
  * (the route then times out). [routeClosing]: the close's first pass - Settings out, the shade still blocked - so the
  * shade is never back while Settings is pinnable (a pass writes the features before the list); the next pass, without
  * it, gives the shade back.
+ *
+ * [ruleClockPins] (design 105 §2.1, the plan's [EnforcementPlan.ruleClockPins]): the clocks a time rule took out of the
+ * kiosk's list. The kiosk-on LOCKED row adds them always (no reach while LOCKED: Home, Recents and the shade are gone,
+ * and any clock screen but the ringing one needs the keyguard dismissed - the UNLOCKED edge); the not-LOCKED rows only
+ * while [dark] ([clockDark]: the gap before the keyguard locks, a phone without a lock), so a full-screen intent in the
+ * dark finds the clock allowed. Unlocked and lit they are out, and Android closes the clock's task. The SOS-narrowed
+ * row (its helpers carry the clocks) and the kiosk off are unchanged.
  */
 fun lockTaskWhileLocked(
     kioskPackages: Set<String>?,
@@ -215,30 +222,44 @@ fun lockTaskWhileLocked(
     sosNarrowed: Set<String>? = null,
     routePin: String? = null,
     routeClosing: Boolean = false,
-): LockTaskSetting = when {
-    !locked && kioskPackages != null && routePin != null ->
-        LockTaskSetting(kioskPackages + routePin, routeWindowFeatures(baseFeatures), statusBarDisabled = true, createWindowsBlocked = restrictCreateWindows)
-    !locked && kioskPackages != null && routeClosing ->
-        LockTaskSetting(kioskPackages, routeWindowFeatures(baseFeatures), statusBarDisabled = true, createWindowsBlocked = restrictCreateWindows)
-    !locked -> LockTaskSetting(kioskPackages, baseFeatures, statusBarDisabled = fenced, createWindowsBlocked = restrictCreateWindows)
-    // qa-25b-25f H1: during the "sos" yield the kiosk's list shrinks to the kiosk-off one, so Android
-    // removes every other locked task (an allowed app brought up in the SOS window).
-    kioskPackages != null && sosNarrowed != null -> LockTaskSetting(
-        setOf(ownPackage) + (sosNarrowed - PLAY_CORE), featuresWhileLocked(baseFeatures, true), statusBarDisabled = true, createWindowsBlocked = true,
-    )
-    kioskPackages != null -> LockTaskSetting(
-        kioskPackages - setOfNotNull(recentsPin), featuresWhileLocked(baseFeatures, true), statusBarDisabled = true, createWindowsBlocked = true,
-    )
-    else -> {
-        val voip = voipPackages - PLAY_CORE
-        LockTaskSetting(
-            setOf(ownPackage) + (lockHelpers - PLAY_CORE) + voip,
-            if (voip.isEmpty()) PIN_LOCK_FEATURES_KIOSK_OFF else PIN_LOCK_FEATURES_KIOSK_OFF or LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_IN_TASK,
-            statusBarDisabled = true,
-            createWindowsBlocked = true,
+    ruleClockPins: Set<String> = emptySet(),
+    dark: Boolean = false,
+): LockTaskSetting {
+    val darkPins = if (dark) ruleClockPins else emptySet()
+    return when {
+        !locked && kioskPackages != null && routePin != null ->
+            LockTaskSetting(kioskPackages + darkPins + routePin, routeWindowFeatures(baseFeatures), statusBarDisabled = true, createWindowsBlocked = restrictCreateWindows)
+        !locked && kioskPackages != null && routeClosing ->
+            LockTaskSetting(kioskPackages + darkPins, routeWindowFeatures(baseFeatures), statusBarDisabled = true, createWindowsBlocked = restrictCreateWindows)
+        !locked -> LockTaskSetting(kioskPackages?.plus(darkPins), baseFeatures, statusBarDisabled = fenced, createWindowsBlocked = restrictCreateWindows)
+        // qa-25b-25f H1: during the "sos" yield the kiosk's list shrinks to the kiosk-off one, so Android
+        // removes every other locked task (an allowed app brought up in the SOS window).
+        kioskPackages != null && sosNarrowed != null -> LockTaskSetting(
+            setOf(ownPackage) + (sosNarrowed - PLAY_CORE), featuresWhileLocked(baseFeatures, true), statusBarDisabled = true, createWindowsBlocked = true,
         )
+        kioskPackages != null -> LockTaskSetting(
+            kioskPackages + ruleClockPins - setOfNotNull(recentsPin), featuresWhileLocked(baseFeatures, true), statusBarDisabled = true, createWindowsBlocked = true,
+        )
+        else -> {
+            val voip = voipPackages - PLAY_CORE
+            LockTaskSetting(
+                setOf(ownPackage) + (lockHelpers - PLAY_CORE) + voip,
+                if (voip.isEmpty()) PIN_LOCK_FEATURES_KIOSK_OFF else PIN_LOCK_FEATURES_KIOSK_OFF or LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_IN_TASK,
+                statusBarDisabled = true,
+                createWindowsBlocked = true,
+            )
+        }
     }
 }
+
+/**
+ * Design 105 §2.1: the screen counts as dark for the rule's clocks ([lockTaskWhileLocked]'s `dark`) while it is off
+ * ([interactive] false), and for [com.kidslauncher.mdm.lock.ALARM_SCREEN_SETTLE_MS] after it came on ([screenOnAtMs],
+ * elapsed realtime; `null` = no screen-on seen in this process - on since before it), so a ring that woke the screen
+ * reaches the keyguard's LOCKED first.
+ */
+fun clockDark(interactive: Boolean, screenOnAtMs: Long?, nowMs: Long): Boolean =
+    !interactive || (screenOnAtMs != null && nowMs - screenOnAtMs < com.kidslauncher.mdm.lock.ALARM_SCREEN_SETTLE_MS)
 
 /**
  * The kiosk list of a pass without a plan (LockTaskChrome's fallback), from the platform's
@@ -246,11 +267,18 @@ fun lockTaskWhileLocked(
  * puts it back whenever the app block is on ([features]) - the plan pins it then too. `null` pin
  * (unknown, or not pinnable): the platform's list as it is. Never Settings (design 98 code QA L4): only
  * the Flymodus route's window pins it, and that needs a plan - in the platform's list it is a window a
- * process death left open, which the put-back's apply closes.
+ * process death left open, which the put-back's apply closes. Design 105 (QA L3): the last plan's stored
+ * [ruleClockPins] go out on an unlocked, lit pass and in on a LOCKED or dark one ([clocksIn]).
  */
-fun fallbackKioskPackages(platformPackages: Set<String>, recentsPin: String?, features: Int): Set<String> =
+fun fallbackKioskPackages(
+    platformPackages: Set<String>,
+    recentsPin: String?,
+    features: Int,
+    ruleClockPins: Set<String> = emptySet(),
+    clocksIn: Boolean = false,
+): Set<String> =
     (if (recentsPin != null && features and LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_IN_TASK != 0) platformPackages + recentsPin else platformPackages) -
-        com.kidslauncher.mdm.assistant.SETTINGS_PACKAGE
+        com.kidslauncher.mdm.assistant.SETTINGS_PACKAGE - ruleClockPins + (if (clocksIn) ruleClockPins else emptySet())
 
 /**
  * Whether `config_recentsComponentName`'s [packageName] may be trusted as the recents provider
