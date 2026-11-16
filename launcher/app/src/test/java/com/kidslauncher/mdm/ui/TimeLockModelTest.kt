@@ -154,6 +154,12 @@ class TimeLockModelTest {
         val clocks = setOf("com.google.android.deskclock")
         assertEquals(setOf("org.signal"), lockRowPackages(setOf("org.signal"), clocks, listening = true))
         assertEquals(setOf("org.signal", "com.google.android.deskclock"), lockRowPackages(setOf("org.signal"), clocks, listening = false))
+        // Design 105 §3: never a clock a rule keeps unpinned; a ticked one (usable) stays.
+        assertEquals(setOf("org.signal"), lockRowPackages(setOf("org.signal"), clocks, listening = false, unpinned = clocks))
+        assertEquals(clocks, lockRowPackages(clocks, clocks, listening = false, unpinned = emptySet()))
+        // The alarm row with its stops opens nothing after an unlock either.
+        val stops = timeLockRows(true, true, "Telefonbok", emptyList(), alarmLabel = "Alarmen ringer", alarmStops = listOf("Slumre", "Avvis"), alarmKey = "k")
+        assertEquals(LockRow.Alarm("Alarmen ringer", listOf("Slumre", "Avvis"), "k"), stops.first())
     }
 
     /** PLAN "one usable thing opens straight after the PIN" (2026-11-02): only the card's only row, only on the unlock's
@@ -417,7 +423,10 @@ class TimeLockModelTest {
         assertEquals("true", root.attr("clickable"))
         assertEquals("true", root.attr("focusable"))
         assertTrue(dp(root.attr("minHeight")) >= 48f)
-        val children = views.drop(1)
+        // Design 105 §3: the alarm row's buttons sit in a container that is gone on every other row.
+        val actions = views.byId("lock_row_actions")
+        assertEquals("gone", actions.attr("visibility"))
+        val children = views.drop(1) - actions
         assertEquals(3, children.size)
         assertTrue(children.all { it.attr("importantForAccessibility") == "no" })
         assertEquals("2", views.byId("lock_row_label").attr("maxLines"))

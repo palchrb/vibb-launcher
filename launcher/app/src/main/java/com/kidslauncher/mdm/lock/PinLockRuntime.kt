@@ -1381,7 +1381,8 @@ object PinLockRuntime {
         val app = context.applicationContext
         val reader = com.kidslauncher.mdm.badges.AlarmNoticeReader
         val telecom = telecomInCall(app)
-        val clocks = clockPackages()
+        // Design 105 §3: the time-rule screen never sends a screen a rule keeps out of the kiosk's list (it is refused).
+        val clocks = if (timeRuleScreen) pinnedClocks() else clockPackages()
         // The PIN lock's send opens the yield, so it keeps to the yield's bound (E7 code QA 2); past it the PIN, then the
         // time-rule screen, reaches the ringing screen.
         val key = reader.screenKey(clocks, inYield = !timeRuleScreen, timeRule = timeRuleScreen)
@@ -1403,13 +1404,36 @@ object PinLockRuntime {
     /** E7's M1: the time-rule screen's alarm row - an allowed clock's alarm rings, its screen kept, not silenced by a
      * silent rule ([alarmRingingNow]'s rule: nobody hears it). Main thread. */
     fun alarmToStop(): Boolean = !com.kidslauncher.mdm.timerules.ZenRuleRuntime.silencesAlarms() &&
-        com.kidslauncher.mdm.badges.AlarmNoticeReader.openable(clockPackages())
+        com.kidslauncher.mdm.badges.AlarmNoticeReader.openable(pinnedClocks())
+
+    /** Design 105 §3: the clocks a rule keeps out of the kiosk's list while unlocked ([LockTaskChrome.ruleClockPins]) -
+     * none while LOCKED, which pins them. */
+    fun unpinnedClocks(): Set<String> = if (mode == LockMode.LOCKED) emptySet() else LockTaskChrome.ruleClockPins
+
+    /** The lock's clock apps less [unpinnedClocks]: the ones whose ringing screen the time-rule screen may send or open. */
+    private fun pinnedClocks(): Set<String> = clockPackages() - unpinnedClocks()
+
+    /** Design 105 §3: the time-rule screen's alarm buttons - a ringing alarm of a clock a rule keeps out of the list, its
+     * non-activity actions; null = none (no row, also while a silent rule silences alarms). Main thread. */
+    fun alarmStops(): com.kidslauncher.mdm.badges.AlarmNoticeReader.AlarmStops? =
+        if (com.kidslauncher.mdm.timerules.ZenRuleRuntime.silencesAlarms()) {
+            null
+        } else {
+            com.kidslauncher.mdm.badges.AlarmNoticeReader.stops(clockPackages() intersect unpinnedClocks())
+        }
+
+    /** Design 105 §3: the kid tapped the alarm row's button [index] for [key] ([alarmStops]) - its Dismiss or Snooze sent,
+     * never an activity. Main thread. */
+    fun stopRingingAlarm(context: Context, key: String, index: Int) {
+        val sent = com.kidslauncher.mdm.badges.AlarmNoticeReader.sendStop(context, key, index, clockPackages())
+        Log.i(LOG_TAG, if (sent) "The ringing alarm's action sent from its row" else "The ringing alarm's action couldn't be sent")
+    }
 
     /** E7's M1: the kid tapped the alarm row - the ringing screen, uncapped (a tap can't loop), from [context], the
      * visible time-rule screen; the screen's own send then skips that ring (E7b's L1). Main thread. */
     fun openRingingAlarm(context: Context) {
         val reader = com.kidslauncher.mdm.badges.AlarmNoticeReader
-        val clocks = clockPackages()
+        val clocks = pinnedClocks()
         val key = reader.screenKey(clocks, capped = false) ?: return
         noteOwnStart("the ringing alarm's screen")
         val sent = reader.sendScreen(context, key, clocks)

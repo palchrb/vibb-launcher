@@ -129,8 +129,9 @@ fun clockTicks(tile: ClockTile?, receivedAtMs: Long, nowMs: Long, shown: Boolean
     return tile.kind == ClockKind.STOPWATCH || now > 0
 }
 
-/** An action of the notification as the lock judges it: its intent's kind only. */
-data class ClockAction(val isActivity: Boolean, val isBroadcast: Boolean)
+/** An action of the notification as the lock judges it: its intent's kind only ([isService]: a service or a foreground
+ * service, design 105 §3). */
+data class ClockAction(val isActivity: Boolean, val isBroadcast: Boolean, val isService: Boolean = false)
 
 /**
  * The ended timer's "Stopp" (design 42, the coordinator's decision of 2026-10-20 after Fossify's
@@ -140,6 +141,15 @@ data class ClockAction(val isActivity: Boolean, val isBroadcast: Boolean)
  */
 fun clockStopAction(kind: ClockKind, actions: List<ClockAction>): Int? =
     0.takeIf { kind == ClockKind.ENDED && actions.size == 1 && actions[0].isBroadcast && !actions[0].isActivity }
+
+/**
+ * Design 105 §3: the ringing alarm's actions the time-rule screen offers as buttons while a rule keeps the clock out of
+ * the kiosk's list - every action that is not an activity and is a broadcast or a service (Fossify: Snooze, a service
+ * while "use the same snooze" is on, and Dismiss, a broadcast), in the notification's order. Lock task gates neither.
+ * An activity (Fossify's snooze picker) would be refused, so it is never offered. Returns their indexes; empty = no row.
+ */
+fun alarmRowActions(actions: List<ClockAction>): List<Int> =
+    actions.indices.filter { !actions[it].isActivity && (actions[it].isBroadcast || actions[it].isService) }
 
 /** The next alarm under the date (§1.3): its time, and the weekday too when it is more than 24 h away. */
 data class GlanceAlarm(val atMs: Long, val withWeekday: Boolean)

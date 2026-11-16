@@ -110,6 +110,20 @@ class ClockTileTest {
         assertNull("none", clockStopAction(ClockKind.ENDED, emptyList()))
         assertNull("a running timer has no button", clockStopAction(ClockKind.TIMER, listOf(broadcast)))
         assertNull(clockStopAction(ClockKind.STOPWATCH, listOf(broadcast)))
+        assertNull("a service is no timer stop", clockStopAction(ClockKind.ENDED, listOf(ClockAction(isActivity = false, isBroadcast = false, isService = true))))
+    }
+
+    /** Design 105 §3: the ringing alarm's buttons are its non-activity actions - Fossify's Snooze (a service) and Dismiss
+     * (a broadcast); its snooze picker (an activity) never; only activities: no row. */
+    @Test
+    fun `alarmRowActions - the non-activity actions in order`() {
+        val snoozeService = ClockAction(isActivity = false, isBroadcast = false, isService = true)
+        val dismiss = ClockAction(isActivity = false, isBroadcast = true)
+        val activity = ClockAction(isActivity = true, isBroadcast = false)
+        assertEquals(listOf(0, 1), alarmRowActions(listOf(snoozeService, dismiss)))
+        assertEquals(listOf(1), alarmRowActions(listOf(activity, dismiss)))
+        assertEquals(emptyList<Int>(), alarmRowActions(listOf(activity, activity)))
+        assertEquals(emptyList<Int>(), alarmRowActions(emptyList()))
     }
 
     @Test

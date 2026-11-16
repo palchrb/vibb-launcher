@@ -38,7 +38,17 @@
         android:textColor="@color/kid_core"
         android:textSize="16sp" />
 
+    <!-- Design 105 §3: the alarm row's buttons (the ringing alarm's own Dismiss and Snooze), in place of the chevron. -->
+    <LinearLayout
+        android:id="@+id/lock_row_actions"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:visibility="gone" />
+
     <ImageView
+        android:id="@+id/lock_row_chevron"
         android:layout_width="20dp"
         android:layout_height="20dp"
         android:layout_marginStart="8dp"
