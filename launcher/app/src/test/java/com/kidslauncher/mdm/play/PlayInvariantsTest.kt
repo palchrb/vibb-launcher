@@ -83,7 +83,7 @@ class PlayInvariantsTest {
         assertTrue("BootCover.applyPolicy(" in enforcer)
         val cover = sources.walkTopDown().first { it.name == "BootCover.kt" }.readText()
         val apply = cover.substringAfter("fun applyPolicy(").substringBefore("\n    }\n")
-        assertTrue("if (wanted) HomePin.locked { addCoverPin(app, dpm, admin) }" in apply)
+        assertTrue("if (androidMarker || (wanted && own == OwnCover.NONE)) HomePin.locked { addCoverPin(app, dpm, admin) }" in apply)
         val filter = cover.substringAfter("private fun coverFilter()").substringBefore("\n    }\n")
         for (needed in listOf("addCategory(BOOT_COVER_CATEGORY)", "Intent.CATEGORY_HOME")) assertTrue(needed, needed in filter)
         val add = cover.substringAfter("internal fun addCoverPin(").substringBefore("\n    }\n")

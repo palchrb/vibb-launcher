@@ -88,6 +88,36 @@ class BootCoverPlanTest {
         assertEquals(3, HOME_PIN_MAX_RESEATS)
     }
 
+    /** compat-fix-1 (QA H1): own mode on a managed phone keeps the cover as the boot's direct-boot-aware HOME at every
+     * event - with Settings hidden and a stock launcher that can't run before the unlock, every boot hung (a normal
+     * restart too) - inert while the switch is off. */
+    @Test
+    fun `own mode on a managed phone - the cover is the boot's HOME at every event, bare while the switch is off`() {
+        assertEquals(OwnCover.BARE, ownModeCover(managed = true, deviceOwner = true, androidMarker = false, wanted = false))
+        assertEquals(OwnCover.FACE, ownModeCover(managed = true, deviceOwner = true, androidMarker = false, wanted = true))
+        assertEquals(OwnCover.NONE, ownModeCover(managed = true, deviceOwner = true, androidMarker = true, wanted = true))
+        assertEquals(OwnCover.NONE, ownModeCover(managed = false, deviceOwner = true, androidMarker = false, wanted = false))
+        assertEquals(OwnCover.NONE, ownModeCover(managed = true, deviceOwner = false, androidMarker = false, wanted = false))
+        // Another package's HOME runs before the unlock (Android 16's Pixel launcher, 17's Settings): the cover stays
+        // out - two would be the system's chooser at every boot.
+        assertEquals(OwnCover.NONE, ownModeCover(managed = true, deviceOwner = true, androidMarker = false, wanted = false, bootHomeElsewhere = true))
+        assertEquals(OwnCover.NONE, ownModeCover(managed = true, deviceOwner = true, androidMarker = false, wanted = true, bootHomeElsewhere = true))
+        assertTrue(coverPersistent(androidMarker = false, own = OwnCover.BARE))
+        assertTrue(coverPersistent(androidMarker = true, own = OwnCover.NONE))
+        assertFalse(coverPersistent(androidMarker = false, own = OwnCover.NONE))
+        for (event in CoverEvent.entries) {
+            for (wanted in listOf(true, false)) {
+                for (tripped in listOf(true, false)) {
+                    assertEquals("$event wanted $wanted tripped $tripped", true, bootCoverEnabled(event, wanted, tripped, persistent = true))
+                }
+            }
+        }
+        // Bare: inert from the start, never the mark; a tripped persistent cover is inert, not gone.
+        assertTrue(coverInert(androidMarker = false, guardTripped = false, bare = true))
+        assertTrue(coverInert(androidMarker = true, guardTripped = true))
+        assertFalse(coverInert(androidMarker = true, guardTripped = false, bare = false))
+    }
+
     /** qa-59d-m-code M-1 (a): the tripped android-mode cover is inert - no face, no ask - and own mode's goes away. */
     @Test
     fun `a tripped guard in android mode leaves an inert cover - never showWhenLocked, never an ask`() {

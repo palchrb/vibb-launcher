@@ -4658,6 +4658,28 @@ next boot finds no HOME before the unlock and never completes (user 0 stays BOOT
 `home-and-photos.md` step M describes for Android 15. Start it with `-wipe-data` and provision again (or switch the boot
 cover on and stop it with `svc power reboot`). 37 can't hang there: Settings (FallbackHome) is never hidden.
 
+## 6at. A HOME before the first unlock in own mode (compat-fix-1, QA H1, 2026-11-16)
+
+Device 1 of the 14-17 rig, the `boot_cover` switch off, apps managed (Settings `hidden=true`). Watch
+`getprop sys.boot_completed`, `dumpsys user` (`State:`) and `cmd package resolve-activity --brief -a
+android.intent.action.MAIN -c android.intent.category.HOME`.
+
+1. **Before the fix, `compat34` (API 34) in own mode**: `adb emu kill` + a cold boot, `adb reboot` and `adb shell svc
+   power reboot` (with `ACTION_SHUTDOWN`) all hung - no `sys.boot_completed` after 150 s, user 0 BOOTING, a black
+   screen, `cmd package query-activities ... HOME --user 0`: "No activities found". In the pause (Settings unhidden)
+   `adb reboot` booted in 15 s. Shell can't rescue it (`pm unhide` needs MANAGE_USERS): wipe and provision again.
+2. **Android mode** (PWA `POST /devices/1/kid-lock/keyguard keyguard=android`), 34: `adb reboot` boots in 15 s,
+   `BootCoverActivity` on top, RUNNING_LOCKED until the PIN (step M).
+3. **`jelly36` (API 36) in own mode, before the fix**: `adb reboot` boots - its Pixel launcher's HOME runs before the
+   unlock (it was displayed at boot).
+4. **The fix**: 34, a fresh phone in own mode: `BootCover: Boot cover own mode BARE: before the unlock HOME has only the
+   cover`; `adb reboot`, `svc power reboot` and `adb reboot` again each boot in about 30 s, the cover displayed once
+   (bare), HOME then `HomeActivity`, no HomePin re-seat. 36: `Boot cover own mode NONE: before the unlock HOME also
+   resolves to com.google.android.apps.nexuslauncher/...NexusLauncherActivity`, the cover disabled; both reboots boot,
+   no `ResolverActivity` (with the cover enabled as well, every boot showed the system's chooser).
+5. Known, not fixed (android mode, 34 only): a phone switched from android mode kept the cover's PPA in the policy
+   engine, and HOME went on resolving to the cover after re-seats on 14 until a reboot; a fresh own-mode phone never.
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:

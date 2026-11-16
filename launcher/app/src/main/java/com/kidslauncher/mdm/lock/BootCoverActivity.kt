@@ -144,14 +144,17 @@ class BootCoverActivity : Activity() {
         super.onCreate(savedInstanceState)
         val tripped = coverGuardTripped(BootCoverGuard.read(this))
         // M-1: own mode's tripped cover goes away; android mode's stays the boot's HOME, inert (coverInert).
-        inert = coverInert(BootCoverGuard.androidMode(this), tripped)
+        // compat-fix-1: so does a persistent own-mode one, and with the switch off it is inert from the start (bare).
+        val persistent = BootCoverGuard.persistent(this)
+        val bare = BootCoverGuard.ownCover(this) == OwnCover.BARE
+        inert = coverInert(persistent, tripped, bare)
         if (tripped && !inert) {
             BootCoverGuard.disable(this, "crash guard")
             ownFinish = true
             finish()
             return
         }
-        if (inert) Log.i(LOG_TAG, "Boot cover inert: the crash guard tripped (android mode) - SystemUI's lock is the face")
+        if (inert) Log.i(LOG_TAG, if (tripped) "Boot cover inert: the crash guard tripped - SystemUI's lock is the face" else "Boot cover inert: the boot's HOME only (the switch is off)")
         // M-4: a relaunch for a configuration change carries the pad over (no stop, no new automatic ask).
         carriedPad?.let {
             pad = it
@@ -163,7 +166,7 @@ class BootCoverActivity : Activity() {
             scaleType = ImageView.ScaleType.CENTER
             importantForAccessibility = ImageView.IMPORTANT_FOR_ACCESSIBILITY_NO
         }
-        waitForLauncher = BootCoverGuard.androidMode(this)
+        waitForLauncher = persistent
         applyLockedFace()
         lateStart = waitForLauncher && getSystemService(UserManager::class.java)?.isUserUnlocked == true &&
             BootCoverGuard.takenOverThisBoot(this)
