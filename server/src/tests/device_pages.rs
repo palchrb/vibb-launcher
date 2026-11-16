@@ -275,11 +275,17 @@ async fn advanced_forms_return_to_their_groups() {
         Option<(String, Option<&'a str>)>,
     );
     // Leave Tailnet shows only for a phone on the tailnet: `tests::leave_tailnet` checks its return.
-    let table: [Row; 6] = [
+    let table: [Row; 7] = [
         (
             "hardening#restrictions",
             &[("disallow_factory_reset", "on")],
             Some((advanced.clone(), Some("restrictions"))),
+        ),
+        // Design 102: the parent code for Wi-Fi sign-in, saved by the logins route, lands back on its row here.
+        (
+            "logins#wifi-signin",
+            &[("on", "on")],
+            Some((advanced.clone(), Some("wifi-signin"))),
         ),
         (
             "kiosk-block#app-screens",
