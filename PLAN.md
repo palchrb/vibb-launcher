@@ -181,6 +181,7 @@ Nothing here is waiting on code. Each line names where the detail is; the longer
 - **DECLINED 2026-10-20: rewind 5-10 s after a long pause** (the user: "Nei legg det bort").
 
 ### Done since the last release
+- **The tab bar's pin and gear holes 0.4 larger in both states - ASKED 2026-11-16 ~12:40 UTC (the user on 0.81.1: the chosen holes felt very small), the user picked "+0.4" from three renders, DONE on main the same day:** the pin's ring r 3.1 (hole 2.05), the gear's 3.8 (hole 2.75), CSS v=121. For the next server tag.
 - **A silent time rule raises a false "Ikke forstyrr er på" attention - REPORTED 2026-11-16 ~10:50 UTC (the user: the Devices list's red counter while Skole is on, "fake news"), MERGED 2026-11-16 (`dnd-attention` 5b9c347f1, light review by the coordinator; server only; for the next server tag)**: the rule's own AutomaticZenRule reports `priority`; `attention.rs` no longer counts it while the report's active rule (or its lock_now copy) is silent and the filter is `priority`.
 
 ### To decide (the user)

@@ -850,7 +850,8 @@ input[type="radio"] {
    (the note's beam) appears, and .ti-detail (the phone's bar) is drawn in the bar's own colour. The pin's and the gear's
    rings merge into the fill and only their hole stays open (.ti-hole, the ring's inner radius: r less half the 2.1
    stroke), so the hole is the same size in both states (the user, 2026-11-16: a cut-out of the ring's outer edge made
-   the middles grow). */
+   the middles grow). The pin's ring is r 3.1 and the gear's 3.8, 0.4 larger than before in both states (the user,
+   2026-11-16: the chosen holes felt too small; "+0.4" picked from three renders). */
 .tab[aria-current="page"] .tab-icon,
 .tab.is-pending .tab-icon {
     color: var(--tab-on-icon);
