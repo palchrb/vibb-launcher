@@ -4619,6 +4619,45 @@ shortcut: on this Chrome the tab's menu has no way there, see E8).
 Feide/Google login back to its app, the presets' hosts); E13's second hotspot; Android's sign-in notification and its
 Cancel on the Jelly Star's own build; the Bare Vibb sink with a SIM; "Open in Chrome browser" on the phone's Chrome.
 
+## 6as. Android 14-17: Settings off the lists, the media button's hold, lint (compat-fix-1, 2026-11-16)
+
+The fixes of `docs/testing/2026-11-16-android-14-17.md`, on `compat372` (API 37.2, CP41.260831.015), `compat34` (API
+34, UE1A.230829.050) and `jelly36` (API 36). 37.2's graphics stack kills system_server on any CPU readback (a task
+snapshot after a dialog, a screencap), so read it with `dumpsys` and `uiautomator`. The rig is the 14-17 check's (a
+server on 3197, device 1; a QR-shaped enrolment code - 26 characters of A-Z and 2-7 - written into its database).
+
+1. **Refused once, not retried** (37.2): after the install `PlatformRefusals: Android refuses to suspend
+   com.android.settings (exempt from suspension); not asked again until a reboot or an OS update` and the same for
+   hide - one line each; later applies (a sync, a system_server restart) make no call (`PackageManager: Cannot
+   suspend package "com.android.settings"` stops). After `adb reboot` (boot_count 23 -> 24) it is asked and logged
+   once more. On 36 the suspension is refused the same way (the app-op is there already) but the hide works; on 34
+   nothing is refused (Settings `hidden=true suspended=true`, no `PlatformRefusals` line).
+2. **Home and the drawer** (37.2, 34, 36): `dumpsys package com.android.settings` on 37.2 reads `hidden=false
+   suspended=false`, yet Home's grid has only Vibb's own "Settings" tile (Kid Settings, `GridTile.Settings` - tap it:
+   `KidSettingsActivity`) and the drawer lists Camera, Clock, Messages (and Music once allowed) - no Android Settings.
+   Kiosk: `dumpsys activity activities` `mLockTaskModeState=LOCKED`.
+3. **The pause** (PWA `POST /devices/1/start-pause`, 37.2 and 34): unlocked, `mLockTaskModeState=NONE`, the drawer
+   lists Android's Settings; Home's "Lock again" takes it off again and the kiosk is LOCKED.
+4. **SystemUI's Settings pages under the kiosk** (37.2): `am start -a android.settings.APP_NOTIFICATION_SETTINGS`
+   resolves to Settings (not `launcher-fix-1`'s sink) and becomes `android/com.android.internal.app.BlockedAppActivity`:
+   "App is not available - Settings is not available right now", OK. No SystemUI crash. (Its OK then hit the emulator's
+   graphics crash - not ours.)
+5. **The media button with nothing to resume** (37.2): the music app allowed (PWA "Allow these apps"), not running,
+   `run-as me.vibb.music.debug` writes `shared_prefs/music.xml` with `resumable` true, `cmd media_session dispatch
+   play`: the events log has `am_foreground_service_start` and 53 ms later `am_foreground_service_stop
+   ...STOP_FOREGROUND`; Media3 logs the refusal as a warning; no crash in 40 s (`logcat -b crash` empty), the service
+   gone, `resumable` false. On 34 (no media button receiver registered on a wiped phone):
+   `am start-foreground-service -a android.intent.action.MEDIA_BUTTON -n me.vibb.music.debug/me.vibb.music.playback.PlaybackService`
+   (a button press with no key, no resumption): in the foreground at once, out after the 2 s first look, no crash.
+6. **Lint** (both apps, `./gradlew lint`): "Lint found ... (and 77 errors filtered by baseline lint-baseline.xml)" and
+   16 for the music app; music's `assembleRelease` (lintVitalRelease) passes with the baseline. Launcher's
+   lintVitalRelease needs `libs/tsnet.aar` (CI only).
+
+**`compat34` after `adb emu kill`**: with Settings hidden, the boot cover off (own mode) and no `ACTION_SHUTDOWN`, the
+next boot finds no HOME before the unlock and never completes (user 0 stays BOOTING, a black screen) - the case
+`home-and-photos.md` step M describes for Android 15. Start it with `-wipe-data` and provision again (or switch the boot
+cover on and stop it with `svc power reboot`). 37 can't hang there: Settings (FallbackHome) is never hidden.
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:

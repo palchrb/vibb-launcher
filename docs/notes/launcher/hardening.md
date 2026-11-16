@@ -72,9 +72,11 @@ On Android 17 (API 37; seen on 37.0 and 37.2) `com.android.settings` hosts App l
 `SYSTEM_EXEMPT_FROM_SUSPENSION` (with `android`, `com.android.providers.settings`, Telecom and other system-uid
 packages): `setPackagesSuspended` returns it as not suspended ("Cannot suspend package ... has
 OP_SYSTEM_EXEMPT_FROM_SUSPENSION set") and `setApplicationHidden` returns false ("ignoring ... as it's on policy-exempt
-list"). Android 14-16 hide and suspend it as before. Lock task still refuses to start it while the kiosk is on, and the
-kiosk is always on while apps are managed (`kiosk_desired` isn't the parent's choice), so it stays shut; but it is
-visible to the package manager.
+list"). Android 16's Google image (`jelly36`) already refuses the suspension for the same app-op but still hides it;
+Android 14 (`compat34`) does both. Lock task still refuses to start it while the kiosk is on, and the kiosk is always
+on while apps are managed (`kiosk_desired` isn't the parent's choice), so it stays shut; but it is visible to the
+package manager. One side effect: with Settings never hidden, FallbackHome is always there before the first unlock, so
+a boot the shutdown didn't arm (step M's case below the boot cover) can't hang on 17.
 
 - **The lists follow the plan** (`server/PlatformRefusals.kt`, `PlatformRefusalsTest`): `AppFilter` (Home, the drawer,
   Kid Settings' hidden apps) leaves out every package the last plan wants hidden or suspended
@@ -92,5 +94,8 @@ visible to the package manager.
   (the Play Store as verifier, a carrier app) is still retried at every pass as before.
 - **What else changes on 17**: Flymodus's route window (design 98) finds Settings unhidden, so it neither unhides nor
   hides it again - it only pins it for the window. SystemUI's Settings links (`launcher-fix-1`'s sink) resolve to
-  Settings' own activities, which win over the sink's priority -1: under the kiosk lock task refuses them without a
-  crash; in the pause they open Settings, as on 14-16.
+  Settings' own activities, which win over the sink's priority -1, so the sink is never reached: under the kiosk (with
+  the app-block bit) the start becomes Android's BlockedAppActivity, "App is not available - Settings is not available
+  right now" with OK, back to where the kid was - no SystemUI crash (checked with `am start` of
+  `APP_NOTIFICATION_SETTINGS` on 37.2, `docs/testing/emulator.md` §6as); in the pause they open Settings, as on 14-16.
+  Snarveier (design 99) has no Settings link of its own; its notification's gear is the case above.
