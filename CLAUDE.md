@@ -54,8 +54,8 @@ imported with full history (`git subtree`), so old commit hashes in the docs sti
   §6ap),
   `music-splash.py` (the music app's launch splash drawables: the Vibb mark read from the launcher's Home splash, "vibb
   music" from Nunito's outlines; `--selftest`), `music-icon.py` (the music app's icon and notification small icon, the
-  user's drawing `vibb-music-q7`: the Vibb mark's outer three rings read from the launcher's `ic_launcher_foreground.xml`
-  and a round-cornered play triangle, its geometry measured on the drawing; `--selftest` checks the outer ring inside the
+  user's drawing `vibb-music-e2`: the Vibb mark's outer three rings read from the launcher's `ic_launcher_foreground.xml`,
+  each with its own scale and stroke, and a round-cornered play triangle, its geometry from the drawing's SVG; `--selftest` checks the outer ring inside the
   safe zone), `webauthn-rs256-vector.py` (the server's RS256 passkey vector
   `server/testdata/webauthn/rs256.json`, made once with a throwaway key - public data only; design 74), `emoji-list.py`
   (the launcher's `assets/sms/emoji-16.0.txt` from Unicode's `emoji-test.txt` 16.0, its SHA-256 pinned; design 81),
