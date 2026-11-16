@@ -4735,6 +4735,44 @@ android.intent.action.MAIN -c android.intent.category.HOME`.
 5. Known, not fixed (android mode, 34 only): a phone switched from android mode kept the cover's PPA in the policy
    engine, and HOME went on resolving to the cover after re-seats on 14 until a reboot; a fresh own-mode phone never.
 
+## 6au. The clock during a rule (design 105, 2026-11-16)
+
+The 14-17 rig's device 1 (server on 3197), the branch's debug launcher as Device Owner, android mode (kid PIN 2580),
+block bit on, Fossify Clock 1.6.0 from GitHub (`clock-10-foss-release.apk`, SHA-256 `43cf9f0e...dca079`, the catalog's
+signer) installed with `adb install`, "Allow these apps" and ticked on the Apps page. Grant it what a real phone has:
+`pm grant org.fossify.clock android.permission.POST_NOTIFICATIONS` and `appops set org.fossify.clock
+USE_FULL_SCREEN_INTENT allow` (without them the ring has no notification and no ringing screen). Alarms set with `am
+start -a android.intent.action.SET_ALARM -p org.fossify.clock --ei ...HOUR --ei ...MINUTES --ez ...SKIP_UI true`. The
+rule is the rig's rule 1 renamed Skole (`kind` school, `silent` 0), turned on with `POST /devices/1/rules-now mode=on
+rule=1 on_len=60`. Read the list in `dumpsys activity activities` (`LockTaskController`'s `mLockTaskPackages`).
+
+`compat34` (API 34), all steps:
+1. **At the rule's start**: Fossify open in front, then Skole on: Fossify left the list, no Fossify ActivityRecord,
+   `LockActivity` resumed. The emptied task stays in `dumpsys activity recents` (the design's "no clock task" is
+   only true of its activities).
+2. **Recents**: `KEYCODE_APP_SWITCH` shows the clock's card; its tap restarts nothing - `BlockedAppActivity` "Clock is
+   not available right now" in that task, no Fossify activity. `am start -a android.intent.action.SHOW_ALARMS -p
+   org.fossify.clock`: the same refusal.
+3. **A ring while LOCKED**: power off - Fossify back in the list at once; at the ring `AlarmActivity` resumed over the
+   keyguard (`isKeyguardShowing=true`). Snoozed by its slider. `dumpsys deviceidle force-idle` stays at INACTIVE on
+   this image, so Doze itself was not reached.
+4. **Unlock while it rings**: the PIN on the bouncer - Fossify out of the list, no Fossify activity, the ringing
+   notification (id 9998) and `AlarmService` still there; the card reads "The alarm is ringing" with Snooze and
+   Dismiss (the notification's actions: `startService` and `broadcastIntent`). Dismiss: the notification and the
+   service gone, the row gone. Snooze (another ring): snoozed 10 min (`AlarmReceiver` re-armed).
+5. **A ring unlocked and lit** (the snooze): a heads-up only - no `AlarmActivity`, Fossify not in the list, the row
+   with Snooze and Dismiss.
+6. **Ticked on Skole**: the rule again with `exempt_apps_json ["org.fossify.clock"]` - in the list, its row "Clock"
+   opens `MainActivity`.
+
+**`compat372` (API 37.2) could not run**: on every app transition system_server aborts in its
+`TaskSnapshotPersister` (`hasReadColorBufferDma`), and with gesture navigation surfaceflinger's RegionSampling too -
+with `-gpu swiftshader_indirect`, `guest` (lavapipe), `swangle_indirect` and `-feature -GLDMA,-GLDMA2,-GLDirectMem`
+(3-button navigation stops only the surfaceflinger one). **`handy36` (API 36, `-read-only -wipe-data`) instead**,
+steps 1 and 3-4 without a ring: the rule took Fossify out of the list with the clock open (no activity left), a
+screen-off put it back in (LOCKED), the PIN unlock took it out again. The rings and the row's buttons ran on 34 only;
+the bar under the row (the pills moved under the label after the 34 run) is not seen on an emulator yet.
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:

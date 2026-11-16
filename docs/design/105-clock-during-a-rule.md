@@ -1,6 +1,6 @@
 # 105 - The clock during a rule (revision 2)
 
-Round `clock-in-rule`, 2026-11-16. Launcher only. Approved by the user ("Ja gjør det"); PLAN "The clock opens from
+Round `clock-in-rule`, 2026-11-16. Launcher only. **Status: built** (branch `clock-in-rule`, emulator §6au). Approved by the user ("Ja gjør det"); PLAN "The clock opens from
 Recents during a rule". Revision 2 answers `docs/review/qa-105-design.md` (section 9 maps each finding).
 
 **The user's decision on Q1** ("nei dette får foreldre bestemme selv, enig i det"): during a rule the clock is usable
