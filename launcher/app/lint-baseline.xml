@@ -1,0 +1,851 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<issues format="6" by="lint 8.13.0" type="baseline" client="gradle" dependencies="false" name="AGP (8.13.0)" variant="all" version="8.13.0">
+
+    <issue
+        id="MissingPermission"
+        message="Call requires permission which may be rejected by user: code should explicitly check to see if permission is available (with `checkPermission`) or explicitly handle a potential `SecurityException`"
+        errorLine1="        context.getSystemService(TelecomManager::class.java)?.isInCall != false"
+        errorLine2="        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/kidslauncher/mdm/server/AppEnforcer.kt"
+            line="1161"
+            column="9"/>
+    </issue>
+
+    <issue
+        id="MissingPermission"
+        message="Call requires permission which may be rejected by user: code should explicitly check to see if permission is available (with `checkPermission`) or explicitly handle a potential `SecurityException`"
+        errorLine1="            context.getSystemService(TelecomManager::class.java)"
+        errorLine2="            ^">
+        <location
+            file="src/main/java/com/kidslauncher/mdm/calls/CallSystem.kt"
+            line="94"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="MissingPermission"
+        message="Call requires permission which may be rejected by user: code should explicitly check to see if permission is available (with `checkPermission`) or explicitly handle a potential `SecurityException`"
+        errorLine1="        context.getSystemService(TelecomManager::class.java)?.isInCall != false"
+        errorLine2="        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/kidslauncher/mdm/calls/CallSystem.kt"
+            line="141"
+            column="9"/>
+    </issue>
+
+    <issue
+        id="MissingPermission"
+        message="Call requires permission which may be rejected by user: code should explicitly check to see if permission is available (with `checkPermission`) or explicitly handle a potential `SecurityException`"
+        errorLine1="        context.getSystemService(TelephonyManager::class.java)"
+        errorLine2="        ^">
+        <location
+            file="src/main/java/com/kidslauncher/mdm/calls/CallSystem.kt"
+            line="156"
+            column="9"/>
+    </issue>
+
+    <issue
+        id="MissingPermission"
+        message="Call requires permission which may be rejected by user: code should explicitly check to see if permission is available (with `checkPermission`) or explicitly handle a potential `SecurityException`"
+        errorLine1="                        lm.getLastKnownLocation(provider)"
+        errorLine2="                        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/kidslauncher/mdm/server/LocateCommands.kt"
+            line="210"
+            column="25"/>
+    </issue>
+
+    <issue
+        id="MissingPermission"
+        message="Call requires permission which may be rejected by user: code should explicitly check to see if permission is available (with `checkPermission`) or explicitly handle a potential `SecurityException`"
+        errorLine1="                    lm.getCurrentLocation(provider, request, cancellationSignal, context.mainExecutor) { location ->"
+        errorLine2="                    ^">
+        <location
+            file="src/main/java/com/kidslauncher/mdm/server/LocateCommands.kt"
+            line="296"
+            column="21"/>
+    </issue>
+
+    <issue
+        id="MissingPermission"
+        message="Call requires permission which may be rejected by user: code should explicitly check to see if permission is available (with `checkPermission`) or explicitly handle a potential `SecurityException`"
+        errorLine1="                        lm.requestLocationUpdates(provider, request, context.mainExecutor, listener)"
+        errorLine2="                        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/kidslauncher/mdm/server/LocateCommands.kt"
+            line="443"
+            column="25"/>
+    </issue>
+
+    <issue
+        id="MissingPermission"
+        message="Call requires permission which may be rejected by user: code should explicitly check to see if permission is available (with `checkPermission`) or explicitly handle a potential `SecurityException`"
+        errorLine1="                        lm.getCurrentLocation(provider, cancellationSignal, context.mainExecutor) { location ->"
+        errorLine2="                        ^">
+        <location
+            file="src/main/java/com/kidslauncher/mdm/server/LocateCommands.kt"
+            line="453"
+            column="25"/>
+    </issue>
+
+    <issue
+        id="MissingPermission"
+        message="Missing permissions required by TelecomManager.cancelMissedCallsNotification: android.permission.MODIFY_PHONE_STATE"
+        errorLine1="            context.getSystemService(TelecomManager::class.java)?.cancelMissedCallsNotification()"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/kidslauncher/mdm/calls/MissedCallNotifier.kt"
+            line="378"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="MissingPermission"
+        message="Call requires permission which may be rejected by user: code should explicitly check to see if permission is available (with `checkPermission`) or explicitly handle a potential `SecurityException`"
+        errorLine1="        context.getSystemService(TelephonyManager::class.java)?.isDataEnabled == true"
+        errorLine2="        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/kidslauncher/mdm/sms/mms/MmsRuntime.kt"
+            line="221"
+            column="9"/>
+    </issue>
+
+    <issue
+        id="MissingPermission"
+        message="Call requires permission which may be rejected by user: code should explicitly check to see if permission is available (with `checkPermission`) or explicitly handle a potential `SecurityException`"
+        errorLine1="            dataEnabled = runCatching { dataTelephony(context)?.isDataEnabled }.getOrNull(),"
+        errorLine2="                                        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/kidslauncher/mdm/server/MobileNetworkRuntime.kt"
+            line="101"
+            column="41"/>
+    </issue>
+
+    <issue
+        id="MissingPermission"
+        message="Call requires permission which may be rejected by user: code should explicitly check to see if permission is available (with `checkPermission`) or explicitly handle a potential `SecurityException`"
+        errorLine1="            .associateWith { sub -> runCatching { tm.createForSubscriptionId(sub).isDataRoamingEnabled }.getOrNull() }"
+        errorLine2="                                                  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/kidslauncher/mdm/server/MobileNetworkRuntime.kt"
+            line="271"
+            column="51"/>
+    </issue>
+
+    <issue
+        id="MissingPermission"
+        message="Call requires permission which may be rejected by user: code should explicitly check to see if permission is available (with `checkPermission`) or explicitly handle a potential `SecurityException`"
+        errorLine1="        val state = tm?.serviceState ?: return@runCatching null"
+        errorLine2="                    ~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/kidslauncher/mdm/server/MobileNetworkRuntime.kt"
+            line="316"
+            column="21"/>
+    </issue>
+
+    <issue
+        id="MissingPermission"
+        message="Call requires permission which may be rejected by user: code should explicitly check to see if permission is available (with `checkPermission`) or explicitly handle a potential `SecurityException`"
+        errorLine1="            enabled = runCatching { tm?.isDataRoamingEnabled }.getOrNull(),"
+        errorLine2="                                    ~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/kidslauncher/mdm/server/MobileNetworkRuntime.kt"
+            line="339"
+            column="37"/>
+    </issue>
+
+    <issue
+        id="MissingPermission"
+        message="Call requires permission which may be rejected by user: code should explicitly check to see if permission is available (with `checkPermission`) or explicitly handle a potential `SecurityException`"
+        errorLine1="        enabled = runCatching { dataTelephony(context)?.isDataEnabled }.getOrNull(),"
+        errorLine2="                                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/kidslauncher/mdm/server/MobileNetworkRuntime.kt"
+            line="351"
+            column="33"/>
+    </issue>
+
+    <issue
+        id="MissingPermission"
+        message="Call requires permission which may be rejected by user: code should explicitly check to see if permission is available (with `checkPermission`) or explicitly handle a potential `SecurityException`"
+        errorLine1="            ctx.getSystemService(TelecomManager::class.java)?.isInManagedCall"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/kidslauncher/mdm/music/MusicCalls.kt"
+            line="98"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="MissingPermission"
+        message="Call requires permission which may be rejected by user: code should explicitly check to see if permission is available (with `checkPermission`) or explicitly handle a potential `SecurityException`"
+        errorLine1="            context.getSystemService(TelecomManager::class.java)?.isInManagedCall"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/kidslauncher/mdm/lock/PinLockRuntime.kt"
+            line="2277"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="MissingPermission"
+        message="Call requires permission which may be rejected by user: code should explicitly check to see if permission is available (with `checkPermission`) or explicitly handle a potential `SecurityException`"
+        errorLine1="            wm.configuredNetworks ?: emptyList()"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/kidslauncher/mdm/server/QuickControls.kt"
+            line="474"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="MissingPermission"
+        message="Call requires permission which may be rejected by user: code should explicitly check to see if permission is available (with `checkPermission`) or explicitly handle a potential `SecurityException`"
+        errorLine1="            wm.scanResults ?: emptyList()"
+        errorLine2="            ~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/kidslauncher/mdm/server/QuickControls.kt"
+            line="484"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="MissingPermission"
+        message="Call requires permission which may be rejected by user: code should explicitly check to see if permission is available (with `checkPermission`) or explicitly handle a potential `SecurityException`"
+        errorLine1="        context.getSystemService(SubscriptionManager::class.java)?.activeSubscriptionInfoList.orEmpty()"
+        errorLine2="        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/kidslauncher/mdm/sms/SmsRuntime.kt"
+            line="496"
+            column="9"/>
+    </issue>
+
+    <issue
+        id="ResourceType"
+        message="Expected resource of type styleable"
+        errorLine1="                attrs.getBoolean(0, false) to attrs.getBoolean(1, false)"
+        errorLine2="                                                               ~">
+        <location
+            file="src/main/java/com/kidslauncher/mdm/assistant/AirplaneRoute.kt"
+            line="355"
+            column="64"/>
+    </issue>
+
+    <issue
+        id="RestrictedApi"
+        message="CoreComponentFactory can only be called from within the same library group prefix (referenced groupId=`androidx.core` with prefix androidx from groupId=`kids-launcher-mdm`)"
+        errorLine1="class KidAppComponentFactory : CoreComponentFactory() {"
+        errorLine2="                               ~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/kidslauncher/mdm/KidAppComponentFactory.kt"
+            line="21"
+            column="32"/>
+    </issue>
+
+    <issue
+        id="RestrictedApi"
+        message="CoreComponentFactory.instantiateActivity can only be called from within the same library group prefix (referenced groupId=`androidx.core` with prefix androidx from groupId=`kids-launcher-mdm`)"
+        errorLine1="    override fun instantiateActivity(cl: ClassLoader, className: String, intent: Intent?): Activity {"
+        errorLine2="                 ~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/kidslauncher/mdm/KidAppComponentFactory.kt"
+            line="29"
+            column="18"/>
+    </issue>
+
+    <issue
+        id="RestrictedApi"
+        message="CoreComponentFactory.instantiateActivity can only be called from within the same library group prefix (referenced groupId=`androidx.core` with prefix androidx from groupId=`kids-launcher-mdm`)"
+        errorLine1="        return super.instantiateActivity(cl, className, intent)"
+        errorLine2="                     ~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/kidslauncher/mdm/KidAppComponentFactory.kt"
+            line="31"
+            column="22"/>
+    </issue>
+
+    <issue
+        id="RestrictedApi"
+        message="CoreComponentFactory.instantiateActivity can only be called from within the same library group prefix (referenced groupId=`androidx.core` with prefix androidx from groupId=`kids-launcher-mdm`)"
+        errorLine1="        return super.instantiateActivity(cl, className, intent)"
+        errorLine2="                                         ~~">
+        <location
+            file="src/main/java/com/kidslauncher/mdm/KidAppComponentFactory.kt"
+            line="31"
+            column="42"/>
+    </issue>
+
+    <issue
+        id="RestrictedApi"
+        message="CoreComponentFactory.instantiateActivity can only be called from within the same library group prefix (referenced groupId=`androidx.core` with prefix androidx from groupId=`kids-launcher-mdm`)"
+        errorLine1="        return super.instantiateActivity(cl, className, intent)"
+        errorLine2="                                             ~~~~~~~~~">
+        <location
+            file="src/main/java/com/kidslauncher/mdm/KidAppComponentFactory.kt"
+            line="31"
+            column="46"/>
+    </issue>
+
+    <issue
+        id="RestrictedApi"
+        message="CoreComponentFactory.instantiateActivity can only be called from within the same library group prefix (referenced groupId=`androidx.core` with prefix androidx from groupId=`kids-launcher-mdm`)"
+        errorLine1="        return super.instantiateActivity(cl, className, intent)"
+        errorLine2="                                                        ~~~~~~">
+        <location
+            file="src/main/java/com/kidslauncher/mdm/KidAppComponentFactory.kt"
+            line="31"
+            column="57"/>
+    </issue>
+
+    <issue
+        id="RestrictedApi"
+        message="CoreComponentFactory.instantiateService can only be called from within the same library group prefix (referenced groupId=`androidx.core` with prefix androidx from groupId=`kids-launcher-mdm`)"
+        errorLine1="    override fun instantiateService(cl: ClassLoader, className: String, intent: Intent?): Service {"
+        errorLine2="                 ~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/kidslauncher/mdm/KidAppComponentFactory.kt"
+            line="34"
+            column="18"/>
+    </issue>
+
+    <issue
+        id="RestrictedApi"
+        message="CoreComponentFactory.instantiateService can only be called from within the same library group prefix (referenced groupId=`androidx.core` with prefix androidx from groupId=`kids-launcher-mdm`)"
+        errorLine1="        return super.instantiateService(cl, className, intent)"
+        errorLine2="                     ~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/kidslauncher/mdm/KidAppComponentFactory.kt"
+            line="36"
+            column="22"/>
+    </issue>
+
+    <issue
+        id="RestrictedApi"
+        message="CoreComponentFactory.instantiateService can only be called from within the same library group prefix (referenced groupId=`androidx.core` with prefix androidx from groupId=`kids-launcher-mdm`)"
+        errorLine1="        return super.instantiateService(cl, className, intent)"
+        errorLine2="                                        ~~">
+        <location
+            file="src/main/java/com/kidslauncher/mdm/KidAppComponentFactory.kt"
+            line="36"
+            column="41"/>
+    </issue>
+
+    <issue
+        id="RestrictedApi"
+        message="CoreComponentFactory.instantiateService can only be called from within the same library group prefix (referenced groupId=`androidx.core` with prefix androidx from groupId=`kids-launcher-mdm`)"
+        errorLine1="        return super.instantiateService(cl, className, intent)"
+        errorLine2="                                            ~~~~~~~~~">
+        <location
+            file="src/main/java/com/kidslauncher/mdm/KidAppComponentFactory.kt"
+            line="36"
+            column="45"/>
+    </issue>
+
+    <issue
+        id="RestrictedApi"
+        message="CoreComponentFactory.instantiateService can only be called from within the same library group prefix (referenced groupId=`androidx.core` with prefix androidx from groupId=`kids-launcher-mdm`)"
+        errorLine1="        return super.instantiateService(cl, className, intent)"
+        errorLine2="                                                       ~~~~~~">
+        <location
+            file="src/main/java/com/kidslauncher/mdm/KidAppComponentFactory.kt"
+            line="36"
+            column="56"/>
+    </issue>
+
+    <issue
+        id="RestrictedApi"
+        message="CoreComponentFactory.instantiateReceiver can only be called from within the same library group prefix (referenced groupId=`androidx.core` with prefix androidx from groupId=`kids-launcher-mdm`)"
+        errorLine1="    override fun instantiateReceiver(cl: ClassLoader, className: String, intent: Intent?): BroadcastReceiver {"
+        errorLine2="                 ~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/kidslauncher/mdm/KidAppComponentFactory.kt"
+            line="39"
+            column="18"/>
+    </issue>
+
+    <issue
+        id="RestrictedApi"
+        message="CoreComponentFactory.instantiateReceiver can only be called from within the same library group prefix (referenced groupId=`androidx.core` with prefix androidx from groupId=`kids-launcher-mdm`)"
+        errorLine1="        return super.instantiateReceiver(cl, className, intent)"
+        errorLine2="                     ~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/kidslauncher/mdm/KidAppComponentFactory.kt"
+            line="41"
+            column="22"/>
+    </issue>
+
+    <issue
+        id="RestrictedApi"
+        message="CoreComponentFactory.instantiateReceiver can only be called from within the same library group prefix (referenced groupId=`androidx.core` with prefix androidx from groupId=`kids-launcher-mdm`)"
+        errorLine1="        return super.instantiateReceiver(cl, className, intent)"
+        errorLine2="                                         ~~">
+        <location
+            file="src/main/java/com/kidslauncher/mdm/KidAppComponentFactory.kt"
+            line="41"
+            column="42"/>
+    </issue>
+
+    <issue
+        id="RestrictedApi"
+        message="CoreComponentFactory.instantiateReceiver can only be called from within the same library group prefix (referenced groupId=`androidx.core` with prefix androidx from groupId=`kids-launcher-mdm`)"
+        errorLine1="        return super.instantiateReceiver(cl, className, intent)"
+        errorLine2="                                             ~~~~~~~~~">
+        <location
+            file="src/main/java/com/kidslauncher/mdm/KidAppComponentFactory.kt"
+            line="41"
+            column="46"/>
+    </issue>
+
+    <issue
+        id="RestrictedApi"
+        message="CoreComponentFactory.instantiateReceiver can only be called from within the same library group prefix (referenced groupId=`androidx.core` with prefix androidx from groupId=`kids-launcher-mdm`)"
+        errorLine1="        return super.instantiateReceiver(cl, className, intent)"
+        errorLine2="                                                        ~~~~~~">
+        <location
+            file="src/main/java/com/kidslauncher/mdm/KidAppComponentFactory.kt"
+            line="41"
+            column="57"/>
+    </issue>
+
+    <issue
+        id="RestrictedApi"
+        message="CoreComponentFactory.instantiateProvider can only be called from within the same library group prefix (referenced groupId=`androidx.core` with prefix androidx from groupId=`kids-launcher-mdm`)"
+        errorLine1="    override fun instantiateProvider(cl: ClassLoader, className: String): ContentProvider {"
+        errorLine2="                 ~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/kidslauncher/mdm/KidAppComponentFactory.kt"
+            line="47"
+            column="18"/>
+    </issue>
+
+    <issue
+        id="RestrictedApi"
+        message="CoreComponentFactory.instantiateProvider can only be called from within the same library group prefix (referenced groupId=`androidx.core` with prefix androidx from groupId=`kids-launcher-mdm`)"
+        errorLine1="        return super.instantiateProvider(cl, className)"
+        errorLine2="                     ~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/com/kidslauncher/mdm/KidAppComponentFactory.kt"
+            line="49"
+            column="22"/>
+    </issue>
+
+    <issue
+        id="RestrictedApi"
+        message="CoreComponentFactory.instantiateProvider can only be called from within the same library group prefix (referenced groupId=`androidx.core` with prefix androidx from groupId=`kids-launcher-mdm`)"
+        errorLine1="        return super.instantiateProvider(cl, className)"
+        errorLine2="                                         ~~">
+        <location
+            file="src/main/java/com/kidslauncher/mdm/KidAppComponentFactory.kt"
+            line="49"
+            column="42"/>
+    </issue>
+
+    <issue
+        id="RestrictedApi"
+        message="CoreComponentFactory.instantiateProvider can only be called from within the same library group prefix (referenced groupId=`androidx.core` with prefix androidx from groupId=`kids-launcher-mdm`)"
+        errorLine1="        return super.instantiateProvider(cl, className)"
+        errorLine2="                                             ~~~~~~~~~">
+        <location
+            file="src/main/java/com/kidslauncher/mdm/KidAppComponentFactory.kt"
+            line="49"
+            column="46"/>
+    </issue>
+
+    <issue
+        id="UseAppTint"
+        message="Must use `app:tint` instead of `android:tint`"
+        errorLine1="                    android:tint=&quot;@color/kid_ink&quot; />"
+        errorLine2="                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/layout/activity_kid_settings.xml"
+            line="87"
+            column="21"/>
+    </issue>
+
+    <issue
+        id="UseAppTint"
+        message="Must use `app:tint` instead of `android:tint`"
+        errorLine1="            android:tint=&quot;@color/kid_core&quot; />"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/layout/activity_pin_lock.xml"
+            line="40"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="UseAppTint"
+        message="Must use `app:tint` instead of `android:tint`"
+        errorLine1="            android:tint=&quot;@color/kid_emergency_text&quot; />"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/layout/activity_pin_lock.xml"
+            line="99"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="UseAppTint"
+        message="Must use `app:tint` instead of `android:tint`"
+        errorLine1="        android:tint=&quot;@color/kid_page_ink&quot; />"
+        errorLine2="        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/layout/include_kid_header.xml"
+            line="29"
+            column="9"/>
+    </issue>
+
+    <issue
+        id="UseAppTint"
+        message="Must use `app:tint` instead of `android:tint`"
+        errorLine1="        android:tint=&quot;@color/kid_lock_chevron&quot; />"
+        errorLine2="        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/layout/item_lock_row.xml"
+            line="47"
+            column="9"/>
+    </issue>
+
+    <issue
+        id="UseAppTint"
+        message="Must use `app:tint` instead of `android:tint`"
+        errorLine1="                    android:tint=&quot;@color/kid_page_call_glyph&quot; />"
+        errorLine2="                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/layout/item_phone_book_row.xml"
+            line="127"
+            column="21"/>
+    </issue>
+
+    <issue
+        id="UseAppTint"
+        message="Must use `app:tint` instead of `android:tint`"
+        errorLine1="                    android:tint=&quot;@color/kid_page_accent&quot; />"
+        errorLine2="                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/layout/item_phone_book_row.xml"
+            line="148"
+            column="21"/>
+    </issue>
+
+    <issue
+        id="UseAppTint"
+        message="Must use `app:tint` instead of `android:tint`"
+        errorLine1="            android:tint=&quot;@color/kid_page_ink&quot; />"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/layout/item_shortcut_pick.xml"
+            line="40"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="UseAppTint"
+        message="Must use `app:tint` instead of `android:tint`"
+        errorLine1="            android:tint=&quot;@color/kid_page_ink&quot; />"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/layout/item_shortcut_pick.xml"
+            line="50"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="UseAppTint"
+        message="Must use `app:tint` instead of `android:tint`"
+        errorLine1="        android:tint=&quot;?android:attr/textColorSecondary&quot;"
+        errorLine2="        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/layout/item_wifi_network.xml"
+            line="53"
+            column="9"/>
+    </issue>
+
+    <issue
+        id="UseAppTint"
+        message="Must use `app:tint` instead of `android:tint`"
+        errorLine1="            android:tint=&quot;@color/kid_on_accent&quot; />"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/layout/view_contact_request_form.xml"
+            line="39"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="UseAppTint"
+        message="Must use `app:tint` instead of `android:tint`"
+        errorLine1="            android:tint=&quot;@color/kid_core&quot; />"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/layout/view_home_music_card.xml"
+            line="41"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="UseAppTint"
+        message="Must use `app:tint` instead of `android:tint`"
+        errorLine1="        android:tint=&quot;@color/kid_ground&quot; />"
+        errorLine2="        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/layout/view_home_music_card.xml"
+            line="93"
+            column="9"/>
+    </issue>
+
+    <issue
+        id="UseAppTint"
+        message="Must use `app:tint` instead of `android:tint`"
+        errorLine1="            android:tint=&quot;@color/kid_page_dim&quot; />"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/layout/view_kid_search.xml"
+            line="32"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="UseAppTint"
+        message="Must use `app:tint` instead of `android:tint`"
+        errorLine1="            android:tint=&quot;@color/kid_page_dim&quot;"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/layout/view_kid_search.xml"
+            line="61"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="UseAppTint"
+        message="Must use `app:tint` instead of `android:tint`"
+        errorLine1="            android:tint=&quot;@color/kid_page_accent&quot; />"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/layout/view_kid_search_empty.xml"
+            line="27"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="UseAppTint"
+        message="Must use `app:tint` instead of `android:tint`"
+        errorLine1="                            android:tint=&quot;@color/kid_core&quot; />"
+        errorLine2="                            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/layout/view_lock_glance.xml"
+            line="219"
+            column="29"/>
+    </issue>
+
+    <issue
+        id="UseAppTint"
+        message="Must use `app:tint` instead of `android:tint`"
+        errorLine1="                        android:tint=&quot;@color/kid_ink&quot; />"
+        errorLine2="                        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/layout/view_lock_glance.xml"
+            line="311"
+            column="25"/>
+    </issue>
+
+    <issue
+        id="UseAppTint"
+        message="Must use `app:tint` instead of `android:tint`"
+        errorLine1="                        android:tint=&quot;@color/kid_ink&quot; />"
+        errorLine2="                        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/layout/view_lock_glance.xml"
+            line="323"
+            column="25"/>
+    </issue>
+
+    <issue
+        id="UseAppTint"
+        message="Must use `app:tint` instead of `android:tint`"
+        errorLine1="                        android:tint=&quot;@color/kid_ink&quot; />"
+        errorLine2="                        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/layout/view_lock_glance.xml"
+            line="334"
+            column="25"/>
+    </issue>
+
+    <issue
+        id="UseAppTint"
+        message="Must use `app:tint` instead of `android:tint`"
+        errorLine1="                        android:tint=&quot;@color/kid_core&quot; />"
+        errorLine2="                        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/layout/view_lock_glance.xml"
+            line="373"
+            column="25"/>
+    </issue>
+
+    <issue
+        id="UseAppTint"
+        message="Must use `app:tint` instead of `android:tint`"
+        errorLine1="                    android:tint=&quot;@color/kid_ground&quot; />"
+        errorLine2="                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/layout/view_lock_glance.xml"
+            line="423"
+            column="21"/>
+    </issue>
+
+    <issue
+        id="UseAppTint"
+        message="Must use `app:tint` instead of `android:tint`"
+        errorLine1="                            android:tint=&quot;@color/kid_accent&quot; />"
+        errorLine2="                            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/layout/view_lock_glance.xml"
+            line="463"
+            column="29"/>
+    </issue>
+
+    <issue
+        id="UseAppTint"
+        message="Must use `app:tint` instead of `android:tint`"
+        errorLine1="                    android:tint=&quot;@color/kid_ground&quot;"
+        errorLine2="                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/layout/view_lock_glance.xml"
+            line="512"
+            column="21"/>
+    </issue>
+
+    <issue
+        id="UseAppTint"
+        message="Must use `app:tint` instead of `android:tint`"
+        errorLine1="            android:tint=&quot;@color/kid_core&quot;"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/layout/view_lock_glance.xml"
+            line="599"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="UseAppTint"
+        message="Must use `app:tint` instead of `android:tint`"
+        errorLine1="            android:tint=&quot;@color/kid_ink&quot;"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/layout/view_lock_glance_row.xml"
+            line="64"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="UseAppTint"
+        message="Must use `app:tint` instead of `android:tint`"
+        errorLine1="        android:tint=&quot;@color/kid_accent&quot; />"
+        errorLine2="        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/layout/view_lock_rule_card.xml"
+            line="32"
+            column="9"/>
+    </issue>
+
+    <issue
+        id="UseAppTint"
+        message="Must use `app:tint` instead of `android:tint`"
+        errorLine1="        android:tint=&quot;@color/kid_core_dim&quot; />"
+        errorLine2="        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/layout/view_lock_weather_mark.xml"
+            line="47"
+            column="9"/>
+    </issue>
+
+    <issue
+        id="UseAppTint"
+        message="Must use `app:tint` instead of `android:tint`"
+        errorLine1="            android:tint=&quot;@color/kid_emergency_text&quot; />"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/layout/view_voip_ring.xml"
+            line="160"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="PermissionImpliesUnsupportedChromeOsHardware"
+        message="Permission exists without corresponding hardware `&lt;uses-feature android:name=&quot;android.hardware.camera&quot; required=&quot;false&quot;>` tag"
+        errorLine1="    &lt;uses-permission android:name=&quot;android.permission.CAMERA&quot; />"
+        errorLine2="     ~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/AndroidManifest.xml"
+            line="9"
+            column="6"/>
+    </issue>
+
+    <issue
+        id="PermissionImpliesUnsupportedChromeOsHardware"
+        message="Permission exists without corresponding hardware `&lt;uses-feature android:name=&quot;android.hardware.telephony&quot; required=&quot;false&quot;>` tag"
+        errorLine1="    &lt;uses-permission android:name=&quot;android.permission.CALL_PHONE&quot; />"
+        errorLine2="     ~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/AndroidManifest.xml"
+            line="80"
+            column="6"/>
+    </issue>
+
+    <issue
+        id="PermissionImpliesUnsupportedChromeOsHardware"
+        message="Permission exists without corresponding hardware `&lt;uses-feature android:name=&quot;android.hardware.telephony&quot; required=&quot;false&quot;>` tag"
+        errorLine1="    &lt;uses-permission android:name=&quot;android.permission.RECEIVE_SMS&quot; />"
+        errorLine2="     ~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/AndroidManifest.xml"
+            line="105"
+            column="6"/>
+    </issue>
+
+    <issue
+        id="PermissionImpliesUnsupportedChromeOsHardware"
+        message="Permission exists without corresponding hardware `&lt;uses-feature android:name=&quot;android.hardware.telephony&quot; required=&quot;false&quot;>` tag"
+        errorLine1="    &lt;uses-permission android:name=&quot;android.permission.READ_SMS&quot; />"
+        errorLine2="     ~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/AndroidManifest.xml"
+            line="106"
+            column="6"/>
+    </issue>
+
+    <issue
+        id="PermissionImpliesUnsupportedChromeOsHardware"
+        message="Permission exists without corresponding hardware `&lt;uses-feature android:name=&quot;android.hardware.telephony&quot; required=&quot;false&quot;>` tag"
+        errorLine1="    &lt;uses-permission android:name=&quot;android.permission.SEND_SMS&quot; />"
+        errorLine2="     ~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/AndroidManifest.xml"
+            line="107"
+            column="6"/>
+    </issue>
+
+    <issue
+        id="PermissionImpliesUnsupportedChromeOsHardware"
+        message="Permission exists without corresponding hardware `&lt;uses-feature android:name=&quot;android.hardware.telephony&quot; required=&quot;false&quot;>` tag"
+        errorLine1="    &lt;uses-permission android:name=&quot;android.permission.RECEIVE_MMS&quot; />"
+        errorLine2="     ~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/AndroidManifest.xml"
+            line="108"
+            column="6"/>
+    </issue>
+
+    <issue
+        id="PermissionImpliesUnsupportedChromeOsHardware"
+        message="Permission exists without corresponding hardware `&lt;uses-feature android:name=&quot;android.hardware.telephony&quot; required=&quot;false&quot;>` tag"
+        errorLine1="    &lt;uses-permission android:name=&quot;android.permission.RECEIVE_WAP_PUSH&quot; />"
+        errorLine2="     ~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/AndroidManifest.xml"
+            line="109"
+            column="6"/>
+    </issue>
+
+</issues>

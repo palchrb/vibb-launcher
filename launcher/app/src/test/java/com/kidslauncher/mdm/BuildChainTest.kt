@@ -92,4 +92,16 @@ class BuildChainTest {
             assertTrue(Regex("""<sha256 value="[0-9a-f]{64}"""").containsMatchIn(metadata))
         }
     }
+
+    /** compat-fix-1: lint fails the build on a new error; the baseline holds that day's errors, never a NewApi (Android
+     * 14-17: an API above minSdk is gated, root CLAUDE.md "Supported Android"). */
+    @Test
+    fun `lint fails on new errors and never baselines NewApi`() {
+        val lint = buildScript.substringAfter("    lint {").substringBefore("    }")
+        assertTrue("abortOnError = true" in lint)
+        assertTrue("baseline = file(\"lint-baseline.xml\")" in lint)
+        val baseline = module("lint-baseline.xml").readText()
+        assertTrue("<issues" in baseline)
+        assertFalse("NewApi is never baselined", "id=\"NewApi\"" in baseline)
+    }
 }
