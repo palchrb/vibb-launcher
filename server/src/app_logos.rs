@@ -57,8 +57,10 @@ pub const MAX_LOGO_BYTES_PER_PHONE: u64 = 12 * 1024 * 1024;
 pub const UPLOADS_A_DAY: u32 = 300;
 /// Where the logos are served on the admin listener.
 pub const ROUTE: &str = "/app-logos";
-/// Vibb One's own row: the server's Vibb mark (the launcher reports no logo of its own).
-pub const VIBB_MARK: &str = "/static/icons/icon-192.png";
+/// Vibb One's own row (the launcher reports no logo of its own): the launcher's adaptive icon as a phone draws it - the
+/// rings at its scale in the 72 dp a launcher shows -, so it sits like the logos the phones draw (the user, 2026-11-16:
+/// the PWA's icon-192.png fills its tile and Vibb Musikk's phone-drawn logo looked far smaller beside it).
+pub const VIBB_MARK: &str = "/static/icons/vibb-one-tile.svg";
 
 /// The day a refusal and the upload budget last.
 const DAY: Duration = Duration::from_secs(24 * 60 * 60);

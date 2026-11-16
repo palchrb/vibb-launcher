@@ -557,7 +557,8 @@ async fn the_pages_show_the_logos() {
     .unwrap();
     let band = band_of(format!("/apps/tracked/{launcher}")).await;
     assert!(
-        band.contains("app-row-logo") && band.contains("<img src=\"/static/icons/icon-192.png\""),
+        band.contains("app-row-logo")
+            && band.contains("<img src=\"/static/icons/vibb-one-tile.svg\""),
         "{band}"
     );
 
