@@ -65,3 +65,32 @@ them), all whether or not the phone is managed in hardening's sense (the parent'
   `DISALLOW_CONFIG_VPN` holds while any shape runs (`vpnConfigLocked`), so it is lifted with them.
 
 The rules are pure (`MobileNetwork.kt`), pinned by `mobile_network.json` (`MobileNetworkTest`).
+
+## Android 17: Settings can't be hidden or suspended (fix round `compat-fix-1`, 2026-11-16)
+
+On Android 17 (API 37; seen on 37.0 and 37.2) `com.android.settings` hosts App lock and holds the app-op
+`SYSTEM_EXEMPT_FROM_SUSPENSION` (with `android`, `com.android.providers.settings`, Telecom and other system-uid
+packages): `setPackagesSuspended` returns it as not suspended ("Cannot suspend package ... has
+OP_SYSTEM_EXEMPT_FROM_SUSPENSION set") and `setApplicationHidden` returns false ("ignoring ... as it's on policy-exempt
+list"). Android 14-16 hide and suspend it as before. Lock task still refuses to start it while the kiosk is on, and the
+kiosk is always on while apps are managed (`kiosk_desired` isn't the parent's choice), so it stays shut; but it is
+visible to the package manager.
+
+- **The lists follow the plan** (`server/PlatformRefusals.kt`, `PlatformRefusalsTest`): `AppFilter` (Home, the drawer,
+  Kid Settings' hidden apps) leaves out every package the last plan wants hidden or suspended
+  (`AppEnforcer.lastPlanSuspend`/`lastPlanHide`, `plannedOffLists`), whatever the platform did - general, not a
+  Settings case. Before the first `apply` in a process the record of this boot's refusals stands in. Home filters
+  again after an `apply` whose sets changed (`HomeActivity.planListener`): a refused package sends no package callback.
+  `dialogTarget` leaves such a package out too (`ResolvedDialog.plannedOff`), so the PIN-gated Settings' system-page
+  rows (Background connection, Modify system settings, App access, fingerprint, media on the lock screen, the
+  assistant's voice input) still say "pause first" instead of a page lock task would refuse. In the pause the plan
+  releases Settings, so it is on Home and the rows open it, on every version.
+- **No retry until a reboot or an OS update**: a refusal of a package that holds the app-op is recorded
+  (`PlatformRefusals.refused`, prefs `platform_refusals`: the boot count and `Build.FINGERPRINT`) with one log line
+  ("Android refuses to suspend ... not asked again until a reboot or an OS update"); `apply` skips that restricting call
+  while the record matches this boot and build (`restrictCallDue`). A release is always made, and any other refusal
+  (the Play Store as verifier, a carrier app) is still retried at every pass as before.
+- **What else changes on 17**: Flymodus's route window (design 98) finds Settings unhidden, so it neither unhides nor
+  hides it again - it only pins it for the window. SystemUI's Settings links (`launcher-fix-1`'s sink) resolve to
+  Settings' own activities, which win over the sink's priority -1: under the kiosk lock task refuses them without a
+  crash; in the pause they open Settings, as on 14-16.

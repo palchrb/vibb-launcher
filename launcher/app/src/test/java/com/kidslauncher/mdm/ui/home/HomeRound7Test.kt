@@ -387,7 +387,7 @@ class HomeRound7Test {
         }
         // The pass touches every package it changes, inside the hold.
         val enforcer = code("server/AppEnforcer.kt")
-        val loop = enforcer.substringAfter("if (shouldBeSuspended == currentlySuspended && shouldBeHidden == currentlyHidden) continue")
+        val loop = enforcer.substringAfter("if (!suspendCall && !hideCall) continue")
         assertTrue(loop.trimStart().startsWith("com.kidslauncher.mdm.ui.home.AppLoadHold.touch(packageName)"))
         // Every LauncherApps callback names its packages; the consumer takes the class.
         val app = code("Application.kt")

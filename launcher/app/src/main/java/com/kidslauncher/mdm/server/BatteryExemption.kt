@@ -18,12 +18,20 @@ import android.provider.Settings
  */
 
 /** The activity that takes `ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`, as resolved. */
-data class ResolvedDialog(val packageName: String, val className: String, val system: Boolean, val suspended: Boolean)
+data class ResolvedDialog(
+    val packageName: String,
+    val className: String,
+    val system: Boolean,
+    val suspended: Boolean,
+    /** The enforcement plan wants the package hidden or suspended (`PlatformRefusals.plannedOff`), whatever Android did. */
+    val plannedOff: Boolean = false,
+)
 
-/** The dialog to start explicitly, or null: only a system package that isn't ours and isn't
- * suspended (a hidden one doesn't resolve at all). */
+/** The dialog to start explicitly, or null: only a system package that isn't ours, isn't suspended (a hidden one
+ * doesn't resolve at all) and isn't one the plan wants off - Android 17 refuses to hide or suspend its Settings
+ * (compat-fix-1), and lock task would refuse the start. */
 fun dialogTarget(resolved: ResolvedDialog?, ownPackage: String): ResolvedDialog? =
-    resolved?.takeIf { it.system && !it.suspended && it.packageName != ownPackage }
+    resolved?.takeIf { it.system && !it.suspended && !it.plannedOff && it.packageName != ownPackage }
 
 /** The "Background connection" row's states (19b §2). */
 enum class BatteryRow { EXEMPT, CAN_ASK, PAUSE_FIRST, UNKNOWN }
@@ -64,6 +72,7 @@ internal fun systemPageIntent(context: Context, intent: Intent): Intent? = try {
             it.name,
             system = flags and ApplicationInfo.FLAG_SYSTEM != 0,
             suspended = flags and ApplicationInfo.FLAG_SUSPENDED != 0,
+            plannedOff = PlatformRefusals.plannedOff(context, it.packageName),
         )
     }
     dialogTarget(resolved, context.packageName)?.let { intent.setClassName(it.packageName, it.className) }

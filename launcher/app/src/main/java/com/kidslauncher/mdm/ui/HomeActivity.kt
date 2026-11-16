@@ -184,6 +184,19 @@ class HomeActivity : UIObjectActivity() {
     private val photoListener: () -> Unit = { renderCallParts() }
     private val wallpaperListener: () -> Unit = { renderWallpaper() }
 
+    /** The plan's hide and suspend sets the grid was last filtered against after an apply (compat-fix-1). */
+    private var planOffSeen: Pair<Set<String>?, Set<String>?>? = null
+
+    /** The grid filters on the enforcement plan too (`PlatformRefusals.plannedOff`), and a package Android refuses to
+     * hide or suspend (Android 17's Settings) sends no package callback: a changed plan filters the apps again. */
+    private val planListener: () -> Unit = {
+        val off = com.kidslauncher.mdm.server.AppEnforcer.lastPlanSuspend to com.kidslauncher.mdm.server.AppEnforcer.lastPlanHide
+        if (off != planOffSeen) {
+            planOffSeen = off
+            refreshApps()
+        }
+    }
+
     /** What [refreshApps] last produced off the main thread. */
     private class GridData(
         val apps: List<GridApp>,
@@ -467,6 +480,7 @@ class HomeActivity : UIObjectActivity() {
         com.kidslauncher.mdm.portal.PortalRuntime.addListener(portalListener)
         com.kidslauncher.mdm.calendar.CalendarStore.addListener(calendarListener)
         com.kidslauncher.mdm.sms.SmsHome.addListener(messagesListener)
+        com.kidslauncher.mdm.server.AppEnforcer.addAppliedListener(planListener)
         com.kidslauncher.mdm.sms.SmsHome.refresh(this)
         ElementMissedCallStore.addListener(elementMissedListener)
         MissedCallsRepo.addSeenListener(elementMissedListener)
@@ -691,6 +705,7 @@ class HomeActivity : UIObjectActivity() {
         com.kidslauncher.mdm.portal.PortalRuntime.removeListener(portalListener)
         com.kidslauncher.mdm.calendar.CalendarStore.removeListener(calendarListener)
         com.kidslauncher.mdm.sms.SmsHome.removeListener(messagesListener)
+        com.kidslauncher.mdm.server.AppEnforcer.removeAppliedListener(planListener)
         ElementMissedCallStore.removeListener(elementMissedListener)
         MissedCallsRepo.removeSeenListener(elementMissedListener)
         refreshHandler.removeCallbacks(callTicker)
