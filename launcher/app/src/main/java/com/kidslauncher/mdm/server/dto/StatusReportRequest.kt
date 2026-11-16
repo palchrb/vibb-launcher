@@ -147,6 +147,10 @@ data class StatusReportRequest(
     val captivePortal: com.kidslauncher.mdm.portal.CaptivePortalReport? = null,
     /** Design 102 §6.2 (capability `login_browser_v1`): Chrome's login role on the phone. A full-report field. */
     val loginBrowser: com.kidslauncher.mdm.portal.LoginBrowserReport? = null,
+    /** Design 107 §2 (capability `notification_channels_v1`): the app-wide switch and Vibb One's channels turned off;
+     * `null` = unreadable (left out). A full-report field (not in `status_heartbeat_fields`). Pinned by
+     * `notification_channels.json` (`NotificationChannelsTest`). */
+    val notificationChannels: com.kidslauncher.mdm.notify.NotificationChannelsReport? = null,
 )
 
 /**

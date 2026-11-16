@@ -1,0 +1,60 @@
+{
+  "capability": "notification_channels_v1",
+  "channels": [
+    {"key": "messages", "id": "launcher:messages", "nb": "Meldinger", "en": "Messages", "feature": "sms", "orange": true, "attention": true},
+    {"key": "missed_calls", "id": "launcher:missed_calls", "nb": "Tapte anrop", "en": "Missed calls", "feature": "calls", "orange": true, "attention": true},
+    {"key": "calls", "id": "launcher:calls", "nb": "Samtaler", "en": "Calls", "feature": "calls", "orange": true, "attention": false},
+    {"key": "messages_silent", "id": "launcher:messages_silent", "nb": "Meldinger (stille)", "en": "Messages (silent)", "feature": "sms", "orange": false, "attention": false},
+    {"key": "messages_reactions", "id": "launcher:messages_reactions", "nb": "Reaksjoner", "en": "Reactions", "feature": "sms", "orange": false, "attention": false},
+    {"key": "calls_silent", "id": "launcher:calls_silent", "nb": "Samtaler (samtaleskjermen er åpen)", "en": "Calls (call screen open)", "feature": "calls", "orange": false, "attention": false},
+    {"key": "command_listener", "id": "launcher:command_listener", "nb": "Vibb One", "en": "Vibb One", "feature": null, "orange": false, "attention": false},
+    {"key": "ring", "id": "launcher:ring", "nb": "Finn enheten – ringing", "en": "Find My Device ring", "feature": null, "orange": false, "attention": false},
+    {"key": "window", "id": "launcher:window", "nb": "Åpnet med foreldrekoden", "en": "Opened with the parent code", "feature": null, "orange": false, "attention": false},
+    {"key": "install_mode", "id": "launcher:install_mode", "nb": "Play-installasjonsmodus", "en": "Play install mode", "feature": null, "orange": false, "attention": false},
+    {"key": "app_install", "id": "launcher:app_install", "nb": "Installering og oppdatering av apper", "en": "App installs and updates", "feature": null, "orange": false, "attention": false},
+    {"key": "vpn_filter", "id": "launcher:vpn_filter", "nb": "Innholdsfilter", "en": "Content filter", "feature": null, "orange": false, "attention": false},
+    {"key": "setup", "id": "launcher:setup", "nb": "Oppsett", "en": "Setup", "feature": null, "orange": false, "attention": false},
+    {"key": "shortcuts", "id": "launcher:shortcuts", "nb": "Snarveier", "en": "Shortcuts", "feature": null, "orange": false, "attention": false}
+  ],
+  "report": {"all_off": false, "blocked": ["messages", "command_listener", "shortcuts"]},
+  "report_none": {"all_off": false, "blocked": []},
+  "report_all_off": {"all_off": true, "blocked": ["messages"]},
+  "read": [
+    {"case": "importance NONE is blocked, the others not", "channels": [{"id": "launcher:messages", "importance": 0}, {"id": "launcher:missed_calls", "importance": 3}, {"id": "launcher:command_listener", "importance": 1}], "blocked_groups": [], "app_enabled": true, "shortcuts_id": "launcher:shortcuts", "report": {"all_off": false, "blocked": ["messages"]}},
+    {"case": "a channel in a blocked group", "channels": [{"id": "launcher:ring", "importance": 4, "group": "launcher:alerts"}, {"id": "launcher:window", "importance": 2, "group": "launcher:other"}], "blocked_groups": ["launcher:alerts"], "app_enabled": true, "shortcuts_id": "launcher:shortcuts", "report": {"all_off": false, "blocked": ["ring"]}},
+    {"case": "an unknown id is skipped", "channels": [{"id": "launcher:crash", "importance": 0}, {"id": "other", "importance": 0}], "blocked_groups": [], "app_enabled": true, "shortcuts_id": "launcher:shortcuts", "report": {"all_off": false, "blocked": []}},
+    {"case": "only Snarveier's channel in use counts", "channels": [{"id": "launcher:shortcuts", "importance": 0}, {"id": "launcher:shortcuts.1", "importance": 0}, {"id": "launcher:shortcuts.2", "importance": 0}], "blocked_groups": [], "app_enabled": true, "shortcuts_id": "launcher:shortcuts.2", "report": {"all_off": false, "blocked": ["shortcuts"]}},
+    {"case": "Snarveier's old channel is skipped", "channels": [{"id": "launcher:shortcuts", "importance": 0}, {"id": "launcher:shortcuts.1", "importance": 2}], "blocked_groups": [], "app_enabled": true, "shortcuts_id": "launcher:shortcuts.1", "report": {"all_off": false, "blocked": []}},
+    {"case": "a missing channel is not blocked", "channels": [], "blocked_groups": [], "app_enabled": true, "shortcuts_id": "launcher:shortcuts", "report": {"all_off": false, "blocked": []}},
+    {"case": "the app-wide switch off", "channels": [{"id": "launcher:messages", "importance": 3}], "blocked_groups": [], "app_enabled": false, "shortcuts_id": "launcher:shortcuts", "report": {"all_off": true, "blocked": []}},
+    {"case": "the app-wide switch off keeps the channels' own state", "channels": [{"id": "launcher:messages", "importance": 0}], "blocked_groups": [], "app_enabled": false, "shortcuts_id": "launcher:shortcuts", "report": {"all_off": true, "blocked": ["messages"]}},
+    {"case": "Android 16's reserved channels are skipped", "channels": [{"id": "android.app.promotions", "importance": 0}, {"id": "android.app.social", "importance": 0}, {"id": "launcher:setup", "importance": 0}], "blocked_groups": [], "app_enabled": true, "shortcuts_id": "launcher:shortcuts", "report": {"all_off": false, "blocked": ["setup"]}},
+    {"case": "in the table's order", "channels": [{"id": "launcher:shortcuts", "importance": 0}, {"id": "launcher:setup", "importance": 0}, {"id": "launcher:calls", "importance": 0}, {"id": "launcher:missed_calls", "importance": 0}, {"id": "launcher:messages", "importance": 0}], "blocked_groups": [], "app_enabled": true, "shortcuts_id": "launcher:shortcuts", "report": {"all_off": false, "blocked": ["messages", "missed_calls", "calls", "setup", "shortcuts"]}}
+  ],
+  "clean": [
+    {"case": "the report as it is", "in": {"all_off": false, "blocked": ["messages", "command_listener", "shortcuts"]}, "out": {"all_off": false, "blocked": ["messages", "command_listener", "shortcuts"]}},
+    {"case": "not an object", "in": ["messages"], "out": null},
+    {"case": "a string", "in": "messages", "out": null},
+    {"case": "all_off not a bool", "in": {"all_off": "yes", "blocked": ["messages"]}, "out": {"all_off": false, "blocked": ["messages"]}},
+    {"case": "blocked missing", "in": {"all_off": true}, "out": {"all_off": true, "blocked": []}},
+    {"case": "blocked not an array", "in": {"all_off": false, "blocked": "messages"}, "out": {"all_off": false, "blocked": []}},
+    {"case": "unknown keys dropped", "in": {"all_off": false, "blocked": ["messages", "launcher:messages", "crash", "android.app.promotions"]}, "out": {"all_off": false, "blocked": ["messages"]}},
+    {"case": "duplicates dropped", "in": {"all_off": false, "blocked": ["ring", "ring", "messages", "ring"]}, "out": {"all_off": false, "blocked": ["messages", "ring"]}},
+    {"case": "put in the table's order", "in": {"all_off": false, "blocked": ["shortcuts", "setup", "missed_calls", "messages"]}, "out": {"all_off": false, "blocked": ["messages", "missed_calls", "setup", "shortcuts"]}},
+    {"case": "non-strings dropped", "in": {"all_off": false, "blocked": ["messages", 3, null, true, {"key": "ring"}, ["ring"]]}, "out": {"all_off": false, "blocked": ["messages"]}},
+    {"case": "an extra key dropped", "in": {"all_off": true, "blocked": [], "silent": ["messages"]}, "out": {"all_off": true, "blocked": []}}
+  ],
+  "pages": [
+    {"case": "SMS managed and Meldinger off", "sms_mode": "managed", "calls_mode": "managed", "language": "system", "shortcuts_bit": true, "report": {"all_off": false, "blocked": ["messages"]}, "value": "Off: “Messages”", "orange": true, "attention": "Notifications off: Messages"},
+    {"case": "SMS unmanaged and Meldinger off: not named", "sms_mode": "unmanaged", "calls_mode": "managed", "language": "system", "shortcuts_bit": true, "report": {"all_off": false, "blocked": ["messages"]}, "value": "All on", "orange": false, "attention": null},
+    {"case": "calls managed and only Samtaler off", "sms_mode": "unmanaged", "calls_mode": "managed", "language": "system", "shortcuts_bit": true, "report": {"all_off": false, "blocked": ["calls"]}, "value": "Off: “Calls”", "orange": true, "attention": null},
+    {"case": "the anchor's channel, bit 128 on", "sms_mode": "managed", "calls_mode": "managed", "language": "system", "shortcuts_bit": true, "report": {"all_off": false, "blocked": ["command_listener"]}, "value": "Off: “Vibb One”", "orange": false, "attention": null},
+    {"case": "the anchor's channel, bit 128 off", "sms_mode": "managed", "calls_mode": "managed", "language": "system", "shortcuts_bit": false, "report": {"all_off": false, "blocked": ["command_listener"]}, "value": "Off: “Vibb One”", "orange": false, "attention": null},
+    {"case": "only Snarveier off", "sms_mode": "managed", "calls_mode": "managed", "language": "system", "shortcuts_bit": true, "report": {"all_off": false, "blocked": ["shortcuts"]}, "value": "All on", "orange": false, "attention": null},
+    {"case": "all off, SMS managed", "sms_mode": "managed", "calls_mode": "unmanaged", "language": "system", "shortcuts_bit": true, "report": {"all_off": true, "blocked": []}, "value": "All off", "orange": true, "attention": "All Vibb One notifications are off"},
+    {"case": "all off, both unmanaged", "sms_mode": "unmanaged", "calls_mode": "unmanaged", "language": "system", "shortcuts_bit": true, "report": {"all_off": true, "blocked": []}, "value": "All off", "orange": true, "attention": null},
+    {"case": "four names, all shown", "sms_mode": "unmanaged", "calls_mode": "unmanaged", "language": "system", "shortcuts_bit": true, "report": {"all_off": false, "blocked": ["command_listener", "ring", "window", "install_mode", "shortcuts"]}, "value": "Off: “Vibb One”, “Find My Device ring”, “Opened with the parent code”, “Play install mode”", "orange": false, "attention": null},
+    {"case": "five names, three and the rest counted", "sms_mode": "unmanaged", "calls_mode": "unmanaged", "language": "system", "shortcuts_bit": true, "report": {"all_off": false, "blocked": ["command_listener", "ring", "window", "install_mode", "app_install"]}, "value": "Off: “Vibb One”, “Find My Device ring”, “Opened with the parent code” and 2 more", "orange": false, "attention": null},
+    {"case": "the phone in nb: the names in nb", "sms_mode": "managed", "calls_mode": "managed", "language": "nb", "shortcuts_bit": true, "report": {"all_off": false, "blocked": ["messages", "missed_calls"]}, "value": "Off: “Meldinger”, “Tapte anrop”", "orange": true, "attention": "Notifications off: Meldinger, Tapte anrop"}
+  ]
+}

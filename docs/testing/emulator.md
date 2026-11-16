@@ -4884,6 +4884,32 @@ on Siste -> Kontakter -> Home. `compat34` stopped with `adb emu kill`; start it 
 - **L2, passed.** On Siste with Emma's missed row, `POST /devices/1/contacts/5/remove`: within the sync Emma's row left
   Siste, the book stayed on Siste with the other rows.
 
+## 6ax. Blocked notification channels (design 107) (2026-11-16)
+
+Design 107 §10's gate. Setup: a server of the branch on port 3107 (design 102's data, the phone "Testtelefon", a
+6-digit test parent code set in the PWA, quick-controls bit 128 off by SQL so the anchor posts its plain notice on
+`launcher:command_listener`); the branch's debug launcher as Device Owner (§4's lines), `POST_NOTIFICATIONS` granted
+with `pm grant` (Home asks for it on a phone), enrolled with a typed code. **`compat34`** (API 34) started with
+`-wipe-data -dns-server 8.8.8.8`; **`jelly36`** (API 36) restored clean from `~/kid-look-1-avd-pre-start` (22 of 22
+sums, the same file list), started without `-wipe-data`, and restored again afterwards. Both under `flock ~/build.lock`
+and `flock -o ~/emulator.lock`. Calls and SMS set to "Ikke styrt" in the PWA (`POST /devices/1/calls/settings`):
+`cmd role get-role-holders android.app.role.DIALER` names Google's dialer and `dumpsys notification` reads
+`mImportanceLockedDefaultApp=false` on every `launcher:` channel. `POST_NOTIFICATIONS` read `POLICY_FIXED` while
+managed and lost it once both were unmanaged (M2, both images). Logs: `NotificationChannels`, `SyncRunner`;
+`dumpsys activity broadcasts history` for what Android sent and dropped.
+
+| Step | Result |
+|---|---|
+| 1, the kid's block | **Passed after a fix.** Long-press the anchor's notice › Turn off notifications (36: "Turn off") › "Vibb One" › Apply: `importance=0`. **Found** (34): no receiver line - the broadcast history reads "skipped by policy at enqueue: Exported Denial … from android (uid=10168) due to receiver … not specifying RECEIVER_EXPORTED": the sheet's change is sent with SystemUI's uid (10168 on 34, 10187 on 36), so a `RECEIVER_NOT_EXPORTED` receiver never gets it; a change on Settings' own page (uid 1000) did arrive. **Fixed**: the receiver is `RECEIVER_EXPORTED` (the three actions are protected broadcasts; the receiver only asks for a sync). Checked on 36 and again on a wiped 34: `Block state changed (NOTIFICATION_CHANNEL_BLOCK_STATE_CHANGED): a sync` and `Sync for [notification_channels]` 3-50 ms after Apply; the row stored 1 s (34) and 9 s (36) later, a full report (the kept `device_report_base` body carries the new `notification_channels`). The PWA: About › Lyd › Varsler "Av: «Vibb One»" (en "Off: “Vibb One”"), plain, the ⓘ with the anchor's sentence and the fix; no Attention row for it. Snarveier's own receiver (`ShortcutsRuntime.init`, not exported) was dropped the same way (one Exported Denial left per block); since code QA L1 it no longer lists the action and the watch refreshes the panel |
+| 1, the sheet afterwards | Opened from another Vibb notice (the pause's "Åpnet med foreldrekoden"), the sheet no longer lists "Vibb One" (34 and 36): AOSP's prediction (L7) holds - the kid has no way back from the sheet |
+| 1, the app-wide switch (M2) | **Takes** on an unmanaged phone (34 and 36): "All Vibb One notifications" off › Apply revokes `POST_NOTIFICATIONS` (`granted=false, USER_SET`), and **Android kills Vibb One's process** for it (`exit-info`: reason 8, PERMISSION CHANGE). No `ACTION_APP_BLOCK_STATE_CHANGED` in the broadcast history for the revoke; the process start's `Sync for [start]` (3-4 s later) carries `all_off: true`. The PWA: "Alle av" orange, no Attention row (nothing managed). Turning it on again in Settings' page does send `APP_BLOCK_STATE_CHANGED` (36), and it arrives |
+| 2, the row in the kiosk | Vibb One's Settings (parent code): "Varsler fra Vibb One · Av: «Vibb One» · Sett alle begrensninger på pause først". A tap opens nothing: Settings stays on top, `mLockTaskModeState=LOCKED`, no sink screen |
+| 2, the row in the pause | "Sett alle begrensninger på pause" on the same page (the code again): the row reads "· Trykk for å slå på" ("Alle av · Trykk for å slå på" with the app switch off). A tap opens `com.android.settings/.Settings$AppNotificationSettingsActivity` for Vibb One; the app switch and "Vibb One" on (36: the blocked channel sits further down the list), Back: the receiver's sync, the row gone, the PWA "Alle på". The pause off: LOCKED |
+| 3, a stale block and the role | Precondition: SMS managed, a contact allowed to text, one SMS (`adb emu sms send`): `launcher:messages` exists. SMS unmanaged, a pause (`POST /devices/1/start-pause`), Meldinger off on Android's page (the receiver's sync, `blocked: ["messages"]`), the pause off. SMS managed alone takes the SMS role, not the dialer: nothing locked yet, and the PWA already reads "Av: «Meldinger»" orange with "Varsler slått av: Meldinger" (the feature counts). Calls managed too: the dialer role is Vibb's, and **Meldinger stays `importance=0`, now locked** (34 and 36; L7's first prediction holds). About "Av: «Meldinger»" orange with the messages sentence; Attention "Varsler slått av: Meldinger" (en page: the names in nb, the phone's language) to `/about#sound`; the Devices list's badge counts it. **L7's second prediction fails**: in a pause Android's page greys Meldinger's switch (`enabled=false`, 34 and 36; the channel's own page: "Show notifications" disabled) and the app switch (POLICY_FIXED). With calls and SMS set to "Ikke styrt" in the pause the lock goes, the switch works, Meldinger on; managed again it stays on (locked at 3). The PWA's `.fix` now ends with that step (§11's wording change) |
+
+Not run: Android 17 (no emulator here), the Jelly Star (owed: with Vibb as the dialer, a long-press on a Meldinger notice
+should say "can't be modified").
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:

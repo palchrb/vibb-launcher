@@ -1532,6 +1532,12 @@ async fn status_intake(
         .as_ref()
         .and_then(crate::logins::clean_browser)
         .map(|value| value.to_string());
+    // Design 107 §4: the Vibb One notification channels turned off, cleaned (the table's keys only, in its order).
+    let notification_channels_json = report
+        .notification_channels
+        .as_ref()
+        .and_then(crate::notification_channels::clean)
+        .map(|value| value.to_string());
     // Design 64 step 2: the phone's zone watch, known keys only.
     let zone_watch_json = report
         .zone_watch
@@ -1569,8 +1575,9 @@ async fn status_intake(
           foreign_access_json, remote_wipe_ready, admin_policies_pending_json, relock_blocks_json, \
           relock_blocks_total, clock_format_applied, battery_level, battery_charging, dns_upstream_json, \
           write_settings_granted, zone_watch_json, tailnet_joined, sms_state_json, data_roaming_json, \
-          mobile_data_json, airplane_mode_json, shortcuts_json, captive_portal_json, login_browser_json) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          mobile_data_json, airplane_mode_json, shortcuts_json, captive_portal_json, login_browser_json, \
+          notification_channels_json) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(device.id)
     .bind(&report.lock_reason)
@@ -1634,6 +1641,7 @@ async fn status_intake(
     .bind(&shortcuts_json)
     .bind(&captive_portal_json)
     .bind(&login_browser_json)
+    .bind(&notification_channels_json)
     .execute(&state.db)
     .await
     .ok();

@@ -609,6 +609,10 @@ pub struct DeviceStatus {
     /// Design 102 §6.2: the report's `login_browser`, cleaned (`logins::clean_browser`).
     #[sqlx(default)]
     pub login_browser_json: Option<String>,
+    /// Design 107 §4 (migration 0151): the report's `notification_channels`, cleaned (`notification_channels::clean`);
+    /// read through `notification_channels::report`, which wants the capability. `None` from older launchers.
+    #[sqlx(default)]
+    pub notification_channels_json: Option<String>,
     /// The report's `call_state` (migrations/0022_calls.sql), its known keys (`device_api::CALL_STATE_FIELDS`). Read
     /// by handlers::calls::call_report on its own; design 98's Oppsett card reads the screening roles from it here.
     #[sqlx(default)]
@@ -1683,6 +1687,10 @@ pub struct StatusReportRequest {
     /// cleared_ms}`, raw - cleaned by `logins::clean_browser`. A full-report field. Absent from older launchers.
     #[serde(default)]
     pub login_browser: Option<serde_json::Value>,
+    /// Design 107 §2 (capability `notification_channels_v1`): `{all_off, blocked}`, raw - cleaned by
+    /// `notification_channels::clean`. A full-report field, not a heartbeat field. Absent from older launchers.
+    #[serde(default)]
+    pub notification_channels: Option<serde_json::Value>,
     /// Design 76: the launcher's certificate check (`testdata/server_tls_report.json`'s `report`), raw - read
     /// within limits by `server_tls::sanitize`, so nothing in it can fail the report. Absent from older launchers.
     #[serde(default)]

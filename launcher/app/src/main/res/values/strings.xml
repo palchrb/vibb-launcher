@@ -534,6 +534,17 @@
     <string name="settings_mdm_write_settings_no_page">Not allowed - Android has no page for this on this phone</string>
     <string name="settings_mdm_write_settings_wait">Not allowed - the pause is starting, a moment…</string>
     <string name="settings_mdm_write_settings_unknown">Unknown</string>
+    <!-- Design 107 §6: the row that opens Android's notification page for Vibb One while something is turned off. -->
+    <string name="settings_notifications">Vibb One notifications</string>
+    <string name="settings_notifications_off">Off: %1$s</string>
+    <string name="settings_notifications_all_off">All off</string>
+    <string name="settings_notifications_quoted">“%1$s”</string>
+    <string name="settings_notifications_summary" translatable="false">%1$s · %2$s</string>
+    <string name="settings_notifications_open">Tap to turn on</string>
+    <string name="settings_notifications_open_role">Tap to turn on. If a switch is grey, first set Calls and SMS to “Not managed” under Calls and SMS on the server, and set them back afterwards</string>
+    <string name="settings_notifications_pause_first">Pause all restrictions first</string>
+    <string name="settings_notifications_wait">The pause is starting, a moment…</string>
+    <string name="settings_notifications_no_page">Android has no page for this on this phone</string>
     <!-- Design 68 §4.2: the PIN-gated Settings' "App access" rows (Android's page per app and access, in a pause). -->
     <string name="app_access_category">App access</string>
     <string name="app_access_row_title">%1$s: %2$s</string>
