@@ -74,6 +74,7 @@ Nothing here is waiting on code. Each line names where the detail is; the longer
 
 **Jelly Star checks**
 
+- Group MMS end to end (asked 2026-11-16, the user: "legg det på longlisten av ting vi vil teste når jeg får tilgang til den ordentlige jelly star"): a group text from an Android phone and from an iPhone (iMessage off for the group, or one non-iPhone in it, so iOS sends MMS) reaching the kid's group thread, each bubble naming its writer; the kid's reply to the whole group; a picture to the group; "Gruppemeldinger" off blocking it; the own number learned. Part of design 77's step 0 (a real MMS both ways). Then decide the follow-up **the kid starting a group conversation** (not in v1, design 77 §6; launcher only, the D12 rule already exists).
 - From the releases of 2026-11-14..16 (server 0.80.0/0.81.0, launcher rc.2/rc.3, music rc.6), moved out of the queue 2026-11-16:
   - design 96: one frame of Android's keyguard and ours on the real Jelly Star (confirms `JELLY_STAR_CLOCK`);
   - designs 99/100: the Snarveier panel and its time line, "Be om mer tid" and the answer (`docs/testing/emulator.md` §6ao);
