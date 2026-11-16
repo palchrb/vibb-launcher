@@ -1,0 +1,52 @@
+{
+  "capability": "unified_push_v1",
+  "policy": {
+    "off": {"on": false, "origin": null, "regs": [], "stopped": []},
+    "on_empty": {"on": true, "origin": "https://phones.example.com", "regs": [], "stopped": []},
+    "on_two": {"on": true, "origin": "https://phones.example.com", "regs": ["c0ffee00000000000000000000000001", "c0ffee00000000000000000000000002"], "stopped": []},
+    "stopped": {"on": true, "origin": "https://phones.example.com", "regs": ["c0ffee00000000000000000000000002"], "stopped": ["org.unifiedpush.example"]},
+    "origin_changed": {"on": true, "origin": "https://push.example.net", "regs": ["c0ffee00000000000000000000000001", "c0ffee00000000000000000000000002"], "stopped": []}
+  },
+  "older_server": {"policy": {"allowlist": []}, "on": false},
+  "register": {
+    "path": "/api/devices/up/registrations",
+    "body": {"reg": "c0ffee00000000000000000000000001", "secret": "FakeSecretForTheContract001", "package": "org.unifiedpush.example"},
+    "body_second": {"reg": "c0ffee00000000000000000000000002", "secret": "FakeSecretForTheContract002", "package": "io.element.android.x"},
+    "answers": [
+      {"case": "ok", "status": 200, "body": {"endpoint": "https://phones.example.com/up/FakeSecretForTheContract001"}},
+      {"case": "retry", "status": 200, "body": {"endpoint": "https://phones.example.com/up/FakeSecretForTheContract001"}},
+      {"case": "off", "status": 409, "body": {"refused": "off"}},
+      {"case": "stopped", "status": 409, "body": {"refused": "stopped"}},
+      {"case": "not_allowed", "status": 409, "body": {"refused": "not_allowed"}},
+      {"case": "limit", "status": 409, "body": {"refused": "limit"}},
+      {"case": "busy", "status": 409, "body": {"refused": "busy"}},
+      {"case": "conflict", "status": 409, "body": {"refused": "conflict"}},
+      {"case": "invalid", "status": 400, "body": null}
+    ],
+    "failed_reason": {
+      "off": "ACTION_REQUIRED",
+      "stopped": "ACTION_REQUIRED",
+      "not_allowed": "ACTION_REQUIRED",
+      "limit": "ACTION_REQUIRED",
+      "busy": "ACTION_REQUIRED",
+      "conflict": "ACTION_REQUIRED",
+      "invalid": "ACTION_REQUIRED",
+      "network": "NETWORK",
+      "server_error": "NETWORK"
+    }
+  },
+  "unregister": {"path": "/api/devices/up/registrations/c0ffee00000000000000000000000001", "status": 204},
+  "messages": {
+    "path": "/api/devices/up/messages",
+    "body": {"ack": ["deadbeef000000000000000000000001", "deadbeef000000000000000000000002"]},
+    "answer": {
+      "messages": [
+        {"key": "deadbeef000000000000000000000003", "reg": "c0ffee00000000000000000000000002", "urgency": "high", "body": "eyJub3RpZmljYXRpb24iOnsiZXZlbnRfaWQiOiIkZmFrZUV2ZW50MDAwMTpleGFtcGxlLm9yZyIsInJvb21faWQiOiIhZmFrZVJvb20wMDAxOmV4YW1wbGUub3JnIiwidHlwZSI6Im0ucm9vbS5tZXNzYWdlIiwic2VuZGVyIjoiQGphY2s6ZXhhbXBsZS5vcmciLCJjb3VudHMiOnsidW5yZWFkIjoyfSwicHJpbyI6ImhpZ2giLCJkZXZpY2VzIjpbeyJhcHBfaWQiOiJpby5lbGVtZW50LmFuZHJvaWQueCIsInB1c2hrZXkiOiJodHRwczovL3Bob25lcy5leGFtcGxlLmNvbS91cC9GYWtlU2VjcmV0Rm9yVGhlQ29udHJhY3QwMDIiLCJwdXNoa2V5X3RzIjoxNzkwMDAwMDAwLCJkYXRhIjp7ImNzIjoiZmFrZS1jbGllbnQtc2VjcmV0In19XX19"},
+        {"key": "deadbeef000000000000000000000004", "reg": "c0ffee00000000000000000000000001", "urgency": "normal", "body": "AAECAwQFBgc="}
+      ],
+      "more": false
+    }
+  },
+  "event": {"name": "up", "data": "up"},
+  "endpoint": {"pattern": "^https://[^/]+/up/[A-Za-z0-9_-]{27}$"}
+}

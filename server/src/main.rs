@@ -79,6 +79,7 @@ mod tests;
 mod time_answers;
 mod time_rules;
 mod time_state;
+mod unified_push;
 mod wallpapers;
 mod weather;
 mod weather_cache;

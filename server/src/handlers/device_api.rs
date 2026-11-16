@@ -465,6 +465,8 @@ pub(crate) async fn build_policy(
     }
     // Design 76: the certificate check, only to a launcher that reads it; a read error fails the policy.
     let server_tls = crate::server_tls::policy(state, device_id, &capabilities).await?;
+    // Design 108 §3.8: app push, only to a launcher that is a distributor; a read error fails the policy.
+    let unified_push = crate::unified_push::policy(&state.db, device_id, &capabilities).await?;
     let receipts = capabilities
         .iter()
         .any(|c| c == crate::models::COMMAND_RECEIPT_CAPABILITY);
@@ -619,6 +621,7 @@ pub(crate) async fn build_policy(
         captive_portal,
         login_browser,
         server_tls,
+        unified_push,
     })
 }
 

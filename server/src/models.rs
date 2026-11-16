@@ -1418,6 +1418,10 @@ pub struct PolicyResponse {
     /// off. Left out for an older launcher.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub server_tls: Option<serde_json::Value>,
+    /// Design 108 §3.8: app push for a launcher with `unified_push_v1` (`unified_push::policy`): `on`, `origin`,
+    /// `regs`, `stopped`. Left out for an older launcher, which then has no distributor.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unified_push: Option<crate::unified_push::UpPolicy>,
 }
 
 /// `PolicyResponse.kid_lock`.

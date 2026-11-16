@@ -85,6 +85,7 @@ mod time_pages;
 mod time_request;
 mod time_rules;
 mod tracked_apps;
+mod unified_push;
 mod wallpapers;
 mod weather;
 mod web_push;
