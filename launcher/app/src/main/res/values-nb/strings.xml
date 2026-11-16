@@ -816,7 +816,6 @@
     <string name="rule_pause_no_pin">Ingen foreldre-PIN er satt på serveren.</string>
     <!-- Snarveier (design 99). -->
     <string name="shortcuts_channel">Snarveier</string>
-    <string name="shortcuts_subtext">Snarveier</string>
     <string name="shortcut_full_torch">Lommelykt</string>
     <string name="shortcut_full_sound">Lyd</string>
     <string name="shortcut_full_airplane">Flymodus</string>

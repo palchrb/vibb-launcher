@@ -543,6 +543,41 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
+        <!-- The gear bug (2026-11-16, hardening.md "SystemUI's Settings links while Settings is hidden"): SystemUI's
+             notification starter (the long-press menu's gear and its app-ops links, Manage, History, Android 16+'s
+             empty-shade Modes link and 16 QPR2+'s bundles) starts these Settings pages through TaskStackBuilder and
+             crashes on ActivityNotFoundException while Settings is hidden. A sink that only finishes; priority -999,
+             so a visible Settings (0 or above) wins without a chooser and a tie is unlikely. Exported without a
+             permission (SystemUI starts it); it reads nothing from the intent. Checked against AOSP 14-17. -->
+        <activity
+            android:name=".server.SettingsSinkActivity"
+            android:configChanges="uiMode"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.NoDisplay">
+            <intent-filter android:priority="-999">
+                <action android:name="android.settings.APP_NOTIFICATION_SETTINGS" />
+                <action android:name="android.settings.CHANNEL_NOTIFICATION_SETTINGS" />
+                <action android:name="android.settings.NOTIFICATION_SETTINGS" />
+                <action android:name="android.settings.NOTIFICATION_HISTORY" />
+                <action android:name="android.settings.ALL_APPS_NOTIFICATION_SETTINGS" />
+                <action android:name="android.settings.CONVERSATION_SETTINGS" />
+                <action android:name="android.settings.APP_NOTIFICATION_BUBBLE_SETTINGS" />
+                <action android:name="android.settings.NOTIFICATION_BUNDLES" />
+                <action android:name="android.settings.ZEN_MODE_SETTINGS" />
+                <action android:name="android.settings.AUTOMATIC_ZEN_RULE_SETTINGS" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <!-- The guts' app-ops links carry the app as a package: URI. -->
+            <intent-filter android:priority="-999">
+                <action android:name="android.settings.APPLICATION_DETAILS_SETTINGS" />
+                <action android:name="android.settings.MANAGE_APP_OVERLAY_PERMISSION" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="package" />
+            </intent-filter>
+        </activity>
 
         <receiver
             android:name=".server.MdmDeviceAdminReceiver"
@@ -598,7 +633,7 @@
             android:exported="false"
             android:noHistory="true"
             android:taskAffinity=""
-            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+            android:theme="@style/ShortcutWindowTheme" />
 
         <!-- The backstop sync alarm (push/BackstopAlarm) - our own explicit PendingIntent only. -->
         <receiver
