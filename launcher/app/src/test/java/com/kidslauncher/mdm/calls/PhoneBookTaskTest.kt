@@ -48,22 +48,26 @@ class PhoneBookTaskTest {
         val home = file("java/com/kidslauncher/mdm/ui/home/HomeGridAdapter.kt").readText()
         assertTrue(home.contains("GridTile.PhoneBook -> activity.startActivity(PhoneBookActivity.intent(activity))"))
         assertTrue(home.contains("GridTile.PhoneBook -> glyphTile(holder, R.color.kid_phone_book, R.drawable.ic_kid_phone_book, R.string.calls_phone_book)"))
+        // The time-rule screen's row lands on the page itself (code QA H1): nothing left above it, and its gate runs.
         val lock = file("java/com/kidslauncher/mdm/ui/LockActivity.kt").readText()
-        assertTrue(lock.contains("is LockRow.PhoneBook -> startActivity(PhoneBookActivity.intent(this))"))
+        assertTrue(lock.contains("is LockRow.PhoneBook -> startActivity(PhoneBookActivity.intent(this, toPage = true))"))
         val book = file("java/com/kidslauncher/mdm/calls/PhoneBookActivity.kt").readText()
-        assertTrue(book.contains("fun intent(context: Context): Intent = Intent(context, PageKind.PHONE_BOOK.current()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)"))
-        // The entry's forward lands on the page itself in a task already there.
-        assertTrue(book.contains("fun forward(context: Context, asked: Intent): Intent = intent(context).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)"))
+        val builder = book.substringAfter("fun intent(context: Context, toPage: Boolean = false): Intent =").substringBefore("\n\n")
+        assertTrue(builder.contains("FLAG_ACTIVITY_NEW_TASK") && builder.substringAfter("if (toPage)").contains("FLAG_ACTIVITY_CLEAR_TOP"))
+        // Code QA M1: the page's intent never carries an action, data or type, so the task's base intent is always the
+        // tile's and Android never stacks a second phone book; the ask rides as extras.
+        val companion = book.substringAfter("companion object {")
+        for (setter in listOf("setAction(", "setData(", "setDataAndType(", "setType(", "action =")) {
+            assertTrue(setter, !companion.substringBefore("fun missedCallsIntent(").contains(setter))
+        }
         assertTrue(book.contains(".setLabel(getString(R.string.calls_phone_book))") && book.contains(".setIcon(R.mipmap.ic_launcher)"))
-        // A Recents start from the task's first intent asks no number and opens no contact again.
-        val create = book.substringAfter("override fun onCreate(savedInstanceState: Bundle?) {").substringBefore("\n    }\n")
-        assertTrue(create.contains("if (savedInstanceState == null && (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) == 0) takeAsked(intent)"))
-        val newIntent = book.substringAfter("override fun onNewIntent(").substringBefore("\n    }\n")
-        assertTrue(newIntent.contains("setIntent(intent)") && newIntent.contains("takeAsked(intent)"))
-        // Under a rule that sends it to the time-rule screen, an asked number or contact is dropped, not left waiting.
+        // The ask is taken once: not after a recreation, nor from Recents' history; under a rule it is dropped.
+        assertTrue(book.contains("(intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) == 0) takeAsked(intent)"))
         val asked = book.substringAfter("private fun takeAsked(intent: Intent) {").substringBefore("\n    }\n")
-        assertTrue(asked.indexOf("if (LauncherPreferences.mdm().lockReason() != LockReason.NONE && !usableNow(this)) return") in 0 until asked.indexOf("handleNumber(intent)"))
-        assertEquals(1, Regex("""\bhandleNumber\(intent\)""").findAll(book).count())
+        assertTrue(asked.indexOf("!usableNow(this)") in 0 until asked.indexOf("handleNumber(number)"))
+        // The ways out of the card's Melding: another app gets a task of its own (code QA H1).
+        val sheet = file("java/com/kidslauncher/mdm/calls/ContactSheet.kt").readText()
+        assertTrue(sheet.substringAfter("fun openMessage(").substringBefore("\n    }\n").contains("FLAG_ACTIVITY_NEW_TASK"))
         // The guard's own rule: no lock, or the rule in force allows calls (an error is no).
         val guard = book.substringAfter("internal fun redirectIfLocked(").substringBefore("\n        }\n")
         assertTrue(guard.contains("if (LauncherPreferences.mdm().lockReason() == LockReason.NONE) return false"))

@@ -113,7 +113,7 @@ class PageManifestTest {
         )
         val code = file("java/com/kidslauncher/mdm/calls/PhoneBookEntryActivity.kt").readText()
         assertTrue(code.contains("\nclass PhoneBookEntryActivity : Activity() {"))
-        assertTrue(code.contains("startActivity(PhoneBookActivity.forward(this, asked))"))
+        assertTrue(code.contains("is EntryRoute.Open -> startActivity(PhoneBookActivity.forward(this, route.ask))"))
         // The notification's and the glance's intent names the entry, never a page class.
         val page = file("java/com/kidslauncher/mdm/calls/PhoneBookActivity.kt").readText()
         assertTrue(page.contains("Intent(context, PhoneBookEntryActivity::class.java).setAction(Intent.ACTION_VIEW).setType(CALL_LOG_TYPE)"))

@@ -345,7 +345,7 @@ missed row is read:
 ```sh
 adb shell content query --uri content://call_log/calls --projection _id:number:type:new   # type=3 -> new=0
 adb shell cmd package resolve-activity -a android.intent.action.VIEW -t vnd.android.cursor.dir/calls
-#   -> $PKG/com.kidslauncher.mdm.calls.PhoneBookEntryActivity (PhoneBookActivity before 2026-11-16, §6au;
+#   -> $PKG/com.kidslauncher.mdm.calls.PhoneBookEntryActivity (PhoneBookActivity before 2026-11-16, §6av;
 #      also on the Jelly Star: a privileged dialer
 #      whose call-log filter has a priority above 0 would win over our persistent preferred activity)
 ```
@@ -4736,7 +4736,7 @@ android.intent.action.MAIN -c android.intent.category.HOME`.
 5. Known, not fixed (android mode, 34 only): a phone switched from android mode kept the cover's PPA in the policy
    engine, and HOME went on resolving to the cover after re-seats on 14 until a reboot; a fresh own-mode phone never.
 
-## 6au. The phone book as a task of its own (branch `phonebook-task`, 2026-11-16)
+## 6av. The phone book as a task of its own (branch `phonebook-task`, 2026-11-16)
 
 `docs/notes/launcher/calls.md`, "The phone book as a task of its own". Setup: **`jelly36`** (clean, 22 of 22 sums),
 started under `flock -o ~/build.lock` and `flock -o ~/emulator.lock` without `-wipe-data`; a server on the
@@ -4762,14 +4762,26 @@ and cut into frames (`ffmpeg -vf fps=20`). Afterwards `jelly36` restored again (
 | Lys | Kid Settings -> Lys, then the tile | **Passed.** The change closed the phone book's and Meldinger's tasks; `LightPhoneBookActivity` in the `.phonebook` task, on the paper |
 | Missed call | `adb emu gsm call` + `cancel` from Mamma; the notification's tap | **Passed.** Entry (`VIEW` calls) -> the open page (`onNewIntent`), Mamma's card open |
 
-**Android 14 (`compat34`, API 34, `-wipe-data`), partly:** the branch's build as Device Owner, but not enrolled - after
-the wipe the image had no default route (`ip route` without `default`, `ping 10.0.2.2`: "Network is unreachable"), so
-the server was never reached and calls stayed unmanaged (no Home tile). The phone book opened through its entry
-(`am start -n .../calls.PhoneBookEntryActivity -a android.intent.action.DIAL`): **passed** - its own
-`.phonebook` task, Home's slide down to the bottom on a recording, and a Recents card "Phone book" with the Vibb icon
-whose tap brings back the same instance. The rule and kiosk checks were not run on 14. `compat34` was stopped with
-`adb emu kill`; start it with `-wipe-data` next time (§6as).
+**Code QA round** (`docs/review/qa-phonebook-task-code.md`; the fixes' build over the first commit's on `jelly36`
+restored clean, then restored again; the rig's DB with SMS "Ikke styrt" and Mamma's message app SMS, so Melding opens
+Google Messages):
 
+| Check | Result (API 36) |
+|---|---|
+| H1: Melding to an outside app | **Passed.** The first commit's start had no flags (Google Messages' own trampoline moved itself to its task, so the bug doesn't show with this app); the fix's `SENDTO` start has `flg=0x10000000`, Messages in its own task, the phone book's task only the page. A rule without calls on: Messages suspended, its task gone from Recents; the phone book's card redirects |
+| H1: the time-rule screen's row | **Passed.** Under `Kveld` the row starts the page with `flg=0x14000000` (`NEW_TASK`, `CLEAR_TOP`), on the page itself |
+| M1: the base intent | **Passed.** After a missed-call tap the task's base intent is component-only (`cmp=.../PhoneBookActivity`, no action or type); Home, then the tile: the same task, the same instance, one activity |
+| M2: a `tel:` link | **Passed.** "Ringe Mamma?" from the number carried as an extra |
+
+**Android 14 (`compat34`, API 34):** started with `-wipe-data -dns-server 8.8.8.8` (the first run's wipe without the
+flag left the launcher unable to reach the server); the network worked before and after the install, the branch's
+build as Device Owner, enrolled, kiosk LOCKED. **Passed:** its own `.phonebook` task; Home's slide to the bottom
+(recorded); the kiosk's Recents card "Telefonbok" with the Vibb icon, its tap back to the same instance; the call log,
+DIAL and DIAL `tel:` resolve to the entry, the dialer role ours; Melding with `NEW_TASK`, Messages' task removed by the
+rule's suspension; under `Lekser` the card and a `tel:` link both end on the time-rule screen; under `Kveld` the row lands
+on the page (`flg=0x14000000`) and Back returns to the time-rule screen; the missed-call tap (expand the shade's group
+first) opens Mamma's card through the entry. **Not run on 14:** the update from an older build's pin (a fresh install
+only). `compat34` stopped with `adb emu kill`: start it with `-wipe-data` next time (§6as).
 
 ## 7. Reporting back
 

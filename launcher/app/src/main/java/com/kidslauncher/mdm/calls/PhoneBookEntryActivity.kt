@@ -13,8 +13,9 @@ import android.util.Log
  * named the phone book's page would name a class of one look, which after a change of look opens a page of the other
  * look (its starting window seen before it closes itself). This entry has no look: translucent (no starting window),
  * not kept in Recents or the back stack, a task of its own when started as one (empty affinity), so nothing behind it
- * is brought forward. While calls are unmanaged it passes the call log on to the system dialer; anything else starts
- * the applied look's phone book ([PhoneBookActivity.forward]), which checks a number itself. Then it closes.
+ * is brought forward. What it passes on and drops is the pure [entryRoute]: while calls are unmanaged the call log goes
+ * to the system dialer; anything else starts the applied look's phone book ([PhoneBookActivity.forward]) with the
+ * [PhoneBookAsk] alone, and the page checks a number itself. Then it closes.
  */
 class PhoneBookEntryActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -22,20 +23,27 @@ class PhoneBookEntryActivity : Activity() {
         val asked = intent
         if (savedInstanceState == null && asked != null) {
             CallPolicyStore.ensureLoaded(this)
-            if (!passOnCallLog(asked)) startActivity(PhoneBookActivity.forward(this, asked))
+            val contact = try {
+                asked.getStringExtra(PhoneBookActivity.EXTRA_MISSED_CONTACT)
+            } catch (e: RuntimeException) {
+                null // Another app's malformed extras: the rest alone.
+            }
+            val unmanaged = CallPolicyStore.effectiveState() == CallPolicyState.Unmanaged
+            when (val route = entryRoute(asked.action, asked.type, asked.dataString, contact, unmanaged)) {
+                EntryRoute.PassOnCallLog -> passOnCallLog()
+                is EntryRoute.Open -> startActivity(PhoneBookActivity.forward(this, route.ask))
+            }
         }
         finish()
     }
 
     /**
-     * The call log asked for while calls are unmanaged: the system dialer's, explicitly - our pin is permanent, so it
-     * stays ours to pass on (as the Play link blocker does). Managed (or rules unknown): the phone book is the call
-     * log. A fresh intent: never the caller's extras. The package comes from what `apply()` cached - no Telecom call
+     * The call log asked for while calls are unmanaged ([EntryRoute.PassOnCallLog]): the system dialer's, explicitly -
+     * our pin is permanent, so it stays ours to pass on (as the Play link blocker does). Managed (or rules unknown): the
+     * phone book is the call log. A fresh intent: never the caller's extras. The package comes from what `apply()` cached - no Telecom call
      * on the main thread (qa-12-code #4). Viewing the call log deals with our missed-call notification too.
      */
-    private fun passOnCallLog(intent: Intent): Boolean {
-        if (!isCallLogView(intent.action, intent.type, intent.dataString)) return false
-        if (CallPolicyStore.effectiveState() != CallPolicyState.Unmanaged) return false
+    private fun passOnCallLog() {
         MissedCallNotifier.dismiss(this)
         val dialer = CallPrefs.systemDialer(this)
         if (dialer == null) Log.w(LOG_TAG, "No system dialer known yet - the call log isn't passed on")
@@ -49,7 +57,6 @@ class PhoneBookEntryActivity : Activity() {
                 Log.w(LOG_TAG, "The system dialer has no call log to pass on to", e)
             }
         }
-        return true
     }
 
     private companion object {

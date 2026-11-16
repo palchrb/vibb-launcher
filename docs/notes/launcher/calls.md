@@ -27,7 +27,7 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
 ## Missed-call notification (handy step 12, design `docs/design/12-missed-calls.md`, at the monorepo root)
 
 - **Ours, not Telecom's**: `calls/MissedCallReceiver` takes `TelecomManager.ACTION_SHOW_MISSED_CALLS_NOTIFICATION` (exported, no `android:permission` - protected broadcast with READ_PHONE_STATE; not direct-boot-aware), so Telecom sends us the broadcast instead of posting its own notification (its tap opened nothing, or the system dialer's call log with its keypad). The count is only a trigger; `calls/MissedCallNotifier` (one background thread, `goAsync`, queued requests run once) posts `launcher:missed_calls` (DEFAULT, no FSI) id 1006.
-- **Content** (pure `calls/MissedCallNotice.kt`, `MissedCallNoticeTest`): missed calls of `phoneBookView(effectiveState())` contacts that still count for the badges **and** are unread in the call log (`new = 1`) up to the newest unread missed `_id` read before the log ("Tapt anrop fra Pappa" / "2 tapte anrop fra Pappa" / "3 tapte anrop" + "Pappa, Mamma"). Alerts only for an `_id` newer than any alerted (CE prefs `missed_call_notice`); boot re-sends and updates are silent. The tap opens the phone book (a call-log `VIEW` sent explicitly to it), or with one contact its sheet (`PhoneBookActivity.EXTRA_MISSED_CONTACT`, read once, only for a number in the view). Without managed rules (fail-closed, or unmanaged while a dialer role the parent granted by hand is still ours) a plain "N tapte anrop" from the log's unread missed rows (`plainMissedCallNotice`, ids and dates only - `canKeepMissedCalls`: managed **or** our dialer role); unmanaged, its tap is passed on to the system dialer.
+- **Content** (pure `calls/MissedCallNotice.kt`, `MissedCallNoticeTest`): missed calls of `phoneBookView(effectiveState())` contacts that still count for the badges **and** are unread in the call log (`new = 1`) up to the newest unread missed `_id` read before the log ("Tapt anrop fra Pappa" / "2 tapte anrop fra Pappa" / "3 tapte anrop" + "Pappa, Mamma"). Alerts only for an `_id` newer than any alerted (CE prefs `missed_call_notice`); boot re-sends and updates are silent. The tap opens the phone book (a call-log `VIEW` sent explicitly to its entry, `PhoneBookEntryActivity`, since 2026-11-16), or with one contact its sheet (`PhoneBookActivity.EXTRA_MISSED_CONTACT`, read once, only for a number in the view). Without managed rules (fail-closed, or unmanaged while a dialer role the parent granted by hand is still ours) a plain "N tapte anrop" from the log's unread missed rows (`plainMissedCallNotice`, ids and dates only - `canKeepMissedCalls`: managed **or** our dialer role); unmanaged, its tap is passed on to the system dialer.
 - **Clearing**: the phone book resumed, any contact sheet, the tap or a swipe (delete intent -> `MissedCallDismissReceiver`, not exported; the post's own range) cancel ours, mark the covered rows read (`new = 0, is_read = 1` - Telecom skips that for a dialer with the receiver, else they come back at every boot) and call `cancelMissedCallsNotification()`; Telecom's count 0 only cancels ours, and not when ours shows calls newer than our last reset (`zeroCountCancels`, ids). Recomputed per broadcast and 3 s + 10 s after our call ends (update/clear only). Nothing is marked read automatically unless the rules are managed, readable and calls are on now (a no-calls time rule leaves only emergency contacts in the view). Cancelled - range forgotten - on the dialer-role hand-back. The phone book's pass-on reads `CallPrefs.systemDialer`, cached by `apply()` (no Telecom call on the main thread).
 - **Call log -> phone book**: the phone book's entry `PhoneBookEntryActivity` (before 2026-11-16 `PhoneBookActivity` itself) has its own `VIEW` `vnd.android.cursor.dir/calls` filter and `AppEnforcer.enforceCallLogPin` makes it the persistent preferred activity in every `apply()` next to the Play link blocker - cleared only by `HomePin`'s re-seat, which adds every PPA of ours back in the same pass (design 59d step M, `PlayInvariantsTest`); while calls are unmanaged it passes the intent on to the system dialer. A privileged dialer whose call-log filter has priority > 0 would still win (device check).
 - **Not device-tested**: the checklist in the 12 doc ("Implementation status"); the smoke test's "Missed call" step covers ours vs `TelecomMissedCalls` on the emulator.
@@ -650,40 +650,55 @@ and the task's card was Home's, which is excluded from Recents.
   (`calls_phone_book`), and the launcher's icon (`setTaskDescription` in `onCreate`). Back from the phone book finishes
   it and shows what was under it (Home, or the time-rule screen it was opened from); the card stays, and a start from it
   (`FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY`) asks no number and opens no contact's card again.
-- **The ways in**: `PhoneBookActivity.intent` (Home's tile, the time-rule screen's row) names the applied look's class
-  with `FLAG_ACTIVITY_NEW_TASK`, so a phone book already open comes back as it was. Everything from outside the process
+- **The ways in**: `PhoneBookActivity.intent` names the applied look's class with `FLAG_ACTIVITY_NEW_TASK`. From Home's
+  tile a phone book already open comes back as it was; the time-rule screen's row asks `toPage`, `FLAG_ACTIVITY_CLEAR_TOP`
+  too, so it lands on the page itself - whatever was above it in the task is closed and the page's rule check runs (code
+  QA H1). The page's intent never carries an action, data or type, so the task's base intent is always the tile's and
+  Android never stacks a second phone book on top of the task (code QA M1: a forwarded `VIEW`/`DIAL` base intent made
+  the tile's plain intent "another filter"). Everything from outside the process
   goes through **`PhoneBookEntryActivity`**, the look-less entry (as `MessagesEntryActivity`, design 78 §12.2 R7):
   translucent, `noHistory`, `excludeFromRecents`, `taskAffinity=""`, and exported, because it now holds every filter the
   page had - DIAL and DIAL `tel:` (which the dialer role requires), `VIEW tel:`/`voicemail:`, `CALL_BUTTON` and the call
   log. The call-log pin (`enforceCallLogPin`) and the missed-call notification and glance (`missedCallsIntent`) name the
-  entry, so no `PendingIntent` or preferred activity holds a page class of one look. The entry passes the call log on
-  to the system dialer while calls are unmanaged (moved from the page), and otherwise starts the page with
-  `PhoneBookActivity.forward`: the asked action, data and type and the missed-call contact - none of an outside intent's
-  other extras - with `FLAG_ACTIVITY_CLEAR_TOP`, so in a task already there it lands on the page itself (`onNewIntent`,
-  which now also `setIntent`s) rather than a second phone book over the kid's picture screen. An older build's
-  call-log pin on `PhoneBookActivity` is replaced at the first `apply()` after the update: Android's device policy engine
-  (14+) keys a persistent preferred activity by its filter, so the entry's pin takes its place (`dumpsys device_policy`,
-  `docs/testing/emulator.md` §6au); the dialer role's own preferred DIAL activities move to the entry with it.
+  entry, so no `PendingIntent` or preferred activity holds a page class of one look. What the entry passes
+  on is the pure `entryRoute` (`calls/PhoneBookAsk.kt`, `PhoneBookAskTest`): the call log goes to the system dialer
+  while calls are unmanaged (moved from the page); anything else opens the page through `PhoneBookActivity.forward` with
+  a `PhoneBookAsk` as extras - a number only from a `tel:`/`voicemail:` link of at most 128 characters, our
+  notification's contact only with the call log - and nothing else of the outside intent (no other extras, flags,
+  ClipData or grants; malformed extras are caught). The forward lands on the page itself (`toPage`, `onNewIntent`, which
+  now also `setIntent`s): a `tel:` link or a missed-call tap while the kid's picture screen (`KidPhotoActivity`, or the
+  camera or picker above it) is in the task closes that screen, and its unsaved framing and draft go - never a second
+  phone book over it. An older build's call-log pin on `PhoneBookActivity` no longer matches anything, since the page
+  has no filters, so Android skips it on any version; on Android 16 the device policy engine also keys a persistent
+  preferred activity by its filter, so the entry's pin replaced it (`dumpsys device_policy`, `docs/testing/emulator.md`
+  §6av); the dialer role's own preferred DIAL activities move to the entry with it.
 - **Under a time rule**: in its own task the phone book outlives Home's `clearTaskOnLaunch`, so Recents can bring it over
   the time-rule screen. Its `onResume` asks `redirectIfLocked` first: while a lock reason is set, it starts the time-rule
   screen unless the lock in force allows calls (pure `phoneBookUsableUnder`: no lock, not locked, or `callsAllowed` -
-  the used-up budget keeps calls; an error reading the rules is no). That is exactly where the time-rule screen offers
-  its "Telefonbok" row (`timeLockRows`, while calls are managed) and where Meldinger is usable (`messagesUsableUnder`),
-  so the phone book is reachable under a rule exactly where it was before. While in front it watches the lock
+  the used-up budget keeps calls; an error reading the rules is no). That is where the time-rule screen offers its
+  "Telefonbok" row (`timeLockRows`) and where Meldinger is usable (`messagesUsableUnder`) - with one difference: with
+  calls unmanaged the screen shows no row, but Recents can still bring back the phone book, which then only says calls
+  are off (harmless: nothing can be called from it that the system dialer couldn't call; code QA L1). While in front it watches the lock
   (`LockWatch`, Kalender's): a rule without calls beginning brings the time-rule screen back. Under such a rule a
   missed-call notification, a `tel:` link or the glance's row lands on the time-rule screen too, and the number or
   contact it asked for is dropped (`takeAsked`), so no "Ring X?" or "not allowed" waits behind the time-rule screen for
   the phone book's next open (seen on the emulator before the fix).
+- **Other apps from the phone book** (code QA H1): suspension and the kiosk judge a task by its root, so an app left
+  inside the phone book's task would stay usable there under a rule that suspends it. The card's and the row's Melding
+  to another app (`ContactSheet.openMessage`) starts it with `FLAG_ACTIVITY_NEW_TASK`, a task of its own (Home's card
+  too). The kid's picture screen (`KidPhotoActivity`, started for a result) joins the phone book's task and checks the
+  rule itself at every resume (Meldinger's rule, the same as the phone book's); the system camera or picker it starts
+  for a result is in the task too - the time-rule screen's row clears them, and Recents shows them only until the picture
+  screen resumes.
 - **Unchanged**: a call placed from the phone book shows `InCallActivity` in its own `.call` task; when it ends Android
-  shows the phone book's task again. The kid's picture screen (`KidPhotoActivity`, started for a result) joins the phone
-  book's task. Screen time: both classes are free screens (`FREE_SCREENS`). Not direct-boot aware, as before. The
+  shows the phone book's task again. Screen time: both classes are free screens (`FREE_SCREENS`). Not direct-boot aware, as before. The
   kiosk allows the new task (our package is lock-task permitted, as for Kalender's and Meldinger's).
-- Tests: `PhoneBookTaskTest` (the manifest, the one intent, the card's name, the guard, `phoneBookUsableUnder` against
-  `messagesUsableUnder` and the time-rule screen's rows), `PageManifestTest` (the two entries and the entry's filters),
+- Tests: `PhoneBookAskTest` (the entry's rule, row by row), `PhoneBookTaskTest` (the manifest, the callers, the card's
+  name, the guard, `phoneBookUsableUnder` against `messagesUsableUnder` and the time-rule screen's rows), `PageManifestTest` (the two entries and the entry's filters),
   `PageLookScanTest` (the class literals, the builders into a start, never a `PendingIntent`), `MissedCallManifestTest`
   and `PlayInvariantsTest` (the call-log filter and pin on the entry).
-- Seen on the emulator (`docs/testing/emulator.md` §6au: Android 16 in full, Android 14 the task, the close and the
-  card only). **Not device-tested yet:** the Jelly Star - Home's slide, the Recents card in the kiosk, a real call's end.
+- Seen on the emulator (`docs/testing/emulator.md` §6av: Android 16 and 14 - on 14 all but the update from an older
+  build's pin). **Not device-tested yet:** the Jelly Star - Home's slide, the Recents card in the kiosk, a real call's end.
 
 ## The lock glance's Meldinger row, step 5 (design 77 §6.8; branch `sms-glance`)
 

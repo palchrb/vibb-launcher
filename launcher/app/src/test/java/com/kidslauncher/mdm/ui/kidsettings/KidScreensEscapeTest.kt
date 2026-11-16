@@ -162,7 +162,7 @@ class KidScreensEscapeTest {
         val sheet = code("calls/ContactSheet.kt")
         // The message app (openMessage) and, since step 4, the kid's picture screen - nothing else.
         assertEquals(2, Regex("""startActivity\(""").findAll(sheet).count())
-        assertTrue(sheet.contains("activity.startActivity(Intent(message.action, Uri.parse(uri)).setPackage(message.packageName))"))
+        assertTrue(sheet.contains("activity.startActivity(Intent(message.action, Uri.parse(uri)).setPackage(message.packageName).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))"))
         assertTrue(sheet.contains("activity.startActivity(KidPhotoActivity.forContact(activity, contact, camera))"))
         // Code QA M1: "Bilde av …" is kept and closes with the card (so Home's closeOverlays() closes both).
         assertTrue(sheet.contains("opened(sheet)") && sheet.contains("photoSheet?.dismiss()"))

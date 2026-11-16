@@ -1716,8 +1716,8 @@ object AppEnforcer {
      * dialer's call log is its full UI with a keypad, and a chooser would be just as bad. Set on
      * every [apply] next to the Play link blocker and cleared only by `HomePin`'s re-seat, which adds every PPA of
      * ours back in the same pass (design 59d step M, `PlayInvariantsTest`); the entry declares the same filter and passes the intent on to the
-     * system dialer while calls are unmanaged. An older build's pin on `PhoneBookActivity` is replaced, not kept beside
-     * it: Android's device policy engine (14+) keys a persistent preferred activity by its filter (seen on the emulator). A privileged dialer whose call-log filter has a
+     * system dialer while calls are unmanaged. An older build's pin on `PhoneBookActivity` matches nothing any more (the
+     * page has no filters), so Android skips it; on 16 the policy engine replaced it with this one (seen on the emulator). A privileged dialer whose call-log filter has a
      * priority above 0 still wins (PackageManager picks it before reading persistent preferred
      * activities) - device check on the Jelly Star.
      */

@@ -320,13 +320,19 @@ open class PhoneBookActivity : KidPageActivity() {
         takeAsked(intent)
     }
 
-    /** The number and the missed-call contact an intent asks for - dropped while the phone book yields to the time-rule
-     * screen ([redirectIfLocked], at the resume that follows): a "Ring X?" or "not allowed" left behind it would be the
-     * first thing the kid sees when the phone book is next opened, perhaps hours later. */
+    /** The number and the missed-call contact the entry asks for ([forward]) - taken once (the extras are removed), and
+     * dropped while the phone book yields to the time-rule screen ([redirectIfLocked], at the resume that follows): a
+     * "Ring X?" or "not allowed" left behind it would be the first thing the kid sees when the phone book is next
+     * opened, perhaps hours later. */
     private fun takeAsked(intent: Intent) {
-        if (LauncherPreferences.mdm().lockReason() != LockReason.NONE && !usableNow(this)) return
+        val number = intent.getStringExtra(EXTRA_ASK_NUMBER)
+        intent.removeExtra(EXTRA_ASK_NUMBER)
+        if (LauncherPreferences.mdm().lockReason() != LockReason.NONE && !usableNow(this)) {
+            intent.removeExtra(EXTRA_MISSED_CONTACT)
+            return
+        }
         takeMissedContact(intent)
-        handleNumber(intent)
+        handleNumber(number)
     }
 
     /** The notification's contact, only when it is in the phone book now (QA #8); the extra is
@@ -573,10 +579,10 @@ open class PhoneBookActivity : KidPageActivity() {
         }
     }
 
-    private fun handleNumber(intent: Intent?) {
-        if (intent == null || isCallLogView(intent.action, intent.type, intent.dataString)) return
-        val data = intent.data ?: return
-        val raw = PhoneNumbers.numberFromHandle(data.toString())
+    /** A `tel:`/`voicemail:` link from another app ([entryRoute]): checked against the call rules, then "Ring X?". */
+    private fun handleNumber(link: String?) {
+        if (link == null) return
+        val raw = PhoneNumbers.numberFromHandle(link)
         val state = CallPolicyStore.effectiveState()
         if (decideOutgoing(raw, state, CallSystem.isEmergencyOutgoing(this, raw)) == Verdict.BLOCK || raw == null) {
             AlertDialog.Builder(this)
@@ -599,6 +605,9 @@ open class PhoneBookActivity : KidPageActivity() {
         /** The phone number (as in the call rules) of the contact whose sheet to open. */
         const val EXTRA_MISSED_CONTACT = "com.kidslauncher.mdm.extra.MISSED_CONTACT"
 
+        /** The link another app asked to call ([PhoneBookAsk.number]); the entry's forward to the page only. */
+        private const val EXTRA_ASK_NUMBER = "me.vibb.launcher.extra.PHONE_BOOK_NUMBER"
+
         /** The page's sides (`activity_phone_book.xml`). */
         private const val PAGE_SIDE_DP = 16f
 
@@ -611,27 +620,27 @@ open class PhoneBookActivity : KidPageActivity() {
 
         /**
          * The one way to open the phone book from inside the process - Home's tile and the time-rule screen's row: a
-         * task of its own (`FLAG_ACTIVITY_NEW_TASK` with the manifest's `.phonebook` affinity), so a task already there
-         * comes back as it was. The class is the applied look's (design 78 §12.2 R5); the intent goes straight into a
-         * start (R7) - a notification or the system names [PhoneBookEntryActivity] instead.
+         * task of its own (`FLAG_ACTIVITY_NEW_TASK` with the manifest's `.phonebook` affinity). From Home's tile
+         * ([toPage] false) a task already there comes back as it was. The time-rule screen's row asks [toPage]:
+         * `FLAG_ACTIVITY_CLEAR_TOP` lands on the page itself (singleTop: `onNewIntent`), so whatever was above it in the
+         * task - the kid's picture screen, the camera - is closed and the page's own rule check runs (code QA H1). The
+         * class is the applied look's (design 78 §12.2 R5); the intent goes straight into a start (R7) - a notification
+         * or the system names [PhoneBookEntryActivity] instead. Never an action or data: the task's base intent stays
+         * the same whoever started it (code QA M1).
          */
-        fun intent(context: Context): Intent = Intent(context, PageKind.PHONE_BOOK.current()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        fun intent(context: Context, toPage: Boolean = false): Intent =
+            Intent(context, PageKind.PHONE_BOOK.current()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK).apply {
+                if (toPage) addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            }
 
         /**
-         * The entry's start ([PhoneBookEntryActivity]): [intent] with what was asked - the action, the number or call
-         * log (data and type) and the missed-call contact, nothing else of an outside intent - and
-         * `FLAG_ACTIVITY_CLEAR_TOP`, so it lands on the page itself (singleTop: `onNewIntent`) in a task already there:
-         * a tel: link or a missed call is never a second phone book over the kid's picture screen.
+         * The entry's start ([PhoneBookEntryActivity]): [intent] to the page itself with [ask] as extras (the number,
+         * the missed-call contact) - nothing else of an outside intent ([entryRoute]). On the page itself, also in a task
+         * already there: a tel: link or a missed call closes the kid's picture screen above it, never a second phone book.
          */
-        fun forward(context: Context, asked: Intent): Intent = intent(context).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP).apply {
-            action = asked.action
-            setDataAndType(asked.data, asked.type)
-            val contact = try {
-                asked.getStringExtra(EXTRA_MISSED_CONTACT)
-            } catch (e: RuntimeException) {
-                null // Another app's malformed extras: the number alone.
-            }
-            if (contact != null) putExtra(EXTRA_MISSED_CONTACT, contact)
+        fun forward(context: Context, ask: PhoneBookAsk): Intent = intent(context, toPage = true).apply {
+            if (ask.number != null) putExtra(EXTRA_ASK_NUMBER, ask.number)
+            if (ask.contact != null) putExtra(EXTRA_MISSED_CONTACT, ask.contact)
         }
 
         /** The missed-call notification's tap and the glance's missed-calls row: the call log, i.e. the phone book
