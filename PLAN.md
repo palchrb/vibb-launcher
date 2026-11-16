@@ -192,6 +192,7 @@ Nothing here is waiting on code. Each line names where the detail is; the longer
 - **A silent time rule raises a false "Ikke forstyrr er på" attention - REPORTED 2026-11-16 ~10:50 UTC (the user: the Devices list's red counter while Skole is on, "fake news"), MERGED 2026-11-16 (`dnd-attention` 5b9c347f1, light review by the coordinator; server only; for the next server tag)**: the rule's own AutomaticZenRule reports `priority`; `attention.rs` no longer counts it while the report's active rule (or its lock_now copy) is silent and the filter is `priority`.
 
 ### To decide (the user)
+- **How to test Android 17 - ASKED 2026-11-16 (the user: "Hva trenger vi?")**: the API 37.0/37.2 emulator images abort in gfxstream (`hasReadColorBufferDma`) on this GPU-less VM with emulator 37.2.12, 37.2.13 and canary 37.3.9 and every GPU mode (`docs/testing/emulator.md`, "Android 17 on this VM"); surfaceflinger dies right after boot. Options: a real phone on Android 17 (a Pixel on the beta), or an emulator host with a GPU. Until then 17 is checked by `dumpsys`/`uiautomator` only, or not at all (design 105's clock).
 
 
 - **The app's DIDL differs from vibb's** (found 2026-10-21 against `pi/daemon.py` `_sonos_body`, branch pipewire): for a
