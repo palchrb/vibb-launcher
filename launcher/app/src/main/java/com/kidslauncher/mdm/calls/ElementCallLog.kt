@@ -91,9 +91,8 @@ fun trimElementCallLog(records: List<ElementCallRecord>, nowMs: Long): List<Elem
 fun elementContactNumbers(rules: CallRules): Set<String> =
     rules.phoneBook.filter { it.messageApp == "element" && isMatrixId(it.messageAddress) }.mapTo(mutableSetOf()) { it.number }
 
-/** The number of the phone-book Element contact with [mxid], or `null`. */
-fun elementContactNumber(rules: CallRules, mxid: String): String? =
-    rules.phoneBook.firstOrNull { it.messageApp == "element" && it.messageAddress == mxid }?.number
+/** The number of the phone-book Element contact with [mxid], or `null` - [elementNumberByMxid]'s tie-break. */
+fun elementContactNumber(rules: CallRules, mxid: String): String? = elementNumberByMxid(rules)[mxid]
 
 /**
  * At each [CallPolicyStore.refresh] (as [pruneElementRooms]): unmanaged drops all; managed drops a record whose contact

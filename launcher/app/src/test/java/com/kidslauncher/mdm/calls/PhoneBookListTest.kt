@@ -244,14 +244,14 @@ class PhoneBookListTest {
     // ---- Siste (design 106 §3.4, §3.5) ----
 
     @Test
-    fun `a visit starts on Kontakter - a configuration change keeps Siste, an ask or calls going off move back`() {
+    fun `a visit starts on Kontakter - a configuration change keeps Siste, any way in or calls going off move back`() {
         assertEquals(PhoneBookTab.CONTACTS, tabAtVisitStart(restored = false, saved = PhoneBookTab.RECENT))
         assertEquals(PhoneBookTab.CONTACTS, tabAtVisitStart(restored = false, saved = null))
         assertEquals(PhoneBookTab.RECENT, tabAtVisitStart(restored = true, saved = PhoneBookTab.RECENT))
-        assertEquals(PhoneBookTab.RECENT, tabAfter(PhoneBookTab.RECENT, switchShown = true, asked = false))
-        assertEquals(PhoneBookTab.CONTACTS, tabAfter(PhoneBookTab.RECENT, switchShown = true, asked = true))
-        assertEquals(PhoneBookTab.CONTACTS, tabAfter(PhoneBookTab.RECENT, switchShown = false, asked = false))
-        assertEquals(PhoneBookTab.CONTACTS, tabAfter(PhoneBookTab.CONTACTS, switchShown = true, asked = false))
+        assertEquals(PhoneBookTab.RECENT, tabAfter(PhoneBookTab.RECENT, switchShown = true, entered = false))
+        assertEquals(PhoneBookTab.CONTACTS, tabAfter(PhoneBookTab.RECENT, switchShown = true, entered = true))
+        assertEquals(PhoneBookTab.CONTACTS, tabAfter(PhoneBookTab.RECENT, switchShown = false, entered = false))
+        assertEquals(PhoneBookTab.CONTACTS, tabAfter(PhoneBookTab.CONTACTS, switchShown = true, entered = false))
         // The switch only while the kid can ask and the form is closed.
         assertTrue(phoneBookSwitchShown(canAsk = true, formOpen = false))
         assertFalse(phoneBookSwitchShown(canAsk = false, formOpen = false))
@@ -263,6 +263,16 @@ class PhoneBookListTest {
         val book = file("java/com/kidslauncher/mdm/calls/PhoneBookActivity.kt")
         val save = book.substringAfter("override fun onSaveInstanceState(").substringBefore("val top = visitTop ?: return")
         assertTrue(save.contains("if (isChangingConfigurations) {") && save.contains("outState.putString(STATE_TAB, tab.name)"))
+        // Code QA M1: every new intent moves the book to Kontakter - the notification with several callers and the system
+        // call log ask for no one, and Q7 still says Kontakter.
+        val newIntent = book.substringAfter("override fun onNewIntent(").substringBefore("takeAsked(intent)")
+        assertTrue(newIntent.contains("tabAfter(tab, switchShown = true, entered = true)") && !newIntent.contains("hasExtra"))
+        // Code QA L2: a sync that changes the rules reloads Siste's rows too; L3: a load of an ended visit is never applied.
+        val policy = book.substringAfter("private val policyListener").substringBefore("/** A rule that doesn't allow calls")
+        assertTrue(policy.contains("render()") && policy.contains("loadMissedCalls()"))
+        val stop = book.substringAfter("override fun onStop()").substringBefore("override fun onDestroy()")
+        assertTrue(stop.contains("loads.begin()"))
+        assertTrue(book.substringAfter("override fun onStart()").substringBefore("ContactPhotos.addListener").contains("snapshot = null"))
         // Search only in Kontakter: hidden on Siste, cleared when Siste shows.
         assertTrue(book.contains("search.setShown(list.search && !requestForm.isOpen && contacts)"))
         val show = book.substringAfter("private fun showTab(").substringBefore("private fun writeRecentMarks(")

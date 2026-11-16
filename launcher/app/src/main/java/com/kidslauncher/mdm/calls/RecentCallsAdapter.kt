@@ -16,7 +16,6 @@ import androidx.recyclerview.widget.RecyclerView
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.ui.ClockFormat
 import com.kidslauncher.mdm.ui.home.KidAvatars
-import com.kidslauncher.mdm.ui.home.MissedCallText
 import java.time.ZoneId
 import java.time.format.TextStyle
 
@@ -139,9 +138,22 @@ class RecentCallsAdapter(private val onRow: (RecentRow) -> Unit) : ListAdapter<R
                 it.bottomMargin = if (lastOfDay) KidAvatars.dp(context, DAY_GAP_DP) else 0
                 itemView.layoutParams = it
             }
-            itemView.contentDescription = context.getString(
-                R.string.recent_row, row.contact.name, spokenWord(context, row), MissedCallText.spokenWhen(context, row.atMs),
-            )
+            itemView.contentDescription = context.getString(R.string.recent_row, row.contact.name, spokenWord(context, row), spokenWhen(context, item, clock))
+        }
+
+        /** "i dag 14:02", "i går 18:30", "3. nov. 14:02" - from the item's own day label (code QA L4), so it follows a
+         * new day with the heading. */
+        private fun spokenWhen(context: Context, item: RecentItem.Call, clock: String): String = when (item.label) {
+            DayLabel.Today -> context.getString(R.string.missed_when_today, clock)
+            DayLabel.Yesterday -> context.getString(R.string.missed_when_yesterday, clock)
+            is DayLabel.Weekday, is DayLabel.Date -> {
+                val locale = context.resources.configuration.locales[0]
+                val date = android.text.format.DateFormat.format(
+                    android.text.format.DateFormat.getBestDateTimePattern(locale, "dMMM"),
+                    java.util.Date.from(item.day.atStartOfDay(ZoneId.systemDefault()).toInstant()),
+                )
+                context.getString(R.string.missed_when_date, date, clock)
+            }
         }
 
         private fun shownWord(context: Context, row: RecentRow): String {

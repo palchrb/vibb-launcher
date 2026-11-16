@@ -227,10 +227,10 @@ its red line.
     (`configChanges="orientation|screenSize|uiMode"` on both classes), so the cases are a font-size or language
     change. `onSaveInstanceState` saves the tab and Siste's sightings **before** its `visitTop ?: return` early
     return, and only while `isChangingConfigurations`. A process death saves nothing that brings Siste back.
-  - **An ask while the book is in front** (M3). The missed-call notification, the glance's row, the call-log `VIEW`
-    and a `tel:` link reach a resumed book through `CLEAR_TOP`/singleTop and `onNewIntent`, with no `onStop`. An
-    intent carrying an ask (`EXTRA_MISSED_CONTACT` or a number) first writes Siste's marks, then switches to
-    Kontakter, then runs `takeAsked` (Q7).
+  - **A way in while the book is in front** (M3, Q7; code QA M1). The missed-call notification (one caller or
+    several), the glance's row, the system call-log `VIEW`, a `tel:` link and the time-rule screen's row reach a
+    resumed book through `CLEAR_TOP`/singleTop and `onNewIntent`, with no `onStop`. Every such intent - whether or not
+    it asks for a number or a contact - first writes Siste's marks, then switches to Kontakter, then runs `takeAsked`.
 - **Calls going off mid-visit** (L1). `render()` forces Kontakter whenever the switch may not show (no `canAsk`), in the
   same place it clears the query today, after writing Siste's marks.
 - **Search only in Kontakter.** On Siste the search pill and the "+" hide. Switching to Siste clears the query and
@@ -493,6 +493,13 @@ Notes: `docs/notes/launcher/calls.md`, "Two badges and Siste (design 106)"; emul
   own - each half's fill is inset 4 dp, so a half takes taps over the whole height.
 - The switch's words are a page colour of their own (`res/color/kid_page_tab_text.xml`, the two page tokens).
 - TalkBack's missed word is lower-cased mid-sentence ("Pappa, tapt anrop, i dag 7:04").
+- **Code QA fixes** (0 High, 1 Medium, 5 Low): M1 - every `onNewIntent` moves the book to Kontakter (§3.5 above), so
+  the notification with several callers and the plain system call log open on Kontakter too; L1 - one MXID -> number
+  lookup (`elementNumberByMxid`, the first contact in the phone book's order) for the badge, the record and Siste's
+  unseen rows; L2 - a change of the rules mid-visit reloads Siste, so a removed contact's rows go; L3 - a load still
+  running when the visit ends is never applied; L4 - a row carries its day's label, so after midnight its TalkBack day
+  follows the heading; L5 - the record's prefs read, JSON, hashing and write run on one background thread with the list
+  kept in memory, never on the main thread.
 - **Open look question, for the user:** in a phone book row the rust pill, now wider with its glyph, reaches the start of
   the name (its end edge is where it was before: 10 dp past the avatar, at the text column's start). Not changed; the
   user decides (screenshot from the gate, Mamma's row with both pills in Lys).

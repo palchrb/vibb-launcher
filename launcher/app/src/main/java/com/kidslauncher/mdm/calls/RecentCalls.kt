@@ -153,7 +153,9 @@ sealed interface RecentItem {
         override val key get() = "day:$day"
     }
 
-    data class Call(val row: RecentRow, val place: RowPlace, val emergency: Boolean) : RecentItem {
+    /** [day] and [label]: the row's day and its words against today (code QA L4) - so a new day rebinds the row and its
+     * TalkBack sentence says "i går" after midnight. */
+    data class Call(val row: RecentRow, val place: RowPlace, val emergency: Boolean, val day: LocalDate, val label: DayLabel) : RecentItem {
         override val key get() = "call:${row.contact.id}:${row.contact.number}:${row.kind}:${row.source}:${row.atMs}"
     }
 }
@@ -161,8 +163,11 @@ sealed interface RecentItem {
 /** The flat list for [days], the labels against [today] (computed at each load, so a new day moves "I dag"). */
 fun recentItems(days: List<RecentDay>, today: LocalDate, emergency: Set<String>): List<RecentItem> = buildList {
     for (day in days) {
-        add(RecentItem.Day(day.day, dayLabel(day.day, today)))
-        day.rows.forEachIndexed { i, row -> add(RecentItem.Call(row, rowPlace(i, day.rows.size), row.contact.number in emergency)) }
+        val label = dayLabel(day.day, today)
+        add(RecentItem.Day(day.day, label))
+        day.rows.forEachIndexed { i, row ->
+            add(RecentItem.Call(row, rowPlace(i, day.rows.size), row.contact.number in emergency, day.day, label))
+        }
     }
 }
 
@@ -197,7 +202,8 @@ fun phoneBookSwitchShown(canAsk: Boolean, formOpen: Boolean): Boolean = canAsk &
  * keeps Siste. */
 fun tabAtVisitStart(restored: Boolean, saved: PhoneBookTab?): PhoneBookTab = if (restored && saved != null) saved else PhoneBookTab.CONTACTS
 
-/** The tab after [render]-time checks and an ask by `onNewIntent` (§3.5, M3, L1): Kontakter whenever the switch may not
- * show, or a number or a missed call's contact was asked for. */
-fun tabAfter(tab: PhoneBookTab, switchShown: Boolean, asked: Boolean): PhoneBookTab =
-    if (!switchShown || asked) PhoneBookTab.CONTACTS else tab
+/** The tab after [render]-time checks and a way in by `onNewIntent` (§3.5, Q7, L1, code QA M1): Kontakter whenever the
+ * switch may not show, or the book was [entered] again from outside (any new intent - the notification with one caller
+ * or several, the system call log, a tel: link, the time-rule screen's row). */
+fun tabAfter(tab: PhoneBookTab, switchShown: Boolean, entered: Boolean): PhoneBookTab =
+    if (!switchShown || entered) PhoneBookTab.CONTACTS else tab

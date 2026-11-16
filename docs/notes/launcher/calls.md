@@ -53,7 +53,9 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
   the pure `elementCallLogAfter` (`ElementCallLogTest`): a new key adds an open record unless an open one with the same
   hash and number is there (the connect sweep after a restart - the same call; its time raised to the live `sinceMs`); a
   key leaving the store, or changing contact, closes its record; a sweep closes every open record whose key isn't
-  active; an unbind closes nothing. Pruned at every write (14 days, 50 records), at each CE `CallPolicyStore.refresh`
+  active; an unbind closes nothing. The work (prefs, JSON, hashing, write) runs on one background thread in order, the list kept
+  in memory after its first read (code QA L5). One MXID -> number lookup, `elementNumberByMxid` (the first contact in
+  the phone book's order), serves the badge, the record and Siste's unseen rows (code QA L1). Pruned at every write (14 days, 50 records), at each CE `CallPolicyStore.refresh`
   (`pruneElementCallLog`: unmanaged = all, a contact no longer a phone-book Element contact) and filtered on every read
   (`shownElementCallLog`). `toString` names neither number nor hash; nothing is logged or sent. Known limit: with the
   process dead while the kid opens the room and a second call is missed in it, the sweep finds the open record and
@@ -742,9 +744,9 @@ mockups A5 and B2. Launcher only; no server change.
   boundary: `onStart` without a restored tab) - Home's tile, Recents, back from a call, another app or the picture screen,
   a reopen after the process died (Q5). Only a configuration change (font size, language; a rotation doesn't recreate
   the page) keeps Siste: `onSaveInstanceState` saves the tab and Siste's sightings before the visit's early return, only
-  while `isChangingConfigurations`. An ask by `onNewIntent` (our notification, the glance's row, the call log, a `tel:`
-  link) and calls going off in `render()` move the book to Kontakter first (`tabAfter`), Siste's marks written (Q7, M3,
-  L1). On Siste the search pill and the "+" hide; showing Siste clears the query and the keyboard and starts the list
+  while `isChangingConfigurations`. Every `onNewIntent` (our notification with one caller or several, the glance's row, the
+  system call log, a `tel:` link, the time-rule screen's row; code QA M1) and calls going off in `render()` move the
+  book to Kontakter first (`tabAfter`), Siste's marks written (Q7, M3, L1). On Siste the search pill and the "+" hide; showing Siste clears the query and the keyboard and starts the list
   at its top. Back (`phoneBookBack`): the keyboard, the form, the search's text, then Siste back to Kontakter
   (`SHOW_CONTACTS`), then leave (Q8); the callback is enabled while Siste shows (`phoneBookBackEnabled`).
 - **What Siste shows** (pure `calls/RecentCalls.kt`, `RecentCallsTest`): `MissedCallsRepo.load` does one call-log read
@@ -766,7 +768,9 @@ mockups A5 and B2. Launcher only; no server change.
   `ic_kid_call_out`, from `scripts/material-symbols.sh`) and its word, the time (`ClockFormat.formatTime`) at the end -
   under the word from font scale 1.3. TalkBack: one node, role button, "Mamma, 2 tapte anrop, i dag 14:02", "Pappa,
   ringte deg 2 ganger, i går 18:30" (its own plural, never the visible "(2)"). A tap opens `ContactSheet` for the
-  contact, as a Kontakter row does - never a call, no "Ring via Element". `onStop` empties it as the contacts list.
+  contact, as a Kontakter row does - never a call, no "Ring via Element". `onStop` empties it as the contacts list and invalidates a load still running
+  (code QA L3); a change of the rules mid-visit reloads it (L2: a removed contact's rows go); each row carries its day's
+  label, so a new day rebinds its TalkBack time (L4).
 - **Seen in Siste** (§3.4, Q4): a red, unseen row at least half on screen for 1 s while Siste shows and the book is
   resumed and focused - Siste's own `TopSightings`, fed `recentVisible` (per contact the newest of its visible rows, so a
   row scrolled away never raises the mark). The marks are written when the kid leaves Siste - the switch to Kontakter

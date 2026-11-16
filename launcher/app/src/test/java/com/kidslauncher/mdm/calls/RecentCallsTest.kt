@@ -196,6 +196,13 @@ class RecentCallsTest {
             },
         )
         assertEquals(items.size, items.map { it.key }.toSet().size)
+        // Code QA L4: a row carries its day's words, so the next day's load differs and rebinds (TalkBack's "i går").
+        val tomorrow = recentItems(days, LocalDate.of(2026, 11, 17), emergency = setOf("113"))
+        val emma = { list: List<RecentItem> -> list.filterIsInstance<RecentItem.Call>().first() }
+        assertEquals(DayLabel.Today, emma(items).label)
+        assertEquals(DayLabel.Yesterday, emma(tomorrow).label)
+        assertEquals(emma(items).key, emma(tomorrow).key)
+        assertTrue(emma(items) != emma(tomorrow))
     }
 
     @Test

@@ -65,8 +65,9 @@ object MissedCallsRepo {
         val entries = ElementMissedCallStore.entries
         val missed = contactMissed(phone, elementMissedSummaries(entries.values, rules, seen))
         // The live calls by their key's hash: a Siste row is unseen exactly when the badge counts it (§3.2, M2).
+        val byMxid = elementNumberByMxid(rules)
         val live = entries.mapNotNull { (key, call) ->
-            elementContactNumber(rules, call.mxid)?.let { elementKeyHash(key) to LiveElementCall(it, call.sinceMs) }
+            byMxid[call.mxid]?.let { elementKeyHash(key) to LiveElementCall(it, call.sinceMs) }
         }.toMap()
         val records = ElementCallLogStore.shown(context, state, nowMs)
         val recent = recentCalls(log, records, view.contacts, rules.defaultCc, unseen, live, seen, nowMs, zone)

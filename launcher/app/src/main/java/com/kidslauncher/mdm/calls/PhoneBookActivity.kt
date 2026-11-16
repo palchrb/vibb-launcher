@@ -110,7 +110,16 @@ open class PhoneBookActivity : KidPageActivity() {
     private val answersCounted = mutableSetOf<String>()
 
     /** A sync or a time rule changed the call rules while the phone book is started (code QA M2, second pass). */
-    private val policyListener: (CallPolicyState) -> Unit = { runOnUiThread { if (!isDestroyed) render() } }
+    private val policyListener: (CallPolicyState) -> Unit = {
+        runOnUiThread {
+            if (!isDestroyed) {
+                render()
+                // Design 106 code QA L2: Siste's rows are built from the contacts of their load - a contact the parent
+                // removed (or added) mid-visit leaves (or joins) Siste with a new one.
+                loadMissedCalls()
+            }
+        }
+    }
 
     /** A rule that doesn't allow calls beginning (or the rule changing) while the phone book is in front. */
     private val lockWatch = LockWatch(this) { redirectIfLocked(it) }
@@ -257,6 +266,8 @@ open class PhoneBookActivity : KidPageActivity() {
 
     override fun onStart() {
         super.onStart()
+        // Code QA L3: nothing of the last visit's load shows before this visit's own.
+        snapshot = null
         ContactPhotos.addListener(photoListener)
         ElementMissedCallStore.addListener(elementMissedListener)
         SmsHome.addListener(messagesListener)
@@ -341,6 +352,8 @@ open class PhoneBookActivity : KidPageActivity() {
             writeRecentMarks()
             recentAdapter.submitList(null)
             snapshot = null
+            // Code QA L3: a load still running from this visit is never applied after it.
+            loads.begin()
             sightings = TopSightings()
             visitTop = null
             answersCounted.clear()
@@ -420,10 +433,10 @@ open class PhoneBookActivity : KidPageActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        // Design 106 §3.5 (M3, Q7): an ask (our notification, the glance's row, the call log, a tel: link) reaching the
-        // book in front writes Siste's marks and moves it to Kontakter first.
-        val asked = intent.hasExtra(EXTRA_ASK_NUMBER) || intent.hasExtra(EXTRA_MISSED_CONTACT)
-        if (tabAfter(tab, switchShown = true, asked = asked) != tab) showTab(PhoneBookTab.CONTACTS)
+        // Design 106 §3.5 (Q7, code QA M1): every new intent is a way in from outside - our notification (one caller or
+        // several), the glance's row, the system call log, a tel: link - or the time-rule screen's row; reaching the
+        // book in front, it writes Siste's marks and moves it to Kontakter first, whether or not it asks for anything.
+        if (tabAfter(tab, switchShown = true, entered = true) != tab) showTab(PhoneBookTab.CONTACTS)
         takeAsked(intent)
     }
 
@@ -512,7 +525,7 @@ open class PhoneBookActivity : KidPageActivity() {
         // Design 106 §3.5 (L1): calls going off (or the form opening) leaves Siste for Kontakter, its marks written.
         val switchShown = phoneBookSwitchShown(canAsk, requestForm.isOpen)
         binding.phoneBookTabs.visibility = if (switchShown) View.VISIBLE else View.GONE
-        if (tabAfter(tab, switchShown, asked = false) != tab) showTab(PhoneBookTab.CONTACTS)
+        if (tabAfter(tab, switchShown, entered = false) != tab) showTab(PhoneBookTab.CONTACTS)
         bindHeader(canAsk)
         val view = phoneBookView(state) { CallSystem.isEmergencyOutgoing(this, it) }
         val info = when {

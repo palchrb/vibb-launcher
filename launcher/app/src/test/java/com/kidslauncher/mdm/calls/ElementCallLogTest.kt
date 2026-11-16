@@ -106,6 +106,22 @@ class ElementCallLogTest {
         assertEquals(emptyList<ElementCallRecord>(), shownElementCallLog(listOf(fresh), withoutMamma, now))
     }
 
+    /** Code QA L1: two phone-book contacts on one MXID - the badge, the record and Siste's unseen row all name the first. */
+    @Test
+    fun `one MXID, one contact - the first in the phone book, for the badge, the record and the row`() {
+        val twin = RuleContact(9, "Lily", "+4790000003", inbound = true, outbound = true, messageApp = "element", messageAddress = mammaId)
+        val shared = rules.copy(contacts = listOf(mamma, twin, pappa))
+        assertEquals(mamma.number, elementNumberByMxid(shared)[mammaId])
+        assertEquals(mamma.number, elementContactNumber(shared, mammaId))
+        val badge = elementMissedSummaries(listOf(ElementMissedCall(mammaId, now)), shared, emptyMap())
+        assertEquals(setOf(mamma.number), badge.keys)
+        val record = elementCallLogAfter(emptyList(), emptyMap(), mapOf(keyA to ElementMissedCall(mammaId, now)), POSTED, { elementContactNumber(shared, it) }, now)
+        assertEquals(listOf(mamma.number), record.map { it.number })
+        // An inbound-only contact (no sheet) never takes the MXID.
+        val inboundFirst = rules.copy(contacts = listOf(twin.copy(outbound = false), mamma))
+        assertEquals(mamma.number, elementNumberByMxid(inboundFirst)[mammaId])
+    }
+
     @Test
     fun `the hash is 128 bits, the codec keeps no room, the strings name nothing`() {
         val hash = elementKeyHash(keyA)
