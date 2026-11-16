@@ -57,9 +57,15 @@ enum class CoverEvent {
 /**
  * The cover component's state after [event]: `true` enable, `false` disable, `null` leave it.
  * Off (switch, unmanaged, not device owner) = disabled at every event.
- * - Own mode: enabled only at shutdown - never while the phone runs unlocked (an apply leaves it), and disabled at
- *   the hand-over and by the crash guard. A crash reboot sends no shutdown: the cover stays off and the boot falls back
- *   to A+B (Home at boot, Home roots lock task) - with no Android PIN the boot isn't BFU.
+ * - Own mode without [persistent] (16b, before compat-fix-1; today only an unmanaged or not-device-owner phone, where
+ *   the cover is off anyway): enabled only at shutdown, disabled at the hand-over and by the crash guard.
+ * - [persistent] (compat-fix-1, QA H1; [coverPersistent]): enabled at every event, as android mode. Every boot is BFU
+ *   until the user unlocks, with or without an Android PIN - the user leaves BOOTING only once a HOME that runs before
+ *   the unlock went idle. On a managed phone our plan hides Settings (FallbackHome), and a stock launcher whose HOME
+ *   isn't direct-boot aware (the Android 14 Google image's) then leaves no HOME at all: every boot hung, a normal
+ *   restart included (`docs/testing/emulator.md` §6at). So, when no other package's HOME runs before the unlock
+ *   ([ownModeCover]'s `bootHomeElsewhere`), the cover is the boot's HOME whatever the switch or how the phone went down -
+ *   inert while the switch is off ([coverInert]).
  * - Android mode ([androidMode], the `boot_cover_android` marker - design 59d step M): enabled at every event, the
  *   take-over included, **the crash guard too** (qa-59d-m-code M-1, option (a)). Before the first unlock only
  *   direct-boot-aware HOMEs resolve, and on a phone whose stock launcher isn't one (with Settings' FallbackHome hidden)
@@ -67,10 +73,17 @@ enum class CoverEvent {
  *   `adb reboot` or a flat battery comes - a tripped guard makes it inert instead ([coverInert]: no face, no ask,
  *   SystemUI's lock is the face), never disabled. `HomePin` keeps the unlocked HOME on HomeActivity.
  */
-fun bootCoverEnabled(event: CoverEvent, wanted: Boolean, guardTripped: Boolean = false, androidMode: Boolean = false): Boolean? = when {
-    !wanted -> false
+fun bootCoverEnabled(
+    event: CoverEvent,
+    wanted: Boolean,
+    guardTripped: Boolean = false,
+    androidMode: Boolean = false,
+    persistent: Boolean = false,
+): Boolean? = when {
+    !wanted && !persistent -> false
     // M-1: in android mode the cover is the boot's HOME whatever the guard says - a trip makes it inert, not off.
-    androidMode -> true
+    // compat-fix-1: so is it in own mode on a managed phone ([persistent]).
+    androidMode || persistent -> true
     event == CoverEvent.CRASH_GUARD -> false
     // A tripped guard holds until the switch goes off (which clears it) and on again, or an update
     // (qa-16b-code #2, F3C-3): no more crashing starts at every boot.
@@ -206,6 +219,27 @@ fun coverHandOverDelayMs(unlocked: Boolean, shownForMs: Long): Long? =
 /** The marker's value at an apply: the cover is wanted because of, or together with, Android's PIN as the gate
  * ([androidGate]: the face, or a credential we own on a secure phone - the rollback's escrow included, F3C-4). */
 fun bootCoverAndroidMarker(wanted: Boolean, androidGate: Boolean): Boolean = wanted && androidGate
+
+/**
+ * compat-fix-1 (QA H1): the own-mode cover on a managed phone, kept in the device-protected marker `boot_cover_own`
+ * (the cover and the crash guard read it before the unlock): [NONE] - android mode ([bootCoverAndroidMarker]) or not
+ * ours to manage; [FACE] - the `boot_cover` switch is on (16b's breathing mark); [BARE] - the switch is off: the cover
+ * is only the boot's direct-boot-aware HOME, an inert night window ([coverInert]) for the seconds until our Home.
+ */
+enum class OwnCover { NONE, BARE, FACE }
+
+/** [OwnCover] at an apply: [managed] and [deviceOwner] as for [bootCoverWanted], [wanted] its result;
+ * [bootHomeElsewhere]: another package's HOME runs before the unlock (Android 16's Pixel launcher, 17's Settings) - then
+ * the cover would only add the system's chooser at every boot, so it stays out. */
+fun ownModeCover(managed: Boolean, deviceOwner: Boolean, androidMarker: Boolean, wanted: Boolean, bootHomeElsewhere: Boolean = false): OwnCover = when {
+    androidMarker || !managed || !deviceOwner || bootHomeElsewhere -> OwnCover.NONE
+    wanted -> OwnCover.FACE
+    else -> OwnCover.BARE
+}
+
+/** The cover stays enabled at every event ([bootCoverEnabled]'s `persistent`): android mode, or own mode on a managed
+ * phone ([ownModeCover]). */
+fun coverPersistent(androidMarker: Boolean, own: OwnCover): Boolean = androidMarker || own != OwnCover.NONE
 
 /** After the unlock the cover waits this long for our main process to take over, then hands over by itself
  * and starts our Home (never stranded; the debug build's first CE start took 12.6-31 s in the emulator runs). */
@@ -446,12 +480,15 @@ fun bootPadSilentInMs(reasks: Int): Long {
 fun bootPadGate(androidMarker: Boolean, unlocked: Boolean, inert: Boolean = false): Boolean = androidMarker && !unlocked && !inert
 
 /**
+ * compat-fix-1: [androidMarker] is any persistent cover ([coverPersistent]) - an own-mode one on a managed phone too -
+ * and [bare] the own-mode cover with the switch off ([OwnCover.BARE]): inert from the start, never the mark.
+ *
  * qa-59d-m-code M-1 (option (a)): an android-mode cover whose crash guard tripped stays enabled - the direct-boot-aware
  * HOME every boot needs - but inert: a bare night window, never showWhenLocked, never an ask, no breathing mark
  * ([bootPadGate]'s `inert`); SystemUI's own lock screen and pad are the face, and once unlocked it runs F3's wait and
  * hands over to our Home. An own-mode cover with a tripped guard finishes and disables itself as before.
  */
-fun coverInert(androidMarker: Boolean, guardTripped: Boolean): Boolean = androidMarker && guardTripped
+fun coverInert(androidMarker: Boolean, guardTripped: Boolean, bare: Boolean = false): Boolean = bare || (androidMarker && guardTripped)
 
 /** What the cover's pad rule hears: its lifecycle, a tap, the ask's answer, the retry's time. */
 enum class PadEvent {

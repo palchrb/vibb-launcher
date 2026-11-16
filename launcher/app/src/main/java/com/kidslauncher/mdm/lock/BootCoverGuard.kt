@@ -20,6 +20,7 @@ private const val LOG_TAG = "BootCover"
 object BootCoverGuard {
     private const val FILE = "boot_cover_state"
     private const val ANDROID_MARKER = "boot_cover_android"
+    private const val OWN_MARKER = "boot_cover_own"
     private const val TAKEN_STAMP = "boot_cover_taken"
 
     @Volatile
@@ -105,6 +106,41 @@ object BootCoverGuard {
         }
     }
 
+    /** compat-fix-1 (QA H1): the marker `boot_cover_own` - [OwnCover] as the last apply left it, its name the content
+     * (absent = NONE). Unreadable = NONE (the 16b rules). */
+    private fun ownMarker(context: Context) = File(context.createDeviceProtectedStorageContext().filesDir, OWN_MARKER)
+
+    fun ownCover(context: Context): OwnCover = try {
+        val marker = ownMarker(context)
+        if (!marker.exists()) OwnCover.NONE else OwnCover.entries.firstOrNull { it.name == marker.readText(Charsets.UTF_8).trim() } ?: OwnCover.NONE
+    } catch (e: Exception) {
+        OwnCover.NONE
+    }
+
+    /** Main process, every apply (background thread). Written to a temp file and renamed over the marker. Never throws. */
+    fun setOwnCover(context: Context, own: OwnCover) {
+        try {
+            if (ownCover(context) == own) return
+            val marker = ownMarker(context)
+            if (own == OwnCover.NONE) {
+                marker.delete()
+            } else {
+                val temp = File(marker.parentFile, "$OWN_MARKER.tmp")
+                java.io.FileOutputStream(temp).use { out ->
+                    out.write(own.name.toByteArray(Charsets.UTF_8))
+                    out.fd.sync()
+                }
+                if (!temp.renameTo(marker)) throw java.io.IOException("rename")
+            }
+            Log.i(LOG_TAG, "Boot cover own mode: $own")
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't write the boot cover's own mode: ${e.javaClass.simpleName}")
+        }
+    }
+
+    /** The cover stays enabled at every event ([coverPersistent]): android mode or [ownCover]. */
+    fun persistent(context: Context): Boolean = coverPersistent(androidMode(context), ownCover(context))
+
     /** Design 59d step M: the main process's take-over stamp `boot_cover_taken` (device-protected, the boot count it was
      * written in) - in android mode the cover stays enabled, so it reads the take-over here ([coverTakenOver]). */
     private fun takenStamp(context: Context) = File(context.createDeviceProtectedStorageContext().filesDir, TAKEN_STAMP)
@@ -124,7 +160,7 @@ object BootCoverGuard {
             }
             if (!temp.renameTo(stamp)) throw java.io.IOException("rename")
             val readBack = coverTakenOver(readTakenStamp(context), boot)
-            Log.i(LOG_TAG, "Boot cover taken over (android mode, boot $boot${if (readBack) "" else ", not read back"})")
+            Log.i(LOG_TAG, "Boot cover taken over (boot $boot${if (readBack) "" else ", not read back"})")
             readBack
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Couldn't write the boot cover's take-over stamp: ${e.javaClass.simpleName}")
@@ -165,8 +201,9 @@ object BootCoverGuard {
                     com.kidslauncher.mdm.BuildConfig.VERSION_NAME,
                 )
                 write(app, next)
-                // M-1: android mode keeps the cover enabled (the boot's only direct-boot-aware HOME), inert from now on.
-                val keep = bootCoverEnabled(CoverEvent.CRASH_GUARD, wanted = true, guardTripped = true, androidMode = androidMode(app))
+                // M-1: android mode keeps the cover enabled (the boot's only direct-boot-aware HOME), inert from now on;
+                // compat-fix-1: so does own mode on a managed phone.
+                val keep = bootCoverEnabled(CoverEvent.CRASH_GUARD, wanted = true, guardTripped = true, androidMode = androidMode(app), persistent = persistent(app))
                 if (coverGuardTripped(next) && keep == false) disable(app, "crash guard (${next.crashes} crashes this boot)")
             } catch (t: Throwable) {
                 // Never in the way of the crash itself.

@@ -62,6 +62,20 @@ object HomePin {
         null
     }
 
+    /** compat-fix-1: android mode ended - our PPAs are cleared and added back without the cover's, so own mode's cover
+     * (enabled, no PPA) never competes with HomeActivity. Not counted against [HOME_PIN_MAX_RESEATS]. Never throws. */
+    fun dropCoverPin(context: Context) {
+        val app = context.applicationContext
+        try {
+            synchronized(lock) {
+                val ran = asOwner(app) { dpm, admin -> AppEnforcer.reseatPreferredActivities(app, dpm, admin) }
+                Log.i(LOG_TAG, "The cover's PPA dropped (android mode off)${if (ran) "" else ": skipped"}")
+            }
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Dropping the cover's PPA failed: ${e.javaClass.simpleName}")
+        }
+    }
+
     /** The check (and re-seat when due). [log]: the resolution is logged even when it is HomeActivity (the take-over). */
     fun check(context: Context, why: String, log: Boolean = false) {
         val app = context.applicationContext

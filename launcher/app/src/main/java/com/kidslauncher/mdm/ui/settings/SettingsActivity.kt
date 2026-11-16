@@ -173,6 +173,11 @@ class SettingsActivity : UIObjectActivity() {
         // open device settings (see https://stackoverflow.com/a/62092663/12787264)
         binding.settingsSystem.setOnClickListener {
             try {
+                // compat-fix-1 (QA L4): Android 17 can't hide or suspend its Settings - the plan decides, as for the rows.
+                val target = packageManager.resolveActivity(Intent(Settings.ACTION_SETTINGS), 0)?.activityInfo?.packageName
+                if (target != null && com.kidslauncher.mdm.server.PlatformRefusals.plannedOff(this, target)) {
+                    throw ActivityNotFoundException("planned off")
+                }
                 startActivity(Intent(Settings.ACTION_SETTINGS))
             } catch (_: ActivityNotFoundException) {
                 // The system Settings app is suspended/hidden when it's not in the KidMode

@@ -95,7 +95,10 @@ android {
     }
 
     lint {
-        abortOnError = false
+        // compat-fix-1 (2026-11-16): a new lint error fails the build; the errors of that day are in the baseline,
+        // which never holds a NewApi (BuildChainTest) - an API above minSdk is gated, never baselined.
+        abortOnError = true
+        baseline = file("lint-baseline.xml")
     }
 
     testOptions {

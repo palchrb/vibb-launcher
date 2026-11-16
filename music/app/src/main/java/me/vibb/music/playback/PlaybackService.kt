@@ -1,7 +1,11 @@
 package me.vibb.music.playback
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.AudioDeviceCallback
@@ -65,6 +69,17 @@ import me.vibb.music.data.ShuffleRow
 import me.vibb.music.data.Snapshot
 import me.vibb.music.data.Store
 import me.vibb.music.logic.CallAction
+import me.vibb.music.logic.ForegroundHold
+import me.vibb.music.logic.HOLD_CHECK_MS
+import me.vibb.music.logic.HoldShown
+import me.vibb.music.logic.HoldVerdict
+import me.vibb.music.logic.ResumptionRefused
+import me.vibb.music.logic.Unresumable
+import me.vibb.music.logic.holdPressedAgain
+import me.vibb.music.logic.holdResumptionAsked
+import me.vibb.music.logic.holdResumptionSettled
+import me.vibb.music.logic.holdStarted
+import me.vibb.music.logic.holdVerdict
 import me.vibb.music.logic.CallPause
 import me.vibb.music.logic.ItemPosition
 import me.vibb.music.logic.ItemRef
@@ -436,6 +451,125 @@ class PlaybackService : MediaSessionService() {
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session
 
+    // --- the media button's foreground hold (compat-fix-1; logic/ForegroundHold.kt) ---
+
+    /** Set while the service holds the foreground for a media button press; null otherwise. Main thread only. */
+    private var hold: ForegroundHold? = null
+    private val holdCheck = Runnable { checkHold() }
+
+    /**
+     * A media button (`KidMediaButtonReceiver`'s foreground start, or Media3's own notification buttons) while not in the
+     * foreground: into the foreground at once - Media3's notification if it is up, else a silent placeholder in its
+     * place - so no path can miss Android's deadline; [checkHold] lets go.
+     */
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == Intent.ACTION_MEDIA_BUTTON) holdForeground()
+        return super.onStartCommand(intent, flags, startId)
+    }
+
+    private fun holdForeground() {
+        val now = SystemClock.elapsedRealtime()
+        val current = hold
+        // Already in the foreground (0: not; the NONE constant is deprecated): this start is answered.
+        val inForeground = foregroundServiceType != 0
+        // QA L2: a second press during the hold after Media3 left the foreground is a start to answer too.
+        if (!inForeground && !enterForeground()) return
+        hold = if (current != null) holdPressedAgain(current, now) else if (inForeground) return else holdStarted(now)
+        lookAtHold(HOLD_CHECK_MS)
+    }
+
+    /** Into the foreground with Media3's notification if it is up, else the placeholder. False when Android refuses (a
+     * plain start from the background: nothing is owed; anything else is logged, QA L3). */
+    private fun enterForeground(): Boolean = try {
+        startForeground(MEDIA_NOTIFICATION_ID, mediaNotificationUp() ?: holdPlaceholder(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+        true
+    } catch (e: Exception) {
+        if (e !is android.app.ForegroundServiceStartNotAllowedException) Log.w(TAG, "No foreground hold: ${e.javaClass.simpleName}")
+        false
+    }
+
+    /** A resumption asked during the hold: counted, and heard when [future] settles. */
+    private fun holdOn(future: ListenableFuture<MediaSession.MediaItemsWithStartPosition>) {
+        val current = hold ?: return
+        hold = holdResumptionAsked(current)
+        future.addListener({ resumptionSettled(future) }, mainExecutor)
+    }
+
+    /** A resumption the hold counted settled: [future] failed with a [ResumptionRefused], or gave items. */
+    private fun resumptionSettled(future: ListenableFuture<MediaSession.MediaItemsWithStartPosition>) {
+        val current = hold ?: return
+        val refused = try {
+            future.get()
+            null
+        } catch (e: Exception) {
+            ((e as? java.util.concurrent.ExecutionException)?.cause as? ResumptionRefused)?.why ?: Unresumable.NOTHING
+        }
+        hold = holdResumptionSettled(current, refused, SystemClock.elapsedRealtime())
+        lookAtHold(0)
+    }
+
+    private fun lookAtHold(delayMs: Long) {
+        handler.removeCallbacks(holdCheck)
+        handler.postDelayed(holdCheck, delayMs)
+    }
+
+    private fun checkHold() {
+        val verdict = holdVerdict(hold, holdShown(), playingNow(), SystemClock.elapsedRealtime())
+        if (verdict != HoldVerdict.WAIT) hold = null
+        when (verdict) {
+            HoldVerdict.WAIT -> lookAtHold(HOLD_CHECK_MS)
+            HoldVerdict.DONE -> Unit
+            HoldVerdict.RELEASE_DETACH -> stopForeground(STOP_FOREGROUND_DETACH)
+            HoldVerdict.RELEASE_STOP -> {
+                // QA L3: a placeholder Media3 detached first is no longer the foreground one - cancelled by its id.
+                val placeholder = holdShown() == HoldShown.PLACEHOLDER
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                if (placeholder) getSystemService(NotificationManager::class.java)?.cancel(MEDIA_NOTIFICATION_ID)
+                stopSelf()
+            }
+        }
+    }
+
+    /** The player plays, or buffers to play. */
+    private fun playingNow(): Boolean {
+        val p = session?.player ?: return false
+        return p.playWhenReady && (p.playbackState == Player.STATE_BUFFERING || p.playbackState == Player.STATE_READY)
+    }
+
+    private fun activeMediaNotification(): android.service.notification.StatusBarNotification? = try {
+        getSystemService(NotificationManager::class.java)?.activeNotifications?.firstOrNull { it.id == MEDIA_NOTIFICATION_ID }
+    } catch (e: Exception) {
+        null
+    }
+
+    /** Media3's notification when it is up now (not the hold's placeholder). */
+    private fun mediaNotificationUp(): Notification? =
+        activeMediaNotification()?.notification?.takeUnless { it.extras.getBoolean(EXTRA_HOLD_PLACEHOLDER) }
+
+    private fun holdShown(): HoldShown {
+        val n = activeMediaNotification()?.notification ?: return HoldShown.NONE
+        return if (n.extras.getBoolean(EXTRA_HOLD_PLACEHOLDER)) HoldShown.PLACEHOLDER else HoldShown.MEDIA
+    }
+
+    /** The hold's placeholder: Media3's channel and id (its own notification replaces it), silent, off the lock screen. */
+    private fun holdPlaceholder(): Notification {
+        val nm = getSystemService(NotificationManager::class.java)
+        if (nm.getNotificationChannel(MEDIA_CHANNEL_ID) == null) {
+            nm.createNotificationChannel(
+                NotificationChannel(MEDIA_CHANNEL_ID, getString(androidx.media3.session.R.string.default_notification_channel_name), NotificationManager.IMPORTANCE_LOW),
+            )
+        }
+        return Notification.Builder(this, MEDIA_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_stat_vibb_music)
+            .setContentTitle(getString(R.string.app_name))
+            .setVisibility(Notification.VISIBILITY_SECRET)
+            .setCategory(Notification.CATEGORY_TRANSPORT)
+            .setOnlyAlertOnce(true)
+            .setShowWhen(false)
+            .addExtras(Bundle().apply { putBoolean(EXTRA_HOLD_PLACEHOLDER, true) })
+            .build()
+    }
+
     /**
      * The task swiped away: the place is saved; Media3 then pauses every player and stops the service
      * unless one plays (a playing Sonos room plays on, as the phone does), and [onDestroy] does the
@@ -727,12 +861,15 @@ class PlaybackService : MediaSessionService() {
             if (mayChangeItems(controller.packageName, packageName)) super.onSetMediaItems(mediaSession, controller, mediaItems, startIndex, startPositionMs)
             else Futures.immediateFailedFuture(UnsupportedOperationException("media items from another app"))
 
-        /** A play button with nothing loaded (Bluetooth after a restart): the stored queue, at its place. */
+        /**
+         * A play button with nothing loaded (Bluetooth after a restart): the stored queue, at its place. Every refusal is a
+         * [ResumptionRefused]; the media button's foreground hold hears how it settled (compat-fix-1).
+         */
         override fun onPlaybackResumption(
             mediaSession: MediaSession,
             controller: MediaSession.ControllerInfo,
         ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
-            if (!playAllowed(suspendedNow())) return Futures.immediateFailedFuture(UnsupportedOperationException("suspended"))
+            if (!playAllowed(suspendedNow())) return Futures.immediateFailedFuture<MediaSession.MediaItemsWithStartPosition>(ResumptionRefused(Unresumable.SUSPENDED)).also { holdOn(it) }
             val future = SettableFuture.create<MediaSession.MediaItemsWithStartPosition>()
             scope.launch {
                 rendererReady.await()
@@ -743,24 +880,24 @@ class PlaybackService : MediaSessionService() {
                         // holds, else the stored one, gated (playAllowed above; the controller's mayPlay before
                         // anything is sent) - and hands the session no local items.
                         resumeLast()
-                        future.setException(UnsupportedOperationException("playing on the Sonos room"))
+                        future.setException(ResumptionRefused(Unresumable.ON_ROOM))
                         return@launch
                     }
                     val restored = restore()
                     if (restored == Restored.NotOnPhone) {
                         // the kid's book isn't on the phone (design 26b §5.6, qa-26b-step4b-code M1): "Ikke lastet
                         // ned", nothing starts, the stored queue stays resumable
-                        future.setException(UnsupportedOperationException("not on the phone"))
+                        future.setException(ResumptionRefused(Unresumable.NOT_ON_PHONE))
                     } else if (restored !is Restored.Queue) {
                         Resumable.set(this@PlaybackService, false)
-                        future.setException(UnsupportedOperationException("nothing to resume"))
+                        future.setException(ResumptionRefused(Unresumable.NOTHING))
                     } else if (isSpotify(restored.active.entry)) {
                         // Design 26c §5.10 (QA H2): a stored Spotify queue takes the room's shape - the web player
                         // attached and the stored queue started through start (gated: playAllowed above, the
                         // renderer's own belt and the network gate), the session handed no local items
                         val (a, index, pos) = restored
                         start(a, QueuePlan(a.items.map { it.key }, index, pos))
-                        future.setException(UnsupportedOperationException("playing on Spotify"))
+                        future.setException(ResumptionRefused(Unresumable.ON_SPOTIFY))
                     } else {
                         val (a, index, pos) = restored
                         // the phone's own player takes Media3's items (never Spotify's web player)
@@ -777,7 +914,7 @@ class PlaybackService : MediaSessionService() {
                     }
                 }
             }
-            return future
+            return future.also { holdOn(it) }
         }
     }
 
@@ -3037,5 +3174,16 @@ class PlaybackService : MediaSessionService() {
 
         /** The web player's debug log (design 26c §7.1; a debug build only). */
         const val SPOTIFY_LOG_TAG = "VibbSpotify"
+
+        /** Media3's notification id and channel: the media button's hold puts its placeholder there (compat-fix-1). */
+        const val MEDIA_NOTIFICATION_ID = DefaultMediaNotificationProvider.DEFAULT_NOTIFICATION_ID
+        const val MEDIA_CHANNEL_ID = DefaultMediaNotificationProvider.DEFAULT_CHANNEL_ID
+
+        /** The media button hold's one log line: a foreground start Android refused for another reason than the
+         * background (a broken manifest, a wrong type - QA L3). */
+        const val TAG = "VibbPlayback"
+
+        /** Marks the hold's placeholder, so the hold knows it from Media3's notification. */
+        const val EXTRA_HOLD_PLACEHOLDER = "me.vibb.music.HOLD_PLACEHOLDER"
     }
 }

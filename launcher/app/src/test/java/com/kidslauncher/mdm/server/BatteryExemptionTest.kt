@@ -20,6 +20,8 @@ class BatteryExemptionTest {
         assertNull(dialogTarget(settings.copy(system = false), own))
         // Ours, even if it were a system app.
         assertNull(dialogTarget(settings.copy(packageName = own), own))
+        // Android 17: Settings visible and unsuspended, but the plan wants it off (compat-fix-1) - lock task would refuse it.
+        assertNull(dialogTarget(settings.copy(plannedOff = true), own))
     }
 
     @Test

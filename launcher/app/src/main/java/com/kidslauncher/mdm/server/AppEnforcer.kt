@@ -297,6 +297,12 @@ object AppEnforcer {
     var lastPlanSuspend: Set<String>? = null
         private set
 
+    /** The packages the last [apply] in this process wanted hidden (`null` = none ran yet): with [lastPlanSuspend] what
+     * Home, the drawer and the system-page rows leave out, whatever the platform did ([PlatformRefusals]). */
+    @Volatile
+    var lastPlanHide: Set<String>? = null
+        private set
+
     /** The last [apply] set its permitted accessibility and keyboard lists (design 24b §1.5): AOSP
      * refuses a list that leaves out an enabled non-system service, and the last list stays. */
     @Volatile
@@ -490,6 +496,11 @@ object AppEnforcer {
         applySmsPermissions(context, dpm, admin, smsPermissionsDenied(smsMode), requested)
 
         lastPlanSuspend = plan.suspend
+        lastPlanHide = plan.hide
+        PlatformRefusals.storePlan(context, plan.suspend, plan.hide)
+        // What the platform refused on this boot because the package is exempt (Android 17's Settings): not asked again
+        // while it still is (QA L1).
+        val refused = PlatformRefusals.stillExempt(context, PlatformRefusals.now(context))
         // Every app's playing sessions, read at most once per pass and only once a package is about to be suspended
         // (2026-11-04: each is paused before its suspension; without listener access none).
         val playingSessions by lazy { com.kidslauncher.mdm.music.MusicSessions.playingSessions(context) }
@@ -512,7 +523,10 @@ object AppEnforcer {
             // policy applied before an exemption, the lock ending), e.g. the system dialer left
             // hidden must be released outright.
             val currentlyHidden = isHidden(dpm, admin, packageName)
-            if (shouldBeSuspended == currentlySuspended && shouldBeHidden == currentlyHidden) continue
+            // A restriction the platform refused as exempt on this boot and build isn't asked for again (compat-fix-1).
+            val suspendCall = restrictCallDue(shouldBeSuspended, currentlySuspended, packageName, refused.suspend)
+            val hideCall = restrictCallDue(shouldBeHidden, currentlyHidden, packageName, refused.hide)
+            if (!suspendCall && !hideCall) continue
             // The system's callbacks about this package after the pass are its trail (`AppLoadHold`: 3 s quiet / 30 s).
             com.kidslauncher.mdm.ui.home.AppLoadHold.touch(packageName)
 
@@ -524,14 +538,15 @@ object AppEnforcer {
                 // that failure mode invisible - confirmed live with a carrier-privileged /product-
                 // partition system app that stayed reachable despite being correctly excluded
                 // from the allowlist, with nothing in logs to explain why.
-                if (shouldBeSuspended != currentlySuspended) {
+                if (suspendCall) {
                     // A playing session is paused first (design 21 §3; every app's since 2026-11-04).
                     val toPause = if (shouldBeSuspended && !currentlySuspended) playingSessions else emptyMap()
                     com.kidslauncher.mdm.music.MusicSessions.pauseBeforeSuspend(
                         com.kidslauncher.mdm.music.sessionsToPause(packageName, shouldBeSuspended, currentlySuspended, toPause),
                     )
                     val notSuspended = dpm.setPackagesSuspended(admin, arrayOf(packageName), shouldBeSuspended)
-                    if (!notSuspended.isNullOrEmpty()) {
+                    // An exempt package's refusal is recorded and logged once by PlatformRefusals instead.
+                    if (!notSuspended.isNullOrEmpty() && !(shouldBeSuspended && PlatformRefusals.refused(context, packageName, PlatformRefusals.Call.SUSPEND))) {
                         Log.w(LOG_TAG, "Platform refused to ${if (shouldBeSuspended) "suspend" else "unsuspend"} $packageName (setPackagesSuspended)")
                     }
                     // The Play Store is the package verifier on GMS phones and can't be suspended
@@ -540,9 +555,9 @@ object AppEnforcer {
                         PlayRuntime.recordStoreSuspendable(context, notSuspended.isNullOrEmpty())
                     }
                 }
-                if (shouldBeHidden != currentlyHidden) {
+                if (hideCall) {
                     val hiddenOk = dpm.setApplicationHidden(admin, packageName, shouldBeHidden)
-                    if (!hiddenOk) {
+                    if (!hiddenOk && !(shouldBeHidden && PlatformRefusals.refused(context, packageName, PlatformRefusals.Call.HIDE))) {
                         Log.w(LOG_TAG, "Platform refused to ${if (shouldBeHidden) "hide" else "unhide"} $packageName (setApplicationHidden)")
                     }
                 }

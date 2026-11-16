@@ -1,5 +1,6 @@
 package me.vibb.music
 
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -23,5 +24,16 @@ class BuildChainTest {
         val metadata = project("gradle/verification-metadata.xml").readText()
         assertTrue("<verify-metadata>true</verify-metadata>" in metadata)
         assertTrue("CI's aapt2 (x86_64 Linux) is listed", "aapt2-8.13.0-13719691-linux.jar" in metadata)
+    }
+
+    /** compat-fix-1: lint fails the build on a new error; the baseline holds that day's errors, never a NewApi. */
+    @Test
+    fun `lint fails on new errors and never baselines NewApi`() {
+        val lint = project("app/build.gradle.kts").readText().substringAfter("    lint {").substringBefore("    }")
+        assertTrue("abortOnError = true" in lint)
+        assertTrue("baseline = file(\"lint-baseline.xml\")" in lint)
+        val baseline = project("app/lint-baseline.xml").readText()
+        assertTrue("<issues" in baseline)
+        assertFalse("NewApi is never baselined", "id=\"NewApi\"" in baseline)
     }
 }

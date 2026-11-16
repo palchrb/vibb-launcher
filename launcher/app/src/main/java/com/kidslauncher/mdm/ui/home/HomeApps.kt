@@ -12,7 +12,8 @@ import com.kidslauncher.mdm.play.playPackageOnHome
  * The apps on Home's grid ([AppSetVisibility.HIDDEN], the default) - or, with [AppSetVisibility.EXCLUSIVE], the apps
  * the kid hid with Home's long-press "Skjul" that the grid would otherwise show (Kid Settings' "Skjulte apper", the
  * user 2026-11-03). One filter for both, so the kid's list never holds an app Home wouldn't show: [AppFilter] (allowed
- * and not suspended, listable, not kept off Home by the parent's `app_display.on_home: false` outside a window), never
+ * and not suspended, nothing the enforcement plan wants hidden or suspended even when Android refused it - Android 17's
+ * Settings, compat-fix-1 -, listable, not kept off Home by the parent's `app_display.on_home: false` outside a window), never
  * Vibb One itself, and the Play Store only in install mode - the drawer lists it in a parent-PIN window too, Home's
  * grid doesn't (design 28; unreadable = not in install mode). Sorted by the name the kid sees. **Off the main thread**:
  * [AppFilter] asks the package manager about every app.

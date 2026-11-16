@@ -1,0 +1,180 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<issues format="6" by="lint 8.13.0" type="baseline" client="gradle" dependencies="false" name="AGP (8.13.0)" variant="all" version="8.13.0">
+
+    <issue
+        id="UnsafeOptInUsageError"
+        message="This declaration is opt-in and its usage should be marked with `@androidx.media3.common.util.UnstableApi` or `@OptIn(markerClass = androidx.media3.common.util.UnstableApi.class)`"
+        errorLine1="    base.buildUpon().removeAll(Player.COMMAND_SET_MEDIA_ITEM, Player.COMMAND_CHANGE_MEDIA_ITEMS).build()"
+        errorLine2="         ~~~~~~~~~">
+        <location
+            file="src/main/java/me/vibb/music/playback/KidCommands.kt"
+            line="25"
+            column="10"/>
+    </issue>
+
+    <issue
+        id="UnsafeOptInUsageError"
+        message="This declaration is opt-in and its usage should be marked with `@androidx.media3.common.util.UnstableApi` or `@OptIn(markerClass = androidx.media3.common.util.UnstableApi.class)`"
+        errorLine1="    base.buildUpon().removeAll(Player.COMMAND_SET_MEDIA_ITEM, Player.COMMAND_CHANGE_MEDIA_ITEMS).build()"
+        errorLine2="                     ~~~~~~~~~">
+        <location
+            file="src/main/java/me/vibb/music/playback/KidCommands.kt"
+            line="25"
+            column="22"/>
+    </issue>
+
+    <issue
+        id="UnsafeOptInUsageError"
+        message="This declaration is opt-in and its usage should be marked with `@androidx.media3.common.util.UnstableApi` or `@OptIn(markerClass = androidx.media3.common.util.UnstableApi.class)`"
+        errorLine1="    base.buildUpon().removeAll(Player.COMMAND_SET_MEDIA_ITEM, Player.COMMAND_CHANGE_MEDIA_ITEMS).build()"
+        errorLine2="                                                                                                 ~~~~~">
+        <location
+            file="src/main/java/me/vibb/music/playback/KidCommands.kt"
+            line="25"
+            column="98"/>
+    </issue>
+
+    <issue
+        id="UnsafeOptInUsageError"
+        message="This declaration is opt-in and its usage should be marked with `@androidx.media3.common.util.UnstableApi` or `@OptIn(markerClass = androidx.media3.common.util.UnstableApi.class)`"
+        errorLine1="    @Override public void onLoadingChanged(boolean isLoading) { inner.onLoadingChanged(isLoading); }"
+        errorLine2="                          ~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/me/vibb/music/playback/KidCommandsListener.java"
+            line="59"
+            column="27"/>
+    </issue>
+
+    <issue
+        id="UnsafeOptInUsageError"
+        message="This declaration is opt-in and its usage should be marked with `@androidx.media3.common.util.UnstableApi` or `@OptIn(markerClass = androidx.media3.common.util.UnstableApi.class)`"
+        errorLine1="    @Override public void onLoadingChanged(boolean isLoading) { inner.onLoadingChanged(isLoading); }"
+        errorLine2="                                                                      ~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/me/vibb/music/playback/KidCommandsListener.java"
+            line="59"
+            column="71"/>
+    </issue>
+
+    <issue
+        id="UnsafeOptInUsageError"
+        message="This declaration is opt-in and its usage should be marked with `@androidx.media3.common.util.UnstableApi` or `@OptIn(markerClass = androidx.media3.common.util.UnstableApi.class)`"
+        errorLine1="    @Override public void onPlayerStateChanged(boolean playWhenReady, int playbackState) { inner.onPlayerStateChanged(playWhenReady, playbackState); }"
+        errorLine2="                          ~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/me/vibb/music/playback/KidCommandsListener.java"
+            line="61"
+            column="27"/>
+    </issue>
+
+    <issue
+        id="UnsafeOptInUsageError"
+        message="This declaration is opt-in and its usage should be marked with `@androidx.media3.common.util.UnstableApi` or `@OptIn(markerClass = androidx.media3.common.util.UnstableApi.class)`"
+        errorLine1="    @Override public void onPlayerStateChanged(boolean playWhenReady, int playbackState) { inner.onPlayerStateChanged(playWhenReady, playbackState); }"
+        errorLine2="                                                                                                 ~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/me/vibb/music/playback/KidCommandsListener.java"
+            line="61"
+            column="98"/>
+    </issue>
+
+    <issue
+        id="UnsafeOptInUsageError"
+        message="This declaration is opt-in and its usage should be marked with `@androidx.media3.common.util.UnstableApi` or `@OptIn(markerClass = androidx.media3.common.util.UnstableApi.class)`"
+        errorLine1="    @Override public void onPositionDiscontinuity(int reason) { inner.onPositionDiscontinuity(reason); }"
+        errorLine2="                          ~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/me/vibb/music/playback/KidCommandsListener.java"
+            line="70"
+            column="27"/>
+    </issue>
+
+    <issue
+        id="UnsafeOptInUsageError"
+        message="This declaration is opt-in and its usage should be marked with `@androidx.media3.common.util.UnstableApi` or `@OptIn(markerClass = androidx.media3.common.util.UnstableApi.class)`"
+        errorLine1="    @Override public void onPositionDiscontinuity(int reason) { inner.onPositionDiscontinuity(reason); }"
+        errorLine2="                                                                      ~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/me/vibb/music/playback/KidCommandsListener.java"
+            line="70"
+            column="71"/>
+    </issue>
+
+    <issue
+        id="UnsafeOptInUsageError"
+        message="This declaration is opt-in and its usage should be marked with `@androidx.media3.common.util.UnstableApi` or `@OptIn(markerClass = androidx.media3.common.util.UnstableApi.class)`"
+        errorLine1="    @Override public void onAudioSessionIdChanged(int audioSessionId) { inner.onAudioSessionIdChanged(audioSessionId); }"
+        errorLine2="                          ~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/me/vibb/music/playback/KidCommandsListener.java"
+            line="81"
+            column="27"/>
+    </issue>
+
+    <issue
+        id="UnsafeOptInUsageError"
+        message="This declaration is opt-in and its usage should be marked with `@androidx.media3.common.util.UnstableApi` or `@OptIn(markerClass = androidx.media3.common.util.UnstableApi.class)`"
+        errorLine1="    @Override public void onAudioSessionIdChanged(int audioSessionId) { inner.onAudioSessionIdChanged(audioSessionId); }"
+        errorLine2="                                                                              ~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/me/vibb/music/playback/KidCommandsListener.java"
+            line="81"
+            column="79"/>
+    </issue>
+
+    <issue
+        id="UnsafeOptInUsageError"
+        message="This declaration is opt-in and its usage should be marked with `@androidx.media3.common.util.UnstableApi` or `@OptIn(markerClass = androidx.media3.common.util.UnstableApi.class)`"
+        errorLine1="    @Override public void onCues(@NonNull List&lt;Cue> cues) { inner.onCues(cues); }"
+        errorLine2="                          ~~~~~~">
+        <location
+            file="src/main/java/me/vibb/music/playback/KidCommandsListener.java"
+            line="90"
+            column="27"/>
+    </issue>
+
+    <issue
+        id="UnsafeOptInUsageError"
+        message="This declaration is opt-in and its usage should be marked with `@androidx.media3.common.util.UnstableApi` or `@OptIn(markerClass = androidx.media3.common.util.UnstableApi.class)`"
+        errorLine1="    @Override public void onCues(@NonNull List&lt;Cue> cues) { inner.onCues(cues); }"
+        errorLine2="                                                                  ~~~~~~">
+        <location
+            file="src/main/java/me/vibb/music/playback/KidCommandsListener.java"
+            line="90"
+            column="67"/>
+    </issue>
+
+    <issue
+        id="UnsafeOptInUsageError"
+        message="This declaration is opt-in and its usage should be marked with `@androidx.media3.common.util.UnstableApi` or `@OptIn(markerClass = androidx.media3.common.util.UnstableApi.class)`"
+        errorLine1="    @Override public void onMetadata(@NonNull Metadata metadata) { inner.onMetadata(metadata); }"
+        errorLine2="                          ~~~~~~~~~~">
+        <location
+            file="src/main/java/me/vibb/music/playback/KidCommandsListener.java"
+            line="92"
+            column="27"/>
+    </issue>
+
+    <issue
+        id="UnsafeOptInUsageError"
+        message="This declaration is opt-in and its usage should be marked with `@androidx.media3.common.util.UnstableApi` or `@OptIn(markerClass = androidx.media3.common.util.UnstableApi.class)`"
+        errorLine1="    @Override public void onMetadata(@NonNull Metadata metadata) { inner.onMetadata(metadata); }"
+        errorLine2="                                              ~~~~~~~~">
+        <location
+            file="src/main/java/me/vibb/music/playback/KidCommandsListener.java"
+            line="92"
+            column="47"/>
+    </issue>
+
+    <issue
+        id="UnsafeOptInUsageError"
+        message="This declaration is opt-in and its usage should be marked with `@androidx.media3.common.util.UnstableApi` or `@OptIn(markerClass = androidx.media3.common.util.UnstableApi.class)`"
+        errorLine1="    @Override public void onMetadata(@NonNull Metadata metadata) { inner.onMetadata(metadata); }"
+        errorLine2="                                                                         ~~~~~~~~~~">
+        <location
+            file="src/main/java/me/vibb/music/playback/KidCommandsListener.java"
+            line="92"
+            column="74"/>
+    </issue>
+
+</issues>

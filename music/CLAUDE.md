@@ -37,7 +37,9 @@ Kotlin, one Gradle module (`app/`), the launcher's AGP 8.13 / Kotlin 2.1.20, min
 - `media/` - the one `SimpleCache` (no evictor; item keys, an HLS key factory), the guarded OkHttp clients, and design
   30's wrappers: `ThroughSink` (the player's cache sink), `StreamGate` (the player's upstream asks the streaming
   switch), `LengthGuard` (a changed source at a resume is a synthetic 416).
-- `playback/` - `PlaybackService` (MediaSessionService; FGS only from a tap or a media command; its notification
+- `playback/` - `PlaybackService` (MediaSessionService; FGS only from a tap or a media command - a media button
+  puts it in the foreground at once and it lets go by `logic/ForegroundHold.kt`: Media3's notification once it plays,
+  else silent and stopped, compat-fix-1; every resumption refusal is a `ResumptionRefused`; its notification
   through `SecretMediaNotification` - Media3's default provider's notification made `VISIBILITY_SECRET`, also the one
   the artwork's callback hands back, so a secure lock screen shows none of it; 2026-11-04, the launcher's lock tile
   reads the session; not device-checked), `PlayerHub` (the

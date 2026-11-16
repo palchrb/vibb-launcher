@@ -86,13 +86,31 @@ object BootCover {
             BootCoverGuard.clear(app)
         }
         // F3: the device-protected marker the cover and the locked boot read (no CE before the PIN).
-        BootCoverGuard.setAndroidMode(app, bootCoverAndroidMarker(wanted, androidGate))
-        // Step M: android mode enables it at every apply (a tripped guard too: inert, M-1); own mode leaves it (the
-        // shutdown arms it). Enabled before its PPA is added (M-5): a policy-engine purge for an earlier disable can't
+        val androidMarker = bootCoverAndroidMarker(wanted, androidGate)
+        val androidWas = BootCoverGuard.androidMode(app)
+        BootCoverGuard.setAndroidMode(app, androidMarker)
+        // compat-fix-1 (QA H1): own mode on a managed phone keeps the cover as the boot's direct-boot-aware HOME when
+        // nothing else can be - our plan hides Settings' FallbackHome, and a stock launcher that can't run before the
+        // unlock left no HOME (Android 14's image: every boot hung). With another one there (Android 16's Pixel
+        // launcher, 17's unhidable Settings) the cover stays out: two before the unlock is the system's chooser.
+        val elsewhere = directBootHomeElsewhere(app)
+        val own = ownModeCover(managed, deviceOwner = true, androidMarker, wanted, bootHomeElsewhere = elsewhere != null)
+        val ownWas = BootCoverGuard.ownCover(app)
+        if (own != ownWas) Log.i(LOG_TAG, "Boot cover own mode $own: before the unlock HOME ${elsewhere?.let { "also resolves to $it" } ?: "has only the cover"}")
+        BootCoverGuard.setOwnCover(app, own)
+        val persistent = coverPersistent(androidMarker, own)
+        // Step M: a persistent cover is enabled at every apply (a tripped guard too: inert, M-1); else the switch's
+        // own mode leaves it. Enabled before its PPA is added (M-5): a policy-engine purge for an earlier disable can't
         // then drop the PPA just added.
         val tripped = coverGuardTripped(BootCoverGuard.read(app))
-        setEnabled(app, bootCoverEnabled(CoverEvent.POLICY, wanted, tripped, androidMode = bootCoverAndroidMarker(wanted, androidGate)), "policy")
-        if (wanted) HomePin.locked { addCoverPin(app, dpm, admin) }
+        // A persistent own-mode cover that is no longer needed goes (else an apply leaves the 16b cover as it is).
+        val enabled = if (ownWas != OwnCover.NONE && !persistent) false else bootCoverEnabled(CoverEvent.POLICY, wanted, tripped, androidMode = androidMarker, persistent = persistent)
+        setEnabled(app, enabled, "policy")
+        // Its PPA in android mode (step M, HomePin keeps HomeActivity's first) and for 16b's switch; never for the own-mode
+        // cover: two HOME PPAs of ours resolve in a per-boot order HomePin can't always win (Android 14: every Home
+        // press went through the cover), and it needs none - it is the only HOME that runs before the unlock.
+        if (androidMarker || (wanted && own == OwnCover.NONE)) HomePin.locked { addCoverPin(app, dpm, admin) }
+        if (androidWas && !androidMarker && !(wanted && own == OwnCover.NONE)) HomePin.dropCoverPin(app)
         HomePin.check(app, "policy")
     }
 
@@ -114,7 +132,25 @@ object BootCover {
     }
 
     /** [HomePin]'s re-seat: the cover's PPA again, last, while it is wanted. */
-    internal fun pinWanted(context: Context): Boolean = wanted(context.applicationContext)
+    internal fun pinWanted(context: Context): Boolean {
+        val app = context.applicationContext
+        return BootCoverGuard.androidMode(app) || (wanted(app) && BootCoverGuard.ownCover(app) == OwnCover.NONE)
+    }
+
+    /** compat-fix-1: a HOME activity of another package that runs before the unlock (direct-boot aware, enabled, not
+     * hidden, not suspended), as `package/class`; `null` when there is none - or it can't be read: then the cover is
+     * kept, the safe side (a chooser beats a boot that never ends). */
+    private fun directBootHomeElsewhere(app: Context): String? = try {
+        val pm = app.packageManager
+        pm.queryIntentActivities(
+            Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME),
+            PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_DIRECT_BOOT_AWARE.toLong()),
+        ).mapNotNull { it.activityInfo }
+            .firstOrNull { it.packageName != app.packageName && it.directBootAware && !pm.isPackageSuspended(it.packageName) }
+            ?.let { "${it.packageName}/${it.name}" }
+    } catch (e: Exception) {
+        null
+    }
 
     /** From `PinLockRuntime.init` (main thread, unlocked): the shutdown receiver, and the take-over (before the boot's Home
      * start) - at every CE start, in every mode, whatever a call does. Own mode disables a cover still enabled, so
@@ -149,10 +185,10 @@ object BootCover {
     fun takeOver(context: Context) {
         val app = context.applicationContext
         try {
-            if (BootCoverGuard.androidMode(app)) {
-                val enabled = bootCoverEnabled(CoverEvent.HANDED_OVER, wanted(app), coverGuardTripped(BootCoverGuard.read(app)), androidMode = true)
-                setEnabled(app, enabled, "take-over (android mode)")
-                if (enabled == true) HomePin.asOwner(app) { dpm, admin -> HomePin.locked { addCoverPin(app, dpm, admin) } }
+            if (BootCoverGuard.persistent(app)) {
+                val enabled = bootCoverEnabled(CoverEvent.HANDED_OVER, wanted(app), coverGuardTripped(BootCoverGuard.read(app)), androidMode = true, persistent = true)
+                setEnabled(app, enabled, "take-over (persistent)")
+                if (enabled == true && BootCoverGuard.androidMode(app)) HomePin.asOwner(app) { dpm, admin -> HomePin.locked { addCoverPin(app, dpm, admin) } }
                 HomePin.check(app, "take-over", log = true)
                 if (BootCoverGuard.markTakenOver(app)) {
                     prefs(app).edit().putLong(KEY_LAUNCHER_HANDOVER_AT, System.currentTimeMillis()).apply()
@@ -177,10 +213,10 @@ object BootCover {
     fun afterHomeResumed(context: Context) {
         val app = context.applicationContext
         try {
-            if (!BootCoverGuard.androidMode(app) || isEnabled(app)) return
-            val enabled = bootCoverEnabled(CoverEvent.HANDED_OVER, wanted(app), coverGuardTripped(BootCoverGuard.read(app)), androidMode = true)
-            setEnabled(app, enabled, "Home resumed (android mode)")
-            if (enabled == true) HomePin.asOwner(app) { dpm, admin -> HomePin.locked { addCoverPin(app, dpm, admin) } }
+            if (!BootCoverGuard.persistent(app) || isEnabled(app)) return
+            val enabled = bootCoverEnabled(CoverEvent.HANDED_OVER, wanted(app), coverGuardTripped(BootCoverGuard.read(app)), androidMode = true, persistent = true)
+            setEnabled(app, enabled, "Home resumed (persistent)")
+            if (enabled == true && BootCoverGuard.androidMode(app)) HomePin.asOwner(app) { dpm, admin -> HomePin.locked { addCoverPin(app, dpm, admin) } }
             HomePin.check(app, "cover enabled again")
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Boot cover re-enable failed: ${e.javaClass.simpleName}")
@@ -344,7 +380,10 @@ object BootCover {
         }
         shuttingDown = true
         val tripped = coverGuardTripped(BootCoverGuard.read(app))
-        val armed = bootCoverEnabled(CoverEvent.SHUTDOWN, wanted(app) && deviceOwner, tripped, androidMode = BootCoverGuard.androidMode(app))
+        val armed = bootCoverEnabled(
+            CoverEvent.SHUTDOWN, wanted(app) && deviceOwner, tripped,
+            androidMode = BootCoverGuard.androidMode(app), persistent = deviceOwner && BootCoverGuard.persistent(app),
+        )
         // SYNCHRONOUS: written before the receiver returns - an OEM shutdown path may not flush
         // pending package settings (qa-16b-code #3).
         setEnabled(app, armed, "shutdown", synchronous = true)
