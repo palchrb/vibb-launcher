@@ -65,15 +65,17 @@ Moved from music/CLAUDE.md on 2026-11-01.
   once due it never turns back), so the wordmark is seen whole and still. Whether it is owed is
   `MusicViewModel.contentShown`: a configuration change shows none, a restored task after a process death shows it again.
   The rings are still (the launcher's breathe AVD is one inhale; a loop would snap back each breath). The app icon
-  (2026-11-15, the user's own drawing `vibb-music-q7`, asked for identical): night rings on `vibb_peach`, the Vibb mark's
-  outer three rings (the launcher's `ic_launcher_foreground.xml` paths at 0.92, stroke 3.6 mark units) and a play
-  triangle with round corners, nudged right, where the inner ring and the dot were. `mipmap-anydpi-v26/ic_launcher.xml`:
+  (2026-11-16, the user's own drawing `vibb-music-e2`, after q7; asked for identical): night rings on `vibb_peach`, the
+  Vibb mark's outer three rings (the launcher's `ic_launcher_foreground.xml` paths, each at its own scale and stroke -
+  1.5333/1.4567/1.3187 and 3.600/3.789/4.186, so every ring is drawn 5.52 units wide and the spacing is even) and a play
+  triangle, about 20% larger than q7's, its round corners a 4.32 round-join stroke, nudged right where the inner ring
+  and the dot were. `mipmap-anydpi-v26/ic_launcher.xml`:
   background `@color/vibb_peach`, foreground and monochrome (themed icons) `res/drawable/ic_launcher_foreground.xml` -
-  the drawing's 60-unit canvas on the 72 dp visible area (1.2 dp a unit), the outer ring's outer edge 30.1 dp from the
+  the drawing's 100-unit canvas on the 72 dp visible area (0.72 dp a unit), the outer ring's outer edge 30.1 dp from the
   centre, inside the 66 dp safe zone. The notification small icon (the media notification, `PlaybackService`, and the
   new-episodes one, `sync/NewNotifier.kt`) is the same shape in white, `res/drawable/ic_stat_vibb_music.xml`. Both are
-  written by `scripts/music-icon.py` (`--selftest`); rendered at 1024 px the foreground matches the drawing to its
-  anti-aliasing. A failed item's
+  written by `scripts/music-icon.py` (`--selftest`); rendered at 1024 px the foreground differs from the drawing's PNG in 0.001% of its pixels
+  (anti-aliasing). A failed item's
   real cause is logged (`VibbPlayer`, `logic/PlayFailure.kt`'s `failureLine`: Media3 and `Log` hide an
   `UnknownHostException`), and a name that can't be looked up says "Trenger internett" instead of "Kan ikke spilles nå"
   (`noNetwork`, `failureMessage`; never the guard's `PrivateAddressException`). Accepted residual: a host the parent's Web
