@@ -4875,6 +4875,15 @@ after a SIGKILL (`am kill` left the process, as on 16) and Recents' card (the al
 1.3 and back; the notification's intent and a `tel:` link moved Siste to Kontakter (Pappa's sheet; "Ringe Jack?"); Back
 on Siste -> Kontakter -> Home. `compat34` stopped with `adb emu kill`; start it with `-wipe-data` next time.
 
+**After the code QA** (`jelly36` restored clean before and after, the fixes' build; the re-gate of what changed):
+- **M1, passed.** With the book left on Siste, Home in front, two callers missed (Jack, Emma): the shade's "2 tapte
+  anrop" tapped - the book on Kontakter. With the book resumed on Siste: the several-callers notification's intent (the
+  entry, `VIEW` calls, no contact) and a plain system call-log `VIEW` - each moved it to Kontakter. As in the first run,
+  the notification itself can't be in the shade while the book is resumed (the call screens end the visit and the
+  book's return clears it), hence the intents.
+- **L2, passed.** On Siste with Emma's missed row, `POST /devices/1/contacts/5/remove`: within the sync Emma's row left
+  Siste, the book stayed on Siste with the other rows.
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:
