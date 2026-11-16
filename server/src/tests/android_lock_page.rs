@@ -659,7 +659,8 @@ async fn the_child_pin_stays_while_androids_lock_is_chosen() {
     let html = page(&app, &cookie, id).await;
     assert!(!html.contains("name=\"clear_kid_pin\""), "{html}");
     assert!(html.contains(
-        "data-row=\"remove-needs-pin\">Android's lock needs a Child PIN, so it can't be removed."
+        "data-row=\"remove-needs-pin\">Android's lock needs a Child PIN. \
+         To change it, save a new one above; to remove it, choose Vibb One's lock first."
     ));
 
     let clear = |id: i64| format!("/devices/{id}/kid-lock");

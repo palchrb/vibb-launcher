@@ -3315,9 +3315,10 @@ pub async fn update_kid_lock(
 /// phone gets no keyguard word before it has a PIN), as a new phone's Android lock does. To android,
 /// the queue rule runs in the same transaction (a kept PIN migrates the phone at once; none kept,
 /// nothing queued); to own, a waiting `set_kid_pin` is cancelled (`keyguard_own`). A change is
-/// logged (`kid_keyguard_changed`) and nudges the phone. Back to its row, `/devices/{id}/lock#lock-keyguard` (scroll-restore keeps
-/// the row where it was, even with a warning coming in above the group); 400 for another value,
-/// 404 for an unknown phone, 500 with nothing written on a DB error.
+/// logged (`kid_keyguard_changed`) and nudges the phone. Back to its row,
+/// `/devices/{id}/lock#lock-keyguard` (scroll-restore keeps the row where it was, even with a
+/// warning coming in above the group); 400 for another value, 404 for an unknown phone, 500 with
+/// nothing written on a DB error.
 pub async fn update_kid_keyguard(
     State(state): State<AppState>,
     lang: Lang,

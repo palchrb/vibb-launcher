@@ -1509,7 +1509,7 @@
   "device.lock.send_again": "Send barne-PIN-en på nytt",
   "device.lock.remove_child_pin": "Fjern barne-PIN",
   "device.lock.remove_child_confirm": "Fjerne barne-PIN-en til {name}? Telefonen åpnes da uten kode.",
-  "device.lock.remove_needs_pin": "Androids lås trenger en barne-PIN, så den kan ikke fjernes. Vil du bytte den, lagrer du en ny ovenfor.",
+  "device.lock.remove_needs_pin": "Androids lås trenger en barne-PIN. Vil du bytte den, lagrer du en ny ovenfor. Vil du fjerne den, velger du Vibb Ones lås først.",
   "device.lock.footer_android": "Androids lås: PIN-tastaturet, og fingeravtrykk hvis du legger til et.",
   "device.lock.footer_own": "Låser telefonen når skjermen slås av.",
   "device.lock.child_info_label": "Om barne-PIN-en",

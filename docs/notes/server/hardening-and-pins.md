@@ -191,7 +191,7 @@ bygger for!"; Vibb One's own lock goes in phase D):
   Vibb One's lock, with the page's "Update Vibb One" warning. The launcher was not changed.
 - **Remove Child PIN is refused while Android's lock is chosen**: removing it would roll the phone back to no lock at
   all (design 59 §3.8, `kid_lock` null). The page shows a row instead of the confirm ("Android's lock needs a Child
-  PIN, so it can't be removed. To change it, save a new one above."; `data-row="remove-needs-pin"`), and a post from
+  PIN. To change it, save a new one above; to remove it, choose Vibb One's lock first."; `data-row="remove-needs-pin"`), and a post from
   an older page is refused by the `UPDATE`'s own `kid_keyguard != 'android'` (a parallel switch wins) with the flash
   `keyguard_needs_pin`, nothing written, no `kid_pin_cleared`. With Vibb One's lock Remove works as before and leaves
   the choice as it is - it no longer falls back to Vibb One's lock silently. To remove the Child PIN of a phone on

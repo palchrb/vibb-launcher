@@ -1509,7 +1509,7 @@
   "device.lock.send_again": "Send the Child PIN again",
   "device.lock.remove_child_pin": "Remove Child PIN",
   "device.lock.remove_child_confirm": "Remove {name}'s Child PIN? The phone then opens without a code.",
-  "device.lock.remove_needs_pin": "Android's lock needs a Child PIN, so it can't be removed. To change it, save a new one above.",
+  "device.lock.remove_needs_pin": "Android's lock needs a Child PIN. To change it, save a new one above; to remove it, choose Vibb One's lock first.",
   "device.lock.footer_android": "Android's lock: the PIN pad, and a fingerprint if you add one.",
   "device.lock.footer_own": "Locks the phone when the screen turns off.",
   "device.lock.child_info_label": "About the Child PIN",
