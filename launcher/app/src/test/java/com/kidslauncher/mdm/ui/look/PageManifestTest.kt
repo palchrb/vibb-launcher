@@ -36,11 +36,13 @@ class PageManifestTest {
         ".ui.day.EventEditActivity" to ".ui.day.LightEventEditActivity",
         ".ui.messages.MessagesActivity" to ".ui.messages.LightMessagesActivity",
         ".ui.messages.ThreadActivity" to ".ui.messages.LightThreadActivity",
+        ".calls.PhoneBookActivity" to ".calls.LightPhoneBookActivity",
     )
 
-    /** The pages with one class, in Home's task (R9): the phone book and kid Settings' three lists. */
+    /** The pages with one class, in Home's task (R9): kid Settings' lists and pickers (the phone book has its own task
+     * and two classes since 2026-11-16). */
     private val oneClass = setOf(
-        ".calls.PhoneBookActivity", ".ui.quickcontrols.WifiNetworksActivity", ".ui.quickcontrols.BluetoothDevicesActivity",
+        ".ui.quickcontrols.WifiNetworksActivity", ".ui.quickcontrols.BluetoothDevicesActivity",
         ".ui.kidsettings.KidSoundPickerActivity", ".ui.kidsettings.ShortcutsPickerActivity",
     )
 
@@ -87,6 +89,34 @@ class PageManifestTest {
             assertEquals(attribute, value, entry.getAttributeNS(ns, attribute))
         }
         assertEquals(0, entry.getElementsByTagName("*").length)
+    }
+
+    /** R7 for the phone book (2026-11-16): the filters the dialer role and other apps need, the call-log pin and the
+     * missed-call notification name its entry - no look, gone at once, a task of its own when started as one. Exported,
+     * unlike Meldinger's: other apps send DIAL and tel: to it. */
+    @Test
+    fun `the phone book's entry has no look and holds every filter`() {
+        val entry = elements("activity").single { name(it) == ".calls.PhoneBookEntryActivity" }
+        assertEquals("@android:style/Theme.Translucent.NoTitleBar", entry.getAttributeNS(ns, "theme"))
+        for ((attribute, value) in listOf("exported" to "true", "noHistory" to "true", "excludeFromRecents" to "true", "taskAffinity" to "")) {
+            assertTrue(attribute, entry.hasAttributeNS(ns, attribute))
+            assertEquals(attribute, value, entry.getAttributeNS(ns, attribute))
+        }
+        val filters = entry.getElementsByTagName("intent-filter")
+        val actions = (0 until filters.length).flatMap { i ->
+            val nodes = (filters.item(i) as Element).getElementsByTagName("action")
+            (0 until nodes.length).map { (nodes.item(it) as Element).getAttributeNS(ns, "name") }
+        }
+        assertEquals(
+            listOf("DIAL", "DIAL", "VIEW", "CALL_BUTTON", "VIEW").map { "android.intent.action.$it" },
+            actions,
+        )
+        val code = file("java/com/kidslauncher/mdm/calls/PhoneBookEntryActivity.kt").readText()
+        assertTrue(code.contains("\nclass PhoneBookEntryActivity : Activity() {"))
+        assertTrue(code.contains("startActivity(PhoneBookActivity.forward(this, asked))"))
+        // The notification's and the glance's intent names the entry, never a page class.
+        val page = file("java/com/kidslauncher/mdm/calls/PhoneBookActivity.kt").readText()
+        assertTrue(page.contains("Intent(context, PhoneBookEntryActivity::class.java).setAction(Intent.ACTION_VIEW).setType(CALL_LOG_TYPE)"))
     }
 
     @Test

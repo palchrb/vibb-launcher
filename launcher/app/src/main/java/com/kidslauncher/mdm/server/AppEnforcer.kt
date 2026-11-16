@@ -23,7 +23,7 @@ import com.kidslauncher.mdm.calls.CallSystem
 import com.kidslauncher.mdm.calls.CALL_LOG_TYPE
 import com.kidslauncher.mdm.calls.EmergencyDialer
 import com.kidslauncher.mdm.calls.MissedCallNotifier
-import com.kidslauncher.mdm.calls.PhoneBookActivity
+import com.kidslauncher.mdm.calls.PhoneBookEntryActivity
 import com.kidslauncher.mdm.calls.RoleAction
 import com.kidslauncher.mdm.calls.dialerRoleAction
 import com.kidslauncher.mdm.calls.roleReportNeeded
@@ -1711,11 +1711,13 @@ object AppEnforcer {
 
     /**
      * `VIEW vnd.android.cursor.dir/calls` - the call log, which Telecom's own missed-call
-     * notification and other apps open - goes to [PhoneBookActivity] (design 12): the system
+     * notification and other apps open - goes to the phone book (design 12) through its look-less entry
+     * [PhoneBookEntryActivity] (2026-11-16: the page itself is two classes, one per look): the system
      * dialer's call log is its full UI with a keypad, and a chooser would be just as bad. Set on
      * every [apply] next to the Play link blocker and cleared only by `HomePin`'s re-seat, which adds every PPA of
-     * ours back in the same pass (design 59d step M, `PlayInvariantsTest`); the activity declares the same filter and passes the intent on to the
-     * system dialer while calls are unmanaged. A privileged dialer whose call-log filter has a
+     * ours back in the same pass (design 59d step M, `PlayInvariantsTest`); the entry declares the same filter and passes the intent on to the
+     * system dialer while calls are unmanaged. An older build's pin on `PhoneBookActivity` is replaced, not kept beside
+     * it: Android's device policy engine (14+) keys a persistent preferred activity by its filter (seen on the emulator). A privileged dialer whose call-log filter has a
      * priority above 0 still wins (PackageManager picks it before reading persistent preferred
      * activities) - device check on the Jelly Star.
      */
@@ -1725,7 +1727,7 @@ object AppEnforcer {
                 addCategory(Intent.CATEGORY_DEFAULT)
                 addDataType(CALL_LOG_TYPE)
             }
-            dpm.addPersistentPreferredActivity(admin, filter, ComponentName(context, PhoneBookActivity::class.java))
+            dpm.addPersistentPreferredActivity(admin, filter, ComponentName(context, PhoneBookEntryActivity::class.java))
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Failed to set the call-log pin", e)
         }

@@ -1,6 +1,8 @@
 package com.kidslauncher.mdm.ui.look
 
 import android.app.Activity
+import com.kidslauncher.mdm.calls.LightPhoneBookActivity
+import com.kidslauncher.mdm.calls.PhoneBookActivity
 import com.kidslauncher.mdm.ui.day.DayActivity
 import com.kidslauncher.mdm.ui.day.EventActivity
 import com.kidslauncher.mdm.ui.day.EventEditActivity
@@ -13,8 +15,8 @@ import com.kidslauncher.mdm.ui.messages.MessagesActivity
 import com.kidslauncher.mdm.ui.messages.ThreadActivity
 
 /**
- * The table (design 78 §12.2 R4): each page that can be the top of a task of the launcher's own - Kalender's three
- * and, since step 2, Meldinger's list and thread - as its night class -
+ * The table (design 78 §12.2 R4): each page that can be the top of a task of the launcher's own - Kalender's three,
+ * since step 2 Meldinger's list and thread, and since 2026-11-16 the phone book - as its night class -
  * the class as it always was - and its light twin. Android draws such a page's starting window from the manifest
  * theme of the class it starts, before any code of ours, so the look is in the class. This file is the only place
  * that names a page class as `::class` (PageLookScanTest): every start asks [current], and everything that knows a
@@ -26,6 +28,7 @@ enum class PageKind(private val night: Class<out Activity>, private val light: C
     EVENT_EDIT(EventEditActivity::class.java, LightEventEditActivity::class.java),
     MESSAGES(MessagesActivity::class.java, LightMessagesActivity::class.java),
     THREAD(ThreadActivity::class.java, LightThreadActivity::class.java),
+    PHONE_BOOK(PhoneBookActivity::class.java, LightPhoneBookActivity::class.java),
     ;
 
     /** This page's class in [look]. */

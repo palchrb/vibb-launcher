@@ -345,7 +345,8 @@ missed row is read:
 ```sh
 adb shell content query --uri content://call_log/calls --projection _id:number:type:new   # type=3 -> new=0
 adb shell cmd package resolve-activity -a android.intent.action.VIEW -t vnd.android.cursor.dir/calls
-#   -> $PKG/com.kidslauncher.mdm.calls.PhoneBookActivity (also on the Jelly Star: a privileged dialer
+#   -> $PKG/com.kidslauncher.mdm.calls.PhoneBookEntryActivity (PhoneBookActivity before 2026-11-16, §6au;
+#      also on the Jelly Star: a privileged dialer
 #      whose call-log filter has a priority above 0 would win over our persistent preferred activity)
 ```
 
@@ -4734,6 +4735,41 @@ android.intent.action.MAIN -c android.intent.category.HOME`.
    no `ResolverActivity` (with the cover enabled as well, every boot showed the system's chooser).
 5. Known, not fixed (android mode, 34 only): a phone switched from android mode kept the cover's PPA in the policy
    engine, and HOME went on resolving to the cover after re-seats on 14 until a reboot; a fresh own-mode phone never.
+
+## 6au. The phone book as a task of its own (branch `phonebook-task`, 2026-11-16)
+
+`docs/notes/launcher/calls.md`, "The phone book as a task of its own". Setup: **`jelly36`** (clean, 22 of 22 sums),
+started under `flock -o ~/build.lock` and `flock -o ~/emulator.lock` without `-wipe-data`; a server on the
+launcher-fix-1 run's data (device 1, four contacts, rules `Lekser` with calls off and `Kveld` with calls on); main's
+debug launcher as Device Owner (§4's adb lines), enrolled with a typed code, kiosk LOCKED; then the branch's build over it
+with `adb install -r`. A rule is turned on now with the PWA's `POST /devices/1/rules-now` (`mode=on rule=<id>
+on_len=60`) and ended with `POST /devices/1/lock-now/<id>/end`. Home presses recorded with the guest's `screenrecord`
+and cut into frames (`ffmpeg -vf fps=20`). Afterwards `jelly36` restored again (22 of 22 sums, the same file list).
+
+| Check | How | Result (API 36) |
+|---|---|---|
+| Before (main) | Home's Telefonbok tile, `dumpsys activity activities` | The phone book in Home's task (`type=home`, `A=...launcher.debug`) |
+| Own task | The same, the branch | **Passed.** `Task{... type=standard A=10218:me.vibb.launcher.debug.phonebook}`, `PhoneBookActivity` on top; LOCKED |
+| Home's close | Home key, frames | **Passed.** The phone book shrinks and slides down to the bottom, frame for frame as Meldinger's (recorded the same way) |
+| Recents | The square key, `uiautomator dump` | **Passed.** A card "Telefonbok" with the Vibb icon next to "Meldinger"; its tap brings back the same activity instance |
+| Back | Back from the phone book | **Passed.** Home; the card stays in Recents. A card tap after Back starts the page from its first intent (`flg=0x14100000`, from history): no "Ring ...?" and no contact's card again |
+| A call | Ring on a contact (the emulator's modem ends outgoing calls at once) | `InCallActivity` in its own task, then the phone book back in front |
+| The pin | `cmd package resolve-activity` for `VIEW vnd.android.cursor.dir/calls`, DIAL and DIAL `tel:` after the update; `dumpsys device_policy` | **Passed.** All three resolve to `PhoneBookEntryActivity`; the policy engine holds one call-log PPA, its value the entry (the old `PhoneBookActivity` pin replaced); the dialer role stays ours |
+| A rule without calls | `Lekser` on; Recents -> the phone book's card | **Passed.** The phone book's task comes forward and starts the time-rule screen 30 ms later (`sr=` the phone book) |
+| ... a `tel:` link | `am start -a android.intent.action.DIAL -d tel:+47...` | **Passed after a fix.** Entry -> the page (`onNewIntent`) -> the time-rule screen. Before the fix the page showed "Dette nummeret er ikke tillatt." behind the time-rule screen, the first thing seen at the next open; now the asked number is dropped while redirected |
+| A rule with calls | `Kveld` on; the time-rule screen's "Telefonbok" row; Back | **Passed.** The phone book opens and stays (no redirect, no left-over dialog); Back -> the time-rule screen |
+| A rule beginning in front | `Lekser` turned on with the phone book open | **Passed.** The time-rule screen on top (the phone book's lock watch and the rule's own start) |
+| Lys | Kid Settings -> Lys, then the tile | **Passed.** The change closed the phone book's and Meldinger's tasks; `LightPhoneBookActivity` in the `.phonebook` task, on the paper |
+| Missed call | `adb emu gsm call` + `cancel` from Mamma; the notification's tap | **Passed.** Entry (`VIEW` calls) -> the open page (`onNewIntent`), Mamma's card open |
+
+**Android 14 (`compat34`, API 34, `-wipe-data`), partly:** the branch's build as Device Owner, but not enrolled - after
+the wipe the image had no default route (`ip route` without `default`, `ping 10.0.2.2`: "Network is unreachable"), so
+the server was never reached and calls stayed unmanaged (no Home tile). The phone book opened through its entry
+(`am start -n .../calls.PhoneBookEntryActivity -a android.intent.action.DIAL`): **passed** - its own
+`.phonebook` task, Home's slide down to the bottom on a recording, and a Recents card "Phone book" with the Vibb icon
+whose tap brings back the same instance. The rule and kiosk checks were not run on 14. `compat34` was stopped with
+`adb emu kill`; start it with `-wipe-data` next time (§6as).
+
 
 ## 7. Reporting back
 

@@ -111,8 +111,8 @@ class PageLookScanTest {
         // once the activity exists, and each page's own onCreate stops there.
         val create = page.substringAfter("override fun onCreate(savedInstanceState: Bundle?) {").substringBefore("\n    }\n")
         assertTrue(create.indexOf("super.onCreate(savedInstanceState)") in 0 until create.indexOf("PageLook.closeIfOtherLook(this)"))
-        for (name in listOf("day/DayActivity", "day/EventActivity", "day/EventEditActivity", "messages/MessagesActivity", "messages/ThreadActivity")) {
-            val own = sources.getValue("com/kidslauncher/mdm/ui/$name.kt")
+        for (name in listOf("ui/day/DayActivity", "ui/day/EventActivity", "ui/day/EventEditActivity", "ui/messages/MessagesActivity", "ui/messages/ThreadActivity", "calls/PhoneBookActivity")) {
+            val own = sources.getValue("com/kidslauncher/mdm/$name.kt")
                 .substringAfter("override fun onCreate(savedInstanceState: Bundle?) {")
             assertTrue(name, own.trimStart().startsWith("super.onCreate(savedInstanceState)\n        if (isFinishing) return"))
         }
@@ -160,20 +160,20 @@ class PageLookScanTest {
         val root = "com/kidslauncher/mdm"
         // R5: neither a night class nor a twin as a class literal anywhere else - the intent builders and the two
         // task rules ask the table. (`is DayActivity` holds for a twin and stays allowed.)
-        val literal = Regex("""\b(Light)?(Day|Event|EventEdit|Messages|Thread)Activity::class""")
+        val literal = Regex("""\b(Light)?(Day|Event|EventEdit|Messages|Thread|PhoneBook)Activity::class""")
         assertEquals(listOf("$root/ui/look/PageKind.kt"), shipped.filterValues { literal.containsMatchIn(it) }.keys.toList())
-        assertEquals(10, literal.findAll(shipped.getValue("$root/ui/look/PageKind.kt")).count())
+        assertEquals(12, literal.findAll(shipped.getValue("$root/ui/look/PageKind.kt")).count())
         // The table's users: the five builders' files, the look's own task rule and the language's.
         val users = shipped.filterValues { Regex("""\bPageKind\b""").containsMatchIn(it) }.keys.filterNot { it.startsWith("$root/ui/look/") }
         assertEquals(
             setOf(
                 "$root/ui/day/DayActivity.kt", "$root/ui/day/EventActivity.kt", "$root/ui/day/EventEditActivity.kt",
-                "$root/ui/messages/MessagesScreens.kt", "$root/ui/LauncherLocale.kt",
+                "$root/ui/messages/MessagesScreens.kt", "$root/ui/LauncherLocale.kt", "$root/calls/PhoneBookActivity.kt",
             ),
             users.toSet(),
         )
-        val bothTasks = "PageKind.DAY.has(rootClassName) || PageKind.MESSAGES.has(rootClassName)"
-        assertTrue(shipped.getValue("$root/ui/look/PageLook.kt").contains("fun closesTask(rootClassName: String?): Boolean = $bothTasks"))
+        val bothTasks = "PageKind.DAY.has(rootClassName) || PageKind.MESSAGES.has(rootClassName) || PageKind.PHONE_BOOK.has(rootClassName)"
+        assertTrue(shipped.getValue("$root/ui/look/PageLook.kt").contains("fun closesTask(rootClassName: String?): Boolean =\n    $bothTasks"))
         assertTrue(shipped.getValue("$root/ui/LauncherLocale.kt").contains("fun languageClosesTask(rootClassName: String?): Boolean =\n    $bothTasks"))
         // One chooser: each builder names the applied look's class, and nothing else asks for one.
         val chosen = mapOf(
@@ -181,8 +181,9 @@ class PageLookScanTest {
             "$root/ui/day/EventActivity.kt" to listOf("Intent(context, PageKind.EVENT.current())"),
             "$root/ui/day/EventEditActivity.kt" to listOf("Intent(context, PageKind.EVENT_EDIT.current())", "Intent(context, PageKind.EVENT_EDIT.current())"),
             "$root/ui/messages/MessagesScreens.kt" to listOf("Intent(context, PageKind.MESSAGES.current())", "Intent(context, PageKind.THREAD.current())"),
+            "$root/calls/PhoneBookActivity.kt" to listOf("Intent(context, PageKind.PHONE_BOOK.current())"),
         )
-        val uses = Regex("""Intent\(context, PageKind\.[A-Z_]+\.current\(\)\)|PageKind\.[A-Z]+\.has\(rootClassName\)|import com\.kidslauncher\.mdm\.ui\.look\.PageKind\n""")
+        val uses = Regex("""Intent\(context, PageKind\.[A-Z_]+\.current\(\)\)|PageKind\.[A-Z_]+\.has\(rootClassName\)|import com\.kidslauncher\.mdm\.ui\.look\.PageKind\n""")
         for ((file, text) in shipped.filterKeys { !it.startsWith("$root/ui/look/") }) {
             assertEquals(file, chosen[file].orEmpty(), uses.findAll(text).map { it.value }.filter { it.startsWith("Intent(") }.toList())
             assertTrue(file, "PageKind" !in uses.replace(text, ""))
@@ -213,6 +214,18 @@ class PageLookScanTest {
                 assertTrue("$file: $line", line.contains("startActivity(") || line.contains("startActivities("))
             }
         }
+        // The phone book's builders (2026-11-16): into a start, every time - Home's tile, the time-rule screen's row and
+        // the entry's forward; the missed-call notification and the call-log pin name the entry (PageManifestTest).
+        val phoneBook = Regex("""\bPhoneBookActivity\.(intent|forward)\(""")
+        var bookStarts = 0
+        for ((file, text) in shipped) {
+            val built = phoneBook.findAll(text).count()
+            val started = Regex("""\bstartActivity\(PhoneBookActivity\.(intent|forward)\(""").findAll(text).count()
+            assertEquals(file, built, started)
+            bookStarts += started
+            if (text.contains("PendingIntent")) assertTrue(file, !phoneBook.containsMatchIn(text))
+        }
+        assertEquals(3, bookStarts)
         val notifier = shipped.getValue("$root/sms/SmsNotifier.kt")
         assertTrue(notifier.contains("PendingIntent.getActivity(\n        context, 0, MessagesEntryActivity.intent(context, conversationId),"))
         val screens = shipped.getValue("$root/ui/messages/MessagesScreens.kt")

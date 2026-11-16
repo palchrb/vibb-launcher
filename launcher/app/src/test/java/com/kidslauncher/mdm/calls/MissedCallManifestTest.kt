@@ -56,7 +56,8 @@ class MissedCallManifestTest {
 
     @Test
     fun `the phone book has its own call-log filter, matching the pin`() {
-        val phoneBook = component("activity", ".calls.PhoneBookActivity")
+        // On the look-less entry since the phone book's own task (2026-11-16); the page has no filter (PageManifestTest).
+        val phoneBook = component("activity", ".calls.PhoneBookEntryActivity")
         assertEquals("true", phoneBook.getAttributeNS(ns, "exported"))
         assertEquals("", phoneBook.getAttributeNS(ns, "directBootAware"))
         val callLog = elements(phoneBook, "intent-filter").filter { filter ->

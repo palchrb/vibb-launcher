@@ -124,17 +124,20 @@ class PageLookTest {
     }
 
     @Test
-    fun `a change finishes every live page and closes Kalender's and Meldinger's tasks, whichever class is the root`() {
+    fun `a change finishes every live page and closes Kalender's, Meldinger's and the phone book's tasks, whichever class is the root`() {
         val registry = PageRegistry<String>()
         registry.created("day")
         registry.created("event")
         registry.created("edit")
         registry.destroyed("edit")
         assertEquals(listOf("day", "event"), registry.live())
-        // The task is known by its root: Kalender's and Meldinger's in either look, never Home's or the lock's - nor
-        // a page that is no root (a thread, a picture, an event) or one in Home's task (the phone book, the lists).
+        // The task is known by its root: Kalender's, Meldinger's and the phone book's in either look, never Home's or
+        // the lock's - nor a page that is no root (a thread, a picture, an event) or one in Home's task (the lists).
         for (root in listOf(DayActivity::class.java, LightDayActivity::class.java, MessagesActivity::class.java, LightMessagesActivity::class.java)) {
             assertTrue(root.name, closesTask(root.name))
+        }
+        for (root in listOf("com.kidslauncher.mdm.calls.PhoneBookActivity", "com.kidslauncher.mdm.calls.LightPhoneBookActivity")) {
+            assertTrue(root, closesTask(root))
         }
         val others = listOf(
             null,
@@ -145,7 +148,7 @@ class PageLookTest {
             ThreadActivity::class.java.name,
             LightThreadActivity::class.java.name,
             "com.kidslauncher.mdm.ui.messages.PictureActivity",
-            "com.kidslauncher.mdm.calls.PhoneBookActivity",
+            "com.kidslauncher.mdm.calls.PhoneBookEntryActivity",
             "com.kidslauncher.mdm.ui.quickcontrols.WifiNetworksActivity",
         )
         for (root in others) assertFalse("$root", closesTask(root))

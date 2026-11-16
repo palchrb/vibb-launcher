@@ -352,13 +352,15 @@ rework is unit-tested and **not yet seen running**.
   window items as literals (the ground, the splash ground, the two bars' icons, the navigation contrast) over
   `kid_ground` and `kid_paper` - the paper with one value in every configuration, equal to the day's
   `kid_page_ground` (`SplashThemeTest`, `KidPaletteTest`); everything else is `KidPageTheme`'s.
-  **A page in Home's task has one class** (R9: home-type, so Android draws no starting window for it): the phone book
-  (`calls/PhoneBookActivity`), `WifiNetworksActivity`, `BluetoothDevicesActivity` and `KidSoundPickerActivity`, on the
+  **A page in Home's task has one class** (R9: home-type, so Android draws no starting window for it):
+  `WifiNetworksActivity`, `BluetoothDevicesActivity` and `KidSoundPickerActivity`, on the
   qualified `KidPageTheme` itself, with the applied look as their AppCompat mode (no row in the table). They are in
   the registry of live pages but **not in the started count** (`KidPageActivity.ownTask`: only a class with a row in
   the table counts) - they are no page task's, and a list left for kid Settings is stopped only after kid Settings
-  resumed. The phone book's doors from outside (a `tel:` link in another app's task, a missed-call notification) are
-  read, not seen (design §12.9 point 1; §6aj).
+  resumed. **The phone book** was such a page until 2026-11-16; since then it tops a task of its own and is two classes
+  like Meldinger's list (`PhoneBookActivity`, `calls/LightPages.kt`'s `LightPhoneBookActivity`, `PageKind.PHONE_BOOK`),
+  and its doors from outside (DIAL, a `tel:` link, the call log, the missed-call notification) go through the look-less
+  `calls/PhoneBookEntryActivity` (`docs/notes/launcher/calls.md`, "The phone book as a task of its own").
   The class sets AppCompat's local night mode to **its own class's look** in `attachBaseContext`, before `super`
   (`UIObjectActivity.lookNightMode()` -> `PageLook.pageNightMode(javaClass)`; a page without a row in the table takes
   the applied look), so a window and its content never disagree, the page's configuration is right from its first

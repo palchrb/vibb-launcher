@@ -356,13 +356,40 @@
              notification receiver and BootCallReceiver are directBootAware, so calls are screened
              before the first unlock after a reboot, from a device-protected copy of the rules.
              Nothing else is - in particular not HomeActivity/LockActivity (the BFU lockout
-             incidents in CLAUDE.md) and not the phone book. -->
+             incidents in CLAUDE.md) and not the phone book.
+             The phone book is a task of its own (2026-11-16, as Meldinger's and Kalender's): in Recents as
+             "Telefonbok", with Android's task-close animation on Home and Back. Its page is two entries, the night class
+             and its light twin (design 78 §12.2 R2), neither reachable from outside the process (R7); every filter the
+             dialer role and other apps need is on the look-less entry PhoneBookEntryActivity, which starts the applied
+             look's class. -->
         <activity
             android:name=".calls.PhoneBookActivity"
             android:configChanges="orientation|screenSize|uiMode"
-            android:exported="true"
+            android:exported="false"
             android:launchMode="singleTop"
-            android:theme="@style/KidPageTheme">
+            android:taskAffinity="${applicationId}.phonebook"
+            android:theme="@style/KidPageNightTheme" />
+        <activity
+            android:name=".calls.LightPhoneBookActivity"
+            android:configChanges="orientation|screenSize|uiMode"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:taskAffinity="${applicationId}.phonebook"
+            android:theme="@style/KidPageLightTheme" />
+        <!-- The phone book's way in from outside (design 78 §12.2 R7, as MessagesEntryActivity): the DIAL / tel: filters
+             the dialer role requires, links, the call button and the call log (the persistent preferred activity and
+             the missed-call notification name it). No look - translucent, so no starting window; a task of its own
+             (empty affinity) when started as one, so nothing behind it is brought forward; gone from the back stack and
+             Recents at once. It passes the call log on to the system dialer while calls are unmanaged, else starts the
+             applied look's phone book with the asked action, number and contact. -->
+        <activity
+            android:name=".calls.PhoneBookEntryActivity"
+            android:configChanges="uiMode"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
             <intent-filter>
                 <action android:name="android.intent.action.DIAL" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -386,7 +413,7 @@
             <!-- The call log (design 12): Telecom's own missed-call notification opens it, and so
                  may other apps. Its own filter, plus a persistent preferred activity set in every
                  AppEnforcer.apply() and never cleared, so neither the system dialer's call log
-                 (its full keypad) nor a chooser wins; while calls are unmanaged the phone book
+                 (its full keypad) nor a chooser wins; while calls are unmanaged the entry
                  passes it on to the system dialer. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />

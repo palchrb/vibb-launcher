@@ -56,6 +56,8 @@ class KidScreensEscapeTest {
     private val guarded = listOf(
         "ui/kidsettings", "ui/quickcontrols", "ui/wallpaper", "server/QuickControls.kt", "server/BluetoothAudio.kt",
         "ui/HomeActivity.kt", "ui/home", "calls/PhoneBookActivity.kt", "calls/PhoneBookAdapter.kt", "ui/day", "calendar",
+        // The phone book's light twin and its look-less entry (its own task, 2026-11-16).
+        "calls/LightPages.kt", "calls/PhoneBookEntryActivity.kt",
         "actions", "ui/messages",
         // Design 99: Snarveier - the panel in the shade, its receiver and Flymodus's window (the picker is in ui/kidsettings).
         "shortcuts",

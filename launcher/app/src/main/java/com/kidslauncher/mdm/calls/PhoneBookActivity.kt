@@ -1,5 +1,6 @@
 package com.kidslauncher.mdm.calls
 
+import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
@@ -13,10 +14,15 @@ import androidx.recyclerview.widget.RecyclerView
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.appdisplay.AppDisplay
 import com.kidslauncher.mdm.databinding.ActivityPhoneBookBinding
+import com.kidslauncher.mdm.preferences.LauncherPreferences
+import com.kidslauncher.mdm.server.LockReason
 import com.kidslauncher.mdm.sms.SmsHome
 import com.kidslauncher.mdm.ui.KidHeader
 import com.kidslauncher.mdm.ui.KidInsets
+import com.kidslauncher.mdm.ui.LockActivity
+import com.kidslauncher.mdm.ui.day.LockWatch
 import com.kidslauncher.mdm.ui.look.KidPageActivity
+import com.kidslauncher.mdm.ui.look.PageKind
 import com.kidslauncher.mdm.ui.look.nightOver
 import com.kidslauncher.mdm.ui.look.showNight
 import com.kidslauncher.mdm.ui.search.KidSearchField
@@ -47,11 +53,18 @@ import kotlinx.coroutines.withContext
  * isn't allowed.
  *
  * Missed calls (design 12): it is also the call-log viewer (`VIEW` `vnd.android.cursor.dir/calls`, pinned as a
- * persistent preferred activity) - while calls are unmanaged it passes that on to the system dialer. Our missed-call
- * notification opens it, with [EXTRA_MISSED_CONTACT] when the calls came from one contact (that contact's sheet opens,
- * once). Being opened clears the notification ([MissedCallNotifier.dismiss]).
+ * persistent preferred activity on [PhoneBookEntryActivity], which passes it on to the system dialer while calls are
+ * unmanaged). Our missed-call notification opens it, with [EXTRA_MISSED_CONTACT] when the calls came from one contact
+ * (that contact's sheet opens, once). Being opened clears the notification ([MissedCallNotifier.dismiss]).
+ *
+ * **A task of its own** (2026-11-16, as Meldinger's and Kalender's; the user: Home should slide it away as Meldinger's,
+ * and it should be in Recents): the `.phonebook` affinity, the night class and its light twin ([LightPhoneBookActivity],
+ * design 78 §12.2 R2), in Recents as the Home tile's "Telefonbok" with the launcher's icon. Started only by [intent]
+ * (Home's tile, the time-rule screen's row) and [forward] (the entry, for everything from outside the process and the
+ * missed calls); since Recents can bring it over the time-rule screen, its resume yields to that screen under a rule
+ * that doesn't allow calls ([redirectIfLocked]) and it watches the lock while in front.
  */
-class PhoneBookActivity : KidPageActivity() {
+open class PhoneBookActivity : KidPageActivity() {
 
     private lateinit var binding: ActivityPhoneBookBinding
     private lateinit var adapter: PhoneBookAdapter
@@ -86,6 +99,9 @@ class PhoneBookActivity : KidPageActivity() {
 
     /** A sync or a time rule changed the call rules while the phone book is started (code QA M2, second pass). */
     private val policyListener: (CallPolicyState) -> Unit = { runOnUiThread { if (!isDestroyed) render() } }
+
+    /** A rule that doesn't allow calls beginning (or the rule changing) while the phone book is in front. */
+    private val lockWatch = LockWatch(this) { redirectIfLocked(it) }
 
     /** Code QA L2: only the latest missed-call load is applied. */
     private val loads = LatestOnly()
@@ -137,11 +153,16 @@ class PhoneBookActivity : KidPageActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (isFinishing) return // The other look's class: its task is closing (KidPageActivity).
+        // Its Recents card: the name the kid reads on Home's tile and the launcher's icon, as Kalender's and Meldinger's
+        // (the root's description serves the whole task; minSdk 34 always has the Builder).
+        setTaskDescription(
+            ActivityManager.TaskDescription.Builder()
+                .setLabel(getString(R.string.calls_phone_book))
+                .setIcon(R.mipmap.ic_launcher)
+                .build(),
+        )
         CallPolicyStore.ensureLoaded(this)
-        if (passOnCallLog(intent)) {
-            finish()
-            return
-        }
         binding = ActivityPhoneBookBinding.inflate(layoutInflater)
         setContentView(binding.root)
         adapter = PhoneBookAdapter(
@@ -174,9 +195,9 @@ class PhoneBookActivity : KidPageActivity() {
         // Design 79 §5.5, code QA L3: the stray drafts go at the first resume - after a draft pick's result is
         // delivered (a framing screen recreated after a process death writes its draft before this one exists).
         draftSweepDue = true
-        // Once: not again after a recreation.
-        if (savedInstanceState == null) takeMissedContact(intent)
-        handleNumber(intent)
+        // Once: not again after a recreation, nor when Recents starts the task again from its first intent (the task
+        // outlives its page: Back finishes the page, the card stays).
+        if (savedInstanceState == null && (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) == 0) takeAsked(intent)
     }
 
     override fun onStart() {
@@ -202,6 +223,11 @@ class PhoneBookActivity : KidPageActivity() {
 
     override fun onResume() {
         super.onResume()
+        // In its own task the phone book outlives Home's clearTaskOnLaunch, so Recents can bring it over the time-rule
+        // screen (in Home's task): under a rule that doesn't allow calls that screen comes back on top, as Kalender's
+        // and Meldinger's pages do.
+        if (redirectIfLocked(this)) return
+        lockWatch.start()
         resumed = true
         if (draftSweepDue) {
             draftSweepDue = false
@@ -215,6 +241,7 @@ class PhoneBookActivity : KidPageActivity() {
     }
 
     override fun onPause() {
+        lockWatch.stop()
         resumed = false
         noteSightings()
         super.onPause()
@@ -289,7 +316,15 @@ class PhoneBookActivity : KidPageActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        if (passOnCallLog(intent)) return
+        setIntent(intent)
+        takeAsked(intent)
+    }
+
+    /** The number and the missed-call contact an intent asks for - dropped while the phone book yields to the time-rule
+     * screen ([redirectIfLocked], at the resume that follows): a "Ring X?" or "not allowed" left behind it would be the
+     * first thing the kid sees when the phone book is next opened, perhaps hours later. */
+    private fun takeAsked(intent: Intent) {
+        if (LauncherPreferences.mdm().lockReason() != LockReason.NONE && !usableNow(this)) return
         takeMissedContact(intent)
         handleNumber(intent)
     }
@@ -300,32 +335,6 @@ class PhoneBookActivity : KidPageActivity() {
         val number = intent?.getStringExtra(EXTRA_MISSED_CONTACT) ?: return
         intent.removeExtra(EXTRA_MISSED_CONTACT)
         pendingSheet = number
-    }
-
-    /**
-     * The call log asked for while calls are unmanaged: the system dialer's, explicitly - our pin
-     * is permanent, so it stays ours to pass on (as the Play link blocker does). Managed (or
-     * rules unknown): the phone book is the call log. A fresh intent: never the caller's extras.
-     * The package comes from what `apply()` cached - no Telecom call on the main thread
-     * (qa-12-code #4). Viewing the call log deals with our missed-call notification too.
-     */
-    private fun passOnCallLog(intent: Intent?): Boolean {
-        if (intent == null || !isCallLogView(intent.action, intent.type, intent.dataString)) return false
-        if (CallPolicyStore.effectiveState() != CallPolicyState.Unmanaged) return false
-        MissedCallNotifier.dismiss(this)
-        val dialer = CallPrefs.systemDialer(this)
-        if (dialer == null) Log.w("PhoneBookActivity", "No system dialer known yet - the call log isn't passed on")
-        if (dialer != null && dialer != packageName) {
-            try {
-                startActivity(
-                    Intent(Intent.ACTION_VIEW).setType(CALL_LOG_TYPE).setPackage(dialer)
-                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                )
-            } catch (e: Exception) {
-                Log.w("PhoneBookActivity", "The system dialer has no call log to pass on to", e)
-            }
-        }
-        return true
     }
 
     private fun loadMissedCalls() {
@@ -600,15 +609,58 @@ class PhoneBookActivity : KidPageActivity() {
         private const val STATE_SEEN_MS = "visit_seen_ms"
         private const val STATE_SEEN_UP_TO = "visit_seen_up_to"
 
-        fun intent(context: Context) = Intent(context, PhoneBookActivity::class.java)
+        /**
+         * The one way to open the phone book from inside the process - Home's tile and the time-rule screen's row: a
+         * task of its own (`FLAG_ACTIVITY_NEW_TASK` with the manifest's `.phonebook` affinity), so a task already there
+         * comes back as it was. The class is the applied look's (design 78 §12.2 R5); the intent goes straight into a
+         * start (R7) - a notification or the system names [PhoneBookEntryActivity] instead.
+         */
+        fun intent(context: Context): Intent = Intent(context, PageKind.PHONE_BOOK.current()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 
-        /** The missed-call notification's tap: the call log, i.e. the phone book (with
-         * [contactNumber]'s sheet) - or, while calls are unmanaged and our dialer role is still
-         * held, passed on to the system dialer (qa-12-code #1). */
+        /**
+         * The entry's start ([PhoneBookEntryActivity]): [intent] with what was asked - the action, the number or call
+         * log (data and type) and the missed-call contact, nothing else of an outside intent - and
+         * `FLAG_ACTIVITY_CLEAR_TOP`, so it lands on the page itself (singleTop: `onNewIntent`) in a task already there:
+         * a tel: link or a missed call is never a second phone book over the kid's picture screen.
+         */
+        fun forward(context: Context, asked: Intent): Intent = intent(context).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP).apply {
+            action = asked.action
+            setDataAndType(asked.data, asked.type)
+            val contact = try {
+                asked.getStringExtra(EXTRA_MISSED_CONTACT)
+            } catch (e: RuntimeException) {
+                null // Another app's malformed extras: the number alone.
+            }
+            if (contact != null) putExtra(EXTRA_MISSED_CONTACT, contact)
+        }
+
+        /** The missed-call notification's tap and the glance's missed-calls row: the call log, i.e. the phone book
+         * (with [contactNumber]'s sheet) - or, while calls are unmanaged and our dialer role is still held, passed on
+         * to the system dialer (qa-12-code #1). It names the look-less entry, never a page class (R7): a
+         * `PendingIntent` outlives the look it was made in. */
         fun missedCallsIntent(context: Context, contactNumber: String?): Intent =
-            intent(context).setAction(Intent.ACTION_VIEW).setType(CALL_LOG_TYPE)
+            Intent(context, PhoneBookEntryActivity::class.java).setAction(Intent.ACTION_VIEW).setType(CALL_LOG_TYPE)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK).apply {
                     if (contactNumber != null) putExtra(EXTRA_MISSED_CONTACT, contactNumber)
                 }
+
+        /** Under a time rule the time-rule screen comes back on top unless the rule allows calls
+         * ([phoneBookUsableUnder]); an error reading the rules is no (the time-rule screen). True when it redirected. */
+        internal fun redirectIfLocked(activity: android.app.Activity): Boolean {
+            if (LauncherPreferences.mdm().lockReason() == LockReason.NONE) return false
+            if (usableNow(activity)) return false
+            LockActivity.start(activity)
+            return true
+        }
+
+        /** The time lock in force now leaves the phone book usable ([phoneBookUsableUnder]). */
+        internal fun usableNow(context: Context): Boolean = try {
+            phoneBookUsableUnder(
+                com.kidslauncher.mdm.timerules.TimeRulesRuntime.snapshot(context, com.kidslauncher.mdm.server.currentPolicyDecision().policy).lock,
+            )
+        } catch (e: Exception) {
+            Log.w("PhoneBookActivity", "Couldn't read the time rules: ${e.javaClass.simpleName}")
+            false
+        }
     }
 }
