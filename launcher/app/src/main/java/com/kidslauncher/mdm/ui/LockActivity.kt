@@ -511,26 +511,26 @@ class LockActivity : UIObjectActivity() {
                 }
                 // Home's Kalender tile: the calendar glyph on its colour.
                 is LockRow.Calendar -> glyphIcon(view.lockRowIcon, R.color.kid_day_tile, R.drawable.app_glyph_calendar_month)
-                is LockRow.Alarm -> {
-                    glyphIcon(view.lockRowIcon, R.color.kid_lock_alarm_row, R.drawable.app_glyph_alarm)
-                    if (row.stops.isNotEmpty()) alarmStopButtons(view, row)
-                }
+                is LockRow.Alarm -> glyphIcon(view.lockRowIcon, R.color.kid_lock_alarm_row, R.drawable.app_glyph_alarm)
                 is LockRow.App -> {
                     rowIcons[row.packageName] = view.lockRowIcon
                     showAppIcon(view.lockRowIcon, icons.cached(row.packageName))
                 }
             }
-            // Design 105 §3: the alarm row with buttons is no button itself.
-            if (!(row is LockRow.Alarm && row.stops.isNotEmpty())) view.root.setOnClickListener { open(row) }
+            // Design 105 §3: the alarm row with stops is a label with its bar of buttons under it, no button itself.
+            val stopBar = if (row is LockRow.Alarm && row.stops.isNotEmpty()) alarmStopBar(view, row) else null
+            if (stopBar == null) view.root.setOnClickListener { open(row) }
             container.addView(view.root)
+            if (stopBar != null) container.addView(stopBar)
         }
         icons.load(::iconsDrawn)
     }
 
-    /** Design 105 §3: the alarm row as its buttons - one ringed pill per stop, with the notification's own title; the
-     * row itself is no button then (TalkBack reads its label, then each "…, knapp"). */
-    private fun alarmStopButtons(view: ItemLockRowBinding, row: LockRow.Alarm) {
-        val key = row.key ?: return
+    /** Design 105 §3: the alarm row with its stops - the row is a label only (no button, no chevron; TalkBack reads
+     * "Alarmen ringer"), and under it a bar of one ringed pill per stop with the notification's own title (each read as
+     * "…, knapp"), lined up with the label. Returns the bar, added after the row. */
+    private fun alarmStopBar(view: ItemLockRowBinding, row: LockRow.Alarm): View? {
+        val key = row.key ?: return null
         view.root.isClickable = false
         view.root.isFocusable = false
         view.root.background = null
@@ -538,30 +538,34 @@ class LockActivity : UIObjectActivity() {
         view.root.accessibilityDelegate = null
         view.lockRowLabel.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
         view.lockRowChevron.visibility = View.GONE
-        view.lockRowActions.visibility = View.VISIBLE
-        val gap = KidAvatars.dp(this, 6f)
-        val sidePad = KidAvatars.dp(this, 14f)
-        val vertPad = KidAvatars.dp(this, 6f)
+        val dp = { v: Float -> KidAvatars.dp(this, v) }
+        val bar = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.HORIZONTAL
+            // The row's start padding, icon and label margin (14 + 34 + 12 dp): the pills start under the label.
+            setPadding(dp(60f), 0, dp(10f), dp(10f))
+        }
         row.stops.forEachIndexed { index, label ->
             val button = TextView(this).apply {
                 text = label
                 setBackgroundResource(R.drawable.bg_lock_ask_outline)
                 setTextColor(ContextCompat.getColor(this@LockActivity, R.color.kid_accent))
-                setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 15f)
+                setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 16f)
                 typeface = androidx.core.content.res.ResourcesCompat.getFont(this@LockActivity, R.font.nunito_bold)
                 gravity = android.view.Gravity.CENTER
-                minHeight = KidAvatars.dp(this@LockActivity, 44f)
+                minHeight = dp(48f)
+                minWidth = dp(88f)
                 maxLines = 1
-                setPadding(sidePad, vertPad, sidePad, vertPad)
+                setPadding(dp(16f), dp(6f), dp(16f), dp(6f))
                 isFocusable = true
                 accessibilityDelegate = ButtonRole
                 setOnClickListener { PinLockRuntime.stopRingingAlarm(this@LockActivity, key, index) }
             }
             val params = android.widget.LinearLayout.LayoutParams(
                 android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
-            ).apply { marginStart = gap }
-            view.lockRowActions.addView(button, params)
+            ).apply { if (index > 0) marginStart = dp(8f) }
+            bar.addView(button, params)
         }
+        return bar
     }
 
     private fun glyphIcon(icon: ImageView, colour: Int, glyph: Int) {

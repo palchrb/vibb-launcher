@@ -423,10 +423,7 @@ class TimeLockModelTest {
         assertEquals("true", root.attr("clickable"))
         assertEquals("true", root.attr("focusable"))
         assertTrue(dp(root.attr("minHeight")) >= 48f)
-        // Design 105 §3: the alarm row's buttons sit in a container that is gone on every other row.
-        val actions = views.byId("lock_row_actions")
-        assertEquals("gone", actions.attr("visibility"))
-        val children = views.drop(1) - actions
+        val children = views.drop(1)
         assertEquals(3, children.size)
         assertTrue(children.all { it.attr("importantForAccessibility") == "no" })
         assertEquals("2", views.byId("lock_row_label").attr("maxLines"))
