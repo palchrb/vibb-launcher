@@ -4644,6 +4644,36 @@ file list).
 Screenshots: the scratchpad's `launcher-fix-1/shots/` (`01`-`04` before, `11`-`16` after, `30`-`32` the pause, `40`-`44`
 the other paths).
 
+**Code QA round** (`docs/review/qa-launcher-fix-1-code.md`; the versions rule of 2026-11-16). The window is one pixel now
+(M1), the sink has the 14-17 actions at priority -999 (M2, L2), and the panel's small icon is the Vibb mark. Run on
+three images, each a fresh phone (`-wipe-data`) of its own AVD made from the compatibility check's configs (`fix34`,
+`fix370`: 480x854 at 240 dpi, `hw.mainKeys = no`) or `jelly36` restored as above; main's build first, then the branch's
+with `adb install -r`; the rest as above. Bars and icon colours measured on host recordings (`adb emu screenrecord`): the
+dark rows in the top and bottom 40 px at x 460, and the brightest and darkest pixel in the status bar's icon strip.
+
+| Check | Android 14 (API 34, `google_apis`) | Android 16 (`jelly36`) | Android 17 (API 37, `google_apis`) |
+|---|---|---|---|
+| Before (main) | The gear: `ActivityNotFoundException`, SystemUI killed, the keyguard. Flymodus: black rows 0-35 and 818-853 for the window's life | From the first run above: the same crash and black rows | **Not reachable:** the platform refuses to hide Settings on this image (`AppEnforcer`: "Platform refused to hide com.android.settings"), so nothing crashes; the shade's Notification settings opened Android's "App is not available" (Settings blocked by lock task) with main and the branch alike |
+| The gear, Manage (kiosk) | **Passed.** Both to the sink; Home focused, LOCKED, no keyguard | **Passed.** Both to the sink, Home focused, no keyguard | Settings visible (see Before): Settings at priority 1 above the sink at -999 for every action, the package actions included; the long-press menu didn't open by `input` on this image |
+| History (kiosk, history on) | **Passed.** `NOTIFICATION_SETTINGS` and `NOTIFICATION_HISTORY` to the sink | Passed in the first run above | Not run (the system restarts, below) |
+| The pause | **Passed.** Settings at priority 1 for every action, the sink at -999 (`pm query-activities`, the package actions with `-d package:`); the gear and Manage opened Settings's pages, no chooser. `AUTOMATIC_ZEN_RULE_SETTINGS` has no Settings filter on 14 (the sink answers it) | Passed in the first run above | Not run; the priorities as above |
+| Flymodus, dark Home | **Passed.** No dark rows after the shade closed, Home drawn throughout (Settings's own voice activity flashes white for ~0.2 s on 14, before and after alike). Three early runs (after a reinstall and the gear checks) showed the whole screen black for the window's life, Home not drawn; not seen again in eight runs, one of them right after a reinstall and one right after the sink | **Passed.** No dark rows, Home drawn throughout | **Passed** once: no dark rows, airplane mode on in 390 ms (3-button navigation, below) |
+| Flymodus, light wallpaper (M1) | **Passed.** The full-screen window of the first commit turned the status icons white for its life (the strip's darkest pixel 236, against 95 for Home's dark icons); the one-pixel window keeps them dark (93-95) | **Passed.** The icons dark (94) through the window | Not run |
+| The small icon | **Passed.** The Vibb mark, filled (dark rings on a light disc) in the shade header; in the status bar the rings at LOW | **Passed.** The same: filled in the header and in the status bar, on the dark and the light wallpaper | Android 17 draws the app's launcher icon in the header (the Vibb mark there); no status icon at LOW. The header reads "Vibb One (debug)" alone |
+
+**Android 17 on this VM:** the API 37.0 and 37.2 images abort in gfxstream (`Assertion failed:
+!rcEnc->featureInfo()->hasReadColorBufferDma`) whenever a frame is read back - `screencap`, SystemUI's navigation-handle
+region sampling and system_server's task snapshots - with `-feature -GLDMA,-GLDMA2`, `-gpu guest` and `-gpu off` alike;
+surfaceflinger or system_server dies and the phone restarts. 3-button navigation (`cmd overlay enable-exclusive
+--category com.android.internal.systemui.navbar.threebutton`) and host screenshots (`adb emu screenrecord screenshot`)
+avoid the first two; a task snapshot still killed system_server after the Flymodus run. So 17's rows are partial.
+
+**Found on Android 14, outside this round:** a reboot of the enrolled API 34 phone never finished booting (user 0 stays
+`BOOTING`, `sys.boot_completed` unset after 7 minutes; no HOME resolves before the first unlock - Settings' FallbackHome is
+hidden and Vibb's HOME isn't direct-boot aware). Seen twice (`fix34`, and the compatibility check's `compat34`); the logcat
+is in the scratchpad (`launcher-fix-1/logcat-34-stuck-boot.txt`). `jelly36` (16) reboots fine (§6an).
+
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:

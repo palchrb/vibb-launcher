@@ -219,9 +219,11 @@
     </style>
 
     <!-- Snarveier's Flymodus window (ShortcutAirplaneActivity, design 99 §4.1): nothing on it, so nothing of it may
-         show. Theme.Translucent.NoTitleBar drew black status and navigation bars (a legacy theme does not draw the bar
-         backgrounds itself) and slid them away with its exit animation (the user on rc.3, 2026-11-16). Transparent
-         bars drawn by the window, edge to edge, no contrast scrim, no window animation. -->
+         show. Under Theme.Translucent.NoTitleBar the window's decor painted the legacy black bar backgrounds over the
+         status and navigation bars, and they moved with the window as it closed (the user on rc.3, 2026-11-16). The
+         window is one pixel now (ShortcutAirplaneActivity.claimNoBars), so it claims no bars at all; this theme keeps
+         them transparent and drawn by the window in case it is ever laid out full screen. The null window animation is
+         harmless but not the fix (the activity's own transitions were already off). -->
     <style name="ShortcutWindowTheme" parent="@android:style/Theme.Material.NoActionBar">
         <item name="android:windowIsTranslucent">true</item>
         <item name="android:windowIsFloating">false</item>
