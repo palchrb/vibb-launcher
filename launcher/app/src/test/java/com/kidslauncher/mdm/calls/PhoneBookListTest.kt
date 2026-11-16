@@ -7,6 +7,9 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.kidslauncher.mdm.ui.search.PhoneBookBack
+import com.kidslauncher.mdm.ui.search.phoneBookBack
+import com.kidslauncher.mdm.ui.search.phoneBookBackEnabled
 import java.util.Locale
 
 /** Design 79 §3-§4: the phone book's order, the visit's frozen top, the search and the seen rule. */
@@ -237,4 +240,80 @@ class PhoneBookListTest {
         assertEquals(100L, ContactMissed(MissedSummary(1, 100), null).lastAtMs)
         assertEquals(mapOf("a" to 300L), visitTopAfter(null, mapOf("a" to ContactMissed(null, MissedSummary(1, 300)), "b" to ContactMissed())))
     }
+
+    // ---- Siste (design 106 §3.4, §3.5) ----
+
+    @Test
+    fun `a visit starts on Kontakter - a configuration change keeps Siste, any way in or calls going off move back`() {
+        assertEquals(PhoneBookTab.CONTACTS, tabAtVisitStart(restored = false, saved = PhoneBookTab.RECENT))
+        assertEquals(PhoneBookTab.CONTACTS, tabAtVisitStart(restored = false, saved = null))
+        assertEquals(PhoneBookTab.RECENT, tabAtVisitStart(restored = true, saved = PhoneBookTab.RECENT))
+        assertEquals(PhoneBookTab.RECENT, tabAfter(PhoneBookTab.RECENT, switchShown = true, entered = false))
+        assertEquals(PhoneBookTab.CONTACTS, tabAfter(PhoneBookTab.RECENT, switchShown = true, entered = true))
+        assertEquals(PhoneBookTab.CONTACTS, tabAfter(PhoneBookTab.RECENT, switchShown = false, entered = false))
+        assertEquals(PhoneBookTab.CONTACTS, tabAfter(PhoneBookTab.CONTACTS, switchShown = true, entered = false))
+        // The switch only while the kid can ask and the form is closed.
+        assertTrue(phoneBookSwitchShown(canAsk = true, formOpen = false))
+        assertFalse(phoneBookSwitchShown(canAsk = false, formOpen = false))
+        assertFalse(phoneBookSwitchShown(canAsk = true, formOpen = true))
+        // The activity alone holds the tab: neither button restores its own checked state (M1), and the tab is saved
+        // only for a configuration change, before the visit's early return.
+        val layout = file("res/layout/activity_phone_book.xml")
+        assertEquals(2, Regex("""android:saveEnabled="false"""").findAll(layout).count())
+        val book = file("java/com/kidslauncher/mdm/calls/PhoneBookActivity.kt")
+        val save = book.substringAfter("override fun onSaveInstanceState(").substringBefore("val top = visitTop ?: return")
+        assertTrue(save.contains("if (isChangingConfigurations) {") && save.contains("outState.putString(STATE_TAB, tab.name)"))
+        // Code QA M1: every new intent moves the book to Kontakter - the notification with several callers and the system
+        // call log ask for no one, and Q7 still says Kontakter.
+        val newIntent = book.substringAfter("override fun onNewIntent(").substringBefore("takeAsked(intent)")
+        assertTrue(newIntent.contains("tabAfter(tab, switchShown = true, entered = true)") && !newIntent.contains("hasExtra"))
+        // Code QA L2: a sync that changes the rules reloads Siste's rows too; L3: a load of an ended visit is never applied.
+        val policy = book.substringAfter("private val policyListener").substringBefore("/** A rule that doesn't allow calls")
+        assertTrue(policy.contains("render()") && policy.contains("loadMissedCalls()"))
+        val stop = book.substringAfter("override fun onStop()").substringBefore("override fun onDestroy()")
+        assertTrue(stop.contains("loads.begin()"))
+        assertTrue(book.substringAfter("override fun onStart()").substringBefore("ContactPhotos.addListener").contains("snapshot = null"))
+        // Search only in Kontakter: hidden on Siste, cleared when Siste shows.
+        assertTrue(book.contains("search.setShown(list.search && !requestForm.isOpen && contacts)"))
+        val show = book.substringAfter("private fun showTab(").substringBefore("private fun writeRecentMarks(")
+        assertTrue(show.contains("if (next == PhoneBookTab.RECENT) {\n            search.clear()"))
+    }
+
+    @Test
+    fun `Back on Siste goes to Kontakter first, and is enabled while Siste shows`() {
+        assertEquals(PhoneBookBack.SHOW_CONTACTS, phoneBookBack(keyboardUp = false, formOpen = false, query = "", recent = true))
+        assertEquals(PhoneBookBack.LEAVE, phoneBookBack(keyboardUp = false, formOpen = false, query = "", recent = false))
+        assertEquals(PhoneBookBack.HIDE_KEYBOARD, phoneBookBack(keyboardUp = true, formOpen = false, query = "", recent = true))
+        assertTrue(phoneBookBackEnabled(formOpen = false, query = "", recent = true))
+        assertFalse(phoneBookBackEnabled(formOpen = false, query = "", recent = false))
+        assertTrue(phoneBookBackEnabled(formOpen = false, query = "M", recent = false))
+    }
+
+    @Test
+    fun `Siste's sightings - each contact its newest visible red row, never one off screen, up to that call`() {
+        fun row(contact: RuleContact, kind: RecentKind, atMs: Long, unseen: Boolean = true) =
+            RecentRow(contact, kind, RecentSource.PHONE, 1, atMs, unseen)
+        val shown = listOf(
+            row(pappa, RecentKind.MISSED, 300) to false, // scrolled out of view
+            row(pappa, RecentKind.MISSED, 200) to true,
+            row(pappa, RecentKind.MISSED, 100) to true,
+            row(mamma, RecentKind.IN, 250) to true, // not red
+            row(ola, RecentKind.MISSED, 150, unseen = false) to true, // seen already
+            row(anna, RecentKind.MISSED, 120) to true,
+        )
+        val visible = recentVisible(shown)
+        assertEquals(mapOf(pappa.number to 200L, anna.number to 120L), visible)
+        // Its own TopSightings: a second on screen while resumed marks each contact up to that row's call.
+        val s = TopSightings()
+        s.update(visible, active = true, nowMs = 0)
+        s.update(visible, active = true, nowMs = 1_000)
+        assertEquals(mapOf(pappa.number to 200L, anna.number to 120L), s.seen(nowMs = 1_000))
+        // Opening Siste alone (less than a second) marks nothing.
+        val brief = TopSightings()
+        brief.update(visible, active = true, nowMs = 0)
+        assertEquals(emptyMap<String, Long>(), brief.seen(nowMs = 400))
+    }
+
+    private fun file(path: String): String =
+        listOf("src/main/$path", "app/src/main/$path").map { java.io.File(it) }.first { it.exists() }.readText()
 }

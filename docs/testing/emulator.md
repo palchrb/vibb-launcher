@@ -4833,6 +4833,57 @@ on the page (`flg=0x14000000`) and Back returns to the time-rule screen; the mis
 first) opens Mamma's card through the entry. **Not run on 14:** the update from an older build's pin (a fresh install
 only). `compat34` stopped with `adb emu kill`: start it with `-wipe-data` next time (§6as).
 
+## 6aw. Two badges and Siste (design 106, branch `a5-b2`, 2026-11-16)
+
+`docs/notes/launcher/calls.md`, "Two badges and Siste". The rig: the server 0.81.0 debug build on port 3100 with a copy
+of §6av's data, its contacts edited for the gate - Mamma (Home, Melding Element X `@mamma:example.org`, SMS in and out),
+Pappa (Home, SMS in and out), Emma, Jack, Lily and Ambulanse 113 -, SMS "Styrt av Vibb"; the branch's debug launcher as
+Device Owner (§4's adb lines), enrolled with a typed code, kiosk LOCKED, Telefonbok and SMS roles ours. Calls with `adb
+emu gsm call`/`cancel` (the emulator's modem ends an outgoing call at once), SMS with `adb emu sms send`; the tab read
+from the `RadioButton`s' `checked` in `uiautomator dump`; rules turned on now with `POST /devices/1/rules-now` and ended
+with `POST /devices/1/lock-now/<id>/end`; calls off with `POST /devices/1/calls/settings section=channels
+calls_mode=off sms_mode=managed`. The missed Element X call from the debug-only `ElementCallDebugReceiver`:
+`adb shell am broadcast -n $P/com.kidslauncher.mdm.calls.ElementCallDebugReceiver --es mxid @mamma:example.org --es key k2`
+(then `--es remove k2`; quote a key with `|` for the device's shell). Screenshots kept in the session's scratchpad.
+
+**Android 16 (`jelly36`, restored clean before and after: 22 of 22 sums, the same file list):**
+
+| Step | Result |
+|---|---|
+| 1. A missed call from Pappa | **Passed.** Home: Pappa's rust pill "1" at the top end with the phone-x glyph; no green badge on any contact; our notification "Tapt anrop fra Pappa" |
+| 2. SMS | **Passed.** From Mamma: the teal pill "1" at her bottom end, the rust pill unchanged. The kid's SMS to Pappa (through Meldinger's "Ny melding", not his sheet, which would mark him seen): nothing changed |
+| 3. The tile | **Passed.** Kontakter chosen, the Siste badge "1" inline after the word (its description "Siste, 1 tapt anrop"); Pappa's row with the rust pill and its glyph, Mamma's with the teal one; the notification gone |
+| 4. Calls for Siste | Ring Emma from her row (OUTGOING), Mamma answered (INCOMING), Pappa twice cancelled (MISSED x2), Jack declined on the call screen (REJECTED, type 5), an unknown number (BLOCKED, type 6) |
+| 5. Siste | **Passed.** Under "I dag": Pappa "2 tapte anrop" (red, one row), Mamma "Ringte deg", Emma "Du ringte", Pappa "Tapt anrop" (step 1, a row of its own); no Jack, no unknown. TalkBack: "Pappa, 2 tapte anrop, i dag 7:07", "Mamma, ringte deg, i dag 7:06", "Emma, du ringte, i dag 7:06". Mørk and Lys, font scale 1.0 and 2.0: the labels wrap ("Kontak-ter" at 2.0), the time under the word at 2.0 |
+| 6. Seen | **Passed** (on fresh calls: step 4's had been marked seen by Kontakter's own rule, the book in front after the calls). Two missed calls from Pappa with Home in front; the tile, Siste within a second, 2.5 s on Siste, Kontakter: the Siste badge gone, Pappa's rust pill gone in his row, his row still first without its red line; Back: Home without his pill |
+| 7. A Siste row | **Passed.** Mamma's missed row opened her sheet, no call placed (no new OUTGOING row); the sheet's rust pill at the top end, the teal pill at the bottom end |
+| 8. Always Kontakter | **Passed:** Home then the tile; Home then Recents' card; Melding (Pappa's own thread, Meldinger's task) then Back twice; a font-size change kept Siste (and its rows); the process killed while Home was in front, then Recents' card; with the book on Siste, the missed-call notification's own intent (`VIEW` calls with Pappa as `EXTRA_MISSED_CONTACT`, to the entry) - Kontakter with Pappa's sheet - and a `tel:` link - Kontakter under "Ringe Jack?"; Back on Siste -> Kontakter, Back again -> Home. **Notes:** Recents' overview opened from the book itself keeps the page resumed (Android's live tile), so tapping its card again is no new visit and Siste stays - design 79's visit boundary; `am kill` can't kill the process while Home (ours) is in front (procState 2), so it was killed with `run-as <pkg> kill -9` (a low-memory kill's SIGKILL, not a force-stop: the alarms stayed); the notification itself can't be tapped while the book is in front (the call's own screen ends the visit and the resume clears it), hence its intent |
+| 9. Element X | **Passed.** Posted: Mamma's rust pill on Home, Siste "Tapt anrop i io.element.android.x" (Element X isn't installed, so the shown label is the package name - the sheet's line says the same); removed: the pill gone, the row stays; the record `element_call_log` holds the number, the time, a 128-bit hash and `o:false` - no room, no MXID |
+| 10. Time rules, calls off | **Passed.** Under Lekser (no calls) the call log's `VIEW` to the entry lands on the time-rule screen; under Kveld (calls) its "Telefonbok" row opens the book and Siste works; with Siste shown, calls off from the server: the book moved to Kontakter with only Ambulanse, "Samtaler er slått av ...", no switch |
+
+**Android 14 (`compat34`, API 34), steps 1-3, 5, 6 and 8:** started with `-wipe-data -dns-server 8.8.8.8` under both
+locks, the same server data and the build with TalkBack's lower-cased missed word; the first `dpm set-device-owner` right
+after boot failed and passed when repeated. The rig's device had a daily budget of 0 (`[0,0,0,0,0,0,0]`), which on 14
+showed "Screen time is used up" over Home: cleared on the PWA's screen-time page for the device (all days blank) before
+the run. The phone in English, the launcher in Norwegian (the server's language). **All passed**, as on 16: Pappa's rust
+pill and our notification; Mamma's teal pill, the kid's own SMS changing nothing; Kontakter with "Siste 1", both pills on
+the rows, the notification gone; Siste under "I dag" - Pappa "2 tapte anrop", Mamma "Ringte deg", Emma "Du ringte", Pappa
+"Tapt anrop" (TalkBack "Pappa, tapt anrop, i dag 10:05"), no Jack (REJECTED) and no unknown number (BLOCKED); 2.5 s on
+Siste, then Kontakter: the badge and Pappa's pill gone, his row first without its red line, Home without his pill after
+Back; Kontakter after Home and the tile, after Home and Recents' card, after Melding (his own thread) and Back twice,
+after a SIGKILL (`am kill` left the process, as on 16) and Recents' card (the alarms kept); Siste kept through font scale
+1.3 and back; the notification's intent and a `tel:` link moved Siste to Kontakter (Pappa's sheet; "Ringe Jack?"); Back
+on Siste -> Kontakter -> Home. `compat34` stopped with `adb emu kill`; start it with `-wipe-data` next time.
+
+**After the code QA** (`jelly36` restored clean before and after, the fixes' build; the re-gate of what changed):
+- **M1, passed.** With the book left on Siste, Home in front, two callers missed (Jack, Emma): the shade's "2 tapte
+  anrop" tapped - the book on Kontakter. With the book resumed on Siste: the several-callers notification's intent (the
+  entry, `VIEW` calls, no contact) and a plain system call-log `VIEW` - each moved it to Kontakter. As in the first run,
+  the notification itself can't be in the shade while the book is resumed (the call screens end the visit and the
+  book's return clears it), hence the intents.
+- **L2, passed.** On Siste with Emma's missed row, `POST /devices/1/contacts/5/remove`: within the sync Emma's row left
+  Siste, the book stayed on Siste with the other rows.
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:

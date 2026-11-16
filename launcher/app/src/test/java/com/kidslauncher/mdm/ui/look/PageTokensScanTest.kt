@@ -20,7 +20,8 @@ class PageTokensScanTest {
         fun dir(path: String) = File(java, path).listFiles { f -> f.extension == "kt" }.orEmpty().toList()
         val files = dir("ui/day") + dir("ui/messages").filterNot { it.name == "PictureActivity.kt" } + dir("ui/quickcontrols") +
             dir("ui/kidsettings").filter { it.name.startsWith("KidSoundPicker") || it.name.startsWith("ShortcutsPicker") } +
-            listOf("PhoneBookActivity.kt", "PhoneBookAdapter.kt", "ContactRequestForm.kt").map { File(java, "calls/$it") } +
+            listOf("PhoneBookActivity.kt", "PhoneBookAdapter.kt", "ContactRequestForm.kt", "RecentCallsAdapter.kt", "RecentBadgeSpan.kt")
+                .map { File(java, "calls/$it") } +
             // The search's highlight, on the phone book's and Meldinger's rows (code QA M1).
             File(java, "ui/search/KidSearchField.kt")
         files.forEach { assertTrue(it.path, it.isFile) }
@@ -53,11 +54,15 @@ class PageTokensScanTest {
         "ic_kid_check", "app_glyph_photo_library",
         // Design 99: the Snarveier picker's "Flytt opp" / "Flytt ned", tinted in the page's ink.
         "ic_kid_chevron",
+        // Design 106: Siste's glyphs, tinted by the row in the alert red or the dim.
+        "ic_kid_missed_call", "ic_kid_call_in", "ic_kid_call_out",
     )
 
-    /** The same in both looks (§4.1): what sits on a peach fill, the kid's own bubble, and the badge pill. */
+    /** The same in both looks (§4.1): what sits on a peach fill, the kid's own bubble, and the badge pills (design 106:
+     * the rust missed-call pill and the teal unread one, Meldinger's tile). */
     private val bothLooks = setOf(
         "kid_on_accent", "kid_on_accent_press", "kid_message_out", "kid_message_out_ink", "kid_message_out_dim", "kid_badge", "kid_badge_ink",
+        "kid_messages_tile",
     )
 
     private fun xml(path: String): String =
@@ -87,6 +92,7 @@ class PageTokensScanTest {
             "activity_wifi_networks", "item_wifi_network", "activity_bluetooth_devices", "item_bluetooth_device",
             "activity_kid_sound_picker", "item_kid_sound", "activity_shortcuts_picker", "item_shortcut_pick",
             "activity_phone_book", "item_phone_book_row", "item_phone_book_label", "item_phone_book_request", "view_contact_request_form",
+            "item_recent_day", "item_recent_call",
         )
         assertTrue("$layouts", layouts.containsAll(expected))
         // The picture viewer is night: its layout is not a page's.
@@ -110,6 +116,8 @@ class PageTokensScanTest {
         for (drawable in drawables - masks.toSet()) assertEquals("drawable/$drawable", emptyList<String>(), strays(xml("drawable/$drawable")))
         // The pickers' number colours.
         assertEquals(emptyList<String>(), strays(xml("color/vibb_picker_number")))
+        // Design 106: the switch's words.
+        assertEquals(emptyList<String>(), strays(xml("color/kid_page_tab_text")))
         // The masks: white, and drawn only tinted - the dot by the adapter in the calendar's colour of the page's look,
         // the photo glyph by the thread in the bubble's dim, the circle as a photo's clip or under the avatar's colour,
         // every other one by a page colour on the element that names it.
@@ -159,7 +167,10 @@ class PageTokensScanTest {
         assertTrue(all.size > 100)
         val naming = all.filter { kotlin(it).contains("R.color.kid_page_") }.map { it.path.replace(File.separatorChar, '/').substringAfter("/mdm/") }
         assertEquals(
-            setOf("ui/day/DayListAdapter.kt", "ui/messages/ThreadActivity.kt", "calls/PhoneBookAdapter.kt", "ui/search/KidSearchField.kt"),
+            setOf(
+                "ui/day/DayListAdapter.kt", "ui/messages/ThreadActivity.kt", "calls/PhoneBookAdapter.kt", "ui/search/KidSearchField.kt",
+                "calls/RecentCallsAdapter.kt",
+            ),
             naming.toSet(),
         )
         // ... and there the application's context only does what isn't drawing: no resource is taken from it, nothing

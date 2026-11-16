@@ -95,6 +95,20 @@ fun afterElementSweep(current: Map<String, ElementMissedCall>, active: List<Elem
     }
 
 /**
+ * Design 106 code QA L1: the one MXID -> contact number lookup for the badge, Siste's record and Siste's unseen rows -
+ * the phone-book contacts whose Message button opens Element X under an MXID. Two contacts with the same MXID: the
+ * first in the phone book's order wins, everywhere, so the pill, the record and the row always name one contact.
+ */
+fun elementNumberByMxid(rules: CallRules): Map<String, String> {
+    val out = LinkedHashMap<String, String>()
+    for (contact in rules.phoneBook) {
+        val mxid = contact.messageAddress?.takeIf { contact.messageApp == "element" && isMatrixId(it) } ?: continue
+        out.putIfAbsent(mxid, contact.number)
+    }
+    return out
+}
+
+/**
  * Per contact number (the badges' key): the missed Element X calls that still count - each room's notification is
  * one call (its text, where several calls could be told apart, is never read), counted when it turned into a missed
  * call after the contact's seen mark ([seenMs]: the kid opened the contact's sheet). The contact is looked up in the
@@ -102,11 +116,9 @@ fun afterElementSweep(current: Map<String, ElementMissedCall>, active: List<Elem
  * are left out.
  */
 fun elementMissedSummaries(calls: Collection<ElementMissedCall>, rules: CallRules, seenMs: Map<String, Long>): Map<String, MissedSummary> {
-    val byMxid = rules.phoneBook
-        .filter { it.messageApp == "element" && isMatrixId(it.messageAddress) }
-        .associateBy { it.messageAddress.orEmpty() }
+    val byMxid = elementNumberByMxid(rules)
     return calls.mapNotNull { call ->
-        val number = byMxid[call.mxid]?.number ?: return@mapNotNull null
+        val number = byMxid[call.mxid] ?: return@mapNotNull null
         if (call.sinceMs > (seenMs[number] ?: Long.MIN_VALUE)) number to call.sinceMs else null
     }.groupBy({ it.first }, { it.second })
         .mapValues { (_, times) -> MissedSummary(times.size, times.max()) }

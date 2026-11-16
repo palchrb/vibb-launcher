@@ -35,6 +35,8 @@ class BadgeListenerService : NotificationListenerService() {
 
     override fun onListenerConnected() {
         NotificationRuleRuntime.attach(this)
+        // Design 106 §3.3: Siste's record of the missed Element X calls follows the memory store's changes.
+        com.kidslauncher.mdm.calls.ElementCallLogStore.attach(this)
         ElementMissedCallStore.attach(elementSweep)
         ClockReader.attach { keys -> activeOrNull(keys) }
         AlarmNoticeReader.attach { keys -> activeOrNull(keys) }

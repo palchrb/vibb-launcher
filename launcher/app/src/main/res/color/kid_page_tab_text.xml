@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Design 106 §3.5: the chosen half's words on the accent fill (9.9:1 Mørk, 7.6:1 Lys), the other's in the dim ink. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:color="@color/kid_on_accent" android:state_checked="true" />
+    <item android:color="@color/kid_page_ink_dim" />
+</selector>

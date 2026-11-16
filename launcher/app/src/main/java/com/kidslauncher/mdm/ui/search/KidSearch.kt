@@ -12,15 +12,20 @@ fun searchShown(rows: Int, query: String, allowed: Boolean, minRows: Int): Boole
     allowed && (query.isNotEmpty() || rows >= minRows)
 
 /** What Back does on the phone book (QA N4, code QA L10): the keyboard first (stock Android), then the request form,
- * then the search's text, then it leaves. */
-enum class PhoneBookBack { HIDE_KEYBOARD, CLOSE_FORM, CLEAR_SEARCH, LEAVE }
+ * then the search's text, then Siste back to Kontakter (design 106 §3.5, Q8), then it leaves. */
+enum class PhoneBookBack { HIDE_KEYBOARD, CLOSE_FORM, CLEAR_SEARCH, SHOW_CONTACTS, LEAVE }
 
-fun phoneBookBack(keyboardUp: Boolean, formOpen: Boolean, query: String): PhoneBookBack = when {
+fun phoneBookBack(keyboardUp: Boolean, formOpen: Boolean, query: String, recent: Boolean = false): PhoneBookBack = when {
     keyboardUp -> PhoneBookBack.HIDE_KEYBOARD
     formOpen -> PhoneBookBack.CLOSE_FORM
     query.isNotEmpty() -> PhoneBookBack.CLEAR_SEARCH
+    recent -> PhoneBookBack.SHOW_CONTACTS
     else -> PhoneBookBack.LEAVE
 }
+
+/** The phone book's Back callback is enabled only while it has something to undo (design 106 L2: Siste too) - with
+ * nothing, the system closes the keyboard and leaves as everywhere. */
+fun phoneBookBackEnabled(formOpen: Boolean, query: String, recent: Boolean): Boolean = formOpen || query.isNotEmpty() || recent
 
 /** What Back does in Meldinger: the keyboard first, then the delete confirm, then the search's text, then "Ny melding"
  * back to the list, then it leaves. */

@@ -56,6 +56,18 @@ internal fun homeRingHairline(darkInk: Boolean, isEmergency: Boolean): Boolean =
 private const val HOME_RING_HAIRLINE_DP = 1f
 private const val HOME_RING_HAIRLINE_COLOUR = 0x47000000
 
+/** Where a contact's pills are drawn (design 106 §2.2): the glyph's size in each. */
+enum class BadgeSize(val glyphDp: Float) {
+    /** Home's 76/64 dp avatars: 24 dp pills, 14 sp. */
+    HOME(15f),
+
+    /** The phone book's 44 dp row avatar: 20 dp pills, 12 sp. */
+    ROW(12f),
+
+    /** The contact sheet's 132 dp avatar: 30 dp pills, 15 sp. */
+    SHEET(18f),
+}
+
 object KidAvatars {
 
     fun dp(context: Context, value: Float): Int =
@@ -112,8 +124,8 @@ object KidAvatars {
         ContactPhotos.cachedShown(context, shownPhotoOf(context, contact, isEmergency = false), thumb) != null
 
     /**
-     * Sizes an `item_kid_contact` for Home ([contactRow]): the avatar, a frame 12 dp wider and
-     * 6 dp taller for the badges, and the green call badge scaled with the avatar (28 dp at 76).
+     * Sizes an `item_kid_contact` for Home ([contactRow]): the avatar, and a frame 12 dp wider and 6 dp taller for the
+     * two pills (design 106 §2.2: both stay 24 dp at either avatar size and grow inward over the avatar).
      */
     fun sizeContact(item: View, avatarDp: Int) {
         val context = item.context
@@ -124,13 +136,6 @@ object KidAvatars {
         item.findViewById<View>(R.id.contact_avatar).layoutParams.apply {
             width = dp(context, avatarDp.toFloat())
             height = dp(context, avatarDp.toFloat())
-        }
-        val scale = avatarDp / 76f
-        item.findViewById<View>(R.id.contact_call_badge).apply {
-            layoutParams.width = dp(context, 28f * scale)
-            layoutParams.height = dp(context, 28f * scale)
-            val pad = dp(context, 7f * scale)
-            setPadding(pad, pad, pad, pad)
         }
     }
 
@@ -164,20 +169,6 @@ object KidAvatars {
         }
     }
 
-    /**
-     * The green call badge with a ring in the wallpaper's ink (white on dark grounds, near-black on
-     * light ones - [com.kidslauncher.mdm.ui.wallpaper.InkChoice]), so it stays legible on any
-     * wallpaper (emulator run 2026-10-06; it was a ring in the fixed ground colour).
-     */
-    fun bindCallBadge(badge: View, ink: com.kidslauncher.mdm.ui.wallpaper.InkChoice) {
-        badge.background = GradientDrawable().apply {
-            shape = GradientDrawable.OVAL
-            setColor(badge.context.getColor(R.color.kid_call_badge))
-            setStroke(dp(badge.context, 2f), ink.ink)
-        }
-        badge.visibility = View.VISIBLE
-    }
-
     /** The ring around the sheet's photo, in the contact's colour ([avatarRingColour]). */
     fun ring(context: Context, contact: RuleContact, isEmergency: Boolean): Drawable =
         GradientDrawable().apply {
@@ -193,11 +184,24 @@ object KidAvatars {
         badge.text = text
     }
 
-    /** A contact avatar's badge ([ContactBadge], design 77 §6.7): the count, the missed-call glyph only with a missed
-     * call. */
-    fun bindContactBadge(badge: TextView, contact: ContactBadge) {
-        bindBadge(badge, contact.count)
-        badge.setCompoundDrawablesRelativeWithIntrinsicBounds(if (contact.callGlyph) R.drawable.ic_kid_missed_call else 0, 0, 0, 0)
+    /**
+     * A contact avatar's two pills (design 106 §2, A5): the rust [missedView] with the phone-x glyph and the missed
+     * calls, the teal [unreadView] with the chat glyph and the unread messages - each hidden at 0, never a sum. [size]
+     * sets the glyph's bounds in code (the drawables are 24 dp).
+     */
+    fun bindContactBadge(missedView: TextView, unreadView: TextView, badge: ContactBadge, size: BadgeSize) {
+        bindPill(missedView, badge.missedText, R.drawable.ic_kid_missed_call, size)
+        bindPill(unreadView, badge.unreadText, R.drawable.ic_kid_badge_message, size)
+    }
+
+    private fun bindPill(pill: TextView, text: String?, glyphRes: Int, size: BadgeSize) {
+        pill.visibility = if (text == null) View.GONE else View.VISIBLE
+        pill.text = text
+        if (text == null) return
+        val glyph = ContextCompat.getDrawable(pill.context, glyphRes)?.mutate()
+        val px = dp(pill.context, size.glyphDp)
+        glyph?.setBounds(0, 0, px, px)
+        pill.setCompoundDrawablesRelative(glyph, null, null, null)
     }
 
     /** What TalkBack reads for a contact avatar: the name, its missed calls, its unread messages. */

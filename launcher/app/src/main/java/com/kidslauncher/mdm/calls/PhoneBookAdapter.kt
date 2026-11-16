@@ -17,6 +17,7 @@ import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import com.kidslauncher.mdm.R
+import com.kidslauncher.mdm.ui.home.BadgeSize
 import com.kidslauncher.mdm.ui.home.ContactBadge
 import com.kidslauncher.mdm.ui.home.KidAvatars
 import com.kidslauncher.mdm.ui.home.MissedCallText
@@ -109,6 +110,7 @@ class PhoneBookAdapter(
         private val photo: ImageView = view.findViewById(R.id.contact_photo)
         private val initial: TextView = view.findViewById(R.id.contact_initial)
         private val badge: TextView = view.findViewById(R.id.contact_badge)
+        private val unreadBadge: TextView = view.findViewById(R.id.contact_unread_badge)
         private val name: TextView = view.findViewById(R.id.row_name)
         private val line: TextView = view.findViewById(R.id.row_line)
         private val buttons: LinearLayout = view.findViewById(R.id.row_buttons)
@@ -175,7 +177,7 @@ class PhoneBookAdapter(
             actionIds.clear()
             when (val row = item.row) {
                 PhoneBookRow.EmergencyDialer -> {
-                    KidAvatars.bindContactBadge(badge, ContactBadge(0, 0))
+                    KidAvatars.bindContactBadge(badge, unreadBadge, ContactBadge(0, 0), BadgeSize.ROW)
                     name.setText(R.string.calls_emergency)
                     line.visibility = View.GONE
                     buttons.visibility = View.GONE
@@ -189,10 +191,8 @@ class PhoneBookAdapter(
         private fun bindContact(context: Context, row: PhoneBookRow.Contact, item: PhoneBookItem) {
             val contact = row.contact
             val badgeCounts = ContactBadge(row.missed?.count ?: 0, row.unread)
-            KidAvatars.bindContactBadge(badge, badgeCounts)
-            // On a 44 dp avatar the count alone: the red line beside it already says it is a missed call (the glyph
-            // made the badge as wide as the avatar, emulator run).
-            badge.setCompoundDrawablesRelativeWithIntrinsicBounds(0, 0, 0, 0)
+            // Design 106 §2 (A5): the two pills with their 12 dp glyphs - the rust one at the top, the teal one at the bottom.
+            KidAvatars.bindContactBadge(badge, unreadBadge, badgeCounts, BadgeSize.ROW)
             name.text = com.kidslauncher.mdm.ui.search.highlightMatch(context, contact.name, row.match)
             val text = rowLine(context, row)
             line.visibility = if (text == null) View.GONE else View.VISIBLE

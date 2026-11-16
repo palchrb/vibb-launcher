@@ -228,8 +228,9 @@ class KidPaletteTest {
         var checked = 0
         for (view in (0 until views.length).map { views.item(it) as Element }) {
             val id = view.getAttributeNS(android, "id").removePrefix("@+id/")
-            // The missed badge's pill is design 34 step 2's colour (P2: kid_badge, checked there).
-            if (id == "sheet_badge") continue
+            // The missed badge's pill is design 34 step 2's colour (P2: kid_badge, checked there); the unread pill is
+            // Meldinger's teal (design 106, checked below).
+            if (id == "sheet_badge" || id == "sheet_unread_badge") continue
             val style = view.getAttribute("style").removePrefix("@style/")
             val text = view.getAttributeNS(android, "textColor").ifEmpty { styleText[style].orEmpty() }
             val glyph = view.getAttributeNS(app, "drawableTopCompat")
@@ -255,6 +256,9 @@ class KidPaletteTest {
         }
         // The name, missed calls, Call (text and glyph), Message (text and glyph), the hint, Close.
         assertEquals(8, checked)
+        // Design 106 §2.2: both pills' ink on their fills.
+        assertTrue(contrast("kid_ink", "kid_messages_tile") >= 4.5)
+        assertTrue(contrast("kid_ink", "kid_badge") >= 4.5)
         // QA M4's number: missed calls #FF8A8A at 7.5:1. The tonal button stays a quiet field, the handle visible.
         assertEquals(7.5, contrast("kid_missed_text", "kid_sheet"), 0.05)
         assertTrue(contrast("kid_sheet_button", "kid_sheet") < 1.5)
@@ -552,6 +556,9 @@ class KidPaletteTest {
             "kid_page_ink_dim" to ground, "kid_page_ink_dim" to tile,
             "kid_page_ink" to over(c("kid_page_card"), ground), "kid_page_dim" to over(c("kid_page_card"), ground),
             "kid_badge_ink" to c("kid_badge"),
+            // Design 106 §2.2 (A5): the teal unread pill (Meldinger's tile) carries the same white in both looks; §3.5:
+            // the switch's chosen half (kid_on_accent on the accent fill, above) and the other half's dim on the track.
+            "kid_badge_ink" to c("kid_messages_tile"), "kid_page_ink_dim" to tile,
             // The request form: its words and fields on the raised panel.
             "kid_page_ink" to c("kid_page_ground"), "kid_page_accent" to c("kid_page_lift"),
         )

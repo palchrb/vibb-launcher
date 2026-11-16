@@ -234,7 +234,11 @@ class ElementMissedCallsTest {
         }
         // Every main source file: only these touch the calls' MXIDs (the rest only listen to the store or ask it to
         // judge again - nothing reaches the sync, the API or a report).
-        val allowed = setOf("ElementMissedCalls.kt", "ElementMissedCallStore.kt", "MissedCallsRepo.kt", "BadgeListenerService.kt", "ElementDmReader.kt")
+        // Design 106 §3.3: Siste's record takes a number, a time and a hash of the key from them (ElementCallLogTest).
+        val allowed = setOf(
+            "ElementMissedCalls.kt", "ElementMissedCallStore.kt", "MissedCallsRepo.kt", "BadgeListenerService.kt", "ElementDmReader.kt",
+            "ElementCallLog.kt", "ElementCallLogStore.kt",
+        )
         val carriers = Regex("""\bElementMissedCall\b|\bElementPost\b|ElementMissedCallStore\.calls\b|\belementMissedSummaries\b|\belementMissedCallContact\b|ElementDmReader\.missedCallContact\b|\bafterElement[A-Za-z]+\b""")
         val offenders = sources.walkTopDown()
             .filter { it.isFile && it.extension == "kt" && it.name !in allowed }

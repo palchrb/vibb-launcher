@@ -61,6 +61,7 @@ import com.kidslauncher.mdm.openAppsList
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.requestNotificationPermission
 import com.kidslauncher.mdm.setDefaultHomeScreen
+import com.kidslauncher.mdm.ui.home.BadgeSize
 import com.kidslauncher.mdm.ui.home.ContactBadge
 import com.kidslauncher.mdm.ui.home.GRID_COLUMN_GAP_DP
 import com.kidslauncher.mdm.ui.home.GRID_ROW_GAP_DP
@@ -1002,10 +1003,9 @@ class HomeActivity : UIObjectActivity() {
                 contact, emergency, initialSp = 30f * layout.avatarDp / 76f, thumb = true,
             )
             KidAvatars.bindHomeRing(item.findViewById(R.id.contact_ring), emergency, shownInk)
-            KidAvatars.bindCallBadge(item.findViewById(R.id.contact_call_badge), shownInk)
-            // Design 77 §6.7: missed calls plus unread messages.
+            // Design 106 (A5): the rust pill for missed calls, the teal one for unread messages - two counts, no sum.
             val badge = ContactBadge(missed[contact.number]?.count ?: 0, com.kidslauncher.mdm.sms.SmsHome.unreadFrom(contact.number))
-            KidAvatars.bindContactBadge(item.findViewById(R.id.contact_badge), badge)
+            KidAvatars.bindContactBadge(item.findViewById(R.id.contact_badge), item.findViewById(R.id.contact_unread_badge), badge, BadgeSize.HOME)
             item.findViewById<TextView>(R.id.contact_name).apply {
                 text = contact.name
                 KidInk.label(this, shownInk)
@@ -1022,7 +1022,7 @@ class HomeActivity : UIObjectActivity() {
             }
             // Each item is one avatar plus one gap wide, so avatars are a gap apart - but a row that
             // fits is never wider than the screen (design 34 P4: three 104 dp items in 288 dp
-            // scrolled by 24 dp and cut the third contact's call badge).
+            // scrolled by 24 dp and cut the third contact's badge).
             item.layoutParams = LinearLayout.LayoutParams(itemPx, LinearLayout.LayoutParams.WRAP_CONTENT)
             row.addView(item)
         }

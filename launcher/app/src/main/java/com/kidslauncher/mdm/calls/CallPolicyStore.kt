@@ -107,6 +107,8 @@ object CallPolicyStore {
         // changed MXID go with the rules that dropped them (design 15). After the state is set:
         // never in the way of the call services; never throws.
         ElementRoomStore.prune(context, newState.forCalls())
+        // Design 106 §3.3: Siste's record of missed Element X calls goes with the contacts the rules dropped.
+        ElementCallLogStore.prune(context, newState.forCalls())
         // Design 79 §5.4: the kid's pictures of contacts that left the phone or were re-pointed go - only on this CE
         // refresh of managed rules ([kidPhotosAfterRefresh]), on the pictures' own IO thread.
         try {

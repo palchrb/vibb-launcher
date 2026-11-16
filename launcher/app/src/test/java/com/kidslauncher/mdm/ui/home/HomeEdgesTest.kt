@@ -193,10 +193,10 @@ class HomeEdgesTest {
         assertEquals(139.9f, tileHeightDp(m, 2.0f), 0.1f)
     }
 
-    // --- (c) the call badge ---
+    // --- (c) the unread pill (the call badge's place until design 106) ---
 
     @Test
-    fun `the third contact's call badge is inside the screen on the Jelly Star`() {
+    fun `the third contact's unread pill is inside the screen on the Jelly Star`() {
         val layout = contactRow(3, 288f)
         assertEquals(ContactRowLayout(76, 28, false), layout)
         // Before: three items of avatar + gap (104 dp) = 312 dp in 288 dp - the row scrolled by 24 dp
@@ -207,7 +207,7 @@ class HomeEdgesTest {
         assertEquals(144, contactItemPx(layout, 3, 432, 1.5f))
         // The third avatar's centre is at 240 dp, its right edge at 278, the badge's at 282 <= 288.
         val centre = 2 * 96f + 48f
-        val badgeRight = centre + layout.avatarDp / 2f + CALL_BADGE_OVERHANG_DP
+        val badgeRight = centre + layout.avatarDp / 2f + UNREAD_BADGE_OVERHANG_DP
         assertEquals(282f, badgeRight, 0.001f)
         assertTrue(badgeRight <= 288f)
     }
@@ -215,13 +215,13 @@ class HomeEdgesTest {
     @Test
     fun `the badge's overhang is the layout's`() {
         val contact = xml("res/layout/item_kid_contact.xml")
-        val badge = byId(contact, "contact_call_badge")
+        val badge = byId(contact, "contact_unread_badge")
         assertEquals("bottom|end", badge.attr("layout_gravity"))
         val margin = badge.attr("layout_marginEnd").removeSuffix("dp").toFloat()
         // KidAvatars.sizeContact makes the frame 12 dp wider than the avatar, centred.
         val sizing = file("java/com/kidslauncher/mdm/ui/home/KidAvatars.kt").readText()
         assertTrue(sizing.contains("width = dp(context, avatarDp + 12f)"))
-        assertEquals(CALL_BADGE_OVERHANG_DP, 12f / 2 - margin, 0.001f)
+        assertEquals(UNREAD_BADGE_OVERHANG_DP, 12f / 2 - margin, 0.001f)
         // Names wrap to two lines at every scale too.
         assertEquals("2", byId(contact, "contact_name").attr("maxLines"))
         // The focus ring's reach is P2's.
@@ -247,7 +247,7 @@ class HomeEdgesTest {
             while (width <= 480f) {
                 val layout = contactRow(count, width)
                 val item = contactItemDp(layout, count, width)
-                // Room for the avatar's call badge and focus ring on both sides, scrolling or not.
+                // Room for the avatar's unread pill and focus ring on both sides, scrolling or not.
                 assertTrue("count $count, width $width: $item", item + 0.001f >= contactRoomDp(layout.avatarDp))
                 if (!layout.scrolls) {
                     assertTrue("count $count, width $width", count * item <= width + 0.001f)

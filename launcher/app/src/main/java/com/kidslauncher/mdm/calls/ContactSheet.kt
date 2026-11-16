@@ -64,16 +64,17 @@ object ContactSheet {
             photoSheet?.dismiss()
             photoSheet = sheet
         }
-        // Design 77 §6.7: missed calls plus unread messages.
+        // Design 106 (A5): the rust pill for missed calls, the teal one for unread messages.
         KidAvatars.bindContactBadge(
             view.findViewById(R.id.sheet_badge),
+            view.findViewById(R.id.sheet_unread_badge),
             com.kidslauncher.mdm.ui.home.ContactBadge(missed?.count ?: 0, com.kidslauncher.mdm.sms.SmsHome.unreadFrom(contact.number)),
+            com.kidslauncher.mdm.ui.home.BadgeSize.SHEET,
         )
         view.findViewById<TextView>(R.id.sheet_name).text = contact.name
-        // Verification N8: the missed calls and the unread messages each in words; the badge is only their sum, so
-        // TalkBack skips it.
+        // Verification N8: the missed calls and the unread messages each in words; TalkBack reads those, never the pills
+        // (both are importantForAccessibility="no" in the layout).
         val unread = com.kidslauncher.mdm.sms.SmsHome.unreadFrom(contact.number)
-        view.findViewById<View>(R.id.sheet_badge).importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         view.findViewById<TextView>(R.id.sheet_missed).apply {
             val text = KidAvatars.sheetLines(activity, missed, unread)
             visibility = if (text == null) View.GONE else View.VISIBLE

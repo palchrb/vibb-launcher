@@ -70,9 +70,10 @@ fun tileHeightDp(metrics: GridMetrics, fontScale: Float, lines: Int = GRID_LABEL
 /** The grid's own bottom padding (`activity_home.xml`): the room under the last row once scrolled to the end. */
 const val GRID_BOTTOM_PADDING_DP = 16f
 
-/** How far the call badge's right edge sits past the avatar's (`item_kid_contact.xml`: the frame
- * is 12 dp wider than the avatar, the badge at its end with a 2 dp margin). */
-const val CALL_BADGE_OVERHANG_DP = 4f
+/** How far the teal unread pill's end edge sits past the avatar's (`item_kid_contact.xml`: the frame is 12 dp wider
+ * than the avatar, the pill at its end with a 2 dp margin) - the green call badge's place until design 106, so the
+ * room is unchanged; the pill grows inward over the avatar. */
+const val UNREAD_BADGE_OVERHANG_DP = 4f
 
 /** How far P2's focus ring reaches past the avatar (its 2 dp stroke lies inside the 4 dp gap). */
 const val FOCUS_RING_OUT_DP = PressFeedback.FOCUS_RING_GAP_DP
@@ -82,7 +83,7 @@ const val FOCUS_RING_OUT_DP = PressFeedback.FOCUS_RING_GAP_DP
  * overhangs on the end side only and the ring on both sides, so the larger of the two on each side
  * covers both (it over-reserves at the start when the badge is the larger - harmless).
  */
-fun contactRoomDp(avatarDp: Int): Float = avatarDp + 2 * max(CALL_BADGE_OVERHANG_DP, FOCUS_RING_OUT_DP)
+fun contactRoomDp(avatarDp: Int): Float = avatarDp + 2 * max(UNREAD_BADGE_OVERHANG_DP, FOCUS_RING_OUT_DP)
 
 /**
  * The width of one Home contact. A scrolling row keeps [ContactRowLayout.itemDp] (the peek's

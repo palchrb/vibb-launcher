@@ -259,10 +259,10 @@ class PressFeedbackTest {
         }
         assertEquals("${PressMotion.ELEVATION_DP.toInt()}dp", items["android:elevation"])
         assertEquals("none", items["android:outlineProvider"])
-        // The call badge takes the avatar's elevation in code, with no outline.
+        // Design 106: the teal unread pill takes the avatar's elevation in code (its style has no outline) ...
         val src = source("java/com/kidslauncher/mdm/ui/home/PressFeedback.kt")
-        assertTrue(src.contains("outlineProvider = null\n            elevation = avatar.elevation"))
-        // So does the missed-call badge, else Home's 4 dp avatar would draw over its 2 dp.
+        assertTrue(src.contains("R.id.contact_unread_badge)?.elevation = avatar.elevation"))
+        // ... and so does the missed-call pill, else Home's 4 dp avatar would draw over their 2 dp.
         assertTrue(src.contains("R.id.contact_badge)?.elevation = avatar.elevation"))
     }
 

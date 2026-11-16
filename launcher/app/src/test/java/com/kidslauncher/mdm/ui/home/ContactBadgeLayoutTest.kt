@@ -6,7 +6,8 @@ import org.w3c.dom.Element
 import java.io.File
 import javax.xml.parsers.DocumentBuilderFactory
 
-/** Emulator run 2026-10-06: the green call badge on Home contacts was clipped by the avatar. */
+/** Emulator run 2026-10-06: the green call badge on Home contacts was clipped by the avatar. Since design 106 the teal
+ * unread pill sits in its place, under the same rule. */
 class ContactBadgeLayoutTest {
     private val ns = "http://schemas.android.com/apk/res/android"
     private val root: Element = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }
@@ -20,8 +21,8 @@ class ContactBadgeLayoutTest {
     }
 
     @Test
-    fun `the badge sits on the frame, inside it, with nothing clipping it`() {
-        val badge = byId("contact_call_badge")
+    fun `the pills sit on the frame, inside it, with nothing clipping them`() {
+        val badge = byId("contact_unread_badge")
         val frame = byId("contact_frame")
         assertEquals(frame, badge.parentNode)
         assertEquals("false", frame.getAttributeNS(ns, "clipChildren"))
@@ -31,6 +32,12 @@ class ContactBadgeLayoutTest {
             val value = badge.getAttributeNS(ns, margin)
             assert(!value.startsWith("-")) { "$margin = $value" }
         }
+        // Design 106 §2.2: the rust pill at the top end, the teal one at the bottom end; the green call badge is gone.
+        assertEquals(frame, byId("contact_badge").parentNode)
+        assertEquals("top|end", byId("contact_badge").getAttributeNS(ns, "layout_gravity"))
+        assertEquals("bottom|end", badge.getAttributeNS(ns, "layout_gravity"))
+        val all = root.getElementsByTagName("*")
+        assert((0 until all.length).none { (all.item(it) as Element).getAttributeNS(ns, "id") == "@+id/contact_call_badge" })
     }
 
     /** Mockup A: the white ring is Home's alone - gone in the layout, drawn last, shown by Home, never by the phone book. */

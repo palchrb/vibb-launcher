@@ -67,6 +67,42 @@
         <item quantity="other">%d treff</item>
     </plurals>
     <string name="phone_book_ask_named">Be om å legge til «%1$s»</string>
+    <!-- Design 106 §3 (B2): telefonbokas bryter «Kontakter | Siste» og lista Siste. -->
+    <string name="phone_book_tabs">Velg liste</string>
+    <string name="phone_book_tab_contacts">Kontakter</string>
+    <string name="phone_book_tab_recent">Siste</string>
+    <plurals name="phone_book_recent_badge">
+        <item quantity="one">Siste, %d tapt anrop</item>
+        <item quantity="other">Siste, %d tapte anrop</item>
+    </plurals>
+    <string name="recent_today">I dag</string>
+    <string name="recent_yesterday">I går</string>
+    <plurals name="recent_missed">
+        <item quantity="one">Tapt anrop</item>
+        <item quantity="other">%d tapte anrop</item>
+    </plurals>
+    <plurals name="recent_missed_in_app">
+        <item quantity="one">Tapt anrop i %2$s</item>
+        <item quantity="other">%1$d tapte anrop i %2$s</item>
+    </plurals>
+    <plurals name="recent_in">
+        <item quantity="one">Ringte deg</item>
+        <item quantity="other">Ringte deg (%d)</item>
+    </plurals>
+    <plurals name="recent_out">
+        <item quantity="one">Du ringte</item>
+        <item quantity="other">Du ringte (%d)</item>
+    </plurals>
+    <plurals name="recent_described_in">
+        <item quantity="one">ringte deg</item>
+        <item quantity="other">ringte deg %d ganger</item>
+    </plurals>
+    <plurals name="recent_described_out">
+        <item quantity="one">du ringte</item>
+        <item quantity="other">du ringte %d ganger</item>
+    </plurals>
+    <string name="recent_row">%1$s, %2$s, %3$s</string>
+    <string name="recent_empty">Ingen anrop de siste 14 dagene</string>
     <!-- Design 79 §5: barnets eget bilde av en kontakt, bare på telefonen. -->
     <string name="kid_photo_title">Bilde av %1$s</string>
     <string name="kid_photo_pick">Velg bilde</string>

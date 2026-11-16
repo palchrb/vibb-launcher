@@ -76,14 +76,18 @@ class HomeModelTest {
         assertEquals(TileChange.FULL, tileChange(GridTile.Messages(1), GridTile.Messages(1, look), sameIcon = true))
     }
 
-    /** Design 77 §6.7 (code QA M2): a contact avatar's badge is missed calls plus unread messages; the missed-call
-     * glyph only with a missed call. */
+    /** Design 106 §2.1 (A5): a contact's two pills each have their own count - one missed call and three messages are
+     * "1" and "3", never "4"; a zero hides its pill. */
     @Test
-    fun `a contact's badge counts missed calls and unread messages`() {
-        assertEquals(5, ContactBadge(2, 3).count)
-        assertTrue(ContactBadge(1, 0).callGlyph)
-        assertFalse(ContactBadge(0, 4).callGlyph)
-        assertEquals(0, ContactBadge(0, 0).count)
+    fun `a contact's two pills count missed calls and unread messages apart`() {
+        assertEquals("1", ContactBadge(1, 3).missedText)
+        assertEquals("3", ContactBadge(1, 3).unreadText)
+        assertEquals(null, ContactBadge(0, 4).missedText)
+        assertEquals("4", ContactBadge(0, 4).unreadText)
+        assertEquals("2", ContactBadge(2, 0).missedText)
+        assertEquals(null, ContactBadge(2, 0).unreadText)
+        assertEquals("99+", ContactBadge(120, 0).missedText)
+        assertEquals(listOf("missed", "unread"), ContactBadge::class.java.declaredFields.filterNot { it.isSynthetic }.map { it.name }.sorted())
     }
 
     @Test

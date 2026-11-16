@@ -120,7 +120,7 @@ private fun rowFits(count: Int, avatar: Int, gap: Int, width: Float) =
  * 1-3 contacts: 76 dp avatars 28 dp apart, centred (mockup); when that doesn't fit (or more
  * contacts): 64 dp, 16 dp apart, centred, if that fits; otherwise 64 dp in a horizontal scroll, spaced so
  * the next avatar is cut in half at the edge - the peek says "there is more". A centred row also needs
- * room for each contact's call badge and focus ring ([contactRoomDp], design 34 P4; this only bites
+ * room for each contact's unread pill and focus ring ([contactRoomDp], design 34 P4; this only bites
  * below about 84 dp of content per contact, never at a real width). A row that fits is laid out by
  * [contactItemDp], never wider than the content.
  */
@@ -154,11 +154,15 @@ fun relativeLuminance(argb: Int): Double {
 fun contrastRatio(lumA: Double, lumB: Double): Double =
     (max(lumA, lumB) + 0.05) / (min(lumA, lumB) + 0.05)
 
-/** Design 77 §6.7: a contact avatar's badge - missed calls plus unread messages. The missed-call glyph shows only
- * with a missed call (a text alone isn't one). */
+/** Design 106 §2.1 (A5): a contact avatar's two pills - the rust one for missed calls (the phone's and Element X's
+ * together, [com.kidslauncher.mdm.calls.ContactMissed.count]) and the teal one for unread messages. Each has its own
+ * count; nothing adds the two (a missed call and a message were "2" next to the phone glyph before). */
 data class ContactBadge(val missed: Int, val unread: Int) {
-    val count: Int get() = missed + unread
-    val callGlyph: Boolean get() = missed > 0
+    /** The rust pill's text; `null` hides it. */
+    val missedText: String? get() = badgeText(missed)
+
+    /** The teal pill's text; `null` hides it. */
+    val unreadText: String? get() = badgeText(unread)
 }
 
 /** Badge text: nothing for 0 or less, the count up to 99, then "99+". */
