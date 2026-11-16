@@ -123,6 +123,12 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
   the last 24 h, still `held`/`dropped`, newest first, at most 100) - also with both channels unmanaged (then no
   contacts, as before). Per contact `sms_in` (never for an emergency number, `emergency::is_emergency` - R2-H1),
   `sms_out`, `mms` (`device_contacts`, backfilled from the call flags, on for a new contact).
+- **The dialer back on the allowlist (design 109 §B)**: `calls::save_settings` runs in `BEGIN IMMEDIATE` and reads the
+  stored `calls_mode`; a save from `managed` or `off` to `unmanaged` adds the reported `system_dialer` to the allowlist
+  if it is missing (`devices::edit_allowlist_in`, in the same transaction), because Device › Apps showed it as a link
+  while calls were managed and the kid may have Android's Phone app again. A NULL allowlist stays NULL (apps not
+  managed), an unreadable one is left as it is (logged, the mode save goes through), no report or no dialer adds
+  nothing; the parent's rename and On Home for it are kept. `tests::dialer_row::unmanaged_again_puts_the_dialer_back`.
 - **`sms_state`** in the status report (`device_status.sms_state_json`), through `sms::sanitize_state`: the flat keys by
   `SMS_STATE_FIELDS`, `blocked` counts by class, at most two `own_numbers`, `hold_full`. No content. Since design 82
   W2 `has_history` (a boolean: the phone has threads to read, so its Meldinger tile shows whatever the mode) - read

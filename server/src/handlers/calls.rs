@@ -2103,7 +2103,13 @@ pub async fn save_settings(
     // The old columns get D2's derived keys, so a rolled-back server sends the fail-closed view.
     let (managed, calls_enabled, sms_enabled) = derived_old_keys(calls_mode, sms_mode);
     let result = async {
-        let mut tx = state.db.begin().await?;
+        // BEGIN IMMEDIATE: it reads the stored mode before it writes (design 109).
+        let mut tx = state.db.begin_with("BEGIN IMMEDIATE").await?;
+        let was_managed: Option<String> =
+            sqlx::query_scalar("SELECT calls_mode FROM device_policy WHERE device_id = ?")
+                .bind(id)
+                .fetch_optional(&mut *tx)
+                .await?;
         // A change to either mode stamps roles_changed_at: reports from before it may still
         // show the old role state (B1).
         let updated = sqlx::query(
@@ -2125,6 +2131,41 @@ pub async fn save_settings(
         .execute(&mut *tx)
         .await?
         .rows_affected();
+        // Design 109: from managed (or off) to unmanaged the Phone app is the kid's again, so it is put back on the
+        // allowlist if it is missing - the Apps page showed it as a link while calls were managed. A NULL allowlist
+        // stays NULL (apps not managed), an unreadable one stays as it is, no report or no dialer adds nothing.
+        if updated > 0
+            && calls_mode == "unmanaged"
+            && was_managed.is_some_and(|mode| mode != "unmanaged")
+        {
+            let call_state: Option<Option<String>> = sqlx::query_scalar(
+                "SELECT call_state_json FROM device_status WHERE device_id = ? \
+                 ORDER BY reported_at DESC, id DESC LIMIT 1",
+            )
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?;
+            let call_state: Option<serde_json::Value> = call_state
+                .flatten()
+                .and_then(|json| serde_json::from_str(&json).ok());
+            if let Some(dialer) = crate::handlers::device_api::system_dialer(call_state.as_ref()) {
+                match crate::handlers::devices::edit_allowlist_in(&mut tx, id, false, |packages| {
+                    if packages.contains(&dialer) {
+                        return false;
+                    }
+                    packages.push(dialer.clone());
+                    true
+                })
+                .await
+                {
+                    Ok(()) => {}
+                    Err(crate::handlers::devices::AllowlistError::Db(err)) => return Err(err),
+                    Err(err) => {
+                        tracing::warn!(device_id = id, %err, "left the allowlist as it was");
+                    }
+                }
+            }
+        }
         tx.commit().await?;
         Ok::<_, sqlx::Error>(updated)
     }

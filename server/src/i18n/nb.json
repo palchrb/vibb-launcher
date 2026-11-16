@@ -4656,5 +4656,11 @@
   "events.pin_used.entry.wifi_signin": "Wi-Fi-innlogging",
   "security.detail.pin.wifi_signin": "{at}: Wi-Fi-innlogging åpnet med foreldrekoden.",
   "security.detail.pin.place.wifi_signin": "ved Wi-Fi-innloggingen",
-  "settings.notifications.switch.wifi_signin": "Wi-Fi-innlogging"
+  "settings.notifications.switch.wifi_signin": "Wi-Fi-innlogging",
+  "apps.dialer.managed_label": "{app} → Vibbs telefonbok",
+  "apps.dialer.managed_sub": "Skjult på telefonen - barnet ringer fra Telefonbok på Hjem",
+  "apps.dialer.off_sub": "Skjult på telefonen - bare nødnumre kan ringes",
+  "apps.dialer.not_allowed": "Av: bare nødanrop virker",
+  "apps.dialer.off_home": "Ikke på Hjem: barnet har ingen måte å ringe på",
+  "device.apps.refused_dialer": "Samtaler er styrt av Vibb: Telefon-appen følger Vibbs telefonbok. Endre det under Anrop og kontakter."
 }

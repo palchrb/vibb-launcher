@@ -317,10 +317,12 @@ body {
     pointer-events: none;
 }
 
-/* static/top-strip.js's nudge: one frame a shade off the night (invisible) on every return to the page, so WebKit sees
-   the fixed top edge's colour change and sends it to the status area again. */
+/* static/top-strip.js's nudge (design 109): held briefly on a return, a shade off the night and one point wider off
+   the screen's left edge (invisible: nothing is uncovered, but the box changes, a layout), so WebKit scans the fixed
+   top edge again and sends it to the status area. */
 .top-strip.top-strip-nudge {
     background: #0C0C15;
+    left: -1px;
 }
 
 a {

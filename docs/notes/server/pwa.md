@@ -423,6 +423,17 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   form's redirect, a refusal through `toggle_refusal` keeping `?notice=…&app=…&from=…#row`, the deleted catalog row,
   the refused Name and icon, Back to `#phones`), `device_pages::tests::apps_from_takes_only_its_two_shapes`,
   `tracked_apps::tests::a_phone_link_says_where_it_came_from`, `jstest/auto-reload.test.js`.
+- **The system Phone app's row** (design 109 §B, `docs/design/109-ios-fade-and-phone-row.md`; `tests::dialer_row`): the
+  dialer is the last report's `call_state.system_dialer` (`device_api::system_dialer`, the filters of
+  `call_and_text_roles`). Calls managed (`calls_managed()`: `managed` and `off`): its installed row is a built-in link
+  row "{its own name} → Vibbs telefonbok" (`apps.dialer.*`), directly under Vibb One, to `/devices/{id}/calls#settings`
+  (value "Styrt av Vibb" / "Av"), with its logo or letter, never in Not allowed, no switch, no Name and icon, no
+  Permissions - the launcher shows the fixed Telefonbok tile and hides the dialer whatever the allowlist says.
+  `devices::dialer_locked` guards `toggle_app` (on and off), `save_app_display` (before `validate`) and `perms_target`
+  (permissions, lock-media): a stale form is refused at the row (`?notice=dialer_managed&app=app-<package>`, the
+  reason under the link row; a refusal lands in place, the cell is moved not rebuilt - `jstest/swap.test.js`, "109").
+  Calls unmanaged: today's row, plus `AppView.dialer_note`: "Av: bare nødanrop virker" when unticked on a phone with a
+  readable allowlist, an alarm line when ticked and not On Home. `edit_allowlist` runs `BEGIN IMMEDIATE`.
 
 ## Device › Apps: Permissions (design 68, `docs/design/68-app-permissions.md` §4.1, migration `0102_app_permissions.sql`)
 
@@ -2047,6 +2058,19 @@ pointer here.
   `focusout` and `visualViewport`'s `resize` re-arm one timer: a single nudge 300 ms after the last (`KEYBOARD_MS`).
   Nothing else: the strip, its colour, the canvas. Tests: `jstest/top-strip.test.js`; the shell test pins `?v=2`.
   Not seen on the iPhone yet.
+- **A layered, held nudge** (design 109, 2026-11-16, `docs/design/109-ios-fade-and-phone-row.md` §A; the user: the fade
+  now *stays* until the app is killed - so a repaint-only nudge never reaches WebKit, which re-sends the fixed top
+  edge only when it scans a layout or compositing change). `static/top-strip.js` (`?v=3`), only when
+  `navigator.standalone === true` (the installed iPhone app, the one place with the pocket): a nudge replaces the strip
+  with `cloneNode(false)` plus `top-strip-nudge` (one DOM operation; `style.css?v=122`: `background: #0C0C15; left:
+  -1px`, a layout change one point off screen, nothing uncovered on any page), sets the existing `theme-color` meta's
+  content one step off (`#0C0C15`, restored from what it read; not counted on), and holds that for two frames and
+  `HOLD_MS` (150 ms), then puts all back. A hold always ends (`endHold()`, idempotent): at its end, from a
+  `HOLD_CAP_MS` (1 s) timer, on hidden and `pagehide`, and at the start of every return; a nudge while `holding` does
+  nothing. Returns (a series: now and at 0.3/1/3 s): `pageshow`, visible, window `focus`, and a
+  `prefers-color-scheme` change (the app-switcher's snapshots); the debounced single nudge (`KEYBOARD_MS`): a field's
+  `focusout`, `visualViewport` and window `resize`. Tests: `jstest/top-strip.test.js` (11), `shell.rs` pins the rule and
+  `?v=3`. If it still stays: taking the strip away for one hold is the next knob (a visible cost, the user's choice).
 
 ## Every phone's own colour (design 85 step 1, 2026-11-12, branch `design-85`, migration `0138_device_avatar_tone.sql`)
 

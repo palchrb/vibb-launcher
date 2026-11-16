@@ -1585,10 +1585,13 @@ fn the_app_shell_scrolls_main_not_the_document() {
     // the pages that scroll the document - exactly the auth pages but /lock (night itself) mark their html
     // `doc-scroll`, with no `:has()` (iOS 14). And one frame off the night on a return (`static/top-strip.js`), so
     // WebKit sends the edge's colour again.
-    assert_eq!(block(".top-strip.top-strip-nudge"), "background: #0C0C15;");
+    assert_eq!(
+        block(".top-strip.top-strip-nudge"),
+        "background: #0C0C15; left: -1px;"
+    );
     assert!(!css.contains(":has("), "no :has() on the browser floor");
     let head = std::fs::read_to_string("templates/partials/head.html").unwrap();
-    assert!(head.contains("<script src=\"/static/top-strip.js?v=2\" defer></script>"));
+    assert!(head.contains("<script src=\"/static/top-strip.js?v=3\" defer></script>"));
     for path in super::device_api::template_files() {
         let text = std::fs::read_to_string(&path).unwrap();
         let auth = text.contains("<body class=\"auth-page");

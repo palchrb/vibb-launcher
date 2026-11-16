@@ -4656,5 +4656,11 @@
   "events.pin_used.entry.wifi_signin": "Wi-Fi sign-in",
   "security.detail.pin.wifi_signin": "{at}: Wi-Fi sign-in opened with the parent code.",
   "security.detail.pin.place.wifi_signin": "at the Wi-Fi sign-in",
-  "settings.notifications.switch.wifi_signin": "Wi-Fi sign-in"
+  "settings.notifications.switch.wifi_signin": "Wi-Fi sign-in",
+  "apps.dialer.managed_label": "{app} → Vibb's phone book",
+  "apps.dialer.managed_sub": "Hidden on the phone - the kid calls from Phone book on Home",
+  "apps.dialer.off_sub": "Hidden on the phone - only emergency numbers can be called",
+  "apps.dialer.not_allowed": "Off: only emergency calls work",
+  "apps.dialer.off_home": "Not on Home: the kid has no way to make a call",
+  "device.apps.refused_dialer": "Calls are managed by Vibb: the Phone app follows Vibb's phone book. Change that under Calls & Contacts."
 }

@@ -1024,14 +1024,22 @@ pub(crate) fn call_and_text_roles(call_state: Option<&serde_json::Value>) -> Vec
     };
     ["system_dialer", "default_sms_package"]
         .iter()
-        .filter_map(|key| call_state.get(key)?.as_str())
-        .filter(|package| {
-            is_package_name(package)
-                && *package != "com.android.settings"
-                && !crate::play::is_play_core(package)
-        })
-        .map(str::to_string)
+        .filter_map(|key| role_package(call_state, key))
         .collect()
+}
+
+/// The phone's system dialer as its last report names it (design 109): `call_state.system_dialer`, a real package
+/// name, never Settings or Play's core - the filters of [call_and_text_roles].
+pub(crate) fn system_dialer(call_state: Option<&serde_json::Value>) -> Option<String> {
+    role_package(call_state?, "system_dialer")
+}
+
+fn role_package(call_state: &serde_json::Value, key: &str) -> Option<String> {
+    let package = call_state.get(key)?.as_str()?;
+    (is_package_name(package)
+        && package != "com.android.settings"
+        && !crate::play::is_play_core(package))
+    .then(|| package.to_string())
 }
 
 /// The launcher's application ids (the configured admin component's, and the release and debug
