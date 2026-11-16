@@ -1,6 +1,8 @@
 # 91 - Find My Device before the first unlock after a reboot (a design note)
 
-**Revision 3, 2026-11-16: the design QA of revision 2 and the user's answers.** Branch `design-91`, merged with
+**Revision 3, decided 2026-11-16: the design QA of revision 2 and the user's answers.** Every decision of §13 is
+taken (the user answered the last open ones "Høres bra ut!"), except D25, the SIM PIN (§21), recommended in this
+revision's last edit. Branch `design-91`, merged with
 `main` at 58fa27119. The QA is `docs/review/qa-91-design-r2.md` (12a6af2f8: 2 High, 9 Medium, 15 Low). §20 says how
 each finding was handled. The user's answers of 2026-11-16:
 
@@ -99,7 +101,7 @@ Revision 3 (§14-§20 hold the details):
   offline and BeaconDB opt-in are an optional later step (§15).
 - **Cost** about 5.5 rounds before QA (§10). **Recommendation:** steps 1-4 after the current queue and before phase D.
   The Jelly Star checks of §15.6 come first, and the emulator gates run on API 34, 36 and 37. A signed SMS command
-  channel goes in its own note later (§17.2). Open for the user: D8b, D9, D12-D14, D16, D19, D21-D24 (§13).
+  channel goes in its own note later (§17.2). Every decision is taken but D25, the SIM PIN (§13, §21).
 
 Revision 2 (for the record; the cadence and the numbers are replaced by revision 3's):
 
@@ -754,29 +756,35 @@ build it.
   parent code), replacing M6's calm notice. (b) no remote PIN change. (c) biometrics stay on, and **a fingerprint
   unlock ends Lost** by itself (§14.8, §14.9).
 
-**Open**, with a recommendation:
+**Decided as recommended** (the user, "Høres bra ut!", 2026-11-16):
 
-- **D8b - One switch, "Trolig stjålet" / "Probably stolen".** Recommended: yes, off by default. It keeps the lock
+- **D8b - One switch, "Trolig stjålet" / "Probably stolen".** Yes, off by default. It keeps the lock
   screen silent: no finder line, no "Ring <name>", no number on any screen, and no SMS (an SMS from the thief's SIM
   would show them the contact's number). Everything else in Lost mode is the same. Alternative: no switch.
-- **D9 - Lost mode turns location on even where the parent set it Off.** Recommended: yes, said at the mark, logged.
-- **D12 - OpenCellID offline** (step 5, off by default, the parent's own token). Recommended: yes, later.
-- **D13 - BeaconDB** (step 5, opt-in, server-side, Lost phones only, at most 6 queries an hour). Recommended: yes,
-  later.
-- **D14 - "Who" from the SIM.** Recommended: ICCID HMACs compared on the phone; only `same`/`other`/`none`, the
+- **D9 - Lost mode turns location on even where the parent set it Off.** Yes, said at the mark, logged.
+- **D12 - OpenCellID offline** (step 5, off by default, the parent's own token). Yes, later.
+- **D13 - BeaconDB** (step 5, opt-in, server-side, Lost phones only, at most 6 queries an hour). Yes, later.
+- **D14 - "Who" from the SIM.** ICCID HMACs compared on the phone; only `same`/`other`/`none`, the
   operator and the line number leave it; the IMEI once, for the police card (§15.4).
-- **D16 - Pushes.** Decided by D20: a PIN unlock while Lost, and a fingerprint end. Recommended in addition: a Lost
+- **D16 - Pushes.** A PIN unlock while Lost and a fingerprint end (D20), and also a Lost
   phone is on again, and a SIM change in any mode (once per SIM state per boot).
-- **D19 - The other ideas (§18).** Recommended: charging reports and the last check at shutdown yes; front-camera
+- **D19 - The other ideas (§18).** Charging reports and the last check at shutdown yes; front-camera
   photos and nearby Bluetooth names no; the signed command SMS later, in its own note.
-- **D21 - A tag on every SMS, and "Sjekk en SMS" in the PWA** (Q91-M7). Recommended: yes.
-- **D22 - Block safe mode while Lost** (`DISALLOW_SAFE_BOOT`, Q91-L9). Recommended: yes, through the same one writer
+- **D21 - A tag on every SMS, and "Sjekk en SMS" in the PWA** (Q91-M7). Yes.
+- **The SMS's recipient** (§17.1): the chosen recovery contact only. The coordinator is confirming this with the
+  user; it can be widened to the parents later (a list in place of one contact).
+- **D22 - Block safe mode while Lost** (`DISALLOW_SAFE_BOOT`, Q91-L9). Yes, through the same one writer
   and lifted the same way as the airplane block.
 - **D23 - A Ring that waited more than 5 minutes for the phone to connect isn't played; the parent gets a push to
-  ring now** (Q91-M1). Recommended: yes.
+  ring now** (Q91-M1). Yes.
 - **D24 - "Ring <name>" on the Lost screen after the PIN.** D20 puts the button there, and H1 allowed the lift only
-  before the unlock. Recommended: the same brief lift of `DISALLOW_OUTGOING_CALLS` for that one call AFU, by the one
-  writer `AppEnforcer` (§14.7). Alternative: the button shows only while outgoing calls aren't restricted.
+  before the unlock. Yes: the same brief lift of `DISALLOW_OUTGOING_CALLS` for that one call AFU, by the one writer
+  `AppEnforcer` (§14.7).
+
+**Recommended, not yet answered** (from the user's question on the SIM PIN):
+
+- **D25 - The SIM PIN** (§21). Recommended: PIN off on the kid's SIM, with the operator's spending limits, as a setup
+  choice in `docs/setup/`; and a line on the phone's Advanced page when the SIM asked for its PIN at the last restart.
 
 ## 14. The permanent connection and Lost mode (revisions 2-3)
 
@@ -986,7 +994,7 @@ unlock:
 - Nothing else is ever lifted. At the next start and at `ACTION_USER_UNLOCKED`, anything still in `lifted` is put back
   first. Each lift goes in the next check (`lifted`), and the server writes `lost_restriction_lifted` to the security
   log.
-- AFU, on the Lost screen (D24, open): `AppEnforcer`, the one writer AFU, does the same brief lift for the one call.
+- AFU, on the Lost screen (D24, decided): `AppEnforcer`, the one writer AFU, does the same brief lift for the one call.
 
 **How Lost mode's own restrictions are lifted (M5, decided).** They are the airplane block, the safe-boot block (D22),
 the location override (D9), the 10-minute interval and the Lost screen.
@@ -1237,7 +1245,7 @@ nothing else of ours, exactly as today. Revision 2's "Alltid" is dropped.
 | Charging reports | **Yes** | `charging` and `plugged` on every check; a check at plug-in in Lost mode (§14.4). |
 | The last check at shutdown | **Yes** | Lost mode only, best effort (§14.4). |
 | Block airplane mode while Lost | **Yes (decided)** | `DISALLOW_AIRPLANE_MODE` through the one writer (§5.4); liftable (§14.7). |
-| Block safe mode while Lost | **Yes (D22, open)** | A thief can restart into safe mode from the power menu, where our app doesn't run [aosp, from memory]. `DISALLOW_SAFE_BOOT` is off by default today (`Hardening.SAFE_BOOT(false)`). Through the one writer, liftable as the airplane block (Q91-L9). |
+| Block safe mode while Lost | **Yes (D22, decided)** | A thief can restart into safe mode from the power menu, where our app doesn't run [aosp, from memory]. `DISALLOW_SAFE_BOOT` is off by default today (`Hardening.SAFE_BOOT(false)`). Through the one writer, liftable as the airplane block (Q91-L9). |
 | Hide the quick settings on the lock screen | **Cut** (the user, M9) | Three writers on one DPM state (Q91-M4), unverified over a secure keyguard, and little beyond the airplane block. |
 | Block power-off | **Can't** | No device-owner API hides the lock screen's power menu outside lock task, and there is no lock task BFU. A long press forces a restart anyway. AOSP has no "require unlock to power off" [unverified whether the Jelly Star's build adds one]. Honest promise: a switched-off phone is silent; a restart only brings it back into Lost mode. |
 | Biometrics off while Lost | **No (the user, D20 (c))** | A fingerprint is the kid's proof and ends Lost (§14.9). |
@@ -1291,3 +1299,38 @@ nothing else of ours, exactly as today. Revision 2's "Alltid" is dropped.
 | L13 when a locate's fix goes | In a check of its own at once; "location off" (§4.4). |
 | L14 components, the stop receiver | `DirectBootComponents`; `LockedStopRingReceiver` in `:locked` (§4.1). |
 | L15 small text issues | "Three routes" (§4.3); "last connected" (§5.5, §14.3); the save rule for every control (§14.6). |
+
+## 21. The SIM PIN (revision 3)
+
+The user: "all ringing og sms før opplåsing henger sikkert fort sammen med at sim kort ikke har pin-kode?" Yes.
+
+- **A SIM with its PIN on stays locked after every boot until the PIN is typed** (Android asks for it on the lock
+  screen, separately from the screen PIN). Until then the phone has no mobile data, no SMS and no calls but emergency
+  ones. The BFU beacon then has **Wi-Fi only**: no stream over mobile data, no SMS fallback, no new-SIM SMS. A phone
+  lost outside a known Wi-Fi is silent, as today.
+- **A device owner can't type it.** `TelephonyManager.supplyPin` and its kin need `MODIFY_PHONE_STATE`
+  (signature|privileged), and no `DevicePolicyManager` method supplies a SIM PIN on Android 14-17 [aosp, from memory;
+  docs]. Storing the SIM PIN to type it would be one more secret in DE anyway. So the SIM's PIN is the parent's setup
+  choice, not something Vibb can work around.
+- **The trade-off for the kid's own SIM.** PIN off: after a restart the beacon has mobile data and SMS, and Find works
+  anywhere with coverage. But someone who takes the SIM out can use it in another phone (calls, data, premium SMS on
+  the parent's bill) until the operator blocks it. PIN on: the SIM is useless elsewhere, but the phone has Wi-Fi only
+  after every restart until the kid types the PIN.
+- **Recommended (D25): PIN off on the kid's SIM, paired with the operator's own limits:** a spending cap, premium and
+  content services blocked, and the operator's "block the SIM" once Find has had its chance on a lost phone. It is a
+  setup choice. The build writes it into `docs/setup/` (a short `sim-card.md`, linked from `android-settings.md`): how
+  to turn the SIM PIN off (Settings › Security › SIM card lock), which limits to ask the operator for, and when to
+  block the SIM.
+- **A thief's own SIM with a PIN:** they type it, so the phone gets their network, and the beacon, the SIM report and
+  the new-SIM SMS work on it (§15.4, §17.1).
+- **Showing the state (recommended: yes, a line on Advanced).** `TelephonyManager.getSimState()` is public and needs no
+  permission, and `SIM_STATE_PIN_REQUIRED` is readable BFU [docs; device]. Whether the PIN is *enabled*, rather than
+  required right now, is a privileged read [unverified], so the phone reports what it saw at the locked boot: the
+  beacon writes `sim_pin_at_boot` to its state file, and the first status report after the unlock carries it (a
+  `report_sim_pin` row in `locked_beacon.json`, the key in `intake_limits`, not a heartbeat field). The phone's
+  Advanced page in the PWA then shows: "SIM-kortet har PIN-kode. Etter en omstart har telefonen bare Wi-Fi til koden
+  er tastet, så Finn telefonen virker bare på kjent Wi-Fi." / "The SIM card has a PIN. After a restart the phone has
+  Wi-Fi only until the PIN is typed, so Find works only on a known Wi-Fi." With no report yet, nothing. Phone Setup
+  gets no line: the state is known only after the first restart.
+- **Jelly Star check** (with §15.6): reboot with the SIM PIN on and don't type it; `getSimState()` from `:locked`; the
+  beacon connects over Wi-Fi only and sends no SMS.
