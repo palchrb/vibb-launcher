@@ -847,8 +847,10 @@ input[type="radio"] {
 
 /* One icon per tab, the same outline and stroke in both states (the user, 2026-11-01). The chosen tab (and the one just
    tapped, .is-pending) turns it the bright peach and fills it ("fylt med fersken", pick A): .ti-body fills, .ti-fill
-   (the note's beam) appears, and .ti-detail (the phone's bar, the pin's dot, the gear's middle) is cut out in the
-   bar's own colour. */
+   (the note's beam) appears, and .ti-detail (the phone's bar) is drawn in the bar's own colour. The pin's and the gear's
+   rings merge into the fill and only their hole stays open (.ti-hole, the ring's inner radius: r less half the 2.1
+   stroke), so the hole is the same size in both states (the user, 2026-11-16: a cut-out of the ring's outer edge made
+   the middles grow). */
 .tab[aria-current="page"] .tab-icon,
 .tab.is-pending .tab-icon {
     color: var(--tab-on-icon);
@@ -864,6 +866,10 @@ input[type="radio"] {
 .tab[aria-current="page"] .ti-detail,
 .tab.is-pending .ti-detail {
     stroke: var(--bar);
+}
+
+.tab[aria-current="page"] .ti-hole,
+.tab.is-pending .ti-hole {
     fill: var(--bar);
 }
 
