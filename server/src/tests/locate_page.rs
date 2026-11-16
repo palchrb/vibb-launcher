@@ -1914,9 +1914,11 @@ async fn the_bubble_says_fresh_or_old() {
     assert!(!html.contains("data-fix-aged"), "{html}");
     assert!(html.contains("data-newest-age=\"2 min ago\""), "{html}");
     assert!(!html.contains("1 day ago"), "{html}");
-    // The one other time is the still line's own, since when it hasn't moved.
+    // The one other time is the still line's own, since when it hasn't moved. 25 h back is
+    // "yesterday" except in the zone's first hour after midnight, when it is the day before (a
+    // weekday; CI failed so at 00:21 CET on 2026-11-17): the test checks the line, not the day word.
     assert!(
-        html.contains(" data-fix-still=\"Hasn&#39;t moved since yesterday "),
+        html.contains(" data-fix-still=\"Hasn&#39;t moved since "),
         "{html}"
     );
 }
