@@ -22,6 +22,8 @@
 #   CLOCK_GLYPHS below)
 #   launcher/app/src/main/res/drawable/shortcut_glyph_<key>.xml   (Snarveier's buttons and picker, design 99;
 #   SHORTCUT_GLYPHS below)
+#   launcher/app/src/main/res/drawable/ic_kid_call_<key>.xml   (Siste's incoming and outgoing calls, design 106;
+#   CALL_GLYPHS below)
 #   music/app/src/main/res/drawable/player_glyph_<key>.xml   (the music player's 15 s back / 30 s on and the favourite
 #   heart, design 50; PLAYER_GLYPHS below)
 # Every converted file says what it was converted from (Apache-2.0 §4(b)).
@@ -76,6 +78,8 @@ brightness_low 5e3a84926f751949be088dba33e445f810017f5ac50b6d40a2d2820d14aa0b92
 brightness_medium 6c08b254162d49f913343d25144ea57218ae042a5e817e182002d434431f36c8
 brightness_high f0293c231724d9e6ad511b66465daa621c086c11c8106e88476dead94633fec4
 more_time b30b77839a4137f89c5b620b71ec47676806e594aac5f55bad87486a9d58993e
+call_received ded40fee193027c17c40f3782636bc2b2c96d05cffbfb707d8036bc354775547
+call_made cc1bf7cef8167639587f0fea7cd6a03d0afecf322f0aa0e8cf33743dd4c9c90c
 HASHES
 
 while read -r name sha; do
@@ -148,8 +152,10 @@ SHORTCUT_GLYPHS = {"sound": "volume_up", "vibrate": "vibration", "airplane": "ai
                    "bluetooth": "bluetooth", "mobile_data": "signal_cellular_alt", "brightness_low": "brightness_low",
                    "brightness_medium": "brightness_medium", "brightness_high": "brightness_high",
                    "more_time": "more_time", "music": "music_note"}
+# Siste in the phone book (design 106 §3.6): a call that came in and one the kid made.
+CALL_GLYPHS = {"in": "call_received", "out": "call_made"}
 for prefix, glyphs in (("lock_glyph", LOCK_GLYPHS), ("torch_glyph", TORCH_GLYPHS), ("clock_glyph", CLOCK_GLYPHS),
-                       ("shortcut_glyph", SHORTCUT_GLYPHS)):
+                       ("shortcut_glyph", SHORTCUT_GLYPHS), ("ic_kid_call", CALL_GLYPHS)):
     for key, name in glyphs.items():
         with open(f"launcher/app/src/main/res/drawable/{prefix}_{key}.xml", "w") as out:
             out.write('<?xml version="1.0" encoding="utf-8"?>\n'
