@@ -124,6 +124,8 @@ their emulator, parked in that zone on purpose.
 
 ### 2.1 Geometry (no change to the shared band)
 
+**Revised 2026-11-16 (the user, option 3a):** the summary's own 38 px gap is gone - the sheet's edge is where every other page has it, so stepping into the phone's own pages moves nothing. The picture lies in a layer over the band (`.summary-sheet .pic-pick { z-index: 9 }`, under the tab bar's 10; centred, it never meets the cap's rounded corners) with its top 13 px above the sheet's edge (`margin-top: -29px`), its ring just under the title's line. The text below is the original design.
+
 The picture must lie half over the night without covering the band's title row (a long name runs to the right edge).
 The summary's own sheet gets `class="sheet summary-sheet"` and `.summary-sheet { margin-top: 38px; }`. That opens a
 38 px gap between the band's foot and the sheet's rounded edge. Night shows in it, because main's own ground is night

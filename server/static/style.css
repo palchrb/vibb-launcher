@@ -3040,17 +3040,19 @@ input.row-num { width: min(6.5em, 34vw); text-align: right; }
 
 /* ---- Design 31 step 10: the phone's summary ---- */
 
-/* The header (design 101, mockup A): the picture lies half over the night gap above the sheet's edge, the pencil badge in
-   its corner, the one status line under it. The summary's own sheet opens a 38px gap under the band (main's ground is
-   night there; the shared band is unchanged). The offset is measured from the sheet's content edge, 32px under the
-   band's box (38px gap + 1px border + 15px padding less the band's 22px foot). The band (z-index 8) is solid down to
-   22px above its box's bottom and covers what reaches higher, so the picture's 4px ring must stay under that: -44px puts
-   the picture's top 12px above the band's box (its ring 16px, 6px of night above it) and 28px above the sheet's edge
-   (the user's iPhone, 2026-11-16: at -52px the ring's top was cut flat). Pinned in tests/shell.rs. Nothing that holds the pic-menu panel may be
-   positioned (.sheet, .summary-head, .avatar-edit): the panel and its dim are placed against the body. */
+/* The header (design 101, mockup A; 3a, the user 2026-11-16): the picture's top reaches into the band's night, the pencil
+   badge in its corner, the one status line under it. The sheet starts where it does on every other page - the phone's
+   own pages (band::phone) keep their sheet's edge in the same place, so going from here to Apps moves nothing but the
+   content (a 38px gap here before: the sheet jumped on every step in and out). The band's solid night ends right at
+   the sheet's edge, so the picture lies in a layer over the band (.pic-pick's z-index 9: over the band's 8 and the
+   cap's 7, under the tab bar's 10 - it is centred, never near the cap's rounded corners). -29px from the sheet's content
+   edge (1px border + 15px padding) puts the picture's top 13px above the sheet's edge and its 4px ring 17px above it,
+   just under the title's line (a 22px title's box ends 18.8px above the edge), so a long name runs over the picture,
+   never into it. Pinned in tests/shell.rs. Nothing that holds the pic-menu panel may be positioned (.sheet,
+   .summary-head, .avatar-edit): the panel and its dim are placed against the body; .pic-pick only holds the badge. */
 .summary-head { display: flex; flex-direction: column; align-items: center; margin: 12px 0 20px; text-align: center; }
-.summary-sheet { margin-top: 38px; }
-.summary-sheet > .summary-head { margin-top: -44px; }
+.summary-sheet > .summary-head { margin-top: -29px; }
+.summary-sheet .pic-pick { z-index: 9; }
 .avatar-large { width: 88px; height: 88px; font-size: 2.5rem; box-shadow: 0 0 0 4px var(--bg); }
 .avatar-edit { display: flex; flex-direction: column; align-items: center; }
 .avatar-save { margin-top: 8px; }

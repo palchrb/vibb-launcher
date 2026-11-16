@@ -1400,16 +1400,16 @@ fn the_app_shell_scrolls_main_not_the_document() {
          background: linear-gradient(var(--night) 50%, var(--bg) 50%);"
     );
     assert_eq!(block(".container > .sheet"), "flex: 1 0 auto;");
-    // Design 101: the summary's picture lies half over a 38 px night gap. The sheet's content edge is 32 px under the
-    // band's box (the gap 38 + border 1 + padding 15 less the band's 22 px foot); -44 px puts the picture's top 12 px
-    // above the band's box, so its 4 px ring stays under the band's solid part (which ends 22 px above its box's bottom
-    // and covers anything higher - at -52 px the ring was cut flat). And nothing that holds the picture's sheet may be
-    // positioned: its panel and dim are placed against the body (the screen).
-    assert_eq!(block(".summary-sheet"), "margin-top: 38px;");
+    // Design 101, 3a (the user, 2026-11-16): the summary's sheet starts where every other page's does (no gap of its
+    // own: the phone's pages keep the sheet's edge in place). The picture lies in a layer over the band (z-index 9),
+    // its top 13 px above the sheet's edge: -29 px from the content edge (border 1 + padding 15). And nothing that
+    // holds the picture's sheet may be positioned: its panel and dim are placed against the body (the screen).
+    assert!(!css.contains("\n.summary-sheet {"), "the summary's own gap");
     assert_eq!(
         block(".summary-sheet > .summary-head"),
-        "margin-top: -44px;"
+        "margin-top: -29px;"
     );
+    assert_eq!(block(".summary-sheet .pic-pick"), "z-index: 9;");
     for held in [".sheet", ".summary-head", ".avatar-edit"] {
         assert!(
             !block(held).contains("position"),
