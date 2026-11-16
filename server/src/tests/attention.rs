@@ -558,8 +558,10 @@ async fn a_silent_rules_own_do_not_disturb_is_no_row() {
     let (id, token) = clean_phone(&app, "Emma").await;
     let add = |name: &'static str, silent: bool| {
         sqlx::query_scalar::<_, i64>(
+            // Calls allowed: a rule that blocks them raises its own row (incoming-calls) on a phone whose calls
+            // aren't managed, and that row is not this test's.
             "INSERT INTO time_rules (name, kind, calls_allowed, exempt_apps_json, silent, days_json) \
-             VALUES (?, 'school', 0, '[]', ?, '[null,null,null,null,null,null,null]') RETURNING id",
+             VALUES (?, 'school', 1, '[]', ?, '[null,null,null,null,null,null,null]') RETURNING id",
         )
         .bind(name)
         .bind(silent)

@@ -278,6 +278,9 @@ mod tests {
         "on_over",
         // Design 59: the Child PIN group's notices and the reveal's form action.
         "keyguard_needs_pin",
+        // The reason a waiting `set_kid_pin` is cancelled when the lock switches to Vibb One's (a command's
+        // `cancel_reason`, not an event; the scan sees it next to the switch's event tuple).
+        "keyguard_own",
         "pin_not_kept",
         "pin_not_sent",
         "pin_sent",
