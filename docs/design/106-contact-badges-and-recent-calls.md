@@ -1,9 +1,10 @@
-# 106 - Two badges on the contacts, and "Siste" in the phone book
+# 106 - Two badges on the contacts, and "Siste" in the phone book (revision 2)
 
-Round `a5-b2`, 2026-11-16. Launcher only; no server change. **Status: design.** PLAN: "Missed calls and messages on
-Home's contacts, and a call log in the phone book" (approved 2026-11-16, mockups A5 and B2 in the board
+Round `a5-b2`, 2026-11-16. Launcher only; no server change. **Status: design, revision 2.** PLAN: "Missed calls and
+messages on Home's contacts, and a call log in the phone book" (approved 2026-11-16, mockups A5 and B2 in the board
 `contact-badges/board.html`). Every decision below the line "Decided by the user" stands; this note settles the rest.
-The Q list at the end holds the choices with a cost the kid or the parent can see.
+The Q list at the end holds the choices with a cost the kid or the parent can see. Revision 2 answers the design QA
+(0 High, 4 Medium, 9 Low); §10 maps each finding to its change.
 
 **Decided by the user.**
 - **A5.** Missed calls get the top-right pill: rust, the phone-x glyph, their own count. Unread messages get a teal pill
@@ -32,8 +33,9 @@ The Q list at the end holds the choices with a cost the kid or the parent can se
   only while `canReadCallLog`: READ_CALL_LOG, unlocked, calls managed). `unseenMissedCalls` counts a contact's missed
   calls after the later of its seen mark (`missed_calls_seen`) and any outgoing or answered call with it.
   Missed Element X calls come from `ElementMissedCallStore`. That store is memory only and holds a call while Element
-  X's notification has the `missed_call` category (round L5). `contactMissed` joins the two sources; Home, the
-  phone book and the sheet all read that one map.
+  X's notification has the `missed_call` category (round L5). `contactMissed` joins the two sources. Home, the
+  phone book and the sheet compute it the same way, from different states: Home from `CallPolicyStore.callsState`,
+  the phone book from `effectiveState()` (the time rule on top). They agree whenever the phone book is usable.
 - **What clears what.**
   - The avatar's missed count goes when the contact is seen: the sheet opens, Ring or Melding is tapped, or a top row
     in the phone book was on screen for 1 s and the kid then leaves (`TopSightings`, design 79 §3.2).
@@ -70,8 +72,7 @@ design 79.
 | Ring | `kid_ground` | `kid_page_ground` | `kid_sheet` |
 
 - **Rust** stays `kid_badge` #B4532C with white text (4.98:1). The glyph stays `ic_kid_missed_call`.
-- **Teal** is a new `kid_message_badge`, equal to `kid_messages_tile` #347470 (white 5.4:1), the Meldinger tile's
-  teal. Its glyph is a new `ic_kid_badge_message`: `ic_kid_message`'s bubble path in white, with a 3-unit stroke like
+- **Teal** is `kid_messages_tile` #347470 itself (white 5.4:1), the Meldinger tile's teal, with no new alias. Its glyph is a new `ic_kid_badge_message`: `ic_kid_message`'s bubble path in white, with a 3-unit stroke like
   the missed-call glyph's.
 - **New drawables:** `bg_kid_message_badge`, `bg_kid_page_message_badge` and `bg_kid_message_badge_sheet`. They are
   the rust drawables' shapes with the teal fill.
@@ -97,7 +98,8 @@ returns `CallsSnapshot(missed: Map<String, ContactMissed>, recent: List<RecentDa
 - **Permissions: nothing new.** READ_CALL_LOG and WRITE_CALL_LOG are self-granted by the Device Owner while calls are
   managed, and the dialer role grants them too (`docs/notes/launcher/calls.md`, "Permissions/SMS"). Siste reads only
   under `canReadCallLog`, the badges' own condition. When the log can't be read (`callLogReadable` false, which the
-  server already warns about), Siste shows the Element X rows and otherwise its empty line.
+  server already warns about), Siste shows the Element X rows, or else nothing under the switch. It never says "no
+  calls" then, because it can't know.
 - **Unmanaged calls, fail-closed and calls off.** There is no switch. These cases have no contacts to show, or only the
   emergency numbers: the phone book says "calls are off", or shows the one 112 row, as today. The call-log `VIEW` still
   goes to the system dialer while calls are unmanaged (`entryRoute`, unchanged).
@@ -123,7 +125,9 @@ ELEMENT_X. `atMs` is the newest call's time.
   different kind.
 - **The window.** 14 days, the badges' own window (`MISSED_CALL_LOG_WINDOW_MS`), so every badge has its row (Q1).
 - **`unseen`.** For a phone row, the row holds one of `unseenMissedCalls(...)[number]` (the badge's own rows). For an
-  Element X row, its record is still open and newer than the seen mark (§3.3).
+  Element X row, the live `ElementMissedCallStore` has an entry with the record's hash whose `sinceMs` is after the
+  contact's seen mark. That is exactly what the badge counts (`elementMissedSummaries`), so the row and the badge
+  can't disagree. The record's `open` flag only guards against duplicates (§3.3).
 - **Days.** The group key is the local day (`ZoneId.systemDefault()`). Each group gets a label:
   - today: "I dag";
   - yesterday: "I går";
@@ -142,19 +146,24 @@ notification's person or title. So Siste shows missed Element X calls only (Q2).
 `ElementMissedCallStore` forgets a call once the kid opens the room in Element X. To keep the row in Siste, the store
 writes a record (Q3):
 - **What is stored:** CE prefs `element_call_log`, versioned `v1`. Each record holds the contact's number (resolved
-  through the rules when it is written, as `elementMissedSummaries` does), `atMs` (the call's `sinceMs`), a truncated
-  SHA-256 of the notification key (so no room ID is stored) and `open`.
-- **When records change** (pure `elementCallLogAfter(records, before, after, numberOf, nowMs)`, called from the store's
-  `set`):
+  through the rules when it is written, as `elementMissedSummaries` does), `atMs` (the call's `sinceMs`), the
+  SHA-256 of the notification key truncated to 64 bits or more (so no room ID is stored) and `open`. The live store's
+  keys are hashed the same way, so a row can find its live entry (§3.2's `unseen`).
+- **When records change** (pure `elementCallLogAfter(records, before, after, change, numberOf, nowMs)`, called from the
+  store's `posted`, `removed`, `swept` and `cleared`). `change` is POSTED, REMOVED, SWEPT or CLEARED: `set()` alone
+  can't tell an unbind from removals, so each caller names its change.
   - A key that is new to the store adds an open record, unless an open record with the same hash exists already. That
-    case is the connect sweep after a process restart, and it is the same call.
-  - A key that leaves the store, or whose contact changes, closes its record.
-  - The connect sweep closes every open record whose key isn't active.
-  - `cleared()` (the listener was unbound) closes nothing, because the next sweep decides.
+    case is the connect sweep after a process restart, and it is the same call. The open record's `atMs` is then
+    raised to the live `sinceMs` if that is later, so the row's time is the badge's.
+  - A key that leaves the store (REMOVED, or a post whose contact is gone or changed) closes its record.
+  - SWEPT closes every open record whose key isn't active.
+  - CLEARED (the listener was unbound) closes nothing, because the next sweep decides.
 - **Limits:**
   - Records are pruned at every write: none older than 14 days, at most 50.
-  - At each `CallPolicyStore.refresh` (as `ElementRoomStore`), a record whose contact is no longer a phone-book Element
-    contact is dropped. All records are dropped when calls are unmanaged.
+  - At each `CallPolicyStore.refresh` (as `ElementRoomStore`), the records are pruned too: a record whose contact is no
+    longer a phone-book Element contact is dropped, and all are dropped when calls are unmanaged.
+  - Every read also filters by the same rules and the 14 days, so a record that a refresh hasn't pruned yet never
+    shows.
   - Records stay in CE storage: never in DE storage, never logged, never sent. `toString` names neither the number nor
     the hash.
 - **The known limit.** Suppose the process is dead while the kid opens the room in Element X and a second call is
@@ -175,9 +184,14 @@ book.
 - A red top row in Kontakter was on screen for 1 s, and the kid leaves. As today.
 - **New:** a red, unseen row in Siste was on screen for 1 s (at least half of the row) while Siste was shown and the
   book was resumed and focused. Siste has its own `TopSightings` instance, keyed by contact. Each contact's mark goes
-  up to the newest call its row showed (`seenMarkAfter` only moves forward). The marks are written when the kid
-  leaves Siste: switching to Kontakter, or the visit's end (`onStop`, not a rotation). Opening Siste alone marks
-  nothing (Q4).
+  up to the newest call its row showed (`seenMarkAfter` only moves forward). Opening Siste alone marks nothing (Q4).
+  - **When the marks are written:** when the kid leaves Siste. That is switching to Kontakter (then `loadMissedCalls()`
+    runs, so the badges follow at once), an ask arriving by `onNewIntent` (§3.5), or the visit's end (`onStop`, not a
+    configuration change).
+  - **The mark is per contact, up to a time.** Seeing Pappa's 12:00 row also clears his 10:00 missed call further
+    down. That is design 79's rule as it stands: a contact is dealt with up to the call the kid saw.
+  - **One row per contact.** Several of a contact's red rows can be on screen at once. Siste's `noteSightings` gives
+    each contact the newest of its **visible** unseen rows, so a row scrolled out of view never raises the mark.
 
 A Siste row that has been seen stays red: Siste is history. The Siste tab's badge shows only while Kontakter is
 selected (as in the mockup). After the switch back, it shows what is still unseen.
@@ -200,20 +214,32 @@ its red line.
     `kid_page_accent_fill` with `kid_on_accent` text (9.9:1 in Mørk, 7.6:1 in Lys). The other half has no fill and
     `kid_page_ink_dim` text. Nunito 800, 16 sp. Labels wrap with the font scale; no ellipsis.
   - **Built as** P9's control (`docs/notes/launcher/ui-polish.md`): two `RadioButton`s in a `RadioGroup`, so TalkBack
-    reads "Kontakter, valgt, 1 av 2".
+    reads "Kontakter, valgt, 1 av 2". Both buttons have `saveEnabled="false"`: a `RadioButton` with an id restores its
+    checked state after `onStart`, which would undo the tab rule below. The activity alone holds the tab.
   - **The Siste badge** is drawn inline after the word: a `ReplacementSpan` with a 20 dp rust pill and 12 sp white
-    text, so the label wraps as one piece. The Siste button's description carries the count ("Siste, 2 tapte anrop").
+    text, so the label wraps as one piece. The Siste button's description carries the count ("Siste, 2 tapte anrop");
+    with none it is plain "Siste".
 - **Always Kontakter.** Every new visit starts on Kontakter, using design 79's visit boundary: `onStart` without
   `visitRestored`. That covers Home's tile, Recents, coming back from another app, from a call's screen or from the
-  kid's picture screen (Q5), the missed-call notification and the call-log `VIEW` (Q7), and the time-rule screen's
-  row. Only a rotation keeps Siste (saved state).
+  kid's picture screen (Q5), a reopen from Recents after the process was killed, and the time-rule screen's row.
+  - **Only a configuration change keeps Siste.** A rotation doesn't recreate the page at all
+    (`configChanges="orientation|screenSize|uiMode"` on both classes), so the cases are a font-size or language
+    change. `onSaveInstanceState` saves the tab and Siste's sightings **before** its `visitTop ?: return` early
+    return, and only while `isChangingConfigurations`. A process death saves nothing that brings Siste back.
+  - **An ask while the book is in front** (M3). The missed-call notification, the glance's row, the call-log `VIEW`
+    and a `tel:` link reach a resumed book through `CLEAR_TOP`/singleTop and `onNewIntent`, with no `onStop`. An
+    intent carrying an ask (`EXTRA_MISSED_CONTACT` or a number) first writes Siste's marks, then switches to
+    Kontakter, then runs `takeAsked` (Q7).
+- **Calls going off mid-visit** (L1). `render()` forces Kontakter whenever the switch may not show (no `canAsk`), in the
+  same place it clears the query today, after writing Siste's marks.
 - **Search only in Kontakter.** On Siste the search pill and the "+" hide. Switching to Siste clears the query and
   closes the keyboard.
 - **Back.** It goes through `phoneBookBack` in order: the keyboard, then the form, then the search's text, then
   **Siste back to Kontakter**, then leave (Q8). Meldinger already works this way ("Ny melding" back to the list). No
-  gesture is removed.
+  gesture is removed. The Back callback is enabled while Siste shows (L2), next to the form and the query.
 - **The lists.** Siste is a second `RecyclerView` (`phone_book_recent`), shown instead of the contacts list. It starts
-  at its top every time it is shown. Kontakter keeps its scroll within a visit.
+  at its top every time it is shown. Kontakter keeps its scroll within a visit. In `onStop`, Siste's adapter also gets
+  `submitList(null)` (L3), as the contacts list does, so a returning kid never taps a row of the last visit.
 - **Live updates.** The call-log observer, the Element X store's listener and the record listener each run the one
   `load`. That updates the rows, both lists and the badge. Only the latest load is applied (`LatestOnly`).
 
@@ -221,24 +247,43 @@ its red line.
 
 The page tokens are shared with the phone book's rows, so Mørk and Lys follow from `colors_kid_page.xml`, with no
 literals.
-- **Day label:** 13 sp, Nunito 800, `kid_page_ink_dim`, 4 dp in from the start, 6 dp above its card.
-- **Day card:** `bg_day_event` (the row's tile, 18 dp corners), with its rows separated by 1 dp `kid_page_divider`
-  lines. Cards are 10 dp apart.
+- **One flat list** (L5): day labels and call rows are items of their own, so `noteSightings` sees each row and
+  TalkBack gets one node per row. A day's "card" is drawn by its rows' backgrounds.
+- **Day label:** 13 sp, Nunito 800, `kid_page_ink_dim`, 4 dp in from the start, 6 dp above its first row. It is an
+  accessibility heading (`ViewCompat.setAccessibilityHeading`), so TalkBack can jump day by day.
+- **Row backgrounds:** four new shapes in `kid_page_tile`, chosen by the row's place in its day:
+  - FIRST: 18 dp top corners;
+  - MIDDLE: no corners;
+  - LAST: 18 dp bottom corners;
+  - SINGLE: all four.
+
+  These are plain shapes, not `bg_day_event` (a ripple). The row's press is a `kid_page_ripple` foreground clipped to
+  the same shape. Rows within a day are separated by 1 dp `kid_page_divider`; the last row of a day keeps 10 dp below.
 - **Row** (`item_recent_call.xml`): min 56 dp; padding start 10, end 16, top and bottom 8.
-  - A 36 dp avatar (`KidAvatars.bindContact`, `thumb = true`; an emergency contact keeps its red ring). No pills on
-    Siste's avatars, since the row is the event.
+  - A 36 dp avatar (`KidAvatars.bindContact`, `thumb = true`; an emergency contact keeps its red ring). Whether a
+    contact is an emergency number comes from `Inputs.emergency`, which `render()` already gathers, with no binder call
+    per row. No pills on Siste's avatars, since the row is the event.
   - The name: 16 sp, Nunito 800, `kid_page_ink`, never cut between letters (`WholeWordTextView`).
   - Under the name, a 13 dp glyph and a word, 13 sp, Nunito 700:
     - missed: `ic_kid_missed_call`, "Tapt anrop" / "2 tapte anrop", in `kid_page_alert` (#FF8A8A Mørk, #B3261E Lys);
-    - incoming: a new `ic_kid_call_in` (an arrow down-left), "Ringte deg", in `kid_page_dim`;
-    - outgoing: a new `ic_kid_call_out` (an arrow up-right), "Du ringte", in `kid_page_dim`;
+    - incoming: a new `ic_kid_call_in`, "Ringte deg", in `kid_page_dim`;
+    - outgoing: a new `ic_kid_call_out`, "Du ringte", in `kid_page_dim`;
+    - the two arrows are Material Symbols `call_received` and `call_made` (Apache-2.0), added through
+      `scripts/material-symbols.sh` like the other app icons;
     - a merged incoming or outgoing row adds " (2)";
     - an Element X row says "Tapt anrop i Element X" (the shown label).
   - The time at the end: 13 sp, Nunito 700, `kid_page_dim`.
   - The press is the tile's `kid_page_ripple`.
   - From font scale 1.3 the time moves under the word, as the rows' `rowLayout` rule does.
-- **TalkBack:** a row is one node with role button: "Mamma, 2 tapte anrop, i dag 14:02". Tapping it opens the sheet.
-- **Empty:** "Ingen anrop de siste 14 dagene", in `kid_page_ink_dim` like the info line.
+- **TalkBack:** a row is one node with role button. It reads the name, the kind in words, then the time:
+  - "Mamma, 2 tapte anrop, i dag 14:02";
+  - "Pappa, ringte deg 2 ganger, i går 18:30": its own plural (`recent_described_*`), never the visible "(2)".
+
+  The time reuses `missed_when_today`, `missed_when_yesterday` and `missed_when_date`. Tapping the row opens the sheet.
+- **A date change** (L7): "I dag" and "I går" are computed against today at each load. The page also reloads on
+  `ACTION_DATE_CHANGED` and `ACTION_TIMEZONE_CHANGED` while started, as Kalender's day view does.
+- **Empty:** "Ingen anrop de siste 14 dagene", in `kid_page_ink_dim` like the info line. It shows only when the call
+  log was read; an unreadable log shows no line (§3.1).
 - **A tap** opens `ContactSheet.show` for the row's contact with `missed[number]`, exactly as a Kontakter row does. The
   sheet is night in both looks. A row never calls.
 - **An Element X row opens the same sheet.** It gets no "Ring via Element" button and no `matrix:...?action=call`
@@ -251,6 +296,7 @@ Nothing new. The book redirects to the time-rule screen unless the lock in force
 `phoneBookUsableUnder`). It watches the lock while it is in front (`LockWatch`). While usable, Siste is usable too. A
 rule that withdraws calls brings the time-rule screen back from either tab. When the book returns it starts a new
 visit, so it opens on Kontakter. Under calls off, Kontakter shows only the emergency numbers and there is no switch.
+If calls go off from the server while Siste is shown, `render()` moves the book to Kontakter (§3.5, L1).
 
 ## 4. Server
 
@@ -287,11 +333,14 @@ already reported. Siste and the badges are drawn from what the phone already has
 | `recent_missed_in_app` (plural) | Tapt anrop i %2$s / %1$d tapte anrop i %2$s | Missed call in %2$s / %1$d missed calls in %2$s |
 | `recent_in` (plural) | Ringte deg / Ringte deg (%d) | Called you / Called you (%d) |
 | `recent_out` (plural) | Du ringte / Du ringte (%d) | You called / You called (%d) |
+| `recent_described_in` (plural, TalkBack) | ringte deg / ringte deg %d ganger | called you / called you %d times |
+| `recent_described_out` (plural, TalkBack) | du ringte / du ringte %d ganger | you called / you called %d times |
 | `recent_row` (TalkBack) | %1$s, %2$s, %3$s | %1$s, %2$s, %3$s |
 | `recent_empty` | Ingen anrop de siste 14 dagene | No calls in the last 14 days |
 
-The weekday and the date come from the locale. `contact_missed`, `contact_unread` and `missed_calls_in_app_at` are
-reused.
+The day labels' weekday and date come from the locale. Reused: `contact_missed`, `contact_unread`,
+`missed_calls_in_app_at`, and for the row's spoken time `missed_when_today`, `missed_when_yesterday` and
+`missed_when_date`.
 
 ## 7. Tests (lean)
 
@@ -303,17 +352,26 @@ reused.
   - the merge: adjacent rows only, the same kind and source, never across a day;
   - the day groups, in a fixed zone, with today, yesterday, a weekday and a date;
   - the 14-day cut;
-  - `unseen` against `unseenMissedCalls`;
+  - `unseen` against `unseenMissedCalls`, and an Element X row's `unseen` from the live entry's hash and `sinceMs`;
+  - the row places FIRST, MIDDLE, LAST and SINGLE;
   - that the Siste badge equals the sum of `contactMissed` counts.
-- **`ElementCallLogTest`** (new, pure): a new key records; a sweep with an open record doesn't record again; removal,
-  a flip back to `message` and a changed contact each close; the 14-day and 50-record prune; dropped when calls are
-  unmanaged or the contact leaves; `toString` names nothing.
+- **`ElementCallLogTest`** (new, pure):
+  - a new key records;
+  - a sweep with an open record doesn't record again, and raises its `atMs` to a later `sinceMs`;
+  - REMOVED, a flip back to `message` and a changed contact each close; SWEPT closes the absent; CLEARED closes nothing;
+  - the 14-day and 50-record prune; dropped at refresh when calls are unmanaged or the contact leaves; filtered on read;
+  - the hash is at least 64 bits; `toString` names nothing.
+
+  This is the only test of the deduplication after a process restart: the gate's debug receiver can't reproduce a
+  restart with a live Element X notification (M4).
 - **`PhoneBookListTest`** (extended):
-  - the tab at a visit's start is always Kontakter, and a rotation keeps it;
-  - `phoneBookBack` with Siste;
+  - the tab at a visit's start is always Kontakter; a configuration change keeps it; an ask (`onNewIntent`) or calls
+    going off moves it to Kontakter;
+  - `phoneBookBack` with Siste, and Back enabled while Siste shows;
   - the switch shows only with `canAsk` and no form;
   - the search hides and clears on Siste;
-  - Siste's sightings mark up to the row's newest call.
+  - Siste's sightings: each contact gets the newest of its visible rows, never a row off screen; the mark goes up to
+    that row's call.
 - **`HomeModelTest`** (extended): `ContactBadge`'s two texts are independent; one missed call and three messages give
   "1" and "3", never "4".
 - **Existing tests updated:**
@@ -334,13 +392,18 @@ reused.
    - it shows Kontakter, with the Siste badge "1";
    - each row has its two pills;
    - the notification is gone.
-4. **Making calls for Siste.** Ring Emma from her row. Answer a call from Mamma. Have Pappa call twice and cancel both.
-   Have an unknown number call (it is blocked).
-5. **Siste's contents.** Open Siste. Under "I dag":
+4. **Making calls for Siste.** In this order:
+   - Ring Emma from her row.
+   - Answer a call from Mamma.
+   - Have Pappa call twice and cancel both.
+   - Have Jack call, and decline it on the call screen.
+   - Have an unknown number call (it is blocked).
+5. **Siste's contents.** Open Siste. Under "I dag", newest first:
    - Pappa "2 tapte anrop" in red, as one row;
    - Mamma "Ringte deg";
    - Emma "Du ringte";
-   - no row for the unknown number.
+   - Pappa "Tapt anrop" from step 1, a row of its own (not adjacent to the other two);
+   - no row for Jack's declined call or for the unknown number.
 
    Take screenshots in Mørk and Lys, at font scale 1.0 and 2.0. Dump the TalkBack sentences (`uiautomator dump`).
 6. **Seen.** Stay 1 s on Siste, then switch to Kontakter:
@@ -348,20 +411,25 @@ reused.
    - Pappa's rust pill is gone, both in his row and on Home after Back;
    - Pappa's row in Kontakter keeps its place for the visit and loses its red line.
 7. **A Siste row.** Tapping a Siste row opens the sheet, with no call. On the sheet, check the two pills' placement.
-8. **Always Kontakter.**
-   - Leave the book on Siste. Then Home, then the tile: Kontakter.
-   - Leave it on Siste. Then Recents: Kontakter.
-   - Leave it on Siste. Then Melding to another app, then Back: Kontakter.
-   - On Siste, rotate: Siste stays.
+8. **Always Kontakter.** Each case starts with the book on Siste:
+   - Home, then the tile: Kontakter.
+   - Recents: Kontakter.
+   - Melding to another app, then Back: Kontakter.
+   - Change the font size in Android's settings, then come back: still Siste (a configuration change).
+   - Home, then kill the process in the background (`adb shell am kill <package>`, never `am force-stop`: that would tear
+     down the Device Owner's alarms and listener), then reopen from Recents: Kontakter.
+   - With the book in front, have Pappa call and cancel, then tap our notification: Kontakter, and Pappa's sheet opens
+     (M3).
    - Back from Siste: Kontakter. Back again: Home.
 9. **Element X.** The debug-only `ElementCallDebugReceiver` (`src/debug`, as `MmsDebugReceiver`) posts a missed
    Element X call for Mamma:
    - Mamma gets the rust pill, and Siste gets "Tapt anrop i Element X";
-   - after the receiver removes it, the row stays and the pill goes;
-   - after `am force-stop` and a reopen, there is still one row.
+   - after the receiver removes it, the row stays and the pill goes.
+
+   The deduplication after a restart is `ElementCallLogTest`'s alone.
 10. **Time rules and calls off.**
     - A rule without calls: the book redirects. A rule that allows calls: Siste works.
-    - The server turns calls off: no switch.
+    - With Siste shown, the server turns calls off: the book moves to Kontakter and the switch goes.
 11. **On compat34:** steps 1-3, 5, 6 and 8.
 
 ## 9. Docs on build
@@ -371,6 +439,24 @@ reused.
 - `docs/notes/launcher/ui-polish.md`, "The phone book's row": the two pills.
 - `docs/testing/emulator.md` §6aw.
 - PLAN: mark the item done in the merge commit.
+
+## 10. Revision 2: the design QA's findings
+
+| # | Finding | Handled in |
+|---|---|---|
+| M1 | A rotation doesn't recreate the page, and RadioButtons restore their own checked state | §3.5: `saveEnabled="false"`; the activity holds the tab and saves it with Siste's sightings before the early return, only while `isChangingConfigurations`; the rule now says "a configuration change (font size, language)"; §7 and §8 step 8 use a font-size change and a kill-and-reopen from Recents |
+| M2 | An Element X row's `unseen` could disagree with the badge | §3.2: `unseen` from the live entry with the record's hash and a `sinceMs` after the seen mark; §3.3: a duplicate raises the open record's `atMs` to the live `sinceMs`, and `elementCallLogAfter` takes an explicit change (POSTED, REMOVED, SWEPT, CLEARED) |
+| M3 | An ask by `onNewIntent` left the book on Siste | §3.5: an intent with an ask writes Siste's marks, switches to Kontakter, then runs `takeAsked`; §8 step 8 |
+| M4 | The gate | §8: the restart deduplication is `ElementCallLogTest`'s only; `am kill`, never `am force-stop`; step 5 lists Pappa's separate row from step 1; added a declined call, calls going off on Siste, the M1 cases and the M3 case |
+| L1 | Calls turned off mid-visit | §3.5 and §3.7: `render()` forces Kontakter |
+| L2 | Back callback while Siste shows | §3.5 |
+| L3 | Badges after the switch; Siste's list at `onStop` | §3.4: `loadMissedCalls()` after the marks; §3.5: `submitList(null)` |
+| L4 | The mark is per contact up to a time; the visible rows | §3.4: said outright; the newest *visible* row per contact; §7 |
+| L5 | One flat list, not a view per day | §3.6: FIRST, MIDDLE, LAST and SINGLE backgrounds, plain shapes with a clipped ripple foreground |
+| L6 | No "no calls" claim when the log can't be read | §3.1 and §3.6 |
+| L7 | TalkBack and i18n | §3.5 (plain "Siste"), §3.6 (`missed_when_*` reused, its own plural, headings, the date change), §6 |
+| L8 | The record's pruning and hash | §3.3: pruned at refresh too, filtered on read, at least 64 bits |
+| L9 | Teal alias, icon source, §1's "one map", emergency per row | §2.2 (`kid_messages_tile`), §3.6 (Material Symbols `call_received`/`call_made`, Apache-2.0, `scripts/material-symbols.sh`; `Inputs.emergency`), §1 (`callsState` vs `effectiveState()`) |
 
 ## Q - choices with a visible cost
 
