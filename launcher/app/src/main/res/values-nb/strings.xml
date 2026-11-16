@@ -442,6 +442,7 @@
     <string name="settings_notifications_all_off">Alle av</string>
     <string name="settings_notifications_quoted">«%1$s»</string>
     <string name="settings_notifications_open">Trykk for å slå på</string>
+    <string name="settings_notifications_open_role">Trykk for å slå på. Er en bryter grå, sett først Samtaler og SMS til «Ikke styrt» under Anrop og SMS på serveren, og sett dem tilbake etterpå</string>
     <string name="settings_notifications_pause_first">Sett alle begrensninger på pause først</string>
     <string name="settings_notifications_wait">Pausen starter, et øyeblikk …</string>
     <string name="settings_notifications_no_page">Android har ingen side for dette på denne telefonen</string>

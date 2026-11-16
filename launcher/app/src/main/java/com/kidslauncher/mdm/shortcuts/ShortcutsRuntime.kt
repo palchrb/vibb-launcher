@@ -106,7 +106,9 @@ object ShortcutsRuntime {
             addAction(NotificationManager.ACTION_INTERRUPTION_FILTER_CHANGED)
             addAction(WifiManager.WIFI_STATE_CHANGED_ACTION)
             addAction(BluetoothAdapter.ACTION_STATE_CHANGED)
-            addAction(NotificationManager.ACTION_NOTIFICATION_CHANNEL_BLOCK_STATE_CHANGED)
+            // Not the channel's block state: the long-press sheet's broadcast comes with SystemUI's uid and is dropped
+            // for this not-exported receiver (design 107 gate §6ax). `notify.NotificationChannelsWatch` (exported, the
+            // protected block-state actions only) calls [requestRefresh] for it.
             // The phone's language. The launcher's own (a per-app locale) comes only as a configuration change:
             // [languageChanged], from `Application.onConfigurationChanged` (C99-L1).
             addAction(Intent.ACTION_LOCALE_CHANGED)

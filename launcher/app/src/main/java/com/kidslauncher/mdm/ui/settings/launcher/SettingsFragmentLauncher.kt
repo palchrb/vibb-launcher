@@ -124,8 +124,13 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
     }
 
     /** Design 107 §6: the channels' report before Android's notification page opened - a change on return is reported
-     * at once (a sync), so the PWA's row follows. */
+     * at once (a sync), so the PWA's row follows. Taken from the row's last read ([notificationsLastRead]), never read on
+     * the main thread at the tap. */
     private var notificationsBeforePage: com.kidslauncher.mdm.notify.NotificationChannelsReport? = null
+    /** The row's last read (off the main thread, [updateNotificationsRow]). */
+    private var notificationsLastRead: com.kidslauncher.mdm.notify.NotificationChannelsReport? = null
+    /** The row's read in flight: a newer one cancels it, so an older read never lands after a newer one. */
+    private var notificationsJob: kotlinx.coroutines.Job? = null
     private var notificationsPageMissing = false
     private val notificationsLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         val app = context?.applicationContext ?: return@registerForActivityResult
@@ -307,7 +312,7 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
             val pages = com.kidslauncher.mdm.notify.NotificationChannelsReader.pageIntents(app)
             notificationsPageMissing = false
             if (pages.isNotEmpty()) {
-                notificationsBeforePage = com.kidslauncher.mdm.notify.NotificationChannelsReader.read(app)
+                notificationsBeforePage = notificationsLastRead
                 notificationsPageMissing = !openFirstPage(pages, notificationsLauncher)
             }
             updateNotificationsRow()
@@ -730,14 +735,19 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
      * read, off the main thread); its summary names them in the phone's words and says what a tap does now. */
     private fun updateNotificationsRow() {
         val app = context?.applicationContext ?: return
-        lifecycleScope.launch {
-            val (report, pages) = withContext(Dispatchers.IO) {
-                com.kidslauncher.mdm.notify.NotificationChannelsReader.read(app) to
-                    com.kidslauncher.mdm.notify.NotificationChannelsReader.pageIntents(app)
+        notificationsJob?.cancel()
+        notificationsJob = lifecycleScope.launch {
+            val (report, pages, roleHeld) = withContext(Dispatchers.IO) {
+                Triple(
+                    com.kidslauncher.mdm.notify.NotificationChannelsReader.read(app),
+                    com.kidslauncher.mdm.notify.NotificationChannelsReader.pageIntents(app),
+                    com.kidslauncher.mdm.calls.CallSystem.dialerRoleHeld(app),
+                )
             }
             if (context == null) return@launch
+            notificationsLastRead = report
             val row = findPreference<Preference>(NOTIFICATIONS) ?: return@launch
-            val text = com.kidslauncher.mdm.notify.notificationsRowText(report, pageAccess(pages, notificationsPageMissing))
+            val text = com.kidslauncher.mdm.notify.notificationsRowText(report, pageAccess(pages, notificationsPageMissing), roleHeld)
             row.isVisible = text != null
             text ?: return@launch
             val what = if (text.allOff) {

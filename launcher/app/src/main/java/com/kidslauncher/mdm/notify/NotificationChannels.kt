@@ -121,13 +121,17 @@ data class NotificationsRow(
     val action: Int,
 )
 
-/** The row from the report and the page's access (pure); `null` hides it: nothing read, or nothing but Snarveier off. */
-fun notificationsRowText(report: NotificationChannelsReport?, access: SystemPageAccess): NotificationsRow? {
+/**
+ * The row from the report and the page's access (pure); `null` hides it: nothing read, or nothing but Snarveier off.
+ * [dialerRoleHeld]: Vibb is the dialer, so every `launcher:` channel is locked and Android's page greys a switch that is
+ * off (gate §6ax step 3) - the tap's words then say to hand the role back first, as the PWA's ⓘ does.
+ */
+fun notificationsRowText(report: NotificationChannelsReport?, access: SystemPageAccess, dialerRoleHeld: Boolean = false): NotificationsRow? {
     report ?: return null
     val off = report.blocked.mapNotNull { ReportedChannel.of(it) }.filter { it != ReportedChannel.SHORTCUTS }
     if (!report.allOff && off.isEmpty()) return null
     val action = when (access) {
-        SystemPageAccess.CAN_OPEN -> R.string.settings_notifications_open
+        SystemPageAccess.CAN_OPEN -> if (dialerRoleHeld) R.string.settings_notifications_open_role else R.string.settings_notifications_open
         SystemPageAccess.PAUSE_FIRST -> R.string.settings_notifications_pause_first
         SystemPageAccess.WAIT -> R.string.settings_notifications_wait
         SystemPageAccess.NO_PAGE -> R.string.settings_notifications_no_page
@@ -197,6 +201,9 @@ object NotificationChannelsWatch {
                 // EXTRA_BLOCKED_STATE can claim a block that never happened. The report's own read is the only truth.
                 override fun onReceive(context: Context, intent: Intent) {
                     Log.i(LOG_TAG, "Block state changed (${intent.action?.substringAfterLast('.')}): a sync")
+                    // Snarveier's panel reads its channel's block too (hidden, design 99 §2.6); its own receiver isn't
+                    // exported, so this one asks for its refresh.
+                    ShortcutsRuntime.requestRefresh()
                     com.kidslauncher.mdm.push.SyncRunner.request(context.applicationContext, NOTIFICATION_CHANNELS_SYNC_REASON)
                 }
             },

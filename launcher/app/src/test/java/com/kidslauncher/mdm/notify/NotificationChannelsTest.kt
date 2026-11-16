@@ -109,6 +109,10 @@ class NotificationChannelsTest {
             assertFalse(row.allOff)
             assertEquals(access.name, action, row.action)
         }
+        // Vibb holds the dialer role: every channel is locked and Android's page greys an off switch (gate §6ax), so the
+        // tap's words say to hand the role back first (code QA L5); the other states are the same.
+        assertEquals(R.string.settings_notifications_open_role, notificationsRowText(report, SystemPageAccess.CAN_OPEN, dialerRoleHeld = true)!!.action)
+        assertEquals(R.string.settings_notifications_pause_first, notificationsRowText(report, SystemPageAccess.PAUSE_FIRST, dialerRoleHeld = true)!!.action)
         assertNull(notificationsRowText(NotificationChannelsReport(false, listOf("shortcuts")), SystemPageAccess.CAN_OPEN))
         assertNull(notificationsRowText(NotificationChannelsReport(false, emptyList()), SystemPageAccess.CAN_OPEN))
         assertNull("nothing read: no row", notificationsRowText(null, SystemPageAccess.CAN_OPEN))
@@ -122,6 +126,8 @@ class NotificationChannelsTest {
         assertEquals("Varsler fra Vibb One", nb["settings_notifications"])
         assertEquals("Sett alle begrensninger på pause først", nb["settings_notifications_pause_first"])
         assertEquals("«%1\$s»", nb["settings_notifications_quoted"])
+        assertTrue(nb.getValue("settings_notifications_open_role").contains("Samtaler og SMS til «Ikke styrt» under Anrop og SMS"))
+        assertTrue(en.getValue("settings_notifications_open_role").contains("Calls and SMS to “Not managed” under Calls and SMS"))
     }
 
     // ---- source pins ----
@@ -164,6 +170,10 @@ class NotificationChannelsTest {
             assertTrue(action, "addAction(NotificationManager.$action)" in watch)
         }
         assertTrue("SyncRunner.request(context.applicationContext, NOTIFICATION_CHANNELS_SYNC_REASON)" in watch)
+        // Snarveier's panel is refreshed from here (code QA L1): its own receiver isn't exported and no longer lists
+        // the channel action.
+        assertTrue("ShortcutsRuntime.requestRefresh()" in watch)
+        assertTrue(watch.indexOf("ShortcutsRuntime.requestRefresh()") < watch.indexOf("SyncRunner.request("))
         // Exported: the long-press sheet's broadcast comes with SystemUI's uid and is dropped for a not-exported
         // receiver (gate §6ax); the actions are protected broadcasts.
         assertTrue("ContextCompat.RECEIVER_EXPORTED," in watch)
@@ -173,5 +183,7 @@ class NotificationChannelsTest {
         assertTrue("com.kidslauncher.mdm.notify.NotificationChannelsWatch.init(this)" in app)
         val shortcuts = File(main, "java/com/kidslauncher/mdm/shortcuts/ShortcutsRuntime.kt").readText()
         assertTrue(shortcuts.substringAfter("fun showAgain").substringBefore("fun report").contains("NOTIFICATION_CHANNELS_SYNC_REASON"))
+        val shortcutsFilter = shortcuts.substringAfter("val filter = IntentFilter().apply {").substringBefore("ContextCompat.registerReceiver")
+        assertFalse(shortcutsFilter.lines().any { "addAction(NotificationManager.ACTION_NOTIFICATION_CHANNEL_BLOCK_STATE_CHANGED)" in it })
     }
 }

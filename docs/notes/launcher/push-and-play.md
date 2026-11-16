@@ -166,8 +166,9 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   to the owning package, when a user's change crosses NONE). **Exported on purpose** (gate §6ax): a change from the
   long-press sheet is sent with SystemUI's uid, and Android drops it at enqueue for a not-exported receiver ("Exported
   Denial", in `dumpsys activity broadcasts history`); only Settings' own page (the system uid) reached one. The actions
-  are protected broadcasts, and the receiver only asks for a sync. (Snarveier's own receiver in `ShortcutsRuntime.init`
-  lists the channel action too and is not exported, so its refresh on a block never comes from this broadcast.)
+  are protected broadcasts, and the receiver only asks for a sync - and Snarveier's refresh: `ShortcutsRuntime.init`'s
+  receiver is not exported (its other actions) and no longer lists the channel action, so this watch calls
+  `ShortcutsRuntime.requestRefresh()` before the sync (code QA L1).
 - The app-wide switch turned off revokes POST_NOTIFICATIONS, and Android kills the process for it (exit reason
   `PERMISSION CHANGE`); no `ACTION_APP_BLOCK_STATE_CHANGED` was seen, and the process start's sync carries the report
   (§6ax). Each asks `SyncRunner.request(app,

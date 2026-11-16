@@ -77,10 +77,13 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   `.N` id, an unknown id and Android 16's reserved `android.app.*` channels are skipped; a channel that doesn't exist is
   not off. Silent (LOW) channels aren't reported (Q6). Not a heartbeat field: a change is in the hash, so it goes as a
   full report.
-- **The role lock**: while Vibb holds the dialer role (`calls_mode`/`sms_mode` other than unmanaged/unmanaged) every
-  `launcher:` channel is locked (`NON_BLOCKABLE_DEFAULT_ROLES`), so the long-press sheet can't turn one off; the report
-  matters on an unmanaged phone, after a failed role take, for a block that survives the role (gate §6ax step 3),
-  another SystemUI and Android 17.
+- **The role lock**: while Vibb holds the dialer role (calls managed) every `launcher:` channel is locked
+  (`NON_BLOCKABLE_DEFAULT_ROLES`), so the long-press sheet can't turn one off. **SMS managed with calls "Ikke styrt"
+  takes only the SMS role, which locks nothing** (gate §6ax step 3): there the kid can turn Meldinger off from the
+  sheet, and the PWA names it (the feature counts). The report also matters on an unmanaged phone, after a failed role
+  take, for a block that survives the role (§6ax step 3), another SystemUI and Android 17. While the dialer role is
+  held, the row's "Trykk for å slå på" also says to hand the role back first (`settings_notifications_open_role`):
+  Android's page greys an off switch then.
 - **Settings' "Vibb One notifications" row** (`settings_mdm_notifications`, after "Modify system settings"; the same
   page-row pattern): shown only while a channel other than Snarveier's, or the whole app, is off (the same reader, off
   the main thread; `notificationsRowText`). Its summary names them in the phone's words, quoted, then by

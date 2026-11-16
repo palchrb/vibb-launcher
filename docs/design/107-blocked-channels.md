@@ -510,13 +510,24 @@ As designed, with Q1-Q6 as recommended, and three changes from the gate (§6ax, 
   SystemUI, so the block-state broadcast goes out with SystemUI's uid, and Android drops it at enqueue for a
   not-exported receiver ("Exported Denial"); only a change on Settings' own page arrived. The three actions are protected
   broadcasts and the receiver only asks for a sync, so exporting it opens nothing. Snarveier's own receiver
-  (`ShortcutsRuntime.init`, design 99) has the same drop for its refresh on a block; left as it is here.
+  (`ShortcutsRuntime.init`, design 99) had the same drop for its refresh on a block; since code QA L1 the watch
+  refreshes the panel.
 - **A stale block can't be raised while the role is held** (L7's second prediction failed): Android's page greys the
   locked channel's switch, and the app switch while POST_NOTIFICATIONS is policy-fixed. §11's fallback is in: the
   `.fix` text ends "If a switch is grey, first set Calls and SMS to “Not managed” under Calls and SMS, and set them back
   afterwards" (nb likewise), checked on both images.
 - **The app-wide switch takes on an unmanaged phone and kills the process** (the permission revoke); no
   `ACTION_APP_BLOCK_STATE_CHANGED` was seen for it, and the process start's sync carries `all_off`.
+
+- **§1 and §11 overstated the role lock**: the lock comes with the dialer role only, which Vibb takes while calls are
+  managed. SMS managed with calls "Ikke styrt" takes only the SMS role (§6ax step 3: Google's dialer kept the dialer role,
+  `mImportanceLockedDefaultApp=false`), so on such a phone the kid can block Meldinger from the sheet - the case where
+  the Attention row matters most. The rest of §1 holds for a phone whose calls Vibb manages.
+
+Code QA fixes (L1-L5): the block-state watch also refreshes Snarveier's panel (its own receiver stays not exported and
+no longer lists the channel action); the Settings row keeps its last read as the "before" of a tap (no read on the main
+thread) and cancels an older read in flight; while Vibb holds the dialer role the row's "Trykk for å slå på" also says to
+set Samtaler and SMS to «Ikke styrt» under Anrop og SMS first, as the PWA's ⓘ does.
 
 Also: the PWA quotes the names in the page's quotes («» on nb pages, “” on en) in About's value and the ⓘ, and leaves
 them unquoted in the Attention title (§5.3's example); the phone's row quotes them in the phone's language. With

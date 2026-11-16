@@ -505,6 +505,7 @@
     <string name="settings_notifications_quoted">“%1$s”</string>
     <string name="settings_notifications_summary" translatable="false">%1$s · %2$s</string>
     <string name="settings_notifications_open">Tap to turn on</string>
+    <string name="settings_notifications_open_role">Tap to turn on. If a switch is grey, first set Calls and SMS to “Not managed” under Calls and SMS on the server, and set them back afterwards</string>
     <string name="settings_notifications_pause_first">Pause all restrictions first</string>
     <string name="settings_notifications_wait">The pause is starting, a moment…</string>
     <string name="settings_notifications_no_page">Android has no page for this on this phone</string>
