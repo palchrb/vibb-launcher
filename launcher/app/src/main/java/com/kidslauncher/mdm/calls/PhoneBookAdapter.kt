@@ -190,9 +190,8 @@ class PhoneBookAdapter(
 
         private fun bindContact(context: Context, row: PhoneBookRow.Contact, item: PhoneBookItem) {
             val contact = row.contact
-            val badgeCounts = ContactBadge(row.missed?.count ?: 0, row.unread)
-            // Design 106 §2 (A5): the two pills with their 12 dp glyphs - the rust one at the top, the teal one at the bottom.
-            KidAvatars.bindContactBadge(badge, unreadBadge, badgeCounts, BadgeSize.ROW)
+            // Variant A (2026-11-17): no pills on the row; the missed calls and unread messages are the one sub-line's words.
+            KidAvatars.bindContactBadge(badge, unreadBadge, ContactBadge(0, 0), BadgeSize.ROW)
             name.text = com.kidslauncher.mdm.ui.search.highlightMatch(context, contact.name, row.match)
             val text = rowLine(context, row)
             line.visibility = if (text == null) View.GONE else View.VISIBLE
@@ -302,20 +301,22 @@ class PhoneBookAdapter(
         }
 
         /**
-         * The row's second line (design 79 §3.4), short - the full sentence stays on the card and in TalkBack:
-         * "Nødnummer"; else the unseen missed calls in red ("2 tapte anrop 14:02"), then " · 1 ulest" in the dim tone; or
-         * alone "1 ulest melding"; else none.
+         * The row's second line (design 79 §3.4; variant A, 2026-11-17), one line: "Nødnummer"; else the unseen missed
+         * calls in rust ("2 tapte anrop 14:02"), " · ", the unread messages in teal ("1 melding"), each only if there
+         * is one; else none.
          */
         fun rowLine(context: Context, row: PhoneBookRow.Contact): CharSequence? {
             if (row.emergency) return context.getString(R.string.phone_book_emergency_line)
             val missed = row.missed?.takeIf { it.count > 0 }
-            if (missed == null) {
-                return context.resources.getQuantityString(R.plurals.contact_unread, row.unread, row.unread).takeIf { row.unread > 0 }
-            }
+            if (missed == null && row.unread <= 0) return null
             val out = SpannableStringBuilder()
-            val red = MissedCallText.short(context, missed.count, missed.lastAtMs)
-            out.append(red, ForegroundColorSpan(context.getColor(R.color.kid_page_alert)), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-            if (row.unread > 0) out.append(" · ").append(context.resources.getQuantityString(R.plurals.contact_unread_short, row.unread, row.unread))
+            if (missed != null) {
+                out.append(MissedCallText.short(context, missed.count, missed.lastAtMs), ForegroundColorSpan(context.getColor(R.color.kid_page_line_missed)), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
+            if (row.unread > 0) {
+                if (missed != null) out.append(" · ")
+                out.append(context.resources.getQuantityString(R.plurals.contact_unread_line, row.unread, row.unread), ForegroundColorSpan(context.getColor(R.color.kid_page_line_unread)), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
             return out
         }
 

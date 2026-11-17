@@ -68,6 +68,10 @@
         <item quantity="one">%d unread</item>
         <item quantity="other">%d unread</item>
     </plurals>
+    <plurals name="contact_unread_line">
+        <item quantity="one">%d message</item>
+        <item quantity="other">%d messages</item>
+    </plurals>
     <string name="phone_book_action_call">Call %1$s</string>
     <string name="phone_book_action_message">Message %1$s</string>
     <string name="phone_book_action_message_in">Message %1$s in %2$s</string>

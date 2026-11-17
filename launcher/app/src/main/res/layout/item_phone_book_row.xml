@@ -110,7 +110,8 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:fontFamily="@font/nunito_bold"
-                android:maxLines="2"
+                android:ellipsize="end"
+                android:maxLines="1"
                 android:textColor="@color/kid_page_dim"
                 android:textSize="13sp"
                 android:visibility="gone" />

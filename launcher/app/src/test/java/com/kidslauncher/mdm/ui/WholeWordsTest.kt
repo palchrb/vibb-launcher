@@ -174,19 +174,8 @@ class WholeWordsTest {
         RowLayout.STACKED -> 288f - ROW_PADDING_START_DP - ROW_AVATAR_DP - ROW_GAP_DP - ROW_STACKED_END_DP
     }
 
-    private val rowLines = mapOf(
-        "nb" to listOf(
-            "Tapt anrop 14:02", "Tapt anrop i går", "Tapt anrop 30. nov.", "12 tapte anrop i går", "12 tapte anrop 30. nov.",
-            "2 tapte anrop 14:02 · 1 ulest", "Nødnummer", "12 uleste meldinger",
-        ),
-        "en" to listOf(
-            "Missed call 14:02", "Missed call yesterday", "12 missed calls yesterday", "12 missed calls Nov 30",
-            "2 missed calls 14:02 · 1 unread", "Emergency number", "12 unread messages",
-        ),
-    )
-
     @Test
-    fun `the phone book row at 288 dp - names whole, the second line never cut, at 1_0 1_3 2_0 in nb and en`() {
+    fun `the phone book row at 288 dp - names whole, the second line one ellipsized line, at 1_0 1_3 2_0 in nb and en`() {
         assertEquals(128f, rowColumn(1.0f), 0.01f)
         assertEquals(214f, rowColumn(1.3f), 0.01f)
         for (scale in scales) {
@@ -195,12 +184,6 @@ class WholeWordsTest {
                 val (size, display) = shown(name, 16f * scale, column)
                 assertNoCut("row ${scale}x '$name'", size, display, column)
             }
-            for ((lang, lines) in rowLines) for (line in lines) {
-                val size = 13f * scale
-                // A plain TextView, at most two lines: it wraps at spaces and is never cut to one or past two.
-                assertTrue("$lang ${scale}x '$line' takes ${lineEnds(line, size, column).size} lines", lineEnds(line, size, column).size <= 2)
-                assertFalse("$lang ${scale}x '$line'", cuts(line, size, column, 2))
-            }
         }
         val doc = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }.newDocumentBuilder()
             .parse(File(main, "res/layout/item_phone_book_row.xml"))
@@ -208,7 +191,7 @@ class WholeWordsTest {
         fun byId(id: String) = (0 until all.length).map { all.item(it) as Element }.single { it.getAttributeNS(ns, "id") == "@+id/$id" }
         assertEquals("com.kidslauncher.mdm.ui.WholeWordTextView", byId("row_name").tagName)
         assertEquals("2", byId("row_name").getAttributeNS(ns, "maxLines"))
-        assertEquals("2", byId("row_line").getAttributeNS(ns, "maxLines"))
+        assertEquals("1", byId("row_line").getAttributeNS(ns, "maxLines"))
     }
 
     @Test

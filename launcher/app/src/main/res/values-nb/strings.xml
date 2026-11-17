@@ -53,6 +53,10 @@
         <item quantity="one">%d ulest</item>
         <item quantity="other">%d uleste</item>
     </plurals>
+    <plurals name="contact_unread_line">
+        <item quantity="one">%d melding</item>
+        <item quantity="other">%d meldinger</item>
+    </plurals>
     <string name="phone_book_action_call">Ring %1$s</string>
     <string name="phone_book_action_message">Send melding til %1$s</string>
     <string name="phone_book_action_message_in">Send melding til %1$s i %2$s</string>
