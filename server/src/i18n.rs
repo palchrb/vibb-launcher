@@ -680,6 +680,7 @@ mod tests {
         "partials/rule_switch.html",
         "partials/device_app_row.html",
         "partials/app_permissions_form.html",
+        "partials/app_push_group.html",
         "partials/status_line.html",
         "partials/push_offer.html",
         "partials/confirm_cancel.html",
@@ -712,6 +713,7 @@ mod tests {
         "partials/spotify_setup.html",
         // 3e-a: Settings' core pages.
         "settings_hub.html",
+        "settings_push.html",
         "notifications.html",
         "notifications_settings.html",
         "schedules.html",

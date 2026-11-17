@@ -40,6 +40,9 @@ private const val MAX_RECONNECT_DELAY_MS = 60_000L
 private const val NOT_ENROLLED_RETRY_DELAY_MS = 30_000L
 private const val EXTRA_SYNC_REASON = "reason"
 
+/** Design 108 §3.9: the stream's app-push event (`event: up`, `data: up`; the contract's `event`). */
+const val UP_EVENT = "up"
+
 /** One background thread for the stream's token reads (design r10, Q-6). */
 private val TOKEN_READER: java.util.concurrent.Executor = java.util.concurrent.Executors.newSingleThreadExecutor()
 
@@ -322,6 +325,8 @@ class CommandListenerService : Service() {
                         val now = SystemClock.elapsedRealtime()
                         val sinceSync = lastReopenSyncAt?.let { now - it }
                         val sinceLastByte = lastByteBeforeDrop?.let { now - it }
+                        // Design 108 §2.2: every reopen pulls the app-push queue once (a no-op while UP is off).
+                        if (wasDown) com.kidslauncher.mdm.push.up.UpRuntime.requestPull(applicationContext, "sse_open")
                         if (wasDown && syncOnSseReopen(sinceSync, sinceLastByte)) {
                             SyncRunner.request(applicationContext, "sse_open")
                             lastReopenSyncAt = now
@@ -331,6 +336,12 @@ class CommandListenerService : Service() {
                 }
 
                 override fun onEvent(eventSource: EventSource, id: String?, type: String?, data: String) {
+                    // Design 108 §5.5: `up` (app push's queue has messages) pulls them, nothing else; every other event
+                    // is today's content-free sync nudge.
+                    if (type == UP_EVENT) {
+                        com.kidslauncher.mdm.push.up.UpRuntime.requestPull(applicationContext, "sse")
+                        return
+                    }
                     Log.i(LOG_TAG, "Command stream nudge received, syncing early")
                     SyncRunner.request(applicationContext, "sse")
                 }

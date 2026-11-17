@@ -19,6 +19,7 @@ import retrofit2.Call
 import retrofit2.Response
 import retrofit2.Retrofit
 import retrofit2.http.Body
+import retrofit2.http.DELETE
 import retrofit2.http.GET
 import retrofit2.http.Header
 import retrofit2.http.POST
@@ -159,6 +160,19 @@ interface MdmApi {
     /** The card's nowcast line (design 75 D9), asked when the card opens. */
     @GET("api/devices/weather/now")
     suspend fun weatherNow(): Response<ResponseBody>
+
+    /** Design 108 §3.7: a new UnifiedPush registration - `200 {endpoint}`, `409 {refused}` or `400`; the raw answer is
+     * read by [com.kidslauncher.mdm.push.up.UpRuntime]. */
+    @POST("api/devices/up/registrations")
+    suspend fun upRegister(@Body body: com.kidslauncher.mdm.push.up.UpRegisterBody): Response<ResponseBody>
+
+    /** Design 108 §3.7: `204`, also for an unknown `reg`. */
+    @DELETE("api/devices/up/registrations/{reg}")
+    suspend fun upUnregister(@Path("reg") reg: String): Response<Unit>
+
+    /** Design 108 §3.7: the sent messages' keys acknowledged, then `{messages, more}`. */
+    @POST("api/devices/up/messages")
+    suspend fun upMessages(@Body body: com.kidslauncher.mdm.push.up.UpAckBody): Response<ResponseBody>
 }
 
 /** [callTimeoutMs] bounds a whole call (design 38's prepared shutdown client); `null` = none.

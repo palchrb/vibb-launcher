@@ -465,6 +465,8 @@ pub(crate) async fn build_policy(
     }
     // Design 76: the certificate check, only to a launcher that reads it; a read error fails the policy.
     let server_tls = crate::server_tls::policy(state, device_id, &capabilities).await?;
+    // Design 108 §3.8: app push, only to a launcher that is a distributor; a read error fails the policy.
+    let unified_push = crate::unified_push::policy(&state.db, device_id, &capabilities).await?;
     let receipts = capabilities
         .iter()
         .any(|c| c == crate::models::COMMAND_RECEIPT_CAPABILITY);
@@ -619,6 +621,7 @@ pub(crate) async fn build_policy(
         captive_portal,
         login_browser,
         server_tls,
+        unified_push,
     })
 }
 
@@ -1911,7 +1914,7 @@ async fn status_intake(
             .collect();
         let json =
             serde_json::to_string(&package_names).expect("a list of strings always serializes");
-        if let Err(err) = sqlx::query(
+        match sqlx::query(
             "UPDATE device_policy SET allowlist_json = ?, updated_at = datetime('now') \
              WHERE device_id = ? AND allowlist_json IS NULL",
         )
@@ -1920,7 +1923,14 @@ async fn status_intake(
         .execute(&state.db)
         .await
         {
-            tracing::error!(device_id = device.id, %err, "allowlist bootstrap failed");
+            // Design 108 (L10): an unmanaged phone's registrations of apps the first list leaves out go.
+            Ok(done) if done.rows_affected() > 0 => {
+                crate::unified_push::prune_disallowed_now(&state, device.id).await;
+            }
+            Ok(_) => {}
+            Err(err) => {
+                tracing::error!(device_id = device.id, %err, "allowlist bootstrap failed");
+            }
         }
     }
 
@@ -2341,6 +2351,8 @@ pub async fn commands_stream(
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
     let device_id = device.id;
     let rx = state.command_notify.subscribe();
+    // Design 108 §3.9: app push's content-free `up`, a channel of its own (none of the command nudges change).
+    let up_rx = state.unified_push.subscribe();
     // Moved into the stream: dropped (stream counted closed) when the connection ends.
     let guard = state.command_streams.open(device_id);
     tracing::info!(device = device_id, "command stream opened");
@@ -2355,7 +2367,16 @@ pub async fn commands_stream(
         }
         _ => None,
     });
+    // A lag on the `up` channel sends only `up` (M2): the phone pulls, the queue is the truth.
+    let ups = BroadcastStream::new(up_rx).filter_map(move |msg| match msg {
+        Ok(id) if id == device_id => Some(Some(Event::default().event("up").data("up"))),
+        Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(_)) => {
+            Some(Some(Event::default().event("up").data("up")))
+        }
+        _ => None,
+    });
     let stream = nudges
+        .merge(ups)
         .merge(close)
         .take_while(Option::is_some)
         .filter_map(move |event| {

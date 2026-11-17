@@ -4910,6 +4910,56 @@ managed and lost it once both were unmanaged (M2, both images). Logs: `Notificat
 Not run: Android 17 (no emulator here), the Jelly Star (owed: with Vibb as the dialer, a long-press on a Meldinger notice
 should say "can't be modified").
 
+## 6ay. App push: Vibb One as the UnifiedPush distributor (design 108 R1-G, 2026-11-17)
+
+Design 108 §12.3's gate, lean: the rows the build and the code QA flagged first. **`compat34`** (API 34) started with
+`-wipe-data -dns-server 8.8.8.8`; **`jelly36`** (API 36) restored clean from `~/kid-look-1-avd-pre-start` (22 of 22 sums,
+the same file list), started without `-wipe-data`, and restored again afterwards (22 of 22). One at a time, under
+`flock ~/build.lock` and `flock -o ~/emulator.lock`. **Android 17 not run**: no API 37 image boots on this VM (37.2's
+graphics stack kills system_server on a readback, §6as) - owed.
+
+**The rig.** The `up` branch's debug server with `BIND_ADDR=0.0.0.0:3108` and `DEVICE_BIND_ADDR=0.0.0.0:3109` (the push
+routes live on the phone listener alone), §6ax's data (device 1, migrated to 0152), the public origin `https://up.test`
+saved on `/settings/push` (no name resolves: the apps never connect to it, every push goes from the VM straight to
+`127.0.0.1:3109` with the endpoint's host as `Host`). The branch's debug launcher as Device Owner (§4's lines),
+`POST_NOTIFICATIONS` granted, the server URL `http://10.0.2.2:3109`, enrolled with a typed code; kiosk LOCKED.
+`scripts/fake-homeserver.py` posts the pushes (`notify` Synapse-shaped `event_id_only` JSON, `up` Web-Push-like bytes,
+`--burst`).
+
+**The test app** is a throwaway probe written for the gate (Java, built with aapt2/javac/d8 like §6ap's, debug-signed,
+`me.vibb.probe.up`; the UP example app's GitHub releases stop at 1.5.4 of 2023, an AND_2 connector that shares no
+identity, and newer ones are on Codeberg only): the connector side of AND_3 written from the spec, not the connector
+library - REGISTER and UNREGISTER with `BroadcastOptions.setShareIdentityEnabled(true)` and the connector's AND_2
+extras (`features`, `application`, `pi`), MESSAGE_ACK with a plain `sendBroadcast` (as the connector does), an exported
+`RAISE_TO_FOREGROUND` service (switchable, and with an optional slow `onBind`), a `dataSync` foreground service started
+from MESSAGE (switchable), a Link activity asking `unifiedpush://link` for a result, and a second "distributor"
+(`OtherLink`, the same link filter) so the preferred activity has a competitor. Commands by `am broadcast -f 32 -n
+me.vibb.probe.up/.Cmd --es cmd ...`; its log tag `UpProbe`. Let out with Allow these apps and ticked under Apps (§3b).
+The launcher's debug build logs each MESSAGE send and each pull's acks by key prefix (`UpRuntime`).
+
+| Row | `compat34` (14) | `jelly36` (16) |
+|---|---|---|
+| 1 register | **Passed.** `queryBroadcastReceivers` lists `me.vibb.launcher.debug`; REGISTER with the shared identity and the AND_2 extras -> `NEW_ENDPOINT` 27 ms later (`https://up.test/up/<27>`) | **Passed.** The same, 19 ms |
+| 15 on by default | **Passed.** Device 1 (made before migration 0152) with the origin saved: `UpReceiver enabled`, `UpLinkActivity enabled` at the enrolment's first syncs | **Passed**, the same |
+| 2a deliver | **Passed.** The gateway POST `200 {"rejected":[]}`, MESSAGE (the minimised Matrix JSON, 259 bytes) about 70 ms after it; the queue empty after the ack pull (6 s later) | **Passed**, the same |
+| 3 the raise | **Passed.** Screen off (the launcher at `FOREGROUND_SERVICE`): the probe goes `CACHED_EMPTY` -> **`FOREGROUND_SERVICE` for 5.0 s** (bind to unbind) -> `CACHED_EMPTY` (`cmd activity get-uid-state` every 0.25 s); its FGS start from the MESSAGE receiver **allowed** (`FGS running`). The control, the raise service disabled: the message sent at once without the raise (`has no raise service`), and the same FGS start **refused** (`ForegroundServiceStartNotAllowedException`). Screen on (Home on top) the bind gives `BOUND_TOP` | **Passed**, the same: `FOREGROUND_SERVICE` for 5.0 s, FGS allowed with the raise, refused without |
+| 10 no loss in the raise | **Passed.** (a) Raise service disabled: delivered without the raise, acked after the send. (b) `onBind` slowed to 3 s, three pushes, `am force-stop` of the probe 1 s into the binding: the three `MESSAGE sent` lines come with the lost binding and arrive in the restarted process (three MESSAGE lines, a new pid); the trailing pull in between acked `[]` (nothing sent yet, nothing re-broadcast); the three keys acked 6 s after their sends; the queue empty | **Passed**, the same |
+| 9 the Link Activity | **Passed.** In the LOCKED kiosk, with `OtherLink` installed as a second handler: `link result=-1 distributor=me.vibb.launcher.debug`, no chooser (`ResolverActivity`/`ChooserActivity` never in the log), no Recents entry. UP off: the activity disabled, the link resolves past it to `OtherLink` (`cmd package resolve-activity`), no chooser. 14 has no policy engine to dump the PPA from; the win over a second handler is the proof | **Passed**, the same. `dumpsys device_policy` lists the PPA (`IntentFilterPolicyKey persistentPreferredActivity` -> `UpLinkActivity`) while UP is on; **while the activity is disabled the engine doesn't list it** (6 keys -> 5, before any resolve) and it is back with the enabling: on again, the first read (about 250 ms after `UpLinkActivity enabled`) lists it and the link resolves to ours - no window seen |
+| 6 UP off / remove | **Passed.** The PWA's switch off: `UNREGISTERED` to the app, both components in `disabledComponents`, `queryBroadcastReceivers` empty; on again: enabled within the save's sync, Vibb One listed, a new REGISTER answered. Uninstall: `PACKAGE_FULLY_REMOVED: me.vibb.probe.up's registrations go` (`UpPackageReceiver`), the server's rows gone, `/up/` 410, the gateway `rejected` | **Passed**, the same |
+| 13 Stop | **Passed.** PWA Stop: `UNREGISTERED` for each token; the app's own REGISTER refused before the store, `REGISTRATION_FAILED(ACTION_REQUIRED)`, no server row; the PWA lists it under Stopped; Allow again: the next REGISTER gets an endpoint | **Passed**, the same |
+| 4 stopped, Doze, standby | **Passed.** Force-stopped, screen off, `dumpsys deviceidle force-idle` (deep IDLE) and standby bucket 45 (restricted): delivered 140 ms after the pull | **Passed**, 100 ms |
+| H1 (code QA): no broadcast held | **Passed.** The phone port answered by a listener that accepts and never replies; a REGISTER, then an SMS 1 s later (SMS managed, the launcher the SMS app): the REGISTER's broadcast **finished 2 ms after dispatch** while its server call ran 10 s (OkHttp's read timeout, then `REGISTRATION_FAILED(NETWORK)`); SMS_DELIVER to `SmsDeliverReceiver` dispatched 0 ms after enqueue and finished in 7 ms (`dumpsys activity broadcasts history`) | **Passed**: REGISTER finished +4 ms, SMS_DELIVER +1 ms / +19 ms |
+| 7 offline (part) | **Passed.** The server down (refused connect): `REGISTRATION_FAILED(NETWORK)` at once; the server back, the same token's REGISTER retried the kept pair and got its endpoint | - |
+| 14 origin change | **Passed.** `/settings/push` to `https://push.test`: `NEW_ENDPOINT` with the new origin within the save's sync; a gateway POST naming the old origin still queued (`rejected: []`, delivered), one naming `evil.test` rejected | - |
+| 8 limits | **Passed** (server side): 4097 bytes 413; a never-seen secret 410; a tombstoned one 410; a burst to one endpoint 429 from about the 30th (the registration's sub-bucket); 32 never-seen secrets from one client: 410 ×29 then 429; during that ban a resolving secret still 201 | - |
+| 11 trailing edge | **Passed.** Two `/up/` pushes 100 ms apart: two `up` events, both delivered within 0.3 s | - |
+
+**Not run:** row 2b (the app's own encrypted test needs a trusted CA), 5 (a time rule's suspended app and its
+notifications), 12 (a second instance), and Android 17. **The connector's acceptance of our NEW_ENDPOINT** (sent
+without a shared identity): read in the connector's source - `MessagingReceiver.onReceive` looks the token up and never
+checks the sender - and seen on the probe (`sender=null`); the real connector is Element X's, owed on the Jelly Star.
+No crash of the launcher in either run (`logcat -b crash`).
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:

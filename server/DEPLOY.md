@@ -41,7 +41,7 @@ pages and the phones' API can be exposed differently:
 | `.env` setting | Default | What it does |
 |---|---|---|
 | `BIND_ADDR` | `127.0.0.1:3100` | The admin listener: the PWA, and the phones' API while `ADMIN_DEVICE_API` is on. |
-| `DEVICE_BIND_ADDR` | unset | The phone listener, e.g. `127.0.0.1:3101`: only the phones' API (`/api/devices/*`) and `/healthz`; every other path is a bare 404. |
+| `DEVICE_BIND_ADDR` | unset | The phone listener, e.g. `127.0.0.1:3101`: only the phones' API (`/api/devices/*`), app push's public routes (`/up/` and `/_matrix/push/v1/notify`, design 108) and `/healthz`; every other path is a bare 404. |
 | `ADMIN_DEVICE_API` | `on` | The admin listener also serves the phones' API (the URLs phones set up before 0.23.0 use). `off` once every phone uses the phone listener. |
 | `ADMIN_PUBLIC` | `off` | The admin listener answers **only loopback and tailnet clients** (100.64.0.0/10, fd7a:115c:a1e0::/48); everyone else gets 403 (logged as `admin_refused` in the security log). `on` lets every client in - see (b) below. |
 | `TRUSTED_PROXIES` | `127.0.0.1,::1` | Proxies whose `X-Forwarded-For` is believed: exact proxy addresses (a range only if every address in it is one of your proxies). Your proxy on the same box needs nothing here. |
@@ -137,6 +137,9 @@ phones.example.com {
 	}
 	reverse_proxy 127.0.0.1:3101 {
 		header_up -Tailscale-User-Login
+		# App push (design 108): Caddy reads a request body (a push is at most 4 KiB) before the server sees it,
+		# so a slow client waits on Caddy, never on the server's push slots.
+		request_buffers 8KiB
 	}
 }
 
@@ -903,6 +906,44 @@ The phones only ever ask this server. The cache (`weather_cells`) has no phone i
 hours (or the longest location retention, when that is shorter) goes, and a phone's Location set to Off erases it at
 once. **Backups** (and the pre-migration and pre-restore copies) keep them as they keep the fixes.
 
+## App push (UnifiedPush) (design 108, migration 0152)
+
+Vibb One is the phone's UnifiedPush distributor, and this server is the push server behind the addresses it hands to
+the phone's apps - Element X first - and a Matrix push gateway. A push comes in from the app's own server (a Matrix
+homeserver, a Mastodon instance), waits in the server's queue and wakes the phone over its existing event stream; no
+Google, no ntfy app and no third party. The routes live on the **phone listener only** (`DEVICE_BIND_ADDR`), and
+nothing about a push is logged.
+
+- **Turn it on:** Settings › App push, the phones' public address (`https://phones.example.com`: `https://` and the
+  name only, at the root of the name - Element X looks for `https://<name>/_matrix/push/v1/notify`). Saving it turns
+  app push on for every phone whose own switch is on (Device › Apps › App push, on by default). A server reachable
+  only on the tailnet gets no app push: the apps' servers post from the internet, and Synapse refuses Tailscale
+  addresses for pushes anyway. Option (b) serves app push only with `DEVICE_BIND_ADDR` set.
+- **Element X** (its Play build stays): once per account, in Element X, Settings › Notifications › Advanced › Push
+  provider › Vibb One. Device › Apps says when an allowed Element X hasn't connected. Switching back to Google is the
+  same setting.
+- **Caddy:** a site that proxies the whole phone host (`reverse_proxy 127.0.0.1:3101`, as above) serves app push as
+  it is; add `request_buffers 8KiB` inside its `reverse_proxy` block (as in the example above), so Caddy holds a client
+  that sends its body slowly and the server's push slots never wait on one. The clients' addresses count as everywhere
+  on the phone listener (`TRUSTED_PROXIES` names the proxy). If the site has access logging on, skip `/up/*`: the path
+  is a capability (`log_skip /up/*`, Caddy 2.8 and later).
+- **nginx:** `location /up/ { proxy_pass http://127.0.0.1:3101; access_log off; client_max_body_size 8k; }` and
+  `location = /_matrix/push/v1/notify { proxy_pass http://127.0.0.1:3101; client_max_body_size 8k; }`.
+- **Check from outside** (mobile data):
+  - `curl -s https://phones.example.com/_matrix/push/v1/notify` -> `{"unifiedpush":{"gateway":"matrix"}}`;
+  - `curl -s -o /dev/null -w '%{http_code}' -X POST --data x https://phones.example.com/up/AAAAAAAAAAAAAAAAAAAAAAAAAAA`
+    -> `410`.
+  Settings › App push shows when an app last checked the address and when the last push came in.
+- **A homeserver on your own LAN** that resolves `phones.example.com` to a private address needs it in Synapse's
+  `ip_range_whitelist` (Synapse refuses private ranges for pushes by default).
+- **Changing the address:** the old one keeps working 30 days while the phones hand every app its new address; change
+  it again within those days and every replaced address keeps its own 30 days. Emptying the field turns app push off
+  for every phone and forgets the old addresses.
+- **Limits:** a push is at most 4096 bytes and waits at most 24 hours; each phone takes 120 at once and then one every
+  5 seconds (every push wakes the phone, so a steady flood would drain its battery; Device › Apps names an app that
+  pushes about 300 times a day or more), each app address 30 and then one every 2 seconds; each sending address 40
+  requests at once and then 20 a second; an address that was removed answers `410` for 30 days.
+
 ## Useful commands on the Pi
 
 - Check it's running: `systemctl status kid-phone-server`
@@ -960,4 +1001,5 @@ The optional MollySocket installer (`deploy/install_mollysocket.sh`) and the lau
 0038 drops their tables, and the server deletes `data/journal_media` at startup; backups made before the update still
 contain them until the backup schedule prunes them). An existing MollySocket install keeps running on its own until you
 remove it (`sudo systemctl disable --now mollysocket`, then delete `/opt/mollysocket` and its `tailscale serve` on
-port 8443). If a phone ever needs UnifiedPush again, install the ntfy app on it as the distributor.
+port 8443). Since design 108 Vibb One is the distributor again, without a third-party relay: see "App push
+(UnifiedPush)" above.

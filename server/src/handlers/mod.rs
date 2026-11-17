@@ -1,5 +1,6 @@
 pub mod activity;
 pub mod admin;
+pub mod app_push;
 pub mod auth;
 pub mod backups;
 pub mod bedtime;

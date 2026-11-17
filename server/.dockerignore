@@ -3,4 +3,6 @@
 !dist/amd64/kid_phone_server
 !dist/arm64/kid_phone_server
 !dist/static/
+!dist/NOTICE.md
+!dist/LICENSES/
 !deploy/distrusted-roots.txt

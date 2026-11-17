@@ -25,6 +25,9 @@ phones.example.com {
 	}
 	reverse_proxy 127.0.0.1:3101 {
 		header_up -Tailscale-User-Login
+		# App push (design 108): Caddy reads a request body (a push is at most 4 KiB) before the server sees it,
+		# so a slow client waits on Caddy, never on the server's push slots.
+		request_buffers 8KiB
 	}
 }
 

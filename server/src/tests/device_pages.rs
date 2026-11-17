@@ -2075,6 +2075,10 @@ async fn apps_forms_return_to_their_rows() {
             updates += 1;
             assert_eq!(action_fragment.as_deref(), Some("downloads"));
             "downloads".to_string()
+        } else if target.starts_with(&format!("/devices/{id}/app-push")) {
+            // Design 108: App push's switch (its off sheet), Stop and Allow Again, back to their group.
+            assert_eq!(action_fragment.as_deref(), Some("app-push"));
+            "app-push".to_string()
         } else {
             panic!("a form the table doesn't know: {action}");
         };

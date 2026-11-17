@@ -85,6 +85,7 @@ mod time_pages;
 mod time_request;
 mod time_rules;
 mod tracked_apps;
+mod unified_push;
 mod wallpapers;
 mod weather;
 mod web_push;
@@ -290,6 +291,7 @@ impl TestApp {
                 weather.quick_second = std::time::Duration::from_millis(10);
                 std::sync::Arc::new(weather)
             },
+            unified_push: Default::default(),
         };
 
         // The setup QR's launcher check as if it had just passed (design 86): no test downloads

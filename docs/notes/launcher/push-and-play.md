@@ -158,6 +158,12 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   says neither: no hash, no heartbeat, no gzip, the ack cleared. Enrollment clears the ack. Claimed as
   `status_heartbeat_v1`.
 
+## The stream's `up` event (design 108)
+
+Since design 108 the stream carries a second event, `up` (app push's queue has messages): `onEvent` hands it to
+`push/up/UpRuntime.requestPull`, never to `SyncRunner`; every reopen pulls the queue once too. See
+`docs/notes/launcher/unified-push.md`.
+
 ## A notification channel turned off asks for a sync (design 107 §3)
 
 - `NotificationChannelsWatch.init` (from `Application.initRest`'s tail, once per process) registers one runtime receiver

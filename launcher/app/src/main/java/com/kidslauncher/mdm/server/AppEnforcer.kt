@@ -357,6 +357,16 @@ object AppEnforcer {
         // persistent preferred activity is skipped, and Android's own handler is then the only one.
         enforceCaptivePortalPin(dpm, admin, context)
         com.kidslauncher.mdm.portal.PortalRuntime.setEntryEnabled(context, com.kidslauncher.mdm.logins.portalPolicyOf(policy).enabled)
+        // Design 108 §5.2 (L3), the same pattern: `unifiedpush://link` always goes to Vibb's Link Activity, whatever UP's
+        // state; whether it is used is the component's enabled state, which follows the policy's `unified_push.on` with
+        // the registration receiver's (disabled: no app sees Vibb One as a distributor). Not a restriction: never lifted.
+        // Code QA M3: switched only by a policy carrying the parent's choice (fresh, or a cache that decodes); a fallback
+        // plan or a bare policy leaves them as they are - a disabled receiver makes the connector drop Vibb One, and each
+        // Element X account would need its manual switch again.
+        enforceUpLinkPin(dpm, admin, context)
+        if (parentChoice) {
+            com.kidslauncher.mdm.push.up.UpRuntime.setComponentsEnabled(context, com.kidslauncher.mdm.push.up.UpView.of(policy).on)
+        }
 
         // Hardening that the server switched off is cleared first, before anything below can
         // throw - "Block USB debugging" off is how a parent gets adb back (QA step 4 #8). The
@@ -1738,8 +1748,8 @@ object AppEnforcer {
 
     /**
      * Design 59d step M, for `lock/HomePin` only (it holds its own lock and adds the boot cover's PPA last): our
-     * package's PPAs cleared and added back in order - HomeActivity's HOME first, then the Play link blocker and the
-     * call-log pin. Not `@Synchronized` (the take-over calls it on the main thread while an apply may run). Never throws.
+     * package's PPAs cleared and added back in order - HomeActivity's HOME first, then the Play link blocker, the
+     * call-log pin, the captive portal's and the UnifiedPush link's (design 108). Not `@Synchronized` (the take-over calls it on the main thread while an apply may run). Never throws.
      */
     internal fun reseatPreferredActivities(context: Context, dpm: DevicePolicyManager, admin: ComponentName) {
         try {
@@ -1751,6 +1761,7 @@ object AppEnforcer {
         enforcePlayLinkBlocker(dpm, admin, context)
         enforceCallLogPin(dpm, admin, context)
         enforceCaptivePortalPin(dpm, admin, context)
+        enforceUpLinkPin(dpm, admin, context)
     }
 
     /**
@@ -1767,6 +1778,26 @@ object AppEnforcer {
             dpm.addPersistentPreferredActivity(admin, filter, ComponentName(context, com.kidslauncher.mdm.portal.CaptivePortalEntry::class.java))
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Failed to set the Wi-Fi sign-in's handler", e)
+        }
+    }
+
+    /**
+     * Design 108 §5.2 (L3): `VIEW unifiedpush://link` goes to [com.kidslauncher.mdm.push.up.UpLinkActivity] - set on
+     * every [apply] and in `HomePin`'s re-seat with the other PPAs of ours (the fifth: HOME, the Play link blocker, the
+     * call-log pin, the captive portal, this one; the boot cover's is `HomePin`'s own, added last), so a re-seat never
+     * leaves a moment where Android shows its chooser and the kid could pick another distributor. Whether it is used is
+     * the activity's enabled state: with UP off it is disabled and the link resolves as if Vibb weren't there.
+     */
+    private fun enforceUpLinkPin(dpm: DevicePolicyManager, admin: ComponentName, context: Context) {
+        try {
+            val filter = IntentFilter(Intent.ACTION_VIEW).apply {
+                addCategory(Intent.CATEGORY_DEFAULT)
+                addDataScheme(com.kidslauncher.mdm.push.up.UpSpec.LINK_SCHEME)
+                addDataAuthority(com.kidslauncher.mdm.push.up.UpSpec.LINK_HOST, null)
+            }
+            dpm.addPersistentPreferredActivity(admin, filter, ComponentName(context, com.kidslauncher.mdm.push.up.UpLinkActivity::class.java))
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Failed to set the UnifiedPush link's handler", e)
         }
     }
 

@@ -2118,6 +2118,8 @@ struct AppsTemplate {
     wifi_only: bool,
     /// The phone's network at its last report, with its time (`app_downloads::network`).
     network: Option<Row>,
+    /// Design 108 §3.10: app push on this phone (`#app-push`).
+    app_push: crate::handlers::app_push::AppPushGroup,
 }
 crate::i18n::words!(AppsTemplate);
 
@@ -2461,9 +2463,43 @@ pub(crate) async fn render_apps(
             },
         );
     }
+    // Design 108 §3.10: the "App push" group, named from the rows above.
+    let names: std::collections::HashMap<String, crate::handlers::app_push::AppName> = allowed
+        .iter()
+        .map(|app| (app, true))
+        .chain(not_allowed.iter().map(|app| (app, false)))
+        .filter(|(app, _)| !app.builtin && !app.row.package_name.is_empty())
+        .map(|(app, allowed)| {
+            (
+                app.row.package_name.clone(),
+                crate::handlers::app_push::AppName {
+                    label: app.row.label.clone(),
+                    letter: app.letter.clone(),
+                    logo: app.logo.clone(),
+                    allowed,
+                },
+            )
+        })
+        .collect();
+    let app_push = match crate::handlers::app_push::group(
+        state,
+        lang,
+        id,
+        &names,
+        latest
+            .as_ref()
+            .map(|_| has_capability(latest.as_ref(), crate::unified_push::CAPABILITY)),
+        &zone,
+    )
+    .await
+    {
+        Ok(group) => group,
+        Err(err) => return read_failed(lang, id, "the phone's app push", err),
+    };
     Html(
         AppsTemplate {
             lang,
+            app_push,
             who: crate::handlers::devices::BandAvatar::of(&device),
             title: format!("{} · {}", t(lang, "nav.apps"), device.name),
             nav_tab,
