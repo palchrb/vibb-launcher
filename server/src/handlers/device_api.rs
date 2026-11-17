@@ -1925,7 +1925,7 @@ async fn status_intake(
         {
             // Design 108 (L10): an unmanaged phone's registrations of apps the first list leaves out go.
             Ok(done) if done.rows_affected() > 0 => {
-                crate::unified_push::prune_disallowed(&state, device.id).await;
+                crate::unified_push::prune_disallowed_now(&state, device.id).await;
             }
             Ok(_) => {}
             Err(err) => {

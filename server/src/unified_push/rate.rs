@@ -6,8 +6,13 @@
 //! Who pays for a push (design 108 §3.3): ntfy's "rate visitor" - **the subscriber is charged, not the publisher**.
 //! Every push to a registration is charged to its phone's bucket ([PHONE_BURST], [PHONE_PER_SEC]) and, under it, to
 //! the registration's own sub-bucket ([REG_BURST], [REG_PER_SEC], M3), so one homeserver pushing for many people is
-//! never the one limited, and one flooded endpoint can't starve the phone's other apps. ntfy's numbers (60 burst, one
-//! per 5 s) are for an anonymous visitor; a phone in a busy group chat needs more.
+//! never the one limited, and one flooded endpoint can't starve the phone's other apps. ntfy's numbers are 60 burst, one
+//! per 5 s for an anonymous visitor; a phone in a busy group chat needs a larger burst (120), and the sustained rate
+//! stays ntfy's one per 5 s (R1-SR L2): every accepted push wakes the phone's radio and the app, so a steady flood
+//! from one leaked endpoint must not drain the battery. Device › Apps names an app that pushes a lot ("noisy").
+//!
+//! Before any of that, every client has a cheap request bucket of its own ([CLIENT_BURST], [CLIENT_PER_SEC], R1-SR
+//! L3), taken at the edge before the database is asked anything.
 //!
 //! The client IP is counted only for secrets this server never issued (M5), in a map of its own that the device API
 //! never sees, with the device API's numbers ([crate::limits::IP_FAILURES] in [crate::limits::IP_WINDOW], then 429 for
@@ -22,12 +27,15 @@ use std::time::Instant;
 
 use crate::limits::{IP_BLOCK, IP_FAILURES, IP_WINDOW, MAX_KEYS, Refused, evict_oldest};
 
-/// A phone's bucket: 120 pushes at once, then one a second (ntfy: `VisitorRequestLimitBurst` 60, a 5 s replenish).
+/// A phone's bucket: 120 pushes at once, then one every 5 s (ntfy: `VisitorRequestLimitBurst` 60, a 5 s replenish).
 pub const PHONE_BURST: f64 = 120.0;
-pub const PHONE_PER_SEC: f64 = 1.0;
+pub const PHONE_PER_SEC: f64 = 0.2;
 /// A registration's sub-bucket under it (M3): 30 at once, then one every 2 s.
 pub const REG_BURST: f64 = 30.0;
 pub const REG_PER_SEC: f64 = 0.5;
+/// Every client's requests to the push routes, whatever they name (`net::limit_key`): 40 at once, then 20 a second.
+pub const CLIENT_BURST: f64 = 40.0;
+pub const CLIENT_PER_SEC: f64 = 20.0;
 
 struct Bucket {
     tokens: f64,
@@ -54,12 +62,37 @@ struct IpFailures {
 
 #[derive(Default)]
 pub struct Rates {
+    clients: Mutex<HashMap<String, Bucket>>,
     phones: Mutex<HashMap<i64, Bucket>>,
     registrations: Mutex<HashMap<i64, Bucket>>,
     ip_failures: Mutex<HashMap<String, IpFailures>>,
 }
 
 impl Rates {
+    /// One request from `key` to a push route (L3): refused when its bucket is empty.
+    pub fn client_request(&self, key: &str) -> Result<(), Refused> {
+        self.client_request_at(key, Instant::now())
+    }
+
+    fn client_request_at(&self, key: &str, now: Instant) -> Result<(), Refused> {
+        let mut clients = self.clients.lock().unwrap_or_else(|e| e.into_inner());
+        if clients.len() >= MAX_KEYS && !clients.contains_key(key) {
+            evict_oldest(&mut clients, |bucket| bucket.last);
+        }
+        let bucket = clients.entry(key.to_string()).or_insert(Bucket {
+            tokens: CLIENT_BURST,
+            last: now,
+        });
+        bucket.refill(now, CLIENT_BURST, CLIENT_PER_SEC);
+        if bucket.tokens < 1.0 {
+            return Err(Refused {
+                retry_after_secs: bucket.wait(CLIENT_PER_SEC),
+            });
+        }
+        bucket.tokens -= 1.0;
+        Ok(())
+    }
+
     /// One push to `registration` of `device`: both buckets give a token, or neither is charged (429).
     pub fn charge(&self, device: i64, registration: i64) -> Result<(), Refused> {
         self.charge_at(device, registration, Instant::now())
@@ -121,7 +154,14 @@ impl Rates {
     fn never_seen_at(&self, key: &str, now: Instant) -> bool {
         let mut failures = self.ip_failures.lock().unwrap_or_else(|e| e.into_inner());
         if failures.len() >= MAX_KEYS && !failures.contains_key(key) {
-            evict_oldest(&mut failures, |f| f.window_start);
+            // L9: a client that isn't banned goes first (the oldest of them), so a flood of fresh addresses can't
+            // evict a ban; only a map of bans alone loses its oldest ban.
+            evict_oldest(&mut failures, |f| {
+                (
+                    f.blocked_until.is_some_and(|until| until > now),
+                    f.window_start,
+                )
+            });
         }
         let entry = failures.entry(key.to_string()).or_insert(IpFailures {
             window_start: now,
@@ -164,11 +204,12 @@ mod tests {
             }
         }
         let refused = rates.charge_at(1, 5, now).unwrap_err();
-        assert_eq!(refused.retry_after_secs, 1);
+        assert_eq!(refused.retry_after_secs, 5);
         // Phone 2 has its own bucket.
         assert!(rates.charge_at(2, 6, now).is_ok());
-        // One a second comes back.
-        let later = now + Duration::from_secs(1);
+        // One every 5 s comes back (L2).
+        assert!(rates.charge_at(1, 5, now + Duration::from_secs(4)).is_err());
+        let later = now + Duration::from_secs(5);
         assert!(rates.charge_at(1, 5, later).is_ok());
         assert!(rates.charge_at(1, 5, later).is_err());
     }
@@ -225,5 +266,19 @@ mod tests {
         );
         // A charge for a resolving secret never consults the ban.
         assert!(rates.charge_at(1, 1, now).is_ok());
+    }
+
+    /// L3: every client's own request bucket - 40 at once, then 20 a second; another client is untouched.
+    #[test]
+    fn a_client_has_its_request_bucket() {
+        let rates = Rates::default();
+        let now = Instant::now();
+        for _ in 0..40 {
+            rates.client_request_at("203.0.113.7", now).unwrap();
+        }
+        assert!(rates.client_request_at("203.0.113.7", now).is_err());
+        assert!(rates.client_request_at("203.0.113.8", now).is_ok());
+        let later = now + Duration::from_millis(100);
+        assert!(rates.client_request_at("203.0.113.7", later).is_ok());
     }
 }

@@ -75,19 +75,21 @@ pub async fn register(
     }
 }
 
-/// The checks, in order, and the row: the endpoint or the refusal's word.
+/// The checks, in order, and the row, in one `BEGIN IMMEDIATE` transaction (R1-SR L4: two registrations at once
+/// can't both pass the caps): the endpoint or the refusal's word.
 async fn decide(
     state: &AppState,
     device_id: i64,
     new: &NewRegistration,
 ) -> Result<Result<String, &'static str>, sqlx::Error> {
-    let Some(origin) = super::settings(&state.db).await?.public_origin else {
+    let mut tx = state.db.begin_with("BEGIN IMMEDIATE").await?;
+    let Some(origin) = super::settings(&mut *tx).await?.public_origin else {
         return Ok(Err("off"));
     };
-    if !super::switch(&state.db, device_id).await? {
+    if !super::switch(&mut *tx, device_id).await? {
         return Ok(Err("off"));
     }
-    if super::stopped(&state.db, device_id)
+    if super::stopped(&mut *tx, device_id)
         .await?
         .contains(&new.package)
     {
@@ -97,7 +99,7 @@ async fn decide(
     let allowlist: Option<String> =
         sqlx::query_scalar("SELECT allowlist_json FROM device_policy WHERE device_id = ?")
             .bind(device_id)
-            .fetch_optional(&state.db)
+            .fetch_optional(&mut *tx)
             .await?
             .flatten();
     if let Some(json) = allowlist
@@ -112,7 +114,7 @@ async fn decide(
     )
     .bind(device_id)
     .bind(&new.reg)
-    .fetch_optional(&state.db)
+    .fetch_optional(&mut *tx)
     .await?;
     if let Some((stored, package)) = existing {
         // A retry after a lost answer: the same row, the same endpoint.
@@ -127,7 +129,7 @@ async fn decide(
          UNION ALL SELECT 1 FROM up_gone WHERE secret_hash = ?1 LIMIT 1",
     )
     .bind(&hash)
-    .fetch_optional(&state.db)
+    .fetch_optional(&mut *tx)
     .await?;
     if taken.is_some() {
         return Ok(Err("conflict"));
@@ -137,36 +139,48 @@ async fn decide(
     )
     .bind(&new.package)
     .bind(device_id)
-    .fetch_one(&state.db)
+    .fetch_one(&mut *tx)
     .await?;
     if of_app >= super::PER_APP || of_phone >= super::PER_PHONE {
         return Ok(Err("limit"));
     }
-    if state.unified_push.busy(device_id, &new.package) {
+    // Checked and counted at once (L4); the phone's own hourly cap too (L5).
+    if !state
+        .unified_push
+        .admit_new_registration(device_id, &new.package)
+    {
         return Ok(Err("busy"));
     }
-    let inserted = sqlx::query(
-        "INSERT INTO up_registrations (device_id, reg, secret_hash, package, vapid) \
-         VALUES (?, ?, ?, ?, ?)",
-    )
-    .bind(device_id)
-    .bind(&new.reg)
-    .bind(&hash)
-    .bind(&new.package)
-    .bind(&new.vapid)
-    .execute(&state.db)
+    let inserted = async {
+        sqlx::query(
+            "INSERT INTO up_registrations (device_id, reg, secret_hash, package, vapid) \
+             VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(device_id)
+        .bind(&new.reg)
+        .bind(&hash)
+        .bind(&new.package)
+        .bind(&new.vapid)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await
+    }
     .await;
     match inserted {
-        Ok(_) => {}
-        // Two requests at once for one reg or secret: the unique keys decide.
-        Err(sqlx::Error::Database(err)) if err.is_unique_violation() => {
-            return Ok(Err("conflict"));
+        Ok(()) => {}
+        Err(err) => {
+            state
+                .unified_push
+                .undo_new_registration(device_id, &new.package);
+            // The unique keys still decide a reg or secret taken some other way.
+            if let sqlx::Error::Database(db) = &err
+                && db.is_unique_violation()
+            {
+                return Ok(Err("conflict"));
+            }
+            return Err(err);
         }
-        Err(err) => return Err(err),
     }
-    state
-        .unified_push
-        .note_new_registration(device_id, &new.package);
     tracing::debug!(device_id, "app push: a new registration");
     Ok(Ok(store::endpoint(&origin, &new.secret)))
 }

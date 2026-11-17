@@ -371,7 +371,7 @@ pub async fn pull(
 
 /// Retention's part (`retention::prune`, hourly): expired messages, the registrations of a phone unseen for
 /// [UNSEEN_DAYS] (no status report: ntfy's "abandoned" with our knowledge; tombstoned by the trigger), then the
-/// tombstones older than [GONE_DAYS]. The rows deleted.
+/// tombstones older than [GONE_DAYS] and the replaced origins past their 30 days. The rows deleted.
 pub async fn prune(db: &SqlitePool, now_ms: i64) -> Result<u64, sqlx::Error> {
     let expired = sqlx::query("DELETE FROM up_messages WHERE expires_at_ms <= ?")
         .bind(now_ms)
@@ -391,7 +391,11 @@ pub async fn prune(db: &SqlitePool, now_ms: i64) -> Result<u64, sqlx::Error> {
         .execute(db)
         .await?
         .rows_affected();
-    Ok(expired + unseen + tombstones)
+    let origins = sqlx::query("DELETE FROM up_previous_origins WHERE until_at <= datetime('now')")
+        .execute(db)
+        .await?
+        .rows_affected();
+    Ok(expired + unseen + tombstones + origins)
 }
 
 #[cfg(test)]

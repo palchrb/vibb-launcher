@@ -18,8 +18,8 @@
 //!
 //! Every push to `/up/` is a UnifiedPush push: ntfy's detection (`Content-Encoding: aes128gcm` or `?up=1`) isn't
 //! needed. The body is kept as bytes (ntfy's base64 envelope isn't needed: the device API carries base64 anyway); a
-//! Matrix notify that came through an outside gateway is minimised as the gateway's is (Q8) and noted
-//! (`outside_gateway_at`, R2's warning). `Urgency` is stored and passed on; `Topic` replaces the pending row with the
+//! Matrix notify that came through an outside gateway is minimised as the gateway's is (Q8) and, once queued, noted
+//! at most once a minute (`outside_gateway_at`, R2's warning). `Urgency` is stored and passed on; `Topic` replaces the pending row with the
 //! same topic. VAPID is not checked yet (R3), as ntfy doesn't.
 
 use axum::Extension;
@@ -114,16 +114,6 @@ pub async fn publish(
     } else {
         None
     };
-    if matrix
-        && let Err(err) = sqlx::query(
-            "UPDATE up_registrations SET outside_gateway_at = datetime('now') WHERE id = ?",
-        )
-        .bind(registration.id)
-        .execute(&state.db)
-        .await
-    {
-        tracing::warn!(%err, "app push: couldn't note an outside gateway");
-    }
     let ttl = ttl(&headers);
     let topic = topic(&headers);
     let push = store::Push {
@@ -133,7 +123,21 @@ pub async fn publish(
         ttl_secs: ttl,
     };
     let key = match super::accept(&state, &registration, &push).await {
-        Ok(super::Accepted::Queued(key)) => key,
+        Ok(super::Accepted::Queued(key)) => {
+            // R2's warning: noted only for a push that was queued, at most once a minute (R1-SR L1).
+            if matrix
+                && let Err(err) = sqlx::query(
+                    "UPDATE up_registrations SET outside_gateway_at = datetime('now') WHERE id = ? \
+                     AND (outside_gateway_at IS NULL OR outside_gateway_at < datetime('now', '-1 minute'))",
+                )
+                .bind(registration.id)
+                .execute(&state.db)
+                .await
+            {
+                tracing::warn!(%err, "app push: couldn't note an outside gateway");
+            }
+            key
+        }
         // TTL 0 and the phone's stream closed: answered as accepted, never stored (RFC 8030 §5.2).
         Ok(super::Accepted::Dropped) => store::random_key(),
         Err(refusal) => return refusal.into_response(),

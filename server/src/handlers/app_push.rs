@@ -44,8 +44,8 @@ struct SettingsPushTemplate {
     saved: bool,
     /// The origin is set: the clear note shows.
     set: bool,
-    /// The previous origin still accepted, worded ("… until 12 Dec").
-    previous: Option<String>,
+    /// The replaced origins still accepted, each worded ("… until 12 Dec"; R1-SR L7: every one within its 30 days).
+    previous: Vec<String>,
     /// "Last seen from outside": the newest discovery and push, worded; `None` = not yet.
     discovery: Option<String>,
     pushed: Option<String>,
@@ -100,18 +100,19 @@ async fn render_settings(
             (None, None) => (String::new(), None, false),
         },
     };
-    let previous = match (&settings.previous_origin, &settings.origin_changed_at) {
-        (Some(previous), Some(changed)) => crate::display_time::parse_db_utc(changed)
-            .map(|at| at + chrono::Duration::days(up::PREVIOUS_ORIGIN_DAYS))
-            .filter(|until| *until > now)
-            .map(|until| {
-                t_params(
+    let previous = match up::previous_origins(&state.db).await {
+        Ok(previous) => previous
+            .into_iter()
+            .filter_map(|(origin, until)| {
+                let until = crate::display_time::parse_db_utc(&until)?;
+                Some(t_params(
                     lang,
                     "app_push.settings.previous",
-                    &[("origin", previous), ("when", &zone.when(until, now))],
-                )
-            }),
-        _ => None,
+                    &[("origin", &origin), ("when", &zone.when(until, now))],
+                ))
+            })
+            .collect(),
+        Err(err) => return read_failed(lang, err),
     };
     let page = SettingsPushTemplate {
         lang,
@@ -232,6 +233,8 @@ pub struct AppPushRow {
     pub line: String,
     /// "No delivery in 7 days".
     pub warning: Option<&'static str>,
+    /// "Many pushes: about 400 a day …" (R1-SR L2, [noisy_per_day]).
+    pub noisy: Option<String>,
     /// Stop's sheet, with the app's name.
     pub stop_question: String,
 }
@@ -257,6 +260,23 @@ pub struct AppPushGroup {
     pub missing: Vec<String>,
 }
 
+/// An app is "noisy" from this many pushes a day (R1-SR L2): its average since its oldest registration on the phone,
+/// counted over at least a day. Each push wakes the phone and the app; a busy family group chat stays well below it.
+pub const NOISY_PER_DAY: i64 = 300;
+
+/// The app's pushes a day when that is at least [NOISY_PER_DAY], else `None`.
+pub(crate) fn noisy_per_day(
+    pushes: i64,
+    since: Option<DateTime<Utc>>,
+    now: DateTime<Utc>,
+) -> Option<i64> {
+    let days = since.map_or(1.0, |at| {
+        ((now - at).num_seconds() as f64 / 86_400.0).max(1.0)
+    });
+    let per_day = (pushes as f64 / days).round() as i64;
+    (per_day >= NOISY_PER_DAY).then_some(per_day)
+}
+
 /// The group for one phone. `names` holds every app the page lists (by package); `capability` is whether the phone's
 /// last report claims `unified_push_v1` (`None` before its first report).
 pub(crate) async fn group(
@@ -269,9 +289,9 @@ pub(crate) async fn group(
 ) -> Result<AppPushGroup, sqlx::Error> {
     let on = up::switch(&state.db, device_id).await?;
     let origin_set = up::settings(&state.db).await?.public_origin.is_some();
-    let rows: Vec<(String, i64, Option<String>, String)> = sqlx::query_as(
-        "SELECT package, COUNT(*), MAX(last_delivered_at), MIN(created_at) FROM up_registrations \
-         WHERE device_id = ? GROUP BY package ORDER BY package",
+    let rows: Vec<(String, i64, Option<String>, String, i64)> = sqlx::query_as(
+        "SELECT package, COUNT(*), MAX(last_delivered_at), MIN(created_at), SUM(pushes) \
+         FROM up_registrations WHERE device_id = ? GROUP BY package ORDER BY package",
     )
     .bind(device_id)
     .fetch_all(&state.db)
@@ -295,7 +315,7 @@ pub(crate) async fn group(
     };
     let apps = rows
         .iter()
-        .map(|(package, count, delivered, created)| {
+        .map(|(package, count, delivered, created, pushes)| {
             let (label, letter, logo) = name_of(package);
             let delivered: Option<DateTime<Utc>> = delivered
                 .as_deref()
@@ -317,6 +337,7 @@ pub(crate) async fn group(
                 Some(at) => at < week_ago,
                 None => created.is_some_and(|at| at < week_ago),
             };
+            let per_day = noisy_per_day(*pushes, created, now);
             AppPushRow {
                 package: package.clone(),
                 stop_question: t_params(lang, "app_push.stop_question", &[("app", &label)]),
@@ -325,6 +346,8 @@ pub(crate) async fn group(
                 logo,
                 line,
                 warning: quiet.then_some("app_push.no_delivery"),
+                noisy: per_day
+                    .map(|n| t_params(lang, "app_push.noisy", &[("count", &n.to_string())])),
             }
         })
         .collect();

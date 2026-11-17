@@ -24,7 +24,7 @@
         "rejected": []
       },
       "queued": {
-        "body": "{\"notification\":{\"counts\":{\"missed_calls\":1,\"unread\":2},\"devices\":[{\"app_id\":\"io.element.android.x\",\"data\":{\"cs\":\"fake-client-secret\"},\"pushkey\":\"{origin}/up/{live}\",\"pushkey_ts\":12345678,\"tweaks\":{\"sound\":\"bing\"}}],\"event_id\":\"$3957tyerfgewrf384\",\"prio\":\"high\",\"room_id\":\"!slw48wfj34rtnrf:example.com\",\"sender\":\"@jack:example.org\",\"type\":\"m.room.message\"}}",
+        "body": "{\"notification\":{\"counts\":{\"missed_calls\":1,\"unread\":2},\"devices\":[{\"app_id\":\"io.element.android.x\",\"data\":{\"cs\":\"fake-client-secret\"},\"pushkey_ts\":12345678}],\"event_id\":\"$3957tyerfgewrf384\",\"prio\":\"high\",\"room_id\":\"!slw48wfj34rtnrf:example.com\",\"type\":\"m.room.message\"}}",
         "urgency": "high",
         "topic": null
       }
@@ -105,7 +105,7 @@
         "rejected": []
       },
       "queued": {
-        "body": "{\"notification\":{\"devices\":[{\"pushkey\":\"https://OLD.example.net/up/{live}\"}],\"prio\":\"low\"}}",
+        "body": "{\"notification\":{\"devices\":[{}],\"prio\":\"low\"}}",
         "urgency": "normal",
         "topic": null
       }
@@ -198,7 +198,7 @@
       "body": "{\"notification\":{\"room_name\":\"Mission Control\",\"devices\":[{\"pushkey\":\"{origin}/up/{live}\"}]}}",
       "status": 201,
       "queued": {
-        "body": "{\"notification\":{\"devices\":[{\"pushkey\":\"{origin}/up/{live}\"}]}}",
+        "body": "{\"notification\":{\"devices\":[{}]}}",
         "urgency": "normal",
         "topic": null
       }

@@ -4706,6 +4706,7 @@
   "app_push.accounts.other": "{count} kontoer",
   "app_push.last_delivered": "sist levert {when}",
   "app_push.never_delivered": "ingenting levert ennå",
+  "app_push.noisy": "Mange push: rundt {count} om dagen - hvert av dem vekker telefonen, og det tapper batteriet",
   "app_push.no_delivery": "Ingen levering på 7 dager",
   "app_push.stop_dots": "Stopp…",
   "app_push.stop_question": "{app} får ingen varsler gjennom Vibb før du tillater det igjen. Appen prøver å koble til på nytt og kan vise barnet en melding om at varsler ikke virker; i appens egne innstillinger kan den settes tilbake til Google.",
@@ -4713,5 +4714,5 @@
   "app_push.stopped": "Stoppet",
   "app_push.allow_again": "Tillat igjen",
   "app_push.missing": "{app} bruker ikke Vibb for varsler. I {app}: Innstillinger › Varsler › Avansert › Push-leverandør › Vibb One, én gang for hver konto.",
-  "app_push.footer": "En tillatt app kobler seg til Vibb One av seg selv og får en privat adresse; varslene vekker den gjennom denne serveren. Ingen meldingstekst lagres, og kontonavnene blir på telefonen."
+  "app_push.footer": "En tillatt app kobler seg til Vibb One av seg selv og får en privat adresse; varslene vekker den gjennom denne serveren. Ingen Matrix-meldingstekst lagres, push for apper holdes i høyst 24 timer, og kontonavnene blir på telefonen."
 }

@@ -46,6 +46,8 @@ pub const PER_APP: i64 = 100;
 pub const PER_PHONE: i64 = 300;
 /// New registrations of one app on one phone an hour (L10, `busy`).
 pub const NEW_PER_HOUR: usize = 20;
+/// New registrations on one phone an hour, every app together (R1-SR L5, `busy` too).
+pub const NEW_PER_PHONE_HOUR: usize = 60;
 /// Apps known to use UnifiedPush, for the PWA's "no push" warning (A3): the package and its name.
 pub const KNOWN_UP_APPS: &[(&str, &str)] = &[("io.element.android.x", "Element X")];
 
@@ -66,8 +68,6 @@ pub struct UpPolicy {
 #[derive(sqlx::FromRow, Debug, Clone, Default, PartialEq, Eq)]
 pub struct Settings {
     pub public_origin: Option<String>,
-    pub previous_origin: Option<String>,
-    pub origin_changed_at: Option<String>,
     pub last_discovery_at: Option<String>,
 }
 
@@ -80,6 +80,7 @@ pub struct UnifiedPush {
     coalescer: Arc<notify::Coalescer>,
     pub rates: rate::Rates,
     in_flight: Arc<tokio::sync::Semaphore>,
+    body_reads: Arc<tokio::sync::Semaphore>,
     per_client: Mutex<HashMap<String, u32>>,
     new_registrations: Mutex<HashMap<(i64, String), VecDeque<Instant>>>,
     discovery_noted: Mutex<Option<Instant>>,
@@ -94,6 +95,7 @@ impl Default for UnifiedPush {
             coalescer: Default::default(),
             rates: Default::default(),
             in_flight: Arc::new(tokio::sync::Semaphore::new(edge::IN_FLIGHT)),
+            body_reads: Arc::new(tokio::sync::Semaphore::new(edge::BODY_READS)),
             per_client: Default::default(),
             new_registrations: Default::default(),
             discovery_noted: Default::default(),
@@ -135,6 +137,10 @@ impl UnifiedPush {
         Arc::clone(&self.in_flight)
     }
 
+    fn body_reads(&self) -> Arc<tokio::sync::Semaphore> {
+        Arc::clone(&self.body_reads)
+    }
+
     fn enter_client(&self, key: &str) -> Option<ClientSlot<'_>> {
         let mut slots = self.per_client.lock().unwrap_or_else(|e| e.into_inner());
         let count = slots.entry(key.to_string()).or_insert(0);
@@ -148,22 +154,10 @@ impl UnifiedPush {
         })
     }
 
-    /// Whether `package` made [NEW_PER_HOUR] new registrations on this phone within the hour (`busy`).
-    fn busy(&self, device_id: i64, package: &str) -> bool {
-        let mut counts = self
-            .new_registrations
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let Some(times) = counts.get_mut(&(device_id, package.to_string())) else {
-            return false;
-        };
-        while times.front().is_some_and(|t| t.elapsed() >= HOUR) {
-            times.pop_front();
-        }
-        times.len() >= NEW_PER_HOUR
-    }
-
-    fn note_new_registration(&self, device_id: i64, package: &str) {
+    /// A new registration of `package` on this phone, checked and counted under one lock (R1-SR L4): `false`
+    /// (`busy`) when the app made [NEW_PER_HOUR] within the hour, or the phone [NEW_PER_PHONE_HOUR] (L5). A counted
+    /// one whose insert then fails is taken back ([UnifiedPush::undo_new_registration]).
+    fn admit_new_registration(&self, device_id: i64, package: &str) -> bool {
         let mut counts = self
             .new_registrations
             .lock()
@@ -171,10 +165,38 @@ impl UnifiedPush {
         if counts.len() >= crate::limits::MAX_KEYS {
             counts.retain(|_, times| times.back().is_some_and(|t| t.elapsed() < HOUR));
         }
+        let mut of_phone = 0;
+        let mut of_app = 0;
+        for ((device, app), times) in counts.iter_mut() {
+            if *device != device_id {
+                continue;
+            }
+            while times.front().is_some_and(|t| t.elapsed() >= HOUR) {
+                times.pop_front();
+            }
+            of_phone += times.len();
+            if app == package {
+                of_app = times.len();
+            }
+        }
+        if of_app >= NEW_PER_HOUR || of_phone >= NEW_PER_PHONE_HOUR {
+            return false;
+        }
         let times = counts.entry((device_id, package.to_string())).or_default();
         times.push_back(Instant::now());
-        while times.len() > NEW_PER_HOUR {
+        while times.len() > NEW_PER_PHONE_HOUR {
             times.pop_front();
+        }
+        true
+    }
+
+    fn undo_new_registration(&self, device_id: i64, package: &str) {
+        let mut counts = self
+            .new_registrations
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(times) = counts.get_mut(&(device_id, package.to_string())) {
+            times.pop_back();
         }
     }
 
@@ -301,29 +323,34 @@ pub async fn accept(
 }
 
 /// The settings row; its absence reads as unset.
-pub async fn settings(db: &sqlx::SqlitePool) -> Result<Settings, sqlx::Error> {
+pub async fn settings<'e>(db: impl sqlx::SqliteExecutor<'e>) -> Result<Settings, sqlx::Error> {
     Ok(sqlx::query_as::<_, Settings>(
-        "SELECT public_origin, previous_origin, origin_changed_at, last_discovery_at \
-         FROM unified_push_settings WHERE id = 1",
+        "SELECT public_origin, last_discovery_at FROM unified_push_settings WHERE id = 1",
     )
     .fetch_optional(db)
     .await?
     .unwrap_or_default())
 }
 
-/// The origins a gateway pushkey may name: the current one, and the previous one for [PREVIOUS_ORIGIN_DAYS] after
-/// the change (M4).
+/// The origins a gateway pushkey may name: the current one, and every one it replaced until that one's
+/// [PREVIOUS_ORIGIN_DAYS] end (M4, R1-SR L7).
 pub async fn accepted_origins(db: &sqlx::SqlitePool) -> Result<Vec<String>, sqlx::Error> {
-    let row: Option<(Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT public_origin, CASE WHEN origin_changed_at > datetime('now', ?) \
-         THEN previous_origin END FROM unified_push_settings WHERE id = 1",
+    let current = settings(db).await?.public_origin;
+    let previous = previous_origins(db).await?;
+    Ok(current
+        .into_iter()
+        .chain(previous.into_iter().map(|(origin, _)| origin))
+        .collect())
+}
+
+/// The replaced origins still accepted, with each one's end (`until_at`), the soonest end first.
+pub async fn previous_origins(db: &sqlx::SqlitePool) -> Result<Vec<(String, String)>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT origin, until_at FROM up_previous_origins WHERE until_at > datetime('now') \
+         ORDER BY until_at, origin",
     )
-    .bind(format!("-{PREVIOUS_ORIGIN_DAYS} days"))
-    .fetch_optional(db)
-    .await?;
-    Ok(row
-        .map(|(current, previous)| current.into_iter().chain(previous).collect())
-        .unwrap_or_default())
+    .fetch_all(db)
+    .await
 }
 
 /// The policy's `unified_push` for a phone whose last report has `capabilities`: `None` (the key left out) without
@@ -352,7 +379,10 @@ pub async fn policy(
 }
 
 /// The phone's own switch (`devices.unified_push`, on by default); an unknown phone reads off.
-pub async fn switch(db: &sqlx::SqlitePool, device_id: i64) -> Result<bool, sqlx::Error> {
+pub async fn switch<'e>(
+    db: impl sqlx::SqliteExecutor<'e>,
+    device_id: i64,
+) -> Result<bool, sqlx::Error> {
     Ok(
         sqlx::query_scalar("SELECT unified_push FROM devices WHERE id = ?")
             .bind(device_id)
@@ -363,7 +393,10 @@ pub async fn switch(db: &sqlx::SqlitePool, device_id: i64) -> Result<bool, sqlx:
 }
 
 /// The packages the parent stopped on this phone, sorted.
-pub async fn stopped(db: &sqlx::SqlitePool, device_id: i64) -> Result<Vec<String>, sqlx::Error> {
+pub async fn stopped<'e>(
+    db: impl sqlx::SqliteExecutor<'e>,
+    device_id: i64,
+) -> Result<Vec<String>, sqlx::Error> {
     sqlx::query_scalar("SELECT package FROM up_stopped WHERE device_id = ? ORDER BY package")
         .bind(device_id)
         .fetch_all(db)
@@ -456,25 +489,32 @@ pub async fn save_origin(
     };
     let mut tx = state.db.begin().await?;
     match saved {
-        OriginSaved::Changed => {
-            sqlx::query(
-                "UPDATE unified_push_settings SET previous_origin = public_origin, \
-                 origin_changed_at = datetime('now'), public_origin = ? WHERE id = 1",
-            )
-            .bind(origin)
-            .execute(&mut *tx)
-            .await?;
-        }
         OriginSaved::Cleared => {
-            sqlx::query(
-                "UPDATE unified_push_settings SET public_origin = NULL, previous_origin = NULL, \
-                 origin_changed_at = NULL WHERE id = 1",
-            )
-            .execute(&mut *tx)
-            .await?;
+            sqlx::query("UPDATE unified_push_settings SET public_origin = NULL WHERE id = 1")
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query("DELETE FROM up_previous_origins")
+                .execute(&mut *tx)
+                .await?;
             store::delete_everywhere(&mut *tx).await?;
         }
         _ => {
+            // The replaced one is accepted 30 days from now, beside any replaced before it (L7); the new one is
+            // current, never "previous" too.
+            if let Some(old) = current.as_deref() {
+                sqlx::query(
+                    "INSERT OR REPLACE INTO up_previous_origins (origin, until_at) \
+                     VALUES (?, datetime('now', ?))",
+                )
+                .bind(old)
+                .bind(format!("+{PREVIOUS_ORIGIN_DAYS} days"))
+                .execute(&mut *tx)
+                .await?;
+            }
+            sqlx::query("DELETE FROM up_previous_origins WHERE origin = ?")
+                .bind(origin)
+                .execute(&mut *tx)
+                .await?;
             sqlx::query("UPDATE unified_push_settings SET public_origin = ? WHERE id = 1")
                 .bind(origin)
                 .execute(&mut *tx)
@@ -550,28 +590,38 @@ pub async fn allow_again(
     Ok(())
 }
 
-/// Every allowlist writer calls this after its write (L10, `tests::unified_push::every_allowlist_writer_prunes`): the
-/// phone's registrations of packages no longer allowed are deleted (tombstoned: the sender gets 410 / rejected) and the
-/// phone nudged. An unmanaged phone (`NULL`) keeps every registration; one whose list can't be read keeps them too
-/// (its policy is a 500 anyway, and the next writer prunes). Errors are logged.
-pub async fn prune_disallowed(state: &AppState, device_id: i64) {
+/// Every allowlist writer calls this after its write, on the same connection - inside its own transaction when it has
+/// one, before the commit (L10, R1-SR M2; `tests::unified_push::every_allowlist_writer_prunes`): the phone's
+/// registrations of packages no longer allowed are deleted (tombstoned: the sender gets 410 / rejected). It reads the
+/// list on that connection, so it sees the writer's uncommitted list and never waits on another pool connection. The
+/// rows deleted: the writer nudges the phone after its commit when any went. An unmanaged phone (`NULL`) keeps every
+/// registration; one whose list can't be read keeps them too (its policy is a 500 anyway, and the next writer prunes).
+pub async fn prune_disallowed(
+    conn: &mut sqlx::SqliteConnection,
+    device_id: i64,
+) -> Result<u64, sqlx::Error> {
     let allowlist: Option<Option<String>> =
-        match sqlx::query_scalar("SELECT allowlist_json FROM device_policy WHERE device_id = ?")
+        sqlx::query_scalar("SELECT allowlist_json FROM device_policy WHERE device_id = ?")
             .bind(device_id)
-            .fetch_optional(&state.db)
-            .await
-        {
-            Ok(allowlist) => allowlist,
-            Err(err) => {
-                tracing::error!(device_id, %err, "app push: couldn't read the allowlist to prune");
-                return;
-            }
-        };
-    let Some(Some(json)) = allowlist else { return };
-    let Ok(allowed) = serde_json::from_str::<Vec<String>>(&json) else {
-        return;
+            .fetch_optional(&mut *conn)
+            .await?;
+    let Some(Some(json)) = allowlist else {
+        return Ok(0);
     };
-    match store::delete_registrations(&state.db, device_id, store::Which::NotIn(&allowed)).await {
+    let Ok(allowed) = serde_json::from_str::<Vec<String>>(&json) else {
+        return Ok(0);
+    };
+    store::delete_registrations(&mut *conn, device_id, store::Which::NotIn(&allowed)).await
+}
+
+/// [prune_disallowed] for a writer without a transaction of its own (after its write committed): a pool connection,
+/// the nudge when anything went, errors logged.
+pub async fn prune_disallowed_now(state: &AppState, device_id: i64) {
+    let pruned = match state.db.acquire().await {
+        Ok(mut conn) => prune_disallowed(&mut conn, device_id).await,
+        Err(err) => Err(err),
+    };
+    match pruned {
         Ok(0) => {}
         Ok(_) => {
             let _ = state.command_notify.send(device_id);
@@ -628,5 +678,24 @@ mod tests {
         assert_eq!(prefill("https://kid.tail1234.ts.net:3101"), None);
         assert_eq!(prefill("http://100.101.102.103:3101"), None);
         assert_eq!(prefill(""), None);
+    }
+
+    /// L4/L5: the churn check counts and refuses under one lock - 20 new registrations of one app an hour, 60 of the
+    /// phone across its apps; an undone one gives its place back.
+    #[test]
+    fn new_registrations_an_hour() {
+        let up = UnifiedPush::default();
+        for _ in 0..NEW_PER_HOUR {
+            assert!(up.admit_new_registration(1, "a.b"));
+        }
+        assert!(!up.admit_new_registration(1, "a.b"), "the app's 20");
+        up.undo_new_registration(1, "a.b");
+        assert!(up.admit_new_registration(1, "a.b"));
+        for _ in 0..NEW_PER_HOUR {
+            assert!(up.admit_new_registration(1, "c.d"));
+            assert!(up.admit_new_registration(1, "e.f"));
+        }
+        assert!(!up.admit_new_registration(1, "g.h"), "the phone's 60");
+        assert!(up.admit_new_registration(2, "g.h"), "another phone");
     }
 }

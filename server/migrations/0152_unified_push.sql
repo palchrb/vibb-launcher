@@ -1,16 +1,19 @@
 -- Design 108 (Vibb as the UnifiedPush distributor, docs/design/108-unified-push.md §3.5): the phones' public address
--- for app push and the one it replaced (accepted 30 days, M4), the phone's own switch (on by default, Q3/A1: nothing
+-- for app push and the ones it replaced (each accepted 30 days, M4 and R1-SR L7), the phone's own switch (on by default, Q3/A1: nothing
 -- changes on a phone until an address is saved), the registrations (the endpoint secret only as its SHA-256), the
 -- queue, the tombstones of deleted secrets (M5) and the parent's stopped apps.
 CREATE TABLE unified_push_settings (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     public_origin TEXT,
-    previous_origin TEXT,
-    origin_changed_at TEXT,
     -- "Last seen from outside" (§3.1): the newest discovery GET, written at most once a minute.
     last_discovery_at TEXT
 );
 INSERT INTO unified_push_settings (id) VALUES (1);
+-- Every address replaced within 30 days stays accepted until its own end (R1-SR L7: two changes keep both).
+CREATE TABLE up_previous_origins (
+    origin TEXT PRIMARY KEY,
+    until_at TEXT NOT NULL
+);
 ALTER TABLE devices ADD COLUMN unified_push INTEGER NOT NULL DEFAULT 1;
 CREATE TABLE up_registrations (
     id INTEGER PRIMARY KEY,

@@ -491,7 +491,7 @@ async fn gateway_rows() {
         .unwrap();
     assert_eq!(pending, 1);
     // Past the previous origin's 30 days, a pushkey on it is rejected.
-    sqlx::query("UPDATE unified_push_settings SET origin_changed_at = datetime('now', '-31 days')")
+    sqlx::query("UPDATE up_previous_origins SET until_at = datetime('now', '-1 minute')")
         .execute(&app.db)
         .await
         .unwrap();
@@ -591,7 +591,8 @@ async fn the_ban_and_the_buckets() {
         refused >= 10,
         "the flooded registration's sub-bucket: {refused}"
     );
-    let res = post("/up/FakeSecretForTheSecondReg01".into(), "198.51.100.1").await;
+    // From another client: the flood's own request bucket (L3) may be empty by now.
+    let res = post("/up/FakeSecretForTheSecondReg01".into(), "198.51.100.2").await;
     assert_eq!(res.status, StatusCode::CREATED, "the other app delivers");
 }
 
@@ -963,4 +964,230 @@ async fn nothing_logged() {
     ] {
         assert!(!all.contains(needle), "{needle} in the log:\n{all}");
     }
+}
+
+/// L7: a second change within 30 days keeps both replaced origins, each until its own end; clearing forgets them.
+#[tokio::test]
+async fn two_changes_keep_both_previous_origins() {
+    let app = TestApp::new().await;
+    for origin in [
+        "https://a.example",
+        "https://b.example",
+        "https://c.example",
+    ] {
+        set_origin(&app, Some(origin)).await;
+    }
+    let mut accepted = crate::unified_push::accepted_origins(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        accepted.remove(0),
+        "https://c.example",
+        "the current one first"
+    );
+    accepted.sort();
+    assert_eq!(accepted, ["https://a.example", "https://b.example"]);
+    // Back to a: it is current again, never "previous" too.
+    set_origin(&app, Some("https://a.example")).await;
+    let accepted = crate::unified_push::accepted_origins(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(accepted.len(), 3, "{accepted:?}");
+    assert_eq!(
+        accepted
+            .iter()
+            .filter(|o| *o == "https://a.example")
+            .count(),
+        1
+    );
+    sqlx::query("UPDATE up_previous_origins SET until_at = datetime('now', '-1 minute') WHERE origin = 'https://b.example'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let accepted = crate::unified_push::accepted_origins(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(accepted, ["https://a.example", "https://c.example"]);
+    set_origin(&app, None).await;
+    assert!(
+        crate::unified_push::accepted_origins(&app.db)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+async fn rows_of(app: &TestApp, registration: i64) -> Vec<(String, i64)> {
+    sqlx::query_as(
+        "SELECT key, LENGTH(body) FROM up_messages WHERE registration_id = ? ORDER BY id",
+    )
+    .bind(registration)
+    .fetch_all(&app.db)
+    .await
+    .unwrap()
+}
+
+async fn dropped_of(app: &TestApp, registration: i64) -> i64 {
+    sqlx::query_scalar("SELECT dropped FROM up_registrations WHERE id = ?")
+        .bind(registration)
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+}
+
+async fn seed_message(app: &TestApp, registration: i64, device: i64, key: &str, size: i64) {
+    let now = chrono::Utc::now().timestamp_millis();
+    sqlx::query(
+        "INSERT INTO up_messages (key, registration_id, device_id, body, urgency, created_at_ms, expires_at_ms) \
+         VALUES (?, ?, ?, zeroblob(?), 'normal', ?, ?)",
+    )
+    .bind(key)
+    .bind(registration)
+    .bind(device)
+    .bind(size)
+    .bind(now)
+    .bind(now + 3_600_000)
+    .execute(&app.db)
+    .await
+    .unwrap();
+}
+
+/// M3 (R1-SR): the queue's caps and TTL 0 - a registration's 101st push drops its oldest (counted); a phone over
+/// 1 MiB loses the oldest row of its registration with the most rows; a full store is 507; TTL 0 is dropped while
+/// the phone's stream is closed and kept 30 s while it is open.
+#[tokio::test]
+async fn the_queue_caps_and_ttl_zero() {
+    use crate::unified_push::store::{self, Push, Queued, Registration};
+    let gateway: Value = serde_json::from_str(GATEWAY).unwrap();
+    let (app, emma) = gateway_app(&gateway).await;
+    let live = registration_id(&app, &format!("{:032x}", 1)).await;
+    let registration = Registration {
+        id: live,
+        device_id: emma,
+        reg: format!("{:032x}", 1),
+        package: "io.element.android.x".to_string(),
+    };
+    let now = chrono::Utc::now().timestamp_millis();
+    let push = |body: &'static [u8]| Push {
+        body,
+        urgency: "normal",
+        topic: None,
+        ttl_secs: 60,
+    };
+    let mut first = None;
+    for n in 0..101 {
+        let Queued::Key(key) = store::enqueue(&app.db, &registration, &push(b"x"), now)
+            .await
+            .unwrap()
+        else {
+            panic!("{n}: refused");
+        };
+        first.get_or_insert(key);
+    }
+    let rows = rows_of(&app, live).await;
+    assert_eq!(rows.len(), 100);
+    assert!(
+        rows.iter().all(|(key, _)| Some(key) != first.as_ref()),
+        "the oldest went"
+    );
+    assert_eq!(dropped_of(&app, live).await, 1);
+    sqlx::query("DELETE FROM up_messages")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE up_registrations SET dropped = 0")
+        .execute(&app.db)
+        .await
+        .unwrap();
+
+    // Two registrations near 1 MiB: the one with more rows loses its oldest.
+    sqlx::query("INSERT INTO up_registrations (device_id, reg, secret_hash, package) VALUES (?, ?, ?, 'a.b')")
+        .bind(emma)
+        .bind(format!("{:032x}", 7))
+        .bind(crate::unified_push::secret_hash("FakeSecretForTheCapsTest007"))
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let other = registration_id(&app, &format!("{:032x}", 7)).await;
+    for n in 0..3 {
+        seed_message(&app, other, emma, &format!("big{n}"), 300_000).await;
+    }
+    seed_message(&app, live, emma, "mid", 145_000).await;
+    assert!(matches!(
+        store::enqueue(&app.db, &registration, &push(&[7u8; 4096]), now)
+            .await
+            .unwrap(),
+        Queued::Key(_)
+    ));
+    let big: Vec<String> = rows_of(&app, other)
+        .await
+        .into_iter()
+        .map(|(k, _)| k)
+        .collect();
+    assert_eq!(big, ["big1", "big2"]);
+    assert_eq!(dropped_of(&app, other).await, 1);
+    assert_eq!(rows_of(&app, live).await.len(), 2, "its own rows stay");
+    sqlx::query("DELETE FROM up_messages")
+        .execute(&app.db)
+        .await
+        .unwrap();
+
+    // The store full: 507 through the route.
+    let (jack, _) = app.enrolled_device("Jack").await;
+    sqlx::query("INSERT INTO up_registrations (device_id, reg, secret_hash, package) VALUES (?, ?, ?, 'a.b')")
+        .bind(jack)
+        .bind(format!("{:032x}", 8))
+        .bind(crate::unified_push::secret_hash("FakeSecretForTheCapsTest008"))
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let jacks = registration_id(&app, &format!("{:032x}", 8)).await;
+    seed_message(&app, jacks, jack, "huge", store::STORE_BYTES).await;
+    let res = post_via_phone_listener(
+        &app,
+        "203.0.113.7",
+        Method::POST,
+        &fill("/up/{live}", &gateway),
+        &[],
+        b"x".to_vec(),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::INSUFFICIENT_STORAGE);
+    sqlx::query("DELETE FROM up_messages")
+        .execute(&app.db)
+        .await
+        .unwrap();
+
+    // TTL 0: dropped with the stream closed (201, nothing stored), kept 30 s with it open.
+    let res = post_via_phone_listener(
+        &app,
+        "203.0.113.7",
+        Method::POST,
+        &fill("/up/{live}", &gateway),
+        &[("ttl", "0")],
+        b"x".to_vec(),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::CREATED);
+    assert_eq!(res.headers["ttl"], "0");
+    assert!(rows_of(&app, live).await.is_empty());
+    let _stream = app.state.command_streams.open(emma);
+    let res = post_via_phone_listener(
+        &app,
+        "203.0.113.7",
+        Method::POST,
+        &fill("/up/{live}", &gateway),
+        &[("ttl", "0")],
+        b"x".to_vec(),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::CREATED);
+    let (created, expires): (i64, i64) = sqlx::query_as(
+        "SELECT created_at_ms, expires_at_ms FROM up_messages WHERE registration_id = ?",
+    )
+    .bind(live)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(expires - created, store::TTL_ZERO_GRACE_SECS * 1000);
 }

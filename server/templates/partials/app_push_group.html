@@ -34,7 +34,7 @@
         <div class="cell" data-up-app="{{ app.package }}">
             <div class="row">
                 {% if let Some(src) = app.logo %}<span class="app-row-tile app-row-logo" aria-hidden="true">{{ app.letter }}<img src="{{ src }}" alt="" decoding="async"></span>{% else %}<span class="app-row-tile" aria-hidden="true">{{ app.letter }}</span>{% endif %}
-                <span class="row-label">{{ app.label }}<span class="row-sub">{{ app.line }}</span>{% if let Some(warning) = app.warning %}<span class="row-sub text-alarm" data-warning="no-delivery">{{ self.t(warning) }}</span>{% endif %}</span>
+                <span class="row-label">{{ app.label }}<span class="row-sub">{{ app.line }}</span>{% if let Some(warning) = app.warning %}<span class="row-sub text-alarm" data-warning="no-delivery">{{ self.t(warning) }}</span>{% endif %}{% if let Some(noisy) = app.noisy %}<span class="row-sub text-alarm" data-warning="noisy">{{ noisy }}</span>{% endif %}</span>
             </div>
             <details class="confirm cell">
                 <summary class="row">{{ self.t("app_push.stop_dots") }}</summary>

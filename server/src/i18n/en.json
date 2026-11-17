@@ -4706,6 +4706,7 @@
   "app_push.accounts.other": "{count} accounts",
   "app_push.last_delivered": "last delivered {when}",
   "app_push.never_delivered": "nothing delivered yet",
+  "app_push.noisy": "Many pushes: about {count} a day - each wakes the phone, which drains the battery",
   "app_push.no_delivery": "No delivery in 7 days",
   "app_push.stop_dots": "Stop…",
   "app_push.stop_question": "{app} gets no notifications through Vibb until you allow it again. The app will try to reconnect and may show your child a message that notifications don't work; in its own settings it can be switched back to Google.",
@@ -4713,5 +4714,5 @@
   "app_push.stopped": "Stopped",
   "app_push.allow_again": "Allow Again",
   "app_push.missing": "{app} isn't using Vibb for notifications. In {app}: Settings › Notifications › Advanced › Push provider › Vibb One, once for each account.",
-  "app_push.footer": "An allowed app connects to Vibb One by itself and gets a private address; its notifications wake it through this server. No message text is kept, and the account names stay on the phone."
+  "app_push.footer": "An allowed app connects to Vibb One by itself and gets a private address; its notifications wake it through this server. No Matrix message text is kept, app pushes are held at most 24 hours, and the account names stay on the phone."
 }

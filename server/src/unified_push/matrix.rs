@@ -65,9 +65,14 @@ pub fn is_matrix_shaped(body: &[u8]) -> bool {
     pushkey_of(body).is_ok()
 }
 
-/// The keys Q8 drops from `notification`: a message's content, the sender's display name, the room's name and alias.
-/// Element X reads only `event_id`, `room_id`, `counts` and `prio`.
-pub const DROPPED: [&str; 4] = ["content", "sender_display_name", "room_name", "room_alias"];
+/// What Q8 keeps of `notification` (R1-SR L6: an allow-list, so a key a homeserver adds is never stored): Element X's
+/// `PushDataUnifiedPush` reads `event_id`, `room_id`, `counts.unread` and `prio` (its session comes from the
+/// registration, never the body); `type` and the devices' `app_id`, `data` and `pushkey_ts` are kept for other Matrix
+/// clients. Gone: a message's `content`, `sender`, `sender_display_name`, `room_name`, `room_alias`, `user_is_target`
+/// and anything else - and each device's `pushkey` (the endpoint itself, which no client reads back) and `tweaks`.
+pub const KEPT: [&str; 6] = ["event_id", "room_id", "counts", "prio", "type", "devices"];
+/// What is kept of each `devices[]` entry.
+pub const KEPT_DEVICE: [&str; 3] = ["app_id", "data", "pushkey_ts"];
 
 /// A JSON object's members in their order, each value kept as its raw text.
 struct Ordered(Vec<(String, Box<RawValue>)>);
@@ -93,11 +98,11 @@ impl<'de> Deserialize<'de> for Ordered {
 }
 
 impl Ordered {
-    fn write(&self, out: &mut String, skip: &[&str]) {
+    fn write(&self, out: &mut String, keep: &[&str]) {
         out.push('{');
         let mut first = true;
         for (key, value) in &self.0 {
-            if skip.contains(&key.as_str()) {
+            if !keep.contains(&key.as_str()) {
                 continue;
             }
             if !first {
@@ -112,28 +117,50 @@ impl Ordered {
     }
 }
 
-/// The notify JSON without [DROPPED] (Q8): every other member kept in its order with its value's bytes as sent; only
-/// the whitespace between members goes. `None` when the body isn't such an object.
+/// The notify JSON as Q8 keeps it: `{"notification": {...}}` with only [KEPT], each device only [KEPT_DEVICE] (a
+/// device that isn't an object is dropped), every kept member in its order with its value's bytes as sent; only the
+/// whitespace between members goes. `None` when the body isn't such an object.
 pub fn minimise(body: &[u8]) -> Option<Vec<u8>> {
     let top: Ordered = serde_json::from_slice(body).ok()?;
+    let notification = top
+        .0
+        .iter()
+        .find(|(key, _)| key == "notification")
+        .map(|(_, value)| value)?;
+    let notification: Ordered = serde_json::from_str(notification.get()).ok()?;
     let mut out = String::with_capacity(body.len());
-    out.push('{');
+    out.push_str("{\"notification\":{");
     let mut first = true;
-    for (key, value) in &top.0 {
+    for (key, value) in &notification.0 {
+        if !KEPT.contains(&key.as_str()) {
+            continue;
+        }
         if !first {
             out.push(',');
         }
         first = false;
         out.push_str(&serde_json::to_string(key).expect("a string serializes"));
         out.push(':');
-        if key == "notification" {
-            let notification: Ordered = serde_json::from_str(value.get()).ok()?;
-            notification.write(&mut out, &DROPPED);
+        if key == "devices" {
+            let devices: Vec<Box<RawValue>> = serde_json::from_str(value.get()).unwrap_or_default();
+            out.push('[');
+            let mut first_device = true;
+            for device in devices {
+                let Ok(device) = serde_json::from_str::<Ordered>(device.get()) else {
+                    continue;
+                };
+                if !first_device {
+                    out.push(',');
+                }
+                first_device = false;
+                device.write(&mut out, &KEPT_DEVICE);
+            }
+            out.push(']');
         } else {
             out.push_str(value.get());
         }
     }
-    out.push('}');
+    out.push_str("}}");
     Some(out.into_bytes())
 }
 
@@ -392,23 +419,23 @@ mod tests {
         assert_eq!(read(response(None)).await, "{\"rejected\":[]}\n");
     }
 
-    /// Q8: `content`, `sender_display_name`, `room_name` and `room_alias` are gone, and every other member is kept in
-    /// its order with its bytes.
+    /// Q8 as an allow-list (L6): only `event_id`, `room_id`, `counts`, `prio`, `type` and the devices' `app_id`, `data`
+    /// and `pushkey_ts` stay, each kept member in its order with its bytes.
     #[test]
     fn minimised() {
         let pushkey = format!("{BASE}/up/{SECRET}");
         let out = String::from_utf8(minimise(body(&pushkey).as_bytes()).unwrap()).unwrap();
         assert_eq!(
             out,
-            format!(
-                r#"{{"notification":{{"counts":{{"missed_calls":1,"unread":2}},"devices":[{{"app_id":"org.matrix.matrixConsole.ios","data":{{}},"pushkey":"{pushkey}","pushkey_ts":12345678,"tweaks":{{"sound":"bing"}}}}],"event_id":"$3957tyerfgewrf384","prio":"high","room_id":"!slw48wfj34rtnrf:example.com","sender":"@exampleuser:matrix.org","type":"m.room.message"}}}}"#
-            )
+            r##"{"notification":{"counts":{"missed_calls":1,"unread":2},"devices":[{"app_id":"org.matrix.matrixConsole.ios","data":{},"pushkey_ts":12345678}],"event_id":"$3957tyerfgewrf384","prio":"high","room_id":"!slw48wfj34rtnrf:example.com","type":"m.room.message"}}"##
         );
-        // Whitespace between members goes; a value's own bytes stay.
-        let spaced = br#"{ "notification" : { "room_name" : "x", "counts" : { "unread" : 2 } } , "extra" : [1, 2] }"#;
+        assert!(!out.contains(SECRET), "the endpoint isn't kept");
+        // Whitespace between members goes; a value's own bytes stay; a top-level extra and a device that isn't an
+        // object go.
+        let spaced = br#"{ "notification" : { "room_name" : "x", "counts" : { "unread" : 2 }, "devices": [1, {"data": {"cs": "a"}, "pushkey": "p"}] } , "extra" : [1, 2] }"#;
         assert_eq!(
             String::from_utf8(minimise(spaced).unwrap()).unwrap(),
-            r#"{"notification":{"counts":{ "unread" : 2 }},"extra":[1, 2]}"#
+            r#"{"notification":{"counts":{ "unread" : 2 },"devices":[{"data":{"cs": "a"}}]}}"#
         );
         assert!(prio_is_high(body(&pushkey).as_bytes()));
         assert_eq!(minimise(b"[1]"), None);

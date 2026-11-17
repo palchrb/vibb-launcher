@@ -1,10 +1,17 @@
 //! The outer layer of the public push routes (design 108 §3.2), on the phone listener only - not
 //! `limits::device_edge`, so a push flood can't block an enrolment and the other way round:
 //!
-//! - its own in-flight semaphore ([IN_FLIGHT]) and a per-client cap under it ([PER_CLIENT], M6: `net::limit_key` of
-//!   the trusted-proxy client, as the rest of the phone listener counts, so one client can't hold every slot);
-//! - the body read within [BODY_READ] (M6), at most [BODY_LIMIT] bytes (413 above), then [ANSWER_TIMEOUT];
+//! - **the client first** (R1-SR M1): a per-client cap of [PER_CLIENT] requests at once (`net::limit_key` of the
+//!   trusted-proxy client, as the rest of the phone listener counts) and its request bucket (`Rates::client_request`,
+//!   L3), both before any database work;
+//! - **then the body**, within [BODY_READ], at most [BODY_LIMIT] bytes (413 above), under its own bound of
+//!   [BODY_READS] reads at once (M6);
+//! - **only then a slot** of the routes' own [IN_FLIGHT] for the handler and its answer within [ANSWER_TIMEOUT]: a slow
+//!   body never holds one, so a few slow clients can't keep every real push out (503);
 //! - the device API's response headers (`nosniff`, `default-src 'none'; sandbox`, `no-store`).
+//!
+//! A proxy in front should buffer request bodies so it, not the server, holds slow clients (DEPLOY.md, Caddy's
+//! `request_buffers`).
 //!
 //! The resolved client rides to the handlers as [UpClient]. Nothing here logs a path or a body: the path is a
 //! capability.
@@ -19,8 +26,10 @@ use axum::response::{IntoResponse, Response};
 
 use crate::AppState;
 
-/// Push requests in flight at once, every client together.
+/// Push requests in their handler at once, every client together (after their bodies are in).
 pub const IN_FLIGHT: usize = 32;
+/// Bodies being read at once, every client together.
+pub const BODY_READS: usize = 256;
 /// Push requests in flight at once from one client (`net::limit_key`).
 pub const PER_CLIENT: u32 = 4;
 /// The whole body must arrive within this.
@@ -60,9 +69,6 @@ pub async fn edge(State(state): State<AppState>, request: Request, next: Next) -
 
 async fn admit(state: &AppState, request: Request, next: Next) -> Response {
     let up = &state.unified_push;
-    let Ok(_slot) = up.in_flight().try_acquire_owned() else {
-        return status(StatusCode::SERVICE_UNAVAILABLE, Some("5"));
-    };
     let client =
         crate::gate::peer_of(&request).map(|peer| state.net.client(request.headers(), peer.ip()));
     if let Some(client) = &client {
@@ -72,14 +78,24 @@ async fn admit(state: &AppState, request: Request, next: Next) -> Response {
     let Some(_client_slot) = up.enter_client(&key) else {
         return status(StatusCode::TOO_MANY_REQUESTS, Some("1"));
     };
+    if let Err(refused) = up.rates.client_request(&key) {
+        return super::too_many(refused);
+    }
     let (mut parts, body) = request.into_parts();
-    let bytes = match tokio::time::timeout(BODY_READ, axum::body::to_bytes(body, BODY_LIMIT)).await
-    {
-        Ok(Ok(bytes)) => bytes,
-        // Over the limit: the rest is never read.
-        Ok(Err(_)) => return status(StatusCode::PAYLOAD_TOO_LARGE, None),
-        // A slow body: 408, which Mastodon and Synapse retry.
-        Err(_) => return status(StatusCode::REQUEST_TIMEOUT, None),
+    let bytes = {
+        let Ok(_reading) = up.body_reads().try_acquire_owned() else {
+            return status(StatusCode::SERVICE_UNAVAILABLE, Some("5"));
+        };
+        match tokio::time::timeout(BODY_READ, axum::body::to_bytes(body, BODY_LIMIT)).await {
+            Ok(Ok(bytes)) => bytes,
+            // Over the limit: the rest is never read.
+            Ok(Err(_)) => return status(StatusCode::PAYLOAD_TOO_LARGE, None),
+            // A slow body: 408, which Mastodon and Synapse retry.
+            Err(_) => return status(StatusCode::REQUEST_TIMEOUT, None),
+        }
+    };
+    let Ok(_slot) = up.in_flight().try_acquire_owned() else {
+        return status(StatusCode::SERVICE_UNAVAILABLE, Some("5"));
     };
     parts.extensions.insert(UpClient { key });
     let request = Request::from_parts(parts, Body::from(bytes));
