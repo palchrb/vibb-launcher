@@ -83,6 +83,10 @@ launcher and the music app, in nb and en alike:
 - An explanation goes behind an (i) alone (the PWA's `<details class="info">`), with no "About ..." label beside it.
 - A state line says the state, in a few words; how to change it goes behind the (i).
 - Say it once: no footer that repeats the page, no sentence that repeats the label above it.
+- Speak up only when something is wrong: a state that is as it should be shows nothing (or a quiet value), and
+  what needs the parent - a switch that stops the page's controls working, a step left to do - is one short orange
+  line, how to fix it behind the (i) (the user, 2026-11-17, of Android's roaming switch: "si ifra om denne IKKE er
+  skrudd på", and "dette er et likt prinsipp som burde være over alt").
 - On the kid's phone fewer words still. A design note's copy table is checked against this before the build.
 
 ## Build and test
