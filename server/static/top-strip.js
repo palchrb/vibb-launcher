@@ -34,6 +34,7 @@
         var oldContent = null;
         var capTimer = null;
         var holdTimer = null;
+        var holdGen = 0;
 
         function themeMeta() {
             try {
@@ -72,6 +73,7 @@
             var meta = themeMeta();
             if (!strip && !meta) return;
             holding = true;
+            var gen = ++holdGen;
             // 1 + 2: the layout change and a fresh strip, in one DOM operation.
             try {
                 if (strip && strip.classList) {
@@ -101,9 +103,11 @@
             } catch (e) { /* next */ }
             // 4: the hold.
             capTimer = win.setTimeout(endHold, HOLD_CAP_MS);
+            // A frame queued by a hold that has ended must not touch a later one (gen).
             frame(function () {
+                if (!holding || gen !== holdGen) return;
                 frame(function () {
-                    if (!holding) return;
+                    if (!holding || gen !== holdGen) return;
                     holdTimer = win.setTimeout(endHold, HOLD_MS);
                 });
             });
@@ -116,6 +120,8 @@
 
         // A return: a nudge now and one at each of RETRY_MS, any earlier series dropped, a stale hold ended.
         function returned() {
+            // The colour-scheme flip of an app-switcher snapshot fires while hidden: nothing to nudge.
+            if (doc.visibilityState === "hidden") return;
             cancelRetries();
             endHold();
             nudge();

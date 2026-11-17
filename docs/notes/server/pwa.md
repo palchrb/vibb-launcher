@@ -2062,7 +2062,7 @@ pointer here.
   now *stays* until the app is killed - so a repaint-only nudge never reaches WebKit, which re-sends the fixed top
   edge only when it scans a layout or compositing change). `static/top-strip.js` (`?v=3`), only when
   `navigator.standalone === true` (the installed iPhone app, the one place with the pocket): a nudge replaces the strip
-  with `cloneNode(false)` plus `top-strip-nudge` (one DOM operation; `style.css?v=122`: `background: #0C0C15; left:
+  with `cloneNode(false)` plus `top-strip-nudge` (one DOM operation; `style.css?v=123`: `background: #0C0C15; left:
   -1px`, a layout change one point off screen, nothing uncovered on any page), sets the existing `theme-color` meta's
   content one step off (`#0C0C15`, restored from what it read; not counted on), and holds that for two frames and
   `HOLD_MS` (150 ms), then puts all back. A hold always ends (`endHold()`, idempotent): at its end, from a

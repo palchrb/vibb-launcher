@@ -2798,7 +2798,7 @@ pub async fn toggle_app(
         return refused("not_an_app", &anchor);
     }
     // Design 109: while calls are managed the system dialer's row is a link; a stale form can't change it.
-    if !music && !package_name.is_empty() {
+    if !package_name.is_empty() {
         match dialer_locked(&state, id, &package_name).await {
             Ok(false) => {}
             Ok(true) => return refused("dialer_managed", &anchor),

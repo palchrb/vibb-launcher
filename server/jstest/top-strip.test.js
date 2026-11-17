@@ -301,3 +301,35 @@ test("without rAF a timer stands in; a page without the strip or the meta nudges
     bare.advance(60000);
     assert.strictEqual(bare.frames.length, 0);
 });
+
+test("frames queued by an ended hold never cut a later hold short", () => {
+    const page = fakePage();
+    install(page.win);
+    page.listeners["win:pageshow"]({});
+    page.runFrame(); // the first hold's first frame ran; its second is queued
+    assert.strictEqual(page.frames.length, 1);
+    page.listeners["win:pagehide"]({}); // the hold ends, the stale frame stays queued
+    page.listeners["win:pageshow"]({}); // a return starts a second hold
+    assert.ok(page.nudged());
+    page.runFrame(); // the stale frame, and the new hold's first
+    // The new hold has not painted its own two frames yet: the stale one must not have started the hold timer.
+    assert.ok(HOLD_MS < HOLD_CAP_MS);
+    page.advance(HOLD_MS);
+    assert.ok(page.nudged(), "the new hold is still held, not cut by the stale frame");
+    assert.strictEqual(page.meta.content, "#0C0C15");
+    page.runFrame(); // its own second frame
+    page.advance(HOLD_MS);
+    assert.ok(!page.nudged());
+    assert.strictEqual(page.meta.content, NIGHT);
+});
+
+test("a colour-scheme flip while hidden starts nothing", () => {
+    const page = fakePage();
+    install(page.win);
+    page.doc.visibilityState = "hidden";
+    page.listeners["mq:change"]({});
+    page.listeners["win:focus"]({});
+    assert.ok(!page.nudged());
+    assert.strictEqual(page.stats.replaced, 0);
+    assert.strictEqual(page.timers.size, 0, "no retries either");
+});

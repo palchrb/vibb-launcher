@@ -438,3 +438,8 @@ managed Phone row, `tests::dialer_row`, the allowlist re-add in `calls::save_set
   unmanaged note "Not on Home: the kid has no way to make a call", no horizontal overflow, a refused toggle (calls set to
   managed behind a stale page) keeps the page and shows the reason under the row, the sign-in page loads `top-strip.js?v=3`.
   Not checked: iOS itself (no device; design A.5's test plan is the user's).
+- **Code QA (2026-11-17, f1a451f1a): 0 H, 0 M, 6 L, all fixed.** L1 a hold generation in `top-strip.js` so frames queued by an
+  ended hold can't cut a later one short (jstest); L2 `returned()` does nothing while hidden (jstest); L3 `toggle_app`'s
+  dialer guard also covers `back=music` (asserted: it answers on Device > Music); L4 the refusal text test pins askama's
+  `&#38;`/`&#39;` form only; L5 `without_a_reported_dialer_the_phone_app_is_a_plain_row`, and the Phone row is asserted
+  before Kalender (and Meldinger when shown); L6 `.row-value-words` wraps with `overflow-wrap: break-word`, `style.css?v=123`.

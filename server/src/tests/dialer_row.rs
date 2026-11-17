@@ -132,6 +132,12 @@ async fn the_managed_row_links_to_calls() {
         let dialer = position(&html, &format!("id=\"app-{DIALER}\""));
         let chess = position(&html, &format!("id=\"app-{OTHER}\""));
         assert!(launcher < dialer && dialer < chess, "{lang}");
+        // Home's order: the phone book first, before the built-in Calendar and Meldinger rows.
+        let calendar = position(&html, "id=\"app-calendar\"");
+        assert!(dialer < calendar, "{lang}: before Kalender");
+        if let Some(messages) = html.find("id=\"app-me.vibb.builtin.messages\"") {
+            assert!(dialer < messages, "{lang}: before Meldinger");
+        }
         let not_allowed = html.find("id=\"not-allowed\"");
         assert!(
             not_allowed.is_none_or(|at| dialer < at),
@@ -273,6 +279,24 @@ async fn a_managed_dialer_is_never_changed() {
         assert_eq!(res.location(), Some(want.as_str()), "{route} {fields:?}");
     }
     assert_eq!(rows_of(&app, id).await, before, "nothing written");
+    // Device > Music's switch (`back=music`) is guarded too, and answers on its own page.
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/apps/toggle"),
+            Some(&cookie),
+            &[("package_name", DIALER), ("back", "music")],
+        )
+        .await;
+    assert_eq!(
+        res.location(),
+        Some(format!("/devices/{id}/music?music_notice=dialer_managed#music-app").as_str())
+    );
+    assert_eq!(
+        rows_of(&app, id).await,
+        before,
+        "nothing written by back=music"
+    );
     // A GET of the refusal URL shows the reason inside the row's cell, in both languages.
     for (lang, text) in [
         (
@@ -294,9 +318,7 @@ async fn a_managed_dialer_is_never_changed() {
         .await;
         let row = cell(&html, DIALER);
         assert!(
-            row.contains(text)
-                || row.contains(&text.replace("&amp;", "&#38;"))
-                || row.contains(&text.replace("&#39;", "'").replace("&amp;", "&")),
+            row.contains(&text.replace("&amp;", "&#38;")),
             "{lang}: {row}"
         );
         assert!(row.contains("flash-error"), "{lang}");
@@ -421,5 +443,43 @@ async fn unmanaged_again_puts_the_dialer_back() {
     assert_eq!(
         allowlist(&app, quiet).await.as_deref(),
         Some("[\"org.example.chess\"]")
+    );
+}
+
+/// A report whose `call_state` names no `system_dialer`: nothing is the dialer, so the Phone app is an app like any
+/// other even while calls are managed - a plain switch row, and its toggle saves.
+#[tokio::test]
+async fn without_a_reported_dialer_the_phone_app_is_a_plain_row() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("Jack").await;
+    app.post_status(
+        &token,
+        serde_json::json!({
+            "installed_apps": [{"package_name": DIALER, "label": "Phone", "preinstalled": true}],
+            "call_state": {},
+        }),
+    )
+    .await;
+    set_policy(&app, id, Some(&[]), "managed").await;
+    let html = page(&app, &cookie, id, "en", "").await;
+    let row = cell(&html, DIALER);
+    assert!(row.contains("name=\"selected\""), "a plain switch: {row}");
+    assert!(!row.contains("Vibb&#39;s phone book"), "{row}");
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/apps/toggle"),
+            Some(&cookie),
+            &[("package_name", DIALER), ("selected", "on")],
+        )
+        .await;
+    assert_eq!(
+        res.location(),
+        Some(format!("/devices/{id}/apps#app-{DIALER}").as_str())
+    );
+    assert_eq!(
+        allowlist(&app, id).await.as_deref(),
+        Some(format!("[\"{DIALER}\"]").as_str())
     );
 }
