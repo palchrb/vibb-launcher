@@ -1,6 +1,7 @@
 # Design 115: App push held while the apps have no network; the glance row's app name
 
-Status: design, 2026-11-17. **Not built.** The approved item is PLAN.md's "App push held while the app has no network;
+Status: design, 2026-11-17, revised after its design QA (`docs/review/115-up-held-design-qa.md`: M1-M5 and the Lows
+applied, see "Revision" at the end). **Not built.** The approved item is PLAN.md's "App push held while the app has no network;
 the glance row's app name" (REPORTED AND APPROVED 2026-11-17, queued right after design 112). Inputs: designs 108
 (§2.2, §3.6, §3.7, §5.4, §5.5), 108b (§3.3, §5), 108c (§1.1, §7), 95 rev. 3 and 97 (the VPN's shapes, `apps_mobile`, the
 kid's switch), `docs/notes/launcher/unified-push.md`, `docs/notes/server/unified-push.md`,
@@ -77,7 +78,9 @@ music app), and every cut that isn't ours cuts Vibb One as well:
 (`CommandListenerService.kt:329`), and the shape on that network decides.
 
 Not covered (unchanged, §9): Android's own per-app cuts that leave Vibb One online - Data Saver, an app's "Background
-data" switch, Low Power Standby on a device that enables it, and a DNS filter that blocks the app's server. The raise
+data" switch, Low Power Standby on a device that enables it, a DNS filter that blocks the app's server, and (QA L6) the
+filter's own DNS upstream down on Wi-Fi under FILTER (design 67's "DNS can't be reached", `ReachTracker`): the apps
+can't resolve while Vibb One, outside the VPN, still pulls. A later hold reason could come from that outage. The raise
 (design 108 §5.4) already lifts Doze, the standby buckets and Android 15's background network rule for the 5 s.
 
 ### 2.2 Decision: no pull while held
@@ -117,33 +120,44 @@ enum class UpHold(val wire: String) { NONE("none"), NO_NETWORK("no_network") }
 /**
  * Held while any view of the VPN says the sink: the tunnel the service has up ([tunnel], `null` without one), the shape
  * last decided ([decided], the persisted `vpn_shape`: the sink's lockdown cuts the apps even when its tunnel failed,
- * design 95 code QA M1), and the shape the current network asks for ([wanted], `applyShape` on the stored inputs and
- * `bestNet`: a Wi-Fi -> cellular switch is held before the tunnel follows). UP off holds nothing (no pull runs).
+ * design 95 code QA M1), and the shape the service's own view of the network asks for ([wanted]: a Wi-Fi -> cellular
+ * switch is held before the tunnel follows). UP off holds nothing (no pull runs).
  */
 fun hold(on: Boolean, tunnel: VpnShape?, decided: VpnShape?, wanted: VpnShape?): UpHold =
     if (on && (tunnel == VpnShape.SINK || decided == VpnShape.SINK || wanted == VpnShape.SINK)) UpHold.NO_NETWORK else UpHold.NONE
+
+/** The runtime's inputs to [hold] (QA L1, M1 (a)): [persisted] counts only while Android's always-on VPN is ours with
+ * lockdown ([lockdown], the thing that cuts the apps without a tunnel), and the service's wanted shape only while the
+ * service runs ([running]) - `applyShape(inputs, net, persisted)` with the network the service's watcher saw last, or
+ * the launcher's own `bestNet` before its first callback (the service's `serviceShape`). */
+fun holdOf(on: Boolean, tunnel: VpnShape?, persisted: VpnShape?, lockdown: Boolean, running: Boolean, inputs: VpnInputs, net: BestNet?): UpHold
 ```
 
 Leaving the sink, the three agree only once the new tunnel is up: `switchTo` writes the non-sink decision first
 (`L/server/MobileNetwork.kt:235`), then `establish` sets the tunnel (`L/server/KidVpnService.kt:272`). Entering it,
 `wanted` turns first. So the hold starts early and ends late, never the other way.
 
-**Rows, `LT/resources/up_rules.json` gains `hold`** (launcher-only; `UpRulesTest` computes `wanted` with
-`applyShape(inputs, net, decided)` from `L/server/MobileNetwork.kt:204-209`, then `UpRules.hold`):
+**Rows, `LT/resources/up_rules.json` gains `hold`** (launcher-only; `UpRulesTest` runs each through `UpRules.holdOf`,
+which computes `wanted` with `applyShape` from `L/server/MobileNetwork.kt:204-209` only while `running`, and counts
+`decided` only with `lockdown`). `running` and `lockdown` are true unless the row says otherwise:
 
 | case | on | inputs (filter, parent_sink, roaming_locked, abroad_armed, kid_off) | net (cellular, roaming, abroad, unsure) | decided | tunnel | held |
 |---|---|---|---|---|---|---|
 | Wi-Fi, Bare Vibb | true | 1,1,0,0,0 | 0,0,0,0 | filter | filter | none |
 | cellular, Bare Vibb | true | 1,1,0,0,0 | 1,0,0,0 | sink | sink | no_network |
 | cellular, the kid's Off | true | 1,0,0,0,1 | 1,0,0,0 | sink | sink | no_network |
+| Wi-Fi, the kid's Off (QA L10) | true | 0,0,0,0,1 | 0,0,0,0 | pass | pass | none |
 | abroad, I utlandet Bare Vibb | true | 0,0,0,1,0 | 1,1,1,0 | sink | sink | no_network |
+| cellular roaming that can't be placed, abroad armed (QA L10) | true | 0,0,0,1,0 | 1,1,0,1 | pass | pass | no_network |
 | roaming session past the lock | true | 1,0,1,0,0 | 1,1,0,0 | sink | sink | no_network |
 | cellular, mobile data "På" | true | 1,0,0,0,0 | 1,0,0,0 | filter | filter | none |
-| cellular, filter off, nothing armed | true | 0,0,0,0,0 | 1,0,0,0 | none | null | none |
+| cellular, filter off, nothing armed (no service) | true | 0,0,0,0,0 | 1,0,0,0 | none | null | none |
 | Wi-Fi just dropped: wanted sink, tunnel still pass | true | 0,1,0,0,0 | 1,0,0,0 | pass | pass | no_network |
 | Wi-Fi back: wanted pass, decided pass, tunnel still sink | true | 0,1,0,0,0 | 0,0,0,0 | pass | sink | no_network |
 | the sink's establish failed: lockdown, the old filter tunnel | true | 1,1,0,0,0 | 1,0,0,0 | sink | filter | no_network |
 | no network seen, the persisted sink kept (`applyShape`'s doubt) | true | 1,1,0,0,0 | null | sink | null | no_network |
+| decided sink, no tunnel, Wi-Fi seen: the service dead under lockdown (QA L10) | true | 1,1,0,0,0 | 0,0,0,0 | sink | null (not running) | no_network |
+| decided sink without lockdown (the VPN taken over, §9; QA L1) | true | 1,1,0,0,0 | 0,0,0,0 | sink (no lockdown) | null (not running) | none |
 | a pause: Bare Vibb lifted, filter off | true | 0,0,0,0,0 | 1,0,0,0 | none | null | none |
 | a pause, the kid's Off (no lift touches it) | true | 0,0,0,0,1 | 1,0,0,0 | sink | sink | no_network |
 | UP off | false | 1,1,0,0,0 | 1,0,0,0 | sink | sink | none |
@@ -152,27 +166,42 @@ The `refresh` rows gain one: a refresh due, in use, **held** -> not sent (§2.4,
 
 ### 2.4 Where it hooks
 
-- **The pull** (`L/push/up/UpEngine.kt`): `UpPhone` gains `fun hold(): UpHold`. `requestPull` (`:457-468`) returns
-  false while held and remembers `heldSeen = true`; `step` (`:481-525`) checks before its server call and ends the
-  pull the same way, keeping `acks`. `UpRuntime.requestPull` (`L/push/up/UpRuntime.kt:213-223`) checks before it takes
-  the wake lock, so a held `up` event costs no wake lock and no request. Its runtime reads `tunnel` from a new
-  `@Volatile KidVpnService.tunnelShape` (companion, set beside `shape` at `KidVpnService.kt:272` and `:597`),
-  `decided` from `MobileNetworkRuntime.storedShape()` (`L/server/MobileNetworkRuntime.kt:127`) and `wanted` from
-  `applyShape(storedInputs(), bestNet(context), storedShape())` (`:72-78`, `:186-191`).
+- **The pull** (`L/push/up/UpEngine.kt`): `UpPhone` gains `fun hold(): UpHold` and `fun pullAfterHold()`.
+  `requestPull` (`:457-468`) returns false while held and notes the hold; `step` (`:481-525`) checks before its server
+  call and ends the pull the same way, keeping `acks`. `UpRuntime.requestPull` (`L/push/up/UpRuntime.kt:213-223`)
+  checks before it takes the wake lock, so a held `up` event costs no wake lock and no request; it posts a cheap
+  `engine.noteHeld()` instead (QA M5). Its runtime reads `tunnel` from a new `@Volatile KidVpnService.tunnelShape`
+  (companion, set beside `shape` at `KidVpnService.kt:272` and `:597`), `decided` from
+  `MobileNetworkRuntime.storedShape()` (`L/server/MobileNetworkRuntime.kt:127`) - counted only while Android's
+  always-on VPN is ours with lockdown (QA L1: `getAlwaysOnVpnPackage` and `isAlwaysOnVpnLockdownEnabled`, device owner
+  only, read only when the stored shape is the sink) - and `wanted` from the service's own view (QA M1 (a)): a companion
+  `KidVpnService.wantedNow()` that is `serviceShape(storedInputs(), lastBest, bestNet-before-the-first-callback,
+  storedShape())` without the service's side effects, `null` while no service runs (QA L1: it follows within
+  milliseconds once one does). A tunnel in the sink answers at once, without the other reads (QA L4); the other reads
+  are prefs, the volatile `lastBest` and, only before the watcher's first callback, telephony.
 - **The send** (`L/push/up/UpRuntime.kt:470-488`): a MESSAGE whose send finds the phone held throws (a new
   `UpHeldException`, logged as "held"), which `RaiseToForeground.send` already reports as failed
   (`L/push/up/vendor/RaiseToForeground.kt:162-170`) -> `UpEngine.failed` (`:543-549`): no ack, delivered again after
-  the hold. This closes the race of a pull in flight when Wi-Fi drops (one batch at most). No vendor change.
+  the hold. Before it throws, the send posts `engine.noteHeld(askPull = true)` (QA M1 (c)): the hold is noted and the
+  "net" pull asked, so a message refused on a hold that ends without any change of shape (a blip of `wanted`) is still
+  pulled again. This closes the race of a pull in flight when Wi-Fi drops (one batch at most). No vendor change.
   `NEW_ENDPOINT` sends are never held (a ping's MESSAGE_ACK is local).
-- **The end of the hold** (no new network callback): the shape's two writers call `UpRuntime.shapeChanged(context)`:
-  `KidVpnService` after every change of `shape` (`establish` `:272`, `stopSelfCleanly` `:597`) and
-  `MobileNetworkRuntime.writeAlwaysOn` (`L/server/MobileNetworkRuntime.kt:146-162`, at its top, before the DPM compare).
-  Every path that ends a sink goes through one of them: the watcher's reshape on Wi-Fi back or a country change
-  (`KidVpnService.kt:338-380` -> `reshape` `:290-318`), `apply()` for the parent's choice, a pause, the override
-  (`AppEnforcer` -> `KidVpnService.start`), the kid's tap (`MobileNetworkRuntime.setKidOff` -> `KidVpnService.start`).
-  `shapeChanged` computes `hold()`; on held -> none it asks a pull **2 s later** (`pullLater`-style, reason `"net"`;
-  the routes and the lockdown's removal are in place by then, and the gate measures it); on none -> held it sets
-  `heldSeen`. Calls in between are cheap (prefs and `activeNetwork`) and change nothing.
+- **The end of the hold** (no new network callback): the shape's two writers call `UpRuntime.shapeChanged(context)`
+  (QA L2: with `applicationContext`, posted to the engine's `work` executor and computed there, never on the service's
+  main thread): `KidVpnService` after every change of `shape` (`establish` `:272`, `stopSelfCleanly` `:597`) and
+  `MobileNetworkRuntime.writeAlwaysOn` (`L/server/MobileNetworkRuntime.kt:146-162`) at its end, after both the pref
+  and Android's always-on are written (QA L2: never before the pref write). Every path that ends a sink goes through
+  one of them: the watcher's reshape on Wi-Fi back or a country change (`KidVpnService.kt:338-380` -> `reshape`
+  `:290-318`), `apply()` for the parent's choice, a pause, the override (`AppEnforcer` -> `KidVpnService.start`), the
+  kid's tap (`MobileNetworkRuntime.setKidOff` -> `KidVpnService.start`).
+  `UpEngine.shapeChanged()` notes the hold when `hold()` says held, and **whenever the engine has seen a hold**
+  (`heldSeen`, QA M1 (b): not a transition of a value computed at this one call) asks `pullAfterHold()`: the "net" pull
+  **2 s after the last such call** (each call moves it; the routes and the lockdown's removal are in place by then, and
+  the gate measures it). When it runs, the pull checks `hold()` again: still held only because of `wanted` (the tunnel
+  and the decision both not the sink: the two views of the network disagreeing for a moment, QA M1), it tries once more
+  10 s later; held by the tunnel or the decision, it ends and the next shape change asks again. The "net" pull takes the
+  pull's 30 s wake lock when it is asked and has its own future, apart from the ack flush (QA L3), so neither swallows
+  the other and Doze can't stretch the 2 s.
 - **The policy**: no hook of its own. `policyAccepted`'s pull (`UpRuntime.kt:205`) is asked before `apply()`
   (`L/server/MdmSyncWorker.kt:168`, then `AppEnforcer.apply` at `:261`): while the old shape still holds it is
   refused, and `apply()`'s shape change asks the pull through `shapeChanged`. The other way (the parent turns Bare Vibb
@@ -180,9 +209,12 @@ The `refresh` rows gain one: a refresh due, in use, **held** -> not sent (§2.4,
   was sent, and the send-time check stops the rest once `apply()` has decided the sink.
 - **The refresh waits** (design 108b §3.3): a `NEW_ENDPOINT` refresh asks the app to re-register with its server,
   which it can't while held. `UpRules.refreshes` (`L/push/up/UpRules.kt:321-322`) takes `held` beside `inUse`
-  (`if (!inUse || held || ...)`); a due refresh waits for the next accepted policy. The liveness ping is not held
-  (its ack is local). The origin's rewrite is not held either (rare; the old origin answers for its 30 days, and the
-  app re-registers at its next start).
+  (`if (!inUse || held || ...)`), threaded through `UpRules.pass` (`:327-335`) for both callers, `policyAccepted` and
+  `userPresent` (QA L5); a due refresh waits for the next accepted policy or unlock. The liveness ping is not held: its
+  ack is local, and Element X's `onNewEndpoint` (checked in its source, `VectorUnifiedPushMessagingReceiver`) only
+  logs a failed pusher registration and doesn't store the endpoint, so the ping's next send with a network registers
+  it (QA L5). The origin's rewrite is not held either (rare; the old origin answers for its 30 days, and the app
+  re-registers at its next start).
 
 ### 2.5 The hold's end: the burst
 
@@ -195,11 +227,23 @@ The `refresh` rows gain one: a refresh due, in use, **held** -> not sent (§2.4,
   per registration.
 - **Android's rate limit on notification updates** (NMS drops updates of an existing key above 5 a second per app):
   Element X fetches one push at a time (a network round trip each), so it should stay under it. Unverified: owed on
-  the Jelly Star with Element X (R1-E). If it fails, pacing the sends of one app (about 250 ms apart) is the fix; not
-  built now.
+  the Jelly Star with Element X (R1-E).
+- **The raise's window (QA M3).** All of an app's MESSAGEs go out within about a second (one step of up to 50,
+  `flush()` in a tight loop, `vendor/RaiseToForeground.kt:156-158`), each pushing the unbind 5 s out: the app is raised
+  for about 6 s in all. Element X starts no foreground service of its own for UnifiedPush; with 10-20 backlogged events
+  its fetches can outlast the raise, and Android 15+'s background network rule can then cut it - the fallback this
+  design removes. Today one push comes at a time, so the burst is new with 115. **The fix, named now and built only if
+  the gate's sequential row or the Jelly Star shows failures:** pace one app's sends - while its raise queue holds more
+  than 3, one every 400 ms; each send already extends the raise, so the raise covers the backlog (optionally a cap per
+  hold-end burst). The gate's probe works through its MESSAGEs one after another with a 500 ms "fetch" each, so it
+  sees this (§6, row 13).
 - **Delivery time (108c §7):** a held push is first handed out after the hold, on the same stream generation (Vibb One
-  stayed online), so its sample would count the hold as delivery time. The first pull run after a hold (every step of
-  the run that starts with `heldSeen`; then cleared) posts `{"ack": [...], "held": true}`. The server passes no stream
+  stayed online), so its sample would count the hold as delivery time. The first pull run after a hold posts
+  `{"ack": [...], "held": true}` on every step. **One owner (QA M5):** `heldSeen` lives in the engine alone; the
+  runtime's early refusal, `shapeChanged` and the send-time hold reach it through `noteHeld()` on the `work` executor.
+  It is cleared only when a run whose steps said `held: true` ends with an answer; a run whose call failed keeps it, so
+  the next run says it again. It is in memory only, which is enough: a process death opens a new stream generation, and
+  `store.rs:446-452` keeps a sample only for a push handed out first on the stream it was accepted on. The server passes no stream
   generation for that pull (`S/unified_push/device.rs:237-238`: `let stream = if pull.held { None } else { ... }`), so
   `store::pull`'s hand-out (`store.rs:446-452`) leaves `stream_ms` null and the ack writes no sample (`:396-402`). An
   older server ignores `held` (`Pull` at `device.rs:219-222` has no `deny_unknown_fields`). `held` is left out when
@@ -222,6 +266,11 @@ delivered on a network that fails for a reason outside our model (§2.1's not-co
 today. Whether Element X replaces an earlier fallback once a later push resolves is Element X's; the Jelly Star check
 looks at the shade after a hold.
 
+**Its shape (QA M4, checked in Element X's source at the build):** `DefaultNotificationCreator.createFallbackNotification`
+(`libraries/push/impl/.../factories/NotificationCreator.kt`) is a plain `NotificationCompat.Builder` with
+`setContentTitle(buildMeta.applicationName)`, the plural "N new messages" as its text and a counter extra - no
+MessagingStyle, no sender. §3's rule for plain notifications covers it.
+
 ### 2.8 The report and the server
 
 **The field.** A full-report field (not a heartbeat field: its hash covers it, so a change sends the full report),
@@ -236,11 +285,14 @@ present while UP is on (`UpView.on`) and the phone is unlocked, absent otherwise
   `notificationChannels` at `L/server/dto/StatusReportRequest.kt:153`), built in `statusReportOf`
   (`L/server/MdmSyncWorker.kt:~509`, beside `:615`) by `UpRuntime.report(context)` with the same `hold()`.
 - Server: `models.rs`'s `StatusReportRequest` gains `#[serde(default)] pub unified_push: Option<serde_json::Value>`
-  (the pattern of `notification_channels`, `S/models.rs:1694-1697`); `unified_push::clean_report(&Value) ->
+  (the pattern of `notification_channels`, `S/models.rs:1694-1697`), and `S/status_heartbeat.rs`'s `REPORT_KEYS`
+  (`:51-103`) gains `unified_push` (QA L7: else `kept_body` drops it, and every heartbeat-expanded row of a hold stores
+  `up_held` NULL; `the_report_keys_are_the_structs` fails the build until it is there); `unified_push::clean_report(&Value) ->
   Option<String>`: an object whose `held` is a string of 1-32 characters `[a-z_]` other than `"none"` is that word (a
   future reason from a newer launcher still reads as held on purpose); anything else is `None`. Stored in a new column
   by `device_api`'s intake (`S/handlers/device_api.rs:1549-1553` pattern, the INSERT at `:1579-1592`).
-- **Migration** `NNNN_up_held.sql` (0156 today; take the next free number at build time):
+- **Migration** `0156_up_held.sql` (QA L8: 0155 is the last; design 114 also takes "the next free number", so the
+  second of the two to merge renumbers):
   `ALTER TABLE device_status ADD COLUMN up_held TEXT;` (kept with its status row; no retention change).
 - No capability and no policy key: absent (an older launcher) and `"none"` both mean "not held on purpose", which is
   today's reading.
@@ -252,7 +304,14 @@ by a report that says so. Arm (a) counts only policies served **after the last h
 ```sql
 SELECT MAX(reported_at) FROM device_status
  WHERE device_id = ? AND reported_at >= ? AND reported_at <= ? AND up_held IS NOT NULL
+   AND COALESCE(json_extract(mobile_data_json, '$.sink'), 'off') <> 'off'
 ```
+
+**Not on the phone's word alone (QA M2).** A held report counts only when the same row's `mobile_data.sink` (design
+95 rev. 3's report, `reportedSink`, filled from the same inputs and the persisted shape) is not `off`: a real hold always
+reports a sink reason, also while no network is seen and a persisted sink is kept. A hold that is wrong (§9: the VPN
+taken over; a disagreement of the launcher's two views of the network) reports `sink: "off"` and leaves the Attention
+row free to rise - the case 108c exists for.
 
 with the window's text bounds (the `(device_id, reported_at)` index, as `policy_problem_between` at `:153-170`); the
 count runs from `max(C + 10 min, that + 1 s)`. Only read when the oldest push is 30 minutes old and unfetched.
@@ -264,6 +323,9 @@ count runs from `max(C + 10 min, that + 1 s)`. Only read when the oldest push is
 - Arm (b) needs no guard: a held phone makes no pull, so nothing is handed out twice (§2.2); the send-time hold
   (§2.4) re-hands a message only on the first pull after the hold, which acknowledges it within seconds.
 - A sync whose report failed after its policy was served counts that policy (the safe direction: at worst a row).
+- Held reports whose `mobile_data.sink` is `off` (or missing) don't count: the row rises as today (QA M2).
+- A hold seen through heartbeats counts: the heartbeat's expanded row carries the kept full body's `unified_push`
+  (QA L7).
 - Device › Apps' waiting line calls the same function, so it stays quiet with the row.
 
 **The contract** `server/testdata/unified_push.json` (byte-identical in `LT/resources/`), one commit with both sides:
@@ -276,7 +338,8 @@ count runs from `max(C + 10 min, that + 1 s)`. Only read when the oldest push is
 - The launcher's `UnifiedPushContractTest` encodes `report`, `report_open` and `body_held` exactly (and `body` still
   without `held`); the server's `tests::unified_push::the_contract` (`S/tests/unified_push.rs:95`) posts both reports
   and checks `up_held`, runs `clean`, and posts `body_held` against a push accepted on the open stream and checks the
-  ack left no `up_delivery` row. `intake_limits` keeps `unified_push`'s key (`S/tests/intake_limits.rs:453` pattern).
+  ack left no `up_delivery` row. `intake_limits` keeps `unified_push`'s key (`S/tests/intake_limits.rs:453` pattern):
+  `report`'s `held` is stored as written.
 - The CI path lists don't change (the same files).
 
 ## 3. Part 2: the glance row's name
@@ -287,18 +350,27 @@ Today: `GlanceReader` reads the notification's title at "Navn" and up (`L/badges
 `:1554-1555`; `L/appdisplay/AppDisplay.kt:187-203`: the parent's name, the kid's rename, the app's own). Element X's
 fallback titles the notification with its own label, so the row reads "Element X" next to the parent's glyph.
 
-- **The rule** (pure, `L/badges/GlanceRows.kt`): `fun glanceShownTitle(title: String?, appLabel: String?): String?` -
-  `null` when `title` is null, or when `appLabel` is known and both fold equal (`cleanGlanceText`'s cleaning, then
-  `lowercase(Locale.ROOT)`); else `title`. An empty title is already `null` (`cleanGlanceText`, `:369-370`).
+- **The rule** (pure, `L/badges/GlanceRows.kt`): `fun glanceShownTitle(title: String?, shape: GlanceShape, sender:
+  String?, appLabel: String?): String?` - `null` when `title` is null, or when the row is a plain notification
+  (`shape == PLAIN && sender == null`: its title came from `EXTRA_TITLE`, QA M4) and `appLabel` is known and both fold
+  equal; else `title`. A MessagingStyle conversation's or sender's name (DIRECT, GROUP, or a sender) is never replaced.
+  The fold (QA L9): the label cut as the title is (`cleanGlanceText(label, GLANCE_TITLE_MAX)`, so a long label cut with
+  "…" still matches), both NFC-normalised, then `lowercase(Locale.ROOT)`. An empty title is already `null`
+  (`cleanGlanceText`, `:369-370`).
 - **Where:** first line of `GlancePanel.bindMessage` (`:1384`): `val row = row.copy(title = glanceShownTitle(row.title,
-  ownLabel(row.packageName)))`. Everything after reads the substituted row: the name (`row.title ?: label` now gives the
+  row.shape, row.sender, ownLabel(row.packageName)))`. Everything after reads the substituted row: the name (`row.title ?: label` now gives the
   display name), the suffix (`glanceNameSuffix`, `:274-276`, none without a title), TalkBack's parts
   (`glanceSpokenParts`), the missed-call wording. `ownLabel` is a second cache beside `labels` (`:241`, cleared with it
-  at `:432`), from a new `AppDisplay.ownLabel(context, pkg)` split out of `shownLabel` (`AppDisplay.kt:197-202`).
+  at `:432`), from a new `AppDisplay.ownLabel(context, pkg)` split out of `shownLabel` (`AppDisplay.kt:197-202`); it
+  returns `null` when `getApplicationInfo` fails, never the package name `shownLabel` falls back to (QA L9).
+- **When it shows.** A plain notification has a title on the glance only at "Full text" (`GlanceLevel.TEXT`;
+  `glanceLevel` is APP_ONLY at "Navn" without MessagingStyle, `L/badges/GlanceRows.kt:197-203`). So the user's row was
+  at "Full text", and that is where the rule acts.
 - **Not in `GlanceReader`:** `LockGlanceGuardTest` allowlists that file's identifiers and reads; the label isn't
   notification content and needs no guard change. The notice store keeps the app's real title.
 - **Android's shade** stays as the app posted it; a notification listener can't rename another app's notification.
-- A conversation genuinely titled like the app (a contact named "Element X") shows the display name: harmless.
+- A plain notification genuinely titled like the app shows the display name: harmless. A MessagingStyle conversation
+  named like the app keeps its name (the PLAIN-only rule).
 
 ## 4. Android 14-17
 
@@ -324,19 +396,26 @@ Checked against the platform's behaviour for 34-37 (the gate runs 14 and 16; 17 
 ## 5. Tests (lean)
 
 Launcher:
-- `UpRulesTest`: every `hold` row (via `applyShape`) and the new `refresh` row.
-- `UpEngineTest` (`FakeUpPhone` gains `var hold`): held -> `requestPull` false and no `server.pull`; held at a step ->
-  the pull ends, `acks` kept; the hold ends -> the next pull sends the kept acks with `held = true`, every step of that
-  run too, the following run without; a send that fails for the hold -> no ack, the message delivered on the next pull.
+- `UpRulesTest`: every `hold` row (via `holdOf`) and the new `refresh` row.
+- `UpEngineTest` (`FakeUpPhone` gains `var hold` and counts `pullAfterHold`): held -> `requestPull` false and no
+  `server.pull`; held at a step -> the pull ends, `acks` kept; the hold ends -> the next pull sends the kept acks with
+  `held = true`, every step of that run too, the following run without; a run with `held` whose call fails keeps it for
+  the next (QA M5); a send that fails for the hold -> no ack, `pullAfterHold` asked, and with no change of shape at all
+  the message is delivered on that pull (QA M1 (d)); `shapeChanged` after a hold asks `pullAfterHold`, before any hold
+  it asks nothing.
 - `UnifiedPushContractTest`: `report`, `report_open`, `body_held` encoded exactly; `body` unchanged.
-- `GlanceRowsTest`: `glanceShownTitle` rows - `("Element X", "Element X")` -> null; `(" element  x", "Element X")` ->
-  null; `("Mamma", "Element X")` -> `"Mamma"`; `(null, "Element X")` -> null; `("Mamma", null)` -> `"Mamma"`.
+- `GlanceRowsTest`: `glanceShownTitle` rows (PLAIN, no sender unless said) - `("Element X", "Element X")` -> null;
+  `(" element  x", "Element X")` -> null; `("Mamma", "Element X")` -> `"Mamma"`; `(null, "Element X")` -> null;
+  `("Mamma", null)` -> `"Mamma"`; a DIRECT row titled "Element X" -> kept; a GROUP row "Element X" -> kept; a PLAIN row
+  with a sender -> kept; a 70-character label cut like the title -> null (QA M4, L9).
 
 Server:
 - `tests::unified_push::the_contract`: the report rows, `clean`, `body_held` (above).
 - `tests::unified_push::attention_rows_of_108c` (`S/tests/unified_push.rs:1784`) gains: three served policies, each
   followed by a held report -> not raised; a held report, then three policies after it -> raised; a held report before
-  `C + 10 min` -> raised as before.
+  `C + 10 min` -> raised as before; held reports with `mobile_data.sink: "off"` -> raised (QA M2).
+- `tests::status_heartbeat` (or `tests::unified_push`): a full held report, then a heartbeat -> the new row's
+  `up_held = 'no_network'` (QA L7).
 - `delivery_time_on_the_pages` (`:2206`) or `store::tests`: a `held` pull leaves no sample; the next plain pull's
   pushes do.
 
@@ -349,8 +428,10 @@ disable|enable`, the PWA's Mobilnett page). New section §6ba.
 
 What it needs:
 - **The probe** gains: on each MESSAGE, log the body's `event_id` (the script numbers them `$fakeEvent0001`, ...) and
-  one `GET http://10.0.2.2:3109/` with a 3 s timeout, logged `net=ok|fail` (cleartext allowed in its manifest); a
-  command `notify --es title T` posting a notification titled T on a HIGH channel.
+  one `GET http://10.0.2.2:3109/` with a 3 s timeout, logged `net=ok|fail` (cleartext allowed in its manifest) - **one
+  message after another on one worker thread, each "fetch" taking at least 500 ms** (QA M3 (a): Element X's own pace,
+  so the raise's window is tested); a command `notify --es title T` posting a plain notification titled T on a HIGH
+  channel, and `notify --es title T --ez messaging true` a MessagingStyle one whose conversation title is T.
 - **`scripts/fake-homeserver.py`**: nothing new (`notify --count N --gap-ms G`, `up --ttl S` exist,
   `scripts/fake-homeserver.py:101-112`).
 - The launcher's debug log names "Pull held (no_network)", "Pull for net" and `held=true` on a pull (by reason and
@@ -367,10 +448,11 @@ What it needs:
 | 6 a pause | held as row 2; "Åpne for oppsett" from the PWA | delivered; the pause's end with Wi-Fi still off holds again | 36 |
 | 7 airplane | airplane on, Wi-Fi off; `notify`; then Wi-Fi on in airplane | no pull while offline; delivered on Wi-Fi | 34, 36 |
 | 8 abroad | §6ak D's roaming setup, "I utlandet: Bare Vibb"; `notify`; then `gsm data home` | held (`sink` `abroad`), then delivered | 36 |
-| 9 TTL | Wi-Fi off; `up --ttl 60`; wait 90 s; Wi-Fi on | nothing delivered; the row gone | 34 |
+| 9 TTL | Wi-Fi off; `up --ttl 60`; wait 90 s; Wi-Fi on | nothing delivered; the row still in `up_messages` past `expires_at_ms` or pruned (QA L10: the prune is hourly) | 34 |
 | 10 Wi-Fi drops mid-pull | `notify --count 20 --gap-ms 0` and `svc wifi disable` in the same second | record: every MESSAGE either `net=ok` or not sent ("held" at the send); none lost after Wi-Fi on | 34, 36 |
-| 11 Attention quiet | row 2's hold; backdate the oldest row's `created_at_ms` 40 min (SQL); Sync now three times, wait 2 min; the Devices list and the summary | no badge, no "App notifications aren't reaching the phone"; after Wi-Fi on delivered, still no row | 36 |
-| 12 the glance name | the PWA names the probe "Chat"; the probe ticked on the glance at "Navn"; `notify --es title "UP Probe"` (its label), then `--es title Mamma` | the glance rows read "Chat" and "Mamma"; the shade shows "UP Probe" | 34, 36 |
+| 11 Attention quiet | row 2's hold; backdate the oldest row's `created_at_ms` 40 min (SQL); Sync now three times, wait 2 min; the Devices list and the summary. Controls (QA L10, M2): the same with the held rows' `up_held` set NULL by SQL, and with their `mobile_data_json`'s sink set `off` | no badge, no "App notifications aren't reaching the phone"; after Wi-Fi on delivered, still no row. Each control: the row raised | 36 |
+| 12 the glance name | the PWA names the probe "Chat"; the probe ticked on the glance at **"Full text"** (QA M4: a plain notification has no title at "Navn"); `notify --es title "UP Probe"` (its label), then `--es title Mamma`, then `--es title "UP Probe" --ez messaging true` | the glance rows read "Chat", "Mamma" and "UP Probe" (a conversation's name is kept); the shade shows "UP Probe" | 34, 36 |
+| 13 the burst (QA M3) | Wi-Fi off; `notify --count 20 --gap-ms 200`; Wi-Fi on; the probe's sequential 500 ms fetches | record every MESSAGE's `net=ok|fail` and the probe's uid state: all 20 `net=ok` passes; any `fail` builds §2.5's pacing | 36 |
 
 Owed on the Jelly Star (Element X, R1-E): Bare Vibb, Wi-Fi off, a few chat messages, Wi-Fi on - the real messages
 notify, no "Du har N nye meldinger", the last message's notification present (§2.5's rate limit).
@@ -404,6 +486,12 @@ notify, no "Du har N nye meldinger", the last message's notification present (§
   parent lifted it, `dns-and-vpn.md` L1): the phone would hold while the apps have a network. Accepted.
 - The burst against Android's update rate (§2.5): owed on the Jelly Star.
 - The first pull run after a hold leaves no delivery samples, also for a fresh push that lands in that run: negligible.
+- A MESSAGE sent in the last moment before the sink starts can still fall back in the app (QA M3 (c)): the send-time
+  check sees the hold only once a view says the sink. That race is inherent.
+- The burst after a long hold against the 5-second raise (§2.5, QA M3): the gate's row 13 and the Jelly Star decide
+  whether the pacing is built.
+- The second bullet above (the VPN taken over) is now closed for the pull by QA L1 (`decided` counts only with our
+  lockdown) and for the Attention row by QA M2.
 
 ## 10. ASK
 
@@ -412,3 +500,15 @@ notify, no "Du har N nye meldinger", the last message's notification present (§
 | ASK 1 | Show the hold on Device › Apps' App push group? A quiet line, e.g. en "Waiting until the apps have internet", nb "Venter til appene har internett", only while the latest report says held. | No line: the hold is the parent's own choice working as meant, and "Words in the UI" says a state that is as it should be shows nothing. | No line. |
 | ASK 2 | Pushes that carry their own text (a Mastodon / Fedilab Web Push shows its notification without fetching): deliver them during a hold, per app? | Hold them too: one rule for all apps, the user's own words ("varslene henger igjen"), and the phone can't tell from encrypted bytes whether an app needs the network. | Hold all. |
 | ASK 3 | Keep held pushes longer than the 24 h TTL (Q10 of design 108), e.g. up to 72 h, for a long stay without Wi-Fi under Bare Vibb? | No: the chat apps sync their rooms at the next push or start, notifications for day-old messages are noise, and the queue's caps would bind first anyway. | 24 h as today. |
+
+## Revision after the design QA (2026-11-18)
+
+`docs/review/115-up-held-design-qa.md` (0 H, 5 M), all applied: M1 - the hold's end follows `heldSeen`, not a computed
+transition; `wanted` from the service's own view; a send refused for the hold notes it and asks the "net" pull; the
+"net" pull retries once at 10 s when only `wanted` holds (§2.4). M2 - the Attention guard counts a held report only with
+a sink that isn't `off` (§2.8). M3 - the raise's window named, the pacing named and left to the gate's row 13 and the
+Jelly Star (§2.5, §6, §9). M4 - the glance rule only for a plain notification without a sender; Element X's fallback
+checked in its source: plain (§2.7, §3); gate row 12 at "Full text" with a MessagingStyle row. M5 - one owner for
+`heldSeen`, its life spelled out (§2.5). The Lows: L1 (lockdown and a running service), L2 (where `shapeChanged` runs),
+L3 (the "net" pull's wake lock and own future), L4 (the sink short-circuit), L5 (the refresh through `pass`; Element X's
+`onNewEndpoint` only logs), L6 (not-covered list), L7 (`REPORT_KEYS`), L8 (0156), L9 (the fold), L10 (rows).
