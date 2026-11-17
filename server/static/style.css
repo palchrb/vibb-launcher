@@ -2324,7 +2324,7 @@ code.key {
     font-size: 0.8125rem;
 }
 
-/* "Show on phones as": the shared app_display_form partial as one row of a group. */
+/* Name and icon: the shared app_display_form partial as one row of a group. */
 .group-display > details.app-display {
     border-top: 0;
     padding: 0;

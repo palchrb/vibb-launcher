@@ -81,10 +81,11 @@ async fn an_fdroid_app_is_added_with_its_repo_and_package() {
     for field in ["fdroid_repo", "fdroid_package"] {
         assert_eq!(form_action_of(&html, field), Some("/apps/tracked/new"));
     }
-    assert!(html.contains(
-        "F-Droid signs apps with its own key: an app from F-Droid can't later switch to GitHub or \
-         Play without a reinstall."
-    ));
+    assert!(
+        html.contains(
+            "An app from F-Droid can't later switch to GitHub or Play without a reinstall."
+        )
+    );
     assert!(!html.contains("onchange"), "no script decides what shows");
 
     let saved = app
@@ -267,8 +268,9 @@ async fn add_app_refuses_a_bad_fdroid_source_by_its_field() {
 }
 
 /// The app's page: "F-Droid · <package>" where a GitHub app shows its repo (linked to the
-/// package's page on f-droid.org) with the one-source line under it, Check Now, the F-Droid
-/// fields in Details, and no upload and no launcher switch. Another repo shows its host, unlinked.
+/// package's page on f-droid.org) with the one-source line behind the group's (i), Check Now,
+/// the F-Droid fields in Details, and no upload and no launcher switch. Another repo shows its
+/// host, unlinked, the line behind the row's own (i).
 #[tokio::test]
 async fn the_app_page_shows_the_fdroid_source() {
     let app = TestApp::new().await;
@@ -285,6 +287,10 @@ async fn the_app_page_shows_the_fdroid_source() {
         "One source per app: F-Droid signs it with its own key, so it can't switch to GitHub or \
          Play without a reinstall."
     ));
+    // Design 113: the linked Source row holds no (i); the line is the group's footer (i).
+    let link = html.find(r#"data-row="source""#).unwrap();
+    assert!(!html[link..link + html[link..].find("</a>").unwrap()].contains("one-source"));
+    assert!(html.contains(r#"<p data-note="one-source">One source per app"#));
     assert!(
         html.contains(r#"<span class="row-value">F-Droid</span>"#),
         "Source & Signing"
@@ -330,6 +336,12 @@ async fn the_app_page_shows_the_fdroid_source() {
     );
     assert!(!html.contains("f-droid.org/packages"));
     assert!(html.contains("needs a reinstall when the repo's signing key isn't the developer's"));
+    // Design 113: an unlinked Source row is its own (i), the one-source line in its panel.
+    let source = html
+        .find(r#"<details class="info cell" data-row="source">"#)
+        .unwrap();
+    let panel = &html[source..source + html[source..].find("</details>").unwrap()];
+    assert!(panel.contains(r#"<p data-note="one-source">"#), "{panel}");
 
     // The Apps tab lists it like any other app.
     let list = app
