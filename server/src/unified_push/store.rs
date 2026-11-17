@@ -39,6 +39,35 @@ pub struct Registration {
     pub device_id: i64,
     pub reg: String,
     pub package: String,
+    /// The registered VAPID key as stored (design 108b), and the last refusal's stamp (read with the row, so a
+    /// refused flood writes at most once a minute, L6).
+    pub vapid: Option<String>,
+    pub vapid_refused_at: Option<String>,
+}
+
+impl Registration {
+    /// The refusal's stamp is due: none yet, or older than a minute (it is written at most that often, L6).
+    pub fn refusal_stamp_due(&self) -> bool {
+        self.vapid_refused_at
+            .as_deref()
+            .and_then(crate::display_time::parse_db_utc)
+            .is_none_or(|at| chrono::Utc::now() - at >= chrono::Duration::minutes(1))
+    }
+}
+
+/// Stamps `vapid_refused_at` for a refused push when [Registration::refusal_stamp_due].
+pub async fn note_refusal(db: &SqlitePool, registration: &Registration) {
+    if !registration.refusal_stamp_due() {
+        return;
+    }
+    if let Err(err) =
+        sqlx::query("UPDATE up_registrations SET vapid_refused_at = datetime('now') WHERE id = ?")
+            .bind(registration.id)
+            .execute(db)
+            .await
+    {
+        tracing::warn!(%err, "app push: couldn't note a refused push");
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -78,7 +107,8 @@ pub async fn lookup(db: &SqlitePool, secret: &str) -> Result<Lookup, sqlx::Error
     }
     let hash = super::secret_hash(secret);
     if let Some(registration) = sqlx::query_as::<_, Registration>(
-        "SELECT id, device_id, reg, package FROM up_registrations WHERE secret_hash = ?",
+        "SELECT id, device_id, reg, package, vapid, vapid_refused_at FROM up_registrations \
+         WHERE secret_hash = ?",
     )
     .bind(&hash)
     .fetch_optional(db)

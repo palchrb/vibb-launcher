@@ -3,7 +3,7 @@
 `docs/design/108-unified-push.md` (revision 2, variant A; the user's Q4 change of 2026-11-16: Element X keeps its Play
 build). The phone's Vibb One is the distributor; this server is the push server behind the endpoints and a Matrix push
 gateway. Code: `src/unified_push/` (its `README.md` lists what is ported from ntfy under Apache-2.0),
-`src/handlers/app_push.rs`, migration 0152.
+`src/handlers/app_push.rs`, migrations 0152 and 0153 (design 108b: `gateway_at`, `vapid_refused_at`).
 
 ## The routes
 
@@ -95,3 +95,34 @@ allowed, installed Element X without a registration (`KNOWN_UP_APPS`), and "Many
 app: Element X keeps its Play build, and its push
 provider is switched to Vibb One once per account in Element X (Settings › Notifications › Advanced › Push provider);
 Google is the same setting back. Words `app_push.*` (the parent web push owns `push.*`).
+
+## VAPID, the outside-gateway mark and `refresh` (design 108b, R23-S)
+
+- **`unified_push::vapid`** (pure; the clock, headers and accepted origins are passed in; `the_rows` runs every row of
+  `testdata/unified_push_vapid.json`): both header forms (`Authorization: vapid t=,k=` in any order, with or without
+  spaces and quotes; `WebPush <jwt>` + `Crypto-Key: p256ecdsa=`), in this order: form (at most 1024 bytes, else bad),
+  key (compared as decoded bytes), the JWT's shape (`alg` ES256, no `crit`, a 64-byte r‖s), **the signature with the
+  registered key**, then `exp` (`[now - 5 min, now + 25 h]`), then `aud` (the current origin or a replaced one within
+  its 30 days). The signature is judged first, so a bad signature is always 403 and 503 goes only to a correctly signed
+  push with a wrong time or address. The headers are never logged. A stored key that isn't a P-256 point (an R1 server
+  stored any 87 characters) reads as no key, with one warning per registration (`stored_key`).
+- **At `/up/`** the check sits in `publish` after the secret's lookup and before the buckets (`accept`): no
+  signature 401 + `WWW-Authenticate: vapid`, wrong key or bad signature 403, time or address 503 + `Retry-After: 300`
+  (Q3 (c): a 5xx keeps a Mastodon subscription alive when our clock or origin is the fault). A refusal never counts
+  toward the ban; it stamps `up_registrations.vapid_refused_at`, written only when the stamp is null or a minute old
+  (`store::note_refusal`; `lookup` returns the stamp with the row, so a refused flood takes no write lock).
+- **The gateway** answers a keyed registration's pushkey as `rejected` (a homeserver never signs) and stamps it
+  the same way. A push queued through our own gateway sets `gateway_at` (at most once a minute).
+- **Registration:** a `vapid` must be 87 base64url characters that are a P-256 point, else 400. A retry of a known
+  token with another valid key stores it and clears `vapid_refused_at` (the phone's update, answered with the same
+  endpoint); a retry without a key never drops one. The one-an-hour limit of key calls is the phone's (`keyTryMs`).
+- **Policy `unified_push.refresh`** `[{reg, why}]`, by `reg`: `outside` while `outside_gateway_at` is within 7 days and
+  `gateway_at` isn't after it; `refused` (wins when both) while `vapid_refused_at` is within a day and no push was
+  accepted after it (`last_push_at`). Pinned by `policy_json_keys_snapshot` and `the_contract`.
+- **PWA** (Device › Apps › App push), per app: "Only pushes signed by the app's server" (a key held), the outside
+  warning (marked), and "Pushes not signed … were refused, last …" (within 7 days). No save: nothing can jump.
+  `KNOWN_UP_APPS` is `(package, name, missing_key)` and holds FluffyChat, whose text says to open it once.
+- **The server's clock** matters for `exp`: DEPLOY.md's "App push" says so. **Release the server before the launcher
+  RC** (an R1 server answers a key update without storing it).
+- Tests: `vapid::tests::{the_rows, points}`, `tests::unified_push::{the_contract (refresh and the register rows),
+  vapid_at_the_route}`.

@@ -12,6 +12,7 @@ use crate::unified_push::CAPABILITY;
 
 const CONTRACT: &str = include_str!("../../testdata/unified_push.json");
 const GATEWAY: &str = include_str!("../../testdata/unified_push_gateway.json");
+const VAPID: &str = include_str!("../../testdata/unified_push_vapid.json");
 const ORIGIN: &str = "https://phones.example.com";
 
 fn contract() -> Value {
@@ -151,6 +152,63 @@ async fn the_contract() {
     assert_eq!(served(app.policy(&token).await), policy["on_two"]);
     let endpoint = regex::Regex::new(contract["endpoint"]["pattern"].as_str().unwrap()).unwrap();
     assert!(endpoint.is_match(second["body"]["endpoint"].as_str().unwrap()));
+    // R2/R3 refresh (108b §3.3, §4.4): an outside gateway's push marks the Element X registration, a push through our
+    // own gateway ends it, and a refusal with no accepted push after it lists `refused`. Every listed reg is held.
+    let outside_body =
+        json!({"notification": {"event_id": "$fake:example.org", "room_id": "!fake:example.org",
+        "type": "m.room.message", "devices": [{"app_id": "io.element.android.x", "pushkey": "x"}]}})
+        .to_string()
+        .into_bytes();
+    let res = post_via_phone_listener(
+        &app,
+        "203.0.113.7",
+        Method::POST,
+        "/up/FakeSecretForTheContract002",
+        &[],
+        outside_body,
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.text());
+    assert_eq!(served(app.policy(&token).await), policy["refresh_outside"]);
+    let notify = json!({"notification": {"event_id": "$fake:example.org", "room_id": "!fake:example.org",
+        "type": "m.room.message", "devices": [{"pushkey": format!("{ORIGIN}/up/FakeSecretForTheContract002")}]}});
+    let res = post_via_phone_listener(
+        &app,
+        "203.0.113.7",
+        Method::POST,
+        "/_matrix/push/v1/notify",
+        &[],
+        notify.to_string().into_bytes(),
+    )
+    .await;
+    assert_eq!(res.json(), json!({"rejected": []}));
+    assert_eq!(served(app.policy(&token).await), policy["on_two"]);
+    sqlx::query(
+        "UPDATE up_registrations SET last_push_at = datetime('now', '-1 hour'), \
+         vapid_refused_at = datetime('now') WHERE reg = 'c0ffee00000000000000000000000002'",
+    )
+    .execute(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(served(app.policy(&token).await), policy["refresh_refused"]);
+    for row in ["refresh_outside", "refresh_refused"] {
+        for entry in policy[row]["refresh"].as_array().unwrap() {
+            assert!(
+                policy[row]["regs"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&entry["reg"])
+            );
+        }
+    }
+    sqlx::query("UPDATE up_registrations SET vapid_refused_at = NULL")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM up_messages")
+        .execute(&app.db)
+        .await
+        .unwrap();
     // The reg with another secret, a tombstoned secret: conflict. Off the list: not_allowed. Malformed: 400.
     let mut other = register["body"].clone();
     other["secret"] = json!("FakeSecretForTheContract009");
@@ -175,6 +233,85 @@ async fn the_contract() {
     set_origin(&app, Some("https://push.example.net")).await;
     assert_eq!(served(app.policy(&token).await), policy["origin_changed"]);
     set_origin(&app, Some(ORIGIN)).await;
+
+    // R3 (108b §4.6): a key registers (200), another valid key is an update stored at once (200, the same endpoint, the
+    // refusal's stamp cleared), a key that isn't a point is a 400 and changes nothing, and a keyless REGISTER of the
+    // same token keeps the key (H1).
+    let stored_key = || async {
+        sqlx::query_scalar::<_, Option<String>>(
+            "SELECT vapid FROM up_registrations WHERE reg = 'c0ffee00000000000000000000000003'",
+        )
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+    };
+    assert_eq!(
+        answer(
+            &app,
+            Method::POST,
+            path,
+            &token,
+            Some(register["body_vapid"].clone())
+        )
+        .await,
+        expected(answers, "ok_vapid")
+    );
+    assert_eq!(
+        stored_key().await,
+        register["body_vapid"]["vapid"].as_str().map(str::to_string)
+    );
+    sqlx::query("UPDATE up_registrations SET vapid_refused_at = datetime('now') WHERE reg = 'c0ffee00000000000000000000000003'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        answer(
+            &app,
+            Method::POST,
+            path,
+            &token,
+            Some(register["body_vapid_changed"].clone())
+        )
+        .await,
+        expected(answers, "vapid_changed")
+    );
+    assert_eq!(
+        stored_key().await,
+        register["body_vapid_changed"]["vapid"]
+            .as_str()
+            .map(str::to_string)
+    );
+    let refused_at: Option<String> = sqlx::query_scalar(
+        "SELECT vapid_refused_at FROM up_registrations WHERE reg = 'c0ffee00000000000000000000000003'",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(refused_at, None, "an update clears the refusal");
+    assert_eq!(
+        answer(
+            &app,
+            Method::POST,
+            path,
+            &token,
+            Some(register["body_vapid_not_a_point"].clone())
+        )
+        .await,
+        expected(answers, "vapid_not_a_point")
+    );
+    let mut keyless = register["body_vapid"].clone();
+    keyless.as_object_mut().unwrap().remove("vapid");
+    assert_eq!(
+        answer(&app, Method::POST, path, &token, Some(keyless)).await["status"],
+        200
+    );
+    assert_eq!(
+        stored_key().await,
+        register["body_vapid_changed"]["vapid"]
+            .as_str()
+            .map(str::to_string),
+        "a REGISTER without a key never drops one"
+    );
 
     // The messages: two seeded rows (the second registration's Matrix body first), acks of keys no longer there.
     let messages = &contract["messages"];
@@ -530,6 +667,179 @@ async fn gateway_rows() {
     )
     .await;
     assert_eq!(res.status, StatusCode::GONE);
+}
+
+/// 108b §4.3/§4.4/§4.5 at the routes: a keyed registration answers a push without a signature 401, with another key or
+/// a bad signature 403, and a signed push whose `exp` has passed (the file's clock is in the past) 503 with
+/// `Retry-After: 300`; none queues, charges a bucket, counts toward the ban or writes the stamp twice within a minute.
+/// An unkeyed registration takes an unsigned push. The gateway rejects a keyed pushkey and stamps it; a gateway push
+/// sets `gateway_at`.
+#[tokio::test]
+async fn vapid_at_the_route() {
+    let gateway: Value = serde_json::from_str(GATEWAY).unwrap();
+    let file: Value = serde_json::from_str(VAPID).unwrap();
+    let (app, _) = gateway_app(&gateway).await;
+    let rows = file["rows"].as_array().unwrap();
+    let auth = |name: &str| {
+        rows.iter().find(|r| r["name"] == name).unwrap()["authorization"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    let reg = format!("{:032x}", 1);
+    // Unkeyed first: an unsigned push is taken.
+    let post = |headers: Vec<(&'static str, String)>| {
+        let app = &app;
+        let path = fill("/up/{live}", &gateway);
+        async move {
+            let headers: Vec<(&str, &str)> =
+                headers.iter().map(|(k, v)| (*k, v.as_str())).collect();
+            post_via_phone_listener(
+                app,
+                "203.0.113.7",
+                Method::POST,
+                &path,
+                &headers,
+                b"x".to_vec(),
+            )
+            .await
+        }
+    };
+    assert_eq!(post(vec![]).await.status, StatusCode::CREATED);
+    sqlx::query("DELETE FROM up_messages")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE up_registrations SET vapid = ? WHERE reg = ?")
+        .bind(file["registered_key"].as_str().unwrap())
+        .bind(&reg)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let res = post(vec![]).await;
+    assert_eq!(res.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(res.headers["www-authenticate"], "vapid");
+    assert_eq!(
+        post(vec![("authorization", auth("wrong_key"))])
+            .await
+            .status,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        post(vec![("authorization", auth("bad_signature"))])
+            .await
+            .status,
+        StatusCode::FORBIDDEN
+    );
+    // Correctly signed, but the real clock is past the file's `exp`: 503, Retry-After 300.
+    let res = post(vec![("authorization", auth("rfc_mastodon"))]).await;
+    assert_eq!(res.status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(res.headers["retry-after"], "300");
+    let queued: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM up_messages")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(queued, 0, "nothing queued");
+    let stamp = |app: &TestApp| {
+        let db = app.db.clone();
+        let reg = reg.clone();
+        async move {
+            sqlx::query_scalar::<_, Option<String>>(
+                "SELECT vapid_refused_at FROM up_registrations WHERE reg = ?",
+            )
+            .bind(reg)
+            .fetch_one(&db)
+            .await
+            .unwrap()
+        }
+    };
+    assert!(stamp(&app).await.is_some(), "the refusal is stamped");
+    // A refusal within the minute writes nothing more.
+    sqlx::query("UPDATE up_registrations SET vapid_refused_at = datetime('now', '-10 seconds')")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let before = stamp(&app).await;
+    assert_eq!(post(vec![]).await.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(stamp(&app).await, before);
+    // The refusal lists `refused` until an accepted push comes after it.
+    let (device,): (i64,) = sqlx::query_as("SELECT device_id FROM up_registrations WHERE reg = ?")
+        .bind(&reg)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    let listed = crate::unified_push::policy(&app.db, device, &[CAPABILITY.to_string()])
+        .await
+        .unwrap()
+        .unwrap()
+        .refresh;
+    assert_eq!(listed.len(), 1);
+    assert_eq!(
+        (listed[0].reg.as_str(), listed[0].why),
+        (reg.as_str(), "refused")
+    );
+    sqlx::query("UPDATE up_registrations SET last_push_at = datetime('now', '+1 minute')")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let again = crate::unified_push::policy(&app.db, device, &[CAPABILITY.to_string()])
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(again.refresh.is_empty(), "a verified push ends it");
+    // The gateway: a keyed registration's pushkey is rejected and stamped; an unkeyed one's push sets `gateway_at`.
+    sqlx::query("UPDATE up_registrations SET vapid_refused_at = NULL")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let notify = |secret: &str| {
+        json!({"notification": {"event_id": "$fake:example.org", "room_id": "!fake:example.org",
+            "type": "m.room.message", "devices": [{"pushkey": format!("{}/up/{secret}", gateway["origin"].as_str().unwrap())}]}})
+        .to_string()
+        .into_bytes()
+    };
+    let live = gateway["live"].as_str().unwrap();
+    let res = post_via_phone_listener(
+        &app,
+        "203.0.113.7",
+        Method::POST,
+        "/_matrix/push/v1/notify",
+        &[],
+        notify(live),
+    )
+    .await;
+    assert_eq!(
+        res.json(),
+        json!({"rejected": [format!("{}/up/{live}", gateway["origin"].as_str().unwrap())]})
+    );
+    assert!(
+        stamp(&app).await.is_some(),
+        "the gateway's refusal is stamped (L9)"
+    );
+    sqlx::query("UPDATE up_registrations SET vapid = NULL")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let res = post_via_phone_listener(
+        &app,
+        "203.0.113.7",
+        Method::POST,
+        "/_matrix/push/v1/notify",
+        &[],
+        notify(live),
+    )
+    .await;
+    assert_eq!(res.json(), json!({"rejected": []}));
+    let marked: Option<String> =
+        sqlx::query_scalar("SELECT gateway_at FROM up_registrations WHERE reg = ?")
+            .bind(&reg)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert!(
+        marked.is_some(),
+        "a push through our gateway sets gateway_at"
+    );
 }
 
 /// M5 and §12.2's rate rows end to end: 30 never-seen secrets from one client get it 429 for the rest - but a
@@ -1066,6 +1376,8 @@ async fn the_queue_caps_and_ttl_zero() {
         device_id: emma,
         reg: format!("{:032x}", 1),
         package: "io.element.android.x".to_string(),
+        vapid: None,
+        vapid_refused_at: None,
     };
     let now = chrono::Utc::now().timestamp_millis();
     let push = |body: &'static [u8]| Push {

@@ -22,6 +22,7 @@ pub mod notify;
 pub mod publish;
 pub mod rate;
 pub mod store;
+pub mod vapid;
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -48,8 +49,16 @@ pub const PER_PHONE: i64 = 300;
 pub const NEW_PER_HOUR: usize = 20;
 /// New registrations on one phone an hour, every app together (R1-SR L5, `busy` too).
 pub const NEW_PER_PHONE_HOUR: usize = 60;
-/// Apps known to use UnifiedPush, for the PWA's "no push" warning (A3): the package and its name.
-pub const KNOWN_UP_APPS: &[(&str, &str)] = &[("io.element.android.x", "Element X")];
+/// Apps known to use UnifiedPush, for the PWA's "no push" warning (A3): the package, its name and the key of its
+/// "isn't using Vibb" text (Element X's provider is switched by hand; FluffyChat picks Vibb One by itself, 108b §6.1).
+pub const KNOWN_UP_APPS: &[(&str, &str, &str)] = &[
+    ("io.element.android.x", "Element X", "app_push.missing"),
+    (
+        "chat.fluffy.fluffychat",
+        "FluffyChat",
+        "app_push.missing_open",
+    ),
+];
 
 /// The policy's `unified_push` (§3.8), only to a launcher whose last report claims [CAPABILITY].
 #[derive(Serialize, Debug, Clone, PartialEq, Eq)]
@@ -62,6 +71,16 @@ pub struct UpPolicy {
     pub regs: Vec<String>,
     /// The packages the parent stopped on this phone, sorted.
     pub stopped: Vec<String>,
+    /// The registrations the phone asks its app to check again (108b §3.3, §4.4), sorted by `reg`.
+    pub refresh: Vec<Refresh>,
+}
+
+/// One `refresh` row: `why` is `outside` (the app's pushes come through an outside gateway) or `refused` (Q3 (d): a
+/// push without the registered key was refused and no verified one came after).
+#[derive(Serialize, Debug, Clone, PartialEq, Eq)]
+pub struct Refresh {
+    pub reg: String,
+    pub why: &'static str,
 }
 
 /// The server-wide row (`unified_push_settings`, migration 0152).
@@ -249,6 +268,25 @@ pub fn too_many(refused: crate::limits::Refused) -> Response {
         .into_response()
 }
 
+/// The answer to a push the VAPID check refused (108b §4.4, Q3 (c)): 401 for no signature, 403 for a wrong key or a bad
+/// signature, 503 with `Retry-After: 300` for a correctly signed push whose time or address is off (our clock or origin
+/// may be at fault, so the sender keeps its subscription).
+pub fn vapid_refusal(outcome: vapid::Outcome) -> Response {
+    match outcome {
+        vapid::Outcome::Missing => (
+            StatusCode::UNAUTHORIZED,
+            [(header::WWW_AUTHENTICATE, "vapid")],
+        )
+            .into_response(),
+        vapid::Outcome::Time | vapid::Outcome::Address => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            [(header::RETRY_AFTER, "300")],
+        )
+            .into_response(),
+        _ => StatusCode::FORBIDDEN.into_response(),
+    }
+}
+
 /// A push the routes accepted.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Accepted {
@@ -370,11 +408,36 @@ pub async fn policy(
             .bind(device_id)
             .fetch_all(db)
             .await?;
+    // Marked (§3.2): an outside push within 7 days and no push through our own gateway since. Refused (§4.4): a
+    // refusal within a day and no accepted push after it (a keyed registration accepts only verified pushes).
+    let refresh: Vec<(String, String)> = sqlx::query_as(
+        "SELECT reg, CASE WHEN vapid_refused_at > datetime('now', '-1 day') \
+           AND (last_push_at IS NULL OR last_push_at < vapid_refused_at) \
+           THEN 'refused' ELSE 'outside' END FROM up_registrations WHERE device_id = ?1 AND ( \
+           (outside_gateway_at > datetime('now', '-7 days') \
+            AND (gateway_at IS NULL OR gateway_at < outside_gateway_at)) \
+           OR (vapid_refused_at > datetime('now', '-1 day') \
+            AND (last_push_at IS NULL OR last_push_at < vapid_refused_at))) ORDER BY reg",
+    )
+    .bind(device_id)
+    .fetch_all(db)
+    .await?;
     Ok(Some(UpPolicy {
         on: switch && origin.is_some(),
         origin,
         regs,
         stopped: stopped(db, device_id).await?,
+        refresh: refresh
+            .into_iter()
+            .map(|(reg, why)| Refresh {
+                reg,
+                why: if why == "refused" {
+                    "refused"
+                } else {
+                    "outside"
+                },
+            })
+            .collect(),
     }))
 }
 

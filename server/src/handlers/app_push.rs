@@ -235,6 +235,12 @@ pub struct AppPushRow {
     pub warning: Option<&'static str>,
     /// "Many pushes: about 400 a day …" (R1-SR L2, [noisy_per_day]).
     pub noisy: Option<String>,
+    /// "Only pushes signed by the app's server": a registration of the app has a VAPID key (108b §4.7).
+    pub signed: bool,
+    /// The app's pushes come through an outside gateway (108b §3.4), worded with its name.
+    pub outside: Option<String>,
+    /// A push without the registered key was refused within 7 days (108b §4.7), worded with its time.
+    pub refused: Option<String>,
     /// Stop's sheet, with the app's name.
     pub stop_question: String,
 }
@@ -277,6 +283,19 @@ pub(crate) fn noisy_per_day(
     (per_day >= NOISY_PER_DAY).then_some(per_day)
 }
 
+/// One app's row of the group's query: package, registrations, last delivery, oldest registration, pushes, has a key,
+/// marked as outside, last refusal within 7 days.
+type AppRow = (
+    String,
+    i64,
+    Option<String>,
+    String,
+    i64,
+    bool,
+    bool,
+    Option<String>,
+);
+
 /// The group for one phone. `names` holds every app the page lists (by package); `capability` is whether the phone's
 /// last report claims `unified_push_v1` (`None` before its first report).
 pub(crate) async fn group(
@@ -289,8 +308,12 @@ pub(crate) async fn group(
 ) -> Result<AppPushGroup, sqlx::Error> {
     let on = up::switch(&state.db, device_id).await?;
     let origin_set = up::settings(&state.db).await?.public_origin.is_some();
-    let rows: Vec<(String, i64, Option<String>, String, i64)> = sqlx::query_as(
-        "SELECT package, COUNT(*), MAX(last_delivered_at), MIN(created_at), SUM(pushes) \
+    let rows: Vec<AppRow> = sqlx::query_as(
+        "SELECT package, COUNT(*), MAX(last_delivered_at), MIN(created_at), SUM(pushes), \
+           MAX(vapid IS NOT NULL), \
+           COALESCE(MAX(outside_gateway_at > datetime('now', '-7 days') \
+               AND (gateway_at IS NULL OR gateway_at < outside_gateway_at)), 0), \
+           MAX(CASE WHEN vapid_refused_at > datetime('now', '-7 days') THEN vapid_refused_at END) \
          FROM up_registrations WHERE device_id = ? GROUP BY package ORDER BY package",
     )
     .bind(device_id)
@@ -305,8 +328,8 @@ pub(crate) async fn group(
             None => {
                 let label = up::KNOWN_UP_APPS
                     .iter()
-                    .find(|(p, _)| *p == package)
-                    .map_or(package, |(_, name)| name)
+                    .find(|(p, ..)| *p == package)
+                    .map_or(package, |(_, name, _)| name)
                     .to_string();
                 let letter = crate::handlers::devices::initial(&label);
                 (label, letter, None)
@@ -315,51 +338,67 @@ pub(crate) async fn group(
     };
     let apps = rows
         .iter()
-        .map(|(package, count, delivered, created, pushes)| {
-            let (label, letter, logo) = name_of(package);
-            let delivered: Option<DateTime<Utc>> = delivered
-                .as_deref()
-                .and_then(crate::display_time::parse_db_utc);
-            let created = crate::display_time::parse_db_utc(created);
-            let accounts = t_count(lang, "app_push.accounts", *count, &[]);
-            let line = match delivered {
-                Some(at) => format!(
-                    "{accounts} · {}",
-                    t_params(
-                        lang,
-                        "app_push.last_delivered",
-                        &[("when", &zone.when(at, now))]
-                    )
-                ),
-                None => format!("{accounts} · {}", t(lang, "app_push.never_delivered")),
-            };
-            let quiet = match delivered {
-                Some(at) => at < week_ago,
-                None => created.is_some_and(|at| at < week_ago),
-            };
-            let per_day = noisy_per_day(*pushes, created, now);
-            AppPushRow {
-                package: package.clone(),
-                stop_question: t_params(lang, "app_push.stop_question", &[("app", &label)]),
-                label,
-                letter,
-                logo,
-                line,
-                warning: quiet.then_some("app_push.no_delivery"),
-                noisy: per_day
-                    .map(|n| t_params(lang, "app_push.noisy", &[("count", &n.to_string())])),
-            }
-        })
+        .map(
+            |(package, count, delivered, created, pushes, keyed, outside, refused)| {
+                let (label, letter, logo) = name_of(package);
+                let name = label.clone();
+                let delivered: Option<DateTime<Utc>> = delivered
+                    .as_deref()
+                    .and_then(crate::display_time::parse_db_utc);
+                let created = crate::display_time::parse_db_utc(created);
+                let accounts = t_count(lang, "app_push.accounts", *count, &[]);
+                let line = match delivered {
+                    Some(at) => format!(
+                        "{accounts} · {}",
+                        t_params(
+                            lang,
+                            "app_push.last_delivered",
+                            &[("when", &zone.when(at, now))]
+                        )
+                    ),
+                    None => format!("{accounts} · {}", t(lang, "app_push.never_delivered")),
+                };
+                let quiet = match delivered {
+                    Some(at) => at < week_ago,
+                    None => created.is_some_and(|at| at < week_ago),
+                };
+                let per_day = noisy_per_day(*pushes, created, now);
+                AppPushRow {
+                    package: package.clone(),
+                    stop_question: t_params(lang, "app_push.stop_question", &[("app", &label)]),
+                    label,
+                    letter,
+                    logo,
+                    line,
+                    warning: quiet.then_some("app_push.no_delivery"),
+                    noisy: per_day
+                        .map(|n| t_params(lang, "app_push.noisy", &[("count", &n.to_string())])),
+                    signed: *keyed,
+                    outside: (*outside)
+                        .then(|| t_params(lang, "app_push.outside", &[("app", &name)])),
+                    refused: refused
+                        .as_deref()
+                        .and_then(crate::display_time::parse_db_utc)
+                        .map(|at| {
+                            t_params(
+                                lang,
+                                "app_push.vapid_refused",
+                                &[("when", &zone.when(at, now))],
+                            )
+                        }),
+                }
+            },
+        )
         .collect();
     let missing = if on && origin_set {
         up::KNOWN_UP_APPS
             .iter()
-            .filter(|(package, _)| {
+            .filter(|(package, ..)| {
                 names.get(*package).is_some_and(|name| name.allowed)
                     && !rows.iter().any(|(p, ..)| p == package)
                     && !stopped.iter().any(|p| p == package)
             })
-            .map(|(_, name)| t_params(lang, "app_push.missing", &[("app", name)]))
+            .map(|(_, name, key)| t_params(lang, key, &[("app", name)]))
             .collect()
     } else {
         Vec::new()

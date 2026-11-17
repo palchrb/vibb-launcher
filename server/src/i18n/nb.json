@@ -4720,5 +4720,9 @@
   "app_push.stopped": "Stoppet",
   "app_push.allow_again": "Tillat igjen",
   "app_push.missing": "{app} bruker ikke Vibb for varsler. I {app}: Innstillinger › Varsler › Avansert › Push-leverandør › Vibb One, én gang for hver konto.",
+  "app_push.outside": "Varslene til {app} går gjennom en ekstern tjeneste (som regel unifiedpush.org), utenfor familiens server. Vibb One ber {app} sjekke adressen på nytt når telefonen er i bruk. Blir dette stående i flere dager, når ikke telefonen adressen: se «Sist sett utenfra» under Innstillinger › Push for apper.",
+  "app_push.signed": "Bare push signert av appens server",
+  "app_push.vapid_refused": "Push som ikke var signert av appens server, ble avvist, sist {when}",
+  "app_push.missing_open": "{app} bruker ikke Vibb for varsler. Åpne {app} én gang, så velger den Vibb One selv.",
   "app_push.footer": "En tillatt app kobler seg til Vibb One av seg selv og får en privat adresse; varslene vekker den gjennom denne serveren. Ingen Matrix-meldingstekst lagres, push for apper holdes i høyst 24 timer, og kontonavnene blir på telefonen."
 }

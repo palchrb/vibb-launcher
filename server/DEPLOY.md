@@ -906,7 +906,7 @@ The phones only ever ask this server. The cache (`weather_cells`) has no phone i
 hours (or the longest location retention, when that is shorter) goes, and a phone's Location set to Off erases it at
 once. **Backups** (and the pre-migration and pre-restore copies) keep them as they keep the fixes.
 
-## App push (UnifiedPush) (design 108, migration 0152)
+## App push (UnifiedPush) (design 108, migrations 0152 and 0153)
 
 Vibb One is the phone's UnifiedPush distributor, and this server is the push server behind the addresses it hands to
 the phone's apps - Element X first - and a Matrix push gateway. A push comes in from the app's own server (a Matrix
@@ -943,6 +943,10 @@ nothing about a push is logged.
   5 seconds (every push wakes the phone, so a steady flood would drain its battery; Device › Apps names an app that
   pushes about 300 times a day or more), each app address 30 and then one every 2 seconds; each sending address 40
   requests at once and then 20 a second; an address that was removed answers `410` for 30 days.
+- **The server's clock must be right** (NTP; the VM's is). A registration made with a VAPID key (Fedilab with a Mastodon
+  4.4+ account) only takes pushes signed by the app's server, and the signature carries an expiry the server judges
+  against its own clock: with the clock badly off, signed pushes are refused with `503` and `Retry-After: 300` (which
+  keeps the sender's subscription) until it is fixed (design 108b §4.8).
 
 ## Useful commands on the Pi
 

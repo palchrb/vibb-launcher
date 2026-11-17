@@ -423,7 +423,7 @@ async fn policy_json_keys_snapshot() {
             "day_minutes": 20, "grant": 0})
     );
     assert!(object["login_browser"].is_null());
-    // Design 108 §3.8: `unified_push` only to a launcher with `unified_push_v1`, `{on, origin, regs, stopped}`; every
+    // Design 108 §3.8: `unified_push` only to a launcher with `unified_push_v1`, `{on, origin, regs, stopped, refresh}`; every
     // row in `tests::unified_push` (`unified_push.json`'s `policy`).
     assert!(!object.contains_key("unified_push"));
     app.post_status(
@@ -439,7 +439,7 @@ async fn policy_json_keys_snapshot() {
         .map(String::as_str)
         .collect();
     up_keys.sort_unstable();
-    assert_eq!(up_keys, ["on", "origin", "regs", "stopped"]);
+    assert_eq!(up_keys, ["on", "origin", "refresh", "regs", "stopped"]);
 
     // The launcher's CallPolicy DTO: every key present and non-null, also when unmanaged.
     let call_policy = object["call_policy"].as_object().unwrap();

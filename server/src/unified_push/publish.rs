@@ -20,7 +20,7 @@
 //! needed. The body is kept as bytes (ntfy's base64 envelope isn't needed: the device API carries base64 anyway); a
 //! Matrix notify that came through an outside gateway is minimised as the gateway's is (Q8) and, once queued, noted
 //! at most once a minute (`outside_gateway_at`, R2's warning). `Urgency` is stored and passed on; `Topic` replaces the pending row with the
-//! same topic. VAPID is not checked yet (R3), as ntfy doesn't.
+//! same topic. A keyed registration's push is VAPID-checked first (design 108b, [super::vapid]).
 
 use axum::Extension;
 use axum::body::Bytes;
@@ -108,6 +108,33 @@ pub async fn publish(
             return StatusCode::SERVICE_UNAVAILABLE.into_response();
         }
     };
+    // R3: a keyed registration takes only pushes signed with its key, checked before the buckets so a leaked endpoint
+    // can't spend the phone's bucket or wake it. Neither refusal counts toward the client's ban: the secret resolved.
+    if let Some(key) = registration
+        .vapid
+        .as_deref()
+        .and_then(|k| super::vapid::stored_key(k, registration.id))
+    {
+        let origins = match super::accepted_origins(&state.db).await {
+            Ok(origins) => origins,
+            Err(err) => {
+                tracing::error!(%err, "app push: couldn't read the settings");
+                return StatusCode::SERVICE_UNAVAILABLE.into_response();
+            }
+        };
+        let header = |name: &str| headers.get(name).and_then(|v| v.to_str().ok());
+        let outcome = super::vapid::check(
+            &key,
+            header("authorization"),
+            header("crypto-key"),
+            chrono::Utc::now().timestamp(),
+            &origins,
+        );
+        if outcome != super::vapid::Outcome::Taken {
+            store::note_refusal(&state.db, &registration).await;
+            return super::vapid_refusal(outcome);
+        }
+    }
     let matrix = super::matrix::is_matrix_shaped(&body);
     let minimised = if matrix {
         super::matrix::minimise(&body)
