@@ -30,7 +30,7 @@ optional "Telefoner" group is not built), the launcher's and the music app's own
   | `device.calls.problem.needs_update` | the finding's own sentence, `device.calls.finding.needs_update` / `_sms` / `_calls` (already short), moved from the ⓘ to `sub`; the fix stays in the ⓘ | SMS går tapt til da. | SMS is lost until then. | unchanged keys |
   | `device.time.ledger_unreadable` | `device.time.ledger_unreadable_sub` (already short), visible as `sub` | Telefonen regner dagens skjermtid som brukt opp. | The phone counts today's screen time as used up. | unchanged |
   | `device.lock.note.needs_update` | new `device.lock.note.needs_update_short`; `needs_update_sub` stays in the ⓘ | Ingen lås til da | No lock until then | added |
-  | `device.lock.note.bad_hash` | new `device.lock.note.bad_hash_short`; `bad_hash_sub` stays in the ⓘ | Bare foreldre-PIN-en åpner den nå | Only the Parent PIN opens it now | added |
+  | `device.lock.note.bad_hash` | new `device.lock.note.bad_hash_short`; `bad_hash_sub` stays in the ⓘ | Bare foreldre-PIN-en åpner den nå | Only the Parent PIN opens it | added |
 
   `Note` is built in
   `device_pages.rs`, `calls.rs`, `music.rs`, `schedules.rs`, `kiosk_escapes.rs`, `kid_lock.rs`, `lock_glance.rs` (about

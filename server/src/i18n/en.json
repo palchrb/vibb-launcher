@@ -4225,7 +4225,7 @@
   "device.lock.note.crash_guard_sub": "It crashed several times in a row. The phone tries it again within 10 minutes of its next check-in; update Vibb One if this repeats.",
   "device.lock.note.bad_hash": "Phone can't read the Child PIN",
   "device.lock.note.bad_hash_sub": "Only the Parent PIN (\"Parent code\" on the lock) opens it now. Set the Child PIN again.",
-  "device.lock.note.bad_hash_short": "Only the Parent PIN opens it now",
+  "device.lock.note.bad_hash_short": "Only the Parent PIN opens it",
   "device.lock.note.other_sub": "Vibb One reported a reason this server doesn't know.",
   "device.lock.note.other_fix": "The phone reported \"{code}\".",
   "device.lock.note.calls_cant_ring": "Calls can't ring over the lock",

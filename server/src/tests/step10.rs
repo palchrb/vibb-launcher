@@ -509,5 +509,5 @@ async fn in_call_ui_failure_is_a_call_warning() {
         .get_page(&super::device_page(id, super::Section::Calls), &cookie)
         .await
         .text();
-    assert!(html.contains("couldn&#39;t show over the lock"), "{html}");
+    assert!(html.contains("didn&#39;t show over the lock"), "{html}");
 }
