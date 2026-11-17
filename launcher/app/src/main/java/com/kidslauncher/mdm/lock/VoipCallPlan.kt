@@ -24,6 +24,10 @@ const val ELEMENT_CALL_CHANNEL = "call_foreground_service_channel"
 /** After the ring ends: the answered call's foreground service comes up within this (QA #4). */
 const val VOIP_GRACE_MS = 15_000L
 
+/** The call's notice seen and then gone, the audio out of IN_COMMUNICATION: the call ends this long after the notice
+ * went (2026-11-17 check, item 5) - a notice re-posted under another key comes back well within it. */
+const val VOIP_CALL_SETTLE_MS = 1_000L
+
 /** At most this long; then the lock comes back, but the package stays pinned while its call lives. */
 const val VOIP_CAP_MS = 3 * 60 * 60_000L
 
@@ -379,6 +383,11 @@ data class VoipRecord(
     val ringEndedElapsedMs: Long? = null,
     /** When the current ring was first seen ([VOIP_RING_LIMIT_MS]); `null` after it ended. */
     val ringStartedElapsedMs: Long? = null,
+    /** The app's call notice was seen since the ring ended: the call was answered, so the ring-to-call gap
+     * ([VOIP_GRACE_MS], design 57) lies behind it. A new ring clears it. */
+    val callSeen: Boolean = false,
+    /** When the seen call notice was first missed ([VOIP_CALL_SETTLE_MS]); `null` while it is up. */
+    val callGoneElapsedMs: Long? = null,
 )
 
 data class VoipInputs(
@@ -413,6 +422,9 @@ private val NO_VOIP = VoipVerdict(null, VoipPhase.NONE, null)
  *   call service starts - a re-front or an unpin in that gap would end the answered call);
  * - the call's foreground service: pinned, IN_CALL while the audio mode is IN_COMMUNICATION (or
  *   in the grace), else NONE - the lock comes back but the package stays;
+ * - that service's notice seen and then gone ([VoipRecord.callSeen]): over [VOIP_CALL_SETTLE_MS] after it went,
+ *   grace or not (2026-11-17, item 5: the glance at once after a short call) - unless the audio is still in
+ *   IN_COMMUNICATION within the grace;
  * - [VOIP_CAP_MS] after the start: NONE (the lock comes back), still pinned while the call lives;
  * - before the listener reported in this process (a crash, an update): the stored record keeps
  *   the package pinned and IN_CALL for [VOIP_GRACE_MS] from the process start, then it ends - the
@@ -423,8 +435,15 @@ fun voipExemption(stored: VoipRecord?, i: VoipInputs): VoipVerdict {
     val record = stored?.takeIf { sameBoot(it.start, i) }
     if (record != null && record.packageName in i.ringing) {
         // The same ring goes on, or (its last ring ended) a new one starts now.
-        val ringStarted = if (record.ringEndedElapsedMs == null) record.ringStartedElapsedMs ?: i.nowElapsedMs else i.nowElapsedMs
-        val next = record.copy(ringEndedElapsedMs = null, ringStartedElapsedMs = ringStarted)
+        val sameRing = record.ringEndedElapsedMs == null
+        val ringStarted = if (sameRing) record.ringStartedElapsedMs ?: i.nowElapsedMs else i.nowElapsedMs
+        // A new ring has its own answer gap: the call seen before it no longer counts.
+        val next = record.copy(
+            ringEndedElapsedMs = null,
+            ringStartedElapsedMs = ringStarted,
+            callSeen = sameRing && record.callSeen,
+            callGoneElapsedMs = null,
+        )
         val ringActive = i.nowElapsedMs - ringStarted in 0 until VOIP_RING_LIMIT_MS
         val capActive = timedWindowActive(record.start, i.nowWallMs, i.nowElapsedMs, i.bootCount, VOIP_CAP_MS)
         return VoipVerdict(next, if (ringActive && capActive) VoipPhase.RINGING else VoipPhase.NONE, record.packageName)
@@ -452,12 +471,27 @@ private fun continueCall(record: VoipRecord, i: VoipInputs): VoipVerdict? {
     val ringEnded = record.ringEndedElapsedMs ?: i.nowElapsedMs
     val next = record.copy(ringEndedElapsedMs = ringEnded, ringStartedElapsedMs = null)
     val grace = i.nowElapsedMs - ringEnded in 0 until VOIP_GRACE_MS
-    return when {
-        pkg in i.inCall -> live(exempt = grace || i.audioInCommunication, next)
-        grace -> live(exempt = true, next)
-        else -> null
+    if (pkg in i.inCall) return live(exempt = grace || i.audioInCommunication, next.copy(callSeen = true, callGoneElapsedMs = null))
+    if (record.callSeen) {
+        // Answered and its notice gone: the gap before the call lies behind it - no grace to wait out, only a settle.
+        val goneAt = record.callGoneElapsedMs ?: i.nowElapsedMs
+        val settling = i.nowElapsedMs - goneAt in 0 until VOIP_CALL_SETTLE_MS
+        return if (settling || (grace && i.audioInCommunication)) live(exempt = true, next.copy(callGoneElapsedMs = goneAt)) else null
     }
+    return if (grace) live(exempt = true, next) else null
 }
+
+/** The next look at the call ([VoipCalls]' poll, at most [pollMs]): sooner while a gone call notice settles, so the
+ * glance comes back [VOIP_CALL_SETTLE_MS] after it rather than on the poll after that. */
+fun voipPollMs(record: VoipRecord?, nowElapsedMs: Long, pollMs: Long): Long {
+    val goneAt = record?.callGoneElapsedMs ?: return pollMs
+    val left = VOIP_CALL_SETTLE_MS - (nowElapsedMs - goneAt)
+    // Settled (the audio holds it in the grace): the plain poll, never a tight loop.
+    return if (left <= 0L || left > VOIP_CALL_SETTLE_MS) pollMs else left.coerceIn(VOIP_SETTLE_POLL_MIN_MS, pollMs)
+}
+
+/** [voipPollMs] never looks sooner than this. */
+const val VOIP_SETTLE_POLL_MIN_MS = 50L
 
 /**
  * Whether the system dialer has a call the lock steps aside for (QA #7): Telecom's

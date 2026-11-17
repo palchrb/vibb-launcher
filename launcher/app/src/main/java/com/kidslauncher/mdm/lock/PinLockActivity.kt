@@ -10,6 +10,7 @@ import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.drawable.LayerDrawable
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -297,6 +298,9 @@ class PinLockActivity : AppCompatActivity() {
     /** Design 59d §8.16: the open ask is a home gesture's ([askAfterGesture]), and whether its one re-ask went. */
     private var askFromGesture = false
     private var gestureAskRetried = false
+
+    /** 2026-11-17 check, item 4: the open ask is the one re-ask after SystemUI dropped its pad ([padDropRetryDue]). */
+    private var padDropRetried = false
     private var askId = 0
 
     private fun askAge(): Long? = askedAt?.let { SystemClock.elapsedRealtime() - it }
@@ -372,11 +376,12 @@ class PinLockActivity : AppCompatActivity() {
 
     /** `requestDismissKeyguard` - Android's PIN pad over the glance; its answer within [ANDROID_ASK_TIMEOUT_MS] or the
      * state is read again once nothing covers us ([askCheck]). */
-    private fun askAndroid() {
+    private fun askAndroid(padRetry: Boolean = false) {
         val id = ++askId
         val offs = PinLockRuntime.screenOffs
         askedAt = SystemClock.elapsedRealtime()
         askedOffs = offs
+        padDropRetried = padRetry
         // Design 59b §3: the pad (and its Emergency dialer) is ours for the face's loss rule.
         PinLockRuntime.noteAndroidAsk(open = true)
         AndroidLock.note(this, "Lås opp: requestDismissKeyguard (Android's PIN pad)")
@@ -445,7 +450,27 @@ class PinLockActivity : AppCompatActivity() {
             handler.removeCallbacks(askCheck)
             val wait = ANDROID_ASK_TIMEOUT_MS - (askAge() ?: 0L)
             handler.postDelayed(askCheck, wait.coerceAtLeast(0L))
+            // Item 4 (Android 16+): the focus back this soon with no answer - SystemUI dropped the pad for its shade.
+            if (padDropRetryDue(Build.VERSION.SDK_INT, padDropRetried, askAge(), askedOffs == PinLockRuntime.screenOffs, keyguardLockedNow())) {
+                val id = askId
+                handler.postDelayed({ padDropReask(id) }, PAD_DROP_RETRY_DELAY_MS)
+            }
         }
+    }
+
+    /** [padDropRetryDue]'s one re-ask, by [padDropReaskNow]: never over a pad that is up (it holds the focus). */
+    private fun padDropReask(id: Int) {
+        val lockAsking = resumed && !isFinishing && !finishingAfterUnlock && PinLockRuntime.mode == LockMode.LOCKED && asking()
+        if (!padDropReaskNow(id == askId && askedAt != null, hasWindowFocus(), keyguardLockedNow(), interactiveNow(), lockAsking, PinLockRuntime.callLiveNow(this))) return
+        Log.i(ANDROID_LOCK_TAG, "Lås opp: the pad went away with no answer - asking once more")
+        askAndroid(padRetry = true)
+    }
+
+    /** `isKeyguardLocked`; unreadable = no (item 4's re-ask fails safe: none). */
+    private fun keyguardLockedNow(): Boolean = try {
+        getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == true
+    } catch (e: Exception) {
+        false
     }
 
     /** A dead ask, or an error: [FaceTrigger.RESUME]'s rule now - Android locked: the glance (a new tap asks again). */

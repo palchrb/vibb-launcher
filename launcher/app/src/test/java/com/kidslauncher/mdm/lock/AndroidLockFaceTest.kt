@@ -181,7 +181,7 @@ class AndroidLockFaceTest {
         assertFalse("a clock gone backwards counts nothing", androidLossOurs(now + 5, now + 5, now + 5, false, now))
         // The glance publishes its ask; a screen-off ends it.
         val activity = code("$lock/PinLockActivity.kt")
-        assertTrue(activity.substringAfter("private fun askAndroid() {").substringBefore("\n    }\n").contains("PinLockRuntime.noteAndroidAsk(open = true)"))
+        assertTrue(activity.substringAfter("private fun askAndroid(padRetry: Boolean = false) {").substringBefore("\n    }\n").contains("PinLockRuntime.noteAndroidAsk(open = true)"))
         assertTrue(activity.substringAfter("private fun closeAsk(").substringBefore("\n    }\n").contains("PinLockRuntime.noteAndroidAsk(open = false, cancelled = cancelled)"))
         val screenOff = code("$lock/PinLockRuntime.kt").substringAfter("if (intent.action == Intent.ACTION_SCREEN_OFF) {").substringBefore("dispatch(app, LockEvent.ScreenOff(")
         assertTrue(screenOff.contains("androidAskAt = null"))

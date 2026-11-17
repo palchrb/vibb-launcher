@@ -3,6 +3,7 @@ package com.kidslauncher.mdm.lock
 import com.kidslauncher.mdm.calls.CallPolicyState
 import com.kidslauncher.mdm.calls.CallRules
 import com.kidslauncher.mdm.calls.RuleContact
+import com.kidslauncher.mdm.server.WindowStart
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -201,10 +202,13 @@ class VoipCallPlanTest {
         assertEquals(VoipPhase.IN_CALL, gapLater.phase)
         // The call: its service notification plus the audio mode.
         val call = voipExemption(gapLater.record, at(t0 + 60 * 60_000L, inCall = setOf(element), audio = true))
-        assertEquals(VoipVerdict(gap.record, VoipPhase.IN_CALL, element), call)
+        assertEquals(VoipVerdict(gap.record!!.copy(callSeen = true), VoipPhase.IN_CALL, element), call)
         assertNull("the ring is over", call.record!!.ringStartedElapsedMs)
-        // Hung up: the service is gone - over at once (the grace is only after the ring).
-        assertEquals(VoipVerdict(null, VoipPhase.NONE, null), voipExemption(call.record, at(t0 + 61 * 60_000L)))
+        // Hung up: the service is gone - over after the settle (the grace is only after the ring).
+        val hungUp = voipExemption(call.record, at(t0 + 61 * 60_000L))
+        assertEquals(VoipPhase.IN_CALL, hungUp.phase)
+        assertEquals(t0 + 61 * 60_000L, hungUp.record!!.callGoneElapsedMs)
+        assertEquals(VoipVerdict(null, VoipPhase.NONE, null), voipExemption(hungUp.record, at(t0 + 61 * 60_000L + VOIP_CALL_SETTLE_MS)))
     }
 
     @Test
@@ -293,7 +297,11 @@ class VoipCallPlanTest {
         val second = voipExemption(call.record, at(t0 + 60_000, ringing = setOf(signal), inCall = setOf(element), audio = true))
         assertEquals(VoipPhase.IN_CALL, second.phase)
         assertEquals(element, second.pinned)
-        val after = voipExemption(second.record, at(t0 + 120_000, ringing = setOf(signal)))
+        // The call's notice gone: the settle first, then the other app's ring starts anew.
+        val settling = voipExemption(second.record, at(t0 + 119_000, ringing = setOf(signal)))
+        assertEquals(VoipPhase.IN_CALL, settling.phase)
+        assertEquals(element, settling.pinned)
+        val after = voipExemption(settling.record, at(t0 + 120_000, ringing = setOf(signal)))
         assertEquals(VoipPhase.RINGING, after.phase)
         assertEquals(signal, after.pinned)
         assertEquals(t0 + 120_000, after.record!!.start.elapsedStartMs)
@@ -302,6 +310,132 @@ class VoipCallPlanTest {
         assertEquals(VoipPhase.RINGING, again.phase)
         assertEquals(call.record!!.start, again.record!!.start)
         assertNull(again.record!!.ringEndedElapsedMs)
+    }
+
+    // ---- the call's end (2026-11-17 check, item 5) ------------------------------------------------
+
+    /** The ring, its end at [answerAt] and (with [callFor]) the call's notice and audio from [answerAt] + 200 ms for
+     * that long: the record as the poll leaves it. */
+    private fun answered(answerAt: Long, callFor: Long): VoipRecord {
+        val ring = voipExemption(null, at(t0, ringing = setOf(element))).record
+        val ended = voipExemption(ring, at(answerAt)).record
+        val up = voipExemption(ended, at(answerAt + 200, inCall = setOf(element), audio = true))
+        assertTrue(up.record!!.callSeen)
+        assertEquals(VoipPhase.IN_CALL, up.phase)
+        return voipExemption(up.record, at(answerAt + 200 + callFor, inCall = setOf(element), audio = true)).record!!
+    }
+
+    @Test
+    fun `a ring the caller hangs up - no call notice, the whole grace as before`() {
+        val ring = voipExemption(null, at(t0, ringing = setOf(element)))
+        val ended = voipExemption(ring.record, at(t0 + 8_000))
+        assertFalse(ended.record!!.callSeen)
+        val waits = voipExemption(ended.record, at(t0 + 8_000 + VOIP_CALL_SETTLE_MS + 1))
+        assertEquals("no call notice yet: the answer gap may still be running", VoipPhase.IN_CALL, waits.phase)
+        assertEquals(VoipPhase.IN_CALL, voipExemption(waits.record, at(t0 + 8_000 + VOIP_GRACE_MS - 1)).phase)
+        assertEquals(VoipVerdict(null, VoipPhase.NONE, null), voipExemption(waits.record, at(t0 + 8_000 + VOIP_GRACE_MS)))
+    }
+
+    @Test
+    fun `the gap between the ring and the call notice keeps the grace - the call then holds it`() {
+        val ring = voipExemption(null, at(t0, ringing = setOf(element)))
+        val gap = voipExemption(ring.record, at(t0 + 5_000))
+        // Element joins first: no call notice and no call audio for seconds - never the settle's end.
+        val stillGap = voipExemption(gap.record, at(t0 + 5_000 + 4_000))
+        assertEquals(VoipPhase.IN_CALL, stillGap.phase)
+        assertEquals(element, stillGap.pinned)
+        assertFalse(stillGap.record!!.callSeen)
+        assertNull(stillGap.record!!.callGoneElapsedMs)
+        val call = voipExemption(stillGap.record, at(t0 + 5_000 + 10_000, inCall = setOf(element), audio = true))
+        assertEquals(VoipPhase.IN_CALL, call.phase)
+        assertTrue(call.record!!.callSeen)
+    }
+
+    @Test
+    fun `a short answered call ends a settle after its notice goes, not at the grace`() {
+        val answerAt = t0 + 5_000
+        val call = answered(answerAt, callFor = 10_000)
+        val goneAt = answerAt + 10_500
+        val gone = voipExemption(call, at(goneAt))
+        assertEquals("well inside the grace", true, goneAt - answerAt < VOIP_GRACE_MS)
+        assertEquals(VoipPhase.IN_CALL, gone.phase)
+        assertEquals(goneAt, gone.record!!.callGoneElapsedMs)
+        assertEquals(VoipPhase.IN_CALL, voipExemption(gone.record, at(goneAt + VOIP_CALL_SETTLE_MS - 1)).phase)
+        assertEquals(VoipVerdict(null, VoipPhase.NONE, null), voipExemption(gone.record, at(goneAt + VOIP_CALL_SETTLE_MS)))
+        // A notice re-posted under another key within the settle: the call goes on, the settle starts over later.
+        val back = voipExemption(gone.record, at(goneAt + 300, inCall = setOf(element), audio = true))
+        assertEquals(VoipPhase.IN_CALL, back.phase)
+        assertNull(back.record!!.callGoneElapsedMs)
+        assertTrue(back.record!!.callSeen)
+    }
+
+    @Test
+    fun `a long call ends a settle after its notice goes`() {
+        val answerAt = t0 + 5_000
+        val call = answered(answerAt, callFor = 30_000)
+        val goneAt = answerAt + 30_500
+        val gone = voipExemption(call, at(goneAt))
+        assertEquals(VoipPhase.IN_CALL, gone.phase)
+        assertEquals(VoipVerdict(null, VoipPhase.NONE, null), voipExemption(gone.record, at(goneAt + VOIP_CALL_SETTLE_MS)))
+        // Past the grace the audio never holds it (QA #5): over at the settle all the same.
+        assertEquals(VoipVerdict(null, VoipPhase.NONE, null), voipExemption(gone.record, at(goneAt + VOIP_CALL_SETTLE_MS, audio = true)))
+    }
+
+    @Test
+    fun `the call notice gone while the audio is still in the call - no end yet`() {
+        val answerAt = t0 + 5_000
+        val call = answered(answerAt, callFor = 3_000)
+        val goneAt = answerAt + 3_500
+        val gone = voipExemption(call, at(goneAt, audio = true))
+        val held = voipExemption(gone.record, at(goneAt + VOIP_CALL_SETTLE_MS + 500, audio = true))
+        assertEquals(VoipPhase.IN_CALL, held.phase)
+        assertEquals(element, held.pinned)
+        assertEquals(goneAt, held.record!!.callGoneElapsedMs)
+        // The audio leaves: over at once.
+        assertEquals(VoipVerdict(null, VoipPhase.NONE, null), voipExemption(held.record, at(goneAt + 2_500)))
+        // Never past the grace: the audio alone holds nothing.
+        assertEquals(VoipVerdict(null, VoipPhase.NONE, null), voipExemption(held.record, at(answerAt + VOIP_GRACE_MS, audio = true)))
+    }
+
+    @Test
+    fun `the audio out of the call while the call notice is still up - no end`() {
+        val answerAt = t0 + 5_000
+        val call = answered(answerAt, callFor = 3_000)
+        val quiet = voipExemption(call, at(answerAt + 4_000, inCall = setOf(element), audio = false))
+        assertEquals("in the grace", VoipVerdict(call, VoipPhase.IN_CALL, element), quiet)
+        val later = voipExemption(quiet.record, at(answerAt + VOIP_GRACE_MS + 60_000, inCall = setOf(element), audio = false))
+        assertEquals("the lock back, the package still pinned (QA #5)", VoipVerdict(call, VoipPhase.NONE, element), later)
+    }
+
+    @Test
+    fun `a new ring forgets the call seen before it - its own answer gap`() {
+        val answerAt = t0 + 5_000
+        val call = answered(answerAt, callFor = 10_000)
+        val again = voipExemption(call, at(answerAt + 20_000, ringing = setOf(element), inCall = setOf(element)))
+        assertEquals(VoipPhase.RINGING, again.phase)
+        assertFalse(again.record!!.callSeen)
+        val sameRing = voipExemption(again.record!!.copy(callSeen = true), at(answerAt + 21_000, ringing = setOf(element)))
+        assertTrue("the same ring keeps what it had", sameRing.record!!.callSeen)
+    }
+
+    @Test
+    fun `the poll looks again when the settle is over, never in a tight loop`() {
+        val start = WindowStart(t0Wall + VOIP_CAP_MS, t0, boot)
+        val settling = VoipRecord(element, start, ringEndedElapsedMs = t0, callSeen = true, callGoneElapsedMs = t0 + 1_000)
+        assertEquals(2_000L, voipPollMs(null, t0, 2_000L))
+        assertEquals(2_000L, voipPollMs(settling.copy(callGoneElapsedMs = null), t0, 2_000L))
+        assertEquals(VOIP_CALL_SETTLE_MS, voipPollMs(settling, t0 + 1_000, 2_000L))
+        assertEquals(300L, voipPollMs(settling, t0 + 1_700, 2_000L))
+        assertEquals(VOIP_SETTLE_POLL_MIN_MS, voipPollMs(settling, t0 + 1_990, 2_000L))
+        assertEquals("settled, the audio holding it", 2_000L, voipPollMs(settling, t0 + 2_000, 2_000L))
+        assertEquals("elapsed going backwards", 2_000L, voipPollMs(settling, t0, 2_000L))
+        assertEquals(listOf(1_000L, 15_000L), listOf(VOIP_CALL_SETTLE_MS, VOIP_GRACE_MS))
+        // The glue: the poll's delay from the rule, and the call seen kept across a process start.
+        val calls = src("lock/VoipCalls.kt")
+        assertTrue(calls.contains("handler.postDelayed(poll, voipPollMs(newRecord, SystemClock.elapsedRealtime(), POLL_MS))"))
+        assertTrue(calls.contains(".putBoolean(KEY_CALL_SEEN, r.callSeen).putLong(KEY_CALL_GONE, r.callGoneElapsedMs ?: -1L)"))
+        assertTrue(calls.contains("callSeen = prefs.getBoolean(KEY_CALL_SEEN, false),"))
+        assertTrue(calls.contains(".remove(KEY_CALL_SEEN).remove(KEY_CALL_GONE)"))
     }
 
     // ---- the system dialer's call (QA #7) and the ring (QA #1) ------------------------------------
