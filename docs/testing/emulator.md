@@ -4984,6 +4984,26 @@ without a shared identity): read in the connector's source - `MessagingReceiver.
 checks the sender - and seen on the probe (`sender=null`); the real connector is Element X's, owed on the Jelly Star.
 No crash of the launcher in either run (`logcat -b crash`).
 
+## 6az. Innstillinger as a task of its own (design 111, branch `kid-settings-task`) - not run yet
+
+`docs/notes/launcher/kid-settings.md`, "Innstillinger as a task of its own"; the design's §4. Setup as §6av: **`jelly36`**
+restored clean, the kiosk LOCKED and enrolled; rules `Lekser` (calls off) and `Kveld`; a rule turned on now with the
+PWA's `POST /devices/1/rules-now` and ended with `POST /devices/1/lock-now/<id>/end`; transitions recorded with the
+guest's `screenrecord` and cut into frames (`ffmpeg -vf fps=20`). **`compat34`** started with `-wipe-data -dns-server
+8.8.8.8`. The parent's mask with Wi-Fi, Bluetooth, sound and Snarveier (1 + 2 + 8 + 128) unless a row says otherwise.
+
+| # | Check | How | Expected | API |
+|---|---|---|---|---|
+| 1 | Own task | Home's Innstillinger tile, then Home and the swipe left; `dumpsys activity activities`, `dumpsys activity lock-task` | `Task{... type=standard A=...launcher.debug.kidsettings}`, `KidSettingsActivity` on top, the same task from both ways in; Home's task first in the lock-task list | 36, 34 |
+| 2 | Open and close | The tile, then the Home key, recorded; the same for Meldinger | **Record the transition type seen** (task or wallpaper-intra) and the first frame. Expected: Meldinger's open and close task animation; the first frame plain night ground (`kid_ground`), the same colour as the screen - no wallpaper anywhere on Kid Settings | 36, 34 |
+| 3 | Recents and Back | The square key; a tap on the card. Wi-Fi page, Home, the tile. A picker on top, then the card. The Wi-Fi sign-in entry on top (a captive network, §6ap), then the card. Back twice | A card "Innstillinger" with the Vibb icon, the night ground in its thumbnail; a tap brings back the same instance (`dumpsys` hash); the Wi-Fi page comes back on top; the picker and the entry come back with the card; Back twice ends on Home and the card stays | 36, 34 |
+| 4 | Location and the mask | Wi-Fi page, then Home: `settings get secure location_mode`; back on the page; a connect followed at once by Home; the PWA takes the Wi-Fi bit away, then the card | Off after Home, on again on the page (when the parent had it off); no "couldn't connect" toast after the connect and Home; without the bit Kid Settings shows no Wi-Fi row, the page is gone, and `location_mode` never turned on (logcat: no scan) | 36, 34 |
+| 5 | A rule, and Flymodus | Wi-Fi page, Home, `Lekser` on, then the card; the rule ended, then the card. Flymodus on and off from Kid Settings (the assistant role held) | Under the rule the time-rule screen, the Wi-Fi page finished, no scan started (logcat); after it Kid Settings. Flymodus: back on Kid Settings after each | 36, 34 (rule only) |
+| 6 | Process death | Lys with the phone in dark theme; Bluetooth page, Home, `adb shell am kill` / `kill -9` of the process, then the card | **Record** the splash (the sub-page's `KidPageTheme` ground in the phone's mode - the accepted wrong-look flash, design 111 §2.3; no icon: every theme inherits `launcherBaseTheme`'s `splash_icon_none`, so design 111's "with the Vibb icon" is not expected), then the Bluetooth page restored in Lys. Back twice ends on Home; `dumpsys activity lock-task` shows Home first | 36, 34 |
+| 7 | Language and look | The parent switches nb to en with the card in Recents, then Home (logcat: whether the first ask was refused); in Kid Settings Lys with Meldinger, Dagen and the phone book open behind | The switch goes through. **Record whether the first ask was refused**: only then is Kid Settings' task closed (the next card "Settings"); a first ask that got through leaves the task and its card "Innstillinger" until the screen is shown again (code QA L5). Lys closes Meldinger's, Dagen's and the phone book's tasks; Kid Settings' stays | 36, 34 |
+
+Rows 2, 3 and 6 on the 17 image are optional (design 111 §3).
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:

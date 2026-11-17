@@ -1,5 +1,6 @@
 package com.kidslauncher.mdm.ui.kidsettings
 
+import android.app.ActivityManager
 import android.app.NotificationManager
 import android.app.admin.DevicePolicyManager
 import android.content.BroadcastReceiver
@@ -66,9 +67,9 @@ import com.kidslauncher.mdm.ui.wallpaper.InkChoice
 import com.kidslauncher.mdm.ui.wallpaper.KidInk
 import com.kidslauncher.mdm.ui.wallpaper.Wallpaper
 import com.kidslauncher.mdm.ui.wallpaper.WallpaperFill
-import com.kidslauncher.mdm.ui.wallpaper.WallpaperGround
 import com.kidslauncher.mdm.ui.wallpaper.WallpaperRender
 import com.kidslauncher.mdm.ui.wallpaper.WallpaperStore
+import com.kidslauncher.mdm.ui.wallpaper.inkForColours
 import com.kidslauncher.mdm.shortcuts.ShortcutsNotification
 import com.kidslauncher.mdm.shortcuts.ShortcutsRuntime
 import com.kidslauncher.mdm.shortcuts.pickerStart
@@ -93,6 +94,12 @@ import kotlinx.coroutines.withContext
  * read again on every resume and after a tap's write. The ringtone and message sound rows ([SoundPicks]) show the
  * phone's sounds, read off the main thread on every resume (the picker is its own page). The kid's hidden apps (the user, 2026-11-03) are filtered again on
  * every resume, policy and change of the hidden set.
+ *
+ * A task of its own (design 111, 2026-11-17), as Meldinger's, Kalender's and the phone book's: `${applicationId}.kidsettings`
+ * with its four sub-pages, in Recents as "Innstillinger" until Back, opened by one intent ([intent]) from the tile and
+ * the swipe. Opaque on the plain night ground (the user, Q1: no copy of the wallpaper here), so Android draws its task
+ * animation, and the window, the splash and the content are the one colour (`KidSettingsTheme`). The sub-pages check
+ * the rule and their row themselves ([SubPageGuard]); this screen redirects under any rule ([redirectIfLocked]).
  */
 class KidSettingsActivity : UIObjectActivity() {
     private lateinit var binding: ActivityKidSettingsBinding
@@ -194,6 +201,14 @@ class KidSettingsActivity : UIObjectActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Its Recents card: the tile's name and the launcher's icon, as Kalender's, Meldinger's and the phone book's (the
+        // root's description serves the whole task; minSdk 34 always has the Builder).
+        setTaskDescription(
+            ActivityManager.TaskDescription.Builder()
+                .setLabel(getString(R.string.kid_settings_title))
+                .setIcon(R.mipmap.ic_launcher)
+                .build(),
+        )
         binding = ActivityKidSettingsBinding.inflate(layoutInflater)
         setContentView(binding.root)
         dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
@@ -257,6 +272,9 @@ class KidSettingsActivity : UIObjectActivity() {
 
     override fun onStart() {
         super.onStart()
+        // Code QA L1: a card brought back under a rule shows nothing until the time-rule screen is up - its old
+        // content would take touches for those frames (it no longer sits under that screen in Home's task).
+        coverIfLocked()
         LauncherPreferences.getSharedPreferences().registerOnSharedPreferenceChangeListener(prefsListener)
         WallpaperStore.addListener(wallpaperListener)
         WallpaperStore.addThumbnailListener(thumbnailListener)
@@ -292,23 +310,33 @@ class KidSettingsActivity : UIObjectActivity() {
         super.onStop()
     }
 
+    /** Under any rule the time-rule screen comes first, the content hidden meanwhile; shown again only without one. */
     private fun redirectIfLocked(): Boolean {
-        if (LauncherPreferences.mdm().lockReason() == LockReason.NONE) return false
+        if (!coverIfLocked()) return false
         LockActivity.start(this)
         return true
     }
 
-    /** The kid's wallpaper behind this screen too, the same way as Home. */
-    override fun showsSystemWallpaper() = true
+    /** The content invisible while a rule or the budget is in force (no touch reaches it), visible otherwise; true
+     * when covered. */
+    private fun coverIfLocked(): Boolean {
+        val locked = LauncherPreferences.mdm().lockReason() != LockReason.NONE
+        binding.root.visibility = if (locked) View.INVISIBLE else View.VISIBLE
+        return locked
+    }
+
+    /** The ink on the plain night ground (the layout's `kid_ground`, the window's and the splash's too): white, no scrim,
+     * no shadow - the wallpaper's ink is Home's alone since design 111. */
+    private val groundInk: InkChoice by lazy { inkForColours(listOf(getColor(R.color.kid_ground))) }
 
     private fun render() {
-        // The same copy of the wallpaper as Home draws (qa-launcher-small-a-code Q-1): no scale step between the two.
-        val wallpaper = WallpaperGround.apply(this, binding.root, ownGround = true)
+        // The plain night ground, never a copy of the wallpaper (design 111 Q1): the store only feeds the picker.
+        val wallpaper = WallpaperStore.state
         val model = kidSettingsModel(
             dpm.isDeviceOwnerApp(packageName), cachedPolicy(), wallpaper.choices, wallpaper.current,
             roleHeld = AirplaneRuntime.roleHeld(this), airplaneOn = AirplaneRuntime.isOn(this),
         )
-        renderInk(wallpaper.ink)
+        renderInk(groundInk)
         renderWallpapers(model.wallpapers)
         val section = model.controls
         val described = section.describe()
@@ -352,7 +380,7 @@ class KidSettingsActivity : UIObjectActivity() {
         }
     }
 
-    /** The row while the kid has hidden an app ([hiddenAppsView]); the list under it while open, in the wallpaper's ink. */
+    /** The row while the kid has hidden an app ([hiddenAppsView]); the list under it while open, in the ground's ink. */
     private fun renderHidden() {
         val view = hiddenAppsView(hiddenApps, hiddenOpen)
         hiddenOpen = view.open
@@ -362,7 +390,7 @@ class KidSettingsActivity : UIObjectActivity() {
             getString(if (view.open) R.string.kid_settings_hidden_open else R.string.kid_settings_hidden_closed)
         val down = if (binding.root.layoutDirection == View.LAYOUT_DIRECTION_RTL) -90f else 90f
         binding.kidSettingsHiddenChevron.rotation = if (view.open) down else 0f
-        val ink = WallpaperStore.state.ink
+        val ink = groundInk
         binding.kidSettingsHiddenChevron.imageTintList = ColorStateList.valueOf(ink.ink)
         val list = binding.kidSettingsHiddenList
         list.removeAllViews()
@@ -772,7 +800,7 @@ class KidSettingsActivity : UIObjectActivity() {
         val grid = binding.kidSettingsWallpapers
         grid.removeAllViews()
         if (tiles.isEmpty()) return
-        val ink = WallpaperStore.state.ink
+        val ink = groundInk
         val gap = KidAvatars.dp(this, 8f)
         val tileHeight = KidAvatars.dp(this, 64f)
         val radius = KidAvatars.dp(this, 12f).toFloat()
@@ -853,6 +881,19 @@ class KidSettingsActivity : UIObjectActivity() {
 
     companion object {
         private const val TAG = "KidSettings"
+
+        /**
+         * The one way to open Kid Settings - Home's last tile and the swipe left (design 111): a task of its own
+         * (`FLAG_ACTIVITY_NEW_TASK` with the manifest's `.kidsettings` affinity). A task already there comes back as it
+         * was, a sub-page on top if one was open. Never an action, data, extras or `CLEAR_TOP`: nothing forwards into
+         * the root, so the task's base intent is always this one and Android never stacks a second Kid Settings (the
+         * phone book's code QA M1).
+         */
+        fun intent(context: Context): Intent =
+            Intent(context, KidSettingsActivity::class.java).addFlags(LAUNCH_FLAGS)
+
+        /** [intent]'s flags: a task of its own, and nothing else (KidSettingsTaskTest). */
+        internal const val LAUNCH_FLAGS = Intent.FLAG_ACTIVITY_NEW_TASK
 
         /** A hidden app's icon in the list (Home's tile drawn smaller). */
         private const val HIDDEN_ICON_DP = 40f

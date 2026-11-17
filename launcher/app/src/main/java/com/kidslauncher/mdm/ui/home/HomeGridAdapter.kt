@@ -2,7 +2,6 @@ package com.kidslauncher.mdm.ui.home
 
 import android.annotation.SuppressLint
 import android.app.Activity
-import android.content.Intent
 import android.content.res.ColorStateList
 import android.graphics.Bitmap
 import android.graphics.Rect
@@ -117,7 +116,8 @@ class HomeGridAdapter(
                     is GridTile.Messages -> activity.startActivity(com.kidslauncher.mdm.ui.messages.MessagesScreens.listIntent(activity))
                     // Dagen's own task (2026-10-27): the one intent the glance uses too.
                     GridTile.Day -> activity.startActivity(com.kidslauncher.mdm.ui.day.DayActivity.intent(activity))
-                    GridTile.Settings -> activity.startActivity(Intent(activity, KidSettingsActivity::class.java))
+                    // Kid Settings' own task (design 111), with the swipe's one intent.
+                    GridTile.Settings -> activity.startActivity(KidSettingsActivity.intent(activity))
                     is GridTile.App -> {
                         val rect = Rect().also { v.getGlobalVisibleRect(it) }
                         infos[tile.app.key]?.getAction()?.invoke(activity, rect)

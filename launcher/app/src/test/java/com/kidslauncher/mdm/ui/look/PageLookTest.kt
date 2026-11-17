@@ -150,6 +150,8 @@ class PageLookTest {
             "com.kidslauncher.mdm.ui.messages.PictureActivity",
             "com.kidslauncher.mdm.calls.PhoneBookEntryActivity",
             "com.kidslauncher.mdm.ui.quickcontrols.WifiNetworksActivity",
+            // Design 111: Kid Settings' own task stays - the look is chosen in it.
+            "com.kidslauncher.mdm.ui.kidsettings.KidSettingsActivity",
         )
         for (root in others) assertFalse("$root", closesTask(root))
     }

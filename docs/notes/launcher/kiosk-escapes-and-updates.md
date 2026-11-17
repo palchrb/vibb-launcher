@@ -18,10 +18,11 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
 ## Home stays the lock-task root after a process death (kiosk-root, 2026-11-11)
 
 - **The rule**: with the kiosk on, Home's task is `mLockTaskModeTasks[0]`, never a page task of our own affinity
-  (`.day` Kalender, `.messages` Meldinger, `.call`, `.pinlock` but for the lock's own fallback in `LockTaskRoot.kt`).
+  (`.day` Kalender, `.messages` Meldinger, `.phonebook` the phone book, `.kidsettings` kid Settings - design 111 -,
+  `.call`, `.pinlock` but for the lock's own fallback in `LockTaskRoot.kt`).
   A root's last activity can't finish (AOSP `activityBlockedFromFinish`: Back does nothing, "Not finishing task in
-  lock task mode"), and removing the root clears every other locked task (`clearLockedTask`: `clear-task-all` on Home
-  and kid Settings).
+  lock task mode"), and removing the root clears every other locked task (`clearLockedTask`: `clear-task-all` on Home's
+  task and every other locked task - kid Settings' own since design 111).
 - **The cause it guards against** (§6ah's two findings): a launcher process death with Home in front - a kill, the
   low-memory killer, a crash (the crash's own finish of Home is blocked while Home is the root). AOSP
   `ActivityRecord.handleAppDied` removes an activity that has no saved state (`!mHaveState && !stateNotNeeded`); a

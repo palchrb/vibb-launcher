@@ -315,4 +315,21 @@ class BluetoothAudioTest {
         assertTrue(activity.substringAfter("override fun onStart(").contains("session = BluetoothAudio.Session(this)"))
         assertTrue(activity.substringAfter("override fun onStop(").substringBefore("override fun").contains("session?.close()"))
     }
+
+    /** Design 111 code QA L3: a start runs a discovery on the page's first start and after one a stop cut short, never
+     * while a pair or a connect runs (the rescan waits for a later start). */
+    @Test
+    fun `a start rescans only when no pair or connect runs`() {
+        data class Row(val first: Boolean, val rescan: Boolean, val busy: Boolean, val scans: Boolean)
+        val rows = listOf(
+            Row(first = true, rescan = false, busy = false, scans = true),
+            Row(first = false, rescan = true, busy = false, scans = true),
+            Row(first = false, rescan = true, busy = true, scans = false),
+            Row(first = false, rescan = false, busy = false, scans = false),
+            Row(first = false, rescan = false, busy = true, scans = false),
+        )
+        for (row in rows) {
+            assertEquals("$row", row.scans, com.kidslauncher.mdm.ui.quickcontrols.btStartScans(row.first, row.rescan, row.busy))
+        }
+    }
 }

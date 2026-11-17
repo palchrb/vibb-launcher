@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The kid's Settings (design 08-ui-polish.md §2, mockup KidSettings.dc.html): the wallpaper as
-     ground, back button + title, the parent's wallpapers to pick from, then "Connection and
+<!-- The kid's Settings (design 08-ui-polish.md §2, mockup KidSettings.dc.html): the plain night
+     ground (design 111: no copy of the wallpaper since it is a task of its own), back button + title, the parent's wallpapers to pick from, then "Connection and
      screen" with the switches the parent turned on. Nothing here changes a rule. -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"

@@ -169,6 +169,21 @@
         <item name="android:enforceNavigationBarContrast">false</item>
     </style>
 
+    <!-- Kid Settings (design 111, path (b) with the user's plain ground): an opaque task of its own on the night ground,
+         so WM Shell runs the task animation (as Meldinger's) and not the wallpaper-intra one a wallpaper window gets.
+         KidPageNightTheme's five window literals - the window, the splash and the layout's root all kid_ground, so a
+         starting window already matches the screen - and transparent bars, which the content runs under (KidInsets).
+         It stays night in both looks (design 78: only a page follows the look), so it has no light twin. -->
+    <style name="KidSettingsTheme" parent="launcherBaseTheme">
+        <item name="android:windowBackground">@color/kid_ground</item>
+        <item name="android:windowSplashScreenBackground">@color/kid_ground</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:enforceNavigationBarContrast">true</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+
     <!-- A page's colours, laid over its theme by KidPageActivity.getTheme after UIObject.modifyTheme (which
          applies colorThemeDefault's night colours on every call). It is what colours a theme reference on a page:
          ?android:attr/textColorSecondary, ?attr/selectableItemBackground's ripple, a control's tint. At night

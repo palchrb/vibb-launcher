@@ -39,8 +39,9 @@ class PageManifestTest {
         ".calls.PhoneBookActivity" to ".calls.LightPhoneBookActivity",
     )
 
-    /** The pages with one class, in Home's task (R9): kid Settings' lists and pickers (the phone book has its own task
-     * and two classes since 2026-11-16). */
+    /** The pages with one class (R9): kid Settings' lists and pickers, in its own task above it since design 111 - an
+     * in-task start in a running process gets no starting window, a Recents restore gets the splash (accepted, design
+     * 111 §2.3). The phone book has its own task and two classes since 2026-11-16. */
     private val oneClass = setOf(
         ".ui.quickcontrols.WifiNetworksActivity", ".ui.quickcontrols.BluetoothDevicesActivity",
         ".ui.kidsettings.KidSoundPickerActivity", ".ui.kidsettings.ShortcutsPickerActivity",
@@ -52,7 +53,7 @@ class PageManifestTest {
         fun on(theme: String) = activities.filter { it.getAttributeNS(ns, "theme") == theme }.map(::name).toSet()
         assertEquals(pairs.keys, on("@style/KidPageNightTheme"))
         assertEquals(pairs.values.toSet(), on("@style/KidPageLightTheme"))
-        // The qualified theme itself is for a page with one class, in Home's task (R9).
+        // The qualified theme itself is for a page with one class, kid Settings' sub-pages (R9).
         assertEquals(oneClass, on("@style/KidPageTheme"))
         for (page in oneClass) {
             val code = file("java/com/kidslauncher/mdm/${page.removePrefix(".").replace('.', '/')}.kt").readText()

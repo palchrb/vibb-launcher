@@ -29,8 +29,9 @@ abstract class KidPageActivity : UIObjectActivity() {
         PageLook.closeIfOtherLook(this)
     }
 
-    /** A page that can top a task of its own (a row in [PageKind]); a page with one class is in Home's task (R9)
-     * and is not counted for [mayChange]. */
+    /** A page that can top a task of its own (a row in [PageKind]); a page with one class - Kid Settings' four
+     * sub-pages, in its task above it since design 111 (R9) - never roots a task and is not counted for [mayChange]:
+     * the look is chosen in Kid Settings, so none of them is started then. */
     private val ownTask: Boolean get() = PageKind.lookOf(javaClass) != null
 
     override fun onStart() {

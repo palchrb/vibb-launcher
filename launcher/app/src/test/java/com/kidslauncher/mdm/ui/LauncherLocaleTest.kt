@@ -238,6 +238,8 @@ class LauncherLocaleTest {
         // Kalender's task in Lys has the light twin as its root (design 78 §12.2).
         assertTrue(languageClosesTask(LightDayActivity::class.java.name))
         assertTrue(languageClosesTask(MessagesActivity::class.java.name))
+        // Design 111: Kid Settings' own task too - a stopped one behind Home can be what makes the system refuse.
+        assertTrue(languageClosesTask("com.kidslauncher.mdm.ui.kidsettings.KidSettingsActivity"))
         val others = listOf(
             null,
             "",
@@ -245,6 +247,9 @@ class LauncherLocaleTest {
             EventActivity::class.java.name,
             ThreadActivity::class.java.name,
             "com.kidslauncher.mdm.lock.PinLockActivity",
+            // Kid Settings' sub-pages never root its task.
+            "com.kidslauncher.mdm.ui.quickcontrols.WifiNetworksActivity",
+            "com.kidslauncher.mdm.ui.kidsettings.ShortcutsPickerActivity",
         )
         for (other in others) assertFalse("$other", languageClosesTask(other))
     }

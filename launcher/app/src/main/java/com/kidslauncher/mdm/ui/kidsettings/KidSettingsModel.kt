@@ -1,6 +1,7 @@
 package com.kidslauncher.mdm.ui.kidsettings
 
 import com.kidslauncher.mdm.server.CachedPolicy
+import com.kidslauncher.mdm.server.LockReason
 import com.kidslauncher.mdm.server.QuickControlFeature
 import com.kidslauncher.mdm.ui.wallpaper.Wallpaper
 
@@ -88,6 +89,86 @@ fun controlsSection(isDeviceOwner: Boolean, cached: CachedPolicy, roleHeld: Bool
 /** Security review S-L5: the Bluetooth devices page may stay open only while [section] still shows the Bluetooth row
  * (`quick_controls_mask`'s bit); else it finishes - at its start and after every apply. */
 fun bluetoothPageAllowed(section: ControlsSection): Boolean = (section as? ControlsSection.Rows)?.bluetooth == true
+
+/** Design 111 §2.2: the Wi-Fi networks page, as [bluetoothPageAllowed] - only while [section] shows the Wi-Fi row. */
+fun wifiPageAllowed(section: ControlsSection): Boolean = (section as? ControlsSection.Rows)?.wifi == true
+
+/** Kid Settings' four sub-pages (design 111): each is opened only from Kid Settings' own rows, in its task. */
+enum class SubPage { WIFI, BLUETOOTH, SOUND_PICKER, SHORTCUTS }
+
+/** What a sub-page does at its gate ([subPageGate]). */
+enum class SubPageGate {
+    /** A time rule or the budget is in force: the time-rule screen comes first, and the page finishes. */
+    REDIRECT,
+
+    /** Its row is no longer Kid Settings' (the parent's switch, the app-op, no device owner): the page finishes. */
+    FINISH,
+
+    /** The page may stay. */
+    OPEN,
+}
+
+/**
+ * Design 111 §2.2: the one gate of Kid Settings' four sub-pages, now that they live in Kid Settings' own task and a
+ * Recents card can bring one back under a rule or after the parent took its row away. Run first in `onStart` (before
+ * any radio work), again in `onResume`, on a `lockReason` change and after each apply. [lockReason] first: any rule or
+ * the budget sends the page to the time-rule screen (a pause or Foreldrekode is `NONE`, as for Kid Settings). Then the
+ * page's row as Kid Settings shows it: Wi-Fi's and Bluetooth's bits of [section]; the sound picker the sound bit with
+ * the "Modify system settings" app-op ([soundWritable], [soundPicksState]); Snarveier the cached policy's bit 128
+ * ([mask], `null` without an accepted policy) on a device-owner phone.
+ */
+fun subPageGate(
+    lockReason: LockReason,
+    section: ControlsSection,
+    page: SubPage,
+    mask: Long? = null,
+    soundWritable: Boolean = false,
+): SubPageGate {
+    if (lockReason != LockReason.NONE) return SubPageGate.REDIRECT
+    val open = when (page) {
+        SubPage.WIFI -> wifiPageAllowed(section)
+        SubPage.BLUETOOTH -> bluetoothPageAllowed(section)
+        SubPage.SOUND_PICKER -> soundPicksState((section as? ControlsSection.Rows)?.sound == true, soundWritable)?.writable == true
+        SubPage.SHORTCUTS -> section != ControlsSection.NotOwner && mask != null && mask and QuickControlFeature.SHORTCUTS != 0L
+    }
+    return if (open) SubPageGate.OPEN else SubPageGate.FINISH
+}
+
+/** The Wi-Fi page's two moments for system Location ([wifiLocationStep]). */
+enum class WifiPageEvent { START, STOP }
+
+/**
+ * What the Wi-Fi page does at a [WifiPageEvent]: [stopPoll] drops a connect attempt's poll (no toast), [location] turns
+ * system Location on (`true`), off (`false`) or leaves it (`null`), [byUs] is whether the page turned it on, and [scan]
+ * starts a scan.
+ */
+data class WifiLocationStep(val stopPoll: Boolean, val location: Boolean?, val byUs: Boolean, val scan: Boolean)
+
+/**
+ * Design 111 §2.2 (L1): Location only while the Wi-Fi page is shown. Android's Wi-Fi scan and config calls need system
+ * Location on (`QuickControls.isLocationEnabled`); the page turned it on in `onCreate` and off only in `onDestroy`, which
+ * Home's clear used to bring - in Kid Settings' own task the page can sit stopped in the card for hours.
+ * - [WifiPageEvent.START] (after the gate): Location on if it is off ([enabledNow] false), marked as ours; then the scan.
+ *   Already on, it is left as it is and stays whoever's it was.
+ * - [WifiPageEvent.STOP]: a running connect poll ([polling]) is dropped first - with Location off its next scan would
+ *   end a connect that worked as "couldn't connect" (a connect, then "Logg på" at once); then Location off only if the
+ *   page turned it on, it is still on, and the parent's policy doesn't want it on now ([policyKeepsOn]: the
+ *   CONFIG_LOCATION switch for Find my device or the zone watch, `locationStaysOn` - a sync while the page was shown
+ *   found it on already and left it; code QA L4). Never a setting the parent had on or wants on.
+ */
+fun wifiLocationStep(
+    event: WifiPageEvent,
+    enabledNow: Boolean,
+    byUs: Boolean,
+    polling: Boolean,
+    policyKeepsOn: Boolean = false,
+): WifiLocationStep = when (event) {
+    WifiPageEvent.START ->
+        if (enabledNow) WifiLocationStep(stopPoll = false, location = null, byUs = byUs, scan = true)
+        else WifiLocationStep(stopPoll = false, location = true, byUs = true, scan = true)
+    WifiPageEvent.STOP ->
+        WifiLocationStep(stopPoll = polling, location = if (byUs && enabledNow && !policyKeepsOn) false else null, byUs = false, scan = false)
+}
 
 /** One wallpaper in the picker. */
 data class WallpaperTile(val wallpaper: Wallpaper, val selected: Boolean)

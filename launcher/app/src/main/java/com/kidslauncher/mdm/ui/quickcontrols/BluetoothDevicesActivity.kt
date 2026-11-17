@@ -23,18 +23,24 @@ import com.kidslauncher.mdm.server.BtAttemptEvent
 import com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
 import com.kidslauncher.mdm.server.QuickControls
 import com.kidslauncher.mdm.server.btAttemptStep
-import com.kidslauncher.mdm.server.AppEnforcer
 import com.kidslauncher.mdm.server.CachedPolicy
 import com.kidslauncher.mdm.server.OfflineOverride
 import com.kidslauncher.mdm.server.RestrictionsPause
 import com.kidslauncher.mdm.server.btPairOffered
 import com.kidslauncher.mdm.server.cachedPolicy
-import com.kidslauncher.mdm.ui.kidsettings.bluetoothPageAllowed
-import com.kidslauncher.mdm.ui.kidsettings.controlsSection
+import com.kidslauncher.mdm.ui.kidsettings.SubPage
+import com.kidslauncher.mdm.ui.kidsettings.SubPageGuard
 import com.kidslauncher.mdm.ui.look.KidPageActivity
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+
+/**
+ * Design 111 (code QA L3): whether a start runs a discovery - the page's first, or one cut short by a stop, but never
+ * while a pair or a connect runs ([busy]): a discovery then slows or breaks it, so the start only reads the bonded list
+ * and the rescan waits for a later start.
+ */
+internal fun btStartScans(firstStart: Boolean, rescan: Boolean, busy: Boolean): Boolean = firstStart || (rescan && !busy)
 
 /**
  * Quick Controls' "Manage devices" screen - scan/pair/connect/forget, built entirely on
@@ -68,6 +74,10 @@ class BluetoothDevicesActivity : KidPageActivity() {
     private var session: BluetoothAudio.Session? = null
     private var firstStart = true
 
+    /** A discovery is running (from [scan] to its end); one cut short by a stop runs again at the next start. */
+    private var scanning = false
+    private var rescan = false
+
     /** Connect attempts running (their 10 s timeouts) and the ones that failed. Main thread only. */
     private val attempts = mutableMapOf<String, Job>()
     private val failed = mutableSetOf<String>()
@@ -99,9 +109,10 @@ class BluetoothDevicesActivity : KidPageActivity() {
         registerStateReceiver()
     }
 
-    /** Security review S-L5: the page leaves as soon as the parent takes the Bluetooth row away (a sync's apply), and
-     * a found device it may no longer pair leaves the list. */
-    private val appliedListener: () -> Unit = { if (!finishIfNotAllowed()) dropUnoffered() }
+    /** Security review S-L5 and design 111 §2.2: the page leaves as soon as the parent takes the Bluetooth row away (a
+     * sync's apply) and under a rule (the time-rule screen first), and a found device it may no longer pair leaves the
+     * list. */
+    private val guard = SubPageGuard(this, SubPage.BLUETOOTH, stayed = { dropUnoffered() })
 
     /** S-L5: a device the scan found may be paired ([btPairOffered]): an audio device, or any while the parent allows
      * it (the cached policy's `bluetooth_any_device`) or the pause/override is on. */
@@ -115,29 +126,38 @@ class BluetoothDevicesActivity : KidPageActivity() {
         if (discovered.values.removeAll { !it.bonded && !pairOffered(it) }) refreshList()
     }
 
-    /** True when it finished: the cached policy no longer shows the Bluetooth row ([bluetoothPageAllowed]). */
-    private fun finishIfNotAllowed(): Boolean {
-        if (isFinishing) return true
-        if (bluetoothPageAllowed(controlsSection(dpm.isDeviceOwnerApp(packageName), cachedPolicy()))) return false
-        finish()
-        return true
-    }
-
+    /** The gate first ([SubPageGuard]: no discovery under a rule or without the row), then the rows a pause's end left
+     * ([dropUnoffered]: the applied listener was off while stopped, design 111 §2.2 L3), then the scan or the list. */
     override fun onStart() {
         super.onStart()
-        AppEnforcer.addAppliedListener(appliedListener)
-        if (finishIfNotAllowed()) return
+        if (guard.start()) return
+        dropUnoffered()
         session = BluetoothAudio.Session(this)
-        if (firstStart) {
+        if (btStartScans(firstStart, rescan, busy = pairingAddress != null || attempts.isNotEmpty())) {
             firstStart = false
+            rescan = false
             scan()
         } else {
             loadBonded()
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        guard.check()
+    }
+
+    /** Discovery ends with the page leaving the screen (design 111 §2.2): it can sit stopped in Kid Settings' card. */
     override fun onStop() {
-        AppEnforcer.removeAppliedListener(appliedListener)
+        guard.stop()
+        if (scanning) {
+            rescan = true
+            // Not "Søker…" while nothing searches: the list, or the empty line, until the next start's scan.
+            showScanEnded()
+        }
+        scanning = false
+        QuickControls.stopBluetoothScan(this, discoveryReceiver)
+        discoveryReceiver = null
         session?.close()
         session = null
         super.onStop()
@@ -184,15 +204,25 @@ class BluetoothDevicesActivity : KidPageActivity() {
             },
             onFinished = {
                 runOnUiThread {
+                    scanning = false
                     if (isFinishing || isDestroyed) return@runOnUiThread
-                    if (discovered.isEmpty()) {
-                        binding.bluetoothDevicesStatusMessage.text =
-                            getString(R.string.bluetooth_devices_empty)
-                        binding.bluetoothDevicesStatusMessage.visibility = View.VISIBLE
-                    }
+                    showScanEnded()
                 }
             },
         )
+        // Code QA L3: a discovery that didn't start (Bluetooth off, the adapter refusing) has no end to wait for.
+        scanning = discoveryReceiver != null
+        if (!scanning) showScanEnded()
+    }
+
+    /** No discovery runs: the empty line while nothing is listed, else the list alone. */
+    private fun showScanEnded() {
+        if (discovered.isEmpty()) {
+            binding.bluetoothDevicesStatusMessage.text = getString(R.string.bluetooth_devices_empty)
+            binding.bluetoothDevicesStatusMessage.visibility = View.VISIBLE
+        } else {
+            binding.bluetoothDevicesStatusMessage.visibility = View.GONE
+        }
     }
 
     /** The bonded devices with their states, read off the main thread. */
@@ -205,6 +235,7 @@ class BluetoothDevicesActivity : KidPageActivity() {
                 settle(info)
             }
             refreshList()
+            dropUnoffered()
         }
     }
 

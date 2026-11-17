@@ -37,12 +37,13 @@ class HomeGroundTest {
         assertEquals(GroundKind.FULL, groundKind(systemShowsOurs = true, scrimAlpha = 0, ownGround = true))
         assertEquals(GroundKind.FULL, groundKind(systemShowsOurs = true, scrimAlpha = 60, ownGround = true))
         assertEquals("without ownGround: transparent over Android's wallpaper", GroundKind.TRANSPARENT, groundKind(systemShowsOurs = true, scrimAlpha = 0))
-        // qa-launcher-small-a-code Q-1: kid Settings draws the same copy, so no switch between it and Home swaps it for
-        // Android's (slightly differently scaled) render. The phone book is on Dagen's plain ground (2026-11-10).
+        // The phone book is on Dagen's plain ground (2026-11-10), and so is kid Settings since design 111 (the user's Q1:
+        // an opaque task of its own on the night ground, no copy of the wallpaper - qa-launcher-small-a-code Q-1's copy
+        // is gone with it).
         assertFalse(code("calls/PhoneBookActivity.kt").contains("Wallpaper"))
-        assertTrue(code("ui/kidsettings/KidSettingsActivity.kt").contains("val wallpaper = WallpaperGround.apply(this, binding.root, ownGround = true)"))
-        // ...and it is, with Home, every screen that shows Android's wallpaper.
-        val showsWallpaper = listOf("ui/kidsettings/KidSettingsActivity.kt", "ui/HomeActivity.kt")
+        assertFalse(code("ui/kidsettings/KidSettingsActivity.kt").contains("WallpaperGround"))
+        // Home is the one screen that shows Android's wallpaper.
+        val showsWallpaper = listOf("ui/HomeActivity.kt")
         val root = listOf(File("src/main/java/com/kidslauncher/mdm"), File("app/src/main/java/com/kidslauncher/mdm")).first { it.exists() }
         val found = root.walk().filter { it.isFile && it.name.endsWith(".kt") }
             .filter { Regex("override fun (showsSystemWallpaper|isHomeScreen)\\(").containsMatchIn(it.readText()) }

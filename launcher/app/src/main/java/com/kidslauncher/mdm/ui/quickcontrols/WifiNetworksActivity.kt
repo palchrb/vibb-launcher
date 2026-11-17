@@ -14,9 +14,22 @@ import androidx.appcompat.app.AlertDialog
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.databinding.ActivityWifiNetworksBinding
+import com.kidslauncher.mdm.calls.CallPolicyStore
+import com.kidslauncher.mdm.calls.managed
+import com.kidslauncher.mdm.server.CachedPolicy
+import com.kidslauncher.mdm.server.LEGACY_LOCATION_POLICY
 import com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
 import com.kidslauncher.mdm.server.QuickControls
+import com.kidslauncher.mdm.server.cachedPolicy
+import com.kidslauncher.mdm.server.hardeningManaged
+import com.kidslauncher.mdm.server.hardeningPlan
+import com.kidslauncher.mdm.server.locationStaysOn
+import com.kidslauncher.mdm.ui.kidsettings.SubPage
+import com.kidslauncher.mdm.ui.kidsettings.SubPageGuard
+import com.kidslauncher.mdm.ui.kidsettings.WifiPageEvent
+import com.kidslauncher.mdm.ui.kidsettings.wifiLocationStep
 import com.kidslauncher.mdm.ui.look.KidPageActivity
+import com.kidslauncher.mdm.zones.ZoneWatch
 
 private const val CONNECT_POLL_INTERVAL_MS = 3_000L
 private const val CONNECT_TIMEOUT_MS = 15_000L
@@ -39,9 +52,12 @@ class WifiNetworksActivity : KidPageActivity() {
     /** Non-null exactly while a connect attempt (including its poll loop) is in flight. */
     private var connectingSsid: String? = null
 
-    /** True only if this screen itself turned Location on - so onDestroy knows to turn it back
+    /** True only if this screen itself turned Location on - so its stop knows to turn it back
      * off rather than clobbering a setting the parent already had on for their own reasons. */
     private var locationEnabledByUs = false
+
+    /** Design 111 §2.2: a lock comes first, and the page leaves when the parent takes the Wi-Fi row away. */
+    private val guard = SubPageGuard(this, SubPage.WIFI)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -55,31 +71,68 @@ class WifiNetworksActivity : KidPageActivity() {
         dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
         admin = ComponentName(this, MdmDeviceAdminReceiver::class.java)
 
-        // WifiManager's scan/config APIs hard-require Location to be on system-wide, independent
-        // of any app permission - see QuickControls.isLocationEnabled's doc comment. Silently
-        // enabled here (no Settings, no dialog) only for this screen's lifetime.
-        if (!QuickControls.isLocationEnabled(this)) {
-            QuickControls.setLocationEnabled(dpm, admin, true)
-            locationEnabledByUs = true
-        }
-
         adapter = WifiNetworkAdapter(onConnect = ::onNetworkTapped, onForget = ::onForgetTapped)
         binding.wifiNetworksList.layoutManager = LinearLayoutManager(this)
         binding.wifiNetworksList.adapter = adapter
 
         binding.wifiNetworksPortal.setOnClickListener { portalTapped() }
-        scan()
     }
 
+    /**
+     * The gate first ([SubPageGuard]: no radio work under a rule or without the row), then Location and the scan
+     * ([wifiLocationStep]). WifiManager's scan/config APIs hard-require Location to be on system-wide, independent of
+     * any app permission - see QuickControls.isLocationEnabled's doc comment. Silently enabled here (no Settings, no
+     * dialog) only while this screen is shown: it can sit stopped in Kid Settings' Recents card (design 111 §2.2).
+     */
     override fun onStart() {
         super.onStart()
+        if (guard.start()) return
+        locationStep(WifiPageEvent.START)
         com.kidslauncher.mdm.portal.PortalRuntime.addListener(portalListener)
         renderPortal()
     }
 
+    override fun onResume() {
+        super.onResume()
+        guard.check()
+    }
+
+    /** The connect poll dropped first (no "couldn't connect" for a connect that worked), then Location off if ours. */
     override fun onStop() {
+        guard.stop()
+        locationStep(WifiPageEvent.STOP)
         com.kidslauncher.mdm.portal.PortalRuntime.removeListener(portalListener)
         super.onStop()
+    }
+
+    private fun locationStep(event: WifiPageEvent) {
+        val step = wifiLocationStep(
+            event, QuickControls.isLocationEnabled(this), locationEnabledByUs, polling = connectingSsid != null,
+            policyKeepsOn = event == WifiPageEvent.STOP && locationEnabledByUs && policyKeepsLocationOn(),
+        )
+        if (step.stopPoll) {
+            handler.removeCallbacksAndMessages(null)
+            connectingSsid = null
+            adapter.setConnecting(null)
+        }
+        step.location?.let { QuickControls.setLocationEnabled(dpm, admin, it) }
+        locationEnabledByUs = step.byUs
+        if (step.scan) scan()
+    }
+
+    /** Code QA L4: the cached policy wants system Location on now - the CONFIG_LOCATION switch (Find my device) or the
+     * zone watch, as the sync's own rule (`locationStaysOn`); an error reads as no. */
+    private fun policyKeepsLocationOn(): Boolean = try {
+        val policy = (cachedPolicy() as? CachedPolicy.Ok)?.policy
+        if (policy == null) {
+            false
+        } else {
+            CallPolicyStore.ensureLoaded(this)
+            val forcesOn = hardeningPlan(policy.hardening, hardeningManaged(policy.allowlist, CallPolicyStore.state.managed)).forceLocationOn
+            locationStaysOn(policy.locationPolicy ?: LEGACY_LOCATION_POLICY, forcesOn, ZoneWatch.zonesOn(this, policy))
+        }
+    } catch (e: Exception) {
+        false
     }
 
     private val portalListener: () -> Unit = { runOnUiThread { renderPortal() } }
@@ -123,11 +176,13 @@ class WifiNetworksActivity : KidPageActivity() {
         }
     }
 
+    /** A belt to [onStop], which has already turned Location back off. */
     override fun onDestroy() {
         super.onDestroy()
         handler.removeCallbacksAndMessages(null)
         if (locationEnabledByUs) {
             QuickControls.setLocationEnabled(dpm, admin, false)
+            locationEnabledByUs = false
         }
     }
 

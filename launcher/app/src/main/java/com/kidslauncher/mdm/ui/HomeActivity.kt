@@ -395,7 +395,7 @@ class HomeActivity : UIObjectActivity() {
                     // The drawer shows the same apps as the grid (same AppFilter), plus the PIN-gated Settings button.
                     HomeSwipe.DRAWER -> openAppsList(this@HomeActivity)
                     // The kid's own settings (also the grid's last tile) - the replacement for Android's Quick Settings shade.
-                    HomeSwipe.KID_SETTINGS -> startActivity(Intent(this@HomeActivity, KidSettingsActivity::class.java))
+                    HomeSwipe.KID_SETTINGS -> startActivity(KidSettingsActivity.intent(this@HomeActivity))
                     HomeSwipe.NONE -> return false
                 }
                 return true

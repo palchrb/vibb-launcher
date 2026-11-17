@@ -1,19 +1,14 @@
 package com.kidslauncher.mdm.ui.kidsettings
 
-import android.app.admin.DevicePolicyManager
 import android.content.Context
 import android.content.Intent
-import android.content.SharedPreferences
 import android.os.Bundle
 import android.view.View
 import androidx.lifecycle.lifecycleScope
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.databinding.ActivityShortcutsPickerBinding
 import com.kidslauncher.mdm.databinding.ItemShortcutPickBinding
-import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.server.CachedPolicy
-import com.kidslauncher.mdm.server.LockReason
-import com.kidslauncher.mdm.server.QuickControlFeature
 import com.kidslauncher.mdm.server.cachedPolicy
 import com.kidslauncher.mdm.shortcuts.SHORTCUTS_MAX
 import com.kidslauncher.mdm.shortcuts.ShortcutItem
@@ -29,7 +24,6 @@ import com.kidslauncher.mdm.shortcuts.shortcutItem
 import com.kidslauncher.mdm.shortcuts.togglePick
 import com.kidslauncher.mdm.ui.KidHeader
 import com.kidslauncher.mdm.ui.KidInsets
-import com.kidslauncher.mdm.ui.LockActivity
 import com.kidslauncher.mdm.ui.look.KidPageActivity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -62,12 +56,9 @@ class ShortcutsPickerActivity : KidPageActivity() {
         binding.shortcutsCount.visibility = View.VISIBLE
     }
 
-    private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-        when (key) {
-            LauncherPreferences.mdm().keys().kidModePolicy() -> if (!finishIfNotAllowed()) load()
-            LauncherPreferences.mdm().keys().lockReason() -> redirectIfLocked()
-        }
-    }
+    /** Design 111 §2.2: a lock comes first, and the page leaves when bit 128 goes; a new policy it stays for is read
+     * again. */
+    private val guard = SubPageGuard(this, SubPage.SHORTCUTS, stayed = { load() })
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -87,36 +78,19 @@ class ShortcutsPickerActivity : KidPageActivity() {
 
     override fun onStart() {
         super.onStart()
-        LauncherPreferences.getSharedPreferences().registerOnSharedPreferenceChangeListener(prefsListener)
+        guard.start()
     }
 
     override fun onResume() {
         super.onResume()
-        if (redirectIfLocked() || finishIfNotAllowed()) return
+        if (guard.check()) return
         load()
     }
 
     override fun onStop() {
-        LauncherPreferences.getSharedPreferences().unregisterOnSharedPreferenceChangeListener(prefsListener)
+        guard.stop()
         binding.root.removeCallbacks(hideFull)
         super.onStop()
-    }
-
-    private fun redirectIfLocked(): Boolean {
-        if (LauncherPreferences.mdm().lockReason() == LockReason.NONE) return false
-        LockActivity.start(this)
-        finish()
-        return true
-    }
-
-    /** True when it finished: not device owner, no accepted policy, or the parent's bit 128 is off. */
-    private fun finishIfNotAllowed(): Boolean {
-        if (isFinishing) return true
-        val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
-        val bits = (cachedPolicy() as? CachedPolicy.Ok)?.policy?.quickControlsMask
-        if (dpm.isDeviceOwnerApp(packageName) && bits != null && bits and QuickControlFeature.SHORTCUTS != 0L) return false
-        finish()
-        return true
     }
 
     /** The policy's mask, the platform, the stored picks and the channel, off the main thread; then the rows. */
