@@ -21,7 +21,7 @@
         <div class="group form-group">
             <div class="field">
                 <label class="field-label" for="public_origin">{{ self.t("app_push.settings.origin") }}</label>
-                <input type="text" id="public_origin" name="public_origin" value="{{ value }}" placeholder="https://phones.example.com" autocomplete="off" autocapitalize="none" spellcheck="false" inputmode="url"{% if error.is_some() %} aria-invalid="true" aria-describedby="public_origin-error" autofocus{% endif %}>
+                <input type="text" id="public_origin" name="public_origin" value="{{ value }}" placeholder="{{ self.t("app_push.settings.origin_example") }}" autocomplete="off" autocapitalize="none" spellcheck="false" inputmode="url"{% if error.is_some() %} aria-invalid="true" aria-describedby="public_origin-error" autofocus{% endif %}>
                 {% if let Some(why) = error %}<p class="field-error" id="public_origin-error">{{ self.t(why) }}</p>
                 {% else if prefilled %}<p class="field-hint" data-source="phone-setup">{{ self.t("app_push.settings.prefilled") }}</p>
                 {% else %}<p class="field-hint">{{ self.t("app_push.settings.origin_hint") }}</p>{% endif %}
