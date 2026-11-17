@@ -1,8 +1,10 @@
 # Design 108c: App push problems on Attention
 
-Status: design, 2026-11-17 (branch `up-r2r3-server`). **Not built.** An addendum to design 108b (R2/R3), to be built
-after R23-S's code QA Lows are fixed (it reads their `vapid_refused_why`, qa-108b-server-code L3). Server only: no
-launcher change, no contract change, no policy key. §6 has two questions for the user.
+Status: design, 2026-11-17 (branch `up-r2r3-server`). **Not built.** An addendum to design 108b (R2/R3), built
+after R23-S's code QA Lows (cb040b347, whose `vapid_refused_why` it reads). Server only: no launcher change, no contract
+change, no policy key. **Decided 2026-11-17** (the user: "Enig i dine anbefalinger"): Q1 (a) list and badge only, no
+Web Push to the parent; Q2 (a) an app not using Vibb is not on Attention (§6). The same day the user approved a
+delivery-time figure on Settings › App push (§7). Migration **0154** (0153 is pushed and frozen).
 
 The user, 2026-11-17: "Høres lurt ut om man får et varsel om trenger oppmerksomhet på UP, med mindre det blir masse
 false positives der?" The promise: **a row only for a real fault, never for a quiet app.** A kid's chat can be silent for
@@ -169,9 +171,8 @@ No save on the page changes, so nothing can jump (`pwa-save-no-jump`).
   - `read_from_report` is false for all three: the server's own data, never "at last report";
   - `facts()` reads it after the music parts;
   - `waiting` is dropped while `policy_problem` holds (§1.1).
-- **Migration:** the two columns go into **0153** while it is unreleased (R23-S isn't merged or tagged; the Lows fix adds
-  `vapid_refused_why` there too). If 0153 has shipped by the time this is built, they go into **0154**. Both are
-  nullable TEXT with no backfill: a run that began before the upgrade starts counting at its next stamp.
+- **Migration 0154** (0153 is pushed and frozen): the two columns, nullable TEXT with no backfill (a run that began
+  before the upgrade starts counting at its next stamp), and §7's table.
 - **Words:** `device.attention.app_push_*`, `app_push.waiting` and `app_push.refused_fix` in `en.json` and `nb.json`.
 - `docs/notes/server/unified-push.md` gains an "Attention (design 108c)" paragraph. `pwa.md`'s Attention bullet names
   the three rows.
@@ -193,17 +194,15 @@ No save on the page changes, so nothing can jump (`pwa-save-no-jump`).
 
 ## 5. Size
 
-**Server S−**, about 250 lines with the tests:
-- the query and rules, ~80;
-- `attention.rs`, ~40;
-- the page lines, ~30;
-- the words;
-- two column lines;
-- the tests, ~100.
+**Server S**, about 400 lines with the tests:
+- the Attention rows (§1-§4), ~250: the query and rules ~80, `attention.rs` ~40, the page lines ~30, the words, the
+  tests ~100;
+- the delivery time (§7), ~150: the table and its writes ~30, the figure and its words ~50, the two page rows ~20, the
+  tests ~50.
 
 No launcher, contract or gate work. It goes on `up-r2r3-server` after the Lows fix, then gets its own code QA (XS).
 
-## 6. Questions for the user
+## 6. Questions for the user (decided 2026-11-17: (a) and (a))
 
 **Q1. Should these rows also push to the parent?** The PWA's Web Push to parents would need:
 - a `parent_events` kind;
@@ -216,7 +215,7 @@ That adds about S. Today only rows that are also events push (an app that may re
 - **(a) List only: the Attention row and the badge.**
 - (b) A push too, once per run, with its own switch, on by default.
 
-**Recommended: (a).** None of the three is urgent. They are seen the next time the PWA is opened, and a push for a
+**Decided: (a)**, as recommended. None of the three is urgent. They are seen the next time the PWA is opened, and a push for a
 condition the heal often fixes would be the noise the user asked to avoid. A push can be added later from the same
 rules.
 
@@ -227,4 +226,107 @@ would show an orange badge on the Devices list for as long as the parent keeps G
 - **(a) No: it stays the line on Device › Apps, as today.**
 - (b) Yes, as an Action row ("Element X isn't using Vibb").
 
-**Recommended: (a).**
+**Decided: (a)**, as recommended.
+
+---
+
+## 7. Delivery time on Settings › App push
+
+Approved by the user on 2026-11-17: how long pushes take from this server to the phone, over the last 24 hours.
+
+### 7.1 What is measured
+
+From **the server accepting a push** to **the phone's ack of it**. Both instants are the server's own clock, so a phone
+whose clock is off changes nothing.
+- **Accepted:** `up_messages.created_at_ms`, written by `store::enqueue` when `/up/` or the gateway queues the push.
+- **Acked:** the `POST /api/devices/up/messages` whose `ack` names the key, taken as `now_ms` in `store::pull`.
+
+The phone acks a key only after its `sendBroadcast` ran, and sends the ack with its next pull: at once in a running
+pull, or 6 s later (`pullLater`). So the figure is "on the phone", give or take a few seconds. It is not "read by the
+child". A message the phone drops, because its app is hidden or gone, is acked too and counts: it reached the phone.
+
+What is not in the figure:
+- a push that expired undelivered (its row is pruned, never acked);
+- a push replaced by a newer one with the same `Topic`.
+
+### 7.2 Where the samples are kept
+
+The queue row holds the accepted time, but the ack deletes the row. So one sample is written in the same transaction,
+just before the delete. The table is the smallest store, in 0154:
+
+```sql
+CREATE TABLE up_delivery (
+    device_id INTEGER NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+    acked_ms INTEGER NOT NULL,
+    ms INTEGER NOT NULL                 -- acked - accepted, at least 0
+);
+CREATE INDEX up_delivery_at ON up_delivery (acked_ms);
+CREATE INDEX up_delivery_device ON up_delivery (device_id, acked_ms);
+```
+
+- **The write**, in `pull`'s ack transaction before the `DELETE`: `INSERT INTO up_delivery (device_id, acked_ms, ms)
+  SELECT device_id, ?now, MAX(0, ?now - created_at_ms) FROM up_messages WHERE device_id = ? AND key IN (…)`. Only a
+  key that is still queued gives a sample, so an ack sent twice counts once. A clock stepped back gives 0, never less
+  than 0.
+- **Nothing per message beyond the three numbers**: no key, registration, package or body.
+- **Pruned hourly** in `store::prune`: rows older than 24 h. It also keeps at most the newest **20,000** rows, about
+  600 KB. The phone's own bucket allows at most about 840 pushes an hour, so that cap is reached only by several busy
+  phones together.
+- **It survives a restart**, since it is SQLite. A server update loses nothing.
+
+### 7.3 The figure
+
+A pure `delivery_figure(ms_sorted) -> Option<Figure { count, median_ms, slowest_ms }>` works on the last 24 h's samples
+(`acked_ms > now - 24 h`, read sorted; at most 20,000 integers).
+- **The median** is the nearest-rank one: element `ceil(n/2)` (1-based). With 2 samples it is the faster one; it is
+  always a time that really happened.
+- **The slowest** is the maximum, as the user asked.
+- **The count is always shown**, so a slowest figure from only a few pushes reads as such.
+- **With no samples**, the row says so and shows no figure. Nothing is hidden for a small count: with 1 sample, the
+  median and the slowest are the same time and both are shown, and the count says 1.
+
+Durations are worded by `duration_words(lang, ms)`:
+- under 1 s: "under a second" / "under ett sekund";
+- under 1 min: "{n} s";
+- under 1 h: "{n} min";
+- otherwise: "{h} h {m} min" / "{h} t {m} min".
+
+The slowest includes time a phone was switched off or out of touch, because a push waits for it on the server. A
+kid's phone off overnight makes it hours, and that is normal. The footer says so, so the figure doesn't read as a
+fault.
+
+### 7.4 Words and places
+
+**Settings › App push** gets a new group "Delivery to the phones" ("Levering til telefonene") under "Last seen from
+outside" (`#delivery`). Its rows have no save, so nothing can jump.
+- **Row** "Median" ("Median"): "2 s", "under a second" …
+- **Row** "Slowest" ("Tregeste"): "14 min".
+- **Row** "Pushes" ("Push"): "38 in the last 24 hours" / "38 siste døgn".
+- **With none:**
+  - en: one row "No pushes in the last 24 hours";
+  - nb: "Ingen push siste døgn".
+- **Footer:**
+  - en: "From this server receiving a push to the phone confirming it, for every phone together. A phone that is
+    switched off or out of touch gets its pushes when it is back, so the slowest can be hours."
+  - nb: "Fra serveren tar imot et push til telefonen bekrefter det, for alle telefonene samlet. En telefon som er
+    slått av eller uten kontakt, får pushene når den er tilbake, så den tregeste kan være flere timer."
+
+**Device › Apps' App push group, per phone.** This is cheap: the same function over the `device_id` index. It is one
+line under the switch, only when the phone had any samples:
+- en: "Delivered in {median} as a rule, the slowest {slowest} ({count} pushes, last 24 hours)";
+- nb: "Levert på {median} som regel, den tregeste {slowest} ({count} push siste døgn)".
+
+The phone's line has no footer of its own. The phone's own off time explains its slowest, and the parent sees the
+phone's state on the same page.
+
+### 7.5 Tests (lean)
+
+- **`unified_push::store::tests`:**
+  - two pushes enqueued, one pull acknowledging both, then the same keys acknowledged again: two samples, with the
+    device id and `ms >= 0`;
+  - one sample backdated past 24 h is pruned.
+- **A pure table for `delivery_figure`:** 0, 1, 2, 3 and 4 samples, with the nearest-rank median and the max; and
+  `duration_words` in nb and en at each boundary (999 ms, 1 s, 59 s, 60 s, 59 min, 1 h).
+- **One page test:**
+  - Settings › App push shows the group with seeded samples, and "No pushes…" without them;
+  - Device › Apps shows the phone's line only for the phone with samples.
