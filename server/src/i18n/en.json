@@ -4723,6 +4723,8 @@
   "app_push.outside": "{app}'s notifications go through an outside gateway (usually unifiedpush.org), outside the family's server. Vibb One asks {app} to check the address again when the phone is in use. If this stays for days, the phone can't reach the address: see “Last seen from outside” in Settings › App push.",
   "app_push.signed": "Only pushes signed by the app's server",
   "app_push.vapid_refused": "Pushes not signed by the app's server were refused, last {when}",
+  "app_push.vapid_refused_time": "A push signed by the app's server was refused because this server's clock doesn't match, last {when}. Check the server's clock",
+  "app_push.vapid_refused_address": "A push signed by the app's server was refused because it was sent to another address than this server's, last {when}. Check the server's address in Settings",
   "app_push.missing_open": "{app} isn't using Vibb for notifications. Open {app} once: it picks Vibb One by itself.",
   "app_push.footer": "An allowed app connects to Vibb One by itself and gets a private address; its notifications wake it through this server. No Matrix message text is kept, app pushes are held at most 24 hours, and the account names stay on the phone."
 }

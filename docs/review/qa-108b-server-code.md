@@ -180,3 +180,34 @@ once a minute per registration (the design's own wording). **Fix:** correct both
 - **DEPLOY.md:** the clock line is in "App push".
 - **The vectors:** they cover every row in §10, including Mastodon's exact spelling. The `alg_none` row stands for
   `HS256` too (the same branch).
+
+---
+
+## Handled
+
+Fixed on `up-r2r3-server` (the commit after d29316c0b):
+
+- **L1.** `vapid::stored_key` keeps the point verdict per key string (a map, emptied past 4096 entries), so the ECDH runs
+  once per key, not per request. The RNG error **fails closed**: `webpush::browser_key_check` tells an error from "not a
+  point", `stored_key` returns `Stored::Unavailable` (never cached), and `publish` and the gateway answer 503 +
+  `Retry-After: 300` instead of taking the push unchecked. The registration's 400 is unchanged. The warning is now once
+  per key and carries no registration id.
+- **L2.** `signed` is computed in Rust from the package's keys (`GROUP_CONCAT(vapid)`) through `stored_key`: a key that
+  isn't a point shows no line (`Unavailable` counts as signed, since pushes are refused).
+- **L3.** Migration 0153 (unreleased) gains `vapid_refused_why` (`unsigned`, `time`, `address`; NULL reads as
+  `unsigned`); `note_refusal` takes it from `Outcome::why`; the gateway stamps `unsigned`. The PWA words the `time` and
+  `address` lines as our clock / our address (`app_push.vapid_refused_time`, `_address`, en and nb), apart from the
+  sender's. Not changed: the policy's `refused` still lists any refusal within a day (the phone re-reading its key is
+  harmless, and the contract rows seed no `why`).
+- **L4.** `a_signed_push_is_taken_at_the_route` signs live with the throwaway test key (scalar derived from the vectors'
+  phrase in the test, never committed): a push for the current origin is 201 and queued, a foreign `aud` 503 stamped
+  `address`, an `exp` a week out 503 stamped `time`. The docstring no longer claims the bucket and ban are asserted (they
+  hold by the code's order, `accept` and `never_seen` after the check).
+- **L5.** Every `Crypto-Key` line is read and joined with `,`; the test sends the draft form on two lines.
+- **L6.** `the_apps_group_lines_of_108b` renders the group and checks `data-row="signed"` (and its absence for a
+  non-point key), `data-warning="outside"` with the app's name, the three refusal texts and FluffyChat's `missing_open`.
+- **L7.** The notes' `KNOWN_UP_APPS` is `(package, name, opens_itself)` and the write-lock wording is "about once a
+  minute per registration".
+
+Not changed: the design note (`docs/design/108b-unified-push-r2-r3.md`: §8's `missing_key`, §7's gateway rows, §4.7's
+one text) - another agent may be writing in `docs/design/`; the three departures are recorded here and in the notes.

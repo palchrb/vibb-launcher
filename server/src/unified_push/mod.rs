@@ -283,6 +283,15 @@ pub fn vapid_refusal(outcome: vapid::Outcome) -> Response {
     }
 }
 
+/// The answer when the stored key's point check couldn't run (L1): the push is neither taken unchecked nor judged.
+pub fn vapid_unavailable() -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        [(header::RETRY_AFTER, "300")],
+    )
+        .into_response()
+}
+
 /// A push the routes accepted.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Accepted {

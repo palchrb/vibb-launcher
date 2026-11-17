@@ -185,21 +185,25 @@ pub fn encrypt(
 
 /// A browser's `p256dh` (65 bytes) is a P-256 point: one throwaway agreement (§5.2).
 pub fn valid_browser_key(ua_public: &[u8]) -> bool {
-    ua_public.len() == 65
-        && agreement::EphemeralPrivateKey::generate(
-            &agreement::ECDH_P256,
-            &ring::rand::SystemRandom::new(),
-        )
-        .ok()
-        .and_then(|private| {
-            agreement::agree_ephemeral(
-                private,
-                &agreement::UnparsedPublicKey::new(&agreement::ECDH_P256, ua_public),
-                |_| (),
-            )
-            .ok()
-        })
-        .is_some()
+    browser_key_check(ua_public).unwrap_or(false)
+}
+
+/// [valid_browser_key] with the RNG's failure told apart: `Err` means the check couldn't run (no throwaway key),
+/// which says nothing about the point. A caller that enforces something by it fails closed on `Err`.
+pub fn browser_key_check(ua_public: &[u8]) -> Result<bool, ring::error::Unspecified> {
+    if ua_public.len() != 65 {
+        return Ok(false);
+    }
+    let private = agreement::EphemeralPrivateKey::generate(
+        &agreement::ECDH_P256,
+        &ring::rand::SystemRandom::new(),
+    )?;
+    Ok(agreement::agree_ephemeral(
+        private,
+        &agreement::UnparsedPublicKey::new(&agreement::ECDH_P256, ua_public),
+        |_| (),
+    )
+    .is_ok())
 }
 
 /// RFC 8291 §3.3-3.4 from the ECDH secret: the IKM, then the CEK and the nonce.

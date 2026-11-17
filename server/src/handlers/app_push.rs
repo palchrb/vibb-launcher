@@ -283,15 +283,16 @@ pub(crate) fn noisy_per_day(
     (per_day >= NOISY_PER_DAY).then_some(per_day)
 }
 
-/// One app's row of the group's query: package, registrations, last delivery, oldest registration, pushes, has a key,
-/// marked as outside, last refusal within 7 days.
+/// One app's row of the group's query: package, registrations, last delivery, oldest registration, pushes, the
+/// registrations' keys (comma-joined; a key holds no comma), marked as outside, last refusal within 7 days as
+/// `<stamp>|<why>`.
 type AppRow = (
     String,
     i64,
     Option<String>,
     String,
     i64,
-    bool,
+    Option<String>,
     bool,
     Option<String>,
 );
@@ -310,10 +311,10 @@ pub(crate) async fn group(
     let origin_set = up::settings(&state.db).await?.public_origin.is_some();
     let rows: Vec<AppRow> = sqlx::query_as(
         "SELECT package, COUNT(*), MAX(last_delivered_at), MIN(created_at), SUM(pushes), \
-           MAX(vapid IS NOT NULL), \
+           GROUP_CONCAT(vapid, ','), \
            COALESCE(MAX(outside_gateway_at > datetime('now', '-7 days') \
                AND (gateway_at IS NULL OR gateway_at < outside_gateway_at)), 0), \
-           MAX(CASE WHEN vapid_refused_at > datetime('now', '-7 days') THEN vapid_refused_at END) \
+           MAX(CASE WHEN vapid_refused_at > datetime('now', '-7 days') THEN vapid_refused_at || '|' || COALESCE(vapid_refused_why, 'unsigned') END) \
          FROM up_registrations WHERE device_id = ? GROUP BY package ORDER BY package",
     )
     .bind(device_id)
@@ -373,19 +374,28 @@ pub(crate) async fn group(
                     warning: quiet.then_some("app_push.no_delivery"),
                     noisy: per_day
                         .map(|n| t_params(lang, "app_push.noisy", &[("count", &n.to_string())])),
-                    signed: *keyed,
+                    // Only a key the check enforces: one that isn't a P-256 point reads as no key (L2).
+                    signed: keyed.as_deref().is_some_and(|keys| {
+                        keys.split(',').any(|k| {
+                            matches!(
+                                up::vapid::stored_key(k),
+                                up::vapid::Stored::Key(_) | up::vapid::Stored::Unavailable
+                            )
+                        })
+                    }),
                     outside: (*outside)
                         .then(|| t_params(lang, "app_push.outside", &[("app", &name)])),
-                    refused: refused
-                        .as_deref()
-                        .and_then(crate::display_time::parse_db_utc)
-                        .map(|at| {
-                            t_params(
-                                lang,
-                                "app_push.vapid_refused",
-                                &[("when", &zone.when(at, now))],
-                            )
-                        }),
+                    refused: refused.as_deref().and_then(|stamp| {
+                        let (at, why) = stamp.split_once('|').unwrap_or((stamp, "unsigned"));
+                        let at = crate::display_time::parse_db_utc(at)?;
+                        // Our own clock or origin is not the sender's fault: worded apart (L3).
+                        let key = match why {
+                            "time" => "app_push.vapid_refused_time",
+                            "address" => "app_push.vapid_refused_address",
+                            _ => "app_push.vapid_refused",
+                        };
+                        Some(t_params(lang, key, &[("when", &zone.when(at, now))]))
+                    }),
                 }
             },
         )

@@ -669,10 +669,136 @@ async fn gateway_rows() {
     assert_eq!(res.status, StatusCode::GONE);
 }
 
+/// A fresh ES256 token for the test key (the private scalar is SHA-256 of the vectors' fixed phrase, derived here and
+/// never committed): Mastodon's shape, `aud` and `exp` as given.
+fn sign_live(file: &Value, aud: &str, exp: i64) -> String {
+    use base64::Engine as _;
+    use sha2::Digest as _;
+    let b64 = |bytes: &[u8]| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
+    let public = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(file["registered_key"].as_str().unwrap())
+        .unwrap();
+    let scalar = sha2::Sha256::digest(b"vibb fake vapid key - test only, never a real sender");
+    let pair = ring::signature::EcdsaKeyPair::from_private_key_and_public_key(
+        &ring::signature::ECDSA_P256_SHA256_FIXED_SIGNING,
+        &scalar,
+        &public,
+        &ring::rand::SystemRandom::new(),
+    )
+    .expect("the derived scalar is the vectors' key");
+    let input = format!(
+        "{}.{}",
+        b64(br#"{"typ":"JWT","alg":"ES256"}"#),
+        b64(
+            json!({"aud": aud, "exp": exp, "sub": "mailto:admin@example.org"})
+                .to_string()
+                .as_bytes()
+        )
+    );
+    let signature = pair
+        .sign(&ring::rand::SystemRandom::new(), input.as_bytes())
+        .unwrap();
+    format!(
+        "vapid t={input}.{},k={}",
+        b64(signature.as_ref()),
+        file["registered_key"].as_str().unwrap()
+    )
+}
+
+/// L4 (QA of R23-S): a push signed live with the throwaway test key is taken at the route (Mastodon's header
+/// shape, the real clock, the current origin) and queued; a foreign `aud` is 503 and stamped `address`, an `exp` a
+/// week out 503 and stamped `time`; `Crypto-Key` on two lines is read (L5).
+#[tokio::test]
+async fn a_signed_push_is_taken_at_the_route() {
+    let gateway: Value = serde_json::from_str(GATEWAY).unwrap();
+    let file: Value = serde_json::from_str(VAPID).unwrap();
+    let (app, _) = gateway_app(&gateway).await;
+    let reg = format!("{:032x}", 1);
+    sqlx::query("UPDATE up_registrations SET vapid = ? WHERE reg = ?")
+        .bind(file["registered_key"].as_str().unwrap())
+        .bind(&reg)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let origin = gateway["origin"].as_str().unwrap();
+    let path = fill("/up/{live}", &gateway);
+    let now = chrono::Utc::now().timestamp();
+    let post = |authorization: String, extra: Vec<(&'static str, String)>| {
+        let (app, path) = (&app, path.clone());
+        async move {
+            let mut headers = vec![("authorization", authorization.as_str())];
+            headers.extend(extra.iter().map(|(k, v)| (*k, v.as_str())));
+            post_via_phone_listener(
+                app,
+                "203.0.113.7",
+                Method::POST,
+                &path,
+                &headers,
+                b"x".to_vec(),
+            )
+            .await
+        }
+    };
+    let why = || async {
+        sqlx::query_scalar::<_, Option<String>>(
+            "SELECT vapid_refused_why FROM up_registrations WHERE reg = ?",
+        )
+        .bind(&reg)
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+    };
+    let res = post(
+        sign_live(&file, "https://elsewhere.example.net", now + 86_400),
+        vec![],
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(why().await.as_deref(), Some("address"));
+    sqlx::query("UPDATE up_registrations SET vapid_refused_at = NULL")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let res = post(sign_live(&file, origin, now + 7 * 86_400), vec![]).await;
+    assert_eq!(res.status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(why().await.as_deref(), Some("time"));
+    let queued = || async {
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM up_messages")
+            .fetch_one(&app.db)
+            .await
+            .unwrap()
+    };
+    assert_eq!(queued().await, 0);
+    let res = post(sign_live(&file, origin, now + 86_400), vec![]).await;
+    assert_eq!(res.status, StatusCode::CREATED);
+    assert_eq!(queued().await, 1);
+    // The draft form with `Crypto-Key` on two lines: `dh=` first, `p256ecdsa=` on its own line.
+    let key = file["registered_key"].as_str().unwrap();
+    let token = sign_live(&file, origin, now + 86_400);
+    let token = token
+        .strip_prefix("vapid t=")
+        .and_then(|t| t.split_once(',').map(|(t, _)| t.to_string()))
+        .unwrap();
+    let res = post(
+        format!("WebPush {token}"),
+        vec![
+            ("crypto-key", "dh=AAAA".to_string()),
+            ("crypto-key", format!("p256ecdsa={key}")),
+        ],
+    )
+    .await;
+    assert_eq!(
+        res.status,
+        StatusCode::CREATED,
+        "both Crypto-Key lines read"
+    );
+}
+
 /// 108b §4.3/§4.4/§4.5 at the routes: a keyed registration answers a push without a signature 401, with another key or
 /// a bad signature 403, and a signed push whose `exp` has passed (the file's clock is in the past) 503 with
-/// `Retry-After: 300`; none queues, charges a bucket, counts toward the ban or writes the stamp twice within a minute.
-/// An unkeyed registration takes an unsigned push. The gateway rejects a keyed pushkey and stamps it; a gateway push
+/// `Retry-After: 300`; none queues or writes the stamp twice within a minute (that a refusal charges no bucket and
+/// counts toward no ban is the code's order - `accept` and `never_seen` come after the check - and isn't asserted
+/// here). An unkeyed registration takes an unsigned push. The gateway rejects a keyed pushkey and stamps it; a gateway push
 /// sets `gateway_at`.
 #[tokio::test]
 async fn vapid_at_the_route() {
@@ -1135,6 +1261,84 @@ async fn switch_on_by_default() {
         Some(format!("/devices/{emma}/apps#app-push").as_str())
     );
     assert_eq!(app.policy(&token).await["unified_push"]["on"], true);
+}
+
+/// L6/L2/L3 (QA of R23-S): Device › Apps' group shows "Only pushes signed ..." for a keyed registration whose key
+/// the check enforces (not for one that isn't a P-256 point), the outside-gateway warning with the app's name, the
+/// refusal line worded by its cause (the sender's, or our clock, or our address), and FluffyChat's own "open it" text.
+#[tokio::test]
+async fn the_apps_group_lines_of_108b() {
+    let file: Value = serde_json::from_str(VAPID).unwrap();
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (emma, token) = app.enrolled_device("Emma").await;
+    set_origin(&app, Some(ORIGIN)).await;
+    app.post_status(
+        &token,
+        json!({"capabilities": [CAPABILITY], "installed_apps": [
+            {"package_name": "chat.fluffy.fluffychat", "label": "FluffyChat"},
+            {"package_name": "org.unifiedpush.example", "label": "UP-Example"}]}),
+    )
+    .await;
+    set_allowlist(
+        &app,
+        emma,
+        &["chat.fluffy.fluffychat", "org.unifiedpush.example"],
+    )
+    .await;
+    seed(&app, emma, 1, "org.unifiedpush.example").await;
+    let page = || async {
+        app.get_page(&format!("/devices/{emma}/apps"), &cookie)
+            .await
+            .text()
+    };
+    let set = |sql: &'static str, binds: Vec<String>| {
+        let db = app.db.clone();
+        async move {
+            let mut query = sqlx::query(sql);
+            for bind in binds {
+                query = query.bind(bind);
+            }
+            query.execute(&db).await.unwrap();
+        }
+    };
+    let plain = page().await;
+    assert!(!plain.contains("data-row=\"signed\""));
+    assert!(!plain.contains("data-warning=\"outside\""));
+    assert!(!plain.contains("data-warning=\"vapid-refused\""));
+    assert!(
+        plain.contains("Open FluffyChat once"),
+        "FluffyChat's own text: {plain}"
+    );
+    // A key that isn't a point: no \"signed\" line (the check reads it as no key).
+    set(
+        "UPDATE up_registrations SET vapid = ?",
+        vec![file["not_a_point"].as_str().unwrap().to_string()],
+    )
+    .await;
+    assert!(!page().await.contains("data-row=\"signed\""));
+    set(
+        "UPDATE up_registrations SET vapid = ?, outside_gateway_at = datetime('now'), \
+         vapid_refused_at = datetime('now'), vapid_refused_why = NULL",
+        vec![file["registered_key"].as_str().unwrap().to_string()],
+    )
+    .await;
+    let marked = page().await;
+    assert!(marked.contains("data-row=\"signed\""));
+    assert!(marked.contains("data-warning=\"outside\""));
+    assert!(marked.contains("UP-Example&#39;s notifications go through an outside gateway"));
+    assert!(marked.contains("Pushes not signed by the app"));
+    for (why, text) in [("time", "clock doesn"), ("address", "another address")] {
+        set(
+            "UPDATE up_registrations SET vapid_refused_why = ?",
+            vec![why.to_string()],
+        )
+        .await;
+        let marked = page().await;
+        assert!(marked.contains("data-warning=\"vapid-refused\""));
+        assert!(marked.contains(text), "{why}");
+        assert!(!marked.contains("Pushes not signed by the app"), "{why}");
+    }
 }
 
 /// §3.10: Device › Apps' group - an app's row and Stop, the stopped list and Allow Again, the "not connected"

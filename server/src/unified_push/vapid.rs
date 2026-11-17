@@ -5,7 +5,7 @@
 //! `aud`. So a bad signature is always [Outcome::Bad], and [Outcome::Time] / [Outcome::Address] only ever describe a
 //! correctly signed push. The headers carry a 24-hour credential: they are **never logged**.
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::sync::Mutex;
 
 use base64::Engine as _;
@@ -35,6 +35,18 @@ pub enum Outcome {
     Address,
 }
 
+impl Outcome {
+    /// Why a refused push was refused, as `vapid_refused_why` stores it: `time` and `address` are the server's own
+    /// clock and origin (a correctly signed push), `unsigned` is the sender's.
+    pub fn why(self) -> &'static str {
+        match self {
+            Outcome::Time => "time",
+            Outcome::Address => "address",
+            _ => "unsigned",
+        }
+    }
+}
+
 /// Base64url, tolerating padding and the standard alphabet.
 fn b64(text: &str) -> Option<Vec<u8>> {
     let text = text.trim().trim_end_matches('=');
@@ -51,21 +63,54 @@ fn b64(text: &str) -> Option<Vec<u8>> {
         .ok()
 }
 
-/// A registered key as the check uses it: 65 bytes, an uncompressed P-256 point. A stored key that isn't one reads as
-/// no key (L7: an R1 server stored any 87 characters), with one warning in the log per registration.
-pub fn stored_key(key: &str, registration: i64) -> Option<Vec<u8>> {
-    static WARNED: Mutex<Option<HashSet<i64>>> = Mutex::new(None);
-    if let Some(bytes) = point(key) {
-        return Some(bytes);
+/// A stored key as the check reads it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Stored {
+    /// A P-256 point (65 bytes): pushes to the registration are checked against it.
+    Key(Vec<u8>),
+    /// Not a point (L7: an R1 server stored any 87 characters): reads as no key, with one warning per key.
+    NotAPoint,
+    /// The point check couldn't run (the RNG failed): the push is refused with a 503, never taken unchecked (L1).
+    Unavailable,
+}
+
+/// A stored key as the check uses it. The ECDH behind the point check runs once per key: the verdict is kept (a few
+/// hundred keys at most; the map is emptied when it grows past [VERDICTS_MAX]), so a request to a keyed endpoint
+/// costs no more than its own verify (L1). An error of the RNG is never kept and never read as "not a point".
+pub fn stored_key(key: &str) -> Stored {
+    static VERDICTS: Mutex<Option<HashMap<String, bool>>> = Mutex::new(None);
+    const VERDICTS_MAX: usize = 4096;
+    let Some(bytes) = b64(key).filter(|b| b.len() == 65 && b[0] == 0x04) else {
+        return Stored::NotAPoint;
+    };
+    let mut verdicts = VERDICTS.lock().unwrap_or_else(|e| e.into_inner());
+    let verdicts = verdicts.get_or_insert_default();
+    let is_point = match verdicts.get(key) {
+        Some(known) => *known,
+        None => match crate::webpush::browser_key_check(&bytes) {
+            Ok(is_point) => {
+                if verdicts.len() >= VERDICTS_MAX {
+                    verdicts.clear();
+                }
+                verdicts.insert(key.to_string(), is_point);
+                if !is_point {
+                    tracing::warn!(
+                        "app push: a stored VAPID key isn't a P-256 point; its pushes are taken unchecked"
+                    );
+                }
+                is_point
+            }
+            Err(_) => {
+                tracing::error!("app push: the VAPID point check couldn't run; pushes are refused");
+                return Stored::Unavailable;
+            }
+        },
+    };
+    if is_point {
+        Stored::Key(bytes)
+    } else {
+        Stored::NotAPoint
     }
-    let mut warned = WARNED.lock().unwrap_or_else(|e| e.into_inner());
-    if warned.get_or_insert_default().insert(registration) {
-        tracing::warn!(
-            registration,
-            "app push: a stored VAPID key isn't a P-256 point; its pushes are taken unchecked"
-        );
-    }
-    None
 }
 
 /// `key` (base64url, 65 bytes) is an uncompressed P-256 point: its bytes.
@@ -263,8 +308,12 @@ mod tests {
         }
         let bad = file["not_a_point"].as_str().unwrap();
         assert!(point(bad).is_none());
-        assert!(stored_key(bad, 1).is_none());
-        assert!(stored_key(file["registered_key"].as_str().unwrap(), 1).is_some());
+        assert_eq!(stored_key(bad), Stored::NotAPoint);
+        assert_eq!(stored_key(bad), Stored::NotAPoint, "the kept verdict");
+        assert!(matches!(
+            stored_key(file["registered_key"].as_str().unwrap()),
+            Stored::Key(_)
+        ));
         assert!(point("short").is_none());
     }
 }

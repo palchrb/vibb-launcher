@@ -55,16 +55,19 @@ impl Registration {
     }
 }
 
-/// Stamps `vapid_refused_at` for a refused push when [Registration::refusal_stamp_due].
-pub async fn note_refusal(db: &SqlitePool, registration: &Registration) {
+/// Stamps `vapid_refused_at` and `vapid_refused_why` (see [crate::unified_push::vapid::Outcome::why]) for a refused
+/// push when [Registration::refusal_stamp_due].
+pub async fn note_refusal(db: &SqlitePool, registration: &Registration, why: &str) {
     if !registration.refusal_stamp_due() {
         return;
     }
-    if let Err(err) =
-        sqlx::query("UPDATE up_registrations SET vapid_refused_at = datetime('now') WHERE id = ?")
-            .bind(registration.id)
-            .execute(db)
-            .await
+    if let Err(err) = sqlx::query(
+        "UPDATE up_registrations SET vapid_refused_at = datetime('now'), vapid_refused_why = ? WHERE id = ?",
+    )
+    .bind(why)
+    .bind(registration.id)
+    .execute(db)
+    .await
     {
         tracing::warn!(%err, "app push: couldn't note a refused push");
     }

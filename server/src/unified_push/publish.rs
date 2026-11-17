@@ -110,11 +110,11 @@ pub async fn publish(
     };
     // R3: a keyed registration takes only pushes signed with its key, checked before the buckets so a leaked endpoint
     // can't spend the phone's bucket or wake it. Neither refusal counts toward the client's ban: the secret resolved.
-    if let Some(key) = registration
-        .vapid
-        .as_deref()
-        .and_then(|k| super::vapid::stored_key(k, registration.id))
-    {
+    let stored = registration.vapid.as_deref().map(super::vapid::stored_key);
+    if stored == Some(super::vapid::Stored::Unavailable) {
+        return super::vapid_unavailable();
+    }
+    if let Some(super::vapid::Stored::Key(key)) = stored {
         let origins = match super::accepted_origins(&state.db).await {
             Ok(origins) => origins,
             Err(err) => {
@@ -122,16 +122,23 @@ pub async fn publish(
                 return StatusCode::SERVICE_UNAVAILABLE.into_response();
             }
         };
-        let header = |name: &str| headers.get(name).and_then(|v| v.to_str().ok());
+        let authorization = headers.get("authorization").and_then(|v| v.to_str().ok());
+        // Every `Crypto-Key` line counts (HTTP allows the draft's `dh=` and `p256ecdsa=` on two lines), joined with `,`.
+        let crypto_key = headers
+            .get_all("crypto-key")
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .collect::<Vec<_>>()
+            .join(",");
         let outcome = super::vapid::check(
             &key,
-            header("authorization"),
-            header("crypto-key"),
+            authorization,
+            (!crypto_key.is_empty()).then_some(crypto_key.as_str()),
             chrono::Utc::now().timestamp(),
             &origins,
         );
         if outcome != super::vapid::Outcome::Taken {
-            store::note_refusal(&state.db, &registration).await;
+            store::note_refusal(&state.db, &registration, outcome.why()).await;
             return super::vapid_refusal(outcome);
         }
     }

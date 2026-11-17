@@ -4723,6 +4723,8 @@
   "app_push.outside": "Varslene til {app} går gjennom en ekstern tjeneste (som regel unifiedpush.org), utenfor familiens server. Vibb One ber {app} sjekke adressen på nytt når telefonen er i bruk. Blir dette stående i flere dager, når ikke telefonen adressen: se «Sist sett utenfra» under Innstillinger › Push for apper.",
   "app_push.signed": "Bare push signert av appens server",
   "app_push.vapid_refused": "Push som ikke var signert av appens server, ble avvist, sist {when}",
+  "app_push.vapid_refused_time": "Push signert av appens server ble avvist fordi serverens klokke ikke stemmer, sist {when}. Sjekk klokken på serveren",
+  "app_push.vapid_refused_address": "Push signert av appens server ble avvist fordi den var sendt til en annen adresse enn serverens, sist {when}. Sjekk serverens adresse i Innstillinger",
   "app_push.missing_open": "{app} bruker ikke Vibb for varsler. Åpne {app} én gang, så velger den Vibb One selv.",
   "app_push.footer": "En tillatt app kobler seg til Vibb One av seg selv og får en privat adresse; varslene vekker den gjennom denne serveren. Ingen Matrix-meldingstekst lagres, push for apper holdes i høyst 24 timer, og kontonavnene blir på telefonen."
 }

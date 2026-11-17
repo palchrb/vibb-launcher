@@ -251,14 +251,14 @@ pub async fn notify(
     };
     // R3 (§4.5): a homeserver never signs, so a keyed registration's pushkey is not ours through here - else the
     // gateway would bypass the check. Stamped like a refused push (L9), so the PWA's warning shows.
-    if registration
-        .vapid
-        .as_deref()
-        .and_then(|k| super::vapid::stored_key(k, registration.id))
-        .is_some()
-    {
-        store::note_refusal(&state.db, &registration).await;
-        return response(Some(&pushkey));
+    match registration.vapid.as_deref().map(super::vapid::stored_key) {
+        Some(super::vapid::Stored::Key(_)) => {
+            store::note_refusal(&state.db, &registration, "unsigned").await;
+            return response(Some(&pushkey));
+        }
+        // The point check couldn't run: not taken unchecked (L1); the homeserver retries.
+        Some(super::vapid::Stored::Unavailable) => return super::vapid_unavailable(),
+        _ => {}
     }
     let Some(minimised) = minimise(&body) else {
         return StatusCode::BAD_REQUEST.into_response();

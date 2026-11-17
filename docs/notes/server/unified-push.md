@@ -105,12 +105,12 @@ Google is the same setting back. Words `app_push.*` (the parent web push owns `p
   registered key**, then `exp` (`[now - 5 min, now + 25 h]`), then `aud` (the current origin or a replaced one within
   its 30 days). The signature is judged first, so a bad signature is always 403 and 503 goes only to a correctly signed
   push with a wrong time or address. The headers are never logged. A stored key that isn't a P-256 point (an R1 server
-  stored any 87 characters) reads as no key, with one warning per registration (`stored_key`).
+  stored any 87 characters) reads as no key, with one warning per key (`stored_key`; the ECDH behind the point check runs once per key, the verdict is kept in memory). If the point check can't run (the RNG fails) the push is refused 503 + `Retry-After: 300`, never taken unchecked (fail closed). Every `Crypto-Key` line is read, joined with `,`.
 - **At `/up/`** the check sits in `publish` after the secret's lookup and before the buckets (`accept`): no
   signature 401 + `WWW-Authenticate: vapid`, wrong key or bad signature 403, time or address 503 + `Retry-After: 300`
   (Q3 (c): a 5xx keeps a Mastodon subscription alive when our clock or origin is the fault). A refusal never counts
-  toward the ban; it stamps `up_registrations.vapid_refused_at`, written only when the stamp is null or a minute old
-  (`store::note_refusal`; `lookup` returns the stamp with the row, so a refused flood takes no write lock).
+  toward the ban; it stamps `up_registrations.vapid_refused_at` and `vapid_refused_why` (`unsigned`, or `time`/`address` for a correctly signed push our own clock or origin refused), written only when the stamp is null or a minute old
+  (`store::note_refusal`; `lookup` returns the stamp with the row, so a refused flood takes SQLite's write lock about once a minute per registration).
 - **The gateway** answers a keyed registration's pushkey as `rejected` (a homeserver never signs) and stamps it
   the same way. A push queued through our own gateway sets `gateway_at` (at most once a minute).
 - **Registration:** a `vapid` must be 87 base64url characters that are a P-256 point, else 400. A retry of a known
@@ -120,9 +120,9 @@ Google is the same setting back. Words `app_push.*` (the parent web push owns `p
   `gateway_at` isn't after it; `refused` (wins when both) while `vapid_refused_at` is within a day and no push was
   accepted after it (`last_push_at`). Pinned by `policy_json_keys_snapshot` and `the_contract`.
 - **PWA** (Device › Apps › App push), per app: "Only pushes signed by the app's server" (a key held), the outside
-  warning (marked), and "Pushes not signed … were refused, last …" (within 7 days). No save: nothing can jump.
-  `KNOWN_UP_APPS` is `(package, name, missing_key)` and holds FluffyChat, whose text says to open it once.
+  warning (marked), and "Pushes not signed … were refused, last …" (within 7 days; a `time`/`address` refusal says our clock or address is off instead). "Signed" shows only for a key the check enforces (a P-256 point). No save: nothing can jump.
+  `KNOWN_UP_APPS` is `(package, name, opens_itself)` and holds FluffyChat, whose text says to open it once (`handlers/app_push.rs` picks `app_push.missing_open` or `app_push.missing` by the bool; design §8's `missing_key` became the bool).
 - **The server's clock** matters for `exp`: DEPLOY.md's "App push" says so. **Release the server before the launcher
   RC** (an R1 server answers a key update without storing it).
 - Tests: `vapid::tests::{the_rows, points}`, `tests::unified_push::{the_contract (refresh and the register rows),
-  vapid_at_the_route}`.
+  vapid_at_the_route, a_signed_push_is_taken_at_the_route (signed live with the throwaway key), the_apps_group_lines_of_108b}`.
