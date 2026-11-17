@@ -675,9 +675,12 @@ restricted-setting check).
 ## The user's answers (2026-11-17, 21:50 CET)
 
 - ASK 1 (vibration on calls and messages): OPTIONAL, not required.
-- ASK 3 (design 110's two map-link steps in this list): ASKED BACK - the user: "er jo fort noe man kanskje installerer
-  etterhvert og ikke ved første setup av en ny telefon?" - answered that a step only applies once its feature is in use
-  (the map steps only once map links are on / a map app is chosen); waiting on the user's word.
+- ASK 3 (design 110's two map-link steps in this list): TAKEN, with the user's condition - the two steps apply only
+  while Organic Maps or CoMaps is installed on the phone (the user: "Helst bør denne greia bare spørres om, om man
+  faktisk har installert comaps eller organic maps"): `when: map_app_installed` (read from the report's installed apps),
+  not the map-link switch alone. (A Device Owner can't make the change itself: Play services holds the links VERIFIED,
+  a persistent preferred activity loses to it, and changing another app's link state needs a permission it lacks -
+  design 110 §6.2.)
 - ASK 4 ("Ikke nå" goes, no hiding of a required step): TAKEN.
 - ASK 6 (background location): follows Locate and zones, as today; fine and coarse always granted.
 - ASK 2 and ASK 5: not asked; the recommendations stand unless the user says otherwise (message banners ticked now and
