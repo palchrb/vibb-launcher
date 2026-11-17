@@ -4746,7 +4746,8 @@
   "app_push.delivery.p95": "95% within",
   "app_push.delivery.pushes": "Pushes",
   "app_push.delivery.pushes_value": "{count} in the last 24 hours",
-  "app_push.delivery.pushes_capped": "the newest 5,000",
+  "app_push.delivery.pushes_capped": "{count}, at most the newest 5,000 per phone",
+  "app_push.delivery.cap_note": "At most the newest 5,000 are counted.",
   "app_push.delivery.none": "No pushes delivered while connected in the last 24 hours",
   "app_push.delivery.footer": "From this server receiving a push to the push being delivered to the phone, for every phone together. Only pushes that came while the phone was connected are counted."
 }

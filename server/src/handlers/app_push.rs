@@ -123,14 +123,24 @@ async fn render_settings(
             .collect(),
         Err(err) => return read_failed(lang, err),
     };
-    let delivery = match up::store::delivery_samples(&state.db, None, now.timestamp_millis()).await
+    let now_ms = now.timestamp_millis();
+    let delivery = match async {
+        let samples = up::store::delivery_samples(&state.db, None, now_ms).await?;
+        let capped = !samples.is_empty() && up::store::delivery_capped(&state.db, now_ms).await?;
+        Ok::<_, sqlx::Error>((samples, capped))
+    }
+    .await
     {
         Ok((samples, capped)) => {
             up::health::delivery_figure(&samples, capped).map(|figure| DeliveryRows {
                 usually: duration_words(lang, figure.median_ms),
                 p95: figure.p95_ms.map(|ms| duration_words(lang, ms)),
                 pushes: if figure.capped {
-                    t(lang, "app_push.delivery.pushes_capped").to_string()
+                    t_params(
+                        lang,
+                        "app_push.delivery.pushes_capped",
+                        &[("count", &figure.count.to_string())],
+                    )
                 } else {
                     t_params(
                         lang,
@@ -388,11 +398,16 @@ pub(crate) async fn group(
             &[("when", &zone.when(since, now))],
         )
     });
-    let (samples, _) =
-        up::store::delivery_samples(&state.db, Some(device_id), now.timestamp_millis()).await?;
-    let delivery = up::health::delivery_figure(&samples, false).map(|figure| {
+    // Nothing under an Off switch (its registrations are gone; the samples may linger up to a day).
+    let samples = if on {
+        up::store::delivery_samples(&state.db, Some(device_id), now.timestamp_millis()).await?
+    } else {
+        Vec::new()
+    };
+    let capped = samples.len() as i64 >= up::store::DELIVERY_CAP;
+    let delivery = up::health::delivery_figure(&samples, capped).map(|figure| {
         let median = duration_words(lang, figure.median_ms);
-        match figure.p95_ms {
+        let line = match figure.p95_ms {
             Some(p95) => t_params(
                 lang,
                 "app_push.delivery_line_p95",
@@ -408,6 +423,11 @@ pub(crate) async fn group(
                 figure.count as i64,
                 &[("median", &median)],
             ),
+        };
+        if figure.capped {
+            format!("{line} {}", t(lang, "app_push.delivery.cap_note"))
+        } else {
+            line
         }
     });
     let week_ago = now - chrono::Duration::days(7);

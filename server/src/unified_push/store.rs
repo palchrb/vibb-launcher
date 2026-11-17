@@ -465,31 +465,44 @@ pub async fn pull(
 pub const DELIVERY_HOURS: i64 = 24;
 pub const DELIVERY_CAP: i64 = 5_000;
 
-/// The delivery samples of the last [DELIVERY_HOURS] hours, sorted: one phone's, or every phone's, and whether a
-/// phone has [DELIVERY_CAP] of them (the cap may have cut).
+/// The delivery samples of the last [DELIVERY_HOURS] hours, sorted: one phone's (its `device_id` index) or every
+/// phone's.
 pub async fn delivery_samples(
     db: &SqlitePool,
     device_id: Option<i64>,
     now_ms: i64,
-) -> Result<(Vec<i64>, bool), sqlx::Error> {
+) -> Result<Vec<i64>, sqlx::Error> {
     let since = now_ms - DELIVERY_HOURS * 3_600_000;
-    let samples: Vec<i64> = sqlx::query_scalar(
-        "SELECT ms FROM up_delivery WHERE acked_ms > ?1 AND (?2 IS NULL OR device_id = ?2) ORDER BY ms",
-    )
-    .bind(since)
-    .bind(device_id)
-    .fetch_all(db)
-    .await?;
+    match device_id {
+        Some(device) => {
+            sqlx::query_scalar(
+                "SELECT ms FROM up_delivery WHERE device_id = ? AND acked_ms > ? ORDER BY ms",
+            )
+            .bind(device)
+            .bind(since)
+            .fetch_all(db)
+            .await
+        }
+        None => {
+            sqlx::query_scalar("SELECT ms FROM up_delivery WHERE acked_ms > ? ORDER BY ms")
+                .bind(since)
+                .fetch_all(db)
+                .await
+        }
+    }
+}
+
+/// Whether some phone has [DELIVERY_CAP] samples in the window, so the cap may have cut (read only where shown: the
+/// Settings page; a phone's own page reads it from its samples' count).
+pub async fn delivery_capped(db: &SqlitePool, now_ms: i64) -> Result<bool, sqlx::Error> {
     let capped: Option<i64> = sqlx::query_scalar(
-        "SELECT 1 FROM up_delivery WHERE acked_ms > ?1 AND (?2 IS NULL OR device_id = ?2) \
-         GROUP BY device_id HAVING COUNT(*) >= ?3 LIMIT 1",
+        "SELECT 1 FROM up_delivery WHERE acked_ms > ? GROUP BY device_id HAVING COUNT(*) >= ? LIMIT 1",
     )
-    .bind(since)
-    .bind(device_id)
+    .bind(now_ms - DELIVERY_HOURS * 3_600_000)
     .bind(DELIVERY_CAP)
     .fetch_optional(db)
     .await?;
-    Ok((samples, capped.is_some()))
+    Ok(capped.is_some())
 }
 
 /// Retention's part for the samples: older than [DELIVERY_HOURS], and beyond each phone's newest [DELIVERY_CAP].
@@ -714,10 +727,11 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(samples, [(t0 + 60_000, 0), (t0 + 60_000, 2_000)]);
-        let (read, capped) = delivery_samples(&db, Some(emma), t0 + 61_000)
+        let read = delivery_samples(&db, Some(emma), t0 + 61_000)
             .await
             .unwrap();
-        assert_eq!((read, capped), (vec![0, 2_000], false));
+        assert_eq!(read, vec![0, 2_000]);
+        assert!(!delivery_capped(&db, t0 + 61_000).await.unwrap());
 
         sqlx::query("INSERT INTO up_delivery (device_id, acked_ms, ms) VALUES (?, ?, 1)")
             .bind(emma)
@@ -740,7 +754,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(left, DELIVERY_CAP, "the old one and the overflow went");
-        let (_, capped) = delivery_samples(&db, Some(emma), t0).await.unwrap();
-        assert!(capped);
+        assert!(delivery_capped(&db, t0).await.unwrap());
+        assert_eq!(
+            delivery_samples(&db, Some(emma), t0).await.unwrap().len() as i64,
+            DELIVERY_CAP
+        );
     }
 }

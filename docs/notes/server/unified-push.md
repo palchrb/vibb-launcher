@@ -158,3 +158,10 @@ calls the same function, so the row and the page agree. "The phone reported" is 
 - Tests: `tests::unified_push::{attention_rows_of_108c, accept_stores_the_stream_generation,
   delivery_time_on_the_pages}`, `store::tests::delivery_samples_follow_the_stream`, `health::tests`,
   `app_push::tests`, `attention::tests`.
+- **Known gap (delivery time, accepted):** a push accepted on a stream that died silently (no FIN) and pulled by the
+  phone's sync *before* its new stream registers still sees the old generation, so that sample includes the outage
+  (until the dead stream is dropped, roughly 15-30 minutes, longer behind a proxy). A guard would need the stream
+  registry to track its last write; not built. Also: the waiting row's arm (b) needs the latest hand-out to be 2+
+  minutes old, so a phone catching up after a lost ack never blinks it. "At most the newest 5,000" is shown when a
+  phone's samples reach the cap (`>=`, exactly 5,000 reads as maybe cut); the Settings count then says per phone.
+- **Dev databases:** a database migrated at cb040b347 (0153 with `vapid_refused_why`) must be recreated.

@@ -132,7 +132,11 @@ async fn waiting_since(
     }
     let raised = match (fetched, handed) {
         // (b) Fetched but never acknowledged: a later pull handed it out again well after the ack flush.
-        (Some(fetched), Some(handed)) => handed >= fetched + REHANDED_MIN * 60_000,
+        // The phone also had 2 minutes to acknowledge the latest hand-out: a phone catching up after a lost ack
+        // acknowledges within seconds and never blinks the row.
+        (Some(fetched), Some(handed)) => {
+            handed >= fetched + REHANDED_MIN * 60_000 && now_ms - handed >= REHANDED_MIN * 60_000
+        }
         (Some(_), None) => false,
         // (a) Never fetched although the phone took its policy three times, with no report saying it couldn't apply it.
         (None, _) => {

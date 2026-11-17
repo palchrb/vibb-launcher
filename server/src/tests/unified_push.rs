@@ -2073,10 +2073,68 @@ async fn attention_rows_of_108c() {
         push_rows(&app, &cookie, emma).await.is_empty(),
         "30 s after the first hand-out"
     );
+    // A re-hand-out 30 s ago: the phone has had no time to acknowledge it (a catch-up after a lost ack).
+    let thirty_ago = (at(0) - chrono::Duration::seconds(30)).timestamp_millis();
+    store::pull(&app.db, emma, &[], thirty_ago, Some(7))
+        .await
+        .unwrap();
+    assert!(
+        push_rows(&app, &cookie, emma).await.is_empty(),
+        "a hand-out 30 s ago"
+    );
     store::pull(&app.db, emma, &[], at(-7).timestamp_millis(), Some(7))
         .await
         .unwrap();
     assert_eq!(push_rows(&app, &cookie, emma).await, ["app-push-waiting"]);
+    // The 30-minute floor: a push 20 minutes old with three served policies in its window isn't waiting yet.
+    sql(&app, "DELETE FROM up_messages").await;
+    store::enqueue(
+        &app.db,
+        &registration_of(&app, reg).await,
+        &push,
+        at(-20).timestamp_millis(),
+        Some(7),
+    )
+    .await
+    .unwrap();
+    for minutes in [-9, -6, -3] {
+        served.note_policy_served_at(emma, at(minutes));
+    }
+    assert!(
+        push_rows(&app, &cookie, emma).await.is_empty(),
+        "under 30 minutes old"
+    );
+}
+
+/// §1.1: a policy the phone took (200, and 304 on `If-None-Match`) is noted by the route, never by anything else.
+#[tokio::test]
+async fn the_policy_route_notes_served_policies() {
+    let app = TestApp::new().await;
+    let (emma, token) = app.enrolled_device("Emma").await;
+    let served = || {
+        app.state.unified_push.policies_served(
+            emma,
+            chrono::Utc::now() - chrono::Duration::minutes(5),
+            chrono::Utc::now() + chrono::Duration::minutes(5),
+        )
+    };
+    assert_eq!(served(), 0);
+    let get = |tag: Option<String>| {
+        let mut request = Request::builder()
+            .method(Method::GET)
+            .uri("/api/devices/policy")
+            .header("authorization", format!("Bearer {token}"));
+        if let Some(tag) = tag {
+            request = request.header("if-none-match", tag);
+        }
+        app.send(request.body(Body::empty()).unwrap())
+    };
+    let first = get(None).await;
+    assert_eq!(first.status, StatusCode::OK);
+    assert_eq!(served(), 1);
+    let tag = first.headers["etag"].to_str().unwrap().to_string();
+    assert_eq!(get(Some(tag)).await.status, StatusCode::NOT_MODIFIED);
+    assert_eq!(served(), 2);
 }
 
 /// §7.1: `accept` stores the phone's stream generation, `NULL` without a stream.

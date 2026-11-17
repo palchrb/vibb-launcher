@@ -177,8 +177,8 @@ the target names each app). Keys are `device.attention.*`, as the rest.
 | Row (`data-attention`) | en | nb |
 |---|---|---|
 | `app-push-waiting` | App notifications aren't reaching the phone | Appvarsler kommer ikke fram til telefonen |
-| `app-push-refused` one / other | An app's notifications are refused / {count} apps' notifications are refused | Varsler til en app blir avvist / Varsler til {count} apper blir avvist |
-| `app-push-outside` one / other | An app's notifications go via an outside service / {count} apps' notifications go via an outside service | Varsler til en app går via en ekstern tjeneste / Varsler til {count} apper går via en ekstern tjeneste |
+| `app-push-refused` one / other | {count} app's notifications are refused / {count} apps' notifications are refused (shipped: the catalog test needs `{count}` in both forms) | Varsler til {count} app blir avvist / Varsler til {count} apper blir avvist |
+| `app-push-outside` one / other | {count} app's notifications go via an outside service / {count} apps' notifications go via an outside service | Varsler til {count} app går via en ekstern tjeneste / Varsler til {count} apper går via en ekstern tjeneste |
 
 The count is apps (packages), not registrations: Element X with two accounts is one app.
 
