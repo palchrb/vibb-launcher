@@ -64,6 +64,21 @@ the sections below:
 - Element X stays the Play build (the amendment): nothing in the launcher depends on the F-Droid build.
 - Not in R1-L: the emulator gate (R1-G, §12.3), VAPID (R3).
 
+**R1-L's code QA (1 H, 3 M, 6 L), fixed on `up`:**
+
+| Finding | The fix |
+|---|---|
+| **H1** `goAsync` held across server calls | no `goAsync()` in either receiver: the request is read, queued, and `onReceive` returns; answers are broadcasts of their own, the anchor's FGS keeps the process. The raise runs on an executor of its own; every server call has a budget (a REGISTER one call plus a conflict retry only after a fast answer, the DELETEs 20 s / 20 a run, a pull step one call) |
+| **M1** the pull spun while the raise bound, and after a failed send | `more` loops only when the step handled a new message; a failed send is reported (`onFailed`, the vendored class's change list says so) and delivered again by a later pull |
+| **M2** a fault left `pullRunning` set | `pullStep` ends the pull on any exception (`UpEngineTest`) |
+| **M3** a fallback or bare policy disabled the components | switched only with `parentChoice` (fresh, or a cache that decodes); the reconcile takes the fresh policy's own view, never the cache read back |
+| **L1** the unverified old-connector hint | noted only for an installed package that may register, at most 3, worded "an app calling itself X ... not verified" |
+| **L2** the wake lock outlived the pull | released when the pull is over and no raise is bound |
+| **L3** the sealed store read for any request | a REGISTER that may not register is refused from the cached policy first; MESSAGE_ACK ignored while off and rate-limited (a token within the hour skipped, 30 reads a minute) |
+| **L4** an unreadable store kept the server's rows for good | after a day's grace the blob is dropped and the reconcile runs from empty (its `DELETE`s); no new UI |
+| **L5** an allowed app hidden for another reason lost its messages | a hidden app's message is dropped and acknowledged **and its registration removed** (as §2.3's "leaves the allowlist" row): holding would fill the server's 50-message batch for every other app; the app registers anew once visible and started |
+| **L6** delivery to a suspended app during a time rule gives it an FGS start window | **not changed: an open question for the user.** Q5 chose "deliver" during a time rule; the raise lets the suspended app start its foreground service (it syncs in the background during bedtime). Whether that is wanted, or the raise should be skipped for a suspended app (the broadcast still delivered), is the user's call |
+
 
 The sections a finding changes are rewritten in place, so where revision 1 and a section disagree, the section as it
 now reads is the design. §16 maps every finding to its fix. What changed, in short:

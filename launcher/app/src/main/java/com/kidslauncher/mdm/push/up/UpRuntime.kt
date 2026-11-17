@@ -35,27 +35,39 @@ private const val PULL_TIMEOUT_MS = 15_000L
 private const val PULL_WAKELOCK_MS = 30_000L
 
 /**
- * Design 108's distributor on the phone (§5): one single-thread executor that runs [UpEngine] - the receiver's
- * requests, the pulls, the policy's reconcile, the raise's callbacks and timers - so nothing in it needs a lock. The
- * engine is built on its first use; it never touches the credential-encrypted store before the first unlock
- * ([isUserUnlocked], L6).
+ * Design 108's distributor on the phone (§5), on two single-thread executors (code QA H1):
+ * - [work] runs [UpEngine] - the receiver's requests, the pulls, the policy's reconcile, every server call (each with
+ *   its time budget) - so the engine needs no lock;
+ * - [raise] runs the raise ([RaiseToForeground]): its sends, its binding's callbacks and its 5 s timer, never behind a
+ *   server call; a sent or failed message is posted back to [work].
+ * No broadcast is held across any of it: the receivers hand their request over and return (the anchor's foreground
+ * service keeps the process), and every answer to an app is a broadcast of its own. The engine is built on its first
+ * use; it never touches the credential-encrypted store before the first unlock ([isUserUnlocked], L6).
  *
  * Entry points: [handle] (from [UpReceiver]), [requestPull] (the anchor's `up` event and every stream reopen, every
  * sync while UP is on), [policyAccepted] (the sync's fresh policy), [packageGone] ([UpPackageReceiver]),
  * [setComponentsEnabled] (`AppEnforcer.apply`) and [diagnostics] (the PIN-gated Settings row).
  */
 object UpRuntime {
-    private val executor: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor { runnable ->
+    private val work: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor { runnable ->
         Thread(runnable, "unified-push").apply { isDaemon = true }
+    }
+    private val raise: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor { runnable ->
+        Thread(runnable, "unified-push-raise").apply { isDaemon = true }
     }
 
     @Volatile
     private var engine: UpEngine? = null
     private var wakeLock: PowerManager.WakeLock? = null
 
-    /** The raise per app while bound (executor only). */
+    /** The raise per app while bound, and their connections ([raise] only); [raising] their count for the wake lock. */
     private val raises = HashMap<String, RaiseToForeground>()
     private val connections = HashMap<RaiseToForeground, ServiceConnection>()
+
+    @Volatile
+    private var raising = 0
+
+    /** The late sends' ack pull ([work] only). */
     private var flush: ScheduledFuture<*>? = null
 
     private fun engine(context: Context): UpEngine = engine ?: synchronized(this) {
@@ -86,39 +98,51 @@ object UpRuntime {
             phone = phone,
             log = { Log.i(LOG_TAG, it) },
         )
-        phone.onSent = { built.sent(it) }
+        phone.onSent = { message -> post { built.sent(message) } }
+        phone.onFailed = { message -> post { built.failed(message) } }
         return built
     }
 
-    /** An app's request, read by [UpReceiver] before `goAsync()`; [done] finishes the broadcast. */
-    fun handle(context: Context, request: UpRequest, done: () -> Unit) {
+    /** An app's request, read in full by [UpReceiver]; queued, never awaited (no broadcast is held). */
+    fun handle(context: Context, request: UpRequest) {
         val app = context.applicationContext
-        post(done) { engine(app).handle(request) }
+        post { engine(app).handle(request) }
     }
 
-    /** A REGISTER without a shared identity: noted once for the diagnostics row (L4), never answered. */
-    fun noteOldConnector(context: Context, pkgHint: String?, done: () -> Unit) {
+    /**
+     * A REGISTER without a shared identity (L4): never answered; noted once for the diagnostics row only when its
+     * claimed package (the `application` extra, unverified - code QA L1) is installed and may register, under the
+     * notes' own cap ([UpStore.OLD_CONNECTOR_MAX]); the row words it as unverified.
+     */
+    fun noteOldConnector(context: Context, pkgHint: String?) {
         val app = context.applicationContext
-        post(done) {
-            if (isUserUnlocked(app) && pkgHint != null) {
-                UpStore.of(app).note(UpNote(pkgHint, NOTE_OLD_CONNECTOR, System.currentTimeMillis()))
+        if (pkgHint == null) return
+        post {
+            if (!isUserUnlocked(app) || !view().mayRegister(pkgHint)) return@post
+            val installed = try {
+                app.packageManager.getApplicationInfo(pkgHint, PackageManager.ApplicationInfoFlags.of(0))
+                true
+            } catch (e: PackageManager.NameNotFoundException) {
+                false
             }
+            if (installed) UpStore.of(app).note(UpNote(pkgHint, NOTE_OLD_CONNECTOR, System.currentTimeMillis()))
         }
     }
 
-    /** [pkg] was removed or its data cleared ([UpPackageReceiver]). */
-    fun packageGone(context: Context, pkg: String, done: () -> Unit) {
+    /** [pkg] was removed or its data cleared ([UpPackageReceiver]); queued, never awaited. */
+    fun packageGone(context: Context, pkg: String) {
         val app = context.applicationContext
-        post(done) { engine(app).packageGone(pkg) }
+        post { engine(app).packageGone(pkg) }
     }
 
-    /** The sync accepted a fresh policy fetched at [requestStartMs]: the reconcile, the origin's rewrite, the queued
-     * deletes, then a pull while UP is on (§5.5's catch-up). */
+    /** The sync accepted [policy], fetched at [requestStartMs]: the reconcile by that policy's own view (code QA M3,
+     * never the cache read back), the origin's rewrite, the queued deletes, then a pull while UP is on (§5.5). */
     fun policyAccepted(context: Context, policy: PolicyResponse, requestStartMs: Long) {
         val app = context.applicationContext
+        val view = UpView.of(policy)
         val regs = policy.unifiedPush?.regs
         post {
-            engine(app).policyAccepted(regs, requestStartMs)
+            engine(app).policyAccepted(view, regs, requestStartMs)
         }
         requestPull(app, "sync")
     }
@@ -135,11 +159,12 @@ object UpRuntime {
         acquireWakeLock(app)
         post {
             val engine = engine(app)
-            if (engine.requestPull(reason)) step(engine)
+            if (engine.requestPull(reason)) step(engine) else releaseIfIdle()
         }
     }
 
-    /** One pull step per executor task, so a REGISTER waits at most one call between them. */
+    /** One pull step per task, so a REGISTER waits at most one call between them. A fault ends the pull (the engine's
+     * `pullStep` resets it, code QA M2). The wake lock goes when the pull is over and no raise is bound (code QA L2). */
     private fun step(engine: UpEngine) {
         val again = try {
             engine.pullStep()
@@ -147,7 +172,13 @@ object UpRuntime {
             Log.w(LOG_TAG, "A pull failed: ${e.javaClass.simpleName}")
             false
         }
-        if (again) post { step(engine) }
+        if (again) post { step(engine) } else releaseIfIdle()
+    }
+
+    /** The pull's wake lock released once nothing is left: no pull running and no raise bound. */
+    private fun releaseIfIdle() {
+        if (engine?.pullActive == true || raising > 0) return
+        releaseWakeLock()
     }
 
     /** UP's two exported components follow the policy's `unified_push.on` (§5.1): disabled, no app sees Vibb One as
@@ -179,19 +210,19 @@ object UpRuntime {
         return UpDiagnostics(view().on, rows, store.notes())
     }
 
-    private fun post(done: () -> Unit = {}, block: () -> Unit) {
+    private fun post(block: () -> Unit) = run(work, block)
+
+    private fun run(executor: ScheduledExecutorService, block: () -> Unit) {
         try {
             executor.execute {
                 try {
                     block()
                 } catch (e: Exception) {
                     Log.w(LOG_TAG, "App push failed: ${e.javaClass.simpleName}")
-                } finally {
-                    done()
                 }
             }
         } catch (e: Exception) {
-            done()
+            Log.w(LOG_TAG, "App push couldn't queue: ${e.javaClass.simpleName}")
         }
     }
 
@@ -212,6 +243,15 @@ object UpRuntime {
             lock?.acquire(PULL_WAKELOCK_MS)
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Couldn't take the pull's wake lock: ${e.javaClass.simpleName}")
+        }
+    }
+
+    @Synchronized
+    private fun releaseWakeLock() {
+        try {
+            wakeLock?.takeIf { it.isHeld }?.release()
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't release the pull's wake lock: ${e.javaClass.simpleName}")
         }
     }
 
@@ -264,6 +304,7 @@ object UpRuntime {
      */
     private class AndroidPhone(private val app: Context) : UpPhone, RaiseToForeground.Platform {
         var onSent: (RaiseToForeground.Message) -> Unit = {}
+        var onFailed: (RaiseToForeground.Message) -> Unit = {}
 
         private fun broadcast(pkg: String, action: String, extras: Intent.() -> Unit) {
             try {
@@ -304,14 +345,17 @@ object UpRuntime {
             }
         }
 
-        override fun deliver(pkg: String, message: RaiseToForeground.Message) {
-            val raise = raises.getOrPut(pkg) { RaiseToForeground(pkg, this, { onSent(it) }, { gone -> raises.remove(pkg, gone) }) }
-            raise.raiseAndSend(message)
+        /** On the [raise] executor: the raise and its send never wait behind a server call. */
+        override fun deliver(pkg: String, message: RaiseToForeground.Message) = run(raise) {
+            val instance = raises.getOrPut(pkg) {
+                RaiseToForeground(pkg, this, { onSent(it) }, { gone -> raises.remove(pkg, gone) }, { onFailed(it) })
+            }
+            instance.raiseAndSend(message)
         }
 
         override fun pullLater(delayMs: Long) {
             if (flush?.isDone == false) return
-            flush = executor.schedule({ requestPull(app, "ack") }, delayMs, TimeUnit.MILLISECONDS)
+            flush = work.schedule({ requestPull(app, "ack") }, delayMs, TimeUnit.MILLISECONDS)
         }
 
         override fun hasRaiseService(app: String): Boolean = try {
@@ -333,11 +377,12 @@ object UpRuntime {
             val bound = this.app.bindService(
                 Intent(UpSpec.RAISE_TO_FOREGROUND).setPackage(app),
                 Context.BIND_AUTO_CREATE,
-                executor,
+                raise,
                 conn,
             )
             if (bound) {
                 connections[connection] = conn
+                raising = connections.size
             } else {
                 // A false bindService still holds the connection until it is unbound.
                 runCatching { this.app.unbindService(conn) }
@@ -346,7 +391,12 @@ object UpRuntime {
         }
 
         override fun unbind(connection: RaiseToForeground) {
-            connections.remove(connection)?.let { this.app.unbindService(it) }
+            try {
+                connections.remove(connection)?.let { this.app.unbindService(it) }
+            } finally {
+                raising = connections.size
+                if (raising == 0) post { releaseIfIdle() }
+            }
         }
 
         override fun send(app: String, message: RaiseToForeground.Message) {
@@ -359,7 +409,7 @@ object UpRuntime {
         }
 
         override fun schedule(delayMs: Long, action: () -> Unit): RaiseToForeground.Cancellable {
-            val future = executor.schedule({
+            val future = raise.schedule({
                 try {
                     action()
                 } catch (e: Exception) {
@@ -374,11 +424,8 @@ object UpRuntime {
         override fun noRaiseService(app: String) {
             if (!noted.add(app)) return
             Log.i(LOG_TAG, "$app has no raise service: its messages go without the raise")
-            try {
-                if (isUserUnlocked(this.app)) UpStore.of(this.app).note(UpNote(app, NOTE_NO_RAISE, System.currentTimeMillis()))
-            } catch (e: Exception) {
-                // Only a note.
-            }
+            // The store is the work executor's.
+            post { if (isUserUnlocked(this.app)) UpStore.of(this.app).note(UpNote(app, NOTE_NO_RAISE, System.currentTimeMillis())) }
         }
     }
 }

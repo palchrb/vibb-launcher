@@ -544,7 +544,7 @@
     <string name="settings_up_waiting">waiting for the server</string>
     <string name="settings_up_not_delivered">nothing delivered yet</string>
     <string name="settings_up_delivered">last delivered %1$s</string>
-    <string name="settings_up_old_connector">%1$s: its push library is too old for Vibb One</string>
+    <string name="settings_up_old_connector">An app calling itself %1$s asked without identifying itself (an older push library?) - not verified</string>
     <string name="settings_up_no_raise">%1$s: gets its messages without the wake-up</string>
     <string name="settings_notifications">Vibb One notifications</string>
     <string name="settings_notifications_off">Off: %1$s</string>

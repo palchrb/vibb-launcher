@@ -53,7 +53,9 @@ class RaiseToForegroundTest {
 
     private val platform = Fake()
     private val unbound = mutableListOf<RaiseToForeground>()
-    private val raise = RaiseToForeground("org.unifiedpush.example", platform, { platform.events += "acked ${it.id}" }, { unbound += it })
+    private val raise = RaiseToForeground(
+        "org.unifiedpush.example", platform, { platform.events += "acked ${it.id}" }, { unbound += it }, { platform.events += "failed ${it.id}" },
+    )
 
     private fun message(id: String) = RaiseToForeground.Message("tok-example-1", byteArrayOf(1, 2), id)
 
@@ -109,10 +111,10 @@ class RaiseToForegroundTest {
     }
 
     @Test
-    fun `a send that fails is never reported, so never acknowledged`() {
+    fun `a send that fails is reported as failed, never as sent, so never acknowledged`() {
         platform.bindResult = false
         platform.sendFails = true
         raise.raiseAndSend(message("k1"))
-        assertEquals(listOf("bind"), platform.events)
+        assertEquals(listOf("bind", "failed k1"), platform.events)
     }
 }

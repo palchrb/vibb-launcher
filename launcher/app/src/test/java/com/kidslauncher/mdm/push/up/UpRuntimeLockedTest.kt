@@ -24,7 +24,7 @@ class UpRuntimeLockedTest {
         engine.handle(UpRequest.Unregister("io.element.android.x", "tok"))
         engine.handle(UpRequest.Ack(null, "tok", "id"))
         engine.packageGone("io.element.android.x")
-        engine.policyAccepted(listOf("c0ffee00000000000000000000000001"), 0)
+        engine.policyAccepted(UpFixtures.view("on"), listOf("c0ffee00000000000000000000000001"), 0)
         assertFalse(engine.requestPull("sse"))
         assertFalse(engine.pullStep())
         assertTrue(phone.sent.isEmpty())

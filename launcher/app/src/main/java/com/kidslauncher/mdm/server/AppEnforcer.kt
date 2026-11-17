@@ -360,8 +360,13 @@ object AppEnforcer {
         // Design 108 §5.2 (L3), the same pattern: `unifiedpush://link` always goes to Vibb's Link Activity, whatever UP's
         // state; whether it is used is the component's enabled state, which follows the policy's `unified_push.on` with
         // the registration receiver's (disabled: no app sees Vibb One as a distributor). Not a restriction: never lifted.
+        // Code QA M3: switched only by a policy carrying the parent's choice (fresh, or a cache that decodes); a fallback
+        // plan or a bare policy leaves them as they are - a disabled receiver makes the connector drop Vibb One, and each
+        // Element X account would need its manual switch again.
         enforceUpLinkPin(dpm, admin, context)
-        com.kidslauncher.mdm.push.up.UpRuntime.setComponentsEnabled(context, com.kidslauncher.mdm.push.up.UpView.of(policy).on)
+        if (parentChoice) {
+            com.kidslauncher.mdm.push.up.UpRuntime.setComponentsEnabled(context, com.kidslauncher.mdm.push.up.UpView.of(policy).on)
+        }
 
         // Hardening that the server switched off is cleared first, before anything below can
         // throw - "Block USB debugging" off is how a parent gets adb back (QA step 4 #8). The

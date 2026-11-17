@@ -482,7 +482,7 @@
     <string name="settings_up_waiting">venter på serveren</string>
     <string name="settings_up_not_delivered">ingenting levert ennå</string>
     <string name="settings_up_delivered">sist levert %1$s</string>
-    <string name="settings_up_old_connector">%1$s: push-biblioteket er for gammelt for Vibb One</string>
+    <string name="settings_up_old_connector">En app som kaller seg %1$s spurte uten å vise hvem den er (eldre push-bibliotek?) - ikke bekreftet</string>
     <string name="settings_up_no_raise">%1$s: får meldingene uten oppvekking</string>
     <string name="settings_notifications">Varsler fra Vibb One</string>
     <string name="settings_notifications_off">Av: %1$s</string>

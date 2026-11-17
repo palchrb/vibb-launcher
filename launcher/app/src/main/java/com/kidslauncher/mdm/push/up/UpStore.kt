@@ -87,10 +87,13 @@ class UpStore(
         const val DELETES = "up_deletes_v1"
         const val CHURN = "up_churn_v1"
         const val NOTES = "up_notes_v1"
+        const val UNREADABLE_SINCE = "up_unreadable_since_v1"
         const val AAD = "$PREFS_NAME/$REGS"
 
-        /** At most this many notes are kept (the oldest goes). */
+        /** At most this many notes are kept (the oldest goes), and of them at most [OLD_CONNECTOR_MAX] unverified
+         * old-connector hints (code QA L1). */
         const val NOTES_MAX = 10
+        const val OLD_CONNECTOR_MAX = 3
 
         fun of(context: Context): UpStore =
             UpStore(context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE))
@@ -104,6 +107,26 @@ class UpStore(
         } catch (e: Exception) {
             UpRead.Unreadable
         }
+    }
+
+    /** When the registrations were first found unreadable (marked now if not yet) - code QA L4's grace. */
+    fun unreadableSince(nowMs: Long): Long {
+        val since = prefs.getLong(UNREADABLE_SINCE, -1L)
+        if (since >= 0) return since
+        prefs.edit().putLong(UNREADABLE_SINCE, nowMs).commit()
+        return nowMs
+    }
+
+    fun clearUnreadable() {
+        if (prefs.contains(UNREADABLE_SINCE)) prefs.edit().remove(UNREADABLE_SINCE).commit()
+    }
+
+    /** Drops the registrations' blob (no seal needed, so it works with a broken key too) and the mark: the next read is
+     * empty. */
+    fun reset(): Boolean {
+        val removed = sealed.edit(prefs) { it.remove(AAD, REGS) }
+        if (removed) clearUnreadable()
+        return removed
     }
 
     /** The rows, sealed, in one `commit()`; false when the seal or the commit failed (nothing written then). */
@@ -134,6 +157,7 @@ class UpStore(
     fun note(note: UpNote): Boolean {
         val notes = notes()
         if (notes.any { it.pkg == note.pkg && it.kind == note.kind }) return false
+        if (note.kind == NOTE_OLD_CONNECTOR && notes.count { it.kind == NOTE_OLD_CONNECTOR } >= OLD_CONNECTOR_MAX) return false
         val kept = (notes + note).takeLast(NOTES_MAX)
         return prefs.edit().putString(NOTES, ServerJson.encodeToString(NotesBlob.serializer(), NotesBlob(kept))).commit()
     }

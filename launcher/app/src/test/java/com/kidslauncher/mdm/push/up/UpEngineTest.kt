@@ -126,4 +126,48 @@ class UpEngineTest {
         assertFalse(engine.pullStep())
         assertFalse(engine.requestPull("sse"))
     }
+
+    @Test
+    fun `M1 - a batch still in the raise never spins the pull, and a failed send is delivered again`() {
+        store.write(UpFixtures.rows)
+        val message = UpWireMessage("deadbeef000000000000000000000005", "c0ffee00000000000000000000000002", "high", "AAEC")
+        server.pulls += UpMessagesAnswer(listOf(message), more = true)
+        assertTrue(engine.requestPull("sse"))
+        assertTrue(engine.pullStep())
+        // The server says more, but all it sends is the one still in the raise: the pull stops and waits for the send.
+        server.pulls += UpMessagesAnswer(listOf(message), more = true)
+        assertFalse(engine.pullStep())
+        assertEquals(1, phone.delivering.size)
+        // The send failed: no ack, and the next pull hands it to the raise again.
+        engine.failed(phone.delivering.removeAt(0))
+        assertTrue(engine.pendingAcks().isEmpty())
+        server.pulls += UpMessagesAnswer(listOf(message))
+        assertTrue(engine.requestPull("sse"))
+        assertFalse(engine.pullStep())
+        assertEquals(message.key, phone.delivering.single().id)
+    }
+
+    @Test
+    fun `M2 - a fault in a step ends the pull, so the next one runs`() {
+        store.write(UpFixtures.rows)
+        val throwing = UpEngine({ true }, { store }, { view }, { throw IllegalStateException("boom") }, phone)
+        assertTrue(throwing.requestPull("sse"))
+        assertTrue(runCatching { throwing.pullStep() }.isFailure)
+        assertFalse(throwing.pullActive)
+        assertTrue(throwing.requestPull("sse"))
+    }
+
+    @Test
+    fun `L3 - a refused app and a repeated ack never read the sealed store`() {
+        var reads = 0
+        val counted = UpEngine({ true }, { reads++; store }, { UpFixtures.view("element_only") }, { server }, phone, { 10_000_000 })
+        counted.handle(UpRequest.Register("org.unifiedpush.example", "tok-x", null, null))
+        assertEquals(0, reads)
+        assertEquals("REGISTRATION_FAILED org.unifiedpush.example tok-x ACTION_REQUIRED", phone.sent.single())
+        counted.handle(UpRequest.Ack(null, "tok-element-1", "id1"))
+        val afterFirst = reads
+        assertTrue(afterFirst > 0)
+        counted.handle(UpRequest.Ack(null, "tok-element-1", "id2"))
+        assertEquals(afterFirst, reads)
+    }
 }

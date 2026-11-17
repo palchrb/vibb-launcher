@@ -12,14 +12,15 @@
  *   original's unbind() did msgsQueue.clear());
  * - a message is reported to [RaiseToForeground]'s `onSent` only after its broadcast was sent, and Vibb One
  *   acknowledges its key to the server only from there, so a crash between the fetch and the send re-delivers instead
- *   of losing;
+ *   of losing; a broadcast that couldn't be sent is reported to `onFailed`, so it can be delivered again;
  * - checkForeground() is gone: Vibb One's process always holds the anchor's foreground service, the precondition the
  *   original tested by scanning the running processes;
  * - hasRaiseToForegroundService() queries the right intent (the original's pre-33 branch queried ACTION_REGISTER); it
  *   runs on 34+ only, in [Platform.hasRaiseService];
  * - send() adds FLAG_INCLUDE_STOPPED_PACKAGES and the message's `id` extra, and an explicit action on every intent (in
  *   [Platform.send]);
- * - the executor is UpRuntime's one: the binding's callbacks and the timeout run there, so the state needs no lock;
+ * - the executor is UpRuntime's raise executor: the binding's callbacks and the timeout run there, never behind a
+ *   server call, so the state needs no lock;
  * - an app with no such service is sent the message without the raise and noted once;
  * - the Android calls sit behind [Platform], so the queue and its state machine are unit-tested with a fake binder
  *   (RaiseToForegroundTest).
@@ -39,6 +40,7 @@ class RaiseToForeground(
     private val platform: Platform,
     private val onSent: (Message) -> Unit,
     private val onUnbound: (RaiseToForeground) -> Unit,
+    private val onFailed: (Message) -> Unit = {},
 ) {
     /** One MESSAGE: the connector's [token], the bytes, and the message's random key [id] (the extra and the ack). */
     class Message(val token: String, val content: ByteArray, val id: String)
@@ -145,7 +147,8 @@ class RaiseToForeground(
         while (queue.isNotEmpty()) send(queue.removeFirst())
     }
 
-    /** Reported only after the broadcast went out; a failed send is never reported, so never acknowledged. */
+    /** Reported to `onSent` only after the broadcast went out, so only then acknowledged; a failed send goes to
+     * `onFailed` (never acknowledged, delivered again by a later pull). */
     private fun send(message: Message) {
         val sent = try {
             platform.send(app, message)
@@ -153,7 +156,7 @@ class RaiseToForeground(
         } catch (e: Exception) {
             false
         }
-        if (sent) onSent(message)
+        if (sent) onSent(message) else onFailed(message)
     }
 
     companion object {

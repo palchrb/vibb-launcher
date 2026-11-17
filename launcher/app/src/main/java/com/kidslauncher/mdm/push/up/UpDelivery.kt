@@ -5,7 +5,7 @@ enum class UpAppState {
     /** Installed and not hidden - suspended included: a suspended app still receives broadcasts and runs (§5.7). */
     INSTALLED,
 
-    /** Hidden by the allowlist (`isApplicationHidden`): it gets no broadcast. */
+    /** Hidden (`isApplicationHidden`, by the allowlist or anything else): it gets no broadcast. */
     HIDDEN,
 
     UNINSTALLED,
@@ -27,7 +27,9 @@ sealed interface UpPlan {
  * | the app is | the message is |
  * |---|---|
  * | installed and visible, suspended included (a time rule, the SMS rule; §5.7, Q5 "deliver") | delivered |
- * | hidden | dropped and acknowledged (the server deletes the registration through the allowlist anyway) |
+ * | hidden (by the allowlist or for another reason, code QA L5) | dropped and acknowledged, the registration removed: a
+ * hidden app can't get a broadcast, and a held message would fill the server's batch for every other app; the app
+ * registers anew once it is visible and started again (§2.3's "leaves the allowlist" row) |
  * | uninstalled | dropped and acknowledged, the registration removed |
  * | an unknown `reg` (removed meanwhile), or one not confirmed | dropped and acknowledged |
  */
@@ -36,8 +38,7 @@ object UpDelivery {
         val row = rows.firstOrNull { it.reg == message.reg }?.takeIf { it.confirmed } ?: return UpPlan.Drop(null)
         return when (state(row.pkg)) {
             UpAppState.INSTALLED -> UpPlan.Deliver(row)
-            UpAppState.HIDDEN -> UpPlan.Drop(null)
-            UpAppState.UNINSTALLED -> UpPlan.Drop(row)
+            UpAppState.HIDDEN, UpAppState.UNINSTALLED -> UpPlan.Drop(row)
         }
     }
 }

@@ -61,19 +61,24 @@ class UpReceiverReadTest {
     }
 
     @Test
-    fun `onReceive reads the identity and the request before goAsync, and hands over only the request (M1)`() {
-        val source = listOf("src/main/java", "app/src/main/java").map(::File).first { it.isDirectory }
-            .resolve("com/kidslauncher/mdm/push/up/UpReceiver.kt").readText()
+    fun `onReceive reads the identity and the request first, hands over only the request and never holds the broadcast (M1, QA H1)`() {
+        val main = listOf("src/main/java", "app/src/main/java").map(::File).first { it.isDirectory }.resolve("com/kidslauncher/mdm/push/up")
+        val source = main.resolve("UpReceiver.kt").readText()
         val onReceive = source.substringAfter("override fun onReceive(").substringBefore("\n    }\n")
         val sender = onReceive.indexOf("sentFromPackage")
         val readAt = onReceive.indexOf("UpRequests.read(intent.action, sender, BundleExtras(intent.extras))")
-        val goAsync = onReceive.indexOf("goAsync()")
+        val handOver = onReceive.indexOf("UpRuntime.handle(")
         assertTrue(sender in 0 until readAt)
-        assertTrue(readAt in 0 until goAsync)
-        // After the first goAsync, nothing reads the Intent or the identity again.
-        val after = onReceive.substring(goAsync)
+        assertTrue(readAt in 0 until handOver)
+        // After the read, nothing reads the Intent or the identity again.
+        val after = onReceive.substring(readAt + "UpRequests.read(intent.action, sender, BundleExtras(intent.extras))".length)
         assertFalse(after, "intent" in after.replace("Intent", ""))
         assertFalse("sentFromPackage" in after)
         assertFalse("getParcelable" in source || "\"pi\"" in source.substringAfter("class UpReceiver"))
+        // Code QA H1: no broadcast is held across a server call - neither receiver calls goAsync().
+        for (file in listOf("UpReceiver.kt", "UpPackageReceiver.kt")) {
+            val code = main.resolve(file).readText().lines().filterNot { it.trim().startsWith("*") || it.trim().startsWith("//") }.joinToString("\n")
+            assertFalse(file, "goAsync()" in code)
+        }
     }
 }

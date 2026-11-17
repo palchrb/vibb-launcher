@@ -16,7 +16,7 @@ class UpPackageReceiver : BroadcastReceiver() {
         if (intent.action != Intent.ACTION_PACKAGE_FULLY_REMOVED && intent.action != Intent.ACTION_PACKAGE_DATA_CLEARED) return
         val pkg = intent.data?.schemeSpecificPart?.takeIf { it.isNotEmpty() } ?: return
         if (pkg == context.packageName) return
-        val pending = goAsync()
-        UpRuntime.packageGone(context, pkg) { pending.finish() }
+        // Queued, never awaited (code QA H1): no goAsync() across the DELETE calls.
+        UpRuntime.packageGone(context, pkg)
     }
 }

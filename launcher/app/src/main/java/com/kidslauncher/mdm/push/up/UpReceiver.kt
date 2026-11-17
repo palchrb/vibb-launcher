@@ -88,9 +88,9 @@ private class BundleExtras(private val bundle: Bundle?) : UpExtrasView {
  * `queryBroadcastReceivers` lists no Vibb One, so no app sees a distributor). The second deliberate exception to "every
  * receiver is `exported=false`", after the device-admin kind (`UpManifestTest`).
  *
- * **Read before `goAsync()` (M1):** the sender's identity, the action and every extra are read here, synchronously,
- * into an immutable [UpRequest]; only then does it call `goAsync()` and hand the request to [UpRuntime]'s executor.
- * Nothing on the executor touches the Intent or this receiver.
+ * **Read in `onReceive` (M1):** the sender's identity, the action and every extra are read here, synchronously, into
+ * an immutable [UpRequest], which alone is handed to [UpRuntime]'s executor; `onReceive` then returns at once (no
+ * `goAsync()`, code QA H1). Nothing on the executor touches the Intent or this receiver.
  */
 class UpReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -106,13 +106,12 @@ class UpReceiver : BroadcastReceiver() {
             UpRequests.Read.Ignored -> return
             is UpRequests.Read.OldConnector -> {
                 Log.w(LOG_TAG, "A REGISTER without a shared identity, ignored (an AND_2-only connector?)")
-                val pending = goAsync()
-                UpRuntime.noteOldConnector(context.applicationContext, read.pkgHint) { pending.finish() }
+                UpRuntime.noteOldConnector(context.applicationContext, read.pkgHint)
             }
-            is UpRequests.Read.Request -> {
-                val pending = goAsync()
-                UpRuntime.handle(context.applicationContext, read.request) { pending.finish() }
-            }
+            // Queued, never awaited (code QA H1): no goAsync() - a broadcast held across a server call would hold up
+            // every other broadcast to this process (SMS_DELIVER, alarms) and risk a background ANR. The answer goes
+            // to the app as a broadcast of its own; the anchor's foreground service keeps the process.
+            is UpRequests.Read.Request -> UpRuntime.handle(context.applicationContext, read.request)
         }
     }
 }

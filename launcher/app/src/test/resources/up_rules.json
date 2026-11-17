@@ -47,7 +47,7 @@
   "delivery": [
     {"case": "installed and visible", "reg": "c0ffee00000000000000000000000001", "app": "installed", "plan": "deliver"},
     {"case": "suspended by a time rule (Q5: delivered; a suspended app reads as installed)", "reg": "c0ffee00000000000000000000000002", "app": "installed", "plan": "deliver"},
-    {"case": "hidden: acknowledged, the server prunes the registration", "reg": "c0ffee00000000000000000000000001", "app": "hidden", "plan": "drop"},
+    {"case": "hidden (the allowlist or any other reason): acknowledged, the registration removed", "reg": "c0ffee00000000000000000000000001", "app": "hidden", "plan": "drop_remove"},
     {"case": "uninstalled: acknowledged, the registration removed", "reg": "c0ffee00000000000000000000000001", "app": "uninstalled", "plan": "drop_remove"},
     {"case": "an unknown reg (removed meanwhile)", "reg": "c0ffee00000000000000000000000099", "app": "installed", "plan": "drop"},
     {"case": "a registration not confirmed", "reg": "c0ffee00000000000000000000000003", "app": "installed", "plan": "drop"}
