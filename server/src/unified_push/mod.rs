@@ -49,15 +49,11 @@ pub const PER_PHONE: i64 = 300;
 pub const NEW_PER_HOUR: usize = 20;
 /// New registrations on one phone an hour, every app together (R1-SR L5, `busy` too).
 pub const NEW_PER_PHONE_HOUR: usize = 60;
-/// Apps known to use UnifiedPush, for the PWA's "no push" warning (A3): the package, its name and the key of its
-/// "isn't using Vibb" text (Element X's provider is switched by hand; FluffyChat picks Vibb One by itself, 108b §6.1).
-pub const KNOWN_UP_APPS: &[(&str, &str, &str)] = &[
-    ("io.element.android.x", "Element X", "app_push.missing"),
-    (
-        "chat.fluffy.fluffychat",
-        "FluffyChat",
-        "app_push.missing_open",
-    ),
+/// Apps known to use UnifiedPush, for the PWA's "no push" warning (A3): the package, its name and whether it picks
+/// Vibb One by itself once opened (FluffyChat, 108b §6.1; Element X's provider is switched by hand in the app).
+pub const KNOWN_UP_APPS: &[(&str, &str, bool)] = &[
+    ("io.element.android.x", "Element X", false),
+    ("chat.fluffy.fluffychat", "FluffyChat", true),
 ];
 
 /// The policy's `unified_push` (§3.8), only to a launcher whose last report claims [CAPABILITY].

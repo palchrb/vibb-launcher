@@ -768,6 +768,10 @@ async fn vapid_at_the_route() {
         .fetch_one(&app.db)
         .await
         .unwrap();
+    sqlx::query("UPDATE up_registrations SET last_push_at = datetime('now', '-1 hour')")
+        .execute(&app.db)
+        .await
+        .unwrap();
     let listed = crate::unified_push::policy(&app.db, device, &[CAPABILITY.to_string()])
         .await
         .unwrap()

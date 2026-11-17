@@ -398,7 +398,14 @@ pub(crate) async fn group(
                     && !rows.iter().any(|(p, ..)| p == package)
                     && !stopped.iter().any(|p| p == package)
             })
-            .map(|(_, name, key)| t_params(lang, key, &[("app", name)]))
+            .map(|(_, name, opens)| {
+                let key = if *opens {
+                    "app_push.missing_open"
+                } else {
+                    "app_push.missing"
+                };
+                t_params(lang, key, &[("app", name)])
+            })
             .collect()
     } else {
         Vec::new()
