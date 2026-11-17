@@ -112,13 +112,15 @@
             <p class="flash{% if refused %} flash-error{% endif %}" role="status" data-flash="child-pin">{{ text }}</p>
             {% endif %}
         </div>
-        <div class="group-footer">{% if keyguard_android %}{{ self.t("device.lock.footer_android") }}{% else %}{{ self.t("device.lock.footer_own") }}{% endif %}
+        <div class="group-footer">
             <details class="info">
                 <summary aria-label="{{ self.t("device.lock.child_info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel" data-privacy="{% if keyguard_android %}android{% else %}own{% endif %}">
                     {% if keyguard_android %}
+                    <p>{{ self.t("device.lock.footer_android") }}</p>
                     <p>{{ self.t("device.lock.child_info_android") }}</p>
                     {% else %}
+                    <p>{{ self.t("device.lock.footer_own") }}</p>
                     <p>{{ self.t("device.lock.child_info_own") }}</p>
                     {% endif %}
                 </div>
@@ -135,12 +137,12 @@
         {% endif %}
         {% if parent.easy %}
         <div class="attention attention-alarm" data-warning="easy-parent-pin">
-            <span class="attention-text">{{ self.t("device.lock.easy") }}<span class="attention-sub">{{ self.t("device.lock.easy_sub") }}</span></span>
+            <div class="attention-text">{{ self.t("device.lock.easy") }}<div class="attention-sub"><details class="info"><summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("device.lock.easy_sub") }}</p></div></details></div></div>
         </div>
         {% endif %}
         {% if offline_override_used && !parent.capable %}
         <div class="attention attention-action" data-warning="override-used">
-            <span class="attention-text">{{ self.t("device.lock.used_offline") }}<span class="attention-sub">{{ self.t("device.lock.used_offline_sub") }}</span></span>
+            <div class="attention-text">{{ self.t("device.lock.used_offline") }}<div class="attention-sub"><details class="info"><summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("device.lock.used_offline_sub") }}</p></div></details></div></div>
         </div>
         {% endif %}
         <div class="group">
@@ -152,6 +154,7 @@
                 </summary>
                 <form method="post" action="/devices/{{ device.id }}/parent-pin#parent-pin" class="edit-body">
                     <label class="field-label" for="new_pin">{{ self.t("device.lock.new_parent_pin") }}</label>
+                    <details class="info field-info"><summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("device.lock.parent_pin_advice") }}</p></div></details>
                     <input type="password" id="new_pin" name="new_pin" inputmode="numeric" pattern="[0-9]{6,10}" maxlength="10" autocomplete="new-password" aria-describedby="new_pin-hint">
                     <p class="field-hint" id="new_pin-hint">{{ self.t("device.lock.parent_pin_hint") }}</p>
                     {% if parent.pin_set %}
@@ -167,10 +170,11 @@
             <p class="flash{% if warning %} flash-error{% endif %}" role="status" data-flash="parent-pin">{{ text }}</p>
             {% endif %}
         </div>
-        <div class="group-footer">{{ self.t("device.lock.parent_footer") }}
+        <div class="group-footer">
             <details class="info">
                 <summary aria-label="{{ self.t("device.lock.parent_info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
+                    <p>{{ self.t("device.lock.parent_footer") }}</p>
                     <p>{{ self.t("device.lock.parent_info") }}</p>
                 </div>
             </details>
@@ -200,7 +204,6 @@
             {% endif %}
             <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
         </form>
-        <p class="group-footer">{{ self.t("device.lock.screen_footer") }}</p>
     </section>
 
     <section id="lock-screen" aria-labelledby="lock-screen-title">
@@ -220,20 +223,27 @@
             </form>
             <form method="post" action="/devices/{{ device.id }}/lock-wake#lock-wake" class="cell" id="lock-wake">
                 <label class="row">
-                    <span class="row-label">{{ self.t("device.lock.wake") }}<span class="row-sub">{{ self.t("device.lock.wake_sub") }}</span></span>
+                    <span class="row-label">{{ self.t("device.lock.wake") }}</span>
                     <input type="checkbox" role="switch" class="sw" name="on" value="on"{% if lock_wake %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
                 </label>
                 <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
             </form>
             <form method="post" action="/devices/{{ device.id }}/lock-buzz#lock-buzz" class="cell" id="lock-buzz">
                 <label class="row">
-                    <span class="row-label">{{ self.t("device.lock.buzz") }}<span class="row-sub">{{ self.t("device.lock.buzz_sub") }}</span>{% if lock_buzz_needs_update %}<span class="row-sub tone-orange" data-hint>{{ self.t("device.lock.buzz_needs_update") }}</span>{% endif %}</span>
+                    <span class="row-label">{{ self.t("device.lock.buzz") }}{% if lock_buzz_needs_update %}<span class="row-sub tone-orange" data-hint>{{ self.t("device.lock.buzz_needs_update") }}</span>{% endif %}</span>
                     <input type="checkbox" role="switch" class="sw" name="on" value="on"{% if lock_buzz %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
                 </label>
                 <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
             </form>
         </div>
-        <p class="group-footer">{{ self.t("device.lock.lock_screen_footer") }}</p>
+        <div class="group-footer">
+            <details class="info">
+                <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    <p>{{ self.t("device.lock.lock_screen_footer") }}</p>
+                </div>
+            </details>
+        </div>
     </section>
 
     {#- Design 75 §6 (the user, 2026-11-03: the weather's options on the lock page, not a page of their own): the switch
@@ -255,7 +265,7 @@
         <div class="group">
             <form method="post" action="/devices/{{ device.id }}/weather/lock#weather-lock" class="cell" id="weather-lock">
                 <label class="row">
-                    <span class="row-label">{{ self.t("device.weather.lock") }}<span class="row-sub">{{ self.t("device.weather.lock_sub") }}</span></span>
+                    <span class="row-label">{{ self.t("device.weather.lock") }}</span>
                     <input type="checkbox" role="switch" class="sw" name="on" value="on"{% if weather.on %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
                 </label>
                 <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
@@ -268,7 +278,7 @@
             {% else %}
             <form method="post" action="/devices/{{ device.id }}/weather/zone#weather-zone" class="cell" id="weather-zone">
                 <label class="row">
-                    <span class="row-label">{{ self.t("device.weather.zone") }}<span class="row-sub">{{ self.t("device.weather.zone_sub") }}</span></span>
+                    <span class="row-label">{{ self.t("device.weather.zone") }}</span>
                     <select class="pick" name="zone" data-autosave>
                         <option value=""{% if weather.no_zone %} selected{% endif %}>{{ self.t("device.weather.zone_none") }}</option>
                         {% for z in weather.zones %}
@@ -281,7 +291,15 @@
             {% endif %}
             {% endif %}
         </div>
-        <p class="group-footer">{{ self.t("device.weather.footer") }}</p>
+        <div class="group-footer">{{ self.t("device.weather.footer") }}
+            <details class="info">
+                <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    <p>{{ self.t("device.weather.info") }}</p>
+                    <p>{{ self.t("device.weather.zone_sub") }}</p>
+                </div>
+            </details>
+        </div>
     </section>
 
     <section id="notifications" aria-labelledby="notifications-title">
@@ -316,7 +334,14 @@
             {% endfor %}
             {% endif %}
         </div>
-        <p class="group-footer">{{ self.t("device.lock.notifications_footer") }}</p>
+        <div class="group-footer">
+            <details class="info">
+                <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    <p>{{ self.t("device.lock.notifications_footer") }}</p>
+                </div>
+            </details>
+        </div>
     </section>
     {% if reveal_answer %}<script src="/static/reveal.js?v=5" data-swap-ready></script>{% endif %}
     {% if passkey_reauth %}<script src="/static/passkey.js?v=9" defer data-swap-ready></script>{% endif %}

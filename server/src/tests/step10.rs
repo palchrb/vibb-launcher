@@ -444,6 +444,14 @@ async fn lock_page_warns_about_the_lock_state() {
         .await;
         let html = lock_page(&app, &cookie, id).await;
         assert!(child_group(&html).contains(text), "{inactive}: {html}");
+        if inactive == "bad_hash" {
+            // Design 113 QA M5: its short consequence visible under the title.
+            assert!(
+                child_group(&html)
+                    .contains("<div class=\"attention-sub\">Only the Parent PIN opens it"),
+                "{html}"
+            );
+        }
     }
     // The last one's sentence and adb command are behind the warning's one ⓘ (design 113 D1 P1).
     let html = lock_page(&app, &cookie, id).await;

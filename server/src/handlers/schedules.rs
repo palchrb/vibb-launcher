@@ -1815,7 +1815,8 @@ struct DeviceTimeTemplate {
     locking: bool,
     /// "42 of 90 min today" and "Includes 30 min extra".
     screen: Option<(String, Option<String>)>,
-    /// The last report's age and exact time, for the Now group's footer.
+    /// The last report's age and exact time, for the Now group's footer - only once it is older than
+    /// [crate::handlers::window_relock::REPORT_AGE_NOTE_MS].
     reported: Option<(String, String)>,
     /// The phone's bedtime (design 66), its row to the Bedtime page.
     bedtime: Bedtime,
@@ -1944,8 +1945,13 @@ async fn render_device_time(
             s.time_state_json.as_deref(),
         )
     });
+    // The Now group's footer says when the report came only once it is old (design 113): the threshold Quick
+    // actions uses, past a healthy phone's backstop sync.
     let reported = report
         .as_ref()
+        .filter(|(t, _)| {
+            (now - *t).num_milliseconds() >= crate::handlers::window_relock::REPORT_AGE_NOTE_MS
+        })
         .map(|(t, _)| (zone.relative(*t, now), zone.exact(*t)));
     let connection = crate::handlers::devices::connection_of(state, &device, now);
     let calls_enforced = crate::attention::calls_enforced(&policy, &call_problems);
@@ -1963,8 +1969,8 @@ async fn render_device_time(
                 now,
             );
             let lock = match &badge {
-                // The footer says when the report came, so the badge needn't repeat it.
-                Some(badge) => badge.words(lang, Some(&zone.relative(*reported_at, now))),
+                // When the footer says when the report came, the badge needn't repeat it.
+                Some(badge) => badge.words(lang, reported.as_ref().map(|(age, _)| age.as_str())),
                 None => t(lang, "device.about.none").to_string(),
             };
             let screen = screen.map(|st| {

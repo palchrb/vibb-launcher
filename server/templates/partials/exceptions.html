@@ -15,7 +15,7 @@
                     {% if let Some(why) = rule.apps_error %}<p class="flash flash-error" id="apps-error" data-flash="apps">{{ why }}</p>{% endif %}
                     {% if rule.exceptions.calendar_shown %}
                     <label class="row" data-row="calendar">
-                        <span class="row-label">{{ self.t("device.exceptions.calendar") }}<span class="row-sub">{{ self.t("device.exceptions.calendar_sub") }}</span></span>
+                        <span class="row-label">{{ self.t("device.exceptions.calendar") }}</span>
                         <input type="checkbox" role="switch" class="sw" name="calendar_allowed" value="on"{% if rule.exceptions.calendar %} checked{% endif %}><span class="knob" aria-hidden="true"></span>
                     </label>
                     {% endif %}
@@ -29,5 +29,12 @@
                     {% endfor %}
                 </details>
             </div>
-            <p class="group-footer">{{ self.t(rule.exceptions.footer) }}</p>
+            <div class="group-footer">
+                <details class="info">
+                    <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                    <div class="info-panel">
+                        <p>{{ self.t(rule.exceptions.footer) }}</p>
+                    </div>
+                </details>
+            </div>
         </section>

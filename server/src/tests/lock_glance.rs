@@ -1284,12 +1284,21 @@ async fn the_wake_switch_saves_logs_nudges_and_reaches_the_policy() {
         cell.contains("Wake the screen for a notification"),
         "{cell}"
     );
+    // Design 113: no sub-line under the switch; what it wakes for is in the group's ⓘ.
+    assert!(!cell.contains("row-sub"), "{cell}");
     assert!(
-        cell.contains("For the apps on the lock below and missed calls"),
-        "{cell}"
+        !cell.contains("<details"),
+        "no ⓘ inside the switch's label: {cell}"
     );
     assert!(!cell.contains(" checked"), "off by default: {cell}");
-    assert!(group.contains("anyone near the phone can see"), "{group}");
+    let panel = &group[group
+        .find("<div class=\"info-panel\">")
+        .expect("the footer ⓘ")..];
+    assert!(
+        panel.contains("The screen wakes and the phone buzzes once, no sound, for the apps on the lock and missed calls."),
+        "{group}"
+    );
+    assert!(panel.contains("anyone near the phone can see"), "{group}");
 
     let mut nudges = app.state.command_notify.subscribe();
     // The second "off" changes nothing: no log line (qa-l7-b-code 6).
@@ -1352,10 +1361,8 @@ async fn the_buzz_switch_saves_logs_nudges_and_reaches_the_policy() {
     let cell = &group[group.find(r#"id="lock-buzz""#).expect("the cell")..];
     let cell = &cell[..cell.find("</form>").unwrap()];
     assert!(cell.contains("Buzz for a notification"), "{cell}");
-    assert!(
-        cell.contains("One short buzz, no sound, for the apps on the lock below and missed calls"),
-        "{cell}"
-    );
+    // Design 113: no sub-line under the switch (the group's ⓘ says what it buzzes for).
+    assert!(!cell.contains("row-sub"), "{cell}");
     assert!(!cell.contains(" checked"), "off by default: {cell}");
     // Code QA S4: a phone that has reported on a Vibb One from before the buzz (it ships with `messages_app_v1`)
     // says so under the switch - never before the first report, and not once it is updated.

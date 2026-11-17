@@ -37,7 +37,7 @@
         </div>
         {% if let Some((age, exact)) = reported %}<p class="group-footer">{{ self.t("device.time.reported.before") }} <span title="{{ exact }}" data-reported>{{ age }}</span>{{ self.t("device.time.reported.after") }}</p>{% endif %}
         {#- Design 98 §4.4.5: a phone with Foreldrekode on its time-rule screen. -#}
-        {% if rule_pause %}<div class="group-footer" data-rule-pause-info>{{ self.t("device.time.rule_pause_info_label") }}
+        {% if rule_pause %}<div class="group-footer" data-rule-pause-info>
             <details class="info"><summary aria-label="{{ self.t("device.time.rule_pause_info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("device.time.rule_pause_info") }}</p></div></details>
         </div>{% endif %}
     </section>
@@ -52,7 +52,6 @@
             </a>
             {% if bedtime_removed %}<p class="flash" role="status" data-flash="bedtime">{{ self.t("device.time.bedtime_removed") }}</p>{% endif %}
         </div>
-        <p class="group-footer">{{ self.t("device.time.bedtime_footer") }}</p>
     </section>
 
     {#- Everyone's rules, a switch each for this phone (migration 0115); the rules themselves are
@@ -65,8 +64,19 @@
             {% else %}
             <p class="row row-note">{{ self.t("device.time.no_everyone") }}</p>
             {% endfor %}
+            <a class="row" href="/schedules#rules">
+                <span class="row-label">{{ self.t("device.time.everyone_link") }}</span>
+                <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </a>
         </div>
-        <p class="group-footer">{{ self.tp("device.time.everyone_footer", [("name", device.name.as_str())]) }} <a href="/schedules#rules">{{ self.t("device.time.everyone_link") }}</a> {{ self.t("device.time.everyone_link_after") }}</p>
+        <div class="group-footer">
+            <details class="info">
+                <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    <p>{{ self.tp("device.time.everyone_footer", [("name", device.name.as_str())]) }}</p>
+                </div>
+            </details>
+        </div>
     </section>
 
     {#- The phone's own rules apply always; one switched off (kept from before 0115, when the phone
@@ -87,7 +97,16 @@
             <a class="row row-button" href="/schedules/rules/new?device={{ device.id }}">{{ self.t("device.time.add_rule") }}&hellip;</a>
             {% if let Some((text, refused)) = own_notice %}<p class="flash{% if *refused %} flash-error{% endif %}" role="status" data-flash="own-rules">{{ text }}</p>{% endif %}
         </div>
-        <p class="group-footer">{{ self.t("device.time.own_footer") }} {{ self.t("device.time.emergency") }}{% if own_off %} {{ self.t("device.time.own_off_footer") }}{% endif %}</p>
+        <div class="group-footer">
+            <details class="info">
+                <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    <p>{{ self.t("device.time.own_footer") }}</p>
+                    <p>{{ self.t("device.time.emergency") }}</p>
+                    {% if own_off %}<p>{{ self.t("device.time.own_off_footer") }}</p>{% endif %}
+                </div>
+            </details>
+        </div>
     </section>
 
     <section id="screen-time" aria-labelledby="screen-time-title">
@@ -120,7 +139,6 @@
             </div>
             {% endif %}
         </div>
-        <p class="group-footer">{% if own_limit %}{{ self.t("device.time.limit_footer") }}{% else %}{{ self.tp("device.time.limit_off_footer", [("name", device.name.as_str())]) }}{% endif %}</p>
     </section>
     </div>
 </main>

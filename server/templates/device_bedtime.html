@@ -18,12 +18,12 @@
         {% if refusal.is_some() || saved %}
         <div class="editor-flash">
             {% if let Some(why) = refusal %}<p class="flash flash-error bar-flash" role="alert" data-flash="refused">{{ self.t("common.not_saved") }} {{ why }}</p>{% endif %}
-            {% if saved && refusal.is_none() %}<p class="flash bar-flash" role="status" data-flash="bedtime">{{ self.t("common.saved_online") }}</p>{% endif %}
+            {% if saved && refusal.is_none() %}<p class="flash bar-flash" role="status" data-flash="bedtime">{{ self.t("common.saved") }}</p>{% endif %}
         </div>
         {% endif %}
 
         {% if let Some(parts) = corrupt %}
-        <div class="attention attention-alarm" data-warning="bedtime-corrupt"><div class="attention-text">{{ self.t("device.bedtime.corrupt") }}<div class="attention-sub">{{ self.tp("device.bedtime.corrupt_sub", [("parts", parts.as_str())]) }}</div></div></div>
+        <div class="attention attention-alarm" data-warning="bedtime-corrupt"><div class="attention-text">{{ self.t("device.bedtime.corrupt") }}<div class="attention-sub">{{ parts }} <details class="info"><summary aria-label="{{ self.t("common.how_to_fix") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("device.bedtime.corrupt_fix") }}</p></div></details></div></div></div>
         {% endif %}
         <section id="nights" aria-label="{{ self.t("device.bedtime.nights") }}">
             <div class="group">
@@ -37,7 +37,14 @@
                 {% if let Some(why) = r.error %}<p class="flash flash-error" id="n{{ r.index }}-error" data-flash="nights-{{ r.index }}">{{ why }}</p>{% endif %}
                 {% endfor %}
             </div>
-            <p class="group-footer">{{ self.t("device.bedtime.nights_footer") }}</p>
+            <div class="group-footer">
+                <details class="info">
+                    <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                    <div class="info-panel">
+                        <p>{{ self.t("device.bedtime.nights_footer") }}</p>
+                    </div>
+                </details>
+            </div>
         </section>
 
         <section id="calls" aria-label="{{ self.t("device.bedtime.calls_label") }}">
@@ -48,11 +55,19 @@
                 </label>
                 {#- 0121: silent during bedtime; alarms still ring. -#}
                 <label class="row" data-row="silent">
-                    <span class="row-label">{{ self.t("time_rules.silent") }}<span class="row-sub">{{ self.t("device.bedtime.silent_sub") }}</span></span>
+                    <span class="row-label">{{ self.t("time_rules.silent") }}</span>
                     <input type="checkbox" role="switch" class="sw" name="silent" value="on"{% if rule.silent %} checked{% endif %}><span class="knob" aria-hidden="true"></span>
                 </label>
             </div>
-            <p class="group-footer">{{ self.t("device.bedtime.calls_footer") }}</p>
+            <div class="group-footer">
+                <details class="info">
+                    <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                    <div class="info-panel">
+                        <p>{{ self.t("device.bedtime.silent_sub") }}</p>
+                        <p>{{ self.t("device.bedtime.calls_footer") }}</p>
+                    </div>
+                </details>
+            </div>
         </section>
 
 {% include "partials/exceptions.html" %}
