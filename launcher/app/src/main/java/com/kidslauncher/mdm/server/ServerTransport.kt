@@ -9,6 +9,7 @@ import java.net.UnknownHostException
 import javax.net.SocketFactory
 import java.util.Collections
 import java.util.WeakHashMap
+import java.util.concurrent.Executors
 import okhttp3.CertificatePinner
 import okhttp3.Connection
 import okhttp3.Dns
@@ -229,7 +230,7 @@ object ServerClients {
             slot = Slot(key, client)
         }
         // Idle connections only: a call still in flight on the old client finishes on its connection.
-        replaced?.connectionPool?.evictAll()
+        replaced?.connectionPool?.let(::evictLater)
         return client
     }
 
@@ -240,7 +241,28 @@ object ServerClients {
      */
     fun streamDropped() {
         val client = synchronized(this) { slot?.client }
-        client?.connectionPool?.evictAll()
+        client?.connectionPool?.let(::evictLater)
+    }
+
+    /** Closing a TLS connection writes its close_notify on the socket, which Android refuses on the main thread
+     * (`NetworkOnMainThreadException`, a crash: [CommandListenerService.streamDown] runs on the main thread, and
+     * [base] may be called there). So the pool's idle connections are closed on a thread of their own; the pool is
+     * thread-safe, and a request in between can still pick an idle connection - as before, its stale retry covers it. */
+    private val evictor = Executors.newSingleThreadExecutor { r -> Thread(r, "server-pool-evict").apply { isDaemon = true } }
+
+    /** Tests: wait until every close queued so far has run (the evictor runs one task at a time, in order). */
+    internal fun awaitEvictions() {
+        evictor.submit {}.get(5, java.util.concurrent.TimeUnit.SECONDS)
+    }
+
+    private fun evictLater(pool: okhttp3.ConnectionPool) {
+        evictor.execute {
+            try {
+                pool.evictAll()
+            } catch (e: Exception) {
+                Log.w("ServerClients", "Closing the pool's idle connections failed", e)
+            }
+        }
     }
 }
 
