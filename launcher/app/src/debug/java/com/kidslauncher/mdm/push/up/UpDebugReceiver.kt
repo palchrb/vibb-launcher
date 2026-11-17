@@ -11,7 +11,7 @@ import android.util.Log
  * are). `adb shell am broadcast -n me.vibb.launcher.debug/com.kidslauncher.mdm.push.up.UpDebugReceiver --es reg <reg>
  * --ei days <N> [--es field lastAppAckMs,confirmedAtMs,...]` moves those stamps of that row N days back in the store
  * (a missing `lastAppAckMs` reads as now first; `pingSentMs` moves `pingLastSendMs` with it; default: every stamp). The
- * next sync or unlock acts on them. Exported for the shell, guarded by DUMP (shell has it, apps don't).
+ * next sync or unlock acts on them; the engine's in-memory ack limit of that token is forgotten too (L5). Exported for the shell, guarded by DUMP (shell has it, apps don't).
  */
 class UpDebugReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -37,6 +37,7 @@ class UpDebugReceiver : BroadcastReceiver() {
                     )
                 },
             )
+            UpRuntime.forgetAcks(rows.firstOrNull { it.reg == reg }?.token)
             Log.i(TAG, "Backdated ${reg.take(8)} by $days days: ${fields.joinToString(",")}")
         }
         resultData = "backdate ${reg.take(8)} $days"

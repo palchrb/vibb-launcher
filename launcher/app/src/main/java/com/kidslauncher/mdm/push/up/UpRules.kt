@@ -81,6 +81,13 @@ object UpRules {
     /** A refresh (§3.3) at most a day apart, counted from an attempt actually made; a key-update call (§4.6) an hour. */
     const val REFRESH_EVERY_MS = DAY_MS
     const val KEY_CALL_EVERY_MS = HOUR_MS
+
+    /** A failed key post is tried again at the next accepted policy at least this long after (L4); a REGISTER-driven call
+     * keeps [KEY_CALL_EVERY_MS] (M4). */
+    const val KEY_RETRY_MS = 5 * 60_000L
+
+    /** An outstanding ping is sent again every day, besides the boot's re-send (M1, 108b Q1's refinement). */
+    const val PING_RESEND_MS = DAY_MS
     const val CLOCK_SLACK_MS = DAY_MS
 
     /** The spec's 100 bytes for the token, the description and a message id; a VAPID key is 87 base64url. */
@@ -156,6 +163,8 @@ object UpRules {
      * the key pending.
      */
     private fun knownOrUpdate(row: UpRow, vapid: String?, nowMs: Long): RegisterDecision = when {
+        // L3: the stored key again while another is pending: the app's key is the stored one, the pending one is dropped.
+        vapid == row.vapid && row.vapidPending != null -> RegisterDecision.Known(row.copy(vapidPending = null))
         vapid == null || vapid == row.vapid || vapid == row.vapidPending -> RegisterDecision.Known(row)
         keyCallDue(row, nowMs) -> RegisterDecision.Update(row, vapid)
         else -> RegisterDecision.Known(row, pendingVapid = vapid)
@@ -167,8 +176,24 @@ object UpRules {
         return nowMs - last >= KEY_CALL_EVERY_MS
     }
 
+    /** A key post to retry from a policy (L4): none within [KEY_RETRY_MS]. */
+    fun keyRetryDue(row: UpRow, nowMs: Long): Boolean {
+        val last = stamp(row.keyTryMs, nowMs) ?: return true
+        return nowMs - last >= KEY_RETRY_MS
+    }
+
+    /** [row] with every stamp more than a day ahead of [nowMs] set to now (L1): written back, so its age starts counting
+     * instead of staying 0 until real time passes it. */
+    fun clamped(row: UpRow, nowMs: Long): UpRow = row.copy(
+        lastAppAckMs = stamp(row.lastAppAckMs, nowMs),
+        pingSentMs = stamp(row.pingSentMs, nowMs),
+        pingLastSendMs = stamp(row.pingLastSendMs, nowMs),
+        refreshMs = stamp(row.refreshMs, nowMs),
+        keyTryMs = stamp(row.keyTryMs, nowMs),
+    )
+
     /** A stamp the rules read (design 108b L3): one more than a day after now (a clock that ran ahead) reads as now, so
-     * a negative age never freezes a row. */
+     * a negative age never freezes a row; the engine writes it back as now ([clamped], L1). */
     fun stamp(value: Long?, nowMs: Long): Long? = value?.let { if (it > nowMs + CLOCK_SLACK_MS) nowMs else it }
 
     /** The churn record with only the last hour kept. */
@@ -255,7 +280,8 @@ object UpRules {
     /**
      * Design 108b §2, the 30-day rule, for the confirmed rows ([boot] is this boot's count, for Q1's re-send): no ping out
      * and 23 days since the later of the app's last ack and the confirmation: a ping. A ping out and sent in another boot:
-     * sent again once (the same id; the phone being off never loses a live app). A ping out for 7 days since the first send
+     * sent again once, and every day while it is out (the same id; the phone being off, or one lost send or ack, never loses
+     * a live app, M1). A ping out for 7 days since the first send
      * **and** an hour since the last send: dead. Stamps that lie more than a day ahead read as now (L3).
      */
     fun liveness(rows: List<UpRow>, boot: Int, nowMs: Long): UpPass {
@@ -274,7 +300,7 @@ object UpRules {
             val first = stamp(row.pingSentMs, nowMs) ?: nowMs
             var last = stamp(row.pingLastSendMs ?: row.pingSentMs, nowMs) ?: nowMs
             var current = row
-            if (row.pingBoot != boot) {
+            if (row.pingBoot != boot || nowMs - last >= PING_RESEND_MS) {
                 last = nowMs
                 current = row.copy(pingLastSendMs = nowMs, pingBoot = boot)
                 sends += UpSend(current, pingId, "resend")

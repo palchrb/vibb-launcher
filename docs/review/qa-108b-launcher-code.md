@@ -201,3 +201,29 @@ rows for H1 and M4, the engine's dead, ping, refresh and key cases, and the rais
   - i18n: en and nb for both notes, apostrophes escaped.
   - No new API above 34 and no new manifest entry in release.
   - The contract copies are identical. `UpRow`'s new fields default to null, so R1 blobs decode.
+
+---
+
+## Handled (fix round, 2026-11-17)
+
+- **M1** fixed: `UpRules.liveness` re-sends an outstanding ping (same id) when `pingLastSendMs` is a day old
+  (`PING_RESEND_MS`), besides the boot's re-send; the dead rule is unchanged. `UpEngine.failed` of a `NEW_ENDPOINT`
+  clears the row's `pingBoot` (a lost ping goes again at the next pass; a lost refresh clears `refreshMs`). An ack that
+  answers a ping this process sent skips the hourly and per-minute ack limits (`pingsOut`). An ack dropped while UP is
+  off in the cached policy, or by a process that died, is covered by the next day's send. Rows in `up_rules.json`; design
+  108b §2 and "Decided 2026-11-17".
+- **L1** fixed: `UpRules.clamped` writes ahead stamps back as now at every pass; `ack` rewrites an ahead
+  `lastAppAckMs`. Design §2 corrected.
+- **L2** fixed: `Registered.Rejected(code)`; only a 400 (`Invalid`) drops the key.
+- **L3** fixed: the stored key again clears a different pending key (rule row).
+- **L4** fixed: a failed post is retried by the next policy at least 5 minutes later (`KEY_RETRY_MS`); the hour stays for
+  REGISTER-driven calls. Gate row 7b says so.
+- **L5** fixed: the debug receiver calls `UpEngine.forgetAcks(token)`; gate rows 8 (boot re-send) and 9 (time rule) added.
+- **L6** fixed: an unreadable `BOOT_COUNT` falls back to the boot instant (now minus uptime) in 10-minute steps, logged
+  once: a new boot reads as a new value, a clock change only adds a re-send.
+- **L7** fixed by clearing, not dating: `NOTE_UNANSWERED` goes when the registration is confirmed again, `NOTE_BAD_KEY`
+  when a key is taken (`UpStore.clearNote`).
+- **L8** fixed: a pass sends (and the user-present pass writes) only when its store write succeeded.
+- **L9** fixed: the rewrite asserts `phone.raised`; a pending row's retry carries the newest key; the `failed()` case now
+  asserts the new behaviour (a failed ping is marked to go again), since "ignores the kind" no longer holds.
+- **Nit** (§8 names): design updated to `settings_up_unanswered` / `settings_up_bad_key`.

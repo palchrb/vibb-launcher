@@ -34,6 +34,9 @@ private const val REGISTER_TIMEOUT_MS = 20_000L
 /** A pull's or a DELETE's call. */
 private const val PULL_TIMEOUT_MS = 15_000L
 
+/** The boot instant's step when `BOOT_COUNT` can't be read (L6). */
+private const val BOOT_STEP_MS = 600_000L
+
 /** The pull's timed partial wake lock (§5.5). */
 private const val PULL_WAKELOCK_MS = 30_000L
 
@@ -110,10 +113,18 @@ object UpRuntime {
 
     /** This boot's count: Q1's once-per-boot re-send of an outstanding ping (design 108b §2). */
     private fun bootCount(app: Context): Int = try {
-        Settings.Global.getInt(app.contentResolver, Settings.Global.BOOT_COUNT, 0)
+        Settings.Global.getInt(app.contentResolver, Settings.Global.BOOT_COUNT)
     } catch (e: Exception) {
-        0
+        // L6: an unreadable count errs toward re-sending: the boot instant (now minus uptime) in 10-minute steps, so it
+        // changes at a restart, and a clock change only adds a re-send. Logged once.
+        if (!bootFallbackLogged) {
+            bootFallbackLogged = true
+            Log.w(LOG_TAG, "BOOT_COUNT unreadable - the boot read from the boot instant")
+        }
+        ((System.currentTimeMillis() - android.os.SystemClock.elapsedRealtime()) / BOOT_STEP_MS).toInt()
     }
+
+    private var bootFallbackLogged = false
 
     /**
      * Design 108b §3.3: the refreshes that waited for the phone to be in use go out at the next unlock. `USER_PRESENT`
@@ -140,6 +151,11 @@ object UpRuntime {
     fun withStore(context: Context, block: (UpStore) -> Unit) {
         val app = context.applicationContext
         post { if (isUserUnlocked(app)) block(UpStore.of(app)) }
+    }
+
+    /** The engine's in-memory ack limits forgotten (the debug hook, after it moved stamps in the store). */
+    fun forgetAcks(token: String?) {
+        post { engine?.forgetAcks(token) }
     }
 
     /** An app's request, read in full by [UpReceiver]; queued, never awaited (no broadcast is held). */
@@ -304,11 +320,12 @@ object UpRuntime {
                     UpServer.Registered.Endpoint(ServerJson.decodeFromString(UpEndpointAnswer.serializer(), text).endpoint)
                 response.code() == 409 && text != null ->
                     UpServer.Registered.Refused(ServerJson.decodeFromString(UpRefusalAnswer.serializer(), text).refused)
-                response.code() in 400..499 -> UpServer.Registered.Invalid
+                response.code() == 400 -> UpServer.Registered.Invalid
+                response.code() in 401..499 -> UpServer.Registered.Rejected(response.code())
                 else -> UpServer.Registered.Network
             }
         } catch (e: kotlinx.serialization.SerializationException) {
-            UpServer.Registered.Invalid
+            UpServer.Registered.Rejected(0)
         } catch (e: Exception) {
             Log.w(LOG_TAG, "A registration's call failed: ${e.javaClass.simpleName}")
             UpServer.Registered.Network

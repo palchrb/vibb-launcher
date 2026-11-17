@@ -288,4 +288,81 @@ class UpEngineTest {
         assertEquals(NOTE_BAD_KEY, store.notes().single().kind)
         assertEquals(1, phone.sent.size)
     }
+
+    // Code QA of 108b R23-L: M1, L1, L2, L7, L9.
+    @Test
+    fun `M1 - an outstanding ping goes again a day on, with its id, and a ping whose send failed goes at the next pass`() {
+        seed("last_app_ack_ms" to now - 30 * day, "ping_sent_ms" to now - 3 * day, "ping_last_send_ms" to now - 25 * 3_600_000L, "ping_boot" to 0, extra = { put("ping_id", "ping-1") })
+        val e = lateEngine()
+        e.policyAccepted(view, allRegs, 7000)
+        val row = rows().first { it.reg == elementReg }
+        assertEquals("$element tok-element-1 ${row.endpoint} ping-1", phone.raised.single())
+        assertEquals(now, row.pingLastSendMs)
+        assertEquals(now - 3 * day, row.pingSentMs)
+        // An hour-old send is not repeated, but one that failed (the stamp was stored before the send) is.
+        e.policyAccepted(view, allRegs, 7000)
+        assertEquals(1, phone.raised.size)
+        e.failed(RaiseToForeground.Message.newEndpoint("tok-element-1", row.endpoint!!, "ping-1"))
+        assertEquals(null, rows().first { it.reg == elementReg }.pingBoot)
+        e.policyAccepted(view, allRegs, 7000)
+        assertEquals(2, phone.raised.size)
+        assertTrue(phone.raised.all { it.endsWith(" ping-1") })
+        assertTrue(rows().any { it.reg == elementReg })
+    }
+
+    @Test
+    fun `M1 - the answer to a ping is read although the token's ack was read within the hour`() {
+        seed("last_app_ack_ms" to now - 30 * 60_000L)
+        val e = lateEngine()
+        e.handle(UpRequest.Ack(null, "tok-element-1", "first"))
+        store.write(rows().map { if (it.reg == elementReg) it.copy(lastAppAckMs = now - 24 * day) else it })
+        e.policyAccepted(view, allRegs, 7000)
+        val ping = rows().first { it.reg == elementReg }.pingId!!
+        e.handle(UpRequest.Ack(null, "tok-element-1", ping))
+        assertEquals(null, rows().first { it.reg == elementReg }.pingId)
+    }
+
+    @Test
+    fun `L1 - a stamp a week ahead of the clock is written back as now`() {
+        seed("last_app_ack_ms" to now + 7 * day, "refresh_ms" to now + 7 * day)
+        lateEngine().policyAccepted(view, allRegs, 7000)
+        val row = rows().first { it.reg == elementReg }
+        assertEquals(now, row.lastAppAckMs)
+        assertEquals(now, row.refreshMs)
+    }
+
+    @Test
+    fun `L2 - a 429 keeps the key pending and retries it at the next policy, only a 400 drops it`() {
+        store.write(UpFixtures.rows.map { if (it.reg == elementReg) it.copy(vapid = keyA) else it })
+        server.registered += UpServer.Registered.Rejected(429)
+        var clock = now
+        val e = lateEngine { clock }
+        e.handle(UpRequest.Register(element, "tok-element-1", null, keyB))
+        assertEquals(keyB, rows().first { it.reg == elementReg }.vapidPending)
+        assertTrue(store.notes().isEmpty())
+        clock += 10 * 60_000L
+        e.policyAccepted(view, allRegs, 7000)
+        assertEquals(keyB, rows().first { it.reg == elementReg }.vapid)
+        assertEquals(2, server.registerBodies.size)
+    }
+
+    @Test
+    fun `L7 - a registration confirmed again clears the unanswered note, a taken key the bad-key note`() {
+        store.note(UpNote(element, NOTE_UNANSWERED, 1))
+        store.note(UpNote(element, NOTE_BAD_KEY, 1))
+        lateEngine().handle(UpRequest.Register(element, "tok-new", null, keyA))
+        assertEquals(listOf(NOTE_BAD_KEY), store.notes().map { it.kind })
+        val reg = rows().single().reg
+        store.write(rows().map { it.copy(vapid = keyB) })
+        lateEngine().handle(UpRequest.Register(element, "tok-new", null, keyA))
+        assertEquals(keyA, rows().single { it.reg == reg }.vapid)
+        assertTrue(store.notes().isEmpty())
+    }
+
+    @Test
+    fun `a pending row's REGISTER is retried with the newest key (4-6)`() {
+        store.write(UpFixtures.rows)
+        lateEngine().handle(UpRequest.Register(element, "tok-element-2", null, keyA))
+        assertEquals(keyA, server.registerBodies.single().vapid)
+    }
 }

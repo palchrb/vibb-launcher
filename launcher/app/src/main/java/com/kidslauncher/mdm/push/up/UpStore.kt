@@ -176,6 +176,13 @@ class UpStore(
         return prefs.edit().putString(NOTES, ServerJson.encodeToString(NotesBlob.serializer(), NotesBlob(kept))).commit()
     }
 
+    /** Drops [pkg]'s note of [kind] (L7: an unanswered note once the app registers again, a bad-key note once a key is taken). */
+    fun clearNote(pkg: String, kind: String) {
+        val notes = notes()
+        if (notes.none { it.pkg == pkg && it.kind == kind }) return
+        prefs.edit().putString(NOTES, ServerJson.encodeToString(NotesBlob.serializer(), NotesBlob(notes.filterNot { it.pkg == pkg && it.kind == kind }))).commit()
+    }
+
     private fun list(key: String): List<String> = try {
         prefs.getString(key, null)?.let { ServerJson.decodeFromString(ListBlob.serializer(), it).items } ?: emptyList()
     } catch (e: Exception) {
