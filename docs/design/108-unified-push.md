@@ -4,6 +4,15 @@ Status: design, **revision 2**, 2026-11-16 (branch `design-108`, from main a4fbf
 8a95489bb. The build needs the user's own go; the user has answered Q1-Q11 (§14) and reversed the 2026-10-06 rule
 (§10). No code, no migration and no contract file exist yet; every name below is a proposal.
 
+## Amendment to revision 2 (2026-11-16, the user: Q4 changed)
+
+**Element X keeps its Play build** (the kid's phone has Google). Its push provider is switched to Vibb One once per
+session in Element X itself (Settings › Notifications › Advanced › Push provider); Google stays a manual fallback
+through the same setting. So §6.6's F-Droid runbook and any "Element X F-Droid as a tracked catalog app" work are out;
+§6.6, R1-E (§12.1), §3.10's sheets and warning, §14's Q4 and §15's risk 7 now say so. Everything else stands as
+revision 2 has it (variant A, the switch on by default, the Matrix gateway in R1, Q8 minimised bodies). Where this
+amendment and an older line below disagree, the amendment wins.
+
 ## Revision 2 (2026-11-16, after the design QA and the user's answers)
 
 The sections a finding changes are rewritten in place, so where revision 1 and a section disagree, the section as it
@@ -491,24 +500,28 @@ Pinned by `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTe
 - **the phone's switch**, on by default (Q3), with its sub-line:
   - nb: "Apper på listen kan få varsler gjennom Vibb, uten Google";
   - en: "Allowed apps can get notifications through Vibb, without Google";
-- **its off sheet (A3):**
-  - nb: "Apper som bruker Vibb for varsler, får ingen varsler i det hele tatt mens dette er av. Element X har ingen vei
-    gjennom Google.";
-  - en: "Apps that use Vibb for notifications get none at all while this is off. Element X has no way through
-    Google.";
+- **its off sheet (A3; worded for the Play build since the amendment):**
+  - nb: "Apper som bruker Vibb for varsler, får ingen mens dette er av, til hver av dem settes tilbake til Google i
+    sine egne innstillinger (Element X: Innstillinger › Varsler › Avansert › Push-leverandør).";
+  - en: "Apps that use Vibb for notifications get none while this is off, until each is switched back to Google in its
+    own settings (Element X: Settings › Notifications › Advanced › Push provider).";
 - **one row per app with registrations:**
   - its name and logo (design 87's tiles);
   - nb "2 kontoer · sist levert 14:02", en "2 accounts · last delivered 14:02";
   - a "Stopp" / "Stop" button with a confirm sheet (A3):
-    - nb: "Element X får ingen varsler før du tillater det igjen. Appen prøver å koble til på nytt og kan vise barnet
-      en melding om at varsler ikke virker.";
-    - en: "Element X gets no notifications until you allow it again. The app will try to reconnect and may show your
-      child a message that notifications don't work.";
+    - nb: "Element X får ingen varsler gjennom Vibb før du tillater det igjen. Appen prøver å koble til på nytt og kan
+      vise barnet en melding om at varsler ikke virker; i appens egne innstillinger kan den settes tilbake til
+      Google.";
+    - en: "Element X gets no notifications through Vibb until you allow it again. The app will try to reconnect and
+      may show your child a message that notifications don't work; in its own settings it can be switched back to
+      Google.";
 - **"Stoppet" / "Stopped":** the stopped apps, each with "Tillat igjen" / "Allow again";
 - **R1's warning (A3), "no push":** an allowed app known to use UP (Element X's package, from a short list in
   `unified_push::KNOWN_UP_APPS`), with no registration on a phone whose UP is on:
-  - nb "Element X får ikke varsler: den har ikke koblet seg til Vibb";
-  - en "Element X gets no notifications: it hasn't connected to Vibb".
+  - since the amendment it names the per-session switch: nb "Element X bruker ikke Vibb for varsler. I Element X:
+    Innstillinger › Varsler › Avansert › Push-leverandør › Vibb One, én gang for hver konto.", en "Element X isn't
+    using Vibb for notifications. In Element X: Settings › Notifications › Advanced › Push provider › Vibb One, once
+    for each account.".
   The row also names "Ingen levering på 7 dager" / "No delivery in 7 days" for an app with registrations;
 - **R2's warning:** "Element X sender gjennom unifiedpush.org" (`outside_gateway_at` within 7 days). The phones'
   address didn't answer Element X's discovery, so the public gateway relays.
@@ -986,7 +999,23 @@ Element X registers with `messageForDistributor = sessionId` (`RegisterUnifiedPu
   ("Element X · @emma:example.org · sist levert 14:02").
 - **It is never sent to the server,** so the PWA says "Element X · 2 kontoer" and can't tell accounts apart (Q7).
 
-### 6.6 Switching the kid's phone to Element X's F-Droid build (a runbook, A2)
+### 6.6 Switching Element X to Vibb One, once per session (the amendment; was the F-Droid runbook, A2)
+
+**Since the amendment (the user, 2026-11-16) Element X's Play build stays.** No reinstall, no catalog row, no
+recovery-key step. After R1 is released and the phone's App push is on:
+
+1. In Element X on the kid's phone, for **each account** (session): Settings › Notifications › Advanced › Push
+   provider › **Vibb One** (the picker shows, because Firebase and Vibb One are both offered, §6.1).
+2. Element X registers with Vibb One, runs its discovery against our origin (§6.2) and sets its pusher. Its
+   Settings › Notifications › Troubleshoot names Vibb One, and the PWA's App push row shows "Element X · 1 konto".
+3. **The way back** is the same setting: Push provider › Google (Firebase). While Vibb's push is off, stopped or has no
+   origin, a session left on Vibb One gets no push until it is switched back or Vibb is on again (§6.3).
+
+A new session (a new login) starts on Firebase again and needs the switch too; the PWA's "isn't using Vibb" warning
+(§3.10) shows while an allowed Element X has no registration. Element X stays a Jelly Star check; R1's gate uses the
+UP example app (§12.3).
+
+**What follows was revision 2's runbook, out since the amendment, kept as the record:**
 
 The Play build can't be updated into the F-Droid build, because the signers differ: Play App Signing's key against
 Element's own release key. The catalog also refuses to pin an app that a phone's last report shows installed by
@@ -1271,7 +1300,7 @@ Apache-2.0).
 | **R1-L** (launcher) | M | `UpReceiver` (read before `goAsync`), `UpLinkActivity` + the always-set PPA (+ the re-seat, `PlayInvariantsTest`), `UpStore`, `UpRules` (with the churn limit), `UpRuntime` (register, pull, ack after send, the origin rewrite, `isUserUnlocked`), `UpDelivery` + `vendor/RaiseToForeground` with H1's fixes, the uninstall/data-clear/allowlist reconcile, the policy's on/off, `origin` and `regs`, the capability, the Settings diagnostics row | 2, in parallel |
 | **R1-SR** | S | the security review of R1-S's public routes (an Opus agent, own worktree) | 3, before any tag |
 | **R1-G** | S | the emulator gate (§12.3); then the server tag before the launcher RC (the launcher checks the capability, so either order is safe) | 4 |
-| **R1-E** | - | the parent's switch to Element X's F-Droid build on the Jelly Star (§6.6), and the Jelly Star checks (§12.3, "Owed") | 5, after both are released |
+| **R1-E** | - | the per-session switch of Element X's Play build to Vibb One on the Jelly Star (§6.6, the amendment; no F-Droid reinstall), and the Jelly Star checks (§12.3, "Owed") | 5, after both are released |
 | **R2** | S | the 30-day ping and unregister (§5.6), the 30-day-unseen prune, the "outside gateway" warning | after R1 is on the Jelly Star a week |
 | **R3** | S | other apps: VAPID verification (`ring`, both header forms, checked against Mastodon's sender at the step), the `Urgency`-based hold if wanted (the spec's SHOULD; R1 delivers every urgency at once, a stated deviation), FluffyChat, SchildiChat Next, Tusky and DAVx⁵ tried | when the kids get such an app |
 | **R4** | - | dropped: Q9 is no ("Google av" is not offered) | - |
@@ -1436,7 +1465,7 @@ real launcher (debug) and server.
 | **Q1** A or B | **A**, ntfy's logic ported into the Vibb server | three new public routes on the phone listener, and a security review |
 | **Q2** reverse the 2026-10-06 rule | **yes** | an exported entry point on the kid's phone, enabled once a public origin is saved (§10.2) |
 | **Q3** who may register | **a per-phone switch, on by default**; when on, any allowlisted app; the switch stays | an allowed app gets push without a separate tick; existing phones flip on at the first Save of an origin (A1) |
-| **Q4** Element X | **the F-Droid build**, from GitHub, as a catalog app | one reinstall per phone with re-login and recovery-key verification (§6.6); no Google path at all when Vibb's push is off (A3) |
+| **Q4** Element X | **the Play build, switched to Vibb One once per session** (the amendment, 2026-11-16; was the F-Droid build) | one setting per account in Element X (§6.6); Google stays the manual way back; a session left on Vibb One gets no push while Vibb's is off (A3) |
 | **Q5** during a time rule | **deliver** (as recommended) | the app syncs in the background during bedtime; notifications appear when the rule ends |
 | **Q6** turning UP off or stopping an app | **allowed, with the warning** (as recommended) | with the F-Droid build that app has no push at all until it is on again, and Element X may tell the kid so (A3) |
 | **Q7** the account in the PWA | **on the phone only** (as recommended) | the PWA shows "Element X · 2 kontoer" and can't say which |
@@ -1461,9 +1490,9 @@ real launcher (debug) and server.
 5. **Element X changes its provider order or picker condition:** watched (§13).
 6. **The user's phone listener being public is now load-bearing for push.** An outage of the proxy or the name means
    no pushes. Senders retry 5xx and timeouts; Synapse backs off.
-7. **With the F-Droid build there is no Google fallback (A3).** Any time Vibb's push is off, Element X has no push
-   at all. The PWA's warning and sheets make that visible; the risk is accepted with Q4.
-8. **The switch-over loses local history without the recovery key** (§6.6, step 1).
+7. **A session switched to Vibb One has no automatic Google fallback (A3).** Any time Vibb's push is off, it has no
+   push until it is switched back in Element X. The PWA's warning and sheets say so; the risk is accepted with Q4.
+8. ~~The switch-over loses local history without the recovery key~~ - gone with the amendment: no reinstall.
 
 ---
 

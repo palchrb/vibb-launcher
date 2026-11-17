@@ -104,4 +104,6 @@ The conversation journal (`device_journal_entries`, media in `data/journal_media
 media directory (`retention::remove_journal_media`, removed with the other one-shot cleanups in 0.54.0), and connections run with `secure_delete` on so deleted rows are
 overwritten. So is the MollySocket installer (`deploy/install_mollysocket.sh`) and the launcher's UnifiedPush
 distributor it relied on (DEPLOY.md has the removal steps for an existing MollySocket). Principle: collect only what's
-needed to manage the phone, delete on a schedule, never store notification or message content.
+needed to manage the phone, delete on a schedule, never store notification or message content. Since design 108 (2026-11-16, the user reversed the 2026-10-06 rule) Vibb One is the
+distributor again, with no third-party relay: pushes ride the one event stream to the family's own server, bodies are
+held seconds to 24 h and never logged, Matrix bodies minimised - see `docs/notes/server/unified-push.md`.

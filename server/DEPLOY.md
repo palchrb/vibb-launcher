@@ -903,6 +903,39 @@ The phones only ever ask this server. The cache (`weather_cells`) has no phone i
 hours (or the longest location retention, when that is shorter) goes, and a phone's Location set to Off erases it at
 once. **Backups** (and the pre-migration and pre-restore copies) keep them as they keep the fixes.
 
+## App push (UnifiedPush) (design 108, migration 0152)
+
+Vibb One is the phone's UnifiedPush distributor, and this server is the push server behind the addresses it hands to
+the phone's apps - Element X first - and a Matrix push gateway. A push comes in from the app's own server (a Matrix
+homeserver, a Mastodon instance), waits in the server's queue and wakes the phone over its existing event stream; no
+Google, no ntfy app and no third party. The routes live on the **phone listener only** (`DEVICE_BIND_ADDR`), and
+nothing about a push is logged.
+
+- **Turn it on:** Settings › App push, the phones' public address (`https://phones.example.com`: `https://` and the
+  name only, at the root of the name - Element X looks for `https://<name>/_matrix/push/v1/notify`). Saving it turns
+  app push on for every phone whose own switch is on (Device › Apps › App push, on by default). A server reachable
+  only on the tailnet gets no app push: the apps' servers post from the internet, and Synapse refuses Tailscale
+  addresses for pushes anyway. Option (b) serves app push only with `DEVICE_BIND_ADDR` set.
+- **Element X** (its Play build stays): once per account, in Element X, Settings › Notifications › Advanced › Push
+  provider › Vibb One. Device › Apps says when an allowed Element X hasn't connected. Switching back to Google is the
+  same setting.
+- **Caddy:** nothing changes for a site that proxies the whole phone host (`reverse_proxy 127.0.0.1:3101`, as above).
+  The clients' addresses count as everywhere on the phone listener (`TRUSTED_PROXIES` names the proxy). If the site
+  has access logging on, skip `/up/*`: the path is a capability (`log_skip /up/*`, Caddy 2.8 and later).
+- **nginx:** `location /up/ { proxy_pass http://127.0.0.1:3101; access_log off; client_max_body_size 8k; }` and
+  `location = /_matrix/push/v1/notify { proxy_pass http://127.0.0.1:3101; client_max_body_size 8k; }`.
+- **Check from outside** (mobile data):
+  - `curl -s https://phones.example.com/_matrix/push/v1/notify` -> `{"unifiedpush":{"gateway":"matrix"}}`;
+  - `curl -s -o /dev/null -w '%{http_code}' -X POST --data x https://phones.example.com/up/AAAAAAAAAAAAAAAAAAAAAAAAAAA`
+    -> `410`.
+  Settings › App push shows when an app last checked the address and when the last push came in.
+- **A homeserver on your own LAN** that resolves `phones.example.com` to a private address needs it in Synapse's
+  `ip_range_whitelist` (Synapse refuses private ranges for pushes by default).
+- **Changing the address:** the old one keeps working 30 days while the phones hand every app its new address.
+  Emptying the field turns app push off for every phone.
+- **Limits:** a push is at most 4096 bytes and waits at most 24 hours; each phone takes 120 at once and then one a
+  second, each app address 30 and then one every 2 seconds; an address that was removed answers `410` for 30 days.
+
 ## Useful commands on the Pi
 
 - Check it's running: `systemctl status kid-phone-server`
@@ -960,4 +993,5 @@ The optional MollySocket installer (`deploy/install_mollysocket.sh`) and the lau
 0038 drops their tables, and the server deletes `data/journal_media` at startup; backups made before the update still
 contain them until the backup schedule prunes them). An existing MollySocket install keeps running on its own until you
 remove it (`sudo systemctl disable --now mollysocket`, then delete `/opt/mollysocket` and its `tailscale serve` on
-port 8443). If a phone ever needs UnifiedPush again, install the ntfy app on it as the distributor.
+port 8443). Since design 108 Vibb One is the distributor again, without a third-party relay: see "App push
+(UnifiedPush)" above.

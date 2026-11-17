@@ -33,6 +33,14 @@ under the Apache License 2.0 - see
 and `server/static/app-icons/LICENSE.txt` (the same text in `server/static/music-icons/LICENSE.txt` and
 `music/app/src/main/assets/licenses/Apache-2.0.txt`). Each converted file says what it was converted from.
 
+The server's UnifiedPush push server and Matrix gateway (`server/src/unified_push/`, design 108) are ported in part
+from [ntfy](https://github.com/binwiederhier/ntfy), commit `a098f52`, Copyright Philipp C. Heckel and contributors,
+licensed under the Apache License 2.0 (ntfy is dual Apache-2.0/GPLv2; the Apache-2.0 option is used) - see
+[`server/src/unified_push/Apache-2.0.txt`](server/src/unified_push/Apache-2.0.txt), shipped as
+`LICENSES/Apache-2.0.txt` with this `NOTICE.md` in the server's tarball and image. Each ported file says so, and the
+directory's `README.md` lists every ported function and what changed; the rest of that directory is under the
+GPL-3.0 (or later).
+
 The launcher's MMS PDU codec (`launcher/app/src/main/java/com/kidslauncher/mdm/sms/vendor/pdu/`, design 77 D9) is
 vendored from [AOSP Messaging](https://android.googlesource.com/platform/packages/apps/Messaging)'s
 `src/com/android/messaging/mmslib/` at commit `de315b762312dd1a5d2bbd16e62ef2bd123f61e5`, Copyright (C) 2007-2008

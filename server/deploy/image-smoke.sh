@@ -73,4 +73,14 @@ if [ -z "$password" ] || grep -qF "$password" <<<"$logs"; then
     exit 1
 fi
 docker exec "$name" /app/kid_phone_server reset-2fa admin
+
+# Design 108 §11 (L8): the Apache-2.0 port's licence and its attribution are in the image.
+if ! docker cp "$name:/app/NOTICE.md" - | tar -xO | grep -q "ntfy"; then
+    echo "/app/NOTICE.md is missing or doesn't name ntfy" >&2
+    exit 1
+fi
+if ! docker cp "$name:/app/LICENSES/Apache-2.0.txt" - | tar -xO | grep -q "Apache License"; then
+    echo "/app/LICENSES/Apache-2.0.txt is missing" >&2
+    exit 1
+fi
 echo "image smoke test passed: $image ${platform:-native}"

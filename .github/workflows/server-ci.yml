@@ -166,6 +166,10 @@ jobs:
           mkdir -p "dist/$ARCH"
           cp "target/$TARGET/release/kid_phone_server" "dist/$ARCH/"
           cp -r static dist/static
+          # As the release's tarball lays them out (design 108 §11, L8).
+          cp ../NOTICE.md dist/NOTICE.md
+          mkdir -p dist/LICENSES
+          cp src/unified_push/Apache-2.0.txt dist/LICENSES/Apache-2.0.txt
       - name: Upload the image context
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
