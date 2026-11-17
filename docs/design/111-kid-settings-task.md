@@ -1,6 +1,6 @@
 # Design note: every built-in "app" behaves as a native app (Innstillinger as a task of its own)
 
-**Revision 2 (2026-11-17)** takes all of design QA (`design-native-apps-qa.md`: 0 H, 1 M, 8 L):
+**Revision 2 (2026-11-17)** takes all of design QA (`docs/review/111-kid-settings-task-design-qa.md`: 0 H, 1 M, 8 L):
 - M1: the open/close animation is now the user's choice between (a) and (b) (§2.3, Q1).
 - L1-L8: folded in where they belong.
 - Q2 is gone: it is a design decision now (§1).
@@ -265,7 +265,9 @@ rule turned on with `rules-now`. `compat34` started with `-wipe-data -dns-server
 The flow is one build, then code QA, then the 7-row gate (all seven on 36, six full and one in part on 34). No server
 change, no contract file.
 
-**Q1 - how Innstillinger opens and closes (M1).**
+**Q1 - ANSWERED 2026-11-17: (b), and no wallpaper at all.** The user: "b er best. jeg trenger ikke bildebakgrunn her, bedre med vanlig fast bakgrunn". Innstillinger is opaque (path (b): Meldinger's task animation) and draws a plain solid ground, the night page's own colour, instead of its copy of the kid's wallpaper: `ownGround` off for Kid Settings and its four sub-pages, the window background and the splash ground the same solid colour, so the starting window already matches and the "frame or two of night ground" of (b) is no longer a visible cost. Path (a) and the wallpaper copy are dropped.
+
+**Q1 - how Innstillinger opens and closes (M1).** (the question as asked)
 - (a) Keep the wallpaper window: no starting window and roughly today's motion, but not Meldinger's animation.
 - (b) Make it opaque: Meldinger's open and close animation, and Home slides it away, but a frame or two of night ground
   shows before the kid's wallpaper.
