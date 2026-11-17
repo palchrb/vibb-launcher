@@ -4678,7 +4678,7 @@
   "app_push.error.read": "Couldn't read app push - check the server log.",
   "app_push.settings.title": "App push",
   "app_push.settings.origin": "Phones' public address",
-  "app_push.settings.origin_hint": "The address the apps' servers send to, for example https://phones.example.com. It must reach this server's phone port from the internet, at the root of the name.",
+  "app_push.settings.origin_hint": "The address the apps' servers send to, for example https://phones.example.com. It must reach this server's phone port from the internet, with nothing after the name.",
   "app_push.settings.prefilled": "Filled in from Phone Setup - not saved yet.",
   "app_push.settings.refused": "The address must be https:// and a host name only",
   "app_push.settings.save_note": "Saving turns on app push for every phone (you can turn it off per phone)",

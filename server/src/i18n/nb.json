@@ -4678,7 +4678,7 @@
   "app_push.error.read": "Kunne ikke lese push for apper - sjekk serverloggen.",
   "app_push.settings.title": "Push for apper",
   "app_push.settings.origin": "Telefonenes offentlige adresse",
-  "app_push.settings.origin_hint": "Adressen appenes servere sender til, for eksempel https://phones.example.com. Den må nå denne serverens telefonport fra internett, i roten av navnet.",
+  "app_push.settings.origin_hint": "Adressen appenes servere sender til, for eksempel https://phones.example.com. Den må nå denne serverens telefonport fra internett, uten noe etter navnet.",
   "app_push.settings.prefilled": "Fylt inn fra Telefonoppsett - ikke lagret ennå.",
   "app_push.settings.refused": "Adressen må være https:// og bare et vertsnavn",
   "app_push.settings.save_note": "Når du lagrer, får alle telefonene push for apper (du kan slå det av per telefon)",
