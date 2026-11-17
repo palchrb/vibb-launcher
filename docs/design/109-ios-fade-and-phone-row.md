@@ -432,7 +432,7 @@ managed Phone row, `tests::dialer_row`, the allowlist re-add in `calls::save_set
   its own connection after the write and returns how many registrations went; `edit_allowlist` and `calls::save_settings`
   send the `command_notify` nudge after their commit when that is above zero. `every_allowlist_writer_prunes` keeps it so.
 - **One addition not in the design**: the managed link row's value ("Managed by Vibb") has `.row-value-words`
-  (`word-break: normal`), because the generic `.row-value` broke it mid-word at 390 px.
+  (`word-break: normal`, only on a link row that has a package - the Phone row; the Vibb One built-in rows keep `row-value` alone), because the generic `.row-value` broke it mid-word at 390 px.
 - **Test fix**: askama escapes `&` as `&#38;`, so the refusal text check in `a_managed_dialer_is_never_changed` accepts it.
 - **Browser pass** (headless Chromium, 390 px, light and dark): managed row under Vibb One as a link with no controls,
   unmanaged note "Not on Home: the kid has no way to make a call", no horizontal overflow, a refused toggle (calls set to
