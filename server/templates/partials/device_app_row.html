@@ -10,7 +10,7 @@
     <a class="row" href="{{ href }}" data-builtin-link>
         {% if let Some(src) = app.logo %}<span class="app-row-tile app-row-logo" aria-hidden="true">{{ app.letter }}<img src="{{ src }}" alt="" decoding="async"></span>{% else if let Some((icon, colour)) = app.icon %}<span class="app-row-tile" style="background: {{ colour }}" aria-hidden="true"><img src="/static/app-icons/{{ icon }}.svg" alt=""></span>{% else if !app.row.package_name.is_empty() %}<span class="app-row-tile" aria-hidden="true">{{ app.letter }}</span>{% endif %}
         <span class="row-label">{{ app.row.label }}<span class="row-sub">{{ app.row.status_label }}</span></span>
-        <span class="row-value{% if !app.row.package_name.is_empty() %} row-value-words{% endif %}">{{ value }}</span>
+        {% if !value.is_empty() %}<span class="row-value">{{ value }}</span>{% endif %}
         <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </a>
     {% if let Some(text) = app.refused %}

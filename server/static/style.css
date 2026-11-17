@@ -1065,12 +1065,18 @@ summary.row:active {
 
 .row-value {
     flex: 0 1 auto;
-    min-width: 0;
     color: var(--label-2);
     font-size: 1rem;
     text-align: right;
-    word-break: break-word;
-    overflow-wrap: anywhere;
+    /* A value wraps only between words and never shrinks below its longest word (min-width: auto, the
+       flex item's min-content): the label beside it gives way, so "Managed by Vibb" and "On" are never
+       cut mid-word (the user, 2026-11-17). A long unbreakable value (a hash, a URL, an address) is
+       capped at 55 % of the row - the auto minimum is clamped by max-width - and breaks inside that
+       box instead of pushing the row wider. */
+    min-width: auto;
+    max-width: 55%;
+    word-break: normal;
+    overflow-wrap: break-word;
 }
 
 .chev {
@@ -3313,8 +3319,7 @@ details.app-display[open] > summary .section-chev {
 .row-form { flex: none; display: flex; align-items: center; }
 /* A short value beside a button (the phone's running version next to Install Now): never wrapped
    or squeezed - the label column with its sub-line gives way instead (the user, 2026-10-20: "0.30." / "0"). */
-.row-value-words { word-break: normal; overflow-wrap: break-word; }
-.row-value-keep { flex: none; min-width: auto; white-space: nowrap; word-break: normal; overflow-wrap: normal; }
+.row-value-keep { flex: none; max-width: none; white-space: nowrap; overflow-wrap: normal; }
 
 /* ---- Connecting (static/reconnect.js, 2026-10-21): a tap is never "nothing" after being away ---- */
 /* The tapped link at once: the tab in its "on" look, a row pressed, any other link dimmed. */

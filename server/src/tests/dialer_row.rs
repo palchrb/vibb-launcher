@@ -115,18 +115,16 @@ async fn the_managed_row_links_to_calls() {
     .execute(&app.db)
     .await
     .unwrap();
-    for (lang, label, sub, mode) in [
+    for (lang, label, sub) in [
         (
             "en",
             "Phone → Vibb&#39;s phone book",
             "Hidden on the phone - the kid calls from Phone book on Home",
-            "Managed by Vibb",
         ),
         (
             "nb",
             "Phone → Vibbs telefonbok",
             "Skjult på telefonen - barnet ringer fra Telefonbok på Hjem",
-            "Styrt av Vibb",
         ),
     ] {
         let html = page(&app, &cookie, id, lang, "").await;
@@ -140,7 +138,9 @@ async fn the_managed_row_links_to_calls() {
             "{lang}: {row}"
         );
         assert!(row.contains(sub), "{lang}: {row}");
-        assert!(row.contains(mode), "{lang}: {row}");
+        // The title and the sub-line say it: no value on the right, only the chevron.
+        assert!(!row.contains("row-value"), "{lang}: {row}");
+        assert!(row.contains("class=\"chev\""), "{lang}: {row}");
         assert!(!row.contains("name=\"selected\""), "no switch");
         assert!(!row.contains("name=\"package_name\""), "no form at all");
         assert!(!row.contains("/apps/display"), "no Name and icon");

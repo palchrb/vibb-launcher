@@ -2588,3 +2588,10 @@ Pinned by `shell::the_app_shell_scrolls_main_not_the_document`; measured by `jst
 - Tests: `notification_channels::tests` (the `clean` rows, the table), `tests::notification_channels` (stored reports,
   every `pages` row through About and the summary, the ⓘ in nb and en, an older launcher and a failed read, the row's
   place and the badge), `intake_limits` (the three reports kept), `attention::tests` (order, title, target).
+
+- **Row values wrap between words only** (2026-11-17, the user's iPhone screenshots: "Manage / d by / Vibb", "O / n"):
+  `.row-value` is `min-width: auto` (never below its longest word), `max-width: 55%`, `word-break: normal`,
+  `overflow-wrap: break-word`, so the label with its sub-line gives way and a long unbreakable value (hash, URL) breaks
+  inside its capped box instead of widening the row. `.row-value-words` is gone; `.row-value-keep` stays only for
+  `white-space: nowrap` dates/versions. The managed Phone row on Device › Apps has no value (title and sub-line say it).
+  Vibb One's name there is `tracked_apps.name`, the parent's own text (migration 0077 renames only the defaults).
