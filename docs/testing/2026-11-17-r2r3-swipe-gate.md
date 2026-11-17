@@ -141,3 +141,17 @@ within a second of `USER_PRESENT`.
 
 **Emulator time:** `compat34` 14:28-15:38 (69 min) and 16:17-16:31 (14 min), `jelly36` 15:38-15:44, 15:48-16:00 and
 16:02-16:16 (about 33 min): about **1 h 56 min** in all, one emulator at a time.
+
+## Re-run 2026-11-17 evening: row 3b
+
+After the F1 fix: `gate-1117` with `up-r2r3-server` c0d05a669 (N2's `gateway_at`) and `up-r2r3` 994784d3f
+(`UpRuntime`'s `USER_PRESENT` receiver `RECEIVER_EXPORTED`; N1's `send_hours`) merged in (no conflicts), the debug
+launcher and server rebuilt. Only row 3b: a fresh `compat34` (`-wipe-data`) and `jelly36` from its clean copy (restored
+again afterwards, 22 of 22 sums), each provisioned and enrolled; the probe registers, an outside Matrix body 201 while
+idle (deep IDLE, screen off) and a sync - no `NEW_ENDPOINT`, `refresh` lists the registration; then the unlock.
+
+| Row | Android 14 | Android 16 | Result |
+|---|---|---|---|
+| 3b outside, in use | `USER_PRESENT` 18:08:24.096, `NEW_ENDPOINT refresh for me.vibb.probe.up` 18:08:24.126 (+30 ms), raised, the probe's `NEW_ENDPOINT` with the same endpoint 18:08:24.132; none at the next sync or the next unlock | `USER_PRESENT` 18:14:17.624, `NEW_ENDPOINT refresh` 18:14:17.641 (+17 ms), raised, the probe's at 18:14:17.645; none at the next sync or the next unlock | **Pass** |
+
+F1 is fixed on both versions. Emulator time: `compat34` 18:05-18:09 (4 min), `jelly36` 18:09-18:15 (6 min), 10 min.
