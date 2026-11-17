@@ -247,6 +247,8 @@ pub async fn policy(
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     };
+    // Design 108c §1.1: a policy answered (200 or 304) is one the phone took; in memory, no write.
+    state.unified_push.note_policy_served(device.id);
     let etag = policy_etag(&body);
     // `no-store`, as every device answer without its own (`limits`): also the one with the
     // Child PIN in it (design 59 §2.1). Set here, so the ETag doesn't turn it into `no-cache`.

@@ -2,6 +2,3 @@
 -- push refused by the VAPID check (R3: the PWA's warning and Q3's recovery). Both written at most once a minute.
 ALTER TABLE up_registrations ADD COLUMN gateway_at TEXT;
 ALTER TABLE up_registrations ADD COLUMN vapid_refused_at TEXT;
--- Why: 'unsigned' (the sender's: a missing, wrong or bad signature), 'time' or 'address' (a correctly signed push our
--- own clock or origin setting refused). NULL reads as 'unsigned'.
-ALTER TABLE up_registrations ADD COLUMN vapid_refused_why TEXT;

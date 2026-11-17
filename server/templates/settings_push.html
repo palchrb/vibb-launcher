@@ -48,6 +48,31 @@
         </div>
         <p class="group-footer">{{ self.t("app_push.settings.seen_footer") }}</p>
     </section>
+
+    <section id="delivery" aria-labelledby="delivery-title">
+        <h2 class="group-header" id="delivery-title">{{ self.t("app_push.delivery.group") }}</h2>
+        <div class="group">
+            {% if let Some(rows) = delivery %}
+            <div class="row" data-row="delivery-usually">
+                <span class="row-label">{{ self.t("app_push.delivery.usually") }}</span>
+                <span class="row-value">{{ rows.usually }}</span>
+            </div>
+            {% if let Some(p95) = rows.p95 %}
+            <div class="row" data-row="delivery-p95">
+                <span class="row-label">{{ self.t("app_push.delivery.p95") }}</span>
+                <span class="row-value">{{ p95 }}</span>
+            </div>
+            {% endif %}
+            <div class="row" data-row="delivery-pushes">
+                <span class="row-label">{{ self.t("app_push.delivery.pushes") }}</span>
+                <span class="row-value">{{ rows.pushes }}</span>
+            </div>
+            {% else %}
+            <p class="row row-note" data-row="delivery-none">{{ self.t("app_push.delivery.none") }}</p>
+            {% endif %}
+        </div>
+        <p class="group-footer">{{ self.t("app_push.delivery.footer") }}</p>
+    </section>
     </div>
 </main>
 </body>

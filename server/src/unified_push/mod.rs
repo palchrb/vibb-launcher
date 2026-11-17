@@ -17,6 +17,7 @@
 
 pub mod device;
 pub mod edge;
+pub mod health;
 pub mod matrix;
 pub mod notify;
 pub mod publish;
@@ -99,7 +100,13 @@ pub struct UnifiedPush {
     per_client: Mutex<HashMap<String, u32>>,
     new_registrations: Mutex<HashMap<(i64, String), VecDeque<Instant>>>,
     discovery_noted: Mutex<Option<Instant>>,
+    /// The last [SERVED_KEPT] instants per phone at which the policy was answered (200 or 304; design 108c §1.1).
+    /// In memory: it costs no write, and a restart forgets them.
+    policy_served: Mutex<HashMap<i64, VecDeque<chrono::DateTime<chrono::Utc>>>>,
 }
+
+/// How many served-policy instants are kept per phone.
+const SERVED_KEPT: usize = 4;
 
 impl Default for UnifiedPush {
     fn default() -> Self {
@@ -114,6 +121,7 @@ impl Default for UnifiedPush {
             per_client: Default::default(),
             new_registrations: Default::default(),
             discovery_noted: Default::default(),
+            policy_served: Default::default(),
         }
     }
 }
@@ -146,6 +154,36 @@ impl UnifiedPush {
     /// A push for `device_id` was committed: its `up`, coalesced (M2).
     pub fn pushed(&self, device_id: i64) {
         self.coalescer.pushed(device_id, Arc::clone(&self.nudge));
+    }
+
+    /// The phone's policy was answered (200 or 304), now.
+    pub fn note_policy_served(&self, device_id: i64) {
+        self.note_policy_served_at(device_id, chrono::Utc::now());
+    }
+
+    pub fn note_policy_served_at(&self, device_id: i64, at: chrono::DateTime<chrono::Utc>) {
+        let mut served = self.policy_served.lock().unwrap_or_else(|e| e.into_inner());
+        let kept = served.entry(device_id).or_default();
+        kept.push_back(at);
+        while kept.len() > SERVED_KEPT {
+            kept.pop_front();
+        }
+    }
+
+    /// How many of the kept instants fall in `[from, to]`.
+    pub fn policies_served(
+        &self,
+        device_id: i64,
+        from: chrono::DateTime<chrono::Utc>,
+        to: chrono::DateTime<chrono::Utc>,
+    ) -> usize {
+        self.policy_served
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&device_id)
+            .map_or(0, |kept| {
+                kept.iter().filter(|at| **at >= from && **at <= to).count()
+            })
     }
 
     fn in_flight(&self) -> Arc<tokio::sync::Semaphore> {
@@ -335,16 +373,14 @@ pub async fn accept(
     {
         return Err(Refusal::TooMany(refused));
     }
-    if push.ttl_secs == 0
-        && state
-            .command_streams
-            .state(registration.device_id)
-            .is_none_or(|s| s.open == 0)
-    {
+    let stream = stream_generation(state, registration.device_id);
+    if push.ttl_secs == 0 && stream.is_none() {
+        // A verified push that wasn't stored still proves the key works (108c L3).
+        store::end_refusal_run(&state.db, registration.id).await;
         return Ok(Accepted::Dropped);
     }
     let now_ms = chrono::Utc::now().timestamp_millis();
-    match store::enqueue(&state.db, registration, push, now_ms).await {
+    match store::enqueue(&state.db, registration, push, now_ms, stream).await {
         Ok(store::Queued::Key(key)) => {
             tracing::debug!(
                 device_id = registration.device_id,
@@ -363,6 +399,17 @@ pub async fn accept(
             Err(Refusal::Failed)
         }
     }
+}
+
+/// The phone's stream generation (design 108c §7.1): `StreamState::since` in ms while a stream is open, else `None`.
+/// It moves whenever a stream opens, so a push handed out on the generation it was accepted on went to a stream that
+/// was open the whole time.
+pub fn stream_generation(state: &AppState, device_id: i64) -> Option<i64> {
+    state
+        .command_streams
+        .state(device_id)
+        .filter(|s| s.open > 0)
+        .map(|s| s.since.timestamp_millis())
 }
 
 /// The settings row; its absence reads as unset.

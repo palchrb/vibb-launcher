@@ -56,13 +56,21 @@ impl Registration {
 }
 
 /// Stamps `vapid_refused_at` and `vapid_refused_why` (see [crate::unified_push::vapid::Outcome::why]) for a refused
-/// push when [Registration::refusal_stamp_due].
+/// push when [Registration::refusal_stamp_due], and `vapid_refused_since` (design 108c §1.2): the first `unsigned`
+/// refusal of the current run. A run restarts after 7 quiet days or after a `time`/`address` stamp; a `time`/`address`
+/// refusal never starts or extends one. The rule is in the SQL, on the bound reason, so it stays one statement.
 pub async fn note_refusal(db: &SqlitePool, registration: &Registration, why: &str) {
     if !registration.refusal_stamp_due() {
         return;
     }
     if let Err(err) = sqlx::query(
-        "UPDATE up_registrations SET vapid_refused_at = datetime('now'), vapid_refused_why = ? WHERE id = ?",
+        "UPDATE up_registrations SET \
+           vapid_refused_since = CASE WHEN ?1 <> 'unsigned' THEN vapid_refused_since \
+             WHEN vapid_refused_since IS NULL OR vapid_refused_at IS NULL \
+               OR vapid_refused_at < datetime('now', '-7 days') \
+               OR COALESCE(vapid_refused_why, 'unsigned') <> 'unsigned' THEN datetime('now') \
+             ELSE vapid_refused_since END, \
+           vapid_refused_at = datetime('now'), vapid_refused_why = ?1 WHERE id = ?2",
     )
     .bind(why)
     .bind(registration.id)
@@ -193,6 +201,20 @@ pub async fn delete_everywhere<'e>(db: impl sqlx::SqliteExecutor<'e>) -> Result<
         .rows_affected())
 }
 
+/// A verified push that wasn't stored (TTL 0, no stream) still proves the key works: the refusal run ends (108c L3).
+pub async fn end_refusal_run(db: &SqlitePool, registration_id: i64) {
+    if let Err(err) = sqlx::query(
+        "UPDATE up_registrations SET vapid_refused_since = NULL \
+         WHERE id = ? AND vapid_refused_since IS NOT NULL",
+    )
+    .bind(registration_id)
+    .execute(db)
+    .await
+    {
+        tracing::warn!(%err, "app push: couldn't end a refusal run");
+    }
+}
+
 /// One push to queue.
 #[derive(Debug, Clone)]
 pub struct Push<'a> {
@@ -220,11 +242,13 @@ pub fn random_key() -> String {
 
 /// Queues `push` for `registration` in one transaction: expired rows of the phone go first, a `Topic` replaces the
 /// registration's pending row with the same topic, then the caps drop the oldest (counted in `dropped`).
+/// `stream_ms` is the phone's stream generation while a stream is open (design 108c §7.1), `None` otherwise.
 pub async fn enqueue(
     db: &SqlitePool,
     registration: &Registration,
     push: &Push<'_>,
     now_ms: i64,
+    stream_ms: Option<i64>,
 ) -> Result<Queued, sqlx::Error> {
     let len = push.body.len() as i64;
     let mut tx = db.begin().await?;
@@ -305,7 +329,7 @@ pub async fn enqueue(
     };
     sqlx::query(
         "INSERT INTO up_messages (key, registration_id, device_id, body, urgency, topic, \
-         created_at_ms, expires_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+         created_at_ms, expires_at_ms, stream_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&key)
     .bind(registration.id)
@@ -315,11 +339,13 @@ pub async fn enqueue(
     .bind(push.topic)
     .bind(now_ms)
     .bind(now_ms + ttl * 1000)
+    .bind(stream_ms)
     .execute(&mut *tx)
     .await?;
+    // An accepted push ends a refusal run (108c §1.2).
     sqlx::query(
-        "UPDATE up_registrations SET pushes = pushes + 1, last_push_at = datetime('now') \
-         WHERE id = ?",
+        "UPDATE up_registrations SET pushes = pushes + 1, last_push_at = datetime('now'), \
+         vapid_refused_since = NULL WHERE id = ?",
     )
     .bind(registration.id)
     .execute(&mut *tx)
@@ -345,11 +371,15 @@ pub struct Pulled {
 
 /// A phone's pull: `ack` (this phone's keys only; others are ignored) deleted first and its registrations' last
 /// delivery noted, then the next pending messages, oldest first - at most [PULL_MAX] or [PULL_BYTES] of bodies.
+/// Design 108c: an acknowledged push handed out on the stream it was accepted on leaves a delivery sample (accept to
+/// first hand-out); each hand-out stamps `fetched_ms` (the first) and `handed_ms` (the latest). `stream_ms` is the
+/// phone's current stream generation, `None` with no stream open.
 pub async fn pull(
     db: &SqlitePool,
     device_id: i64,
     ack: &[String],
     now_ms: i64,
+    stream_ms: Option<i64>,
 ) -> Result<Pulled, sqlx::Error> {
     if !ack.is_empty() {
         let keys = serde_json::to_string(ack).expect("a list of strings serializes");
@@ -361,6 +391,17 @@ pub async fn pull(
         )
         .bind(device_id)
         .bind(&keys)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO up_delivery (device_id, acked_ms, ms) \
+             SELECT device_id, ?3, MAX(0, fetched_ms - created_at_ms) FROM up_messages \
+             WHERE device_id = ?1 AND stream_ms IS NOT NULL AND fetched_ms IS NOT NULL \
+             AND key IN (SELECT value FROM json_each(?2))",
+        )
+        .bind(device_id)
+        .bind(&keys)
+        .bind(now_ms)
         .execute(&mut *tx)
         .await?;
         sqlx::query(
@@ -399,7 +440,75 @@ pub async fn pull(
             body: base64::engine::general_purpose::STANDARD.encode(&body),
         });
     }
+    if !messages.is_empty() {
+        let keys: Vec<&str> = messages.iter().map(|m| m.key.as_str()).collect();
+        let keys = serde_json::to_string(&keys).expect("a list of strings serializes");
+        // The first hand-out keeps its sample only on the stream the push was accepted on (108c §7.1, H2).
+        sqlx::query(
+            "UPDATE up_messages SET \
+               stream_ms = CASE WHEN fetched_ms IS NULL THEN (CASE WHEN stream_ms = ?3 THEN stream_ms END) \
+                 ELSE stream_ms END, \
+               fetched_ms = COALESCE(fetched_ms, ?4), handed_ms = ?4 \
+             WHERE device_id = ?1 AND key IN (SELECT value FROM json_each(?2))",
+        )
+        .bind(device_id)
+        .bind(keys)
+        .bind(stream_ms)
+        .bind(now_ms)
+        .execute(db)
+        .await?;
+    }
     Ok(Pulled { messages, more })
+}
+
+/// Delivery samples are kept this long and at most [DELIVERY_CAP] per phone (108c §7.2).
+pub const DELIVERY_HOURS: i64 = 24;
+pub const DELIVERY_CAP: i64 = 5_000;
+
+/// The delivery samples of the last [DELIVERY_HOURS] hours, sorted: one phone's, or every phone's, and whether a
+/// phone has [DELIVERY_CAP] of them (the cap may have cut).
+pub async fn delivery_samples(
+    db: &SqlitePool,
+    device_id: Option<i64>,
+    now_ms: i64,
+) -> Result<(Vec<i64>, bool), sqlx::Error> {
+    let since = now_ms - DELIVERY_HOURS * 3_600_000;
+    let samples: Vec<i64> = sqlx::query_scalar(
+        "SELECT ms FROM up_delivery WHERE acked_ms > ?1 AND (?2 IS NULL OR device_id = ?2) ORDER BY ms",
+    )
+    .bind(since)
+    .bind(device_id)
+    .fetch_all(db)
+    .await?;
+    let capped: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM up_delivery WHERE acked_ms > ?1 AND (?2 IS NULL OR device_id = ?2) \
+         GROUP BY device_id HAVING COUNT(*) >= ?3 LIMIT 1",
+    )
+    .bind(since)
+    .bind(device_id)
+    .bind(DELIVERY_CAP)
+    .fetch_optional(db)
+    .await?;
+    Ok((samples, capped.is_some()))
+}
+
+/// Retention's part for the samples: older than [DELIVERY_HOURS], and beyond each phone's newest [DELIVERY_CAP].
+async fn prune_deliveries(db: &SqlitePool, now_ms: i64) -> Result<u64, sqlx::Error> {
+    let old = sqlx::query("DELETE FROM up_delivery WHERE acked_ms <= ?")
+        .bind(now_ms - DELIVERY_HOURS * 3_600_000)
+        .execute(db)
+        .await?
+        .rows_affected();
+    let over = sqlx::query(
+        "DELETE FROM up_delivery WHERE rowid IN (SELECT rowid FROM ( \
+           SELECT rowid, ROW_NUMBER() OVER (PARTITION BY device_id ORDER BY acked_ms DESC, rowid DESC) AS n \
+           FROM up_delivery) WHERE n > ?)",
+    )
+    .bind(DELIVERY_CAP)
+    .execute(db)
+    .await?
+    .rows_affected();
+    Ok(old + over)
 }
 
 /// Retention's part (`retention::prune`, hourly): expired messages, the registrations of a phone unseen for
@@ -428,7 +537,8 @@ pub async fn prune(db: &SqlitePool, now_ms: i64) -> Result<u64, sqlx::Error> {
         .execute(db)
         .await?
         .rows_affected();
-    Ok(expired + unseen + tombstones + origins)
+    let deliveries = prune_deliveries(db, now_ms).await?;
+    Ok(expired + unseen + tombstones + origins + deliveries)
 }
 
 #[cfg(test)]
@@ -552,5 +662,85 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(left, 1);
+    }
+
+    /// Design 108c §7: an acknowledged push gives a sample only when it was handed out on the stream it was accepted
+    /// on - `fetched - accepted`, not the ack's time, at least 0 - and an ack sent twice counts once; samples past 24
+    /// hours and a phone's 5,001st are pruned.
+    #[tokio::test]
+    async fn delivery_samples_follow_the_stream() {
+        let (_dir, db, emma) = db().await;
+        add(&db, emma, 1, "a.b").await;
+        let registration: Registration = sqlx::query_as(
+            "SELECT id, device_id, reg, package, vapid, vapid_refused_at FROM up_registrations",
+        )
+        .fetch_one(&db)
+        .await
+        .unwrap();
+        let push = Push {
+            body: b"x",
+            urgency: "normal",
+            topic: None,
+            ttl_secs: 3600,
+        };
+        let t0 = chrono::Utc::now().timestamp_millis();
+        let mut keys = Vec::new();
+        // Same stream, no stream, a stream that reopened before the pull, and a clock stepped back.
+        for (created, stream) in [
+            (t0, Some(100)),
+            (t0, None),
+            (t0, Some(50)),
+            (t0 + 9_000, Some(100)),
+        ] {
+            let Queued::Key(key) = enqueue(&db, &registration, &push, created, stream)
+                .await
+                .unwrap()
+            else {
+                panic!("not queued")
+            };
+            keys.push(key);
+        }
+        let handed = pull(&db, emma, &[], t0 + 2_000, Some(100)).await.unwrap();
+        assert_eq!(handed.messages.len(), 4);
+        pull(&db, emma, &keys, t0 + 60_000, Some(100))
+            .await
+            .unwrap();
+        pull(&db, emma, &keys, t0 + 61_000, Some(100))
+            .await
+            .unwrap();
+        let samples: Vec<(i64, i64)> =
+            sqlx::query_as("SELECT acked_ms, ms FROM up_delivery ORDER BY ms")
+                .fetch_all(&db)
+                .await
+                .unwrap();
+        assert_eq!(samples, [(t0 + 60_000, 0), (t0 + 60_000, 2_000)]);
+        let (read, capped) = delivery_samples(&db, Some(emma), t0 + 61_000)
+            .await
+            .unwrap();
+        assert_eq!((read, capped), (vec![0, 2_000], false));
+
+        sqlx::query("INSERT INTO up_delivery (device_id, acked_ms, ms) VALUES (?, ?, 1)")
+            .bind(emma)
+            .bind(t0 - 25 * 3_600_000)
+            .execute(&db)
+            .await
+            .unwrap();
+        sqlx::query(
+            "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 5000) \
+             INSERT INTO up_delivery (device_id, acked_ms, ms) SELECT ?, ?, i FROM n",
+        )
+        .bind(emma)
+        .bind(t0)
+        .execute(&db)
+        .await
+        .unwrap();
+        prune(&db, t0).await.unwrap();
+        let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM up_delivery")
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        assert_eq!(left, DELIVERY_CAP, "the old one and the overflow went");
+        let (_, capped) = delivery_samples(&db, Some(emma), t0).await.unwrap();
+        assert!(capped);
     }
 }

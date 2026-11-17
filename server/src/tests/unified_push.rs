@@ -1605,7 +1605,7 @@ async fn the_queue_caps_and_ttl_zero() {
     };
     let mut first = None;
     for n in 0..101 {
-        let Queued::Key(key) = store::enqueue(&app.db, &registration, &push(b"x"), now)
+        let Queued::Key(key) = store::enqueue(&app.db, &registration, &push(b"x"), now, None)
             .await
             .unwrap()
         else {
@@ -1643,7 +1643,7 @@ async fn the_queue_caps_and_ttl_zero() {
     }
     seed_message(&app, live, emma, "mid", 145_000).await;
     assert!(matches!(
-        store::enqueue(&app.db, &registration, &push(&[7u8; 4096]), now)
+        store::enqueue(&app.db, &registration, &push(&[7u8; 4096]), now, None)
             .await
             .unwrap(),
         Queued::Key(_)
@@ -1719,4 +1719,451 @@ async fn the_queue_caps_and_ttl_zero() {
     .await
     .unwrap();
     assert_eq!(expires - created, store::TTL_ZERO_GRACE_SECS * 1000);
+}
+
+// ---- Design 108c: app push on Attention, and the delivery time -----------------------------------------------------
+
+/// The app push rows (`data-attention` keys starting `app-push-`) on the phone's summary.
+async fn push_rows(app: &TestApp, cookie: &str, id: i64) -> Vec<String> {
+    let page = app.get_page(&format!("/devices/{id}"), cookie).await.text();
+    super::tags(&page, "a")
+        .into_iter()
+        .filter_map(|tag| tag.attr("data-attention").map(str::to_string))
+        .filter(|key| key.starts_with("app-push-"))
+        .collect()
+}
+
+/// The Devices list's red number for the phone; 0 without one.
+async fn list_badge(app: &TestApp, cookie: &str, id: i64) -> usize {
+    let list = app.get_page("/devices", cookie).await.text();
+    let start = list.find(&format!("data-device=\"{id}\"")).unwrap();
+    let row = &list[start..];
+    let row = &row[..row.find("</a>").unwrap()];
+    super::tags(row, "span")
+        .into_iter()
+        .find_map(|tag| tag.attr("data-attention-count"))
+        .map_or(0, |n| n.parse().unwrap())
+}
+
+async fn sql(app: &TestApp, query: &str) {
+    sqlx::query(query).execute(&app.db).await.unwrap();
+}
+
+async fn registration_of(app: &TestApp, id: i64) -> crate::unified_push::store::Registration {
+    sqlx::query_as(
+        "SELECT id, device_id, reg, package, vapid, vapid_refused_at FROM up_registrations WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap()
+}
+
+async fn since_of(app: &TestApp, id: i64) -> Option<String> {
+    sqlx::query_scalar("SELECT vapid_refused_since FROM up_registrations WHERE id = ?")
+        .bind(id)
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+}
+
+/// A `SELECT <condition> …` of one registration, as a bool.
+async fn flag(app: &TestApp, query: &str, id: i64) -> bool {
+    sqlx::query_scalar::<_, i64>(query)
+        .bind(id)
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+        == 1
+}
+
+/// §1, §4: the three Attention rows at their thresholds, every column written through its real path (the stamps
+/// through `note_refusal`, an accepted push, the publish route, the key update's route, `pull` and the policy
+/// served), the page lines, and one count for the summary and the Devices list.
+#[tokio::test]
+async fn attention_rows_of_108c() {
+    use crate::unified_push::store::{self, Push};
+    let vapid: Value = serde_json::from_str(VAPID).unwrap();
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (emma, token) = app.enrolled_device("Emma").await;
+    set_origin(&app, Some(ORIGIN)).await;
+    app.post_status(&token, json!({"capabilities": [CAPABILITY]}))
+        .await;
+    set_allowlist(&app, emma, &["io.element.android.x"]).await;
+    let secret = seed(&app, emma, 1, "io.element.android.x").await;
+    let reg = registration_id(&app, &format!("{:032x}", 1)).await;
+    let push = Push {
+        body: b"x",
+        urgency: "normal",
+        topic: None,
+        ttl_secs: 86_400,
+    };
+    let baseline = list_badge(&app, &cookie, emma).await;
+    assert!(push_rows(&app, &cookie, emma).await.is_empty());
+
+    // -- refused: an `unsigned` run of a day, the phone in touch a day in.
+    let refuse = |why: &'static str| {
+        let app = &app;
+        async move {
+            // The stamp is written at most once a minute: backdate it so the next one is due.
+            sql(app, "UPDATE up_registrations SET vapid_refused_at = datetime(vapid_refused_at, '-2 minutes') WHERE vapid_refused_at IS NOT NULL").await;
+            store::note_refusal(&app.db, &registration_of(app, reg).await, why).await;
+        }
+    };
+    refuse("unsigned").await;
+    assert!(since_of(&app, reg).await.is_some());
+    assert!(
+        push_rows(&app, &cookie, emma).await.is_empty(),
+        "a single refusal"
+    );
+    sql(
+        &app,
+        "UPDATE up_registrations SET vapid_refused_since = datetime('now', '-30 hours')",
+    )
+    .await;
+    assert_eq!(push_rows(&app, &cookie, emma).await, ["app-push-refused"]);
+    assert_eq!(
+        list_badge(&app, &cookie, emma).await,
+        baseline + 1,
+        "one count"
+    );
+    let apps = app
+        .get_page(&format!("/devices/{emma}/apps"), &cookie)
+        .await
+        .text();
+    assert!(apps.contains("This has gone on for over a day"), "{apps}");
+    // The phone's report must come a day into the run.
+    sql(
+        &app,
+        "UPDATE device_status SET reported_at = datetime('now', '-10 hours')",
+    )
+    .await;
+    assert!(
+        push_rows(&app, &cookie, emma).await.is_empty(),
+        "no report a day in"
+    );
+    sql(
+        &app,
+        "UPDATE device_status SET reported_at = datetime('now')",
+    )
+    .await;
+    // A `time` stamp never raises, never extends, and ends the run: the next `unsigned` starts a new one.
+    refuse("time").await;
+    assert!(
+        push_rows(&app, &cookie, emma).await.is_empty(),
+        "a time run"
+    );
+    let apps = app
+        .get_page(&format!("/devices/{emma}/apps"), &cookie)
+        .await
+        .text();
+    assert!(
+        !apps.contains("over a day"),
+        "the sentence never lands on a time line"
+    );
+    refuse("unsigned").await;
+    assert!(
+        push_rows(&app, &cookie, emma).await.is_empty(),
+        "broken by a time stamp"
+    );
+    // A run is ended by an accepted push, by the key update through the register route, and by a TTL-0 Dropped.
+    let make_run = || async {
+        sql(&app, "UPDATE up_registrations SET vapid_refused_since = datetime('now', '-30 hours'), vapid_refused_why = 'unsigned', vapid_refused_at = datetime('now', '-3 minutes')").await;
+        assert_eq!(push_rows(&app, &cookie, emma).await, ["app-push-refused"]);
+    };
+    make_run().await;
+    store::enqueue(
+        &app.db,
+        &registration_of(&app, reg).await,
+        &push,
+        chrono::Utc::now().timestamp_millis(),
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(
+        since_of(&app, reg).await.is_none(),
+        "an accepted push ends the run"
+    );
+    sql(&app, "DELETE FROM up_messages").await;
+    make_run().await;
+    let res = answer(
+        &app,
+        Method::POST,
+        "/api/devices/up/registrations",
+        &token,
+        Some(json!({"reg": format!("{:032x}", 1), "secret": secret,
+            "package": "io.element.android.x", "vapid": vapid["registered_key"]})),
+    )
+    .await;
+    assert_eq!(res["status"], 200, "{res}");
+    assert!(
+        since_of(&app, reg).await.is_none(),
+        "the key update ends the run"
+    );
+    make_run().await;
+    let dropped = Push {
+        ttl_secs: 0,
+        ..push.clone()
+    };
+    let taken =
+        crate::unified_push::accept(&app.state, &registration_of(&app, reg).await, &dropped)
+            .await
+            .ok();
+    assert!(matches!(
+        taken,
+        Some(crate::unified_push::Accepted::Dropped)
+    ));
+    assert!(
+        since_of(&app, reg).await.is_none(),
+        "a verified Dropped push ends the run"
+    );
+    // 7 quiet days: the next refusal starts a new run.
+    sql(&app, "UPDATE up_registrations SET vapid_refused_since = datetime('now', '-9 days'), vapid_refused_at = datetime('now', '-8 days'), vapid_refused_why = 'unsigned'").await;
+    assert!(push_rows(&app, &cookie, emma).await.is_empty());
+    refuse("unsigned").await;
+    assert!(flag(&app, "SELECT datetime(vapid_refused_since) > datetime('now', '-1 minute') FROM up_registrations WHERE id = ?", reg).await);
+    // The key update made the registration keyed; the outside pushes below are unsigned ones from a gateway.
+    sql(&app, "UPDATE up_registrations SET vapid = NULL, vapid_refused_since = NULL, vapid_refused_at = NULL, vapid_refused_why = NULL").await;
+
+    // -- outside: an outside push a day or more into the run.
+    let outside_body =
+        json!({"notification": {"event_id": "$fake:example.org", "room_id": "!fake:example.org",
+        "type": "m.room.message", "devices": [{"app_id": "io.element.android.x", "pushkey": "x"}]}})
+        .to_string()
+        .into_bytes();
+    let path = format!("/up/{secret}");
+    let outside_push = || async {
+        let res = post_via_phone_listener(
+            &app,
+            "203.0.113.7",
+            Method::POST,
+            &path,
+            &[],
+            outside_body.clone(),
+        )
+        .await;
+        assert_eq!(res.status, StatusCode::CREATED, "{}", res.text());
+    };
+    outside_push().await;
+    assert!(
+        push_rows(&app, &cookie, emma).await.is_empty(),
+        "the run's first push"
+    );
+    // Its first hour only, three days later: a healed, quiet app (H1).
+    sql(&app, "UPDATE up_registrations SET outside_since = datetime('now', '-3 days'), outside_gateway_at = datetime('now', '-3 days', '+1 hour')").await;
+    assert!(
+        push_rows(&app, &cookie, emma).await.is_empty(),
+        "H1: the mark alone proves nothing"
+    );
+    // An outside push 30 hours into the run.
+    sql(&app, "UPDATE up_registrations SET outside_since = datetime('now', '-30 hours'), outside_gateway_at = datetime('now', '-3 minutes')").await;
+    outside_push().await;
+    assert_eq!(push_rows(&app, &cookie, emma).await, ["app-push-outside"]);
+    assert_eq!(list_badge(&app, &cookie, emma).await, baseline + 1);
+    // A push through our own gateway ends the mark; the next outside push starts a new run.
+    let notify = json!({"notification": {"event_id": "$fake:example.org", "room_id": "!fake:example.org",
+        "type": "m.room.message", "devices": [{"pushkey": format!("{ORIGIN}/up/{secret}")}]}});
+    let res = post_via_phone_listener(
+        &app,
+        "203.0.113.7",
+        Method::POST,
+        "/_matrix/push/v1/notify",
+        &[],
+        notify.to_string().into_bytes(),
+    )
+    .await;
+    assert_eq!(res.json(), json!({"rejected": []}));
+    assert!(
+        push_rows(&app, &cookie, emma).await.is_empty(),
+        "our own gateway ends it"
+    );
+    sql(&app, "UPDATE up_registrations SET outside_gateway_at = datetime('now', '-3 minutes'), gateway_at = datetime('now', '-2 minutes')").await;
+    outside_push().await;
+    assert!(
+        flag(&app, "SELECT datetime(outside_since) > datetime('now', '-1 minute') FROM up_registrations WHERE id = ?", reg).await,
+        "the run restarted"
+    );
+    assert!(push_rows(&app, &cookie, emma).await.is_empty());
+    sql(&app, "DELETE FROM up_messages").await;
+
+    // -- waiting: the oldest push 40 minutes old.
+    let now = chrono::Utc::now();
+    let at = |minutes: i64| now + chrono::Duration::minutes(minutes);
+    let queue = || async {
+        sql(&app, "DELETE FROM up_messages").await;
+        let Ok(store::Queued::Key(key)) = store::enqueue(
+            &app.db,
+            &registration_of(&app, reg).await,
+            &push,
+            at(-40).timestamp_millis(),
+            Some(7),
+        )
+        .await
+        else {
+            panic!("not queued")
+        };
+        key
+    };
+    let served = &app.state.unified_push;
+    let key = queue().await;
+    for minutes in [-25, -15] {
+        served.note_policy_served_at(emma, at(minutes));
+    }
+    assert!(
+        push_rows(&app, &cookie, emma).await.is_empty(),
+        "two served policies"
+    );
+    served.note_policy_served_at(emma, at(-5));
+    assert_eq!(push_rows(&app, &cookie, emma).await, ["app-push-waiting"]);
+    let apps = app
+        .get_page(&format!("/devices/{emma}/apps"), &cookie)
+        .await
+        .text();
+    assert!(apps.contains("data-warning=\"up-waiting\""));
+    assert_eq!(list_badge(&app, &cookie, emma).await, baseline + 1);
+    // A not-ok report in the window.
+    sql(&app, "UPDATE device_status SET policy_state = 'error', reported_at = datetime('now', '-20 minutes')").await;
+    app.post_status(&token, json!({"capabilities": [CAPABILITY]}))
+        .await;
+    assert!(
+        push_rows(&app, &cookie, emma).await.is_empty(),
+        "a report that couldn't apply the policy"
+    );
+    sql(
+        &app,
+        "DELETE FROM device_status WHERE policy_state = 'error'",
+    )
+    .await;
+    assert_eq!(push_rows(&app, &cookie, emma).await, ["app-push-waiting"]);
+    // The ack ends it.
+    store::pull(&app.db, emma, &[key], now.timestamp_millis(), None)
+        .await
+        .unwrap();
+    assert!(
+        push_rows(&app, &cookie, emma).await.is_empty(),
+        "acknowledged"
+    );
+    // Three policies, all in the push's first ten minutes: not counted.
+    let key = queue().await;
+    let _ = key;
+    for minutes in [-39, -37, -35] {
+        served.note_policy_served_at(emma, at(minutes));
+    }
+    assert!(
+        push_rows(&app, &cookie, emma).await.is_empty(),
+        "inside the first ten minutes"
+    );
+    // (b) fetched, handed out again 3 minutes later: raised; 30 s later: not.
+    let _ = queue().await;
+    store::pull(&app.db, emma, &[], at(-10).timestamp_millis(), Some(7))
+        .await
+        .unwrap();
+    store::pull(
+        &app.db,
+        emma,
+        &[],
+        (at(-10) + chrono::Duration::seconds(30)).timestamp_millis(),
+        Some(7),
+    )
+    .await
+    .unwrap();
+    assert!(
+        push_rows(&app, &cookie, emma).await.is_empty(),
+        "30 s after the first hand-out"
+    );
+    store::pull(&app.db, emma, &[], at(-7).timestamp_millis(), Some(7))
+        .await
+        .unwrap();
+    assert_eq!(push_rows(&app, &cookie, emma).await, ["app-push-waiting"]);
+}
+
+/// §7.1: `accept` stores the phone's stream generation, `NULL` without a stream.
+#[tokio::test]
+async fn accept_stores_the_stream_generation() {
+    let gateway: Value = serde_json::from_str(GATEWAY).unwrap();
+    let (app, emma) = gateway_app(&gateway).await;
+    let live = registration_id(&app, &format!("{:032x}", 1)).await;
+    let post = || async {
+        let res = post_via_phone_listener(
+            &app,
+            "203.0.113.7",
+            Method::POST,
+            &fill("/up/{live}", &gateway),
+            &[],
+            b"x".to_vec(),
+        )
+        .await;
+        assert_eq!(res.status, StatusCode::CREATED);
+    };
+    post().await;
+    let _stream = app.state.command_streams.open(emma);
+    post().await;
+    let streams: Vec<Option<i64>> = sqlx::query_scalar(
+        "SELECT stream_ms FROM up_messages WHERE registration_id = ? ORDER BY id",
+    )
+    .bind(live)
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(streams.len(), 2);
+    assert_eq!(streams[0], None);
+    assert_eq!(
+        streams[1],
+        Some(
+            app.state
+                .command_streams
+                .state(emma)
+                .unwrap()
+                .since
+                .timestamp_millis()
+        )
+    );
+}
+
+/// §7.4, §7.5: Settings › App push's group and Device › Apps' line, from seeded samples.
+#[tokio::test]
+async fn delivery_time_on_the_pages() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (emma, token) = app.enrolled_device("Emma").await;
+    let (jack, _) = app.enrolled_device("Jack").await;
+    app.post_status(&token, json!({"capabilities": [CAPABILITY]}))
+        .await;
+    set_origin(&app, Some(ORIGIN)).await;
+    let settings = app.get_page("/settings/push", &cookie).await.text();
+    assert!(
+        settings.contains("data-row=\"delivery-none\""),
+        "{settings}"
+    );
+    let now = chrono::Utc::now().timestamp_millis();
+    for ms in [1_000, 2_000, 3_000] {
+        sqlx::query("INSERT INTO up_delivery (device_id, acked_ms, ms) VALUES (?, ?, ?)")
+            .bind(emma)
+            .bind(now)
+            .bind(ms)
+            .execute(&app.db)
+            .await
+            .unwrap();
+    }
+    let settings = app.get_page("/settings/push", &cookie).await.text();
+    assert!(settings.contains("Delivery to the phones"));
+    assert!(settings.contains("data-row=\"delivery-usually\""));
+    assert!(
+        !settings.contains("data-row=\"delivery-p95\""),
+        "no 95% below 20"
+    );
+    assert!(settings.contains("3 in the last 24 hours"));
+    let line = "Usually delivered in 2 s (3 pushes while connected, last 24 hours)";
+    let page = app
+        .get_page(&format!("/devices/{emma}/apps"), &cookie)
+        .await
+        .text();
+    assert!(page.contains(line), "{page}");
+    let other = app
+        .get_page(&format!("/devices/{jack}/apps"), &cookie)
+        .await
+        .text();
+    assert!(!other.contains("data-row=\"app-push-delivery\""));
 }

@@ -30,6 +30,8 @@
             <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
         </form>
         {% endif %}
+        {% if let Some(waiting) = app_push.waiting %}<p class="row row-note text-alarm" data-warning="up-waiting">{{ waiting }}</p>{% endif %}
+        {% if let Some(delivery) = app_push.delivery %}<p class="row row-note" data-row="app-push-delivery">{{ delivery }}</p>{% endif %}
         {% for app in app_push.apps %}
         <div class="cell" data-up-app="{{ app.package }}">
             <div class="row">

@@ -51,6 +51,15 @@ struct SettingsPushTemplate {
     pushed: Option<String>,
     /// No `DEVICE_BIND_ADDR`: the push routes aren't served at all.
     no_listener: bool,
+    /// "Delivery to the phones" (design 108c §7.4): `None` with no samples.
+    delivery: Option<DeliveryRows>,
+}
+
+/// The delivery group's rows, worded: the median, the 95th percentile (from 20 pushes) and the count.
+pub struct DeliveryRows {
+    pub usually: String,
+    pub p95: Option<String>,
+    pub pushes: String,
 }
 crate::i18n::words!(SettingsPushTemplate);
 
@@ -114,6 +123,25 @@ async fn render_settings(
             .collect(),
         Err(err) => return read_failed(lang, err),
     };
+    let delivery = match up::store::delivery_samples(&state.db, None, now.timestamp_millis()).await
+    {
+        Ok((samples, capped)) => {
+            up::health::delivery_figure(&samples, capped).map(|figure| DeliveryRows {
+                usually: duration_words(lang, figure.median_ms),
+                p95: figure.p95_ms.map(|ms| duration_words(lang, ms)),
+                pushes: if figure.capped {
+                    t(lang, "app_push.delivery.pushes_capped").to_string()
+                } else {
+                    t_params(
+                        lang,
+                        "app_push.delivery.pushes_value",
+                        &[("count", &figure.count.to_string())],
+                    )
+                },
+            })
+        }
+        Err(err) => return read_failed(lang, err),
+    };
     let page = SettingsPushTemplate {
         lang,
         title: t(lang, "app_push.settings.title").to_string(),
@@ -126,6 +154,7 @@ async fn render_settings(
         discovery: when(settings.last_discovery_at.as_deref()),
         pushed: when(pushed.as_deref()),
         no_listener: state.net.device_bind_addr.is_none(),
+        delivery,
     };
     (status, Html(page.render().unwrap())).into_response()
 }
@@ -197,6 +226,29 @@ pub async fn save_settings(
     }
 }
 
+/// A delivery time in words (design 108c §7.3), each unit floored so 59.6 s reads "59 s": under a second, "{n} s", "{n} min",
+/// then "{h} h {m} min" (nb "t").
+pub fn duration_words(lang: Lang, ms: i64) -> String {
+    let ms = ms.max(0);
+    let n = |v: i64| v.to_string();
+    if ms < 1_000 {
+        t(lang, "app_push.delivery.under_second").to_string()
+    } else if ms < 60_000 {
+        t_params(lang, "app_push.delivery.seconds", &[("n", &n(ms / 1_000))])
+    } else if ms < 3_600_000 {
+        t_params(lang, "app_push.delivery.minutes", &[("n", &n(ms / 60_000))])
+    } else {
+        t_params(
+            lang,
+            "app_push.delivery.hours",
+            &[
+                ("h", &n(ms / 3_600_000)),
+                ("m", &n(ms % 3_600_000 / 60_000)),
+            ],
+        )
+    }
+}
+
 /// The Settings hub row's value: "On" while an origin is set, else "Off"; `None` on a read error.
 pub async fn hub_value(db: &sqlx::SqlitePool, lang: Lang) -> Option<String> {
     let settings = up::settings(db).await.ok()?;
@@ -264,6 +316,10 @@ pub struct AppPushGroup {
     pub stopped: Vec<StoppedRow>,
     /// "Element X isn't using Vibb for notifications…", worded.
     pub missing: Vec<String>,
+    /// Design 108c §2: shown exactly when Attention's "pushes waiting" row is raised.
+    pub waiting: Option<String>,
+    /// Design 108c §7.4: "Usually delivered in …", only when the phone has samples.
+    pub delivery: Option<String>,
 }
 
 /// An app is "noisy" from this many pushes a day (R1-SR L2): its average since its oldest registration on the phone,
@@ -306,6 +362,7 @@ pub(crate) async fn group(
     names: &HashMap<String, AppName>,
     capability: Option<bool>,
     zone: &Zone,
+    reported_at: Option<&str>,
 ) -> Result<AppPushGroup, sqlx::Error> {
     let on = up::switch(&state.db, device_id).await?;
     let origin_set = up::settings(&state.db).await?.public_origin.is_some();
@@ -322,6 +379,37 @@ pub(crate) async fn group(
     .await?;
     let stopped = up::stopped(&state.db, device_id).await?;
     let now = Utc::now();
+    // The same function Attention reads, so the row and the page agree (design 108c §3).
+    let problems = up::health::attention(state, device_id, reported_at, now).await?;
+    let waiting = problems.waiting_since.map(|since| {
+        t_params(
+            lang,
+            "app_push.waiting",
+            &[("when", &zone.when(since, now))],
+        )
+    });
+    let (samples, _) =
+        up::store::delivery_samples(&state.db, Some(device_id), now.timestamp_millis()).await?;
+    let delivery = up::health::delivery_figure(&samples, false).map(|figure| {
+        let median = duration_words(lang, figure.median_ms);
+        match figure.p95_ms {
+            Some(p95) => t_params(
+                lang,
+                "app_push.delivery_line_p95",
+                &[
+                    ("median", &median),
+                    ("p95", &duration_words(lang, p95)),
+                    ("count", &figure.count.to_string()),
+                ],
+            ),
+            None => t_count(
+                lang,
+                "app_push.delivery_line",
+                figure.count as i64,
+                &[("median", &median)],
+            ),
+        }
+    });
     let week_ago = now - chrono::Duration::days(7);
     let name_of = |package: &str| -> (String, String, Option<String>) {
         match names.get(package) {
@@ -385,17 +473,34 @@ pub(crate) async fn group(
                     }),
                     outside: (*outside)
                         .then(|| t_params(lang, "app_push.outside", &[("app", &name)])),
-                    refused: refused.as_deref().and_then(|stamp| {
-                        let (at, why) = stamp.split_once('|').unwrap_or((stamp, "unsigned"));
-                        let at = crate::display_time::parse_db_utc(at)?;
-                        // Our own clock or origin is not the sender's fault: worded apart (L3).
-                        let key = match why {
-                            "time" => "app_push.vapid_refused_time",
-                            "address" => "app_push.vapid_refused_address",
-                            _ => "app_push.vapid_refused",
-                        };
-                        Some(t_params(lang, key, &[("when", &zone.when(at, now))]))
-                    }),
+                    refused: problems
+                        .refused
+                        .iter()
+                        .find(|(p, _)| p == package)
+                        .and_then(|(_, stamp)| {
+                            // Raised for this app (108c §2): worded from the raised registration's own stamp, which
+                            // is an `unsigned` one, so the fix can't land on a `time` line.
+                            let at = crate::display_time::parse_db_utc(stamp)?;
+                            Some(t_params(
+                                lang,
+                                "app_push.refused_fix",
+                                &[("when", &zone.when(at, now)), ("app", &name)],
+                            ))
+                        })
+                        .or_else(|| {
+                            refused.as_deref().and_then(|stamp| {
+                                let (at, why) =
+                                    stamp.split_once('|').unwrap_or((stamp, "unsigned"));
+                                let at = crate::display_time::parse_db_utc(at)?;
+                                // Our own clock or origin is not the sender's fault: worded apart (L3).
+                                let key = match why {
+                                    "time" => "app_push.vapid_refused_time",
+                                    "address" => "app_push.vapid_refused_address",
+                                    _ => "app_push.vapid_refused",
+                                };
+                                Some(t_params(lang, key, &[("when", &zone.when(at, now))]))
+                            })
+                        }),
                 }
             },
         )
@@ -439,6 +544,8 @@ pub(crate) async fn group(
         apps,
         stopped,
         missing,
+        waiting,
+        delivery,
     })
 }
 
@@ -534,5 +641,27 @@ async fn known_device(state: &AppState, lang: Lang, id: i64) -> Result<(), Box<R
             "error.device_not_found",
         ))),
         Err(err) => Err(Box::new(save_failed(lang, id, err))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// §7.3: each unit floored, at every boundary, in both languages.
+    #[test]
+    fn durations_are_floored_words() {
+        for (ms, en, nb) in [
+            (999, "under a second", "under ett sekund"),
+            (1_000, "1 s", "1 s"),
+            (59_600, "59 s", "59 s"),
+            (60_000, "1 min", "1 min"),
+            (3_540_000, "59 min", "59 min"),
+            (3_600_000, "1 h 0 min", "1 t 0 min"),
+            (5_400_000, "1 h 30 min", "1 t 30 min"),
+        ] {
+            assert_eq!(duration_words(Lang::En, ms), en, "{ms}");
+            assert_eq!(duration_words(Lang::Nb, ms), nb, "{ms}");
+        }
     }
 }

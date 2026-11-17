@@ -3,7 +3,7 @@
 `docs/design/108-unified-push.md` (revision 2, variant A; the user's Q4 change of 2026-11-16: Element X keeps its Play
 build). The phone's Vibb One is the distributor; this server is the push server behind the endpoints and a Matrix push
 gateway. Code: `src/unified_push/` (its `README.md` lists what is ported from ntfy under Apache-2.0),
-`src/handlers/app_push.rs`, migrations 0152 and 0153 (design 108b: `gateway_at`, `vapid_refused_at`).
+`src/handlers/app_push.rs`, migrations 0152 and 0153 (design 108b: `gateway_at`, `vapid_refused_at`; 0153 is frozen) and 0154 (design 108c: `vapid_refused_why`, `vapid_refused_since`, `outside_since`, the queue's `stream_ms`/`fetched_ms`/`handed_ms`, `up_delivery`).
 
 ## The routes
 
@@ -126,3 +126,35 @@ Google is the same setting back. Words `app_push.*` (the parent web push owns `p
   RC** (an R1 server answers a key update without storing it).
 - Tests: `vapid::tests::{the_rows, points}`, `tests::unified_push::{the_contract (refresh and the register rows),
   vapid_at_the_route, a_signed_push_is_taken_at_the_route (signed live with the throwaway key), the_apps_group_lines_of_108b}`.
+
+## Attention and delivery time (design 108c)
+
+`docs/design/108c-up-attention.md`. Three orange (Action) Attention rows, on the Devices list badge and the phone's
+summary, all linking to `/devices/{id}/apps#app-push`; no Web Push to the parent, and Element X on Google is not a
+row. `unified_push::health::attention` computes them on render (no sweep), from what happened; Device › Apps' group
+calls the same function, so the row and the page agree. "The phone reported" is the latest status report's
+`reported_at`, never `last_seen_at`.
+
+- **`app-push-waiting`:** the phone's oldest live push is 30 minutes old and either (a) was never fetched although the
+  server served the phone's policy three times in `[queued + 10 min, now - 2 min]` (`UnifiedPush::policy_served`, in
+  memory, the last 4 per phone, noted by `device_api::policy` on a 200/304; no not-`ok` report in that window), or (b)
+  was fetched and a later pull handed it out again 2+ minutes after the first (`up_messages.fetched_ms`/`handed_ms`,
+  written by `store::pull`). Clears at the ack or the expiry.
+- **`app-push-refused`:** only `unsigned` refusals (`time`/`address` may be our own clock or address). `note_refusal`
+  keeps `vapid_refused_since`, the first `unsigned` refusal of the run (restarted after 7 quiet days or a
+  `time`/`address` stamp; ended by an accepted push, the key update, or a verified TTL-0 push that was dropped).
+  Raised when refusals still came a day after the first and the phone reported a day or more into the run.
+- **`app-push-outside`:** the mark (108b) plus `outside_since` (the run's start, written with `outside_gateway_at`),
+  raised only by an outside push a day or more into the run and a report a day in: a healed, quiet app never shows.
+  Open case, accepted: a homeserver with two pushers flips the mark with each push and restarts the run, so it never
+  gets a row (the page's line comes and goes).
+- **Not on Attention:** "no delivery in 7 days", "many pushes", `time`/`address` refusals, an app not using Vibb.
+- **Delivery time:** `up_delivery` (device, acked_ms, ms) is written at the ack for a push whose first hand-out
+  (`fetched_ms - created_at_ms`, at least 0) was on the stream generation it was accepted on (`stream_ms`, the
+  stream registry's `since` while a stream is open, kept at the first hand-out only if unchanged). Pruned hourly: older
+  than 24 h and beyond 5,000 per phone. `health::delivery_figure`: nearest-rank median and 95th percentile with the
+  count, only median and count below 20 samples. Shown on Settings › App push (`#delivery`, every phone together) and
+  as one line on Device › Apps' App push group; `app_push::duration_words` floors each unit.
+- Tests: `tests::unified_push::{attention_rows_of_108c, accept_stores_the_stream_generation,
+  delivery_time_on_the_pages}`, `store::tests::delivery_samples_follow_the_stream`, `health::tests`,
+  `app_push::tests`, `attention::tests`.

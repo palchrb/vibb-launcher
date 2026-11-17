@@ -2571,6 +2571,7 @@ pub(crate) async fn render_apps(
             .as_ref()
             .map(|_| has_capability(latest.as_ref(), crate::unified_push::CAPABILITY)),
         &zone,
+        latest.as_ref().map(|st| st.reported_at.as_str()),
     )
     .await
     {

@@ -161,7 +161,14 @@ pub async fn publish(
             // R2's warning: noted only for a push that was queued, at most once a minute (R1-SR L1).
             if matrix
                 && let Err(err) = sqlx::query(
-                    "UPDATE up_registrations SET outside_gateway_at = datetime('now') WHERE id = ? \
+                    // `outside_since` (108c §1.3): when this run of outside pushes began - kept while the mark
+                    // stands, restarted after a fade or a push through our own gateway.
+                    "UPDATE up_registrations SET \
+                       outside_since = CASE WHEN outside_since IS NULL OR outside_gateway_at IS NULL \
+                         OR outside_gateway_at < datetime('now', '-7 days') \
+                         OR (gateway_at IS NOT NULL AND gateway_at >= outside_gateway_at) \
+                         THEN datetime('now') ELSE outside_since END, \
+                       outside_gateway_at = datetime('now') WHERE id = ? \
                      AND (outside_gateway_at IS NULL OR outside_gateway_at < datetime('now', '-1 minute'))",
                 )
                 .bind(registration.id)

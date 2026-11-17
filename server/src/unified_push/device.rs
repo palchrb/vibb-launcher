@@ -128,7 +128,7 @@ async fn decide(
             && key.as_deref() != Some(vapid)
         {
             sqlx::query(
-                "UPDATE up_registrations SET vapid = ?, vapid_refused_at = NULL \
+                "UPDATE up_registrations SET vapid = ?, vapid_refused_at = NULL, vapid_refused_since = NULL \
                  WHERE device_id = ? AND reg = ?",
             )
             .bind(vapid)
@@ -233,7 +233,8 @@ pub async fn messages(
         return StatusCode::BAD_REQUEST.into_response();
     }
     let now_ms = chrono::Utc::now().timestamp_millis();
-    match store::pull(&state.db, device.id, &pull.ack, now_ms).await {
+    let stream = super::stream_generation(&state, device.id);
+    match store::pull(&state.db, device.id, &pull.ack, now_ms, stream).await {
         Ok(pulled) => Json(pulled).into_response(),
         Err(err) => failed(err),
     }

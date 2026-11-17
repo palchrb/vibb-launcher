@@ -66,6 +66,11 @@ pub enum Kind {
     /// Design 107 §5.3: Meldinger or Tapte anrop turned off on the phone while Vibb runs it, or every Vibb One
     /// notification off while SMS or calls are managed ([Facts::notifications_off] holds which).
     NotificationsOff,
+    /// Design 108c: app push problems, from `unified_push::health::attention` (the server's own data): pushes waiting
+    /// on the server, an app's pushes refused past the heal (apps), an app's pushes still going outside (apps).
+    AppPushWaiting,
+    AppPushRefused(usize),
+    AppPushOutside(usize),
     Calls(CallProblem),
     LedgerUnreadable,
     LauncherWithoutRules,
@@ -100,6 +105,9 @@ impl Kind {
                 | Kind::EasyParentPin
                 | Kind::AccessRevoked
                 | Kind::IncomingCallsNotBlocked
+                | Kind::AppPushWaiting
+                | Kind::AppPushRefused(_)
+                | Kind::AppPushOutside(_)
         )
     }
 }
@@ -149,6 +157,9 @@ impl AttentionItem {
             Kind::BootCoverNotShown => "boot-cover-not-shown",
             Kind::NoNotificationAccess => "notification-access",
             Kind::NotificationsOff => "notifications-off",
+            Kind::AppPushWaiting => "app-push-waiting",
+            Kind::AppPushRefused(_) => "app-push-refused",
+            Kind::AppPushOutside(_) => "app-push-outside",
             Kind::Calls(_) => "calls",
             Kind::LedgerUnreadable => "screen-time-record",
             Kind::LauncherWithoutRules => "launcher-without-rules",
@@ -198,6 +209,8 @@ pub struct Facts {
     pub no_notification_access: bool,
     /// Design 107: the notification channels' row, if it is raised (`notification_channels::attention`).
     pub notifications_off: Option<crate::notification_channels::Attention>,
+    /// Design 108c: the app push rows (`unified_push::health::attention`).
+    pub app_push: crate::unified_push::health::AppPushAttention,
     /// From the call report, in its order (`Waiting` left out by [items]).
     pub calls: Vec<CallProblem>,
     pub ledger_unreadable: bool,
@@ -246,6 +259,15 @@ pub fn items(lang: Lang, device_id: i64, facts: &Facts) -> Vec<AttentionItem> {
     add(facts.boot_cover_not_shown, Kind::BootCoverNotShown);
     add(facts.no_notification_access, Kind::NoNotificationAccess);
     add(facts.notifications_off.is_some(), Kind::NotificationsOff);
+    add(facts.app_push.waiting_since.is_some(), Kind::AppPushWaiting);
+    add(
+        !facts.app_push.refused.is_empty(),
+        Kind::AppPushRefused(facts.app_push.refused.len()),
+    );
+    add(
+        !facts.app_push.outside.is_empty(),
+        Kind::AppPushOutside(facts.app_push.outside.len()),
+    );
     for problem in &facts.calls {
         add(problem.needs_attention(), Kind::Calls(*problem));
     }
@@ -307,6 +329,9 @@ fn level(kind: Kind) -> Level {
         | Kind::BootCoverNotShown
         | Kind::NoNotificationAccess
         | Kind::NotificationsOff
+        | Kind::AppPushWaiting
+        | Kind::AppPushRefused(_)
+        | Kind::AppPushOutside(_)
         | Kind::Calls(_)
         | Kind::LedgerUnreadable
         | Kind::LauncherWithoutRules
@@ -350,6 +375,13 @@ fn title(lang: Lang, kind: Kind) -> String {
         Kind::NoNotificationAccess => t(lang, "device.attention.notification_access"),
         // Worded from its facts in [items] (the names); this is its all-off form.
         Kind::NotificationsOff => t(lang, "device.attention.notifications_all_off"),
+        Kind::AppPushWaiting => t(lang, "device.attention.app_push_waiting"),
+        Kind::AppPushRefused(n) => {
+            return t_count(lang, "device.attention.app_push_refused", count(n), &[]);
+        }
+        Kind::AppPushOutside(n) => {
+            return t_count(lang, "device.attention.app_push_outside", count(n), &[]);
+        }
         Kind::Calls(problem) => problem.title(lang),
         Kind::LedgerUnreadable => t(lang, "device.attention.screen_time_record"),
         Kind::LauncherWithoutRules => t(lang, "device.attention.launcher_without_rules"),
@@ -394,6 +426,9 @@ fn target(kind: Kind, id: i64) -> String {
         Kind::NoParentPin | Kind::EasyParentPin => ("/lock", "parent-pin"),
         Kind::ChildLockOff | Kind::ChildPinChanged => ("/lock", "child-pin"),
         Kind::NoNotificationAccess => ("/home", "layout"),
+        Kind::AppPushWaiting | Kind::AppPushRefused(_) | Kind::AppPushOutside(_) => {
+            ("/apps", "app-push")
+        }
         Kind::IncomingCallsNotBlocked | Kind::Calls(_) => {
             return format!("/devices/{id}/calls");
         }
@@ -445,6 +480,8 @@ pub struct Sources<'a> {
     pub music_ticked: &'a [i64],
     /// The Spotify account it plays as, from the accounts table (`music::spotify_account_warnings`).
     pub spotify_account: crate::handlers::music::SpotifyAccountWarnings,
+    /// The app push rows (`unified_push::health::attention`), read by the caller.
+    pub app_push: &'a crate::unified_push::health::AppPushAttention,
 }
 
 /// Whether the reported Do Not Disturb is the launcher's own for a silent time rule: the report's
@@ -568,6 +605,17 @@ pub async fn facts(state: &AppState, device: &Device, connection: ConnectionStat
             tracing::error!(device_id = id, %err, "attention: can't read the Spotify account");
             Default::default()
         });
+    let app_push = crate::unified_push::health::attention(
+        state,
+        id,
+        latest.map(|st| st.reported_at.as_str()),
+        chrono::Utc::now(),
+    )
+    .await
+    .unwrap_or_else(|err| {
+        tracing::error!(device_id = id, %err, "attention: can't read the app push state");
+        Default::default()
+    });
     facts_of(
         &Sources {
             device,
@@ -580,6 +628,7 @@ pub async fn facts(state: &AppState, device: &Device, connection: ConnectionStat
             connection,
             music_ticked: &music_ticked,
             spotify_account,
+            app_push: &app_push,
         },
         now_ms,
     )
@@ -673,6 +722,7 @@ pub fn facts_of(s: &Sources, now_ms: i64) -> Facts {
         notifications_off: latest
             .and_then(crate::notification_channels::report)
             .and_then(|report| crate::notification_channels::attention(policy, &report)),
+        app_push: s.app_push.clone(),
         calls: s.call_problems.to_vec(),
         // Device › Time reads the same typed report.
         ledger_unreadable: latest
@@ -730,6 +780,11 @@ mod tests {
                 keys: vec!["messages", "missed_calls"],
                 names: None,
             }),
+            app_push: crate::unified_push::health::AppPushAttention {
+                waiting_since: Some(chrono::Utc::now()),
+                refused: vec![("a.b".to_string(), "2026-11-17 10:00:00".to_string())],
+                outside: vec!["c.d".to_string(), "e.f".to_string()],
+            },
             calls: vec![CallProblem::Waiting, CallProblem::AnyoneCanCall],
             ledger_unreadable: true,
             launcher_without_rules: true,
@@ -829,6 +884,9 @@ mod tests {
                 "Boot cover wasn't shown",
                 "Notification access off",
                 "Notifications off: Messages, Missed calls",
+                "App notifications aren't reaching the phone",
+                "An app's notifications are refused",
+                "2 apps' notifications go via an outside service",
                 "Anyone can call this phone",
                 "Screen-time record unreadable",
                 "Vibb One too old for time rules",
@@ -871,6 +929,8 @@ mod tests {
             .collect();
         kinds.push(Kind::BlockedApps(1));
         kinds.push(Kind::MusicFailing(1));
+        kinds.push(Kind::AppPushRefused(1));
+        kinds.push(Kind::AppPushOutside(1));
         kinds.extend(CallProblem::ALL.iter().map(|p| Kind::Calls(*p)));
         for kind in kinds {
             let title = title(Lang::En, kind);
@@ -888,6 +948,18 @@ mod tests {
         assert_eq!(
             title(Lang::En, Kind::MusicFailing(1)),
             "1 music entry fails on the phone"
+        );
+        assert_eq!(
+            title(Lang::Nb, Kind::AppPushRefused(3)),
+            "Varsler til 3 apper blir avvist"
+        );
+        assert_eq!(
+            title(Lang::Nb, Kind::AppPushOutside(1)),
+            "Varsler til en app går via en ekstern tjeneste"
+        );
+        assert_eq!(
+            title(Lang::Nb, Kind::AppPushWaiting),
+            "Appvarsler kommer ikke fram til telefonen"
         );
     }
 
@@ -932,6 +1004,10 @@ mod tests {
         assert_eq!(target("notification-access"), "/devices/7/home#layout");
         // Design 107: About This Phone's Sound group, where the row is.
         assert_eq!(target("notifications-off"), "/devices/7/about#sound");
+        // Design 108c: Device › Apps' App push group.
+        for key in ["app-push-waiting", "app-push-refused", "app-push-outside"] {
+            assert_eq!(target(key), "/devices/7/apps#app-push");
+        }
         // Step 9: Device › Time, its warnings at the top.
         assert_eq!(target("screen-time-record"), "/devices/7/time");
         assert_eq!(target("launcher-without-rules"), "/devices/7/time");
