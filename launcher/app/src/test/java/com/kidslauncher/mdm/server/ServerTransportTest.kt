@@ -391,7 +391,7 @@ class ServerTransportTest {
 
     @Test
     fun `a key change and a dropped stream close the pool's idle connections`() {
-        // Code QA L2.
+        // Code QA L2. The closes run off the calling thread (NetworkOnMainThreadException, rc.4's crash report).
         LoopServer().use { server ->
             val path = ServerPath.Direct(server.url, null)
             val base = ServerClients.base(path, ServerPinning(enforce = false))
@@ -399,10 +399,12 @@ class ServerTransportTest {
             assertEquals("ok1", child.get(server.url))
             assertEquals(1, base.connectionPool.connectionCount())
             ServerClients.streamDropped()
+            ServerClients.awaitEvictions()
             assertEquals(0, base.connectionPool.connectionCount())
             assertEquals("ok2", child.get(server.url))
             assertEquals(1, base.connectionPool.connectionCount())
             ServerClients.base(path, ServerPinning(enforce = true))
+            ServerClients.awaitEvictions()
             assertEquals(0, base.connectionPool.connectionCount())
         }
     }
