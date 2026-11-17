@@ -4853,11 +4853,24 @@ pub async fn forget_package_name(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
-    sqlx::query("UPDATE tracked_apps SET package_name = '', signer_sha256 = NULL WHERE id = ?")
-        .bind(id)
-        .execute(&state.db)
-        .await
-        .ok();
+    // The kept logo (0155) was the old package's: it goes with the name, and its file when nothing else names it.
+    let kept: Option<String> =
+        sqlx::query_scalar("SELECT logo_hash FROM tracked_apps WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()
+            .flatten();
+    sqlx::query(
+        "UPDATE tracked_apps SET package_name = '', signer_sha256 = NULL, logo_hash = NULL WHERE id = ?",
+    )
+    .bind(id)
+    .execute(&state.db)
+    .await
+    .ok();
+    let kept: Vec<String> = kept.into_iter().collect();
+    crate::app_logos::prune_hashes(&state, &kept).await;
     // A release refused for the old pins is downloaded again at the next sync.
     state.app_syncs.set_refused(id, None);
     // Design 90 §17.3 M4: a new key is a new trust - the accepted set goes, and the next release
@@ -4914,6 +4927,15 @@ pub async fn delete_tracked_app(
         return Redirect::to(&format!("/apps/tracked/{id}#check"));
     }
 
+    // The catalog's kept logo (0155) goes with the row; read before the delete.
+    let kept: Option<String> =
+        sqlx::query_scalar("SELECT logo_hash FROM tracked_apps WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()
+            .flatten();
     let deleted = sqlx::query("DELETE FROM tracked_apps WHERE id = ?")
         .bind(id)
         .execute(&state.db)
@@ -4934,6 +4956,9 @@ pub async fn delete_tracked_app(
     if app.source_type == "fdroid" {
         remove_unused_fdroid_indexes(&state).await;
     }
+    // Its file, when nothing else names it.
+    let kept: Vec<String> = kept.into_iter().collect();
+    crate::app_logos::prune_hashes(&state, &kept).await;
 
     Redirect::to("/apps")
 }

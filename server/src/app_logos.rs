@@ -13,10 +13,17 @@
 //!   hash must match the bytes and name one of this phone's rows; the PNG is decoded under limits ([reencode]:
 //!   exactly [SIZE_PX] square) and written again by the server's own encoder, so no chunk of the phone's survives.
 //!   A refused PNG is not asked for again for a day.
+//! - **The catalog's kept logo** (`tracked_apps.logo_hash`, migration 0155; the user, 2026-11-17): the last logo a
+//!   phone reported for a catalog app's package - a new or changed row replaces it, any reported logo fills an empty
+//!   one ([apply_rows]) -, so the catalog keeps it after the last phone drops the app. It is cleared with the package
+//!   name and goes with the catalog row (`tracked_apps::delete_tracked_app`, `forget_package_name`).
 //! - **The files** (`data/app_logos/<hash>.png`, `AppState.app_logo_dir`): one per distinct logo, shared by every
-//!   phone; a file no row names is deleted ([prune_hashes] after a report and a phone's delete, [prune_all] in the
-//!   retention pass). Never backed up: after a restore the rows name missing files, which the next report wants.
-//! - **Served** ([view], `GET /app-logos/{hash}`) behind the parent's session, only a hash some row names.
+//!   phone; a file no phone row and no catalog row names is deleted ([prune_hashes] after a report, a phone's delete
+//!   and a catalog app's removal, [prune_all] in the retention pass). Never backed up: after a restore the rows name
+//!   missing files, which the next report wants; a kept hash no phone reports any more shows the letter until a phone
+//!   with the app sends it again.
+//! - **Served** ([view], `GET /app-logos/{hash}`) behind the parent's session, only a hash some row names (a phone's or
+//!   the catalog's).
 
 use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
@@ -196,7 +203,8 @@ pub async fn intake(
     prune_hashes(state, &lost).await;
 }
 
-/// [intake]'s rows in one transaction; the hashes that lost a row.
+/// [intake]'s rows in one transaction, and the catalog's kept logos of the reported packages; the hashes that lost a
+/// row.
 async fn apply_rows(
     db: &sqlx::SqlitePool,
     device_id: i64,
@@ -215,6 +223,8 @@ async fn apply_rows(
             .fetch_all(&mut *tx)
             .await?;
     let mut lost = Vec::new();
+    // The packages whose row is new or changed: their logo replaces the catalog's kept one.
+    let mut changed: HashSet<&str> = HashSet::new();
     for (package, hash) in &rows {
         if !installed.contains(package.as_str()) {
             sqlx::query("DELETE FROM device_app_logos WHERE device_id = ? AND package_name = ?")
@@ -236,6 +246,7 @@ async fn apply_rows(
             .execute(&mut *tx)
             .await?;
             lost.push(hash.clone());
+            changed.insert(package.as_str());
         }
     }
     let known: HashSet<&str> = rows.iter().map(|(package, _)| package.as_str()).collect();
@@ -250,7 +261,27 @@ async fn apply_rows(
             .bind(hash)
             .execute(&mut *tx)
             .await?;
+            changed.insert(package.as_str());
         }
+    }
+    let catalog: Vec<(i64, String, Option<String>)> = sqlx::query_as(
+        "SELECT id, package_name, logo_hash FROM tracked_apps WHERE package_name != ''",
+    )
+    .fetch_all(&mut *tx)
+    .await?;
+    for (id, package, kept) in catalog {
+        let Some(new) = reported.get(package.as_str()).copied() else {
+            continue;
+        };
+        if kept.as_deref() == Some(new) || (kept.is_some() && !changed.contains(package.as_str())) {
+            continue;
+        }
+        sqlx::query("UPDATE tracked_apps SET logo_hash = ? WHERE id = ?")
+            .bind(new)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        lost.extend(kept);
     }
     tx.commit().await?;
     Ok(lost)
@@ -536,7 +567,19 @@ fn decode_limits() -> Limits {
     limits
 }
 
-/// Deletes the files of `hashes` no row names any more. Best effort: a failure is logged.
+/// Whether a phone's row or a catalog row names `hash`.
+async fn is_named(db: &sqlx::SqlitePool, hash: &str) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM device_app_logos WHERE logo_hash = ?) \
+         OR EXISTS (SELECT 1 FROM tracked_apps WHERE logo_hash = ?)",
+    )
+    .bind(hash)
+    .bind(hash)
+    .fetch_one(db)
+    .await
+}
+
+/// Deletes the files of `hashes` no phone row and no catalog row names any more. Best effort: a failure is logged.
 pub async fn prune_hashes(state: &AppState, hashes: &[String]) {
     if hashes.is_empty() {
         return;
@@ -546,13 +589,7 @@ pub async fn prune_hashes(state: &AppState, hashes: &[String]) {
         let Some(path) = path_for(&state.app_logo_dir, hash) else {
             continue;
         };
-        let named: Result<bool, _> = sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM device_app_logos WHERE logo_hash = ?)",
-        )
-        .bind(hash)
-        .fetch_one(&state.db)
-        .await;
-        match named {
+        match is_named(&state.db, hash).await {
             Ok(false) => remove(&path).await,
             Ok(true) => {}
             Err(err) => tracing::warn!(%err, "can't check an app logo before deleting it"),
@@ -560,21 +597,23 @@ pub async fn prune_hashes(state: &AppState, hashes: &[String]) {
     }
 }
 
-/// The retention pass's full scan: every file no row names, and a temp file older than an hour (a crash between a
-/// commit and its prune leaves no orphan for long).
+/// The retention pass's full scan: every file no phone row and no catalog row names, and a temp file older than an
+/// hour (a crash between a commit and its prune leaves no orphan for long).
 pub async fn prune_all(state: &AppState) {
     let _files = APP_LOGO_FILES.lock().await;
-    let named: HashSet<String> =
-        match sqlx::query_scalar("SELECT DISTINCT logo_hash FROM device_app_logos")
-            .fetch_all(&state.db)
-            .await
-        {
-            Ok(hashes) => hashes.into_iter().collect(),
-            Err(err) => {
-                tracing::warn!(%err, "can't list the app logos to prune");
-                return;
-            }
-        };
+    let named: HashSet<String> = match sqlx::query_scalar(
+        "SELECT logo_hash FROM device_app_logos \
+         UNION SELECT logo_hash FROM tracked_apps WHERE logo_hash IS NOT NULL",
+    )
+    .fetch_all(&state.db)
+    .await
+    {
+        Ok(hashes) => hashes.into_iter().collect(),
+        Err(err) => {
+            tracing::warn!(%err, "can't list the app logos to prune");
+            return;
+        }
+    };
     let Ok(mut entries) = tokio::fs::read_dir(&*state.app_logo_dir).await else {
         return;
     };
@@ -619,18 +658,14 @@ pub async fn hashes_of(db: &sqlx::SqlitePool, device_id: i64) -> Vec<String> {
         })
 }
 
-/// `GET /app-logos/{hash}`, behind the parent's session: only a valid hash some row names and whose file exists,
+/// `GET /app-logos/{hash}`, behind the parent's session: only a valid hash some row (a phone's or the catalog's) names
+/// and whose file exists,
 /// else 404 (no listing). Content-addressed, so cached for good.
 pub async fn view(State(state): State<AppState>, UrlPath(hash): UrlPath<String>) -> Response {
     let Some(path) = path_for(&state.app_logo_dir, &hash) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let named: Result<bool, _> =
-        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM device_app_logos WHERE logo_hash = ?)")
-            .bind(&hash)
-            .fetch_one(&state.db)
-            .await;
-    if !matches!(named, Ok(true)) {
+    if !matches!(is_named(&state.db, &hash).await, Ok(true)) {
         return StatusCode::NOT_FOUND.into_response();
     }
     match tokio::fs::read(&path).await {
@@ -671,8 +706,8 @@ pub async fn phone_logos(
     Ok(logos)
 }
 
-/// The catalog rows' logos (§8.1, R2-L4): per package the hash most rows name, a tie to the most recently
-/// updated, whose file exists - package -> URL.
+/// The catalog rows' logos (§8.1, R2-L4): per package the hash most phone rows name, a tie to the most recently
+/// updated, whose file exists; else the catalog row's kept logo (0155) when its file exists - package -> URL.
 pub async fn catalog_logos(state: &AppState) -> Result<HashMap<String, String>, sqlx::Error> {
     let rows: Vec<(String, String)> = sqlx::query_as(
         "SELECT package_name, logo_hash FROM device_app_logos \
@@ -687,6 +722,20 @@ pub async fn catalog_logos(state: &AppState) -> Result<HashMap<String, String>, 
             continue;
         }
         if let Some(path) = path_for(&state.app_logo_dir, &hash)
+            && is_stored(&path).await
+        {
+            logos.insert(package, src_of(&hash));
+        }
+    }
+    let kept: Vec<(String, String)> = sqlx::query_as(
+        "SELECT package_name, logo_hash FROM tracked_apps \
+         WHERE package_name != '' AND logo_hash IS NOT NULL",
+    )
+    .fetch_all(&state.db)
+    .await?;
+    for (package, hash) in kept {
+        if !logos.contains_key(&package)
+            && let Some(path) = path_for(&state.app_logo_dir, &hash)
             && is_stored(&path).await
         {
             logos.insert(package, src_of(&hash));

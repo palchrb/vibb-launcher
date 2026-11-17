@@ -308,7 +308,8 @@ phone reporting `sms_engine_v1`) follows 0129, and `0131_spotify_audiobook.sql` 
   Permissions")
 - `device_app_logos` - design 87 (0140): per phone and package the SHA-256 of the app's logo the phone drew
   (`installed_apps[].logo`); the PNG is `data/app_logos/<hash>.png`, shared by every phone, written again by the
-  server, never backed up (a restore's missing files are wanted again), a file no row names deleted
+  server, never backed up (a restore's missing files are wanted again), a file no phone row and no catalog row names
+  deleted; `tracked_apps.logo_hash` (0155) is the catalog's kept last logo of the package, shown when no phone has it
   (`app_logos.rs`; `docs/notes/server/pwa.md`, "The apps' own logos")
 - `device_tracked_apps` - per-device opt-in join table (device_id, tracked_app_id) scoping which catalog apps actually get pushed to which device - see the "global catalog" bullet above
 - `device_pending_uninstalls` - packages queued for silent on-device uninstall, self-cleared once a status report confirms the package is gone - see the "unchecking Apps to install" bullet above
