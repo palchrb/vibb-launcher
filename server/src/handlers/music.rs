@@ -4561,11 +4561,9 @@ pub struct SpotifyBindingCard {
     pub accounts: Vec<(i64, String)>,
     /// The account this phone plays as.
     pub bound: Option<i64>,
-    /// The bound account's login: "Log in again before 14 Apr 2027" (the "Plays as" row's sub-line).
-    pub login: Option<String>,
     /// What needs the parent (§4.2's sub-page warnings: a short title, one sentence).
     pub warnings: Vec<Note>,
-    /// Why this phone's ticked Spotify entries aren't sent (not bound): the row's sub-line.
+    /// Why this phone's ticked Spotify entries aren't sent (not bound): the row's orange sub-line.
     pub note: Option<String>,
     /// One-shot message after a refused save (`?music_notice=spotify_...`).
     pub notice: Option<&'static str>,
@@ -5115,8 +5113,8 @@ pub(crate) async fn device_card(
 }
 
 /// Device › Music's "Plays as" (design 26c §2.5, §3.6; design 31 §4.2's shapes since the second
-/// merge of main): the picker's accounts, the bound account's login line, and what needs the
-/// parent as notes - no app, the login (renewing, another key, ending), one account on two
+/// merge of main): the picker's accounts and what needs the parent as notes - no app, the login
+/// (renewing, another key, ending; design 113: nothing while it isn't ending), one account on two
 /// phones, the phone's own refusals (`music_state.spotify`) - plus the ticked Spotify entries an
 /// unbound phone isn't sent. Dates in the Phone Setup zone. `None` while nothing about Spotify
 /// exists here (no app, no account, no binding). The phone's passing words (`ok`, `unreachable`,
@@ -5140,14 +5138,6 @@ async fn spotify_binding_card(
     let now = state.music_sweep.now();
     use crate::i18n::{t, t_params};
     let zone = crate::display_time::Zone::load(&state.db, lang).await;
-    let day = |at: chrono::DateTime<chrono::Utc>, year: bool| {
-        if year {
-            date_with_year(&zone, at)
-        } else {
-            day_text(&zone, at)
-        }
-    };
-    let mut login = None;
     let mut warnings = Vec::new();
     if !configured {
         warnings.push(warning(
@@ -5170,13 +5160,15 @@ async fn spotify_binding_card(
                 named("device.music.spotify.other_key_sub"),
             ));
         } else if let Some(ends) = row.login_ends() {
+            // Design 113 P4: a login that isn't ending says nothing; within 14 days the orange
+            // warning comes.
             if row.login_ending(now) {
                 warnings.push(if now < ends {
                     warning(
                         &t_params(
                             lang,
                             "device.music.spotify.ends",
-                            &[("date", &day(ends, false))],
+                            &[("date", &day_text(&zone, ends))],
                         ),
                         named("device.music.spotify.log_in_before"),
                     )
@@ -5186,12 +5178,6 @@ async fn spotify_binding_card(
                         named("device.music.spotify.log_in_again"),
                     )
                 });
-            } else {
-                login = Some(t_params(
-                    lang,
-                    "device.music.spotify.login_line",
-                    &[("date", &day(ends, true))],
-                ));
             }
         }
         // One account plays on one phone at a time (§2.5).
@@ -5268,7 +5254,6 @@ async fn spotify_binding_card(
             .map(|row| (row.id, row.display_name.clone()))
             .collect(),
         bound,
-        login,
         warnings,
         note,
         notice,

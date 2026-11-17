@@ -13,7 +13,13 @@
     <div class="sheet">
 
     {% if off %}
-    <p class="group-footer" data-sources="off">{{ self.t("calendar.sources.no_key") }}</p>
+    <div class="attention attention-action" data-sources="off">
+        <div class="attention-text">{{ self.t("calendar.sources.no_key") }}<div class="attention-sub">
+            <details class="info">
+                <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel"><p>{{ self.t("calendar.sources.no_key_info") }}</p></div>
+            </details></div></div>
+    </div>
     {% else %}
     {#- The source: two radios before the groups, so CSS marks the chosen row and shows only its form (Add App's way,
         no script). The radios belong to no form: each kind posts to its own route (the link to .../calendar/links, the
@@ -36,6 +42,7 @@
                 <div class="group form-group">
                     <div class="field">
                         <label class="field-label" for="link-url">{{ self.t("calendar.links.url") }}</label>
+                        <details class="info field-info"><summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("calendar.add.link_footer") }}</p></div></details>
                         <input type="url" id="link-url" name="url" value="{{ link.url }}" maxlength="2100" placeholder="{{ self.t("calendar.link.url_example") }}" inputmode="url" autocomplete="off" autocapitalize="none" spellcheck="false" required{% if link.error.is_some() %} aria-invalid="true" aria-describedby="link-url-error" autofocus{% endif %}>
                         {% if let Some(why) = link.error %}<p class="field-error" id="link-url-error" role="alert" data-flash="link-refused">{{ why }}</p>{% endif %}
                     </div>
@@ -44,7 +51,6 @@
                         <input type="text" id="link-name" name="name" value="{{ link.name }}" maxlength="60" autocomplete="off">
                     </div>
                 </div>
-                <p class="group-footer">{{ self.t("calendar.add.link_footer") }}</p>
                 <button type="submit" class="button-wide">{{ self.t("common.add") }}</button>
             </form>
             {% endif %}
@@ -68,11 +74,11 @@
                     </div>
                     <div class="field">
                         <label class="field-label" for="caldav-password">{{ self.t("calendar.caldav.password") }}</label>
+                        <details class="info field-info"><summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("calendar.add.caldav_footer") }}</p></div></details>
                         <input type="password" id="caldav-password" name="password" maxlength="500" autocomplete="new-password" autocapitalize="none" spellcheck="false" required{% if account.error_field == "password" %} aria-invalid="true" aria-describedby="caldav-password-error" autofocus{% endif %}>
                         {% if account.error_field == "password" %}{% if let Some(why) = account.error %}<p class="field-error" id="caldav-password-error" role="alert" data-flash="caldav-refused">{{ why }}</p>{% endif %}{% endif %}
                     </div>
                 </div>
-                <p class="group-footer">{{ self.t("calendar.add.caldav_footer") }}</p>
                 <button type="submit" class="button-wide">{{ self.t("calendar.add.caldav_submit") }}</button>
             </form>
             {% endif %}

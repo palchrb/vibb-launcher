@@ -4373,12 +4373,12 @@ mod entries {
             page.contains(&format!("<option value=\"{kid}\">Ella</option>")),
             "{page}"
         );
-        // Design 31's shapes (qa-26c-merge2-code M2): one footer sentence, a row to the accounts,
-        // and the picker's no-JS Save (L2).
+        // Design 31's shapes (qa-26c-merge2-code M2): one footer sentence (design 113: behind its
+        // (i) alone), a row to the accounts, and the picker's no-JS Save (L2).
         assert!(page.contains(
-            "<p class=\"group-footer\">One account per phone: the child's own Premium account, \
-             never yours.</p>"
+            "<p>One account per phone: the child's own Premium account, never yours.</p>"
         ));
+        assert!(!page.contains("<p class=\"group-footer\">One account per phone"));
         assert!(
             page.contains(
                 "href=\"/music/settings#spotify-accounts\" data-row=\"spotify-accounts\""
@@ -4431,10 +4431,9 @@ mod entries {
         );
         let page = card(ella).await;
         assert!(page.contains(&format!("<option value=\"{kid}\" selected>Ella</option>")));
-        assert!(
-            page.contains("<span class=\"row-sub\" data-row=\"spotify-login\">Log in again before"),
-            "{page}"
-        );
+        // Design 113 P4: a login that isn't ending says nothing.
+        assert!(!page.contains("spotify-login"), "{page}");
+        assert!(!page.contains("Log in again before"), "{page}");
         // The DNS note, now that step 3 makes it true (qa-26c-step2b-code L3): the delivered list
         // and the launcher's filter leave Spotify's hosts out while the phone is bound.
         assert!(
@@ -4576,7 +4575,7 @@ mod entries {
         assert_eq!(binding(&app, ella).await, None);
         let page = card(ella).await;
         assert!(page.contains(
-            "<span class=\"row-sub\" data-row=\"spotify-off\">Its Spotify entry isn't sent.</span>"
+            "<span class=\"row-sub tone-orange\" data-row=\"spotify-off\">Its Spotify entry isn't sent.</span>"
         ));
         assert!(
             !filter(ella)

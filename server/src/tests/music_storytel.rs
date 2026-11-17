@@ -1616,7 +1616,7 @@ async fn library_gates_storytel() {
         "{storytel}"
     );
     assert_eq!(super::input_checked(storytel, "storytel", "on"), Some(true));
-    assert!(page.contains("No login saved yet: add it in <a href=\"/music/settings#storytel\">"));
+    assert!(page.contains("No login: <a href=\"/music/settings#storytel\">"));
     // After the clear: every phone's line says why, and a failed check doesn't promise the list.
     let entry_page = app
         .get_page(&format!("/music/entries/{series}"), &cookie)
