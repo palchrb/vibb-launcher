@@ -29,7 +29,7 @@ class DebugHookAbsentTest {
         assertTrue(outside.size > 100)
         for (f in outside) {
             // Raw text, comments included: a KDoc naming a hook fails too (design 28 QA L3).
-            for (banned in listOf("LockTaskOverride", "lock_task_debug_override", "extra_lock_task_packages", "PinVaultKeyReceiver", "HeadsetDebugReceiver", "MmsDebugReceiver", "ElementCallDebugReceiver", "push_hex")) {
+            for (banned in listOf("LockTaskOverride", "lock_task_debug_override", "extra_lock_task_packages", "PinVaultKeyReceiver", "HeadsetDebugReceiver", "MmsDebugReceiver", "ElementCallDebugReceiver", "UpDebugReceiver", "push_hex")) {
                 assertFalse("${f.path} names $banned", f.readText().contains(banned))
             }
         }
@@ -39,7 +39,7 @@ class DebugHookAbsentTest {
     fun `only the debug manifest declares the receivers, guarded by DUMP`() {
         val main = dir("main/AndroidManifest.xml").readText()
         val debug = code(dir("debug/AndroidManifest.xml"))
-        val receivers = listOf("lock" to "LockTaskOverrideReceiver", "server" to "PinVaultKeyReceiver", "music" to "HeadsetDebugReceiver", "sms" to "MmsDebugReceiver", "calls" to "ElementCallDebugReceiver")
+        val receivers = listOf("lock" to "LockTaskOverrideReceiver", "server" to "PinVaultKeyReceiver", "music" to "HeadsetDebugReceiver", "sms" to "MmsDebugReceiver", "calls" to "ElementCallDebugReceiver", "push.up" to "UpDebugReceiver")
         // No other hook (no other component of any kind): a new one is listed here (and in checkReleaseHasNoDebugHook) first.
         assertEquals(receivers.size, Regex("<(receiver|activity|activity-alias|service|provider)\\b").findAll(debug).count())
         for ((pkg, name) in receivers) {
@@ -47,7 +47,7 @@ class DebugHookAbsentTest {
             val receiver = debug.substringAfter("android:name=\"com.kidslauncher.mdm.$pkg.$name\"", "").substringBefore("/>")
             assertTrue(name, receiver.contains("android:exported=\"true\""))
             assertTrue(name, receiver.contains("android:permission=\"android.permission.DUMP\""))
-            assertTrue(name, dir("debug/java/com/kidslauncher/mdm/$pkg/$name.kt").exists())
+            assertTrue(name, dir("debug/java/com/kidslauncher/mdm/${pkg.replace('.', '/')}/$name.kt").exists())
         }
     }
 

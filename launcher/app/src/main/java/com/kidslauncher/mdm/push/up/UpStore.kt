@@ -19,7 +19,11 @@ const val UP_CONFIRMED = "confirmed"
  * [confirmedAtMs] is the wall time the server's answer arrived - the `regs` reconcile's race rule (§2.3). [lastAppAckMs]
  * the app's last `MESSAGE_ACK` (the 30-day rule, R2), [pingId]/[pingSentMs] that rule's ping. [message] is the app's own
  * description (Element X's MXID), cut to 100 bytes, **never sent anywhere** - shown only in the PIN-gated Settings'
- * diagnostics row (§6.5). [lastDeliveredMs] the last MESSAGE broadcast sent. Tokens, secrets and endpoints are
+ * diagnostics row (§6.5). [lastDeliveredMs] the last MESSAGE broadcast sent. Design 108b: [refreshMs] the last
+ * `NEW_ENDPOINT` sent to ask the app to re-check its address (§3.3, at most a day apart); [vapidPending] a new VAPID key
+ * the app registered with that the server hasn't taken yet and [keyTryMs] the last call that posted one (at most one an
+ * hour, M4; §4.6); [pingLastSendMs] and [pingBoot] the last send of the outstanding ping and the boot it went out in (Q1:
+ * it is re-sent once per boot, and "dead" needs an hour since the last send). Tokens, secrets and endpoints are
  * capabilities: never logged ([toString]).
  */
 @Serializable
@@ -38,6 +42,11 @@ data class UpRow(
     val pingSentMs: Long? = null,
     val message: String? = null,
     val lastDeliveredMs: Long? = null,
+    val refreshMs: Long? = null,
+    val vapidPending: String? = null,
+    val keyTryMs: Long? = null,
+    val pingLastSendMs: Long? = null,
+    val pingBoot: Int? = null,
 ) {
     val confirmed: Boolean get() = state == UP_CONFIRMED && endpoint != null
 
@@ -56,6 +65,11 @@ data class UpNote(val pkg: String, val kind: String, val atMs: Long)
 
 const val NOTE_OLD_CONNECTOR = "old_connector"
 const val NOTE_NO_RAISE = "no_raise"
+
+/** Design 108b: an app that didn't answer for 30 days and was unregistered ([NOTE_UNANSWERED]); a key update the server
+ * refused as not a P-256 point, the old key kept ([NOTE_BAD_KEY]). */
+const val NOTE_UNANSWERED = "unanswered"
+const val NOTE_BAD_KEY = "bad_key"
 
 /** What a read of the registrations found: [Rows], or [Unreadable] (a blob that doesn't open or decode - kept as it
  * is, and nothing that would delete a server row runs on it). */
@@ -160,6 +174,13 @@ class UpStore(
         if (note.kind == NOTE_OLD_CONNECTOR && notes.count { it.kind == NOTE_OLD_CONNECTOR } >= OLD_CONNECTOR_MAX) return false
         val kept = (notes + note).takeLast(NOTES_MAX)
         return prefs.edit().putString(NOTES, ServerJson.encodeToString(NotesBlob.serializer(), NotesBlob(kept))).commit()
+    }
+
+    /** Drops [pkg]'s note of [kind] (L7: an unanswered note once the app registers again, a bad-key note once a key is taken). */
+    fun clearNote(pkg: String, kind: String) {
+        val notes = notes()
+        if (notes.none { it.pkg == pkg && it.kind == kind }) return
+        prefs.edit().putString(NOTES, ServerJson.encodeToString(NotesBlob.serializer(), NotesBlob(notes.filterNot { it.pkg == pkg && it.kind == kind }))).commit()
     }
 
     private fun list(key: String): List<String> = try {

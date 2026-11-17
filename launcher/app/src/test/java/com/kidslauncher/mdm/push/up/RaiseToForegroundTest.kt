@@ -117,4 +117,17 @@ class RaiseToForegroundTest {
         raise.raiseAndSend(message("k1"))
         assertEquals(listOf("bind", "failed k1"), platform.events)
     }
+
+    @Test
+    fun `a NEW_ENDPOINT kind goes through the same bind and queue, and is reported as sent like a message`() {
+        raise.raiseAndSend(RaiseToForeground.Message.newEndpoint("tok-example-1", "https://phones.example.com/up/FakeSecretForTheContract001", "ping-1"))
+        raise.raiseAndSend(message("k1"))
+        assertEquals(listOf("bind"), platform.events)
+        raise.onServiceConnected()
+        assertEquals(listOf("bind", "send ping-1", "acked ping-1", "send k1", "acked k1"), platform.events)
+        val ne = RaiseToForeground.Message.newEndpoint("t", "e", "i")
+        assertEquals(RaiseToForeground.Kind.NEW_ENDPOINT, ne.kind)
+        assertEquals("e", ne.endpoint)
+        assertEquals(RaiseToForeground.Kind.MESSAGE, message("x").kind)
+    }
 }

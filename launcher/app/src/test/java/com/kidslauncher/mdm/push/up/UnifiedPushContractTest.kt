@@ -42,7 +42,11 @@ class UnifiedPushContractTest {
         for ((name, row) in contract["policy"]!!.jsonObject) {
             val policy = ServerJson.decodeFromString(PolicyResponse.serializer(), """{"allowlist": [], "unified_push": $row}""")
             val up = policy.unifiedPush!!
-            assertEquals(name, setOf("on", "origin", "regs", "stopped"), row.jsonObject.keys)
+            assertEquals(name, setOf("on", "origin", "regs", "stopped", "refresh"), row.jsonObject.keys)
+            val refresh = row.jsonObject["refresh"]!!.jsonArray.map { it.jsonObject["reg"]!!.jsonPrimitive.content to it.jsonObject["why"]!!.jsonPrimitive.content }
+            assertEquals(name, refresh, up.refresh.map { it.reg to it.why })
+            assertEquals(name, refresh, UpView.of(policy).refresh.map { it.reg to it.why })
+            assertTrue(name, refresh.all { it.first in up.regs })
             assertEquals(name, row.jsonObject["on"]!!.jsonPrimitive.content == "true", up.on)
             assertEquals(name, row.jsonObject["regs"]!!.jsonArray.map { it.jsonPrimitive.content }, up.regs)
             assertEquals(name, row.jsonObject["stopped"]!!.jsonArray.map { it.jsonPrimitive.content }, up.stopped)
@@ -64,13 +68,15 @@ class UnifiedPushContractTest {
     fun `the register bodies encode exactly, every answer decodes, every refusal maps to its reason`() {
         val register = contract["register"]!!.jsonObject
         assertEquals("api/devices/up/registrations", register["path"]!!.jsonPrimitive.content.removePrefix("/"))
-        for (key in listOf("body", "body_second")) {
+        for (key in listOf("body", "body_second", "body_vapid", "body_vapid_changed")) {
             val body = register[key]!!.jsonObject
             val ours = UpRegisterBody(
                 body["reg"]!!.jsonPrimitive.content,
                 body["secret"]!!.jsonPrimitive.content,
                 body["package"]!!.jsonPrimitive.content,
+                body["vapid"]?.jsonPrimitive?.content,
             )
+            body["vapid"]?.let { assertTrue(key, UpRules.validVapid(it.jsonPrimitive.content)) }
             assertEquals(key, body, ServerJson.encodeToJsonElement(UpRegisterBody.serializer(), ours))
         }
         val reasons = register["failed_reason"]!!.jsonObject.mapValues { it.value.jsonPrimitive.content }
@@ -82,7 +88,8 @@ class UnifiedPushContractTest {
             when (status) {
                 200 -> {
                     val endpoint = ServerJson.decodeFromJsonElement(UpEndpointAnswer.serializer(), body).endpoint
-                    assertTrue(case, UpRules.endpointValid(endpoint, secret))
+                    val own = if ("vapid" in case) register["body_vapid"]!!.jsonObject["secret"]!!.jsonPrimitive.content else secret
+                    assertTrue(case, UpRules.endpointValid(endpoint, own))
                 }
                 409 -> {
                     val refused = ServerJson.decodeFromJsonElement(UpRefusalAnswer.serializer(), body).refused
@@ -92,7 +99,8 @@ class UnifiedPushContractTest {
                 else -> {
                     assertEquals(case, 400, status)
                     assertEquals(case, JsonNull, body)
-                    assertEquals(case, reasons.getValue(case), UpRules.failedReason(case))
+                    val reason = if (case == "vapid_not_a_point") "invalid" else case
+                    assertEquals(case, reasons.getValue(reason), UpRules.failedReason(reason))
                 }
             }
         }

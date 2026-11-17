@@ -484,6 +484,8 @@
     <string name="settings_up_delivered">sist levert %1$s</string>
     <string name="settings_up_old_connector">En app som kaller seg %1$s spurte uten å vise hvem den er (eldre push-bibliotek?) - ikke bekreftet</string>
     <string name="settings_up_no_raise">%1$s: får meldingene uten oppvekking</string>
+    <string name="settings_up_unanswered">%1$s svarte ikke på 30 dager; registreringen ble fjernet</string>
+    <string name="settings_up_bad_key">%1$s sendte en ugyldig nøkkel; den gamle beholdes</string>
     <string name="settings_notifications">Varsler fra Vibb One</string>
     <string name="settings_notifications_off">Av: %1$s</string>
     <string name="settings_notifications_all_off">Alle av</string>

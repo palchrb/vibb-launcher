@@ -1,13 +1,16 @@
 package com.kidslauncher.mdm.push.up
 
+import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.os.IBinder
 import android.os.PowerManager
 import android.os.UserManager
+import android.provider.Settings
 import android.util.Log
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.push.up.vendor.RaiseToForeground
@@ -30,6 +33,9 @@ private const val REGISTER_TIMEOUT_MS = 20_000L
 
 /** A pull's or a DELETE's call. */
 private const val PULL_TIMEOUT_MS = 15_000L
+
+/** The boot instant's step when `BOOT_COUNT` can't be read (L6). */
+private const val BOOT_STEP_MS = 600_000L
 
 /** The pull's timed partial wake lock (§5.5). */
 private const val PULL_WAKELOCK_MS = 30_000L
@@ -97,10 +103,62 @@ object UpRuntime {
             server = { serverFor() },
             phone = phone,
             log = { Log.i(LOG_TAG, it) },
+            boot = { bootCount(app) },
         )
         phone.onSent = { message -> post { built.sent(message) } }
         phone.onFailed = { message -> post { built.failed(message) } }
+        registerUserPresent(app)
         return built
+    }
+
+    /** This boot's count: Q1's once-per-boot re-send of an outstanding ping (design 108b §2). */
+    private fun bootCount(app: Context): Int = try {
+        Settings.Global.getInt(app.contentResolver, Settings.Global.BOOT_COUNT)
+    } catch (e: Exception) {
+        // L6: an unreadable count errs toward re-sending: the boot instant (now minus uptime) in 10-minute steps, so it
+        // changes at a restart, and a clock change only adds a re-send. Logged once.
+        if (!bootFallbackLogged) {
+            bootFallbackLogged = true
+            Log.w(LOG_TAG, "BOOT_COUNT unreadable - the boot read from the boot instant")
+        }
+        ((System.currentTimeMillis() - android.os.SystemClock.elapsedRealtime()) / BOOT_STEP_MS).toInt()
+    }
+
+    private var bootFallbackLogged = false
+
+    /**
+     * Design 108b §3.3: the refreshes that waited for the phone to be in use go out at the next unlock. `USER_PRESENT`
+     * isn't delivered to a manifest receiver, so this one is context-registered, once, in the process that holds the
+     * anchor's foreground service (the engine is built here); exported (SystemUI is another uid; the broadcast is protected). The same
+     * on Android 14-17. A process that restarts registers again at its first use, and the next accepted policy covers
+     * what it missed.
+     */
+    private fun registerUserPresent(app: Context) {
+        try {
+            val receiver = object : BroadcastReceiver() {
+                override fun onReceive(context: Context, intent: Intent) {
+                    if (intent.action == Intent.ACTION_USER_PRESENT) post { engine?.userPresent() }
+                }
+            }
+            // RECEIVER_EXPORTED on purpose (gate 2026-11-17, row 3b; design 59's trap, PinLockRuntime): SystemUI sends
+            // USER_PRESENT from its own uid, which a NOT_EXPORTED receiver never hears. Safe: it is a protected broadcast,
+            // only the system can send it, and the filter holds this one action.
+            app.registerReceiver(receiver, IntentFilter(Intent.ACTION_USER_PRESENT), Context.RECEIVER_EXPORTED)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't listen for the unlock: ${e.javaClass.simpleName}")
+        }
+    }
+
+    /** [block] on the engine's executor with the store, after the first unlock (the debug hook's way in; nothing else
+     * touches the store from another thread). */
+    fun withStore(context: Context, block: (UpStore) -> Unit) {
+        val app = context.applicationContext
+        post { if (isUserUnlocked(app)) block(UpStore.of(app)) }
+    }
+
+    /** The engine's in-memory ack limits forgotten (the debug hook, after it moved stamps in the store). */
+    fun forgetAcks(token: String?) {
+        post { engine?.forgetAcks(token) }
     }
 
     /** An app's request, read in full by [UpReceiver]; queued, never awaited (no broadcast is held). */
@@ -265,11 +323,12 @@ object UpRuntime {
                     UpServer.Registered.Endpoint(ServerJson.decodeFromString(UpEndpointAnswer.serializer(), text).endpoint)
                 response.code() == 409 && text != null ->
                     UpServer.Registered.Refused(ServerJson.decodeFromString(UpRefusalAnswer.serializer(), text).refused)
-                response.code() in 400..499 -> UpServer.Registered.Invalid
+                response.code() == 400 -> UpServer.Registered.Invalid
+                response.code() in 401..499 -> UpServer.Registered.Rejected(response.code())
                 else -> UpServer.Registered.Network
             }
         } catch (e: kotlinx.serialization.SerializationException) {
-            UpServer.Registered.Invalid
+            UpServer.Registered.Rejected(0)
         } catch (e: Exception) {
             Log.w(LOG_TAG, "A registration's call failed: ${e.javaClass.simpleName}")
             UpServer.Registered.Network
@@ -347,6 +406,13 @@ object UpRuntime {
             }
         }
 
+        /** Interactive and not in Doze (design 108b §3.3): `PowerManager` on 14-17 alike. */
+        override fun inUse(): Boolean = try {
+            app.getSystemService(PowerManager::class.java)?.let { it.isInteractive && !it.isDeviceIdleMode } == true
+        } catch (e: Exception) {
+            false
+        }
+
         /** On the [raise] executor: the raise and its send never wait behind a server call. */
         override fun deliver(pkg: String, message: RaiseToForeground.Message) = run(raise) {
             val instance = raises.getOrPut(pkg) {
@@ -402,6 +468,16 @@ object UpRuntime {
         }
 
         override fun send(app: String, message: RaiseToForeground.Message) {
+            if (message.kind == RaiseToForeground.Kind.NEW_ENDPOINT) {
+                this.app.sendBroadcast(
+                    Intent(UpSpec.NEW_ENDPOINT).setPackage(app).addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES)
+                        .putExtra(UpSpec.EXTRA_TOKEN, message.token)
+                        .putExtra(UpSpec.EXTRA_ENDPOINT, message.endpoint)
+                        .putExtra(UpSpec.EXTRA_ID, message.id),
+                )
+                Log.i(LOG_TAG, "NEW_ENDPOINT to $app (raised)")
+                return
+            }
             this.app.sendBroadcast(
                 Intent(UpSpec.MESSAGE).setPackage(app).addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES)
                     .putExtra(UpSpec.EXTRA_TOKEN, message.token)

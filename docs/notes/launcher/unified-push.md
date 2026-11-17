@@ -114,10 +114,54 @@ The PIN-gated Settings' "App push" / "Push for apper" row (`settings_mdm_unified
 app, its own description (Element X's MXID - on the phone only, never sent) and its last delivery, and the notes. Shown
 while UP is on or anything is registered or noted.
 
+## R2/R3 (design 108b, R23-L, 2026-11-17)
+
+Design `docs/design/108b-unified-push-r2-r3.md`; the server's part (the VAPID check, `refresh`) is R23-S. The server
+releases first (L8). All of it is pure rules in `UpRules` (rows in `up_rules.json`: `liveness`, `refresh`, `pass`, the
+register rows) run by `UpEngine`.
+
+- **Liveness (§2).** `UpRules.liveness`, run in `policyAccepted` on the kept rows (so at least every 30 minutes): a
+  confirmed row with no ping out and 23 days since `max(lastAppAckMs, confirmedAtMs)` gets a ping (`NEW_ENDPOINT`, same
+  endpoint, new id; `pingId`, `pingSentMs`, `pingLastSendMs`, `pingBoot`). A ping out is **re-sent once per boot** (same
+  id; `pingBoot` against `Settings.Global.BOOT_COUNT`; unreadable: the boot instant in 10-minute steps, logged once, so it
+  errs toward re-sending, L6) **and every day while it is out** (`PING_RESEND_MS`, code QA M1: one lost send or ack no
+  longer removes a live app; an ack of a ping this process sent skips the ack limits; a failed send clears the row's
+  `pingBoot` so the next pass sends again), and "dead" needs 7 days since `pingSentMs` **and** an hour
+  since `pingLastSendMs` - so a phone that was off never buries a live app at its first sync. Dead: `UNREGISTERED`, the
+  row removed, its `DELETE` queued, the note `NOTE_UNANSWERED`. Any ack clears the ping (`UpEngine.ack`). Every stamp
+  more than a day ahead reads as now (`UpRules.stamp`) and is **written back as now** (`UpRules.clamped` in each pass, and
+  `ack` rewrites an ahead `lastAppAckMs`, L1).
+- **The refresh (§3.3).** The policy's `unified_push.refresh` (`UpRefresh(reg, why)`: `outside` or `refused`, both the same
+  act; an unknown `why` reads as `outside`). `UpRules.refreshes`: a confirmed listed row whose `refreshMs` is null or a day
+  old, **only while the phone is in use** (`PowerManager.isInteractive && !isDeviceIdleMode`, `UpPhone.inUse`). A refresh
+  that falls due otherwise waits for the next accepted policy while in use, or the unlock: `UpRuntime` registers a
+  context receiver for `ACTION_USER_PRESENT` (`RECEIVER_EXPORTED`: SystemUI sends it from its own uid, design 59's trap; protected, once, when the engine is built; manifest receivers
+  don't get it) that calls `UpEngine.userPresent`. `UpRules.pass` gives one `NEW_ENDPOINT` per row (L2): a due ping or
+  re-send carries the refresh (its id; `refreshMs` set).
+- **Through the raise (M1).** Every `NEW_ENDPOINT` that doesn't answer a REGISTER goes through `RaiseToForeground`
+  (`Message.kind` `NEW_ENDPOINT` with an endpoint; `UpPhone.deliver`): the ping, the re-send, the refresh and the
+  origin's rewrite. `UpEngine.sent` ignores that kind (nothing to acknowledge to the server); `failed` only marks a lost ping or refresh to
+  go again. A pass sends only when its stamps were stored (L8). A REGISTER's answer
+  (`Known`, `Update`) is a plain broadcast.
+- **A key update (§4.6, H1, M4).** `registerDecision(..., vapid)`: a known confirmed token re-registered with no key or
+  the same key is `Known` (a stored key is never dropped); **another** key is `Update` - `NEW_ENDPOINT` from the store at
+  once, `vapidPending` set, `keyTryMs` stamped, the key posted (`postKey`); a 200 makes it `vapid`; **only a 400** (`Registered.Invalid`) drops the
+  pending key and notes `NOTE_BAD_KEY`; any other answer (`Rejected(code)`: 401, 408, 429, a 409 without a body, an
+  unreadable 200), no network or a 5xx keeps it pending, posted again by `policyAccepted` (`retryKeys`) at least 5
+  minutes after the failed post (L4). The same key as the stored one clears a pending other (L3). At most one key call an hour per token: within it a REGISTER with another key is `Known` with the key
+  pending. Never `REGISTRATION_FAILED` for a key. A pending row's retry carries the newest key.
+- **Words.** `settings_up_unanswered`, `settings_up_bad_key` (en, nb) in the PIN-gated App push row. A note goes when its
+  cause does (L7): `NOTE_UNANSWERED` when the app's registration is confirmed again, `NOTE_BAD_KEY` when a key is taken
+  (`UpStore.clearNote`).
+- **The gate's hook.** `UpDebugReceiver` (src/debug only, DUMP-guarded; `checkReleaseHasNoDebugHook`,
+  `DebugHookAbsentTest`) backdates a row's stamps by N days in the store (`--es reg --ei days [--es field] [--ei send_hours H]`; the last sets the ping's last send H hours ago so row 2's "dead" is one step) on the
+  engine's executor, and drops the engine's in-memory ack limit of that token (`UpEngine.forgetAcks`, L5): the system
+  clock is never moved (L11).
+
 ## Not in R1-L
 
-- The 30-day liveness ping and unregister (§5.6) are R2: the rows keep `lastAppAckMs`/`pingId` for it.
-- VAPID verification (R3): a registered key is passed to the server as is.
+- (Done in R23-L: the 30-day liveness ping and unregister, §5.6.)
+- VAPID verification is the server's (R23-S, design 108b §4): the phone passes the key on and updates it (above).
 - The emulator gate is R1-G: `docs/testing/emulator.md` §6ay (14 and 16 passed, row 5 included: a suspended app's
   notifications are hidden by Android and appear in the shade without sound when the rule ends; Android 17 not run). The debug build logs each MESSAGE send and each pull's acks by key prefix (`UpRuntime`, `Log.d`). Element X
   itself is owed on the Jelly Star (R1-E).

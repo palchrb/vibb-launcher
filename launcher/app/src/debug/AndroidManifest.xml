@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Debug build only: the design 16d lock-task override hook (docs/testing/emulator.md §6e), the
-     design 24b vault-key hook, the design 28 fake headset, design 77's MMS push and design 106's missed Element X call. Merged
+     design 24b vault-key hook, the design 28 fake headset, design 77's MMS push and design 106's missed Element X call and design 108b's registration backdating. Merged
      into the debug manifest; the release build never sees this file (checkReleaseHasNoDebugHook,
      DebugHookAbsentTest). Exported for `adb shell am broadcast -n`, guarded by DUMP (shell holds it,
      apps don't). -->
@@ -28,6 +28,11 @@
         <!-- Design 106 §8 step 9: a missed Element X call the emulator can't have. -->
         <receiver
             android:name="com.kidslauncher.mdm.calls.ElementCallDebugReceiver"
+            android:exported="true"
+            android:permission="android.permission.DUMP" />
+        <!-- Design 108b §11 L11: backdates an app-push registration's stamps (the 30-day rule's gate), never the clock. -->
+        <receiver
+            android:name="com.kidslauncher.mdm.push.up.UpDebugReceiver"
             android:exported="true"
             android:permission="android.permission.DUMP" />
     </application>

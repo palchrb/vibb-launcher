@@ -113,14 +113,23 @@ broadcast, and acknowledged to the server once the send went out (L12).
 - **A ping still outstanding at a boot is re-sent once after that boot (Q1 refinement).** The same ping id, once per
   boot (`pingBootResent`, cleared by an ack; it does not move `pingSentMs`'s first stamp, only `pingLastSendMs`). A phone
   switched off between a ping and its answer never loses a live app.
+- **An outstanding ping is also re-sent every day (code QA M1).** Same id, same raise, when `pingLastSendMs` is a day
+  old, besides the boot's re-send. A removal then follows about seven unanswered sends, not one: a single send lost
+  after its stamps were stored (the launcher dying, or a `send` that throws - `UpEngine.failed` clears `pingBoot` of the
+  row, so the next pass sends again), an ack dropped before the store read (UP off in the cached policy, the 30-a-minute
+  cap - an answer to a ping this process sent skips the cap and the hourly skip) or an app process that died before
+  the connector's ack costs one day, not the app. The dead rule is unchanged. It tightens Q1's "once per boot" on the
+  safe side only and costs a live app nothing (it answers the first send); a dead token's app gets one raise a day for
+  a week and its connector ignores the unknown token.
 - a ping out, **both** `now - pingSentMs >= 7 days` (the first ping) **and** `now - pingLastSendMs >= 1 hour` (the last
   send, the first or the boot's re-send): **dead** - `UNREGISTERED(token)`, the row removed, its `DELETE` queued
   (R1's `remove` path; the server tombstones the secret, so the app server gets 410 or `rejected`), and a diagnostics
   note `NOTE_UNANSWERED` for the PIN-gated Settings row;
 - any `MESSAGE_ACK` from the app (a message's or the ping's) clears the ping (R1's `UpEngine.ack` already does).
 - **Stamps from a clock that ran ahead (L3).** Every stamp the rules read (`lastAppAckMs`, `pingSentMs`, `refreshMs`,
-  `keyTryMs`) that lies more than a day after now is read as now. `UpEngine.ack`'s hourly skip uses the same reading.
-  Otherwise a negative age would freeze the row. A clock moved forward only pings early, and a live app answers within
+  `keyTryMs`) that lies more than a day after now is read as now, **and the engine writes it back as now** (`UpRules.clamped`,
+  at every pass; `UpEngine.ack` rewrites an ahead `lastAppAckMs` instead of skipping it; code QA L1), so its age
+  starts counting. Otherwise a negative age would freeze the row. A clock moved forward only pings early, and a live app answers within
   a second.
 - **One `NEW_ENDPOINT` per row per pass (L2).** A row that a rewrite, a ping and a refresh (§3.3) all want gets one.
   When the ping is due, that one carries the ping's id and sets `pingId`/`pingSentMs`, and a refresh due at the same
@@ -577,9 +586,12 @@ gains `refresh` and the VAPID register rows, and its scripts line gains `fake-ho
 The existing `app_push.missing` stays Element X's text. `KNOWN_UP_APPS` holds `(package, name, missing_key)`.
 
 **Launcher** (`values/strings.xml`, `values-nb/strings.xml`): the diagnostics notes
-`settings_mdm_up_note_unanswered` (§2) and `settings_mdm_up_note_bad_key`:
+`settings_up_unanswered` (§2) and `settings_up_bad_key` (the existing `settings_up_*` family; the build's names):
 - nb "%1$s sendte en ugyldig nøkkel; den gamle beholdes";
 - en "%1$s sent a key that isn't valid; the old one is kept".
+
+A note goes when its cause does (code QA L7): the unanswered note when the app's registration is confirmed again, the
+bad-key note when a key is taken.
 
 Nothing new appears on the kid's screens.
 
@@ -676,16 +688,18 @@ The rig is `docs/testing/emulator.md` §6ay's: `compat34`, `jelly36`, the debug 
 | Row | What | Expected |
 |---|---|---|
 | 1 ping | the probe registered; the store backdated 24 days; a sync with the screen off and `dumpsys deviceidle force-idle` | the probe gets `NEW_ENDPOINT` with the same endpoint and a new id, inside the raise (its uid at the foreground-service level); it acks; no second ping at the next sync |
-| 2 dead | "ack off"; backdated 24 days (ping), then the ping 8 days; a sync each | `UNREGISTERED` to the probe; a POST to its endpoint gets 410; the PIN-gated Settings row shows the note |
+| 2 dead | "ack off"; backdated 24 days (ping), a sync; then `--es field pingSentMs --ei days 8 --ei send_hours 2` (the ping 8 days old, its last send 2 h old, so the daily re-send is not due), a sync | `UNREGISTERED` to the probe; a POST to its endpoint gets 410; the PIN-gated Settings row shows the note |
 | 3 outside, idle | `--outside` to the probe's endpoint; the phone idle (screen off, force-idle); a sync | the PWA's warning on the probe's row; the policy's `refresh` lists the `reg`; **no** `NEW_ENDPOINT` while idle |
 | 3b outside, in use | unlock the phone | `NEW_ENDPOINT` within a second of `USER_PRESENT`, raised; no second one at the next sync or the next unlock |
 | 4 healed | a gateway POST (our `notify`) for the probe's pushkey | the PWA's warning gone; `refresh` empty in the next policy |
 | 5 VAPID | the probe registered with the test key; `--vapid rfc`, `rfc-spaced`, `draft` | 201 and delivered, each; the PWA shows "Only pushes signed…" |
 | 6 refused | `--vapid none`, `wrong-key`, `expired`, `wrong-aud`; then a gateway POST for the pushkey | 401, 403, 503, 503, nothing delivered, the phone not nudged; the gateway `rejected`; the PWA's refused warning; with Q3 (d), `refresh` lists `refused` until a verified push |
 | 7 key update | the probe re-REGISTERs the same token with another key; then once more without a key | `NEW_ENDPOINT` with the same endpoint at once, each time; the server holds the new key after the first; the keyless one changes nothing |
-| 7b offline update | the server unreachable; the probe re-REGISTERs with a third key | `NEW_ENDPOINT` with the same endpoint at once, no `REGISTRATION_FAILED`; the server back, the key arrives at the next policy |
+| 7b offline update | the server unreachable; the probe re-REGISTERs with a third key | `NEW_ENDPOINT` with the same endpoint at once, no `REGISTRATION_FAILED`; the server back, the key arrives at the next policy at least 5 minutes after the failed post (code QA L4; the hour of M4 bounds only REGISTER-driven calls) |
+| 8 boot re-send | a ping backdated 8 days (`pingSentMs`); the emulator rebooted, then unlocked | a re-send, same id, no removal; with "ack off", the removal an hour later; the hook has dropped the engine's ack limit (the debug receiver does it, L5) |
+| 9 time rule | the probe suspended by a time rule (the schedule lock) during row 1's ping | the ping is raised and delivered, and the probe's ack comes back: the ping is cleared |
 
-Rows 1-3b and 5-7b run on both versions; row 4 is a server-and-policy row and runs on one (16).
+Rows 1-3b and 5-9 run on both versions; row 4 is a server-and-policy row and runs on one (16).
 
 **Owed on the Jelly Star (the user's tests, §6.3):**
 - FluffyChat end to end. It can't log in on this VM: it needs a homeserver that can reach the push address.
@@ -717,6 +731,10 @@ Neither Q3 change touches the contract. The FluffyChat test needs none of this r
 ---
 
 ## 13. Questions for the user
+
+**Decided 2026-11-17 (code QA M1, a refinement of Q1 that only makes it safer):** the same ping id is re-sent once a
+day while it is out (besides the boot re-send); the dead rule (7 days since the first send, an hour since the last) is
+unchanged. See §2.
 
 **Decided (the user, 2026-11-17):** **Q1 yes**; **Q2 (a)**, every push delivered at once; **Q3 (c) + (d)**. Two
 refinements were added to the answers: Q1's boot re-send and its two-part "dead" (§2), and Q3's signature-first order
@@ -764,7 +782,7 @@ Short enough to put in Norwegian in a few lines each.
    and on the raise giving them network. The idle case is owed on the Jelly Star (§11). If it fails, the PWA's warning
    stays and points at "Last seen from outside".
 3. **A clock that ran ahead** pings every registration early, and a live app answers at once. Stamps more than a day
-   ahead are read as now.
+   ahead are read as now and written back as now (code QA L1).
 4. **Tusky can't use Vibb One** (an AND_2 connector) until it moves to connector 3.x. Pachli works without VAPID.
 5. **Android 17** is owed, as for R1.
 

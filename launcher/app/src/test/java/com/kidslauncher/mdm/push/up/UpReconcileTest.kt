@@ -54,6 +54,8 @@ class UpReconcileTest {
         assertEquals(listOf("NEW_ENDPOINT io.element.android.x tok-element-1 https://push.example.net/up/FakeSecretForTheContract002"), phone.sent)
         assertEquals(listOf("c0ffee00000000000000000000000001", "c0ffee00000000000000000000000009"), server.unregistered)
         assertEquals(emptyList<String>(), store.deletes())
+        // L9: the rewrite goes through the raise, never the plain broadcast.
+        assertEquals(1, phone.raised.size)
     }
 
     @Test

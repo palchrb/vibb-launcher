@@ -546,6 +546,8 @@
     <string name="settings_up_delivered">last delivered %1$s</string>
     <string name="settings_up_old_connector">An app calling itself %1$s asked without identifying itself (an older push library?) - not verified</string>
     <string name="settings_up_no_raise">%1$s: gets its messages without the wake-up</string>
+    <string name="settings_up_unanswered">%1$s didn\'t answer for 30 days; its registration was removed</string>
+    <string name="settings_up_bad_key">%1$s sent a key that isn\'t valid; the old one is kept</string>
     <string name="settings_notifications">Vibb One notifications</string>
     <string name="settings_notifications_off">Off: %1$s</string>
     <string name="settings_notifications_all_off">All off</string>

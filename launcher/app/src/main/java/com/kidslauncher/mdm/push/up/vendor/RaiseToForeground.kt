@@ -23,7 +23,10 @@
  *   server call, so the state needs no lock;
  * - an app with no such service is sent the message without the raise and noted once;
  * - the Android calls sit behind [Platform], so the queue and its state machine are unit-tested with a fake binder
- *   (RaiseToForegroundTest).
+ *   (RaiseToForegroundTest);
+ * - design 108b §3.3 (M1): a [Message] has a [Message.kind] - `MESSAGE`, or `NEW_ENDPOINT` with its endpoint: the same
+ *   raise serves a ping, a refresh and the origin's rewrite, which the app's own work after `onReceive` needs. The
+ *   queue, the unbind paths and `onSent`/`onFailed` are the same for both; Vibb One's ack ignores the second kind.
  *
  * Distributed as part of Vibb One under the GNU GPL v3.0 or later (Apache-2.0 code may be included in a GPL-3.0 work).
  */
@@ -42,8 +45,15 @@ class RaiseToForeground(
     private val onUnbound: (RaiseToForeground) -> Unit,
     private val onFailed: (Message) -> Unit = {},
 ) {
-    /** One MESSAGE: the connector's [token], the bytes, and the message's random key [id] (the extra and the ack). */
-    class Message(val token: String, val content: ByteArray, val id: String)
+    enum class Kind { MESSAGE, NEW_ENDPOINT }
+
+    /** One MESSAGE: the connector's [token], the bytes, and the message's random key [id] (the extra and the ack). A
+     * [Kind.NEW_ENDPOINT] one carries the [endpoint] (no bytes) and an [id] that is the ping's or a fresh one. */
+    class Message(val token: String, val content: ByteArray, val id: String, val kind: Kind = Kind.MESSAGE, val endpoint: String? = null) {
+        companion object {
+            fun newEndpoint(token: String, endpoint: String, id: String) = Message(token, ByteArray(0), id, Kind.NEW_ENDPOINT, endpoint)
+        }
+    }
 
     /** What the class needs of Android, on UpRuntime's executor. */
     interface Platform {
@@ -56,7 +66,7 @@ class RaiseToForeground(
 
         fun unbind(connection: RaiseToForeground)
 
-        /** Sends one MESSAGE broadcast to [app]; throws when it couldn't. */
+        /** Sends one broadcast to [app] - a MESSAGE, or a NEW_ENDPOINT by [Message.kind]; throws when it couldn't. */
         fun send(app: String, message: Message)
 
         /** Runs [action] on the executor after [delayMs]. */

@@ -51,7 +51,14 @@ data class UnifiedPushPolicy(
     val origin: String? = null,
     val regs: List<String> = emptyList(),
     val stopped: List<String> = emptyList(),
+    val refresh: List<UpRefresh> = emptyList(),
 )
+
+/** One row of the policy's `unified_push.refresh` (design 108b §3.3, §4.4): the registration [reg] the server wants its
+ * app to re-check, [why] `outside` (an outside gateway re-posted a push) or `refused` (a VAPID refusal). Both are the same
+ * act for the phone, so an unknown [why] reads as `outside`; a [reg] the phone doesn't hold is ignored (L12). */
+@Serializable
+data class UpRefresh(val reg: String, val why: String = "outside")
 
 /** `POST /api/devices/up/registrations`: the phone's key [reg] (32 hex) and the endpoint [secret] (27 base64url) it
  * chose, so a retry is idempotent. The connection token never leaves the phone. */
