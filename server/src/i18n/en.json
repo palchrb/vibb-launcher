@@ -4681,9 +4681,9 @@
   "device.attention.notifications_off": "Notifications off: {names}",
   "device.attention.notifications_all_off": "All Vibb One notifications are off",
   "device.attention.app_push_waiting": "App notifications aren't reaching the phone",
-  "device.attention.app_push_refused.one": "An app's notifications are refused",
+  "device.attention.app_push_refused.one": "{count} app's notifications are refused",
   "device.attention.app_push_refused.other": "{count} apps' notifications are refused",
-  "device.attention.app_push_outside.one": "An app's notifications go via an outside service",
+  "device.attention.app_push_outside.one": "{count} app's notifications go via an outside service",
   "device.attention.app_push_outside.other": "{count} apps' notifications go via an outside service",
 
   "app_push.error.read": "Couldn't read app push - check the server log.",

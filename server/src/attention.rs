@@ -852,7 +852,11 @@ mod tests {
                 "no-parent-pin",
                 "easy-parent-pin",
                 "access-revoked",
-                "incoming-calls"
+                "incoming-calls",
+                // Design 108c: the server's own data, never "at last report".
+                "app-push-waiting",
+                "app-push-refused",
+                "app-push-outside"
             ]
         );
     }
@@ -885,7 +889,7 @@ mod tests {
                 "Notification access off",
                 "Notifications off: Messages, Missed calls",
                 "App notifications aren't reaching the phone",
-                "An app's notifications are refused",
+                "1 app's notifications are refused",
                 "2 apps' notifications go via an outside service",
                 "Anyone can call this phone",
                 "Screen-time record unreadable",
@@ -955,7 +959,7 @@ mod tests {
         );
         assert_eq!(
             title(Lang::Nb, Kind::AppPushOutside(1)),
-            "Varsler til en app går via en ekstern tjeneste"
+            "Varsler til 1 app går via en ekstern tjeneste"
         );
         assert_eq!(
             title(Lang::Nb, Kind::AppPushWaiting),

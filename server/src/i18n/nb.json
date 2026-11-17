@@ -4681,9 +4681,9 @@
   "device.attention.notifications_off": "Varsler slått av: {names}",
   "device.attention.notifications_all_off": "Alle varsler fra Vibb One er av",
   "device.attention.app_push_waiting": "Appvarsler kommer ikke fram til telefonen",
-  "device.attention.app_push_refused.one": "Varsler til en app blir avvist",
+  "device.attention.app_push_refused.one": "Varsler til {count} app blir avvist",
   "device.attention.app_push_refused.other": "Varsler til {count} apper blir avvist",
-  "device.attention.app_push_outside.one": "Varsler til en app går via en ekstern tjeneste",
+  "device.attention.app_push_outside.one": "Varsler til {count} app går via en ekstern tjeneste",
   "device.attention.app_push_outside.other": "Varsler til {count} apper går via en ekstern tjeneste",
 
   "app_push.error.read": "Kunne ikke lese push for apper - sjekk serverloggen.",
