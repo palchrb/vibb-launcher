@@ -4,6 +4,10 @@ Status: design, **revision 2**, 2026-11-16 (branch `design-108`, from main a4fbf
 8a95489bb. The build needs the user's own go; the user has answered Q1-Q11 (§14) and reversed the 2026-10-06 rule
 (§10). No code, no migration and no contract file exist yet; every name below is a proposal.
 
+**R2 and R3 (2026-11-17)** are designed in `docs/design/108b-unified-push-r2-r3.md` (liveness, the outside gateway and
+its heal, VAPID, the Urgency question, FluffyChat and the VAPID app); where it and §5.6, §3.10's R2 line, §3.4's VAPID
+row, §7 or §12.1's R2/R3 rows disagree, 108b wins.
+
 ## Amendment to revision 2 (2026-11-16, the user: Q4 changed)
 
 **Element X keeps its Play build** (the kid's phone has Google). Its push provider is switched to Vibb One once per
@@ -1391,8 +1395,8 @@ Apache-2.0).
 | **R1-SR** | S | the security review of R1-S's public routes (an Opus agent, own worktree) | 3, before any tag |
 | **R1-G** | S | the emulator gate (§12.3); then the server tag before the launcher RC (the launcher checks the capability, so either order is safe) | 4 |
 | **R1-E** | - | the per-session switch of Element X's Play build to Vibb One on the Jelly Star (§6.6, the amendment; no F-Droid reinstall), and the Jelly Star checks (§12.3, "Owed") | 5, after both are released |
-| **R2** | S | the 30-day ping and unregister (§5.6), the 30-day-unseen prune, the "outside gateway" warning | after R1 is on the Jelly Star a week |
-| **R3** | S | other apps: VAPID verification (`ring`, both header forms, checked against Mastodon's sender at the step), the `Urgency`-based hold if wanted (the spec's SHOULD; R1 delivers every urgency at once, a stated deviation), FluffyChat, SchildiChat Next, Tusky and DAVx⁵ tried | when the kids get such an app |
+| **R2** | S | the 30-day ping and unregister (§5.6), the 30-day-unseen prune (built in R1), the "outside gateway" warning - **designed in 108b**, built with R3 (the user, 2026-11-17) | 108b §12 |
+| **R3** | S | other apps: VAPID verification (`ring`, both header forms, checked against Mastodon's sender at the step), the `Urgency`-based hold if wanted (the spec's SHOULD; R1 delivers every urgency at once, a stated deviation), FluffyChat, SchildiChat Next, Tusky and DAVx⁵ tried - **designed in 108b** | 108b §12 |
 | **R4** | - | dropped: Q9 is no ("Google av" is not offered) | - |
 
 **The smallest useful first step is R1 for Element X** (R1-C + R1-S + R1-L, with the gate, then R1-E). Nothing in R1
