@@ -152,14 +152,22 @@ data class WifiLocationStep(val stopPoll: Boolean, val location: Boolean?, val b
  *   Already on, it is left as it is and stays whoever's it was.
  * - [WifiPageEvent.STOP]: a running connect poll ([polling]) is dropped first - with Location off its next scan would
  *   end a connect that worked as "couldn't connect" (a connect, then "Logg på" at once); then Location off only if the
- *   page turned it on and it is still on. Never a setting the parent had on.
+ *   page turned it on, it is still on, and the parent's policy doesn't want it on now ([policyKeepsOn]: the
+ *   CONFIG_LOCATION switch for Find my device or the zone watch, `locationStaysOn` - a sync while the page was shown
+ *   found it on already and left it; code QA L4). Never a setting the parent had on or wants on.
  */
-fun wifiLocationStep(event: WifiPageEvent, enabledNow: Boolean, byUs: Boolean, polling: Boolean): WifiLocationStep = when (event) {
+fun wifiLocationStep(
+    event: WifiPageEvent,
+    enabledNow: Boolean,
+    byUs: Boolean,
+    polling: Boolean,
+    policyKeepsOn: Boolean = false,
+): WifiLocationStep = when (event) {
     WifiPageEvent.START ->
         if (enabledNow) WifiLocationStep(stopPoll = false, location = null, byUs = byUs, scan = true)
         else WifiLocationStep(stopPoll = false, location = true, byUs = true, scan = true)
     WifiPageEvent.STOP ->
-        WifiLocationStep(stopPoll = polling, location = if (byUs && enabledNow) false else null, byUs = false, scan = false)
+        WifiLocationStep(stopPoll = polling, location = if (byUs && enabledNow && !policyKeepsOn) false else null, byUs = false, scan = false)
 }
 
 /** One wallpaper in the picker. */

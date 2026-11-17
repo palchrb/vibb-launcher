@@ -683,7 +683,8 @@ object QuickControls {
      * (Android's own discovery mechanism is inherently incremental, unlike the one-shot WiFi scan
      * above), then calls [onFinished] once discovery naturally ends (~12s). Returns the receiver
      * so the caller can unregister it in `onStop`/`onDestroy` via [stopBluetoothScan] - unlike the
-     * WiFi scan helper, this one can't self-unregister after a single event.
+     * WiFi scan helper, this one can't self-unregister after a single event. `null` when no discovery runs (no adapter,
+     * the receiver refused, or `startDiscovery()` false): no [onFinished] comes then.
      */
     @Suppress("MissingPermission")
     fun scanBluetoothDevices(
@@ -743,6 +744,16 @@ object QuickControls {
             false
         }
         Log.i(LOG_TAG, "scanBluetoothDevices: startDiscovery() returned $discoveryStarted")
+        if (!discoveryStarted) {
+            // No discovery, so no ACTION_DISCOVERY_FINISHED will come: null tells the caller nothing runs (design 111
+            // code QA L3 - a page waiting for the end would wait, and rescan, for ever).
+            try {
+                appContext.unregisterReceiver(receiver)
+            } catch (e: Exception) {
+                // Already unregistered - harmless.
+            }
+            return null
+        }
         return receiver
     }
 

@@ -14,13 +14,21 @@ import androidx.appcompat.app.AlertDialog
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.databinding.ActivityWifiNetworksBinding
+import com.kidslauncher.mdm.calls.CallPolicyStore
+import com.kidslauncher.mdm.server.CachedPolicy
+import com.kidslauncher.mdm.server.LEGACY_LOCATION_POLICY
 import com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
 import com.kidslauncher.mdm.server.QuickControls
+import com.kidslauncher.mdm.server.cachedPolicy
+import com.kidslauncher.mdm.server.hardeningManaged
+import com.kidslauncher.mdm.server.hardeningPlan
+import com.kidslauncher.mdm.server.locationStaysOn
 import com.kidslauncher.mdm.ui.kidsettings.SubPage
 import com.kidslauncher.mdm.ui.kidsettings.SubPageGuard
 import com.kidslauncher.mdm.ui.kidsettings.WifiPageEvent
 import com.kidslauncher.mdm.ui.kidsettings.wifiLocationStep
 import com.kidslauncher.mdm.ui.look.KidPageActivity
+import com.kidslauncher.mdm.zones.ZoneWatch
 
 private const val CONNECT_POLL_INTERVAL_MS = 3_000L
 private const val CONNECT_TIMEOUT_MS = 15_000L
@@ -97,7 +105,10 @@ class WifiNetworksActivity : KidPageActivity() {
     }
 
     private fun locationStep(event: WifiPageEvent) {
-        val step = wifiLocationStep(event, QuickControls.isLocationEnabled(this), locationEnabledByUs, polling = connectingSsid != null)
+        val step = wifiLocationStep(
+            event, QuickControls.isLocationEnabled(this), locationEnabledByUs, polling = connectingSsid != null,
+            policyKeepsOn = event == WifiPageEvent.STOP && locationEnabledByUs && policyKeepsLocationOn(),
+        )
         if (step.stopPoll) {
             handler.removeCallbacksAndMessages(null)
             connectingSsid = null
@@ -106,6 +117,21 @@ class WifiNetworksActivity : KidPageActivity() {
         step.location?.let { QuickControls.setLocationEnabled(dpm, admin, it) }
         locationEnabledByUs = step.byUs
         if (step.scan) scan()
+    }
+
+    /** Code QA L4: the cached policy wants system Location on now - the CONFIG_LOCATION switch (Find my device) or the
+     * zone watch, as the sync's own rule (`locationStaysOn`); an error reads as no. */
+    private fun policyKeepsLocationOn(): Boolean = try {
+        val policy = (cachedPolicy() as? CachedPolicy.Ok)?.policy
+        if (policy == null) {
+            false
+        } else {
+            CallPolicyStore.ensureLoaded(this)
+            val forcesOn = hardeningPlan(policy.hardening, hardeningManaged(policy.allowlist, CallPolicyStore.state.managed)).forceLocationOn
+            locationStaysOn(policy.locationPolicy ?: LEGACY_LOCATION_POLICY, forcesOn, ZoneWatch.zonesOn(this, policy))
+        }
+    } catch (e: Exception) {
+        false
     }
 
     private val portalListener: () -> Unit = { runOnUiThread { renderPortal() } }

@@ -94,17 +94,22 @@ class KidSettingsTaskTest {
                 .replace(Regex("/\\*.*?\\*/", RegexOption.DOT_MATCHES_ALL), "")
                 .replace(Regex("//[^\\n]*"), "")
         }
+        // The builder is the component and LAUNCH_FLAGS: nothing a filter compares, no other flag.
         val builder = code.getValue("ui/kidsettings/KidSettingsActivity.kt").substringAfter("fun intent(context: Context): Intent =")
             .substringBefore("\n\n")
-        assertEquals("Intent(context, KidSettingsActivity::class.java).addFlags(LAUNCH_FLAGS)", builder.trim())
+        assertTrue(builder, builder.contains("KidSettingsActivity::class.java") && builder.contains("addFlags(LAUNCH_FLAGS)"))
+        for (token in listOf("putExtra", "setAction", "setData", "setType", "addCategory", "setFlags", "CLEAR_TOP", "action =", "data =")) {
+            assertFalse(token, builder.contains(token))
+        }
         // The class is named in the builder and the language's task rule alone; the tile and the swipe use the builder.
         val naming = code.filterValues { it.contains("KidSettingsActivity::class") }.keys
         assertEquals(setOf("ui/kidsettings/KidSettingsActivity.kt", "ui/LauncherLocale.kt"), naming)
         val callers = code.filterValues { it.contains("KidSettingsActivity.intent(") }.keys
         assertEquals(setOf("ui/HomeActivity.kt", "ui/home/HomeGridAdapter.kt"), callers)
-        // Nothing forwards into the root: it takes no intent of its own.
+        // Nothing forwards into the root: outside its builder it never reads an intent.
         val screen = code.getValue("ui/kidsettings/KidSettingsActivity.kt")
         assertFalse(screen.contains("onNewIntent"))
-        assertFalse(screen.contains("getStringExtra") || screen.contains("intent.action") || screen.contains("intent.data"))
+        // No read of the activity's intent in any form (`intent.`, `intent?.`, `getIntent()`).
+        assertFalse(Regex("""(?<![\w.])intent\??\.|getIntent\(""").containsMatchIn(screen))
     }
 }

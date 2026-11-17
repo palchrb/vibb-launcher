@@ -37,8 +37,9 @@ fun applyLocaleNow(currentTags: String, desired: String, callActive: Boolean): B
  * and Kid Settings' (design 111: one class, night in both looks, so the look's own [com.kidslauncher.mdm.ui.look.closesTask]
  * leaves it - the look is chosen in it). The system refuses the call while the process's newest activity is of another
  * kind of task than at the last call that got through (design 78 §5.3, 2026-11-11), and a stopped page behind Home stays
- * the newest for as long as its task lives; the switch would have created its activities again anyway, and a closed
- * card can't keep the old language's name.
+ * the newest for as long as its task lives - Kid Settings' too, now that it stays behind Home in its own task; the
+ * switch would have created its activities again anyway. Only a refused switch closes them: a switch that gets through
+ * at once leaves the tasks, and a card keeps its old name until its screen is shown again.
  */
 fun languageClosesTask(rootClassName: String?): Boolean =
     PageKind.DAY.has(rootClassName) || PageKind.MESSAGES.has(rootClassName) || PageKind.PHONE_BOOK.has(rootClassName) ||

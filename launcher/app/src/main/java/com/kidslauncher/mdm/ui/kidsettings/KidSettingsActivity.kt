@@ -272,6 +272,9 @@ class KidSettingsActivity : UIObjectActivity() {
 
     override fun onStart() {
         super.onStart()
+        // Code QA L1: a card brought back under a rule shows nothing until the time-rule screen is up - its old
+        // content would take touches for those frames (it no longer sits under that screen in Home's task).
+        coverIfLocked()
         LauncherPreferences.getSharedPreferences().registerOnSharedPreferenceChangeListener(prefsListener)
         WallpaperStore.addListener(wallpaperListener)
         WallpaperStore.addThumbnailListener(thumbnailListener)
@@ -307,10 +310,19 @@ class KidSettingsActivity : UIObjectActivity() {
         super.onStop()
     }
 
+    /** Under any rule the time-rule screen comes first, the content hidden meanwhile; shown again only without one. */
     private fun redirectIfLocked(): Boolean {
-        if (LauncherPreferences.mdm().lockReason() == LockReason.NONE) return false
+        if (!coverIfLocked()) return false
         LockActivity.start(this)
         return true
+    }
+
+    /** The content invisible while a rule or the budget is in force (no touch reaches it), visible otherwise; true
+     * when covered. */
+    private fun coverIfLocked(): Boolean {
+        val locked = LauncherPreferences.mdm().lockReason() != LockReason.NONE
+        binding.root.visibility = if (locked) View.INVISIBLE else View.VISIBLE
+        return locked
     }
 
     /** The ink on the plain night ground (the layout's `kid_ground`, the window's and the splash's too): white, no scrim,

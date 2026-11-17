@@ -238,6 +238,10 @@ Meldinger, Kalender and the phone book do. The drawer and the parent's Settings 
   and `R.mipmap.ic_launcher`. Back at the root finishes it (a non-root locked task's finish, never blocked) and Home
   shows; the card stays (AOSP keeps an emptied task in Recents). Home no longer clears it, and `HomeFront.bring` brings
   Home forward over it instead of clearing it.
+- **Under a rule** (code QA L1): Overview stays on under time rules, so the card can bring Kid Settings back during
+  one. Its content is made invisible in `onStart` and on a `lockReason` change while any rule or the budget is in force
+  (`coverIfLocked`), and visible again in `onResume` without one, so the old screen takes no touch in the frames before
+  the time-rule screen is up.
 - **The look** (the user's Q1, 2026-11-17: "b er best. jeg trenger ikke bildebakgrunn her, bedre med vanlig fast
   bakgrunn"). Opaque, so WM Shell runs the task (wallpaper open/close) animation, Meldinger's, and not the
   wallpaper-intra transition two `FLAG_SHOW_WALLPAPER` windows get (`lock-and-glance.md`). `KidSettingsTheme` =
@@ -258,13 +262,17 @@ Meldinger, Kalender and the phone book do. The drawer and the parent's Settings 
   accepted policy on a device-owner phone; else `FINISH`. It replaces the pickers' two copies of
   `redirectIfLocked`/`finishIfNotAllowed` and Bluetooth's `finishIfNotAllowed`. Kid Settings itself keeps its own
   redirect under any rule (`onResume` and the `lockReason` listener); nothing on it is PIN-gated.
-- **The Wi-Fi page's Location** (pure `wifiLocationStep(event, enabledNow, byUs, polling)`). Turned on in `onStart`
+- **The Wi-Fi page's Location** (pure `wifiLocationStep(event, enabledNow, byUs, polling, policyKeepsOn)`). Turned on in `onStart`
   after the gate (if it was off, marked as ours), then the scan; in `onStop` the connect poll is dropped first
   (`handler.removeCallbacksAndMessages`, `connectingSsid = null`, no toast - else a connect that worked ends as
-  "couldn't connect" once Location is off, e.g. a connect and then "Logg på" at once), then Location off if ours and
-  still on. Never a setting the parent had on. Residue as before: a process death with the page in front leaves
+  "couldn't connect" once Location is off, e.g. a connect and then "Logg på" at once), then Location off if ours,
+  still on, and not wanted on by the cached policy now (`locationStaysOn`: the CONFIG_LOCATION switch for Find my
+  device, or the zone watch - a sync while the page was shown found it on and left it; code QA L4). Never a setting
+  the parent had on or wants on. Residue as before: a process death with the page in front leaves
   Location on.
-- **The Bluetooth page** stops discovery in `onStop` (a discovery cut short runs again at the next start) and drops the
+- **The Bluetooth page** stops discovery in `onStop` (a discovery cut short runs again at the next start, unless a pair
+  or a connect runs then - `btStartScans`; a discovery that didn't start returns no receiver, so nothing waits for its
+  end; code QA L3) and drops the
   rows it may no longer pair (`dropUnoffered`) in `onStart` after the gate and when `loadBonded` returns - the applied
   listener is off while stopped, so a page left in the card during a restrictions pause listed non-audio devices with
   "Pair" afterwards (the tap re-checked, so nothing could be paired).
@@ -275,9 +283,13 @@ Meldinger, Kalender and the phone book do. The drawer and the parent's Settings 
 - **Starting windows on a Recents restore**: after a process death or a destroyed activity Shell draws the top
   activity's splash - Kid Settings' is `kid_ground`, correct; a sub-page's is `KidPageTheme`'s `kid_page_ground` in the
   **phone's** night mode, a wrong-look flash when it differs from the kid's look. Accepted (design 111 §2.3,
-  `ui-polish.md` R9); twins only if the user objects after §6az row 6.
-- **Language and kiosk.** `languageClosesTask` names Kid Settings (`LauncherLocaleTest`), so the card never keeps the old
-  language's name. Our package is lock-task permitted, so `.kidsettings` joins lock task; Home stays
+  `ui-polish.md` R9); twins only if the user objects after §6az row 6. No icon on either splash: every theme inherits
+  `launcherBaseTheme`'s `splash_icon_none` (design 111's "with the Vibb icon" was wrong; code QA L6).
+- **Language and kiosk.** `languageClosesTask` names Kid Settings (`LauncherLocaleTest`): a stopped Kid Settings behind
+  Home can be the process's newest activity, which makes the system refuse the language switch (design 78 §5.3), so a
+  refused switch closes its task with the page tasks before it asks again. A switch that gets through at once leaves the
+  task, and its card keeps "Innstillinger" until the screen is shown again (as Dagen's and Meldinger's cards; code QA
+  L5). Our package is lock-task permitted, so `.kidsettings` joins lock task; Home stays
   `mLockTaskModeTasks[0]` (`kiosk-escapes-and-updates.md`); `clearLockedTask` empties the card when the kiosk goes off,
   as Dagen's. Flymodus's assistant window runs in a task of its own and focus goes back to Kid Settings' task.
   Process death: Kid Settings rebuilds everything in `onResume`; the hidden-apps list comes back closed (accepted).

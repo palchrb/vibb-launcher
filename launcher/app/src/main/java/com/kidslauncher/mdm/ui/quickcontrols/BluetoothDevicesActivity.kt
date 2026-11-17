@@ -36,6 +36,13 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
+ * Design 111 (code QA L3): whether a start runs a discovery - the page's first, or one cut short by a stop, but never
+ * while a pair or a connect runs ([busy]): a discovery then slows or breaks it, so the start only reads the bonded list
+ * and the rescan waits for a later start.
+ */
+internal fun btStartScans(firstStart: Boolean, rescan: Boolean, busy: Boolean): Boolean = firstStart || (rescan && !busy)
+
+/**
  * Quick Controls' "Manage devices" screen - scan/pair/connect/forget, built entirely on
  * [QuickControls]' Device-Owner Bluetooth APIs rather than `Settings.ACTION_BLUETOOTH_SETTINGS` or
  * any QS panel, for the same reason the rest of Quick Controls exists.
@@ -126,7 +133,7 @@ class BluetoothDevicesActivity : KidPageActivity() {
         if (guard.start()) return
         dropUnoffered()
         session = BluetoothAudio.Session(this)
-        if (firstStart || rescan) {
+        if (btStartScans(firstStart, rescan, busy = pairingAddress != null || attempts.isNotEmpty())) {
             firstStart = false
             rescan = false
             scan()
@@ -143,7 +150,11 @@ class BluetoothDevicesActivity : KidPageActivity() {
     /** Discovery ends with the page leaving the screen (design 111 §2.2): it can sit stopped in Kid Settings' card. */
     override fun onStop() {
         guard.stop()
-        if (scanning) rescan = true
+        if (scanning) {
+            rescan = true
+            // Not "Søker…" while nothing searches: the list, or the empty line, until the next start's scan.
+            showScanEnded()
+        }
         scanning = false
         QuickControls.stopBluetoothScan(this, discoveryReceiver)
         discoveryReceiver = null
@@ -170,7 +181,6 @@ class BluetoothDevicesActivity : KidPageActivity() {
         refreshList()
         loadBonded()
 
-        scanning = true
         binding.bluetoothDevicesStatusMessage.text = getString(R.string.bluetooth_devices_scanning)
         binding.bluetoothDevicesStatusMessage.visibility =
             if (discovered.isEmpty()) View.VISIBLE else View.GONE
@@ -196,14 +206,23 @@ class BluetoothDevicesActivity : KidPageActivity() {
                 runOnUiThread {
                     scanning = false
                     if (isFinishing || isDestroyed) return@runOnUiThread
-                    if (discovered.isEmpty()) {
-                        binding.bluetoothDevicesStatusMessage.text =
-                            getString(R.string.bluetooth_devices_empty)
-                        binding.bluetoothDevicesStatusMessage.visibility = View.VISIBLE
-                    }
+                    showScanEnded()
                 }
             },
         )
+        // Code QA L3: a discovery that didn't start (Bluetooth off, the adapter refusing) has no end to wait for.
+        scanning = discoveryReceiver != null
+        if (!scanning) showScanEnded()
+    }
+
+    /** No discovery runs: the empty line while nothing is listed, else the list alone. */
+    private fun showScanEnded() {
+        if (discovered.isEmpty()) {
+            binding.bluetoothDevicesStatusMessage.text = getString(R.string.bluetooth_devices_empty)
+            binding.bluetoothDevicesStatusMessage.visibility = View.VISIBLE
+        } else {
+            binding.bluetoothDevicesStatusMessage.visibility = View.GONE
+        }
     }
 
     /** The bonded devices with their states, read off the main thread. */

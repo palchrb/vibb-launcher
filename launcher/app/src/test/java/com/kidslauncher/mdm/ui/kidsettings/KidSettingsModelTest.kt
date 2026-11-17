@@ -172,6 +172,16 @@ class KidSettingsModelTest {
         for (row in rows) {
             assertEquals("$row", row.step, wifiLocationStep(row.event, row.enabledNow, row.byUs, row.polling))
         }
+        // Code QA L4: ours, but the parent's policy wants it on now (Find my device, the zone watch): left on, no longer
+        // ours; the poll still dropped.
+        assertEquals(
+            WifiLocationStep(stopPoll = true, location = null, byUs = false, scan = false),
+            wifiLocationStep(WifiPageEvent.STOP, enabledNow = true, byUs = true, polling = true, policyKeepsOn = true),
+        )
+        assertEquals(
+            WifiLocationStep(stopPoll = false, location = true, byUs = true, scan = true),
+            wifiLocationStep(WifiPageEvent.START, enabledNow = false, byUs = false, polling = false, policyKeepsOn = true),
+        )
         // A start then a stop leaves Location as it was found, whichever it was.
         for (found in listOf(true, false)) {
             val start = wifiLocationStep(WifiPageEvent.START, found, byUs = false, polling = false)

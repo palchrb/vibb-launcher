@@ -167,7 +167,8 @@ The build takes whichever path the user picks.
 **Starting windows on a Recents restore (L2, L8).** Shell's `PhoneStartingWindowTypeAlgorithm` returns a **splash**
 for `!processRunning`, or for a task switch with `!activityCreated`, before it considers a snapshot. So:
 - A card brought back after a process death, or a warm start (activity destroyed, process alive), gets the top
-  activity's splash: `windowSplashScreenBackground` with the Vibb icon. That holds for both (a) and (b). (a)'s
+  activity's splash: `windowSplashScreenBackground` (no icon - every theme inherits `launcherBaseTheme`'s
+  `splash_icon_none`; corrected after the build, code QA L6). That holds for both (a) and (b). (a)'s
   "no starting window" covers only a launch from Home with the wallpaper visible.
 - For Kid Settings itself the splash is `kid_ground`, correct under (b) and defined under (a).
 - For a sub-page on top it is `KidPageTheme`'s `kid_page_ground` in the **phone's** night mode. That is a wrong-look
@@ -192,8 +193,10 @@ change made from Kid Settings in front runs at once, with no sub-page alive (`pa
   - The crash-loop residue that `kiosk-escapes-and-updates.md` names covers this task as it covers every page task; its
     list of page tasks gains `.kidsettings`.
   - When the kiosk goes off, `clearLockedTask` empties the card, as it does Dagen's. Harmless.
-- **Language.** `languageClosesTask` gains `KidSettingsActivity` (rows in `LauncherLocaleTest`), so the label is always
-  the current language's.
+- **Language.** `languageClosesTask` gains `KidSettingsActivity` (rows in `LauncherLocaleTest`): a stopped Kid Settings
+  behind Home can make the system refuse the switch, and a refused switch then closes its task. A switch that gets
+  through at once leaves it, and the card keeps its old label until the screen is shown again (corrected after the
+  build, code QA L5).
 - **Process death.** Kid Settings rebuilds everything in `onResume`. The hidden-apps list's open state comes back
   closed (accepted).
 - **Flymodus.** `startVoiceActivity` runs in a task of its own. When it ends, focus goes to the next locked task, now
@@ -249,7 +252,7 @@ rule turned on with `rules-now`. `compat34` started with `-wipe-data -dns-server
 | 3 | Recents and Back | The card "Innstillinger" with the Vibb icon and the wallpaper in the thumbnail; a tap brings back the same instance. Wi-Fi page, Home, tile: the Wi-Fi page comes back. The card with a picker on top, and with the sign-in entry on top (L5). Back twice ends on Home and the card stays | 36, 34 |
 | 4 | Location and the mask | Wi-Fi page, then Home: `settings get secure location_mode` is off; back on the page: on. A connect followed by an immediate Home gives no false "couldn't connect". The PWA takes the Wi-Fi bit away, then the card: Kid Settings without the row, the page gone, Location never turned on | 36, 34 |
 | 5 | A rule, and Flymodus | Wi-Fi page, Home, `Lekser` on, then the card: the time-rule screen, the page finished, no scan started (logcat). The rule ended, then the card: Kid Settings. Flymodus on and off from Kid Settings: back on Kid Settings | 36, 34 (rule only) |
-| 6 | Process death | Lys with the phone in dark theme; Bluetooth page, Home, `kill -9`, then the card. Expected: a splash in the phone's mode with the Vibb icon (L2). Record it; then the page is restored. Back twice ends on Home; the lock-task list shows Home first | 36, 34 |
+| 6 | Process death | Lys with the phone in dark theme; Bluetooth page, Home, `kill -9`, then the card. Expected: a splash in the phone's mode, without an icon (`splash_icon_none`; code QA L6). Record it; then the page is restored. Back twice ends on Home; the lock-task list shows Home first | 36, 34 |
 | 7 | Language and look | The parent switches nb to en with the card in Recents, then Home: the switch goes through (the task closed). In Kid Settings, Lys: Meldinger's, Dagen's and the phone book's tasks close, Kid Settings' stays | 36, 34 |
 
 ## 5. Size and question
