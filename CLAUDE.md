@@ -74,6 +74,17 @@ imported with full history (`git subtree`), so old commit hashes in the docs sti
 - `kids-launcher-mdm/`, `kid-phone-server/` (gitignored, if present) - the old standalone clones.
   Don't edit them; work in `launcher/` and `server/`.
 
+## Words in the UI
+
+The user (2026-11-17): "vi bør ikke være så wordy og over-explaining hele tiden". This holds for the PWA, the
+launcher and the music app, in nb and en alike:
+- A heading or a choice is a word or two ("Roaming": "På", "Av", "Bare Vibb"); no sub-line under a choice that
+  restates or explains it.
+- An explanation goes behind an (i) alone (the PWA's `<details class="info">`), with no "About ..." label beside it.
+- A state line says the state, in a few words; how to change it goes behind the (i).
+- Say it once: no footer that repeats the page, no sentence that repeats the label above it.
+- On the kid's phone fewer words still. A design note's copy table is checked against this before the build.
+
 ## Build and test
 
 **Supported Android: 14 to 17** (the user, 2026-11-16: "alt fremover skal være 14-17 kompatibelt"). Both apps are minSdk 34 and every change must work on Android 14, 15, 16 and 17: an API above 34 behind a `Build.VERSION.SDK_INT` gate with a sane path on 14 (lint's NewApi in CI catches a missing gate, never suppress it), and a platform behaviour that differs between them (Device Owner, lock task, roles, notifications and Modes, VPN, telephony, location, WebView) checked against each version's behaviour changes. A design note names the versions it was checked on; an emulator gate that depends on the version runs on the lowest and the highest it touches. The Jelly Star runs Android 16 (Unihertz's update, from September 2026).
