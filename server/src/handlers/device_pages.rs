@@ -2270,16 +2270,14 @@ pub(crate) async fn render_apps(
             let off = policy.calls_mode == "off";
             dialer_view = Some(AppView {
                 builtin: true,
+                // Managed: the title and the sub-line already say so - no value, only the chevron.
                 link: Some((
                     format!("/devices/{id}/calls#settings"),
-                    t(
-                        lang,
-                        if off {
-                            "device.calls.mode.off"
-                        } else {
-                            "device.calls.mode.managed"
-                        },
-                    ),
+                    if off {
+                        t(lang, "device.calls.mode.off")
+                    } else {
+                        ""
+                    },
                 )),
                 logo: logos.get(&package).cloned(),
                 perms: None,
