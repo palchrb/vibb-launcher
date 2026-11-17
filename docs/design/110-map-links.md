@@ -66,7 +66,7 @@ Agreed in the queue entry:
   - The Artbox Android share resolved to a `?q=<name, address>&ftid=` link without coordinates.
   - `geo:0,0?q=<address>` found the place offline.
   - Google's long HTML page carries the **requester's** IP location as `center=`.
-- **The user's later research** (a shared ChatGPT conversation, read as data: `scratchpad/cgpt/texts.txt`):
+- **The user's later research** (a conversation the user shared on 2026-11-17, read as data):
   - The user's own server got the place by feature id from `/maps/preview/place` in 239 ms. This is how the open-source
     `gmapsUnshortener` (`app/services/google.py`, `place_details()`) works.
   - `gmapsUnshortener`'s upstream (codeberg.org/retiolus/gmapsUnshortener) is **AGPL-3.0-only** according to its
