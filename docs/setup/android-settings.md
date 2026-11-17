@@ -115,3 +115,22 @@ The same over adb (emulator or a phone with debugging on):
 A short link is resolved by GeoShare asking Google where it points (Google learns that this phone opened a link Google
 made for the sender; the place is the sender's, not the kid's): the DNS filter must let GeoShare reach those hosts. A
 device owner has no API for either setting, so this stays a manual step.
+
+## Banners for other apps' messages (2026-11-17)
+
+Android shows a notification as a banner (heads-up) only when its channel's importance is High. Some apps create
+their message channel at Default, so a message gives only a sound, the count on Home and an icon in the shade - no
+banner. Element X does this: its "Noisy notifications" channel ("Støyende varsler") is created at importance 3.
+Vibb One can't change another app's channels (Android allows only the app itself and the user), so it's a one-time
+choice per app on the phone, in a pause:
+
+1. Pause the restrictions (the PWA, or Vibb One's Settings with the parent code) - Android's Settings is hidden
+   otherwise, and the apps' "notification settings" links and the shade's gear go nowhere on purpose.
+2. Settings › Apps › the app (e.g. Element X) › Notifications.
+3. Tap the channel's name itself ("Noisy notifications" / "Støyende varsler"), not its switch.
+4. Under "Alerting"/"Varsle", turn on "Pop on screen" / "Vis på skjermen".
+5. End the pause.
+
+Check: `adb shell dumpsys notification --noredact | grep -A12 "AppSettings: io.element.android.x"` shows the channel
+with `mImportance=4`. Vibb One's own Meldinger channel needs no step: it is created at High (PLAN, "No heads-up banner
+on Home for messages").
