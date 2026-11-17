@@ -4,12 +4,13 @@
     python3 -I scripts/music-icon.py             # write both drawables
     python3 -I scripts/music-icon.py --selftest  # check the committed ones are what this script writes
 
-The user's own drawing `vibb-music-e2m` (2026-11-17, e2 with the two inner rings drawn closer to the outer one; e2 was
-2026-11-16, after q7) rebuilt as vectors, so it is the same picture at every size: night rings on the Vibb peach, the
+The user's own drawing `vibb-music-p82` (2026-11-17: "Kjør på p82% logoen"; q7's rings with the play sign shrunk to
+82 % around its own centroid, for air between the play sign and the inner ring - e2m before it) rebuilt as vectors, so
+it is the same picture at every size: night rings on the Vibb peach, the
 Vibb mark's outer three rings (Vibb mark (c) palchrb, NOTICE.md) and a play triangle with round corners, nudged right,
-where the mark's inner ring and dot are. Its geometry, from the drawing's SVG: a 100-unit full-bleed canvas (viewBox 0
-0 100 100), the outer ring as in q7 and the two inner ones drawn in to an even spacing of about 8.8 units (e2 had 9.6)
-(a scale and a stroke each, so every ring is drawn 5.52 units wide), a play sign about 20% larger as below. The ring
+where the mark's inner ring and dot are. Its geometry, from the drawing's vector: a 100-unit full-bleed canvas (viewBox 0
+0 100 100), the three rings at the mark's own spacing (one scale and stroke for all, so every ring is drawn 5.52 units
+wide), the play sign q7's at 82 % about its centroid (x -0.53), its round-join stroke scaled with it. The ring
 paths are read from the launcher's adaptive icon (launcher/app/src/main/res/drawable/ic_launcher_foreground.xml, from
 palchrb/vibb pi/art by launcher/scripts/vibb-icon.py) - hand-shaped polylines, so copied, not approximated; the
 launcher is read, never written.
@@ -43,14 +44,14 @@ WHITE = "#FFFFFFFF"
 # The drawing: a 100-unit canvas centred on 0 (the SVG's viewBox 0 0 100 100, centre 50).
 CANVAS = 100.0
 RINGS = 3  # the mark's outer three (of four; the inner one and the dot gave way to the play button)
-# Each ring in its own scale (of the launcher's path) and stroke (in path units, before the scale): the drawn stroke
-# is the same 5.52 canvas units on all three, the spacing even.
-RING_SCALES = (1.5333, 1.4950, 1.4260)
-RING_STROKES = (3.600, 3.692, 3.871)
+# Each ring's scale (of the launcher's path) and stroke (in path units, before the scale): the same for all three since
+# P82, so the drawn stroke is 5.52 canvas units and the spacing the Vibb mark's own.
+RING_SCALES = (1.5333, 1.5333, 1.5333)
+RING_STROKES = (3.600, 3.600, 3.600)
 # The play triangle, canvas units from the centre: a sharp triangle drawn with a round-join stroke, which is what
 # rounds its corners.
-TRI = ((-7.154, -10.8), (12.718, 0.0), (-7.154, 10.8))
-TRI_STROKE = 4.32
+TRI = ((-5.962, -8.856), (10.333, 0.0), (-5.962, 8.856))
+TRI_STROKE = 3.542
 
 # Adaptive icon: 108 dp layer, 72 dp visible, 66 dp safe zone. Small icon: 24 dp, 22 dp live.
 LAYER_DP, VISIBLE_DP, SAFE_DP = 108, 72, 66
