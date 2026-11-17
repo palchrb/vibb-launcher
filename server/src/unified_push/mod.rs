@@ -377,43 +377,40 @@ pub fn secret_hash(secret: &str) -> Vec<u8> {
     sha2::Sha256::digest(secret.as_bytes()).to_vec()
 }
 
-/// The refusal's words for an address [check_origin] won't take.
-pub const ORIGIN_REFUSED: &str = "app_push.settings.refused";
-
 /// The phones' public address for app push (§3.1), as typed: `https://` and an origin only (no path - a lone `/` is
 /// dropped -, query, fragment or user), never a Tailscale IP literal. Element X probes
 /// `scheme://host[:port]/_matrix/push/v1/notify`, so the phone listener must sit at the root of that name. The origin
-/// as stored (`https://host[:port]`, the host lower-cased, the default port left out), or [ORIGIN_REFUSED].
-pub fn check_origin(typed: &str) -> Result<String, &'static str> {
+/// as stored (`https://host[:port]`, the host lower-cased, the default port left out); `None` refused.
+pub fn check_origin(typed: &str) -> Option<String> {
     let typed = typed.trim();
     if !typed
         .get(..8)
         .is_some_and(|s| s.eq_ignore_ascii_case("https://"))
+        || typed.contains('?')
+        || typed.contains('#')
     {
-        return Err(ORIGIN_REFUSED);
+        return None;
     }
-    let url = reqwest::Url::parse(typed).map_err(|_| ORIGIN_REFUSED)?;
+    let url = reqwest::Url::parse(typed).ok()?;
     if url.scheme() != "https"
         || !url.username().is_empty()
         || url.password().is_some()
         || url.path() != "/"
         || url.query().is_some()
         || url.fragment().is_some()
-        || typed.contains('?')
-        || typed.contains('#')
     {
-        return Err(ORIGIN_REFUSED);
+        return None;
     }
-    let host = url.host_str().ok_or(ORIGIN_REFUSED)?;
+    let host = url.host_str()?;
     if let Ok(ip) = host
         .trim_start_matches('[')
         .trim_end_matches(']')
         .parse::<std::net::IpAddr>()
         && crate::net::is_tailnet(ip)
     {
-        return Err(ORIGIN_REFUSED);
+        return None;
     }
-    Ok(url.origin().ascii_serialization())
+    Some(url.origin().ascii_serialization())
 }
 
 /// `/settings/push`'s prefill from Phone Setup's saved address (L7): its origin when it is `https://` and passes
@@ -424,7 +421,7 @@ pub fn prefill(server_url: &str) -> Option<String> {
     if url.scheme() != "https" {
         return None;
     }
-    let origin = check_origin(&url.origin().ascii_serialization()).ok()?;
+    let origin = check_origin(&url.origin().ascii_serialization())?;
     let host = url.host_str()?.to_ascii_lowercase();
     let port = url.port_or_known_default()?;
     if host.ends_with(".ts.net") && ![443, 8443, 10000].contains(&port) {
@@ -604,7 +601,7 @@ mod tests {
             ("https://kid.tail1234.ts.net", "https://kid.tail1234.ts.net"),
             ("https://203.0.113.7", "https://203.0.113.7"),
         ] {
-            assert_eq!(check_origin(typed).as_deref(), Ok(stored), "{typed}");
+            assert_eq!(check_origin(typed).as_deref(), Some(stored), "{typed}");
         }
         for typed in [
             "http://phones.example.com",
@@ -617,7 +614,7 @@ mod tests {
             "https://[fd7a:115c:a1e0::1]",
             "",
         ] {
-            assert_eq!(check_origin(typed), Err(ORIGIN_REFUSED), "{typed}");
+            assert_eq!(check_origin(typed), None, "{typed}");
         }
         // The prefill (L7): Phone Setup's https address by its origin; a ts.net name only on Funnel's ports.
         assert_eq!(

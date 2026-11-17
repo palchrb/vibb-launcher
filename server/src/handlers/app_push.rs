@@ -168,8 +168,9 @@ pub async fn save_settings(
         None
     } else {
         match up::check_origin(typed) {
-            Ok(origin) => Some(origin),
-            Err(why) => {
+            Some(origin) => Some(origin),
+            None => {
+                let why = "app_push.settings.refused";
                 let shown: String = typed.chars().take(200).collect();
                 return render_settings(
                     &state,
