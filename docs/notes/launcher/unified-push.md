@@ -135,7 +135,7 @@ register rows) run by `UpEngine`.
   act; an unknown `why` reads as `outside`). `UpRules.refreshes`: a confirmed listed row whose `refreshMs` is null or a day
   old, **only while the phone is in use** (`PowerManager.isInteractive && !isDeviceIdleMode`, `UpPhone.inUse`). A refresh
   that falls due otherwise waits for the next accepted policy while in use, or the unlock: `UpRuntime` registers a
-  context receiver for `ACTION_USER_PRESENT` (`RECEIVER_NOT_EXPORTED`, once, when the engine is built; manifest receivers
+  context receiver for `ACTION_USER_PRESENT` (`RECEIVER_EXPORTED`: SystemUI sends it from its own uid, design 59's trap; protected, once, when the engine is built; manifest receivers
   don't get it) that calls `UpEngine.userPresent`. `UpRules.pass` gives one `NEW_ENDPOINT` per row (L2): a due ping or
   re-send carries the refresh (its id; `refreshMs` set).
 - **Through the raise (M1).** Every `NEW_ENDPOINT` that doesn't answer a REGISTER goes through `RaiseToForeground`
@@ -154,7 +154,7 @@ register rows) run by `UpEngine`.
   cause does (L7): `NOTE_UNANSWERED` when the app's registration is confirmed again, `NOTE_BAD_KEY` when a key is taken
   (`UpStore.clearNote`).
 - **The gate's hook.** `UpDebugReceiver` (src/debug only, DUMP-guarded; `checkReleaseHasNoDebugHook`,
-  `DebugHookAbsentTest`) backdates a row's stamps by N days in the store (`--es reg --ei days [--es field]`) on the
+  `DebugHookAbsentTest`) backdates a row's stamps by N days in the store (`--es reg --ei days [--es field] [--ei send_hours H]`; the last sets the ping's last send H hours ago so row 2's "dead" is one step) on the
   engine's executor, and drops the engine's in-memory ack limit of that token (`UpEngine.forgetAcks`, L5): the system
   clock is never moved (L11).
 

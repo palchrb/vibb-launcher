@@ -129,7 +129,7 @@ object UpRuntime {
     /**
      * Design 108b §3.3: the refreshes that waited for the phone to be in use go out at the next unlock. `USER_PRESENT`
      * isn't delivered to a manifest receiver, so this one is context-registered, once, in the process that holds the
-     * anchor's foreground service (the engine is built here); not exported - it is a protected system broadcast. The same
+     * anchor's foreground service (the engine is built here); exported (SystemUI is another uid; the broadcast is protected). The same
      * on Android 14-17. A process that restarts registers again at its first use, and the next accepted policy covers
      * what it missed.
      */
@@ -140,7 +140,10 @@ object UpRuntime {
                     if (intent.action == Intent.ACTION_USER_PRESENT) post { engine?.userPresent() }
                 }
             }
-            app.registerReceiver(receiver, IntentFilter(Intent.ACTION_USER_PRESENT), Context.RECEIVER_NOT_EXPORTED)
+            // RECEIVER_EXPORTED on purpose (gate 2026-11-17, row 3b; design 59's trap, PinLockRuntime): SystemUI sends
+            // USER_PRESENT from its own uid, which a NOT_EXPORTED receiver never hears. Safe: it is a protected broadcast,
+            // only the system can send it, and the filter holds this one action.
+            app.registerReceiver(receiver, IntentFilter(Intent.ACTION_USER_PRESENT), Context.RECEIVER_EXPORTED)
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Couldn't listen for the unlock: ${e.javaClass.simpleName}")
         }

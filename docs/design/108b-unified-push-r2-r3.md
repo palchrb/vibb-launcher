@@ -688,7 +688,7 @@ The rig is `docs/testing/emulator.md` §6ay's: `compat34`, `jelly36`, the debug 
 | Row | What | Expected |
 |---|---|---|
 | 1 ping | the probe registered; the store backdated 24 days; a sync with the screen off and `dumpsys deviceidle force-idle` | the probe gets `NEW_ENDPOINT` with the same endpoint and a new id, inside the raise (its uid at the foreground-service level); it acks; no second ping at the next sync |
-| 2 dead | "ack off"; backdated 24 days (ping), then the ping 8 days; a sync each | `UNREGISTERED` to the probe; a POST to its endpoint gets 410; the PIN-gated Settings row shows the note |
+| 2 dead | "ack off"; backdated 24 days (ping), a sync; then `--es field pingSentMs --ei days 8 --ei send_hours 2` (the ping 8 days old, its last send 2 h old, so the daily re-send is not due), a sync | `UNREGISTERED` to the probe; a POST to its endpoint gets 410; the PIN-gated Settings row shows the note |
 | 3 outside, idle | `--outside` to the probe's endpoint; the phone idle (screen off, force-idle); a sync | the PWA's warning on the probe's row; the policy's `refresh` lists the `reg`; **no** `NEW_ENDPOINT` while idle |
 | 3b outside, in use | unlock the phone | `NEW_ENDPOINT` within a second of `USER_PRESENT`, raised; no second one at the next sync or the next unlock |
 | 4 healed | a gateway POST (our `notify`) for the probe's pushkey | the PWA's warning gone; `refresh` empty in the next policy |
