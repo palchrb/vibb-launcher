@@ -13,7 +13,25 @@ through the same setting. So §6.6's F-Droid runbook and any "Element X F-Droid 
 revision 2 has it (variant A, the switch on by default, the Matrix gateway in R1, Q8 minimised bodies). Where this
 amendment and an older line below disagree, the amendment wins.
 
-## Revision 2 (2026-11-16, after the design QA and the user's answers)
+## Built: R1-C and R1-S (branch `up`, 2026-11-17)
+
+The server half is built; the notes are `docs/notes/server/unified-push.md` and `server/src/unified_push/README.md`.
+Where the build differs from the sections below:
+
+- i18n keys `app_push.*` (the parents' web push owns `push.*`); `AppState.unified_push` holds `up_notify`, the
+  coalescing, the buckets and the slots.
+- Migration 0152 also has `unified_push_settings.last_discovery_at` ("last seen from outside"), `up_previous_origins`
+  (every replaced origin with its own 30-day end, in place of `previous_origin`/`origin_changed_at`, R1-SR L7) and a
+  trigger that tombstones every deleted registration, a cascade included.
+- The 30-day-unseen prune is in R1 (its test is §12.2's); `outside_gateway_at` is recorded (R2 shows it).
+- A TTL 0 push is kept 30 s while the stream is open; Matrix `prio: high` is the urgency; a Matrix body arriving at
+  `/up/` is minimised too; the off switch is a confirm sheet, turning on an auto-saving switch.
+- After the security review (R1-SR, §16's second table): the edge takes the client, then the body, then a slot; the
+  phone's sustained rate is ntfy's one per 5 s with a "noisy app" line; a per-client request bucket; registration in
+  one `BEGIN IMMEDIATE`; a per-phone hourly registration cap; the Matrix body by an allow-list (the pushkey dropped);
+  every replaced origin kept its 30 days.
+- Not in R1-S: `scripts/fake-homeserver.py` (R1-G), VAPID (R3), the launcher note's rule paragraph (R1-L/merge).
+
 
 The sections a finding changes are rewritten in place, so where revision 1 and a section disagree, the section as it
 now reads is the design. §16 maps every finding to its fix. What changed, in short:
@@ -1525,4 +1543,21 @@ in the section named.
 | **L10** | random ids; register churn; every allowlist writer; the scripts list; `FLAG_RECEIVER_FOREGROUND` | random keys for `Location` and MESSAGE; 20 new registrations an hour per app (`busy`); `prune_disallowed` in every writer with a source scan; `fake-homeserver.py` in the root `CLAUDE.md`; `FLAG_RECEIVER_FOREGROUND` named as no fallback | §2.1, §3.4, §3.5, §3.7, §3.8, §5.1, §5.4, §9, §15 |
 | **L11** | the Play Store and Play services can't simply be hidden | the Play Store is the required verifier and can't be hidden; Play services can't while Find My Device is an active admin | §8 |
 | **Gate** | a row for Stop with an app that re-registers by itself | added | §12.3, row 13 |
+
+### The security review of R1-S (R1-SR, 2026-11-17: 0 H, 3 M, 9 L), fixed on `up`
+
+| Finding | What it said | The fix |
+|---|---|---|
+| **M1** | slow bodies held every global slot | the edge takes the per-client cap and bucket, then the body (its own bound of 256 reads), and only then one of the 32 handler slots; DEPLOY.md's Caddy site `request_buffers 8KiB` |
+| **M2** | `prune_disallowed` on another pool connection would block inside a `BEGIN IMMEDIATE` writer (design 109) | it takes the writer's connection and runs before its commit; the nudge after; `prune_disallowed_now` for a writer without a transaction; the note says how |
+| **M3** | the queue's caps untested | `tests::unified_push::the_queue_caps_and_ttl_zero`: 101 rows, the 1 MiB phone cap, 507, TTL 0 closed and open |
+| **L1** | `outside_gateway_at` written for any push | only after a queued push, at most once a minute |
+| **L2** | battery drain from a steady flood | the phone's sustained rate one per 5 s (burst 120 kept); Device › Apps' "Many pushes" line from 300 a day |
+| **L3** | a lookup for every request | a per-client request bucket (40, 20 a second) at the edge, before the database |
+| **L4** | registration races | checks and insert in one `BEGIN IMMEDIATE`; the churn check and count under one lock |
+| **L5** | no per-phone churn cap | 60 new registrations an hour per phone, across its apps (`busy`) |
+| **L6** | a deny-list of Matrix keys | an allow-list (`matrix::KEPT`, `KEPT_DEVICE`); the pushkey dropped (Element X reads only `event_id`, `room_id`, `counts`, `prio`); the contract's Matrix body changed in both copies |
+| **L7** | a second origin change dropped the first | `up_previous_origins`: every replaced origin until its own 30 days |
+| **L8** | DEPLOY.md's listener table, the footer's wording | the push routes named; "No Matrix message text is kept; app pushes are held at most 24 hours" |
+| **L9** | ban-map eviction | a client that isn't banned is evicted first |
 

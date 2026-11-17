@@ -41,7 +41,7 @@ pages and the phones' API can be exposed differently:
 | `.env` setting | Default | What it does |
 |---|---|---|
 | `BIND_ADDR` | `127.0.0.1:3100` | The admin listener: the PWA, and the phones' API while `ADMIN_DEVICE_API` is on. |
-| `DEVICE_BIND_ADDR` | unset | The phone listener, e.g. `127.0.0.1:3101`: only the phones' API (`/api/devices/*`) and `/healthz`; every other path is a bare 404. |
+| `DEVICE_BIND_ADDR` | unset | The phone listener, e.g. `127.0.0.1:3101`: only the phones' API (`/api/devices/*`), app push's public routes (`/up/` and `/_matrix/push/v1/notify`, design 108) and `/healthz`; every other path is a bare 404. |
 | `ADMIN_DEVICE_API` | `on` | The admin listener also serves the phones' API (the URLs phones set up before 0.23.0 use). `off` once every phone uses the phone listener. |
 | `ADMIN_PUBLIC` | `off` | The admin listener answers **only loopback and tailnet clients** (100.64.0.0/10, fd7a:115c:a1e0::/48); everyone else gets 403 (logged as `admin_refused` in the security log). `on` lets every client in - see (b) below. |
 | `TRUSTED_PROXIES` | `127.0.0.1,::1` | Proxies whose `X-Forwarded-For` is believed: exact proxy addresses (a range only if every address in it is one of your proxies). Your proxy on the same box needs nothing here. |
@@ -137,6 +137,9 @@ phones.example.com {
 	}
 	reverse_proxy 127.0.0.1:3101 {
 		header_up -Tailscale-User-Login
+		# App push (design 108): Caddy reads a request body (a push is at most 4 KiB) before the server sees it,
+		# so a slow client waits on Caddy, never on the server's push slots.
+		request_buffers 8KiB
 	}
 }
 
@@ -919,9 +922,11 @@ nothing about a push is logged.
 - **Element X** (its Play build stays): once per account, in Element X, Settings › Notifications › Advanced › Push
   provider › Vibb One. Device › Apps says when an allowed Element X hasn't connected. Switching back to Google is the
   same setting.
-- **Caddy:** nothing changes for a site that proxies the whole phone host (`reverse_proxy 127.0.0.1:3101`, as above).
-  The clients' addresses count as everywhere on the phone listener (`TRUSTED_PROXIES` names the proxy). If the site
-  has access logging on, skip `/up/*`: the path is a capability (`log_skip /up/*`, Caddy 2.8 and later).
+- **Caddy:** a site that proxies the whole phone host (`reverse_proxy 127.0.0.1:3101`, as above) serves app push as
+  it is; add `request_buffers 8KiB` inside its `reverse_proxy` block (as in the example above), so Caddy holds a client
+  that sends its body slowly and the server's push slots never wait on one. The clients' addresses count as everywhere
+  on the phone listener (`TRUSTED_PROXIES` names the proxy). If the site has access logging on, skip `/up/*`: the path
+  is a capability (`log_skip /up/*`, Caddy 2.8 and later).
 - **nginx:** `location /up/ { proxy_pass http://127.0.0.1:3101; access_log off; client_max_body_size 8k; }` and
   `location = /_matrix/push/v1/notify { proxy_pass http://127.0.0.1:3101; client_max_body_size 8k; }`.
 - **Check from outside** (mobile data):
@@ -931,10 +936,13 @@ nothing about a push is logged.
   Settings › App push shows when an app last checked the address and when the last push came in.
 - **A homeserver on your own LAN** that resolves `phones.example.com` to a private address needs it in Synapse's
   `ip_range_whitelist` (Synapse refuses private ranges for pushes by default).
-- **Changing the address:** the old one keeps working 30 days while the phones hand every app its new address.
-  Emptying the field turns app push off for every phone.
-- **Limits:** a push is at most 4096 bytes and waits at most 24 hours; each phone takes 120 at once and then one a
-  second, each app address 30 and then one every 2 seconds; an address that was removed answers `410` for 30 days.
+- **Changing the address:** the old one keeps working 30 days while the phones hand every app its new address; change
+  it again within those days and every replaced address keeps its own 30 days. Emptying the field turns app push off
+  for every phone and forgets the old addresses.
+- **Limits:** a push is at most 4096 bytes and waits at most 24 hours; each phone takes 120 at once and then one every
+  5 seconds (every push wakes the phone, so a steady flood would drain its battery; Device › Apps names an app that
+  pushes about 300 times a day or more), each app address 30 and then one every 2 seconds; each sending address 40
+  requests at once and then 20 a second; an address that was removed answers `410` for 30 days.
 
 ## Useful commands on the Pi
 
