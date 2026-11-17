@@ -76,7 +76,13 @@ only with it may the app start its foreground service from MESSAGE (refused with
 policy engine doesn't list the Link Activity's PPA while the activity is disabled and lists it again with the enabling
 (no chooser window seen); a hung server ends a REGISTER after OkHttp's 10 s read timeout. The launcher's debug build
 logs each MESSAGE send and each pull's acks by key prefix. Not run: 2b (a trusted CA), 5 (a time rule), 12 (a second
-instance). Owed on the Jelly Star: Element X's Play build switched to Vibb One (the real connector, its pusher and
+instance). **Row 5 (the user's question), run afterwards on both:** during a rule the suspended app gets every
+MESSAGE, may start its FGS with the raise (refused without), and posts - but Android hides every notification of a
+suspended package (NMS `mHidden`, SystemUI's `IsSuspendedFilter`): no sound, no vibration, no heads-up, nothing in the
+shade. When the rule ends they all appear in the shade without sound or vibration; Android 14's SystemUI also shows a
+heads-up for each, 16's doesn't (silent). With the raise skipped the same, except that the app posts from its receiver
+(no FGS) - so L6's open question is only about the FGS window, not about what the kid sees or hears. Owed on the Jelly
+Star: Element X's Play build switched to Vibb One (the real connector, its pusher and
 discovery with the family's homeserver), a ring in Doze and its latency against FCM, the tsnet path, 112/AML.
 
 **R1-L's code QA (1 H, 3 M, 6 L), fixed on `up`:**
