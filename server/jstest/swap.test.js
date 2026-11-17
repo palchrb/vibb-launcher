@@ -504,6 +504,32 @@ test("103-2: a form in a sheet that closes anchors on the sheet's row; one that 
     assert.strictEqual(anchorDelta(doc3, chain3), 0);
 });
 
+test("109: a refused row whose form is gone follows its moved cell (the managed Phone app's row)", () => {
+    // Before: the row's cell with its form in the lower group; after: the cell without a form in the group above.
+    const cell = (withForm) => h("div", { id: "app-7", class: "cell", "data-h": "40" },
+        withForm ? h("form", { action: "/a/toggle#app-7", "data-h": "40" }) : []);
+    const before = () => [
+        h("div", { id: "allowed", "data-h": "10" }, h("div", { "data-h": "300" })),
+        h("div", { id: "not-allowed", "data-h": "10" }, cell(true)),
+    ];
+    const after = () => [
+        h("div", { id: "allowed", "data-h": "10" }, cell(false), h("div", { "data-h": "300" })),
+        h("div", { id: "not-allowed", "data-h": "10" }),
+    ];
+    const doc = page(before());
+    const form = doc.querySelector("form");
+    const chain = anchorChain(doc, mainOf(doc), form);
+    assert.ok(chain.some((c) => c.id === "app-7"), "the cell is in the chain");
+    const was = chain.find((c) => c.id === "app-7").top;
+    const cellEl = doc.getElementById("app-7");
+    morph(mainOf(doc), mainOf(page(after())), ctxFor(doc, { saved: (x) => x === form }));
+    assert.strictEqual(doc.getElementById("app-7"), cellEl, "the cell is moved, not rebuilt");
+    assert.ok(!doc.querySelector("form"), "the form is gone");
+    const delta = anchorDelta(doc, chain);
+    assert.notStrictEqual(delta, 0, "followed, not skipped");
+    assert.strictEqual(delta, cellEl.getBoundingClientRect().top - was, "the cell keeps its old top");
+});
+
 test("103-15: without a save the anchor is the first id'd element at or below main's visible top", () => {
     const doc = page([h("div", { id: "a", "data-h": "100" }), h("div", { id: "b", "data-h": "100" }), h("div", { id: "c", "data-h": "100" })]);
     doc.scrollTop = 150;

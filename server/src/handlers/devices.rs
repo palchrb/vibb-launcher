@@ -1368,6 +1368,29 @@ pub async fn save_app_display(
     if exists.is_none() {
         return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.device_not_found");
     }
+    // Design 109: the managed dialer's row has no form; a stale one is refused before anything is read or validated.
+    match dialer_locked(&state, id, &package).await {
+        Ok(false) => {}
+        Ok(true) => {
+            let anchor = app_anchor(&package, None);
+            return crate::settings_log::refused(Redirect::to(
+                &crate::handlers::device_pages::apps_url(
+                    id,
+                    &format!("notice=dialer_managed&app={anchor}"),
+                    from,
+                    &anchor,
+                ),
+            ));
+        }
+        Err(err) => {
+            tracing::error!(device_id = id, %err, "couldn't read the calls mode");
+            return crate::i18n::error(
+                lang,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "error.save_failed",
+            );
+        }
+    }
     let refuse = |error: FieldError| {
         let entered = Entered {
             label: field("label").to_string(),
@@ -1693,6 +1716,12 @@ async fn perms_target(
     let music = music_refused && crate::music::MUSIC_PACKAGES.contains(&target.package.as_str());
     if crate::play::is_play_core(&target.package) || vibb || music {
         return Err(Box::new(target.refused("perms")));
+    }
+    // Design 109: the managed dialer's row has no Permissions.
+    match dialer_locked(state, id, &target.package).await {
+        Ok(false) => {}
+        Ok(true) => return Err(Box::new(target.refused("dialer_managed"))),
+        Err(err) => return Err(Box::new(perms_save_failed(lang, id, err))),
     }
     Ok(target)
 }
@@ -2617,6 +2646,7 @@ pub(crate) fn toggle_refusal(lang: Lang, code: &str) -> Option<&'static str> {
     match code {
         "from_play" => Some(t(lang, "device.apps.refused_play")),
         "not_an_app" => Some(t(lang, "device.apps.refused_changed")),
+        "dialer_managed" => Some(t(lang, "device.apps.refused_dialer")),
         "perms" => Some(t(lang, "apps.perms.refused")),
         "perms_full" => Some(t(lang, "apps.perms.full")),
         "lock_media_full" => Some(t(lang, "apps.perms.lock_media_full")),
@@ -2766,6 +2796,14 @@ pub async fn toggle_app(
             return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.not_an_app");
         }
         return refused("not_an_app", &anchor);
+    }
+    // Design 109: while calls are managed the system dialer's row is a link; a stale form can't change it.
+    if !package_name.is_empty() {
+        match dialer_locked(&state, id, &package_name).await {
+            Ok(false) => {}
+            Ok(true) => return refused("dialer_managed", &anchor),
+            Err(err) => return failed(err),
+        }
     }
     let installed = match latest_installed(&state, id).await {
         Ok(installed) => installed,
@@ -2921,27 +2959,75 @@ impl From<sqlx::Error> for AllowlistError {
     }
 }
 
+/// Whether `package` is the phone's reported system dialer while calls are managed by Vibb (design 109): then its row
+/// on Device › Apps is a link to the Calls page and a post that would change it is refused. One read of the policy's
+/// `calls_mode` and the last report's `call_state_json`; false for a phone with no report or no policy row.
+pub(crate) async fn dialer_locked(
+    state: &AppState,
+    device_id: i64,
+    package: &str,
+) -> Result<bool, sqlx::Error> {
+    let mode: Option<String> =
+        sqlx::query_scalar("SELECT calls_mode FROM device_policy WHERE device_id = ?")
+            .bind(device_id)
+            .fetch_optional(&state.db)
+            .await?;
+    if mode.as_deref() == Some("unmanaged") || mode.is_none() {
+        return Ok(false);
+    }
+    let call_state: Option<Option<String>> = sqlx::query_scalar(
+        "SELECT call_state_json FROM device_status WHERE device_id = ? \
+         ORDER BY reported_at DESC, id DESC LIMIT 1",
+    )
+    .bind(device_id)
+    .fetch_optional(&state.db)
+    .await?;
+    let call_state: Option<serde_json::Value> = call_state
+        .flatten()
+        .and_then(|json| serde_json::from_str(&json).ok());
+    Ok(crate::handlers::device_api::system_dialer(call_state.as_ref()).as_deref() == Some(package))
+}
+
 /// Read-modify-write of one device's allowlist in a single transaction, so a concurrent writer
 /// (another toggle, the heartbeat bootstrap) can't be lost in between. `edit` returns whether it
 /// changed anything; nothing is written if not. A `NULL` allowlist (unmanaged) starts as empty.
+/// `BEGIN IMMEDIATE`: it reads then writes, so two toggles can't both read the old list.
 async fn edit_allowlist(
     state: &AppState,
     device_id: i64,
     edit: impl FnOnce(&mut Vec<String>) -> bool,
 ) -> Result<(), AllowlistError> {
-    let mut tx = state.db.begin().await?;
+    let mut tx = state.db.begin_with("BEGIN IMMEDIATE").await?;
+    let pruned = edit_allowlist_in(&mut tx, device_id, true, edit).await?;
+    tx.commit().await?;
+    if pruned > 0 {
+        let _ = state.command_notify.send(device_id);
+    }
+    Ok(())
+}
+
+/// [edit_allowlist] on a connection already in a transaction (design 109: `calls::save_settings` re-adds the dialer
+/// in its own). With `null_starts_empty` false a `NULL` allowlist (apps not managed) is left `NULL`: adding would start
+/// managing the apps with one app. Returns how many push registrations the write pruned (the caller nudges after its commit).
+pub(crate) async fn edit_allowlist_in(
+    conn: &mut sqlx::SqliteConnection,
+    device_id: i64,
+    null_starts_empty: bool,
+    edit: impl FnOnce(&mut Vec<String>) -> bool,
+) -> Result<u64, AllowlistError> {
     let current: Option<Option<String>> =
         sqlx::query_scalar("SELECT allowlist_json FROM device_policy WHERE device_id = ?")
             .bind(device_id)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(&mut *conn)
             .await?;
     let current = current.ok_or(AllowlistError::MissingPolicyRow)?;
     let mut packages: Vec<String> = match current.as_deref() {
         Some(json) => serde_json::from_str(json).map_err(AllowlistError::Corrupt)?,
-        None => Vec::new(),
+        None if null_starts_empty => Vec::new(),
+        None => return Ok(0),
     };
     if !edit(&mut packages) {
-        return Ok(());
+        return Ok(0);
     }
     let json = serde_json::to_string(&packages).expect("a list of strings always serializes");
     sqlx::query(
@@ -2950,15 +3036,12 @@ async fn edit_allowlist(
     )
     .bind(&json)
     .bind(device_id)
-    .execute(&mut *tx)
+    .execute(&mut *conn)
     .await?;
-    // Design 108 (L10, R1-SR M2): an app that left the list loses its push registrations, in this transaction.
-    let pruned = crate::unified_push::prune_disallowed(&mut tx, device_id).await?;
-    tx.commit().await?;
-    if pruned > 0 {
-        let _ = state.command_notify.send(device_id);
-    }
-    Ok(())
+    // Design 108 (L10, R1-SR M2): an app that left the list loses its push registrations, on this same connection
+    // (inside the caller's transaction, before its commit); the caller nudges the phone after the commit when any went.
+    let pruned = crate::unified_push::prune_disallowed(&mut *conn, device_id).await?;
+    Ok(pruned)
 }
 
 /// Adds one package to a device's allowlist if it isn't already there. Used by

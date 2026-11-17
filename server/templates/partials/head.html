@@ -3,7 +3,7 @@
 {#- The lock screen (design 74 §6.5) has no title of its own: the head says only "Vibb". #}
 <title>{% if title.is_empty() %}Vibb{% else %}{{ title }} · Vibb Phone{% endif %}</title>
 <meta name="color-scheme" content="light dark">
-<link rel="stylesheet" href="/static/style.css?v=121">
+<link rel="stylesheet" href="/static/style.css?v=123">
 <!-- The headings' Nunito, from this server only (style.css's @font-face). -->
 <link rel="preload" href="/static/fonts/nunito-latin-wght.woff2" as="font" type="font/woff2" crossorigin>
 
@@ -73,7 +73,8 @@
 {#- A page that waits for the phone refreshes in place every 3 s while the server draws its marker `[data-waits]`
     (design 103 §2.7; the script was loaded only on those pages before). -#}
 <script src="/static/auto-reload.js?v=10" defer></script>
-<!-- The status bar's night after a return (2026-11-12): the strip one frame off the night on pageshow and on
-     visible, so WebKit sends the fixed top edge's colour again (style.css, `.top-strip-nudge`); since design 104
-     again 0.3, 1 and 3 s after a return, and once after the keyboard has moved. -->
-<script src="/static/top-strip.js?v=2" defer></script>
+<!-- The status bar's night after a return (2026-11-12): the strip off the night on pageshow and on visible, so
+     WebKit sends the fixed top edge's colour again (style.css, `.top-strip-nudge`); since design 104 again 0.3, 1 and
+     3 s after a return, and once after the keyboard has moved; since design 109 a held, layered nudge (a fresh strip,
+     one point off screen, theme-color) in the installed iPhone app only. -->
+<script src="/static/top-strip.js?v=3" defer></script>

@@ -1947,6 +1947,9 @@ pub struct AppView {
     /// A refused switch, under the row (`toggle_app`'s `?notice=<code>&app=<row>`,
     /// `devices::toggle_refusal`).
     pub refused: Option<&'static str>,
+    /// Design 109: a line under the system Phone app's switch while calls are unmanaged - what off costs, and whether
+    /// it is an alarm (`text-alarm`).
+    pub dialer_note: Option<(&'static str, bool)>,
     /// Design 68: an allowed app's Permissions - the row's second sub-line and the `<details>` - when the phone's
     /// report says something about it, or it has the lock screen's media player switch (2026-11-04).
     pub perms: Option<crate::app_permissions::PermsView>,
@@ -2244,9 +2247,79 @@ pub(crate) async fn render_apps(
     // A refused save is the answer to a POST: a reload would ask to send it again (L1).
     let installing = entered.is_none() && rows.apps.iter().any(|a| a.is_installing);
     let (mut allowed, mut not_allowed) = (Vec::new(), Vec::new());
+    // Design 109: the phone's system dialer, from its last report.
+    let dialer = crate::handlers::device_api::system_dialer(
+        latest
+            .as_ref()
+            .and_then(|s| s.call_state_json.as_deref())
+            .and_then(|json| serde_json::from_str::<serde_json::Value>(json).ok())
+            .as_ref(),
+    );
+    let calls_managed = policy.calls_managed();
+    let allowlist_readable = policy.allowlist_json.is_some() && !rows.allowlist_corrupt;
+    let mut dialer_view: Option<AppView> = None;
     for row in rows.apps {
         let package = row.package_name.clone();
         let anchor = crate::handlers::devices::app_anchor(&package, row.tracked_app_id);
+        // Calls managed: the Phone app is a link to the Calls page, whatever the allowlist says (the launcher never
+        // shows it then); no switch, no Name and icon, no Permissions.
+        if calls_managed && dialer.as_deref() == Some(package.as_str()) {
+            let app_name = row.own_label.clone().unwrap_or_else(|| row.label.clone());
+            let label =
+                crate::i18n::t_params(lang, "apps.dialer.managed_label", &[("app", &app_name)]);
+            let off = policy.calls_mode == "off";
+            dialer_view = Some(AppView {
+                builtin: true,
+                link: Some((
+                    format!("/devices/{id}/calls#settings"),
+                    t(
+                        lang,
+                        if off {
+                            "device.calls.mode.off"
+                        } else {
+                            "device.calls.mode.managed"
+                        },
+                    ),
+                )),
+                logo: logos.get(&package).cloned(),
+                perms: None,
+                letter: crate::handlers::devices::initial(&app_name),
+                refused: refused
+                    .filter(|(row, _)| *row == anchor)
+                    .map(|(_, text)| text),
+                dialer_note: None,
+                icon: None,
+                display: None,
+                anchor,
+                row: crate::handlers::devices::UnifiedAppRow {
+                    status_label: t(
+                        lang,
+                        if off {
+                            "apps.dialer.off_sub"
+                        } else {
+                            "apps.dialer.managed_sub"
+                        },
+                    )
+                    .to_string(),
+                    own_label: None,
+                    label,
+                    checked: true,
+                    ..row
+                },
+            });
+            continue;
+        }
+        let dialer_note = (!calls_managed && dialer.as_deref() == Some(package.as_str()))
+            .then(|| {
+                if !row.checked {
+                    allowlist_readable.then(|| (t(lang, "apps.dialer.not_allowed"), false))
+                } else if off_home.contains(&package) {
+                    Some((t(lang, "apps.dialer.off_home"), true))
+                } else {
+                    None
+                }
+            })
+            .flatten();
         let phone_row = own.get(&package);
         let default = defaults.get(&package);
         let current = phone_row.or(default);
@@ -2330,6 +2403,7 @@ pub(crate) async fn render_apps(
             refused: refused
                 .filter(|(row, _)| *row == anchor)
                 .map(|(_, text)| text),
+            dialer_note,
             icon,
             display,
             anchor,
@@ -2404,6 +2478,7 @@ pub(crate) async fn render_apps(
                 perms: None,
                 letter: crate::handlers::devices::initial(&row.label),
                 refused: None,
+                dialer_note: None,
                 icon: Some((glyph.to_string(), tile)),
                 display: Some(form),
                 anchor,
@@ -2443,6 +2518,7 @@ pub(crate) async fn render_apps(
                 perms: None,
                 letter: crate::handlers::devices::initial(name),
                 refused: None,
+                dialer_note: None,
                 icon: Some((display::DAY_LOOK.glyph.to_string(), display::DAY_LOOK.tile)),
                 display: None,
                 anchor: "app-calendar".to_string(),
@@ -2462,6 +2538,11 @@ pub(crate) async fn render_apps(
                 },
             },
         );
+    }
+    // Design 109: the managed Phone app's link row, directly under Vibb One (Home's order: the phone book first).
+    if let Some(view) = dialer_view {
+        let at = usize::from(allowed.first().is_some_and(|app| app.row.is_launcher));
+        allowed.insert(at, view);
     }
     // Design 108 §3.10: the "App push" group, named from the rows above.
     let names: std::collections::HashMap<String, crate::handlers::app_push::AppName> = allowed

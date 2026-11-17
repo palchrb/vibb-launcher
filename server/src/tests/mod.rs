@@ -29,6 +29,7 @@ mod deploy_scripts;
 mod device_api;
 mod device_pages;
 mod devices_list;
+mod dialer_row;
 mod dns_blocklist;
 mod docker;
 mod edge;
