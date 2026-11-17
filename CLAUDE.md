@@ -59,6 +59,10 @@ imported with full history (`git subtree`), so old commit hashes in the docs sti
   safe zone), `webauthn-rs256-vector.py` (the server's RS256 passkey vector
   `server/testdata/webauthn/rs256.json`, made once with a throwaway key - public data only; design 74), `emoji-list.py`
   (the launcher's `assets/sms/emoji-16.0.txt` from Unicode's `emoji-test.txt` 16.0, its SHA-256 pinned; design 81),
+  `fake-homeserver.py` (a fake Matrix homeserver and Web Push sender for design 108's emulator gate: the gateway's
+  discovery, Synapse-shaped `event_id_only` notifies, Web-Push-like bytes to `/up/` with TTL/Urgency/Topic, `--burst`;
+  every request to the phone listener with the endpoint's host as `Host`; standard library, `--selftest` against a
+  loopback recorder, run by `server-ci.yml`'s always-run changes job; `docs/testing/emulator.md` §6ay),
   `mmsc-hosts.py` (the server's `server/testdata/mmsc_hosts.txt`, design 83 §3: each operator's MMS server hosts from
   AOSP's `apns-full-conf.xml` at a pinned commit and SHA-256, in two classes - unasked and hints; its `UNASKED` stays
   `"none"` until design 77's step 0; `--selftest`, no network, converts `scripts/mmsc-hosts-sample.xml` and checks the

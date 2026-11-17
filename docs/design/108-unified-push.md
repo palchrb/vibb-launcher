@@ -64,6 +64,21 @@ the sections below:
 - Element X stays the Play build (the amendment): nothing in the launcher depends on the F-Droid build.
 - Not in R1-L: the emulator gate (R1-G, §12.3), VAPID (R3).
 
+## Built: R1-G, the emulator gate (2026-11-17)
+
+`docs/testing/emulator.md` §6ay, on `compat34` (14) and `jelly36` (16); Android 17 can't run on this VM (owed). The test
+app is a throwaway probe written from the AND_3 spec (the UP example app's GitHub releases are AND_2 only), and the
+pushes come from the new `scripts/fake-homeserver.py` (`--selftest` in `server-ci.yml`'s changes job). **Every row run
+passed on both** - 1, 2a, 3, 4, 6, 9, 10, 13, 15 and the code QA's H1 (a REGISTER's broadcast finishes in 2-4 ms while
+its server call hangs; an SMS_DELIVER a second later is dispatched at once) - and 7 (part), 8, 11 and 14 on 14. Found
+on the way, no fix needed: the raise is `BOUND_TOP` with Home in front and `FOREGROUND_SERVICE` with the screen off, and
+only with it may the app start its foreground service from MESSAGE (refused without the raise, both versions); on 16 the
+policy engine doesn't list the Link Activity's PPA while the activity is disabled and lists it again with the enabling
+(no chooser window seen); a hung server ends a REGISTER after OkHttp's 10 s read timeout. The launcher's debug build
+logs each MESSAGE send and each pull's acks by key prefix. Not run: 2b (a trusted CA), 5 (a time rule), 12 (a second
+instance). Owed on the Jelly Star: Element X's Play build switched to Vibb One (the real connector, its pusher and
+discovery with the family's homeserver), a ring in Doze and its latency against FCM, the tsnet path, 112/AML.
+
 **R1-L's code QA (1 H, 3 M, 6 L), fixed on `up`:**
 
 | Finding | The fix |

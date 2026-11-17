@@ -92,6 +92,10 @@ jobs:
       # Cheap and always run: scripts/mmsc-hosts.py (design 83 §3) made server/testdata/mmsc_hosts.txt; a hand edit
       # of the list, or a converter that no longer gives the sample's lines, fails here. No network.
       run: python3 -I scripts/mmsc-hosts.py --selftest
+    - name: The fake homeserver's self-test
+      # Cheap and always run: scripts/fake-homeserver.py (design 108's emulator gate, docs/testing/emulator.md §6ay)
+      # against a loopback recorder. No network.
+      run: python3 -I scripts/fake-homeserver.py --selftest
 
   server-build:
     needs: server-changes

@@ -283,6 +283,7 @@ object UpRuntime {
         }
 
         override fun pull(acks: List<String>): UpMessagesAnswer? = try {
+            if (com.kidslauncher.mdm.BuildConfig.DEBUG) Log.d(LOG_TAG, "Pull acking [${acks.joinToString(" ") { it.take(8) }}]")
             val response = runBlocking { createMdmApi(url, token, callTimeoutMs = PULL_TIMEOUT_MS).upMessages(UpAckBody(acks)) }
             if (!response.isSuccessful) {
                 response.errorBody()?.close()
@@ -309,6 +310,7 @@ object UpRuntime {
         private fun broadcast(pkg: String, action: String, extras: Intent.() -> Unit) {
             try {
                 app.sendBroadcast(Intent(action).setPackage(pkg).addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES).apply(extras))
+                Log.i(LOG_TAG, "${action.substringAfterLast('.')} to $pkg")
             } catch (e: Exception) {
                 Log.w(LOG_TAG, "Couldn't send ${action.substringAfterLast('.')} to $pkg: ${e.javaClass.simpleName}")
             }
@@ -406,6 +408,8 @@ object UpRuntime {
                     .putExtra(UpSpec.EXTRA_BYTES_MESSAGE, message.content)
                     .putExtra(UpSpec.EXTRA_ID, message.id),
             )
+            // Design 108 R1-G row 10: a key's send and its ack, in order (debug builds only; random keys, no content).
+            if (com.kidslauncher.mdm.BuildConfig.DEBUG) Log.d(LOG_TAG, "MESSAGE sent to $app: ${message.id.take(8)}")
         }
 
         override fun schedule(delayMs: Long, action: () -> Unit): RaiseToForeground.Cancellable {
