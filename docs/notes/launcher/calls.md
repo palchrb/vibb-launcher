@@ -891,7 +891,7 @@ on the wire but nb's heart.
   kid's own in effect - then the same gate, outbox and `UNCERTAIN` as any text (a group reaction is a group MMS, refused
   with `GROUPS_OFF` when group texts are off). `repeated` compares target, op and key. A delete takes the bubble's
   reactions with it, one `MessageDeleted` each; `removeReactions` ("Fjern reaksjonene") deletes the others' rows only.
-- **The notification (`SmsNotifier`):** lines from `engine.notifiable` (the unread bubbles first, then unread reactions
+- **The notification (`SmsNotifier`):** a message posts on **`launcher:messages_v2`** (HIGH, so it peeks as a banner; 2026-11-17 - the first `launcher:messages` was DEFAULT, and an app can't raise a channel's importance, so `createChannels` deletes it and creates the new id; key `messages` unchanged). lines from `engine.notifiable` (the unread bubbles first, then unread reactions
   in effect in the lines left - a reaction never pushes a message out; "Reagerte med ❤️ på «…»" with the quote cut at
   40, or "på et bilde"; the public text "Ny reaksjon" only when every line is a reaction, `smsPublicIsReaction`). A
   reaction from someone else posts on **`launcher:messages_reactions`** (DEFAULT, no sound, one 40 ms buzz, no heads-up)
