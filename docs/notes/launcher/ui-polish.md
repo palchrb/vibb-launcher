@@ -69,14 +69,20 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   the bar's inset to the sheet's XML bottom padding. Tap outside still closes it.
   **Swipe down closes them (2026-11-17, branch `kid-sheet-swipe`):** `setUpKidSheet` (now also `KidPhotoSheet`'s) puts
   the content in a `KidSheetDragFrame`: the sheet follows a finger dragging down, the window's dim fades with it
-  (`setDimAmount`, only on a 0.02 step), and on release it closes past a third of its height or on a fling down of at
-  least 1000 dp/s (a fling up springs back), else springs back - a 100-200 ms decelerate settle; a close ends in
-  `dialog.dismiss()`, so every dismiss listener runs as for Lukk. The rules are pure, `KidSheetDrag` (`KidSheetDragTest`).
-  A move inside the touch slop stays a tap; a downward drag that starts on a button cancels its press and drags the
-  sheet; up and sideways nothing moves (no rubber band). On the emergency sheet's rows (`EmergencyRowsScroll`) the
-  drag is the list's until it is at its top. A sheet without window focus (the card under "Bilde av …" after the
-  photo's long-press) never drags. Animations off (duration scale 0) closes or settles at once. Lukk, Back (predictive
-  back too, the dialog's own) and tap outside are unchanged; the frame has no accessibility node of its own.
+  (`setDimAmount`, in 0.05 steps - each is a window relayout - and onto the ends), and on release it closes past a third
+  of its height or on a fling down of at least 1000 dp/s once it is 48 dp (or an eighth of its height) down; a fling
+  up springs back, else it springs back. The settle is 100-200 ms: a decelerate that starts at the finger's speed after
+  a fast release, an ease in and out after a slow one. A close ends in `dialog.dismiss()`, so every dismiss listener
+  runs as for Lukk. The rules are pure, `KidSheetDrag` (`KidSheetDragTest`; the release's UP goes into the velocity
+  tracker, so a finger held still before it lifts is no fling). A move inside the start threshold stays a tap - the
+  touch slop, but on a button 24 dp and at least twice the slop (a hurried tap on 112 that slips stays a call); a
+  downward drag past it that starts on a button cancels its press and drags the sheet; up and sideways nothing moves
+  (no rubber band). Only a drag catches a spring-back; a tap leaves it running and never closes the sheet. On the
+  emergency sheet's rows (`EmergencyRowsScroll`) the drag is the list's until it is at its top (inside a list that
+  scrolls the start threshold stays the slop, the list's own). A sheet that loses its window focus (the card under
+  "Bilde av …" after the photo's long-press) lets go of the touch and springs back. Animations off (duration scale 0)
+  closes or settles at once. Lukk, Back (predictive back too, the dialog's own) and tap outside are unchanged; the
+  frame has no accessibility node of its own.
 
 ## The phone book's row (design 79 §3.4; branch `phone-book-list`)
 
