@@ -898,7 +898,7 @@ async fn location_policy_form_round_trip() {
     let page = app
         .get_page(&format!("/devices/locate?device={id}"), &cookie)
         .await;
-    assert!(page.text().contains("Location is off for this phone"));
+    assert!(page.text().contains("Location is off<"));
 }
 
 #[tokio::test]

@@ -682,22 +682,29 @@ async fn the_locate_page_tells_the_floor_the_watch_and_the_mock_count() {
     let mut off = watch(1, 0);
     off["location_on"] = json!(false);
     post(&app, &token, json!({"zone_watch": off})).await;
+    // Design 113: the two it can't watch in are one orange line, the reason behind its ⓘ.
+    let html = page().await;
+    assert!(html.contains("data-warning=\"zones-cant-watch\""), "{html}");
+    assert!(html.contains("The phone can&#39;t watch the zones"));
     assert!(
-        page()
-            .await
-            .contains("Location is off on the phone, so it can&#39;t watch the zones.")
+        html.contains("<p>Location is off on the phone.</p>"),
+        "{html}"
     );
+    assert!(!html.contains("data-zone-watch"));
     let mut no_grant = watch(1, 0);
     no_grant["background_location"] = json!(false);
     post(&app, &token, json!({"zone_watch": no_grant})).await;
-    assert!(
-        page()
-            .await
-            .contains("use its location in the background yet")
-    );
+    let html = page().await;
+    assert!(html.contains("data-warning=\"zones-cant-watch\""));
+    assert!(html.contains("use its location in the background yet"));
+    assert!(!html.contains("data-zone-watch"));
     post(&app, &token, json!({"zone_watch": watch(0, 0)})).await;
     let html = page().await;
     assert!(html.contains("set up its zones yet"));
+    assert!(
+        !html.contains("data-warning=\"zones-cant-watch\""),
+        "quiet, behind the ⓘ"
+    );
     assert!(!html.contains("data-interval-note"), "no fences, no floor");
     // A longer choice than the floor: no note.
     post(&app, &token, json!({"zone_watch": watch(1, 0)})).await;

@@ -78,7 +78,10 @@
                     <input type="checkbox" role="switch" class="sw" name="notify_leave" value="on"{% if form.notify_leave %} checked{% endif %}><span class="knob" aria-hidden="true"></span>
                 </label>
             </div>
-            <p class="group-footer">{{ self.t("locate.zone.notify_footer") }}</p>
+            <div class="group-footer"><details class="info">
+                <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel"><p>{{ self.t("locate.zone.notify_footer") }}</p><p>{{ self.t("locate.zone.counts_info") }}</p></div>
+            </details></div>
         </section>
     </form>
 

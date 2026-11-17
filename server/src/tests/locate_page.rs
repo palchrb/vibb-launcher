@@ -262,12 +262,12 @@ async fn the_rows_and_their_pages() {
     ] {
         assert!(rows.contains(&format!("href=\"{href}\"")), "{href}");
     }
-    // Their values: no zones yet, Only when asked; Ring, lock, erase under Find Phone.
+    // Their values: no zones yet, Only when asked; Find Phone its title alone (design 113).
     let zones_row = rows.split("data-row=\"zones\"").nth(1).unwrap();
     let zones_row = zones_row.split("</a>").next().unwrap();
     assert!(zones_row.contains(">None yet</span>"), "{zones_row}");
     assert!(rows.contains(">Only when asked</span>"), "{rows}");
-    assert!(rows.contains("Find Phone<span class=\"row-sub\">Ring, lock, erase</span>"));
+    assert!(rows.contains("Find Phone</span>"), "{rows}");
     // None of what moved.
     for gone in [
         "id=\"zones\"",
@@ -309,7 +309,7 @@ async fn the_rows_and_their_pages() {
     }
     let nb = locate_page(&app, &cookie, &format!("?device={id}&lang=nb")).await;
     assert!(rows_of(&nb).contains(">Av</span>"));
-    assert!(rows_of(&nb).contains("Finn telefonen<span class=\"row-sub\">Ring, lås, slett</span>"));
+    assert!(rows_of(&nb).contains("Finn telefonen</span>"));
 
     // The three pages: the phone band, back to this phone's Locate, no bell.
     for (page, title) in [
@@ -1508,7 +1508,7 @@ async fn the_locate_tab_speaks_norwegian() {
         .await
         .text();
     assert!(zone.contains(r#"<html lang="nb">"#) && zone.contains("Ny sone"));
-    assert!(zone.contains("Varsle når de kommer"));
+    assert!(zone.contains(">Kommer</span>"));
 
     let locations = app
         .get_page(&format!("/devices/{id}/locations?lang=nb"), &cookie)
@@ -1988,7 +1988,7 @@ async fn update_location_is_the_first_row_and_the_map_has_no_box() {
     );
     assert!(pressed.contains(" data-waiting"), "locate.js waits");
 
-    // Location off: the warning above the rows, and the row says why no position comes.
+    // Location off: the warning above the rows says it; the row adds nothing (design 113).
     set_location(&app, id, "off", 15).await;
     sqlx::query("DELETE FROM device_locations WHERE device_id = ?")
         .bind(id)
@@ -2004,12 +2004,7 @@ async fn update_location_is_the_first_row_and_the_map_has_no_box() {
         .nth(1)
         .and_then(|rest| rest.split("</button>").next())
         .unwrap();
-    assert!(
-        row.contains(
-            "<span class=\"row-sub\" data-fix-none>No position kept while location is off.</span>"
-        ),
-        "{row}"
-    );
+    assert!(!row.contains("data-fix-none"), "{row}");
 }
 
 /// Design 85 §4.8 (the user's decision of 2026-11-12): both map views carry the full-screen

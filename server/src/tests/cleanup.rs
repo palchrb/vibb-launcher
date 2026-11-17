@@ -980,8 +980,5 @@ async fn off_erases_every_fix_and_on_keeps_the_last_known() {
         .get_page(&format!("/devices/locate?device={off}"), &cookie)
         .await
         .text();
-    assert!(
-        page.contains("No position kept while location is off."),
-        "{page}"
-    );
+    assert!(page.contains("data-warning=\"location-off\""), "{page}");
 }
