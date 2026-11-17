@@ -671,3 +671,15 @@ restricted-setting check).
 5. **The adb shortcuts leave the PWA's texts** and stay in the runbook (§5.7). Recommended: yes.
 6. **BACKGROUND location stays tied to Locate/zones**, while FINE/COARSE are always granted (§7.1). Recommended: keep
    it tied.
+
+## The user's answers (2026-11-17, 21:50 CET)
+
+- ASK 1 (vibration on calls and messages): OPTIONAL, not required.
+- ASK 3 (design 110's two map-link steps in this list): ASKED BACK - the user: "er jo fort noe man kanskje installerer
+  etterhvert og ikke ved første setup av en ny telefon?" - answered that a step only applies once its feature is in use
+  (the map steps only once map links are on / a map app is chosen); waiting on the user's word.
+- ASK 4 ("Ikke nå" goes, no hiding of a required step): TAKEN.
+- ASK 6 (background location): follows Locate and zones, as today; fine and coarse always granted.
+- ASK 2 and ASK 5: not asked; the recommendations stand unless the user says otherwise (message banners ticked now and
+  detected later; the adb shortcuts leave the PWA's texts and stay in the runbooks).
+
