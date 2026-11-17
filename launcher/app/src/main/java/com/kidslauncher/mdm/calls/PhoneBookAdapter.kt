@@ -193,7 +193,7 @@ class PhoneBookAdapter(
             // Variant A (2026-11-17): no pills on the row; the missed calls and unread messages are the one sub-line's words.
             KidAvatars.bindContactBadge(badge, unreadBadge, ContactBadge(0, 0), BadgeSize.ROW)
             name.text = com.kidslauncher.mdm.ui.search.highlightMatch(context, contact.name, row.match)
-            val text = rowLine(context, row)
+            val text = rowLine(context, row, line.textSize)
             line.visibility = if (text == null) View.GONE else View.VISIBLE
             line.text = text
             buttons.visibility = View.VISIBLE
@@ -301,23 +301,37 @@ class PhoneBookAdapter(
         }
 
         /**
-         * The row's second line (design 79 §3.4; variant A, 2026-11-17), one line: "Nødnummer"; else the unseen missed
-         * calls in rust ("2 tapte anrop 14:02"), " · ", the unread messages in teal ("1 melding"), each only if there
-         * is one; else none.
+         * The row's second line (design 79 §3.4; variant A with glyphs, 2026-11-17), one line: "Nødnummer"; else the
+         * pills' own glyphs in the text - the phone-x and the time of the newest unseen missed call (the count when
+         * several), in rust, then the chat bubble and the unread count, in teal, a wide gap between; each only if there
+         * is one; else none. [textSizePx] sizes the glyphs; the words are [sentence]'s, for TalkBack.
          */
-        fun rowLine(context: Context, row: PhoneBookRow.Contact): CharSequence? {
+        fun rowLine(context: Context, row: PhoneBookRow.Contact, textSizePx: Float): CharSequence? {
             if (row.emergency) return context.getString(R.string.phone_book_emergency_line)
             val missed = row.missed?.takeIf { it.count > 0 }
             if (missed == null && row.unread <= 0) return null
             val out = SpannableStringBuilder()
             if (missed != null) {
-                out.append(MissedCallText.short(context, missed.count, missed.lastAtMs), ForegroundColorSpan(context.getColor(R.color.kid_page_line_missed)), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                val text = if (missed.count > 1) missed.count.toString() else MissedCallText.shortWhen(context, missed.lastAtMs)
+                glyphPart(context, out, R.drawable.ic_kid_missed_call, text, R.color.kid_page_line_missed, textSizePx)
             }
             if (row.unread > 0) {
-                if (missed != null) out.append(" · ")
-                out.append(context.resources.getQuantityString(R.plurals.contact_unread_line, row.unread, row.unread), ForegroundColorSpan(context.getColor(R.color.kid_page_line_unread)), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                if (missed != null) out.append("\u2003")
+                glyphPart(context, out, R.drawable.ic_kid_badge_message, row.unread.toString(), R.color.kid_page_line_unread, textSizePx)
             }
             return out
+        }
+
+        private fun glyphPart(context: Context, out: SpannableStringBuilder, glyphRes: Int, text: String, colourRes: Int, sizePx: Float) {
+            val colour = context.getColor(colourRes)
+            val glyph = androidx.core.content.ContextCompat.getDrawable(context, glyphRes)!!.mutate()
+            glyph.setTint(colour)
+            val px = (sizePx * 1.1f).toInt()
+            glyph.setBounds(0, 0, px, px)
+            val from = out.length
+            out.append(" ", android.text.style.ImageSpan(glyph, android.text.style.ImageSpan.ALIGN_CENTER), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            out.append("\u2009").append(text)
+            out.setSpan(ForegroundColorSpan(colour), from, out.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
 
         /** TalkBack's sentence (design 79 §3.6): "Pappa, 2 tapte anrop i dag 14:02, 1 ulest melding"; "Ambulanse, nødnummer". */
@@ -326,8 +340,8 @@ class PhoneBookAdapter(
             if (row.emergency) return context.getString(R.string.phone_book_emergency_description, name)
             return listOfNotNull(
                 name,
-                KidAvatars.missedText(context, row.missed)?.replace("\n", ", "),
-                context.resources.getQuantityString(R.plurals.contact_unread, row.unread, row.unread).takeIf { row.unread > 0 },
+                row.missed?.takeIf { it.count > 0 }?.let { MissedCallText.short(context, it.count, it.lastAtMs) },
+                context.resources.getQuantityString(R.plurals.contact_unread_line, row.unread, row.unread).takeIf { row.unread > 0 },
             ).joinToString(", ")
         }
     }

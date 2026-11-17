@@ -26,9 +26,13 @@ object MissedCallText {
      * nov." earlier, "2 tapte anrop 14:02" for more - [count] the phone's and Element X's calls together, [lastAtMs] the
      * newest. The full sentence stays on the card and in TalkBack ([describe]).
      */
-    fun short(context: Context, count: Int, lastAtMs: Long, zone: ZoneId = ZoneId.systemDefault()): String {
+    fun short(context: Context, count: Int, lastAtMs: Long, zone: ZoneId = ZoneId.systemDefault()): String =
+        context.resources.getQuantityString(R.plurals.missed_short, count, shortWhen(context, lastAtMs, zone), count)
+
+    /** The short time alone: "14:02", "i går" or "30. nov." - the phone-book row's glyph line shows it after the phone-x. */
+    fun shortWhen(context: Context, lastAtMs: Long, zone: ZoneId = ZoneId.systemDefault()): String {
         val at = Instant.ofEpochMilli(lastAtMs).atZone(zone)
-        val whenText = when (relativeDay(at.toLocalDate().toEpochDay(), LocalDate.now(zone).toEpochDay())) {
+        return when (relativeDay(at.toLocalDate().toEpochDay(), LocalDate.now(zone).toEpochDay())) {
             RelativeDay.TODAY -> com.kidslauncher.mdm.ui.ClockFormat.formatTime(context, lastAtMs, zone)
             RelativeDay.YESTERDAY -> context.getString(R.string.missed_short_yesterday)
             RelativeDay.EARLIER -> {
@@ -36,7 +40,6 @@ object MissedCallText {
                 android.text.format.DateFormat.format(DateFormat.getBestDateTimePattern(locale, "dMMM"), Date(lastAtMs)).toString()
             }
         }
-        return context.resources.getQuantityString(R.plurals.missed_short, count, whenText, count)
     }
 
     private fun whenText(context: Context, summary: MissedSummary, zone: ZoneId): String = spokenWhen(context, summary.lastAtMs, zone)

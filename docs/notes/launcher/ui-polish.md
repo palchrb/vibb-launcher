@@ -79,8 +79,7 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   `KidAvatars.bindContactBadge` sets the bounds in code, so the glyph no longer makes a pill as wide as the avatar). With
   "99+" a pill is about 43 dp wide and covers only the avatar's top or bottom edge; the two never touch. The text column 288 - 10 - 44 - 10 - 96 = 128 dp: the name Nunito 800 16 sp `kid_ink` in a
   `WholeWordTextView` (at most 2 lines), the second line 13 sp 700, one line ellipsized at the end (variant A, 2026-11-17), there only when there is something
-  to say - "Nødnummer"; the unseen missed calls in `kid_missed_text` ("2 tapte anrop 14:02", "Tapt anrop i går",
-  `MissedCallText.short`) in `kid_page_line_missed`, then " · 1 melding" / "3 meldinger" in `kid_page_line_unread` (the pills' rust and teal; lighter tints in Mørk); either alone.
+  to say - "Nødnummer"; else the phone-x glyph and the time of the unseen missed call (the count for several) in `kid_page_line_missed`, then the chat glyph and the unread count in `kid_page_line_unread` - see `calls.md`, "Two badges and Siste"; either alone.
 - **Ring and Melding:** two 38 dp tonal discs (`kid_sheet_button`, white 8 %) in touching 48 dp targets - Ring's phone in
   the new `kid_call_glyph` #7FC28F (6.5:1 on the disc over the tile), Melding's in `kid_accent`; an emergency number's
   Ring is the tonal red pair (`kid_emergency_tonal` disc, `kid_emergency_text` glyph). Tonal, not filled: fifty green

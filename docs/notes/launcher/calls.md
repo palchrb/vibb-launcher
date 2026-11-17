@@ -731,10 +731,12 @@ mockups A5 and B2. Launcher only; no server change.
   "The phone book's row". The sheet: rust top end 6 dp in, teal bottom end (`sheet_unread_badge`). The green call badge
   (`contact_call_badge`, `bindCallBadge`, `bg_kid_call_badge`, `kid_call_badge`) is gone. TalkBack is unchanged (the
   pills are `importantForAccessibility="no"`; the avatar's sentence and the sheet's lines say both in words).
-  **Since 2026-11-17 (variant A, text only) the phone book's Kontakter rows carry no pills**: one single-line,
-  end-ellipsized sub-line instead, "Tapt anrop 7:20 · 1 melding" (`PhoneBookAdapter.rowLine`), the missed part in
-  `kid_page_line_missed` (the pill's rust a step darker in Lys for 4.5:1, a lighter tint in Mørk), the messages (`contact_unread_line`, "1 melding" /
-  "3 meldinger", "1 message" / "3 messages") in `kid_page_line_unread` (the teal likewise). Home, the sheet and Siste are unchanged.
+  **Since 2026-11-17 (variant A with glyphs) the phone book's Kontakter rows carry no pills**: one single-line,
+  end-ellipsized sub-line instead (`PhoneBookAdapter.rowLine`), the pills' own glyphs inline as `ImageSpan`s tinted like
+  their text: the phone-x and the time of the newest unseen missed call (`MissedCallText.shortWhen`; the count when
+  several) in `kid_page_line_missed` (the pill's rust a step darker in Lys for 4.5:1, a lighter tint in Mørk), an em
+  space, the chat bubble and the unread count in `kid_page_line_unread` (the teal likewise). The words are the row's
+  content description (`sentence`: "Tapt anrop 10:19, 1 melding", `contact_unread_line`). Home, the sheet and Siste are unchanged.
 - **B2, the switch** (`activity_phone_book.xml`): "Kontakter | Siste" under the header, above the search - P9's control,
   two `RadioButton`s in a `RadioGroup` ("Velg liste"), 44 dp on `kid_page_tile` (in Lys with the `kid_page_edge`
   hairline), each half the whole height's tap target with its fill 4 dp in (`bg_phone_book_tab`: the chosen half
