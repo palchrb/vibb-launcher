@@ -6068,7 +6068,7 @@ async fn the_music_tab_speaks_norwegian() {
     let files = page(format!("/music/entries/{own}?lang=nb")).await;
     has(
         &files,
-        &["Filer (0 av ", "Lydfiler", "Ingen telefon har det ennå."],
+        &["Filer (0 av ", "Lydfiler", "Ingen telefoner ennå"],
     );
 
     let settings = page("/music/settings?lang=nb".to_string()).await;
@@ -6086,7 +6086,7 @@ async fn the_music_tab_speaks_norwegian() {
     has(
         &categories,
         &[
-            "Legg til en kategori",
+            "Ny kategori",
             "<legend>Farge</legend>",
             "title=\"note\"",
             " Blå</label>",

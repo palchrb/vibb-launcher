@@ -33,6 +33,7 @@
             <form method="post" action="/music/entries/{{ entry.id }}/cover#cover" enctype="multipart/form-data" class="form-group">
                 <div class="field">
                     <label class="field-label" for="cover_file">{{ self.t("music.entry.photo") }}</label>
+                    <details class="info field-info"><summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("music.entry.cover_footer") }}</p></div></details>
                     <input type="file" id="cover_file" name="cover" accept="image/jpeg,image/png,image/webp" required{% if cover_error.is_some() %} aria-invalid="true" aria-describedby="cover-error" autofocus{% endif %}>
                     {% if let Some(error) = cover_error %}<p class="field-error" id="cover-error">{{ error }}</p>{% endif %}
                 </div>
@@ -45,9 +46,15 @@
         </form>
         {% endif %}
     </div>
-    <p class="group-footer">{{ self.t("music.entry.cover_footer") }}</p>
 
     {% if let Some(sweep) = sweep %}
+    {#- Design 113: a Spotify audiobook needs listening time on the child's account - one orange line, the why behind its ⓘ. -#}
+    {% if sweep.audiobook %}
+    <div class="attention attention-action" data-warning="audiobook">
+        <div class="attention-text">{{ self.t("music.card.audiobook_short") }}<div class="attention-sub">
+            <details class="info"><summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("music.card.audiobook") }}</p></div></details></div></div>
+    </div>
+    {% endif %}
     <h2 class="group-header">{{ self.t(list_title) }}</h2>
     <div class="group" id="status">
         {% if let Some(title) = sweep.source_title %}
@@ -59,9 +66,6 @@
         {% for note in sweep.notes %}
         <p class="row row-note">{{ note }}</p>
         {% endfor %}
-        {% if sweep.lan %}
-        <p class="row row-note">{{ self.t("music.entry.lan") }}</p>
-        {% endif %}
         <div class="row music-card">{% call music_status::status_block(sweep.status) %}{% endcall %}</div>
         {% if let Some(after) = sweep.check_after %}
         <p class="row row-note" data-row="check-after">{{ self.tp("music.check_after", [("time", after.as_str())]) }}</p>
@@ -93,10 +97,12 @@
         </div>
         {% if spotify %}
         {#- Design 26c §3.2-§3.3: a Spotify entry keeps nothing offline; in context mode Spotify
-            picks the order (no select: the handler keeps the stored one). -#}
+            picks the order (no select: the handler keeps the stored one). Design 113: the why and
+            the streaming behind the order's ⓘ. -#}
         {% if !spotify_context %}
-        <div class="field">
+        <div class="field" data-hint="spotify-order">
             <label class="field-label" for="entry_order">{{ self.t("music.entry.play_order") }}</label>
+            <details class="info field-info"><summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("music.entry.spotify_streams") }}</p></div></details>
             <select id="entry_order" name="order"{% if form.error_field == "order" %} aria-invalid="true" aria-describedby="entry-error" autofocus{% endif %}>
                 {% for (value, label) in orders %}
                 <option value="{{ value }}"{% if form.order == **value %} selected{% endif %}>{{ self.t(label) }}</option>
@@ -104,12 +110,12 @@
             </select>
             {% if form.error_field == "order" %}{% if let Some(error) = form.error %}<p class="field-error" id="entry-error">{{ error }}</p>{% endif %}{% endif %}
         </div>
-        {% else if spotify_artist %}
-        <p class="field-hint" data-hint="spotify-order">{{ self.t("music.entry.spotify_order_artist") }}</p>
         {% else %}
-        <p class="field-hint" data-hint="spotify-order">{{ self.t("music.entry.spotify_order_context") }}</p>
+        <div class="field" data-hint="spotify-order">
+            <p class="field-label">{{ self.t("music.entry.spotify_order") }}</p>
+            <details class="info field-info"><summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{% if spotify_artist %}{{ self.t("music.card.artist_context") }}{% else %}{{ self.t("music.spotify.context") }}{% endif %}</p><p>{{ self.t("music.entry.spotify_streams") }}</p></div></details>
+        </div>
         {% endif %}
-        <p class="field-hint" data-hint="spotify-streams">{{ self.t("music.entry.spotify_streams") }}</p>
         {% else if !own %}
         <div class="field">
             <label class="field-label" for="entry_order">{{ self.t("music.entry.play_order") }}</label>
@@ -132,13 +138,13 @@
         </div>
         {% endif %}
         <label class="row field-switch">
-            <span class="row-label">{{ self.t("music.entry.resume") }}<span class="row-sub">{{ self.t("music.entry.resume_sub") }}</span></span>
+            <span class="row-label">{{ self.t("music.entry.resume") }}</span>
             <input type="checkbox" role="switch" class="sw" name="resume" value="on"{% if form.resume %} checked{% endif %}><span class="knob" aria-hidden="true"></span>
         </label>
         <button type="submit" class="button-wide">{{ self.t("common.save") }}</button>
     </form>
     {% if own %}
-    <p class="group-footer">{{ self.t("music.entry.own_footer") }}</p>
+    <div class="group-footer"><details class="info"><summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("music.entry.own_footer") }}</p></div></details></div>
     {% endif %}
 
     {% if own %}
@@ -147,6 +153,7 @@
         <form method="post" action="/music/entries/{{ entry.id }}/files#files" enctype="multipart/form-data" class="cell form-group">
             <div class="field">
                 <label class="field-label" for="music_files">{{ self.t("music.entry.audio_files") }}</label>
+                <details class="info field-info"><summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("music.entry.files_footer") }}</p></div></details>
                 <input type="file" id="music_files" name="file" accept="audio/*,.mp3,.m4a,.m4b,.ogg,.opus,.flac,.wav" multiple required{% if !upload_problems.is_empty() %} autofocus{% endif %}>
             </div>
             {% if !upload_problems.is_empty() %}
@@ -171,13 +178,11 @@
         </details>
         {% endfor %}
     </div>
-    <p class="group-footer">{{ self.t("music.entry.files_footer") }}</p>
     {% endif %}
 
     <h2 class="group-header">{{ self.t("music.on_phones") }}</h2>
     {% if phones.is_empty() %}
     <div class="group" id="phones"><p class="row row-note" data-row="no-phones">{{ self.t("music.entry.no_phones") }}</p></div>
-    <p class="group-footer">{{ self.t("music.entry.no_phones_footer") }}</p>
     {% else %}
     <div class="group group-avatars group-small" id="phones" data-group="phones">
         {% for p in phones %}

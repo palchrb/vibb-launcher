@@ -2610,6 +2610,8 @@ details.info[open] > summary .section-chev { -webkit-transform: rotate(90deg); t
 .music-status-busy { color: var(--orange-text); }
 .music-status-error { color: var(--red-text); }
 .group-music .music-status { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* A library card says nothing while its source is fine (design 113 P4); the block stays for static/music-cards.js. */
+.music-card-tile .music-status-ok { display: none; }
 .music-actions { display: flex; flex-wrap: wrap; align-items: center; padding: 0 16px 10px 72px; margin-top: -4px; }
 .music-actions > * { margin: 4px 16px 0 0; }
 .music-actions form { display: flex; align-items: center; }
