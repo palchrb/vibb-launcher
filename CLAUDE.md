@@ -56,7 +56,9 @@ imported with full history (`git subtree`), so old commit hashes in the docs sti
   music" from Nunito's outlines; `--selftest`), `music-icon.py` (the music app's icon and notification small icon, the
   user's drawing `vibb-music-e2`: the Vibb mark's outer three rings read from the launcher's `ic_launcher_foreground.xml`,
   each with its own scale and stroke, and a round-cornered play triangle, its geometry from the drawing's SVG; `--selftest` checks the outer ring inside the
-  safe zone), `webauthn-rs256-vector.py` (the server's RS256 passkey vector
+  safe zone), `up-vapid-vectors.py` (design 108b's VAPID vectors `server/testdata/unified_push_vapid.json` and the two public keys of the
+  contract's `body_vapid` rows, from a throwaway key derived from a fake phrase; pure Python, public data only),
+  `webauthn-rs256-vector.py` (the server's RS256 passkey vector
   `server/testdata/webauthn/rs256.json`, made once with a throwaway key - public data only; design 74), `emoji-list.py`
   (the launcher's `assets/sms/emoji-16.0.txt` from Unicode's `emoji-test.txt` 16.0, its SHA-256 pinned; design 81),
   `fake-homeserver.py` (a fake Matrix homeserver and Web Push sender for design 108's emulator gate: the gateway's
@@ -380,16 +382,21 @@ row through `channelsReport` and encodes the reports exactly; both compare the c
 
 App push (design 108, Vibb as the UnifiedPush distributor) is `server/testdata/unified_push.json`, byte-identical in
 `launcher/app/src/test/resources/`: `capability` (`unified_push_v1`), `policy` (the policy's `unified_push`
-`{on, origin, regs, stopped}` in the rows `off`, `on_empty`, `on_two`, `stopped` and `origin_changed`), `older_server`
+`{on, origin, regs, stopped, refresh}` in the rows `off`, `on_empty`, `on_two`, `stopped`, `origin_changed`, and design 108b's
+`refresh_outside` and `refresh_refused` - `refresh` is `[{reg, why: outside|refused}]`, an unknown `why` read as `outside`), `older_server`
 (a policy without the key: UP off, the receiver disabled), `register` (the exact `POST /api/devices/up/registrations`
 bodies, every answer - `ok`, a retry, the 409 refusals `off`/`stopped`/`not_allowed`/`limit`/`busy`/`conflict`, the 400
-- and `failed_reason`, each refusal to the connector's `ACTION_REQUIRED` or `NETWORK`), `unregister` (the `DELETE`'s
+- and `failed_reason`, each refusal to the connector's `ACTION_REQUIRED` or `NETWORK`; design 108b's VAPID rows `body_vapid`,
+`body_vapid_changed` (the same `reg`, another valid key: the same endpoint, the key updated) and `body_vapid_not_a_point`
+with the answers `ok_vapid`, `vapid_changed` and `vapid_not_a_point`), `unregister` (the `DELETE`'s
 204), `messages` (the exact `POST /api/devices/up/messages` body with acks and an answer with a minimised Matrix body
 and a binary one, base64), `event` (the SSE event `up`/`up`) and `endpoint` (the endpoint's form). The server's
 `tests::unified_push` produces the policy rows and the answers from seeded data; the launcher's
 `UnifiedPushContractTest` encodes the bodies, decodes every answer and policy row and maps each refusal; both compare
 the copies. The server-only rows of the push routes are `server/testdata/unified_push_gateway.json`
-(`tests::unified_push::gateway_rows`). The policy's `unified_push` is pinned by `policy_json_keys_snapshot` and the
+(`tests::unified_push::gateway_rows`) and the VAPID check's vectors `server/testdata/unified_push_vapid.json`
+(`unified_push::vapid::tests::the_rows`; made by `scripts/up-vapid-vectors.py` with a throwaway test key, public data only).
+The policy's `unified_push` is pinned by `policy_json_keys_snapshot` and the
 launcher's `PolicyResponseCompatTest`. The distributor's own rules (register, unregister and ack decisions, the delivery
 plan, the `regs` reconcile, the origin rewrite) stay the launcher's alone, in
 `launcher/app/src/test/resources/up_rules.json` (`UpRulesTest`, `UpDeliveryPlanTest`, `UpReconcileTest`).

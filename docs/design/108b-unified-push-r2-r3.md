@@ -1,7 +1,7 @@
 # Design 108b: App push R2 and R3 (liveness, the outside gateway, VAPID, urgency, other apps)
 
 Status: design, **revision 2**, 2026-11-17 (branch `up-r2r3`). Revision 1 was ee101b19c; its design QA is
-`docs/review/qa-108b-design.md` (2fa7a16df: 1 H, 4 M, 12 L), and §15 maps every finding to its fix. **Not built.**
+`docs/review/qa-108b-design.md` (2fa7a16df: 1 H, 4 M, 12 L), and §15 maps every finding to its fix. **Not built** (R23-C, the contract commit, is the first step; the user answered Q1-Q3 on 2026-11-17, §13).
 Builds on design 108 (R1-C, R1-S, R1-L and R1-G built and merged; `docs/design/108-unified-push.md`, the notes
 `docs/notes/server/unified-push.md` and `docs/notes/launcher/unified-push.md`). The user approved building R2 and R3 now
 (2026-11-17: "jeg vil at du bygger r2 og r3 likevel. vi kan heller installere en app for å teste at det funker, feks
@@ -110,7 +110,11 @@ broadcast, and acknowledged to the server once the send went out (L12).
 - only confirmed rows; `since = max(lastAppAckMs ?: 0, confirmedAtMs ?: createdAtMs)`;
 - no ping out and `now - since >= 23 days`: **ping** - `NEW_ENDPOINT(token, endpoint, id = new)`, the row gets
   `pingId` and `pingSentMs`;
-- a ping out and `now - pingSentMs >= 7 days`: **dead** - `UNREGISTERED(token)`, the row removed, its `DELETE` queued
+- **A ping still outstanding at a boot is re-sent once after that boot (Q1 refinement).** The same ping id, once per
+  boot (`pingBootResent`, cleared by an ack; it does not move `pingSentMs`'s first stamp, only `pingLastSendMs`). A phone
+  switched off between a ping and its answer never loses a live app.
+- a ping out, **both** `now - pingSentMs >= 7 days` (the first ping) **and** `now - pingLastSendMs >= 1 hour` (the last
+  send, the first or the boot's re-send): **dead** - `UNREGISTERED(token)`, the row removed, its `DELETE` queued
   (R1's `remove` path; the server tombstones the secret, so the app server gets 410 or `rejected`), and a diagnostics
   note `NOTE_UNANSWERED` for the PIN-gated Settings row;
 - any `MESSAGE_ACK` from the app (a message's or the ping's) clears the ping (R1's `UpEngine.ack` already does).
@@ -259,7 +263,11 @@ The JWT (Mastodon's): header `{"typ":"JWT","alg":"ES256"}`, claims `aud` = the e
 
 ### 4.3 The check (`server/src/unified_push/vapid.rs`, pure, `now` passed in)
 
-Cheap steps first; the ECDSA verify last (L4), so an expired or garbage token never costs a verify.
+Cheap steps first, then the signature, then the claims (**Q3 refinement, decided 2026-11-17**): the signature is verified
+with the registered key **before** `exp` and `aud` are judged, so a bad signature is always 403 and 503 goes only to a
+correctly signed push whose time or address is off. A forger, who can't sign, never gets a 503. The ECDSA cost stays
+bounded by the edge's per-client bucket (§4.4); a garbage token still costs nothing, because the shape check (step 3)
+comes first.
 
 1. **Form.**
    - An `Authorization` header of at most 1024 bytes, with the scheme `vapid` or `WebPush` in any case.
@@ -272,14 +280,14 @@ Cheap steps first; the ECDSA verify last (L4), so an expired or garbage token ne
      `crit` member is refused.
    - The claims are JSON, and the signature is 64 bytes: JWS's fixed r‖s. ASN.1 is refused (RFC 7518 §3.4).
    - Any failure here: **bad**.
-4. **`exp`** is any JSON number, floored. It must be in `[now - 5 min, now + 25 h]` (M3). RFC 8292's 24 h is the
+4. **The signature**, verified with `ring`'s `ECDSA_P256_SHA256_FIXED` over `header.claims` with **the registered
+   key** (never the request's own). A failure: **bad** (403). Judged before `exp` and `aud`.
+5. **`exp`** is any JSON number, floored. It must be in `[now - 5 min, now + 25 h]` (M3). RFC 8292's 24 h is the
    sender's MUST. We allow an hour more, because Mastodon signs exactly 24 h ahead by its own clock, and a fast sender
    clock must not be refused. The 5 minutes below cover a slow one. Otherwise: **time**.
-5. **`aud`** is a JSON string, or an array holding one (RFC 7519). It is parsed as a URL and normalised: lowercase
+6. **`aud`** is a JSON string, or an array holding one (RFC 7519). It is parsed as a URL and normalised: lowercase
    scheme and host, port 443 dropped. It must equal the current public origin or one in `up_previous_origins` within its
    30 days (M4: an app server still on the old address signs for it). Otherwise: **address**.
-6. **The signature**, verified with `ring`'s `ECDSA_P256_SHA256_FIXED` over `header.claims` with **the registered
-   key** (never the request's own). A failure: **bad**.
 7. `sub` is not checked (RFC 8292: a push service MAY ask for it; nothing here uses it).
 
 **Never logged (L4):** the `Authorization` and `Crypto-Key` headers are never in tracing or the security log. The JWT is
@@ -302,7 +310,7 @@ The order in `publish`: the size checks, the secret's lookup (a gone secret stil
 | a key registered, the push verifies | as today | the same |
 | **missing** (no `Authorization` of either form) | **401**, `WWW-Authenticate: vapid` | 401 |
 | **wrong key**, **bad** (form, `alg`, `crit`, signature) | **403** | 403 |
-| **time** (`exp`) or **address** (`aud`) | **503**, `Retry-After: 300` | 403 |
+| **time** (`exp`) or **address** (`aud`) of a **correctly signed** push | **503**, `Retry-After: 300` | 403 |
 
 - **401 and 403 follow RFC 8292 §4.2 (L5):** 401 for absent authentication, 403 for invalid. Mastodon treats both
   alike.
@@ -320,6 +328,9 @@ The order in `publish`: the size checks, the secret's lookup (a gone secret stil
   in `refresh` with `why: "refused"`. The phone then sends the app a raised `NEW_ENDPOINT` once a day while the phone
   is in use (§3.3). Fedilab's `PushServiceImpl.onNewEndpoint` re-subscribes Mastodon, so a wrongful 4xx costs at most
   about a day. Without (d) the server never lists `refused`, and the contract is unchanged.
+
+**Decided 2026-11-17 (Q3 (c) + (d)):** a bad signature is 403 whatever its `exp` and `aud`; only a push that verifies
+with the registered key and has a wrong time or address gets 503.
 
 **What each answer does at the sender** (`push_notification_worker.rb`'s `send`):
 - **A 4xx** other than 408 or 429 destroys the subscription. The app gets nothing until it subscribes again: Fedilab
@@ -542,7 +553,7 @@ ALTER TABLE up_registrations ADD COLUMN vapid_refused_at TEXT;
 ```
 
 **Server-only:**
-- `server/testdata/unified_push_vapid.json` (§10);
+- `server/testdata/unified_push_vapid.json` (§10; made by `scripts/up-vapid-vectors.py`, public data only);
 - three new `unified_push_gateway.json` rows: a keyed registration's pushkey is `rejected` and stamps
   `vapid_refused_at`, and a gateway push sets `gateway_at`.
 
@@ -594,14 +605,16 @@ Nothing new appears on the kid's screens.
 
 **Server:**
 - **`unified_push::vapid::tests::the_rows`** runs every row of `server/testdata/unified_push_vapid.json` through the
-  pure check, with the row's `now` and origins:
-  - **taken:** `rfc_mastodon` (Mastodon's exact spelling, no space), `rfc_spaced` (`t=…, k=…`, reversed order),
+  pure check, with the file's `now`, `origin` and `previous_origins` (`registered_key` is the registered key; row
+  fields `authorization`, `crypto_key?`, `outcome`):
+  - **taken:** (also `scheme_case_webpush`, `exp_slow_sender_edge`) `rfc_mastodon` (Mastodon's exact spelling, no space), `rfc_spaced` (`t=…, k=…`, reversed order),
     `rfc_quoted` (`t="…"`), `scheme_case` (`Vapid`, `webpush`), `k_padded`, `k_std_alphabet`, `draft_webpush`
     (`WebPush` + `Crypto-Key: dh=…;p256ecdsa=…`), `exp_float`, `exp_24h_plus_30min`, `aud_array`,
     `aud_with_port_443`, `previous_origin`;
-  - **missing:** `missing`;
+  - **missing:** `missing`, `no_key`;
   - **wrong key:** `wrong_key`;
-  - **bad:** `bad_signature`, `asn1_signature`, `alg_none`, `crit_header`, `oversized`;
+  - **bad:** `bad_signature`, `asn1_signature`, `alg_none`, `crit_header`, `oversized`, and (Q3 refinement) `expired_bad_signature` and `wrong_aud_bad_signature`:
+    a bad signature is **bad** even where `exp` or `aud` is off;
   - **time:** `expired`, `exp_26h`;
   - **address:** `wrong_aud`, `previous_origin_ended`.
 - **`unified_push::vapid::tests::points`:** the contract's test key, the not-a-point key, and a stored non-point read
@@ -615,9 +628,10 @@ Nothing new appears on the kid's screens.
   - a refusal lists `refused`, and a verified push ends it.
 - `policy_json_keys_snapshot`, and `i18n::tests` (automatic).
 
-**The vectors** are made once by `scripts/fake-homeserver.py --write-vapid-vectors` with a fixed `now`, signing with the
-test key. Its `--selftest` verifies every row's signature with its own pure-Python verify (the outcome must match the
-row) and checks that the contract's `body_vapid` key is its key. **The test key** is a P-256 private scalar derived from
+**The vectors** are made by `scripts/up-vapid-vectors.py --write` (R23-C; pure Python, deterministic, no network; it has no
+`--selftest` of its own) with a fixed `now`, signing with the test key; `--keys` prints the two public keys the
+contract's `body_vapid` and `body_vapid_changed` carry. R23-G's `fake-homeserver.py --vapid` may read the file and check
+that the contract's `body_vapid` key is its key. **The test key** is a P-256 private scalar derived from
 the SHA-256 of the phrase "vibb fake vapid key - test only, never a real sender" (the secrets rule: fake keys look
 fake). Only its public half is in the contract.
 
@@ -703,6 +717,10 @@ Neither Q3 change touches the contract. The FluffyChat test needs none of this r
 ---
 
 ## 13. Questions for the user
+
+**Decided (the user, 2026-11-17):** **Q1 yes**; **Q2 (a)**, every push delivered at once; **Q3 (c) + (d)**. Two
+refinements were added to the answers: Q1's boot re-send and its two-part "dead" (§2), and Q3's signature-first order
+(§4.3, §4.4). The questions are kept below as asked.
 
 Short enough to put in Norwegian in a few lines each.
 
