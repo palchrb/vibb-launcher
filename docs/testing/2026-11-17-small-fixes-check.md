@@ -136,3 +136,56 @@ Jelly Star, with its real ring-to-call gap). The crash buffer was not read.
 
 **Emulator time:** `compat34` 21:54-22:24 (29 min, three shutdowns and cold boots in it), `jelly36` 22:24-22:37
 (13 min, one shutdown): about **42 min**, one emulator at a time.
+
+## Fix re-run (branch `call-glance-1118`, 2026-11-17 night)
+
+**Build.** `call-glance-1118` at 9af3c88c6 (debug launcher, `testDebugUnitTest assembleDebug -PwarningsAsErrors=true`:
+2803 tests, 0 failed), the same rig, server binary and data as above. Times are the emulators' clocks (UTC, as above).
+Item 5's rows use the `ring_t` variant (the probe's main screen opened before the lock), the one that showed Android's
+lock; Answer and Hang up tapped on its screens.
+
+**The fixes.** Item 5, step 1 only: the record notes once the app's call notice was seen (`VoipRecord.callSeen`); inside
+the grace, that notice gone and the audio out of IN_COMMUNICATION ends the call `VOIP_CALL_SETTLE_MS` (1 s) after the
+notice went; a ring with no call notice keeps the 15 s grace; past the grace a gone notice ends it at once, as before.
+Item 4: on Android 16 and up, the glance's focus back within 1 s of an open, unanswered ask while the keyguard is
+locked asks once more after 0.5 s, once, and only if the glance still has the focus then (a pad that is up holds it).
+
+### Item 5: the glance after a VoIP call ends
+
+| Row | Android 14 (`compat34`) | Android 16 (`jelly36`) | Before (above) |
+|---|---|---|---|
+| T1. Caller hangs up while ringing | ring end 22:59:04.076; Android's lock from 04.385; screen off 22:59:10.8; NONE 22:59:20.093 (+16.0 s); the glance (screen off) | ring end 23:11:50.754; Android's lock from 51.057; screen off 23:11:57.5; NONE 23:12:06.768 (+16.0 s); the glance | the same: **unchanged**, as intended (no call notice: the grace stays) |
+| T2. Answer, 10 s call, hang up | hang-up 23:00:04.311; Android's lock 04.604-05.999 (**1.4 s**); NONE 23:00:05.432 (+1.12 s); **the glance 23:00:05.999 (+1.69 s)** | hang-up 23:12:51.326; Android's lock 51.635-52.996 (**1.4 s**); NONE 23:12:52.431 (+1.11 s); **the glance 23:12:53.080 (+1.75 s)** | Android's lock 6.3 s (14) / 6.4 s (16), NONE 16 s after the ring end |
+| T3. Answer, 30 s call, hang up | hang-up 23:01:18.978; NONE 19.117 (+0.14 s); **the glance 19.804 (+0.83 s)**; keyguard stayed occluded, no Android lock | hang-up 23:14:05.989; NONE 06.135 (+0.15 s); **the glance 06.762 (+0.77 s)**; no Android lock | NONE +0.12 s / +0.11 s, the glance at once, no Android lock |
+
+**Pass** on both: after a 10 s call the glance is back 1.7 s after the hang-up (Android's lock shows for the 1 s settle
+plus the glance's return, 1.4 s), after a 30 s call as before; the ring-only end is unchanged (up to 16 s of Android's
+lock, owed to step 2's answer window measured on Element X).
+
+The first build (91232d157) also settled past the grace. On Android 14 its T2 was the same (hang-up 22:53:16.863, NONE
++1.14 s, the glance +1.71 s), but its T3 regressed: NONE +1.12 s and Android's lock 22:54:33.893-35.287 (1.4 s) where
+the build before showed none. So 9af3c88c6 keeps the settle inside the grace only, and the rows above are on it.
+
+### Item 4: the empty shade after a swipe from the glance to the PIN pad
+
+| Row | Result |
+|---|---|
+| 16: swipe down from the status bar, then a swipe up | `Status Bar was long pressed` 23:14:42.194; the ask 23:14:43.783; `OCCLUDED -> PRIMARY_BOUNCER` 43.818, cancelled at 44.191, `PRIMARY_BOUNCER -> OCCLUDED` finished 44.356 (the drop); focus back on `PinLockActivity` 44.435; **"Lås opp: the pad went away with no answer - asking once more" 44.940**, the bouncer asked 44.941, focus `NotificationShade` 44.955: the pad over the shade (`isBouncerShowing(): true`, `mExpandedHeight=192.0`; scratchpad `sfc/shots/r36-downup.png`). PIN 4826: Home, `mExpandedHeight=0.0`. The empty shade showed ~0.6 s. **Pass** |
+| 16: a swipe up alone | the ask 23:15:12.820, the pad (`isBouncerShowing(): true`, focus `NotificationShade`); no second ask. **Pass** |
+| 16: a swipe up, Back on the pad ~0.6 s later | the ask 23:15:29.366, `cancelled` 29.997, the glance; no second ask. **Pass** |
+| 14: a swipe up alone | the ask 23:01:56.926, the pad (`isBouncerShowing(): true`); no second ask. **Pass** |
+| 14: swipe down, then a swipe up | the ask 23:02:15.276, the pad (`isBouncerShowing(): true`, `mExpandedHeight=0.0`); no second ask (14 is gated off). **Pass** |
+
+A second ask over a pad that is already up was not provoked directly: in every normal-pad row the focus stayed on
+`NotificationShade`, so the guard (the glance focused when the re-ask is due) never let one go.
+
+**Rig notes.** `compat34` started without `-wipe-data` (the state from the check above), twice (before and after the
+second build). Its old device token had gone stale with `jelly36`'s earlier enrolment, so its sync attempts got the
+emulator host blocked on the device API (429, `Retry-After` 171 s); the rows above are local to the phone and didn't
+need the server. `jelly36` started from its pre-start copy (22 of 22 sums), provisioned with the rig's `setup.sh`,
+enrolled by a typed code once the block lifted, the Child PIN 4826 and `keyguard=android` saved in the PWA; restored
+from `~/kid-look-1-avd-pre-start` afterwards: 22 of 22 sums, the same file list, `jelly36.ini` equal. Android 17: not
+run (as above).
+
+**Emulator time:** `compat34` 22:50-22:56 and 22:57-23:02, `jelly36` 23:02-23:16: about **25 min**, one emulator at a
+time under `~/emulator.lock` and `~/build.lock`.
