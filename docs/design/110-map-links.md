@@ -696,18 +696,20 @@ the two workflows get the path.
 
 About 1.75 rounds. One commit across both directories, and the server tags before the launcher's RC.
 
-## 15. Questions for the user
+## 15. Questions for the user - answers 2026-11-17
 
-1. **Map links you can tap in Meldinger.** Today nothing in a message can be tapped. Should a map link get a small "map"
-   button under the message that opens the place in Organic Maps? All other text stays as it is. **I recommend yes.**
-2. **Two steps on each phone, once, during a pause.** For links from Element X and other apps to reach Organic Maps,
-   the parent must, in Vibb One's settings during a pause: (1) turn off Google Play services' "Open supported links",
-   (2) turn on Vibb One's. Links in Meldinger work without this. The PWA shows an orange line until it is done. **I
-   recommend yes, with two rows in Vibb One's settings that open the right pages.**
-3. **CoMaps too.** CoMaps is a copy of Organic Maps. Should Vibb use CoMaps when Organic Maps isn't installed, and offer
-   the switch for either app? **I recommend yes.**
-4. **When the switch is turned off.** Google Play services' links stay off on the phone until someone turns them back
-   on. Should Vibb One's settings then show a row that does it, with a line in the PWA? **I recommend yes.**
+1. **Links in Meldinger - CHANGED by the user:** "Alle linker i meldinger bør vel kunne trykkes på? burde se ut som en
+   vanlig link vel?" Every web link (`http`/`https`) in a message is tappable and looks like an ordinary link (underlined,
+   the theme's link colour), not a separate "map" button. A tap sends a plain `VIEW`: a map link reaches Vibb's handler
+   (§7.1) and Organic Maps; any other link goes where Android sends it (the allowed browser, or an allowed app that holds
+   it), and when nothing on the phone can open it, the kid's calm note (§7.4). Phone numbers, e-mail addresses and plain
+   street addresses in the text stay plain text. The link detection and its look get their own rows in §10's tests;
+   §7.3 is read in this light at build.
+2. **The two one-time steps - YES** ("ok, det kan vel sikkert ikke gjøres automatisk?"). It can't: changing another
+   app's link handling needs a permission a device owner lacks, Play services is never suspended, and its pre-approval
+   beats Vibb's persistent preferred activity (§6.2). Vibb One's two rows open the exact pages.
+3. **CoMaps - OPEN** (the user asked what it is; explained, waiting for a yes or no).
+4. **The row that gives Play services its links back - YES** ("høres fornuftig ut").
 
 ## 16. Not in this round
 
