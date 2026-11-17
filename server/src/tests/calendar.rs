@@ -1301,8 +1301,8 @@ async fn every_calendar_route_needs_a_session() {
     assert_eq!(app.fetch.count(), calls, "no fetch without a session");
 }
 
-/// 2026-11-12: Kalender has a row on Device › Apps' allowed list, under Meldinger - "Part of Vibb One", whether it is
-/// on Home, a link to Device › Calendar - before the first report and for a Vibb One with Dagen, never for one without.
+/// 2026-11-12: Kalender has a row on Device › Apps' allowed list, under Meldinger - no sub-line (design 113), whether
+/// it is on Home, a link to Device › Calendar - before the first report and for a Vibb One with Dagen, never for one without.
 #[tokio::test]
 async fn kalender_has_a_row_on_device_apps() {
     use super::{Section, device_page};
@@ -1349,10 +1349,7 @@ async fn kalender_has_a_row_on_device_apps() {
         html.contains(&format!(r##"href="/devices/{id}/calendar#dagen""##)),
         "{html}"
     );
-    assert!(
-        html.contains(r#"row-label">Calendar<span class="row-sub">Part of Vibb One<"#),
-        "{html}"
-    );
+    assert!(html.contains(r#"row-label">Calendar</span>"#), "{html}");
     assert!(
         html.contains(r#"<span class="row-value">On Home</span>"#),
         "{html}"

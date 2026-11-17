@@ -1542,7 +1542,7 @@ pub(crate) fn notification_access_note(lang: Lang, latest: Option<&DeviceStatus>
 /// The phone should show the parent's clock format but can't (design 34 P12): the policy asks
 /// for "24" or "12" and the last report says `clock_format_applied` false - no "Modify system
 /// settings" access, or Android refused the write. Home Screen's warning above the Language
-/// group; the adb grant and the Settings path behind its ⓘ. "Follow the phone" never warns, nor
+/// group; the adb grant and the Settings path behind its ⓘ. "Same as the phone" never warns, nor
 /// does an older launcher that doesn't report it.
 /// How to grant Vibb One "Modify system settings" (PLAN fix backlog, 2026-10-24) is
 /// `device.write_settings_steps`: the on-phone path first - Vibb One's Settings row that opens Android's page -, adb as
@@ -1560,7 +1560,7 @@ pub(crate) fn clock_format_note(
         title: t(lang, "device.home.clock_not_applied").to_string(),
         value: None,
         sub: None,
-        detail: Some(t(lang, "device.home.clock_not_applied_sub").to_string()),
+        detail: None,
         fix: Some(format!(
             "{} {}",
             t(lang, "device.home.clock_not_applied_fix"),
@@ -1596,8 +1596,8 @@ struct HomeTemplate {
     /// Security review S-L5: the Bluetooth page pairs any device (`bluetooth_any_device`).
     bluetooth_any_device: bool,
     /// Design 98 §6.1: the kid's Flymodus switch (bit 64), its row only for a launcher with `airplane_mode_v1` - its
-    /// sub-line when it says something (`airplane_mode::home_sub`).
-    airplane_row: Option<Option<String>>,
+    /// sub-line when it says something and whether it is orange (`airplane_mode::home_sub`).
+    airplane_row: Option<Option<(String, bool)>>,
     quick_airplane: bool,
     /// Design 99 §5.2: Snarveier (bit 128), its row only for a launcher with `shortcuts_v1` - its sub-line when it says
     /// something (`shortcuts::home_sub`).
@@ -1639,7 +1639,7 @@ pub async fn view_home(State(state): State<AppState>, lang: Lang, Path(id): Path
         .filter(|s| has_capability(Some(s), crate::airplane_mode::CAPABILITY))
         .map(|s| {
             let report = crate::airplane_mode::report(s).unwrap_or_default();
-            crate::airplane_mode::home_sub(lang, &device.name, &policy, &report)
+            crate::airplane_mode::home_sub(lang, &policy, &report)
         });
     let shortcuts_row = latest
         .as_ref()
@@ -2281,7 +2281,7 @@ pub(crate) async fn render_apps(
             let off = policy.calls_mode == "off";
             dialer_view = Some(AppView {
                 builtin: true,
-                // Managed: the title and the sub-line already say so - no value, only the chevron.
+                // Managed: the title says so - no value, no sub-line, only the chevron (design 113).
                 link: Some((
                     format!("/devices/{id}/calls#settings"),
                     if off {
@@ -2301,15 +2301,11 @@ pub(crate) async fn render_apps(
                 display: None,
                 anchor,
                 row: crate::handlers::devices::UnifiedAppRow {
-                    status_label: t(
-                        lang,
-                        if off {
-                            "apps.dialer.off_sub"
-                        } else {
-                            "apps.dialer.managed_sub"
-                        },
-                    )
-                    .to_string(),
+                    status_label: if off {
+                        t(lang, "apps.dialer.off_sub").to_string()
+                    } else {
+                        String::new()
+                    },
                     own_label: None,
                     label,
                     checked: true,
@@ -2353,9 +2349,13 @@ pub(crate) async fn render_apps(
                         .filter(|(entered, _)| *entered == package)
                         .map(|(_, e)| e),
                 );
-                form.catalog_default = default.map(|values| values.describe(lang));
                 form.logo = logos.get(&package).cloned();
                 form.own_row = phone_row.is_some() || off_home.contains(&package);
+                // Design 113: the catalog's default is said only beside Tilbakestill (the phone has its own value).
+                form.catalog_default = form
+                    .can_reset()
+                    .then(|| default.map(|values| values.describe(lang)))
+                    .flatten();
                 form.from = from.clone();
                 form.on_home = Some(!off_home.contains(&package));
                 form.on_home_words = Some((
@@ -2458,12 +2458,12 @@ pub(crate) async fn render_apps(
             && !has_capability(latest.as_ref(), crate::lock_glance::MESSAGES_APP_CAPABILITY))
         .then_some(t(lang, "apps.builtin.update_note"));
         let label = current.and_then(|values| values.label.clone());
-        let part_of = t(lang, "apps.builtin.part_of_vibb");
         let row = crate::handlers::devices::UnifiedAppRow {
+            // Design 113: a line only while SMS isn't managed.
             status_label: if policy.sms_mode == "managed" {
-                part_of.to_string()
+                String::new()
             } else {
-                format!("{part_of} · {}", t(lang, "apps.builtin.sms_unmanaged"))
+                t(lang, "apps.builtin.sms_unmanaged").to_string()
             },
             own_label: label.is_some().then(|| name.to_string()),
             label: label.unwrap_or_else(|| name.to_string()),
@@ -2532,7 +2532,7 @@ pub(crate) async fn render_apps(
                 display: None,
                 anchor: "app-calendar".to_string(),
                 row: crate::handlers::devices::UnifiedAppRow {
-                    status_label: t(lang, "apps.builtin.part_of_vibb").to_string(),
+                    status_label: String::new(),
                     own_label: None,
                     label: name.to_string(),
                     package_name: String::new(),

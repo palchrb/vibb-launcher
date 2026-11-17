@@ -1552,7 +1552,7 @@ pub async fn save_app_permissions(
     }
 }
 
-/// `POST /devices/{id}/apps/lock-media` (2026-11-04): one app's "Show as a media player on the lock screen" - the
+/// `POST /devices/{id}/apps/lock-media` (2026-11-04): one app's "Media player on the lock screen" - the
 /// auto-saving checkbox `lock_media=on`, its field missing = off; another value is a 400 - in its Permissions. Saved,
 /// refused and failed as [save_app_permissions] (`?notice=lock_media_full` past `app_permissions::MAX_ROWS_PER_DEVICE`);
 /// refused at the row for Vibb music too, whose player always shows. On only for an app the page offers it for
@@ -1940,14 +1940,16 @@ pub(crate) async fn app_rows(
         let update = tracked_match.and_then(|t| download_of(t.id));
         let (label, own_label) = shown(&app.package_name, None, &app.label);
         apps.push(UnifiedAppRow {
-            status_label: if app.preinstalled {
-                t(lang, "device.apps.preinstalled").to_string()
-            } else if app.installer.as_deref() == Some(crate::play::PLAY_STORE) {
-                t(lang, "device.apps.from_play").to_string()
-            } else if let Some(update) = update {
-                crate::app_downloads::update_label(update, &zone, now)
-            } else {
-                t(lang, "device.apps.installed").to_string()
+            // Design 113: an installed app says nothing (preinstalled, from Play or plain); an update that waits or
+            // was refused keeps its line.
+            status_label: match update {
+                Some(update)
+                    if !app.preinstalled
+                        && app.installer.as_deref() != Some(crate::play::PLAY_STORE) =>
+                {
+                    crate::app_downloads::update_label(update, &zone, now)
+                }
+                _ => String::new(),
             },
             is_installing: false,
             // An update the phone refused (security review M10) shows like a failed install.

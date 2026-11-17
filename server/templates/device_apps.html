@@ -23,7 +23,7 @@
     {% endif %}
 
     {% if let Some(note) = update_note %}
-    <p class="row row-note" data-row="update-note">{{ note }}</p>
+    <p class="row row-note tone-orange" data-row="update-note">{{ note }}</p>
     {% endif %}
 
     <section id="allowed" aria-labelledby="allowed-title">
@@ -49,10 +49,11 @@
             {% if reported %}<p class="row row-note">{{ self.t("device.apps.nothing_else") }}</p>{% endif %}
             {% endfor %}
         </div>
-        <div class="group-footer">{{ self.t("device.apps.footer") }}
+        <div class="group-footer">
             <details class="info">
                 <summary aria-label="{{ self.t("device.apps.info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
+                    <p>{{ self.t("device.apps.footer") }}</p>
                     <p>{{ self.t("device.apps.info") }}</p>
                 </div>
             </details>
@@ -76,10 +77,11 @@
             {% include "partials/info_row.html" %}
             {% endif %}
         </div>
-        <div class="group-footer">{{ self.t("device.apps.downloads_footer") }}
+        <div class="group-footer">
             <details class="info">
                 <summary aria-label="{{ self.t("device.apps.downloads_info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
+                    <p>{{ self.t("device.apps.downloads_footer") }}</p>
                     <p>{{ self.t("device.apps.downloads_info") }}</p>
                 </div>
             </details>

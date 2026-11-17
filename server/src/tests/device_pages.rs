@@ -2187,8 +2187,8 @@ async fn the_permissions_form_returns_to_its_open_details() {
     let page = device_page(id, Section::Apps);
     let html = app.get_page(&page, &cookie).await.text();
     assert!(
-        html.contains("data-row=\"update-note\""),
-        "an older launcher: the note"
+        html.contains("class=\"row row-note tone-orange\" data-row=\"update-note\""),
+        "an older launcher: the note, orange"
     );
     app.post_status(&token, report(json!(["app_permissions_v1"])))
         .await;
@@ -2206,7 +2206,10 @@ async fn the_permissions_form_returns_to_its_open_details() {
         .and_then(|rest| rest.split("</details>").next())
         .expect("the plain app's details");
     assert!(plain.contains("name=\"lock_media\"") && !plain.contains("name=\"camera\""));
-    assert!(html.contains("Media management: not approved"));
+    // Design 113: an access not approved is an orange row, the way to approve it behind its ⓘ.
+    assert!(html.contains(
+        "<summary class=\"row\"><span class=\"row-label tone-orange\">Media management: not approved</span>"
+    ));
     assert!(html.contains("App access › Element X: Media management"));
     let action = format!("/devices/{id}/apps/permissions#{anchor}");
     assert!(html.contains(&format!("action=\"{action}\"")));
@@ -2314,7 +2317,7 @@ async fn the_permissions_form_returns_to_its_open_details() {
     assert_eq!(rows, 0);
 }
 
-/// 2026-11-04: "Show as a media player on the lock screen" - an allowed, installed third-party app's switch in its
+/// 2026-11-04: "Media player on the lock screen" - an allowed, installed third-party app's switch in its
 /// Permissions, back to the open details, sent as the policy's `lock_media_apps`; none for a preinstalled app. The
 /// route keeps the page's rule for on (a preinstalled, an unknown, Vibb, Vibb music and Play's core refused at their
 /// row), takes off for any app, answers 400 for another value, prunes the rows of apps no longer offered when one is
@@ -2347,7 +2350,7 @@ async fn the_lock_media_switch_returns_to_its_open_details() {
     let html = app.get_page(&page, &cookie).await.text();
     let anchor = format!("perms-{pod}");
     assert!(html.contains(&format!("<details class=\"app-display\" id=\"{anchor}\">")));
-    assert!(html.contains("Show as a media player on the lock screen"));
+    assert!(html.contains("Media player on the lock screen"));
     assert!(html.contains("title and picture show on the lock screen"));
     assert!(html.contains(&format!(
         "action=\"/devices/{id}/apps/lock-media#{anchor}\""

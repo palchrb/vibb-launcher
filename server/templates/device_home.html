@@ -50,7 +50,14 @@
             </label>
             <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
         </form>
-        <p class="group-footer">{{ self.t("device.home.layout_footer") }}</p>
+        <div class="group-footer">
+            <details class="info">
+                <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    <p>{{ self.t("device.home.layout_footer") }}</p>
+                </div>
+            </details>
+        </div>
     </section>
 
     <section id="wallpapers" aria-labelledby="wallpapers-title">
@@ -71,7 +78,7 @@
             </div>
             <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
         </form>
-        <p class="group-footer">{{ self.t("device.home.wallpapers_footer.before") }} <a href="/wallpapers">{{ self.t("device.home.wallpapers_footer.link") }}</a>{{ self.t("device.home.wallpapers_footer.after") }}</p>
+        <p class="group-footer">{{ self.t("device.home.wallpapers_footer.before") }} <a href="/wallpapers">{{ self.t("device.home.wallpapers_footer.link") }}</a></p>
     </section>
 
     <section id="quick-controls" aria-labelledby="quick-controls-title">
@@ -93,7 +100,7 @@
             {% if let Some(airplane_sub) = airplane_row %}
             <input type="hidden" name="airplane_row" value="1">
             <label class="row" data-row="airplane">
-                <span class="row-label">{{ self.t("device.home.airplane") }}{% if let Some(line) = airplane_sub %}<span class="row-sub" data-airplane-sub>{{ line }}</span>{% endif %}</span>
+                <span class="row-label">{{ self.t("device.home.airplane") }}{% if let Some((line, warn)) = airplane_sub %}<span class="row-sub{% if warn %} tone-orange{% endif %}" data-airplane-sub>{{ line }}</span>{% endif %}</span>
                 <input type="checkbox" role="switch" class="sw" name="quick_control_airplane" value="on"{% if quick_airplane %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
             </label>
             {% endif %}
@@ -105,9 +112,9 @@
                 <span class="row-label">{{ self.t("device.home.bluetooth") }}</span>
                 <input type="checkbox" role="switch" class="sw" name="quick_control_bluetooth" value="on"{% if quick_bluetooth %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
             </label>
-            {#- Security review S-L5: off = the Bluetooth page pairs headphones and speakers only. -#}
+            {#- Security review S-L5: off = the Bluetooth page pairs headphones and speakers only (said in the group's ⓘ). -#}
             <label class="row">
-                <span class="row-label">{{ self.t("device.home.bluetooth_any") }}<span class="row-sub">{{ self.t("device.home.bluetooth_any_sub") }}</span></span>
+                <span class="row-label">{{ self.t("device.home.bluetooth_any") }}</span>
                 <input type="checkbox" role="switch" class="sw" name="bluetooth_any_device" value="on"{% if bluetooth_any_device %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
             </label>
             <label class="row">
@@ -124,12 +131,14 @@
             </label>
             <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
         </form>
-        <div class="group-footer">{{ self.t("device.home.quick_footer") }}{% if shortcuts_row.is_some() %} <span data-shortcuts-footer>{{ self.t("device.home.quick_footer_shortcuts") }}</span>{% endif %} {{ self.t("device.home.quick_mobile") }}
+        <div class="group-footer">
             <details class="info">
                 <summary aria-label="{{ self.t("device.home.quick_info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
+                    <p>{{ self.t("device.home.quick_footer") }}{% if shortcuts_row.is_some() %} <span data-shortcuts-footer>{{ self.t("device.home.quick_footer_shortcuts") }}</span>{% endif %} {{ self.t("device.home.quick_mobile") }}</p>
                     {% if shortcuts_row.is_some() %}<p data-shortcuts-info>{{ self.tp("device.home.shortcuts_info", [("name", device.name.as_str())]) }}</p>{% endif %}
                     <p>{{ self.t("device.home.quick_info") }}</p>
+                    <p>{{ self.t("device.home.bluetooth_any_sub") }}</p>
                     {% if airplane_row.is_some() %}<p data-airplane-info>{{ self.t("device.home.airplane_info") }}</p>{% endif %}
                 </div>
             </details>

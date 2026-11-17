@@ -571,7 +571,7 @@ pub struct DeviceStatus {
     pub relock_blocks_total: Option<i64>,
     /// The phone's clock format is the policy's (design 34 P12, migrations/0075): `false` = it
     /// should be but can't be (no "Modify system settings" access, or the write was refused).
-    /// `None` = "Follow the phone", or an older launcher.
+    /// `None` = "Same as the phone", or an older launcher.
     pub clock_format_applied: Option<bool>,
     // dns_upstream_json (migrations/0079, design 36 §4.2) is read directly by
     // handlers::dns_filter::phone_lines.
@@ -1382,7 +1382,7 @@ pub struct PolicyResponse {
     /// switched away from the default on this phone. A failing query is a 500 for the whole policy (fail closed): a
     /// lost list would hand the camera back. An older launcher ignores it.
     pub app_permissions: Vec<crate::app_permissions::AppPermission>,
-    /// "Show as a media player on the lock screen" (2026-11-04), always a list of package names, sorted: the apps the
+    /// "Media player on the lock screen" (2026-11-04), always a list of package names, sorted: the apps the
     /// parent switched on on this phone, which the lock's media tile then shows as it does a music, video or browser
     /// app (`app_permissions::lock_media_apps`). A failing query sends `[]` (it only hides a tile). An older launcher
     /// ignores it.
@@ -1648,7 +1648,7 @@ pub struct StatusReportRequest {
     #[serde(default)]
     pub relock_blocks_total: Option<i64>,
     /// Design 34 P12: the phone's clock format is the policy's `launcher_ui.clock_format` (true),
-    /// it should be but can't be (false), or nothing to apply - "Follow the phone" - (null).
+    /// it should be but can't be (false), or nothing to apply - "Same as the phone" - (null).
     /// Absent from older launchers.
     #[serde(default)]
     pub clock_format_applied: Option<bool>,

@@ -196,8 +196,11 @@ async fn the_home_form_keeps_bit_64_without_its_row() {
         super::form_action_of(&html, "quick_control_airplane"),
         Some(format!("/devices/{id}/policy#quick-controls").as_str())
     );
+    // Bit 64 on and no role: one short orange line (design 113 QA M6).
     assert!(
-        html.contains("Shows for Emma once Vibb One is chosen as the digital assistant."),
+        html.contains(
+            "<span class=\"row-sub tone-orange\" data-airplane-sub>Vibb One isn&#39;t the digital assistant</span>"
+        ),
         "{html}"
     );
     assert!(html.contains("data-airplane-info"));
@@ -208,7 +211,7 @@ async fn the_home_form_keeps_bit_64_without_its_row() {
         .text();
     assert!(nb.contains("Flymodus"), "{nb}");
     assert!(
-        nb.contains("Vises for Emma når Vibb One er valgt som digital assistent."),
+        nb.contains("Vibb One er ikke digital assistent</span>"),
         "{nb}"
     );
     assert!(nb.contains("Nødsamtaler virker fortsatt"));
@@ -223,6 +226,13 @@ async fn the_home_form_keeps_bit_64_without_its_row() {
     assert_redirect(&res, &home, Some("quick-controls"));
     app.assert_lands(&res, &cookie).await;
     assert_eq!(mask(&app, &token).await, 1 | 32);
+    // Bit 64 off, still no role: nothing is said about the role, nothing orange.
+    let html = app.get_page(&home, &cookie).await.text();
+    assert!(!html.contains("digital assistant</span>"), "{html}");
+    assert!(
+        !html.contains("data-airplane-sub"),
+        "no sub-line, so nothing orange: {html}"
+    );
     let res = save(vec![
         ("airplane_row", "1"),
         ("quick_control_wifi", "on"),
@@ -252,7 +262,9 @@ async fn the_home_form_keeps_bit_64_without_its_row() {
     .await;
     let html = app.get_page(&home, &cookie).await.text();
     assert!(
-        html.contains("Without Wi-Fi in airplane mode the phone is fully offline"),
+        html.contains(
+            "<span class=\"row-sub\" data-airplane-sub>Fully offline in airplane mode</span>"
+        ),
         "{html}"
     );
     report(
@@ -271,7 +283,9 @@ async fn the_home_form_keeps_bit_64_without_its_row() {
         .unwrap();
     let html = app.get_page(&home, &cookie).await.text();
     assert!(
-        html.contains("Airplane mode is blocked under Advanced › Restrictions."),
+        html.contains(
+            "<span class=\"row-sub\" data-airplane-sub>Blocked under Restrictions</span>"
+        ),
         "{html}"
     );
 }
