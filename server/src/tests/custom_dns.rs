@@ -53,8 +53,38 @@ async fn pick(app: &TestApp, cookie: &str, upstream: &str) -> TestResponse {
 }
 
 /// A field of the Custom Server form, from its label to the end of its `.field`.
+/// A field from its label to the `</div>` that closes it (a field ⓘ's panel, design 113, has
+/// its own `<div>` inside).
 fn field<'a>(html: &'a str, id: &str) -> &'a str {
-    part(html, &format!("for=\"{id}\""), "</div>")
+    let start = html
+        .find(&format!("for=\"{id}\""))
+        .unwrap_or_else(|| panic!("no {id}"));
+    let rest = &html[start..];
+    let mut depth = 0usize;
+    let mut at = 0usize;
+    loop {
+        let open = rest[at..].find("<div").map(|i| at + i);
+        let close = rest[at..]
+            .find("</div>")
+            .map(|i| at + i)
+            .expect("an open field");
+        match open {
+            Some(o) if o < close => {
+                depth += 1;
+                at = o + 4;
+            }
+            _ if depth == 0 => return &rest[..close + 6],
+            _ => {
+                depth -= 1;
+                at = close + 6;
+            }
+        }
+    }
+}
+
+/// The Custom Server row's state line (design 113: said once, on the row, not under the field).
+fn custom_sub(html: &str) -> &str {
+    part(html, "id=\"custom-server\"", "</summary>")
 }
 
 async fn events(app: &TestApp) -> Vec<String> {
@@ -73,7 +103,7 @@ async fn a_custom_server_is_saved_write_only_and_lands_on_its_group() {
     let page = app.get_page("/dns", &cookie).await.text();
     check_forms("/dns", &page);
     assert!(field(&page, "custom_server").contains("value=\"\""));
-    assert!(field(&page, "custom_server").contains("Not set."));
+    assert!(custom_sub(&page).contains("Not set<"));
     assert!(field(&page, "custom_backup").contains("value=\"https://1.1.1.3/dns-query\""));
     assert!(!page.contains("forget_custom"));
     assert!(page.contains("<details class=\"disclosure cell\" id=\"custom-server\">"));
@@ -322,7 +352,7 @@ async fn a_refused_save_never_shows_the_stored_values() {
         assert!(!html.contains(secret), "{secret} in the page");
     }
     assert!(field(&html, "custom_server").contains("value=\"\""));
-    assert!(field(&html, "custom_server").contains("Set (…dns.example · DNS-over-HTTPS)."));
+    assert!(custom_sub(&html).contains("…dns.example · DNS-over-HTTPS"));
     assert_eq!(stored(&app).await.1, pair.0);
 }
 
@@ -334,7 +364,7 @@ async fn an_equal_stored_pair_keeps_its_hints_and_backup() {
     let cookie = app.admin_cookie().await;
     store(&app, "quad9", "tls://9.9.9.9", "tls://9.9.9.9", 1).await;
     let page = app.get_page("/dns", &cookie).await.text();
-    assert!(field(&page, "custom_server").contains("Set (9.9.9.9 · DNS-over-TLS)."));
+    assert!(custom_sub(&page).contains("9.9.9.9 · DNS-over-TLS"));
     assert!(field(&page, "custom_backup").contains("Set (9.9.9.9 · DNS-over-TLS)."));
     assert!(field(&page, "custom_backup").contains("value=\"\""));
 

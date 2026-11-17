@@ -420,15 +420,13 @@ async fn every_form_in_the_add_flow_lands_where_it_should() {
     assert!(!html.contains("data-warning=\"replaces\""));
     let qr_action = format!("/devices/{id}/provision#qr");
     let code_action = format!("/devices/{id}/regenerate-code");
-    let mut actions: Vec<String> = settings_pages::forms(&html)
+    let actions: Vec<String> = settings_pages::forms(&html)
         .into_iter()
         .map(|(action, _)| action)
         .collect();
-    // Design 86: the launcher check's Check Again comes first (tested on its own below).
-    assert_eq!(
-        actions.remove(0),
-        "/settings/provisioning/launcher-check#launcher"
-    );
+    // Design 113: a launcher that works shows no launcher group (and no Check Again) here;
+    // Settings › Phone Setup keeps it.
+    assert!(!html.contains("/settings/provisioning/launcher-check#launcher"));
     assert_eq!(actions, [qr_action.clone(), code_action.clone()]);
     let form_at = html.find(&format!("action=\"{qr_action}\"")).unwrap();
     assert!(settings_pages::encloses(&html, "qr", form_at));
