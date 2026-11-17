@@ -314,36 +314,45 @@
         <receiver
             android:name=".portal.PortalSessionReceiver"
             android:exported="false" />
+        <!-- Kid Settings, a task of its own (design 111, 2026-11-17), as Kalender's, Meldinger's and the phone book's:
+             in Recents as "Innstillinger" until Back, with Android's task animation on the tile, the swipe and Home.
+             Opaque on the plain night ground (KidSettingsTheme: the window, the splash and the content one colour).
+             Not exported; one intent opens it (KidSettingsActivity.intent). Its four sub-pages below share the
+             affinity and are started only from its rows, in its task (KidSettingsTaskTest). -->
         <activity
             android:name=".ui.kidsettings.KidSettingsActivity"
             android:configChanges="orientation|screenSize|uiMode"
-            android:excludeFromRecents="true"
-            android:exported="false" />
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:taskAffinity="${applicationId}.kidsettings"
+            android:theme="@style/KidSettingsTheme" />
         <!-- The kid's ringtone / message sound picker (2026-11-04): our own list, never the system picker; not
              exported, so only Kid Settings opens it, and as our own page it runs in the launcher's lock task. -->
         <activity
             android:name=".ui.kidsettings.KidSoundPickerActivity"
             android:configChanges="orientation|screenSize|uiMode"
-            android:excludeFromRecents="true"
             android:exported="false"
+            android:taskAffinity="${applicationId}.kidsettings"
             android:theme="@style/KidPageTheme" />
-        <!-- Design 99 §4.2: the kid's Snarveier picker, a page in Home's task as the sound picker. -->
+        <!-- Design 99 §4.2: the kid's Snarveier picker, a page in Kid Settings' task as the sound picker. -->
         <activity
             android:name=".ui.kidsettings.ShortcutsPickerActivity"
             android:configChanges="orientation|screenSize|uiMode"
-            android:excludeFromRecents="true"
             android:exported="false"
+            android:taskAffinity="${applicationId}.kidsettings"
             android:theme="@style/KidPageTheme" />
         <activity
             android:name=".ui.quickcontrols.WifiNetworksActivity"
             android:configChanges="orientation|screenSize|uiMode"
             android:exported="false"
+            android:taskAffinity="${applicationId}.kidsettings"
             android:windowSoftInputMode="adjustResize"
             android:theme="@style/KidPageTheme" />
         <activity
             android:name=".ui.quickcontrols.BluetoothDevicesActivity"
             android:configChanges="orientation|screenSize|uiMode"
             android:exported="false"
+            android:taskAffinity="${applicationId}.kidsettings"
             android:theme="@style/KidPageTheme" />
 
         <!-- Calls. The dialer role needs a DIAL activity (plain and tel:) and an exported

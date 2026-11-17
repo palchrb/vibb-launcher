@@ -1,5 +1,6 @@
 package com.kidslauncher.mdm.ui
 
+import com.kidslauncher.mdm.ui.kidsettings.KidSettingsActivity
 import com.kidslauncher.mdm.ui.look.PageKind
 
 /*
@@ -32,13 +33,16 @@ fun applyLocaleNow(currentTags: String, desired: String, callActive: Boolean): B
 
 /**
  * A task a refused switch closes before it asks once more, by its root activity's class name: the launcher's own
- * tasks that stay alive behind Home - Kalender's, Meldinger's and the phone book's (either look's class, `PageKind`). The system
- * refuses the call while the process's newest activity is of another kind of task than at the last call that got
- * through (design 78 §5.3, 2026-11-11), and a stopped page behind Home stays the newest for as long as its task
- * lives; the switch would have created its activities again anyway.
+ * tasks that stay alive behind Home - Kalender's, Meldinger's and the phone book's (either look's class, `PageKind`),
+ * and Kid Settings' (design 111: one class, night in both looks, so the look's own [com.kidslauncher.mdm.ui.look.closesTask]
+ * leaves it - the look is chosen in it). The system refuses the call while the process's newest activity is of another
+ * kind of task than at the last call that got through (design 78 §5.3, 2026-11-11), and a stopped page behind Home stays
+ * the newest for as long as its task lives; the switch would have created its activities again anyway, and a closed
+ * card can't keep the old language's name.
  */
 fun languageClosesTask(rootClassName: String?): Boolean =
-    PageKind.DAY.has(rootClassName) || PageKind.MESSAGES.has(rootClassName) || PageKind.PHONE_BOOK.has(rootClassName)
+    PageKind.DAY.has(rootClassName) || PageKind.MESSAGES.has(rootClassName) || PageKind.PHONE_BOOK.has(rootClassName) ||
+        rootClassName == KidSettingsActivity::class.java.name
 
 /**
  * How long after a refused resume the language is asked for once more. The system refuses the call while the

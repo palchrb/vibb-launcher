@@ -1,9 +1,7 @@
 package com.kidslauncher.mdm.ui.kidsettings
 
-import android.app.admin.DevicePolicyManager
 import android.content.Context
 import android.content.Intent
-import android.content.SharedPreferences
 import android.os.Bundle
 import android.view.View
 import android.widget.RadioButton
@@ -11,12 +9,8 @@ import androidx.lifecycle.lifecycleScope
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.databinding.ActivityKidSoundPickerBinding
 import com.kidslauncher.mdm.databinding.ItemKidSoundBinding
-import com.kidslauncher.mdm.preferences.LauncherPreferences
-import com.kidslauncher.mdm.server.LockReason
-import com.kidslauncher.mdm.server.cachedPolicy
 import com.kidslauncher.mdm.ui.KidHeader
 import com.kidslauncher.mdm.ui.KidInsets
-import com.kidslauncher.mdm.ui.LockActivity
 import com.kidslauncher.mdm.ui.look.KidPageActivity
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -47,12 +41,9 @@ class KidSoundPickerActivity : KidPageActivity() {
     private var writesRunning = 0
     private var loadJob: Job? = null
 
-    private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-        when (key) {
-            LauncherPreferences.mdm().keys().kidModePolicy() -> finishIfNotAllowed()
-            LauncherPreferences.mdm().keys().lockReason() -> redirectIfLocked()
-        }
-    }
+    /** Design 111 §2.2: a lock comes first, and the page leaves when its rows aren't Kid Settings' any more (the
+     * parent's sound bit, or the app-op) - the sound stopped first. */
+    private val guard = SubPageGuard(this, SubPage.SOUND_PICKER, beforeLeave = { preview.stop() })
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -82,19 +73,19 @@ class KidSoundPickerActivity : KidPageActivity() {
 
     override fun onStart() {
         super.onStart()
-        LauncherPreferences.getSharedPreferences().registerOnSharedPreferenceChangeListener(prefsListener)
+        guard.start()
     }
 
     override fun onResume() {
         super.onResume()
-        if (redirectIfLocked() || finishIfNotAllowed()) return
+        if (guard.check()) return
         load()
     }
 
     /** Leaving stops the sound (the footer's promise), and so does the screen going off. */
     override fun onStop() {
         preview.stop()
-        LauncherPreferences.getSharedPreferences().unregisterOnSharedPreferenceChangeListener(prefsListener)
+        guard.stop()
         super.onStop()
     }
 
@@ -102,26 +93,6 @@ class KidSoundPickerActivity : KidPageActivity() {
     override fun onDestroy() {
         preview.stop()
         super.onDestroy()
-    }
-
-    private fun redirectIfLocked(): Boolean {
-        if (LauncherPreferences.mdm().lockReason() == LockReason.NONE) return false
-        preview.stop()
-        LockActivity.start(this)
-        finish()
-        return true
-    }
-
-    /** True when it finished: the rows aren't Kid Settings' any more (the parent's sound bit, or the app-op). */
-    private fun finishIfNotAllowed(): Boolean {
-        if (isFinishing) return true
-        val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
-        val section = controlsSection(dpm.isDeviceOwnerApp(packageName), cachedPolicy())
-        val state = soundPicksState((section as? ControlsSection.Rows)?.sound == true, KidSounds.canWrite(this))
-        if (state?.writable == true) return false
-        preview.stop()
-        finish()
-        return true
     }
 
     /** The phone's list (once) and its current sound, off the main thread; then the rows. */

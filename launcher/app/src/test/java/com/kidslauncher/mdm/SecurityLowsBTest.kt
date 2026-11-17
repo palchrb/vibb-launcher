@@ -308,6 +308,7 @@ class SecurityLowsBTest {
         assertTrue(page.contains("if (!info.bonded && !pairOffered(info)) return@launch"))
         val pair = page.substringAfter("private fun onPairTapped(").substringBefore("QuickControls.pairBluetoothDevice(")
         assertTrue(pair.contains("if (!pairOffered(device)) {"))
-        assertTrue(page.contains("{ if (!finishIfNotAllowed()) dropUnoffered() }"))
+        // Design 111: the sub-pages' one guard runs the gate on every apply and drops the rows when the page stays.
+        assertTrue(page.contains("SubPageGuard(this, SubPage.BLUETOOTH, stayed = { dropUnoffered() })"))
     }
 }

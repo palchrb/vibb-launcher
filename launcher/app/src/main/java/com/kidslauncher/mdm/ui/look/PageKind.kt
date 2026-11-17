@@ -42,8 +42,8 @@ enum class PageKind(private val night: Class<out Activity>, private val light: C
     fun has(className: String?): Boolean = className == night.name || className == light.name
 
     companion object {
-        /** The look [page] is the variant of; null for a class without a row - a page with one class, in Home's
-         * task (R9). */
+        /** The look [page] is the variant of; null for a class without a row - a page with one class, one of Kid
+         * Settings' sub-pages in its task (R9, design 111). */
         fun lookOf(page: Class<*>): LookMode? = when {
             entries.any { it.light == page } -> LookMode.LIGHT
             entries.any { it.night == page } -> LookMode.DARK
