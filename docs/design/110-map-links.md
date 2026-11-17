@@ -669,6 +669,7 @@ the two workflows get the path.
     - RAI (`44.4490541, 26.0888398`);
     - one Norwegian G9 share;
     - a `cid` as `0x0:0x<hex>`.
+    - **Steak no Don confirmed 2026-11-17** on the user's server (a Raspberry Pi in Norway), `hl=no`: `d[6][9]` = `[null,null,34.5945482,133.75834279999998]` (the `!3d!4d` point to float noise - round to 7 decimals before use), `d[6][11]` = "Steak no Don", `d[6][2]` = `["4 Chome-7-28 Oimatsucho","Kurashiki, Okayama 710-0826","Japan"]` (address lines may be three, the country last). With Artbox measured here, the method holds on two known places.
     - Record the size and time, `hl=no` against `hl=en`, and §8.3's checks. Store the cut-down answers as `preview`
       rows.
     - The known-point rows confirm that `d[6][9]` is the place (within 50 m).
