@@ -161,7 +161,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   as the device page does) -> `items` = rows with a level (alarm/action), a typed title (<= 8 words;
   `calls::CallProblem` types the call report's warnings), a target (the sub-page that fixes it, or since step 10 a group of the summary: Restrictions
   paused → `#quick`, the foreign app → `#foreign-access`, blocked apps → `#blocked-apps`) and `at_last_report`. A phone not set up has none; an Offline or Disconnected phone's
-  report-based rows are marked "At last report" and still count. The summary shows them in its Attention group; the Devices list shows their count as the badge - the same `items`, so they agree.
+  report-based rows are marked "At last report" and still count. Design 108c's three app push rows (`app-push-waiting`, `app-push-refused`, `app-push-outside`, orange, the server's own data, so never "at last report"; `unified-push.md`) come from `unified_push::health::attention`, passed to `facts_of` in `Sources::app_push`. The summary shows them in its Attention group; the Devices list shows their count as the badge - the same `items`, so they agree.
 - **Devices list** (`devices_list.html`, `devices::list_row`): avatar + dot, name, one status line (since
   2026-11-01, "Tidier status" below; was "Online · seen 3 min ago" or the lock part, the screen time and the battery
   each on a line), the screen-time bar, the badge, Add Phone. The sign-in warnings are short

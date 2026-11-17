@@ -1,17 +1,22 @@
 {
   "capability": "unified_push_v1",
   "policy": {
-    "off": {"on": false, "origin": null, "regs": [], "stopped": []},
-    "on_empty": {"on": true, "origin": "https://phones.example.com", "regs": [], "stopped": []},
-    "on_two": {"on": true, "origin": "https://phones.example.com", "regs": ["c0ffee00000000000000000000000001", "c0ffee00000000000000000000000002"], "stopped": []},
-    "stopped": {"on": true, "origin": "https://phones.example.com", "regs": ["c0ffee00000000000000000000000002"], "stopped": ["org.unifiedpush.example"]},
-    "origin_changed": {"on": true, "origin": "https://push.example.net", "regs": ["c0ffee00000000000000000000000001", "c0ffee00000000000000000000000002"], "stopped": []}
+    "off": {"on": false, "origin": null, "regs": [], "stopped": [], "refresh": []},
+    "on_empty": {"on": true, "origin": "https://phones.example.com", "regs": [], "stopped": [], "refresh": []},
+    "on_two": {"on": true, "origin": "https://phones.example.com", "regs": ["c0ffee00000000000000000000000001", "c0ffee00000000000000000000000002"], "stopped": [], "refresh": []},
+    "refresh_outside": {"on": true, "origin": "https://phones.example.com", "regs": ["c0ffee00000000000000000000000001", "c0ffee00000000000000000000000002"], "stopped": [], "refresh": [{"reg": "c0ffee00000000000000000000000002", "why": "outside"}]},
+    "refresh_refused": {"on": true, "origin": "https://phones.example.com", "regs": ["c0ffee00000000000000000000000001", "c0ffee00000000000000000000000002"], "stopped": [], "refresh": [{"reg": "c0ffee00000000000000000000000002", "why": "refused"}]},
+    "stopped": {"on": true, "origin": "https://phones.example.com", "regs": ["c0ffee00000000000000000000000002"], "stopped": ["org.unifiedpush.example"], "refresh": []},
+    "origin_changed": {"on": true, "origin": "https://push.example.net", "regs": ["c0ffee00000000000000000000000001", "c0ffee00000000000000000000000002"], "stopped": [], "refresh": []}
   },
   "older_server": {"policy": {"allowlist": []}, "on": false},
   "register": {
     "path": "/api/devices/up/registrations",
     "body": {"reg": "c0ffee00000000000000000000000001", "secret": "FakeSecretForTheContract001", "package": "org.unifiedpush.example"},
     "body_second": {"reg": "c0ffee00000000000000000000000002", "secret": "FakeSecretForTheContract002", "package": "io.element.android.x"},
+    "body_vapid": {"reg": "c0ffee00000000000000000000000003", "secret": "FakeSecretForTheContract003", "package": "org.unifiedpush.example", "vapid": "BPMwxsChHwQB6KNYw_vwKp1npWFcvayuLurSnNBKkMrZCtkIbOqB_b_d4c7Gb01jFbw8O147izfRonJ8EGY-lYM"},
+    "body_vapid_changed": {"reg": "c0ffee00000000000000000000000003", "secret": "FakeSecretForTheContract003", "package": "org.unifiedpush.example", "vapid": "BOCy5UVN1dNRCd5cAwccCrI9meuw-LflncH2J0Raa4kY4PD559WZ6nfNr0zuZTSLCt3p_ucbC_yF9UpUMyfEEuY"},
+    "body_vapid_not_a_point": {"reg": "c0ffee00000000000000000000000003", "secret": "FakeSecretForTheContract003", "package": "org.unifiedpush.example", "vapid": "BJtoDGws0dhkCqwAWIDk4x8SV4J3GD4CPCJIMAykUbm9kfcRUKOL-A1p1xArO7FaRVggEwhKQ8BHUgyZqC80HPY"},
     "answers": [
       {"case": "ok", "status": 200, "body": {"endpoint": "https://phones.example.com/up/FakeSecretForTheContract001"}},
       {"case": "retry", "status": 200, "body": {"endpoint": "https://phones.example.com/up/FakeSecretForTheContract001"}},
@@ -21,7 +26,10 @@
       {"case": "limit", "status": 409, "body": {"refused": "limit"}},
       {"case": "busy", "status": 409, "body": {"refused": "busy"}},
       {"case": "conflict", "status": 409, "body": {"refused": "conflict"}},
-      {"case": "invalid", "status": 400, "body": null}
+      {"case": "invalid", "status": 400, "body": null},
+      {"case": "ok_vapid", "status": 200, "body": {"endpoint": "https://phones.example.com/up/FakeSecretForTheContract003"}},
+      {"case": "vapid_changed", "status": 200, "body": {"endpoint": "https://phones.example.com/up/FakeSecretForTheContract003"}},
+      {"case": "vapid_not_a_point", "status": 400, "body": null}
     ],
     "failed_reason": {
       "off": "ACTION_REQUIRED",

@@ -2288,6 +2288,18 @@ async fn render_device(
             }
         };
 
+    // Design 108c: the app push rows, from the same function the Devices list reads.
+    let app_push = crate::unified_push::health::attention(
+        state,
+        id,
+        latest.as_ref().map(|st| st.reported_at.as_str()),
+        now,
+    )
+    .await
+    .unwrap_or_else(|err| {
+        tracing::error!(device_id = id, %err, "can't read the phone's app push state");
+        Default::default()
+    });
     // The same rows the Devices list counts, from the parts built above (not read twice).
     let connection = connection_of(state, &device, now);
     let facts = crate::attention::facts_of(
@@ -2302,6 +2314,7 @@ async fn render_device(
             connection,
             music_ticked: music_ticked.as_deref().unwrap_or(&[]),
             spotify_account,
+            app_push: &app_push,
         },
         now.timestamp_millis(),
     );

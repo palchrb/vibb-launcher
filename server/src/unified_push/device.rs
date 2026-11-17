@@ -45,12 +45,14 @@ fn failed(err: sqlx::Error) -> Response {
     StatusCode::INTERNAL_SERVER_ERROR.into_response()
 }
 
-/// A VAPID public key's form (an uncompressed P-256 point, base64url without padding).
+/// A VAPID public key: 87 base64url characters that are an uncompressed P-256 point (108b §4.6). A key that can never
+/// verify must not be stored: every push would be refused and the sender would drop the subscription.
 fn valid_vapid(key: &str) -> bool {
     key.len() == 87
         && key
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        && super::vapid::point(key).is_some()
 }
 
 pub async fn register(
@@ -109,20 +111,34 @@ async fn decide(
         return Ok(Err("not_allowed"));
     }
     let hash = super::secret_hash(&new.secret);
-    let existing: Option<(Vec<u8>, String)> = sqlx::query_as(
-        "SELECT secret_hash, package FROM up_registrations WHERE device_id = ? AND reg = ?",
+    let existing: Option<(Vec<u8>, String, Option<String>)> = sqlx::query_as(
+        "SELECT secret_hash, package, vapid FROM up_registrations WHERE device_id = ? AND reg = ?",
     )
     .bind(device_id)
     .bind(&new.reg)
     .fetch_optional(&mut *tx)
     .await?;
-    if let Some((stored, package)) = existing {
-        // A retry after a lost answer: the same row, the same endpoint.
-        return Ok(if stored == hash && package == new.package {
-            Ok(store::endpoint(&origin, &new.secret))
-        } else {
-            Err("conflict")
-        });
+    if let Some((stored, package, key)) = existing {
+        if stored != hash || package != new.package {
+            return Ok(Err("conflict"));
+        }
+        // A retry after a lost answer: the same row, the same endpoint. A different key is the app's update (108b
+        // §4.6, H1): stored, with the refusal's stamp cleared. A request without a key never drops a stored one.
+        if let Some(vapid) = new.vapid.as_deref()
+            && key.as_deref() != Some(vapid)
+        {
+            sqlx::query(
+                "UPDATE up_registrations SET vapid = ?, vapid_refused_at = NULL, vapid_refused_since = NULL \
+                 WHERE device_id = ? AND reg = ?",
+            )
+            .bind(vapid)
+            .bind(device_id)
+            .bind(&new.reg)
+            .execute(&mut *tx)
+            .await?;
+            tx.commit().await?;
+        }
+        return Ok(Ok(store::endpoint(&origin, &new.secret)));
     }
     let taken: Option<i64> = sqlx::query_scalar(
         "SELECT 1 FROM up_registrations WHERE secret_hash = ?1 \
@@ -217,7 +233,8 @@ pub async fn messages(
         return StatusCode::BAD_REQUEST.into_response();
     }
     let now_ms = chrono::Utc::now().timestamp_millis();
-    match store::pull(&state.db, device.id, &pull.ack, now_ms).await {
+    let stream = super::stream_generation(&state, device.id);
+    match store::pull(&state.db, device.id, &pull.ack, now_ms, stream).await {
         Ok(pulled) => Json(pulled).into_response(),
         Err(err) => failed(err),
     }

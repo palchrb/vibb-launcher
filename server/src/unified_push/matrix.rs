@@ -249,6 +249,17 @@ pub async fn notify(
             return StatusCode::SERVICE_UNAVAILABLE.into_response();
         }
     };
+    // R3 (§4.5): a homeserver never signs, so a keyed registration's pushkey is not ours through here - else the
+    // gateway would bypass the check. Stamped like a refused push (L9), so the PWA's warning shows.
+    match registration.vapid.as_deref().map(super::vapid::stored_key) {
+        Some(super::vapid::Stored::Key(_)) => {
+            store::note_refusal(&state.db, &registration, "unsigned").await;
+            return response(Some(&pushkey));
+        }
+        // The point check couldn't run: not taken unchecked (L1); the homeserver retries.
+        Some(super::vapid::Stored::Unavailable) => return super::vapid_unavailable(),
+        _ => {}
+    }
     let Some(minimised) = minimise(&body) else {
         return StatusCode::BAD_REQUEST.into_response();
     };
@@ -264,7 +275,24 @@ pub async fn notify(
         ttl_secs: store::TTL_MAX_SECS,
     };
     match super::accept(&state, &registration, &push).await {
-        Ok(_) => response(None),
+        Ok(accepted) => {
+            // R2: the push came through our own gateway, which ends the outside-gateway mark. Noted only for a
+            // queued push, at most once a minute (as `outside_gateway_at` is) - except that it always ends an outside
+            // mark newer than the stored stamp (gate 2026-11-17, N2).
+            if matches!(accepted, super::Accepted::Queued(_))
+                && let Err(err) = sqlx::query(
+                    "UPDATE up_registrations SET gateway_at = datetime('now') WHERE id = ? \
+                     AND (gateway_at IS NULL OR gateway_at < datetime('now', '-1 minute') \
+                          OR gateway_at < outside_gateway_at)",
+                )
+                .bind(registration.id)
+                .execute(&state.db)
+                .await
+            {
+                tracing::warn!(%err, "app push: couldn't note our own gateway");
+            }
+            response(None)
+        }
         Err(refusal) => refusal.into_response(),
     }
 }

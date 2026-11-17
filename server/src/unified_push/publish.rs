@@ -20,7 +20,7 @@
 //! needed. The body is kept as bytes (ntfy's base64 envelope isn't needed: the device API carries base64 anyway); a
 //! Matrix notify that came through an outside gateway is minimised as the gateway's is (Q8) and, once queued, noted
 //! at most once a minute (`outside_gateway_at`, R2's warning). `Urgency` is stored and passed on; `Topic` replaces the pending row with the
-//! same topic. VAPID is not checked yet (R3), as ntfy doesn't.
+//! same topic. A keyed registration's push is VAPID-checked first (design 108b, [super::vapid]).
 
 use axum::Extension;
 use axum::body::Bytes;
@@ -108,6 +108,40 @@ pub async fn publish(
             return StatusCode::SERVICE_UNAVAILABLE.into_response();
         }
     };
+    // R3: a keyed registration takes only pushes signed with its key, checked before the buckets so a leaked endpoint
+    // can't spend the phone's bucket or wake it. Neither refusal counts toward the client's ban: the secret resolved.
+    let stored = registration.vapid.as_deref().map(super::vapid::stored_key);
+    if stored == Some(super::vapid::Stored::Unavailable) {
+        return super::vapid_unavailable();
+    }
+    if let Some(super::vapid::Stored::Key(key)) = stored {
+        let origins = match super::accepted_origins(&state.db).await {
+            Ok(origins) => origins,
+            Err(err) => {
+                tracing::error!(%err, "app push: couldn't read the settings");
+                return StatusCode::SERVICE_UNAVAILABLE.into_response();
+            }
+        };
+        let authorization = headers.get("authorization").and_then(|v| v.to_str().ok());
+        // Every `Crypto-Key` line counts (HTTP allows the draft's `dh=` and `p256ecdsa=` on two lines), joined with `,`.
+        let crypto_key = headers
+            .get_all("crypto-key")
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .collect::<Vec<_>>()
+            .join(",");
+        let outcome = super::vapid::check(
+            &key,
+            authorization,
+            (!crypto_key.is_empty()).then_some(crypto_key.as_str()),
+            chrono::Utc::now().timestamp(),
+            &origins,
+        );
+        if outcome != super::vapid::Outcome::Taken {
+            store::note_refusal(&state.db, &registration, outcome.why()).await;
+            return super::vapid_refusal(outcome);
+        }
+    }
     let matrix = super::matrix::is_matrix_shaped(&body);
     let minimised = if matrix {
         super::matrix::minimise(&body)
@@ -127,7 +161,14 @@ pub async fn publish(
             // R2's warning: noted only for a push that was queued, at most once a minute (R1-SR L1).
             if matrix
                 && let Err(err) = sqlx::query(
-                    "UPDATE up_registrations SET outside_gateway_at = datetime('now') WHERE id = ? \
+                    // `outside_since` (108c §1.3): when this run of outside pushes began - kept while the mark
+                    // stands, restarted after a fade or a push through our own gateway.
+                    "UPDATE up_registrations SET \
+                       outside_since = CASE WHEN outside_since IS NULL OR outside_gateway_at IS NULL \
+                         OR outside_gateway_at < datetime('now', '-7 days') \
+                         OR (gateway_at IS NOT NULL AND gateway_at >= outside_gateway_at) \
+                         THEN datetime('now') ELSE outside_since END, \
+                       outside_gateway_at = datetime('now') WHERE id = ? \
                      AND (outside_gateway_at IS NULL OR outside_gateway_at < datetime('now', '-1 minute'))",
                 )
                 .bind(registration.id)
