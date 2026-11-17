@@ -162,6 +162,44 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
 - **Process start**: the boot's first CE start with the face is UNLOCKED (`processStartUnlocked`, `ProcessStart.androidBoot`
   - the PIN was typed to unlock CE); every later start LOCKED, and the resume's rule decides. The crash guard in
   android mode calls `lockNow()` (`AndroidLock.crashGuardTripped`).
+- **A SystemUI restart under the glance** (read 2026-11-17 against AOSP `main`'s `KeyguardServiceDelegate`,
+  `PhoneWindowManager`, `KeyguardController` and `KeyguardViewMediator`; nothing of ours changed). SystemUI's death is
+  fail-closed in system_server: `onServiceDisconnected` resets the keyguard state to showing, secure and **not
+  occluded** and calls `setLockScreenShown(true)`, so `isKeyguardLocked` reads true until the new process answers, and
+  the new `KeyguardViewMediator` starts showing on a secure phone. Three things follow, none of them ours:
+  - *Two lock screens*: the reconnect replays `setOccluded` only when the reset state says occluded (never), and WM's
+    own occlusion of our showWhenLocked glance didn't change, so the new SystemUI isn't told and draws its keyguard over
+    the still-resumed glance until the occlusion changes. A window, not an activity: the glance is neither paused nor
+    stopped, so the face's loss rule doesn't fight it. SystemUI's own keyguard still unlocks: its `USER_PRESENT` leaves
+    the glance (the `USER_PRESENT` path above).
+  - *A dead ask*: a swipe while SystemUI is gone reaches `PhoneWindowManager.dismissKeyguardLw`, which sees the cached
+    "showing" and hands the dismiss to a null service - no callback ever. The ask's recovery covers it (no answer in
+    `ANDROID_ASK_TIMEOUT_MS` with our focus, or when the focus comes back: the state read again; a swipe after
+    `ANDROID_ASK_RETRY_MS` asks again). No public signal tells an app the keyguard service is back, so a wait before the
+    ask would only delay the same retry.
+  - *Android open under the glance after a restart* (`screen-on: keyguardLocked=false deviceLocked=false`): caught by
+    the face's rule at the next trigger - the wake's resume (RELOCK after `ANDROID_ANSWER_WAIT_MS`, or
+    `ANDROID_UNLOCK_WAIT_MS` when the screen-off read Android locked), any swipe or row (the same wait), any leave of the
+    glance (the pause/stop check: `AndroidWait`, then the re-front and its resume), the screen-off (the sleep check after
+    `ANDROID_SLEEP_CHECK_MS`). With the screen left on and the glance untouched nothing reads the state, but nothing
+    passes the glance either: the shade stays disabled (`setStatusBarDisabled` lives in system_server's
+    `StatusBarManagerService`, which hands it to the new SystemUI), Back is held, and every way out is one of the
+    triggers. Look for `Android's keyguard didn't lock under the glance - locked it (the glance's wait)` after such a line.
+
+  **The emulator-only trigger**: Google APIs Android 16 images run the Pixel SystemUI without
+  `com.google.android.flipendo` (Extreme Battery Saver; `pm list packages -u | grep flipendo` prints nothing), and under
+  20 % its `LowPowerWarningsController.onBatteryEventUpdate` calls the missing provider on every battery event. The crash
+  buffer (`adb logcat -b crash`) repeats `FATAL EXCEPTION: SystemUIBg-…  Process: com.android.systemui` with
+  `IllegalArgumentException: Unknown authority com.google.android.flipendo.api` for each SystemUI pid. It is Google's bug,
+  with or without Vibb One. In the 2026-11-17 `jellystar2` run, the keyguard came back over the glance at every battery
+  event, with black frames, and the phone couldn't be unlocked while the crash loop ran. Charge the emulator above 20 %
+  (`adb emu power capacity 80`) before any lock test. Our hide rule
+  can't cause it on a real phone: `controllablePackages` takes a system package only with a launcher activity, so the
+  headless packages SystemUI calls by provider or binder (Flipendo, Device Health Services, Settings Services, the
+  settings and telephony providers, the permission controller - check a new one with `cmd package query-activities -a
+  android.intent.action.MAIN -c android.intent.category.LAUNCHER`) are never hidden or suspended. The launchable system
+  packages SystemUI starts are spared (the system dialer, the recents provider, Emergency SOS) or handled (Settings, see
+  the sink in `hardening.md`).
 - **Migration** (§3.4): the next correct Child PIN on our keypad while requested with no credential becomes Android's
   PIN through `WindowRelock.resetCredential` (the one `resetPasswordWithToken` caller besides 24b's relock), with the
   rev of the hash it was checked against (`PinResult.Ok(pinRev)`, Q59-5). The token: `ensureAndroidResetToken` at every
