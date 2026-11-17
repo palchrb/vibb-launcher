@@ -220,3 +220,70 @@ the setup notification.
   picks are CE prefs `shortcuts`/`picks` (a JSON list; unknown keys kept).
 - **The report** `shortcuts: {shown, hidden, items}` (capability `shortcuts_v1`, a full-report field), the contract
   `shortcuts.json` (root `CLAUDE.md`).
+
+## Innstillinger as a task of its own (design 111, `docs/design/111-kid-settings-task.md`, branch `kid-settings-task`)
+
+The user, 2026-11-17: "Alle 'apper' vi legger inn fra vibb one skal oppføre seg som native apper." Kid Settings was the
+last built-in "app" in Home's task (`excludeFromRecents`, cleared by Home's `clearTaskOnLaunch`); it now behaves as
+Meldinger, Kalender and the phone book do. The drawer and the parent's Settings stay in Home (decided).
+
+- **The task.** `KidSettingsActivity` and its four sub-pages (`WifiNetworksActivity`, `BluetoothDevicesActivity`,
+  `KidSoundPickerActivity`, `ShortcutsPickerActivity`) share `${applicationId}.kidsettings`; none of the five is
+  `excludeFromRecents`; Kid Settings is `singleTop`; the sub-pages are started from its rows with plain in-task starts.
+  **One builder**, `KidSettingsActivity.intent(context)`: the component and `FLAG_ACTIVITY_NEW_TASK`, never an action,
+  data, extras or `CLEAR_TOP` - Home's tile and the swipe left both use it, an open task comes back as it was (a
+  sub-page on top if one was open), and since nothing forwards into the root the task's base intent never drifts, so
+  the phone book's code QA M1 (a second root stacked) can't happen. `KidSettingsTaskTest`.
+- **The card.** `setTaskDescription` in `onCreate`: "Innstillinger"/"Settings" (`kid_settings_title`, the tile's name)
+  and `R.mipmap.ic_launcher`. Back at the root finishes it (a non-root locked task's finish, never blocked) and Home
+  shows; the card stays (AOSP keeps an emptied task in Recents). Home no longer clears it, and `HomeFront.bring` brings
+  Home forward over it instead of clearing it.
+- **The look** (the user's Q1, 2026-11-17: "b er best. jeg trenger ikke bildebakgrunn her, bedre med vanlig fast
+  bakgrunn"). Opaque, so WM Shell runs the task (wallpaper open/close) animation, Meldinger's, and not the
+  wallpaper-intra transition two `FLAG_SHOW_WALLPAPER` windows get (`lock-and-glance.md`). `KidSettingsTheme` =
+  `launcherBaseTheme` + `KidPageNightTheme`'s five window literals (window and splash ground `kid_ground`, dark bar
+  icons off, navigation contrast on) + transparent bars; `showsSystemWallpaper()` is gone (`UIObject` applies
+  `Background.SOLID`). **No copy of the wallpaper any more**: the root is the layout's own `kid_ground`, the same colour
+  as the window and the splash, so a starting window already matches; the ink is the plain ground's (white, no scrim,
+  no shadow: `inkForColours(kid_ground)`), the status-bar icons the theme's. `WallpaperStore` only feeds the wallpaper
+  picker. Home is the one screen that shows Android's wallpaper (`HomeGroundTest`). Kid Settings stays night in both
+  looks (design 78): no light twin, no `PageKind` row, and **not** in the look's `closesTask` - the look is chosen in it.
+- **The sub-pages' gate** (`SubPageGuard`, the pure `subPageGate(lockReason, section, page, mask, soundWritable)`,
+  `KidSettingsModelTest`). A card can bring a sub-page back under a rule or after the parent took its row away, so each
+  runs the one gate **first in `onStart`, before any radio work** (Location, a Wi-Fi scan, Bluetooth discovery), again in
+  `onResume`, on a `lockReason` change, on a stored policy and after each apply. Any lock reason -> `REDIRECT`
+  (`LockActivity.start`, then `finish()`); a pause or Foreldrekode is `NONE`, as for Kid Settings. Else the page's own
+  row: Wi-Fi's bit (`wifiPageAllowed`, new - the Wi-Fi page checked no mask before), Bluetooth's (`bluetoothPageAllowed`),
+  the sound picker's bit with the "Modify system settings" app-op (`soundPicksState`), Snarveier's bit 128 of an
+  accepted policy on a device-owner phone; else `FINISH`. It replaces the pickers' two copies of
+  `redirectIfLocked`/`finishIfNotAllowed` and Bluetooth's `finishIfNotAllowed`. Kid Settings itself keeps its own
+  redirect under any rule (`onResume` and the `lockReason` listener); nothing on it is PIN-gated.
+- **The Wi-Fi page's Location** (pure `wifiLocationStep(event, enabledNow, byUs, polling)`). Turned on in `onStart`
+  after the gate (if it was off, marked as ours), then the scan; in `onStop` the connect poll is dropped first
+  (`handler.removeCallbacksAndMessages`, `connectingSsid = null`, no toast - else a connect that worked ends as
+  "couldn't connect" once Location is off, e.g. a connect and then "Logg på" at once), then Location off if ours and
+  still on. Never a setting the parent had on. Residue as before: a process death with the page in front leaves
+  Location on.
+- **The Bluetooth page** stops discovery in `onStop` (a discovery cut short runs again at the next start) and drops the
+  rows it may no longer pair (`dropUnoffered`) in `onStart` after the gate and when `loadBonded` returns - the applied
+  listener is off while stopped, so a page left in the card during a restrictions pause listed non-audio devices with
+  "Pair" afterwards (the tap re-checked, so nothing could be paired).
+- **The Wi-Fi sign-in inside the card** (design 102). `CaptivePortalEntry.start` from the Wi-Fi page has no `NEW_TASK`, so
+  the entry and the window join Kid Settings' task, and under a rule the "Innstillinger" card can resume the window
+  (`:portal`, no rule check). Allowed: design 102 §3.5 (D4) permits the window under a time rule; the entry's keypad
+  finishes in `onStop`; the window ends itself. Kept as is.
+- **Starting windows on a Recents restore**: after a process death or a destroyed activity Shell draws the top
+  activity's splash - Kid Settings' is `kid_ground`, correct; a sub-page's is `KidPageTheme`'s `kid_page_ground` in the
+  **phone's** night mode, a wrong-look flash when it differs from the kid's look. Accepted (design 111 §2.3,
+  `ui-polish.md` R9); twins only if the user objects after §6az row 6.
+- **Language and kiosk.** `languageClosesTask` names Kid Settings (`LauncherLocaleTest`), so the card never keeps the old
+  language's name. Our package is lock-task permitted, so `.kidsettings` joins lock task; Home stays
+  `mLockTaskModeTasks[0]` (`kiosk-escapes-and-updates.md`); `clearLockedTask` empties the card when the kiosk goes off,
+  as Dagen's. Flymodus's assistant window runs in a task of its own and focus goes back to Kid Settings' task.
+  Process death: Kid Settings rebuilds everything in `onResume`; the hidden-apps list comes back closed (accepted).
+- **Android 14-17.** `TaskDescription.Builder` is API 33; the cross-task `LockActivity.start` from a sub-page is our own
+  uid's, allowed by 15's and 16's background-start hardening. **Android 17**'s behaviour changes (developer.android.com,
+  "Behavior changes: all apps" and "apps targeting Android 17", read 2026-11-17) list nothing for tasks, Recents,
+  `TaskDescription`, back navigation, lock task, starting windows, device-owner Location or Bluetooth discovery; the one
+  activity item, "Activity Security" (background-start rules extended to `IntentSender`), applies to apps targeting 37,
+  and we target 36. The gate runs rows 1-7 on 14 and 16 (`docs/testing/emulator.md` §6az).
