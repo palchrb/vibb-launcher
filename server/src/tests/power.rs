@@ -1095,9 +1095,18 @@ async fn a_newer_shutdown_supersedes_an_older_held_push() {
     )
     .await;
     assert_eq!(deliveries(&app, "phone_off").await[1].0, "accepted");
+    // A line only when the push went wrong (design 113): the newer's left unconfirmed has one, the superseded older
+    // none (never "Not sent").
+    sqlx::query("UPDATE push_deliveries SET reason = NULL WHERE reason = 'declarative'")
+        .execute(&app.db)
+        .await
+        .unwrap();
     let cookie = app.admin_cookie().await;
     let inbox = app.get_page("/notifications", &cookie).await.text();
-    assert_eq!(delivery_lines(&inbox), ["Delivered to iPhone · Safari"]);
+    assert_eq!(
+        delivery_lines(&inbox),
+        ["Pushed to iPhone · Safari, not confirmed"]
+    );
 }
 
 /// qa-38-design N4: the sender claims a row before its request - one dropped since the pass read

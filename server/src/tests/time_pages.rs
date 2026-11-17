@@ -188,7 +188,14 @@ async fn time_rules_lists_rules_the_limit_and_the_phones() {
         .find(&format!("href=\"/devices/{emil}/time\""))
         .unwrap()..];
     assert!(emil_row[..emil_row.find("</a>").unwrap()].contains("data-in-force>2 rules<"));
-    assert!(phones.contains("Emergency calls always work."));
+    // Design 113: the emergency fact once, in the rules' ⓘ; no footer under the phones.
+    let rules_info = &rules[rules.find("<div class=\"group-footer\">").unwrap()..];
+    assert!(
+        rules_info.contains("<details class=\"info\">"),
+        "{rules_info}"
+    );
+    assert!(rules_info.contains("<p>Emergency calls always work.</p>"));
+    assert!(!phones.contains("group-footer"), "{phones}");
     // No device picker any more.
     assert!(!html.contains("Select a device"));
 
@@ -1852,21 +1859,40 @@ async fn the_silent_switch_saves_serves_and_shows() {
     let cookie = app.admin_cookie().await;
     let (anna, anna_token) = app.enrolled_device("Anna").await;
 
-    // A new rule: school, Silent on, inside the rule's one form with its sub-line.
+    // A new rule: school, Silent on, inside the rule's one form; what it does behind the ⓘ row right after the
+    // switch's label (design 113, QA M8: never inside it).
     let html = app.get_page("/schedules/rules/new", &cookie).await.text();
     assert_eq!(input_checked(&html, "silent", "on"), Some(true));
     assert_eq!(
         form_action_of(&html, "silent"),
         Some("/schedules/rules#rule")
     );
-    assert!(html.contains(
-        ">Silent<span class=\"row-sub\">No sounds, notifications, music or alarms while the rule is on. Calls the rule allows still ring.</span>"
+    let silent_info = |html: &str| -> String {
+        let row = &html[html.find("data-row=\"silent\"").unwrap()..];
+        let label = &row[..row.find("</label>").unwrap()];
+        assert!(
+            label.contains(">Silent<") || label.contains(">Stille<"),
+            "{label}"
+        );
+        assert!(
+            !label.contains("row-sub") && !label.contains("<details"),
+            "{label}"
+        );
+        let after = row[row.find("</label>").unwrap() + "</label>".len()..].trim_start();
+        assert!(
+            after.starts_with("<details class=\"info cell\">"),
+            "{after}"
+        );
+        after[..after.find("</details>").unwrap()].to_string()
+    };
+    assert!(silent_info(&html).contains(
+        "<p>No sounds, notifications, music or alarms while the rule is on. Calls the rule allows still ring.</p>"
     ));
     let nb = app
         .get_page("/schedules/rules/new?lang=nb", &cookie)
         .await
         .text();
-    assert!(nb.contains(">Stille<span class=\"row-sub\">Ingen lyder, varsler, musikk"));
+    assert!(silent_info(&nb).contains("<p>Ingen lyder, varsler, musikk"));
 
     // Saved silent: stored, served, "· silent" in the lists.
     let days = |name: &'static str| -> Vec<(&'static str, String)> {
@@ -1957,7 +1983,10 @@ async fn the_silent_switch_saves_serves_and_shows() {
         .get_page(&format!("/schedules/rules/{rule}"), &cookie)
         .await
         .text();
-    assert!(html.contains(">Silent<span class=\"row-sub\">No sounds or notifications during bedtime. Alarms still ring"));
+    assert!(
+        silent_info(&html)
+            .contains("<p>No sounds or notifications during bedtime. Alarms still ring")
+    );
 
     // Bedtime: a new one opens silent (alarms still ring, the group's ⓘ says so); a save keeps what is sent.
     let page = format!("/devices/{anna}/bedtime");

@@ -77,7 +77,8 @@ pub struct InboxRow {
     pub when: String,
     pub exact: String,
     pub unread: bool,
-    /// "Pushed to 2 devices · shown on 1" (§5.1), nothing when no push was made.
+    /// "Pushed to 2 devices, not confirmed" (§5.1): only when the push went wrong - nothing when it was shown,
+    /// opened or delivered, or when no push was made (design 113).
     pub delivery: Option<String>,
 }
 
@@ -149,7 +150,7 @@ struct InboxTemplate {
     badge: i64,
     /// The devices that may not be showing notifications, or that pushes don't reach: rows to
     /// the settings page's Getting Notifications.
-    not_showing: Vec<(String, String)>,
+    not_showing: Vec<(String, Option<String>)>,
     /// A push refused the server's signature in the last day: one row to the settings page.
     clock_warning: bool,
 }
@@ -173,6 +174,9 @@ struct SettingsTemplate {
     /// The admin's active endpoints' 16-hex SHA-256 prefixes, comma-separated (§5.2).
     subscribed: String,
     devices: Vec<DeviceRow>,
+    /// A device may not be showing notifications, or has stopped them (design 113): only then the "added the app
+    /// again?" line under the list.
+    devices_unhealthy: bool,
     /// A push refused the server's signature in the last day (§4.4).
     clock_warning: bool,
     /// A flash in This Device or in Getting Notifications: `(text, error)`.
@@ -396,6 +400,9 @@ pub async fn settings_page(
         .collect();
     let notice = notice_of(lang, params.get("notice").map(String::as_str));
     let sub = number(&params, "sub");
+    let devices_unhealthy = subscriptions
+        .iter()
+        .any(|s| matches!(s.health, Health::MayNotShow | Health::Gone));
     let devices = subscriptions
         .iter()
         .map(|s| {
@@ -419,6 +426,7 @@ pub async fn settings_page(
             push_key: state.push.key.as_ref().map(|key| key.public.clone()),
             subscribed: known.join(","),
             devices,
+            devices_unhealthy,
             clock_warning: push::signature_refused(&state.db, now).await,
             this_notice: notice.filter(|n| n.0).map(|(_, text, error)| (text, error)),
         }
@@ -676,8 +684,9 @@ fn db_error(lang: Lang, err: sqlx::Error) -> Response {
     )
 }
 
-/// A subscription's warning, `(title, sub-line)`, when it needs the parent (§6, qa-35-s2-code M1).
-fn warning_of(lang: Lang, sub: &push::Subscription) -> Option<(String, String)> {
+/// A subscription's warning, `(title, sub-line)`, when it needs the parent (§6, qa-35-s2-code M1). A stopped
+/// device's row says it in its title alone: the row leads to where it is fixed (design 113).
+fn warning_of(lang: Lang, sub: &push::Subscription) -> Option<(String, Option<String>)> {
     match sub.health {
         Health::MayNotShow => Some((
             t_params(
@@ -685,7 +694,7 @@ fn warning_of(lang: Lang, sub: &push::Subscription) -> Option<(String, String)> 
                 "devices.warning.push_may_not_show",
                 &[("label", &sub.label)],
             ),
-            t(lang, "devices.warning.push_unconfirmed").to_string(),
+            Some(t(lang, "devices.warning.push_unconfirmed").to_string()),
         )),
         Health::NotGettingThrough => Some((
             t_params(
@@ -693,13 +702,13 @@ fn warning_of(lang: Lang, sub: &push::Subscription) -> Option<(String, String)> 
                 "devices.warning.push_not_reaching",
                 &[("label", &sub.label)],
             ),
-            sub.failure.clone().unwrap_or_default(),
+            sub.failure.clone().filter(|f| !f.is_empty()),
         )),
         // A push service said it is gone (404/410): never silent (2026-11-04) - the row stays until that device
         // turns notifications on again (its new subscription replaces it) or the parent removes it.
         Health::Gone => Some((
             t_params(lang, "devices.warning.push_gone", &[("label", &sub.label)]),
-            t(lang, "devices.warning.push_gone_sub").to_string(),
+            None,
         )),
         Health::Ok | Health::NeverSent => None,
     }
@@ -814,7 +823,7 @@ async fn delivery_lines(
     event_ids: &[i64],
 ) -> Result<HashMap<i64, Vec<DeliveryState>>, sqlx::Error> {
     // A folded delivery takes its summary's status (the subscription's next summary after it),
-    // so "In a summary" means the summary itself went out (qa-35-s2-code N4).
+    // so a folded push counts as sent only when the summary itself went out (qa-35-s2-code N4).
     let rows: Vec<(i64, String, Option<String>, bool, String, bool)> = sqlx::query_as(
         "SELECT d.event_id, \
                 CASE WHEN d.reason = 'folded' THEN COALESCE((SELECT m.status \
@@ -840,15 +849,13 @@ async fn delivery_lines(
     Ok(lines)
 }
 
-/// An inbox row's delivery line (§5.1): "Opened on iPhone · Safari" (a tap, server round 5 §1),
-/// "Shown on iPhone · Safari", "Delivered to iPhone · Safari"
-/// (Apple's service accepted a declarative push it shows itself), "Pushed to iPhone · Safari, not
-/// confirmed", "Pushed to 2 devices · opened on 1" when any was opened, else "Pushed to 2 devices
-/// · shown on 1" (delivered ones counted), "Sending", "In a
-/// summary" (its summary was accepted), "Not sent"; nothing when no push was made. A folded delivery's status is its
-/// summary's ([delivery_lines]). A push a restart or a quick start dropped (design 38: the held
-/// `phone_off` the next start folded) or a newer shutdown superseded counts as none - the row says
-/// nothing, never "Not sent".
+/// An inbox row's delivery line (§5.1), only when the push went wrong (design 113): "Pushed to iPhone · Safari, not
+/// confirmed", "Pushed to 2 devices, not confirmed" when none of several showed or opened it, "Sending", "Not
+/// sent". Nothing when it was opened, shown, delivered (Apple's service accepted a declarative push it shows itself)
+/// or went out in a summary (its summary was accepted), when one of several devices showed or opened it, or when no
+/// push was made. A folded delivery's status is its summary's ([delivery_lines]). A push a restart or a quick start
+/// dropped (design 38: the held `phone_off` the next start folded) or a newer shutdown superseded counts as none -
+/// the row says nothing, never "Not sent".
 pub fn delivery_line(lang: Lang, deliveries: &[DeliveryState]) -> Option<String> {
     let deliveries: Vec<&DeliveryState> = deliveries
         .iter()
@@ -866,35 +873,25 @@ pub fn delivery_line(lang: Lang, deliveries: &[DeliveryState]) -> Option<String>
         .copied()
         .filter(|d| d.0 == "accepted" && !folded(d))
         .collect();
-    let delivered = |d: &&DeliveryState| d.2 || d.1.as_deref() == Some("declarative");
-    let shown = accepted.iter().filter(|d| delivered(d)).count().to_string();
-    let opened = accepted.iter().filter(|d| d.4).count();
-    let to = |key: &str, label: &str| t_params(lang, key, &[("label", label)]);
+    // Shown (a receipt), delivered (declarative) or opened (a tap): it got there.
+    let arrived = |d: &&DeliveryState| d.2 || d.4 || d.1.as_deref() == Some("declarative");
     Some(match accepted.as_slice() {
         [] if deliveries.is_empty() => return None,
         [] if deliveries.iter().any(|d| d.0 == "queued") => {
             t(lang, "settings.notifications.delivery.sending").to_string()
         }
-        [] if deliveries.iter().any(|d| folded(d) && d.0 == "accepted") => {
-            t(lang, "settings.notifications.delivery.summary").to_string()
-        }
+        [] if deliveries.iter().any(|d| folded(d) && d.0 == "accepted") => return None,
         [] => t(lang, "settings.notifications.delivery.not_sent").to_string(),
-        [one] if one.4 => to("settings.notifications.delivery.opened", &one.3),
-        [one] if one.2 => to("settings.notifications.delivery.shown", &one.3),
-        [one] if delivered(one) => to("settings.notifications.delivery.delivered", &one.3),
-        [one] => to("settings.notifications.delivery.pushed", &one.3),
-        many if opened > 0 => t_params(
+        many if many.iter().any(arrived) => return None,
+        [one] => t_params(
             lang,
-            "settings.notifications.delivery.many_opened",
-            &[
-                ("devices", &many.len().to_string()),
-                ("opened", &opened.to_string()),
-            ],
+            "settings.notifications.delivery.pushed",
+            &[("label", &one.3)],
         ),
         many => t_params(
             lang,
-            "settings.notifications.delivery.many_shown",
-            &[("devices", &many.len().to_string()), ("shown", &shown)],
+            "settings.notifications.delivery.many_pushed",
+            &[("devices", &many.len().to_string())],
         ),
     })
 }
@@ -912,7 +909,7 @@ pub async fn warning_row(
             tracing::error!(%err, "can't read the notification subscriptions");
             Vec::new()
         });
-    let warnings: Vec<(String, String)> = subscriptions
+    let warnings: Vec<(String, Option<String>)> = subscriptions
         .iter()
         .filter_map(|sub| warning_of(lang, sub))
         .collect();
@@ -1540,28 +1537,23 @@ mod tests {
             delivery
         };
         let iphone = "iPhone · Safari";
+        // Design 113: a line only when the push went wrong.
         for (deliveries, line) in [
             (vec![], None),
-            // A tap (server round 5 §1): opened before shown before delivered.
+            // A tap (server round 5 §1), a receipt or Apple's own showing: it got there, no line.
             (
                 vec![opened(d("accepted", Some("declarative"), false, iphone))],
-                Some("Opened on iPhone · Safari"),
+                None,
             ),
-            (
-                vec![opened(d("accepted", None, true, iphone))],
-                Some("Opened on iPhone · Safari"),
-            ),
+            (vec![opened(d("accepted", None, true, iphone))], None),
             (
                 vec![
                     opened(d("accepted", Some("declarative"), false, iphone)),
                     d("accepted", None, true, "Mac · Safari"),
                 ],
-                Some("Pushed to 2 devices · opened on 1"),
+                None,
             ),
-            (
-                vec![d("accepted", None, true, iphone)],
-                Some("Shown on iPhone · Safari"),
-            ),
+            (vec![d("accepted", None, true, iphone)], None),
             (
                 vec![d("accepted", None, false, iphone)],
                 Some("Pushed to iPhone · Safari, not confirmed"),
@@ -1569,14 +1561,14 @@ mod tests {
             // Apple's service shows a declarative push itself: accepted is delivered.
             (
                 vec![d("accepted", Some("declarative"), false, iphone)],
-                Some("Delivered to iPhone · Safari"),
+                None,
             ),
             (
                 vec![
                     d("accepted", Some("declarative"), false, iphone),
                     d("accepted", None, false, "Mac · Safari"),
                 ],
-                Some("Pushed to 2 devices · shown on 1"),
+                None,
             ),
             (
                 vec![
@@ -1584,14 +1576,19 @@ mod tests {
                     d("accepted", None, false, "Mac · Safari"),
                     d("failed", Some("BadJwtToken"), false, "Windows · Edge"),
                 ],
-                Some("Pushed to 2 devices · shown on 1"),
+                None,
+            ),
+            // QA M3: several devices got it and none showed or opened it.
+            (
+                vec![
+                    d("accepted", None, false, iphone),
+                    d("accepted", None, false, "Mac · Safari"),
+                ],
+                Some("Pushed to 2 devices, not confirmed"),
             ),
             (vec![d("queued", None, false, iphone)], Some("Sending")),
-            // A folded delivery carries its summary's status.
-            (
-                vec![d("accepted", Some("folded"), false, iphone)],
-                Some("In a summary"),
-            ),
+            // A folded delivery carries its summary's status: a summary that went out is no line.
+            (vec![d("accepted", Some("folded"), false, iphone)], None),
             (
                 vec![d("queued", Some("folded"), false, iphone)],
                 Some("Sending"),
@@ -1626,8 +1623,19 @@ mod tests {
         }
         // In Norwegian too.
         assert_eq!(
-            delivery_line(Lang::Nb, &[d("accepted", None, true, iphone)]).as_deref(),
-            Some("Vist på iPhone · Safari")
+            delivery_line(Lang::Nb, &[d("accepted", None, false, iphone)]).as_deref(),
+            Some("Sendt til iPhone · Safari, ikke bekreftet")
+        );
+        assert_eq!(
+            delivery_line(
+                Lang::Nb,
+                &[
+                    d("accepted", None, false, iphone),
+                    d("accepted", None, false, "Mac · Safari")
+                ]
+            )
+            .as_deref(),
+            Some("Sendt til 2 enheter, ikke bekreftet")
         );
     }
 

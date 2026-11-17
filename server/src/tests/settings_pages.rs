@@ -732,7 +732,7 @@ async fn the_settings_pages_speak_norwegian() {
     has(
         &page("/schedules/screen-time?lang=nb".to_string()).await,
         &[
-            "Alle · Skjermtid",
+            "Alle telefoner",
             ">Mandag<",
             ">Søndag<",
             "Om den daglige grensen",
