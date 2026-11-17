@@ -118,6 +118,6 @@ while UP is on or anything is registered or noted.
 
 - The 30-day liveness ping and unregister (§5.6) are R2: the rows keep `lastAppAckMs`/`pingId` for it.
 - VAPID verification (R3): a registered key is passed to the server as is.
-- The emulator gate is R1-G: `docs/testing/emulator.md` §6ay (14 and 16 passed; the time rule's row 5 and Android 17
-  not run). The debug build logs each MESSAGE send and each pull's acks by key prefix (`UpRuntime`, `Log.d`). Element X
+- The emulator gate is R1-G: `docs/testing/emulator.md` §6ay (14 and 16 passed, row 5 included: a suspended app's
+  notifications are hidden by Android and appear in the shade without sound when the rule ends; Android 17 not run). The debug build logs each MESSAGE send and each pull's acks by key prefix (`UpRuntime`, `Log.d`). Element X
   itself is owed on the Jelly Star (R1-E).

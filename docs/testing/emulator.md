@@ -4954,8 +4954,25 @@ The launcher's debug build logs each MESSAGE send and each pull's acks by key pr
 | 8 limits | **Passed** (server side): 4097 bytes 413; a never-seen secret 410; a tombstoned one 410; a burst to one endpoint 429 from about the 30th (the registration's sub-bucket); 32 never-seen secrets from one client: 410 ×29 then 429; during that ban a resolving secret still 201 | - |
 | 11 trailing edge | **Passed.** Two `/up/` pushes 100 ms apart: two `up` events, both delivered within 0.3 s | - |
 
-**Not run:** row 2b (the app's own encrypted test needs a trusted CA), 5 (a time rule's suspended app and its
-notifications), 12 (a second instance), and Android 17. **The connector's acceptance of our NEW_ENDPOINT** (sent
+**Row 5, a time rule (the user's question, run afterwards on the same rig, both versions).** The probe now posts a
+chat-like notification for each MESSAGE (channel "Messages", importance HIGH: sound and heads-up) from its foreground
+service, or from the receiver when the FGS start is refused (as Element X falls back). A baseline push with no rule
+alerts (`notification_alert` with sound, a heads-up). Then the PWA's "on now" for a rule (`POST /devices/1/rules-now
+mode=on`), the probe `suspended=true`, LockActivity on top; three pushes 1.5 s apart; then the rule ended
+(`/lock-now/<id>/end`).
+
+| Row 5 | `compat34` (14) | `jelly36` (16) |
+|---|---|---|
+| During the rule, the raise on | every MESSAGE delivered; the raise binds; the suspended app's **FGS start is allowed**; it posts all three. NMS: every record of the package `mHidden==true`; **no `notification_alert`** (no sound, no vibration; `mSoundNotificationKey=null`); SystemUI's collection lists each with `filter=IsSuspendedFilter` - not in the shade, no heads-up, the FGS's own notification filtered with the package's | the same; SystemUI: `PEEK suppressed: app is suspended` for the first, `notification isSilent` for the next |
+| The rule ends | all three appear in the shade (`section=Alerting`), **no sound or vibration** (no `notification_alert`), but **a heads-up for each** (`HeadsUpManager: show notification`, about 5.7 s, newest first) | all three appear in the shade (`section=Alerting`), **silently: no sound, no vibration, no heads-up** (the peek was decided as suppressed at post time and not asked again) |
+| The raise off (the alternative) | MESSAGE still delivered; the **FGS start refused** (`ForegroundServiceStartNotAllowedException`) and the receiver posts instead; the same hiding during the rule and the same end (shade + a heads-up each, no sound) | the same: FGS refused, the receiver posts, hidden during, silent in the shade after |
+
+So while a rule makes the app not allowed, the phone neither alerts nor shows its notifications, and when the rule
+lifts the piled-up ones are in the shade - on 16 silently, on 14 with a silent heads-up each. The raise changes only
+whether the app may start its foreground service while suspended (it may with the raise, not without), not what the
+kid sees. No product code was changed for this row.
+
+**Not run:** row 2b (the app's own encrypted test needs a trusted CA), 12 (a second instance), and Android 17. **The connector's acceptance of our NEW_ENDPOINT** (sent
 without a shared identity): read in the connector's source - `MessagingReceiver.onReceive` looks the token up and never
 checks the sender - and seen on the probe (`sender=null`); the real connector is Element X's, owed on the Jelly Star.
 No crash of the launcher in either run (`logcat -b crash`).
