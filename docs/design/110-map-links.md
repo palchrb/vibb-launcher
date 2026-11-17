@@ -708,7 +708,7 @@ About 1.75 rounds. One commit across both directories, and the server tags befor
 2. **The two one-time steps - YES** ("ok, det kan vel sikkert ikke gjøres automatisk?"). It can't: changing another
    app's link handling needs a permission a device owner lacks, Play services is never suspended, and its pre-approval
    beats Vibb's persistent preferred activity (§6.2). Vibb One's two rows open the exact pages.
-3. **CoMaps - OPEN** (the user asked what it is; explained, waiting for a yes or no).
+3. **CoMaps - YES** ("OK til comaps!"): the target when Organic Maps isn't installed, and the switch offered for either.
 4. **The row that gives Play services its links back - YES** ("høres fornuftig ut").
 
 ## 16. Not in this round
