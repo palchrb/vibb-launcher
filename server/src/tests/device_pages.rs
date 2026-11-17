@@ -1119,8 +1119,8 @@ async fn web_filter_holds_the_phones_parts() {
     assert!(nb.contains("<option value=\"default\">Som for alle (på)</option>"));
     assert!(nb.contains("<option value=\"off\" selected>Av</option>"));
     // Settings › Web Filter tells each list's story from the phones' own settings (the user, 2026-10-26): Anna's
-    // own Off under an On list, nobody's under an Off one; then Emil's own On under the Off list, and Anna's own On
-    // under the On list (the same as the switch: not named).
+    // own Off under an On list, nobody's under an Off one (design 113 P4: no line - the switch says it); then Emil's
+    // own On under the Off list, and Anna's own On under the On list (the same as the switch: not named).
     let global = |html: &str, list_id: i64| {
         let at = html.find(&format!("data-list=\"{list_id}\"")).unwrap();
         html[at..at + html[at..].find("</form>").unwrap()].to_string()
@@ -1135,7 +1135,7 @@ async fn web_filter_holds_the_phones_parts() {
         web.contains("<h2 class=\"group-header\" id=\"lists-title\">Lists for every phone</h2>")
     );
     assert_eq!(scope(&web, 1), "On for every phone except Anna");
-    assert_eq!(scope(&web, 2), "Off for every phone");
+    assert!(!global(&web, 2).contains("data-scope"));
     assert!(
         web.contains("A phone&#39;s own Web Filter page can set a list otherwise for that phone.")
     );
@@ -1165,10 +1165,7 @@ async fn web_filter_holds_the_phones_parts() {
         .execute(&app.db)
         .await
         .unwrap();
-    assert_eq!(
-        scope(&app.get_page("/dns", &cookie).await.text(), 1),
-        "Off for every phone"
-    );
+    assert!(!global(&app.get_page("/dns", &cookie).await.text(), 1).contains("data-scope"));
     sqlx::query("UPDATE dns_blocklists SET enabled = 1 WHERE id = 1")
         .execute(&app.db)
         .await

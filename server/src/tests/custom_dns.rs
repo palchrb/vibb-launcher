@@ -652,7 +652,18 @@ async fn the_footer_says_per_phone_which_server_is_in_use() {
     };
     let zone = Zone::load(&app.db, crate::i18n::Lang::En).await;
     let page = app.get_page("/dns", &cookie).await.text();
-    assert_eq!(line(&page, anna), "Anna · Your server in use");
+    // Design 113 P4: a phone using your server as it should has no line; every other line is orange but the wait.
+    assert!(
+        !page.contains(&format!("data-dns-phone=\"{anna}\"")),
+        "{page}"
+    );
+    assert!(page.contains(&format!(
+        "<li class=\"tone-orange\" data-dns-phone=\"{ola}\">"
+    )));
+    assert!(page.contains(&format!(
+        "<li class=\"tone-orange\" data-dns-phone=\"{liv}\">"
+    )));
+    assert!(page.contains(&format!("<li data-dns-phone=\"{kari}\">")));
     assert_eq!(
         line(&page, ola),
         format!(
@@ -816,10 +827,12 @@ async fn the_lines_say_when_dns_cant_be_reached() {
         )
     );
     let ended = format!("couldn't be reached {}-{}", when(50), when(30));
-    assert_eq!(
-        line(&page, ola),
-        format!("Ola · Your server in use · {ended}")
-    );
+    // Your server in use says nothing; the ended outage alone is grey (design 113 QA L4).
+    assert_eq!(line(&page, ola), format!("Ola · DNS {ended}"));
+    assert!(page.contains(&format!("<li data-dns-phone=\"{ola}\">")));
+    assert!(page.contains(&format!(
+        "<li class=\"tone-orange\" data-dns-phone=\"{anna}\">"
+    )));
     assert_eq!(
         line(&page, kari),
         format!("Kari · Waiting for the phone · {ended}")
@@ -837,7 +850,7 @@ async fn the_lines_say_when_dns_cant_be_reached() {
         )
         .await;
         let page = app.get_page("/dns", &cookie).await.text();
-        assert_eq!(line(&page, ola), "Ola · Your server in use", "{since}");
+        assert_eq!(line(&page, ola), "", "{since}");
     }
 
     // An ongoing outage from a phone gone Offline is what it last said (qa-67-code L4).
@@ -942,25 +955,36 @@ async fn the_secure_dns_bypass_on_the_page() {
         lines(anna),
         [
             "Anna · Update Vibb One to close the secure-DNS bypass",
-            "Anna · Firefox: its own secure DNS can get around the filter",
+            "Anna · Firefox can get around the filter",
         ]
     );
     assert_eq!(
         lines(ola),
         [
-            "Ola · Cromite: set its Secure DNS to Off on the phone, or it won't load pages",
-            "Ola · IronFox: its own secure DNS can get around the filter",
+            "Ola · Cromite: its Secure DNS must be off",
+            "Ola · IronFox can get around the filter",
         ]
     );
     // Nothing owed, the filter off, or no report yet: no line.
     for id in [per, liv, mia] {
         assert!(lines(id).is_empty(), "{id}");
     }
+    // Design 113: every bypass line is orange.
+    assert!(page.contains(&format!(
+        "<li class=\"tone-orange\" data-bypass-phone=\"{ola}\">"
+    )));
     let page = page.replace("&#39;", "'");
     let lists = part(&page, "<section id=\"lists\"", "</section>");
-    assert!(lists.contains(
-        "Secure DNS servers<span class=\"row-sub\">Built into Vibb One, on with the filter</span>"
-    ));
+    // The built-in servers: a value, what it means behind the row's ⓘ.
+    let doh = part(lists, "data-list=\"builtin-doh\"", "</details>");
+    assert!(
+        doh.contains("<span class=\"row-label\">Secure DNS servers</span>")
+            && doh.contains("<span class=\"row-value\">Blocked</span>")
+            && doh.contains(
+                "<div class=\"info-panel\"><p>Built into Vibb One, on with the filter</p></div>"
+            ),
+        "{doh}"
+    );
     assert!(lists.contains(
         "Chrome's own secure DNS is turned off, and the best-known public secure-DNS servers are \
          blocked. Firefox and Cromite can still be set to another secure-DNS server by hand."

@@ -36,29 +36,26 @@ struct FeedRow {
     sub: String,
     failing: bool,
     detail: Option<String>,
-    /// What the switch means for the phones ([list_scope]): "On for every phone except Testtelefon".
-    scope: String,
+    /// What the switch means for the phones ([list_scope]): "On for every phone except Testtelefon"; `None` while
+    /// every phone follows the switch (design 113 P4: the switch says it).
+    scope: Option<String>,
 }
 
 /// A list's line from the phones' own choices (the user, 2026-10-26: the switch is every phone's default, a phone's
 /// Web Filter page can set it otherwise - say so here): `others` are the phones whose own setting differs from the
-/// switch, by name. An own setting equal to the switch changes nothing and isn't named.
-fn list_scope(lang: Lang, enabled: bool, others: &[&str]) -> String {
-    let names = others.join(", ");
-    match (enabled, others.is_empty()) {
-        (true, true) => crate::i18n::t(lang, "settings.web_filter.scope.on_all").to_string(),
-        (true, false) => crate::i18n::t_params(
-            lang,
-            "settings.web_filter.scope.on_except",
-            &[("names", &names)],
-        ),
-        (false, true) => crate::i18n::t(lang, "settings.web_filter.scope.off_all").to_string(),
-        (false, false) => crate::i18n::t_params(
-            lang,
-            "settings.web_filter.scope.off_but",
-            &[("names", &names)],
-        ),
+/// switch, by name. An own setting equal to the switch changes nothing and isn't named; with no such phone there is no
+/// line (design 113 P4).
+fn list_scope(lang: Lang, enabled: bool, others: &[&str]) -> Option<String> {
+    if others.is_empty() {
+        return None;
     }
+    let names = others.join(", ");
+    let key = if enabled {
+        "settings.web_filter.scope.on_except"
+    } else {
+        "settings.web_filter.scope.off_but"
+    };
+    Some(crate::i18n::t_params(lang, key, &[("names", &names)]))
 }
 
 /// How a feed's last download went (`dns_engine::CompiledBlocklist`), typed (design 31 M5): a
@@ -207,9 +204,10 @@ struct ServerGroup {
     forget: bool,
     /// Both stored values are names: the "give the backup as an IP" line.
     both_names: bool,
-    /// The phones' lines ([phone_line], `data-dns-phone` = its id): every phone while Custom is in
-    /// force, with a provider only those whose DNS can't be reached or couldn't (design 67).
-    phones: Vec<(i64, String)>,
+    /// The phones' lines ([phone_line], `data-dns-phone` = its id, and whether it is orange): while Custom is in
+    /// force every phone not using it as it should, with a provider only those whose DNS can't be reached or couldn't
+    /// (design 67, design 113 P4).
+    phones: Vec<(i64, String, bool)>,
 }
 
 /// A refused Custom Server save or Custom pick (design 36 §6): what goes back into the form.
@@ -372,8 +370,10 @@ fn ended_outage(
 }
 
 /// One phone's line under the DNS Server group (design 36 §6.3, design 67 §3.3), from its filter
-/// switch and its last report (`None` before the first), in the [Zone]'s language. With the parent's servers every phone
-/// has one; with a provider only a phone whose DNS can't be reached, or couldn't within 24 h.
+/// switch and its last report (`None` before the first), in the [Zone]'s language, and whether it is orange. With the
+/// parent's servers every phone has one but a phone using them with no outage (design 113 P4); with a provider only a
+/// phone whose DNS can't be reached, or couldn't within 24 h. Every line is orange but the wait for a phone's report
+/// and an ended outage alone (it is over; design 113 QA L4).
 /// An ended outage shows whatever the report's rev or mode (the fixed servers bumped it), and
 /// nothing shows for a phone whose filter is off but that.
 fn phone_line(
@@ -383,15 +383,16 @@ fn phone_line(
     lookups: Lookups,
     zone: &Zone,
     now: chrono::DateTime<chrono::Utc>,
-) -> Option<String> {
+) -> Option<(String, bool)> {
     let lang = zone.lang();
     if !filter_on {
         return matches!(lookups, Lookups::Custom { .. }).then(|| {
-            t_params(
+            let line = t_params(
                 lang,
                 "settings.web_filter.line.filter_off",
                 &[("name", name)],
-            )
+            );
+            (line, true)
         });
     }
     let state = report
@@ -425,12 +426,13 @@ fn phone_line(
                     "settings.web_filter.line.provider_down",
                     &[("since", &when(since)), ("provider", provider)],
                 );
-                format!("{line}{at_last_report}")
+                (format!("{line}{at_last_report}"), true)
             }),
-        Lookups::Custom { rev } => Some(match (&report, &state) {
-            (Some(report), _) if !report.claims(dns_server::DNS_CUSTOM_CAPABILITY) => {
-                t(lang, "settings.web_filter.line.update_for_custom").to_string()
-            }
+        Lookups::Custom { rev } => match (&report, &state) {
+            (Some(report), _) if !report.claims(dns_server::DNS_CUSTOM_CAPABILITY) => Some((
+                t(lang, "settings.web_filter.line.update_for_custom").to_string(),
+                true,
+            )),
             // A provider report while Custom is in force (even at rev 0) is never the backup.
             (Some(_), Some(state)) if state.rev == rev && state.in_use != "provider" => {
                 match outage_since(state) {
@@ -440,11 +442,10 @@ fn phone_line(
                             "settings.web_filter.line.custom_down",
                             &[("since", &when(since))],
                         );
-                        format!("{line}{at_last_report}")
+                        Some((format!("{line}{at_last_report}"), true))
                     }
-                    None if state.in_use == "custom" => {
-                        t(lang, "settings.web_filter.line.custom_in_use").to_string()
-                    }
+                    // The parent's servers in use, as they should be: no line (design 113 P4).
+                    None if state.in_use == "custom" => None,
                     None => {
                         let backup = match at(state.since_ms) {
                             Some(since) => t_params(
@@ -460,20 +461,23 @@ fn phone_line(
                             .and_then(backup_reason_text)
                             .map(|why| format!(" - {}", t(lang, why)))
                             .unwrap_or_default();
-                        format!("{backup}{why}")
+                        Some((format!("{backup}{why}"), true))
                     }
                 }
             }
-            _ => t(lang, "settings.web_filter.line.waiting").to_string(),
-        }),
+            _ => Some((
+                t(lang, "settings.web_filter.line.waiting").to_string(),
+                false,
+            )),
+        },
     };
     let ended = state
         .as_ref()
         .and_then(|state| ended_outage(state, zone, now));
     match (what, ended) {
-        (Some(what), Some(ended)) => Some(format!("{name} · {what} · {ended}")),
-        (Some(what), None) => Some(format!("{name} · {what}")),
-        (None, Some(ended)) => Some(format!("{name} · DNS {ended}")),
+        (Some((what, warn)), Some(ended)) => Some((format!("{name} · {what} · {ended}"), warn)),
+        (Some((what, warn)), None) => Some((format!("{name} · {what}"), warn)),
+        (None, Some(ended)) => Some((format!("{name} · DNS {ended}"), false)),
         (None, None) => None,
     }
 }
@@ -518,7 +522,7 @@ async fn phone_lines(
     lookups: Lookups<'_>,
     devices: &[Device],
     lang: Lang,
-) -> Result<(Vec<(i64, String)>, Vec<(i64, String)>), sqlx::Error> {
+) -> Result<(Vec<(i64, String, bool)>, Vec<(i64, String)>), sqlx::Error> {
     type Row = (
         i64,
         String,
@@ -563,8 +567,8 @@ async fn phone_lines(
             allowlist.as_deref(),
         );
         bypass.extend(lines.into_iter().map(|line| (*id, line)));
-        if let Some(line) = phone_line(name, *filter_on, report, lookups, &zone, now) {
-            server.push((*id, line));
+        if let Some((line, warn)) = phone_line(name, *filter_on, report, lookups, &zone, now) {
+            server.push((*id, line, warn));
         }
     }
     Ok((server, bypass))

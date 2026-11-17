@@ -20,21 +20,25 @@
         <div class="group form-group">
             <div class="field">
                 <label class="field-label" for="server_url">{{ self.t("settings.provisioning.server_url") }}</label>
+                <details class="info field-info"><summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("settings.provisioning.server_url_hint") }}</p>
+                    {%- if let Some(env) = env_server_url %}{% if entered.server_url.is_empty() %}<p>{{ self.tp("settings.provisioning.from_env", [("url", env.as_str())]) }}</p>{% else %}<p>{{ self.tp("settings.provisioning.saved_wins", [("url", env.as_str())]) }}</p>{% endif %}{% endif -%}
+                </div></details>
                 <input type="text" id="server_url" name="server_url" value="{{ entered.server_url }}" placeholder="{% if let Some(env) = env_server_url %}{{ env }}{% else %}{{ self.t("settings.provisioning.server_url_example") }}{% endif %}" autocomplete="off" autocapitalize="none" spellcheck="false" inputmode="url"{% if let Some((field, _)) = error %}{% if *field == "server_url" %} aria-invalid="true" aria-describedby="server_url-error" autofocus{% endif %}{% endif %}>
                 {% if let Some((field, why)) = error %}{% if *field == "server_url" %}<p class="field-error" id="server_url-error">{{ self.t(why) }}</p>{% endif %}{% endif %}
                 {% if let Some(why) = url_warning %}<p class="field-error" data-warning="plain-http">{{ why }}</p>{% endif %}
-                {#- Where the QR's address comes from (Q25): saved here wins over .env's PHONE_SERVER_URL. -#}
-                {% if let Some(env) = env_server_url %}
-                {% if entered.server_url.is_empty() %}<p class="field-hint" data-source="env">{{ self.tp("settings.provisioning.from_env", [("url", env.as_str())]) }}</p>
-                {% else %}<p class="field-hint" data-source="saved">{{ self.tp("settings.provisioning.saved_wins", [("url", env.as_str())]) }}</p>{% endif %}
-                {% else %}<p class="field-hint">{{ self.t("settings.provisioning.server_url_hint") }}</p>{% endif %}
+                {#- Where the QR's address comes from (Q25): saved here wins over .env's PHONE_SERVER_URL - a word in view,
+                    the address behind the field's ⓘ (design 113). -#}
+                {% if env_server_url.is_some() %}
+                {% if entered.server_url.is_empty() %}<p class="field-hint" data-source="env">{{ self.t("settings.provisioning.source_env") }}</p>
+                {% else %}<p class="field-hint" data-source="saved">{{ self.t("settings.provisioning.source_saved") }}</p>{% endif %}
+                {% endif %}
             </div>
             <div class="field">
                 <label class="field-label" for="tailscale_auth_key">{{ self.t("settings.provisioning.key") }}</label>
-                <details class="info field-info"><summary aria-label="{{ self.t("settings.provisioning.key_info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("settings.provisioning.key_info") }}</p></div></details>
+                <details class="info field-info"><summary aria-label="{{ self.t("settings.provisioning.key_info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("settings.provisioning.key_hint") }}</p><p>{{ self.t("settings.provisioning.key_info") }}</p></div></details>
                 <p class="field-hint" data-row="key">{% if let Some(hint) = tailscale_key_hint %}{{ self.tp("settings.hint_set", [("hint", hint.as_str())]) }}{% else %}{{ self.t("settings.hint_not_set") }}{% endif %}</p>
                 <input type="password" id="tailscale_auth_key" name="tailscale_auth_key" value="" placeholder="{% if tailscale_key_hint.is_some() %}{{ self.t("settings.provisioning.key_replace") }}{% else %}{{ self.t("settings.provisioning.key_paste") }}{% endif %}" autocomplete="off"{% if entered.key_dropped %} aria-invalid="true" aria-describedby="key-error"{% endif %}>
-                {% if entered.key_dropped %}<p class="field-error" id="key-error">{{ self.t("settings.provisioning.key_dropped") }}</p>{% else %}<p class="field-hint">{{ self.t("settings.provisioning.key_hint") }}</p>{% endif %}
+                {% if entered.key_dropped %}<p class="field-error" id="key-error">{{ self.t("settings.provisioning.key_dropped") }}</p>{% endif %}
                 {% if tailscale_key_hint.is_some() %}
                 <label class="checkbox-row">
                     <input type="checkbox" name="clear_tailscale_auth_key" value="on"{% if entered.clear_key %} checked{% endif %}>
@@ -56,7 +60,7 @@
             </div>
             <button type="submit" class="button-wide">{{ self.t("common.save") }}</button>
         </div>
-        <p class="group-footer">{{ self.t("settings.provisioning.footer") }}</p>
+        <div class="group-footer"><details class="info"><summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("settings.provisioning.footer") }}</p></div></details></div>
         {% if saved %}<div class="group" id="saved"><p class="flash" data-flash="setup" role="status">{{ self.t("settings.provisioning.saved") }}</p></div>{% endif %}
     </form>
 
@@ -67,12 +71,13 @@
         <form method="post" action="/settings/calls#country-code" class="group form-group">
             <div class="field">
                 <label class="field-label" for="default_country_code">{{ self.t("settings.provisioning.country_code") }}</label>
+                <details class="info field-info"><summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.tp("settings.provisioning.country_code_hint", [("code", country_code.value.as_str())]) }}</p></div></details>
                 <input type="text" id="default_country_code" name="default_country_code" value="{{ country_code.value }}" inputmode="numeric" pattern="\+?[1-9][0-9]{0,2}" maxlength="4" autocomplete="off"{% if country_code.error.is_some() %} aria-invalid="true" aria-describedby="country-code-error" autofocus{% endif %}>
-                {% if let Some(why) = country_code.error %}<p class="field-error" id="country-code-error">{{ self.t(why) }}</p>{% else %}<p class="field-hint">{{ self.tp("settings.provisioning.country_code_hint", [("code", country_code.value.as_str())]) }}</p>{% endif %}
+                {% if let Some(why) = country_code.error %}<p class="field-error" id="country-code-error">{{ self.t(why) }}</p>{% endif %}
             </div>
             <button type="submit" class="button-wide">{{ self.t("common.save") }}</button>
         </form>
-        <p class="group-footer">{{ self.t("settings.provisioning.numbers_footer") }}</p>
+        <div class="group-footer"><details class="info"><summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("settings.provisioning.numbers_footer") }}</p></div></details></div>
         {% if country_code.saved %}<div class="group"><p class="flash" data-flash="country-code" role="status">{{ self.t("settings.provisioning.country_code_saved") }}</p></div>{% endif %}
     </section>
     </div>

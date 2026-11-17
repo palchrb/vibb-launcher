@@ -596,7 +596,8 @@ async fn the_web_filter_page_reads_as_rows() {
     );
     assert!(page.contains("&#60;b&#62;Anna&#60;/b&#62;") && !page.contains("<b>Anna"));
     // Nothing loaded in a test: every seeded list says so in a few words.
-    assert!(page.contains("<span class=\"row-sub text-alarm\">Not loaded yet</span>"));
+    // Design 113: the problem is an orange row after the list's switch, the story behind its ⓘ.
+    assert!(page.contains("<span class=\"row-label tone-orange\">Not loaded yet</span>"));
     let lists = page.find("id=\"lists\"").unwrap();
     let server = page.find("id=\"server\"").unwrap();
     assert!(page.find("id=\"blocked\"").unwrap() > lists);
@@ -794,7 +795,7 @@ async fn the_settings_pages_speak_norwegian() {
         &[
             "Legg til et bilde",
             "Også på låseskjermen",
-            "Alle bakgrunnsbilder",
+            "id=\"all-title\">Bilder</h2>",
             "Innebygd · på",
         ],
     );
