@@ -1,0 +1,69 @@
+{
+  "comment": "Design 108's launcher-only rules (§5.1, §5.4, §2.3): UpRulesTest, UpDeliveryPlanTest, UpReconcileTest. The rows are one phone's registrations; the times are wall-clock ms.",
+  "rows": [
+    {"reg": "c0ffee00000000000000000000000001", "pkg": "org.unifiedpush.example", "token": "tok-example-1", "secret": "FakeSecretForTheContract001", "endpoint": "https://phones.example.com/up/FakeSecretForTheContract001", "state": "confirmed", "created_at_ms": 1000, "confirmed_at_ms": 2000},
+    {"reg": "c0ffee00000000000000000000000002", "pkg": "io.element.android.x", "token": "tok-element-1", "secret": "FakeSecretForTheContract002", "endpoint": "https://phones.example.com/up/FakeSecretForTheContract002", "state": "confirmed", "created_at_ms": 4000, "confirmed_at_ms": 5000, "message": "@emma:example.org"},
+    {"reg": "c0ffee00000000000000000000000003", "pkg": "io.element.android.x", "token": "tok-element-2", "secret": "FakeSecretForTheContract003", "state": "pending", "created_at_ms": 6000}
+  ],
+  "views": {
+    "on": {"on": true, "origin": "https://phones.example.com", "allowlist": ["org.unifiedpush.example", "io.element.android.x", "com.example.notes"], "stopped": []},
+    "off": {"on": false, "origin": null, "allowlist": ["org.unifiedpush.example", "io.element.android.x"], "stopped": []},
+    "unmanaged": {"on": true, "origin": "https://phones.example.com", "allowlist": null, "stopped": []},
+    "element_only": {"on": true, "origin": "https://phones.example.com", "allowlist": ["io.element.android.x"], "stopped": []},
+    "example_stopped": {"on": true, "origin": "https://phones.example.com", "allowlist": ["org.unifiedpush.example", "io.element.android.x"], "stopped": ["org.unifiedpush.example"]},
+    "element_stopped": {"on": true, "origin": "https://phones.example.com", "allowlist": ["org.unifiedpush.example", "io.element.android.x"], "stopped": ["io.element.android.x"]},
+    "moved": {"on": true, "origin": "https://push.example.net", "allowlist": ["org.unifiedpush.example", "io.element.android.x"], "stopped": []}
+  },
+  "register": [
+    {"case": "off", "view": "off", "pkg": "org.unifiedpush.example", "token": "tok-new", "decision": "refuse:off"},
+    {"case": "a token another app holds", "view": "on", "pkg": "org.unifiedpush.example", "token": "tok-element-1", "decision": "refuse:token_taken"},
+    {"case": "not on the allowlist", "view": "element_only", "pkg": "org.unifiedpush.example", "token": "tok-new", "decision": "refuse:not_allowed"},
+    {"case": "any app on an unmanaged phone", "view": "unmanaged", "pkg": "com.example.other", "token": "tok-new", "decision": "new"},
+    {"case": "stopped", "view": "example_stopped", "pkg": "org.unifiedpush.example", "token": "tok-new", "decision": "refuse:stopped"},
+    {"case": "a stopped app's known token", "view": "example_stopped", "pkg": "org.unifiedpush.example", "token": "tok-example-1", "decision": "refuse:stopped"},
+    {"case": "known and confirmed: from the store", "view": "on", "pkg": "org.unifiedpush.example", "token": "tok-example-1", "decision": "known:c0ffee00000000000000000000000001"},
+    {"case": "known and pending: the same pair again", "view": "on", "pkg": "io.element.android.x", "token": "tok-element-2", "decision": "retry:c0ffee00000000000000000000000003"},
+    {"case": "a new token", "view": "on", "pkg": "com.example.notes", "token": "tok-new", "decision": "new"},
+    {"case": "100 of one app", "view": "on", "pkg": "com.example.notes", "token": "tok-new", "extra_rows": {"pkg": "com.example.notes", "count": 100}, "decision": "refuse:limit"},
+    {"case": "99 of one app", "view": "on", "pkg": "com.example.notes", "token": "tok-new", "extra_rows": {"pkg": "com.example.notes", "count": 99}, "decision": "new"},
+    {"case": "300 on the phone", "view": "unmanaged", "pkg": "com.example.notes", "token": "tok-new", "extra_rows": {"pkg": "com.example.many", "count": 297}, "decision": "refuse:limit"},
+    {"case": "20 new of the app within the hour", "view": "on", "pkg": "com.example.notes", "token": "tok-new", "now_ms": 10000000, "churn": {"com.example.notes": {"count": 20, "at_ms": 9000000}}, "decision": "refuse:busy"},
+    {"case": "20 new of the app over an hour ago", "view": "on", "pkg": "com.example.notes", "token": "tok-new", "now_ms": 10000000, "churn": {"com.example.notes": {"count": 20, "at_ms": 6400000}}, "decision": "new"},
+    {"case": "60 new on the phone within the hour", "view": "unmanaged", "pkg": "com.example.notes", "token": "tok-new", "now_ms": 10000000, "churn": {"com.example.a": {"count": 19, "at_ms": 9500000}, "com.example.b": {"count": 19, "at_ms": 9500000}, "com.example.c": {"count": 19, "at_ms": 9500000}, "com.example.d": {"count": 3, "at_ms": 9500000}}, "decision": "refuse:busy"},
+    {"case": "a known token is never counted", "view": "on", "pkg": "org.unifiedpush.example", "token": "tok-example-1", "now_ms": 10000000, "churn": {"org.unifiedpush.example": {"count": 20, "at_ms": 9000000}}, "decision": "known:c0ffee00000000000000000000000001"}
+  ],
+  "unregister": [
+    {"case": "the owner", "sender": "io.element.android.x", "token": "tok-element-1", "row": "c0ffee00000000000000000000000002"},
+    {"case": "another app naming the token", "sender": "org.unifiedpush.example", "token": "tok-element-1", "row": null},
+    {"case": "an unknown token", "sender": "io.element.android.x", "token": "tok-unknown", "row": null}
+  ],
+  "ack": [
+    {"case": "the connector shares no identity for MESSAGE_ACK: the token alone", "sender": null, "token": "tok-element-1", "row": "c0ffee00000000000000000000000002"},
+    {"case": "the owner", "sender": "io.element.android.x", "token": "tok-element-1", "row": "c0ffee00000000000000000000000002"},
+    {"case": "a shared identity that isn't the owner", "sender": "org.unifiedpush.example", "token": "tok-element-1", "row": null},
+    {"case": "an unknown token", "sender": null, "token": "tok-unknown", "row": null}
+  ],
+  "failed_reason": {"off": "ACTION_REQUIRED", "token_taken": "ACTION_REQUIRED", "not_allowed": "ACTION_REQUIRED", "stopped": "ACTION_REQUIRED", "limit": "ACTION_REQUIRED", "busy": "ACTION_REQUIRED", "conflict": "ACTION_REQUIRED", "invalid": "ACTION_REQUIRED", "network": "NETWORK", "server_error": "NETWORK"},
+  "delivery": [
+    {"case": "installed and visible", "reg": "c0ffee00000000000000000000000001", "app": "installed", "plan": "deliver"},
+    {"case": "suspended by a time rule (Q5: delivered; a suspended app reads as installed)", "reg": "c0ffee00000000000000000000000002", "app": "installed", "plan": "deliver"},
+    {"case": "hidden: acknowledged, the server prunes the registration", "reg": "c0ffee00000000000000000000000001", "app": "hidden", "plan": "drop"},
+    {"case": "uninstalled: acknowledged, the registration removed", "reg": "c0ffee00000000000000000000000001", "app": "uninstalled", "plan": "drop_remove"},
+    {"case": "an unknown reg (removed meanwhile)", "reg": "c0ffee00000000000000000000000099", "app": "installed", "plan": "drop"},
+    {"case": "a registration not confirmed", "reg": "c0ffee00000000000000000000000003", "app": "installed", "plan": "drop"}
+  ],
+  "reconcile": [
+    {"case": "off: every app told, the server deleted its rows itself", "view": "off", "regs": [], "request_start_ms": 7000, "now_ms": 8000, "keep": [], "tell": ["c0ffee00000000000000000000000001", "c0ffee00000000000000000000000002", "c0ffee00000000000000000000000003"], "delete": []},
+    {"case": "all held", "view": "on", "regs": ["c0ffee00000000000000000000000001", "c0ffee00000000000000000000000002"], "request_start_ms": 7000, "now_ms": 8000, "keep": ["c0ffee00000000000000000000000001", "c0ffee00000000000000000000000002", "c0ffee00000000000000000000000003"], "tell": [], "delete": []},
+    {"case": "missing, confirmed before the request: dropped", "view": "on", "regs": ["c0ffee00000000000000000000000001"], "request_start_ms": 7000, "now_ms": 8000, "keep": ["c0ffee00000000000000000000000001", "c0ffee00000000000000000000000003"], "tell": ["c0ffee00000000000000000000000002"], "delete": []},
+    {"case": "missing, confirmed during the request: kept (the race rule)", "view": "on", "regs": ["c0ffee00000000000000000000000001"], "request_start_ms": 5000, "now_ms": 8000, "keep": ["c0ffee00000000000000000000000001", "c0ffee00000000000000000000000002", "c0ffee00000000000000000000000003"], "tell": [], "delete": []},
+    {"case": "stopped by the parent", "view": "element_stopped", "regs": ["c0ffee00000000000000000000000001"], "request_start_ms": 7000, "now_ms": 8000, "keep": ["c0ffee00000000000000000000000001"], "tell": ["c0ffee00000000000000000000000002", "c0ffee00000000000000000000000003"], "delete": []},
+    {"case": "off the allowlist", "view": "element_only", "regs": ["c0ffee00000000000000000000000002"], "request_start_ms": 7000, "now_ms": 8000, "keep": ["c0ffee00000000000000000000000002", "c0ffee00000000000000000000000003"], "tell": ["c0ffee00000000000000000000000001"], "delete": []},
+    {"case": "a reg the phone doesn't know: deleted", "view": "on", "regs": ["c0ffee00000000000000000000000001", "c0ffee00000000000000000000000002", "c0ffee00000000000000000000000009"], "request_start_ms": 7000, "now_ms": 8000, "keep": ["c0ffee00000000000000000000000001", "c0ffee00000000000000000000000002", "c0ffee00000000000000000000000003"], "tell": [], "delete": ["c0ffee00000000000000000000000009"]},
+    {"case": "a pending one a day old: dropped quietly, deleted", "view": "on", "regs": ["c0ffee00000000000000000000000001", "c0ffee00000000000000000000000002", "c0ffee00000000000000000000000003"], "request_start_ms": 86500000, "now_ms": 86500000, "keep": ["c0ffee00000000000000000000000001", "c0ffee00000000000000000000000002"], "tell": [], "delete": ["c0ffee00000000000000000000000003"]}
+  ],
+  "rewrite": [
+    {"case": "the same origin: nothing", "origin": "https://phones.example.com", "rewritten": {}},
+    {"case": "a changed origin (M4): each confirmed endpoint, never a pending one", "origin": "https://push.example.net", "rewritten": {"c0ffee00000000000000000000000001": "https://push.example.net/up/FakeSecretForTheContract001", "c0ffee00000000000000000000000002": "https://push.example.net/up/FakeSecretForTheContract002"}}
+  ]
+}

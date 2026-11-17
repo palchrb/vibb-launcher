@@ -473,6 +473,17 @@
     <string name="settings_mdm_write_settings_no_page">Ikke tillatt - Android har ingen side for dette på denne telefonen</string>
     <string name="settings_mdm_write_settings_wait">Ikke tillatt - pausen starter, et øyeblikk …</string>
     <string name="settings_mdm_write_settings_unknown">Ukjent</string>
+    <!-- Design 108 §6.5: the app-push diagnostics row (PIN-gated Settings). -->
+    <string name="settings_up_title">Push for apper</string>
+    <string name="settings_up_on">På: apper på listen kan få varsler gjennom Vibb One</string>
+    <string name="settings_up_off">Av</string>
+    <string name="settings_up_none">Ingen app bruker det ennå</string>
+    <string name="settings_up_unreadable">Registreringene kan ikke leses</string>
+    <string name="settings_up_waiting">venter på serveren</string>
+    <string name="settings_up_not_delivered">ingenting levert ennå</string>
+    <string name="settings_up_delivered">sist levert %1$s</string>
+    <string name="settings_up_old_connector">%1$s: push-biblioteket er for gammelt for Vibb One</string>
+    <string name="settings_up_no_raise">%1$s: får meldingene uten oppvekking</string>
     <string name="settings_notifications">Varsler fra Vibb One</string>
     <string name="settings_notifications_off">Av: %1$s</string>
     <string name="settings_notifications_all_off">Alle av</string>

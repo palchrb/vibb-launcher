@@ -386,7 +386,9 @@ and a binary one, base64), `event` (the SSE event `up`/`up`) and `endpoint` (the
 `UnifiedPushContractTest` encodes the bodies, decodes every answer and policy row and maps each refusal; both compare
 the copies. The server-only rows of the push routes are `server/testdata/unified_push_gateway.json`
 (`tests::unified_push::gateway_rows`). The policy's `unified_push` is pinned by `policy_json_keys_snapshot` and the
-launcher's `PolicyResponseCompatTest`.
+launcher's `PolicyResponseCompatTest`. The distributor's own rules (register, unregister and ack decisions, the delivery
+plan, the `regs` reconcile, the origin rewrite) stay the launcher's alone, in
+`launcher/app/src/test/resources/up_rules.json` (`UpRulesTest`, `UpDeliveryPlanTest`, `UpReconcileTest`).
 
 ## CI and releases
 

@@ -186,6 +186,10 @@ data class PolicyResponse(
     val captivePortal: com.kidslauncher.mdm.logins.CaptivePortalPolicy? = null,
     /** Design 102 §6.1: Chrome only for logins - its package and the sites; `null` (and missing) = the role off. */
     val loginBrowser: com.kidslauncher.mdm.logins.LoginBrowserPolicy? = null,
+    /** Design 108 §3.8: app push (UnifiedPush) - `on`, `origin`, `regs`, `stopped`; sent only to a launcher claiming
+     * `unified_push_v1`. Missing (an older server) = off: the receiver and the Link Activity disabled
+     * ([com.kidslauncher.mdm.push.up.UpView]). */
+    val unifiedPush: com.kidslauncher.mdm.push.up.UnifiedPushPolicy? = null,
 )
 
 /** `PolicyResponse.kidLock` - `security::hash_pin` on the server (PBKDF2-SHA256, see

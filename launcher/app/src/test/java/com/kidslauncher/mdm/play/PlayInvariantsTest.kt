@@ -46,6 +46,8 @@ class PlayInvariantsTest {
                 "enforceCallLogPin(dpm, admin, context)",
                 // Design 102 §3.2 (Q102-M5): the Wi-Fi sign-in's handler, so a re-seat never shows Android's chooser.
                 "enforceCaptivePortalPin(dpm, admin, context)",
+                // Design 108 §5.2 (L3): the UnifiedPush link's handler, the fifth of ours, so no distributor chooser.
+                "enforceUpLinkPin(dpm, admin, context)",
             ),
             body,
         )
@@ -69,6 +71,26 @@ class PlayInvariantsTest {
         val enforcer = sources.walkTopDown().first { it.name == "AppEnforcer.kt" }.readText()
         assertTrue("enforceDefaultHome(dpm, admin, context)" in enforcer)
         assertTrue("enforcePlayLinkBlocker(dpm, admin, context)" in enforcer)
+    }
+
+    /** Design 108 §5.2 (L3): every PPA `apply()` sets is re-added by the re-seat - none is set only in one of them - and
+     * the UnifiedPush link's is set whatever UP's state (its enabled state decides, never a cleared PPA). */
+    @Test
+    fun `every PPA set in apply is re-added by the re-seat, the UnifiedPush link's unconditionally`() {
+        val enforcer = code("AppEnforcer.kt")
+        val apply = enforcer.substringAfter("private fun applyHeld(").substringBefore("\n    }\n")
+        val reseat = enforcer.substringAfter("internal fun reseatPreferredActivities(").substringBefore("\n    }\n")
+        val pins = Regex("""\b(enforce\w+)\(dpm, admin, context\)""")
+        val inApply = pins.findAll(apply).map { it.groupValues[1] }.toSet()
+        val inReseat = pins.findAll(reseat).map { it.groupValues[1] }.toSet()
+        assertEquals(inApply, inReseat)
+        assertTrue("enforceUpLinkPin" in inApply)
+        // Unconditional: a statement of its own, not behind UP's switch.
+        assertEquals("enforceUpLinkPin(dpm, admin, context)", apply.lines().first { "enforceUpLinkPin(" in it }.trim())
+        for (name in inApply) {
+            val body = enforcer.substringAfter("private fun $name(").substringBefore("\n    }\n")
+            assertTrue(name, "addPersistentPreferredActivity(" in body)
+        }
     }
 
     /** Design 16b (QA #7/#9): the boot cover's PPA is added next to HomeActivity's with its own

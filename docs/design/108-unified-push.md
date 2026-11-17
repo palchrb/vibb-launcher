@@ -32,6 +32,38 @@ Where the build differs from the sections below:
   every replaced origin kept its 30 days.
 - Not in R1-S: `scripts/fake-homeserver.py` (R1-G), VAPID (R3), the launcher note's rule paragraph (R1-L/merge).
 
+## Built: R1-L (branch `up`, 2026-11-17)
+
+The launcher half is built; the note is `docs/notes/launcher/unified-push.md`. Code in `push/up/`: `UpReceiver`
+(`UpRequests.read`), `UpLinkActivity`, `UpPackageReceiver`, `UpStore`, `UpRules`, `UpDelivery`, `UpEngine` (the logic,
+JVM-tested with fakes), `UpRuntime` (the Android wiring: one single-thread scheduled executor that also carries the
+raise's binding callbacks and timers) and `vendor/RaiseToForeground.kt` with H1's fixes. Where the build differs from
+the sections below:
+
+- **MESSAGE_ACK is taken on its token alone.** The connector sends it with a plain `sendBroadcast`, without
+  `FLAG_SHARE_IDENTITY` (`MessagingReceiver.mayAcknowledgeMessage`), so §5.1's "we check anyway" can't hold: a sender
+  that is present must own the token, a missing one is accepted on the token (the spec's unguessable-token way). It
+  only feeds `lastAppAckMs` (written at most hourly), never the server's ack.
+- **`message` is cut to 100 bytes, not refused** (§5.3's wording; an MXID may be longer and it is only shown). A
+  `vapid` that isn't 87 base64url ignores the request (the spec's rule; the reference distributor treats it as absent).
+- **A REGISTER without a shared identity** is noted for the diagnostics row by its `application` extra, an untrusted
+  hint shown only there; it is never answered.
+- **The 30-day ping and unregister (§5.6)** are R2, as §12.1 has it: the rows keep `lastAppAckMs`, `pingId` and
+  `pingSentMs` for it. `up_rules.json` has no liveness rows yet.
+- **The reconcile also** drops a pending row a day old (its `DELETE` queued: the server may hold it behind a lost
+  answer), sends a `DELETE` for every server `reg` no local row knows, and drops an app no longer installed (the
+  backstop for a missed `PACKAGE_FULLY_REMOVED`; a hidden app is still installed). Off tells every app `UNREGISTERED`
+  without `DELETE`s (the server deleted its rows). A store that doesn't open changes nothing and deletes nothing.
+- **A `conflict`** answer drops the pending row and tries once with a fresh `reg` and secret (a secret tombstoned
+  behind a lost answer would otherwise refuse forever).
+- **Every stream reopen pulls** (not only when the sync's 10-minute reopen rule syncs); every accepted fresh policy
+  pulls after its reconcile. The acks of sends that happen after a pull ride a pull 6 s later.
+- **The store's side keys** (`up_deletes_v1`, `up_churn_v1`, `up_notes_v1`) are plain JSON in the same CE prefs file;
+  only `up_regs_v1` is sealed.
+- **The Link Activity** has `configChanges` with `uiMode` (every activity does, `PageManifestTest`).
+- Element X stays the Play build (the amendment): nothing in the launcher depends on the F-Droid build.
+- Not in R1-L: the emulator gate (R1-G, §12.3), VAPID (R3).
+
 
 The sections a finding changes are rewritten in place, so where revision 1 and a section disagree, the section as it
 now reads is the design. §16 maps every finding to its fix. What changed, in short:
@@ -1254,6 +1286,10 @@ managing the phone needs.
 **When built,** R1's merge commit rewrites both notes' paragraphs (the history kept, the rule replaced by "Vibb One is
 the distributor since design 108; see `docs/notes/launcher/unified-push.md`"), DEPLOY.md's section and the root
 `CLAUDE.md`'s contract list. The user's "yes" to the reversal is recorded (Q2, 2026-11-16).
+
+**Done:** R1-S rewrote the server note (`retention-and-crashes.md`), DEPLOY.md's section and the root `CLAUDE.md`; R1-L
+rewrote `docs/notes/launcher/gotchas-and-history.md`'s paragraph ("Removed monitoring and upstream extras") and added
+`docs/notes/launcher/unified-push.md`.
 
 ---
 

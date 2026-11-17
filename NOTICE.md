@@ -49,6 +49,15 @@ Esmertec AG and The Android Open Source Project, licensed under the Apache Licen
 modified here (made pure JVM and hardened); each file keeps its header and says it was modified, and the package's
 `README.md` lists every change. The few files written here in that package are under the GPL-3.0 (or later) and say so.
 
+The launcher's raise of a UnifiedPush app to the foreground
+(`launcher/app/src/main/java/com/kidslauncher/mdm/push/up/vendor/RaiseToForeground.kt`, design 108 §5.4) is adapted
+from [UnifiedPush's android-distributor](https://codeberg.org/UnifiedPush/android-distributor)'s
+`RaiseAppToForeground.kt` at commit `6daaf14`, by the UnifiedPush contributors, licensed under the Apache License 2.0 -
+see [`launcher/app/src/main/assets/licenses/Apache-2.0.txt`](launcher/app/src/main/assets/licenses/Apache-2.0.txt). It
+was changed here (no message is ever dropped: a failed bind sends at once, every unbind path sends what is queued, a
+message is acknowledged only after its broadcast was sent); its header keeps the attribution and lists every change.
+The rest of `push/up/` is written here under the GPL-3.0 (or later); the UnifiedPush connector is not a dependency.
+
 The server's list of MMS servers (`server/testdata/mmsc_hosts.txt`, made by `scripts/mmsc-hosts.py`, design 83) is
 extracted from AOSP's APN list, [`device/sample`](https://android.googlesource.com/device/sample)'s
 `etc/apns-full-conf.xml` at commit `73f904fbeb872f5675cb5f18cd9dfb15856425a6`, Copyright 2006, The Android Open Source

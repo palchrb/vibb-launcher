@@ -71,6 +71,7 @@ private const val WIFI_APM = "settings_mdm_wifi_apm"
 private const val CALL_FILTER = "settings_mdm_call_filter"
 private const val FINGERPRINT = "settings_mdm_fingerprint"
 private const val MEDIA_LOCK = "settings_mdm_media_lock"
+private const val UNIFIED_PUSH = "settings_mdm_unified_push"
 private const val APP_ACCESS = "settings_mdm_app_access"
 private const val SERVER_CERT_ROW = "settings_mdm_server_cert"
 
@@ -618,6 +619,55 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
         updateFingerprintRow()
         updateMediaLockRow()
         updateAccessRows()
+        updateUnifiedPushRow()
+    }
+
+    /**
+     * Design 108 §6.5: "App push", the distributor's diagnostics - each registration's app, its own description (Element
+     * X's account, kept on the phone only and shown only here) and its last delivery, and the notes (an app whose push
+     * library is too old to share its identity, an app without the wake-up service). Shown while UP is on or anything is
+     * registered or noted; read off the main thread.
+     */
+    private fun updateUnifiedPushRow() {
+        val app = context?.applicationContext ?: return
+        lifecycleScope.launch {
+            val diagnostics = withContext(Dispatchers.IO) { com.kidslauncher.mdm.push.up.UpRuntime.diagnostics(app) }
+            val context = context ?: return@launch
+            val row = findPreference<Preference>(UNIFIED_PUSH) ?: return@launch
+            val rows = diagnostics?.rows
+            row.isVisible = diagnostics != null && (diagnostics.on || !rows.isNullOrEmpty() || diagnostics.notes.isNotEmpty())
+            diagnostics ?: return@launch
+            val pm = context.packageManager
+            fun label(pkg: String): String = try {
+                pm.getApplicationLabel(
+                    pm.getApplicationInfo(pkg, PackageManager.ApplicationInfoFlags.of(PackageManager.MATCH_UNINSTALLED_PACKAGES.toLong())),
+                ).toString()
+            } catch (e: Exception) {
+                pkg
+            }
+            val now = System.currentTimeMillis()
+            val lines = mutableListOf(getString(if (diagnostics.on) R.string.settings_up_on else R.string.settings_up_off))
+            when {
+                rows == null -> lines += getString(R.string.settings_up_unreadable)
+                rows.isEmpty() && diagnostics.on -> lines += getString(R.string.settings_up_none)
+                else -> for (reg in rows.sortedBy { it.pkg }) {
+                    val delivered = when {
+                        !reg.confirmed -> getString(R.string.settings_up_waiting)
+                        reg.lastDeliveredMs == null -> getString(R.string.settings_up_not_delivered)
+                        else -> getString(
+                            R.string.settings_up_delivered,
+                            android.text.format.DateUtils.formatSameDayTime(reg.lastDeliveredMs, now, java.text.DateFormat.SHORT, java.text.DateFormat.SHORT),
+                        )
+                    }
+                    lines += listOfNotNull(label(reg.pkg), reg.message, delivered).joinToString(" · ")
+                }
+            }
+            for (note in diagnostics.notes) {
+                val text = if (note.kind == com.kidslauncher.mdm.push.up.NOTE_OLD_CONNECTOR) R.string.settings_up_old_connector else R.string.settings_up_no_raise
+                lines += getString(text, label(note.pkg))
+            }
+            row.summary = lines.joinToString("\n")
+        }
     }
 
     /** "App access" (design 68 §4.2): read off the main thread, then the category's rows replaced; hidden while empty.
