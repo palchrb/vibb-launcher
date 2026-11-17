@@ -74,7 +74,6 @@ Nothing here is waiting on code. Each line names where the detail is; the longer
 - **Wi-Fi in Phone Setup**, one of: (A) remember the Wi-Fi for the setup QR (write-only like the
   Tailscale key, left out of backups) - small; or (B) push the family's Wi-Fi networks to every
   phone through the policy - server, launcher and contract, larger. Waiting for the choice.
-- Developer-verification registration: waits for Google in Norway; nothing in the repo, ever.
 
 **Jelly Star checks**
 
@@ -188,6 +187,7 @@ Nothing here is waiting on code. Each line names where the detail is; the longer
 - **DECLINED 2026-10-20: rewind 5-10 s after a long pause** (the user: "Nei legg det bort").
 
 ### Done since the last release
+- **Android developer verification - DONE by the user 2026-11-17** ("Jeg har registrert meg som utvikler og registrert pakkene mine"): the user is registered with Google as a developer and has registered their packages. Nothing in the repo, ever (no keys, no account details).
 - **PWA rows: no value broken inside a word (2026-11-17, merged from `pwa-row-words` e6fc9665c, server CI 44076014276 green)**: the user's iPhone screenshots of Device › Apps ("Manage/d by/Vibb", "O/n"). `.row-value` now wraps only between words and never shrinks below its longest word (`min-width: auto`), capped at 55 % of the row so a hash or URL breaks inside that box; `.row-value-words` removed, `.row-value-keep` kept for dates and versions; `style.css?v=124`. The managed Phone row drops its "Managed by Vibb" value (its title and sub-line say it; "Off" still shows). "VibbOne" on Device › Apps is the parent's own typed name in the catalog (`tracked_apps.name`), not ours - left as is. Checked at 390×844 in en and nb, light and dark, on six pages: no other split word.
 - **Phone-book rows as text only (variant A) - APPROVED 2026-11-17 (the user: "vi går med din anbefaling om bare tekst (option A)"; variants https://claude.ai/artifact/Bxu1yunR5QMVYhBNXz6vin), IN BUILD (`phonebook-text` 42895459e: text only, CI green; on the emulator "Tapt anrop 10:19 · 1 melding" didn't fit beside the two buttons) - CHANGED 2026-11-17 to variant D, glyphs in the line (the user: "Nr D ser bra ut, kjør den!"; the artifact's D: Home's phone-x glyph + the time in rust, the chat glyph + the count in teal, one line, the words for TalkBack), BUILT (`phonebook-text` 64aa4adbe, nb screenshots sent), CODE QA DONE (0 H, 1 M - at font scale 2.0 the teal part vanished, now wraps whole to line 2 - 6 L, all fixed in e2912d5fe, CI green), MERGED 2026-11-17 (for `launcher-v0.40.0-rc.7`)**: the phone book's Kontakter rows drop the two pills on the avatar; one line under the name, ellipsized, "Tapt anrop 7:20" in rust and "1 melding" in teal (design 106's words, both languages); Home's tiles keep their pills.
 
