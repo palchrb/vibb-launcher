@@ -88,7 +88,25 @@ async fn the_managed_row_links_to_calls() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     // The dialer is missing from the allowlist: still not in Not allowed.
-    let (id, _) = phone(&app, Some(&[OTHER]), "managed", true).await;
+    let (id, token) = phone(&app, Some(&[OTHER]), "managed", true).await;
+    // A Vibb One with Dagen: Kalender's built-in row is on the page too (and Meldinger's with SMS managed).
+    app.post_status(
+        &token,
+        serde_json::json!({
+            "installed_apps": [
+                {"package_name": DIALER, "label": "Phone", "preinstalled": true},
+                {"package_name": OTHER, "label": "Chess"},
+            ],
+            "call_state": {"system_dialer": DIALER},
+            "capabilities": [crate::calendar::CALENDAR_CAPABILITY],
+        }),
+    )
+    .await;
+    sqlx::query("UPDATE device_policy SET sms_mode = 'managed' WHERE device_id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
     sqlx::query(
         "INSERT INTO device_app_display (device_id, package_name, label) VALUES (?, ?, 'Ring')",
     )
