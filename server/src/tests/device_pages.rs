@@ -470,10 +470,7 @@ async fn a_live_code_shows_on_connection_without_the_code() {
         .expect("the warning")..];
     let warning = &warning[..warning.find("</div>").unwrap()];
     assert!(warning.contains("Typed codes paused until "), "{warning}");
-    assert!(
-        warning.contains("A setup QR code still works."),
-        "{warning}"
-    );
+    assert!(warning.contains("The QR code still works"), "{warning}");
 }
 
 /// A disconnected phone still shows when it was last in contact (qa-31-s3-code M1): "cut off a

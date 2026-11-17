@@ -239,7 +239,7 @@ async fn an_old_reports_pause_says_its_age_and_ends_by_the_clock() {
     let old = quick().await;
     assert!(old.contains(&lock_again), "{old}");
     assert!(
-        old.contains("<p class=\"quick-note\" data-report-age>As of the phone&#39;s last report, 40 min ago.</p>"),
+        old.contains("<p class=\"quick-note\" data-report-age>Last report 40 min ago</p>"),
         "{old}"
     );
     age(121).await.unwrap();
@@ -283,7 +283,8 @@ async fn lock_again_follows_the_status_and_the_capability() {
         quick.contains(&format!("<div class=\"group\" id=\"setup-open\" {paused}>")),
         "{quick}"
     );
-    assert!(quick.contains("Apps and Play Store are open"), "{quick}");
+    // Design 113: no sub-line while the phone can be locked again from here.
+    assert!(!quick.contains("Apps and Play Store are open"), "{quick}");
     assert!(!quick.contains("attention-alarm"), "{quick}");
     assert!(
         html.contains(&format!(
@@ -327,9 +328,7 @@ async fn lock_again_follows_the_status_and_the_capability() {
     let quick = group(&html, "quick");
     assert!(quick.contains(paused), "{quick}");
     assert!(
-        quick.contains(
-            "The pause ends by itself; this version of Vibb One can&#39;t be locked again from here."
-        ),
+        quick.contains("Can&#39;t be locked again from here"),
         "{quick}"
     );
     assert!(
@@ -452,7 +451,7 @@ async fn the_commands_are_queued_logged_and_kept_by_other_commands() {
         .await
         .text();
     assert!(
-        group(&html, "quick").contains("Sent. The phone locks again within seconds"),
+        group(&html, "quick").contains("data-flash=\"quick\">Sent</p>"),
         "{html}"
     );
     // The Lock again just pressed keeps its "Sent." while the summary waits (qa-pwa-fixes-a-code
@@ -533,7 +532,7 @@ async fn an_install_time_block_is_listed_allowed_and_cleared() {
         .text();
     let blocked = group(&html, "blocked-apps");
     assert!(
-        blocked.contains("And 17 more the phone doesn&#39;t list"),
+        blocked.contains("17 more the phone doesn&#39;t show"),
         "{blocked}"
     );
     // The phone's label, escaped in the row and in the confirm (qa-31-s10-code L3).
@@ -904,7 +903,7 @@ async fn an_app_that_could_read_the_parent_pin_is_a_red_warning_with_the_steps()
         warning.contains("Device admin: com.evil.admin. Accessibility: com.evil.admin."),
         "{warning}"
     );
-    assert!(warning.contains("Unlock 2\u{a0}h"), "{warning}");
+    assert!(warning.contains("Open for setup on Advanced"), "{warning}");
     assert!(
         warning.contains("Security › Device admin apps"),
         "{warning}"
@@ -1088,7 +1087,7 @@ async fn the_summary_reloads_until_the_phone_shows_lock_again_or_unlock() {
     assert!(reloads(app.get_page(&landing, &cookie).await.text()));
     // The reload's page has no ?notice= (auto-reload.js drops it): the "Sent." line stays while it
     // waits (qa-pwa-fixes-a-code Q-2), and goes once the report shows the pause.
-    const UNLOCK_SENT: &str = "Sent. The phone unlocks for 2 hours";
+    const UNLOCK_SENT: &str = "data-flash=\"quick\">Sent</p>";
     let html = app.get_page(&page, &cookie).await.text();
     assert!(reloads(html.clone()), "{html}");
     assert!(group(&html, "quick").contains(UNLOCK_SENT), "{html}");
@@ -1107,7 +1106,7 @@ async fn the_summary_reloads_until_the_phone_shows_lock_again_or_unlock() {
     let html = app.get_page(&page, &cookie).await.text();
     assert!(reloads(html.clone()));
     assert!(
-        group(&html, "quick").contains("Sent. The phone locks again"),
+        group(&html, "quick").contains("data-flash=\"quick\">Sent</p>"),
         "{html}"
     );
     answer_newest(&app, &token, id, true).await;

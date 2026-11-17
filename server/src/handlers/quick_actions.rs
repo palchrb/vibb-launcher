@@ -20,7 +20,7 @@ pub(crate) struct RuleOption {
     /// A school rule: Slå på nå's default.
     pub school: bool,
     pub name: String,
-    /// "Telefonen låses som i Skole: …" (§6.2 B5).
+    /// "Kalender og nødanrop virker." (§6.2 B5; design 113: the rule is the select's, not repeated).
     pub mode_line: String,
     /// The `.qa-warn` lines for turning this rule on (§6.2 B5), joined by a newline for JS.
     pub warnings: Vec<String>,
@@ -50,7 +50,8 @@ pub(crate) struct RunningView {
 /// The row right under the phone's header while it is open for setup (§6.1 item 1).
 pub(crate) struct SetupRow {
     pub text: String,
-    pub sub: String,
+    /// Only for a launcher that can't be locked again from here (`pause_ends_old`).
+    pub sub: Option<String>,
     pub lock_again: bool,
 }
 
@@ -80,8 +81,8 @@ pub(crate) struct QuickActions {
     pub running: Option<RunningView>,
     /// The running pauses, each "Leggetid på pause til 21:00" with its lift id (Avslutt nå).
     pub pauses: Vec<(i64, String)>,
-    /// The Skjermtid sheet's note.
-    pub extra_note: String,
+    /// The Skjermtid sheet's note: "Brukt i dag: 1 t av 2 t" while the phone has a budget, else none.
+    pub extra_note: Option<String>,
     /// A refusal's words, shown in the sheet it reopened.
     pub sheet_flash: Option<String>,
     pub setup: Option<SetupRow>,
@@ -133,9 +134,8 @@ fn listed(lang: Lang, items: &[String]) -> String {
     }
 }
 
-/// The rule's mode in words (§6.2 B5): what still works while it locks.
+/// The rule's mode in words (§6.2 B5): what still works while it locks ("Kalender og nødanrop virker.").
 pub(crate) fn mode_line(lang: Lang, rule: &TimeRuleRow, apps: &HashMap<String, String>) -> String {
-    let name = crate::time_rules::shown_name(lang, &rule.name);
     let mut works = Vec::new();
     if rule.calls_allowed {
         works.push(t(lang, "device.summary.qa.calls").to_string());
@@ -148,12 +148,12 @@ pub(crate) fn mode_line(lang: Lang, rule: &TimeRuleRow, apps: &HashMap<String, S
         works.push(t(lang, "device.summary.qa.calendar").to_string());
     }
     if works.is_empty() {
-        t_params(lang, "device.summary.qa.mode_line_none", &[("rule", &name)])
+        t(lang, "device.summary.qa.mode_line_none").to_string()
     } else {
         t_params(
             lang,
             "device.summary.qa.mode_line",
-            &[("rule", &name), ("list", &listed(lang, &works))],
+            &[("list", &listed(lang, &works))],
         )
     }
 }
@@ -428,11 +428,7 @@ pub(crate) async fn build(
                 (true, None) => t(lang, "device.summary.qa.setup_open").to_string(),
                 (false, _) => t(lang, "device.summary.qa.setup_play").to_string(),
             },
-            sub: if input.lock_again {
-                t(lang, "device.summary.qa.setup_sub").to_string()
-            } else {
-                t(lang, "device.summary.pause_ends_old").to_string()
-            },
+            sub: (!input.lock_again).then(|| t(lang, "device.summary.pause_ends_old").to_string()),
             lock_again: input.lock_again,
         }
     });
@@ -463,14 +459,10 @@ pub(crate) async fn build(
                     t_params(
                         lang,
                         "device.summary.qa.warn_setup",
-                        &[("at", &zone.clock(at)), ("rule", &name)],
+                        &[("at", &zone.clock(at))],
                     )
                 } else {
-                    t_params(
-                        lang,
-                        "device.summary.qa.warn_setup_plain",
-                        &[("rule", &name)],
-                    )
+                    t(lang, "device.summary.qa.warn_setup_plain").to_string()
                 });
             }
             if let Some((_, _, _, expires)) = pause_rows
@@ -559,17 +551,19 @@ pub(crate) async fn build(
         [true, false, _] => "60",
         _ => "day",
     };
-    let extra_note = match input.screen.and_then(|s| s.budget.map(|b| (s.used, b))) {
-        Some((used, budget)) => t_params(
-            lang,
-            "device.summary.qa.extra_used",
-            &[
-                ("used", &crate::display_time::duration(lang, used)),
-                ("budget", &crate::display_time::duration(lang, budget)),
-            ],
-        ),
-        None => t(lang, "device.summary.qa.extra_note").to_string(),
-    };
+    let extra_note = input
+        .screen
+        .and_then(|s| s.budget.map(|b| (s.used, b)))
+        .map(|(used, budget)| {
+            t_params(
+                lang,
+                "device.summary.qa.extra_used",
+                &[
+                    ("used", &crate::display_time::duration(lang, used)),
+                    ("budget", &crate::display_time::duration(lang, budget)),
+                ],
+            )
+        });
     Ok(QuickActions {
         open,
         mode_on,

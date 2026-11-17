@@ -282,7 +282,11 @@
         {% endif %}
         {% if let Some(until) = access.typed_paused_until %}
         <div class="attention attention-action" data-warning="typed-paused">
-            <span class="attention-text">{{ self.tp("device.summary.access.paused", [("until", until.as_str())]) }}<span class="attention-sub">{{ self.tc("device.summary.access.paused_sub", access.pause_failures(), []) }}</span></span>
+            <div class="attention-text">{{ self.tp("device.summary.access.paused", [("until", until.as_str())]) }}<div class="attention-sub">{{ self.t("device.summary.access.qr_works") }}
+                <details class="info">
+                    <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                    <div class="info-panel"><p>{{ self.tc("device.summary.access.paused_sub", access.pause_failures(), []) }}</p></div>
+                </details></div></div>
         </div>
         {% endif %}
         <div class="group">

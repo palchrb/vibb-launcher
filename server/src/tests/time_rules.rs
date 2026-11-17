@@ -679,10 +679,7 @@ async fn invalid_lifts_are_rejected() {
         .find("<section id=\"quick\"")
         .expect("the quick actions")..];
     let quick = &quick[..quick.find("</section>").unwrap()];
-    assert!(
-        quick.contains("That rule no longer applies to this phone. Nothing was paused."),
-        "{quick}"
-    );
+    assert!(quick.contains("The rule no longer applies"), "{quick}");
     assert!(quick.contains("flash-error"), "{quick}");
     // Without a refusal and without rules, there is no Pause group.
     let html = app

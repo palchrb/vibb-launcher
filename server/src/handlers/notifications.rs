@@ -921,10 +921,7 @@ pub async fn warning_row(
         [(one, _)] => one.clone(),
         many => t_count(lang, "devices.warning.push_many", many.len() as i64, &[]),
     };
-    Some(crate::handlers::auth::WarningRow {
-        title,
-        sub: t(lang, "devices.warning.push_sub").to_string(),
-    })
+    Some(crate::handlers::auth::WarningRow { title, sub: None })
 }
 
 /// Where a This Device or Getting Notifications form comes back to, with its notice.

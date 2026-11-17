@@ -403,7 +403,7 @@ async fn the_tiles_open_their_sheets() {
     );
     assert!(q.contains(" selected>Skole</option>"), "{q}");
     assert!(
-        q.contains("The phone locks as in Skole: org.fossify.clock work."),
+        q.contains("org.fossify.clock and emergency calls work."),
         "{q}"
     );
 

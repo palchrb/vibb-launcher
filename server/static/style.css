@@ -1032,6 +1032,12 @@ summary.row:active {
     line-height: 1.3;
 }
 
+/* The first opening's offer (partials/push_offer.html, design 113): its line is empty until static/notifications.js
+   writes a blocked or failed text into it. */
+.row-sub[data-offer-line]:empty {
+    display: none;
+}
+
 /* The summary's Activity sub-line (design 101 D5: the newest row's words and clock): it wraps, and the clock sits in a
    .nowrap span, so it is never cut in the middle and never clipped away (a line clamp would hide a clock that wraps
    to a third line, code QA L5). */

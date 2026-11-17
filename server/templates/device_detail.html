@@ -33,7 +33,6 @@
                 <span class="pic-backdrop" data-confirm-cancel hidden aria-hidden="true"></span>
                 <div class="pic-panel" role="group" aria-label="{{ self.tp("device.summary.picture_of", [("name", device.name.as_str())]) }}">
                     <div class="pic-card">
-                        <p class="pic-note">{{ self.t("device.summary.picture_note") }}</p>
                         <form method="post" action="/devices/{{ device.id }}/avatar#avatar" enctype="multipart/form-data" class="pic-form">
                             <label class="pic-action"><input class="pic-file" type="file" id="avatar-file" name="picture" accept="image/*" data-autosave{% if avatar_error.is_some() %} aria-invalid="true" aria-describedby="avatar-error"{% endif %}>{% if photo.is_some() %}{{ self.t("device.summary.change_picture") }}{% else %}{{ self.t("device.summary.add_picture") }}{% endif %}</label>
                             <noscript><button type="submit" class="pic-action">{{ self.t("device.summary.save_picture") }}</button></noscript>
@@ -62,7 +61,10 @@
     <section id="ask" class="ask-card" aria-label="{{ self.t("device.summary.ask.label") }}" data-ask>
         <div class="ask-head">
             <span class="ask-tile" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" height="20" focusable="false"><path d="M7 3h10M7 21h10M8 3c0 5 8 5 8 9s-8 4-8 9M16 3c0 5-8 5-8 9s8 4 8 9" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-            <span class="ask-text"><strong class="ask-title">{{ self.tp("device.summary.ask.title", [("name", device.name.as_str())]) }}</strong><span class="ask-sub">{{ ask.sub }}</span>{% if ask.pauses %}<span class="ask-sub" data-ask-pauses>{{ self.t("device.summary.ask.pauses") }}</span>{% endif %}{% if ask.adds %}<span class="ask-sub" data-ask-adds>{{ self.t("device.summary.ask.adds") }}</span>{% endif %}</span>
+            <div class="ask-text"><strong class="ask-title">{{ self.tp("device.summary.ask.title", [("name", device.name.as_str())]) }}</strong><span class="ask-sub">{{ ask.sub }}</span>{% if ask.pauses || ask.adds %}<details class="info">
+                <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">{% if ask.pauses %}<p data-ask-pauses>{{ self.t("device.summary.ask.pauses") }}</p>{% endif %}{% if ask.adds %}<p data-ask-adds>{{ self.t("device.summary.ask.adds") }}</p>{% endif %}</div>
+            </details>{% endif %}</div>
         </div>
         <form method="post" action="/devices/{{ device.id }}/time-request/answer#ask" class="ask-form">
             <input type="hidden" name="request" value="{{ ask.request }}">
@@ -79,7 +81,7 @@
         before setup (qa-31-s10-code L1). -#}
     {% if no_parent_pin %}
     <a class="attention attention-action" href="/devices/{{ device.id }}/lock#parent-pin" data-warning="no-parent-pin">
-        <span class="attention-text">{{ self.t("device.summary.no_parent_pin") }}<span class="attention-sub">{{ self.t("device.summary.no_parent_pin_sub") }}</span></span>
+        <span class="attention-text">{{ self.t("device.summary.no_parent_pin") }}</span>
         <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </a>
     {% endif %}
@@ -87,7 +89,11 @@
         <h2 class="group-header" id="access-title">{{ self.t("device.summary.access.title") }}</h2>
         {% if let Some(until) = access.typed_paused_until %}
         <div class="attention attention-action" data-warning="typed-paused">
-            <span class="attention-text">{{ self.tp("device.summary.access.paused", [("until", until.as_str())]) }}<span class="attention-sub">{{ self.tc("device.summary.access.paused_sub", access.pause_failures(), []) }}</span></span>
+            <div class="attention-text">{{ self.tp("device.summary.access.paused", [("until", until.as_str())]) }}<div class="attention-sub">{{ self.t("device.summary.access.qr_works") }}
+                <details class="info">
+                    <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                    <div class="info-panel"><p>{{ self.tc("device.summary.access.paused_sub", access.pause_failures(), []) }}</p></div>
+                </details></div></div>
         </div>
         {% endif %}
         <div class="group">
@@ -105,7 +111,10 @@
                 <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </a>
         </div>
-        <p class="group-footer">{{ self.t("device.summary.access.footer") }}</p>
+        <div class="group-footer"><details class="info">
+            <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+            <div class="info-panel"><p>{{ self.t("device.summary.access.footer") }}</p></div>
+        </details></div>
     </section>
     {#- Design 98 D2: the QR page's "Åpne for oppsett nå" lands here (#oppsett) before the phone has reported. -#}
     {% if let Some((text, refused)) = self.flash("oppsett") %}
@@ -167,9 +176,19 @@
         <div class="group">
             {% if setup.shown %}
             {% for step in setup.steps %}
+            {% if step.sub.is_empty() %}
             <div class="row" data-setup-step="{{ step.id }}">
-                <span class="row-label">{{ step.label }}<span class="row-sub">{{ step.sub }}</span></span>
+                <span class="row-label">{{ step.label }}</span>
             </div>
+            {% else %}
+            <details class="info cell" data-setup-step="{{ step.id }}">
+                <summary class="row">
+                    <span class="row-label">{{ step.label }}</span>
+                    <svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("common.more_info") }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>
+                </summary>
+                <div class="info-panel"><p>{{ step.sub }}</p></div>
+            </details>
+            {% endif %}
             {% endfor %}
             <form method="post" action="/devices/{{ device.id }}/start-pause#oppsett" class="cell">
                 <input type="hidden" name="back" value="setup">
@@ -181,27 +200,35 @@
             {% endif %}
             {% if let Some((text, refused)) = self.flash("oppsett") %}<p class="flash{% if refused %} flash-error{% endif %}" role="status" data-flash="oppsett">{{ text }}</p>{% endif %}
         </div>
-        {% if setup.shown %}<p class="group-footer">{{ self.t("device.summary.setup.footer") }}</p>{% endif %}
+        {% if setup.shown %}
+        <div class="group-footer"><details class="info">
+            <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+            <div class="info-panel"><p>{{ self.t("device.summary.setup.footer") }}</p></div>
+        </details></div>
+        {% endif %}
     </section>
     {% endif %}
 
-    {#- While the phone refuses the Parent PIN (design 24b, QA High 1 (b)): the steps out, by the
-        quick actions they name. The packages are behind the ⓘ. -#}
+    {#- While the phone refuses the Parent PIN (design 24b, QA High 1 (b)): the red title and which apps; the
+        consequence, the packages and the steps out are behind the ⓘ (design 113). -#}
     {% if let Some(f) = relock.foreign %}
     <section id="foreign-access" aria-label="{{ self.t("device.summary.foreign.label") }}">
         <div class="attention attention-alarm" data-warning="foreign-access">
             <div class="attention-text">{{ self.t("device.summary.foreign.title") }}
                 <div class="attention-sub">{% if f.many %}{{ self.tp("device.summary.foreign.sub_many", [("apps", f.apps.as_str())]) }}{% else %}{{ self.tp("device.summary.foreign.sub_one", [("apps", f.apps.as_str())]) }}{% endif %}
                     <details class="info">
-                        <summary aria-label="{{ self.t("device.summary.foreign.which") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
-                        <div class="info-panel"><p>{{ f.packages }}</p></div>
+                        <summary aria-label="{{ self.t("common.how_to_fix") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                        <div class="info-panel">
+                            <p>{{ self.t("device.summary.foreign.refuses") }}</p>
+                            <p>{{ f.packages }}</p>
+                            <ol class="attention-steps">
+                                <li>{% if f.paused %}{{ self.t("device.summary.foreign.step_paused") }}{% else %}{{ self.t("device.summary.foreign.step_unlock") }}{% endif %}</li>
+                                <li>{% if !f.admins.is_empty() && !f.accessibility.is_empty() %}{{ self.tp("device.summary.foreign.off_both", [("admins", f.admins.as_str()), ("accessibility", f.accessibility.as_str())]) }}{% else if !f.admins.is_empty() %}{{ self.tp("device.summary.foreign.off_admins", [("admins", f.admins.as_str())]) }}{% else %}{{ self.tp("device.summary.foreign.off_accessibility", [("accessibility", f.accessibility.as_str())]) }}{% endif %} {% if f.many %}{{ self.t("device.summary.foreign.uninstall_many") }}{% else %}{{ self.t("device.summary.foreign.uninstall_one") }}{% endif %}</li>
+                                <li>{{ self.t("device.summary.foreign.step_pin.before") }} <a href="/devices/{{ device.id }}/lock#parent-pin">{{ self.t("device.summary.foreign.step_pin.link") }}</a>{% if f.many %}{{ self.t("device.summary.foreign.step_pin.after_many") }}{% else %}{{ self.t("device.summary.foreign.step_pin.after_one") }}{% endif %}</li>
+                            </ol>
+                        </div>
                     </details>
                 </div>
-                <ol class="attention-steps">
-                    <li>{% if f.paused %}{{ self.t("device.summary.foreign.step_paused") }}{% else %}{{ self.t("device.summary.foreign.step_unlock") }}{% endif %}</li>
-                    <li>{% if !f.admins.is_empty() && !f.accessibility.is_empty() %}{{ self.tp("device.summary.foreign.off_both", [("admins", f.admins.as_str()), ("accessibility", f.accessibility.as_str())]) }}{% else if !f.admins.is_empty() %}{{ self.tp("device.summary.foreign.off_admins", [("admins", f.admins.as_str())]) }}{% else %}{{ self.tp("device.summary.foreign.off_accessibility", [("accessibility", f.accessibility.as_str())]) }}{% endif %} {% if f.many %}{{ self.t("device.summary.foreign.uninstall_many") }}{% else %}{{ self.t("device.summary.foreign.uninstall_one") }}{% endif %}</li>
-                    <li>{{ self.t("device.summary.foreign.step_pin.before") }} <a href="/devices/{{ device.id }}/lock#parent-pin">{{ self.t("device.summary.foreign.step_pin.link") }}</a>{% if f.many %}{{ self.t("device.summary.foreign.step_pin.after_many") }}{% else %}{{ self.t("device.summary.foreign.step_pin.after_one") }}{% endif %}</li>
-                </ol>
             </div>
         </div>
     </section>
@@ -216,7 +243,7 @@
         <div class="group" id="setup-open" data-warning="restrictions-paused">
             <div class="row">
                 <span class="tile tile-graphite qa-row-tile"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><rect x="3" y="7.2" width="11" height="7.6" rx="1.7" fill="currentColor"/><path d="M5.4 7.2V5.3a3.1 3.1 0 0 1 6-1.1" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></span>
-                <span class="row-label">{{ s.text }}<span class="row-sub">{{ s.sub }}</span></span>
+                <span class="row-label">{{ s.text }}{% if let Some(sub) = s.sub %}<span class="row-sub">{{ sub }}</span>{% endif %}</span>
                 {% if s.lock_again %}
                 <form method="post" action="/devices/{{ device.id }}/end-windows#quick" class="row-end">
                     <button type="submit" class="row-action">{{ self.t("device.summary.lock_again") }}</button>
@@ -263,7 +290,7 @@
                         {% endfor %}
                     </div>
                 </div>
-                <p class="row row-note">{{ qa.extra_note }}</p>
+                {% if let Some(note) = qa.extra_note %}<p class="row row-note">{{ note }}</p>{% endif %}
                 <button type="submit" class="row row-button" data-qa-button="extra">{{ self.t("device.summary.qa.give_extra") }}</button>
             </form>
         </div>
@@ -299,7 +326,7 @@
                         </div>
                     </div>
                     <label class="row">
-                        <span class="row-label">{{ self.t("device.summary.qa.until") }}<span class="row-sub">{{ self.t("device.summary.qa.until_sub") }}</span></span>
+                        <span class="row-label">{{ self.t("device.summary.qa.until") }}</span>
                         <input type="time" class="row-time" name="til" placeholder="{{ r.end_clock }}" data-qa-til>
                     </label>
                     <button type="submit" class="row row-button">{{ self.t("device.summary.qa.save_time") }}</button>
@@ -353,7 +380,7 @@
                         </div>
                     </div>
                     <label class="row when-on">
-                        <span class="row-label">{{ self.t("device.summary.qa.until") }}<span class="row-sub">{{ self.t("device.summary.qa.until_sub") }}</span></span>
+                        <span class="row-label">{{ self.t("device.summary.qa.until") }}</span>
                         <input type="time" class="row-time" name="til" data-qa-til>
                     </label>
                     <div class="row row-stacked when-pause">
@@ -366,7 +393,6 @@
                     </div>
                     <p class="row row-note when-on" data-qa-line>{{ qa.selected_mode_line() }}</p>
                     {% for w in qa.selected_warnings() %}<p class="row row-note qa-warn when-on" data-qa-warn>{{ w }}</p>{% endfor %}
-                    <p class="row row-note when-pause">{{ self.t("device.summary.qa.pause_note") }}</p>
                     <button type="submit" class="row row-button when-on" data-qa-button="on">{{ self.t("device.summary.qa.turn_on") }}</button>
                     <button type="submit" class="row row-button when-pause" data-qa-button="pause">{{ self.t("device.summary.qa.pause_it") }}</button>
                 </form>
@@ -422,6 +448,15 @@
                 </div>
             </details>
             {% endfor %}
+            {% if let Some(more) = relock.blocks.more %}
+            <details class="info cell" data-row="blocked-more">
+                <summary class="row">
+                    <span class="row-label text-alarm">{{ self.tc("device.summary.blocked.more", more, []) }}</span>
+                    <svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("common.more_info") }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>
+                </summary>
+                <div class="info-panel"><p>{{ self.t("device.summary.blocked.more_info") }}</p></div>
+            </details>
+            {% endif %}
             {% if !relock.blocks.allow.is_empty() %}
             <details class="confirm cell" id="allow-apps">
                 <summary class="row">{{ self.t("device.summary.blocked.allow") }}&hellip;</summary>
@@ -435,7 +470,6 @@
             {% endif %}
             {% if let Some((text, refused)) = self.flash("blocked-apps") %}<p class="flash{% if refused %} flash-error{% endif %}" role="status" data-flash="blocked-apps">{{ text }}</p>{% endif %}
         </div>
-        <p class="group-footer">{{ self.t("device.summary.blocked.footer") }}{% if let Some(more) = relock.blocks.more %} {{ self.tc("device.summary.blocked.more", more, []) }}{% endif %}</p>
     </section>
     {% endif %}
 
@@ -446,7 +480,7 @@
         <h2 class="group-header" id="relock-title">{{ self.t("device.summary.relock.title") }}</h2>
         <div class="group">
             <div class="row" data-row="relock-at">
-                <span class="row-label">{{ self.t("device.summary.relock.at") }}{% if let Some(why) = f.trigger %}<span class="row-sub">{{ why }}</span>{% endif %}</span>
+                <span class="row-label">{% if let Some(why) = f.trigger %}{{ why }}{% else %}{{ self.t("device.summary.relock.at") }}{% endif %}</span>
                 <span class="row-value" title="{{ f.exact }}">{{ f.when }}</span>
             </div>
             {% if !f.removed.is_empty() %}
@@ -456,7 +490,13 @@
             <div class="row" data-row="relock-still-on"><span class="row-label text-alarm">{{ self.t("device.summary.relock.still_on") }}<span class="row-sub">{{ f.still_on|join("; ") }}</span></span></div>
             {% endif %}
             {% if !f.turned_off.is_empty() %}
-            <div class="row" data-row="relock-turned-off"><span class="row-label text-alarm">{{ self.t("device.summary.relock.turned_off") }}<span class="row-sub">{{ self.tp("device.summary.relock.turned_off_sub", [("names", f.turned_off.join(", ").as_str())]) }}</span></span></div>
+            <details class="info cell" data-row="relock-turned-off">
+                <summary class="row">
+                    <span class="row-label text-alarm">{{ self.t("device.summary.relock.turned_off") }}<span class="row-sub">{{ self.tp("device.summary.relock.turned_off_sub", [("names", f.turned_off.join(", ").as_str())]) }}</span></span>
+                    <svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("common.more_info") }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>
+                </summary>
+                <div class="info-panel"><p>{{ self.t("device.summary.relock.turned_off_info") }}</p></div>
+            </details>
             {% endif %}
             {% if f.own_notifications_off %}
             <div class="row" data-row="relock-notifications"><span class="row-label">{{ self.t("device.summary.relock.notifications") }}</span><span class="row-value row-value-alarm">{{ self.t("common.off") }}</span></div>
@@ -465,7 +505,10 @@
             <div class="row" data-row="relock-failed"><span class="row-label text-alarm">{{ self.t("device.summary.relock.failed") }}<span class="row-sub">{{ f.failures|join(", ") }}</span></span></div>
             {% endif %}
         </div>
-        <p class="group-footer">{{ self.t("device.summary.relock.footer") }}</p>
+        <div class="group-footer"><details class="info">
+            <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+            <div class="info-panel"><p>{{ self.t("device.summary.relock.footer") }}</p></div>
+        </details></div>
     </section>
     {% endif %}
 

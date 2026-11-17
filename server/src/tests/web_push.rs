@@ -1310,7 +1310,7 @@ async fn the_first_opening_offers_notifications_on_devices() {
         Some("/devices?notice=push_on#push-offer-done")
     );
     let back = app.get_page(res.location().unwrap(), &cookie).await.text();
-    assert!(back.contains("Notifications are on for this phone."));
+    assert!(back.contains("Notifications on."));
     // The browser's subscription is known now: the script keeps the card hidden.
     assert!(back.contains(&format!(
         "data-subscribed=\"{}\"",
