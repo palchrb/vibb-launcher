@@ -4136,8 +4136,9 @@ mod entries {
         assert_eq!(check(&app, id, later).await.error, None);
         let page = page_text(&app.get_page(&path, &cookie).await);
         assert!(!page.contains("name=\"order\""), "{page}");
-        assert!(page.contains("Spotify picks the order"));
-        assert!(page.contains("no logged-in account may list this one's tracks"));
+        // Design 113: one order line, the reason behind its ⓘ.
+        assert!(page.contains("Order: as in Spotify"), "{page}");
+        assert!(page.contains("data-hint=\"spotify-order\""), "{page}");
         let res = app
             .request_form(
                 Method::POST,
