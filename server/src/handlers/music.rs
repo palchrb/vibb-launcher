@@ -4629,6 +4629,7 @@ fn warning(title: &str, detail: String) -> Note {
         warning: true,
         title: title.to_string(),
         value: None,
+        sub: None,
         detail: Some(detail),
         fix: None,
     }

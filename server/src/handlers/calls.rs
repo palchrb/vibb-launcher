@@ -1163,6 +1163,7 @@ fn screening_note(lang: Lang) -> Note {
         warning: false,
         title: t(lang, "device.calls.screening").to_string(),
         value: Some(t(lang, "device.calls.not_granted").to_string()),
+        sub: None,
         detail: Some(t_params(
             lang,
             "device.calls.screening_sub",
@@ -1325,7 +1326,8 @@ impl Finding {
 
     /// The calls page's words (§4.2): the problem's short title and one or two sentences, local
     /// times, an expert detail (an adb command, a package name, the phone's own error) behind the
-    /// ⓘ only. Everything but [Finding::Waiting] is a warning.
+    /// ⓘ only; the sentence sits behind the ⓘ too, except where it is the news (design 113 D1 P1:
+    /// it shows as the note's `sub`). Everything but [Finding::Waiting] is a warning.
     pub fn note(&self, zone: &Zone, now: DateTime<Utc>) -> Note {
         let lang = zone.lang();
         let say = |key: &str| t(lang, key).to_string();
@@ -1481,11 +1483,27 @@ impl Finding {
             ),
             Finding::SmsRoleKept => (say("device.calls.finding.sms_role_kept"), None),
         };
+        // Where the sentence is the news, it shows under the title (a KEEP: the emergency call,
+        // the call-back window, a call that couldn't show; and what's lost until the update) and
+        // only the fix stays behind the ⓘ (design 113 D1 P1, QA M5).
+        let visible = matches!(
+            self,
+            Finding::EmergencyCall { .. }
+                | Finding::CallbackWindow { .. }
+                | Finding::CallScreenFailed { .. }
+                | Finding::NeedsUpdate { .. }
+        );
+        let (sub, detail) = if visible {
+            (Some(detail), None)
+        } else {
+            (None, Some(detail))
+        };
         Note {
             warning: self.problem().needs_attention(),
             title: self.problem().title(lang).to_string(),
             value: None,
-            detail: Some(detail),
+            sub,
+            detail,
             fix,
         }
     }
@@ -3451,7 +3469,18 @@ mod tests {
                         | Finding::SmsRoleKept
                 )
             );
-            let detail = note.detail.unwrap();
+            // Design 113 D1 P1: the KEEPs and the needs-update finding show their sentence under the
+            // title (`sub`, at most six words beside the times); every other sentence is behind the ⓘ.
+            let visible = matches!(
+                finding,
+                Finding::EmergencyCall { .. }
+                    | Finding::CallbackWindow { .. }
+                    | Finding::CallScreenFailed { .. }
+                    | Finding::NeedsUpdate { .. }
+            );
+            assert_eq!(note.sub.is_some(), visible, "{finding:?}");
+            assert_eq!(note.detail.is_some(), !visible, "{finding:?}");
+            let detail = note.sub.or(note.detail).unwrap();
             assert!(detail.split_whitespace().count() <= 40, "{detail}");
             for raw in [
                 package,
@@ -3466,7 +3495,10 @@ mod tests {
                 assert!(!detail.contains(raw), "{raw} in {detail}");
             }
         }
-        let detail = |f: &Finding| f.note(&zone, now).detail.unwrap();
+        let detail = |f: &Finding| {
+            let note = f.note(&zone, now);
+            note.sub.or(note.detail).unwrap()
+        };
         assert!(detail(&all[0]).contains("(10:58)"), "{}", detail(&all[0]));
         assert!(detail(&all[1]).contains("until 14:55"));
         assert!(

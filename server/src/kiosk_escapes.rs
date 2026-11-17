@@ -460,6 +460,7 @@ impl EscapeNote {
             warning: self.is_warning(),
             title,
             value,
+            sub: None,
             detail,
             fix: None,
         }

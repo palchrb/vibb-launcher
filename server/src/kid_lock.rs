@@ -620,6 +620,7 @@ impl LockNote {
             warning: true,
             title: t(lang, title).to_string(),
             value: None,
+            sub: None,
             detail: Some(detail),
             fix,
         };
@@ -627,6 +628,7 @@ impl LockNote {
             warning: false,
             title,
             value: Some(value),
+            sub: None,
             detail: detail.map(|key| t(lang, key).to_string()),
             fix: None,
         };
@@ -638,11 +640,15 @@ impl LockNote {
                 w("device.lock.note.safe_mode_sub"),
                 None,
             ),
-            LockNote::NeedsUpdate => warning(
-                "device.lock.note.needs_update",
-                w("device.lock.note.needs_update_sub"),
-                None,
-            ),
+            // The title alone doesn't carry the news: a short visible line (design 113, QA M5).
+            LockNote::NeedsUpdate => Note {
+                sub: Some(w("device.lock.note.needs_update_short")),
+                ..warning(
+                    "device.lock.note.needs_update",
+                    w("device.lock.note.needs_update_sub"),
+                    None,
+                )
+            },
             LockNote::Off(Inactive::Unmanaged) => warning(
                 "device.lock.note.unmanaged",
                 w("device.lock.note.unmanaged_sub"),
@@ -671,11 +677,15 @@ impl LockNote {
                 w("device.lock.note.crash_guard_sub"),
                 None,
             ),
-            LockNote::Off(Inactive::BadHash) => warning(
-                "device.lock.note.bad_hash",
-                w("device.lock.note.bad_hash_sub"),
-                None,
-            ),
+            // The title alone doesn't carry the news: a short visible line (design 113, QA M5).
+            LockNote::Off(Inactive::BadHash) => Note {
+                sub: Some(w("device.lock.note.bad_hash_short")),
+                ..warning(
+                    "device.lock.note.bad_hash",
+                    w("device.lock.note.bad_hash_sub"),
+                    None,
+                )
+            },
             LockNote::Off(Inactive::Other(code)) => warning(
                 "device.attention.child_lock_off",
                 w("device.lock.note.other_sub"),
@@ -828,6 +838,7 @@ impl LockNote {
                             warning: false,
                             title: w("device.lock.note.pin_to_phone"),
                             value: Some(at("device.lock.note.answered_at", when)),
+                            sub: None,
                             detail: Some(t_params(
                                 lang,
                                 "device.lock.note.phone_said",
@@ -1371,6 +1382,19 @@ mod tests {
             assert!(words.warning, "{note:?}");
             // §4.2: a bold title of up to 6 words + 1 sentence; commands and packages in the ⓘ.
             assert!(words.title.split_whitespace().count() <= 6, "{note:?}");
+            // Design 113 (QA M5): a short visible line only where the title alone doesn't carry
+            // the news; the sentence stays behind the ⓘ.
+            assert_eq!(
+                words.sub.is_some(),
+                matches!(
+                    note,
+                    LockNote::NeedsUpdate | LockNote::Off(Inactive::BadHash)
+                ),
+                "{note:?}"
+            );
+            if let Some(sub) = &words.sub {
+                assert!(sub.split_whitespace().count() <= 6, "{note:?}: {sub}");
+            }
             let detail = words.detail.unwrap();
             for hidden in [
                 "adb ",

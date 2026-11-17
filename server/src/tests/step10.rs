@@ -413,9 +413,20 @@ async fn lock_page_warns_about_the_lock_state() {
     app.post_status(&token, json!({ "capabilities": ["call_policy_v1"] }))
         .await;
     let html = lock_page(&app, &cookie, id).await;
+    let group = child_group(&html);
+    assert!(group.contains("Vibb One needs an update"), "{html}");
+    // Design 113 D1 P1 (QA M5): the short consequence under the title, visible; the sentence
+    // behind the ⓘ.
+    let short = group
+        .find("<div class=\"attention-sub\">No lock until then")
+        .expect("the visible sub");
+    let panel = short
+        + group[short..]
+            .find("<div class=\"info-panel\">")
+            .expect("the ⓘ");
     assert!(
-        child_group(&html).contains("Vibb One needs an update"),
-        "{html}"
+        group[panel..].starts_with("<div class=\"info-panel\"><p>This version has no lock."),
+        "{group}"
     );
 
     for (inactive, text) in [
@@ -434,12 +445,20 @@ async fn lock_page_warns_about_the_lock_state() {
         let html = lock_page(&app, &cookie, id).await;
         assert!(child_group(&html).contains(text), "{inactive}: {html}");
     }
-    // The last one's adb command is behind the warning's ⓘ, not in its sentence.
+    // The last one's sentence and adb command are behind the warning's one ⓘ (design 113 D1 P1).
     let html = lock_page(&app, &cookie, id).await;
     let group = child_group(&html);
     let command = group.find("adb shell locksettings clear").expect("the fix");
+    let panel = group[..command]
+        .rfind("<div class=\"info-panel\">")
+        .expect("the ⓘ");
+    let summary = group[..panel].rfind("<summary").unwrap();
     assert!(
-        group[..command].contains("aria-label=\"How to fix it\""),
+        group[summary..panel].contains("aria-label=\"More info\""),
+        "{group}"
+    );
+    assert!(
+        group[panel..command].contains("<p>Remove it so Vibb One&#39;s lock"),
         "{group}"
     );
 

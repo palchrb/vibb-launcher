@@ -1990,6 +1990,7 @@ async fn render_device_time(
             warning: true,
             title: t(lang, "device.time.too_old").to_string(),
             value: None,
+            sub: None,
             detail: Some(t(lang, "device.time.too_old_sub").to_string()),
             fix: None,
         });
@@ -1999,7 +2000,9 @@ async fn render_device_time(
             warning: true,
             title: t(lang, "device.time.ledger_unreadable").to_string(),
             value: None,
-            detail: Some(t(lang, "device.time.ledger_unreadable_sub").to_string()),
+            // The consequence is the news: under the title, not behind an ⓘ (design 113, QA M5).
+            sub: Some(t(lang, "device.time.ledger_unreadable_sub").to_string()),
+            detail: None,
             fix: None,
         });
     }
@@ -2008,6 +2011,7 @@ async fn render_device_time(
             warning: true,
             title: t(lang, "device.time.incoming_not_blocked").to_string(),
             value: None,
+            sub: None,
             detail: Some(t(lang, "device.time.incoming_not_blocked_sub").to_string()),
             fix: None,
         });

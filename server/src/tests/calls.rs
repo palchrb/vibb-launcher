@@ -1002,14 +1002,25 @@ async fn emergency_call_is_shown_on_the_device_page() {
     );
     let oslo = crate::display_time::Zone::from_setting("Europe/Oslo");
     let page = calls_page(&app, &cookie, id).await;
+    // Design 113 D1 P1: both KEEPs show their sentence under the title (`Note.sub`), outside any ⓘ
+    // panel, and neither has a panel of its own.
+    let shown = visible(&page);
+    let sub = |text: &str| format!("<div class=\"attention-sub\">{text}</div>");
     assert!(
-        page.contains(&format!("emergency number ({})", oslo.when(called, now))),
+        shown.contains(&sub(&format!(
+            "The phone called an emergency number ({}).",
+            oslo.when(called, now)
+        ))),
         "{page}"
     );
     assert!(
-        page.contains(&format!("until {}, so", oslo.until(until, now))),
+        shown.contains(&sub(&format!(
+            "Anyone can call until {}.",
+            oslo.until(until, now)
+        ))),
         "{page}"
     );
+    assert!(!page.contains("class=\"info-panel\"><p>Anyone can call"));
     assert!(!visible(&page).contains("UTC"));
 
     // Old ones are not alerted again.

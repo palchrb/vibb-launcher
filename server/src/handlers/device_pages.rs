@@ -40,16 +40,21 @@ use crate::models::{Device, DevicePolicy, DeviceStatus, Hardening};
 use crate::streams::ConnectionState;
 
 /// A row's words from a typed state: a short title, maybe a value, maybe the sentence behind its
-/// ⓘ. A warning shows as an orange row above its group (title + the sentence), anything else as a
-/// row in the group (title · value, the sentence behind ⓘ).
+/// ⓘ. A warning shows as an orange row above its group (its title; then `sub` when set; the sentence
+/// and the fix behind one ⓘ - design 113 D1 P1), anything else as a row in the group (title · value,
+/// the sentence behind ⓘ).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Note {
     pub warning: bool,
     pub title: String,
     pub value: Option<String>,
+    /// A warning's short visible consequence under its title, set only where the title alone
+    /// doesn't carry the news (design 113 D1: Anrop's KEEPs, needs-update, the ledger, two lock
+    /// notes); `None` everywhere else. A row never shows it.
+    pub sub: Option<String>,
     pub detail: Option<String>,
-    /// An expert fix (an adb command, a package name) for a warning: behind its ⓘ, never in the
-    /// visible text (design 31 §4.2).
+    /// An expert fix (an adb command, a package name) for a warning: behind its ⓘ with the sentence,
+    /// never in the visible text (design 31 §4.2).
     pub fix: Option<String>,
 }
 
@@ -182,6 +187,7 @@ impl PlayNote {
                     )],
                 ),
                 value: None,
+                sub: None,
                 detail: Some(t(lang, "device.advanced.play.install_mode_sub").to_string()),
                 fix: None,
             },
@@ -189,6 +195,7 @@ impl PlayNote {
                 warning: false,
                 title: t(lang, "device.advanced.play.store").to_string(),
                 value: Some(t(lang, "device.advanced.play.updating").to_string()),
+                sub: None,
                 detail: Some(t(lang, "device.advanced.play.updating_sub").to_string()),
                 fix: None,
             },
@@ -196,6 +203,7 @@ impl PlayNote {
                 warning: true,
                 title: t(lang, "device.advanced.play.restart").to_string(),
                 value: None,
+                sub: None,
                 detail: Some(t_params(
                     lang,
                     "device.advanced.play.restart_sub",
@@ -214,6 +222,7 @@ impl PlayNote {
                 warning: true,
                 title: t(lang, "device.advanced.play.not_suspendable").to_string(),
                 value: None,
+                sub: None,
                 detail: Some(
                     t(
                         lang,
@@ -1522,6 +1531,7 @@ pub(crate) fn notification_access_note(lang: Lang, latest: Option<&DeviceStatus>
             warning: true,
             title: t(lang, "device.home.no_notification_access").to_string(),
             value: None,
+            sub: None,
             detail: Some(t(lang, "device.home.no_notification_access_sub").to_string()),
             // The second sentence lives behind the ⓘ (§4.2: a title and one sentence;
             // qa-31-s5-code N2).
@@ -1549,6 +1559,7 @@ pub(crate) fn clock_format_note(
         warning: true,
         title: t(lang, "device.home.clock_not_applied").to_string(),
         value: None,
+        sub: None,
         detail: Some(t(lang, "device.home.clock_not_applied_sub").to_string()),
         fix: Some(format!(
             "{} {}",
@@ -2590,6 +2601,7 @@ pub(crate) async fn render_apps(
                 warning: true,
                 title: t(lang, "device.apps.corrupt").to_string(),
                 value: None,
+                sub: None,
                 detail: Some(t(lang, "device.apps.corrupt_sub").to_string()),
                 fix: Some(t(lang, "device.apps.corrupt_fix").to_string()),
             }),

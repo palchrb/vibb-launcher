@@ -784,7 +784,13 @@ async fn a_stored_pair_an_older_launcher_cant_do_is_explained() {
         .await
         .text();
     assert!(page.contains("The phone needs an update"), "{page}");
-    assert!(page.contains("SMS is lost and calls are contacts-only until then."));
+    // Design 113 (QA M5): what is lost until the update shows under the title, not behind an ⓘ.
+    assert!(
+        page.contains(
+            "<div class=\"attention-sub\">SMS is lost and calls are contacts-only until then.</div>"
+        ),
+        "{page}"
+    );
     assert!(
         save_modes(&app, &cookie, id, "unmanaged", "managed")
             .await

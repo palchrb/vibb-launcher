@@ -176,6 +176,7 @@ impl Note {
             warning: true,
             title: crate::i18n::t(lang, title).to_string(),
             value: None,
+            sub: None,
             detail: Some(crate::i18n::t(lang, detail).to_string()),
             fix: None,
         }
