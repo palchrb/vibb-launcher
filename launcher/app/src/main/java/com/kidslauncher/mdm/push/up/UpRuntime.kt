@@ -229,7 +229,9 @@ object UpRuntime {
         if (!isUserUnlocked(app)) return
         if (!view().on) return
         // Design 115: held, no wake lock and no request - the engine only notes it.
-        if (holdParts(app).hold != UpHold.NONE) {
+        val hold = holdParts(app).hold
+        if (hold != UpHold.NONE) {
+            Log.i(LOG_TAG, "Pull for $reason held (${hold.wire})")
             post { engine(app).noteHeld() }
             return
         }
