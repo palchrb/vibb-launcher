@@ -457,7 +457,13 @@ mod tests {
         assert_eq!(Value::from(channels), contract()["channels"]);
         assert_eq!(contract()["capability"], CAPABILITY);
         for channel in CHANNELS {
-            assert_eq!(channel.id, format!("launcher:{}", channel.key));
+            // Meldinger's id is versioned: Android can't raise a channel's importance, so High got a new id.
+            let id = if channel.key == "messages" {
+                "launcher:messages_v2".to_string()
+            } else {
+                format!("launcher:{}", channel.key)
+            };
+            assert_eq!(channel.id, id);
             if let Some(effect) = channel.effect {
                 for lang in Lang::ALL {
                     assert!(crate::i18n::has(lang, effect), "{effect}");
