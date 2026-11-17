@@ -277,11 +277,13 @@ pub async fn notify(
     match super::accept(&state, &registration, &push).await {
         Ok(accepted) => {
             // R2: the push came through our own gateway, which ends the outside-gateway mark. Noted only for a
-            // queued push, at most once a minute (as `outside_gateway_at` is).
+            // queued push, at most once a minute (as `outside_gateway_at` is) - except that it always ends an outside
+            // mark newer than the stored stamp (gate 2026-11-17, N2).
             if matches!(accepted, super::Accepted::Queued(_))
                 && let Err(err) = sqlx::query(
                     "UPDATE up_registrations SET gateway_at = datetime('now') WHERE id = ? \
-                     AND (gateway_at IS NULL OR gateway_at < datetime('now', '-1 minute'))",
+                     AND (gateway_at IS NULL OR gateway_at < datetime('now', '-1 minute') \
+                          OR gateway_at < outside_gateway_at)",
                 )
                 .bind(registration.id)
                 .execute(&state.db)

@@ -1986,6 +1986,27 @@ async fn attention_rows_of_108c() {
         "the run restarted"
     );
     assert!(push_rows(&app, &cookie, emma).await.is_empty());
+    // N2: our own gateway's push inside the minute's throttle still ends an outside mark newer than its stamp.
+    sql(&app, "UPDATE up_registrations SET outside_gateway_at = datetime('now', '-5 seconds'), gateway_at = datetime('now', '-20 seconds')").await;
+    let res = post_via_phone_listener(
+        &app,
+        "203.0.113.7",
+        Method::POST,
+        "/_matrix/push/v1/notify",
+        &[],
+        notify.to_string().into_bytes(),
+    )
+    .await;
+    assert_eq!(res.json(), json!({"rejected": []}));
+    assert!(
+        flag(
+            &app,
+            "SELECT gateway_at >= outside_gateway_at FROM up_registrations WHERE id = ?",
+            reg
+        )
+        .await,
+        "N2: a gateway push within the minute ends a newer outside mark"
+    );
     sql(&app, "DELETE FROM up_messages").await;
 
     // -- waiting: the oldest push 40 minutes old.
