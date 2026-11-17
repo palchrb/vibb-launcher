@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="{{ lang.code() }}">
+<head>
+{% include "partials/head.html" %}
+</head>
+<body>
+<div class="top-strip" aria-hidden="true"></div>
+{% let tab = "settings" %}
+{% include "partials/tab_bar.html" %}
+{% import "partials/band.html" as band %}
+<main class="container container-narrow">
+    {% call band::sub(self.t("app_push.settings.title"), "/settings", self.t("nav.settings")) %}{% endcall %}
+    <div class="sheet">
+
+    {#- Design 108 §3.1: one form. A refusal renders in the POST's answer at #push; a save comes back to the flash
+        under Save (#saved). The prefill (Phone Setup's address) is never saved by itself. -#}
+    {% if no_listener %}
+    <div class="group" data-warning="no-listener"><p class="row row-note text-alarm">{{ self.t("app_push.settings.no_listener") }}</p></div>
+    {% endif %}
+    <form method="post" action="/settings/push#push" id="push">
+        <div class="group form-group">
+            <div class="field">
+                <label class="field-label" for="public_origin">{{ self.t("app_push.settings.origin") }}</label>
+                <input type="text" id="public_origin" name="public_origin" value="{{ value }}" placeholder="https://phones.example.com" autocomplete="off" autocapitalize="none" spellcheck="false" inputmode="url"{% if error.is_some() %} aria-invalid="true" aria-describedby="public_origin-error" autofocus{% endif %}>
+                {% if let Some(why) = error %}<p class="field-error" id="public_origin-error">{{ self.t(why) }}</p>
+                {% else if prefilled %}<p class="field-hint" data-source="phone-setup">{{ self.t("app_push.settings.prefilled") }}</p>
+                {% else %}<p class="field-hint">{{ self.t("app_push.settings.origin_hint") }}</p>{% endif %}
+                {% if let Some(previous) = previous %}<p class="field-hint" data-row="previous">{{ previous }}</p>{% endif %}
+            </div>
+            <p class="field-hint" data-row="save-note">{{ self.t("app_push.settings.save_note") }}</p>
+            <button type="submit" class="button-wide">{{ self.t("common.save") }}</button>
+        </div>
+        <p class="group-footer">{{ self.t("app_push.settings.footer") }}{% if set %} {{ self.t("app_push.settings.clear_note") }}{% endif %}</p>
+        {% if saved %}<div class="group" id="saved"><p class="flash" data-flash="push" role="status">{{ self.t("common.saved") }}</p></div>{% endif %}
+    </form>
+
+    <section id="seen" aria-labelledby="seen-title">
+        <h2 class="group-header" id="seen-title">{{ self.t("app_push.settings.seen") }}</h2>
+        <div class="group">
+            <div class="row" data-row="discovery">
+                <span class="row-label">{{ self.t("app_push.settings.discovery") }}</span>
+                <span class="row-value">{% if let Some(at) = discovery %}{{ at }}{% else %}{{ self.t("app_push.settings.never") }}{% endif %}</span>
+            </div>
+            <div class="row" data-row="pushed">
+                <span class="row-label">{{ self.t("app_push.settings.pushed") }}</span>
+                <span class="row-value">{% if let Some(at) = pushed %}{{ at }}{% else %}{{ self.t("app_push.settings.never") }}{% endif %}</span>
+            </div>
+        </div>
+        <p class="group-footer">{{ self.t("app_push.settings.seen_footer") }}</p>
+    </section>
+    </div>
+</main>
+</body>
+</html>

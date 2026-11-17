@@ -291,6 +291,7 @@ impl TestApp {
                 weather.quick_second = std::time::Duration::from_millis(10);
                 std::sync::Arc::new(weather)
             },
+            unified_push: Default::default(),
         };
 
         // The setup QR's launcher check as if it had just passed (design 86): no test downloads

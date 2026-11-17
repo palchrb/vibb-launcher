@@ -181,7 +181,9 @@ pub fn device_routes(state: AppState) -> Router<AppState> {
         // `unified_push::routes`, on the phone listener only).
         .route(
             "/api/devices/up/registrations",
-            post(crate::unified_push::device::register),
+            post(crate::unified_push::device::register).layer(DefaultBodyLimit::max(
+                crate::unified_push::device::REGISTER_LIMIT,
+            )),
         )
         .route(
             "/api/devices/up/registrations/{reg}",
@@ -189,7 +191,9 @@ pub fn device_routes(state: AppState) -> Router<AppState> {
         )
         .route(
             "/api/devices/up/messages",
-            post(crate::unified_push::device::messages),
+            post(crate::unified_push::device::messages).layer(DefaultBodyLimit::max(
+                crate::unified_push::device::MESSAGES_LIMIT,
+            )),
         )
         .layer(from_fn_with_state(
             state.clone(),

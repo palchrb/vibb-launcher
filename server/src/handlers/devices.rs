@@ -576,6 +576,8 @@ async fn insert_device_with_policy(state: &AppState, name: &str) -> Result<i64, 
     .await?;
 
     tx.commit().await?;
+    // Design 108 (L10): every allowlist writer prunes - a new phone has no registrations, so nothing goes.
+    crate::unified_push::prune_disallowed(state, id).await;
     Ok(id)
 }
 
@@ -2951,6 +2953,8 @@ async fn edit_allowlist(
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
+    // Design 108 (L10): an app that left the list loses its push registrations.
+    crate::unified_push::prune_disallowed(state, device_id).await;
     Ok(())
 }
 

@@ -260,6 +260,16 @@ async fn update_raw(db: &SqlitePool, row_id: i64, detail: &Detail) {
 }
 
 /// `text` cut to at most `max` characters - what a log row keeps of a path or a name.
+/// A request path as the security log and the log lines may keep it (design 108 L5): an app push endpoint's path is a
+/// capability, so `/up/<secret>` (and anything under `/up/`) reads `/up/…`; then [clip]ped to `max` characters.
+pub fn clip_path(path: &str, max: usize) -> &str {
+    if path == "/up" || path.starts_with("/up/") {
+        "/up/…"
+    } else {
+        clip(path, max)
+    }
+}
+
 pub fn clip(text: &str, max: usize) -> &str {
     match text.char_indices().nth(max) {
         Some((index, _)) => &text[..index],

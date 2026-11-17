@@ -1089,7 +1089,7 @@ pub async fn log_sign_in_redirects(
     let site = header_for_log(request.headers(), "sec-fetch-site");
     let mode = header_for_log(request.headers(), "sec-fetch-mode");
     let method = request.method().clone();
-    let path = crate::audit::clip(request.uri().path(), 100).to_string();
+    let path = crate::audit::clip_path(request.uri().path(), 100).to_string();
     let response = next.run(request).await;
     let to_login = response.status().is_redirection()
         && response
@@ -1407,7 +1407,7 @@ pub async fn require_device_token(
             },
             &[],
         )
-        .with_facts(crate::audit::clip(request.uri().path(), 100));
+        .with_facts(crate::audit::clip_path(request.uri().path(), 100));
         if blocked {
             detail = detail.and("security.detail.client_refused", &[]);
         }

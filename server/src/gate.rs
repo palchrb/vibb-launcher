@@ -126,7 +126,7 @@ pub async fn admin_gate(State(state): State<AppState>, request: Request, next: N
             .with_facts(format!(
                 "{} {}",
                 request.method(),
-                crate::audit::clip(request.uri().path(), 100)
+                crate::audit::clip_path(request.uri().path(), 100)
             ));
             let first_this_minute = state
                 .audit
@@ -145,7 +145,7 @@ pub async fn admin_gate(State(state): State<AppState>, request: Request, next: N
                     reason = refusal.key(),
                     client = %ip,
                     method = %request.method(),
-                    path = crate::audit::clip(request.uri().path(), 100),
+                    path = crate::audit::clip_path(request.uri().path(), 100),
                     "a request with a session cookie refused by the admin gate (403)"
                 );
             }

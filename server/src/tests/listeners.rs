@@ -476,3 +476,43 @@ async fn malformed_forwards_dont_share_loopbacks_failure_bucket() {
         "loopback's own bucket is untouched"
     );
 }
+
+/// Design 108 §3.2: app push's public routes exist on the phone listener alone - the admin listener never serves
+/// them (refused by its gate, or its 404), so the admin gate's surface is unchanged.
+#[tokio::test]
+async fn up_routes_only_on_the_phone_listener() {
+    let app = TestApp::new().await;
+    crate::unified_push::save_origin(&app.state, Some("https://phones.example.com"))
+        .await
+        .unwrap();
+    let discovery = || get("/_matrix/push/v1/notify");
+    let push = || {
+        Request::builder()
+            .method(Method::POST)
+            .uri("/up/FakeSecretForTheListenerT1")
+            .body(Body::from("x"))
+            .unwrap()
+    };
+    let res = app
+        .send_via(&app.device_router(), peer("203.0.113.7"), discovery())
+        .await;
+    assert_eq!(res.status, StatusCode::OK);
+    let res = app
+        .send_via(&app.device_router(), peer("203.0.113.7"), push())
+        .await;
+    assert_eq!(res.status, StatusCode::GONE);
+    for (peer, via) in [(LOOPBACK_PEER, "loopback"), (peer("203.0.113.7"), "public")] {
+        let res = app.send_via(&app.router, peer, discovery()).await;
+        assert!(
+            !res.status.is_success() && !res.text().contains("unifiedpush"),
+            "{via}: {}",
+            res.status
+        );
+        let res = app.send_via(&app.router, peer, push()).await;
+        assert!(
+            res.status != StatusCode::GONE && !res.status.is_success(),
+            "{via}: {}",
+            res.status
+        );
+    }
+}

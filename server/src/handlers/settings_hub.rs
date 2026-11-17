@@ -51,6 +51,8 @@ pub struct HubValues {
     pub backups: Option<String>,
     /// "Server 0.24.0".
     pub about: String,
+    /// App push (design 108): "On" while the phones' public address is set, else "Off".
+    pub app_push: Option<String>,
 }
 
 pub async fn settings_hub(
@@ -127,6 +129,7 @@ pub async fn hub_values(
             "settings.hub.server_version",
             &[("version", crate::APP_VERSION.trim_start_matches('v'))],
         ),
+        app_push: crate::handlers::app_push::hub_value(db, lang).await,
     }
 }
 

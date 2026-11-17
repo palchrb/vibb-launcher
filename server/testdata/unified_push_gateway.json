@@ -1,0 +1,221 @@
+{
+  "about": "Design 108's push routes, server-only (tests::unified_push::gateway_rows): ntfy's Matrix tests and the /up answers of §3.4. Placeholders: {origin}, {previous} (the address before a change, within 30 days), {live} (a registration's secret), {gone} (a deleted one's, tombstoned), {unknown} (never issued). A body is text, or {\"repeat\": byte, \"count\": n}. `queued` is the queue row the request leaves (its body, urgency, topic), null for none.",
+  "origin": "https://phones.example.com",
+  "previous": "https://old.example.net",
+  "live": "FakeSecretForTheGatewayRow1",
+  "gone": "FakeSecretForTheGatewayRow2",
+  "unknown": "FakeSecretForTheGatewayRow3",
+  "rows": [
+    {
+      "case": "discovery",
+      "method": "GET",
+      "path": "/_matrix/push/v1/notify",
+      "status": 200,
+      "answer_text": "{\"unifiedpush\":{\"gateway\":\"matrix\"}}\n",
+      "queued": null
+    },
+    {
+      "case": "matrix success, minimised (Q8)",
+      "method": "POST",
+      "path": "/_matrix/push/v1/notify",
+      "body": "{\"notification\":{\"content\":{\"body\":\"I'm floating in a most peculiar way.\",\"msgtype\":\"m.text\"},\"counts\":{\"missed_calls\":1,\"unread\":2},\"devices\":[{\"app_id\":\"io.element.android.x\",\"data\":{\"cs\":\"fake-client-secret\"},\"pushkey\":\"{origin}/up/{live}\",\"pushkey_ts\":12345678,\"tweaks\":{\"sound\":\"bing\"}}],\"event_id\":\"$3957tyerfgewrf384\",\"prio\":\"high\",\"room_alias\":\"#exampleroom:matrix.org\",\"room_id\":\"!slw48wfj34rtnrf:example.com\",\"room_name\":\"Mission Control\",\"sender\":\"@jack:example.org\",\"sender_display_name\":\"Jack\",\"type\":\"m.room.message\"}}",
+      "status": 200,
+      "answer": {
+        "rejected": []
+      },
+      "queued": {
+        "body": "{\"notification\":{\"counts\":{\"missed_calls\":1,\"unread\":2},\"devices\":[{\"app_id\":\"io.element.android.x\",\"data\":{\"cs\":\"fake-client-secret\"},\"pushkey\":\"{origin}/up/{live}\",\"pushkey_ts\":12345678,\"tweaks\":{\"sound\":\"bing\"}}],\"event_id\":\"$3957tyerfgewrf384\",\"prio\":\"high\",\"room_id\":\"!slw48wfj34rtnrf:example.com\",\"sender\":\"@jack:example.org\",\"type\":\"m.room.message\"}}",
+        "urgency": "high",
+        "topic": null
+      }
+    },
+    {
+      "case": "matrix too large",
+      "method": "POST",
+      "path": "/_matrix/push/v1/notify",
+      "body": {
+        "repeat": "a",
+        "count": 4097
+      },
+      "status": 413,
+      "queued": null
+    },
+    {
+      "case": "matrix invalid JSON",
+      "method": "POST",
+      "path": "/_matrix/push/v1/notify",
+      "body": "this is not json",
+      "status": 400,
+      "queued": null
+    },
+    {
+      "case": "matrix not a Matrix message",
+      "method": "POST",
+      "path": "/_matrix/push/v1/notify",
+      "body": "{\"message\":\"this is not a matrix message, but valid json\"}",
+      "status": 400,
+      "queued": null
+    },
+    {
+      "case": "matrix pushkey on another host (no open relay)",
+      "method": "POST",
+      "path": "/_matrix/push/v1/notify",
+      "body": "{\"notification\":{\"devices\":[{\"pushkey\":\"https://ntfy.example.com/up/{live}\"}]}}",
+      "status": 200,
+      "answer": {
+        "rejected": [
+          "https://ntfy.example.com/up/{live}"
+        ]
+      },
+      "queued": null
+    },
+    {
+      "case": "matrix never-seen secret",
+      "method": "POST",
+      "path": "/_matrix/push/v1/notify",
+      "body": "{\"notification\":{\"devices\":[{\"pushkey\":\"{origin}/up/{unknown}\"}]}}",
+      "status": 200,
+      "answer": {
+        "rejected": [
+          "{origin}/up/{unknown}"
+        ]
+      },
+      "queued": null
+    },
+    {
+      "case": "matrix tombstoned secret (M5)",
+      "method": "POST",
+      "path": "/_matrix/push/v1/notify",
+      "body": "{\"notification\":{\"devices\":[{\"pushkey\":\"{origin}/up/{gone}\"}]}}",
+      "status": 200,
+      "answer": {
+        "rejected": [
+          "{origin}/up/{gone}"
+        ]
+      },
+      "queued": null
+    },
+    {
+      "case": "matrix previous origin within 30 days, host in capitals (M4)",
+      "method": "POST",
+      "path": "/_matrix/push/v1/notify",
+      "body": "{\"notification\":{\"devices\":[{\"pushkey\":\"https://OLD.example.net/up/{live}\"}],\"prio\":\"low\"}}",
+      "status": 200,
+      "answer": {
+        "rejected": []
+      },
+      "queued": {
+        "body": "{\"notification\":{\"devices\":[{\"pushkey\":\"https://OLD.example.net/up/{live}\"}],\"prio\":\"low\"}}",
+        "urgency": "normal",
+        "topic": null
+      }
+    },
+    {
+      "case": "up accepted with TTL, Urgency and Topic",
+      "method": "POST",
+      "path": "/up/{live}",
+      "headers": {
+        "ttl": "60",
+        "urgency": "high",
+        "topic": "chat-1",
+        "content-encoding": "aes128gcm"
+      },
+      "body": "fake encrypted bytes",
+      "status": 201,
+      "headers_out": {
+        "ttl": "60",
+        "location_prefix": "{origin}/up/m/"
+      },
+      "queued": {
+        "body": "fake encrypted bytes",
+        "urgency": "high",
+        "topic": "chat-1"
+      }
+    },
+    {
+      "case": "up without TTL gets the day",
+      "method": "POST",
+      "path": "/up/{live}",
+      "body": "more fake bytes",
+      "status": 201,
+      "headers_out": {
+        "ttl": "86400",
+        "location_prefix": "{origin}/up/m/"
+      },
+      "queued": {
+        "body": "more fake bytes",
+        "urgency": "normal",
+        "topic": null
+      }
+    },
+    {
+      "case": "up empty body",
+      "method": "POST",
+      "path": "/up/{live}",
+      "body": "",
+      "status": 400,
+      "queued": null
+    },
+    {
+      "case": "up too large",
+      "method": "POST",
+      "path": "/up/{live}",
+      "body": {
+        "repeat": "b",
+        "count": 4097
+      },
+      "status": 413,
+      "queued": null
+    },
+    {
+      "case": "up tombstoned secret: gone (Misskey deletes only on 410)",
+      "method": "POST",
+      "path": "/up/{gone}",
+      "body": "x",
+      "status": 410,
+      "queued": null
+    },
+    {
+      "case": "up tombstoned secret, a Matrix body through an outside gateway: 404 (L1)",
+      "method": "POST",
+      "path": "/up/{gone}",
+      "body": "{\"notification\":{\"devices\":[{\"pushkey\":\"{origin}/up/{gone}\"}]}}",
+      "status": 404,
+      "queued": null
+    },
+    {
+      "case": "up never-seen secret",
+      "method": "POST",
+      "path": "/up/{unknown}",
+      "body": "x",
+      "status": 410,
+      "queued": null
+    },
+    {
+      "case": "up a Matrix body through an outside gateway is minimised too",
+      "method": "POST",
+      "path": "/up/{live}",
+      "body": "{\"notification\":{\"room_name\":\"Mission Control\",\"devices\":[{\"pushkey\":\"{origin}/up/{live}\"}]}}",
+      "status": 201,
+      "queued": {
+        "body": "{\"notification\":{\"devices\":[{\"pushkey\":\"{origin}/up/{live}\"}]}}",
+        "urgency": "normal",
+        "topic": null
+      }
+    },
+    {
+      "case": "up GET is the listener's 404",
+      "method": "GET",
+      "path": "/up/{live}",
+      "status": 404,
+      "queued": null
+    },
+    {
+      "case": "the message's Location is no route",
+      "method": "GET",
+      "path": "/up/m/00000000000000000000000000000000",
+      "status": 404,
+      "queued": null
+    }
+  ]
+}
