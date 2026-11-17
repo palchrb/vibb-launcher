@@ -575,3 +575,94 @@ async fn the_pages_show_the_logos() {
     assert!(!file(&app, &sha(&own)).exists());
     assert!(file(&app, &sha(&common)).exists());
 }
+
+/// The catalog's kept logo (0155; the user, 2026-11-17): after the last phone drops the app the Apps tab still shows
+/// its logo and the file stays; a newer logo replaces it; a restore without the file shows the letter until a phone
+/// sends it again; the app's removal from the catalog deletes the file nothing else names.
+#[tokio::test]
+async fn the_catalog_keeps_the_last_logo() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (emma, token) = app.enrolled_device("Emma").await;
+    let catalog: i64 = sqlx::query_scalar(
+        "INSERT INTO tracked_apps (name, package_name, github_repo) VALUES ('Drawing', 'org.example.drawing', 'o/r') \
+         RETURNING id",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    let kept = || async {
+        sqlx::query_scalar::<_, Option<String>>("SELECT logo_hash FROM tracked_apps WHERE id = ?")
+            .bind(catalog)
+            .fetch_one(&app.db)
+            .await
+            .unwrap()
+    };
+    let tile = |hash: &str| format!("<img src=\"/app-logos/{hash}\"");
+    let (old, new) = (png(SIZE_PX, 70), png(SIZE_PX, 80));
+    let with = |logo: &[u8]| json!([app_row("org.example.drawing", "Drawing", Some(&sha(logo)))]);
+    let without = json!([app_row("org.example.notes", "Notes", None)]);
+
+    report_and_upload(&app, &token, with(&old), &[&old]).await;
+    assert_eq!(kept().await, Some(sha(&old)));
+
+    // The last phone drops the app: its row goes, the catalog's logo and file stay, served and shown on the Apps tab
+    // and the app's page - not on the phone's own list.
+    assert_eq!(
+        wanted(&app, &token, status_body(without.clone())).await,
+        json!([])
+    );
+    assert!(rows(&app, emma).await.is_empty());
+    crate::app_logos::prune_all(&app.state).await;
+    assert!(file(&app, &sha(&old)).exists());
+    let res = app
+        .get_page(&format!("/app-logos/{}", sha(&old)), &cookie)
+        .await;
+    assert_eq!(res.status, StatusCode::OK);
+    let apps_tab = app.get_page("/apps", &cookie).await.text();
+    assert!(apps_tab.contains(&tile(&sha(&old))), "{apps_tab}");
+    let page = app
+        .get_page(&format!("/apps/tracked/{catalog}"), &cookie)
+        .await
+        .text();
+    assert!(page.contains(&tile(&sha(&old))), "{page}");
+    let phone = app
+        .get_page(&device_page(emma, Section::Apps), &cookie)
+        .await
+        .text();
+    assert!(!phone.contains(&tile(&sha(&old))));
+
+    // A newer logo replaces the kept one; the old file goes with its last name.
+    report_and_upload(&app, &token, with(&new), &[&new]).await;
+    assert_eq!(kept().await, Some(sha(&new)));
+    assert!(!file(&app, &sha(&old)).exists());
+    let apps_tab = app.get_page("/apps", &cookie).await.text();
+    assert!(apps_tab.contains(&tile(&sha(&new))), "{apps_tab}");
+
+    // A restore without the file, no phone with the app: the letter; a phone that reports it sends it again.
+    assert_eq!(
+        wanted(&app, &token, status_body(without.clone())).await,
+        json!([])
+    );
+    std::fs::remove_file(file(&app, &sha(&new))).unwrap();
+    let apps_tab = app.get_page("/apps", &cookie).await.text();
+    assert!(!apps_tab.contains(&tile(&sha(&new))), "{apps_tab}");
+    report_and_upload(&app, &token, with(&new), &[&new]).await;
+    assert!(file(&app, &sha(&new)).exists());
+    let apps_tab = app.get_page("/apps", &cookie).await.text();
+    assert!(apps_tab.contains(&tile(&sha(&new))), "{apps_tab}");
+
+    // Removed from the catalog while no phone has it: the file goes.
+    assert_eq!(wanted(&app, &token, status_body(without)).await, json!([]));
+    assert!(file(&app, &sha(&new)).exists());
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/apps/tracked/{catalog}/delete"),
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    assert!(res.status.is_redirection());
+    assert!(!file(&app, &sha(&new)).exists());
+}

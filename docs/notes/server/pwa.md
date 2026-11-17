@@ -2186,6 +2186,16 @@ pointer here.
   `private, max-age=31536000, immutable`, `nosniff`; never on the phones' port).
 - **Not backed up**: `data/app_logos/` is no store of the backup zip. After a restore the rows name files that aren't
   there, the next report wants them again, and the pages show the letter until they come.
+- **The catalog keeps the last logo** (the user, 2026-11-17, branch `catalog-logo-keep`: an app uninstalled from the
+  only phone that had it fell back to the letter on the Apps tab): `tracked_apps.logo_hash` (0155, filled from today's
+  rows by the migration) is the catalog row's kept logo - `apply_rows` sets it when a phone's row for the package is
+  new or changed, or fills it when it is empty. A file is pruned only when no phone row and no catalog row names it
+  (`prune_hashes`, `prune_all`); `view` serves a hash either names. The kept hash is cleared with the package name
+  (`forget_package_name`) and goes with the catalog row (`delete_tracked_app`), each pruning its file when nothing else
+  names it. `catalog_logos` (the Apps tab, the app's page and its Name and icon preview) takes the phones' logo as
+  before, else the kept one when its file is there; Device › Apps keeps the phone's own (`phone_logos`). After a
+  restore with no phone reporting the app, the kept hash names a missing file: the letter, until a phone with the app
+  reports it and is asked for it again. Test: `tests::app_logos::the_catalog_keeps_the_last_logo`.
 - **The tiles** (§8.1, revision 3 - the user, 2026-11-12: "jeg trodde vi bestemte originale ikoner?"): in the lists
   the app's real logo wins whatever the Name and icon choice; else a chosen glyph (the phone's Name and icon row as a
   whole, else the catalog default); else the letter. Only the tile's order in `partials/device_app_row.html` and
@@ -2201,7 +2211,7 @@ pointer here.
   page), the header untouched.
 - **Tests**: `tests::app_logos` (`the_contract`, `the_rows_follow_the_reports_and_the_files_follow_the_rows`,
   `a_full_phone_is_asked_for_nothing_more`, `only_a_named_logo_is_served_behind_the_session`,
-  `the_pages_show_the_logos`), `app_logos::tests` (the decode's limits, the budget and refusals),
+  `the_pages_show_the_logos`, `the_catalog_keeps_the_last_logo`), `app_logos::tests` (the decode's limits, the budget and refusals),
   `intake_limits::the_field_tables_keep_every_contract_key` (`report`'s keys),
   `listeners::the_device_router_serves_nothing_but_the_device_api` (`/app-logos/`); the launcher's `AppLogosTest`.
 
