@@ -678,7 +678,16 @@ fn sign_live(file: &Value, aud: &str, exp: i64) -> String {
     let public = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(file["registered_key"].as_str().unwrap())
         .unwrap();
-    let scalar = sha2::Sha256::digest(b"vibb fake vapid key - test only, never a real sender");
+    // The vectors' script derives the scalar as `SHA-256 mod (n - 1) + 1`: the digest (below n - 1) plus one.
+    let mut scalar: [u8; 32] =
+        sha2::Sha256::digest(b"vibb fake vapid key - test only, never a real sender").into();
+    for byte in scalar.iter_mut().rev() {
+        let (next, carried) = byte.overflowing_add(1);
+        *byte = next;
+        if !carried {
+            break;
+        }
+    }
     let pair = ring::signature::EcdsaKeyPair::from_private_key_and_public_key(
         &ring::signature::ECDSA_P256_SHA256_FIXED_SIGNING,
         &scalar,
