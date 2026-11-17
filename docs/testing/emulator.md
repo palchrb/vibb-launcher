@@ -4673,6 +4673,13 @@ the same way at its first boot (surfaceflinger's RegionSampling, three times wit
 the stable 37.2.13 is back (`sdkmanager --uninstall emulator`, then `sdkmanager --channel=0 emulator` - a plain
 `sdkmanager emulator` keeps the newer canary).
 
+Retried 2026-11-17 with the canary emulator 37.4.1 (`sdkmanager --channel=3 emulator`), always `-no-window -no-audio -no-snapshot
+-wipe-data -dns-server 8.8.8.8`: API 37.0 google_apis with `-gpu swiftshader_indirect` booted in 85 s but surfaceflinger
+died 20 s later (screencap 72 bytes); `-gpu guest` and `auto-no-window` (not a valid option in 37.4.1, falls back to `auto`)
+never reached `sys.boot_completed` in 10 minutes ("Failed to find ColorBuffer"). `aosp_atd` 37.0 with `swiftshader_indirect`
+booted in 25 s but surfaceflinger died after 90 s (screencap empty); `guest` and `default` were not run (the round was stopped).
+No working command line. 37.2.13 is the default `emulator` again (same uninstall/`--channel=0` steps as above).
+
 **Found on Android 14, outside this round:** a reboot of the enrolled API 34 phone never finished booting (user 0 stays
 `BOOTING`, `sys.boot_completed` unset after 7 minutes; no HOME resolves before the first unlock - Settings' FallbackHome is
 hidden and Vibb's HOME isn't direct-boot aware). Seen twice (`fix34`, and the compatibility check's `compat34`); the logcat
