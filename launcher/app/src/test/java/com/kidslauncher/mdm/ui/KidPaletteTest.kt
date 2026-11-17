@@ -493,6 +493,7 @@ class KidPaletteTest {
             "kid_page_ripple" to "#1FFFFFFF", "kid_page_ripple_strong" to "#33FFFFFF",
             "kid_page_message_in" to "@color/kid_message_in", "kid_page_message_in_ink" to "@color/kid_ink",
             "kid_page_message_in_dim" to "@color/kid_message_in_dim", "kid_page_alert" to "@color/kid_missed_text",
+            "kid_page_line_missed" to "#F08F66", "kid_page_line_unread" to "#6FC7C0",
             "kid_page_danger" to "@color/kid_emergency_tonal", "kid_page_danger_text" to "#FF8A8A",
             // Step 2: the lists' second ink, the sound picker's card (bg_kid_card's literal), the phone book's Ring
             // glyph, the search field's focus ring, an open request's and a missing photo's edge, the request form's
@@ -545,6 +546,8 @@ class KidPaletteTest {
             "kid_page_ink" to over(c("kid_page_back"), ground),
             "kid_page_message_in_ink" to bubble, "kid_page_message_in_dim" to bubble,
             "kid_page_alert" to ground, "kid_page_alert" to tile,
+            // The phone book row's sub-line (variant D): the missed and unread words on the row.
+            "kid_page_line_missed" to ground, "kid_page_line_missed" to tile, "kid_page_line_unread" to ground, "kid_page_line_unread" to tile,
             "kid_page_danger_text" to c("kid_page_danger"),
             "kid_message_out_ink" to own, "kid_message_out_dim" to own,
             // Step 2. Meldinger: the confirm's and the pickers' words on the raised panel, the "Ny melding" mark on its

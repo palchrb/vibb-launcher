@@ -64,9 +64,9 @@
         <item quantity="other">%2$d missed calls %1$s</item>
     </plurals>
     <string name="missed_short_yesterday">yesterday</string>
-    <plurals name="contact_unread_short">
-        <item quantity="one">%d unread</item>
-        <item quantity="other">%d unread</item>
+    <plurals name="contact_unread_line">
+        <item quantity="one">%d message</item>
+        <item quantity="other">%d messages</item>
     </plurals>
     <string name="phone_book_action_call">Call %1$s</string>
     <string name="phone_book_action_message">Message %1$s</string>

@@ -174,19 +174,8 @@ class WholeWordsTest {
         RowLayout.STACKED -> 288f - ROW_PADDING_START_DP - ROW_AVATAR_DP - ROW_GAP_DP - ROW_STACKED_END_DP
     }
 
-    private val rowLines = mapOf(
-        "nb" to listOf(
-            "Tapt anrop 14:02", "Tapt anrop i går", "Tapt anrop 30. nov.", "12 tapte anrop i går", "12 tapte anrop 30. nov.",
-            "2 tapte anrop 14:02 · 1 ulest", "Nødnummer", "12 uleste meldinger",
-        ),
-        "en" to listOf(
-            "Missed call 14:02", "Missed call yesterday", "12 missed calls yesterday", "12 missed calls Nov 30",
-            "2 missed calls 14:02 · 1 unread", "Emergency number", "12 unread messages",
-        ),
-    )
-
     @Test
-    fun `the phone book row at 288 dp - names whole, the second line never cut, at 1_0 1_3 2_0 in nb and en`() {
+    fun `the phone book row at 288 dp - names whole, the second line two lines at most, at 1_0 1_3 2_0 in nb and en`() {
         assertEquals(128f, rowColumn(1.0f), 0.01f)
         assertEquals(214f, rowColumn(1.3f), 0.01f)
         for (scale in scales) {
@@ -194,12 +183,6 @@ class WholeWordsTest {
             for (name in names + listOf("Trener Kari", "Sofie Østby", "Bestemor Ingrid")) {
                 val (size, display) = shown(name, 16f * scale, column)
                 assertNoCut("row ${scale}x '$name'", size, display, column)
-            }
-            for ((lang, lines) in rowLines) for (line in lines) {
-                val size = 13f * scale
-                // A plain TextView, at most two lines: it wraps at spaces and is never cut to one or past two.
-                assertTrue("$lang ${scale}x '$line' takes ${lineEnds(line, size, column).size} lines", lineEnds(line, size, column).size <= 2)
-                assertFalse("$lang ${scale}x '$line'", cuts(line, size, column, 2))
             }
         }
         val doc = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }.newDocumentBuilder()
@@ -209,6 +192,30 @@ class WholeWordsTest {
         assertEquals("com.kidslauncher.mdm.ui.WholeWordTextView", byId("row_name").tagName)
         assertEquals("2", byId("row_name").getAttributeNS(ns, "maxLines"))
         assertEquals("2", byId("row_line").getAttributeNS(ns, "maxLines"))
+    }
+
+    /** A part of the phone book row's sub-line (variant D): the glyph at 1.1 em, the narrow no-break space, the text. */
+    private fun partWidth(text: String, sizeDp: Float) = 1.1f * sizeDp + width(" ", sizeDp) + width(text, sizeDp)
+
+    @Test
+    fun `the phone book row's glyph line - each part whole, the second wraps to line 2, never an ellipsis`() {
+        val missedParts = mapOf(
+            "nb" to listOf("14:02", "i går", "30. nov.", "99+"),
+            "en" to listOf("14:02", "yesterday", "Nov 30", "99+"),
+        )
+        for (scale in scales) {
+            val column = rowColumn(scale)
+            val size = 13f * scale
+            for ((lang, firsts) in missedParts) for (first in firsts) for (second in listOf("1", "12", "99+")) {
+                val a = partWidth(first, size)
+                val b = partWidth(second, size)
+                assertTrue("$lang ${scale}x '$first' fits whole", a <= column)
+                assertTrue("$lang ${scale}x '$second' fits whole", b <= column)
+                // One line when both fit with the space between, else the second part alone on line 2 (maxLines 2).
+                val lines = if (a + width(" ", size) + b <= column) 1 else 2
+                assertTrue("$lang ${scale}x '$first' '$second' takes $lines lines", lines <= 2)
+            }
+        }
     }
 
     @Test

@@ -731,6 +731,15 @@ mockups A5 and B2. Launcher only; no server change.
   "The phone book's row". The sheet: rust top end 6 dp in, teal bottom end (`sheet_unread_badge`). The green call badge
   (`contact_call_badge`, `bindCallBadge`, `bg_kid_call_badge`, `kid_call_badge`) is gone. TalkBack is unchanged (the
   pills are `importantForAccessibility="no"`; the avatar's sentence and the sheet's lines say both in words).
+  **Since 2026-11-17 (variant D, glyphs in the line) the phone book's Kontakter rows carry no pills** (the row's pill
+  views are gone): a sub-line of at most two lines instead (`PhoneBookAdapter.rowLine`, the parts from the pure
+  `rowLineParts`), the pills' own glyphs inline as `ImageSpan`s, centred on the text and tinted like it: the phone-x and
+  the time of the newest unseen missed call (`MissedCallText.shortWhen`; the count when several) in
+  `kid_page_line_missed` (the pill's rust a step darker in Lys for 4.5:1, a lighter tint in Mørk), a space, the chat
+  bubble and the unread count ("99+" past 99) in `kid_page_line_unread` (the teal likewise). Each part is U+FFFC, U+202F
+  and its text, so it never splits: at a large font the teal part wraps whole to line 2 instead of being ellipsized.
+  The words are the row's content description (`sentence`: "Tapt anrop 10:19, 1 melding"; with a missed Element X call
+  the card's words, "... i Element X ..."). Home, the sheet and Siste are unchanged.
 - **B2, the switch** (`activity_phone_book.xml`): "Kontakter | Siste" under the header, above the search - P9's control,
   two `RadioButton`s in a `RadioGroup` ("Velg liste"), 44 dp on `kid_page_tile` (in Lys with the `kid_page_edge`
   hairline), each half the whole height's tap target with its fill 4 dp in (`bg_phone_book_tab`: the chosen half

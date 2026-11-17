@@ -29,6 +29,9 @@
     <color name="kid_page_message_in_dim">#5E5870</color>
     <!-- 5.9:1 on the ground, 6.5:1 on a tile. -->
     <color name="kid_page_alert">#B3261E</color>
+    <!-- The pills' own fills (kid_badge darkened a step for 4.5:1 on the ground; kid_messages_tile as is). -->
+    <color name="kid_page_line_missed">#A84A22</color>
+    <color name="kid_page_line_unread">@color/kid_messages_tile</color>
     <color name="kid_page_danger">#FBE3E1</color>
     <color name="kid_page_danger_text">#A1241C</color>
     <!-- Step 2. The lists' second ink is the dim's: 6.4:1 on the ground. A card is a tile. -->

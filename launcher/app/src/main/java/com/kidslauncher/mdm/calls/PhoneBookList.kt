@@ -297,3 +297,23 @@ class TopSightings {
 
 /** One row's sighting, kept across a rotation ([TopSightings.state]). */
 data class SightingState(val number: String, val atMs: Long, val accumulatedMs: Long, val seenUpToMs: Long?)
+
+/** Which glyph a part of a phone-book row's sub-line carries. */
+enum class RowLineKind { MISSED, UNREAD }
+
+/** One part of the sub-line: its glyph's kind and its text (a time or a count). */
+data class RowLinePart(val kind: RowLineKind, val text: String)
+
+/**
+ * The parts of a Kontakter row's sub-line (design 106, variant D), the missed call first: its time, or its count when
+ * there are several ([missedWhen] is asked only for one call), then the unread count, "99+" past 99 as the pills
+ * had it. Either part alone, none for neither.
+ */
+fun rowLineParts(missedCount: Int, unread: Int, missedWhen: () -> String): List<RowLinePart> = listOfNotNull(
+    if (missedCount > 0) RowLinePart(RowLineKind.MISSED, if (missedCount > 1) com.kidslauncher.mdm.ui.home.badgeText(missedCount)!! else missedWhen()) else null,
+    com.kidslauncher.mdm.ui.home.badgeText(unread)?.let { RowLinePart(RowLineKind.UNREAD, it) },
+)
+
+/** A glyph part's characters: the glyph's placeholder, a narrow no-break space, the text - never split by a line break. */
+const val ROW_GLYPH = "\uFFFC"
+const val ROW_GLYPH_GAP = "\u202F"

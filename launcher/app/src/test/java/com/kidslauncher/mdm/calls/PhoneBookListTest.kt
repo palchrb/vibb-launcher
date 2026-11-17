@@ -314,6 +314,24 @@ class PhoneBookListTest {
         assertEquals(emptyMap<String, Long>(), brief.seen(nowMs = 400))
     }
 
+    @Test
+    fun `the sub-line's parts - the time for one missed call, the count for several, the unread count capped, either alone`() {
+        val time = { "10:19" }
+        assertEquals(emptyList<RowLinePart>(), rowLineParts(0, 0, time))
+        assertEquals(listOf(RowLinePart(RowLineKind.MISSED, "10:19")), rowLineParts(1, 0, time))
+        assertEquals(listOf(RowLinePart(RowLineKind.UNREAD, "3")), rowLineParts(0, 3, time))
+        assertEquals(
+            listOf(RowLinePart(RowLineKind.MISSED, "10:19"), RowLinePart(RowLineKind.UNREAD, "1")),
+            rowLineParts(1, 1, time),
+        )
+        assertEquals(
+            listOf(RowLinePart(RowLineKind.MISSED, "2"), RowLinePart(RowLineKind.UNREAD, "99+")),
+            rowLineParts(2, 150, time),
+        )
+        // The time is asked for only with one call.
+        assertEquals("2", rowLineParts(2, 0) { error("no time for several") }.single().text)
+    }
+
     private fun file(path: String): String =
         listOf("src/main/$path", "app/src/main/$path").map { java.io.File(it) }.first { it.exists() }.readText()
 }
