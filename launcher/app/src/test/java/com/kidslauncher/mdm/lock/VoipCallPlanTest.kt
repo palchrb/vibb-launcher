@@ -204,11 +204,8 @@ class VoipCallPlanTest {
         val call = voipExemption(gapLater.record, at(t0 + 60 * 60_000L, inCall = setOf(element), audio = true))
         assertEquals(VoipVerdict(gap.record!!.copy(callSeen = true), VoipPhase.IN_CALL, element), call)
         assertNull("the ring is over", call.record!!.ringStartedElapsedMs)
-        // Hung up: the service is gone - over after the settle (the grace is only after the ring).
-        val hungUp = voipExemption(call.record, at(t0 + 61 * 60_000L))
-        assertEquals(VoipPhase.IN_CALL, hungUp.phase)
-        assertEquals(t0 + 61 * 60_000L, hungUp.record!!.callGoneElapsedMs)
-        assertEquals(VoipVerdict(null, VoipPhase.NONE, null), voipExemption(hungUp.record, at(t0 + 61 * 60_000L + VOIP_CALL_SETTLE_MS)))
+        // Hung up: the service is gone - over at once (the grace is only after the ring).
+        assertEquals(VoipVerdict(null, VoipPhase.NONE, null), voipExemption(call.record, at(t0 + 61 * 60_000L)))
     }
 
     @Test
@@ -297,11 +294,7 @@ class VoipCallPlanTest {
         val second = voipExemption(call.record, at(t0 + 60_000, ringing = setOf(signal), inCall = setOf(element), audio = true))
         assertEquals(VoipPhase.IN_CALL, second.phase)
         assertEquals(element, second.pinned)
-        // The call's notice gone: the settle first, then the other app's ring starts anew.
-        val settling = voipExemption(second.record, at(t0 + 119_000, ringing = setOf(signal)))
-        assertEquals(VoipPhase.IN_CALL, settling.phase)
-        assertEquals(element, settling.pinned)
-        val after = voipExemption(settling.record, at(t0 + 120_000, ringing = setOf(signal)))
+        val after = voipExemption(second.record, at(t0 + 120_000, ringing = setOf(signal)))
         assertEquals(VoipPhase.RINGING, after.phase)
         assertEquals(signal, after.pinned)
         assertEquals(t0 + 120_000, after.record!!.start.elapsedStartMs)
@@ -370,15 +363,16 @@ class VoipCallPlanTest {
     }
 
     @Test
-    fun `a long call ends a settle after its notice goes`() {
+    fun `a long call ends at once when its notice goes, as before`() {
         val answerAt = t0 + 5_000
         val call = answered(answerAt, callFor = 30_000)
         val goneAt = answerAt + 30_500
-        val gone = voipExemption(call, at(goneAt))
-        assertEquals(VoipPhase.IN_CALL, gone.phase)
-        assertEquals(VoipVerdict(null, VoipPhase.NONE, null), voipExemption(gone.record, at(goneAt + VOIP_CALL_SETTLE_MS)))
-        // Past the grace the audio never holds it (QA #5): over at the settle all the same.
-        assertEquals(VoipVerdict(null, VoipPhase.NONE, null), voipExemption(gone.record, at(goneAt + VOIP_CALL_SETTLE_MS, audio = true)))
+        assertEquals(VoipVerdict(null, VoipPhase.NONE, null), voipExemption(call, at(goneAt)))
+        // Past the grace the audio never holds it (QA #5).
+        assertEquals(VoipVerdict(null, VoipPhase.NONE, null), voipExemption(call, at(goneAt, audio = true)))
+        // A settle begun in the grace ends with it.
+        val settling = voipExemption(call.copy(callGoneElapsedMs = answerAt + VOIP_GRACE_MS - 200), at(answerAt + VOIP_GRACE_MS))
+        assertEquals(VoipVerdict(null, VoipPhase.NONE, null), settling)
     }
 
     @Test

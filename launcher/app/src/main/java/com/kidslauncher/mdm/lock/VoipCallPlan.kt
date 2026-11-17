@@ -422,9 +422,9 @@ private val NO_VOIP = VoipVerdict(null, VoipPhase.NONE, null)
  *   call service starts - a re-front or an unpin in that gap would end the answered call);
  * - the call's foreground service: pinned, IN_CALL while the audio mode is IN_COMMUNICATION (or
  *   in the grace), else NONE - the lock comes back but the package stays;
- * - that service's notice seen and then gone ([VoipRecord.callSeen]): over [VOIP_CALL_SETTLE_MS] after it went,
- *   grace or not (2026-11-17, item 5: the glance at once after a short call) - unless the audio is still in
- *   IN_COMMUNICATION within the grace;
+ * - that service's notice seen and then gone ([VoipRecord.callSeen]) within the grace: over [VOIP_CALL_SETTLE_MS]
+ *   after it went (2026-11-17, item 5: the glance back after a short call, not at the grace's end) unless the audio
+ *   is still in IN_COMMUNICATION; past the grace a gone notice ends it at once, as before;
  * - [VOIP_CAP_MS] after the start: NONE (the lock comes back), still pinned while the call lives;
  * - before the listener reported in this process (a crash, an update): the stored record keeps
  *   the package pinned and IN_CALL for [VOIP_GRACE_MS] from the process start, then it ends - the
@@ -472,13 +472,15 @@ private fun continueCall(record: VoipRecord, i: VoipInputs): VoipVerdict? {
     val next = record.copy(ringEndedElapsedMs = ringEnded, ringStartedElapsedMs = null)
     val grace = i.nowElapsedMs - ringEnded in 0 until VOIP_GRACE_MS
     if (pkg in i.inCall) return live(exempt = grace || i.audioInCommunication, next.copy(callSeen = true, callGoneElapsedMs = null))
+    // Past the grace a gone notice ends the call at once, as it always did (the glance before Android's lock shows).
+    if (!grace) return null
     if (record.callSeen) {
         // Answered and its notice gone: the gap before the call lies behind it - no grace to wait out, only a settle.
         val goneAt = record.callGoneElapsedMs ?: i.nowElapsedMs
         val settling = i.nowElapsedMs - goneAt in 0 until VOIP_CALL_SETTLE_MS
-        return if (settling || (grace && i.audioInCommunication)) live(exempt = true, next.copy(callGoneElapsedMs = goneAt)) else null
+        return if (settling || i.audioInCommunication) live(exempt = true, next.copy(callGoneElapsedMs = goneAt)) else null
     }
-    return if (grace) live(exempt = true, next) else null
+    return live(exempt = true, next)
 }
 
 /** The next look at the call ([VoipCalls]' poll, at most [pollMs]): sooner while a gone call notice settles, so the
