@@ -172,7 +172,7 @@ No save on the page changes, so nothing can jump (`pwa-save-no-jump`).
   - `facts()` reads it after the music parts;
   - `waiting` is dropped while `policy_problem` holds (§1.1).
 - **Migration 0154** (0153 is pushed and frozen): the two columns, nullable TEXT with no backfill (a run that began
-  before the upgrade starts counting at its next stamp), and §7's table.
+  before the upgrade starts counting at its next stamp), and §7's `up_messages.connected` and table.
 - **Words:** `device.attention.app_push_*`, `app_push.waiting` and `app_push.refused_fix` in `en.json` and `nb.json`.
 - `docs/notes/server/unified-push.md` gains an "Attention (design 108c)" paragraph. `pwa.md`'s Attention bullet names
   the three rows.
@@ -197,8 +197,8 @@ No save on the page changes, so nothing can jump (`pwa-save-no-jump`).
 **Server S**, about 400 lines with the tests:
 - the Attention rows (§1-§4), ~250: the query and rules ~80, `attention.rs` ~40, the page lines ~30, the words, the
   tests ~100;
-- the delivery time (§7), ~150: the table and its writes ~30, the figure and its words ~50, the two page rows ~20, the
-  tests ~50.
+- the delivery time (§7), ~160: the flag, the table and their writes ~40, the figure and its words ~50, the two page
+  rows ~20, the tests ~50.
 
 No launcher, contract or gate work. It goes on `up-r2r3-server` after the Lows fix, then gets its own code QA (XS).
 
@@ -233,6 +233,9 @@ would show an orange badge on the Devices list for as long as the parent keeps G
 ## 7. Delivery time on Settings › App push
 
 Approved by the user on 2026-11-17: how long pushes take from this server to the phone, over the last 24 hours.
+Revised before design QA, the same day. A plain maximum would almost always be hours: a phone switched off overnight
+gets its queued pushes in the morning, and that says nothing about delivery. So only pushes that came **while the
+phone was connected** count, and the figure is the median and the 95th percentile.
 
 ### 7.1 What is measured
 
@@ -245,16 +248,26 @@ The phone acks a key only after its `sendBroadcast` ran, and sends the ack with 
 pull, or 6 s later (`pullLater`). So the figure is "on the phone", give or take a few seconds. It is not "read by the
 child". A message the phone drops, because its app is hidden or gone, is acked too and counts: it reached the phone.
 
+**Only pushes accepted while the phone held its command stream count.** The server knows this cheaply.
+`unified_push::accept` already reads the in-memory stream registry, `state.command_streams.state(device_id)` and its
+`open`, for the TTL-0 rule. It reads it for every push, takes it as `connected`, and passes it to `enqueue`, which
+stores it on the queue row.
+
+An open stream the server hasn't yet seen die is counted as connected. That happens when the phone lost its network
+and the keepalive hasn't failed yet. Its slow delivery is real, and it is what the 95th percentile should show.
+
 What is not in the figure:
+- a push accepted while the phone had no stream;
 - a push that expired undelivered (its row is pruned, never acked);
 - a push replaced by a newer one with the same `Topic`.
 
 ### 7.2 Where the samples are kept
 
-The queue row holds the accepted time, but the ack deletes the row. So one sample is written in the same transaction,
-just before the delete. The table is the smallest store, in 0154:
+The flag lives on the queue row. The sample needs a store of its own, because the ack deletes the queue row. Both go in
+**0154**:
 
 ```sql
+ALTER TABLE up_messages ADD COLUMN connected INTEGER NOT NULL DEFAULT 0;   -- the phone's stream open at accept
 CREATE TABLE up_delivery (
     device_id INTEGER NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
     acked_ms INTEGER NOT NULL,
@@ -265,25 +278,28 @@ CREATE INDEX up_delivery_device ON up_delivery (device_id, acked_ms);
 ```
 
 - **The write**, in `pull`'s ack transaction before the `DELETE`: `INSERT INTO up_delivery (device_id, acked_ms, ms)
-  SELECT device_id, ?now, MAX(0, ?now - created_at_ms) FROM up_messages WHERE device_id = ? AND key IN (…)`. Only a
-  key that is still queued gives a sample, so an ack sent twice counts once. A clock stepped back gives 0, never less
-  than 0.
+  SELECT device_id, ?now, MAX(0, ?now - created_at_ms) FROM up_messages WHERE device_id = ? AND connected = 1 AND key
+  IN (…)`.
+  - Only a key that is still queued gives a sample, so an ack sent twice counts once.
+  - A clock stepped back gives 0, never less.
+  - A row queued before the upgrade has `connected = 0` and gives no sample.
 - **Nothing per message beyond the three numbers**: no key, registration, package or body.
 - **Pruned hourly** in `store::prune`: rows older than 24 h. It also keeps at most the newest **20,000** rows, about
   600 KB. The phone's own bucket allows at most about 840 pushes an hour, so that cap is reached only by several busy
   phones together.
-- **It survives a restart**, since it is SQLite. A server update loses nothing.
+- **It survives a restart**, since it is SQLite. A server update loses nothing. The stream registry starts empty after a
+  restart, and phones reconnect within seconds (up to 5 min after a crash). Pushes accepted in that gap count as not
+  connected, so they are left out.
 
 ### 7.3 The figure
 
-A pure `delivery_figure(ms_sorted) -> Option<Figure { count, median_ms, slowest_ms }>` works on the last 24 h's samples
+A pure `delivery_figure(ms_sorted) -> Option<Figure { count, median_ms, p95_ms }>` works on the last 24 h's samples
 (`acked_ms > now - 24 h`, read sorted; at most 20,000 integers).
-- **The median** is the nearest-rank one: element `ceil(n/2)` (1-based). With 2 samples it is the faster one; it is
-  always a time that really happened.
-- **The slowest** is the maximum, as the user asked.
-- **The count is always shown**, so a slowest figure from only a few pushes reads as such.
-- **With no samples**, the row says so and shows no figure. Nothing is hidden for a small count: with 1 sample, the
-  median and the slowest are the same time and both are shown, and the count says 1.
+- **Both are nearest-rank**, so each is a time that really happened. The median is element `ceil(0.5 n)` and the 95th
+  percentile is element `ceil(0.95 n)` (1-based).
+- **With 1 to 19 samples**, the 95th percentile is the slowest, since `ceil(0.95 n) = n`. That is honest at that count,
+  and the count beside it says how few.
+- **With no samples**, the group says so and shows no figure.
 
 Durations are worded by `duration_words(lang, ms)`:
 - under 1 s: "under a second" / "under ett sekund";
@@ -291,42 +307,38 @@ Durations are worded by `duration_words(lang, ms)`:
 - under 1 h: "{n} min";
 - otherwise: "{h} h {m} min" / "{h} t {m} min".
 
-The slowest includes time a phone was switched off or out of touch, because a push waits for it on the server. A
-kid's phone off overnight makes it hours, and that is normal. The footer says so, so the figure doesn't read as a
-fault.
-
 ### 7.4 Words and places
 
 **Settings › App push** gets a new group "Delivery to the phones" ("Levering til telefonene") under "Last seen from
 outside" (`#delivery`). Its rows have no save, so nothing can jump.
 - **Row** "Median" ("Median"): "2 s", "under a second" …
-- **Row** "Slowest" ("Tregeste"): "14 min".
-- **Row** "Pushes" ("Push"): "38 in the last 24 hours" / "38 siste døgn".
+- **Row** "95 % within" ("95 % innen"): "9 s".
+- **Row** "Pushes counted" ("Push talt med"): "38 in the last 24 hours" / "38 siste døgn".
 - **With none:**
-  - en: one row "No pushes in the last 24 hours";
-  - nb: "Ingen push siste døgn".
+  - en: one row "No pushes to a connected phone in the last 24 hours";
+  - nb: "Ingen push til en tilkoblet telefon siste døgn".
 - **Footer:**
-  - en: "From this server receiving a push to the phone confirming it, for every phone together. A phone that is
-    switched off or out of touch gets its pushes when it is back, so the slowest can be hours."
-  - nb: "Fra serveren tar imot et push til telefonen bekrefter det, for alle telefonene samlet. En telefon som er
-    slått av eller uten kontakt, får pushene når den er tilbake, så den tregeste kan være flere timer."
+  - en: "From this server receiving a push to the phone confirming it, for every phone together. Only pushes that
+    came while the phone was connected are counted."
+  - nb: "Fra serveren tar imot et push til telefonen bekrefter det, for alle telefonene samlet. Bare push som kom mens
+    telefonen var tilkoblet, er talt med."
 
 **Device › Apps' App push group, per phone.** This is cheap: the same function over the `device_id` index. It is one
-line under the switch, only when the phone had any samples:
-- en: "Delivered in {median} as a rule, the slowest {slowest} ({count} pushes, last 24 hours)";
-- nb: "Levert på {median} som regel, den tregeste {slowest} ({count} push siste døgn)".
-
-The phone's line has no footer of its own. The phone's own off time explains its slowest, and the parent sees the
-phone's state on the same page.
+line under the switch, only when the phone has samples:
+- en: "Delivered in {median} as a rule, 95 % within {p95} ({count} pushes while connected, last 24 hours)";
+- nb: "Levert på {median} som regel, 95 % innen {p95} ({count} push mens den var tilkoblet, siste døgn)".
 
 ### 7.5 Tests (lean)
 
 - **`unified_push::store::tests`:**
-  - two pushes enqueued, one pull acknowledging both, then the same keys acknowledged again: two samples, with the
-    device id and `ms >= 0`;
+  - three pushes enqueued, two `connected` and one not;
+  - one pull acknowledges all three, then the same keys are acknowledged again;
+  - this gives two samples, with the device id and `ms >= 0`;
   - one sample backdated past 24 h is pruned.
-- **A pure table for `delivery_figure`:** 0, 1, 2, 3 and 4 samples, with the nearest-rank median and the max; and
-  `duration_words` in nb and en at each boundary (999 ms, 1 s, 59 s, 60 s, 59 min, 1 h).
+- **`tests::unified_push`:** one push through `/up/` with a stream open in the registry, and one without, gives
+  `connected` 1 and 0. This checks that `accept` reads the registry.
+- **A pure table for `delivery_figure`:** 0, 1, 2, 19, 20 and 40 samples, with the median and the 95th percentile at
+  their nearest ranks. Also `duration_words` in nb and en at each boundary (999 ms, 1 s, 59 s, 60 s, 59 min, 1 h).
 - **One page test:**
   - Settings › App push shows the group with seeded samples, and "No pushes…" without them;
   - Device › Apps shows the phone's line only for the phone with samples.
