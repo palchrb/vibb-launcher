@@ -17,8 +17,6 @@ import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import com.kidslauncher.mdm.R
-import com.kidslauncher.mdm.ui.home.BadgeSize
-import com.kidslauncher.mdm.ui.home.ContactBadge
 import com.kidslauncher.mdm.ui.home.KidAvatars
 import com.kidslauncher.mdm.ui.home.MissedCallText
 import com.kidslauncher.mdm.ui.home.PressFeedback
@@ -109,8 +107,6 @@ class PhoneBookAdapter(
     inner class ContactHolder(view: View, private val rowLayout: RowLayout) : RecyclerView.ViewHolder(view) {
         private val photo: ImageView = view.findViewById(R.id.contact_photo)
         private val initial: TextView = view.findViewById(R.id.contact_initial)
-        private val badge: TextView = view.findViewById(R.id.contact_badge)
-        private val unreadBadge: TextView = view.findViewById(R.id.contact_unread_badge)
         private val name: TextView = view.findViewById(R.id.row_name)
         private val line: TextView = view.findViewById(R.id.row_line)
         private val buttons: LinearLayout = view.findViewById(R.id.row_buttons)
@@ -177,7 +173,6 @@ class PhoneBookAdapter(
             actionIds.clear()
             when (val row = item.row) {
                 PhoneBookRow.EmergencyDialer -> {
-                    KidAvatars.bindContactBadge(badge, unreadBadge, ContactBadge(0, 0), BadgeSize.ROW)
                     name.setText(R.string.calls_emergency)
                     line.visibility = View.GONE
                     buttons.visibility = View.GONE
@@ -190,8 +185,6 @@ class PhoneBookAdapter(
 
         private fun bindContact(context: Context, row: PhoneBookRow.Contact, item: PhoneBookItem) {
             val contact = row.contact
-            // Variant A (2026-11-17): no pills on the row; the missed calls and unread messages are the one sub-line's words.
-            KidAvatars.bindContactBadge(badge, unreadBadge, ContactBadge(0, 0), BadgeSize.ROW)
             name.text = com.kidslauncher.mdm.ui.search.highlightMatch(context, contact.name, row.match)
             val text = rowLine(context, row, line.textSize)
             line.visibility = if (text == null) View.GONE else View.VISIBLE
@@ -301,23 +294,26 @@ class PhoneBookAdapter(
         }
 
         /**
-         * The row's second line (design 79 §3.4; variant A with glyphs, 2026-11-17), one line: "Nødnummer"; else the
-         * pills' own glyphs in the text - the phone-x and the time of the newest unseen missed call (the count when
-         * several), in rust, then the chat bubble and the unread count, in teal, a wide gap between; each only if there
-         * is one; else none. [textSizePx] sizes the glyphs; the words are [sentence]'s, for TalkBack.
+         * The row's sub-line (design 79 §3.4; design 106, variant D, 2026-11-17): "Nødnummer"; else the pills' own glyphs
+         * in the text - the phone-x and the time of the newest unseen missed call (the count when several), in rust, a
+         * space, the chat bubble and the unread count, in teal; each only if there is one; else none ([rowLineParts]).
+         * Each part is its glyph, a no-break space and its text, so it never splits; the one break is the space between
+         * the parts, and with a large font the teal part wraps whole to the second line. [textSizePx] sizes the glyphs;
+         * the words are [sentence]'s, for TalkBack.
          */
         fun rowLine(context: Context, row: PhoneBookRow.Contact, textSizePx: Float): CharSequence? {
             if (row.emergency) return context.getString(R.string.phone_book_emergency_line)
             val missed = row.missed?.takeIf { it.count > 0 }
-            if (missed == null && row.unread <= 0) return null
+            val parts = rowLineParts(missed?.count ?: 0, row.unread) { MissedCallText.shortWhen(context, missed!!.lastAtMs) }
+            if (parts.isEmpty()) return null
             val out = SpannableStringBuilder()
-            if (missed != null) {
-                val text = if (missed.count > 1) missed.count.toString() else MissedCallText.shortWhen(context, missed.lastAtMs)
-                glyphPart(context, out, R.drawable.ic_kid_missed_call, text, R.color.kid_page_line_missed, textSizePx)
-            }
-            if (row.unread > 0) {
-                if (missed != null) out.append("\u2003")
-                glyphPart(context, out, R.drawable.ic_kid_badge_message, row.unread.toString(), R.color.kid_page_line_unread, textSizePx)
+            for (part in parts) {
+                if (out.isNotEmpty()) out.append(" ")
+                val (glyphRes, colourRes) = when (part.kind) {
+                    RowLineKind.MISSED -> R.drawable.ic_kid_missed_call to R.color.kid_page_line_missed
+                    RowLineKind.UNREAD -> R.drawable.ic_kid_badge_message to R.color.kid_page_line_unread
+                }
+                glyphPart(context, out, glyphRes, part.text, colourRes, textSizePx)
             }
             return out
         }
@@ -329,18 +325,21 @@ class PhoneBookAdapter(
             val px = (sizePx * 1.1f).toInt()
             glyph.setBounds(0, 0, px, px)
             val from = out.length
-            out.append(" ", android.text.style.ImageSpan(glyph, android.text.style.ImageSpan.ALIGN_CENTER), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-            out.append("\u2009").append(text)
+            out.append(ROW_GLYPH, android.text.style.ImageSpan(glyph, android.text.style.ImageSpan.ALIGN_CENTER), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            out.append(ROW_GLYPH_GAP).append(text)
             out.setSpan(ForegroundColorSpan(colour), from, out.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
 
-        /** TalkBack's sentence (design 79 §3.6): "Pappa, 2 tapte anrop i dag 14:02, 1 ulest melding"; "Ambulanse, nødnummer". */
+        /** TalkBack's sentence (design 79 §3.6; design 106): "Pappa, 2 tapte anrop 14:02, 1 melding" - with a missed Element X
+         * call the card's words ("1 tapt anrop i Element X i dag 14:02"); "Ambulanse, nødnummer". */
         fun sentence(context: Context, row: PhoneBookRow.Contact): String {
             val name = row.contact.name
             if (row.emergency) return context.getString(R.string.phone_book_emergency_description, name)
             return listOfNotNull(
                 name,
-                row.missed?.takeIf { it.count > 0 }?.let { MissedCallText.short(context, it.count, it.lastAtMs) },
+                row.missed?.takeIf { it.count > 0 }?.let {
+                    if (it.element != null) KidAvatars.missedText(context, row.missed)?.replace("\n", ", ") else MissedCallText.short(context, it.count, it.lastAtMs)
+                },
                 context.resources.getQuantityString(R.plurals.contact_unread_line, row.unread, row.unread).takeIf { row.unread > 0 },
             ).joinToString(", ")
         }

@@ -27,7 +27,7 @@
     <color name="kid_page_message_in_ink">@color/kid_ink</color>
     <color name="kid_page_message_in_dim">@color/kid_message_in_dim</color>
     <color name="kid_page_alert">@color/kid_missed_text</color>
-    <!-- The phone-book row's sub-line (variant A): the pills' rust and teal, lifted for the dark ground. -->
+    <!-- The phone-book row's sub-line (variant D): the pills' rust and teal, lifted for the dark ground. -->
     <color name="kid_page_line_missed">#F08F66</color>
     <color name="kid_page_line_unread">#6FC7C0</color>
     <color name="kid_page_danger">@color/kid_emergency_tonal</color>

@@ -49,10 +49,6 @@
         <item quantity="other">%2$d tapte anrop %1$s</item>
     </plurals>
     <string name="missed_short_yesterday">i går</string>
-    <plurals name="contact_unread_short">
-        <item quantity="one">%d ulest</item>
-        <item quantity="other">%d uleste</item>
-    </plurals>
     <plurals name="contact_unread_line">
         <item quantity="one">%d melding</item>
         <item quantity="other">%d meldinger</item>

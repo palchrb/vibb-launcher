@@ -175,7 +175,7 @@ class WholeWordsTest {
     }
 
     @Test
-    fun `the phone book row at 288 dp - names whole, the second line one ellipsized line, at 1_0 1_3 2_0 in nb and en`() {
+    fun `the phone book row at 288 dp - names whole, the second line two lines at most, at 1_0 1_3 2_0 in nb and en`() {
         assertEquals(128f, rowColumn(1.0f), 0.01f)
         assertEquals(214f, rowColumn(1.3f), 0.01f)
         for (scale in scales) {
@@ -191,7 +191,31 @@ class WholeWordsTest {
         fun byId(id: String) = (0 until all.length).map { all.item(it) as Element }.single { it.getAttributeNS(ns, "id") == "@+id/$id" }
         assertEquals("com.kidslauncher.mdm.ui.WholeWordTextView", byId("row_name").tagName)
         assertEquals("2", byId("row_name").getAttributeNS(ns, "maxLines"))
-        assertEquals("1", byId("row_line").getAttributeNS(ns, "maxLines"))
+        assertEquals("2", byId("row_line").getAttributeNS(ns, "maxLines"))
+    }
+
+    /** A part of the phone book row's sub-line (variant D): the glyph at 1.1 em, the narrow no-break space, the text. */
+    private fun partWidth(text: String, sizeDp: Float) = 1.1f * sizeDp + width(" ", sizeDp) + width(text, sizeDp)
+
+    @Test
+    fun `the phone book row's glyph line - each part whole, the second wraps to line 2, never an ellipsis`() {
+        val missedParts = mapOf(
+            "nb" to listOf("14:02", "i går", "30. nov.", "99+"),
+            "en" to listOf("14:02", "yesterday", "Nov 30", "99+"),
+        )
+        for (scale in scales) {
+            val column = rowColumn(scale)
+            val size = 13f * scale
+            for ((lang, firsts) in missedParts) for (first in firsts) for (second in listOf("1", "12", "99+")) {
+                val a = partWidth(first, size)
+                val b = partWidth(second, size)
+                assertTrue("$lang ${scale}x '$first' fits whole", a <= column)
+                assertTrue("$lang ${scale}x '$second' fits whole", b <= column)
+                // One line when both fit with the space between, else the second part alone on line 2 (maxLines 2).
+                val lines = if (a + width(" ", size) + b <= column) 1 else 2
+                assertTrue("$lang ${scale}x '$first' '$second' takes $lines lines", lines <= 2)
+            }
+        }
     }
 
     @Test

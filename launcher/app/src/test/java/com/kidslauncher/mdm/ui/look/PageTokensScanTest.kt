@@ -56,7 +56,7 @@ class PageTokensScanTest {
         "ic_kid_chevron",
         // Design 106: Siste's glyphs, tinted by the row in the alert red or the dim.
         "ic_kid_missed_call", "ic_kid_call_in", "ic_kid_call_out",
-        // The phone book row's sub-line (variant A with glyphs): the chat bubble, tinted teal by the row.
+        // The phone book row's sub-line (variant D): the chat bubble, tinted teal by the row.
         "ic_kid_badge_message",
     )
 

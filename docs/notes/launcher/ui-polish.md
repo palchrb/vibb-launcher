@@ -73,12 +73,9 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
 - **Designed at the Jelly Star's 288 dp** (`item_phone_book_row.xml`): a solid night tile (`bg_day_event`, #1B1B28, 18
   dp corners, white 12 % ripple) so a row reads on any wallpaper; rows 8 dp apart; start padding 10 dp, end 0 (the
   buttons' targets reach the tile's edge). The 44 dp avatar (18 sp initials, the row-sized photo, no ring, no press
-  scale, no long-press), and since design 106 (A5) two pills on it: the rust missed-call pill at its top end (translation
-  10, -6 dp; y -6 to 14 dp) and the teal unread pill (`kid_messages_tile`, white 5.4:1, `KidPageMessageBadge`) at its
-  bottom end (10, 6 dp; y 30 to 50 dp), both 20 dp, 12 sp, each with its own 12 dp glyph (phone-x, chat;
-  `KidAvatars.bindContactBadge` sets the bounds in code, so the glyph no longer makes a pill as wide as the avatar). With
-  "99+" a pill is about 43 dp wide and covers only the avatar's top or bottom edge; the two never touch. The text column 288 - 10 - 44 - 10 - 96 = 128 dp: the name Nunito 800 16 sp `kid_ink` in a
-  `WholeWordTextView` (at most 2 lines), the second line 13 sp 700, one line ellipsized at the end (variant A, 2026-11-17), there only when there is something
+  scale, no long-press), and no pills on it since 2026-11-17 (variant D; the pills, design 106 A5, stay on Home and the
+  sheet - the row's two pill views are gone). The text column 288 - 10 - 44 - 10 - 96 = 128 dp: the name Nunito 800 16 sp `kid_ink` in a
+  `WholeWordTextView` (at most 2 lines), the second line 13 sp 700, at most 2 lines (each glyph part whole, the teal part wrapping to line 2 at a large font; variant D, 2026-11-17), there only when there is something
   to say - "Nødnummer"; else the phone-x glyph and the time of the unseen missed call (the count for several) in `kid_page_line_missed`, then the chat glyph and the unread count in `kid_page_line_unread` - see `calls.md`, "Two badges and Siste"; either alone.
 - **Ring and Melding:** two 38 dp tonal discs (`kid_sheet_button`, white 8 %) in touching 48 dp targets - Ring's phone in
   the new `kid_call_glyph` #7FC28F (6.5:1 on the disc over the tile), Melding's in `kid_accent`; an emergency number's

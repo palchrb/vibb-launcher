@@ -100,3 +100,19 @@ it. Nothing checks the new line's width.
   only when both parts are there. `rowLine` needs a `Context`, and the launcher has no Robolectric. A pure helper,
   `rowLineParts(missedCount, unread)` returning `[missed(time|count), unread(count)]`, would make this a three-row
   unit test. This is optional; M1's width test matters more.
+
+## Handled (2026-11-17, `phonebook-text`)
+
+- **M1, fixed.** The line is `maxLines="2"`. Each part is U+FFFC (the image span), U+202F and its text, so it never
+  splits from its glyph; the parts are joined by a normal space, the one break, and the teal part wraps whole to line 2.
+  `WholeWordsTest` (`the phone book row's glyph line ...`) checks each part's width, worst nb/en words and "99+", at
+  1.0, 1.3 and 2.0, and the layout's `maxLines`. Not run again on the emulator: at font scale 1.0 the line is unchanged.
+- **L1, fixed.** `calls.md` says "centred".
+- **L2, fixed.** `sentence` uses the card's words (naming the app) when the contact has a missed Element X call, else
+  "Tapt anrop 10:19".
+- **L3, fixed.** The unread count (and a count of several missed calls) goes through `badgeText`: "99+".
+- **L4, fixed.** `sentence`'s KDoc, "variant D" in the code comments and docs, and `ui-polish.md`'s row bullet (no pills).
+- **L5, fixed.** The plurals `contact_unread_short` (nb, en), the row's two pill views, their adapter fields and
+  `BadgeSize.ROW` are gone.
+- **L6, fixed.** The pure `rowLineParts(missedCount, unread, missedWhen)` and `PhoneBookListTest` (only missed, only
+  unread, both, several missed gives the count, the cap, the time asked for only with one call).

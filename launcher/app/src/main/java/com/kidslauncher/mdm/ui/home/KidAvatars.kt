@@ -56,13 +56,10 @@ internal fun homeRingHairline(darkInk: Boolean, isEmergency: Boolean): Boolean =
 private const val HOME_RING_HAIRLINE_DP = 1f
 private const val HOME_RING_HAIRLINE_COLOUR = 0x47000000
 
-/** Where a contact's pills are drawn (design 106 §2.2): the glyph's size in each. */
+/** Where a contact's pills are drawn (the phone book's rows have none since variant D) (design 106 §2.2): the glyph's size in each. */
 enum class BadgeSize(val glyphDp: Float) {
     /** Home's 76/64 dp avatars: 24 dp pills, 14 sp. */
     HOME(15f),
-
-    /** The phone book's 44 dp row avatar: 20 dp pills, 12 sp. */
-    ROW(12f),
 
     /** The contact sheet's 132 dp avatar: 30 dp pills, 15 sp. */
     SHEET(18f),

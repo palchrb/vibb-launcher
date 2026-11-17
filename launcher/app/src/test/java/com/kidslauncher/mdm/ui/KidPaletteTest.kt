@@ -546,7 +546,7 @@ class KidPaletteTest {
             "kid_page_ink" to over(c("kid_page_back"), ground),
             "kid_page_message_in_ink" to bubble, "kid_page_message_in_dim" to bubble,
             "kid_page_alert" to ground, "kid_page_alert" to tile,
-            // The phone book row's sub-line (variant A): the missed and unread words on the row.
+            // The phone book row's sub-line (variant D): the missed and unread words on the row.
             "kid_page_line_missed" to ground, "kid_page_line_missed" to tile, "kid_page_line_unread" to ground, "kid_page_line_unread" to tile,
             "kid_page_danger_text" to c("kid_page_danger"),
             "kid_message_out_ink" to own, "kid_message_out_dim" to own,
