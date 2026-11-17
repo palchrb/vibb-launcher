@@ -49,6 +49,31 @@ class BootCoverPlanTest {
         assertEquals(false, bootCoverEnabled(CoverEvent.HANDED_OVER, wanted = true, androidMode = false))
     }
 
+    /** 2026-11-17: a sync in flight at the power-off reported the shutdown's own arm, and the server said "Boot cover
+     * wasn't shown" before the next start. During the boot that armed it the report says the arm before. */
+    @Test
+    fun `the report says the previous arm during the boot whose shutdown armed it, the newest from the next boot on`() {
+        val first = coverArmed(CoverArms(), bootNow = 7, nowMs = 1_000)
+        assertEquals(CoverArms(atMs = 1_000, boot = 7, previousAtMs = null), first)
+        assertNull("the first arm, still in its boot: nothing yet", reportedCoverArm(first, bootNow = 7))
+        assertEquals("the next boot", 1_000L, reportedCoverArm(first, bootNow = 8))
+
+        val second = coverArmed(first, bootNow = 8, nowMs = 5_000)
+        assertEquals(CoverArms(atMs = 5_000, boot = 8, previousAtMs = 1_000), second)
+        assertEquals("the shutdown's boot reports the arm before", 1_000L, reportedCoverArm(second, bootNow = 8))
+        assertEquals(5_000L, reportedCoverArm(second, bootNow = 9))
+
+        // A second shutdown broadcast in the same boot keeps the previous arm.
+        assertEquals(CoverArms(atMs = 5_100, boot = 8, previousAtMs = 1_000), coverArmed(second, bootNow = 8, nowMs = 5_100))
+        // An unknown boot count - now or at the arm, or an arm an older build stored without one - reports the newest.
+        assertEquals(5_000L, reportedCoverArm(second, bootNow = -1))
+        val unknown = coverArmed(second, bootNow = -1, nowMs = 9_000)
+        assertEquals(CoverArms(atMs = 9_000, boot = -1, previousAtMs = 5_000), unknown)
+        assertEquals(9_000L, reportedCoverArm(unknown, bootNow = -1))
+        assertEquals(9_000L, reportedCoverArm(CoverArms(atMs = 9_000), bootNow = 12))
+        assertNull(reportedCoverArm(CoverArms(), bootNow = 12))
+    }
+
     @Test
     fun `step M - the take-over stamp counts only in its own boot, and an unreadable boot count never`() {
         assertTrue(coverTakenOver(stampBoot = 12, bootNow = 12))

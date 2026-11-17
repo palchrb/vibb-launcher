@@ -38,6 +38,9 @@ object BootCover {
     private const val PREFS = "boot_cover"
     private const val KEY_WANTED = "wanted"
     private const val KEY_ARMED_AT = "armed_at_ms"
+    /** The boot whose shutdown made [KEY_ARMED_AT], and the arm before it ([CoverArms], 2026-11-17). */
+    private const val KEY_ARMED_BOOT = "armed_boot"
+    private const val KEY_PREVIOUS_ARMED_AT = "previous_armed_at_ms"
     private const val KEY_LAUNCHER_HANDOVER_AT = "launcher_handover_at_ms"
     private const val KEY_SWITCH = "switch_on"
 
@@ -387,7 +390,23 @@ object BootCover {
         // SYNCHRONOUS: written before the receiver returns - an OEM shutdown path may not flush
         // pending package settings (qa-16b-code #3).
         setEnabled(app, armed, "shutdown", synchronous = true)
-        if (armed == true) prefs(app).edit().putLong(KEY_ARMED_AT, System.currentTimeMillis()).commit()
+        if (armed == true) {
+            val next = coverArmed(arms(app), BootCoverGuard.bootCount(app), System.currentTimeMillis())
+            prefs(app).edit()
+                .putLong(KEY_ARMED_AT, next.atMs ?: 0L)
+                .putInt(KEY_ARMED_BOOT, next.boot)
+                .putLong(KEY_PREVIOUS_ARMED_AT, next.previousAtMs ?: 0L)
+                .commit()
+        }
+    }
+
+    private fun arms(app: Context): CoverArms {
+        val prefs = prefs(app)
+        return CoverArms(
+            atMs = prefs.getLong(KEY_ARMED_AT, 0L).takeIf { it > 0L },
+            boot = prefs.getInt(KEY_ARMED_BOOT, -1),
+            previousAtMs = prefs.getLong(KEY_PREVIOUS_ARMED_AT, 0L).takeIf { it > 0L },
+        )
     }
 
     private fun prefs(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -406,7 +425,8 @@ object BootCover {
         return com.kidslauncher.mdm.server.dto.BootCoverReport(
             wanted = wanted(app),
             tripped = coverGuardTripped(record),
-            lastArmedAtMs = prefs(app).getLong(KEY_ARMED_AT, 0L).takeIf { it > 0L },
+            // During the boot whose shutdown armed it, the arm before (2026-11-17: no false "wasn't shown").
+            lastArmedAtMs = reportedCoverArm(arms(app), BootCoverGuard.bootCount(app)),
             lastShownAtMs = record?.shownAtMs,
             lastHandover = by,
             lastHandoverAtMs = at,

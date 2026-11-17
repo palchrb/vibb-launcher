@@ -13,6 +13,10 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   least, so its status-bar icon stays while the anchor runs (Android has no hidden FGS). The filter's "kobler til …",
   Play's install mode, the ring and the assistant's setup notice carry `ic_stat_vibb` too (design 100 §4; every
   `ic_stat_*` drawable has literal colours - a `?android:textColor` fill draws an empty disc in SystemUI, M10).
+  Since 2026-11-17 `ic_stat_vibb` is the mark's two-ring variant from the user's logo set (Logo_design_request5: two
+  rings and the core, white on transparent, the mark in the 20 dp live area of 24 dp - the four rings blurred at 24 px
+  in the shade and 33 px in the status bar on 240 dpi), a source file with its origin in the header (NOTICE.md);
+  `launcher/scripts/vibb-icon.py` no longer writes it.
   `KidVpnService` goes foreground first in `onCreate` as before and drops it (`stopForeground(STOP_FOREGROUND_REMOVE)`,
   only on `VpnSettle.DROP` in `settleForeground`) once the tunnel is up **and** `isAlwaysOn` (a throw counts as not):
   AOSP's `Vpn.establish` binds an established VpnService from system_server with `BIND_AUTO_CREATE |
