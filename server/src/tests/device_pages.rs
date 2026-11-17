@@ -1089,7 +1089,20 @@ async fn web_filter_holds_the_phones_parts() {
     assert!(list(1).contains("<option value=\"default\">As for everyone (On)</option>"));
     assert!(list(2).contains("<option value=\"default\" selected>As for everyone (Off)</option>"));
     assert!(list(1).contains("<input type=\"hidden\" name=\"back\" value=\"filter\">"));
-    assert!(html.contains("As for everyone follows the switch in Settings › Web Filter."));
+    // Design 113: the option says it; no footer under the lists.
+    assert!(!html.contains("As for everyone follows the switch"));
+    // The Sign-in row shares the filter switch's group, its state as the row's value.
+    let filter_group = &filter[..filter.find("</section>").unwrap()];
+    assert!(
+        filter_group.contains(&format!(
+            "href=\"/devices/{id}/logins\" data-row=\"logins\""
+        )),
+        "{filter_group}"
+    );
+    assert!(
+        filter_group.contains("<span class=\"row-value\">Wi-Fi: on · Apps: off</span>"),
+        "{filter_group}"
+    );
     let nb = app
         .get_page(
             &format!("{}?lang=nb", device_page(id, Section::Filter)),
@@ -1179,8 +1192,14 @@ async fn web_filter_holds_the_phones_parts() {
             .unwrap();
         assert!(field.has("required") && field.has("pattern"));
     }
-    // The log: off by default, no list; the switch saves itself.
+    // The log: off by default, no list; the switch saves itself. Off erases the log: said in view (design 113 QA
+    // H1), the retention behind the ⓘ.
     assert_eq!(input_checked(&html, "dns_log_enabled", "on"), Some(false));
+    assert!(
+        group("log").contains("<div class=\"group-footer\">Off deletes the log."),
+        "{}",
+        group("log")
+    );
     assert!(!html.contains("data-group=\"log-events\""));
     assert_saves_without_js(&html, &["vpn_filter_enabled", "setting", "dns_log_enabled"]);
     assert!(!autosaves(&html, "domain"));

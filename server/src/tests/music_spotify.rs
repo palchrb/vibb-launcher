@@ -5100,17 +5100,14 @@ mod phones {
         let bound = page().await;
         assert!(
             bound.contains(
-                "spotify.com<span class=\"row-sub\" data-spotify-override>Not applied while this phone plays Spotify</span>"
+                "spotify.com<span class=\"row-sub\" data-spotify-override>Off while Spotify plays</span>"
             ),
             "{bound}"
         );
         assert!(bound.contains("ads.example</span>"), "{bound}");
         assert_eq!(bound.matches("data-spotify-override").count(), 1);
-        // One footer under the filter switch while bound; the rest behind its ⓘ (qa-26c-merge2-code
-        // M2).
-        assert!(bound.contains(
-            "Blocks the lists and domains below, except Spotify&#39;s while this phone plays Spotify."
-        ));
+        // One footer under the filter switch while bound, its ⓘ alone (qa-26c-merge2-code M2, design 113).
+        assert!(!bound.contains("Blocks the lists and domains below"));
         let filter = &bound[bound.find("<section id=\"filter\"").unwrap()..];
         let filter = &filter[..filter.find("</section>").unwrap()];
         assert_eq!(filter.matches("group-footer").count(), 1, "{filter}");

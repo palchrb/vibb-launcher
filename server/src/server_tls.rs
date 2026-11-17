@@ -835,12 +835,19 @@ pub async fn intake(state: &AppState, device_id: i64, raw: Option<&serde_json::V
 /// The device page's group (Advanced › Certificate check): the state as one line (and what the phone itself reports,
 /// code QA M-1), the last refusal as an alarm, the recovery address, the buttons that apply.
 pub struct Card {
+    /// The state, the row's label under the "Certificate check" header (design 113: "On", "Watching - on from …").
     pub line: String,
-    /// A second sentence: the phone hasn't taken the state, or says its check is on while stopped.
+    /// A second sentence, behind the row's ⓘ: the phone hasn't taken the state, or says its check is on while
+    /// stopped.
     pub detail: Option<String>,
+    /// The line is a wrong state (orange): `stopped`, `stopped_unnamed`, `on_cannot`, `on_phone_off`.
+    pub warn: bool,
     pub alarm: Option<String>,
-    /// The plain-http tailnet address to point a refusing phone at, or where to find it (H-1).
-    pub recovery: String,
+    /// The recovery address row's value: the plain-http tailnet address to point a refusing phone at, or
+    /// "Unknown" (H-1).
+    pub recovery_value: String,
+    /// The recovery address row's ⓘ: how to use it, or where to find it.
+    pub recovery_info: String,
     /// "Turn off the certificate check" (watching or on).
     pub can_turn_off: bool,
     /// "Turn it on again" (off).
@@ -912,18 +919,20 @@ pub fn card(
     // nothing is checked; the watch counts, and the phone takes `on`, only at a sync over https.
     let no_certificate = row.phone_enforcing.is_some() && row.seen_in_set.is_none();
     let no_certificate_detail = || t(lang, "server_tls.no_certificate").to_string();
-    let (line, detail) = match row.state {
+    let (line, detail, warn) = match row.state {
         State::On => match row.phone_enforcing {
-            Some(true) => (t(lang, "server_tls.on").to_string(), None),
+            Some(true) => (t(lang, "server_tls.on").to_string(), None, false),
             _ if cannot_pin => (
                 t_params(lang, "server_tls.on_cannot", &[("issuer", &issuer_outside)]),
                 None,
+                true,
             ),
             _ if no_certificate => (
                 t(lang, "server_tls.on_phone_off").to_string(),
                 Some(no_certificate_detail()),
+                true,
             ),
-            _ => (t(lang, "server_tls.on_pending").to_string(), None),
+            _ => (t(lang, "server_tls.on_pending").to_string(), None, false),
         },
         State::Off => {
             let line = t_params(
@@ -946,7 +955,7 @@ pub fn card(
             );
             let detail = (row.phone_enforcing == Some(true))
                 .then(|| t(lang, "server_tls.off_pending").to_string());
-            (line, detail)
+            (line, detail, false)
         }
         State::Watching => {
             let line = match (row.stopped_at, row.outside.last()) {
@@ -977,7 +986,7 @@ pub fn card(
             } else {
                 None
             };
-            (line, detail)
+            (line, detail, row.stopped_at.is_some())
         }
     };
     // M-1: kept while the phone still sends it (it hasn't reached this server through a working connection since),
@@ -1004,15 +1013,23 @@ pub fn card(
                 format!("{text} {}", t(lang, "server_tls.refused_closed"))
             }
         });
-    let recovery = match recovery {
-        Some(url) => t_params(lang, "server_tls.recovery", &[("url", url)]),
-        None => t(lang, "server_tls.recovery_unknown").to_string(),
+    let (recovery_value, recovery_info) = match recovery {
+        Some(url) => (
+            url.to_string(),
+            t(lang, "server_tls.recovery_info").to_string(),
+        ),
+        None => (
+            t(lang, "server_tls.recovery_unknown").to_string(),
+            t(lang, "server_tls.recovery_unknown_info").to_string(),
+        ),
     };
     Card {
         line,
         detail,
+        warn,
         alarm,
-        recovery,
+        recovery_value,
+        recovery_info,
         can_turn_off: row.state != State::Off,
         can_watch: row.state == State::Off,
         // "Turn the check on now" also for a watched phone that says its check is on ("phone_says_on" names it).
@@ -1431,7 +1448,16 @@ mod tests {
         let alarm = card.alarm.unwrap();
         assert!(alarm.contains("at 10:00"), "{alarm}");
         assert!(!card.notice.unwrap().0.contains("hears it now"));
-        assert!(card.recovery.contains("DEPLOY.md"), "{}", card.recovery);
+        assert!(!card.warn, "off is no wrong state");
+        assert_eq!(
+            card.recovery_value,
+            t(crate::i18n::Lang::En, "server_tls.recovery_unknown")
+        );
+        assert!(
+            card.recovery_info.contains("DEPLOY.md"),
+            "{}",
+            card.recovery_info
+        );
         // Dropped by the phone since: still shown a week, said so; then gone.
         let mut closed = enforcing_off.clone();
         closed.phone_enforcing = Some(false);
@@ -1450,7 +1476,11 @@ mod tests {
                 .contains(t(crate::i18n::Lang::En, "server_tls.refused_closed"))
         );
         assert!(shown.detail.is_none());
-        assert!(shown.recovery.contains("http://100.101.102.103:3101"));
+        assert_eq!(shown.recovery_value, "http://100.101.102.103:3101");
+        assert_eq!(
+            shown.recovery_info,
+            t(crate::i18n::Lang::En, "server_tls.recovery_info")
+        );
         assert!(
             super::card(&closed, &zone, at(11, 12), None, None)
                 .alarm
@@ -1468,7 +1498,9 @@ mod tests {
             seen_name: "GTS Root R4".into(),
             ..Row::default()
         };
-        let line = super::card(&cannot, &zone, now, None, None).line;
+        let cannot_card = super::card(&cannot, &zone, now, None, None);
+        assert!(cannot_card.warn, "on_cannot is orange");
+        let line = cannot_card.line;
         assert!(line.contains("GTS Root R4"), "{line}");
         assert_ne!(line, t(crate::i18n::Lang::En, "server_tls.on"));
         // Its own chain in the set, an old outside row still sent (a hostile network once): it will take it.
@@ -1478,19 +1510,25 @@ mod tests {
             open: true,
             ..outside("seen", "wifi", 1)
         }];
+        let pending_card = super::card(&pending, &zone, now, None, None);
         assert_eq!(
-            super::card(&pending, &zone, now, None, None).line,
+            pending_card.line,
             t(crate::i18n::Lang::En, "server_tls.on_pending")
         );
+        assert!(!pending_card.warn);
         // A stopped phone without a row of its own names no issuer.
         let stopped = Row {
             stopped_at: Some(now),
             ..Row::default()
         };
+        let stopped_card = super::card(&stopped, &zone, now, None, None);
         assert_eq!(
-            super::card(&stopped, &zone, now, None, None).line,
+            stopped_card.line,
             t(crate::i18n::Lang::En, "server_tls.stopped_unnamed")
         );
+        assert!(stopped_card.warn, "stopped is orange");
+        // Watching, not stopped: grey.
+        assert!(!super::card(&Row::default(), &zone, now, None, None).warn);
     }
 
     /// Verification L-a: 8 `seen` rows after a refusal (forged, or a ring that is never dropped) never push it off
@@ -1567,6 +1605,7 @@ mod tests {
         };
         let shown = card(&on, &zone, now, None, None);
         assert_eq!(shown.line, t(lang, "server_tls.on_phone_off"));
+        assert!(shown.warn, "on_phone_off is orange");
         assert_eq!(
             shown.detail.as_deref(),
             Some(t(lang, "server_tls.no_certificate"))

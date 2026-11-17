@@ -802,12 +802,9 @@ async fn open_for_setup_is_the_advanced_pages_first_row() {
     );
     assert!(setup.contains(&button), "{setup}");
     assert!(setup.contains("<input type=\"hidden\" name=\"back\" value=\"advanced\">"));
-    // Design 103 §3: one line and "Open now" (the long note with the phone's name is gone).
-    assert!(
-        setup.contains("Apps, Settings and Play open for 2 hours."),
-        "{setup}"
-    );
-    assert!(setup.contains(">Open now</button>"), "{setup}");
+    // Design 103 §3, design 113: no line, "Open for 2 h" (the long note with the phone's name is gone).
+    assert!(!setup.contains("Apps, Settings and Play open"), "{setup}");
+    assert!(setup.contains(">Open for 2\u{a0}h</button>"), "{setup}");
     assert!(!setup.contains("Play Store open on"), "{setup}");
     let summary = app
         .get_page(&format!("/devices/{id}"), &cookie)

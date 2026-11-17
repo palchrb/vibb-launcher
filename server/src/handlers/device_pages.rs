@@ -162,8 +162,6 @@ impl PolicyProblem {
 pub enum PlayNote {
     /// Play install mode is on: the Play Store opens until then.
     InstallMode { until_ms: i64 },
-    /// The nightly Play update window is open (screen off).
-    UpdateWindow,
     /// A device-admin policy waits for a restart (`models::admin_policy_effects`).
     RestartOnce(Vec<&'static str>),
     /// Android won't suspend Play on this phone; `block_on`: the kiosk app block is on.
@@ -189,14 +187,6 @@ impl PlayNote {
                 value: None,
                 sub: None,
                 detail: Some(t(lang, "device.advanced.play.install_mode_sub").to_string()),
-                fix: None,
-            },
-            PlayNote::UpdateWindow => Note {
-                warning: false,
-                title: t(lang, "device.advanced.play.store").to_string(),
-                value: Some(t(lang, "device.advanced.play.updating").to_string()),
-                sub: None,
-                detail: Some(t(lang, "device.advanced.play.updating_sub").to_string()),
                 fix: None,
             },
             PlayNote::RestartOnce(effects) => Note {
@@ -281,9 +271,7 @@ pub(crate) fn play_notes(
     if let Some(until_ms) = status.install_mode_until_ms.filter(|until| *until > now_ms) {
         notes.push(PlayNote::InstallMode { until_ms });
     }
-    if status.play_window_active {
-        notes.push(PlayNote::UpdateWindow);
-    }
+    // The nightly Play update window (`play_window_active`) is the good state: no row (design 113, P4).
     let effects =
         crate::models::admin_policy_effects(status.admin_policies_pending_json.as_deref());
     if !effects.is_empty() {
@@ -885,8 +873,8 @@ struct AdvancedTemplate {
     title: String,
     device: Device,
     hardening: Hardening,
-    /// The last report's `backup_service_enabled`: `Some(true)` a warning, `Some(false)` "Off",
-    /// `None` (older launcher, unreadable) no row.
+    /// The last report's `backup_service_enabled`: `Some(true)` a warning; `Some(false)` and `None`
+    /// (older launcher, unreadable) nothing (design 113: no row in any state).
     backup_service_enabled: Option<bool>,
     block_activity_start: bool,
     /// App screens: warnings above the group, rows in it.
@@ -1764,7 +1752,7 @@ struct FilterTemplate {
     spotify_overridden: Vec<i64>,
     /// The site-wide blocked domains it overrides on this phone.
     spotify_global: Vec<String>,
-    /// Design 102 §5: the Sign-in row's sub-line ("Wi-Fi: på · Apper: av").
+    /// Design 102 §5: the Sign-in row's value ("Wi-Fi: på · Apper: av"; design 113: was its sub-line).
     logins_sub: String,
 }
 crate::i18n::words!(FilterTemplate);
@@ -2896,7 +2884,6 @@ mod tests {
         assert!(play_notes(None, true, 0).is_empty());
         let status = DeviceStatus {
             install_mode_until_ms: Some(10_000),
-            play_window_active: true,
             admin_policies_pending_json: Some(r#"["disable-camera","wipe-data"]"#.to_string()),
             play_store_suspendable: Some(false),
             ..Default::default()
@@ -2906,7 +2893,6 @@ mod tests {
             notes,
             vec![
                 PlayNote::InstallMode { until_ms: 10_000 },
-                PlayNote::UpdateWindow,
                 PlayNote::RestartOnce(vec!["device.advanced.play.effect.camera"]),
                 PlayNote::NotSuspendable { block_on: false },
             ]
@@ -2929,10 +2915,9 @@ mod tests {
             .collect();
         assert_eq!(nb[0].title, "Play Butikk er åpen til 01:00");
         assert!(words[0].warning);
-        assert!(!words[1].warning);
-        assert_eq!(words[2].title, "Restart the phone once");
+        assert_eq!(words[1].title, "Restart the phone once");
         assert!(
-            words[3]
+            words[2]
                 .detail
                 .as_deref()
                 .unwrap()

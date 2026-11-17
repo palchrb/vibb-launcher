@@ -14,9 +14,9 @@
 
     {#- Design 93 §6.6, design 103 §3: "Åpne for oppsett" (was the summary's "Unlock 2 h…"), the page's first row, for a
         phone that takes the command. The row opens in place (its chevron turns) and toggles itself shut; the sheet
-        holds one line and one button. Both forms carry back=advanced and land here, #setup, with the flash in the
-        group. While open, the row says "til 17:10"; the line shows only when the row has no value (Play's install
-        mode, an open with no known end: design 103-11). -#}
+        holds the button (design 113: its words say the 2 hours). Both forms carry back=advanced and land here, #setup,
+        with the flash in the group. While open, the row says "til 17:10"; the line shows only when the row has no
+        value (Play's install mode, an open with no known end: design 103-11). -#}
     {% if let Some(s) = setup %}
     <section id="setup" aria-label="{{ self.t("device.advanced.setup.title") }}">
         <div class="group group-icons">
@@ -35,7 +35,6 @@
                         <button type="submit" class="row row-button">{{ self.t("device.summary.lock_again") }}</button>
                     </form>
                     {% else %}
-                    <p class="row row-note">{{ self.t("device.advanced.setup.line") }}</p>
                     {% if let Some(line) = s.on_lock %}<p class="row row-note qa-warn">{{ line }}</p>{% endif %}
                     <form method="post" action="/devices/{{ device.id }}/start-pause#setup" class="cell">
                         <input type="hidden" name="back" value="advanced">
@@ -56,7 +55,14 @@
         {% match backup_service_enabled %}
         {% when Some(true) %}
         <div class="attention attention-alarm" data-warning="google-backup">
-            <span class="attention-text">{{ self.t("device.advanced.backup_on") }}<span class="attention-sub">{{ self.t("device.advanced.backup_on_sub") }}</span></span>
+            <div class="attention-text">{{ self.t("device.advanced.backup_on") }}<div class="attention-sub">
+                <details class="info">
+                    <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                    <div class="info-panel">
+                        <p>{{ self.t("device.advanced.backup_on_sub") }}</p>
+                        <p>{{ self.t("device.advanced.backup_info") }}</p>
+                    </div>
+                </details></div></div>
         </div>
         {% when _ %}
         {% endmatch %}
@@ -99,10 +105,11 @@
                     <input type="checkbox" role="switch" class="sw" name="disallow_screen_capture" value="on" {% if hardening.disallow_screen_capture %}checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
                 </label>
             </div>
-            <div class="group-footer">{{ self.t("device.advanced.restrictions_footer") }}
+            <div class="group-footer">
                 <details class="info">
                     <summary aria-label="{{ self.t("device.advanced.restrictions_info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                     <div class="info-panel">
+                        <p>{{ self.t("device.advanced.restrictions_footer") }}</p>
                         <p>{{ self.t("device.advanced.restrictions_info") }}</p>
                     </div>
                 </details>
@@ -114,10 +121,11 @@
                     <input type="checkbox" role="switch" class="sw" name="disallow_debugging_features" value="on" {% if hardening.disallow_debugging_features %}checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
                 </label>
             </div>
-            <div class="group-footer">{{ self.t("device.advanced.debugging_footer") }}
+            <div class="group-footer">
                 <details class="info">
                     <summary aria-label="{{ self.t("device.advanced.debugging_info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                     <div class="info-panel">
+                        <p>{{ self.t("device.advanced.debugging_footer") }}</p>
                         <p>{{ self.t("device.advanced.debugging_info") }}</p>
                     </div>
                 </details>
@@ -129,27 +137,16 @@
                     <input type="checkbox" role="switch" class="sw" name="disallow_safe_boot" value="on" {% if hardening.disallow_safe_boot %}checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
                 </label>
             </div>
-            <div class="group-footer">{{ self.t("device.advanced.safe_boot_footer") }}
+            <div class="group-footer">
                 <details class="info">
                     <summary aria-label="{{ self.t("device.advanced.safe_boot_info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                     <div class="info-panel">
+                        <p>{{ self.t("device.advanced.safe_boot_footer") }}</p>
                         <p>{{ self.t("device.advanced.safe_boot_info") }}</p>
                     </div>
                 </details>
             </div>
 
-            {% if let Some(on) = backup_service_enabled %}
-            <div class="group">
-                <details class="info cell" data-row="google-backup">
-                    <summary class="row">
-                        <span class="row-label">{{ self.t("device.advanced.backup") }}</span>
-                        <span class="row-value{% if on %} row-value-alarm{% endif %}">{% if on %}{{ self.t("common.on") }}{% else %}{{ self.t("common.off") }}{% endif %}</span>
-                        <svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("common.more_info") }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>
-                    </summary>
-                    <div class="info-panel"><p>{{ self.t("device.advanced.backup_info") }}</p></div>
-                </details>
-            </div>
-            {% endif %}
             <noscript><div class="group"><button type="submit" class="row row-button">{{ self.t("device.advanced.save_restrictions") }}</button></div></noscript>
         </form>
     </section>
@@ -159,15 +156,29 @@
         (#wifi-signin) - a save never jumps to the top. -#}
     <section id="wifi-signin" aria-labelledby="wifi-signin-title">
         <h2 class="group-header" id="wifi-signin-title">{{ self.t("logins.code.header") }}</h2>
-        <form method="post" action="/devices/{{ device.id }}/logins#wifi-signin" class="group">
-            <input type="hidden" name="section" value="wifi_signin">
-            <label class="row">
-                <span class="row-label">{{ self.t("logins.code.label") }}<span class="row-sub">{{ self.t("logins.code.sub") }}</span>{% if let Some(key) = wifi_signin.warning %}<span class="row-sub tone-orange" data-hint="wifi-signin">{{ self.t(key) }}</span>{% endif %}</span>
-                <input type="checkbox" role="switch" class="sw" name="on" value="on"{% if wifi_signin.require_code %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
-            </label>
-            <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
-        </form>
-        <p class="group-footer">{{ self.t("logins.code.footer") }} <a href="/devices/{{ device.id }}/logins#logins-wifi">{{ self.t("logins.page") }}</a></p>
+        <div class="group">
+            <form method="post" action="/devices/{{ device.id }}/logins#wifi-signin" class="cell">
+                <input type="hidden" name="section" value="wifi_signin">
+                <label class="row">
+                    <span class="row-label">{{ self.t("logins.code.label") }}{% if let Some(key) = wifi_signin.warning %}<span class="row-sub tone-orange" data-hint="wifi-signin">{{ self.t(key) }}</span>{% endif %}</span>
+                    <input type="checkbox" role="switch" class="sw" name="on" value="on"{% if wifi_signin.require_code %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                </label>
+                <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
+            </form>
+            <a class="row" href="/devices/{{ device.id }}/logins#logins-wifi">
+                <span class="row-label">{{ self.t("logins.page") }}</span>
+                <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </a>
+        </div>
+        <div class="group-footer">
+            <details class="info">
+                <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    <p>{{ self.t("logins.code.sub") }}</p>
+                    <p>{{ self.t("logins.code.footer") }}</p>
+                </div>
+            </details>
+        </div>
     </section>
 
     {% if device.enrolled_at.is_some() %}
@@ -188,10 +199,11 @@
             {% include "partials/note_row.html" %}
             {% endfor %}
         </div>
-        <div class="group-footer">{{ self.t("device.advanced.block_screens_footer") }}
+        <div class="group-footer">
             <details class="info">
                 <summary aria-label="{{ self.t("device.advanced.block_screens_info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
+                    <p>{{ self.t("device.advanced.block_screens_footer") }}</p>
                     <p>{{ self.t("device.advanced.block_screens_info") }}</p>
                 </div>
             </details>
@@ -205,15 +217,15 @@
         {% endfor %}
         <form method="post" action="/devices/{{ device.id }}/kiosk-escapes#updates" class="group">
             <label class="row">
-                <span class="row-label">{{ self.t("device.advanced.fence") }}<span class="row-sub">{{ self.t("device.advanced.fence_sub") }}</span></span>
+                <span class="row-label">{{ self.t("device.advanced.fence") }}</span>
                 <input type="checkbox" role="switch" class="sw" name="update_fence" value="on" {% if escapes.update_fence %}checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
             </label>
             <label class="row">
-                <span class="row-label">{{ self.t("device.advanced.notification_filter") }}<span class="row-sub">{{ self.t("device.advanced.notification_filter_sub") }}</span></span>
+                <span class="row-label">{{ self.t("device.advanced.notification_filter") }}</span>
                 <input type="checkbox" role="switch" class="sw" name="notification_auto_cancel" value="on" {% if escapes.notification_auto_cancel %}checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
             </label>
             <label class="row">
-                <span class="row-label">{{ self.t("device.advanced.boot_cover") }}<span class="row-sub">{{ self.t("device.advanced.boot_cover_sub") }}</span></span>
+                <span class="row-label">{{ self.t("device.advanced.boot_cover") }}</span>
                 <input type="checkbox" role="switch" class="sw" name="boot_cover" value="on" {% if escapes.boot_cover %}checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
             </label>
             {% for note in escape_rows %}
@@ -221,10 +233,14 @@
             {% endfor %}
             <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
         </form>
-        <div class="group-footer">{{ self.t("device.advanced.updates_footer") }}
+        <div class="group-footer">
             <details class="info">
                 <summary aria-label="{{ self.t("device.advanced.updates_info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
+                    <p>{{ self.t("device.advanced.updates_footer") }}</p>
+                    <p>{{ self.t("device.advanced.fence_sub") }}</p>
+                    <p>{{ self.t("device.advanced.notification_filter_sub") }}</p>
+                    <p>{{ self.t("device.advanced.boot_cover_sub") }}</p>
                     <p>{{ self.t("device.advanced.updates_info") }}</p>
                 </div>
             </details>
@@ -262,10 +278,11 @@
             </form>
             {% endif %}
         </div>
-        <div class="group-footer">{{ self.t("advanced.spotify_diag.footer") }}
+        <div class="group-footer">
             <details class="info">
                 <summary aria-label="{{ self.t("advanced.spotify_diag.info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
+                    <p>{{ self.t("advanced.spotify_diag.footer") }}</p>
                     <p>{{ self.t("advanced.spotify_diag.info") }}</p>
                 </div>
             </details>
@@ -277,7 +294,11 @@
         <h2 class="group-header" id="connection-title">{{ self.t("device.about.connection") }}</h2>
         {% if !access.has_token %}
         <div class="attention attention-alarm" data-warning="access-removed">
-            <span class="attention-text">{{ self.t("device.advanced.access_removed") }}<span class="attention-sub">{{ self.t("device.advanced.access_removed_sub") }}</span></span>
+            <div class="attention-text">{{ self.t("device.advanced.access_removed") }}<div class="attention-sub">
+                <details class="info">
+                    <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                    <div class="info-panel"><p>{{ self.t("device.advanced.access_removed_sub") }}</p></div>
+                </details></div></div>
         </div>
         {% endif %}
         {% if let Some(until) = access.typed_paused_until %}
@@ -336,7 +357,12 @@
             <p class="flash{% if error %} flash-error{% endif %}" role="status">{{ text }}</p>
             {% endif %}
         </div>
-        <p class="group-footer">{{ self.t("device.advanced.connection_footer") }}</p>
+        <div class="group-footer">
+            <details class="info">
+                <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel"><p>{{ self.t("device.advanced.connection_footer") }}</p></div>
+            </details>
+        </div>
     </section>
 
     {#- Design 76: the certificate check - the state as one row, the last refusal as an alarm, the parent's one-shots
@@ -350,12 +376,27 @@
         </div>
         {% endif %}
         <div class="group">
+            {% if let Some(detail) = tls.detail %}
+            <details class="info cell" data-row="server-tls">
+                <summary class="row">
+                    <span class="row-label{% if tls.warn %} tone-orange{% endif %}">{{ tls.line }}</span>
+                    <svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("common.more_info") }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>
+                </summary>
+                <div class="info-panel"><p>{{ detail }}</p></div>
+            </details>
+            {% else %}
             <div class="row" data-row="server-tls">
-                <span class="row-label">{{ tls.line }}{% if let Some(detail) = tls.detail %} {{ detail }}{% endif %}</span>
+                <span class="row-label{% if tls.warn %} tone-orange{% endif %}">{{ tls.line }}</span>
             </div>
-            <div class="row" data-row="server-tls-recovery">
-                <span class="row-label">{{ tls.recovery }}</span>
-            </div>
+            {% endif %}
+            <details class="info cell" data-row="server-tls-recovery">
+                <summary class="row">
+                    <span class="row-label">{{ self.t("server_tls.recovery") }}</span>
+                    <span class="row-value">{{ tls.recovery_value }}</span>
+                    <svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("common.more_info") }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>
+                </summary>
+                <div class="info-panel"><p>{{ tls.recovery_info }}</p></div>
+            </details>
             {% if tls.can_turn_on %}
             <form method="post" action="/devices/{{ device.id }}/server-tls/on#server-tls" class="cell">
                 <button type="submit" class="row row-button">{{ self.t("server_tls.turn_on_now") }}</button>
@@ -384,7 +425,12 @@
             <p class="flash{% if error %} flash-error{% endif %}" role="status">{{ text }}</p>
             {% endif %}
         </div>
-        <p class="group-footer">{{ self.t("server_tls.footer") }}</p>
+        <div class="group-footer">
+            <details class="info">
+                <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel"><p>{{ self.t("server_tls.footer") }}</p></div>
+            </details>
+        </div>
     </section>
     {% endif %}
     {% endif %}

@@ -93,7 +93,8 @@ async fn a_launcher_report_moves_the_state() {
     );
     let group = advanced(&app, id, &cookie, "").await.unwrap();
     assert!(
-        group.contains("this phone saw a certificate from emSign Root CA - G1 on Wi-Fi"),
+        group
+            .contains("<span class=\"row-label tone-orange\">Not on: emSign Root CA - G1 on Wi-Fi"),
         "{group}"
     );
     assert!(
@@ -151,7 +152,11 @@ async fn a_launcher_report_moves_the_state() {
     }
     let group = advanced(&app, id, &cookie, "").await.unwrap();
     assert!(
-        group.contains("Recovery address: http://100.101.102.103:3101"),
+        group.contains("<span class=\"row-label\">Recovery address</span>"),
+        "{group}"
+    );
+    assert!(
+        group.contains("<span class=\"row-value\">http://100.101.102.103:3101</span>"),
         "{group}"
     );
     sqlx::query("UPDATE provisioning_settings SET server_url = ''")
@@ -189,7 +194,7 @@ async fn a_launcher_report_moves_the_state() {
     );
     let group = advanced(&app, other, &cookie, "").await.unwrap();
     assert!(
-        group.contains("Certificate check: on - only Let&#39;s Encrypt or ZeroSSL"),
+        group.contains("<span class=\"row-label\">On</span>"),
         "{group}"
     );
 }
@@ -203,7 +208,7 @@ async fn a_fresh_phone_is_watched_and_shows_when_it_switches_on() {
     assert_eq!(app.policy(&token).await["server_tls"], json!({}));
     let group = advanced(&app, id, &cookie, "").await.unwrap();
     assert!(
-        group.contains("Certificate check: watching - on from"),
+        group.contains("<span class=\"row-label\">Watching - on from"),
         "{group}"
     );
     assert!(

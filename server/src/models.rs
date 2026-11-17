@@ -517,7 +517,7 @@ pub struct DeviceStatus {
     pub time_state_json: Option<String>,
     /// Play install mode end (wall-clock ms) while active (migrations/0026).
     pub install_mode_until_ms: Option<i64>,
-    pub play_window_active: bool,
+    // `play_window_active` stays stored (the report's column) but no page reads it since design 113 (P4).
     /// See `StatusReportRequest.play_store_suspendable` (migrations/0029).
     pub play_store_suspendable: Option<bool>,
     /// The launcher's `lock_state` (handy step 10, migrations/0030), see `kid_lock::LockState`.

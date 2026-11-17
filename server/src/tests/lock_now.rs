@@ -504,7 +504,8 @@ async fn the_advanced_page_opens_for_setup_and_lands_back_there() {
         .await
         .text();
     assert!(page.contains("id=\"setup-sheet\""), "{page}");
-    // Design 103 §3: one row that opens in place - no second tile and title, no Close, one line and "Open now".
+    // Design 103 §3: one row that opens in place - no second tile and title, no Close; design 113: no line, the button
+    // says the 2 hours ("Open for 2 h").
     let words = |key| crate::i18n::t(crate::i18n::Lang::En, key);
     let sheet = |page: &str| -> String {
         let at = page.find("id=\"setup-sheet\"").unwrap();
@@ -519,13 +520,7 @@ async fn the_advanced_page_opens_for_setup_and_lands_back_there() {
         "{closed}"
     );
     assert!(!closed.contains("qa-danger"), "{closed}");
-    assert!(
-        closed.contains(&format!(
-            "<p class=\"row row-note\">{}</p>",
-            words("device.advanced.setup.line")
-        )),
-        "{closed}"
-    );
+    assert!(!closed.contains("Apps, Settings and Play open"), "{closed}");
     assert!(
         closed.contains(words("device.advanced.setup.open_now")),
         "{closed}"

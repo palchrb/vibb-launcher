@@ -208,15 +208,6 @@ fn wait_key(reason: &str) -> Option<&'static str> {
     })
 }
 
-/// How the boot cover handed over at the last start.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Handover {
-    /// The cover saw Vibb ready and stepped aside by itself.
-    ByItself,
-    /// Vibb took over when it started.
-    WhenVibbStarted,
-}
-
 /// One thing the phone's reports say about the update fence, the notification filter or the boot
 /// cover (design 31 M5: typed; [EscapeNote::note] words it).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -249,12 +240,6 @@ pub enum EscapeNote {
     BootCoverNeedsUpdate,
     /// The boot cover crashed twice in one start and switched itself off.
     BootCoverTripped,
-    /// Armed at the next shutdown or restart.
-    BootCoverArmed,
-    BootCoverShown {
-        at_ms: i64,
-        handover: Option<Handover>,
-    },
     /// Armed at a shutdown, but not shown at the start after it.
     BootCoverNotShown {
         armed_at_ms: i64,
@@ -275,9 +260,7 @@ impl EscapeNote {
             EscapeNote::LastRelease(release) => release.failed(),
             EscapeNote::Fencing { .. }
             | EscapeNote::UpdateWaiting { .. }
-            | EscapeNote::FilterNotActive
-            | EscapeNote::BootCoverArmed
-            | EscapeNote::BootCoverShown { .. } => false,
+            | EscapeNote::FilterNotActive => false,
         }
     }
 
@@ -426,25 +409,6 @@ impl EscapeNote {
                 None,
                 w("device.advanced.escape.cover_tripped_sub"),
             ),
-            EscapeNote::BootCoverArmed => (
-                "device.advanced.escape.cover_next",
-                w("device.advanced.escape.cover_ready"),
-                w("device.advanced.escape.cover_ready_sub"),
-            ),
-            EscapeNote::BootCoverShown { at_ms, handover } => (
-                "device.advanced.escape.cover_last",
-                Some(t_params(
-                    lang,
-                    "device.advanced.escape.cover_shown",
-                    &[("at", &when(*at_ms))],
-                )),
-                handover.and_then(|h| {
-                    w(match h {
-                        Handover::ByItself => "device.advanced.escape.cover_by_itself",
-                        Handover::WhenVibbStarted => "device.advanced.escape.cover_when_started",
-                    })
-                }),
-            ),
             EscapeNote::BootCoverNotShown { armed_at_ms } => (
                 "device.attention.boot_cover_not_shown",
                 None,
@@ -506,7 +470,13 @@ pub fn escapes_card(
         if update_fence && fence.home_role_held == Some(false) {
             card.notes.push(EscapeNote::PartialFence);
         }
-        if let Some(release) = fence.last_release.as_deref().and_then(Release::parse) {
+        // A release that went as planned (`Replaced`) is the good outcome: no row (design 113, P4).
+        if let Some(release) = fence
+            .last_release
+            .as_deref()
+            .and_then(Release::parse)
+            .filter(|r| *r != Release::Replaced)
+        {
             card.notes.push(EscapeNote::LastRelease(release));
         }
         if let Some(tag) = fence.pending_tag.as_deref() {
@@ -579,8 +549,9 @@ pub fn parse_boot_cover(json: Option<&str>) -> Option<BootCoverState> {
 }
 
 /// What the phone says about the boot cover: nothing while the switch is off; "update Vibb" when
-/// the reporting launcher hasn't got it; the phone's state otherwise - a tripped guard is a
-/// warning, so "test it on this phone first" can be checked on Advanced.
+/// the reporting launcher hasn't got it; otherwise only what went wrong - a tripped guard, or a
+/// cover armed and not shown - so "test it on this phone first" can be checked on Advanced. A
+/// cover armed and not yet shown, or shown after its arm, is fine: no note (design 113, P4).
 pub fn boot_cover_notes(
     switch_on: bool,
     capable: bool,
@@ -599,18 +570,11 @@ pub fn boot_cover_notes(
     if state.tripped {
         return vec![EscapeNote::BootCoverTripped];
     }
-    vec![match (state.last_armed_at_ms, state.last_shown_at_ms) {
-        (None, _) => EscapeNote::BootCoverArmed,
-        (Some(armed), Some(shown)) if shown >= armed => EscapeNote::BootCoverShown {
-            at_ms: shown,
-            handover: match state.last_handover.as_deref() {
-                Some("cover") => Some(Handover::ByItself),
-                Some("launcher") => Some(Handover::WhenVibbStarted),
-                _ => None,
-            },
-        },
-        (Some(armed), _) => EscapeNote::BootCoverNotShown { armed_at_ms: armed },
-    }]
+    match (state.last_armed_at_ms, state.last_shown_at_ms) {
+        (None, _) => Vec::new(),
+        (Some(armed), Some(shown)) if shown >= armed => Vec::new(),
+        (Some(armed), _) => vec![EscapeNote::BootCoverNotShown { armed_at_ms: armed }],
+    }
 }
 
 #[cfg(test)]
@@ -645,23 +609,12 @@ mod tests {
             boot_cover_notes(true, false, true, None),
             vec![EscapeNote::BootCoverNeedsUpdate]
         );
-        // Shown after the arm: a row.
+        // Shown after the arm: fine, no note.
         let shown = BootCoverState {
             last_handover: Some("cover".into()),
             ..state.clone()
         };
-        let notes = boot_cover_notes(true, true, true, Some(&shown));
-        assert_eq!(
-            notes,
-            vec![EscapeNote::BootCoverShown {
-                at_ms: 2_000,
-                handover: Some(Handover::ByItself)
-            }]
-        );
-        let note = notes[0].note(&oslo(), at(10_000));
-        assert!(!note.warning);
-        assert_eq!(note.value.as_deref(), Some("Shown 01:00"));
-        assert!(note.detail.unwrap().contains("by itself"));
+        assert!(boot_cover_notes(true, true, true, Some(&shown)).is_empty());
         // Armed but never shown: a warning.
         let missed = BootCoverState {
             last_shown_at_ms: None,
@@ -694,16 +647,8 @@ mod tests {
                 .unwrap()
                 .contains("crashed twice")
         );
-        // Not armed yet.
-        let notes = boot_cover_notes(true, true, true, Some(&BootCoverState::default()));
-        assert_eq!(notes, vec![EscapeNote::BootCoverArmed]);
-        assert!(
-            notes[0]
-                .note(&oslo(), at(0))
-                .detail
-                .unwrap()
-                .contains("power menu")
-        );
+        // Not armed yet: fine, no note.
+        assert!(boot_cover_notes(true, true, true, Some(&BootCoverState::default())).is_empty());
     }
 
     #[test]

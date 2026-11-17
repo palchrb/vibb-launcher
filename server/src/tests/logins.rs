@@ -180,6 +180,15 @@ async fn the_pages_and_their_saves() {
         assert!(html.contains(&format!("id=\"{anchor}\"")), "{anchor}");
     }
     assert!(html.contains(&format!("href=\"/devices/{id}/advanced#wifi-signin\"")));
+    // Design 113: the parent code's row is a label and its state; Chrome's clear note shows while it is off.
+    let code = &html[html.find("data-row=\"wifi-code\"").unwrap()..];
+    let code = &code[..code.find("</a>").unwrap()];
+    assert!(
+        code.contains("<span class=\"row-label\">Parent code</span>")
+            && code.contains("<span class=\"row-value\">On</span>"),
+        "{code}"
+    );
+    assert!(html.contains("Turning this on clears what Chrome has stored"));
     // The Web Filter page links here, with the sub-line.
     let filter = app
         .get_page(&format!("/devices/{id}/filter"), &cookie)
@@ -295,6 +304,14 @@ async fn the_pages_and_their_saves() {
     .unwrap();
     let ticked = app.get_page(&page, &cookie).await.text();
     assert!(ticked.contains("data-row=\"chrome-ticked\""));
+    // The orange line alone, the fix behind its ⓘ.
+    let line = &ticked[ticked.find("data-row=\"chrome-ticked\"").unwrap()..];
+    let line = &line[..line.find("</details>").unwrap()];
+    assert!(
+        line.contains("tone-orange\">Chrome is allowed as a normal app</span>"),
+        "{line}"
+    );
+    assert!(line.contains("Untick it under Apps"), "{line}");
     save(&app, &cookie, id, &[("section", "apps"), ("on", "on")]).await;
     let on: bool =
         sqlx::query_scalar("SELECT login_browser_enabled FROM device_policy WHERE device_id = ?")
@@ -335,6 +352,12 @@ async fn the_apps_page_names_the_login_role() {
             .text()
             .contains("data-login-only")
     );
+    // Design 113: on, the clear note has said its piece.
+    let logins = app
+        .get_page(&format!("/devices/{id}/logins"), &cookie)
+        .await
+        .text();
+    assert!(!logins.contains("Turning this on clears"), "{logins}");
 }
 
 /// `wifi_signin_wide` once across two reports (its key is the session's `opened_ms`), never for blocked

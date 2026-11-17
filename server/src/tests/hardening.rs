@@ -384,18 +384,15 @@ fn restrictions(html: &str) -> &str {
     &html[start..end]
 }
 
-/// The "Backup to Google" row's value, if the row is there.
-fn backup_row(html: &str) -> Option<&str> {
-    let row = &html[html.find("data-row=\"google-backup\"")?..];
-    let value = &row[row.find("row-value")?..];
-    let value = &value[value.find('>')? + 1..];
-    Some(&value[..value.find('<')?])
+/// The old "Backup to Google" row (design 113: gone in every state).
+fn backup_row(html: &str) -> bool {
+    html.contains("data-row=\"google-backup\"")
 }
 
 /// Google account on the phone (docs/setup/google-account.md, migrations/0041): the launcher
-/// reports whether Android's backup service is on. Off is a quiet "Off" row in Advanced ›
-/// Restrictions, on is a warning above the group (and an Attention alarm), and a report without
-/// it (an older launcher, or the phone couldn't read it) shows nothing.
+/// reports whether Android's backup service is on. On is a warning above Advanced › Restrictions
+/// (and an Attention alarm), its words behind its ⓘ; off, or a report without it (an older
+/// launcher, or the phone couldn't read it), shows nothing (design 113).
 #[tokio::test]
 async fn backup_service_state_is_stored_and_shown() {
     let app = TestApp::new().await;
@@ -410,22 +407,19 @@ async fn backup_service_state_is_stored_and_shown() {
 
     // No report yet.
     let html = advanced().await;
-    assert_eq!(backup_row(&html), None);
+    assert!(!backup_row(&html));
     assert!(!html.contains(warning));
 
     // An older launcher: the field is missing - stored as NULL, nothing shown.
     report_backup(&app, &token, None).await;
     assert_eq!(stored_backup(&app, id).await, None);
     let html = advanced().await;
-    assert!(
-        backup_row(&html).is_none() && !html.contains(warning),
-        "{html}"
-    );
+    assert!(!backup_row(&html) && !html.contains(warning), "{html}");
 
     report_backup(&app, &token, Some(json!(false))).await;
     assert_eq!(stored_backup(&app, id).await, Some(false));
     let html = advanced().await;
-    assert_eq!(backup_row(restrictions(&html)), Some("Off"), "{html}");
+    assert!(!backup_row(&html), "{html}");
     assert!(!html.contains(warning));
     // The page keeps the scroll position after the auto-saving switches (no jump to the top).
     assert!(html.contains("/static/scroll-restore.js"));
@@ -434,7 +428,13 @@ async fn backup_service_state_is_stored_and_shown() {
     assert_eq!(stored_backup(&app, id).await, Some(true));
     let html = advanced().await;
     assert!(restrictions(&html).contains(warning), "{html}");
-    assert_eq!(backup_row(restrictions(&html)), Some("On"));
+    assert!(!backup_row(&html), "{html}");
+    // The alarm's title alone, its two sentences behind its ⓘ.
+    let alarm = &html[html.find("data-warning=\"google-backup\"").unwrap()..];
+    let alarm = &alarm[..alarm.find("</details>").unwrap()];
+    let panel = &alarm[alarm.find("info-panel").expect("the alarm's ⓘ")..];
+    assert!(panel.contains("turns it off at its next sync"), "{alarm}");
+    assert!(panel.contains("there is no switch for it"), "{alarm}");
     // The Attention row on the device page links to it.
     let summary = app
         .get_page(&device_page(id, Section::Summary), &cookie)
@@ -446,10 +446,7 @@ async fn backup_service_state_is_stored_and_shown() {
     report_backup(&app, &token, Some(Value::Null)).await;
     assert_eq!(stored_backup(&app, id).await, None);
     let html = advanced().await;
-    assert!(
-        backup_row(&html).is_none() && !html.contains(warning),
-        "{html}"
-    );
+    assert!(!backup_row(&html) && !html.contains(warning), "{html}");
 }
 
 #[tokio::test]
