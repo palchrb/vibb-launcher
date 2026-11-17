@@ -579,12 +579,17 @@ pub fn parse_boot_cover(json: Option<&str>) -> Option<BootCoverState> {
 
 /// What the phone says about the boot cover: nothing while the switch is off; "update Vibb" when
 /// the reporting launcher hasn't got it; the phone's state otherwise - a tripped guard is a
-/// warning, so "test it on this phone first" can be checked on Advanced.
+/// warning, so "test it on this phone first" can be checked on Advanced. "Not shown" only once
+/// the phone has started since the arm - a `phone_on` newer than it ([last_on_ms], the newest
+/// `phone_on`'s instant, both the phone's clock): a report sent during the shutdown that armed it
+/// (the low-battery sync still in flight) is no missed cover (2026-11-17); until then it reads as
+/// the last start's cover, or as armed.
 pub fn boot_cover_notes(
     switch_on: bool,
     capable: bool,
     reported: bool,
     state: Option<&BootCoverState>,
+    last_on_ms: Option<i64>,
 ) -> Vec<EscapeNote> {
     if !switch_on {
         return Vec::new();
@@ -598,17 +603,23 @@ pub fn boot_cover_notes(
     if state.tripped {
         return vec![EscapeNote::BootCoverTripped];
     }
+    let shown = |at_ms: i64| EscapeNote::BootCoverShown {
+        at_ms,
+        handover: match state.last_handover.as_deref() {
+            Some("cover") => Some(Handover::ByItself),
+            Some("launcher") => Some(Handover::WhenVibbStarted),
+            _ => None,
+        },
+    };
+    let started_since = |armed: i64| last_on_ms.is_some_and(|on| on > armed);
     vec![match (state.last_armed_at_ms, state.last_shown_at_ms) {
         (None, _) => EscapeNote::BootCoverArmed,
-        (Some(armed), Some(shown)) if shown >= armed => EscapeNote::BootCoverShown {
-            at_ms: shown,
-            handover: match state.last_handover.as_deref() {
-                Some("cover") => Some(Handover::ByItself),
-                Some("launcher") => Some(Handover::WhenVibbStarted),
-                _ => None,
-            },
-        },
-        (Some(armed), _) => EscapeNote::BootCoverNotShown { armed_at_ms: armed },
+        (Some(armed), Some(at)) if at >= armed => shown(at),
+        (Some(armed), _) if started_since(armed) => {
+            EscapeNote::BootCoverNotShown { armed_at_ms: armed }
+        }
+        (Some(_), Some(at)) => shown(at),
+        (Some(_), None) => EscapeNote::BootCoverArmed,
     }]
 }
 
@@ -639,9 +650,9 @@ mod tests {
         assert!(sanitize_boot_cover(&serde_json::json!("on")).is_none());
 
         // Switch off: nothing; an older launcher: update it.
-        assert!(boot_cover_notes(false, true, true, Some(&state)).is_empty());
+        assert!(boot_cover_notes(false, true, true, Some(&state), None).is_empty());
         assert_eq!(
-            boot_cover_notes(true, false, true, None),
+            boot_cover_notes(true, false, true, None, None),
             vec![EscapeNote::BootCoverNeedsUpdate]
         );
         // Shown after the arm: a row.
@@ -649,7 +660,7 @@ mod tests {
             last_handover: Some("cover".into()),
             ..state.clone()
         };
-        let notes = boot_cover_notes(true, true, true, Some(&shown));
+        let notes = boot_cover_notes(true, true, true, Some(&shown), Some(1_500));
         assert_eq!(
             notes,
             vec![EscapeNote::BootCoverShown {
@@ -661,12 +672,12 @@ mod tests {
         assert!(!note.warning);
         assert_eq!(note.value.as_deref(), Some("Shown 01:00"));
         assert!(note.detail.unwrap().contains("by itself"));
-        // Armed but never shown: a warning.
+        // Armed but never shown, with a start since: a warning.
         let missed = BootCoverState {
             last_shown_at_ms: None,
             ..state.clone()
         };
-        let notes = boot_cover_notes(true, true, true, Some(&missed));
+        let notes = boot_cover_notes(true, true, true, Some(&missed), Some(1_500));
         assert_eq!(
             notes,
             vec![EscapeNote::BootCoverNotShown { armed_at_ms: 1_000 }]
@@ -679,12 +690,40 @@ mod tests {
                 .unwrap()
                 .contains("not shown")
         );
+        // 2026-11-17: armed by a shutdown and reported before the power-off (the low-battery sync in flight), with
+        // no start since - no warning: the last start's cover, or armed. A start at or before the arm is no start
+        // since it; an older phone's report of an earlier shutdown's start counts as none.
+        let rearmed = BootCoverState {
+            last_armed_at_ms: Some(3_000),
+            ..shown.clone()
+        };
+        for last_on in [None, Some(1_500), Some(3_000)] {
+            assert_eq!(
+                boot_cover_notes(true, true, true, Some(&rearmed), last_on),
+                vec![EscapeNote::BootCoverShown {
+                    at_ms: 2_000,
+                    handover: Some(Handover::ByItself)
+                }],
+                "{last_on:?}"
+            );
+        }
+        for last_on in [None, Some(900), Some(1_000)] {
+            assert_eq!(
+                boot_cover_notes(true, true, true, Some(&missed), last_on),
+                vec![EscapeNote::BootCoverArmed],
+                "{last_on:?}"
+            );
+        }
+        assert_eq!(
+            boot_cover_notes(true, true, true, Some(&rearmed), Some(3_001)),
+            vec![EscapeNote::BootCoverNotShown { armed_at_ms: 3_000 }]
+        );
         // Tripped: a warning, nothing else.
         let tripped = BootCoverState {
             tripped: true,
             ..state.clone()
         };
-        let notes = boot_cover_notes(true, true, true, Some(&tripped));
+        let notes = boot_cover_notes(true, true, true, Some(&tripped), None);
         assert_eq!(notes, vec![EscapeNote::BootCoverTripped]);
         assert!(
             notes[0]
@@ -694,7 +733,7 @@ mod tests {
                 .contains("crashed twice")
         );
         // Not armed yet.
-        let notes = boot_cover_notes(true, true, true, Some(&BootCoverState::default()));
+        let notes = boot_cover_notes(true, true, true, Some(&BootCoverState::default()), None);
         assert_eq!(notes, vec![EscapeNote::BootCoverArmed]);
         assert!(
             notes[0]

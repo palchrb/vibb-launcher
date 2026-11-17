@@ -115,6 +115,30 @@ data class CoverRecord(
     val trippedVersionName: String? = null,
 )
 
+/**
+ * The cover's arms as the main process keeps them (2026-11-17): the newest arm [atMs] by a shutdown in boot [boot]
+ * (-1 = unknown, also an arm stored by an older build), and the arm before it [previousAtMs].
+ */
+data class CoverArms(val atMs: Long? = null, val boot: Int = -1, val previousAtMs: Long? = null)
+
+/** A shutdown in boot [bootNow] armed the cover at [nowMs]: the newest arm becomes the previous one - unless it is this
+ * boot's own (a second shutdown broadcast), whose previous one stays. */
+fun coverArmed(arms: CoverArms, bootNow: Int, nowMs: Long): CoverArms =
+    if (bootNow >= 0 && arms.boot == bootNow) {
+        arms.copy(atMs = nowMs)
+    } else {
+        CoverArms(atMs = nowMs, boot = bootNow, previousAtMs = arms.atMs)
+    }
+
+/**
+ * The status report's `boot_cover.last_armed_at_ms` in boot [bootNow]: during the boot whose shutdown armed it, the arm
+ * before - a sync still in flight at the power-off (the low-battery sync with its location fix) reported the new arm
+ * and the server said "Boot cover wasn't shown" before the next start had its chance (2026-11-17); from the next boot
+ * on, the newest. An unknown boot count (now or at the arm) reports the newest, as before.
+ */
+fun reportedCoverArm(arms: CoverArms, bootNow: Int): Long? =
+    if (bootNow >= 0 && arms.boot == bootNow) arms.previousAtMs else arms.atMs
+
 /** The cover was shown at [wallMs]/[elapsedMs] in boot [bootNow]: the last-shown time for the
  * report, and the boot's first frame - kept over a recreation in the same boot, new in a new one. */
 fun coverShown(record: CoverRecord, bootNow: Int, wallMs: Long, elapsedMs: Long): CoverRecord {
