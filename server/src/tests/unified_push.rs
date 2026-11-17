@@ -1272,9 +1272,9 @@ async fn switch_on_by_default() {
     assert_eq!(app.policy(&token).await["unified_push"]["on"], true);
 }
 
-/// L6/L2/L3 (QA of R23-S): Device › Apps' group shows "Only pushes signed ..." for a keyed registration whose key
-/// the check enforces (not for one that isn't a P-256 point), the outside-gateway warning with the app's name, the
-/// refusal line worded by its cause (the sender's, or our clock, or our address), and FluffyChat's own "open it" text.
+/// L6/L2/L3 (QA of R23-S), design 113: Device › Apps' group shows the outside-gateway line with the app's name behind
+/// the row's ⓘ, "Pushes refused" with its cause behind the ⓘ (the sender's, or our clock, or our address), and
+/// FluffyChat's own "open it" text. No "signed" line: the good state shows nothing.
 #[tokio::test]
 async fn the_apps_group_lines_of_108b() {
     let file: Value = serde_json::from_str(VAPID).unwrap();
@@ -1312,20 +1312,12 @@ async fn the_apps_group_lines_of_108b() {
         }
     };
     let plain = page().await;
-    assert!(!plain.contains("data-row=\"signed\""));
     assert!(!plain.contains("data-warning=\"outside\""));
     assert!(!plain.contains("data-warning=\"vapid-refused\""));
     assert!(
         plain.contains("Open FluffyChat once"),
         "FluffyChat's own text: {plain}"
     );
-    // A key that isn't a point: no \"signed\" line (the check reads it as no key).
-    set(
-        "UPDATE up_registrations SET vapid = ?",
-        vec![file["not_a_point"].as_str().unwrap().to_string()],
-    )
-    .await;
-    assert!(!page().await.contains("data-row=\"signed\""));
     set(
         "UPDATE up_registrations SET vapid = ?, outside_gateway_at = datetime('now'), \
          vapid_refused_at = datetime('now'), vapid_refused_why = NULL",
@@ -1333,10 +1325,11 @@ async fn the_apps_group_lines_of_108b() {
     )
     .await;
     let marked = page().await;
-    assert!(marked.contains("data-row=\"signed\""));
+    assert!(!marked.contains("data-row=\"signed\""));
     assert!(marked.contains("data-warning=\"outside\""));
     assert!(marked.contains("UP-Example&#39;s notifications go through an outside gateway"));
-    assert!(marked.contains("Pushes not signed by the app"));
+    assert!(marked.contains("Pushes refused"));
+    assert!(marked.contains("wasn&#39;t signed by the app"));
     for (why, text) in [("time", "clock doesn"), ("address", "another address")] {
         set(
             "UPDATE up_registrations SET vapid_refused_why = ?",
@@ -1346,7 +1339,8 @@ async fn the_apps_group_lines_of_108b() {
         let marked = page().await;
         assert!(marked.contains("data-warning=\"vapid-refused\""));
         assert!(marked.contains(text), "{why}");
-        assert!(!marked.contains("Pushes not signed by the app"), "{why}");
+        assert!(marked.contains("Pushes refused"), "{why}");
+        assert!(!marked.contains("wasn&#39;t signed"), "{why}");
     }
 }
 
@@ -2201,7 +2195,7 @@ async fn accept_stores_the_stream_generation() {
     );
 }
 
-/// §7.4, §7.5: Settings › App push's group and Device › Apps' line, from seeded samples.
+/// §7.4, §7.5, designs 112/113: Settings › App push's "Delivery" group and Device › Apps' line, from seeded samples.
 #[tokio::test]
 async fn delivery_time_on_the_pages() {
     let app = TestApp::new().await;
@@ -2227,14 +2221,11 @@ async fn delivery_time_on_the_pages() {
             .unwrap();
     }
     let settings = app.get_page("/settings/push", &cookie).await.text();
-    assert!(settings.contains("Delivery to the phones"));
+    assert!(settings.contains(">Delivery<"));
     assert!(settings.contains("data-row=\"delivery-usually\""));
-    assert!(
-        !settings.contains("data-row=\"delivery-p95\""),
-        "no 95% below 20"
-    );
-    assert!(settings.contains("3 in the last 24 hours"));
-    let line = "Usually delivered in 2 s (3 pushes while connected, last 24 hours)";
+    assert!(!settings.contains("95% within"), "no 95% below 20");
+    assert!(settings.contains("3 pushes in the last 24 hours"));
+    let line = "Usually delivered in 2 s · 3 pushes in the last 24 hours";
     let page = app
         .get_page(&format!("/devices/{emma}/apps"), &cookie)
         .await
@@ -2245,4 +2236,42 @@ async fn delivery_time_on_the_pages() {
         .await
         .text();
     assert!(!other.contains("data-row=\"app-push-delivery\""));
+}
+
+/// Design 113: Settings › App push's "Last seen from outside" says "Not yet" in orange only when a registration is
+/// over an hour old and nothing has reached the address; a younger one, or a push since, keeps it quiet.
+#[tokio::test]
+async fn seen_late_on_settings() {
+    const LATE: &str = "<span class=\"row-value row-value-action\">Not yet</span>";
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (emma, _) = app.enrolled_device("Emma").await;
+    set_origin(&app, Some(ORIGIN)).await;
+    let page = || async { app.get_page("/settings/push", &cookie).await.text() };
+    let none = page().await;
+    assert!(none.contains("data-row=\"seen\""), "{none}");
+    assert!(!none.contains(LATE), "no registration: {none}");
+    seed(&app, emma, 1, "org.unifiedpush.example").await;
+    sql(
+        &app,
+        "UPDATE up_registrations SET created_at = datetime('now', '-10 minutes')",
+    )
+    .await;
+    let young = page().await;
+    assert!(young.contains(">Not yet<"), "{young}");
+    assert!(!young.contains(LATE), "ten minutes old: {young}");
+    sql(
+        &app,
+        "UPDATE up_registrations SET created_at = datetime('now', '-2 hours')",
+    )
+    .await;
+    assert!(page().await.contains(LATE), "two hours old");
+    sql(
+        &app,
+        "UPDATE up_registrations SET last_push_at = datetime('now', '-5 minutes')",
+    )
+    .await;
+    let seen = page().await;
+    assert!(!seen.contains(LATE), "a push reached it: {seen}");
+    assert!(!seen.contains(">Not yet<"), "{seen}");
 }

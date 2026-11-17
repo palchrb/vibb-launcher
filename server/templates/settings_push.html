@@ -13,65 +13,63 @@
     <div class="sheet">
 
     {#- Design 108 §3.1: one form. A refusal renders in the POST's answer at #push; a save comes back to the flash
-        under Save (#saved). The prefill (Phone Setup's address) is never saved by itself. -#}
+        under Save (#saved). The prefill (Phone Setup's address) is never saved by itself. Designs 112 and 113: the
+        explanations behind the ⓘs, one "Delivery" group, "Not yet" orange only when it is late. -#}
     {% if no_listener %}
-    <div class="group" data-warning="no-listener"><p class="row row-note text-alarm">{{ self.t("app_push.settings.no_listener") }}</p></div>
+    <div class="attention attention-action" data-warning="no-listener">
+        <div class="attention-text">{{ self.t("app_push.settings.no_listener") }}<div class="attention-sub">
+            <details class="info">
+                <summary aria-label="{{ self.t("common.how_to_fix") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel"><p>{{ self.t("app_push.settings.no_listener_info") }}</p></div>
+            </details></div></div>
+    </div>
     {% endif %}
     <form method="post" action="/settings/push#push" id="push">
         <div class="group form-group">
             <div class="field">
                 <label class="field-label" for="public_origin">{{ self.t("app_push.settings.origin") }}</label>
+                <details class="info field-info"><summary aria-label="{{ self.t("app_push.settings.origin_about") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("app_push.settings.origin_info") }}</p></div></details>
                 <input type="text" id="public_origin" name="public_origin" value="{{ value }}" placeholder="{{ self.t("app_push.settings.origin_example") }}" autocomplete="off" autocapitalize="none" spellcheck="false" inputmode="url"{% if error.is_some() %} aria-invalid="true" aria-describedby="public_origin-error" autofocus{% endif %}>
                 {% if let Some(why) = error %}<p class="field-error" id="public_origin-error">{{ self.t(why) }}</p>
-                {% else if prefilled %}<p class="field-hint" data-source="phone-setup">{{ self.t("app_push.settings.prefilled") }}</p>
-                {% else %}<p class="field-hint">{{ self.t("app_push.settings.origin_hint") }}</p>{% endif %}
+                {% else if prefilled %}<p class="field-hint" data-source="phone-setup">{{ self.t("app_push.settings.prefilled") }}</p>{% endif %}
                 {% for line in previous %}<p class="field-hint" data-row="previous">{{ line }}</p>{% endfor %}
             </div>
-            <p class="field-hint" data-row="save-note">{{ self.t("app_push.settings.save_note") }}</p>
+            {% if !set %}<p class="field-hint" data-row="save-note">{{ self.t("app_push.settings.save_note") }}</p>{% endif %}
             <button type="submit" class="button-wide">{{ self.t("common.save") }}</button>
         </div>
-        <p class="group-footer">{{ self.t("app_push.settings.footer") }}{% if set %} {{ self.t("app_push.settings.clear_note") }}{% endif %}</p>
+        <div class="group-footer">
+            <details class="info">
+                <summary aria-label="{{ self.t("app_push.settings.info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel"><p>{{ self.t("app_push.settings.info") }}</p></div>
+            </details>
+        </div>
         {% if saved %}<div class="group" id="saved"><p class="flash" data-flash="push" role="status">{{ self.t("common.saved") }}</p></div>{% endif %}
     </form>
-
-    <section id="seen" aria-labelledby="seen-title">
-        <h2 class="group-header" id="seen-title">{{ self.t("app_push.settings.seen") }}</h2>
-        <div class="group">
-            <div class="row" data-row="discovery">
-                <span class="row-label">{{ self.t("app_push.settings.discovery") }}</span>
-                <span class="row-value">{% if let Some(at) = discovery %}{{ at }}{% else %}{{ self.t("app_push.settings.never") }}{% endif %}</span>
-            </div>
-            <div class="row" data-row="pushed">
-                <span class="row-label">{{ self.t("app_push.settings.pushed") }}</span>
-                <span class="row-value">{% if let Some(at) = pushed %}{{ at }}{% else %}{{ self.t("app_push.settings.never") }}{% endif %}</span>
-            </div>
-        </div>
-        <p class="group-footer">{{ self.t("app_push.settings.seen_footer") }}</p>
-    </section>
 
     <section id="delivery" aria-labelledby="delivery-title">
         <h2 class="group-header" id="delivery-title">{{ self.t("app_push.delivery.group") }}</h2>
         <div class="group">
+            <details class="info cell" data-row="seen">
+                <summary class="row">
+                    <span class="row-label">{{ self.t("app_push.settings.seen") }}</span>
+                    <span class="row-value{% if seen_late %} row-value-action{% endif %}">{% if let Some(at) = seen %}{{ at }}{% else %}{{ self.t("app_push.settings.never") }}{% endif %}</span>
+                    <svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("common.more_info") }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>
+                </summary>
+                <div class="info-panel"><p>{{ self.t("app_push.settings.seen_info") }}</p></div>
+            </details>
             {% if let Some(rows) = delivery %}
-            <div class="row" data-row="delivery-usually">
-                <span class="row-label">{{ self.t("app_push.delivery.usually") }}</span>
-                <span class="row-value">{{ rows.usually }}</span>
-            </div>
-            {% if let Some(p95) = rows.p95 %}
-            <div class="row" data-row="delivery-p95">
-                <span class="row-label">{{ self.t("app_push.delivery.p95") }}</span>
-                <span class="row-value">{{ p95 }}</span>
-            </div>
-            {% endif %}
-            <div class="row" data-row="delivery-pushes">
-                <span class="row-label">{{ self.t("app_push.delivery.pushes") }}</span>
-                <span class="row-value">{{ rows.pushes }}</span>
-            </div>
+            <details class="info cell" data-row="delivery-usually">
+                <summary class="row">
+                    <span class="row-label">{{ self.t("app_push.delivery.usually") }}<span class="row-sub">{{ rows.sub }}</span></span>
+                    <span class="row-value">{{ rows.usually }}</span>
+                    <svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("common.more_info") }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>
+                </summary>
+                <div class="info-panel"><p>{{ self.t("app_push.delivery.info") }}</p></div>
+            </details>
             {% else %}
             <p class="row row-note" data-row="delivery-none">{{ self.t("app_push.delivery.none") }}</p>
             {% endif %}
         </div>
-        <p class="group-footer">{{ self.t("app_push.delivery.footer") }}</p>
     </section>
     </div>
 </main>

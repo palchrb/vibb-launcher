@@ -1,14 +1,21 @@
 {#- Design 108 §3.10: Device › Apps' "App push" group (`app_push::AppPushGroup`, as `app_push`). The switch turns on
-    as an auto-saving form and off through its sheet (A3); every form returns to #app-push (design 103: in place). -#}
+    as an auto-saving form and off through its sheet (A3); every form returns to #app-push (design 103: in place).
+    Design 113: a wrong state is a short orange line, its detail behind an ⓘ; the explanation is the footer's ⓘ. -#}
 <section id="app-push" aria-labelledby="app-push-title">
     <h2 class="group-header" id="app-push-title">{{ self.t("app_push.group") }}</h2>
-    {% for line in app_push.missing %}
-    <div class="group" data-warning="up-missing"><p class="row row-note text-alarm">{{ line }}</p></div>
+    {% for (title, fix) in app_push.missing %}
+    <div class="attention attention-action" data-warning="up-missing">
+        <div class="attention-text">{{ title }}<div class="attention-sub">
+            <details class="info">
+                <summary aria-label="{{ self.t("common.how_to_fix") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel"><p>{{ fix }}</p></div>
+            </details></div></div>
+    </div>
     {% endfor %}
     <div class="group group-avatars group-small group-apps">
         {% if app_push.on %}
         <div class="row" data-row="app-push-switch">
-            <span class="row-label">{{ self.t("app_push.switch") }}<span class="row-sub">{% if app_push.needs_update %}{{ self.t("app_push.needs_update") }}{% else if !app_push.origin_set %}{{ self.t("app_push.no_origin") }}{% else %}{{ self.t("app_push.switch_sub") }}{% endif %}</span></span>
+            <span class="row-label">{{ self.t("app_push.switch") }}{% if app_push.needs_update %}<span class="row-sub tone-orange">{{ self.t("app_push.needs_update") }}</span>{% else if !app_push.origin_set %}<span class="row-sub tone-orange">{{ self.t("app_push.no_origin") }}</span>{% endif %}</span>
             <span class="row-value">{{ self.t("app_push.hub.on") }}</span>
         </div>
         <details class="confirm cell" id="app-push-off">
@@ -24,20 +31,39 @@
         <form method="post" action="/devices/{{ device.id }}/app-push#app-push" class="cell">
             {% if let Some(from) = from %}<input type="hidden" name="from" value="{{ from }}">{% endif %}
             <label class="row" data-row="app-push-switch">
-                <span class="row-label">{{ self.t("app_push.switch") }}<span class="row-sub">{{ self.t("app_push.switch_sub") }}</span></span>
+                <span class="row-label">{{ self.t("app_push.switch") }}</span>
                 <input type="checkbox" role="switch" class="sw" name="on" value="on" data-autosave><span class="knob" aria-hidden="true"></span>
             </label>
             <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
         </form>
         {% endif %}
-        {% if let Some(waiting) = app_push.waiting %}<p class="row row-note text-alarm" data-warning="up-waiting">{{ waiting }}</p>{% endif %}
+        {% if let Some((waiting, waiting_info)) = app_push.waiting %}
+        <details class="info cell" data-warning="up-waiting">
+            <summary class="row">
+                <span class="row-label text-alarm">{{ waiting }}</span>
+                <svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("common.more_info") }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>
+            </summary>
+            <div class="info-panel"><p>{{ waiting_info }}</p></div>
+        </details>
+        {% endif %}
         {% if let Some(delivery) = app_push.delivery %}<p class="row row-note" data-row="app-push-delivery">{{ delivery }}</p>{% endif %}
         {% for app in app_push.apps %}
         <div class="cell" data-up-app="{{ app.package }}">
-            <div class="row">
+            {#- Design 113: a row with a noisy, outside or refused line opens; its panel holds their details. -#}
+            {% let info = app.noisy.is_some() || app.outside.is_some() || app.refused.is_some() %}
+            {% if info %}<details class="info cell"><summary class="row">{% else %}<div class="row">{% endif %}
                 {% if let Some(src) = app.logo %}<span class="app-row-tile app-row-logo" aria-hidden="true">{{ app.letter }}<img src="{{ src }}" alt="" decoding="async"></span>{% else %}<span class="app-row-tile" aria-hidden="true">{{ app.letter }}</span>{% endif %}
-                <span class="row-label">{{ app.label }}<span class="row-sub">{{ app.line }}</span>{% if let Some(warning) = app.warning %}<span class="row-sub text-alarm" data-warning="no-delivery">{{ self.t(warning) }}</span>{% endif %}{% if let Some(noisy) = app.noisy %}<span class="row-sub text-alarm" data-warning="noisy">{{ noisy }}</span>{% endif %}{% if app.signed %}<span class="row-sub" data-row="signed">{{ self.t("app_push.signed") }}</span>{% endif %}{% if let Some(outside) = app.outside %}<span class="row-sub text-alarm" data-warning="outside">{{ outside }}</span>{% endif %}{% if let Some(refused) = app.refused %}<span class="row-sub text-alarm" data-warning="vapid-refused">{{ refused }}</span>{% endif %}</span>
+                <span class="row-label">{{ app.label }}<span class="row-sub">{{ app.line }}</span>{% if let Some(warning) = app.warning %}<span class="row-sub text-alarm" data-warning="no-delivery">{{ self.t(warning) }}</span>{% endif %}{% if let Some((noisy, _)) = app.noisy %}<span class="row-sub text-alarm" data-warning="noisy">{{ noisy }}</span>{% endif %}{% if let Some((outside, _)) = app.outside %}<span class="row-sub text-alarm" data-warning="outside">{{ outside }}</span>{% endif %}{% if let Some((refused, _)) = app.refused %}<span class="row-sub text-alarm" data-warning="vapid-refused">{{ refused }}</span>{% endif %}</span>
+            {% if info %}
+                <svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("common.more_info") }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>
+            </summary>
+            <div class="info-panel">
+                {%- if let Some((_, detail)) = app.noisy %}<p>{{ detail }}</p>{% endif %}
+                {%- if let Some((_, detail)) = app.outside %}<p>{{ detail }}</p>{% endif %}
+                {%- if let Some((_, detail)) = app.refused %}<p>{{ detail }}</p>{% endif -%}
             </div>
+            </details>
+            {% else %}</div>{% endif %}
             <details class="confirm cell">
                 <summary class="row">{{ self.t("app_push.stop_dots") }}</summary>
                 <form method="post" action="/devices/{{ device.id }}/app-push/stop#app-push" class="confirm-body">
@@ -51,7 +77,12 @@
         </div>
         {% endfor %}
     </div>
-    <p class="group-footer">{{ self.t("app_push.footer") }}</p>
+    <div class="group-footer">
+        <details class="info">
+            <summary aria-label="{{ self.t("app_push.settings.info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+            <div class="info-panel"><p>{{ self.t("app_push.footer") }}</p></div>
+        </details>
+    </div>
     {% if !app_push.stopped.is_empty() %}
     <h2 class="group-header" id="app-push-stopped">{{ self.t("app_push.stopped") }}</h2>
     <div class="group group-avatars group-small group-apps">

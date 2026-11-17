@@ -1,9 +1,10 @@
 //! App push in the PWA (design 108 §3.10, Vibb as the UnifiedPush distributor):
 //!
 //! - **Settings › App push** (`/settings/push`, [show_settings], [save_settings]): the phones' public address, its
-//!   check's reason when refused, "Saving turns on app push for every phone" above Save, the prefill from Phone Setup
-//!   (never saved by itself, L7) and "Last seen from outside" (the newest discovery and the newest accepted push, times
-//!   only: the server never probes itself).
+//!   check's reason when refused, "Saving turns app push on for every phone with its switch on" above Save while no
+//!   address is saved, the prefill from Phone Setup (never saved by itself, L7), and one "Delivery" group (designs 112,
+//!   113): "Last seen from outside" (the later of the newest discovery and the newest accepted push, a time only: the
+//!   server never probes itself) and "Usually delivered in".
 //! - **Device › Apps' group** ([group], `partials/app_push_group.html`, `#app-push`): the phone's switch (on by
 //!   default; turning it off goes through its sheet, A3), one row per app with registrations (accounts, last delivery,
 //!   "no delivery in 7 days", Stop through its sheet), the stopped apps with Allow Again, and the "not connected"
@@ -42,24 +43,25 @@ struct SettingsPushTemplate {
     /// A refused save's reason (its key).
     error: Option<&'static str>,
     saved: bool,
-    /// The origin is set: the clear note shows.
+    /// The origin is set: the save note ("Saving turns app push on …") shows only while it isn't.
     set: bool,
     /// The replaced origins still accepted, each worded ("… until 12 Dec"; R1-SR L7: every one within its 30 days).
     previous: Vec<String>,
-    /// "Last seen from outside": the newest discovery and push, worded; `None` = not yet.
-    discovery: Option<String>,
-    pushed: Option<String>,
+    /// "Last seen from outside": the later of the newest discovery and the newest push, worded; `None` = not yet.
+    seen: Option<String>,
+    /// Nothing seen yet although a registration is over an hour old: "Not yet" is orange (design 113).
+    seen_late: bool,
     /// No `DEVICE_BIND_ADDR`: the push routes aren't served at all.
     no_listener: bool,
-    /// "Delivery to the phones" (design 108c §7.4): `None` with no samples.
+    /// "Usually delivered in" (design 108c §7.4, design 112): `None` with no samples.
     delivery: Option<DeliveryRows>,
 }
 
-/// The delivery group's rows, worded: the median, the 95th percentile (from 20 pushes) and the count.
+/// The delivery row, worded (design 112): the median, and under it the 95th percentile (from 20 pushes) and the
+/// count, the cap note appended when the count was cut.
 pub struct DeliveryRows {
     pub usually: String,
-    pub p95: Option<String>,
-    pub pushes: String,
+    pub sub: String,
 }
 crate::i18n::words!(SettingsPushTemplate);
 
@@ -92,9 +94,24 @@ async fn render_settings(
         };
     let zone = Zone::load(&state.db, lang).await;
     let now = Utc::now();
-    let when = |text: Option<&str>| {
-        text.and_then(crate::display_time::parse_db_utc)
-            .map(|at| zone.when(at, now))
+    // Design 112: either one proves the address is reached, so the later of the two.
+    let seen_at = [settings.last_discovery_at.as_deref(), pushed.as_deref()]
+        .into_iter()
+        .flatten()
+        .filter_map(crate::display_time::parse_db_utc)
+        .max();
+    // Design 113: "Not yet" only speaks up once an app has had an hour to reach the address.
+    let seen_late = match seen_at {
+        Some(_) => false,
+        None => match sqlx::query_scalar::<_, i64>(
+            "SELECT 1 FROM up_registrations WHERE created_at < datetime('now', '-1 hour') LIMIT 1",
+        )
+        .fetch_optional(&state.db)
+        .await
+        {
+            Ok(row) => row.is_some(),
+            Err(err) => return read_failed(lang, err),
+        },
     };
     let setup = setup_address(setup, &state.config);
     let prefill = settings
@@ -132,25 +149,25 @@ async fn render_settings(
     }
     .await
     {
-        Ok((samples, capped)) => {
-            up::health::delivery_figure(&samples, capped).map(|figure| DeliveryRows {
+        Ok((samples, capped)) => up::health::delivery_figure(&samples, capped).map(|figure| {
+            let count = figure.count.to_string();
+            let sub = match figure.p95_ms {
+                Some(p95) => t_params(
+                    lang,
+                    "app_push.delivery.sub_p95",
+                    &[("p95", &duration_words(lang, p95)), ("count", &count)],
+                ),
+                None => t_count(lang, "app_push.delivery.sub", figure.count as i64, &[]),
+            };
+            DeliveryRows {
                 usually: duration_words(lang, figure.median_ms),
-                p95: figure.p95_ms.map(|ms| duration_words(lang, ms)),
-                pushes: if figure.capped {
-                    t_params(
-                        lang,
-                        "app_push.delivery.pushes_capped",
-                        &[("count", &figure.count.to_string())],
-                    )
+                sub: if figure.capped {
+                    format!("{sub} {}", t(lang, "app_push.delivery.cap_note"))
                 } else {
-                    t_params(
-                        lang,
-                        "app_push.delivery.pushes_value",
-                        &[("count", &figure.count.to_string())],
-                    )
+                    sub
                 },
-            })
-        }
+            }
+        }),
         Err(err) => return read_failed(lang, err),
     };
     let page = SettingsPushTemplate {
@@ -162,8 +179,8 @@ async fn render_settings(
         saved,
         set: settings.public_origin.is_some(),
         previous,
-        discovery: when(settings.last_discovery_at.as_deref()),
-        pushed: when(pushed.as_deref()),
+        seen: seen_at.map(|at| zone.when(at, now)),
+        seen_late,
         no_listener: state.net.device_bind_addr.is_none(),
         delivery,
     };
@@ -296,14 +313,14 @@ pub struct AppPushRow {
     pub line: String,
     /// "No delivery in 7 days".
     pub warning: Option<&'static str>,
-    /// "Many pushes: about 400 a day …" (R1-SR L2, [noisy_per_day]).
-    pub noisy: Option<String>,
-    /// "Only pushes signed by the app's server": a registration of the app has a VAPID key (108b §4.7).
-    pub signed: bool,
-    /// The app's pushes come through an outside gateway (108b §3.4), worded with its name.
-    pub outside: Option<String>,
-    /// A push without the registered key was refused within 7 days (108b §4.7), worded with its time.
-    pub refused: Option<String>,
+    /// "About 400 pushes a day" and its detail for the row's ⓘ (R1-SR L2, [noisy_per_day]).
+    pub noisy: Option<(String, String)>,
+    /// The app's pushes come through an outside gateway (108b §3.4): "Goes via an outside service" and its detail,
+    /// worded with the app's name.
+    pub outside: Option<(String, String)>,
+    /// A push was refused within 7 days (108b §4.7): "Pushes refused, last {when}" and its cause (or the fix, once
+    /// Attention raised it).
+    pub refused: Option<(String, String)>,
     /// Stop's sheet, with the app's name.
     pub stop_question: String,
 }
@@ -319,16 +336,16 @@ pub struct StoppedRow {
 pub struct AppPushGroup {
     /// The phone's own switch.
     pub on: bool,
-    /// A public origin is set (otherwise the switch's row says where to set it).
+    /// A public origin is set (otherwise the switch's row says it is missing).
     pub origin_set: bool,
-    /// The phone reported without `unified_push_v1`: "Needs a newer Vibb One".
+    /// The phone reported without `unified_push_v1`: "Vibb One needs an update".
     pub needs_update: bool,
     pub apps: Vec<AppPushRow>,
     pub stopped: Vec<StoppedRow>,
-    /// "Element X isn't using Vibb for notifications…", worded.
-    pub missing: Vec<String>,
-    /// Design 108c §2: shown exactly when Attention's "pushes waiting" row is raised.
-    pub waiting: Option<String>,
+    /// "Element X isn't using Vibb for notifications" and the fix behind its ⓘ, worded.
+    pub missing: Vec<(String, String)>,
+    /// Design 108c §2: shown exactly when Attention's "pushes waiting" row is raised; its line and its ⓘ's text.
+    pub waiting: Option<(String, String)>,
     /// Design 108c §7.4: "Usually delivered in …", only when the phone has samples.
     pub delivery: Option<String>,
 }
@@ -350,16 +367,14 @@ pub(crate) fn noisy_per_day(
     (per_day >= NOISY_PER_DAY).then_some(per_day)
 }
 
-/// One app's row of the group's query: package, registrations, last delivery, oldest registration, pushes, the
-/// registrations' keys (comma-joined; a key holds no comma), marked as outside, last refusal within 7 days as
-/// `<stamp>|<why>`.
+/// One app's row of the group's query: package, registrations, last delivery, oldest registration, pushes, marked
+/// as outside, last refusal within 7 days as `<stamp>|<why>`.
 type AppRow = (
     String,
     i64,
     Option<String>,
     String,
     i64,
-    Option<String>,
     bool,
     Option<String>,
 );
@@ -379,7 +394,6 @@ pub(crate) async fn group(
     let origin_set = up::settings(&state.db).await?.public_origin.is_some();
     let rows: Vec<AppRow> = sqlx::query_as(
         "SELECT package, COUNT(*), MAX(last_delivered_at), MIN(created_at), SUM(pushes), \
-           GROUP_CONCAT(vapid, ','), \
            COALESCE(MAX(outside_gateway_at > datetime('now', '-7 days') \
                AND (gateway_at IS NULL OR gateway_at < outside_gateway_at)), 0), \
            MAX(CASE WHEN vapid_refused_at > datetime('now', '-7 days') THEN vapid_refused_at || '|' || COALESCE(vapid_refused_why, 'unsigned') END) \
@@ -393,10 +407,13 @@ pub(crate) async fn group(
     // The same function Attention reads, so the row and the page agree (design 108c §3).
     let problems = up::health::attention(state, device_id, reported_at, now).await?;
     let waiting = problems.waiting_since.map(|since| {
-        t_params(
-            lang,
-            "app_push.waiting",
-            &[("when", &zone.when(since, now))],
+        (
+            t_params(
+                lang,
+                "app_push.waiting",
+                &[("when", &zone.when(since, now))],
+            ),
+            t(lang, "app_push.waiting_info").to_string(),
         )
     });
     // Nothing under an Off switch (its registrations are gone; the samples may linger up to a day).
@@ -407,24 +424,13 @@ pub(crate) async fn group(
     };
     let capped = samples.len() as i64 >= up::store::DELIVERY_CAP;
     let delivery = up::health::delivery_figure(&samples, capped).map(|figure| {
-        let median = duration_words(lang, figure.median_ms);
-        let line = match figure.p95_ms {
-            Some(p95) => t_params(
-                lang,
-                "app_push.delivery_line_p95",
-                &[
-                    ("median", &median),
-                    ("p95", &duration_words(lang, p95)),
-                    ("count", &figure.count.to_string()),
-                ],
-            ),
-            None => t_count(
-                lang,
-                "app_push.delivery_line",
-                figure.count as i64,
-                &[("median", &median)],
-            ),
-        };
+        // The 95th percentile lives on Settings › App push (design 113).
+        let line = t_count(
+            lang,
+            "app_push.delivery_line",
+            figure.count as i64,
+            &[("median", &duration_words(lang, figure.median_ms))],
+        );
         if figure.capped {
             format!("{line} {}", t(lang, "app_push.delivery.cap_note"))
         } else {
@@ -449,7 +455,7 @@ pub(crate) async fn group(
     let apps = rows
         .iter()
         .map(
-            |(package, count, delivered, created, pushes, keyed, outside, refused)| {
+            |(package, count, delivered, created, pushes, outside, refused)| {
                 let (label, letter, logo) = name_of(package);
                 let name = label.clone();
                 let delivered: Option<DateTime<Utc>> = delivered
@@ -481,19 +487,20 @@ pub(crate) async fn group(
                     logo,
                     line,
                     warning: quiet.then_some("app_push.no_delivery"),
-                    noisy: per_day
-                        .map(|n| t_params(lang, "app_push.noisy", &[("count", &n.to_string())])),
-                    // Only a key the check enforces: one that isn't a P-256 point reads as no key (L2).
-                    signed: keyed.as_deref().is_some_and(|keys| {
-                        keys.split(',').any(|k| {
-                            matches!(
-                                up::vapid::stored_key(k),
-                                up::vapid::Stored::Key(_) | up::vapid::Stored::Unavailable
-                            )
-                        })
+                    noisy: per_day.map(|n| {
+                        (
+                            t_params(lang, "app_push.noisy", &[("count", &n.to_string())]),
+                            t(lang, "app_push.noisy_info").to_string(),
+                        )
                     }),
-                    outside: (*outside)
-                        .then(|| t_params(lang, "app_push.outside", &[("app", &name)])),
+                    outside: (*outside).then(|| {
+                        (
+                            t(lang, "app_push.outside").to_string(),
+                            t_params(lang, "app_push.outside_info", &[("app", &name)]),
+                        )
+                    }),
+                    // Every refusal's visible line is "Pushes refused, last {when}"; the cause sits behind the
+                    // row's ⓘ (design 113).
                     refused: problems
                         .refused
                         .iter()
@@ -502,10 +509,9 @@ pub(crate) async fn group(
                             // Raised for this app (108c §2): worded from the raised registration's own stamp, which
                             // is an `unsigned` one, so the fix can't land on a `time` line.
                             let at = crate::display_time::parse_db_utc(stamp)?;
-                            Some(t_params(
-                                lang,
-                                "app_push.refused_fix",
-                                &[("when", &zone.when(at, now)), ("app", &name)],
+                            Some((
+                                at,
+                                t_params(lang, "app_push.refused_fix", &[("app", &name)]),
                             ))
                         })
                         .or_else(|| {
@@ -517,10 +523,20 @@ pub(crate) async fn group(
                                 let key = match why {
                                     "time" => "app_push.vapid_refused_time",
                                     "address" => "app_push.vapid_refused_address",
-                                    _ => "app_push.vapid_refused",
+                                    _ => "app_push.vapid_refused_unsigned",
                                 };
-                                Some(t_params(lang, key, &[("when", &zone.when(at, now))]))
+                                Some((at, t(lang, key).to_string()))
                             })
+                        })
+                        .map(|(at, cause)| {
+                            (
+                                t_params(
+                                    lang,
+                                    "app_push.vapid_refused",
+                                    &[("when", &zone.when(at, now))],
+                                ),
+                                cause,
+                            )
                         }),
                 }
             },
@@ -540,7 +556,10 @@ pub(crate) async fn group(
                 } else {
                     "app_push.missing"
                 };
-                t_params(lang, key, &[("app", name)])
+                (
+                    t_params(lang, "app_push.missing_title", &[("app", name)]),
+                    t_params(lang, key, &[("app", name)]),
+                )
             })
             .collect()
     } else {
