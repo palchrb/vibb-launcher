@@ -45,7 +45,7 @@
     {#- The QR code renders in the POST's answer, in this group: the form posts to #qr, so the
         answer lands on it with or without JS. The Wi-Fi password is never stored or shown again. -#}
     <section id="qr" aria-labelledby="qr-title">
-        <h2 class="choice-title" id="qr-title">{{ self.t("devices.qr.qr") }}<span class="choice-sub">{{ self.t("devices.qr.qr_sub") }}</span></h2>
+        <h2 class="choice-title" id="qr-title">{{ self.t("devices.qr.qr") }}</h2>
         <div class="group">
             {% if missing_checksum %}
             <p class="row row-note">{{ self.t("devices.qr.needs_setup") }}</p>
@@ -87,15 +87,16 @@
             {% endif %}
         </div>
         <div class="group-footer">{{ self.t("devices.qr.footer") }}
-            <details class="info"><summary aria-label="{{ self.t("devices.qr.info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.tp("devices.qr.info", [("minutes", qr_minutes.to_string().as_str())]) }}</p>{% if let Some(launcher) = launcher %}{% if launcher.state == "works" %}{% if let Some(needs) = launcher.needs %}<p data-row="launcher-needs">{{ needs }}</p>{% endif %}{% endif %}{% endif %}</div></details>
+            <details class="info"><summary aria-label="{{ self.t("devices.qr.info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.tp("devices.qr.info", [("minutes", qr_minutes.to_string().as_str())]) }}</p>{% if !qr_svg.is_empty() && until.is_some() %}<p>{{ self.t("devices.qr.reload_info") }}</p>{% endif %}{% if let Some(launcher) = launcher %}{% if launcher.state == "works" %}{% if let Some(needs) = launcher.needs %}<p data-row="launcher-needs">{{ needs }}</p>{% endif %}{% endif %}{% endif %}</div></details>
         </div>
     </section>
 
     <section id="setup-code" aria-labelledby="code-title">
-        <h2 class="choice-title" id="code-title">{{ self.t("devices.qr.code") }}<span class="choice-sub">{{ self.t("devices.qr.code_sub") }}</span></h2>
+        <h2 class="choice-title" id="code-title">{{ self.t("devices.qr.code") }}</h2>
         {% if let Some(until) = paused_until %}
         <div class="attention attention-action" data-warning="typed-paused">
-            <span class="attention-text">{{ self.tp("devices.code.paused", [("until", until.as_str())]) }}<span class="attention-sub">{{ self.t("devices.qr.paused_sub") }}</span></span>
+            <div class="attention-text">{{ self.tp("devices.code.paused", [("until", until.as_str())]) }}<div class="attention-sub">{{ self.t("devices.qr.paused_sub") }}
+            <details class="info"><summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("devices.qr.paused_why") }}</p></div></details></div></div>
         </div>
         {% endif %}
         <div class="group">
@@ -104,7 +105,7 @@
                 <button type="submit" class="row row-button">{{ self.t("device.summary.access.new_code") }}</button>
             </form>
         </div>
-        <div class="group-footer">{{ self.t("devices.qr.code_footer") }}
+        <div class="group-footer">
             <details class="info"><summary aria-label="{{ self.t("devices.qr.code_info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.tp("devices.qr.code_info", [("minutes", code_minutes.to_string().as_str())]) }}</p></div></details>
         </div>
     </section>

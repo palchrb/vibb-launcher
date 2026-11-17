@@ -1239,6 +1239,9 @@ async fn the_security_log_reads_as_labelled_rows() {
         ),
     )
     .await;
+    // No blocked address: no Blocked Addresses group (design 113).
+    let page = app.get_page("/security", &cookie).await.text();
+    assert!(!page.contains("id=\"banned\""), "{page}");
     sqlx::query(
         "INSERT INTO banned_ips (ip_address, banned_until, reason) \
          VALUES ('192.0.2.7', datetime('now', '+1 hours'), '20 failed login attempts')",
@@ -1250,7 +1253,8 @@ async fn the_security_log_reads_as_labelled_rows() {
     check_forms("/security", &page);
     let rows: Vec<&str> = page.split("data-event>").skip(1).collect();
     assert_eq!(rows.len(), 4);
-    // One plain row: who, the detail and the exact time shown under the label, no ⓘ and no id.
+    // One plain row: who and the detail under the label, the exact time the time's `title` (design
+    // 113), no ⓘ and no id.
     let row = &rows[3][..rows[3].find("</div>").unwrap()];
     assert!(row.contains("Command sent to phone"), "{row}");
     assert!(
@@ -1259,7 +1263,13 @@ async fn the_security_log_reads_as_labelled_rows() {
     );
     assert!(row.contains("&#60;img src=x") && !page.contains("<img src=x"));
     assert!(!page.contains("device_command_queued") && !page.contains("Logged as"));
-    assert!(!page.contains("info-icon"), "{page}");
+    assert!(
+        rows.iter()
+            .all(|r| !r[..r.find("</div>").unwrap()].contains("info-icon")),
+        "{page}"
+    );
+    assert!(row.contains("row-value-keep\" title=\""), "{row}");
+    assert_eq!(row.matches("class=\"row-sub\"").count(), 1, "{row}");
     assert!(rows[2].contains("Music moved"));
     assert!(
         rows[1].contains("Password change refused") && rows[1].contains("wrong current password"),

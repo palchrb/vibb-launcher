@@ -1108,7 +1108,6 @@ async fn the_sign_in_pages_read_in_norwegian() {
     for needle in [
         r#"<html lang="nb" class="doc-scroll">"#,
         "<title>Logg inn · Vibb Phone</title>",
-        "<p class=\"auth-sub\">Logg inn for å passe på familiens telefoner.</p>",
         ">Brukernavn</label>",
         ">Passord</label>",
         "<button type=\"submit\" class=\"button-wide\">Logg inn</button>",

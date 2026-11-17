@@ -12,7 +12,9 @@
     {% call band::sub(self.t("security_log.title"), "/settings", self.t("nav.settings")) %}{% endcall %}
     <div class="sheet">
 
-    {#- Unban is one tap (§5.6): it can be blocked again. It comes back to this group (#banned). -#}
+    {#- Unban is one tap (§5.6): it can be blocked again. It comes back to this group (#banned). Design 113: the group
+        shows only while an address is blocked, or for the Unban's answer that lands here. -#}
+    {%- if !bans.is_empty() || unbanned.is_some() %}
     <section id="banned" aria-labelledby="banned-title">
         <h2 class="group-header" id="banned-title">{{ self.t("security_log.banned.title") }}</h2>
         <div class="group">
@@ -24,13 +26,17 @@
                     <button type="submit" class="row-action" aria-label="{{ self.tp("security_log.banned.unban_label", [("ip", b.ip.as_str())]) }}">{{ self.t("security_log.banned.unban") }}</button>
                 </form>
             </div>
-            {% else %}
-            <p class="row row-note">{{ self.t("security_log.banned.none") }}</p>
             {% endfor %}
             {% if let Some(ip) = unbanned %}<p class="flash" data-flash="banned" role="status">{{ self.tp("security_log.banned.unbanned", [("ip", ip.as_str())]) }}</p>{% endif %}
         </div>
-        <p class="group-footer">{{ self.t("security_log.banned.footer") }}</p>
+        <div class="group-footer">
+            <details class="info">
+                <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel"><p>{{ self.t("security_log.banned.footer") }}</p></div>
+            </details>
+        </div>
     </section>
+    {%- endif %}
 
     <section id="activity" aria-labelledby="activity-title">
         <h2 class="group-header" id="activity-title">{% if paged %}{{ self.t("security_log.activity.older_title") }}{% else %}{{ self.t("security_log.activity.recent_title") }}{% endif %}</h2>
@@ -43,8 +49,8 @@
             {% endif %}
             {% for e in events %}
             <div class="row" data-event>
-                <span class="row-label">{{ e.label }}{% if !e.sub.is_empty() %}<span class="row-sub">{{ e.sub }}</span>{% endif %}{% if !e.exact.is_empty() %}<span class="row-sub">{{ e.exact }}</span>{% endif %}</span>
-                <span class="row-value row-value-keep">{{ e.when }}</span>
+                <span class="row-label">{{ e.label }}{% if !e.sub.is_empty() %}<span class="row-sub">{{ e.sub }}</span>{% endif %}</span>
+                <span class="row-value row-value-keep"{% if !e.exact.is_empty() %} title="{{ e.exact }}"{% endif %}>{{ e.when }}</span>
             </div>
             {% else %}
             <p class="row row-note">{{ self.t("security_log.activity.none") }}</p>
@@ -56,7 +62,12 @@
             </a>
             {% endif %}
         </div>
-        <p class="group-footer">{{ self.t("security_log.activity.footer") }}</p>
+        <div class="group-footer">
+            <details class="info">
+                <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel"><p>{{ self.t("security_log.activity.footer") }}</p></div>
+            </details>
+        </div>
     </section>
     </div>
 </main>
