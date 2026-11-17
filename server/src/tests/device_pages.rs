@@ -583,7 +583,13 @@ async fn lock_screen_and_pins_holds_the_moved_forms() {
     for field in ["new_kid_pin", "new_pin"] {
         let input = html.find(&format!("name=\"{field}\"")).unwrap();
         let details = html[..input].rfind("<details class=\"edit cell\"").unwrap();
-        assert!(!html[details..input].contains("</details>"), "{field}");
+        // A field's own ⓘ (design 113) may sit between the two: still open means more
+        // <details> opened than closed.
+        let between = &html[details..input];
+        assert!(
+            between.matches("<details").count() > between.matches("</details>").count(),
+            "{field}"
+        );
     }
     // The Parent PIN stays off the screen and out of autofill (qa-31-s4-code L2); the Child PIN
     // is read back to the child, so it is plain text.
