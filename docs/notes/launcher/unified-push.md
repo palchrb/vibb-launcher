@@ -158,6 +158,32 @@ register rows) run by `UpEngine`.
   engine's executor, and drops the engine's in-memory ack limit of that token (`UpEngine.forgetAcks`, L5): the system
   clock is never moved (L11).
 
+## Held while the apps have no network (design 115)
+
+`docs/design/115-up-held-without-network.md`. Under the VPN's sink (the parent's Bare Vibb, abroad, a roaming session
+past the lock, the kid's Off) only Vibb One has a network, so the queue stays on the server: **no pull**, not "pull and
+don't deliver".
+
+- **The rule** (pure `UpRules.hold`, `holdOf`; rows `up_rules.json`'s `hold`): held while any view says the sink - the
+  tunnel (`KidVpnService.tunnelShape`, a companion mirror of `shape`), the persisted decision (`vpn_shape`, only while
+  Android's always-on VPN is ours with lockdown, `MobileNetworkRuntime.lockdownOurs`) and the service's wanted shape
+  (`applyShape` with `KidVpnService.serviceNet`: its watcher's last network, only while a service runs). UP off holds
+  nothing. A tunnel in the sink answers at once (the runtime's `holdParts`).
+- **Hooks:** `UpRuntime.requestPull` refuses before the wake lock and posts `engine.noteHeld()`; `UpEngine.requestPull`
+  and each `step` check `UpPhone.hold()` (a held step ends the pull, the acks kept); a MESSAGE's send that finds the
+  phone held throws `UpHeldException` (reported as failed, never acked) after posting `noteHeld(askPull = true)`.
+  `KidVpnService.establish`, `stopSelfCleanly` and the end of `MobileNetworkRuntime.writeAlwaysOn` call
+  `UpRuntime.shapeChanged()` (posted to `work`): once a hold was seen, `pullAfterHold()` - the "net" pull 2 s after the
+  last ask (its own future and the 30 s wake lock), checked again when it runs, once more 10 s later when only the
+  wanted shape still holds. A refresh due waits while held (`UpRules.pass(..., held)`); pings and the origin's rewrite
+  are not held.
+- **`held` on the pull** (`UpAckBody.held`, left out when false): every step of the first run after a hold, so its
+  hand-outs leave no delivery sample. `heldSeen` lives in the engine alone, cleared when such a run ends with an answer.
+- **The report:** `unified_push: {"held": "no_network" | "none"}` (`UpRuntime.report`, while UP is on and the phone
+  unlocked), a full-report field; the server's Attention guard reads it.
+- Tests: `UpRulesTest` (hold rows, the refresh row), `UpEngineTest` (design 115 rows), `UnifiedPushContractTest`
+  (`report`, `report_open`, `body_held`).
+
 ## Not in R1-L
 
 - (Done in R23-L: the 30-day liveness ping and unregister, §5.6.)

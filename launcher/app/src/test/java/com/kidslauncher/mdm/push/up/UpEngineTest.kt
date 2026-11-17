@@ -365,4 +365,94 @@ class UpEngineTest {
         lateEngine().handle(UpRequest.Register(element, "tok-element-2", null, keyA))
         assertEquals(keyA, server.registerBodies.single().vapid)
     }
+
+    // ---- Design 115: held while the apps have no network -----------------------------------------------------------
+
+    private val message = UpWireMessage("deadbeef000000000000000000000006", "c0ffee00000000000000000000000002", "high", "AAEC")
+
+    @Test
+    fun `design 115 - held, no pull runs and the acks wait for the first pull after it, which says held on every step`() {
+        store.write(UpFixtures.rows)
+        server.pulls += UpMessagesAnswer(listOf(message))
+        assertTrue(engine.requestPull("sse"))
+        assertFalse(engine.pullStep())
+        phone.sendAll()
+        assertEquals(listOf(message.key), engine.pendingAcks())
+        // Held: no request at all, the ack kept.
+        phone.hold = UpHold.NO_NETWORK
+        assertFalse(engine.requestPull("ack"))
+        assertEquals(1, server.pullAcks.size)
+        assertTrue(engine.held)
+        // Held at a step (the hold came after the pull was asked): the pull ends before its call, the ack kept.
+        phone.hold = UpHold.NONE
+        assertTrue(engine.requestPull("sse"))
+        phone.hold = UpHold.NO_NETWORK
+        assertFalse(engine.pullStep())
+        assertEquals(1, server.pullAcks.size)
+        assertEquals(listOf(message.key), engine.pendingAcks())
+        // The hold ends: the kept ack rides the first pull, which says held on each of its steps; the next run doesn't.
+        phone.hold = UpHold.NONE
+        server.pulls += UpMessagesAnswer(emptyList(), more = true)
+        server.pulls += UpMessagesAnswer(emptyList())
+        assertTrue(engine.requestPull("net"))
+        assertFalse(engine.pullStep())
+        assertEquals(listOf(message.key), server.pullAcks[1])
+        assertEquals(listOf(true), server.pullHeld.drop(1))
+        assertFalse(engine.held)
+        assertTrue(engine.requestPull("sse"))
+        assertFalse(engine.pullStep())
+        assertEquals(listOf(true, false), server.pullHeld.drop(1))
+    }
+
+    @Test
+    fun `design 115 - QA M5, a held run whose call failed keeps the mark for the next run`() {
+        store.write(UpFixtures.rows)
+        engine.noteHeld()
+        server.pulls += null
+        assertTrue(engine.requestPull("net"))
+        assertFalse(engine.pullStep())
+        assertTrue(engine.held)
+        assertTrue(engine.requestPull("net"))
+        assertFalse(engine.pullStep())
+        assertEquals(listOf(true, true), server.pullHeld)
+        assertFalse(engine.held)
+    }
+
+    @Test
+    fun `design 115 - QA M1, a send refused for the hold asks the net pull and is delivered with no change of shape`() {
+        store.write(UpFixtures.rows)
+        server.pulls += UpMessagesAnswer(listOf(message))
+        assertTrue(engine.requestPull("sse"))
+        assertFalse(engine.pullStep())
+        // The send found the phone held (the runtime posts these two): not acknowledged, the net pull asked.
+        engine.noteHeld(askPull = true)
+        engine.failed(phone.delivering.removeAt(0))
+        assertEquals(1, phone.pullsAfterHold)
+        assertTrue(engine.pendingAcks().isEmpty())
+        // The hold was a moment's: no shape change ever comes, the net pull itself delivers it.
+        server.pulls += UpMessagesAnswer(listOf(message))
+        assertTrue(engine.requestPull("net"))
+        assertFalse(engine.pullStep())
+        assertEquals(message.key, phone.delivering.single().id)
+        assertEquals(listOf(false, true), server.pullHeld)
+    }
+
+    @Test
+    fun `design 115 - a shape change asks the net pull only once a hold was seen`() {
+        store.write(UpFixtures.rows)
+        engine.shapeChanged()
+        assertEquals(0, phone.pullsAfterHold)
+        phone.hold = UpHold.NO_NETWORK
+        engine.shapeChanged()
+        assertEquals(1, phone.pullsAfterHold)
+        // QA M1 (b): every change after the hold asks again, whatever the computed hold says at that call.
+        engine.shapeChanged()
+        phone.hold = UpHold.NONE
+        engine.shapeChanged()
+        assertEquals(3, phone.pullsAfterHold)
+        // UP off: nothing.
+        view = UpFixtures.view("off")
+        engine.shapeChanged()
+        assertEquals(3, phone.pullsAfterHold)
+    }
 }

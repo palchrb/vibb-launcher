@@ -401,6 +401,16 @@ pub async fn accept(
     }
 }
 
+/// Design 115 §2.8: the report's `unified_push`, cleaned for `device_status.up_held` - its `held` when that is a word of
+/// 1-32 characters `[a-z_]` other than `none` (a reason a newer launcher adds still reads as held, on purpose); `None`
+/// for `none` and anything else.
+pub fn clean_report(value: &serde_json::Value) -> Option<String> {
+    let held = value.get("held")?.as_str()?;
+    let word =
+        (1..=32).contains(&held.len()) && held.bytes().all(|b| b.is_ascii_lowercase() || b == b'_');
+    (word && held != "none").then(|| held.to_string())
+}
+
 /// The phone's stream generation (design 108c §7.1): `StreamState::since` in ms while a stream is open, else `None`.
 /// It moves whenever a stream opens, so a push handed out on the generation it was accepted on went to a stream that
 /// was open the whole time.

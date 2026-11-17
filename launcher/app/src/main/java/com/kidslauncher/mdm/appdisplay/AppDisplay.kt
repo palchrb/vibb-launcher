@@ -193,13 +193,15 @@ object AppDisplay {
         } catch (e: Exception) {
             null
         }
-        val own = try {
-            val pm = context.packageManager
-            pm.getApplicationLabel(pm.getApplicationInfo(packageName, 0)).toString()
-        } catch (e: Exception) {
-            packageName
-        }
-        return displayLabel(label(packageName), kidRename, own)
+        return displayLabel(label(packageName), kidRename, ownLabel(context, packageName) ?: packageName)
+    }
+
+    /** The app's own Android label; `null` when it can't be read (design 115 §3: never the package name). */
+    fun ownLabel(context: Context, packageName: String): String? = try {
+        val pm = context.packageManager
+        pm.getApplicationLabel(pm.getApplicationInfo(packageName, 0)).toString()
+    } catch (e: Exception) {
+        null
     }
 
     /** Reads the cached policy (`Ok` only - a corrupt or missing cache shows the apps' own names);

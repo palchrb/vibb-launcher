@@ -158,7 +158,25 @@ object MobileNetworkRuntime {
             Log.i(LOG_TAG, "Always-on: ${pkg ?: "none"}, lockdown ${wanted.lockdown} (${shape.wire})")
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Couldn't set always-on for ${shape.wire}: ${e.javaClass.simpleName}")
+        } finally {
+            // Design 115 §2.4 (QA L2): after the decision and Android's always-on are both written, app push looks at
+            // its hold again (on its own thread).
+            com.kidslauncher.mdm.push.up.UpRuntime.shapeChanged()
         }
+    }
+
+    /** Design 115 (QA L1): Android's always-on VPN is ours with lockdown - what cuts every other app while no tunnel is
+     * up. Device owner only; `false` on any doubt. */
+    fun lockdownOurs(context: Context): Boolean = try {
+        val dpm = context.getSystemService(DevicePolicyManager::class.java)
+        if (dpm == null || !dpm.isDeviceOwnerApp(context.packageName)) {
+            false
+        } else {
+            val admin = ComponentName(context, MdmDeviceAdminReceiver::class.java)
+            dpm.getAlwaysOnVpnPackage(admin) == context.packageName && dpm.isAlwaysOnVpnLockdownEnabled(admin)
+        }
+    } catch (e: Exception) {
+        false
     }
 
     // ---- the network ---------------------------------------------------------------------------------------------

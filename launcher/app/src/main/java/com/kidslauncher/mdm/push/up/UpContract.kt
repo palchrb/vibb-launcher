@@ -80,9 +80,15 @@ data class UpEndpointAnswer(val endpoint: String) {
 @Serializable
 data class UpRefusalAnswer(val refused: String)
 
-/** `POST /api/devices/up/messages`: the keys of the messages whose broadcast was sent (H1), at most [ACK_MAX]. */
+/** `POST /api/devices/up/messages`: the keys of the messages whose broadcast was sent (H1), at most [ACK_MAX]; [held]
+ * on every step of the first pull run after a hold (design 115 §2.5: its hand-outs leave no delivery sample), left out
+ * when false (no `encodeDefaults`), so an older server reads the body as before. */
 @Serializable
-data class UpAckBody(val ack: List<String>)
+data class UpAckBody(val ack: List<String>, val held: Boolean = false)
+
+/** Design 115 §2.8: the status report's `unified_push` while UP is on - [held] is [UpHold.wire]. A full-report field. */
+@Serializable
+data class UpReport(val held: String)
 
 @Serializable
 data class UpMessagesAnswer(val messages: List<UpWireMessage> = emptyList(), val more: Boolean = false)

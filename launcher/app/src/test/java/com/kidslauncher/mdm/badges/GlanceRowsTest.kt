@@ -586,4 +586,26 @@ class GlanceRowsTest {
         // The suffix's name stays out of a log line.
         assertFalse(GlanceNameSuffix.Sender("Pappa").toString().contains("Pappa"))
     }
+
+    // ---- design 115 §3: the row's name -----------------------------------------------------------------------------
+
+    @Test
+    fun `design 115 - a plain title equal to the app's label shows the display name, a conversation's never`() {
+        val plain = GlanceShape.PLAIN
+        assertNull(glanceShownTitle("Element X", plain, null, "Element X"))
+        assertNull(glanceShownTitle("element  x", plain, null, " Element X"))
+        assertNull(glanceShownTitle("ELEMENT X", plain, null, "Element\u00A0X"))
+        assertEquals("Mamma", glanceShownTitle("Mamma", plain, null, "Element X"))
+        assertNull(glanceShownTitle(null, plain, null, "Element X"))
+        assertEquals("Mamma", glanceShownTitle("Mamma", plain, null, null))
+        assertEquals("Element X", glanceShownTitle("Element X", plain, null, null))
+        // QA M4: MessagingStyle's names are kept.
+        assertEquals("Element X", glanceShownTitle("Element X", GlanceShape.DIRECT, "Element X", "Element X"))
+        assertEquals("Element X", glanceShownTitle("Element X", GlanceShape.GROUP, "Mamma", "Element X"))
+        assertEquals("Element X", glanceShownTitle("Element X", plain, "Mamma", "Element X"))
+        // QA L9: a long label is cut as the title was; NFC folds a decomposed letter.
+        val long = "A very long application label that goes on and on past the glance's sixty"
+        assertNull(glanceShownTitle(cleanGlanceText(long, GLANCE_TITLE_MAX), plain, null, long))
+        assertNull(glanceShownTitle("Bl\u00e5", plain, null, "Bla\u030a"))
+    }
 }

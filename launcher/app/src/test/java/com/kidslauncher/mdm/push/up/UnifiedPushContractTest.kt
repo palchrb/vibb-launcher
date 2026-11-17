@@ -116,6 +116,11 @@ class UnifiedPushContractTest {
         val body = messages["body"]!!.jsonObject
         val acks = body["ack"]!!.jsonArray.map { it.jsonPrimitive.content }
         assertEquals(body, ServerJson.encodeToJsonElement(UpAckBody.serializer(), UpAckBody(acks)))
+        // Design 115 §2.5: the first pull after a hold says `held`; `false` is left out, so `body` stays as it was.
+        val held = messages["body_held"]!!.jsonObject
+        val heldAcks = held["ack"]!!.jsonArray.map { it.jsonPrimitive.content }
+        assertEquals(held, ServerJson.encodeToJsonElement(UpAckBody.serializer(), UpAckBody(heldAcks, held = true)))
+        assertEquals(body, ServerJson.encodeToJsonElement(UpAckBody.serializer(), UpAckBody(acks, held = false)))
         val answer = ServerJson.decodeFromJsonElement(UpMessagesAnswer.serializer(), messages["answer"]!!)
         assertEquals(messages["answer"]!!.jsonObject["more"]!!.jsonPrimitive.content == "true", answer.more)
         assertEquals(2, answer.messages.size)
@@ -128,6 +133,19 @@ class UnifiedPushContractTest {
         // Each answer row plans against a phone that holds both registrations.
         val rows = listOf(UpFixtures.row(answer.messages[0].reg, "io.element.android.x"), UpFixtures.row(answer.messages[1].reg, "org.unifiedpush.example"))
         for (message in answer.messages) assertTrue(UpDelivery.plan(message, rows) { UpAppState.INSTALLED } is UpPlan.Deliver)
+    }
+
+    @Test
+    fun `design 115 - the report's unified_push encodes exactly, held and not`() {
+        for ((key, hold) in listOf("report" to UpHold.NO_NETWORK, "report_open" to UpHold.NONE)) {
+            val report = com.kidslauncher.mdm.server.dto.StatusReportRequest(lockReason = "NONE", kioskEngaged = true, unifiedPush = UpReport(hold.wire))
+            val encoded = ServerJson.encodeToJsonElement(com.kidslauncher.mdm.server.dto.StatusReportRequest.serializer(), report).jsonObject
+            assertEquals(key, contract[key]!!.jsonObject["unified_push"], encoded["unified_push"])
+            assertEquals(key, setOf("unified_push"), contract[key]!!.jsonObject.keys)
+        }
+        // An older launcher's report (and UP off) leaves the key out.
+        val none = com.kidslauncher.mdm.server.dto.StatusReportRequest(lockReason = "NONE", kioskEngaged = true)
+        assertFalse("unified_push" in ServerJson.encodeToJsonElement(com.kidslauncher.mdm.server.dto.StatusReportRequest.serializer(), none).jsonObject)
     }
 
     @Test
