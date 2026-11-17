@@ -587,11 +587,11 @@ async fn meldinger_has_a_row_and_a_name_and_icon_of_its_own() {
         "{html}"
     );
     assert!(
-        html.contains(r##"data-auto-glyph="chat" data-auto-tile="#347470""##),
+        html.contains(r##"data-auto-glyph="sms" data-auto-tile="#347470""##),
         "{html}"
     );
     assert!(
-        html.contains(r##"style="background: #347470" aria-hidden="true"><img src="/static/app-icons/chat.svg""##),
+        html.contains(r##"style="background: #347470" aria-hidden="true"><img src="/static/app-icons/sms.svg""##),
         "{html}"
     );
     // No switch, no "App logo", no permissions; its own words for "On Home".

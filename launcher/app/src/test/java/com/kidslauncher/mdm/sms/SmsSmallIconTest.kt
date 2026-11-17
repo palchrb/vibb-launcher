@@ -7,8 +7,8 @@ import org.junit.Test
 
 class SmsSmallIconTest {
     @Test
-    fun `the small icon is Meldinger's glyph, the chat glyph by default`() {
-        assertEquals(R.drawable.app_glyph_chat, smsSmallIcon(MessagesLook()))
+    fun `the small icon is Meldinger's glyph, its own bubble with dots by default`() {
+        assertEquals(R.drawable.ic_kid_sms, smsSmallIcon(MessagesLook()))
         assertEquals(R.drawable.ic_launcher_foreground, smsSmallIcon(MessagesLook(glyph = R.drawable.ic_launcher_foreground)))
     }
 }

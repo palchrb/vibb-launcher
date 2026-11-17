@@ -35,14 +35,16 @@ pub const OWN_PREVIEW: &str = "#5C6370";
 /// app shows its tone. "Automatic" previews as it, and a chosen glyph with the colour [AUTO] keeps the tile.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BuiltinLook {
-    /// A key of [ICONS].
+    /// A glyph in `static/app-icons/`: a key of [ICONS], or the part's own glyph there (Meldinger's `sms`, not a
+    /// parent choice).
     pub glyph: &'static str,
     pub tile: &'static str,
 }
 
-/// Meldinger's: the chat glyph on the launcher's `kid_messages_tile`.
+/// Meldinger's: the bubble with dots (Material Symbols `sms`, 2026-11-17; the launcher's `ic_kid_sms`) on the
+/// launcher's `kid_messages_tile` - a parent-chosen "chat" app keeps the plain bubble.
 pub const MESSAGES_LOOK: BuiltinLook = BuiltinLook {
-    glyph: "chat",
+    glyph: "sms",
     tile: "#347470",
 };
 
@@ -747,7 +749,16 @@ mod tests {
             color: color.to_string(),
         };
         let own = (MESSAGES_LOOK.glyph, MESSAGES_LOOK.tile);
-        assert!(icon_known(own.0));
+        // Meldinger's glyph is its own (not a parent choice), converted beside the others.
+        assert!(!icon_known(own.0));
+        let svg = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("static/app-icons/sms.svg"),
+        )
+        .unwrap();
+        assert!(
+            svg.contains("Converted from Material Symbols \"sms\"")
+                && svg.contains("Apache License 2.0")
+        );
         assert!(icon_known(DAY_LOOK.glyph));
         assert_eq!(MESSAGES_LOOK.shown(None), own);
         assert_eq!(MESSAGES_LOOK.shown(Some(&values(None, "plum"))), own);

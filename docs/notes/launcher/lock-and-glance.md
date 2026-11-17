@@ -240,7 +240,7 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   counting toward `GLANCE_MAX_ROWS`, the "more" line and the compact tile's rule like any row. The look
   (`lock/GlanceSmsRowView.kt`): the name as the message screens say it, "Ny melding" / "3 nye meldinger", the newest
   unread message's time; the contact's Home avatar with a teal message badge in the missed call's corner
-  (`bg_glance_sms_badge`, Home's Meldinger teal), else the chat glyph on that teal - since design 82 D9 both are
+  (`bg_glance_sms_badge`, Home's Meldinger teal), else Meldinger's glyph on that teal - since design 82 D9 both are
   Meldinger's look (`GlanceSmsRow.look`: the parent's glyph, and the badge's fill recoloured with its ring kept;
   `docs/notes/launcher/home-and-photos.md`, "Meldinger's entry"); at Full text (`lock_glance.sms`,
   design 82 - `smsLockLevel`; no row at all at Off; `docs/notes/launcher/calls.md`, "The level") the

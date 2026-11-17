@@ -102,11 +102,18 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   `scripts/material-symbols.sh` (root) from `server/testdata/app_icons.json` - the test copy in
   `src/test/resources/` must be identical (`AppGlyphsTest`, which also checks that every tile is one of the six
   tones). The Apache-2.0 text is `assets/licenses/Apache-2.0.txt`, shown on the licences screen (`LegalInfoActivity`).
+- **The built-in tiles in the same set** (2026-11-17, the user: "Telefonbok feks ser litt rar ut"): Telefonbok
+  (`ic_kid_phone_book`, Material Symbols `call`, also the time-rule screen's phone-book row), Innstillinger
+  (`ic_kid_settings`, `settings`) and Meldinger's own look (`ic_kid_sms`, `sms` - a bubble with dots, so a
+  parent-chosen "chat" app no longer looks like it; also its notifications' small icon and the lock's SMS rows) are
+  made by `scripts/material-symbols.sh` (`BUILTIN_GLYPHS`) like every other glyph; the tiles keep their colours. The
+  PWA previews Meldinger with the same glyph (`server/static/app-icons/sms.svg`, the server's `MESSAGES_LOOK`; not a
+  parent choice, so not in `app_icons.json`).
 - **Meldinger's entry** (design 82 D1, D9, W1, W2; `docs/design/82-meldinger-as-an-app.md` §14): the built-in SMS
   app's name, icon and On Home ride the same list under the reserved key `me.vibb.builtin.messages`
   (`BUILTIN_MESSAGES`; the prefix `BUILTIN_PREFIX`). A reserved name is no installed app's: `AppDisplay.entry`
   (`appEntry`) answers null for it and only `AppDisplay.builtin(key)` (`builtinEntry`) reads it. `messagesLook(entry)`
-  -> `MessagesLook(glyph, tile, name)`: the parent's glyph (`AppGlyphs.ICONS`), else the chat glyph; the colour's tile
+  -> `MessagesLook(glyph, tile, name)`: the parent's glyph (`AppGlyphs.ICONS`), else its own bubble with dots (`ic_kid_sms`); the colour's tile
   **only with a chosen glyph**, else `kid_messages_tile` (`tileColor`); the name, else `messages_title`
   (`shownName`, `AppDisplay.messagesName`); `own` is no glyph, so it is Meldinger's own look. It feeds the Home tile
   (`GridTile.Messages.look`, so `tileChange` is a full rebind for a new icon or name), the time-rule screen's row
