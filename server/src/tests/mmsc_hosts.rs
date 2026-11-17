@@ -267,7 +267,7 @@ async fn allow_decline_and_take_back() {
     assert_eq!(mmsc_hosts(&app, &token).await, sent);
 }
 
-/// An open question's markup: what the row shows, and what is folded under "Mer" (from its `<details`).
+/// An open question's markup: what the row shows, and what is folded under its ⓘ, "Mer" (from its `<details`).
 fn question(page: &str, row: i64) -> (&str, &str) {
     let block = &page[page.find(&format!("id=\"mmsc-{row}\"")).unwrap()..];
     block[..block.find("</details>").unwrap()]
@@ -276,8 +276,8 @@ fn question(page: &str, row: i64) -> (&str, &str) {
 }
 
 /// The question is short (the user, 2026-11-11): the row asks, names the picture and warns only about an address
-/// Android's list doesn't have for the SIM; what the list says and how long an allow lasts are folded under "Mer",
-/// closed, in both languages. A SIM the phone gives no name for is "the SIM's operator" in the warning, never its
+/// Android's list doesn't have for the SIM; what the list says and how long an allow lasts are folded under an ⓘ
+/// labelled "Mer" (design 113: the icon alone), closed, in both languages. A SIM the phone gives no name for is "the SIM's operator" in the warning, never its
 /// MCC/MNC.
 #[tokio::test]
 async fn the_question_is_short_and_the_rest_is_under_more() {
@@ -291,14 +291,14 @@ async fn the_question_is_short_and_the_rest_is_under_more() {
     for (lang, more, list, lasts, warning) in [
         (
             "en",
-            ">More<",
+            "aria-label=\"More\"",
             "Android's list",
             "until you remove it.",
             "Unknown address for the SIM's operator. Allow only if",
         ),
         (
             "nb",
-            ">Mer<",
+            "aria-label=\"Mer\"",
             "Androids liste",
             "til du fjerner den.",
             "Ukjent adresse for SIM-kortets operatør. Tillat bare hvis",

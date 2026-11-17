@@ -638,12 +638,9 @@ async fn default_country_code_is_validated_and_used() {
     assert!(!html.contains("data-flash=\"setup\""));
     add(&app, &cookie, id, "Farmor", "070-123 45 67").await;
     assert_eq!(contact_rows(&app).await[0].2, "+46701234567");
-    // The calls page names it and where to change it, but has no form for it any more.
+    // The calls page names it (design 113: the code alone), but has no form for it any more.
     let html = calls_page(&app, &cookie, id).await;
-    assert!(
-        html.contains("+46 is used (Settings › Phone Setup)"),
-        "{html}"
-    );
+    assert!(html.contains("No country code: +46"), "{html}");
     assert!(!html.contains("/settings/calls"));
 
     // An unreadable setting is a 500 on Phone Setup, never an empty field.

@@ -377,7 +377,7 @@ impl DeviceCallsTemplate {
 }
 
 /// One channel's row (design 77 D2): its form name (`calls_mode`/`sms_mode`), label, the segmented control's three
-/// choices and the chosen state's sub-line.
+/// choices and the chosen state's sentence (design 113: read only by the calls ⓘ, no sub-line under the row).
 struct ChannelRow {
     name: &'static str,
     label: &'static str,
@@ -394,7 +394,7 @@ struct ChannelRow {
 }
 
 /// One choice of a segmented control (design 77 D2, the look of the phone switcher's segments): a radio, its short
-/// label and a quiet note under it ("anbefalt").
+/// label and a quiet note under it (none since design 113 dropped "anbefalt"; the template keeps the slot).
 struct Segment {
     value: &'static str,
     label: &'static str,
@@ -404,9 +404,8 @@ struct Segment {
     disabled: bool,
 }
 
-/// D2's three choices and the sub-line of `mode` for the calls channel (`sms` false) or SMS; `other` is the other
-/// channel's state. `engine`: the phone reports `sms_engine_v1` - SMS's "Styrt av Vibb" then says "anbefalt".
-/// Without it (code QA M2, the capability gate) a choice that would make the pair one an older launcher can't do
+/// D2's three choices and the sentence of `mode` for the calls channel (`sms` false) or SMS; `other` is the other
+/// channel's state. `engine`: the phone reports `sms_engine_v1`. Without it (code QA M2, the capability gate) a choice that would make the pair one an older launcher can't do
 /// ([sms::older_launcher_expresses]) shows disabled, with "<choice> - Oppdater Vibb One først" under the row - never
 /// the stored one.
 fn channel_row(
@@ -443,8 +442,7 @@ fn channel_row(
             Segment {
                 value,
                 label: t(lang, key),
-                note: (sms && engine && *value == "managed")
-                    .then(|| t(lang, "device.calls.mode.recommended")),
+                note: None,
                 selected: *value == mode,
                 disabled,
             }
@@ -521,8 +519,8 @@ struct EmergencyRow {
     number: String,
     /// The parent's name; for an emergency number without one, "Emergency number".
     name: String,
-    /// The sub-line's word key, and whether it is orange (a number that follows the call rules).
-    sub: &'static str,
+    /// The sub-line's word key, only on a number that isn't an emergency number (orange, design 113); `warn` the same.
+    sub: Option<&'static str>,
     warn: bool,
     /// A second line: on a managed phone, a non-emergency number that isn't an outbound phone-book contact (the
     /// phone dims it).
@@ -548,7 +546,6 @@ fn emergency_rows(
     cc: &str,
     phone_book: Option<&[String]>,
 ) -> Vec<EmergencyRow> {
-    let big = emergency::big_row(menu, cc);
     menu.iter()
         .enumerate()
         .map(|(i, e)| {
@@ -558,19 +555,12 @@ fn emergency_rows(
             } else {
                 e.name.clone()
             };
-            let (sub, warn) = if !real {
-                ("device.emergency.not_emergency", true)
-            } else if big == Some(i) {
-                ("device.emergency.big", false)
-            } else {
-                ("device.emergency.always", false)
-            };
             EmergencyRow {
                 id: e.id,
                 number: e.number.clone(),
                 name,
-                sub,
-                warn,
+                sub: (!real).then_some("device.emergency.not_emergency"),
+                warn: !real,
                 extra: phone_book
                     .filter(|book| !real && !book.contains(&e.number))
                     .map(|_| "device.emergency.not_in_phone_book"),

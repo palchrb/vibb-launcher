@@ -570,7 +570,14 @@ async fn the_contacts_messages_group() {
     );
     let ambulance_row = &page[page.find(&format!("id=\"contact-{ambulance}\"")).unwrap()..];
     let ambulance_row = &ambulance_row[..ambulance_row.find("Remove Contact").unwrap()];
-    assert!(ambulance_row.contains("Emergency numbers can&#39;t text here"));
+    // Design 113: said once, on the main row - Avansert's one-way row doesn't repeat it.
+    assert_eq!(
+        ambulance_row
+            .matches("Emergency numbers can&#39;t text here")
+            .count(),
+        1,
+        "{ambulance_row}"
+    );
     let switch = super::tags(ambulance_row, "input")
         .into_iter()
         .find(|tag| tag.attr("name") == Some("sms_in"))
