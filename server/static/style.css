@@ -1102,13 +1102,17 @@ summary.row:active {
     height: 17px;
 }
 
-.tile-indigo { background: #5E5CE6; }
-.tile-teal { background: #30B0C7; }
-.tile-red { background: #FF453A; }
-.tile-blue { background: #32ADE6; }
-.tile-green { background: #34C759; }
-.tile-grey { background: #8E8E93; }
-.tile-graphite { background: #636366; }
+/* The tiles' colours are the launcher's Home tiles (2026-11-17, the user picked variant B of
+   https://claude.ai/artifact/YCwhPXW9joi1RoVcXiGFiu): Lommelykt indigo, Meldinger teal, Dagen blue, Telefonbok
+   green, Innstillinger slate, with a muted red, a darker slate and Vibb's rust - every one 5:1 or more against the
+   white glyph (iOS's green, teal and blue were 2.2-2.6:1). The same in both schemes. */
+.tile-indigo { background: #6065A9; }
+.tile-teal { background: #347470; }
+.tile-red { background: #B8433A; }
+.tile-blue { background: #496C9C; }
+.tile-green { background: #3A7552; }
+.tile-grey { background: #606B80; }
+.tile-graphite { background: #4A4E5C; }
 
 /* An action row: blue text; .row-danger red. A <button class="row row-button"> resets the filled
    button style. */
@@ -2573,7 +2577,7 @@ details.edit[open] > summary .chev {
 
 /* An action on the band (band.html's call body): a 44 px target; on the band it is peach (.band .title-action). */
 .title-action { display: inline-flex; align-items: center; min-height: 44px; padding: 0 4px; color: var(--tint); font-size: 1.0625rem; text-decoration: none; }
-.tile-orange { background: #C2410C; }
+.tile-orange { background: #B4532C; }
 details.disclosure > summary { list-style: none; cursor: pointer; }
 details.disclosure > summary::-webkit-details-marker { display: none; }
 details.disclosure[open] > summary .section-chev,
@@ -2821,7 +2825,7 @@ input.row-input {
 /* ---- Device › Music (design 31 step 7) ---- */
 
 /* The Music row on the phone page (the DeviceSummary mockup tile). */
-.tile-pink { background: #FF375F; }
+.tile-pink { background: #A8475F; }
 
 /* ---- Calls & Contacts (design 31 step 8) ---- */
 
