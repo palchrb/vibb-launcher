@@ -1882,7 +1882,7 @@ Each page's "Tests" bullets name the tests that pin its strings or rows. Across 
 
 ## The user's answers (2026-11-17, 21:55 CET)
 
-- ASK 1 (the full-text codes line): ASKED BACK - the user asked what it means; not built until answered.
+- ASK 1 (the full-text codes line): DROPPED ("Dropp den!") - no new line.
 - ASK 2 (the device row's opened count): KEEP it ("Behold den").
 - ASK 3 (the inbox's delivery line only when it went wrong): TAKEN.
 - ASK 4 (the Settings hub's «Blokkert aktivitet» row): KEEP the row.
