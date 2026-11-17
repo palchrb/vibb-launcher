@@ -87,6 +87,7 @@ async fn render_settings(
         text.and_then(crate::display_time::parse_db_utc)
             .map(|at| zone.when(at, now))
     };
+    let setup = setup_address(setup, &state.config);
     let prefill = settings
         .public_origin
         .is_none()
@@ -478,5 +479,51 @@ async fn known_device(state: &AppState, lang: Lang, id: i64) -> Result<(), Box<R
             "error.device_not_found",
         ))),
         Err(err) => Err(Box::new(save_failed(lang, id, err))),
+    }
+}
+
+/// The address the prefill (L7) starts from: Phone Setup's saved one, else `PHONE_SERVER_URL` - the same rule as the
+/// setup QR's (`provisioning::server_url`), so a server set up by `.env` alone is prefilled too. The prefill still
+/// takes it only when it can be public (`up::prefill`), and only the parent's Save sets it.
+fn setup_address(saved: Option<String>, config: &crate::config::ForkConfig) -> Option<String> {
+    match saved {
+        Some(saved)
+            if !saved.is_empty() && !crate::handlers::provisioning::saved_refused(&saved) =>
+        {
+            Some(saved)
+        }
+        _ => config.phone_server_url.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::setup_address;
+    use crate::config::ForkConfig;
+
+    #[test]
+    fn the_prefill_falls_back_to_the_env_address() {
+        let mut config = ForkConfig::for_tests();
+        config.phone_server_url = Some("https://phones.example.com".to_string());
+        let saved = |url: &str| Some(url.to_string());
+        assert_eq!(
+            setup_address(None, &config).as_deref(),
+            Some("https://phones.example.com")
+        );
+        assert_eq!(
+            setup_address(saved(""), &config).as_deref(),
+            Some("https://phones.example.com")
+        );
+        assert_eq!(
+            setup_address(saved("ftp://saved.example"), &config).as_deref(),
+            Some("https://phones.example.com"),
+            "a saved address the rule refuses loses, as in the QR"
+        );
+        assert_eq!(
+            setup_address(saved("https://saved.example"), &config).as_deref(),
+            Some("https://saved.example"),
+            "the saved one wins"
+        );
+        assert_eq!(setup_address(None, &ForkConfig::for_tests()), None);
     }
 }
