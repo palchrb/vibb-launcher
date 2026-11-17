@@ -422,3 +422,19 @@ The design QA of revision 1 (1 High, 1 Medium, 12 Low), each finding and what re
   (B.6).
 
 Nothing left open.
+
+## Built (2026-11-17, branch `server-round`)
+
+Built as revised: A (the layered, held nudge, `top-strip.js?v=3`, `jstest/top-strip.test.js`, 443 jstest pass) and B (the
+managed Phone row, `tests::dialer_row`, the allowlist re-add in `calls::save_settings`).
+
+- **Merge with UnifiedPush R1 (design 108)**: `devices::edit_allowlist_in` now calls `unified_push::prune_disallowed` on
+  its own connection after the write and returns how many registrations went; `edit_allowlist` and `calls::save_settings`
+  send the `command_notify` nudge after their commit when that is above zero. `every_allowlist_writer_prunes` keeps it so.
+- **One addition not in the design**: the managed link row's value ("Managed by Vibb") has `.row-value-words`
+  (`word-break: normal`), because the generic `.row-value` broke it mid-word at 390 px.
+- **Test fix**: askama escapes `&` as `&#38;`, so the refusal text check in `a_managed_dialer_is_never_changed` accepts it.
+- **Browser pass** (headless Chromium, 390 px, light and dark): managed row under Vibb One as a link with no controls,
+  unmanaged note "Not on Home: the kid has no way to make a call", no horizontal overflow, a refused toggle (calls set to
+  managed behind a stale page) keeps the page and shows the reason under the row, the sign-in page loads `top-strip.js?v=3`.
+  Not checked: iOS itself (no device; design A.5's test plan is the user's).

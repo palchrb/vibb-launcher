@@ -125,7 +125,8 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
   `sms_out`, `mms` (`device_contacts`, backfilled from the call flags, on for a new contact).
 - **The dialer back on the allowlist (design 109 §B)**: `calls::save_settings` runs in `BEGIN IMMEDIATE` and reads the
   stored `calls_mode`; a save from `managed` or `off` to `unmanaged` adds the reported `system_dialer` to the allowlist
-  if it is missing (`devices::edit_allowlist_in`, in the same transaction), because Device › Apps showed it as a link
+  if it is missing (`devices::edit_allowlist_in`, in the same transaction; it prunes app push on that transaction and
+  `save_settings` nudges the phone after the commit when registrations went, design 108 L10), because Device › Apps showed it as a link
   while calls were managed and the kid may have Android's Phone app again. A NULL allowlist stays NULL (apps not
   managed), an unreadable one is left as it is (logged, the mode save goes through), no report or no dialer adds
   nothing; the parent's rename and On Home for it are kept. `tests::dialer_row::unmanaged_again_puts_the_dialer_back`.
