@@ -450,6 +450,18 @@ fn the_field_tables_keep_every_contract_key() {
                 checked += 1;
             }
         }
+        // Design 107 §4: the report's `notification_channels` (`notification_channels.json`'s `report`, `report_none`
+        // and `report_all_off`), every key kept by the cleaning.
+        if json.get("capability").and_then(|c| c.as_str())
+            == Some(crate::notification_channels::CAPABILITY)
+        {
+            for key in ["report", "report_none", "report_all_off"] {
+                let blob = &json[key];
+                let kept = crate::notification_channels::clean(blob).unwrap();
+                assert_eq!(&kept, blob, "{}'s {key}", path.display());
+                checked += 1;
+            }
+        }
         // Design 102 §6.2: the report's `captive_portal` and `login_browser` (`login_windows.json`'s `report` and
         // `report_off`), every key kept by the cleaning.
         if json

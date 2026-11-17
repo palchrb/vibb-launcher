@@ -1,0 +1,69 @@
+{#- Design 108 §3.10: Device › Apps' "App push" group (`app_push::AppPushGroup`, as `app_push`). The switch turns on
+    as an auto-saving form and off through its sheet (A3); every form returns to #app-push (design 103: in place). -#}
+<section id="app-push" aria-labelledby="app-push-title">
+    <h2 class="group-header" id="app-push-title">{{ self.t("app_push.group") }}</h2>
+    {% for line in app_push.missing %}
+    <div class="group" data-warning="up-missing"><p class="row row-note text-alarm">{{ line }}</p></div>
+    {% endfor %}
+    <div class="group group-avatars group-small group-apps">
+        {% if app_push.on %}
+        <div class="row" data-row="app-push-switch">
+            <span class="row-label">{{ self.t("app_push.switch") }}<span class="row-sub">{% if app_push.needs_update %}{{ self.t("app_push.needs_update") }}{% else if !app_push.origin_set %}{{ self.t("app_push.no_origin") }}{% else %}{{ self.t("app_push.switch_sub") }}{% endif %}</span></span>
+            <span class="row-value">{{ self.t("app_push.hub.on") }}</span>
+        </div>
+        <details class="confirm cell" id="app-push-off">
+            <summary class="row">{{ self.t("app_push.turn_off_dots") }}</summary>
+            <form method="post" action="/devices/{{ device.id }}/app-push#app-push" class="confirm-body">
+                {% if let Some(from) = from %}<input type="hidden" name="from" value="{{ from }}">{% endif %}
+                <p>{{ self.t("app_push.off_question") }}</p>
+                <button type="submit" class="button-destructive">{{ self.t("app_push.turn_off") }}</button>
+                {% include "partials/confirm_cancel.html" %}
+            </form>
+        </details>
+        {% else %}
+        <form method="post" action="/devices/{{ device.id }}/app-push#app-push" class="cell">
+            {% if let Some(from) = from %}<input type="hidden" name="from" value="{{ from }}">{% endif %}
+            <label class="row" data-row="app-push-switch">
+                <span class="row-label">{{ self.t("app_push.switch") }}<span class="row-sub">{{ self.t("app_push.switch_sub") }}</span></span>
+                <input type="checkbox" role="switch" class="sw" name="on" value="on" data-autosave><span class="knob" aria-hidden="true"></span>
+            </label>
+            <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
+        </form>
+        {% endif %}
+        {% for app in app_push.apps %}
+        <div class="cell" data-up-app="{{ app.package }}">
+            <div class="row">
+                {% if let Some(src) = app.logo %}<span class="app-row-tile app-row-logo" aria-hidden="true">{{ app.letter }}<img src="{{ src }}" alt="" decoding="async"></span>{% else %}<span class="app-row-tile" aria-hidden="true">{{ app.letter }}</span>{% endif %}
+                <span class="row-label">{{ app.label }}<span class="row-sub">{{ app.line }}</span>{% if let Some(warning) = app.warning %}<span class="row-sub text-alarm" data-warning="no-delivery">{{ self.t(warning) }}</span>{% endif %}{% if let Some(noisy) = app.noisy %}<span class="row-sub text-alarm" data-warning="noisy">{{ noisy }}</span>{% endif %}</span>
+            </div>
+            <details class="confirm cell">
+                <summary class="row">{{ self.t("app_push.stop_dots") }}</summary>
+                <form method="post" action="/devices/{{ device.id }}/app-push/stop#app-push" class="confirm-body">
+                    <input type="hidden" name="package" value="{{ app.package }}">
+                    {% if let Some(from) = from %}<input type="hidden" name="from" value="{{ from }}">{% endif %}
+                    <p>{{ app.stop_question }}</p>
+                    <button type="submit" class="button-destructive">{{ self.t("app_push.stop") }}</button>
+                    {% include "partials/confirm_cancel.html" %}
+                </form>
+            </details>
+        </div>
+        {% endfor %}
+    </div>
+    <p class="group-footer">{{ self.t("app_push.footer") }}</p>
+    {% if !app_push.stopped.is_empty() %}
+    <h2 class="group-header" id="app-push-stopped">{{ self.t("app_push.stopped") }}</h2>
+    <div class="group group-avatars group-small group-apps">
+        {% for app in app_push.stopped %}
+        <form method="post" action="/devices/{{ device.id }}/app-push/allow#app-push" class="cell" data-up-stopped="{{ app.package }}">
+            <input type="hidden" name="package" value="{{ app.package }}">
+            {% if let Some(from) = from %}<input type="hidden" name="from" value="{{ from }}">{% endif %}
+            <div class="row">
+                {% if let Some(src) = app.logo %}<span class="app-row-tile app-row-logo" aria-hidden="true">{{ app.letter }}<img src="{{ src }}" alt="" decoding="async"></span>{% else %}<span class="app-row-tile" aria-hidden="true">{{ app.letter }}</span>{% endif %}
+                <span class="row-label">{{ app.label }}</span>
+                <button type="submit" class="row-action">{{ self.t("app_push.allow_again") }}</button>
+            </div>
+        </form>
+        {% endfor %}
+    </div>
+    {% endif %}
+</section>

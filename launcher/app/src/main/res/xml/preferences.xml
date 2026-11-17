@@ -56,6 +56,13 @@
         android:key="settings_mdm_write_settings"
         android:title="@string/settings_mdm_write_settings" />
 
+    <!-- Design 107 §6: Android's notification page for Vibb One, only while a channel (not Snarveier's) or the whole
+         app is turned off; shown and summarised in code. -->
+    <Preference
+        android:key="settings_mdm_notifications"
+        android:title="@string/settings_notifications"
+        app:isPreferenceVisible="false" />
+
     <!-- Design 98 §3.3, "Fullfør oppsett": Vibb One as the Digital assistant (Flymodus), Wi-Fi in airplane mode, and
          the call filter's two roles (D10) - shown and summarised in code. -->
     <Preference
@@ -85,6 +92,14 @@
     <Preference
         android:key="settings_mdm_media_lock"
         android:title="@string/settings_mdm_media_lock" />
+
+    <!-- Design 108 §6.5: app push (UnifiedPush) diagnostics - each registration's app, its account (on the phone only)
+         and its last delivery; shown and summarised in code. -->
+    <Preference
+        android:key="settings_mdm_unified_push"
+        android:selectable="false"
+        android:title="@string/settings_up_title"
+        app:isPreferenceVisible="false" />
 
     <Preference
         android:key="settings_play_install_mode"

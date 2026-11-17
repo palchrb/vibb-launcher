@@ -12,7 +12,7 @@
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::middleware::from_fn_with_state;
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 
 use crate::{AppState, handlers, limits, security};
 
@@ -175,6 +175,24 @@ pub fn device_routes(state: AppState) -> Router<AppState> {
             "/api/devices/calendar/kid-events",
             post(crate::calendar_kid_events::post).layer(DefaultBodyLimit::max(
                 crate::calendar_kid_events::BODY_LIMIT + 1,
+            )),
+        )
+        // Design 108 §3.7: the phone's UnifiedPush registrations and its queue (the public push routes are
+        // `unified_push::routes`, on the phone listener only).
+        .route(
+            "/api/devices/up/registrations",
+            post(crate::unified_push::device::register).layer(DefaultBodyLimit::max(
+                crate::unified_push::device::REGISTER_LIMIT,
+            )),
+        )
+        .route(
+            "/api/devices/up/registrations/{reg}",
+            delete(crate::unified_push::device::unregister),
+        )
+        .route(
+            "/api/devices/up/messages",
+            post(crate::unified_push::device::messages).layer(DefaultBodyLimit::max(
+                crate::unified_push::device::MESSAGES_LIMIT,
             )),
         )
         .layer(from_fn_with_state(

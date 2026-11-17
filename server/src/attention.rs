@@ -63,6 +63,9 @@ pub enum Kind {
     /// The boot cover was armed but not shown: another home screen came up at boot.
     BootCoverNotShown,
     NoNotificationAccess,
+    /// Design 107 §5.3: Meldinger or Tapte anrop turned off on the phone while Vibb runs it, or every Vibb One
+    /// notification off while SMS or calls are managed ([Facts::notifications_off] holds which).
+    NotificationsOff,
     Calls(CallProblem),
     LedgerUnreadable,
     LauncherWithoutRules,
@@ -145,6 +148,7 @@ impl AttentionItem {
             Kind::NotHomeApp => "not-home-app",
             Kind::BootCoverNotShown => "boot-cover-not-shown",
             Kind::NoNotificationAccess => "notification-access",
+            Kind::NotificationsOff => "notifications-off",
             Kind::Calls(_) => "calls",
             Kind::LedgerUnreadable => "screen-time-record",
             Kind::LauncherWithoutRules => "launcher-without-rules",
@@ -192,6 +196,8 @@ pub struct Facts {
     pub not_home_app: bool,
     pub boot_cover_not_shown: bool,
     pub no_notification_access: bool,
+    /// Design 107: the notification channels' row, if it is raised (`notification_channels::attention`).
+    pub notifications_off: Option<crate::notification_channels::Attention>,
     /// From the call report, in its order (`Waiting` left out by [items]).
     pub calls: Vec<CallProblem>,
     pub ledger_unreadable: bool,
@@ -239,6 +245,7 @@ pub fn items(lang: Lang, device_id: i64, facts: &Facts) -> Vec<AttentionItem> {
     add(facts.not_home_app, Kind::NotHomeApp);
     add(facts.boot_cover_not_shown, Kind::BootCoverNotShown);
     add(facts.no_notification_access, Kind::NoNotificationAccess);
+    add(facts.notifications_off.is_some(), Kind::NotificationsOff);
     for problem in &facts.calls {
         add(problem.needs_attention(), Kind::Calls(*problem));
     }
@@ -266,7 +273,12 @@ pub fn items(lang: Lang, device_id: i64, facts: &Facts) -> Vec<AttentionItem> {
         .map(|kind| AttentionItem {
             kind,
             level: level(kind),
-            title: title(lang, kind),
+            title: match (kind, &facts.notifications_off) {
+                (Kind::NotificationsOff, Some(off)) => {
+                    crate::notification_channels::attention_title(lang, off)
+                }
+                _ => title(lang, kind),
+            },
             target: target(kind, device_id),
             at_last_report: facts.report_stale && kind.read_from_report(),
         })
@@ -294,6 +306,7 @@ fn level(kind: Kind) -> Level {
         | Kind::NotHomeApp
         | Kind::BootCoverNotShown
         | Kind::NoNotificationAccess
+        | Kind::NotificationsOff
         | Kind::Calls(_)
         | Kind::LedgerUnreadable
         | Kind::LauncherWithoutRules
@@ -335,6 +348,8 @@ fn title(lang: Lang, kind: Kind) -> String {
         Kind::NotHomeApp => t(lang, "device.attention.not_home_app"),
         Kind::BootCoverNotShown => t(lang, "device.attention.boot_cover_not_shown"),
         Kind::NoNotificationAccess => t(lang, "device.attention.notification_access"),
+        // Worded from its facts in [items] (the names); this is its all-off form.
+        Kind::NotificationsOff => t(lang, "device.attention.notifications_all_off"),
         Kind::Calls(problem) => problem.title(lang),
         Kind::LedgerUnreadable => t(lang, "device.attention.screen_time_record"),
         Kind::LauncherWithoutRules => t(lang, "device.attention.launcher_without_rules"),
@@ -367,7 +382,7 @@ fn target(kind: Kind, id: i64) -> String {
         Kind::RestrictionsPaused => ("", "quick"),
         Kind::ForeignAccess => ("", "foreign-access"),
         Kind::BlockedApps(_) => ("", "blocked-apps"),
-        Kind::DoNotDisturb => ("/about", "sound"),
+        Kind::DoNotDisturb | Kind::NotificationsOff => ("/about", "sound"),
         Kind::PolicyProblem => ("/about", "software"),
         Kind::UnseenRestarts => ("/about", "diagnostics"),
         Kind::GoogleBackup => ("/advanced", "restrictions"),
@@ -654,6 +669,10 @@ pub fn facts_of(s: &Sources, now_ms: i64) -> Facts {
             latest,
         )
         .is_some(),
+        // About › Sound's own reading, so the row and the page agree.
+        notifications_off: latest
+            .and_then(crate::notification_channels::report)
+            .and_then(|report| crate::notification_channels::attention(policy, &report)),
         calls: s.call_problems.to_vec(),
         // Device › Time reads the same typed report.
         ledger_unreadable: latest
@@ -706,6 +725,11 @@ mod tests {
             not_home_app: true,
             boot_cover_not_shown: true,
             no_notification_access: true,
+            notifications_off: Some(crate::notification_channels::Attention {
+                all_off: false,
+                keys: vec!["messages", "missed_calls"],
+                names: None,
+            }),
             calls: vec![CallProblem::Waiting, CallProblem::AnyoneCanCall],
             ledger_unreadable: true,
             launcher_without_rules: true,
@@ -804,6 +828,7 @@ mod tests {
                 "Vibb One isn't the Home app",
                 "Boot cover wasn't shown",
                 "Notification access off",
+                "Notifications off: Messages, Missed calls",
                 "Anyone can call this phone",
                 "Screen-time record unreadable",
                 "Vibb One too old for time rules",
@@ -905,6 +930,8 @@ mod tests {
         assert_eq!(target("child-lock-off"), "/devices/7/lock#child-pin");
         // Step 5: Home Screen.
         assert_eq!(target("notification-access"), "/devices/7/home#layout");
+        // Design 107: About This Phone's Sound group, where the row is.
+        assert_eq!(target("notifications-off"), "/devices/7/about#sound");
         // Step 9: Device › Time, its warnings at the top.
         assert_eq!(target("screen-time-record"), "/devices/7/time");
         assert_eq!(target("launcher-without-rules"), "/devices/7/time");

@@ -2563,3 +2563,28 @@ only its `left`; the 2dppx block - a 1 px `--sep` line `scaleY(0.5)` - is the la
 gets the border and the scaled line both. A 0.5 px border vanished at some fractional positions at 3x in WebKit (§1.3);
 the scaled line shows at every one (1 device px at 2x, 1.5 at 3x). `.all-show` (a Leaflet popup) keeps its own.
 Pinned by `shell::the_app_shell_scrolls_main_not_the_document`; measured by `jstest/real/swap-real.js`.
+
+## Vibb One's notifications turned off (design 107, `docs/design/107-blocked-channels.md` §4-§5, migration `0151_notification_channels.sql`)
+
+- **The report**: `notification_channels` (`{all_off, blocked}`, a full-report field, not a heartbeat field), cleaned
+  by `notification_channels::clean` (the table's keys only, each once, in its order; a missing or non-array `blocked`
+  is `[]`) into `device_status.notification_channels_json`; read through `notification_channels::report`, which wants
+  the capability `notification_channels_v1` *and* a stored object (a failed read on the phone is no row, never a false
+  "All on"). No security event (Q5).
+- **Which channels count** (§5.1): Meldinger's three while `sms_mode == "managed"`, the three call channels while
+  `calls_mode == "managed"`, the others always; Snarveier never (its own rows say it). The names are the phone's
+  (`notification_channels::CHANNELS`, the contract's `channels`), in the phone's language when `launcher_ui.language`
+  is nb or en, else the page's; quoted in the page's quotes.
+- **About This Phone › Lyd** (`about`): "Varsler" after Ikke forstyrr - "Alle på", "Alle av" (the app-wide switch), or
+  "Av: «Meldinger», «Tapte anrop»" (up to four names, from five three and "og N til"). Orange (`row-value-action`) for
+  "Alle av" or an orange channel (Meldinger, Tapte anrop, Samtaler). The ⓘ (only when something is off): the lead, a
+  sentence for each named channel with an effect (`effect` keys), the fix (the pause and the phone's "Varsler fra Vibb
+  One" row, and - since a channel blocked before the dialer role came back stays locked with a grey switch, gate §6ax -
+  calls and SMS to "Ikke styrt" first if a switch is grey). No row from an older launcher.
+- **Attention** (`Kind::NotificationsOff`, Action, key `notifications-off`, right after `NoNotificationAccess`, to
+  `/about#sound`): a blocked Meldinger or Tapte anrop while its feature counts ("Varsler slått av: Meldinger, Tapte
+  anrop", the names unquoted), or the app-wide switch off while SMS or calls are managed ("Alle varsler fra Vibb One er
+  av"). Never Samtaler (the phone still rings), the minor channels or Snarveier. The Devices list's badge counts it.
+- Tests: `notification_channels::tests` (the `clean` rows, the table), `tests::notification_channels` (stored reports,
+  every `pages` row through About and the summary, the ⓘ in nb and en, an older launcher and a failed read, the row's
+  place and the badge), `intake_limits` (the three reports kept), `attention::tests` (order, title, target).

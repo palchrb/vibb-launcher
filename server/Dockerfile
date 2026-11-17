@@ -2,7 +2,7 @@
 # linux/arm64. It only COPYs the binary the release built natively for that architecture (static
 # musl, from its tarball) - no compiler and no QEMU here. The build context is server/ with dist/
 # laid out as (one architecture's binary is enough for a single-platform build):
-#   dist/amd64/kid_phone_server  dist/arm64/kid_phone_server  dist/static/
+#   dist/amd64/kid_phone_server  dist/arm64/kid_phone_server  dist/static/  dist/NOTICE.md  dist/LICENSES/
 # Base images are pinned by digest (multi-arch indexes); bump them deliberately.
 
 # distroless static, nonroot: uid 65532, a CA bundle (the TLS stack reads it), tzdata, /tmp; no shell.
@@ -53,6 +53,9 @@ COPY --from=dirs --chown=65532:65532 /out/data /app/data
 COPY --from=certs /out/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY dist/${TARGETARCH}/kid_phone_server /app/kid_phone_server
 COPY dist/static /app/static
+# Design 108 §11 (L8): the notices of the Apache-2.0 port (unified_push/) ship with the server.
+COPY dist/NOTICE.md /app/NOTICE.md
+COPY dist/LICENSES /app/LICENSES
 # The admin listener stays on loopback (use network_mode: host, or publish 127.0.0.1:3100 only).
 ENV BIND_ADDR=127.0.0.1:3100 DEPLOY_KIND=docker
 USER 65532

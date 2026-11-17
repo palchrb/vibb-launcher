@@ -59,6 +59,10 @@ imported with full history (`git subtree`), so old commit hashes in the docs sti
   safe zone), `webauthn-rs256-vector.py` (the server's RS256 passkey vector
   `server/testdata/webauthn/rs256.json`, made once with a throwaway key - public data only; design 74), `emoji-list.py`
   (the launcher's `assets/sms/emoji-16.0.txt` from Unicode's `emoji-test.txt` 16.0, its SHA-256 pinned; design 81),
+  `fake-homeserver.py` (a fake Matrix homeserver and Web Push sender for design 108's emulator gate: the gateway's
+  discovery, Synapse-shaped `event_id_only` notifies, Web-Push-like bytes to `/up/` with TTL/Urgency/Topic, `--burst`;
+  every request to the phone listener with the endpoint's host as `Host`; standard library, `--selftest` against a
+  loopback recorder, run by `server-ci.yml`'s always-run changes job; `docs/testing/emulator.md` §6ay),
   `mmsc-hosts.py` (the server's `server/testdata/mmsc_hosts.txt`, design 83 §3: each operator's MMS server hosts from
   AOSP's `apns-full-conf.xml` at a pinned commit and SHA-256, in two classes - unasked and hints; its `UNASKED` stays
   `"none"` until design 77's step 0; `--selftest`, no network, converts `scripts/mmsc-hosts-sample.xml` and checks the
@@ -362,6 +366,34 @@ check (`loginEntry`); both compare the copies. The window's and the role's own r
 `captive_portal` and `login_browser` are pinned by `policy_json_keys_snapshot` and the launcher's
 `PolicyResponseCompatTest`.
 
+The blocked notification channels (design 107) are `server/testdata/notification_channels.json`, byte-identical in
+`launcher/app/src/test/resources/`: `capability` (`notification_channels_v1`), `channels` (the table in display order:
+`{key, id, nb, en, feature, orange, attention}`, the names the phone's own strings), `report`, `report_none` and
+`report_all_off` (the exact `notification_channels` of a status report), `read` (the launcher's reading of Android's
+channels, groups and app-wide switch, Snarveier's channel in use, Android 16's reserved `android.app.*` skipped),
+`clean` (the server's cleaning) and `pages` (`{sms_mode, calls_mode, language, shortcuts_bit, report}` to About ›
+Sound's value, its orange and the Attention title). The server's `notification_channels::tests` runs `clean` and
+checks its table, `tests::notification_channels` posts the reports and checks what is stored, runs every `pages` row
+through About and the summary and checks the Devices list's badge, and `intake_limits` keeps the reports' keys; the
+launcher's `NotificationChannelsTest` checks its table and names against `channels` and its strings, runs every `read`
+row through `channelsReport` and encodes the reports exactly; both compare the copies. No policy key.
+
+App push (design 108, Vibb as the UnifiedPush distributor) is `server/testdata/unified_push.json`, byte-identical in
+`launcher/app/src/test/resources/`: `capability` (`unified_push_v1`), `policy` (the policy's `unified_push`
+`{on, origin, regs, stopped}` in the rows `off`, `on_empty`, `on_two`, `stopped` and `origin_changed`), `older_server`
+(a policy without the key: UP off, the receiver disabled), `register` (the exact `POST /api/devices/up/registrations`
+bodies, every answer - `ok`, a retry, the 409 refusals `off`/`stopped`/`not_allowed`/`limit`/`busy`/`conflict`, the 400
+- and `failed_reason`, each refusal to the connector's `ACTION_REQUIRED` or `NETWORK`), `unregister` (the `DELETE`'s
+204), `messages` (the exact `POST /api/devices/up/messages` body with acks and an answer with a minimised Matrix body
+and a binary one, base64), `event` (the SSE event `up`/`up`) and `endpoint` (the endpoint's form). The server's
+`tests::unified_push` produces the policy rows and the answers from seeded data; the launcher's
+`UnifiedPushContractTest` encodes the bodies, decodes every answer and policy row and maps each refusal; both compare
+the copies. The server-only rows of the push routes are `server/testdata/unified_push_gateway.json`
+(`tests::unified_push::gateway_rows`). The policy's `unified_push` is pinned by `policy_json_keys_snapshot` and the
+launcher's `PolicyResponseCompatTest`. The distributor's own rules (register, unregister and ack decisions, the delivery
+plan, the `regs` reconcile, the origin rewrite) stay the launcher's alone, in
+`launcher/app/src/test/resources/up_rules.json` (`UpRulesTest`, `UpDeliveryPlanTest`, `UpReconcileTest`).
+
 ## CI and releases
 
 - `.github/workflows/launcher.yml`, `server-ci.yml` and `music.yml` run on every push/PR, but their build job
@@ -369,7 +401,7 @@ check (`loginEntry`); both compare the copies. The window's and the role's own r
   (`launcher.yml` also on `.github/actions/build-tsnet/` and the music files its tests read: the bridge, the
   shared snapshots, the three `spotify_hosts.json`, `server/testdata/time_status_report.json`,
   `dns_upstream_status.json`, `power_report.json`, `zone_status_report.json`, `launcher_tag_codes.json`,
-  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json`, `server_url_vectors.json`, `restrictions_pause.json`, `server_tls_report.json`, `sms_contract.json`, `contact_request.json`, `app_logos.json`, `lock_now.json`, `mobile_network.json`, `status_heartbeat.json`, `airplane_mode.json`, `rule_pause.json`, `shortcuts.json` and `login_windows.json`, `music/gradle/` and `music.yml`, and the server's and music's `storytel_token_answers.json`, and `server/testdata/doh_hosts.txt`, and `scripts/yr-symbols.py` with its vendored `yr-symbols-11.svg` and `scripts/fake-portal.py` (the changes job runs both `--selftest`s always); `music.yml` also on the shared
+  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json`, `server_url_vectors.json`, `restrictions_pause.json`, `server_tls_report.json`, `sms_contract.json`, `contact_request.json`, `app_logos.json`, `lock_now.json`, `mobile_network.json`, `status_heartbeat.json`, `airplane_mode.json`, `rule_pause.json`, `shortcuts.json`, `login_windows.json`, `notification_channels.json` and `unified_push.json`, `music/gradle/` and `music.yml`, and the server's and music's `storytel_token_answers.json`, and `server/testdata/doh_hosts.txt`, and `scripts/yr-symbols.py` with its vendored `yr-symbols-11.svg` and `scripts/fake-portal.py` (the changes job runs both `--selftest`s always); `music.yml` also on the shared
   `server/testdata/music_*.json` and `spotify_hosts.json`, the launcher's copy of the bridge AIDL,
   `bridge_contract.json` and `spotify_hosts.json`, `server/testdata/spotify/`, `scripts/fake-sonos.py`,
   `scripts/fake-storytel.py`, `scripts/fake-spotify.py`, `scripts/fake-audio.py`, `scripts/music-splash.py`
@@ -379,7 +411,7 @@ check (`loginEntry`); both compare the copies. The window's and the role's own r
   `server-ci.yml`'s build job also on the apps' `spotify_hosts.json` and `storytel_token_answers.json` copies and
   the launcher's `time_status_report.json`,
   `dns_upstream_status.json`, `power_report.json`, `zone_status_report.json`, `launcher_tag_codes.json`,
-  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json`, `server_url_vectors.json`, `restrictions_pause.json`, `server_tls_report.json`, `sms_contract.json`, `contact_request.json`, `app_logos.json`, `lock_now.json`, `mobile_network.json`, `status_heartbeat.json`, `airplane_mode.json`, `rule_pause.json`, `shortcuts.json` and `login_windows.json`, and the launcher's `assets/dns/doh_hosts.txt`, and `scripts/mmsc-hosts.py` with its `scripts/mmsc-hosts-sample.xml` (the changes job runs its `--selftest` always);
+  `time_request.json`, `installed_apps_report.json`, the four `calendar_*.json`, `emergency_numbers.json`, `weather.json`, `leave_tailnet.json`, `server_url_vectors.json`, `restrictions_pause.json`, `server_tls_report.json`, `sms_contract.json`, `contact_request.json`, `app_logos.json`, `lock_now.json`, `mobile_network.json`, `status_heartbeat.json`, `airplane_mode.json`, `rule_pause.json`, `shortcuts.json`, `login_windows.json`, `notification_channels.json` and `unified_push.json`, and the launcher's `assets/dns/doh_hosts.txt`, and `scripts/mmsc-hosts.py` with its `scripts/mmsc-hosts-sample.xml` (the changes job runs its `--selftest` always);
   `server-ci.yml`'s
   `server-image` job only when `server/Dockerfile`, `server/.dockerignore`, `server/deploy/image-smoke.sh`, `server/deploy/distrusted-roots.txt` or
   the workflow changed). The server's Rust (`toolchain: 1.99.0`) is pinned in `server-ci.yml` and

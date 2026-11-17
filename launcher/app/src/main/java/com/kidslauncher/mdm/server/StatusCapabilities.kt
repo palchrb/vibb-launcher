@@ -94,6 +94,12 @@ val STATUS_CAPABILITIES: List<String> = listOf(
     // Design 102 Part B: the policy's `login_browser` (Chrome only for logins, its lockdown read back before it is
     // unhidden) and `login_browser` in every full report. The server's Sign-in page says "Krever nyere Vibb One" without it.
     com.kidslauncher.mdm.logins.LOGIN_BROWSER_CAPABILITY,
+    // Design 107: `notification_channels` in every full report; the server's About › Sound row and its Attention row
+    // wait for it.
+    com.kidslauncher.mdm.notify.NOTIFICATION_CHANNELS_CAPABILITY,
+    // Design 108: Vibb One is the UnifiedPush distributor - the policy's `unified_push` (on, origin, regs, stopped) and
+    // the device API's `up/` routes. The server sends the key only to a phone claiming it.
+    com.kidslauncher.mdm.push.up.UNIFIED_PUSH_CAPABILITY,
 )
 
 /** A time rule's "Stille" switch (server migration 0121): `rules[].silent` is enforced. */

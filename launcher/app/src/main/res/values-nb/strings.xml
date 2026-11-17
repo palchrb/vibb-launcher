@@ -473,6 +473,26 @@
     <string name="settings_mdm_write_settings_no_page">Ikke tillatt - Android har ingen side for dette på denne telefonen</string>
     <string name="settings_mdm_write_settings_wait">Ikke tillatt - pausen starter, et øyeblikk …</string>
     <string name="settings_mdm_write_settings_unknown">Ukjent</string>
+    <!-- Design 108 §6.5: the app-push diagnostics row (PIN-gated Settings). -->
+    <string name="settings_up_title">Push for apper</string>
+    <string name="settings_up_on">På: apper på listen kan få varsler gjennom Vibb One</string>
+    <string name="settings_up_off">Av</string>
+    <string name="settings_up_none">Ingen app bruker det ennå</string>
+    <string name="settings_up_unreadable">Registreringene kan ikke leses</string>
+    <string name="settings_up_waiting">venter på serveren</string>
+    <string name="settings_up_not_delivered">ingenting levert ennå</string>
+    <string name="settings_up_delivered">sist levert %1$s</string>
+    <string name="settings_up_old_connector">En app som kaller seg %1$s spurte uten å vise hvem den er (eldre push-bibliotek?) - ikke bekreftet</string>
+    <string name="settings_up_no_raise">%1$s: får meldingene uten oppvekking</string>
+    <string name="settings_notifications">Varsler fra Vibb One</string>
+    <string name="settings_notifications_off">Av: %1$s</string>
+    <string name="settings_notifications_all_off">Alle av</string>
+    <string name="settings_notifications_quoted">«%1$s»</string>
+    <string name="settings_notifications_open">Trykk for å slå på</string>
+    <string name="settings_notifications_open_role">Trykk for å slå på. Er en bryter grå, sett først Samtaler og SMS til «Ikke styrt» under Anrop og SMS på serveren, og sett dem tilbake etterpå</string>
+    <string name="settings_notifications_pause_first">Sett alle begrensninger på pause først</string>
+    <string name="settings_notifications_wait">Pausen starter, et øyeblikk …</string>
+    <string name="settings_notifications_no_page">Android har ingen side for dette på denne telefonen</string>
     <!-- Design 68 §4.2: «Tilgang for apper» i de PIN-beskyttede innstillingene. -->
     <string name="app_access_category">Tilgang for apper</string>
     <string name="app_access_row_title">%1$s: %2$s</string>

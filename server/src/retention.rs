@@ -179,6 +179,9 @@ pub struct Pruned {
     pub mmsc_hosts: u64,
     /// The heartbeat's kept bodies past `status_heartbeat::MAX_AGE_HOURS` (design 95 §3.5, code QA L2).
     pub report_bases: u64,
+    /// App push (design 108 §3.6): expired queue rows, an unseen phone's registrations (tombstoned) and the
+    /// tombstones past 30 days (`unified_push::store::prune`).
+    pub app_push: u64,
     /// The tables whose statement failed in this pass (logged; security review L9): every other
     /// table was pruned all the same.
     pub failed: Vec<&'static str>,
@@ -571,6 +574,16 @@ pub async fn prune(db: &SqlitePool) -> Pruned {
         "device_report_base",
         crate::status_heartbeat::prune(db).await,
     );
+    // Design 108: app push's expired queue rows, a phone unseen 30 days, old tombstones.
+    let app_push =
+        match crate::unified_push::store::prune(db, chrono::Utc::now().timestamp_millis()).await {
+            Ok(rows) => rows,
+            Err(err) => {
+                tracing::error!(%err, "couldn't prune app push's rows");
+                failed.push("up_messages");
+                0
+            }
+        };
     // (No local is named `*_events`: `admin::every_written_event_has_a_label` reads the table names
     // next to such a `let` as event ids.)
     Pruned {
@@ -591,6 +604,7 @@ pub async fn prune(db: &SqlitePool) -> Pruned {
         contact_requests,
         mmsc_hosts,
         report_bases,
+        app_push,
         failed: std::mem::take(failed),
     }
 }
@@ -606,5 +620,86 @@ pub async fn run_pruning(state: AppState) {
         if pruned != Pruned::default() {
             tracing::info!(?pruned, "Pruned old data");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Design 108: the hourly pass deletes expired queue rows (a live one stays), the registrations of a phone unseen
+    /// for 30 days (their secrets tombstoned) and tombstones past 30 days.
+    #[tokio::test]
+    async fn up_expired_and_unseen() {
+        let dir = tempfile::tempdir().unwrap();
+        let db =
+            crate::connect_db(&format!("sqlite://{}", dir.path().join("t.db").display())).await;
+        let mut ids = Vec::new();
+        for (name, seen) in [("Emma", "-31 days"), ("Jack", "-1 days")] {
+            let id: i64 = sqlx::query_scalar(
+                "INSERT INTO devices (name, last_seen_at) VALUES (?, datetime('now', ?)) RETURNING id",
+            )
+            .bind(name)
+            .bind(seen)
+            .fetch_one(&db)
+            .await
+            .unwrap();
+            sqlx::query(
+                "INSERT INTO up_registrations (device_id, reg, secret_hash, package) \
+                 VALUES (?, ?, ?, 'a.b')",
+            )
+            .bind(id)
+            .bind(format!("{id:032x}"))
+            .bind(crate::unified_push::secret_hash(&format!(
+                "FakeSecretForRetention{id:05}"
+            )))
+            .execute(&db)
+            .await
+            .unwrap();
+            ids.push(id);
+        }
+        let jack_reg: i64 =
+            sqlx::query_scalar("SELECT id FROM up_registrations WHERE device_id = ?")
+                .bind(ids[1])
+                .fetch_one(&db)
+                .await
+                .unwrap();
+        let now = chrono::Utc::now().timestamp_millis();
+        for (key, expires) in [("expired", now - 1), ("live", now + 60_000)] {
+            sqlx::query(
+                "INSERT INTO up_messages (key, registration_id, device_id, body, urgency, \
+                 created_at_ms, expires_at_ms) VALUES (?, ?, ?, x'00', 'normal', ?, ?)",
+            )
+            .bind(key)
+            .bind(jack_reg)
+            .bind(ids[1])
+            .bind(now - 1000)
+            .bind(expires)
+            .execute(&db)
+            .await
+            .unwrap();
+        }
+        sqlx::query("INSERT INTO up_gone (secret_hash, gone_at) VALUES (x'01', datetime('now', '-31 days'))")
+            .execute(&db)
+            .await
+            .unwrap();
+        let pruned = prune(&db).await;
+        assert!(pruned.failed.is_empty(), "{:?}", pruned.failed);
+        let keys: Vec<String> = sqlx::query_scalar("SELECT key FROM up_messages")
+            .fetch_all(&db)
+            .await
+            .unwrap();
+        assert_eq!(keys, ["live"]);
+        let devices: Vec<i64> = sqlx::query_scalar("SELECT device_id FROM up_registrations")
+            .fetch_all(&db)
+            .await
+            .unwrap();
+        assert_eq!(devices, [ids[1]], "Emma's unseen 31 days");
+        let tombstones: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM up_gone")
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        assert_eq!(tombstones, 1, "Emma's new one; the old one pruned");
+        assert_eq!(pruned.app_push, 3);
     }
 }

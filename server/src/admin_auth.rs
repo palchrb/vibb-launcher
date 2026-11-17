@@ -805,7 +805,7 @@ pub async fn csrf_guard(State(state): State<AppState>, request: Request, next: N
                 &client.map(|c| c.key()).unwrap_or_default(),
                 ip.as_deref(),
                 crate::security::Detail::words(reason, &[])
-                    .with_facts(format!("{method} {}", crate::audit::clip(path, 100))),
+                    .with_facts(format!("{method} {}", crate::audit::clip_path(path, 100))),
             )
             .await;
         // Before the session layer: `?lang=` or the browser's language.

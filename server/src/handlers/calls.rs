@@ -2134,6 +2134,7 @@ pub async fn save_settings(
         // Design 109: from managed (or off) to unmanaged the Phone app is the kid's again, so it is put back on the
         // allowlist if it is missing - the Apps page showed it as a link while calls were managed. A NULL allowlist
         // stays NULL (apps not managed), an unreadable one stays as it is, no report or no dialer adds nothing.
+        let mut pruned = 0;
         if updated > 0
             && calls_mode == "unmanaged"
             && was_managed.is_some_and(|mode| mode != "unmanaged")
@@ -2158,7 +2159,7 @@ pub async fn save_settings(
                 })
                 .await
                 {
-                    Ok(()) => {}
+                    Ok(n) => pruned = n,
                     Err(crate::handlers::devices::AllowlistError::Db(err)) => return Err(err),
                     Err(err) => {
                         tracing::warn!(device_id = id, %err, "left the allowlist as it was");
@@ -2167,6 +2168,9 @@ pub async fn save_settings(
             }
         }
         tx.commit().await?;
+        if pruned > 0 {
+            let _ = state.command_notify.send(id);
+        }
         Ok::<_, sqlx::Error>(updated)
     }
     .await;

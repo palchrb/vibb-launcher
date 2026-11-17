@@ -65,11 +65,13 @@ import kotlinx.coroutines.withContext
 private const val LOG_TAG = "SettingsFragmentLauncher"
 private const val BACKGROUND_CONNECTION = "settings_mdm_background_connection"
 private const val WRITE_SETTINGS = "settings_mdm_write_settings"
+private const val NOTIFICATIONS = "settings_mdm_notifications"
 private const val ASSISTANT = "settings_mdm_assistant"
 private const val WIFI_APM = "settings_mdm_wifi_apm"
 private const val CALL_FILTER = "settings_mdm_call_filter"
 private const val FINGERPRINT = "settings_mdm_fingerprint"
 private const val MEDIA_LOCK = "settings_mdm_media_lock"
+private const val UNIFIED_PUSH = "settings_mdm_unified_push"
 private const val APP_ACCESS = "settings_mdm_app_access"
 private const val SERVER_CERT_ROW = "settings_mdm_server_cert"
 
@@ -120,6 +122,27 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
             com.kidslauncher.mdm.push.SyncRunner.request(context.applicationContext, "write_settings")
         }
         updateWriteSettingsRow()
+    }
+
+    /** Design 107 §6: the channels' report before Android's notification page opened - a change on return is reported
+     * at once (a sync), so the PWA's row follows. Taken from the row's last read ([notificationsLastRead]), never read on
+     * the main thread at the tap. */
+    private var notificationsBeforePage: com.kidslauncher.mdm.notify.NotificationChannelsReport? = null
+    /** The row's last read (off the main thread, [updateNotificationsRow]). */
+    private var notificationsLastRead: com.kidslauncher.mdm.notify.NotificationChannelsReport? = null
+    /** The row's read in flight: a newer one cancels it, so an older read never lands after a newer one. */
+    private var notificationsJob: kotlinx.coroutines.Job? = null
+    private var notificationsPageMissing = false
+    private val notificationsLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        val app = context?.applicationContext ?: return@registerForActivityResult
+        val before = notificationsBeforePage
+        lifecycleScope.launch {
+            val now = withContext(Dispatchers.IO) { com.kidslauncher.mdm.notify.NotificationChannelsReader.read(app) }
+            if (now != before) {
+                com.kidslauncher.mdm.push.SyncRunner.request(app, com.kidslauncher.mdm.notify.NOTIFICATION_CHANNELS_SYNC_REASON)
+            }
+            updateNotificationsRow()
+        }
     }
 
     /** Design 98 §3.2: Android's "Digital assistant app" page answered - the default-apps window ends now. */
@@ -279,6 +302,21 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
                 }
             }
             updateBatteryRow()
+            true
+        }
+
+        // Design 107 §6: Android's notification page for Vibb One, on the write-settings row's path - it resolves only
+        // during the pause (Android's Settings is hidden in the kiosk), so a tap outside one opens nothing and the
+        // summary says what to do.
+        findPreference<Preference>(NOTIFICATIONS)?.setOnPreferenceClickListener {
+            val app = requireContext().applicationContext
+            val pages = com.kidslauncher.mdm.notify.NotificationChannelsReader.pageIntents(app)
+            notificationsPageMissing = false
+            if (pages.isNotEmpty()) {
+                notificationsBeforePage = notificationsLastRead
+                notificationsPageMissing = !openFirstPage(pages, notificationsLauncher)
+            }
+            updateNotificationsRow()
             true
         }
 
@@ -576,10 +614,60 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
     private fun updateSystemPageRows() {
         updateBatteryRow()
         updateWriteSettingsRow()
+        updateNotificationsRow()
         updateAssistantRows()
         updateFingerprintRow()
         updateMediaLockRow()
         updateAccessRows()
+        updateUnifiedPushRow()
+    }
+
+    /**
+     * Design 108 §6.5: "App push", the distributor's diagnostics - each registration's app, its own description (Element
+     * X's account, kept on the phone only and shown only here) and its last delivery, and the notes (an app whose push
+     * library is too old to share its identity, an app without the wake-up service). Shown while UP is on or anything is
+     * registered or noted; read off the main thread.
+     */
+    private fun updateUnifiedPushRow() {
+        val app = context?.applicationContext ?: return
+        lifecycleScope.launch {
+            val diagnostics = withContext(Dispatchers.IO) { com.kidslauncher.mdm.push.up.UpRuntime.diagnostics(app) }
+            val context = context ?: return@launch
+            val row = findPreference<Preference>(UNIFIED_PUSH) ?: return@launch
+            val rows = diagnostics?.rows
+            row.isVisible = diagnostics != null && (diagnostics.on || !rows.isNullOrEmpty() || diagnostics.notes.isNotEmpty())
+            diagnostics ?: return@launch
+            val pm = context.packageManager
+            fun label(pkg: String): String = try {
+                pm.getApplicationLabel(
+                    pm.getApplicationInfo(pkg, PackageManager.ApplicationInfoFlags.of(PackageManager.MATCH_UNINSTALLED_PACKAGES.toLong())),
+                ).toString()
+            } catch (e: Exception) {
+                pkg
+            }
+            val now = System.currentTimeMillis()
+            val lines = mutableListOf(getString(if (diagnostics.on) R.string.settings_up_on else R.string.settings_up_off))
+            when {
+                rows == null -> lines += getString(R.string.settings_up_unreadable)
+                rows.isEmpty() && diagnostics.on -> lines += getString(R.string.settings_up_none)
+                else -> for (reg in rows.sortedBy { it.pkg }) {
+                    val delivered = when {
+                        !reg.confirmed -> getString(R.string.settings_up_waiting)
+                        reg.lastDeliveredMs == null -> getString(R.string.settings_up_not_delivered)
+                        else -> getString(
+                            R.string.settings_up_delivered,
+                            android.text.format.DateUtils.formatSameDayTime(reg.lastDeliveredMs, now, java.text.DateFormat.SHORT, java.text.DateFormat.SHORT),
+                        )
+                    }
+                    lines += listOfNotNull(label(reg.pkg), reg.message, delivered).joinToString(" · ")
+                }
+            }
+            for (note in diagnostics.notes) {
+                val text = if (note.kind == com.kidslauncher.mdm.push.up.NOTE_OLD_CONNECTOR) R.string.settings_up_old_connector else R.string.settings_up_no_raise
+                lines += getString(text, label(note.pkg))
+            }
+            row.summary = lines.joinToString("\n")
+        }
     }
 
     /** "App access" (design 68 §4.2): read off the main thread, then the category's rows replaced; hidden while empty.
@@ -690,6 +778,37 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
                     if (com.kidslauncher.mdm.assistant.AssistantSetup.setupWindowOpen()) R.string.settings_call_filter_open else R.string.settings_call_filter_pause_first,
                 )
             }
+        }
+    }
+
+    /** Design 107 §6: shown only while a channel other than Snarveier's, or the whole app, is turned off (the report's
+     * read, off the main thread); its summary names them in the phone's words and says what a tap does now. */
+    private fun updateNotificationsRow() {
+        val app = context?.applicationContext ?: return
+        notificationsJob?.cancel()
+        notificationsJob = lifecycleScope.launch {
+            val (report, pages, roleHeld) = withContext(Dispatchers.IO) {
+                Triple(
+                    com.kidslauncher.mdm.notify.NotificationChannelsReader.read(app),
+                    com.kidslauncher.mdm.notify.NotificationChannelsReader.pageIntents(app),
+                    com.kidslauncher.mdm.calls.CallSystem.dialerRoleHeld(app),
+                )
+            }
+            if (context == null) return@launch
+            notificationsLastRead = report
+            val row = findPreference<Preference>(NOTIFICATIONS) ?: return@launch
+            val text = com.kidslauncher.mdm.notify.notificationsRowText(report, pageAccess(pages, notificationsPageMissing), roleHeld)
+            row.isVisible = text != null
+            text ?: return@launch
+            val what = if (text.allOff) {
+                getString(R.string.settings_notifications_all_off)
+            } else {
+                getString(
+                    R.string.settings_notifications_off,
+                    text.off.joinToString(", ") { getString(R.string.settings_notifications_quoted, getString(it.nameRes)) },
+                )
+            }
+            row.summary = getString(R.string.settings_notifications_summary, what, getString(text.action))
         }
     }
 

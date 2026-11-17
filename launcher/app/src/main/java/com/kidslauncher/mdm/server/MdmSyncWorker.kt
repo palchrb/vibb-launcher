@@ -163,6 +163,9 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         storeAcceptedPolicy(context, freshPolicy)
         // Design 98 §4.4.4: the parent code's pauses read this policy (an ack, or ended in the PWA after the ack).
         com.kidslauncher.mdm.timerules.PhonePauses.policyAccepted(context, freshPolicy.timePolicy, policyGetStartedMs)
+        // Design 108 §2.3, §5.5: app push's reconcile (`regs` by the request's start, the race rule), the origin's
+        // rewrite, the queued DELETEs, then a pull while UP is on - on UP's own executor, never blocking the sync.
+        com.kidslauncher.mdm.push.up.UpRuntime.policyAccepted(context, freshPolicy, policyGetStartedMs)
         // Design 95 §3.5: an accepted 200 is kept with its ETag (a 304's body is the kept one already); one with a
         // command is not (its Child PIN stays out of storage, design 59 §1), nor one without an ETag (an older server).
         when (val step = keptBodyStep(served, freshPolicy)) {
@@ -608,6 +611,8 @@ private fun statusReportOf(
         captivePortal = com.kidslauncher.mdm.portal.PortalRuntime.report(context),
         // Design 102 §6.2: Chrome's login role on this phone.
         loginBrowser = BrowserConfig.report(context),
+        // Design 107 §2: the channels turned off, read now (a block-state broadcast only asked for this sync sooner).
+        notificationChannels = com.kidslauncher.mdm.notify.NotificationChannelsReader.read(context),
     )
 }
 

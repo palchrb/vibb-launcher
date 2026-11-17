@@ -271,6 +271,8 @@ class SealedPrefsTest {
                 "music/MusicFileDownloads.kt" to 1, "music/MusicBridgeService.kt" to 3,
                 // Design 75: the lock weather's pull.
                 "weather/WeatherPull.kt" to 1,
+                // Design 108: app push's device API calls.
+                "push/up/UpRuntime.kt" to 1,
                 "server/SealedPrefs.kt" to 1,
             ),
             sites,

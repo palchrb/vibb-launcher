@@ -575,6 +575,8 @@ async fn insert_device_with_policy(state: &AppState, name: &str) -> Result<i64, 
     .execute(&mut *tx)
     .await?;
 
+    // Design 108 (L10): every allowlist writer prunes - a new phone has no registrations, so nothing goes.
+    crate::unified_push::prune_disallowed(&mut tx, id).await?;
     tx.commit().await?;
     Ok(id)
 }
@@ -2996,20 +2998,23 @@ async fn edit_allowlist(
     edit: impl FnOnce(&mut Vec<String>) -> bool,
 ) -> Result<(), AllowlistError> {
     let mut tx = state.db.begin_with("BEGIN IMMEDIATE").await?;
-    edit_allowlist_in(&mut tx, device_id, true, edit).await?;
+    let pruned = edit_allowlist_in(&mut tx, device_id, true, edit).await?;
     tx.commit().await?;
+    if pruned > 0 {
+        let _ = state.command_notify.send(device_id);
+    }
     Ok(())
 }
 
 /// [edit_allowlist] on a connection already in a transaction (design 109: `calls::save_settings` re-adds the dialer
 /// in its own). With `null_starts_empty` false a `NULL` allowlist (apps not managed) is left `NULL`: adding would start
-/// managing the apps with one app.
+/// managing the apps with one app. Returns how many push registrations the write pruned (the caller nudges after its commit).
 pub(crate) async fn edit_allowlist_in(
     conn: &mut sqlx::SqliteConnection,
     device_id: i64,
     null_starts_empty: bool,
     edit: impl FnOnce(&mut Vec<String>) -> bool,
-) -> Result<(), AllowlistError> {
+) -> Result<u64, AllowlistError> {
     let current: Option<Option<String>> =
         sqlx::query_scalar("SELECT allowlist_json FROM device_policy WHERE device_id = ?")
             .bind(device_id)
@@ -3019,10 +3024,10 @@ pub(crate) async fn edit_allowlist_in(
     let mut packages: Vec<String> = match current.as_deref() {
         Some(json) => serde_json::from_str(json).map_err(AllowlistError::Corrupt)?,
         None if null_starts_empty => Vec::new(),
-        None => return Ok(()),
+        None => return Ok(0),
     };
     if !edit(&mut packages) {
-        return Ok(());
+        return Ok(0);
     }
     let json = serde_json::to_string(&packages).expect("a list of strings always serializes");
     sqlx::query(
@@ -3033,7 +3038,10 @@ pub(crate) async fn edit_allowlist_in(
     .bind(device_id)
     .execute(&mut *conn)
     .await?;
-    Ok(())
+    // Design 108 (L10, R1-SR M2): an app that left the list loses its push registrations, on this same connection
+    // (inside the caller's transaction, before its commit); the caller nudges the phone after the commit when any went.
+    let pruned = crate::unified_push::prune_disallowed(&mut *conn, device_id).await?;
+    Ok(pruned)
 }
 
 /// Adds one package to a device's allowlist if it isn't already there. Used by

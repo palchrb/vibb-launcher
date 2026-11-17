@@ -52,7 +52,8 @@ private const val LOG_TAG = "Shortcuts"
 private const val PREFS = "shortcuts"
 private const val KEY_PICKS = "picks"
 private const val KEY_CHANNEL = "channel_n"
-private const val CHANNEL_BASE = "launcher:shortcuts"
+/** Snarveier's channel id; `.N` is added after the kid showed it again (§2.6). Design 107 reads it. */
+const val SHORTCUTS_CHANNEL_BASE = "launcher:shortcuts"
 
 /**
  * Snarveier's glue (design 99 §2.3-§2.6, design 100 §2): reads the platform, builds the panel ([shortcutsModel]) for
@@ -105,7 +106,9 @@ object ShortcutsRuntime {
             addAction(NotificationManager.ACTION_INTERRUPTION_FILTER_CHANGED)
             addAction(WifiManager.WIFI_STATE_CHANGED_ACTION)
             addAction(BluetoothAdapter.ACTION_STATE_CHANGED)
-            addAction(NotificationManager.ACTION_NOTIFICATION_CHANNEL_BLOCK_STATE_CHANGED)
+            // Not the channel's block state: the long-press sheet's broadcast comes with SystemUI's uid and is dropped
+            // for this not-exported receiver (design 107 gate §6ax). `notify.NotificationChannelsWatch` (exported, the
+            // protected block-state actions only) calls [requestRefresh] for it.
             // The phone's language. The launcher's own (a per-app locale) comes only as a configuration change:
             // [languageChanged], from `Application.onConfigurationChanged` (C99-L1).
             addAction(Intent.ACTION_LOCALE_CHANGED)
@@ -282,7 +285,7 @@ object ShortcutsRuntime {
      * only: the poster makes sure of it right before each build ([ensureChannel], design 100 M7). */
     fun currentChannelId(context: Context): String {
         val n = prefs(context).getInt(KEY_CHANNEL, 0)
-        return if (n == 0) CHANNEL_BASE else "$CHANNEL_BASE.$n"
+        return if (n == 0) SHORTCUTS_CHANNEL_BASE else "$SHORTCUTS_CHANNEL_BASE.$n"
     }
 
     /** The panel's channel [id] exists afterwards (created when missing; an existing one - the kid's block included -
@@ -326,7 +329,7 @@ object ShortcutsRuntime {
             AnchorNotification.onPosterThread {
                 val prefs = prefs(app)
                 val n = prefs.getInt(KEY_CHANNEL, 0)
-                val old = if (n == 0) CHANNEL_BASE else "$CHANNEL_BASE.$n"
+                val old = if (n == 0) SHORTCUTS_CHANNEL_BASE else "$SHORTCUTS_CHANNEL_BASE.$n"
                 if (!AnchorNotification.panelUp()) {
                     runCatching { app.getSystemService(NotificationManager::class.java)?.deleteNotificationChannel(old) }
                 }
@@ -337,6 +340,9 @@ object ShortcutsRuntime {
             Log.w(LOG_TAG, "Show again failed: ${e.javaClass.simpleName}")
         }
         requestRefresh()
+        // Design 107 §3: a delete and a new channel send no block-state broadcast (design 100 M6), so the report that
+        // says Snarveier is on again is asked for here.
+        com.kidslauncher.mdm.push.SyncRunner.request(app, com.kidslauncher.mdm.notify.NOTIFICATION_CHANNELS_SYNC_REASON)
     }
 
     /** §6.1: the report's `shortcuts` (the sync's thread); `null` when it can't be read (left out). */

@@ -53,6 +53,12 @@
             <span class="row-label">{{ self.t("settings.provisioning.title") }}</span>
             <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </a>
+        <a class="row" href="/settings/push" data-row="app-push">
+            <span class="tile tile-orange"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><rect x="3" y="2.5" width="11" height="12" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="12.5" cy="4" r="2.6" fill="currentColor"/></svg></span>
+            <span class="row-label">{{ self.t("app_push.settings.title") }}</span>
+            {% if let Some(value) = values.app_push %}<span class="row-value">{{ value }}</span>{% endif %}
+            <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </a>
         <a class="row" href="/backups" data-row="backups">
             <span class="tile tile-grey"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><rect x="2" y="3" width="13" height="4" rx="1" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M3 7v6.5h11V7M7 10h3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></span>
             <span class="row-label">{{ self.t("settings.backups.title") }}</span>

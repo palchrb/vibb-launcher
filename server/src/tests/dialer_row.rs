@@ -294,7 +294,9 @@ async fn a_managed_dialer_is_never_changed() {
         .await;
         let row = cell(&html, DIALER);
         assert!(
-            row.contains(text) || row.contains(&text.replace("&#39;", "'").replace("&amp;", "&")),
+            row.contains(text)
+                || row.contains(&text.replace("&amp;", "&#38;"))
+                || row.contains(&text.replace("&#39;", "'").replace("&amp;", "&")),
             "{lang}: {row}"
         );
         assert!(row.contains("flash-error"), "{lang}");

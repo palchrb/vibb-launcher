@@ -198,9 +198,12 @@ jobs:
         run: |
           set -euo pipefail
           # Laid out as before: the binary and static/ at the top.
-          mkdir -p tarball
+          mkdir -p tarball/LICENSES
           cp "target/$TARGET/release/kid_phone_server" tarball/
           cp -r static tarball/
+          # Design 108 §11 (L8): the Apache-2.0 port's licence and the attribution travel with the server.
+          cp ../NOTICE.md tarball/NOTICE.md
+          cp src/unified_push/Apache-2.0.txt tarball/LICENSES/Apache-2.0.txt
           tar -czf "kid-phone-server-$TARGET.tar.gz" -C tarball .
           # install.sh/update.sh download this and refuse a tarball that doesn't match it.
           sha256sum "kid-phone-server-$TARGET.tar.gz" > "kid-phone-server-$TARGET.tar.gz.sha256"
@@ -339,6 +342,8 @@ jobs:
           mkdir -p "dist/$ARCH"
           install -m 755 "$tarball/unpacked/kid_phone_server" "dist/$ARCH/kid_phone_server"
           cp -r "$tarball/unpacked/static" dist/static
+          cp "$tarball/unpacked/NOTICE.md" dist/NOTICE.md
+          cp -r "$tarball/unpacked/LICENSES" dist/LICENSES
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 

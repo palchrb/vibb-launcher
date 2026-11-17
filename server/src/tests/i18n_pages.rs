@@ -241,6 +241,7 @@ async fn nb_pages_have_no_english() {
         format!("/music/entries/{}", family.entry),
         "/settings".to_string(),
         "/settings/provisioning".to_string(),
+        "/settings/push".to_string(),
         "/schedules".to_string(),
         "/schedules/screen-time".to_string(),
         "/schedules/rules/new".to_string(),

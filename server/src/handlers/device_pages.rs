@@ -629,6 +629,20 @@ pub async fn view_about(
                 .detail(dnd.detail(lang)),
             );
         }
+        // Design 107 §5.2: the Vibb One notifications turned off on the phone, from a launcher with
+        // `notification_channels_v1` that sent its reading.
+        if let Some(channels) = crate::notification_channels::report(status) {
+            let row = crate::notification_channels::about(lang, &policy, &channels);
+            sound.push(
+                Row::new(
+                    "notifications",
+                    t(lang, "device.about.notifications"),
+                    row.value,
+                )
+                .class(if row.orange { "row-value-action" } else { "" })
+                .detail(row.detail),
+            );
+        }
 
         if let Some(full) = status.app_version.as_deref().filter(|v| !v.is_empty()) {
             let short = short_version(full);
@@ -2107,6 +2121,8 @@ struct AppsTemplate {
     wifi_only: bool,
     /// The phone's network at its last report, with its time (`app_downloads::network`).
     network: Option<Row>,
+    /// Design 108 §3.10: app push on this phone (`#app-push`).
+    app_push: crate::handlers::app_push::AppPushGroup,
 }
 crate::i18n::words!(AppsTemplate);
 
@@ -2528,9 +2544,43 @@ pub(crate) async fn render_apps(
         let at = usize::from(allowed.first().is_some_and(|app| app.row.is_launcher));
         allowed.insert(at, view);
     }
+    // Design 108 §3.10: the "App push" group, named from the rows above.
+    let names: std::collections::HashMap<String, crate::handlers::app_push::AppName> = allowed
+        .iter()
+        .map(|app| (app, true))
+        .chain(not_allowed.iter().map(|app| (app, false)))
+        .filter(|(app, _)| !app.builtin && !app.row.package_name.is_empty())
+        .map(|(app, allowed)| {
+            (
+                app.row.package_name.clone(),
+                crate::handlers::app_push::AppName {
+                    label: app.row.label.clone(),
+                    letter: app.letter.clone(),
+                    logo: app.logo.clone(),
+                    allowed,
+                },
+            )
+        })
+        .collect();
+    let app_push = match crate::handlers::app_push::group(
+        state,
+        lang,
+        id,
+        &names,
+        latest
+            .as_ref()
+            .map(|_| has_capability(latest.as_ref(), crate::unified_push::CAPABILITY)),
+        &zone,
+    )
+    .await
+    {
+        Ok(group) => group,
+        Err(err) => return read_failed(lang, id, "the phone's app push", err),
+    };
     Html(
         AppsTemplate {
             lang,
+            app_push,
             who: crate::handlers::devices::BandAvatar::of(&device),
             title: format!("{} · {}", t(lang, "nav.apps"), device.name),
             nav_tab,

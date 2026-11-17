@@ -1375,6 +1375,27 @@ class PolicyResponseCompatTest {
         assertNull(older.loginBrowser)
     }
 
+    /** Design 108 §3.8: `unified_push` (the server's `policy_json_keys_snapshot`, sent only to a launcher claiming
+     * `unified_push_v1`) - missing (an older server), or without an origin, is off. */
+    @Test
+    fun `unified_push decodes, missing or without an origin is off (108)`() {
+        val policy = (decodeCached(
+            """{"allowlist": ["io.element.android.x"], "unified_push": {"on": true, "origin": "https://phones.example.com",
+                "regs": ["c0ffee00000000000000000000000001"], "stopped": ["org.unifiedpush.example"]}}""",
+        ) as CachedPolicy.Ok).policy
+        val view = com.kidslauncher.mdm.push.up.UpView.of(policy)
+        assertTrue(view.on)
+        assertEquals(listOf("c0ffee00000000000000000000000001"), policy.unifiedPush!!.regs)
+        assertTrue(view.mayRegister("io.element.android.x"))
+        assertFalse(view.mayRegister("org.unifiedpush.example"))
+        assertFalse(view.mayRegister("com.example.notes"))
+        val noOrigin = (decodeCached("""{"unified_push": {"on": true, "origin": null, "regs": [], "stopped": []}}""") as CachedPolicy.Ok).policy
+        assertFalse(com.kidslauncher.mdm.push.up.UpView.of(noOrigin).on)
+        val older = (decodeCached(serverResponse) as CachedPolicy.Ok).policy
+        assertNull(older.unifiedPush)
+        assertFalse(com.kidslauncher.mdm.push.up.UpView.of(older).on)
+    }
+
     @Test
     fun `bluetooth_any_device decodes and is off without it`() {
         assertTrue(ServerJson.decodeFromString(PolicyResponse.serializer(), """{"bluetooth_any_device":true}""").bluetoothAnyDevice)

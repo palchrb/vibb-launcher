@@ -51,6 +51,7 @@ mod music_secret;
 mod music_sources;
 mod music_sweep;
 mod net;
+mod notification_channels;
 mod parent_events;
 mod parent_pin;
 mod parents;
@@ -78,6 +79,7 @@ mod tests;
 mod time_answers;
 mod time_rules;
 mod time_state;
+mod unified_push;
 mod wallpapers;
 mod weather;
 mod weather_cache;
@@ -215,6 +217,9 @@ pub struct AppState {
     /// The weather's caches in memory, its locks and the phones' ask limits
     /// (`weather_cache::Weather`).
     pub weather: std::sync::Arc<weather_cache::Weather>,
+    /// App push (design 108): the `up` channel and its coalescing, the push routes' buckets and slots, in memory
+    /// only (`unified_push::UnifiedPush`).
+    pub unified_push: std::sync::Arc<unified_push::UnifiedPush>,
 }
 
 pub const APP_VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
@@ -546,6 +551,7 @@ async fn main() {
             music_net::REQUEST_SPACING,
         )),
         weather: Default::default(),
+        unified_push: Default::default(),
     };
     state
         .tokens
@@ -835,11 +841,13 @@ async fn not_found() -> StatusCode {
     StatusCode::NOT_FOUND
 }
 
-/// The phone listener (`DEVICE_BIND_ADDR`, design 22 §2): the device API and `/healthz`, nothing
-/// else - no session layer, no `/static`, and an empty 404 for every other path, so a proxy rule
+/// The phone listener (`DEVICE_BIND_ADDR`, design 22 §2): the device API, app push's public routes (design 108,
+/// `unified_push::routes`) and `/healthz`, nothing else - no session layer, no `/static`, and an empty 404 for every other path, so a proxy rule
 /// meant for the phones can't expose the admin.
 pub fn build_device_router(state: AppState) -> Router {
     device_routes::device_routes(state.clone())
+        // Design 108 §3.2: the public push routes, on this listener alone (behind their own edge).
+        .merge(unified_push::routes(state.clone()))
         .route("/healthz", get(healthz))
         .fallback(not_found)
         .with_state(state)
@@ -1517,6 +1525,19 @@ pub fn build_admin_router(
             "/devices/{id}/app-updates",
             post(handlers::devices::update_app_updates),
         )
+        // Design 108 §3.10: Device › Apps' "App push" group - the phone's switch, Stop, Allow Again.
+        .route(
+            "/devices/{id}/app-push",
+            post(handlers::app_push::save_switch),
+        )
+        .route(
+            "/devices/{id}/app-push/stop",
+            post(handlers::app_push::stop),
+        )
+        .route(
+            "/devices/{id}/app-push/allow",
+            post(handlers::app_push::allow),
+        )
         .route(
             "/devices/{id}/apps/display",
             post(handlers::devices::save_app_display),
@@ -1725,6 +1746,11 @@ pub fn build_admin_router(
             post(handlers::dns_filter::set_dns_log),
         )
         .route("/settings", get(handlers::settings_hub::settings_hub))
+        // Design 108 §3.10: the phones' public address for app push.
+        .route(
+            "/settings/push",
+            get(handlers::app_push::show_settings).post(handlers::app_push::save_settings),
+        )
         .route(
             "/settings/provisioning",
             get(handlers::settings::provisioning_settings_form)
