@@ -132,5 +132,5 @@ choice per app on the phone, in a pause:
 5. End the pause.
 
 Check: `adb shell dumpsys notification --noredact | grep -A12 "AppSettings: io.element.android.x"` shows the channel
-with `mImportance=4`. Vibb One's own Meldinger channel needs no step: it is created at High (PLAN, "No heads-up banner
+with `mImportance=4`. Vibb One's own Meldinger channel needs no step: it is created at High (`launcher:messages_v2`; PLAN, "No heads-up banner
 on Home for messages").

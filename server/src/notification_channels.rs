@@ -78,7 +78,7 @@ const SHORTCUTS: &str = "shortcuts";
 pub const CHANNELS: &[Channel] = &[
     Channel {
         key: "messages",
-        id: "launcher:messages",
+        id: "launcher:messages_v2",
         nb: "Meldinger",
         en: "Messages",
         feature: Some(Feature::Sms),

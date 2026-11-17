@@ -27,7 +27,9 @@ private const val LOG_TAG = "SmsNotifier"
 
 /** Design 77 §6.8: the message notifications - DEFAULT, and LOW for a message stored under a time rule without
  * calls ("stored and notified silently", §6.7). */
-const val NOTIFICATION_CHANNEL_MESSAGES = "launcher:messages"
+/** High, so a message peeks as a banner; the first version, `launcher:messages` (Default, never a banner), is deleted in [SmsNotifier.createChannels]. */
+const val NOTIFICATION_CHANNEL_MESSAGES = "launcher:messages_v2"
+private const val OLD_CHANNEL_MESSAGES = "launcher:messages"
 const val NOTIFICATION_CHANNEL_MESSAGES_SILENT = "launcher:messages_silent"
 
 /**
@@ -68,8 +70,9 @@ object SmsNotifier {
 
     fun createChannels(context: Context) {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
+        manager.deleteNotificationChannel(OLD_CHANNEL_MESSAGES)
         manager.createNotificationChannel(
-            NotificationChannel(NOTIFICATION_CHANNEL_MESSAGES, context.getString(R.string.notification_channel_messages), NotificationManager.IMPORTANCE_DEFAULT),
+            NotificationChannel(NOTIFICATION_CHANNEL_MESSAGES, context.getString(R.string.notification_channel_messages), NotificationManager.IMPORTANCE_HIGH),
         )
         manager.createNotificationChannel(
             NotificationChannel(
