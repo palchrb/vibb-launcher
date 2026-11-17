@@ -124,8 +124,8 @@ pub struct DevicePolicy {
     /// Design 95 rev. 3 (migration 0143): "Mobildata for apper", "on" or "vibb" (Bare Vibb).
     #[sqlx(default)]
     pub apps_mobile: String,
-    /// Design 97 (migration 0145): "I utlandet" - "off" (Ingen data), "vibb" (Bare Vibb, a new phone's default) or
-    /// "home" (Som hjemme). Read through [crate::mobile_network::abroad_choice]; the policy's `data_roaming` is derived
+    /// Design 97 (migration 0145): "Roaming" (design 113's name) - "off" (Av), "vibb" (Bare Vibb, a new phone's default)
+    /// or "home" (På). Read through [crate::mobile_network::abroad_choice]; the policy's `data_roaming` is derived
     /// from it, and design 94's `data_roaming` column (migration 0143) is no longer read or written.
     #[sqlx(default)]
     pub abroad: String,
@@ -1387,7 +1387,7 @@ pub struct PolicyResponse {
     /// app (`app_permissions::lock_media_apps`). A failing query sends `[]` (it only hides a tile). An older launcher
     /// ignores it.
     pub lock_media_apps: Vec<String>,
-    /// Design 97: "I utlandet", `"off"`, `"vibb"` or `"home"`, always sent. An older launcher ignores it.
+    /// Design 97: "Roaming" (Mobilnett), `"off"`, `"vibb"` or `"home"`, always sent. An older launcher ignores it.
     pub abroad: String,
     /// Design 94: `"off"` (data roaming off and locked) or `"phone"` (the phone's choice), always sent. Since design 97
     /// derived from `abroad` for an older launcher (`mobile_network::derived_roaming`): it never gets more than chosen.

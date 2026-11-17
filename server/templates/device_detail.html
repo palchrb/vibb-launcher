@@ -128,12 +128,13 @@
     {% endif %}
 
     {#- Design 95 rev. 3 (the approved mockup's "Telefonens side"): Mobilnett's lines, only when they say something -
-        mobile data off on the phone, only Vibb on cellular now (grey), a roaming warning (orange). Each opens the page. -#}
+        the kid's Off (grey), a roaming warning (orange); mobile data off is the Attention row's (design 113). Each is a
+        link card: its title alone, the ⓘ is on Mobilnett (QA M7). -#}
     {% if !mobile_lines.is_empty() %}
     <section id="mobile-state" aria-label="{{ self.t("device.page.mobile") }}">
         {% for line in mobile_lines %}
         <a class="attention{% if line.warn %} attention-action{% endif %}" href="/devices/{{ device.id }}/mobile" data-mobile-line="{{ line.key }}">
-            <span class="attention-text">{{ line.title }}{% if let Some(sub) = line.sub %}<span class="attention-sub">{{ sub }}</span>{% endif %}</span>
+            <span class="attention-text">{{ line.title }}</span>
             <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </a>
         {% endfor %}

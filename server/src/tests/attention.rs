@@ -113,6 +113,12 @@ async fn each_fact_raises_its_own_row() {
             "play-install-mode",
             json!({"install_mode": {"until_ms": now_ms + 600_000}}),
         ),
+        // Design 113: Android's own mobile-data switch off.
+        (
+            "mobile-data-off",
+            json!({"capabilities": ["time_rules_v1", "mobile_data_v1"],
+                   "mobile_data": {"enabled": false, "sink": "off", "settings_locked": true}}),
+        ),
     ];
     for (key, extra) in cases {
         let (id, token) = clean_phone(&app, key).await;
@@ -156,6 +162,17 @@ async fn each_fact_raises_its_own_row() {
         report(&app, &token, extra).await;
         assert_eq!(rows(&app, &cookie, id).await, [key], "{key}");
     }
+    // Design 113: the kid's own switch off (Android's still on) raises nothing.
+    let (kid_off, token) = clean_phone(&app, "kid off").await;
+    report(
+        &app,
+        &token,
+        json!({"capabilities": ["time_rules_v1", "mobile_data_v1"],
+               "mobile_data": {"enabled": true, "sink": "kid", "settings_locked": true, "kid": "off"}}),
+    )
+    .await;
+    assert_eq!(rows(&app, &cookie, kid_off).await, Vec::<String>::new());
+
     // Play not pausable with "Block other apps' screens" on: Play stays blocked, no row.
     let (blocked, token) = clean_phone(&app, "blocked").await;
     report(&app, &token, json!({"play_store_suspendable": false})).await;

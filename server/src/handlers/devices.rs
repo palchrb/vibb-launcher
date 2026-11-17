@@ -1128,8 +1128,8 @@ struct DeviceDetailTemplate {
     filter_value: &'static str,
     /// Device › Mobilnett's row (design 95 rev. 3): its value only when it says something ("Bare Vibb · Roaming på").
     mobile_value: Option<String>,
-    /// Design 95 rev. 3: Mobilnett's lines on the summary - only when they say something (mobile data off on the phone,
-    /// only Vibb on cellular now, a roaming warning), each leading to the page.
+    /// Design 95 rev. 3: Mobilnett's lines on the summary - only when they say something (the kid's Off, a roaming
+    /// warning; mobile data off is the Attention row's, design 113), each leading to the page.
     mobile_lines: Vec<crate::mobile_network::Line>,
     /// Design 98 §6.2: Flymodus' lines - a period ended within 12 h, the one an emergency call ended, the role lost.
     airplane_lines: Vec<crate::airplane_mode::Line>,

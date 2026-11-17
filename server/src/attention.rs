@@ -66,6 +66,9 @@ pub enum Kind {
     /// Design 107 §5.3: Meldinger or Tapte anrop turned off on the phone while Vibb runs it, or every Vibb One
     /// notification off while SMS or calls are managed ([Facts::notifications_off] holds which).
     NotificationsOff,
+    /// Design 113 (the user's call): Android's own mobile-data switch is off on the phone - not even Vibb has mobile
+    /// data. Temporary (QA L2): design 114 folds it into its setup row and removes the kind.
+    MobileDataOff,
     /// Design 108c: app push problems, from `unified_push::health::attention` (the server's own data): pushes waiting
     /// on the server, an app's pushes refused past the heal (apps), an app's pushes still going outside (apps).
     AppPushWaiting,
@@ -157,6 +160,7 @@ impl AttentionItem {
             Kind::BootCoverNotShown => "boot-cover-not-shown",
             Kind::NoNotificationAccess => "notification-access",
             Kind::NotificationsOff => "notifications-off",
+            Kind::MobileDataOff => "mobile-data-off",
             Kind::AppPushWaiting => "app-push-waiting",
             Kind::AppPushRefused(_) => "app-push-refused",
             Kind::AppPushOutside(_) => "app-push-outside",
@@ -209,6 +213,8 @@ pub struct Facts {
     pub no_notification_access: bool,
     /// Design 107: the notification channels' row, if it is raised (`notification_channels::attention`).
     pub notifications_off: Option<crate::notification_channels::Attention>,
+    /// Design 113: the report's `mobile_data.enabled` is `false` (a launcher with `mobile_data_v1`); unknown is `false`.
+    pub mobile_data_off: bool,
     /// Design 108c: the app push rows (`unified_push::health::attention`).
     pub app_push: crate::unified_push::health::AppPushAttention,
     /// From the call report, in its order (`Waiting` left out by [items]).
@@ -259,6 +265,7 @@ pub fn items(lang: Lang, device_id: i64, facts: &Facts) -> Vec<AttentionItem> {
     add(facts.boot_cover_not_shown, Kind::BootCoverNotShown);
     add(facts.no_notification_access, Kind::NoNotificationAccess);
     add(facts.notifications_off.is_some(), Kind::NotificationsOff);
+    add(facts.mobile_data_off, Kind::MobileDataOff);
     add(facts.app_push.waiting_since.is_some(), Kind::AppPushWaiting);
     add(
         !facts.app_push.refused.is_empty(),
@@ -329,6 +336,7 @@ fn level(kind: Kind) -> Level {
         | Kind::BootCoverNotShown
         | Kind::NoNotificationAccess
         | Kind::NotificationsOff
+        | Kind::MobileDataOff
         | Kind::AppPushWaiting
         | Kind::AppPushRefused(_)
         | Kind::AppPushOutside(_)
@@ -375,6 +383,7 @@ fn title(lang: Lang, kind: Kind) -> String {
         Kind::NoNotificationAccess => t(lang, "device.attention.notification_access"),
         // Worded from its facts in [items] (the names); this is its all-off form.
         Kind::NotificationsOff => t(lang, "device.attention.notifications_all_off"),
+        Kind::MobileDataOff => t(lang, "device.attention.mobile_data_off"),
         Kind::AppPushWaiting => t(lang, "device.attention.app_push_waiting"),
         Kind::AppPushRefused(n) => {
             return t_count(lang, "device.attention.app_push_refused", count(n), &[]);
@@ -426,6 +435,7 @@ fn target(kind: Kind, id: i64) -> String {
         Kind::NoParentPin | Kind::EasyParentPin => ("/lock", "parent-pin"),
         Kind::ChildLockOff | Kind::ChildPinChanged => ("/lock", "child-pin"),
         Kind::NoNotificationAccess => ("/home", "layout"),
+        Kind::MobileDataOff => ("/mobile", "mobile-data"),
         Kind::AppPushWaiting | Kind::AppPushRefused(_) | Kind::AppPushOutside(_) => {
             ("/apps", "app-push")
         }
@@ -722,6 +732,11 @@ pub fn facts_of(s: &Sources, now_ms: i64) -> Facts {
         notifications_off: latest
             .and_then(crate::notification_channels::report)
             .and_then(|report| crate::notification_channels::attention(policy, &report)),
+        // Mobilnett's own reading (its orange "data-off" line), so the row and the page agree. The kid's own switch
+        // (`kid == "off"`, Android's still on) never raises it.
+        mobile_data_off: latest
+            .and_then(crate::mobile_network::mobile_report)
+            .is_some_and(|m| m.enabled == Some(false)),
         app_push: s.app_push.clone(),
         calls: s.call_problems.to_vec(),
         // Device › Time reads the same typed report.
@@ -780,6 +795,7 @@ mod tests {
                 keys: vec!["messages", "missed_calls"],
                 names: None,
             }),
+            mobile_data_off: true,
             app_push: crate::unified_push::health::AppPushAttention {
                 waiting_since: Some(chrono::Utc::now()),
                 refused: vec![("a.b".to_string(), "2026-11-17 10:00:00".to_string())],
@@ -888,6 +904,7 @@ mod tests {
                 "Boot cover wasn't shown",
                 "Notification access off",
                 "Notifications off: Messages, Missed calls",
+                "Mobile data is off on the phone",
                 "App notifications aren't reaching the phone",
                 "1 app's notifications are refused",
                 "2 apps' notifications go via an outside service",
@@ -1008,6 +1025,8 @@ mod tests {
         assert_eq!(target("notification-access"), "/devices/7/home#layout");
         // Design 107: About This Phone's Sound group, where the row is.
         assert_eq!(target("notifications-off"), "/devices/7/about#sound");
+        // Design 113: Mobilnett's Mobildata group, where the orange line is.
+        assert_eq!(target("mobile-data-off"), "/devices/7/mobile#mobile-data");
         // Design 108c: Device › Apps' App push group.
         for key in ["app-push-waiting", "app-push-refused", "app-push-outside"] {
             assert_eq!(target(key), "/devices/7/apps#app-push");
