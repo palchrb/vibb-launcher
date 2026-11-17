@@ -1900,14 +1900,15 @@ th {
 .tone-teal { --avatar-bg: #7FCBC8; }
 .tone-rose { --avatar-bg: #EFA3AF; }
 
-/* The app tiles' colours (white text 4.5:1 or more on each); the grey is also a phone's not set up. */
-.avatar-indigo { background: #5E5CE6; }
-.avatar-orange { background: #C2410C; }
-.avatar-teal { background: #0E7C91; }
-.avatar-green { background: #2E8540; }
-.avatar-pink { background: #C2306B; }
-.avatar-purple { background: #8944AB; }
-.avatar-grey { background: #636366; color: #FFFFFF; }
+/* The app tiles' letter colours (white text 5:1 or more on each), the menu tiles' palette - the launcher's Home tiles
+   (2026-11-17, variant B) - with a muted plum; the grey is also a phone's not set up. */
+.avatar-indigo { background: #6065A9; }
+.avatar-orange { background: #B4532C; }
+.avatar-teal { background: #347470; }
+.avatar-green { background: #3A7552; }
+.avatar-pink { background: #A8475F; }
+.avatar-purple { background: #7A5A94; }
+.avatar-grey { background: #606B80; color: #FFFFFF; }
 
 /* The connection dot on the avatar; the state is also the word in the status line. */
 .avatar-dot {
