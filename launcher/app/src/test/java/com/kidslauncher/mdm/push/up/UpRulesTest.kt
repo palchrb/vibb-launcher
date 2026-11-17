@@ -1,5 +1,6 @@
 package com.kidslauncher.mdm.push.up
 
+import com.kidslauncher.mdm.server.ServerJson
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -16,6 +17,7 @@ class UpRulesTest {
     private fun decisionText(decision: RegisterDecision): String = when (decision) {
         is RegisterDecision.Refuse -> "refuse:${decision.reason}"
         is RegisterDecision.Known -> "known:${decision.row.reg}"
+        is RegisterDecision.Update -> "update:${decision.row.reg}"
         is RegisterDecision.Retry -> "retry:${decision.row.reg}"
         RegisterDecision.New -> "new"
     }
@@ -32,15 +34,18 @@ class UpRulesTest {
                 val at = c.jsonObject["at_ms"]!!.jsonPrimitive.long
                 List(c.jsonObject["count"]!!.jsonPrimitive.long.toInt()) { at + it }
             }.orEmpty()
+            val own = case["row_extra"]?.jsonArray?.map { ServerJson.decodeFromJsonElement(UpRow.serializer(), it) }.orEmpty()
             val decision = UpRules.registerDecision(
                 UpFixtures.view(case["view"]!!.jsonPrimitive.content),
                 case["pkg"]!!.jsonPrimitive.content,
                 case["token"]!!.jsonPrimitive.content,
-                UpFixtures.rows + extra,
+                UpFixtures.rows + extra + own,
                 churn,
                 UpFixtures.long(case["now_ms"], 10_000_000),
+                UpFixtures.string(case["vapid"]),
             )
             assertEquals(name, case["decision"]!!.jsonPrimitive.content, decisionText(decision))
+            assertEquals(name, UpFixtures.string(case["pending_vapid"]), (decision as? RegisterDecision.Known)?.pendingVapid)
         }
     }
 
@@ -98,5 +103,55 @@ class UpRulesTest {
         assertTrue(UpRules.validVapid("B" + "A".repeat(86)))
         assertFalse(UpRules.validVapid("B" + "A".repeat(85) + "="))
         assertFalse(UpRules.validVapid("A".repeat(86)))
+    }
+
+    private fun kinds(sends: List<UpRules.UpSend>) = sends.map { it.kind }
+
+    @Test
+    fun `every liveness row pings, re-sends or buries as written (Q1, L3)`() {
+        for (case in rules["liveness"]!!.jsonArray.map { it.jsonObject }) {
+            val name = case["case"]!!.jsonPrimitive.content
+            val reg = case["reg"]!!.jsonPrimitive.content
+            val now = case["now_ms"]!!.jsonPrimitive.long
+            val row = UpFixtures.rowWith(reg, case["row"]!!.jsonObject)
+            val result = UpRules.liveness(listOf(row), case["boot"]!!.jsonPrimitive.long.toInt(), now)
+            assertEquals(name, UpFixtures.strings(case["send"]), kinds(result.sends))
+            assertEquals(name, case["dead"]!!.jsonPrimitive.content == "true", result.dead.isNotEmpty())
+            val send = result.sends.singleOrNull() ?: continue
+            assertEquals(name, now, send.row.pingLastSendMs)
+            assertEquals(name, send.id, send.row.pingId)
+            if (send.kind == "resend") assertEquals(name, row.pingId, send.id) else assertEquals(name, now, send.row.pingSentMs)
+        }
+    }
+
+    @Test
+    fun `every refresh row is sent or waits as written (section 3, 3)`() {
+        for (case in rules["refresh"]!!.jsonArray.map { it.jsonObject }) {
+            val name = case["case"]!!.jsonPrimitive.content
+            val row = UpFixtures.rowWith(case["reg"]!!.jsonPrimitive.content, case["row"]!!.jsonObject)
+            val now = case["now_ms"]!!.jsonPrimitive.long
+            val refresh = case["refresh"]!!.jsonArray.map { ServerJson.decodeFromJsonElement(UpRefresh.serializer(), it) }
+            val sends = UpRules.refreshes(listOf(row), refresh, now, case["in_use"]!!.jsonPrimitive.content == "true")
+            assertEquals(name, case["send"]!!.jsonPrimitive.content == "true", sends.isNotEmpty())
+            sends.singleOrNull()?.let { assertEquals(name, now, it.row.refreshMs) }
+        }
+    }
+
+    @Test
+    fun `a pass sends one NEW_ENDPOINT per row, a due ping carrying the refresh (L2)`() {
+        for (case in rules["pass"]!!.jsonArray.map { it.jsonObject }) {
+            val name = case["case"]!!.jsonPrimitive.content
+            val row = UpFixtures.rowWith(case["reg"]!!.jsonPrimitive.content, case["row"]!!.jsonObject)
+            val now = case["now_ms"]!!.jsonPrimitive.long
+            val refresh = case["refresh"]!!.jsonArray.map { ServerJson.decodeFromJsonElement(UpRefresh.serializer(), it) }
+            val pass = UpRules.pass(listOf(row), refresh, case["boot"]!!.jsonPrimitive.long.toInt(), now, case["in_use"]!!.jsonPrimitive.content == "true")
+            assertEquals(name, UpFixtures.strings(case["sends"]), kinds(pass.sends))
+            assertEquals(name, case["dead"]!!.jsonPrimitive.content == "true", pass.dead.isNotEmpty())
+            val want = case["refresh_ms"]!!.takeIf { it !is kotlinx.serialization.json.JsonNull }?.jsonPrimitive?.long
+            pass.sends.singleOrNull()?.let {
+                assertEquals(name, want, it.row.refreshMs)
+                if (it.kind != "refresh") assertEquals(name, it.row.pingId, it.id)
+            }
+        }
     }
 }

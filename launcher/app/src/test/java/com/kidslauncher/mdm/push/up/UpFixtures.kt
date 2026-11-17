@@ -21,6 +21,12 @@ object UpFixtures {
 
     val rows: List<UpRow> by lazy { rules["rows"]!!.jsonArray.map { ServerJson.decodeFromJsonElement(UpRow.serializer(), it) } }
 
+    /** The fixture row [reg] with [overrides] (snake_case JSON fields) laid over it. */
+    fun rowWith(reg: String, overrides: JsonObject): UpRow {
+        val base = rules["rows"]!!.jsonArray.map { it.jsonObject }.first { it["reg"]!!.jsonPrimitive.content == reg }
+        return ServerJson.decodeFromJsonElement(UpRow.serializer(), JsonObject(base + overrides))
+    }
+
     fun view(name: String): UpView {
         val v = rules["views"]!!.jsonObject[name]!!.jsonObject
         return UpView(
@@ -81,6 +87,10 @@ class FakeUpServer : UpServer {
 class FakeUpPhone : UpPhone {
     val sent = mutableListOf<String>()
     val states = mutableMapOf<String, UpAppState>()
+
+    /** The NEW_ENDPOINTs sent through the raise (ping, refresh, rewrite): "pkg token endpoint id". */
+    val raised = mutableListOf<String>()
+    var inUse = true
     val delivering = mutableListOf<RaiseToForeground.Message>()
     var onSent: (RaiseToForeground.Message) -> Unit = {}
     var pullsLater = 0
@@ -99,7 +109,14 @@ class FakeUpPhone : UpPhone {
 
     override fun appState(pkg: String): UpAppState = states[pkg] ?: UpAppState.INSTALLED
 
+    override fun inUse() = inUse
+
     override fun deliver(pkg: String, message: RaiseToForeground.Message) {
+        if (message.kind == RaiseToForeground.Kind.NEW_ENDPOINT) {
+            raised += "$pkg ${message.token} ${message.endpoint} ${message.id}"
+            sent += "NEW_ENDPOINT $pkg ${message.token} ${message.endpoint}"
+            return
+        }
         delivering += message
     }
 

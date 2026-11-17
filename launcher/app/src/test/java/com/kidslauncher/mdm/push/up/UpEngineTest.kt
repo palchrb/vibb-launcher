@@ -1,5 +1,8 @@
 package com.kidslauncher.mdm.push.up
 
+import com.kidslauncher.mdm.push.up.vendor.RaiseToForeground
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -169,5 +172,120 @@ class UpEngineTest {
         assertTrue(afterFirst > 0)
         counted.handle(UpRequest.Ack(null, "tok-element-1", "id2"))
         assertEquals(afterFirst, reads)
+    }
+
+    // Design 108b: liveness, the refresh, the key update.
+    private val day = UpRules.DAY_MS
+    private val now = 40 * day
+    private val keyA = "B" + "A".repeat(86)
+    private val keyB = "B" + "B".repeat(86)
+    private val keyC = "B" + "C".repeat(86)
+    private val allRegs = listOf("c0ffee00000000000000000000000001", "c0ffee00000000000000000000000002")
+    private val elementReg = "c0ffee00000000000000000000000002"
+
+    private fun lateEngine(clock: () -> Long = { now }) =
+        UpEngine({ true }, { store }, { view }, { server }, phone, clock).also { e -> phone.onSent = { e.sent(it) } }
+
+    private fun seed(vararg overrides: Pair<String, Long?>, extra: (kotlinx.serialization.json.JsonObjectBuilder.() -> Unit)? = null) {
+        val own = UpFixtures.rowWith(
+            elementReg,
+            buildJsonObject {
+                for ((k, v) in overrides) put(k, v)
+                extra?.invoke(this)
+            },
+        )
+        // Row 1 answered just now and the pending row is left out (a day-old pending one is dropped by the reconcile).
+        store.write(UpFixtures.rows.filter { it.confirmed }.map { if (it.reg == elementReg) own else it.copy(lastAppAckMs = now) })
+    }
+
+    @Test
+    fun `a ping goes through the raise with its id, is never acknowledged to the server, and an ack clears it`() {
+        seed("last_app_ack_ms" to now - 24 * day)
+        val e = lateEngine()
+        e.policyAccepted(view, allRegs, 7000)
+        val ping = rows().first { it.reg == elementReg }
+        assertEquals("$element tok-element-1 ${ping.endpoint} ${ping.pingId}", phone.raised.single())
+        assertEquals(now, ping.pingSentMs)
+        // The raise reports it sent: no server message, so no ack and no pull.
+        e.sent(RaiseToForeground.Message.newEndpoint("tok-element-1", ping.endpoint!!, ping.pingId!!))
+        assertTrue(e.pendingAcks().isEmpty())
+        assertEquals(0, phone.pullsLater)
+        // The app answers it (the connector acks by itself): the ping is cleared.
+        e.handle(UpRequest.Ack(null, "tok-element-1", ping.pingId!!))
+        val after = rows().first { it.reg == elementReg }
+        assertEquals(null, after.pingId)
+        assertEquals(now, after.lastAppAckMs)
+        // A second pass: nothing more to send.
+        e.policyAccepted(view, allRegs, 7000)
+        assertEquals(1, phone.raised.size)
+    }
+
+    @Test
+    fun `a row nobody answered for 30 days is unregistered, its DELETE sent and the note written`() {
+        seed("last_app_ack_ms" to now - 40 * day, "ping_sent_ms" to now - 8 * day, "ping_last_send_ms" to now - 2 * 3_600_000L, "ping_boot" to 0, extra = { put("ping_id", "ping-1") })
+        lateEngine().policyAccepted(view, allRegs, 7000)
+        assertTrue(rows().none { it.reg == elementReg })
+        assertEquals("UNREGISTERED $element tok-element-1", phone.sent.single())
+        assertEquals(listOf(elementReg), server.unregistered)
+        assertEquals(NOTE_UNANSWERED, store.notes().single().kind)
+        assertTrue(phone.raised.isEmpty())
+    }
+
+    @Test
+    fun `a refresh waits for the phone in use, then goes at the unlock, once a day`() {
+        seed("last_app_ack_ms" to now)
+        view = view.copy(refresh = listOf(UpRefresh(elementReg, "outside")))
+        val e = lateEngine()
+        phone.inUse = false
+        e.policyAccepted(view, allRegs, 7000)
+        assertTrue(phone.raised.isEmpty())
+        phone.inUse = true
+        e.userPresent()
+        assertEquals(1, phone.raised.size)
+        assertEquals(now, rows().first { it.reg == elementReg }.refreshMs)
+        e.userPresent()
+        e.policyAccepted(view, allRegs, 7000)
+        assertEquals(1, phone.raised.size)
+        assertEquals(0, phone.pullsLater)
+    }
+
+    @Test
+    fun `H1 - another key is answered from the store at once, never REGISTRATION_FAILED, and posted at the next policy`() {
+        store.write(UpFixtures.rows.map { if (it.reg == elementReg) it.copy(vapid = keyA) else it })
+        server.registered += UpServer.Registered.Network
+        var clock = now
+        val e = lateEngine { clock }
+        e.handle(UpRequest.Register(element, "tok-element-1", null, keyB))
+        val first = rows().first { it.reg == elementReg }
+        assertEquals(listOf("NEW_ENDPOINT $element tok-element-1 ${first.endpoint}"), phone.sent)
+        assertEquals(keyA, first.vapid)
+        assertEquals(keyB, first.vapidPending)
+        assertEquals(keyB, server.registerBodies.single().vapid)
+        // A key flipping within the hour: no second call (M4), the newest kept pending; a REGISTER without a key changes
+        // nothing (H1).
+        e.handle(UpRequest.Register(element, "tok-element-1", null, keyC))
+        e.handle(UpRequest.Register(element, "tok-element-1", null, null))
+        assertEquals(1, server.registerBodies.size)
+        assertEquals(keyC, rows().first { it.reg == elementReg }.vapidPending)
+        assertEquals(3, phone.sent.size)
+        // The next policy, an hour on: the newest key is posted and taken.
+        clock += 2 * 3_600_000L
+        e.policyAccepted(view, allRegs, 7000)
+        val taken = rows().first { it.reg == elementReg }
+        assertEquals(keyC, taken.vapid)
+        assertEquals(null, taken.vapidPending)
+        assertEquals(2, server.registerBodies.size)
+    }
+
+    @Test
+    fun `a key the server refuses is dropped, the old one kept and the note written`() {
+        store.write(UpFixtures.rows.map { if (it.reg == elementReg) it.copy(vapid = keyA) else it })
+        server.registered += UpServer.Registered.Invalid
+        lateEngine().handle(UpRequest.Register(element, "tok-element-1", null, keyB))
+        val row = rows().first { it.reg == elementReg }
+        assertEquals(keyA, row.vapid)
+        assertEquals(null, row.vapidPending)
+        assertEquals(NOTE_BAD_KEY, store.notes().single().kind)
+        assertEquals(1, phone.sent.size)
     }
 }

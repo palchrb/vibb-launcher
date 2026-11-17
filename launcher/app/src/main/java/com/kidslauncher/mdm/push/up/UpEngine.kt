@@ -53,7 +53,11 @@ interface UpPhone {
 
     fun appState(pkg: String): UpAppState
 
-    /** Raises [pkg] and sends [message]; the engine's [UpEngine.sent] is called once its broadcast went out. */
+    /** The phone is in use (design 108b §3.3): interactive and not in Doze. A refresh waits for it. */
+    fun inUse(): Boolean
+
+    /** Raises [pkg] and sends [message] (a MESSAGE, or a NEW_ENDPOINT of design 108b: a ping, a refresh, the origin's
+     * rewrite); the engine's [UpEngine.sent] is called once its broadcast went out. */
     fun deliver(pkg: String, message: RaiseToForeground.Message)
 
     /** Asks for a pull after [delayMs] (the acks of sends that happened after the last pull). */
@@ -82,6 +86,8 @@ class UpEngine(
     private val log: (String) -> Unit = {},
     /** Monotonic ms for the time budgets. */
     private val ticks: () -> Long = { System.nanoTime() / 1_000_000 },
+    /** This boot's count (`Settings.Global.BOOT_COUNT`): Q1's once-per-boot re-send of an outstanding ping. */
+    private val boot: () -> Int = { 0 },
 ) {
     /** Keys whose broadcast was sent and that the server hasn't been told of yet (H1: only these are acknowledged). */
     private val acks = LinkedHashSet<String>()
@@ -132,7 +138,7 @@ class UpEngine(
         val rows = rowsOrNull() ?: return phone.registrationFailed(pkg, request.token, UpRules.failedReason("network"))
         val store = store()
         val now = clock()
-        when (val decision = UpRules.registerDecision(view, pkg, request.token, rows, store.churn(), now)) {
+        when (val decision = UpRules.registerDecision(view, pkg, request.token, rows, store.churn(), now, request.vapid)) {
             is RegisterDecision.Refuse -> {
                 log("REGISTER of $pkg refused: ${decision.reason}")
                 phone.registrationFailed(pkg, request.token, UpRules.failedReason(decision.reason))
@@ -140,10 +146,25 @@ class UpEngine(
             is RegisterDecision.Known -> {
                 val row = decision.row
                 val message = UpRules.cutMessage(request.message)
-                if (message != null && message != row.message) store.write(rows.map { if (it.reg == row.reg) it.copy(message = message) else it })
+                var updated = row
+                if (message != null && message != row.message) updated = updated.copy(message = message)
+                if (decision.pendingVapid != null) updated = updated.copy(vapidPending = decision.pendingVapid)
+                if (updated != row) store.write(rows.map { if (it.reg == row.reg) updated else it })
                 phone.newEndpoint(pkg, request.token, row.endpoint!!, UpRules.newId())
             }
-            is RegisterDecision.Retry -> call(decision.row, retryOnConflict = true)
+            is RegisterDecision.Update -> {
+                // H1: answered from the store at once (the old endpoint, which the old key still serves); the new key is
+                // posted after, never as `REGISTRATION_FAILED` (connector 3.0.9 would drop the instance's keys on it).
+                phone.newEndpoint(pkg, request.token, decision.row.endpoint!!, UpRules.newId())
+                val message = UpRules.cutMessage(request.message)
+                val pending = decision.row.copy(vapidPending = decision.vapid, keyTryMs = now, message = message ?: decision.row.message)
+                if (store.write(rows.map { if (it.reg == pending.reg) pending else it })) postKey(pending)
+            }
+            is RegisterDecision.Retry -> {
+                // A pending row is a server call anyway: retried with the newest key (design 108b §4.6).
+                val row = decision.row
+                call(request.vapid?.let { row.copy(vapid = it) } ?: row, retryOnConflict = true)
+            }
             RegisterDecision.New -> {
                 val row = newRow(request, now)
                 if (!store.write(rows + row)) return phone.registrationFailed(pkg, request.token, UpRules.failedReason("network"))
@@ -203,6 +224,29 @@ class UpEngine(
         }
     }
 
+    /**
+     * The pending key of a confirmed [row] posted with its `reg` and secret (design 108b §4.6): a 200 makes it the row's
+     * key; a 400 (not a P-256 point) drops it, keeps the old key and notes it; no network, a 5xx or anything else keeps it
+     * pending for a later policy. Never an answer to the app.
+     */
+    private fun postKey(row: UpRow) {
+        val key = row.vapidPending ?: return
+        val api = server() ?: return
+        val answer = api.register(UpRegisterBody(row.reg, row.secret, row.pkg, key))
+        val store = store()
+        val rows = rowsOrNull() ?: return
+        val current = rows.firstOrNull { it.reg == row.reg && it.vapidPending == key } ?: return
+        val updated = when {
+            answer is UpServer.Registered.Endpoint && UpRules.endpointValid(answer.endpoint, row.secret) -> current.copy(vapid = key, vapidPending = null)
+            answer is UpServer.Registered.Invalid -> {
+                store.note(UpNote(row.pkg, NOTE_BAD_KEY, clock()))
+                current.copy(vapidPending = null)
+            }
+            else -> return
+        }
+        store.write(rows.map { if (it.reg == updated.reg) updated else it })
+    }
+
     private fun unregister(request: UpRequest.Unregister) {
         val rows = rowsOrNull() ?: return
         val row = UpRules.unregisterDecision(request.sender, request.token, rows) ?: return
@@ -230,8 +274,13 @@ class UpEngine(
         val rows = rowsOrNull() ?: return
         val row = UpRules.ackDecision(request.sender, request.token, rows) ?: return
         val answersPing = row.pingId != null && row.pingId == request.id
-        if (!answersPing && row.lastAppAckMs != null && now - row.lastAppAckMs < UpRules.HOUR_MS) return
-        store().write(rows.map { if (it.reg == row.reg) it.copy(lastAppAckMs = now, pingId = null, pingSentMs = null) else it })
+        val lastAck = UpRules.stamp(row.lastAppAckMs, now)
+        if (!answersPing && lastAck != null && now - lastAck < UpRules.HOUR_MS) return
+        store().write(
+            rows.map {
+                if (it.reg == row.reg) it.copy(lastAppAckMs = now, pingId = null, pingSentMs = null, pingLastSendMs = null, pingBoot = null) else it
+            },
+        )
     }
 
     /** [pkg] was uninstalled or its data cleared (its tokens are gone): its rows removed, a `DELETE` each, nothing sent. */
@@ -309,12 +358,72 @@ class UpEngine(
             val byReg = rewritten.associateBy { it.reg }
             keep = keep.map { byReg[it.reg] ?: it }
         }
+        // Design 108b: the liveness ping and the refresh, on the kept rows (the rewritten endpoints included): one
+        // NEW_ENDPOINT per row (L2), the ping's id when a ping is due.
+        val pass = if (view.on) UpRules.pass(keep, view.refresh, boot(), now, phone.inUse()) else UpRules.UpPass(emptyList(), emptyList())
+        keep = applyPass(keep, pass)
         if (keep != rows) store.write(keep)
-        val deletes = reconcile.drop.filter { it.deleteOnServer }.map { it.row.reg } + uninstalled.map { it.reg } + reconcile.deleteUnknown
+        val deletes = reconcile.drop.filter { it.deleteOnServer }.map { it.row.reg } + uninstalled.map { it.reg } +
+            reconcile.deleteUnknown + pass.dead.map { it.reg }
         if (deletes.isNotEmpty()) store.setDeletes(store.deletes() + deletes)
         for (drop in reconcile.drop) if (drop.tellApp) phone.unregistered(drop.row.pkg, drop.row.token)
-        for (row in rewritten) phone.newEndpoint(row.pkg, row.token, row.endpoint!!, UpRules.newId())
+        sendPass(pass, rewritten.filter { r -> pass.sends.none { it.row.reg == r.reg } })
         retryDeletes()
+        if (view.on) retryKeys(now)
+    }
+
+    /** A fresh or unlocked phone in use again (the receiver's `USER_PRESENT`): the refreshes that waited, and anything
+     * else a pass finds due. */
+    fun userPresent() {
+        if (!unlocked()) return
+        val view = view()
+        if (!view.on) return
+        val rows = rowsOrNull() ?: return
+        val pass = UpRules.pass(rows, view.refresh, boot(), clock(), phone.inUse())
+        if (pass.sends.isEmpty() && pass.dead.isEmpty()) return
+        val store = store()
+        store.write(applyPass(rows, pass))
+        if (pass.dead.isNotEmpty()) store.setDeletes(store.deletes() + pass.dead.map { it.reg })
+        sendPass(pass, emptyList())
+        if (pass.dead.isNotEmpty()) retryDeletes()
+    }
+
+    private fun applyPass(rows: List<UpRow>, pass: UpRules.UpPass): List<UpRow> {
+        val updated = pass.sends.associate { it.row.reg to it.row }
+        val dead = pass.dead.map { it.reg }.toSet()
+        return rows.filter { it.reg !in dead }.map { updated[it.reg] ?: it }
+    }
+
+    /** The pass's broadcasts, through the raise: the sends, and the [rewritten] endpoints with a fresh id; the dead rows
+     * told `UNREGISTERED` and noted. */
+    private fun sendPass(pass: UpRules.UpPass, rewritten: List<UpRow>) {
+        for (row in rewritten) raiseNewEndpoint(row, UpRules.newId())
+        for (send in pass.sends) {
+            log("NEW_ENDPOINT ${send.kind} for ${send.row.pkg}")
+            raiseNewEndpoint(send.row, send.id)
+        }
+        for (row in pass.dead) {
+            log("${row.pkg} didn't answer - unregistered")
+            store().note(UpNote(row.pkg, NOTE_UNANSWERED, clock()))
+            phone.unregistered(row.pkg, row.token)
+        }
+    }
+
+    private fun raiseNewEndpoint(row: UpRow, id: String) =
+        phone.deliver(row.pkg, RaiseToForeground.Message.newEndpoint(row.token, row.endpoint!!, id))
+
+    /** The pending keys due (design 108b §4.6, M4: one call an hour per token), at most [DELETES_BUDGET_MS] of calls. */
+    private fun retryKeys(now: Long) {
+        val started = ticks()
+        val due = (rowsOrNull() ?: return).filter { it.confirmed && it.vapidPending != null && UpRules.keyCallDue(it, now) }
+        for (row in due) {
+            if (ticks() - started >= DELETES_BUDGET_MS) break
+            val rows = rowsOrNull() ?: return
+            val current = rows.firstOrNull { it.reg == row.reg } ?: continue
+            val tried = current.copy(keyTryMs = now)
+            if (!store().write(rows.map { if (it.reg == tried.reg) tried else it })) return
+            postKey(tried)
+        }
     }
 
     /** A pull was asked for (an `up` event, a reopen, a sync, the acks of late sends): one runs, one more trails. */
@@ -396,6 +505,8 @@ class UpEngine(
 
     /** The broadcast of [message] went out (H1): only now may its key be acknowledged; the ack rides the next pull. */
     fun sent(message: RaiseToForeground.Message) {
+        // A NEW_ENDPOINT (a ping, a refresh, the rewrite) is no server message: nothing to acknowledge (design 108b §3.3).
+        if (message.kind != RaiseToForeground.Kind.MESSAGE) return
         acks += message.id
         delivering.remove(message.id)?.let { deliveredAt[it] = clock() }
         phone.pullLater(ACK_FLUSH_MS)
@@ -403,6 +514,7 @@ class UpEngine(
 
     /** The broadcast of [message] couldn't be sent (code QA M1): no ack, and the next pull may deliver it again. */
     fun failed(message: RaiseToForeground.Message) {
+        if (message.kind != RaiseToForeground.Kind.MESSAGE) return
         delivering.remove(message.id)
     }
 

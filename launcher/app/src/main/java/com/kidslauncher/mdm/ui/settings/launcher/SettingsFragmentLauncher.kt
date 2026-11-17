@@ -663,7 +663,12 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
                 }
             }
             for (note in diagnostics.notes) {
-                val text = if (note.kind == com.kidslauncher.mdm.push.up.NOTE_OLD_CONNECTOR) R.string.settings_up_old_connector else R.string.settings_up_no_raise
+                val text = when (note.kind) {
+                    com.kidslauncher.mdm.push.up.NOTE_OLD_CONNECTOR -> R.string.settings_up_old_connector
+                    com.kidslauncher.mdm.push.up.NOTE_UNANSWERED -> R.string.settings_up_unanswered
+                    com.kidslauncher.mdm.push.up.NOTE_BAD_KEY -> R.string.settings_up_bad_key
+                    else -> R.string.settings_up_no_raise
+                }
                 lines += getString(text, label(note.pkg))
             }
             row.summary = lines.joinToString("\n")

@@ -1381,14 +1381,19 @@ class PolicyResponseCompatTest {
     fun `unified_push decodes, missing or without an origin is off (108)`() {
         val policy = (decodeCached(
             """{"allowlist": ["io.element.android.x"], "unified_push": {"on": true, "origin": "https://phones.example.com",
-                "regs": ["c0ffee00000000000000000000000001"], "stopped": ["org.unifiedpush.example"]}}""",
+                "regs": ["c0ffee00000000000000000000000001"], "stopped": ["org.unifiedpush.example"],
+                "refresh": [{"reg": "c0ffee00000000000000000000000001", "why": "outside"}]}}""",
         ) as CachedPolicy.Ok).policy
         val view = com.kidslauncher.mdm.push.up.UpView.of(policy)
         assertTrue(view.on)
+        assertEquals(listOf("c0ffee00000000000000000000000001" to "outside"), view.refresh.map { it.reg to it.why })
         assertEquals(listOf("c0ffee00000000000000000000000001"), policy.unifiedPush!!.regs)
         assertTrue(view.mayRegister("io.element.android.x"))
         assertFalse(view.mayRegister("org.unifiedpush.example"))
         assertFalse(view.mayRegister("com.example.notes"))
+        // An older server sends no `refresh`: none.
+        val noRefresh = (decodeCached("""{"unified_push": {"on": true, "origin": "https://phones.example.com", "regs": [], "stopped": []}}""") as CachedPolicy.Ok).policy
+        assertTrue(com.kidslauncher.mdm.push.up.UpView.of(noRefresh).refresh.isEmpty())
         val noOrigin = (decodeCached("""{"unified_push": {"on": true, "origin": null, "regs": [], "stopped": []}}""") as CachedPolicy.Ok).policy
         assertFalse(com.kidslauncher.mdm.push.up.UpView.of(noOrigin).on)
         val older = (decodeCached(serverResponse) as CachedPolicy.Ok).policy

@@ -13,13 +13,15 @@ data class UpView(
     val origin: String?,
     val allowlist: List<String>?,
     val stopped: List<String>,
+    /** The policy's `refresh` rows (design 108b): registrations the app should be asked to re-check. */
+    val refresh: List<UpRefresh> = emptyList(),
 ) {
     companion object {
         /** Off without the key (an older server, design 108 §9 `older_server`) and without an origin. */
         fun of(policy: PolicyResponse?): UpView {
             val up = policy?.unifiedPush
             val origin = up?.origin?.takeIf { it.isNotBlank() }
-            return UpView(up?.on == true && origin != null, origin, policy?.allowlist, up?.stopped.orEmpty())
+            return UpView(up?.on == true && origin != null, origin, policy?.allowlist, up?.stopped.orEmpty(), up?.refresh.orEmpty())
         }
     }
 
@@ -33,8 +35,13 @@ sealed interface RegisterDecision {
     data class Refuse(val reason: String) : RegisterDecision
 
     /** A confirmed registration of this token: `NEW_ENDPOINT` from the store, no network (the spec's "SHOULD NOT create
-     * a new endpoint if a valid registration exists"). */
-    data class Known(val row: UpRow) : RegisterDecision
+     * a new endpoint if a valid registration exists"). [pendingVapid]: a different key the app sent, within the hour of
+     * the last key call (M4) - kept as the row's pending key, posted by a later policy (design 108b §4.6). */
+    data class Known(val row: UpRow, val pendingVapid: String? = null) : RegisterDecision
+
+    /** A confirmed registration re-registered with **another** [vapid] key (design 108b §4.6, H1): `NEW_ENDPOINT` from
+     * the store at once, the new key posted in the background. */
+    data class Update(val row: UpRow, val vapid: String) : RegisterDecision
 
     /** A pending one (a lost answer, or no network): the server call again with the same `reg` and secret. */
     data class Retry(val row: UpRow) : RegisterDecision
@@ -64,6 +71,17 @@ object UpRules {
     const val NEW_PER_APP_HOUR = 20
     const val NEW_PER_PHONE_HOUR = 60
     const val HOUR_MS = 3_600_000L
+    const val DAY_MS = 24 * HOUR_MS
+
+    /** Design 108b §2: a registration whose app acknowledged nothing for 23 days gets the spec's ping; a ping unanswered
+     * 7 more days (and an hour since its last send, Q1) unregisters it. */
+    const val PING_AFTER_MS = 23 * DAY_MS
+    const val DEAD_AFTER_MS = 7 * DAY_MS
+
+    /** A refresh (§3.3) at most a day apart, counted from an attempt actually made; a key-update call (§4.6) an hour. */
+    const val REFRESH_EVERY_MS = DAY_MS
+    const val KEY_CALL_EVERY_MS = HOUR_MS
+    const val CLOCK_SLACK_MS = DAY_MS
 
     /** The spec's 100 bytes for the token, the description and a message id; a VAPID key is 87 base64url. */
     const val TEXT_MAX_BYTES = 100
@@ -108,13 +126,21 @@ object UpRules {
      * answered from the store, a pending one retried; under the caps (100 per app, 300 per phone); under the churn
      * limit (20 new an hour per app, 60 per phone; [churn] holds each app's new registrations' wall times).
      */
-    fun registerDecision(view: UpView, pkg: String, token: String, rows: List<UpRow>, churn: Map<String, List<Long>>, nowMs: Long): RegisterDecision {
+    fun registerDecision(
+        view: UpView,
+        pkg: String,
+        token: String,
+        rows: List<UpRow>,
+        churn: Map<String, List<Long>>,
+        nowMs: Long,
+        vapid: String? = null,
+    ): RegisterDecision {
         if (!view.on) return RegisterDecision.Refuse("off")
         val same = rows.firstOrNull { it.token == token }
         if (same != null && same.pkg != pkg) return RegisterDecision.Refuse("token_taken")
         if (view.allowlist != null && pkg !in view.allowlist) return RegisterDecision.Refuse("not_allowed")
         if (pkg in view.stopped) return RegisterDecision.Refuse("stopped")
-        if (same != null) return if (same.confirmed) RegisterDecision.Known(same) else RegisterDecision.Retry(same)
+        if (same != null) return if (same.confirmed) knownOrUpdate(same, vapid, nowMs) else RegisterDecision.Retry(same)
         if (rows.count { it.pkg == pkg } >= PER_APP || rows.size >= PER_PHONE) return RegisterDecision.Refuse("limit")
         val lastHour = churnWithin(churn, nowMs)
         if (lastHour[pkg].orEmpty().size >= NEW_PER_APP_HOUR || lastHour.values.sumOf { it.size } >= NEW_PER_PHONE_HOUR) {
@@ -122,6 +148,28 @@ object UpRules {
         }
         return RegisterDecision.New
     }
+
+    /**
+     * A known, confirmed token (design 108b §4.6): a REGISTER without a key never drops a stored one (H1: Fedilab
+     * registers with `null` when its fetch of the instance's key failed) and the same key changes nothing - both are
+     * `Known`; **another** key is an `Update`, unless a key call went out within the hour (M4), when it is `Known` with
+     * the key pending.
+     */
+    private fun knownOrUpdate(row: UpRow, vapid: String?, nowMs: Long): RegisterDecision = when {
+        vapid == null || vapid == row.vapid || vapid == row.vapidPending -> RegisterDecision.Known(row)
+        keyCallDue(row, nowMs) -> RegisterDecision.Update(row, vapid)
+        else -> RegisterDecision.Known(row, pendingVapid = vapid)
+    }
+
+    /** No key-update call for this row within the hour (M4). */
+    fun keyCallDue(row: UpRow, nowMs: Long): Boolean {
+        val last = stamp(row.keyTryMs, nowMs) ?: return true
+        return nowMs - last >= KEY_CALL_EVERY_MS
+    }
+
+    /** A stamp the rules read (design 108b L3): one more than a day after now (a clock that ran ahead) reads as now, so
+     * a negative age never freezes a row. */
+    fun stamp(value: Long?, nowMs: Long): Long? = value?.let { if (it > nowMs + CLOCK_SLACK_MS) nowMs else it }
 
     /** The churn record with only the last hour kept. */
     fun churnWithin(churn: Map<String, List<Long>>, nowMs: Long): Map<String, List<Long>> =
@@ -193,6 +241,80 @@ object UpRules {
     fun rewrite(rows: List<UpRow>, origin: String): List<UpRow> = rows.filter { it.confirmed }.mapNotNull { row ->
         val wanted = endpointFor(origin, row.secret)
         if (row.endpoint == wanted) null else row.copy(endpoint = wanted)
+    }
+
+    /**
+     * One `NEW_ENDPOINT` to send for [row] (already updated: stamps set): [kind] `ping` (the first, with a new id), `resend`
+     * (the outstanding ping again after a boot, the same id) or `refresh` (§3.3, a new id). A row gets one per pass (L2).
+     */
+    data class UpSend(val row: UpRow, val id: String, val kind: String)
+
+    /** What one pass decided: the [sends] and the rows [dead] (unanswered; `UNREGISTERED`, removed). */
+    data class UpPass(val sends: List<UpSend>, val dead: List<UpRow>)
+
+    /**
+     * Design 108b §2, the 30-day rule, for the confirmed rows ([boot] is this boot's count, for Q1's re-send): no ping out
+     * and 23 days since the later of the app's last ack and the confirmation: a ping. A ping out and sent in another boot:
+     * sent again once (the same id; the phone being off never loses a live app). A ping out for 7 days since the first send
+     * **and** an hour since the last send: dead. Stamps that lie more than a day ahead read as now (L3).
+     */
+    fun liveness(rows: List<UpRow>, boot: Int, nowMs: Long): UpPass {
+        val sends = mutableListOf<UpSend>()
+        val dead = mutableListOf<UpRow>()
+        for (row in rows) {
+            if (!row.confirmed) continue
+            val pingId = row.pingId
+            if (pingId == null) {
+                val since = maxOf(stamp(row.lastAppAckMs, nowMs) ?: 0L, stamp(row.confirmedAtMs ?: row.createdAtMs, nowMs) ?: 0L)
+                if (nowMs - since < PING_AFTER_MS) continue
+                val id = newId()
+                sends += UpSend(row.copy(pingId = id, pingSentMs = nowMs, pingLastSendMs = nowMs, pingBoot = boot), id, "ping")
+                continue
+            }
+            val first = stamp(row.pingSentMs, nowMs) ?: nowMs
+            var last = stamp(row.pingLastSendMs ?: row.pingSentMs, nowMs) ?: nowMs
+            var current = row
+            if (row.pingBoot != boot) {
+                last = nowMs
+                current = row.copy(pingLastSendMs = nowMs, pingBoot = boot)
+                sends += UpSend(current, pingId, "resend")
+            }
+            if (nowMs - first >= DEAD_AFTER_MS && nowMs - last >= HOUR_MS) {
+                dead += row
+                sends.removeAll { it.row.reg == row.reg }
+            }
+        }
+        return UpPass(sends, dead)
+    }
+
+    /**
+     * Design 108b §3.3: the confirmed rows the policy lists in [refresh] whose last refresh is null or a day old, while
+     * [inUse] (the phone is interactive and not idle: the app's own discovery needs the network). A row never listed, a
+     * pending one and a `reg` the phone doesn't hold are never refreshed.
+     */
+    fun refreshes(rows: List<UpRow>, refresh: List<UpRefresh>, nowMs: Long, inUse: Boolean): List<UpSend> {
+        if (!inUse || refresh.isEmpty()) return emptyList()
+        val listed = refresh.map { it.reg }.toSet()
+        return rows.filter { it.confirmed && it.reg in listed && refreshDue(it, nowMs) }
+            .map { UpSend(it.copy(refreshMs = nowMs), newId(), "refresh") }
+    }
+
+    private fun refreshDue(row: UpRow, nowMs: Long): Boolean {
+        val last = stamp(row.refreshMs, nowMs) ?: return true
+        return nowMs - last >= REFRESH_EVERY_MS
+    }
+
+    /** [liveness] and [refreshes] in one pass, one `NEW_ENDPOINT` per row (L2): a refresh due with a ping (or its re-send)
+     * rides on it - the ping's id - and counts as done. */
+    fun pass(rows: List<UpRow>, refresh: List<UpRefresh>, boot: Int, nowMs: Long, inUse: Boolean): UpPass {
+        val live = liveness(rows, boot, nowMs)
+        val deadRegs = live.dead.map { it.reg }.toSet()
+        val sends = live.sends.toMutableList()
+        for (send in refreshes(rows.filter { it.reg !in deadRegs }, refresh, nowMs, inUse)) {
+            val at = sends.indexOfFirst { it.row.reg == send.row.reg }
+            if (at >= 0) sends[at] = sends[at].copy(row = sends[at].row.copy(refreshMs = nowMs)) else sends += send
+        }
+        return UpPass(sends, live.dead)
     }
 
     /** A registration key: 16 random bytes, 32 lowercase hex. */
