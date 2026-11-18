@@ -1584,6 +1584,8 @@ async fn library_gates_storytel() {
         super::input_checked(storytel, "storytel", "on"),
         Some(false)
     );
+    // Under Av it is a quiet line: orange only while the switch is on.
+    assert!(!storytel.contains("tone-orange"), "{storytel}");
     // The mobile data ⓘ names the books (design 30).
     assert!(page.contains("Downloads: a Storytel book is often several hundred MB."));
     // The switch on: in.
@@ -1619,6 +1621,8 @@ async fn library_gates_storytel() {
         "{storytel}"
     );
     assert_eq!(super::input_checked(storytel, "storytel", "on"), Some(true));
+    // The switch on and no login: orange.
+    assert!(storytel.contains("tone-orange"), "{storytel}");
     assert!(page.contains("No login: <a href=\"/music/settings#storytel\">"));
     // After the clear: every phone's line says why, and a failed check doesn't promise the list.
     let entry_page = app

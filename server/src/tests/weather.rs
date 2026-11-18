@@ -1262,7 +1262,8 @@ async fn the_page_says_when_the_lock_shows_no_weather() {
     let cookie = app.admin_cookie().await;
     let (id, token) = phone(&app, "n", true, "on_request").await;
     let html = group(&app.get_page(&page(id), &cookie).await.text());
-    assert!(html.contains(r#"data-warning="needs-position""#), "{html}");
+    assert!(html.contains(r#"data-note="needs-position""#), "{html}");
+    assert!(!html.contains(r#"data-warning="needs-position""#), "{html}");
     assert!(html.contains(r#"data-warning="needs-update""#), "{html}");
     app.post_status(
         &token,

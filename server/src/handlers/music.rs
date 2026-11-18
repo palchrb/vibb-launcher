@@ -4595,6 +4595,8 @@ pub struct MusicCard {
     /// "2 Storytel entries aren't sent": ticked, but the switch is off or no login is saved
     /// (design 26b §2.3, §2.7). Under the switch.
     pub storytel_unsent: Option<String>,
+    /// The unsent line is orange only while Storytel's switch is on (no login saved); quiet under Av.
+    pub storytel_unsent_orange: bool,
     /// The phone's own Storytel login was refused (design 26b §4.5): above the switch.
     pub storytel_refused: Option<Note>,
     /// Above the first group: Vibb can't deliver music yet, or can't reach the music app.
@@ -4660,13 +4662,13 @@ pub struct MusicWarnings {
 
 /// What the account a phone plays as needs from the parent (design 26c §2.2, §2.5), for the
 /// Attention rows: no Spotify app set up, the login to renew (ended, refused, or locked with
-/// another key), the login ending within 14 days, the account bound to another phone too.
+/// another key), the login ending within 14 days. (The account bound to another phone too is a quiet
+/// note on the page, no row: 2026-11-18.)
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SpotifyAccountWarnings {
     pub no_app: bool,
     pub renew: bool,
     pub ending: bool,
-    pub shared: bool,
 }
 
 /// [SpotifyAccountWarnings] for the phone of `policy`: all false unless it plays as an account.
@@ -4693,16 +4695,10 @@ pub async fn spotify_account_warnings(
     let now = state.music_sweep.now();
     let ended = row.login_ends().is_some_and(|ends| now >= ends);
     let renew = row.needs_login != 0 || row.refresh_error.as_deref() == Some("key") || ended;
-    let phones: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM device_policy WHERE music_spotify_account = ?")
-            .bind(id)
-            .fetch_one(&state.db)
-            .await?;
     Ok(SpotifyAccountWarnings {
         no_app,
         renew,
         ending: !renew && row.login_ending(now),
-        shared: phones > 1,
     })
 }
 
@@ -5097,6 +5093,7 @@ pub(crate) async fn device_card(
                 )
             },
         ),
+        storytel_unsent_orange: policy.music_storytel,
         storytel_refused: found.storytel_refused.then(|| {
             warning(
                 t(lang, "device.music.storytel_refused"),
@@ -5201,25 +5198,29 @@ async fn spotify_binding_card(
                 None => String::new(),
             };
             let two = phones.len() == 2;
-            warnings.push(warning(
-                t(
-                    lang,
-                    if two {
-                        "device.music.spotify.shared_two"
-                    } else {
-                        "device.music.spotify.shared_several"
-                    },
-                ),
-                t_params(
-                    lang,
-                    if two {
-                        "device.music.spotify.shared_two_sub"
-                    } else {
-                        "device.music.spotify.shared_several_sub"
-                    },
-                    &[("phones", &listed), ("name", name)],
-                ),
-            ));
+            // The PWA allows it: a quiet note, not a warning (2026-11-18).
+            warnings.push(Note {
+                warning: false,
+                ..warning(
+                    t(
+                        lang,
+                        if two {
+                            "device.music.spotify.shared_two"
+                        } else {
+                            "device.music.spotify.shared_several"
+                        },
+                    ),
+                    t_params(
+                        lang,
+                        if two {
+                            "device.music.spotify.shared_two_sub"
+                        } else {
+                            "device.music.spotify.shared_several_sub"
+                        },
+                        &[("phones", &listed), ("name", name)],
+                    ),
+                )
+            });
         }
         // The phone's own refusals (§3.6, §4.4); `reauthorize` is the renewing note above.
         match reported {

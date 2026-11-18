@@ -108,11 +108,6 @@ async fn each_fact_raises_its_own_row() {
                                   "ledger_unreadable": true}}),
         ),
         ("launcher-without-rules", json!({"capabilities": []})),
-        // Design 31 step 3 fix round (qa-31-s3-code M4): install mode opens the Play Store.
-        (
-            "play-install-mode",
-            json!({"install_mode": {"until_ms": now_ms + 600_000}}),
-        ),
         // Design 113: Android's own mobile-data switch off.
         (
             "mobile-data-off",
@@ -130,11 +125,6 @@ async fn each_fact_raises_its_own_row() {
     // on its own, with a report that says nothing, raises nothing.
     let escapes = ["time_rules_v1", "kiosk_escapes_v1", "boot_cover_v1"];
     let cases: Vec<(&str, &str, Value)> = vec![
-        (
-            "play-store-openable",
-            "block_activity_start = 0",
-            json!({"play_store_suspendable": false}),
-        ),
         (
             "not-home-app",
             "update_fence = 1",
@@ -183,6 +173,22 @@ async fn each_fact_raises_its_own_row() {
     )
     .await;
     assert_eq!(rows(&app, &cookie, kid_off).await, Vec::<String>::new());
+
+    // Install mode and an openable Play Store (block off) are the parent's choices: no row (2026-11-18).
+    let (play_open, token) = clean_phone(&app, "play open").await;
+    sqlx::query("UPDATE device_policy SET block_activity_start = 0 WHERE device_id = ?")
+        .bind(play_open)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    report(
+        &app,
+        &token,
+        json!({"play_store_suspendable": false,
+               "install_mode": {"until_ms": now_ms + 600_000}}),
+    )
+    .await;
+    assert_eq!(rows(&app, &cookie, play_open).await, Vec::<String>::new());
 
     // Play not pausable with "Block other apps' screens" on: Play stays blocked, no row.
     let (blocked, token) = clean_phone(&app, "blocked").await;
@@ -258,7 +264,14 @@ async fn each_fact_raises_its_own_row() {
         .execute(&app.db)
         .await
         .unwrap();
-    assert_eq!(rows(&app, &cookie, revoked).await, ["access-revoked"]);
+    // The parent's own "Remove access": no Attention row (2026-11-18), a quiet line on Advanced.
+    assert_eq!(rows(&app, &cookie, revoked).await, Vec::<String>::new());
+    let adv = app
+        .get_page(&format!("/devices/{revoked}/advanced"), &cookie)
+        .await
+        .text();
+    assert!(adv.contains("data-note=\"access-removed\""));
+    assert!(!adv.contains("data-warning=\"access-removed\""));
 }
 
 #[tokio::test]

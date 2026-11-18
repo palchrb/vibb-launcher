@@ -571,6 +571,29 @@ async fn write_settings_grant_is_stored_and_shown() {
         .expect("the on-phone path");
     let adb = row.find("adb shell appops").expect("the shortcut");
     assert!(on_phone < adb, "the on-phone path comes first: {html}");
+    // Orange only while a feature the parent chose needs the grant (the touch switch or a clock format).
+    let value_tag = |html: &str| {
+        let row = &html[html.find("data-row=\"write-settings\"").expect("the row")..];
+        let at = row.find("Not allowed</span>").expect("the value");
+        row[..at].rsplit("<span").next().unwrap().to_string()
+    };
+    for (mask, clock, orange) in [(0, "system", false), (16, "system", true), (0, "24", true)] {
+        sqlx::query(
+            "UPDATE device_policy SET quick_controls_mask = ?, clock_format = ? WHERE device_id = ?",
+        )
+        .bind(mask)
+        .bind(clock)
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+        let tag = value_tag(&about_page(&app, id).await);
+        assert_eq!(
+            tag.contains("row-value-action"),
+            orange,
+            "{mask} {clock}: {tag}"
+        );
+    }
 
     app.post_status(&token, json!({ "write_settings_granted": true }))
         .await;

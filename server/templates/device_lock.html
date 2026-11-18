@@ -253,7 +253,7 @@
     <section id="weather" aria-labelledby="weather-title">
         <h2 class="group-header" id="weather-title">{{ self.t("device.page.weather") }}</h2>
         {% if weather.needs_position %}
-        <div class="attention attention-action" data-warning="needs-position">
+        <div class="attention" data-note="needs-position">
             <div class="attention-text">{{ self.t("device.weather.needs_position") }}<div class="attention-sub"><a href="/devices/{{ device.id }}/location-settings">{{ self.t("device.weather.needs_position_link") }}</a></div></div>
         </div>
         {% endif %}
