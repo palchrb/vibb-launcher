@@ -462,8 +462,7 @@ Updates calls an older release "You have the latest version"). To go back on pur
 
 Root on the Pi installs and runs only release files signed with the project's [minisign](https://jedisct1.github.io/minisign/)
 key (security review M5): `install.sh` and `update.sh` check the tarball for their machine (each of the two has its
-own `.minisig`). `update.sh` itself is signed too: an older install's root-side updater checked it before it ran it,
-and that is how such an install reaches the release that removes the updater. The public key is pinned in the scripts themselves (`SERVER_SIGNING_PUBKEY`), and each signature's
+own `.minisig`). `update.sh` itself is signed too. The public key is pinned in the scripts themselves (`SERVER_SIGNING_PUBKEY`), and each signature's
 trusted comment names the file and the release tag, so a signed file can't be passed off under another name or as
 another release. `server-release.yml` signs both tarballs and `update.sh` in its `server-release-sign` job, with the `SERVER_MINISIGN_KEY`
 secret of the protected `release` environment, before any image is pushed or tagged: without the secret, or when it

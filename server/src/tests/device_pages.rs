@@ -1406,7 +1406,7 @@ async fn home_and_filter_forms_return_to_their_page() {
 
 /// H1 (§5.6): the quick controls (Home Screen) and the filter switch (Web Filter) share
 /// `/devices/{id}/policy`; a post with a section writes only that section, so saving one page
-/// never turns off what the other page set. A post without one (an older tab) writes both.
+/// never turns off what the other page set. A post without one is refused.
 #[tokio::test]
 async fn a_policy_section_leaves_the_other_section_alone() {
     let app = TestApp::new().await;
@@ -1456,14 +1456,15 @@ async fn a_policy_section_leaves_the_other_section_alone() {
     let res = post(vec![("section", "filter"), ("vpn_filter_enabled", "on")]).await;
     assert_redirect(&res, &device_page(id, Section::Filter), Some("filter"));
     assert_eq!(state(&app).await, (1, true, 1));
-    // No section: both, as before, back to the device page.
-    let res = post(vec![("quick_control_sound", "on")]).await;
-    assert_redirect(&res, &device_page(id, Section::Summary), None);
-    assert_eq!(state(&app).await, (8, false, 1));
-    // An unknown section writes nothing; an unknown phone is a 404.
-    let res = post(vec![("section", "all"), ("quick_control_wifi", "on")]).await;
-    assert_eq!(res.status, StatusCode::BAD_REQUEST);
-    assert_eq!(state(&app).await, (8, false, 1));
+    // No section or an unknown one writes nothing; an unknown phone is a 404.
+    for fields in [
+        vec![("quick_control_sound", "on")],
+        vec![("section", "all"), ("quick_control_wifi", "on")],
+    ] {
+        let res = post(fields).await;
+        assert_eq!(res.status, StatusCode::BAD_REQUEST);
+        assert_eq!(state(&app).await, (1, true, 1));
+    }
     let res = app
         .request_form(
             Method::POST,
@@ -1475,20 +1476,13 @@ async fn a_policy_section_leaves_the_other_section_alone() {
     assert_eq!(res.status, StatusCode::NOT_FOUND);
 }
 
-/// Old bookmarks and links (§3.1, L5): `/dns?device=` and `/dns/log?device=` open the phone's
-/// Web Filter page (the log at its group); the global pages link each phone there.
+/// §3.1: the global pages link each phone to its Web Filter page and hold no per-phone form.
 #[tokio::test]
-async fn old_per_phone_filter_urls_redirect_to_the_filter_page() {
+async fn the_global_filter_pages_link_each_phone_there() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("Anna").await;
-    let res = app.get_page(&format!("/dns?device={id}"), &cookie).await;
-    assert_redirect(&res, &device_page(id, Section::Filter), None);
-    let res = app
-        .get_page(&format!("/dns/log?device={id}"), &cookie)
-        .await;
-    assert_redirect(&res, &device_page(id, Section::Filter), Some("log"));
-    for page in ["/dns", "/dns?device=", "/dns/log"] {
+    for page in ["/dns", "/dns/log"] {
         let res = app.get_page(page, &cookie).await;
         assert_eq!(res.status, StatusCode::OK, "{page}");
         let html = res.text();

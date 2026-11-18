@@ -6,24 +6,10 @@
 use axum::body::Body;
 use axum::extract::ConnectInfo;
 use axum::http::{Method, Request, StatusCode, header};
-use axum::response::IntoResponse;
 use serde_json::json;
 use tower::ServiceExt;
 
 use super::TestApp;
-
-async fn device_page(app: &TestApp, id: i64) -> String {
-    let response = crate::handlers::devices::view_device(
-        axum::extract::State(app.state.clone()),
-        axum::Extension(crate::security::CurrentAdmin(app.an_admin().await)),
-        crate::i18n::Lang::En,
-        axum::extract::Path(id),
-        axum::extract::Query(Default::default()),
-    )
-    .await
-    .into_response();
-    super::read_response(response).await.text()
-}
 
 /// About This Phone (design 31 step 3): the connection, Battery optimisation.
 async fn about_page(app: &TestApp, id: i64) -> String {
@@ -72,47 +58,6 @@ async fn security_details(app: &TestApp, event_type: &str) -> Vec<String> {
 // ---------------------------------------------------------------------------------------------
 // Design 19: no FCM
 // ---------------------------------------------------------------------------------------------
-
-/// A 0.19-era launcher still reports `push` (with its FCM installation ID) and `fcm_push_v1`:
-/// the report is accepted, the `push` object is stored nowhere, and the policy has no `push`.
-#[tokio::test]
-async fn an_old_launchers_push_report_is_accepted_and_dropped() {
-    let app = TestApp::new().await;
-    let (id, token) = app.enrolled_device("phone").await;
-    app.post_status(
-        &token,
-        json!({
-            "push": { "fcm_token": "dIsVQ2QVRT-nQyYvE0SNfx", "fcm_token_kind": "fid",
-                      "transport": "fcm", "fcm_configured": true, "gms_available": true,
-                      "last_nudge_id": "0123456789abcdef", "reason": null },
-            "capabilities": ["call_policy_v1", "fcm_push_v1", "play_policy_v1"]
-        }),
-    )
-    .await;
-    let (push_json, caps): (Option<String>, Option<String>) = sqlx::query_as(
-        "SELECT push_state_json, capabilities_json FROM device_status WHERE device_id = ? \
-         ORDER BY id DESC LIMIT 1",
-    )
-    .bind(id)
-    .fetch_one(&app.db)
-    .await
-    .unwrap();
-    assert_eq!(push_json, None, "the push report is not stored");
-    // The capability list is stored as reported; nothing reads fcm_push_v1.
-    assert!(caps.unwrap().contains("call_policy_v1"));
-
-    let policy = app
-        .request(Method::GET, "/api/devices/policy", Some(&token), None)
-        .await;
-    assert_eq!(policy.status, StatusCode::OK);
-    assert!(policy.json().get("push").is_none(), "no vestigial push");
-
-    let page = device_page(&app, id).await;
-    assert!(!page.contains("FCM"), "{page}");
-    let page = advanced_page(&app, id).await;
-    assert!(!page.contains("FCM"), "{page}");
-    assert!(page.contains("App screens"), "{page}");
-}
 
 #[tokio::test]
 async fn migration_0048_drops_device_push_and_clears_stored_push_reports() {

@@ -157,11 +157,13 @@ async fn add(
     name: &str,
     number: &str,
 ) -> super::TestResponse {
+    let mut fields = vec![("name", name), ("number", number)];
+    fields.extend(super::ADD_CONTACT_ALL_ON);
     app.request_form(
         Method::POST,
         &format!("/devices/{device_id}/contacts"),
         Some(cookie),
-        &[("name", name), ("number", number)],
+        &fields,
     )
     .await
 }
@@ -380,7 +382,9 @@ async fn contact_flags_are_scoped_to_the_device() {
             &format!("/devices/{b}/contacts/{contact}"),
             Some(&cookie),
             &[
+                ("calls_shown", "custom"),
                 ("inbound", "on"),
+                ("texts_shown", "custom"),
                 ("message_app", "element"),
                 ("message_address", " @mormor:matrix.org "),
             ],
@@ -434,7 +438,9 @@ async fn contact_flags_are_scoped_to_the_device() {
             &format!("/devices/{b}/contacts/{contact}#contact-{contact}"),
             Some(&cookie),
             &[
+                ("calls_shown", "custom"),
                 ("outbound", "on"),
+                ("texts_shown", "custom"),
                 ("message_app", "element"),
                 ("message_address", "mormor"),
             ],
@@ -475,10 +481,19 @@ async fn settings_form_writes_both_channels() {
             &uri,
             Some(&cookie),
             &[
+                ("section", "channels"),
                 ("calls_mode", "managed"),
                 ("sms_mode", "off"),
-                ("default_message_app", "signal"),
             ],
+        )
+        .await;
+    assert!(res.status.is_redirection());
+    let res = app
+        .request_form(
+            Method::POST,
+            &uri,
+            Some(&cookie),
+            &[("section", "button"), ("default_message_app", "signal")],
         )
         .await;
     assert!(res.status.is_redirection());
@@ -499,7 +514,11 @@ async fn settings_form_writes_both_channels() {
         Method::POST,
         &uri,
         Some(&cookie),
-        &[("calls_mode", "unmanaged"), ("sms_mode", "unmanaged")],
+        &[
+            ("section", "channels"),
+            ("calls_mode", "unmanaged"),
+            ("sms_mode", "unmanaged"),
+        ],
     )
     .await;
     let call_policy = app.policy(&token).await["call_policy"].clone();
@@ -510,7 +529,7 @@ async fn settings_form_writes_both_channels() {
             Method::POST,
             &uri,
             Some(&cookie),
-            &[("default_message_app", "whatsapp")],
+            &[("section", "button"), ("default_message_app", "whatsapp")],
         )
         .await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
@@ -519,7 +538,11 @@ async fn settings_form_writes_both_channels() {
             Method::POST,
             "/devices/9999/calls/settings",
             Some(&cookie),
-            &[("calls_mode", "off"), ("sms_mode", "off")],
+            &[
+                ("section", "channels"),
+                ("calls_mode", "off"),
+                ("sms_mode", "off"),
+            ],
         )
         .await;
     assert_eq!(res.status, StatusCode::NOT_FOUND);
@@ -554,11 +577,19 @@ async fn writes_nudge_device() {
     for (uri, fields) in [
         (
             format!("/devices/{id}/calls/settings"),
-            vec![("calls_mode", "managed"), ("sms_mode", "unmanaged")],
+            vec![
+                ("section", "channels"),
+                ("calls_mode", "managed"),
+                ("sms_mode", "unmanaged"),
+            ],
         ),
         (
             format!("/devices/{id}/contacts/{contact}"),
-            vec![("inbound", "on")],
+            vec![
+                ("calls_shown", "custom"),
+                ("inbound", "on"),
+                ("texts_shown", "custom"),
+            ],
         ),
         (format!("/devices/{id}/contacts/{contact}/remove"), vec![]),
     ] {

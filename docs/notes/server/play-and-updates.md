@@ -4,7 +4,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 
 ## SSE only (design 19, `docs/design/19-remove-fcm.md`, at the monorepo root)
 
-- An old launcher's status `push` is accepted with 204 and stored nowhere (no `deny_unknown_fields`); `fcm_push_v1` in `capabilities` is stored as reported and read by nothing. `FCM_SERVICE_ACCOUNT_FILE` is ignored.
+- `FCM_SERVICE_ACCOUNT_FILE` is ignored.
 - **Keepalive**: `SSE_KEEPALIVE_SECS` default 240 (= `MAX_SSE_KEEPALIVE_SECS`; shipped launchers read with 300 s),
   invalid values fall back to 240; `.env` `SSE_KEEPALIVE_SECS=120` reverts. A proxy in front needs a read timeout
   >= 300 s (`tailscale serve` streams unbuffered).

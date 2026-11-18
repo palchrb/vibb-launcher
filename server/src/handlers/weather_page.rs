@@ -8,8 +8,8 @@
 //!   /devices/{id}/weather/zone`, one of this phone's zones or none), `device_policy.weather_zone_id` - never in the
 //!   policy.
 //!
-//! Each change is in the security log (the zone by its name, never coordinates) and nudges the phone. The old page's
-//! address, `/devices/{id}/weather`, leads to the group ([view]). The page never shows the cell or the forecast.
+//! Each change is in the security log (the zone by its name, never coordinates) and nudges the phone. The page never
+//! shows the cell or the forecast.
 
 use std::collections::HashMap;
 
@@ -72,12 +72,6 @@ pub async fn card(
             })
             .collect(),
     })
-}
-
-/// GET `/devices/{id}/weather`, the page the group lived on before (design 75 §12): old links and bookmarks land on the
-/// lock page's Weather group.
-pub async fn view(Path(id): Path<i64>) -> Response {
-    Redirect::to(&format!("/devices/{id}/lock#weather")).into_response()
 }
 
 fn save_failed(lang: Lang, id: i64, err: sqlx::Error) -> Response {

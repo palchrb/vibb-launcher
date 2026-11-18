@@ -178,6 +178,8 @@ async fn each_allow_path_grants_texts_in_alone() {
                 ("name", "Trener"),
                 ("number", "+4790000099"),
                 ("switches", "on"),
+                ("calls_shown", "custom"),
+                ("texts_shown", "custom"),
                 ("sms_in", "on"),
             ],
         )
@@ -193,7 +195,7 @@ async fn each_allow_path_grants_texts_in_alone() {
     .await
     .unwrap();
     assert_eq!(flags, (false, false, false, true, false, false));
-    // A plain Add Contact (no switches field, as before) still gets every flag on.
+    // An Add Contact without the `switches` marker (a stale page) is refused and adds nothing.
     let res = app
         .request_form(
             Method::POST,
@@ -202,16 +204,13 @@ async fn each_allow_path_grants_texts_in_alone() {
             &[("name", "Pappa"), ("number", "+4790000002")],
         )
         .await;
-    assert!(res.status.is_redirection());
-    let flags: (bool, bool, bool) = sqlx::query_as(
-        "SELECT sms_in, sms_out, mms FROM device_contacts dc JOIN contacts c ON c.id = dc.contact_id \
-         WHERE dc.device_id = ? AND c.phone_number = '+4790000002'",
-    )
-    .bind(id)
-    .fetch_one(&app.db)
-    .await
-    .unwrap();
-    assert_eq!(flags, (true, true, true));
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    let added: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM contacts WHERE phone_number = '+4790000002'")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(added, 0);
 
     // Allow Texts from Mamma: sms_in alone.
     let allow = |n: u32| format!("/devices/{id}/calls/held/{n:032x}/allow");
@@ -548,9 +547,28 @@ async fn the_contacts_messages_group() {
             .await
         }
     };
-    let res = save(mamma, &[("inbound", "on"), ("sms_in", "on"), ("mms", "on")]).await;
+    let res = save(
+        mamma,
+        &[
+            ("calls_shown", "custom"),
+            ("inbound", "on"),
+            ("texts_shown", "custom"),
+            ("sms_in", "on"),
+            ("mms", "on"),
+        ],
+    )
+    .await;
     app.assert_lands(&res, &cookie).await;
-    let res = save(ambulance, &[("inbound", "on"), ("sms_in", "on")]).await;
+    // An emergency number's row posts no `texts_shown`.
+    let res = save(
+        ambulance,
+        &[
+            ("calls_shown", "custom"),
+            ("inbound", "on"),
+            ("sms_in", "on"),
+        ],
+    )
+    .await;
     assert!(res.status.is_redirection());
     let texts: Vec<(bool, bool, bool)> = sqlx::query_as(
         "SELECT sms_in, sms_out, mms FROM device_contacts WHERE device_id = ? ORDER BY contact_id",
@@ -997,6 +1015,8 @@ async fn add_contact_never_lets_an_emergency_number_text_in() {
                 ("name", "Ambulanse"),
                 ("number", "113"),
                 ("switches", "on"),
+                ("calls_shown", "custom"),
+                ("texts_shown", "custom"),
                 ("inbound", "on"),
                 ("sms_in", "on"),
             ],

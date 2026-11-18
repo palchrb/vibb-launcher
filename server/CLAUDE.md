@@ -18,7 +18,7 @@ not code: `src/config.rs` (`ForkConfig`, `AppState.config`) reads `SERVER_RELEAS
 `LAUNCHER_APK_URL`, `LAUNCHER_SIGNATURE_CHECKSUM` and `PHONE_SERVER_URL` (0.54.0: the setup QR's server address
 while Phone Setup has none saved - the saved one wins, `provisioning::server_url`) and `PHONE_RECOVERY_URL` (design 76's fix round: the tailnet recovery address, plain http to a Tailscale IP only, `server_tls::recovery_url`) once at startup, with defaults pointing at the monorepo; the
 pre-monorepo defaults (`palchrb/kid-phone-server`, the `kids-launcher-mdm` APK URL) are read as today's, migration
-0031 repoints a catalog row watching `palchrb/kids-launcher-mdm`, and `update.sh` maps the old `KPS_REPO`. The
+0031 repoints a catalog row watching `palchrb/kids-launcher-mdm`. The
 checksum has no default: without it the provisioning page shows a banner and no QR. An
 invalid value is logged and treated as unset. The root-run deploy scripts never read `.env` (it's writable by the
 service user): `install.sh`/`update.sh` take `KPS_REPO=owner/repo` (validated). `update.sh` downloads with `curl -f` and unpacks/checks the release before stopping the
@@ -72,8 +72,7 @@ No prior programming experience - build features directly rather than explaining
   through its own `sanitize_*` (`call_state`/`time_state` through `device_api::known_fields` since 0.55.0, security
   review L10: a key the launcher adds to its `TimeState`/`CallState` is dropped until
   `device_api::TIME_STATE_FIELDS`/`CALL_STATE_FIELDS` list it - one commit with the launcher's change, the API rule;
-  `intake_limits::the_field_tables_keep_every_contract_key` checks every contract file's). An older launcher's `battery_exempt` (round 7 §2, removed 2026-10-20) is ignored and never stored
-  (`intake_limits::an_older_launchers_battery_exempt_is_accepted_and_dropped`). An app's `logo` (design 87) is kept
+  `intake_limits::the_field_tables_keep_every_contract_key` checks every contract file's). An app's `logo` (design 87) is kept
   only as 64 lowercase hex (`lenient_text`: a number or object is no logo, never a refused report) and goes to
   `device_app_logos`, never into the stored snapshot; an uploaded logo is checked against its hash and this phone's
   rows, decoded under limits as exactly a 128 px PNG and written again by the server's encoder (`app_logos::reencode`),
@@ -145,12 +144,8 @@ No prior programming experience - build features directly rather than explaining
   `/var/run/reboot-required`, `/sys/block`, mounts): Settings › Software Updates shows versions only and how the owner
   updates (`handlers::updates`). Since server 0.67.0; through 0.66 a root watcher (`kid-phone-server-updater.path`, `actions.sh`,
   `watcher.sh`), a root scheduler (`scheduler.sh` reading `data/schedule.conf`) and a root backup copy to a USB drive
-  (`backup_sync.sh`) did the PWA's bidding, paired by `security::REQUIRED_WATCHER_SCHEMA`; all of it is gone, and
-  `remove_host_helpers` (the same text in install.sh and update.sh, `tests::deploy_scripts`) removes them from an old
-  install - disables the path unit and the timers, never stops a running helper (an old server's "Update now" runs
-  update.sh inside the watcher's service), deletes the units, drop-ins and `/opt/kid-phone-server-updater/`, moves the
-  installed version to `/var/lib/kid-phone-server/installed_version`. The server deletes what the old requests left in
-  `data/` at every start (`startup::HOST_FILES`). Don't add a way back: a new thing the host should do is the owner's,
+  (`backup_sync.sh`) did the PWA's bidding, paired by `security::REQUIRED_WATCHER_SCHEMA`; all of it is gone (C1,
+  2026-11-18: the scripts' and the startup's cleanup of an old install went too). Don't add a way back: a new thing the host should do is the owner's,
   documented in DEPLOY.md.
 - **axum's built-in `Form` extractor cannot deserialize repeated same-named form fields** (e.g. multiple checked checkboxes named `allowed_packages`) into a `Vec<String>` - errors with `invalid type: string "...", expected a sequence`. Fixed in `handlers::devices::update_policy` by taking raw `axum::body::Bytes` and parsing manually with `form_urlencoded` instead of `Form<T>`. Reuse this pattern for any future repeated-checkbox-group field.
 - **Browsers cache `/static/*` assets aggressively with no revalidation** - editing `style.css` and reloading can silently keep serving the old cached copy even after a hard navigate. `partials/head.html` links it with a `?v=N` cache-busting query param (bump `N` when the stylesheet changes) - the same pattern `board-game-tracker` already uses. A lost `}` in `style.css` doesn't fail anything by itself - the browser nests everything after it and silently drops ~160 lines (the PWA browser pass of 2026-10-14, High 1) - so `tests::shell::style_css_has_the_shape_browsers_read` tokenizes the file (comments, strings, braces) and fails on a rule opened inside a declaration block, an unbalanced brace, or an unclosed comment or string.

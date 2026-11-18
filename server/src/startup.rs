@@ -6,7 +6,6 @@
 //! - [apply_restore_request]: a restore asked for in `data/restore_request` (the PWA's in the
 //!   container, the owner's over SSH on a systemd install, DEPLOY.md) - the marker is consumed
 //!   first, a prerestore copy, and [undo_restore] when the restored database won't open.
-//! - [remove_host_files]: the files the server's old requests to its host left in `data/`.
 //! - [pre_migration_backup]: `VACUUM INTO data/backups/pre-migrate-<from>-<to>.db` before pending
 //!   migrations run (3 kept) - the backup a rollback needs.
 //! - [initial_admin_password]: no admin and no password configured - one is generated into
@@ -71,34 +70,6 @@ fn with_suffix(db: &Path, suffix: &str) -> PathBuf {
 /// `Ok(None)`: no marker. `Err`: refused or failed - nothing was swapped.
 pub fn apply_restore_request(data_dir: &Path, db: &Path) -> Result<Option<AppliedRestore>, String> {
     apply_restore_request_capped(data_dir, db, RESTORE_MAX_BYTES)
-}
-
-/// What the server's requests to its host left in `data/` before it stopped making any (the
-/// user, 2026-11-04): the root watcher's request file and the version stamps install.sh wrote for
-/// it, the OS/Tailscale and app-update schedules and the last check, the live copy of the database
-/// the drive copy read (a whole database - gone, not kept) and the root restore's marker. Deleted
-/// at every start; a missing one is fine. `update.sh` removes the root helpers themselves.
-pub const HOST_FILES: [&str; 9] = [
-    "update_requested",
-    "watcher_version",
-    "watcher_schema_version",
-    "schedule.conf",
-    "app_update_schedule.conf",
-    "app_update_last_check",
-    "live_mirror.db",
-    "live_mirror.db.tmp",
-    "restore_applied",
-];
-
-/// Deletes [HOST_FILES] in `data_dir` (a symlink is removed, never followed).
-pub fn remove_host_files(data_dir: &Path) {
-    for name in HOST_FILES {
-        match std::fs::remove_file(data_dir.join(name)) {
-            Ok(()) => tracing::info!("removed data/{name}: the server no longer acts on its host"),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(err) => tracing::warn!("couldn't remove data/{name}: {err}"),
-        }
-    }
 }
 
 /// After a restore: a backup made before 0.24.0 holds the sessions of its time, and none of them

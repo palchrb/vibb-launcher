@@ -1131,7 +1131,11 @@ async fn the_policy_carries_a_small_music_object() {
         Method::POST,
         &format!("/devices/{device}/music"),
         Some(&cookie),
-        &[("v", "2"), ("download_mobile_data", "on")],
+        &[
+            ("v", "2"),
+            ("download_mobile_data", "on"),
+            ("storage_limit", "5"),
+        ],
     )
     .await;
     let music = music_policy(&app, &token).await;
@@ -1143,10 +1147,24 @@ async fn the_policy_carries_a_small_music_object() {
         ),
         (&json!(false), &json!(true), &json!(false))
     );
+    // A post without the page's marker or without the limit is refused and writes nothing.
+    for fields in [
+        [("mobile_data", "on"), ("storage_limit", "5")],
+        [("v", "2"), ("stream_mobile_data", "on")],
+    ] {
+        let res = app
+            .request_form(
+                Method::POST,
+                &format!("/devices/{device}/music"),
+                Some(&cookie),
+                &fields,
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::BAD_REQUEST, "{fields:?}");
+    }
     assert_eq!(
-        music["storage_limit_gb"],
-        json!(5),
-        "a post without the limit keeps it"
+        music_policy(&app, &token).await["stream_mobile_data"],
+        json!(false)
     );
 
     // The limit's choices; "none" is no limit; anything else is refused and changes nothing.
@@ -1205,7 +1223,7 @@ async fn the_policy_carries_a_small_music_object() {
             Method::POST,
             &format!("/devices/{device}/music"),
             Some(&cookie),
-            &[("v", "2"), ("volume_cap", cap)],
+            &[("v", "2"), ("volume_cap", cap), ("storage_limit", "2")],
         )
         .await;
         assert_eq!(
@@ -1219,7 +1237,7 @@ async fn the_policy_carries_a_small_music_object() {
                 Method::POST,
                 &format!("/devices/{device}/music"),
                 Some(&cookie),
-                &[("v", "2"), ("volume_cap", bad)],
+                &[("v", "2"), ("volume_cap", bad), ("storage_limit", "2")],
             )
             .await;
         assert_eq!(res.status, StatusCode::BAD_REQUEST, "{bad}");
@@ -1232,7 +1250,7 @@ async fn the_policy_carries_a_small_music_object() {
         Method::POST,
         &format!("/devices/{device}/music"),
         Some(&cookie),
-        &[("v", "2"), ("volume_cap", "off")],
+        &[("v", "2"), ("volume_cap", "off"), ("storage_limit", "2")],
     )
     .await;
     let music = music_policy(&app, &token).await;
@@ -1339,81 +1357,6 @@ async fn migration_0073_gives_both_switches_the_old_value_and_every_phone_2_gb()
     .await
     .unwrap();
     assert_eq!(fresh, (false, false, Some(2)));
-}
-
-#[tokio::test]
-async fn a_page_from_before_the_update_sets_both_switches_from_mobile_data() {
-    let app = TestApp::new().await;
-    let cookie = app.admin_cookie().await;
-    let (device, token) = app.enrolled_device("phone").await;
-    app.request_form(
-        Method::POST,
-        &format!("/devices/{device}/music"),
-        Some(&cookie),
-        &[
-            ("v", "2"),
-            ("stream_mobile_data", "on"),
-            ("storage_limit", "10"),
-        ],
-    )
-    .await;
-    // The old page: one checkbox, no `v`, no limit. It meant both, so it sets both.
-    let res = app
-        .request_form(
-            Method::POST,
-            &format!("/devices/{device}/music"),
-            Some(&cookie),
-            &[("mobile_data", "on"), ("volume_cap", "off")],
-        )
-        .await;
-    assert_eq!(
-        res.location(),
-        Some(format!("/devices/{device}/music#music-settings").as_str())
-    );
-    let music = music_policy(&app, &token).await;
-    assert_eq!(
-        (
-            &music["mobile_data"],
-            &music["stream_mobile_data"],
-            &music["download_mobile_data"]
-        ),
-        (&json!(true), &json!(true), &json!(true))
-    );
-    assert_eq!(music["storage_limit_gb"], json!(10), "the limit unchanged");
-    // The event names the limit in force, not the absent posted one (qa-30-s1-code L2).
-    assert_eq!(
-        events(&app, "music_phone_settings").await.last().unwrap(),
-        &format!(
-            "phone {device}: streaming on mobile data on, downloads on mobile data on, \
-             storage limit 10 GB, volume cap off, Storytel off"
-        )
-    );
-    // Its checkbox off: both off. Today's switch names without `v` aren't read.
-    app.request_form(
-        Method::POST,
-        &format!("/devices/{device}/music"),
-        Some(&cookie),
-        &[("stream_mobile_data", "on"), ("volume_cap", "off")],
-    )
-    .await;
-    let music = music_policy(&app, &token).await;
-    assert_eq!(
-        (&music["stream_mobile_data"], &music["download_mobile_data"]),
-        (&json!(false), &json!(false))
-    );
-    assert_eq!(music["storage_limit_gb"], json!(10));
-    // With `v=2` the old `mobile_data` means nothing.
-    app.request_form(
-        Method::POST,
-        &format!("/devices/{device}/music"),
-        Some(&cookie),
-        &[("v", "2"), ("mobile_data", "on")],
-    )
-    .await;
-    assert_eq!(
-        music_policy(&app, &token).await["mobile_data"],
-        json!(false)
-    );
 }
 
 #[tokio::test]
@@ -1549,7 +1492,7 @@ async fn report_music_state(app: &TestApp, token: &str, state: Value) {
 
 /// Today's Music settings form with these switches.
 async fn save_switches(app: &TestApp, cookie: &str, device: i64, stream: bool, download: bool) {
-    let mut fields = vec![("v", "2")];
+    let mut fields = vec![("v", "2"), ("storage_limit", "2")];
     if stream {
         fields.push(("stream_mobile_data", "on"));
     }
@@ -3320,8 +3263,7 @@ async fn the_music_page_ticks_entries_and_switches_the_app() {
     assert_eq!(rows, 1, "only once");
 
     // The app switch is the catalog toggle (installs and allowlists), back to its group on this
-    // page with `back=music` (design 31 §5.1.4; a page from before step 6 sent `anchor=music`,
-    // which still works).
+    // page with `back=music` (design 31 §5.1.4).
     let page = music_page(&app, &cookie, device).await;
     assert_eq!(
         form_action_of(&page, "back"),
@@ -3329,22 +3271,20 @@ async fn the_music_page_ticks_entries_and_switches_the_app() {
     );
     assert!(page.contains(r#"<input type="hidden" name="back" value="music">"#));
     assert_eq!(input_checked(&page, "selected", ""), Some(false));
-    for back in ["back", "anchor"] {
-        let res = app
-            .request_form(
-                Method::POST,
-                &format!("/devices/{device}/apps/toggle"),
-                Some(&cookie),
-                &[
-                    ("tracked_app_id", &app_id.to_string()),
-                    ("package_name", "me.vibb.music"),
-                    (back, "music"),
-                    ("selected", "on"),
-                ],
-            )
-            .await;
-        assert_redirect(&res, &music, Some("music-app"));
-    }
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{device}/apps/toggle"),
+            Some(&cookie),
+            &[
+                ("tracked_app_id", &app_id.to_string()),
+                ("package_name", "me.vibb.music"),
+                ("back", "music"),
+                ("selected", "on"),
+            ],
+        )
+        .await;
+    assert_redirect(&res, &music, Some("music-app"));
     let policy = app
         .request(Method::GET, "/api/devices/policy", Some(&token), None)
         .await
@@ -3947,7 +3887,7 @@ async fn the_storytel_login_is_write_only_sealed_and_generational() {
         Method::POST,
         &format!("/devices/{device}/music"),
         Some(&cookie),
-        &[("storytel", "on")],
+        &[("v", "2"), ("storage_limit", "2"), ("storytel", "on")],
     )
     .await;
     assert_eq!(nudged(&mut rx), vec![device]);

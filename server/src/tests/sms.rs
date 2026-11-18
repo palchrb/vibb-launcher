@@ -579,9 +579,9 @@ async fn the_calls_page_saves_both_channels() {
                 uri,
                 Some(cookie),
                 &[
+                    ("section", "channels"),
                     ("calls_mode", calls),
                     ("sms_mode", sms),
-                    ("default_message_app", "sms"),
                 ],
             )
             .await
@@ -627,7 +627,7 @@ async fn the_calls_page_saves_both_channels() {
             Method::POST,
             &uri,
             Some(&cookie),
-            &[("default_message_app", "sms")],
+            &[("section", "channels"), ("default_message_app", "sms")],
         )
         .await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
@@ -645,9 +645,9 @@ async fn save_modes(
         &format!("/devices/{id}/calls/settings"),
         Some(cookie),
         &[
+            ("section", "channels"),
             ("calls_mode", calls),
             ("sms_mode", sms),
-            ("default_message_app", "sms"),
         ],
     )
     .await

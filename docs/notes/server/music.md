@@ -26,9 +26,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   each phone's Music page `/devices/{id}/music` (design 31 step 7, "Device › Music" below; the device page's card
   `#music` before): the app switch = `toggle_app` with `back=music`, an auto-saving switch per entry, the
   `#music-settings` form - since design 30 two switches, "Stream on mobile data" / "Download on mobile data" (a hidden
-  `v=2` marks today's page; a post without it is a page from before the update, and its one `mobile_data` checkbox
-  sets both - `handlers::music::mobile_switches`), the "Storage limit" picker (1/2/5/10 GB/No limit, `storage_limit` =
-  a choice or `none`, else 400; missing = the stored one kept), the warning "Update Vibb One and the music app" while the
+  `v=2` marks today's page; a post without it is a 400), the "Storage limit" picker (1/2/5/10 GB/No limit,
+  `storage_limit` = a choice or `none`, else 400, missing too), the warning "Update Vibb One and the music app" while the
   switches differ and the phone's app report (`cache_bytes`) has no `extra_bytes` (`music::older_phone`; it names only the app that is too old - `music::OlderApps` from
   `app_version_code` >= 25_999 (launcher-v0.26.0-rc) and `music_state.version_code` >= 3_999 (music-v0.4.0-rc), the
   first that pass `extra_bytes` on: "Update the music app", "Update Vibb One", else both), the storage
@@ -454,8 +453,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   CDN host (`akamaized.net` stays delivered; the launcher exempts the exact hosts before its walk) - from the
   categories **and** the custom blocks, and `compute_dns_filter_version` hashes `\nspotify:true` **while bound**
   (bind and unbind each move it; an unbound phone keeps the version it had). A parent's own block of `spotify.com` is
-  overridden on that phone for every app: the device card's Web Filter part says so, and **`/dns?device=<id>`
-  marks** each of the phone's custom blocks the rule names "not applied while Spotify is on for this phone" and lists
+  overridden on that phone for every app: the device card's Web Filter part says so, and **the phone's Web Filter
+  page marks** each of the phone's custom blocks the rule names "not applied while Spotify is on for this phone" and lists
   the site-wide ones it overrides (`handlers::dns_filter`). `HOST_SUFFIXES`/`EXACT_HOSTS` are checked against
   `testdata/spotify_hosts.json`, byte-identical with both apps' copies (`spotify::tests::hosts_match_the_contract`
   reads all three) - **provisional** until the user's DNS capture lands, before any tag of this release, as one commit

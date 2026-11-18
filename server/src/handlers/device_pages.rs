@@ -1777,8 +1777,7 @@ impl FilterTemplate {
 /// (`/dns/domains/new`, `/dns/domains/{id}/delete`, with `back=filter`) and the blocked-domain log
 /// (`/dns/log/{id}` and its newest 200 entries, local times). Every form returns here without a
 /// fragment, except a refused domain: `?notice=not_a_domain_block|allow#blocked|allowed`, the
-/// refusal under its group's add row (qa-31-s5-code L1). `/dns?device=` and `/dns/log?device=`
-/// redirect here.
+/// refusal under its group's add row (qa-31-s5-code L1).
 pub async fn view_filter(
     State(state): State<AppState>,
     lang: Lang,

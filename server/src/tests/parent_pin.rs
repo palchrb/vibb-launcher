@@ -233,8 +233,12 @@ async fn the_policy_form_leaves_the_pin_alone() {
     save(&app, &cookie, id, &[("new_pin", "583920")]).await;
     let before = stored(&app, id).await;
     for fields in [
-        vec![("vpn_filter_enabled", "on")],
-        vec![("new_pin", "246810"), ("clear_pin", "on")],
+        vec![("section", "filter"), ("vpn_filter_enabled", "on")],
+        vec![
+            ("section", "quick"),
+            ("new_pin", "246810"),
+            ("clear_pin", "on"),
+        ],
     ] {
         let res = app
             .request_form(

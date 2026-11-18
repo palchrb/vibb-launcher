@@ -40,7 +40,11 @@ async fn managing_calls_stamps_roles_changed_at_only_on_a_change() {
                 Method::POST,
                 uri,
                 Some(cookie),
-                &[("calls_mode", calls), ("sms_mode", sms)],
+                &[
+                    ("section", "channels"),
+                    ("calls_mode", calls),
+                    ("sms_mode", sms),
+                ],
             )
             .await
         }
@@ -253,7 +257,11 @@ async fn an_error_page_never_reloads_itself() {
             Method::POST,
             &format!("/devices/{id}/contacts"),
             Some(&cookie),
-            &[("name", "Mamma"), ("number", "abc")],
+            &[
+                [("name", "Mamma"), ("number", "abc")].as_slice(),
+                &super::ADD_CONTACT_ALL_ON,
+            ]
+            .concat(),
         )
         .await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
@@ -266,7 +274,11 @@ async fn an_error_page_never_reloads_itself() {
             Method::POST,
             &format!("/devices/{id}/contacts"),
             Some(&cookie),
-            &[("name", "Mamma"), ("number", "90000001")],
+            &[
+                [("name", "Mamma"), ("number", "90000001")].as_slice(),
+                &super::ADD_CONTACT_ALL_ON,
+            ]
+            .concat(),
         )
         .await;
     assert!(res.status.is_redirection());

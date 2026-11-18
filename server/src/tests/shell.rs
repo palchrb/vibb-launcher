@@ -902,7 +902,11 @@ async fn every_form_on_every_page_lands_on_its_own_group() {
     for (path, fields) in [
         (
             format!("/devices/{id}/contacts"),
-            vec![("name", "Mamma"), ("number", "91234567")],
+            [
+                vec![("name", "Mamma"), ("number", "91234567")],
+                super::ADD_CONTACT_ALL_ON.to_vec(),
+            ]
+            .concat(),
         ),
         (
             "/schedules/rules".to_string(),

@@ -323,7 +323,11 @@ async fn a_number_outside_the_phone_book_says_it_is_dimmed() {
             Method::POST,
             &format!("/devices/{id}/contacts"),
             Some(&cookie),
-            &[("name", "Mamma"), ("number", "90000001")],
+            &[
+                [("name", "Mamma"), ("number", "90000001")].as_slice(),
+                &super::ADD_CONTACT_ALL_ON,
+            ]
+            .concat(),
         )
         .await;
     assert!(res.status.is_redirection());

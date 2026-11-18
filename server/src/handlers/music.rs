@@ -5551,27 +5551,12 @@ pub async fn set_device_entry(
     Redirect::to(&format!("/devices/{id}/music#music-entry-{entry_id}")).into_response()
 }
 
-/// The two mobile-data switches of a `POST /devices/{id}/music` (design 30 §3, QA L6): today's
-/// page sends the hidden `v=2` and a checkbox per switch (missing = off); a page opened before the
-/// update sends only `mobile_data`, which meant both, so it sets both.
-pub fn mobile_switches(form: &FormMap) -> (bool, bool) {
-    if form.get("v").is_some_and(|v| v == "2") {
-        (
-            form.contains_key("stream_mobile_data"),
-            form.contains_key("download_mobile_data"),
-        )
-    } else {
-        let both = form.contains_key("mobile_data");
-        (both, both)
-    }
-}
-
-/// `POST /devices/{id}/music`: the mobile-data switches ([mobile_switches]), the volume cap
-/// (`volume_cap`: "off" or one of [VOLUME_CAPS]), the music storage limit (`storage_limit`: "none"
-/// or one of [STORAGE_LIMITS]; missing - a page from before design 30 - keeps the stored one) and
-/// Storytel on this phone (`storytel`). One auto-saving form (Device ›
-/// Music's settings, design 31 §5.6: one group): a missing checkbox is off; back to
-/// `/devices/{id}/music#music-settings`.
+/// `POST /devices/{id}/music`: the two mobile-data switches (`stream_mobile_data`,
+/// `download_mobile_data`; design 30 §3), the volume cap (`volume_cap`: "off" or one of
+/// [VOLUME_CAPS]), the music storage limit (`storage_limit`: "none" or one of [STORAGE_LIMITS]) and
+/// Storytel on this phone (`storytel`). One auto-saving form (Device › Music's settings, design 31
+/// §5.6: one group) marked `v=2`: a post without the marker or the storage limit is a 400 and writes
+/// nothing; a missing checkbox is off; back to `/devices/{id}/music#music-settings`.
 pub async fn save_device_settings(
     State(state): State<AppState>,
     lang: Lang,
@@ -5579,7 +5564,11 @@ pub async fn save_device_settings(
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<FormMap>,
 ) -> Response {
-    let (stream, download) = mobile_switches(&form);
+    if field(&form, "v") != "2" {
+        return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.out_of_date");
+    }
+    let stream = form.contains_key("stream_mobile_data");
+    let download = form.contains_key("download_mobile_data");
     let storytel = form.contains_key("storytel");
     let cap = match field(&form, "volume_cap").trim() {
         "" | "off" => None,
@@ -5590,12 +5579,11 @@ pub async fn save_device_settings(
             }
         },
     };
-    // `Some(new)` = save it (`new` = None is no limit), `None` = keep the stored one.
-    let limit: Option<Option<i64>> = match form.get("storage_limit").map(|v| v.trim()) {
-        None => None,
-        Some("none") => Some(None),
-        Some(value) => match value.parse::<i64>() {
-            Ok(gb) if STORAGE_LIMITS.contains(&gb) => Some(Some(gb)),
+    // `None` is no limit.
+    let limit: Option<i64> = match field(&form, "storage_limit").trim() {
+        "none" => None,
+        value => match value.parse::<i64>() {
+            Ok(gb) if STORAGE_LIMITS.contains(&gb) => Some(gb),
             _ => {
                 return crate::i18n::error(
                     lang,
@@ -5608,15 +5596,14 @@ pub async fn save_device_settings(
     let updated: Result<Option<Option<i64>>, sqlx::Error> = sqlx::query_scalar(
         "UPDATE device_policy SET music_stream_mobile_data = ?, music_download_mobile_data = ?, \
          music_volume_cap_pct = ?, music_storytel = ?, \
-         music_storage_limit_gb = CASE WHEN ? THEN ? ELSE music_storage_limit_gb END, \
+         music_storage_limit_gb = ?, \
          updated_at = datetime('now') WHERE device_id = ? RETURNING music_storage_limit_gb",
     )
     .bind(stream)
     .bind(download)
     .bind(cap)
     .bind(storytel)
-    .bind(limit.is_some())
-    .bind(limit.flatten())
+    .bind(limit)
     .bind(id)
     .fetch_optional(&state.db)
     .await;

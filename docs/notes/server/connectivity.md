@@ -84,8 +84,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   HttpOnly, Strict) or `handy` with `INSECURE_COOKIES` (`security::session_layer`); `SESSION_INACTIVITY_DAYS`
   (`NetConfig`, default 30), and since 0.55.0 (security review L6) `SESSION_MAX_DAYS` (default 90, 1-3650): the sign-in's
   time (`admin_auth::SIGNED_IN_AT_KEY`, set at the sign-in's last step) ends the session that long after, however
-  often it is used (`load_active_admin`, `SignInWhy::TooOld`); a session from before has no time and starts its clock
-  at its next request, so the upgrade signs nobody out (`admin_auth::a_session_ends_after_its_absolute_lifetime`). `kid_phone_server reset-2fa <user>` (`main::run_command`) clears TOTP, lock and counter,
+  often it is used (`load_active_admin`, `SignInWhy::TooOld`); a session without the time is past it
+  (`admin_auth::a_session_ends_after_its_absolute_lifetime`). `kid_phone_server reset-2fa <user>` (`main::run_command`) clears TOTP, lock and counter,
   bumps the epoch and replaces the password with a new one in `data/initial-admin-password-<id>` (QA 22 M4; one file per
   account since design 62, which also restores a removed account and clears a one-time password's expiry). `admin_headers`: HSTS, nosniff, Referrer-Policy, X-Frame-Options, COOP, Permissions-Policy,
   CSP (`ADMIN_CSP`; phase 2 since 0.55.0, design 22 S7 and security review L5: `script-src 'self'`, no
@@ -136,8 +136,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `security_events` pruned after 180 days, a phone's own lines sooner (`retention::prune`, `retention-and-crashes.md`). The TOTP secret stays in the DB (QA b, DEPLOY.md).
 - **Docker and startup** (D1, `src/startup.rs`, `Dockerfile`, `deploy/image-smoke.sh`): `DEPLOY_KIND` (`NetConfig`,
   systemd default, the image sets docker). Startup for every kind: `check_data_writable` ("data/ is not writable by
-  uid N", exit 1); `remove_host_files` (since the server stopped acting on its host, 2026-11-04: what the old root
-  helper's requests left in `data/`, `startup::HOST_FILES`); `apply_restore_request` (every restore: `data/restore_request`
+  uid N", exit 1); `apply_restore_request` (every restore: `data/restore_request`
   written by `backups::restore_in_container`, which exits 3 a second later for the restart policy, or on a systemd
   install by the owner over SSH before `systemctl restart` - DEPLOY.md, "Backups"; startup deletes the marker
   first, checks the name/zip/`kidphone.db` (at most `RESTORE_MAX_BYTES`, 1 GiB), copies the DB +

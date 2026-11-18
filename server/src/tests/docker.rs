@@ -560,25 +560,6 @@ async fn no_route_asks_the_host_for_anything() {
     assert!(page.contains("copy them off the host"));
 }
 
-/// The files the old host requests left in data/ go at the next start; nothing else does.
-#[test]
-fn the_old_host_files_are_removed_at_start() {
-    let dir = tempfile::tempdir().unwrap();
-    for name in startup::HOST_FILES {
-        std::fs::write(dir.path().join(name), "x").unwrap();
-    }
-    std::fs::write(dir.path().join("backup_schedule.conf"), "FREQUENCY=daily\n").unwrap();
-    std::fs::write(dir.path().join(startup::RESTORE_REQUEST), "backup-x.zip").unwrap();
-    startup::remove_host_files(dir.path());
-    for name in startup::HOST_FILES {
-        assert!(!dir.path().join(name).exists(), "{name}");
-    }
-    assert!(dir.path().join("backup_schedule.conf").exists());
-    assert!(dir.path().join(startup::RESTORE_REQUEST).exists());
-    // Again, with none there: nothing to do.
-    startup::remove_host_files(dir.path());
-}
-
 /// A fake GitHub release list: `tag` (`None`: a 500), and how many reads it answered.
 async fn fake_github(
     tag: std::sync::Arc<std::sync::Mutex<Option<&'static str>>>,

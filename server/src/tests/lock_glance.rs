@@ -655,33 +655,6 @@ async fn refused_saves_write_nothing() {
         )
         .await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST, "no value");
-    // A Lock page from before the select (qa-srv-sweep-resume-code L6b): its switch posts `on`,
-    // its text switch the removed route - both say to reload, nothing written.
-    for (route, fields) in [
-        (
-            "lock-screen/apps",
-            vec![("package_name", ELEMENT_X), ("on", "on")],
-        ),
-        (
-            "lock-screen/apps/text",
-            vec![("package_name", ELEMENT_X), ("show_text", "on")],
-        ),
-    ] {
-        let res = app
-            .request_form(
-                Method::POST,
-                &format!("/devices/{id}/{route}"),
-                Some(&cookie),
-                &fields,
-            )
-            .await;
-        assert_eq!(res.status, StatusCode::BAD_REQUEST, "{route}");
-        assert_eq!(
-            res.text(),
-            "This page is out of date - reload it.",
-            "{route}"
-        );
-    }
     // 400: the text of something that isn't a package.
     assert_eq!(
         switch(&app, Some(&cookie), id, "not a package", true)

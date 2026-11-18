@@ -491,60 +491,6 @@ fn the_field_tables_keep_every_contract_key() {
     assert!(checked >= 1, "time_status_report.json carries a time_state");
 }
 
-/// Launcher round 7 §2 (the battery state) was removed on 2026-10-20, but launcher 0.32.0 still sends
-/// `installed_apps[].battery_exempt`: the report is accepted, the field is dropped (never stored), and the
-/// Apps page says nothing about the background.
-#[tokio::test]
-async fn an_older_launchers_battery_exempt_is_accepted_and_dropped() {
-    let app = TestApp::new().await;
-    let cookie = app.admin_cookie().await;
-    let (id, token) = app.enrolled_device("phone").await;
-    let res = app
-        .request(
-            Method::POST,
-            "/api/devices/status",
-            Some(&token),
-            Some(serde_json::json!({
-                "lock_reason": "NONE",
-                "kiosk_engaged": true,
-                "installed_apps": [
-                    { "package_name": "org.fossify.clock", "label": "Clock", "preinstalled": false,
-                      "installer": "me.vibb.launcher", "battery_exempt": false },
-                    { "package_name": "io.element.android.x", "label": "Element X", "preinstalled": false,
-                      "installer": "me.vibb.launcher", "battery_exempt": true },
-                    { "package_name": "com.android.chrome", "label": "Chrome", "preinstalled": true },
-                ],
-            })),
-        )
-        .await;
-    assert!(res.status.is_success(), "{}", res.text());
-    let apps_json: String = sqlx::query_scalar(
-        "SELECT installed_apps_json FROM device_status WHERE device_id = ? ORDER BY id DESC LIMIT 1",
-    )
-    .bind(id)
-    .fetch_one(&app.db)
-    .await
-    .unwrap();
-    let apps: Vec<crate::models::InstalledApp> = serde_json::from_str(&apps_json).unwrap();
-    let packages: Vec<&str> = apps.iter().map(|a| a.package_name.as_str()).collect();
-    assert_eq!(
-        packages,
-        [
-            "org.fossify.clock",
-            "io.element.android.x",
-            "com.android.chrome"
-        ]
-    );
-    assert!(!apps_json.contains("battery_exempt"), "{apps_json}");
-
-    let html = app
-        .get_page(&device_page(id, Section::Apps), &cookie)
-        .await
-        .text();
-    assert!(html.contains("Clock"), "{html}");
-    assert!(!html.contains("Background:"), "{html}");
-}
-
 #[tokio::test]
 async fn the_security_log_pages_back_past_a_flood() {
     let app = TestApp::new().await;

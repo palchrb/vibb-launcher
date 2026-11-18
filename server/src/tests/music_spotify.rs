@@ -5122,12 +5122,6 @@ mod phones {
         assert!(
             panel.contains("Spotify&#39;s hosts are allowed on this phone while it plays Spotify")
         );
-        // `/dns?device=` (an old link) goes to that page.
-        let res = app.get_page(&format!("/dns?device={ella}"), &cookie).await;
-        assert_eq!(
-            res.location(),
-            Some(format!("/devices/{ella}/filter").as_str())
-        );
     }
 }
 

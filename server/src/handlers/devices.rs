@@ -1322,8 +1322,7 @@ async fn messages_row_listed(db: &sqlx::SqlitePool, device_id: i64) -> bool {
 
 /// `POST /devices/{id}/apps/display` (design 14): this phone's name, icon and colour for one app.
 /// `action` "reset" = the phone's row goes (it follows the catalog default, else Vibb style;
-/// design 34 P1 - an older page's "catalog" does the same, its "own" keeps its old meaning: an
-/// empty row, Vibb style on this phone even with a catalog default), else save the fields (Vibb
+/// design 34 P1), "save" (or none) saves the fields, anything else is a 400 (Vibb
 /// style with no name on a phone with a catalog default keeps an empty row: Vibb style there). A
 /// choice equal to the catalog default, or nothing without a default, keeps no row. Refused input: 400,
 /// Device › Apps with that app's form open, the entered values and the error by the field, the
@@ -1418,12 +1417,13 @@ pub async fn save_app_display(
             response
         }
     };
-    // "reset" (and an older page's "Follow the catalog") deletes the row; an older page's "Use the
-    // app's own" keeps its old meaning - nothing chosen on this phone, an empty row over a catalog
-    // default (Vibb style there; qa-34-s1-code L1).
-    let action = field("action");
-    let reset = matches!(action, "reset" | "catalog");
-    let values = if reset || action == "own" {
+    // "reset" deletes the row.
+    let reset = match field("action") {
+        "reset" => true,
+        "" | "save" => false,
+        _ => return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.out_of_date"),
+    };
+    let values = if reset {
         DisplayValues::empty()
     } else if builtin && field("icon").trim() == crate::app_display::OWN {
         // Design 82 D9: a part of Vibb One has no app logo to show.
@@ -2687,8 +2687,7 @@ pub(crate) fn toggle_refusal(lang: Lang, code: &str) -> Option<&'static str> {
 /// (`device_pending_uninstalls`) when the phone's last report has the package installed and not
 /// preinstalled (a preinstalled app can only be hidden).
 ///
-/// Where it returns (§5.1): `back=music` (or `anchor=music`, a page from before design 31 step 6)
-/// to Device › Music (`/devices/{id}/music#music-app`, its group; a refusal
+/// Where it returns (§5.1): `back=music` to Device › Music (`/devices/{id}/music#music-app`, its group; a refusal
 /// to `?music_notice=<code>#music-app`, the reason in that group), anything else to the app's row
 /// on Device › Apps (`#app-<package>`): the row moves between Allowed and Not allowed, and the
 /// fragment finds it again, with or without JS.
@@ -2766,13 +2765,9 @@ pub async fn toggle_app(
     let page = |params: &str, fragment: &str| {
         crate::handlers::device_pages::apps_url(id, params, from, fragment)
     };
-    // Device › Music's switch (`back=music`, or an older page's `anchor=music`) returns there: the
-    // page on a save, its group with the reason on a refusal (design 31 step 7).
-    let music = form
-        .get("back")
-        .or_else(|| form.get("anchor"))
-        .map(String::as_str)
-        == Some("music");
+    // Device › Music's switch (`back=music`) returns there: the page on a save, its group with the
+    // reason on a refusal (design 31 step 7).
+    let music = form.get("back").map(String::as_str) == Some("music");
     let refused = |code: &str, anchor: &str| {
         crate::settings_log::refused(Redirect::to(&if music {
             format!("/devices/{id}/music?music_notice={code}#music-app")
@@ -3102,8 +3097,7 @@ pub(crate) async fn remove_from_allowlist(
 /// the two live on two pages, so the form says which part it carries (§5.6, H1): `section=quick`
 /// writes only the quick controls and returns to their group, `/devices/{id}/home#quick-controls`,
 /// `section=filter` only the filter and returns to `/devices/{id}/filter#filter` (§5.1.4). A
-/// form without `section` (an older tab) writes both, as before, and returns to the device page;
-/// an unknown section is a 400. Unticked = off, as every checkbox. 404 for an unknown phone, 500
+/// missing or unknown section is a 400. Unticked = off, as every checkbox. 404 for an unknown phone, 500
 /// on a DB error (nothing written either way); nudges the phone. `Form<HashMap<...>>` is safe:
 /// nothing here is a repeated-name checkbox group.
 pub async fn update_policy(
@@ -3113,10 +3107,9 @@ pub async fn update_policy(
     Form(fields): Form<std::collections::HashMap<String, String>>,
 ) -> axum::response::Response {
     let (quick, filter, back) = match fields.get("section").map(String::as_str) {
-        None => (true, true, format!("/devices/{id}")),
         Some("quick") => (true, false, format!("/devices/{id}/home#quick-controls")),
         Some("filter") => (false, true, format!("/devices/{id}/filter#filter")),
-        Some(_) => {
+        _ => {
             return crate::i18n::error(
                 lang,
                 axum::http::StatusCode::BAD_REQUEST,
@@ -3622,8 +3615,7 @@ pub async fn update_hardening(
 
 /// Home Screen's language ("system", "nb", "en"), apps per row (3 or 4) and the phone's clock
 /// format ("system", "24", "12"; design 34 P12): one auto-saving form (design 31 §5.6); an unknown
-/// value is a 400 and nothing is written. A form without `clock_format` (a page cached before the
-/// field existed) keeps the stored format (qa-34-design L10). Back to its group,
+/// or missing clock format is a 400 and nothing is written. Back to its group,
 /// `/devices/{id}/home#layout` (§5.1.4).
 pub async fn update_launcher_ui(
     State(state): State<AppState>,
@@ -3636,10 +3628,10 @@ pub async fn update_launcher_ui(
         .get("home_columns")
         .and_then(|c| c.parse::<i64>().ok())
         .unwrap_or(3);
-    let clock_format = form.get("clock_format").map(String::as_str);
+    let clock_format = form.get("clock_format").map(String::as_str).unwrap_or("");
     if !crate::models::LAUNCHER_LANGUAGES.contains(&language)
         || !(columns == 3 || columns == 4)
-        || clock_format.is_some_and(|f| !crate::models::CLOCK_FORMATS.contains(&f))
+        || !crate::models::CLOCK_FORMATS.contains(&clock_format)
     {
         return crate::i18n::error(
             lang,
@@ -3649,7 +3641,7 @@ pub async fn update_launcher_ui(
     }
     let result = sqlx::query(
         "UPDATE device_policy SET launcher_language = ?, home_columns = ?, \
-         clock_format = COALESCE(?, clock_format), updated_at = datetime('now') \
+         clock_format = ?, updated_at = datetime('now') \
          WHERE device_id = ?",
     )
     .bind(language)

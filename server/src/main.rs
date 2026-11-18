@@ -318,8 +318,7 @@ async fn main() {
 
     // A restore asked for in data/restore_request (the PWA's in the container, the owner's over
     // SSH on a systemd install): applied before the database is opened, and undone if the
-    // restored one won't open. The old host requests' files go first.
-    startup::remove_host_files(std::path::Path::new("data"));
+    // restored one won't open.
     let db_path = startup::sqlite_path(&database_url);
     let restored = match &db_path {
         Some(path) => match startup::apply_restore_request(std::path::Path::new("data"), path) {
@@ -1163,8 +1162,7 @@ pub fn build_admin_router(
         .route("/devices/{id}/apps", get(handlers::device_pages::view_apps))
         // Step 5: Home Screen and Web Filter.
         .route("/devices/{id}/home", get(handlers::device_pages::view_home))
-        // Design 75 §6: the weather's two rows are on Lock Screen & PINs; the old page's address leads there.
-        .route("/devices/{id}/weather", get(handlers::weather_page::view))
+        // Design 75 §6: the weather's two rows are on Lock Screen & PINs.
         .route(
             "/devices/{id}/weather/lock",
             post(handlers::weather_page::save_lock),
@@ -1557,11 +1555,6 @@ pub fn build_admin_router(
         .route(
             "/devices/{id}/lock-screen/apps",
             post(handlers::lock_glance::save_app),
-        )
-        // A Lock page from before the select still posts here: "reload it" (QA L6b).
-        .route(
-            "/devices/{id}/lock-screen/apps/text",
-            post(handlers::lock_glance::stale_page),
         )
         // Launcher round 7 §3: "Wake the screen for a notification".
         .route(

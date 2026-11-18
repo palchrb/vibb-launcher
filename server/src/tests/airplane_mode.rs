@@ -159,20 +159,14 @@ async fn the_home_form_keeps_bit_64_without_its_row() {
         }
     };
 
-    // An older launcher: no row, and both forms keep 64 and 32.
+    // An older launcher: no row, and the form keeps 64 and 32.
     app.post_status(&token, json!({})).await;
     let html = app.get_page(&home, &cookie).await.text();
     assert!(!html.contains("quick_control_airplane"), "{html}");
     assert!(!html.contains("airplane_row"));
-    for section in [Some("quick"), None] {
-        let mut fields = vec![("quick_control_wifi", "on")];
-        if let Some(section) = section {
-            fields.push(("section", section));
-        }
-        let res = save(fields).await;
-        assert!(res.status.is_redirection(), "{}", res.text());
-        assert_eq!(mask(&app, &token).await, 1 | 32 | 64, "{section:?}");
-    }
+    let res = save(vec![("section", "quick"), ("quick_control_wifi", "on")]).await;
+    assert!(res.status.is_redirection(), "{}", res.text());
+    assert_eq!(mask(&app, &token).await, 1 | 32 | 64);
 
     // Design 98's launcher, the role not chosen yet: the row, its sub-line and the ⓘ.
     report(
@@ -213,7 +207,7 @@ async fn the_home_form_keeps_bit_64_without_its_row() {
     );
     assert!(nb.contains("Nødsamtaler virker fortsatt"));
 
-    // With the row: the switch decides bit 64, 32 is still kept - on both forms.
+    // With the row: the switch decides bit 64, 32 is still kept.
     let res = save(vec![
         ("section", "quick"),
         ("airplane_row", "1"),
@@ -224,6 +218,7 @@ async fn the_home_form_keeps_bit_64_without_its_row() {
     app.assert_lands(&res, &cookie).await;
     assert_eq!(mask(&app, &token).await, 1 | 32);
     let res = save(vec![
+        ("section", "quick"),
         ("airplane_row", "1"),
         ("quick_control_wifi", "on"),
         ("quick_control_airplane", "on"),
@@ -231,7 +226,12 @@ async fn the_home_form_keeps_bit_64_without_its_row() {
     .await;
     assert!(res.status.is_redirection());
     assert_eq!(mask(&app, &token).await, 1 | 32 | 64);
-    save(vec![("airplane_row", "1"), ("quick_control_wifi", "on")]).await;
+    save(vec![
+        ("section", "quick"),
+        ("airplane_row", "1"),
+        ("quick_control_wifi", "on"),
+    ])
+    .await;
     assert_eq!(mask(&app, &token).await, 1 | 32);
     let res = save(vec![
         ("section", "quick"),

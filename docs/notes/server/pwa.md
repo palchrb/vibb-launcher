@@ -238,9 +238,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `show_text = 0`, or with `show_text = 1` - back to the app's row (Off on a row listed only because it was on: to
   `#notifications`, qa-browser-fixes-code L1), the phone nudged, a security-log line per change only
   (`lock_screen_app_changed` on/off, `lock_screen_text_changed` for the text; a save that changes nothing logs
-  nothing). 400 for a bad package or a `show` that isn't one of the three; a body without `show` (a Lock page loaded
-  before the select posts `on`) and a post to the removed `/lock-screen/apps/text` answer 400 "This page is out of
-  date - reload it." (`lock_glance::stale_page`, nothing written; the route can go a release later). The write is one
+  nothing). 400 for a bad package or a `show` that isn't one of the three (or none), nothing written. The write is one
   `BEGIN IMMEDIATE` transaction (two saves racing wait for each other). 404 unknown phone, 500 on a
   DB error - nothing written. **The stored data and the policy are unchanged** (`device_lock_glance_apps` row or
   none, `show_text`; `policy_json_keys_snapshot` untouched): no launcher or contract change. Tests:
@@ -328,8 +326,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - **Web Filter** (`GET /devices/{id}/filter`, `device_pages::view_filter`, `device_filter.html`; row "Web Filter ·
   On/Off"): the Web filter switch (`/policy` with `section=filter`); Blocklists, one inline select each - "As for
   everyone (On|Off)" (the list as everyone has it; "Default (On)" until 2026-11-01) / On / Off, the footer "As for
-  everyone follows the switch in Settings › Web Filter." (`device.filter.*`) (`/dns/devices/{id}/blocklists/{list}/override`, `setting=default|on|off`; an
-  older form's `clear` / `enabled` still works; 400 other values, 404 unknown phone or list), with the list's download
+  everyone follows the switch in Settings › Web Filter." (`device.filter.*`) (`/dns/devices/{id}/blocklists/{list}/override`, `setting=default|on|off`; 400
+  other values or none, 404 unknown phone or list), with the list's download
   problem as a short title (`dns_filter::FeedState::problem`; the global page keeps its sentence); Blocked / Allowed
   on this phone (`/dns/domains/new` with `device_id`, `/dns/domains/{id}/delete`; a name that isn't a domain goes back
   to its group with `?notice=not_a_domain_block|allow#blocked|allowed` from this page, a 400 from `/dns`; a domain
@@ -339,17 +337,15 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   by the phone's time in local time (a garbled phone time reads "Time unknown" and sorts last). Every read the page
   needs fails as a 500 (the code QA fix round, `qa-31-s5-code.md`).
 - **`section` on `/devices/{id}/policy`** (§5.6, H1): `quick` writes only `quick_controls_mask` and returns to
-  `/home`, `filter` only `vpn_filter_enabled` and returns to `/filter`; no section (an older tab) writes both and returns
-  to the device page; another value 400. `kiosk_desired = 1` and the lock-task features in every case; 404 unknown phone,
+  `/home`, `filter` only `vpn_filter_enabled` and returns to `/filter`; none or another value 400. `kiosk_desired = 1` and the lock-task features in every case; 404 unknown phone,
   500 on a DB error (it used to log and redirect).
 - **`back`** (§5.1) on the domain and list routes (`dns_filter::back_to`): `back=filter` returns to the phone's Web
   Filter page - the phone from the path or the deleted row, never from the form -, anything else to the form's group on
   `/dns` (step 14). Every form on the two phone pages returns to its group (`#layout`, `#wallpapers`,
   `#quick-controls`; `#filter`, `#lists`, `#blocked`, `#allowed`, `#log`; scroll-restore keeps the place), pinned by
   `tests::device_pages::home_and_filter_forms_return_to_their_page`.
-- **Old URLs** (L5): `/dns?device=X` → `/devices/X/filter`, `/dns/log?device=X` → `/devices/X/filter#log`. `/dns`
-  and `/dns/log` are in "The rest of Settings" below.
-- Tests: `src/tests/device_pages.rs` (both pages, the rows, the section test, the redirect table, the old URLs, bad
+- `/dns` and `/dns/log` are in "The rest of Settings" below.
+- Tests: `src/tests/device_pages.rs` (both pages, the rows, the section test, the redirect table, bad
   input, unreadable parts, a phone not set up), repointed `launcher_ui.rs`, `wallpapers.rs`, `sound_mode.rs`,
   `cleanup.rs` (the log), `dns_blocklist.rs` (the phone's list problem), `lock_glance.rs`, `devices_list.rs`, `shell.rs`.
 
@@ -383,7 +379,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - **Where the forms return** (§5.1, `tests::device_pages::apps_forms_return_to_their_rows`, built from the rendered
   forms): a switch (`/apps/toggle`, `back=apps`) to its row, `/devices/{id}/apps#app-<package>` (`#catalog-<id>` for a
   catalog app without a package; `devices::app_anchor`) - the row moves between the groups and the fragment finds it,
-  with or without JS; `back=music` (or a page's old `anchor=music`) to Device › Music (step 7, below); a Name
+  with or without JS; `back=music` to Device › Music (step 7, below); a Name
   and icon save to the same row (the action carries the fragment, for a refusal rendered in the answer);
   `/app-updates` to `#downloads`. The blocked apps' "tick it" and the Apps tab's phone rows link to the rows.
 - **`toggle_app`** takes a package name (the status intake's rule) or exactly what the catalog row it names stores (an

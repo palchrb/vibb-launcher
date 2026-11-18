@@ -181,8 +181,8 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
   "· Melding begge veier" / "· Melding inn" / "· Melding ut".
 - **Add Contact shows every switch** (R2-M1), with `switches=on` in the form: all on for a new contact; "Opprett
   kontakt…" from a held message is a link `?add_number=<encoded>#add-contact` that opens it with the number (escaped
-  by the template) and "Kan sende melding til" alone on. A post without `switches` (an older page) gets every flag on,
-  as before. Never `sms_in` for an emergency number.
+  by the template) and "Kan sende melding til" alone on. A post without `switches` is a 400 (`error.out_of_date`).
+  Never `sms_in` for an emergency number.
 - **"Meldinger som venter"** (`#held`, at the top while it has rows; the section is always there so a redirect can
   land): `device_sms_held` rows but `blocked`, newest first, the last 7 days, at most 100, each `#held-<id>`: "Nummer
   {number}" / "Avsendernavn «{name}»", SMS/Bilde, when, and its state - "Venter til {time}", "Tillatt - leveres når
@@ -321,8 +321,8 @@ Steps 1 and 2: server and template only - no policy key, contract file, migratio
   channel from `calls_shown`/`texts_shown` (what the main row showed: `on`, `off`, `custom`), the two-way switch and
   the one-way pair (always posted - Avansert is in the same form): a changed two-way switch sets both; otherwise the
   pair as posted, except that a post leaving the switch alone with the pair exactly as shown implies keeps the
-  **stored** pair (L1: a stale tab never undoes a split made meanwhile); `custom`, absent or any other value (an older
-  page, N4) is the pair as posted. Without JS a post that changed both the switch and its pair takes the switch.
+  **stored** pair (L1: a stale tab never undoes a split made meanwhile); `custom` is the pair as posted; absent or any
+  other value is refused (400, nothing written) - only an emergency number's own row posts no `texts_shown`. Without JS a post that changed both the switch and its pair takes the switch.
   `calls_form::resolve` applies it to a form; an emergency number's texts row is `sms_out` alone ("{kid} kan sende
   melding til {contact}") and `sms_in` is never stored (R2-H1). A refusal (a bad Matrix ID, Add Contact's name or
   number) is redrawn from the resolved pairs (L2).
@@ -368,7 +368,7 @@ Steps 1 and 2: server and template only - no policy key, contract file, migratio
   row), the sender names. Every return there carries `?advanced=1` (also a notice's), which draws it open; a refusal
   inside it draws it open too.
 - **`/calls/settings` split** (design 31 §5.6): `section=channels` writes only the modes, `section=button` only
-  `default_message_app` (back to `?advanced=1#message-button`), no marker is the old write-all.
+  `default_message_app` (back to `?advanced=1#message-button`), no marker is a 400.
 - **The phone's own number** (§4.5, `calls_sms::own_rows`): a row per active SIM in the last report
   (`calls_sms::reported_own`) and per stored slot. The SIM knows it and nothing is stored: "Telefonens nummer · {n}",
   "Fra SIM-kortet", **"Bruk dette nummeret"** (`POST /devices/{id}/calls/own-number/use`, `source=sim:<slot>`: stores
@@ -421,7 +421,7 @@ Steps 1 and 2: server and template only - no policy key, contract file, migratio
     `?notice=own_number_gone` and stores nothing.
   - **Add Contact of an emergency number without JS** follows the two-way texts switch (`resolve` runs `both_ways` on
     `(sms_out, sms_out)`), and the refusal redraw judges the sent number (L5).
-  - An unknown `section` on `/calls/settings` is a 400 (`error.unknown_section`), never the write-all (N2). No free
+  - A missing or unknown `section` on `/calls/settings` is a 400 (`error.unknown_section`) (N2). No free
     slot for a learned or conflict number lands on `?notice=own_number_no_slot` with its own words (N4). The short-number
     line names the kid (N5). "Tilpasset" takes the switch's box as its minimum (`flex: 0 0 auto; min-width: 51px`, no
     gap of its own; second pass V3): at the default size its label wraps as beside the switch, so a save moves nothing;

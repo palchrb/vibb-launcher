@@ -228,7 +228,11 @@ async fn launcher_ui_defaults_and_form() {
             Method::POST,
             &format!("/devices/{id}/launcher"),
             Some(&cookie),
-            &[("language", "nb"), ("home_columns", "4")],
+            &[
+                ("language", "nb"),
+                ("home_columns", "4"),
+                ("clock_format", "system"),
+            ],
         )
         .await;
     // Back to its group on Home Screen (design 31 §5.1.4).
@@ -240,8 +244,16 @@ async fn launcher_ui_defaults_and_form() {
     );
 
     for bad in [
-        [("language", "de"), ("home_columns", "3")],
-        [("language", "en"), ("home_columns", "5")],
+        [
+            ("language", "de"),
+            ("home_columns", "3"),
+            ("clock_format", "24"),
+        ],
+        [
+            ("language", "en"),
+            ("home_columns", "5"),
+            ("clock_format", "24"),
+        ],
     ] {
         let res = app
             .request_form(
@@ -263,7 +275,7 @@ async fn launcher_ui_defaults_and_form() {
             Method::POST,
             "/devices/999/launcher",
             Some(&cookie),
-            &[("language", "en")],
+            &[("language", "en"), ("clock_format", "24")],
         )
         .await;
     assert_eq!(res.status, StatusCode::NOT_FOUND);
@@ -594,11 +606,10 @@ async fn missing_notification_access_is_a_warning() {
     }
 }
 
-/// Design 34 P12: the Clock select is in the launcher form; every choice reaches the policy, a
-/// present unknown value is a 400 that changes nothing, and a post without `clock_format` (a page
-/// cached before the field existed) keeps the stored format (qa-34-design L10).
+/// Design 34 P12: the Clock select is in the launcher form; every choice reaches the policy, and an
+/// unknown or missing value is a 400 that changes nothing.
 #[tokio::test]
-async fn clock_format_form_keeps_a_missing_field() {
+async fn clock_format_form_refuses_a_bad_value() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;
@@ -632,40 +643,20 @@ async fn clock_format_form_keeps_a_missing_field() {
     assert!(page.contains("<option value=\"12\" selected>12 h</option>"));
     assert!(page.contains("<option value=\"system\">Follow the phone</option>"));
 
-    // An old cached page: the language and columns change, the clock stays 12 h.
-    let res = app
-        .request_form(
-            Method::POST,
-            &launcher,
-            Some(&cookie),
-            &[("language", "nb"), ("home_columns", "4")],
-        )
-        .await;
-    assert_redirect(&res, &device_page(id, Section::Home), Some("layout"));
-    assert_eq!(
-        launcher_settings(&app, &token).await,
-        json!({ "language": "nb", "home_columns": 4, "clock_format": "12" })
-    );
-
-    // A present unknown value is a 400, and nothing is written.
-    for bad in ["", "24h", "follow", "SYSTEM"] {
+    // An unknown or missing value is a 400, and nothing is written.
+    for bad in [Some(""), Some("24h"), Some("follow"), Some("SYSTEM"), None] {
+        let mut fields = vec![("language", "nb"), ("home_columns", "4")];
+        if let Some(bad) = bad {
+            fields.push(("clock_format", bad));
+        }
         let res = app
-            .request_form(
-                Method::POST,
-                &launcher,
-                Some(&cookie),
-                &[
-                    ("language", "en"),
-                    ("home_columns", "3"),
-                    ("clock_format", bad),
-                ],
-            )
+            .request_form(Method::POST, &launcher, Some(&cookie), &fields)
             .await;
         assert_eq!(res.status, StatusCode::BAD_REQUEST, "{bad:?}");
     }
     assert_eq!(
         launcher_settings(&app, &token).await,
-        json!({ "language": "nb", "home_columns": 4, "clock_format": "12" })
+        json!({ "language": "en", "home_columns": 3, "clock_format": "12" })
     );
 }
 

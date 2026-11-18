@@ -185,22 +185,16 @@ async fn the_home_form_keeps_bit_128_without_its_row() {
         }
     };
 
-    // An older launcher: no row, no ⓘ paragraph, no footer sentence, and both forms keep 128 (and 64 and 32).
+    // An older launcher: no row, no ⓘ paragraph, no footer sentence, and the form keeps 128 (and 64 and 32).
     app.post_status(&token, json!({})).await;
     let html = app.get_page(&home, &cookie).await.text();
     assert!(!html.contains("quick_control_shortcuts"), "{html}");
     assert!(!html.contains("shortcuts_row"));
     assert!(!html.contains("data-shortcuts-info"));
     assert!(!html.contains("The switches apply to both Settings and Shortcuts."));
-    for section in [Some("quick"), None] {
-        let mut fields = vec![("quick_control_wifi", "on")];
-        if let Some(section) = section {
-            fields.push(("section", section));
-        }
-        let res = save(fields).await;
-        assert!(res.status.is_redirection(), "{}", res.text());
-        assert_eq!(mask(&app, &token).await, 1 | 32 | 64 | 128, "{section:?}");
-    }
+    let res = save(vec![("section", "quick"), ("quick_control_wifi", "on")]).await;
+    assert!(res.status.is_redirection(), "{}", res.text());
+    assert_eq!(mask(&app, &token).await, 1 | 32 | 64 | 128);
 
     // Design 99's launcher: the row first, on, saving itself on #quick-controls; its sub-line, the ⓘ and the footer.
     report(&app, &token, contract()["report"].clone()).await;
@@ -250,8 +244,7 @@ async fn the_home_form_keeps_bit_128_without_its_row() {
     ));
     assert!(nb.contains("Bryterne gjelder både Innstillinger og Snarveier."));
 
-    // With the row: the switch decides bit 128; 64 (no Flymodus row in these saves) and 32 are still kept - on both
-    // forms.
+    // With the row: the switch decides bit 128; 64 (no Flymodus row in these saves) and 32 are still kept.
     let res = save(vec![
         ("section", "quick"),
         ("shortcuts_row", "1"),
@@ -262,6 +255,7 @@ async fn the_home_form_keeps_bit_128_without_its_row() {
     app.assert_lands(&res, &cookie).await;
     assert_eq!(mask(&app, &token).await, 1 | 32 | 64);
     let res = save(vec![
+        ("section", "quick"),
         ("shortcuts_row", "1"),
         ("quick_control_wifi", "on"),
         ("quick_control_shortcuts", "on"),
@@ -269,7 +263,12 @@ async fn the_home_form_keeps_bit_128_without_its_row() {
     .await;
     assert!(res.status.is_redirection());
     assert_eq!(mask(&app, &token).await, 1 | 32 | 64 | 128);
-    save(vec![("shortcuts_row", "1"), ("quick_control_wifi", "on")]).await;
+    save(vec![
+        ("section", "quick"),
+        ("shortcuts_row", "1"),
+        ("quick_control_wifi", "on"),
+    ])
+    .await;
     assert_eq!(mask(&app, &token).await, 1 | 32 | 64);
     let res = save(vec![
         ("section", "quick"),

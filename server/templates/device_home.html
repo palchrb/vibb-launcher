@@ -22,8 +22,7 @@
         {% if let Some(note) = clock_warning %}
         {% include "partials/note_warning.html" %}
         {% endif %}
-        {#- One form (design 31 §5.6): the handler writes all three values; a post without
-            clock_format (an older cached page) keeps the stored one (design 34 P12). -#}
+        {#- One form (design 31 §5.6): the handler writes all three values (design 34 P12). -#}
         <form method="post" action="/devices/{{ device.id }}/launcher#layout" class="group">
             <label class="row">
                 <span class="row-label">{{ self.t("device.home.language") }}</span>

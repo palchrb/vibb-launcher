@@ -71,7 +71,7 @@ impl Show {
 /// security log has a line for what changed: `lock_screen_app_changed` when it came on or went
 /// off, `lock_screen_text_changed` when an app on the lock changed its text (coming on with Full
 /// text logs both). 400 for a package that isn't a package name or is Play core, or a `show` that
-/// isn't one of the three (none: [stale_page]); 404 for an unknown device; 500 on a DB error - each
+/// isn't one of the three (or none); 404 for an unknown device; 500 on a DB error - each
 /// with nothing written.
 pub async fn save_app(
     State(state): State<AppState>,
@@ -88,11 +88,7 @@ pub async fn save_app(
     if !lock_glance::valid_package(&package) {
         return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.not_lock_screen_app");
     }
-    let Some(value) = form.get("show") else {
-        // A page from before the select (it posts `on`): nothing written, and what to do.
-        return stale_page(lang).await;
-    };
-    let Some(show) = Show::parse(value) else {
+    let Some(show) = form.get("show").and_then(|value| Show::parse(value)) else {
         return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.pick_lock_screen_show");
     };
     match write_show(&state, id, &package, show).await {
@@ -134,13 +130,6 @@ pub async fn save_app(
             failed(lang)
         }
     }
-}
-
-/// A Lock page loaded before 2026-10-21's select posts the old fields (`on`) or to the removed
-/// `/lock-screen/apps/text`: a 400 that says to reload, nothing written (qa-srv-sweep-resume-code
-/// L6b). The route can go a release after.
-pub async fn stale_page(lang: Lang) -> Response {
-    crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.out_of_date")
 }
 
 /// [save_app]'s write in one transaction: `Ok(None)` = no such device (nothing written), else the

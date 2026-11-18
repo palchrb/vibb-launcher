@@ -924,6 +924,21 @@ pub fn device_page(id: i64, section: Section) -> String {
     }
 }
 
+/// Add Contact's marker and switches as the page posts them with every switch on (design 80 D5).
+pub const ADD_CONTACT_ALL_ON: [(&str, &str); 11] = [
+    ("switches", "on"),
+    ("calls_shown", "on"),
+    ("calls", "on"),
+    ("inbound", "on"),
+    ("outbound", "on"),
+    ("texts_shown", "on"),
+    ("texts", "on"),
+    ("sms_in", "on"),
+    ("sms_out", "on"),
+    ("show_on_home", "on"),
+    ("mms", "on"),
+];
+
 /// A redirect (3xx) to `path` (with its query) and `fragment` (`None`: no `#` at all) - the
 /// redirect table's check (design 31 §5.1).
 #[track_caller]

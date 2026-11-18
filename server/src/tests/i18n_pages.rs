@@ -277,7 +277,6 @@ async fn nb_pages_have_no_english() {
             "/lock",
             "/apps",
             "/home",
-            "/weather",
             "/filter",
             "/calls",
             "/time",
@@ -399,7 +398,11 @@ async fn nb_pages_have_no_english() {
     for (route, form) in [
         (
             format!("/devices/{anna}/contacts"),
-            vec![("name", "Bestemor"), ("number", "abc")],
+            [
+                vec![("name", "Bestemor"), ("number", "abc")],
+                super::ADD_CONTACT_ALL_ON.to_vec(),
+            ]
+            .concat(),
         ),
         (
             format!("/devices/{anna}/zones"),

@@ -23,11 +23,6 @@
 set -euo pipefail
 
 REPO="${KPS_REPO:-palchrb/vibb-launcher}"
-# The pre-monorepo server repo: its installs pass it in (an older install's root-side updater
-# remembered the repo it was installed from). Its releases now live in the monorepo.
-if [ "$REPO" = "palchrb/kid-phone-server" ]; then
-    REPO="palchrb/vibb-launcher"
-fi
 # It goes into the download URLs, so it must be a plain owner/repo and nothing else.
 if ! [[ "$REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
     echo "KPS_REPO must look like owner/repo, got: $REPO" >&2
@@ -35,11 +30,9 @@ if ! [[ "$REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
 fi
 INSTALL_DIR="/opt/kid-phone-server"
 SERVICE_USER="kidphone"
-# The installed server version, for the downgrade check: root's, outside data/. Installs from
-# before 0.67.0 kept it in OLD_UPDATER_DIR, the root helpers' directory (remove_host_helpers). The
-# same lines in install.sh and update.sh.
+# The installed server version, for the downgrade check: root's, outside data/. The same line in
+# install.sh and update.sh.
 VERSION_FILE="/var/lib/kid-phone-server/installed_version"
-OLD_UPDATER_DIR="/opt/kid-phone-server-updater"
 
 # Security review M5: every release file root installs or runs is signed with the project's
 # minisign key, pinned here (the same line in install.sh and update.sh - a server test keeps them
@@ -136,19 +129,15 @@ version_gt() {
 }
 
 # The installed server version (vX.Y.Z), or nothing if unknown: install.sh/update.sh record it in
-# VERSION_FILE, older installs in OLD_UPDATER_DIR - both root's. Nothing in data/ is read (security
-# QA L2: the service user's file could hang root or block every later update); an install with
-# neither file skips the downgrade check.
+# VERSION_FILE, root's. Nothing in data/ is read (security QA L2: the service user's file could
+# hang root or block every later update); an install without the file skips the downgrade check.
 installed_version() {
-    local f v
-    for f in "$VERSION_FILE" "$OLD_UPDATER_DIR/installed_version"; do
-        [ -f "$f" ] || continue
-        v="$(head -c 32 "$f" | tr -d '\n')"
-        if [[ "$v" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "$v"
-            return
-        fi
-    done
+    local v
+    [ -f "$VERSION_FILE" ] || return 0
+    v="$(head -c 32 "$VERSION_FILE" | tr -d '\n')"
+    if [[ "$v" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo "$v"
+    fi
 }
 
 # Refuses to install an older release than the installed one (it would refuse to start on a
@@ -342,15 +331,6 @@ systemctl enable kid-phone-server
 # this works the same whether this is a fresh install or a re-run.
 systemctl restart kid-phone-server
 
-# The host helpers' removal. Since 0.67.0 the server never makes its host do anything (the user,
-# 2026-11-04): no root watcher for its requests (update, restart, apt, Tailscale, reboot, format a
-# drive, restore), no root scheduler for the system's updates, no root copy of the backups to a
-# drive. An install from before has them; this removes them, the last time root touches them. A
-# helper that is running right now is never stopped (an older server's "Update now" runs update.sh
-# inside the watcher's own service): with its unit gone it ends by itself. A backup drive mounted
-# at /mnt/kid-phone-server-backup and its /etc/fstab line are the owner's and stay. The same text
-# in install.sh and update.sh.
-
 # record_version vX.Y.Z: the installed server version, into VERSION_FILE (root's).
 record_version() {
     install -d -m 755 "${VERSION_FILE%/*}"
@@ -358,30 +338,8 @@ record_version() {
     mv -f "$VERSION_FILE.new" "$VERSION_FILE"
 }
 
-remove_host_helpers() {
-    local unit current
-    for unit in kid-phone-server-updater.path kid-phone-server-scheduler.timer kid-phone-server-backup-sync.timer; do
-        systemctl disable --now "$unit" >/dev/null 2>&1 || true
-    done
-    for unit in kid-phone-server-updater kid-phone-server-scheduler kid-phone-server-backup-sync; do
-        rm -f "/etc/systemd/system/$unit.service"
-        rm -rf "/etc/systemd/system/$unit.service.d"
-    done
-    rm -f /etc/systemd/system/kid-phone-server-updater.path \
-        /etc/systemd/system/kid-phone-server-scheduler.timer \
-        /etc/systemd/system/kid-phone-server-backup-sync.timer
-    # The version the downgrade check reads moves out of the directory that goes.
-    current="$(installed_version)"
-    if [ -n "$current" ] && [ ! -f "$VERSION_FILE" ]; then
-        record_version "$current"
-    fi
-    # Root's alone (0700): actions.sh, watcher.sh, scheduler.sh, backup_sync.sh, their run dates.
-    rm -rf "$OLD_UPDATER_DIR"
-    systemctl daemon-reload
-}
 
 record_version "$INSTALLED_VERSION"
-remove_host_helpers
 
 echo ""
 echo "=========================================="

@@ -1,7 +1,7 @@
 //! Design 31 step 9: Settings › Time Rules (`/schedules`), the Daily Limit page, the rule editor
 //! and Device › Time. The POST routes are the step-6 ones; this checks the pages, where every form
 //! returns (the redirect table, §5.1, built from the rendered forms), the `section` split of
-//! `/schedules/device/{id}` (§5.6, H1), refusals in place, local times and the old URLs.
+//! `/schedules/device/{id}` (§5.6, H1), refusals in place and local times.
 
 use axum::http::{Method, StatusCode};
 use serde_json::json;
@@ -199,23 +199,6 @@ async fn time_rules_lists_rules_the_limit_and_the_phones() {
         .unwrap();
     let html = app.get_page("/schedules", &cookie).await.text();
     assert!(section(&html, "screen-time").contains("Can&#39;t be read"));
-}
-
-/// L5: an old per-phone bookmark goes to the phone's Time page; anything else in `device` is
-/// ignored.
-#[tokio::test]
-async fn old_per_phone_schedule_urls_redirect_to_the_time_page() {
-    let app = TestApp::new().await;
-    let cookie = app.admin_cookie().await;
-    let (id, _) = app.enrolled_device("Anna").await;
-    let res = app
-        .get_page(&format!("/schedules?device={id}"), &cookie)
-        .await;
-    assert_redirect(&res, &format!("/devices/{id}/time"), None);
-    let res = app.get_page("/schedules?device=anna", &cookie).await;
-    assert_eq!(res.status, StatusCode::OK);
-    let res = app.get_page("/schedules?device=", &cookie).await;
-    assert_eq!(res.status, StatusCode::OK);
 }
 
 /// Daily Limit: one form, Save returns to its group with the flash; a refused day renders the page
@@ -686,7 +669,7 @@ async fn every_form_on_the_time_pages_returns_to_its_group() {
 /// H1 (§5.6): the Own limit switch and the own limits share `/schedules/device/{id}`; a post with
 /// a section writes only that section. A switch-only post keeps the limits (an unticked switch
 /// sends nothing, and an absent limit used to mean "no limit"); a limits-only post keeps the
-/// switch. A post without a section (an older tab) writes both, as before.
+/// switch. A post without a known section is a 400.
 #[tokio::test]
 async fn a_switch_only_post_keeps_the_limits() {
     let app = TestApp::new().await;
@@ -711,24 +694,18 @@ async fn a_switch_only_post_keeps_the_limits() {
         ("[60,null,null,null,null,null,120]".to_string(), false)
     );
 
-    // The Own limit switch on, then off: the limits stay. An older tab's Own rules switch
-    // (`section=switch`) writes the same column, now the limit's switch alone.
-    for (section, name) in [
-        ("limit", "own_limit"),
-        ("switch", "custom_schedule_enabled"),
-    ] {
-        for on in [true, false] {
-            let mut fields = vec![("section", section)];
-            if on {
-                fields.push((name, "on"));
-            }
-            let res = post(fields).await;
-            assert_redirect(&res, &format!("/devices/{id}/time"), Some("screen-time"));
-            assert_eq!(
-                budget_of(&app, id).await,
-                ("[60,null,null,null,null,null,120]".to_string(), on)
-            );
+    // The Own limit switch on, then off: the limits stay.
+    for on in [true, false] {
+        let mut fields = vec![("section", "limit")];
+        if on {
+            fields.push(("own_limit", "on"));
         }
+        let res = post(fields).await;
+        assert_redirect(&res, &format!("/devices/{id}/time"), Some("screen-time"));
+        assert_eq!(
+            budget_of(&app, id).await,
+            ("[60,null,null,null,null,null,120]".to_string(), on)
+        );
     }
     // The limits while the switch is on: the switch stays on.
     post(vec![("section", "limit"), ("own_limit", "on")]).await;
@@ -737,17 +714,16 @@ async fn a_switch_only_post_keeps_the_limits() {
         budget_of(&app, id).await,
         ("[null,null,30,null,null,null,null]".to_string(), true)
     );
-    // No section: both, as an older tab expects.
-    let res = post(vec![("b1", "15")]).await;
-    assert_redirect(&res, &format!("/devices/{id}/time"), None);
-    assert_eq!(
-        budget_of(&app, id).await,
-        ("[null,15,null,null,null,null,null]".to_string(), false)
-    );
-    // Another section is a 400; a refused limit renders Device › Time (400) as typed, nothing
-    // written.
-    let res = post(vec![("section", "everything")]).await;
-    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    // No section or another one is a 400; a refused limit renders Device › Time (400) as typed,
+    // nothing written.
+    for fields in [
+        vec![("b1", "15")],
+        vec![("section", "switch"), ("custom_schedule_enabled", "on")],
+        vec![("section", "everything")],
+    ] {
+        let res = post(fields).await;
+        assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    }
     let res = post(vec![("section", "budget"), ("b4", "1441")]).await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
     let html = res.text();
@@ -761,14 +737,14 @@ async fn a_switch_only_post_keeps_the_limits() {
     assert!(section(&html, "screen-time").contains("Friday: 0 to 1440 minutes"));
     assert_eq!(
         budget_of(&app, id).await,
-        ("[null,15,null,null,null,null,null]".to_string(), false)
+        ("[null,null,30,null,null,null,null]".to_string(), true)
     );
     let res = app
         .request_form(
             Method::POST,
             "/schedules/device/9999",
             Some(&cookie),
-            &[("section", "switch")],
+            &[("section", "limit")],
         )
         .await;
     assert_eq!(res.status, StatusCode::NOT_FOUND);

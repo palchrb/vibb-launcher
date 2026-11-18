@@ -341,20 +341,14 @@ async fn the_page_saves_on_its_anchors_and_the_home_form_keeps_bit_32() {
     let res = save(&app, &cookie, id, &[("group", "kid-mobile"), ("on", "on")]).await;
     assert_redirect(&res, &format!("/devices/{id}/mobile"), Some("mobile-data"));
     assert_eq!(mask(&app, &token).await, 5 | 32);
-    for section in [Some("quick"), None] {
-        let mut fields = vec![("quick_control_wifi", "on")];
-        if let Some(section) = section {
-            fields.push(("section", section));
-        }
-        app.request_form(
-            Method::POST,
-            &format!("/devices/{id}/policy"),
-            Some(&cookie),
-            &fields,
-        )
-        .await;
-        assert_eq!(mask(&app, &token).await, 1 | 32, "{section:?}");
-    }
+    app.request_form(
+        Method::POST,
+        &format!("/devices/{id}/policy"),
+        Some(&cookie),
+        &[("section", "quick"), ("quick_control_wifi", "on")],
+    )
+    .await;
+    assert_eq!(mask(&app, &token).await, 1 | 32);
     save(&app, &cookie, id, &[("group", "kid-mobile")]).await;
     assert_eq!(mask(&app, &token).await, 1);
     let res = save(

@@ -154,7 +154,8 @@ fn contact_html(html: &str, contact: i64) -> &str {
 
 /// D3 through the contact's form, as autosave posts it: a two-way switch sets both flags, a one-way change under
 /// "on" is taken, a split channel is "Tilpasset" and kept when another field saves, a stale page never undoes a
-/// split (L1), `custom` and an older page take the pair as posted, and `more` brings the Avansert back (D9).
+/// split (L1), `custom` takes the pair as posted, a missing `*_shown` is refused, and `more` brings the Avansert back
+/// (D9).
 #[tokio::test]
 async fn a_contacts_two_way_switches_set_both_flags() {
     let app = TestApp::new().await;
@@ -292,21 +293,27 @@ async fn a_contacts_two_way_switches_set_both_flags() {
         flags(&app, id, c).await,
         [false, true, false, true, false, false]
     );
-    // An older page (no `*_shown`, the old six switches): today's behaviour; an unknown value too (N4).
-    let old: Vec<(String, String)> = [
-        ("inbound", "on"),
-        ("sms_out", "on"),
-        ("texts_shown", "v2"),
-        ("texts", "on"),
-    ]
-    .iter()
-    .map(|(k, v)| (k.to_string(), v.to_string()))
-    .collect();
-    post(&app, &cookie, &action, &old).await;
-    assert_eq!(
-        flags(&app, id, c).await,
-        [true, false, false, false, true, false]
-    );
+    // A missing or unknown `*_shown` (a stale page) is refused and writes nothing.
+    for old in [
+        vec![("inbound", "on"), ("sms_out", "on")],
+        vec![
+            ("calls_shown", "custom"),
+            ("inbound", "on"),
+            ("texts_shown", "v2"),
+            ("texts", "on"),
+        ],
+    ] {
+        let old: Vec<(String, String)> = old
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        let res = post(&app, &cookie, &action, &old).await;
+        assert_eq!(res.status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            flags(&app, id, c).await,
+            [false, true, false, true, false, false]
+        );
+    }
 
     // D9: a save with the Avansert open comes back with it open.
     let html = page(&app, &cookie, &calls).await;
@@ -572,7 +579,13 @@ async fn add_contact_ways_in_and_the_own_number() {
                 Method::POST,
                 &action,
                 Some(&cookie),
-                &[("name", "Meg"), ("number", number), ("switches", "on")],
+                &[
+                    ("name", "Meg"),
+                    ("number", number),
+                    ("switches", "on"),
+                    ("calls_shown", "custom"),
+                    ("texts_shown", "custom"),
+                ],
             )
             .await;
         assert_eq!(res.status, StatusCode::BAD_REQUEST, "{number}");
@@ -611,7 +624,7 @@ async fn add_contact_ways_in_and_the_own_number() {
 }
 
 /// D8: `/calls/settings` split by its section marker - each saving one leaves the other unchanged - and no marker is
-/// the write-all of before.
+/// refused.
 #[tokio::test]
 async fn the_settings_form_is_split_by_section() {
     let app = TestApp::new().await;
@@ -662,17 +675,19 @@ async fn the_settings_form_is_split_by_section() {
         stored().await,
         ("unmanaged".into(), "managed".into(), "signal".into())
     );
-    // No marker: today's write-all (a missing button reads as SMS).
-    app.request_form(
-        Method::POST,
-        &uri,
-        Some(&cookie),
-        &[("calls_mode", "managed"), ("sms_mode", "managed")],
-    )
-    .await;
+    // No marker: refused, nothing written.
+    let res = app
+        .request_form(
+            Method::POST,
+            &uri,
+            Some(&cookie),
+            &[("calls_mode", "managed"), ("sms_mode", "managed")],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
     assert_eq!(
         stored().await,
-        ("managed".into(), "managed".into(), "sms".into())
+        ("unmanaged".into(), "managed".into(), "signal".into())
     );
     // A button post without its picker is refused.
     let res = app
@@ -1216,6 +1231,8 @@ async fn a_learned_number_can_be_added_as_a_contact() {
                 ("name", "Klassekamerat"),
                 ("number", "+4790000009"),
                 ("switches", "on"),
+                ("calls_shown", "custom"),
+                ("texts_shown", "custom"),
             ],
         )
         .await;
@@ -1384,6 +1401,7 @@ async fn an_emergency_number_added_without_js_follows_the_texts_switch() {
                 ("name", ""),
                 ("number", "113"),
                 ("switches", "on"),
+                ("calls_shown", "custom"),
                 ("texts_shown", "off"),
                 ("texts", "on"),
             ],

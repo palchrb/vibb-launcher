@@ -8,8 +8,7 @@
 //!
 //! The per-phone parts (a list on or off for one phone, its own domains, the blocked-domain log)
 //! are on the phone's Web Filter page since design 31 step 5 (`device_pages::view_filter`,
-//! `/devices/{id}/filter`); `/dns?device=` and `/dns/log?device=` redirect there. Their POST
-//! routes are shared and return to the page named in their `back` field ([back_to]).
+//! `/devices/{id}/filter`). Their POST routes are shared and return to the page named in their `back` field ([back_to]).
 
 use askama::Template;
 use axum::extract::{Path, Query, State};
@@ -583,12 +582,6 @@ fn query_value(value: Option<&String>) -> String {
     form_urlencoded::byte_serialize(value.as_bytes()).collect()
 }
 
-/// `?device=X` (an old bookmark or link): the phone's parts are on its Web Filter page now
-/// (design 31 §3.1, L5). Anything that isn't a phone id is ignored.
-fn old_device_param(params: &HashMap<String, String>) -> Option<i64> {
-    params.get("device").and_then(|s| s.parse::<i64>().ok())
-}
-
 fn read_failed(lang: Lang, err: sqlx::Error) -> Response {
     tracing::error!(%err, "couldn't read the web filter");
     crate::i18n::error(
@@ -605,9 +598,6 @@ pub async fn show_dns_filter(
     lang: Lang,
     Query(params): Query<HashMap<String, String>>,
 ) -> Response {
-    if let Some(id) = old_device_param(&params) {
-        return Redirect::to(&format!("/devices/{id}/filter")).into_response();
-    }
     render_page(&state, &params, None, lang).await
 }
 
@@ -1135,8 +1125,7 @@ pub(crate) fn doh_allowed_notice(params: &HashMap<String, String>) -> Option<Str
 }
 
 /// One phone's setting for one blocklist: `setting` = `default` (no override: the list as it is
-/// for everyone), `on` or `off`. An older page's form (`clear`, else the `enabled` checkbox) still
-/// works. Anything else is a 400; an unknown phone or list a 404. Nudges the phone; back to `back`
+/// for everyone), `on` or `off`. Anything else, or none, is a 400; an unknown phone or list a 404. Nudges the phone; back to `back`
 /// ([back_to]).
 pub async fn set_device_blocklist_override(
     State(state): State<AppState>,
@@ -1148,11 +1137,9 @@ pub async fn set_device_blocklist_override(
         Some("default") => None,
         Some("on") => Some(true),
         Some("off") => Some(false),
-        Some(_) => {
+        _ => {
             return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.unknown_setting");
         }
-        None if form.contains_key("clear") => None,
-        None => Some(form.contains_key("enabled")),
     };
     let result = match setting {
         None => {
@@ -1225,15 +1212,8 @@ crate::i18n::words!(DnsLogTemplate);
 
 /// Blocked Activity (`/dns/log`): the phones, each with its log off or today's count (since local
 /// midnight in the Phone Setup zone, as the Settings row counts), linking to the log on its Web
-/// Filter page (design 31 steps 5 and 14). `?device=X` redirects there (L5). A DB error is a 500.
-pub async fn show_dns_log(
-    State(state): State<AppState>,
-    lang: Lang,
-    Query(params): Query<HashMap<String, String>>,
-) -> Response {
-    if let Some(id) = old_device_param(&params) {
-        return Redirect::to(&format!("/devices/{id}/filter#log")).into_response();
-    }
+/// Filter page (design 31 steps 5 and 14). A DB error is a 500.
+pub async fn show_dns_log(State(state): State<AppState>, lang: Lang) -> Response {
     let zone = crate::display_time::Zone::load(&state.db, lang).await;
     let since = crate::handlers::settings_hub::utc_start_of_day(zone.local(chrono::Utc::now()));
     let phones = sqlx::query_as::<_, (i64, String, Option<bool>, i64)>(

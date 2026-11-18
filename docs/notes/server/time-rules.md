@@ -53,8 +53,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   off, `settings.time_rules.off_for`; a rule that doesn't read says "Can't be read" and still opens), Add Rule, the
   group's footer "Each rule is on for every phone until it is switched off on that phone's Time Rules page", the Daily
   Limit row ("Mon-Fri 90 min · Sat-Sun 2 h", `budget_summary`), a row per phone with its rules in force ("3 rules",
-  its bedtime counted; `data-in-force`) to its Time Rules page. `/schedules?device=X` (an old bookmark) redirects to
-  `/devices/X/time` (L5). **Daily Limit** (`GET /schedules/screen-time`, `schedule_budget.html`): the 7 fields
+  its bedtime counted; `data-in-force`) to its Time Rules page. **Daily Limit** (`GET /schedules/screen-time`, `schedule_budget.html`): the 7 fields
   (`partials/budget_rows.html`, also Device › Time Rules') as one form.
 - **The rule editor** (`GET /schedules/rules/{id}` chained with its POST, `GET /schedules/rules/new` and
   `?device=X` for a phone's own; `schedule_rule.html`): one form, Save at the top (the RuleEditor mockup), Name, Type
@@ -95,9 +94,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   (`notice=gone_unsaved|gone`), nothing written. Daily Limit → `/schedules/screen-time?saved=1#screen-time`. On Device
   › Time Rules each form carries its group's fragment: a rule's switch → `#everyone` / `#own-rules`, the Own limit
   switch → `#screen-time`, the limits → `?saved=budget#screen-time`. The lift forms (the summary's) → `#quick`.
-- **`section` on `/schedules/device/{id}`** (§5.6, H1): `limit` writes only `custom_schedule_enabled` from `own_limit`
-  (an older tab's `switch` the same, from `custom_schedule_enabled`), `budget` only `daily_budget_json` (`COALESCE`
-  of a NULL bind keeps the other), none both (an older tab), another value 400. Logged as `screen_time_saved` with
+- **`section` on `/schedules/device/{id}`** (§5.6, H1): `limit` writes only `custom_schedule_enabled` from `own_limit`,
+  `budget` only `daily_budget_json` (`COALESCE` of a NULL bind keeps the other), none or another value 400. Logged as `screen_time_saved` with
   "Own limit on/off" (`security.detail.screen_time.own_limit.*`; the old rows' "Own rules on/off" keep their keys).
   Pinned by `tests::time_pages::a_switch_only_post_keeps_the_limits`.
 - **Refusals in place**: a rule (no name, a day with one time or a time that isn't `HH:MM`, more than 50 apps) or a

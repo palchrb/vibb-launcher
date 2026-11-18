@@ -907,8 +907,9 @@ async fn load_page(
                 .get("number")
                 .and_then(|raw| phone::normalize(raw, &default_country_code).ok())
                 .is_some_and(|number| emergency::is_emergency(&number, &default_country_code));
+            // A post the save refused as stale never gets here; all off if one did (fail closed).
             let ((inbound, outbound), (sms_in, sms_out)) =
-                calls_form::resolve(sent, None, emergency);
+                calls_form::resolve(sent, None, emergency).unwrap_or_default();
             [
                 inbound,
                 outbound,
@@ -2028,23 +2029,21 @@ pub async fn save_settings(
     Path(id): Path<i64>,
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
-    // Design 80 D8 (design 31 §5.6): the page splits this form in two, each with its section marker, and a marked
-    // post writes only its section - `button` the phone's default Message button (in the page's Avansert),
-    // `channels` the two modes. No marker (an older page) is the write-all of before.
-    let section = form.get("section").map(String::as_str);
-    // Code QA N2: an unknown marker is refused, never the write-all (it would reset the default Message button).
-    if section.is_some_and(|s| s != "button" && s != "channels") {
+    // Design 80 D8 (design 31 §5.6): the page splits this form in two, each with its section marker, and a post
+    // writes only its section - `button` the phone's default Message button (in the page's Avansert), `channels` the
+    // two modes. A missing or unknown marker is refused (code QA N2).
+    let section = form.get("section").map(String::as_str).unwrap_or("");
+    if section != "button" && section != "channels" {
         return bad_request(lang, "error.unknown_section");
     }
-    let default_message_app = form
-        .get("default_message_app")
-        .map(String::as_str)
-        .or((section != Some("button")).then_some("sms"));
-    let Some(default_message_app) = default_message_app.filter(|app| MESSAGE_APPS.contains(app))
-    else {
-        return bad_request(lang, "error.unknown_message_app");
-    };
-    if section == Some("button") {
+    if section == "button" {
+        let Some(default_message_app) = form
+            .get("default_message_app")
+            .map(String::as_str)
+            .filter(|app| MESSAGE_APPS.contains(app))
+        else {
+            return bad_request(lang, "error.unknown_message_app");
+        };
         let result = sqlx::query(
             "UPDATE device_policy SET default_message_app = ?, updated_at = datetime('now') \
              WHERE device_id = ?",
@@ -2063,7 +2062,6 @@ pub async fn save_settings(
             Err(err) => db_error(lang, id, err),
         };
     }
-    let channels_only = section == Some("channels");
     // Design 77 D2: each channel's state; a missing or unknown one is refused, never guessed.
     let mode = |key: &str| {
         form.get(key)
@@ -2117,16 +2115,13 @@ pub async fn save_settings(
              roles_changed_at = CASE WHEN calls_mode != ?1 OR sms_mode != ?2 THEN datetime('now') \
                                      ELSE roles_changed_at END, \
              calls_mode = ?1, sms_mode = ?2, calls_managed = ?3, calls_enabled = ?4, sms_enabled = ?5, \
-             default_message_app = CASE WHEN ?6 THEN default_message_app ELSE ?7 END, \
-             updated_at = datetime('now') WHERE device_id = ?8",
+             updated_at = datetime('now') WHERE device_id = ?6",
         )
         .bind(calls_mode)
         .bind(sms_mode)
         .bind(managed)
         .bind(calls_enabled)
         .bind(sms_enabled)
-        .bind(channels_only)
-        .bind(default_message_app)
         .bind(id)
         .execute(&mut *tx)
         .await?
@@ -2192,7 +2187,7 @@ const REQUEST_ADD_SWITCHES: [bool; 6] = [true, true, false, true, true, false];
 /// the global contact with that number (renaming it - the name is shared by every device that
 /// has it) and attaches it at the end of the list. Its switches are the form's (design 77 R2-M1: the form says
 /// `switches`, and a missing one is off - "Opprett kontakt…" sends "Kan sende melding til" alone); a post without
-/// them gets every flag on, as before. "Kan sende melding til" is never stored for an emergency number (R2-H1). The
+/// the marker is a 400 and writes nothing. "Kan sende melding til" is never stored for an emergency number (R2-H1). The
 /// kid's open requests for the number - and the one "Legg til…" came from (`request`) - are answered `added` in the
 /// same transaction, and that request's Matrix ID becomes the contact's only with "Bruk Matrix-ID-en" ticked
 /// (`use_matrix`; design 77 §14, R2-M1). Back to its row; a refusal renders the page (400) with Add Contact open, what
@@ -2206,15 +2201,18 @@ pub async fn add_contact(
     if let Some(contact_id) = form.get("contact_id") {
         return add_family_contact(&state, lang, id, contact_id).await;
     }
+    // The add form always sends its `switches` marker and both `*_shown` (design 80 D5); without them it is stale.
+    if !form.contains_key("switches") || calls_form::resolve(&form, None, false).is_none() {
+        return bad_request(lang, "error.out_of_date");
+    }
     let name = form.get("name").map(|s| s.trim()).unwrap_or("");
     let raw_number = form.get("number").map(String::as_str).unwrap_or("");
-    let with_switches = form.contains_key("switches");
     let state = &state;
     let form = &form;
     let refuse = |field: &'static str, why: String| async move {
         let shown = Shown {
             add: Some((name, raw_number, field, why)),
-            add_sent: with_switches.then_some(form),
+            add_sent: Some(form),
             ..Default::default()
         };
         render(state, id, StatusCode::BAD_REQUEST, shown, lang).await
@@ -2255,22 +2253,20 @@ pub async fn add_contact(
         Ok(_) => {}
         Err(err) => return db_error(lang, id, err),
     }
-    // Design 80 D3/D5: the form's two-way switches and Avansert resolved to the pairs (a post without `switches`,
-    // an older page, gets every flag on, as before).
-    let switches = if with_switches {
-        let ((inbound, outbound), (sms_in, sms_out)) =
-            calls_form::resolve(form, None, emergency::is_emergency(&number, &cc));
-        [
-            inbound,
-            outbound,
-            form.contains_key("show_on_home"),
-            sms_in,
-            sms_out,
-            form.contains_key("mms"),
-        ]
-    } else {
-        [true; 6]
+    // Design 80 D3/D5: the form's two-way switches and Avansert resolved to the pairs.
+    let Some(((inbound, outbound), (sms_in, sms_out))) =
+        calls_form::resolve(form, None, emergency::is_emergency(&number, &cc))
+    else {
+        return bad_request(lang, "error.out_of_date");
     };
+    let switches = [
+        inbound,
+        outbound,
+        form.contains_key("show_on_home"),
+        sms_in,
+        sms_out,
+        form.contains_key("mms"),
+    ];
     // Design 77 §14 (QA M1): from a kid's live request, a number the family already has keeps its contact's name -
     // judged by the number this form saves, not the one the kid asked for. A different typed name is refused in place,
     // with the kept name in the field and why, never silently ignored; saving again adds the contact under it.
@@ -2293,7 +2289,7 @@ pub async fn add_contact(
                 let why = t_params(lang, "device.requests.kept_refused", &[("contact", &kept)]);
                 let shown = Shown {
                     add: Some((kept.as_str(), raw_number, "name", why)),
-                    add_sent: with_switches.then_some(form),
+                    add_sent: Some(form),
                     ..Default::default()
                 };
                 return render(state, id, StatusCode::BAD_REQUEST, shown, lang).await;
@@ -2496,7 +2492,8 @@ pub(crate) fn valid_matrix_id(value: &str) -> bool {
 /// Saves one contact's flags and Message button, scoped to this device. Back to its row, open;
 /// a Matrix ID that isn't one renders the page (400) with the row open, what was sent and the
 /// reason under the field; a contact that isn't on this phone (removed meanwhile) returns to
-/// `#contacts` saying nothing was saved. An unknown phone is a 404.
+/// `#contacts` saying nothing was saved; a `*_shown` the page sends that is missing or unknown is a
+/// 400 and writes nothing. An unknown phone is a 404.
 pub async fn update_contact(
     State(state): State<AppState>,
     lang: Lang,
@@ -2529,11 +2526,7 @@ pub async fn update_contact(
                     why: t(lang, "device.calls.matrix_refused").to_string(),
                     sent: Some(&form),
                     // Design 80 L2: the redraw shows the channels as the save would have stored them.
-                    pairs: Some(calls_form::resolve(
-                        &form,
-                        Some(stored.pairs),
-                        stored.emergency,
-                    )),
+                    pairs: calls_form::resolve(&form, Some(stored.pairs), stored.emergency),
                 }),
                 ..Default::default()
             };
@@ -2544,13 +2537,17 @@ pub async fn update_contact(
     let result = async {
         let mut tx = state.db.begin().await?;
         let Some(stored) = stored_channels(&mut *tx, id, contact_id).await? else {
-            return Ok(0);
+            return Ok(Some(0));
         };
         // Design 80 D3: each channel's pair from its two-way switch, its one-way switches and what the page showed
         // (the stale-page guard keeps a split made meanwhile); "Kan sende melding til" is never stored for an
         // emergency number (design 77 R2-H1: its switch is disabled, and the policy never sends it).
-        let ((inbound, outbound), (sms_in, sms_out)) =
-            calls_form::resolve(&form, Some(stored.pairs), stored.emergency);
+        // A `*_shown` missing or unknown (a stale page): refused, nothing written.
+        let Some(((inbound, outbound), (sms_in, sms_out))) =
+            calls_form::resolve(&form, Some(stored.pairs), stored.emergency)
+        else {
+            return Ok(None);
+        };
         let updated = sqlx::query(
             "UPDATE device_contacts SET allow_inbound = ?, allow_outbound = ?, show_on_home = ?, \
              sms_in = ?, sms_out = ?, mms = ?, message_app = ?, \
@@ -2572,13 +2569,14 @@ pub async fn update_contact(
         .await?
         .rows_affected();
         tx.commit().await?;
-        Ok::<_, sqlx::Error>(updated)
+        Ok::<_, sqlx::Error>(Some(updated))
     }
     .await;
     match result {
-        Ok(0) => gone(&state, id, contact_id, true, lang).await,
+        Ok(None) => bad_request(lang, "error.out_of_date"),
+        Ok(Some(0)) => gone(&state, id, contact_id, true, lang).await,
         // D9: back to the row, its Avansert as it was (`more`, kept in step by static/contact-form.js).
-        Ok(_) => {
+        Ok(Some(_)) => {
             let more = form.get("more").is_some_and(|m| m == "1");
             saved(&state, id, contact_return(id, contact_id, more))
         }

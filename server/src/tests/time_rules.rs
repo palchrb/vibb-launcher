@@ -431,7 +431,7 @@ async fn invalid_rule_and_budget_forms_are_rejected() {
             Method::POST,
             "/schedules/device/9999",
             Some(&cookie),
-            &[("b0", "10")],
+            &[("section", "budget"), ("b0", "10")],
         )
         .await;
     assert_eq!(res.status, StatusCode::NOT_FOUND);
@@ -1088,7 +1088,7 @@ async fn new_admin_routes_refuse_without_a_session_and_write_nothing() {
         ("/schedules/global".into(), vec![("b0", "5")]),
         (
             format!("/schedules/device/{id}"),
-            vec![("custom_schedule_enabled", "on"), ("b0", "5")],
+            vec![("section", "budget"), ("b0", "5")],
         ),
         (
             format!("/schedules/device/{id}"),
@@ -1366,7 +1366,7 @@ async fn parent_edits_are_in_the_security_log() {
         Method::POST,
         &format!("/schedules/device/{id}"),
         Some(&cookie),
-        &[("b0", "30")],
+        &[("section", "limit")],
     )
     .await;
     app.request_form(
