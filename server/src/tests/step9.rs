@@ -203,9 +203,10 @@ async fn kiosk_block_switch_and_play_not_suspendable() {
             .unwrap();
     assert_eq!(stored, Some(false));
     let html = page(&app, &cookie, &format!("/devices/{id}/advanced")).await;
-    // The parent's block-off choice: no warning row, the sentence behind the block switch's (i).
-    assert!(
-        !html.contains("Play can&#39;t be paused on this phone"),
+    // The parent's block-off choice: no warning row, the sentence behind the block switch's (i) alone.
+    assert_eq!(
+        html.matches("Play can&#39;t be paused on this phone").count(),
+        1,
         "{html}"
     );
     assert!(html.contains("data-note=\"play-openable\""), "{html}");
