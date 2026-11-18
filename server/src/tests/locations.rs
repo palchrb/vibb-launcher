@@ -297,8 +297,8 @@ async fn a_delivered_command_is_not_shown_as_done() {
         .await
         .unwrap();
     }
-    // Find Phone (design 88): what is in flight - the waiting ring, the lock not confirmed yet; the
-    // stop, possibly lost, is in the phone's Activity page below.
+    // Find Phone (design 88): its newest three requests - the waiting ring, the lock not confirmed
+    // yet and the stop, possibly lost (the newest Stop Ringing whatever became of it).
     let page = app
         .get_page(&format!("/devices/{id}/find"), &cookie)
         .await
@@ -310,7 +310,11 @@ async fn a_delivered_command_is_not_shown_as_done() {
         "{}",
         row("lock")
     );
-    assert!(!page.contains("data-command=\"stop_ring\""), "{page}");
+    assert!(
+        row("stop_ring").contains(">Not confirmed<"),
+        "{}",
+        row("stop_ring")
+    );
     // A result is done: not a request any more (design 48 §1.4), a row of the phone's Activity.
     assert!(!page.contains("data-command=\"locate\""), "{page}");
     let page = app
