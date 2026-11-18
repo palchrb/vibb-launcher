@@ -6,7 +6,6 @@ import com.kidslauncher.mdm.timerules.RuleLifts
 import com.kidslauncher.mdm.timerules.TimeLock
 import com.kidslauncher.mdm.timerules.TimePolicy
 import com.kidslauncher.mdm.timerules.decideTimeLock
-import com.kidslauncher.mdm.timerules.legacyTimePolicy
 import java.time.LocalDateTime
 
 /**
@@ -29,14 +28,9 @@ enum class LockReason {
  */
 object KidModeEnforcer {
 
-    /** The time rules and budget [policy] enforces: its `time_policy`, or an older server's fixed
-     * weekday/weekend/bedtime windows converted to rules. `null` = no policy at all. */
+    /** The time rules and budget [policy] enforces: its `time_policy`, or none. `null` = no policy at all. */
     fun timePolicyOf(policy: PolicyResponse?): TimePolicy? = policy?.let {
-        it.timePolicy ?: legacyTimePolicy(
-            it.weekdayStartMinutes, it.weekdayEndMinutes,
-            it.weekendStartMinutes, it.weekendEndMinutes,
-            it.bedtimeStartMinutes, it.bedtimeEndMinutes,
-        )
+        it.timePolicy ?: TimePolicy(dailyBudgetMinutes = List(7) { null })
     }
 
     /**

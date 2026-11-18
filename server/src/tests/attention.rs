@@ -107,7 +107,6 @@ async fn each_fact_raises_its_own_row() {
                                   "lock_reason": "NONE", "lifts_active": [],
                                   "ledger_unreadable": true}}),
         ),
-        ("launcher-without-rules", json!({"capabilities": []})),
         // Design 31 step 3 fix round (qa-31-s3-code M4): install mode opens the Play Store.
         (
             "play-install-mode",

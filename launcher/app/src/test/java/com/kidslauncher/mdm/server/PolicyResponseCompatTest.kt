@@ -23,7 +23,7 @@ import java.io.File
 
 /**
  * The cached policy blob and the server response must keep decoding across launcher and server
- * versions. The fixture has exactly the 17 keys kid-phone-server's `policy_json_keys_snapshot`
+ * versions. The fixture has a core subset of the keys the server's `policy_json_keys_snapshot`
  * test pins, in the server's field order, with realistic values.
  */
 class PolicyResponseCompatTest {
@@ -31,12 +31,6 @@ class PolicyResponseCompatTest {
     private val serverResponse = """
         {
           "allowlist": ["org.example.music", "org.example.chat"],
-          "weekday_start_minutes": 420,
-          "weekday_end_minutes": 1200,
-          "weekend_start_minutes": 480,
-          "weekend_end_minutes": 1260,
-          "bedtime_start_minutes": 1260,
-          "bedtime_end_minutes": 420,
           "kiosk_desired": true,
           "lock_task_features": 63,
           "override_pin_hash": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
@@ -56,7 +50,6 @@ class PolicyResponseCompatTest {
         assertTrue(cached is CachedPolicy.Ok)
         val policy = (cached as CachedPolicy.Ok).policy
         assertEquals(listOf("org.example.music", "org.example.chat"), policy.allowlist)
-        assertEquals(1260, policy.bedtimeStartMinutes)
         assertEquals(true, policy.kioskDesired)
         assertEquals(63L, policy.lockTaskFeatures)
         assertEquals(3L, policy.quickControlsMask)

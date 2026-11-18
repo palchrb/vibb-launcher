@@ -35,10 +35,8 @@ import kotlinx.serialization.Serializable
  * them. [hardening] is the phone-hardening switches ([HardeningPolicy]); `null` (older server)
  * means every switch's default. [launcherUi] is the parent's language and home-grid choice
  * ([LauncherUi]); `null` (older server) means the defaults. [timePolicy] is the named time rules,
- * daily budget and the parent's lifts (handy step 6); `null` from an older server, whose fixed
- * windows above are then converted ([com.kidslauncher.mdm.server.KidModeEnforcer.timePolicyOf]).
- * Once a phone has had one, a response without it is rejected ([com.kidslauncher.mdm.server.judgeFresh]).
- * The fixed windows are still sent (frozen) for older launchers. [locationPolicy]: when location
+ * daily budget and the parent's lifts (handy step 6); `null` means no rules. Once a phone has had one, a
+ * response without it is rejected ([com.kidslauncher.mdm.server.judgeFresh]). [locationPolicy]: when location
  * goes into the status report; `null` (older server) keeps the old every-sync behaviour.
  * A 0.19 server's `push` (FCM, removed in design 19) is an unknown key and ignored.
  * [kidLock]: the kid's PIN for handy's own lock screen (step 10).
@@ -46,12 +44,6 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class PolicyResponse(
     val allowlist: List<String>? = null,
-    val weekdayStartMinutes: Int? = null,
-    val weekdayEndMinutes: Int? = null,
-    val weekendStartMinutes: Int? = null,
-    val weekendEndMinutes: Int? = null,
-    val bedtimeStartMinutes: Int? = null,
-    val bedtimeEndMinutes: Int? = null,
     val kioskDesired: Boolean = false,
     val lockTaskFeatures: Long = 0,
     val overridePinHash: String? = null,

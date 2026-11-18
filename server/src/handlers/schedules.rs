@@ -1974,15 +1974,6 @@ async fn render_device_time(
     };
 
     let mut warnings = Vec::new();
-    if crate::handlers::devices::launcher_without_rules(latest.as_ref()) {
-        warnings.push(Note {
-            warning: true,
-            title: t(lang, "device.time.too_old").to_string(),
-            value: None,
-            detail: Some(t(lang, "device.time.too_old_sub").to_string()),
-            fix: None,
-        });
-    }
     if report.as_ref().is_some_and(|(_, r)| r.ledger_unreadable) {
         warnings.push(Note {
             warning: true,

@@ -359,12 +359,7 @@ async fn the_badge_counts_the_device_pages_attention_rows() {
         .await
         .text();
     let rows = attention_rows(&anna_page);
-    for key in [
-        "do-not-disturb",
-        "google-backup",
-        "no-parent-pin",
-        "launcher-without-rules",
-    ] {
+    for key in ["do-not-disturb", "google-backup", "no-parent-pin"] {
         assert!(rows.iter().any(|r| r == key), "{key}: {rows:?}");
     }
     // Alarms first, each row a link to its fix.
@@ -375,9 +370,6 @@ async fn the_badge_counts_the_device_pages_attention_rows() {
         "<a class=\"attention attention-alarm\" href=\"/devices/{anna}/advanced#restrictions\" data-attention=\"google-backup\">"
     )));
     assert!(anna_page.contains(">Do Not Disturb is on</span>"));
-    assert!(anna_page.contains(&format!(
-        "<a class=\"attention attention-action\" href=\"/devices/{anna}/time\" data-attention=\"launcher-without-rules\">"
-    )));
     // The targets exist on their pages (the summary's own: the quick actions).
     assert!(anna_page.contains("<section id=\"quick\""));
     // Device › Time's warnings sit at its top: the page answers.
@@ -385,7 +377,6 @@ async fn the_badge_counts_the_device_pages_attention_rows() {
         .get_page(&format!("/devices/{anna}/time"), &cookie)
         .await;
     assert_eq!(time.status, axum::http::StatusCode::OK);
-    assert!(time.text().contains("Vibb One too old for time rules"));
     for (page, anchor) in [
         ("about", "sound"),
         ("about", "software"),

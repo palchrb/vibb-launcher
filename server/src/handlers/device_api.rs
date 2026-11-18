@@ -312,43 +312,10 @@ pub(crate) async fn build_policy(
         .transpose()
         .map_err(PolicyError::CorruptAllowlist)?;
 
-    // The legacy schedule fields: the global default unless this device has its own override
-    // turned on - see migrations/0017_schedules_page.sql (since 0115 that switch is the own daily
-    // limit's alone; these frozen fields still follow it). Since step 6 they're frozen (converted
-    // into time rules once, `time_rules::migrate_legacy`) and only read by launchers without
-    // `time_rules_v1`. A missing singleton row means "no schedule" (its migration seeds it); a
-    // query error is a 500.
+    // A missing singleton row means "no global limit" (its migration seeds it); a query error is a 500.
     let global = sqlx::query_as::<_, GlobalSchedule>("SELECT * FROM global_schedule WHERE id = 1")
         .fetch_optional(&state.db)
         .await?;
-    let legacy = if policy.custom_schedule_enabled {
-        (
-            policy.weekday_start_minutes,
-            policy.weekday_end_minutes,
-            policy.weekend_start_minutes,
-            policy.weekend_end_minutes,
-            policy.bedtime_start_minutes,
-            policy.bedtime_end_minutes,
-        )
-    } else {
-        let g = global.clone().unwrap_or_default();
-        (
-            g.weekday_start_minutes,
-            g.weekday_end_minutes,
-            g.weekend_start_minutes,
-            g.weekend_end_minutes,
-            g.bedtime_start_minutes,
-            g.bedtime_end_minutes,
-        )
-    };
-    let (
-        weekday_start_minutes,
-        weekday_end_minutes,
-        weekend_start_minutes,
-        weekend_end_minutes,
-        bedtime_start_minutes,
-        bedtime_end_minutes,
-    ) = legacy;
 
     let time_policy = build_time_policy(state, &policy, global.as_ref()).await?;
     // Design 64 step 2: the phone's zones (centre and radius, never the name) while Regularly,
@@ -528,12 +495,6 @@ pub(crate) async fn build_policy(
 
     Ok(PolicyResponse {
         allowlist,
-        weekday_start_minutes,
-        weekday_end_minutes,
-        weekend_start_minutes,
-        weekend_end_minutes,
-        bedtime_start_minutes,
-        bedtime_end_minutes,
         kiosk_desired: policy.kiosk_desired,
         // The block bit travels as `block_activity_start` only (see PolicyResponse).
         lock_task_features: policy.lock_task_features.unwrap_or(0)

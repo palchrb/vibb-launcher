@@ -1026,21 +1026,6 @@ async fn legacy_schedules_become_rules_once() {
     assert_eq!(flag, 1);
 }
 
-#[tokio::test]
-async fn legacy_fields_are_still_sent_for_older_launchers() {
-    let app = TestApp::new().await;
-    let (_, token) = app.enrolled_device("phone").await;
-    sqlx::query(
-        "UPDATE global_schedule SET bedtime_start_minutes = 1260, bedtime_end_minutes = 420",
-    )
-    .execute(&app.db)
-    .await
-    .unwrap();
-    let p = app.policy(&token).await;
-    assert_eq!(p["bedtime_start_minutes"], 1260);
-    assert_eq!(p["bedtime_end_minutes"], 420);
-}
-
 // QA step 6 fix round
 
 async fn count(app: &TestApp, sql: &str) -> i64 {

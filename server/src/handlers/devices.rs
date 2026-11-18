@@ -447,18 +447,6 @@ pub(crate) fn managed_without_pin(policy: &DevicePolicy) -> bool {
     (policy.allowlist_json.is_some() || policy.managed()) && policy.override_pin_hash.is_none()
 }
 
-/// The phone reported, without `time_rules_v1`: it still runs the old schedule.
-pub(crate) fn launcher_without_rules(latest: Option<&DeviceStatus>) -> bool {
-    latest.is_some_and(|s| {
-        !s.capabilities_json
-            .as_deref()
-            .and_then(|j| serde_json::from_str::<Vec<String>>(j).ok())
-            .unwrap_or_default()
-            .iter()
-            .any(|c| c == "time_rules_v1")
-    })
-}
-
 /// A phone's name is at most this many characters (it fills a row and a page title).
 pub(crate) const MAX_DEVICE_NAME_CHARS: usize = 40;
 
@@ -2340,9 +2328,7 @@ async fn render_device(
     // "Needs attention" while Device › Time shows a warning, as the Music row does.
     let (time_value, time_attention) = match &time_rules {
         Err(_) => (unreadable(), false),
-        Ok(_) if facts.ledger_unreadable || facts.launcher_without_rules => {
-            (needs_attention(), true)
-        }
+        Ok(_) if facts.ledger_unreadable => (needs_attention(), true),
         // A rule or the own limit in force that doesn't read: the phone gets a 500 for its
         // settings until it is saved again (qa-31-s9-code N5).
         Ok(rules)

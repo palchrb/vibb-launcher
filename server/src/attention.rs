@@ -73,7 +73,6 @@ pub enum Kind {
     AppPushOutside(usize),
     Calls(CallProblem),
     LedgerUnreadable,
-    LauncherWithoutRules,
     /// Device › Music's warnings (design 31 step 7 fix round, qa-31-s7-code M1), from
     /// `music::music_warnings` like the page's: Vibb without music while entries are on, the music
     /// app not reachable, Storytel's login refused, over the storage limit, the old mobile-data
@@ -162,7 +161,6 @@ impl AttentionItem {
             Kind::AppPushOutside(_) => "app-push-outside",
             Kind::Calls(_) => "calls",
             Kind::LedgerUnreadable => "screen-time-record",
-            Kind::LauncherWithoutRules => "launcher-without-rules",
             Kind::MusicCantDeliver => "music-cant-deliver",
             Kind::MusicUnreachable => "music-unreachable",
             Kind::MusicStorytelRefused => "music-storytel-refused",
@@ -214,7 +212,6 @@ pub struct Facts {
     /// From the call report, in its order (`Waiting` left out by [items]).
     pub calls: Vec<CallProblem>,
     pub ledger_unreadable: bool,
-    pub launcher_without_rules: bool,
     /// Not a row: calls are managed and the launcher screens them, so a no-calls rule really
     /// blocks calls (the lock badge's "calls off", qa-31-s2-code M3).
     pub calls_enforced: bool,
@@ -272,7 +269,6 @@ pub fn items(lang: Lang, device_id: i64, facts: &Facts) -> Vec<AttentionItem> {
         add(problem.needs_attention(), Kind::Calls(*problem));
     }
     add(facts.ledger_unreadable, Kind::LedgerUnreadable);
-    add(facts.launcher_without_rules, Kind::LauncherWithoutRules);
     let music = &facts.music;
     add(music.cant_deliver, Kind::MusicCantDeliver);
     add(music.unreachable, Kind::MusicUnreachable);
@@ -334,7 +330,6 @@ fn level(kind: Kind) -> Level {
         | Kind::AppPushOutside(_)
         | Kind::Calls(_)
         | Kind::LedgerUnreadable
-        | Kind::LauncherWithoutRules
         | Kind::MusicCantDeliver
         | Kind::MusicUnreachable
         | Kind::MusicStorytelRefused
@@ -384,7 +379,6 @@ fn title(lang: Lang, kind: Kind) -> String {
         }
         Kind::Calls(problem) => problem.title(lang),
         Kind::LedgerUnreadable => t(lang, "device.attention.screen_time_record"),
-        Kind::LauncherWithoutRules => t(lang, "device.attention.launcher_without_rules"),
         Kind::MusicCantDeliver => t(lang, "device.attention.music_cant_deliver"),
         Kind::MusicUnreachable => t(lang, "device.attention.music_unreachable"),
         Kind::MusicStorytelRefused => t(lang, "device.attention.music_storytel_refused"),
@@ -433,7 +427,7 @@ fn target(kind: Kind, id: i64) -> String {
             return format!("/devices/{id}/calls");
         }
         // Device › Time's warnings at the top of the page (step 9): no fragment needed.
-        Kind::LedgerUnreadable | Kind::LauncherWithoutRules => {
+        Kind::LedgerUnreadable => {
             return format!("/devices/{id}/time");
         }
         // Device › Music's warnings at the top of the page: no fragment needed.
@@ -741,7 +735,6 @@ pub fn facts_of(s: &Sources, now_ms: i64) -> Facts {
             .and_then(|st| st.time_state_json.as_deref())
             .and_then(crate::time_state::TimeReport::parse)
             .is_some_and(|report| report.ledger_unreadable),
-        launcher_without_rules: crate::handlers::devices::launcher_without_rules(latest),
         calls_enforced: calls_enforced(policy, s.call_problems),
         // Device › Music's own warnings, so the rows and the page agree.
         music: {
@@ -799,7 +792,6 @@ mod tests {
             },
             calls: vec![CallProblem::Waiting, CallProblem::AnyoneCanCall],
             ledger_unreadable: true,
-            launcher_without_rules: true,
             music: crate::handlers::music::MusicWarnings {
                 cant_deliver: true,
                 unreachable: true,

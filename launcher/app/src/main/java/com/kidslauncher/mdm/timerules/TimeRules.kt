@@ -10,8 +10,7 @@ import java.time.ZoneId
 /*
  * Named time rules and the daily screen-time budget - pure Kotlin, no Android imports, unit-tested
  * in TimeRulesTest. Design: docs/design/06-time-rules.md in the handy workspace. The server sends
- * `PolicyResponse.timePolicy`; an older server's weekday/weekend/bedtime windows are converted with
- * [legacyTimePolicy] (the same algorithm as kid-phone-server's `time_rules::legacy_rules`).
+ * `PolicyResponse.timePolicy`.
  *
  * Fail closed: a rule whose `days` isn't 7 entries is always active, an out-of-range window covers
  * its whole day, an unknown kind counts as custom, and a budget array of the wrong size means 0
@@ -283,51 +282,6 @@ fun nextBoundary(policy: TimePolicy?, now: Instant, zone: ZoneId, extraInstants:
         }
     }
     return candidates.filter { it.isAfter(now) }.minOrNull()
-}
-
-/**
- * An older server's fixed windows as rules (kid-phone-server's `time_rules::legacy_rules` does the
- * same for its migration). Old meaning: the weekday/weekend window is when the phone may be used
- * (outside it: locked), bedtime is when it's locked; `null` or start == end = no restriction; all
- * on the local minute of day. Calls stayed allowed during both. Names are left empty: the lock
- * screen then shows its own localized label for the kind.
- */
-fun legacyTimePolicy(
-    weekdayStart: Int?,
-    weekdayEnd: Int?,
-    weekendStart: Int?,
-    weekendEnd: Int?,
-    bedtimeStart: Int?,
-    bedtimeEnd: Int?,
-): TimePolicy {
-    val rules = mutableListOf<TimeRule>()
-    if (bedtimeStart != null && bedtimeEnd != null && bedtimeStart != bedtimeEnd) {
-        rules += TimeRule(-1, "", KIND_BEDTIME, callsAllowed = true, days = List(7) { TimeWindow(bedtimeStart, bedtimeEnd) })
-    }
-    fun allowed(day: Int): TimeWindow? {
-        val (s, e) = if (day < 5) weekdayStart to weekdayEnd else weekendStart to weekendEnd
-        return if (s == null || e == null || s == e) null else TimeWindow(s, e)
-    }
-    val windows = (0 until 7).map(::allowed)
-    val combinable = windows.all { it != null && it.start < it.end } &&
-        (0 until 7).all { d -> windows[(d + 1) % 7]!!.start <= windows[d]!!.end }
-    if (combinable) {
-        rules += TimeRule(-2, "", KIND_CUSTOM, callsAllowed = true, days = (0 until 7).map { d ->
-            TimeWindow(windows[d]!!.end, windows[(d + 1) % 7]!!.start)
-        })
-    } else {
-        val morning = windows.map { w -> w?.takeIf { it.start < it.end && it.start > 0 }?.let { TimeWindow(0, it.start) } }
-        val evening = windows.map { w ->
-            when {
-                w == null -> null
-                w.start < w.end -> TimeWindow(w.end, 0)
-                else -> TimeWindow(w.end, w.start)
-            }
-        }
-        if (morning.any { it != null }) rules += TimeRule(-2, "", KIND_CUSTOM, callsAllowed = true, days = morning)
-        if (evening.any { it != null }) rules += TimeRule(-3, "", KIND_CUSTOM, callsAllowed = true, days = evening)
-    }
-    return TimePolicy(rules = rules, dailyBudgetMinutes = List(7) { null })
 }
 
 /** Local date-time of [instant] in [zone]. */

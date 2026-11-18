@@ -331,8 +331,6 @@ async fn policy_json_keys_snapshot() {
             "app_permissions",
             "app_updates_wifi_only",
             "apps_mobile",
-            "bedtime_end_minutes",
-            "bedtime_start_minutes",
             "block_activity_start",
             "bluetooth_any_device",
             "boot_cover",
@@ -369,10 +367,6 @@ async fn policy_json_keys_snapshot() {
             "time_policy",
             "update_fence",
             "vpn_filter_enabled",
-            "weekday_end_minutes",
-            "weekday_start_minutes",
-            "weekend_end_minutes",
-            "weekend_start_minutes",
         ]
     );
 

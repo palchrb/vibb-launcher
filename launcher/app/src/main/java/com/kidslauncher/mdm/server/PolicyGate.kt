@@ -92,7 +92,7 @@ val com.kidslauncher.mdm.server.dto.CallPolicy.hasChannelModes: Boolean
  *   cached policy, with the last managed call rules, stays in force.
  * - no `time_policy` on a phone that has had one ([timePolicySeen], written with the cache, or a
  *   cached policy with one): our server always sends it (handy step 6), so the rules, budget and
- *   lifts the phone has stay in force rather than falling back to the frozen legacy windows.
+ *   lifts the phone has stay in force.
  * - a `call_policy` without `calls_mode`/`sms_mode` on a phone that has had them ([channelModesSeen], written with the
  *   cache, or a cached policy with them; design 77 D2): a rolled-back server can't loosen a channel silently. A mode
  *   that isn't one of the three is rejected always - we can't tell what it would allow.
@@ -143,15 +143,9 @@ data class LastEnforcedPlan(
     val allowlist: List<String>? = emptyList(),
     val kioskDesired: Boolean = true,
     val lockTaskFeatures: Long = LOCK_TASK_FEATURE_KEYGUARD.toLong(),
-    val weekdayStartMinutes: Int? = null,
-    val weekdayEndMinutes: Int? = null,
-    val weekendStartMinutes: Int? = null,
-    val weekendEndMinutes: Int? = null,
-    val bedtimeStartMinutes: Int? = null,
-    val bedtimeEndMinutes: Int? = null,
     /** The hardening switches, so a fallback keeps the parent's choices (`null` = defaults). */
     val hardening: HardeningPolicy? = null,
-    /** The time rules and budget, without lifts (`null` = the windows above, converted). */
+    /** The time rules and budget, without lifts (`null` = none). */
     val timePolicy: TimePolicy? = null,
     /** The kiosk app block switch (step 9); missing = off, like [PolicyResponse.blockActivityStart]. */
     val blockActivityStart: Boolean = false,
@@ -176,12 +170,6 @@ data class LastEnforcedPlan(
         allowlist = allowlist,
         kioskDesired = kioskDesired,
         lockTaskFeatures = lockTaskFeatures,
-        weekdayStartMinutes = weekdayStartMinutes,
-        weekdayEndMinutes = weekdayEndMinutes,
-        weekendStartMinutes = weekendStartMinutes,
-        weekendEndMinutes = weekendEndMinutes,
-        bedtimeStartMinutes = bedtimeStartMinutes,
-        bedtimeEndMinutes = bedtimeEndMinutes,
         hardening = hardening,
         timePolicy = timePolicy,
         blockActivityStart = blockActivityStart,
@@ -199,12 +187,6 @@ data class LastEnforcedPlan(
             allowlist = policy.allowlist,
             kioskDesired = policy.kioskDesired,
             lockTaskFeatures = policy.lockTaskFeatures,
-            weekdayStartMinutes = policy.weekdayStartMinutes,
-            weekdayEndMinutes = policy.weekdayEndMinutes,
-            weekendStartMinutes = policy.weekendStartMinutes,
-            weekendEndMinutes = policy.weekendEndMinutes,
-            bedtimeStartMinutes = policy.bedtimeStartMinutes,
-            bedtimeEndMinutes = policy.bedtimeEndMinutes,
             hardening = policy.hardening,
             timePolicy = policy.timePolicy?.copy(lifts = emptyList()),
             blockActivityStart = policy.blockActivityStart,

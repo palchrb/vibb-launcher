@@ -105,12 +105,6 @@ pub struct Device {
 pub struct DevicePolicy {
     pub device_id: i64,
     pub allowlist_json: Option<String>,
-    pub weekday_start_minutes: Option<i64>,
-    pub weekday_end_minutes: Option<i64>,
-    pub weekend_start_minutes: Option<i64>,
-    pub weekend_end_minutes: Option<i64>,
-    pub bedtime_start_minutes: Option<i64>,
-    pub bedtime_end_minutes: Option<i64>,
     pub kiosk_desired: bool,
     pub lock_task_features: Option<i64>,
     pub override_pin_hash: Option<String>,
@@ -157,9 +151,9 @@ pub struct DevicePolicy {
     /// `daily_budget_json` instead of the global one. Until migration 0115 it also swapped
     /// everyone's rules for the phone's own; since then each rule has its own switch
     /// (`device_rule_off`, `time_rules::effective_rule_rows`) and the old choice became those
-    /// rows. The weekday/weekend/bedtime *_minutes columns above are the pre-step-6
-    /// schedule, converted into rules once (`time_rules::migrate_legacy`) and still sent to older
-    /// launchers. See `handlers::schedules`.
+    /// rows. The table's weekday/weekend/bedtime *_minutes columns are the pre-step-6 schedule, read
+    /// only by its one-time conversion into rules (`time_rules::migrate_legacy`). See
+    /// `handlers::schedules`.
     pub custom_schedule_enabled: bool,
     /// Design 77 D2 (migrations/0130_sms.sql): each channel's own state, "off", "managed" or "unmanaged"
     /// ([CHANNEL_MODES]). The old `calls_managed`/`calls_enabled`/`sms_enabled` columns are derived from these
@@ -482,17 +476,11 @@ pub struct DeviceContactRow {
     pub mms: bool,
 }
 
-/// Singleton (always `id = 1`) - the daily limit (and frozen pre-step-6 schedule) every device
+/// Singleton (always `id = 1`) - the daily limit every device
 /// follows unless `device_policy.custom_schedule_enabled` (its own limit) is set. See
 /// `handlers::schedules`.
 #[derive(sqlx::FromRow, Clone, Default)]
 pub struct GlobalSchedule {
-    pub weekday_start_minutes: Option<i64>,
-    pub weekday_end_minutes: Option<i64>,
-    pub weekend_start_minutes: Option<i64>,
-    pub weekend_end_minutes: Option<i64>,
-    pub bedtime_start_minutes: Option<i64>,
-    pub bedtime_end_minutes: Option<i64>,
     /// The global daily screen-time budget (migrations/0025), see `DevicePolicy.daily_budget_json`.
     pub daily_budget_json: String,
 }
@@ -1279,12 +1267,6 @@ pub struct EnrollResponse {
 #[derive(Serialize)]
 pub struct PolicyResponse {
     pub allowlist: Option<Vec<String>>,
-    pub weekday_start_minutes: Option<i64>,
-    pub weekday_end_minutes: Option<i64>,
-    pub weekend_start_minutes: Option<i64>,
-    pub weekend_end_minutes: Option<i64>,
-    pub bedtime_start_minutes: Option<i64>,
-    pub bedtime_end_minutes: Option<i64>,
     pub kiosk_desired: bool,
     pub lock_task_features: i64,
     pub override_pin_hash: Option<String>,
