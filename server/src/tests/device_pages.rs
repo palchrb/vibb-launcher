@@ -52,7 +52,7 @@ async fn about_this_phone_shows_the_last_reports_facts() {
             "interruption_filter": "all",
             "policy_state": "cache_corrupt",
             "battery_optimization_exempt": true,
-            "music_state": { "package": "me.vibb.music", "version_code": 3000 },
+            "music_state": { "package": "me.vibb.music", "version_code": 60009 },
             "time_state": { "lock_reason": "SCHOOL", "active_rule_name": "Skole" },
         }),
     )
@@ -111,8 +111,8 @@ async fn about_this_phone_shows_the_last_reports_facts() {
     assert_eq!(value(&html, "do-not-disturb").as_deref(), Some("Off"));
     assert_eq!(value(&html, "vibb").as_deref(), Some("0.23.6"));
     assert!(html.contains("Full version: 0.23.6-debug."));
-    assert_eq!(value(&html, "music-app").as_deref(), Some("0.3.0"));
-    assert!(html.contains("me.vibb.music, version code 3000."));
+    assert_eq!(value(&html, "music-app").as_deref(), Some("0.6.0"));
+    assert!(html.contains("me.vibb.music, version code 60009."));
     assert_eq!(
         value(&html, "settings").as_deref(),
         Some("Saved settings unreadable")

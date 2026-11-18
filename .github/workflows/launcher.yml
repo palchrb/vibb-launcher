@@ -194,10 +194,8 @@ jobs:
       # versionName MAJOR.MINOR.PATCH[-rc.N], versionCode MAJOR*10_000_000 + MINOR*10_000 + PATCH*10 + N,
       # N = the RC number (1..8, a prerelease) or 9 for the release - every build its own code, so an RC
       # installs over the RC before it and the release over its RCs by Android's own rule
-      # (launcher-v0.36.0-rc.4 = 360004, launcher-v0.36.0 = 360009). The rule before 2026-10-23
-      # (MAJOR*1_000_000 + MINOR*1_000 + PATCH, an RC one less, so every RC of a version shared a code)
-      # built every tag up to launcher-v0.36.0-rc.3; each code of today's rule is above each old one, and
-      # the script refuses a tag below launcher-v0.36.0-rc.4. The launcher (SelfUpdatePlan.kt
+      # (launcher-v0.36.0-rc.4 = 360004, launcher-v0.36.0 = 360009); the script refuses a tag below
+      # launcher-v0.36.0-rc.4. The launcher (SelfUpdatePlan.kt
       # launcherTagVersionCode) and the server (install_now::launcher_tag_version_code) read a tag's code
       # the same way (server/testdata/launcher_tag_codes.json).
       run: |

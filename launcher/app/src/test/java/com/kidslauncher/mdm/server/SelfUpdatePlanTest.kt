@@ -243,8 +243,6 @@ class SelfUpdatePlanTest {
             val tag = row["tag"]!!.jsonPrimitive.content
             val code = row["code"]!!.takeUnless { it is JsonNull }?.jsonPrimitive?.longOrNull
             assertEquals(tag, code, launcherTagVersionCode(tag))
-            // The name only for a tag whose code reads.
-            assertEquals(tag, code != null, launcherTagVersionName(tag) != null)
         }
     }
 
@@ -264,81 +262,11 @@ class SelfUpdatePlanTest {
         assertEquals("an older rc of the running version's", LauncherUpdateStep.ALREADY_RUNNING, running("launcher-v1.3.0-rc.1@5", 10_030_002))
     }
 
-    // ---- RC over RC: one versionCode, another versionName ----------------------------------------
-
-    private fun runningAs(advertised: String, code: Long, name: String?, pending: PendingSelfUpdate? = null) =
-        launcherUpdateStep(advertised, null, null, null, false, pending, true, now, backoff, runningVersionCode = code, runningVersionName = name)
-
     @Test
-    fun `a release tag's versionName is the tag minus launcher-v`() {
-        assertEquals("0.36.0-rc.2", launcherTagVersionName("launcher-v0.36.0-rc.2@5"))
-        assertEquals("0.36.0", launcherTagVersionName("launcher-v0.36.0"))
-        for (bad in listOf("v0.36.0", "launcher-v0.36", "launcher-v0.36.0-beta@5", "launcher-v0.36.0-rc.2x")) {
-            assertEquals(bad, null, launcherTagVersionName(bad))
-        }
-    }
-
-    @Test
-    fun `a build is ahead by a higher code, or by the same code under a newer name`() {
-        assertEquals(true, launcherBuildAhead(36_000, "0.36.0", 35_999, "0.36.0-rc.2"))
-        assertEquals(false, launcherBuildAhead(35_999, "0.36.0-rc.2", 36_000, "0.36.0"))
-        assertEquals("rc.2 over rc.1", true, launcherBuildAhead(35_999, "0.36.0-rc.2", 35_999, "0.36.0-rc.1"))
-        assertEquals("rc.10 over rc.9", true, launcherBuildAhead(35_999, "0.36.0-rc.10", 35_999, "0.36.0-rc.9"))
-        assertEquals("the next version's rc over the release", true, launcherBuildAhead(36_000, "0.36.1-rc.1", 36_000, "0.36.0"))
-        assertEquals("the same build", false, launcherBuildAhead(35_999, "0.36.0-rc.1", 35_999, "0.36.0-rc.1"))
-        assertEquals("rc.1 over rc.2", false, launcherBuildAhead(35_999, "0.36.0-rc.1", 35_999, "0.36.0-rc.2"))
-        assertEquals("the release over the next version's rc", false, launcherBuildAhead(36_000, "0.36.0", 36_000, "0.36.1-rc.1"))
-        // An RC sorts before its own release (qa-rc-to-rc-code R2R-2).
-        assertEquals(true, launcherBuildAhead(5, "0.36.0", 5, "0.36.0-rc.2"))
-        assertEquals(false, launcherBuildAhead(5, "0.36.0-rc.2", 5, "0.36.0"))
-        assertEquals("names that can't be ordered but differ", true, launcherBuildAhead(5, "0.36.0-rc.2", 5, "local"))
-        assertEquals("an unknown name is the running build", false, launcherBuildAhead(35_999, null, 35_999, "0.36.0-rc.1"))
-        assertEquals(false, launcherBuildAhead(35_999, "0.36.0-rc.2", 35_999, null))
-    }
-
-    @Test
-    fun `an rc over an rc of the same version is downloaded, the same name is already running`() {
-        assertEquals(LauncherUpdateStep.DOWNLOAD, runningAs("launcher-v0.36.0-rc.2@5", 35_999, "0.36.0-rc.1"))
-        assertEquals(LauncherUpdateStep.REPLACE_PENDING, runningAs("launcher-v0.36.0-rc.2@5", 35_999, "0.36.0-rc.1", pending))
-        // From launcher-v0.36.0-rc.4 on every build has its own code: the code decides (an old-rule rc.3 takes rc.4).
-        assertEquals(LauncherUpdateStep.DOWNLOAD, runningAs("launcher-v0.36.0-rc.4@5", 35_999, "0.36.0-rc.3"))
-        assertEquals(LauncherUpdateStep.DOWNLOAD, runningAs("launcher-v0.36.1-rc.1@5", 360_009, "0.36.0"))
-        assertEquals(LauncherUpdateStep.DOWNLOAD, runningAs("launcher-v0.36.0@5", 35_999, "0.36.0-rc.2"))
-        assertEquals(LauncherUpdateStep.ALREADY_RUNNING, runningAs("launcher-v0.36.0-rc.2@5", 35_999, "0.36.0-rc.2"))
-        assertEquals(LauncherUpdateStep.ALREADY_RUNNING, runningAs("launcher-v0.36.0-rc.1@5", 35_999, "0.36.0-rc.2"))
-        assertEquals(LauncherUpdateStep.ALREADY_RUNNING, runningAs("launcher-v0.36.0@5", 360_011, "0.36.1-rc.1"))
-        assertEquals(LauncherUpdateStep.ALREADY_RUNNING, runningAs("launcher-v0.36.0-rc.3@5", 360_004, "0.36.0-rc.4"))
-        assertEquals("an rc.4 phone under the 0.34.0 row", LauncherUpdateStep.ALREADY_RUNNING, running("launcher-v0.34.0@5", 360_004))
-        assertEquals("no running name: by the code alone", LauncherUpdateStep.ALREADY_RUNNING, runningAs("launcher-v0.36.0-rc.2@5", 35_999, null))
-    }
-
-    @Test
-    fun `a pending APK of the same code installs only under a newer name, every other check stays`() {
-        fun same(archiveName: String?, ownName: String? = "0.36.0-rc.1", signers: Set<String>? = null) = pendingApkCheck(
-            pending, pending.sizeBytes, pending.sha256, "me.vibb.launcher", 35_999L, "me.vibb.launcher", 35_999L,
-            ourSigners = if (signers == null) emptySet() else setOf("aa"), archiveSigners = signers,
-            archiveVersionName = archiveName, ownVersionName = ownName,
-        )
-        assertEquals(PendingApkCheck.OK, same("0.36.0-rc.2"))
-        assertEquals(PendingApkCheck.SAME_VERSION, same("0.36.0-rc.1"))
-        assertEquals(PendingApkCheck.SAME_VERSION, same("0.36.0-rc.0"))
-        assertEquals("an unreadable name keeps refusing", PendingApkCheck.SAME_VERSION, same(null))
-        assertEquals(PendingApkCheck.SAME_VERSION, same("0.36.0-rc.2", ownName = null))
-        assertEquals("the signer still decides", PendingApkCheck.WRONG_SIGNER, same("0.36.0-rc.2", signers = setOf("bb")))
-        assertEquals(PendingApkCheck.OK, same("0.36.0-rc.2", signers = setOf("aa")))
-        assertEquals(
-            "the first new-rule build over an old-rule rc",
-            PendingApkCheck.OK,
-            pendingApkCheck(pending, pending.sizeBytes, pending.sha256, "me.vibb.launcher", 360_004L, "me.vibb.launcher", 35_999L, archiveVersionName = "0.36.0-rc.4", ownVersionName = "0.36.0-rc.3"),
-        )
-        assertEquals(
-            PendingApkCheck.NOT_OURS,
-            pendingApkCheck(pending, pending.sizeBytes, pending.sha256, "org.example", 35_999L, "me.vibb.launcher", 35_999L, archiveVersionName = "0.36.0-rc.2", ownVersionName = "0.36.0-rc.1"),
-        )
-        assertEquals(
-            PendingApkCheck.DOWNGRADE,
-            pendingApkCheck(pending, pending.sizeBytes, pending.sha256, "me.vibb.launcher", 35_998L, "me.vibb.launcher", 35_999L, archiveVersionName = "0.36.0-rc.9", ownVersionName = "0.36.0-rc.1"),
-        )
+    fun `a tag from before today's rule reads by it, below every build since rc 4`() {
+        assertEquals(350_009L, launcherTagVersionCode("launcher-v0.35.0"))
+        assertEquals("an rc.4 phone under the 0.35.0 row", LauncherUpdateStep.ALREADY_RUNNING, running("launcher-v0.35.0@5", 360_004))
+        assertEquals(LauncherUpdateStep.DOWNLOAD, running("launcher-v0.36.0-rc.5@5", 360_004))
     }
 
     @Test

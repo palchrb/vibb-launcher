@@ -443,17 +443,14 @@ plan, the `regs` reconcile, the origin rewrite) stay the launcher's alone, in
 - `launcher-vX.Y.Z` (or `launcher-vX.Y.Z-rc.N`, a prerelease) on a `main` commit -> signed APK
   release (`kids-launcher-mdm.apk`), versionCode `X*10_000_000 + Y*10_000 + Z*10 + N` (N = the RC number
   1..8, 9 for the release: every build its own code, `scripts/release-version.sh`; X <= 199, Y and Z <= 999).
-  In force since 2026-10-23: the first tag under it is `launcher-v0.36.0-rc.4` (360004), and the script refuses a
-  lower one; every tag before it was built as `X*1_000_000 + Y*1_000 + Z` with an RC one less (every RC of a version shared a
-  code), below every new code, and the launcher and the server still read those tags so
-  (`launcher_tag_codes.json`). Only
+  The first tag under it is `launcher-v0.36.0-rc.4` (360004), and the script refuses a lower one; the launcher and
+  the server read any tag by it (`launcher_tag_codes.json`). Only
   stable launcher releases become GitHub's "latest", so
   `releases/latest/download/kids-launcher-mdm.apk` is the provisioning QR's URL.
 - `music-vX.Y.Z` (or `-rc.N`) on a `main` commit -> `vibb-music.apk` + `.sha256`, signed with the
   launcher's key in the `release` environment (its deployment rule must allow `music-v*` tags too; the same
-  `RELEASE_CERT_SHA256` check), versionCode as the launcher's (the same script; the first tag under today's rule
-  is `music-v0.5.0-rc.4`, 50004, the old rule built every tag up to `music-v0.5.0-rc.3`, and the server reads the
-  music app's version from its code by that cutover), never "latest". Deploy a server with the music
+  `RELEASE_CERT_SHA256` check), versionCode as the launcher's (the same script; the first tag under it is
+  `music-v0.5.0-rc.4`, 50004; the server reads the music app's version from its code by it), never "latest". Deploy a server with the music
   catalog row (0.21.0+) before the first stable `music-v*` (design 21 QA #11).
 - `server-vX.Y.Z` (must equal `server/Cargo.toml`'s version) on a `main` commit -> fmt + tests,
   then the aarch64 and x86_64 tarballs and their `.sha256`, never "latest". Since 0.24.0 the tarballs and `update.sh` are signed

@@ -21,18 +21,14 @@ async fn launcher(app: &TestApp) -> i64 {
 }
 
 /// A status report from a launcher running release `code` (1.3.2 = 10030029,
-/// `scripts/release-version.sh`), with Install Now when `capable`, and `extra` fields merged in.
-async fn report(app: &TestApp, token: &str, code: i64, capable: bool, extra: Value) {
+/// `scripts/release-version.sh`), with `extra` fields merged in.
+async fn report(app: &TestApp, token: &str, code: i64, extra: Value) {
     let mut body = json!({
         "lock_reason": "none",
         "kiosk_engaged": true,
         "app_version": format!("{}.{}.{}", code / 10_000_000, code / 10_000 % 1_000, code / 10 % 1_000),
         "app_version_code": code,
-        "capabilities": if capable {
-            json!(["command_receipt_v1", "install_now_v1"])
-        } else {
-            json!(["command_receipt_v1"])
-        },
+        "capabilities": ["command_receipt_v1"],
     });
     for (key, value) in extra.as_object().unwrap() {
         body[key] = value.clone();
@@ -43,10 +39,10 @@ async fn report(app: &TestApp, token: &str, code: i64, capable: bool, extra: Val
     assert!(res.status.is_success(), "{}", res.text());
 }
 
-/// A set-up phone on 1.3.2 that knows Install Now.
+/// A set-up phone on 1.3.2.
 async fn behind_phone(app: &TestApp, name: &str) -> (i64, String) {
     let (id, token) = app.enrolled_device(name).await;
-    report(app, &token, 10_030_029, true, json!({})).await;
+    report(app, &token, 10_030_029, json!({})).await;
     (id, token)
 }
 
@@ -204,82 +200,18 @@ async fn install_now_queues_one_command_with_the_tag_and_the_pop_sends_it() {
     assert!(ring.get("release_tag").is_none(), "{ring}");
 }
 
-/// R2R-1: an RC over an RC of one version (the same code) is offered only to a launcher that
-/// claims `same_code_update_v1` in its report; one from before the fix reads "Install Now works
-/// from this update on." and a tap answers `too_old`.
-#[tokio::test]
-async fn the_same_code_under_a_newer_name_is_offered_only_with_the_capability() {
-    let app = TestApp::new().await;
-    let cookie = app.admin_cookie().await;
-    let launcher = launcher(&app).await;
-    sqlx::query(
-        "UPDATE tracked_apps SET latest_release_tag = 'launcher-v0.36.0-rc.3' WHERE id = ?",
-    )
-    .bind(launcher)
-    .execute(&app.db)
-    .await
-    .unwrap();
-    let rc2 = |caps: Value| json!({ "app_version": "0.36.0-rc.2", "capabilities": caps });
-    let (pre_fix, token) = app.enrolled_device("PreFix").await;
-    report(
-        &app,
-        &token,
-        35_999,
-        true,
-        rc2(json!(["command_receipt_v1", "install_now_v1"])),
-    )
-    .await;
-    let (fixed, token) = app.enrolled_device("Fixed").await;
-    report(
-        &app,
-        &token,
-        35_999,
-        true,
-        rc2(json!([
-            "command_receipt_v1",
-            "install_now_v1",
-            "same_code_update_v1"
-        ])),
-    )
-    .await;
-
-    let page = app
-        .get_page(&format!("/apps/tracked/{launcher}"), &cookie)
-        .await
-        .text();
-    let old = row(&page, pre_fix);
-    assert!(
-        old.contains("0.36.0-rc.3 is waiting. Install Now works from this update on."),
-        "{old}"
-    );
-    assert!(!old.contains(">Install Now</button>"), "{old}");
-    let new = row(&page, fixed);
-    assert!(new.contains("0.36.0-rc.3 not downloaded yet"), "{new}");
-    assert!(new.contains(">Install Now</button>"), "{new}");
-
-    let refused = post(&app, &cookie, &install_uri(launcher, pre_fix)).await;
-    assert!(refused.location().unwrap().contains("install=too_old"));
-    assert!(commands(&app, pre_fix).await.is_empty());
-    let queued = post(&app, &cookie, &install_uri(launcher, fixed)).await;
-    assert!(!queued.location().unwrap().contains("install=too_old"));
-    assert_eq!(commands(&app, fixed).await.len(), 1);
-}
-
 #[tokio::test]
 async fn every_refusal_lands_on_an_element_the_page_renders() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let launcher = launcher(&app).await;
     let (current, token) = app.enrolled_device("Current").await;
-    report(&app, &token, 10_040_009, true, json!({})).await;
-    let (old, token) = app.enrolled_device("Old").await;
-    report(&app, &token, 10_030_029, false, json!({})).await;
+    report(&app, &token, 10_040_009, json!({})).await;
     let (silent, _) = app.enrolled_device("Silent").await;
     let (not_set_up, _) = app.create_device("New").await;
 
     for (device, word, fragment) in [
         (current, "up_to_date", format!("phone-{current}")),
-        (old, "too_old", format!("phone-{old}")),
         (silent, "not_reported", format!("phone-{silent}")),
         (not_set_up, "not_set_up", "phones".to_string()),
         (9999, "unknown_phone", "phones".to_string()),
@@ -303,7 +235,6 @@ async fn every_refusal_lands_on_an_element_the_page_renders() {
         .get_page(&format!("/apps/tracked/{launcher}"), &cookie)
         .await
         .text();
-    assert!(row(&page, old).contains("Install Now works from this update on."));
     assert!(row(&page, silent).contains("reported yet"));
     assert!(
         !page.contains(">Install Now</button>"),
@@ -498,7 +429,6 @@ async fn a_server_start_keeps_it_and_a_confirmed_one_works_for_25_hours() {
         &app,
         &token,
         10_030_029,
-        true,
         json!({
             "update_fence": { "enabled": false, "state": "none", "waiting_for": "install_now_download" },
             "app_downloads": { "wifi_only": true, "network": "metered", "entries": [{
@@ -607,7 +537,7 @@ async fn the_answer_shows_in_the_row() {
     let tap = post(&app, &cookie, &install_uri(launcher, phone)).await;
     assert!(tap.location().unwrap().contains("install=in_progress"));
     // The report with the new version: the row reads it.
-    report(&app, &token, 10_040_009, true, json!({})).await;
+    report(&app, &token, 10_040_009, json!({})).await;
     let page = app
         .get_page(&format!("/apps/tracked/{launcher}"), &cookie)
         .await

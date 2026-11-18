@@ -26,10 +26,6 @@ val STATUS_CAPABILITIES: List<String> = listOf(
     BATTERY_CAPABILITY,
     // Design 95 §3.5: heartbeat reports (StatusReports).
     STATUS_HEARTBEAT_CAPABILITY,
-    INSTALL_NOW_CAPABILITY,
-    // The RC-to-RC fix: a same-code release under a newer name installs (launcherBuildAhead). Legacy since
-    // launcher-v0.36.0-rc.4 (every build its own versionCode); kept for builds tagged before it.
-    SAME_CODE_UPDATE_CAPABILITY,
     POWER_CAPABILITY,
     // Design 64 step 2: the zone watch - fences, the crossing's fixes, `zone_watch` in every report.
     ZONES_CAPABILITY,

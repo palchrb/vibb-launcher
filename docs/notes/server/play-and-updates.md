@@ -142,21 +142,12 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   Now"; `received_overdue_minutes` makes a Received `install_update` "No answer" only after 25 h
   (`INSTALL_UPDATE_RECEIVED_MINUTES`), every other command after 10 minutes.
 - **The row** (pure `src/install_now.rs`, typed): `launcher_tag_version_code` (the launcher's `launcherTagVersionCode`,
-  both reading the shared `testdata/launcher_tag_codes.json`: since 2026-10-23 a tag from `launcher-v0.36.0-rc.4` on is
-  `X*10_000_000 + Y*10_000 + Z*10 + N`, N the RC number 1..8 or 9 for the release - every build its own code,
-  `scripts/release-version.sh` -, an older tag the old rule's `X*1_000_000 + Y*1_000 + Z`, an RC one less, as the
-  phones on those builds report it; a report below 360004 - an old-rule build - gets every tag read by the old rule,
-  as its own parser does, `tag_code_as_read_by`, so rc.1/rc.2 phones are TooOld for rc.4 to rc.8, qa-versioncode-rc-code
-  Q-1), `release(tag, report)` -> `Standing` NotReported / NoRelease (no release, or the row is off)
-  / UpToDate / Behind (`build_ahead`, the launcher's `launcherBuildAhead`: the tag's code above the report's
-  `app_version_code`, or - legacy of the old rule, for builds tagged before `launcher-v0.36.0-rc.4` - the same code and
-  the tag's name - `release_name`, "0.36.0-rc.2" - another, newer one than
-  the report's `app_version`: every RC of one version shared a code, so rc.2 is behind-worthy over rc.1, never rc.1
-  over rc.2; two names that can't be ordered count as ahead; or a `pending_tag`;
-  a manual upload's label is behind unless the phone runs a build of that name). Ahead by the name alone (the same
-  code) is Behind only when the report claims `same_code_update_v1` (`install_now::SAME_CODE_CAPABILITY`, the
-  launcher's `SAME_CODE_UPDATE_CAPABILITY`), else TooOld: a launcher from before the RC-to-RC fix decides by the code
-  and would answer "Already on X" (qa-rc-to-rc-code R2R-1) / TooOld (behind without capability `install_now_v1`); `offer`
+  both reading the shared `testdata/launcher_tag_codes.json`: `X*10_000_000 + Y*10_000 + Z*10 + N`, N the RC number
+  1..8 or 9 for the release - every build its own code, `scripts/release-version.sh`; a tag from before
+  `launcher-v0.36.0-rc.4` reads by it too, below every build since), `release(tag, report)` -> `Standing` NotReported /
+  NoRelease (no release, or the row is off) / UpToDate / Behind (the tag's code above the report's `app_version_code`
+  - the code alone decides, as on the phone -, or a `pending_tag`; a manual upload's label is behind unless the phone
+  runs a build of that name); `offer`
   adds the newest `install_update`: Asked (Waiting, with Cancel; Sent - not lost - without) and Working (Received, no
   answer, under 25 h) - and Working "Installed - waiting for the phone's report" while the newest answer is
   `installed: X` and the latest report is older than it (`awaiting_report`, at most an hour; qa-37-code M1: in one sync
@@ -170,7 +161,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   line inside - `locate::command_row`, now `pub(crate)`). `refusal` is the POST's rule.
 - **Routes** (`handlers::install_now`, full auth, plain forms, 404 unless the app is the launcher):
   `POST /apps/tracked/{id}/install-now/{device_id}` queues only when the row offers it (`device_command_queued`
-  "install_update <tag>, device N"), else answers `up_to_date`, `too_old`, `no_release`, `not_reported`, `in_progress`
+  "install_update <tag>, device N"), else answers `up_to_date`, `no_release`, `not_reported`, `in_progress`
   (fetched or confirmed - a waiting one is replaced), `not_set_up`, `unknown_phone`; `POST
   .../install-now/{device_id}/cancel/{command_id}` - `locate::cancel_waiting` (the Locate tab's `cancel_command` moved
   into it, `only` = the kind) -> `cancelled` / `too_late` (`device_command_cancelled`); `GET

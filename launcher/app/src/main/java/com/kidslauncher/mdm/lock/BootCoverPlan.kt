@@ -109,10 +109,6 @@ data class CoverRecord(
     val shownElapsedMs: Long? = null,
     /** F3C-3: the launcher's versionCode when the guard tripped (`null` = unknown, a trip from an older build). */
     val trippedVersion: Long? = null,
-    /** The versionName with [trippedVersion] (`null` = unknown, a trip from an older build): under the old versionCode
-     * rule (tags before launcher-v0.36.0-rc.4) every RC of one version shared a code, so an RC that fixed a cover crash
-     * of the RC before it had the same code (qa-rc-to-rc-code R2R-6). Legacy since then: every build has its own code. */
-    val trippedVersionName: String? = null,
 )
 
 /**
@@ -153,7 +149,7 @@ fun coverShown(record: CoverRecord, bootNow: Int, wallMs: Long, elapsedMs: Long)
 /** One more crash of the cover; a new boot (or an unknown count changing) counts from one. The
  * [COVER_MAX_CRASHES]th in a boot trips the guard, and a trip stays (qa-16b-code #2). An
  * unreadable boot count (-1) counts as one boot. */
-fun coverCrashed(record: CoverRecord?, bootNow: Int, versionCode: Long? = null, versionName: String? = null): CoverRecord {
+fun coverCrashed(record: CoverRecord?, bootNow: Int, versionCode: Long? = null): CoverRecord {
     val crashes = if (record != null && record.bootCount == bootNow) record.crashes + 1 else 1
     val wasTripped = record?.tripped == true
     val tripped = wasTripped || crashes >= COVER_MAX_CRASHES
@@ -162,9 +158,8 @@ fun coverCrashed(record: CoverRecord?, bootNow: Int, versionCode: Long? = null, 
         bootCount = bootNow,
         crashes = crashes,
         tripped = tripped,
-        // F3C-3: the build that tripped it (code and name - R2R-6); a later build gets one more try.
+        // F3C-3: the build that tripped it; a later build gets one more try.
         trippedVersion = if (trips) versionCode else record?.trippedVersion,
-        trippedVersionName = if (trips) versionName else record?.trippedVersionName,
     )
 }
 
@@ -173,8 +168,7 @@ fun coverGuardTripped(record: CoverRecord?): Boolean = record?.tripped == true
 
 /**
  * F3C-3: a tripped guard is cleared (one more try) when the launcher was updated since the trip ([versionNow] differs
- * from [CoverRecord.trippedVersion], an unknown one included - or, R2R-6, the same code under another name: an RC over
- * an RC of one version, when both names are known), or on the server switch's off -> on edge ([switchWas] ->
+ * from [CoverRecord.trippedVersion], an unknown one included), or on the server switch's off -> on edge ([switchWas] ->
  * [switchNow]) - in every mode, so android mode (which keeps the cover wanted) isn't stuck with it.
  */
 fun coverGuardClearDue(
@@ -182,12 +176,9 @@ fun coverGuardClearDue(
     versionNow: Long,
     switchWas: Boolean,
     switchNow: Boolean,
-    versionNameNow: String? = null,
 ): Boolean {
     if (!coverGuardTripped(record)) return false
-    val trippedName = record?.trippedVersionName
-    val renamed = trippedName != null && versionNameNow != null && trippedName != versionNameNow
-    return record?.trippedVersion != versionNow || renamed || (!switchWas && switchNow)
+    return record?.trippedVersion != versionNow || (!switchWas && switchNow)
 }
 
 /** The record as stored (`key=value` lines, version 1). */
@@ -201,7 +192,6 @@ fun encodeCoverRecord(record: CoverRecord): String = buildString {
     record.shownBootCount?.let { append("shown_boot=").append(it).append('\n') }
     record.shownElapsedMs?.let { append("shown_elapsed=").append(it).append('\n') }
     record.trippedVersion?.let { append("trip_version=").append(it).append('\n') }
-    record.trippedVersionName?.takeIf { '\n' !in it }?.let { append("trip_version_name=").append(it).append('\n') }
 }
 
 /** `null` = no record. A file that exists but can't be read counts as tripped: the cover stays
@@ -219,7 +209,6 @@ fun decodeCoverRecord(text: String?): CoverRecord? {
         shownBootCount = fields["shown_boot"]?.toIntOrNull(),
         shownElapsedMs = fields["shown_elapsed"]?.toLongOrNull(),
         trippedVersion = fields["trip_version"]?.toLongOrNull(),
-        trippedVersionName = fields["trip_version_name"],
     )
 }
 
