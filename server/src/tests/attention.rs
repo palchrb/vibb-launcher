@@ -6,11 +6,8 @@ use serde_json::{Value, json};
 
 use super::{TestApp, tags};
 
-/// A status report from a launcher with time rules (`extra`'s `capabilities` replace them).
-async fn report(app: &TestApp, token: &str, mut extra: Value) {
-    let keys = extra.as_object_mut().unwrap();
-    keys.entry("capabilities")
-        .or_insert_with(|| json!(["time_rules_v1"]));
+/// A status report.
+async fn report(app: &TestApp, token: &str, extra: Value) {
     app.post_status(token, extra).await;
 }
 
@@ -107,12 +104,10 @@ async fn each_fact_raises_its_own_row() {
                                   "lock_reason": "NONE", "lifts_active": [],
                                   "ledger_unreadable": true}}),
         ),
-        ("launcher-without-rules", json!({"capabilities": []})),
         // Design 113: Android's own mobile-data switch off.
         (
             "mobile-data-off",
-            json!({"capabilities": ["time_rules_v1", "mobile_data_v1"],
-                   "mobile_data": {"enabled": false, "sink": "off", "settings_locked": true}}),
+            json!({"mobile_data": {"enabled": false, "sink": "off", "settings_locked": true}}),
         ),
     ];
     for (key, extra) in cases {
@@ -123,19 +118,16 @@ async fn each_fact_raises_its_own_row() {
 
     // Each needs a switch on this server and the report that goes with it (M4, L4). The switch
     // on its own, with a report that says nothing, raises nothing.
-    let escapes = ["time_rules_v1", "kiosk_escapes_v1", "boot_cover_v1"];
     let cases: Vec<(&str, &str, Value)> = vec![
         (
             "not-home-app",
             "update_fence = 1",
-            json!({"capabilities": escapes,
-                   "update_fence": {"enabled": true, "state": "none", "home_role_held": false}}),
+            json!({"update_fence": {"enabled": true, "state": "none", "home_role_held": false}}),
         ),
         (
             "boot-cover-not-shown",
             "boot_cover = 1",
-            json!({"capabilities": escapes,
-                   "boot_cover": {"wanted": true, "last_armed_at_ms": now_ms - 3_600_000}}),
+            json!({"boot_cover": {"wanted": true, "last_armed_at_ms": now_ms - 3_600_000}}),
         ),
     ];
     for (key, setting, extra) in cases {
@@ -158,7 +150,7 @@ async fn each_fact_raises_its_own_row() {
             .await
             .unwrap();
         }
-        report(&app, &token, json!({"capabilities": escapes})).await;
+        report(&app, &token, json!({})).await;
         assert_eq!(rows(&app, &cookie, id).await, Vec::<String>::new(), "{key}");
         report(&app, &token, extra).await;
         assert_eq!(rows(&app, &cookie, id).await, [key], "{key}");
@@ -168,8 +160,7 @@ async fn each_fact_raises_its_own_row() {
     report(
         &app,
         &token,
-        json!({"capabilities": ["time_rules_v1", "mobile_data_v1"],
-               "mobile_data": {"enabled": true, "sink": "kid", "settings_locked": true, "kid": "off"}}),
+        json!({"mobile_data": {"enabled": true, "sink": "kid", "settings_locked": true, "kid": "off"}}),
     )
     .await;
     assert_eq!(rows(&app, &cookie, kid_off).await, Vec::<String>::new());
@@ -242,19 +233,12 @@ async fn each_fact_raises_its_own_row() {
     report(
         &app,
         &token,
-        json!({"capabilities": ["time_rules_v1", "pin_lock_v1"],
-               "lock_state": {"active": false, "inactive": "crash_guard"}}),
+        json!({"lock_state": {"active": false, "inactive": "crash_guard"}}),
     )
     .await;
     assert_eq!(rows(&app, &cookie, lock_phone).await, ["child-lock-off"]);
     // The same phone with its lock on: nothing.
-    report(
-        &app,
-        &token,
-        json!({"capabilities": ["time_rules_v1", "pin_lock_v1"],
-               "lock_state": {"active": true}}),
-    )
-    .await;
+    report(&app, &token, json!({"lock_state": {"active": true}})).await;
     assert_eq!(rows(&app, &cookie, lock_phone).await, Vec::<String>::new());
 
     // Access removed.
@@ -326,11 +310,8 @@ async fn each_music_warning_raises_its_row_and_marks_the_music_row() {
     let cookie = app.admin_cookie().await;
     let entry = super::music::add_own(&app, &cookie, "Eventyr").await;
     let other = super::music::add_own(&app, &cookie, "Sanger").await;
-    let music =
-        |state: Value| json!({"capabilities": ["time_rules_v1", "music_v1"], "music_state": state});
+    let music = |state: Value| json!({"music_state": state});
     let cases: Vec<(&str, Value)> = vec![
-        // A launcher without music while an entry is on.
-        ("music-cant-deliver", json!({})),
         (
             "music-unreachable",
             music(json!({"package": "me.vibb.music", "bridge": "unbound"})),
@@ -480,20 +461,6 @@ async fn each_music_warning_raises_its_row_and_marks_the_music_row() {
             .unwrap();
         assert!(rows(&app, &cookie, id).await.is_empty(), "{key}");
     }
-    // The older-phone warning: the two switches differ while the phone sends no `extra_bytes`.
-    let (id, token) = clean_phone(&app, "older").await;
-    sqlx::query("UPDATE device_policy SET music_stream_mobile_data = 1 WHERE device_id = ?")
-        .bind(id)
-        .execute(&app.db)
-        .await
-        .unwrap();
-    report(
-        &app,
-        &token,
-        music(json!({"package": "me.vibb.music", "bridge": "bound", "cache_bytes": 1_000_000})),
-    )
-    .await;
-    assert_eq!(rows(&app, &cookie, id).await, ["music-older-phone"]);
     // An error for an entry that isn't on for the phone is nothing to fix (N3).
     let (id, token) = clean_phone(&app, "off").await;
     report(
@@ -553,12 +520,7 @@ async fn every_call_warning_is_typed() {
         "last_error": "boom",
         "default_sms_package": "com.example.sms",
     });
-    report(
-        &app,
-        &token,
-        json!({"capabilities": ["call_policy_v1"], "call_state": call_state}),
-    )
-    .await;
+    report(&app, &token, json!({"call_state": call_state})).await;
     sqlx::query(
         "UPDATE device_policy SET calls_mode = 'managed', sms_mode = 'off', \
          allowlist_json = '[\"com.example.sms\"]' WHERE device_id = ?",

@@ -3,7 +3,6 @@ package com.kidslauncher.mdm.shortcuts
 import com.kidslauncher.mdm.assistant.AirplaneRowState
 import com.kidslauncher.mdm.server.KidMobileRow
 import com.kidslauncher.mdm.server.QuickControlFeature
-import com.kidslauncher.mdm.server.STATUS_CAPABILITIES
 import com.kidslauncher.mdm.server.ServerJson
 import com.kidslauncher.mdm.server.dto.StatusReportRequest
 import com.kidslauncher.mdm.timerules.AskPart
@@ -51,7 +50,6 @@ class ShortcutsTest {
 
     @Test
     fun `the keys, bits, defaults and limits are the contract's`() {
-        assertEquals(SHORTCUTS_CAPABILITY, contract.getValue("capability").jsonPrimitive.content)
         assertEquals(QuickControlFeature.SHORTCUTS, contract.getValue("bit").jsonPrimitive.long)
         assertEquals(SHORTCUTS_MAX.toLong(), contract.getValue("max_items").jsonPrimitive.long)
         val items = contract.getValue("items").jsonArray.map { it.jsonObject }
@@ -61,7 +59,6 @@ class ShortcutsTest {
             assertEquals(key.wire, row.getValue("bit").jsonPrimitive.longOrNull, key.bit)
         }
         assertEquals(contract.getValue("defaults").jsonArray.map { it.jsonPrimitive.content }, SHORTCUT_DEFAULTS.map { it.wire })
-        assertTrue(SHORTCUTS_CAPABILITY in STATUS_CAPABILITIES)
     }
 
     @Test

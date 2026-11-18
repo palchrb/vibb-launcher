@@ -2,6 +2,10 @@
 
 Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the rest is' lists every note.
 
+## How phones get their filter
+
+The server runs no DNS listener: each phone filters on-device (the launcher's `KidVpnService`). `dns_engine.rs` holds `CompiledBlocklist`/`compile_blocklist`. `GET /api/devices/dns-blocklist` serves a phone's fully resolved, category-tagged list and `POST /api/devices/dns-events` ingests what got blocked (`device_dns_events`, admin page `/dns/log`). A phone's feed overrides are `device_blocklist_overrides`; `dns_custom_domains.device_id` is NULL for a global domain. `PolicyResponse.dns_filter_version` is an opaque per-device token (the global compiled-list hash plus the phone's override and custom-domain state), so the phone fetches the full list (100k+ domains) only when it changed. The compile downloads every defined feed whatever its global `enabled` flag, so a phone's override can turn a globally-off feed on for that phone alone. `device_policy.vpn_filter_enabled` (default on) is the per-device switch for `KidVpnService`. `rustls` stays a dependency: reqwest needs the process-wide `CryptoProvider` `main.rs` installs (see the `rustls` gotcha in `server/CLAUDE.md`).
+
 ## A custom DNS server for the Web Filter (design 36 step 1, `docs/design/36-custom-dns.md`, migration `0079_custom_dns.sql`)
 
 - **The server never contacts either address** - no resolve, no probe, no fetch (no SSRF surface); it only parses.
@@ -28,9 +32,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   bootstrap/connect/tls/http/refused/timeout; every time from 2000 up to the report's arrival + 5 min -
   `CLOCK_SLACK_MS`, a phone clock ahead; `unreachable_until_ms` only with a kept `unreachable_since_ms`, and neither
   when it ends before it starts), never an address, inside `dns_upstream_json` (no migration; a row stored
-  before design 67 reads back with both times `None`); capability `dns_custom_v1` (`dns_server::DNS_CUSTOM_CAPABILITY`,
-  sent by the launcher from step 2 on). Contract `testdata/dns_upstream_status.json`, byte-identical in the launcher's
-  test resources (root `CLAUDE.md`). Design 67 (a launcher claiming `dns_bypass_v1`, `DNS_BYPASS_CAPABILITY`) reports in provider mode too (`rev` 0, `provider`, no since or reason - an older server stores `null`) and
+  before design 67 reads back with both times `None`). Contract `testdata/dns_upstream_status.json`, byte-identical in the launcher's
+  test resources (root `CLAUDE.md`). Design 67's launcher reports in provider mode too (`rev` 0, `provider`, no since or reason) and
   only while its tunnel is up; the two times are "DNS can't be reached" (`unreachable_since_ms` alone: ongoing; both:
   the last ended outage), read by the phone as at least 3 dropped queries over at least 30 s with no answer between,
   on a validated network (launcher/CLAUDE.md, "DNS can't be reached").
@@ -47,8 +50,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   the field); something typed and valid stores both normalized, sets `upstream = 'custom'`, moves `custom_rev` if
   either changed; Forget with both fields empty clears both and puts Custom back on Cloudflare; nothing typed changes
   nothing. A save returns to `/dns?open=custom-server#server` (the row open again), a pick to `/dns#server`. Each hint and the backup prefill follow their own stored value, not the pair's validity, and the picker's 400 names the missing or equal field (`check_custom`, shared with Save). While Custom is in force the footer has one line per set-up phone
-  (`dns_filter::phone_line`: "Your server in use", "Backup server since 10:42 - <reason>", "Cloudflare - update Vibb
-  One on this phone ..." without the capability, "Waiting for the phone" without a report at the current `rev` or
+  (`dns_filter::phone_line`: "Your server in use", "Backup server since 10:42 - <reason>", "Waiting for the
+  phone" without a report at the current `rev` or
   with a `provider` report (even at rev 0), "Web filter off" when the phone's filter switch is off; design 67: "DNS
   can't be reached since 10:42 - neither your server nor the backup answers" while an outage goes on at the current
   `rev`, in place of the custom/backup words); a stored but no longer valid pair says so instead. With a provider
@@ -76,8 +79,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   every phone", "Off · on for Testtelefon" (`settings.web_filter.*`; an own setting equal to the switch isn't named);
   the footer starts "A phone's own Web Filter page can set a list otherwise for that phone." Test
   `device_pages::web_filter_holds_the_phones_parts`. The Each Phone group's footer has lines only where something
-  is owed, only while that phone's filter is on (`dns_filter::bypass_lines`, `data-bypass-phone`): "Anna · Update Vibb
-  One to close the secure-DNS bypass" while its last report lacks `dns_bypass_v1`, and a line for each browser of
+  is owed, only while that phone's filter is on (`dns_filter::bypass_lines`, `data-bypass-phone`): a line for each browser of
   `DOH_IGNORING_BROWSERS` (server only) on its allowlist - Cromite ("set its Secure DNS to Off on the phone, or it
   won't load pages"), the Firefox family - Firefox, Beta, Nightly (`org.mozilla.fenix`), Fennec F-Droid, IronFox -
   ("its own secure DNS can get around the filter"; final words after E3 check 11) and Opera ("may", until E3 check 16

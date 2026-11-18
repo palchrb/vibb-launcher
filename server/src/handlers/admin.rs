@@ -273,9 +273,10 @@ mod tests {
 
     /// Literals near a security-event writer that are not event ids: form fields, notice codes
     /// and command names.
-    const NOT_EVENTS: [&str; 40] = [
+    const NOT_EVENTS: [&str; 42] = [
         // Design 93: the Regler sheet's flash codes next to its security events.
         "changed_elsewhere",
+        "on_busy",
         "on_over",
         // Design 59: the Child PIN group's notices and the reveal's form action.
         "keyguard_needs_pin",
@@ -309,6 +310,8 @@ mod tests {
         "not_a_domain_allow",
         "not_a_domain_block",
         "override_is_kid_pin",
+        // A form field read next to the lock glance's events.
+        "package_name",
         "override_needed_by_lock",
         "parent_pin_cleared",
         "parent_pin_invalid",

@@ -79,11 +79,9 @@ class AirplaneModeTest {
     }
 
     @Test
-    fun `the capability and the bit`() {
-        assertEquals(contract.str("capability"), AIRPLANE_MODE_CAPABILITY)
+    fun `the bit`() {
         assertEquals(contract["bit"]!!.jsonPrimitive.content.toLong(), com.kidslauncher.mdm.server.QuickControlFeature.AIRPLANE)
         assertTrue(contract["rows"]!!.jsonArray.isNotEmpty())
-        assertTrue(AIRPLANE_MODE_CAPABILITY in com.kidslauncher.mdm.server.STATUS_CAPABILITIES)
     }
 
     @Test

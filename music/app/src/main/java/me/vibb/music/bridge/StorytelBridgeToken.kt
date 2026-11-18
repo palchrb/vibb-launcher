@@ -31,8 +31,7 @@ sealed interface JwtResult {
     /** Asked too often, or the server can't log in now: ask again after [retryAfterMs]. */
     data class Busy(val retryAfterMs: Long) : JwtResult
 
-    /** Anything else, by its [word]: `unreachable`, `key`, `launcher` (a timeout, an older launcher without the
-     * method), or a word this app doesn't know. */
+    /** Anything else, by its [word]: `unreachable`, `key`, `launcher` (a timeout or a hung launcher), or a word this app doesn't know. */
     data class Unreachable(val word: String) : JwtResult
 }
 
@@ -75,7 +74,7 @@ object StorytelBridgeToken {
 
     /**
      * One `getStorytelToken` on [bridge] ([stale] the session Storytel answered 401 to, else null), its answer
-     * awaited at most [TIMEOUT_MS]: an older launcher drops the oneway call it doesn't know, which is a
+     * awaited at most [TIMEOUT_MS]: a hung or slow launcher is a
      * timeout - `Unreachable("launcher")`.
      */
     suspend fun ask(bridge: IMusicBridge, stale: String?): JwtResult {

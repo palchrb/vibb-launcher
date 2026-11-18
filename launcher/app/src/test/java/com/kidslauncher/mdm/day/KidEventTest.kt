@@ -131,7 +131,7 @@ class KidEventTest {
         assertNull("the pick hidden", kidCalendarOf(policy(pick(picked.key, false)), all, 500))
         val localHidden = """{"key": "${local.key}", "shown": false}"""
         assertNull("the phone's own hidden", kidCalendarOf(policy(localHidden), all, 500))
-        assertNull("no + at all", kidCalendarOf(CalendarPolicy.OLDER_SERVER, all, 500))
+        assertNull("no + at all", kidCalendarOf(CalendarPolicy(usable = true), all, 500))
     }
 
     @Test

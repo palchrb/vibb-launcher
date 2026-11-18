@@ -8,7 +8,7 @@ use axum::http::{Method, Request, StatusCode, header};
 use serde_json::{Value, json};
 
 use super::{TestApp, TestResponse};
-use crate::status_heartbeat::{CAPABILITY, HEARTBEAT_FIELDS, fields_tag};
+use crate::status_heartbeat::{HEARTBEAT_FIELDS, fields_tag};
 
 const CONTRACT: &str = include_str!("../../testdata/status_heartbeat.json");
 
@@ -82,7 +82,6 @@ fn the_contract_matches_the_launchers_copy_and_the_constants() {
         .unwrap_or_else(|e| panic!("{}: {e}", copy_path.display()));
     assert_eq!(copy, CONTRACT, "{} differs", copy_path.display());
     let contract = contract();
-    assert_eq!(contract["capability"], CAPABILITY);
     let fields: Vec<&str> = contract["heartbeat_fields"]
         .as_array()
         .unwrap()
@@ -236,7 +235,7 @@ async fn a_heartbeat_stands_for_the_full_report_it_names() {
             .unwrap();
     assert_eq!(hash, contract["full"]["hash"].as_str().unwrap());
 
-    // An older launcher's report (no hash) forgets what was kept.
+    // A report without a hash forgets what was kept.
     let mut plain = contract["full"].clone();
     plain.as_object_mut().unwrap().remove("hash");
     assert_eq!(

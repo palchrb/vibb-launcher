@@ -543,8 +543,6 @@ phone_lines! {
     /// Design 98 §4.4.5: the parent code's pause of a rule, posted by the phone (`handlers::rule_pause`) - with the
     /// parent-PIN use it follows.
     TimeLiftPhone = "time_lift_phone", crate::parent_pin::PIN_EVENT_DAYS;
-    /// The parent's Storytel credential handed to a phone: a sign-in's 180 days.
-    StorytelLoginSent = "storytel_login_sent", crate::retention::SECURITY_EVENT_DAYS;
 }
 
 /// A line a phone's report raised - a PIN use, a start without the launcher, an app installed, a
@@ -879,7 +877,7 @@ pub enum SignInWhy {
     Reauth,
     /// Settings' Sign Out.
     SignOut,
-    /// The sign-in is older than `SESSION_MAX_DAYS` (security review L6).
+    /// The sign-in is older than `SESSION_MAX_DAYS`, or the session has no sign-in time (security review L6).
     TooOld,
 }
 
@@ -969,22 +967,19 @@ pub(crate) async fn load_active_admin(
         return Err(SignInWhy::Epoch);
     }
     // The absolute lifetime (security review L6): however often it is used, a session ends
-    // `session_max_days` after its sign-in. A session from before 0.55.0 has no sign-in time: its
-    // clock starts now (one sign-in again after the cap, not one at the upgrade).
-    let now = crate::admin_auth::now_secs();
-    let signed_in_at: Option<u64> = session
+    // `session_max_days` after its sign-in. Every sign-in stores its time; a session without one is
+    // past it.
+    let signed_in_at: u64 = session
         .get(crate::admin_auth::SIGNED_IN_AT_KEY)
         .await
-        .map_err(|_| SignInWhy::StoreError)?;
-    match signed_in_at {
-        None => session
-            .insert(crate::admin_auth::SIGNED_IN_AT_KEY, now)
-            .await
-            .map_err(|_| SignInWhy::StoreError)?,
-        Some(at) if session_too_old(at, now, state.net.session_max_days) => {
-            return Err(SignInWhy::TooOld);
-        }
-        Some(_) => {}
+        .map_err(|_| SignInWhy::StoreError)?
+        .ok_or(SignInWhy::TooOld)?;
+    if session_too_old(
+        signed_in_at,
+        crate::admin_auth::now_secs(),
+        state.net.session_max_days,
+    ) {
+        return Err(SignInWhy::TooOld);
     }
     Ok(admin)
 }
@@ -1128,8 +1123,7 @@ pub async fn log_sign_in_redirects(
 /// `GET /api/session` (2026-10-25, `static/reconnect.js`): 204 while the request's session is a
 /// signed-in, onboarded admin's (what [require_full_auth] lets through), 423 while the app lock is due (design 74 D3.4:
 /// reconnect.js goes to /lock), else 401 - no body,
-/// `no-store`, nothing written but a session from before 0.55.0's first sign-in time
-/// (`load_active_admin`, security review L6; the session isn't flushed). The sign-in page asks it before it
+/// `no-store`, nothing written (the session isn't flushed). The sign-in page asks it before it
 /// stays on screen; each answer is logged with its reason.
 pub async fn session_check(
     State(state): State<AppState>,

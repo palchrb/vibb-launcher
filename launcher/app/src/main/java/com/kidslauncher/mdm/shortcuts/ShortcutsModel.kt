@@ -13,9 +13,6 @@ import kotlinx.serialization.Serializable
  * launcher's alone.
  */
 
-/** Status-report capability: this launcher shows Snarveier (bit 128) and sends `shortcuts` in every full report. */
-const val SHORTCUTS_CAPABILITY = "shortcuts_v1"
-
 /** §3: four quarter cells, one row. */
 const val SHORTCUTS_MAX = 4
 

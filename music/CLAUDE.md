@@ -159,13 +159,12 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   only when a mint needs it, design 58) and `push` sends the report (with the own files held) at its end; `LiveBridge` sends
   `setNowPlaying`/`setForeground` and retries a bind. Bind only the restrictions' launcher, and only when it is
   signed like this app; honour `BRIDGE_CHANGED` only from a launcher. An in-place update syncs at once (`PackageReplacedReceiver` on `MY_PACKAGE_REPLACED`; the launcher nudges too), so Device › Music never keeps the old app's report. The two mobile-data switches
-  (`stream_mobile_data`, `download_mobile_data`; a launcher from before design 30 writes neither, and then the old
-  `mobile_data` counts for both - `mobileSwitch`), the storage limit (`storage_limit_gb`, 0 = none, absent or junk =
+  (`stream_mobile_data`, `download_mobile_data`; `true` is on, anything else - absent included - off, `mobileSwitch`),
+  the storage limit (`storage_limit_gb`, 0 = none, absent or junk =
   2 GB - `storageLimit`; the played extras' eviction counts against it) and `volume_cap_pct` (the parent's cap on our
   own Sonos volume sets, design 26a §5.3) are read live from the managed config. The report always carries
   `audio_bytes` (the audio cache: what the limit counts) and `extra_bytes` (the played extras now, from the
-  report's own plan, so the job's report says it too): their presence tells the PWA the app reads both switches
-  (design 30 §1.3). The AIDL is
+  report's own plan, so the job's report says it too). The AIDL is
   byte-identical with `launcher/` - append, never reorder; shared names are in `bridge_contract.json`.
 - The session gives another app's controller (the launcher, the system UI, Bluetooth, any app) the transport only:
   no `COMMAND_SET_MEDIA_ITEM`/`COMMAND_CHANGE_MEDIA_ITEMS`, and `onAddMediaItems`/`onSetMediaItems` refuse every

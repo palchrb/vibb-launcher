@@ -471,12 +471,11 @@ class GuardsTest {
         // qa-30-s3a-code L2: unmanaged (the debug feed's prefs, same key names) the managed config's own rules ...
         assertTrue(store.contains("private fun unmanagedSwitch(key: String): Boolean = mobileSwitch(prefs.all, key)"))
         assertTrue(store.contains("return if (config.managed) config.storageLimitGb else storageLimit(prefs.all)"))
-        // ... and the feed: a bare mobile_data sets both switches, then a key of its own wins
+        // ... and the feed: each switch by its own key
         val feed = code("src/debug/java/me/vibb/music/debugfeed/DebugFeedReceiver.kt")
-        val bare = feed.indexOf("config?.get(\"mobile_data\")?.jsonPrimitive?.booleanOrNull?.let {\n                store.streamMobileData = it\n                store.downloadMobileData = it\n            }")
-        assertTrue(bare >= 0)
-        assertTrue(bare < feed.indexOf("config?.get(\"stream_mobile_data\")?.jsonPrimitive?.booleanOrNull?.let { store.streamMobileData = it }"))
-        assertTrue(bare < feed.indexOf("config?.get(\"download_mobile_data\")?.jsonPrimitive?.booleanOrNull?.let { store.downloadMobileData = it }"))
+        assertFalse(feed.contains("config?.get(\"mobile_data\")"))
+        assertTrue(feed.contains("config?.get(\"stream_mobile_data\")?.jsonPrimitive?.booleanOrNull?.let { store.streamMobileData = it }"))
+        assertTrue(feed.contains("config?.get(\"download_mobile_data\")?.jsonPrimitive?.booleanOrNull?.let { store.downloadMobileData = it }"))
         assertTrue(feed.contains("config?.get(\"storage_limit_gb\")?.jsonPrimitive?.intOrNull?.let { store.storageLimitGb = it }"))
     }
 

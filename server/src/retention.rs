@@ -125,24 +125,18 @@ impl Budget {
 
 /// Past [STATUS_ROWS_A_DAY] reports in a rolling day, a new report replaces the one before it
 /// (`previous_id`, just read) instead of adding to the history - so the newest report is always
-/// the latest and a phone's day holds at most the budget plus one. Never the newest report that
-/// said it enforces calls (`prune`'s keeper). A failure is logged: the row stays.
+/// the latest and a phone's day holds at most the budget plus one. Called after the new report is
+/// inserted, so `previous_id` is never the phone's newest. A failure is logged: the row stays.
 pub async fn replace_over_budget(db: &SqlitePool, device_id: i64, previous_id: i64) {
     let result = sqlx::query(
         "DELETE FROM device_status WHERE id = ?1 AND device_id = ?2 \
            AND reported_at > datetime('now', '-1 day') \
            AND (SELECT COUNT(*) FROM device_status \
-                WHERE device_id = ?2 AND reported_at > datetime('now', '-1 day')) > ?3 \
-           AND id IS NOT (SELECT MAX(id) FROM device_status \
-                          WHERE device_id = ?2 AND capabilities_json LIKE ?4)",
+                WHERE device_id = ?2 AND reported_at > datetime('now', '-1 day')) > ?3",
     )
     .bind(previous_id)
     .bind(device_id)
     .bind(STATUS_ROWS_A_DAY)
-    .bind(format!(
-        "%\"{}\"%",
-        crate::handlers::calls::CALL_POLICY_CAPABILITY
-    ))
     .execute(db)
     .await;
     if let Err(err) = result {
@@ -208,14 +202,13 @@ fn rows(
 
 /// One pruning pass:
 /// - blocked domains older than [DNS_LOG_RETENTION_DAYS], and every entry of a phone whose log
-///   is off (an older launcher may still send them; the server drops those at the door too);
+///   is off (the server drops those at the door too);
 /// - locations older than the phone's `location_retention_days` (by the server's receive time, or
 ///   the phone's last re-send of it as still current, `resent_at`), except each phone's newest fix:
 ///   its last known position, which Locate shows with its age (the owner's decision on M1 of round
 ///   S3); and every fix of a phone whose location is Off, the newest too (security review P1; the
 ///   location policy's Off save runs the pass at once);
-/// - status reports older than [STATUS_HISTORY_HOURS], except each phone's newest one of them and
-///   the newest one that reported call enforcement (`call_policy_v1`);
+/// - status reports older than [STATUS_HISTORY_HOURS], except each phone's newest one of them;
 /// - crash reports not reported again for [CRASH_REPORT_DAYS];
 /// - security log entries older than [SECURITY_EVENT_DAYS], a phone's own lines after their
 ///   `security::PhoneLine::keep_days`, and a wrong sign-in's typed username after
@@ -287,8 +280,8 @@ pub async fn prune(db: &SqlitePool) -> Pruned {
             .execute(db)
             .await,
         );
-    // Also kept: the newest report per phone that said it enforces calls - the calls warning
-    // "stopped reporting that it enforces calls" (a downgraded launcher) rests on it (qa-cleanup #7).
+    // Each phone's newest report is kept: the newest from before the window (every newer one is
+    // inside it), so a phone that stopped reporting keeps its last word.
     let status_reports = rows(
         failed,
         "device_status",
@@ -297,15 +290,9 @@ pub async fn prune(db: &SqlitePool) -> Pruned {
          WHERE reported_at < datetime('now', '-' || ?1 || ' hours') \
            AND id NOT IN (SELECT MAX(id) FROM device_status \
                           WHERE reported_at < datetime('now', '-' || ?1 || ' hours') \
-                          GROUP BY device_id) \
-           AND id NOT IN (SELECT MAX(id) FROM device_status WHERE capabilities_json LIKE ?2 \
                           GROUP BY device_id)",
         )
         .bind(STATUS_HISTORY_HOURS)
-        .bind(format!(
-            "%\"{}\"%",
-            crate::handlers::calls::CALL_POLICY_CAPABILITY
-        ))
         .execute(db)
         .await,
     );

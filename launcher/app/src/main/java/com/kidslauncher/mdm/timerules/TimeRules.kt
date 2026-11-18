@@ -10,8 +10,7 @@ import java.time.ZoneId
 /*
  * Named time rules and the daily screen-time budget - pure Kotlin, no Android imports, unit-tested
  * in TimeRulesTest. Design: docs/design/06-time-rules.md in the handy workspace. The server sends
- * `PolicyResponse.timePolicy`; an older server's weekday/weekend/bedtime windows are converted with
- * [legacyTimePolicy] (the same algorithm as kid-phone-server's `time_rules::legacy_rules`).
+ * `PolicyResponse.timePolicy`.
  *
  * Fail closed: a rule whose `days` isn't 7 entries is always active, an out-of-range window covers
  * its whole day, an unknown kind counts as custom, and a budget array of the wrong size means 0
@@ -34,25 +33,22 @@ data class TimeRule(
     val callsAllowed: Boolean = false,
     val exemptApps: List<String> = emptyList(),
     /** Kalender (our own day view, "Vibb-kalender" in the PWA) stays usable while the rule runs (PLAN 2026-11-02,
-     * server migration 0119). Missing - an older server - is false: Kalender stays closed under the rule, as before. */
+     * server migration 0119). Missing is false: Kalender stays closed under the rule. */
     val calendarAllowed: Boolean = false,
     /** The phone is silent while the rule runs (the user, 2026-11-02; server migration 0121, "Stille" in the PWA):
-     * [ruleSilenceFor], our own Do Not Disturb rule ([ZenRuleRuntime]). Missing - an older server - is false. */
+     * [ruleSilenceFor], our own Do Not Disturb rule ([ZenRuleRuntime]). Missing is false. */
     val silent: Boolean = false,
     val days: List<TimeWindow?> = emptyList(),
     /** Design 93 §9.1: a rule the parent turned on now ("Slå på nå") is gone from this instant (epoch ms), whatever its
-     * weekday window says. Null - a scheduled rule, or an older server - never ends. Kept in the cache with the rule. */
+     * weekday window says. Null - a scheduled rule - never ends. Kept in the cache with the rule. */
     val untilMs: Long? = null,
     /** Design 93 §9.2: the card shows this rule ahead of the kind order while its own end is a real unlock. True on a
      * turned-on rule only; missing is false. */
     val cardFirst: Boolean = false,
     /** Design 98 §4.4.2: on a rule turned on now (a copy, negative [id]), the rule it copies - the parent code's pause
-     * pauses both, as the PWA's twin lift does. Missing - a scheduled rule, or an older server - pauses the copy alone. */
+     * pauses both, as the PWA's twin lift does. Missing - a scheduled rule - pauses the copy alone. */
     val copyOf: Long? = null,
 )
-
-/** Design 93 §9.3: the launcher honours `until_ms` and `card_first` (the server's `lock_now::CAPABILITY`). */
-const val LOCK_NOW_CAPABILITY = "lock_now_v1"
 
 const val KIND_SCHOOL = "school"
 const val KIND_BEDTIME = "bedtime"
@@ -69,12 +65,12 @@ data class Lift(
     val minutes: Int = 0,
     val expiresAtMs: Long = 0,
     /** Design 98 §4.4.3: the parent code's pause this phone posted. Such a lift lifts only through this phone's own
-     * record of the key ([phonePauseLifts]), never through a [LiftRecord]; missing - the PWA's lifts - as before. */
+     * record of the key ([phonePauseLifts]), never through a [LiftRecord]; missing - the PWA's lifts. */
     val phoneKey: String? = null,
-    /** Design 100 §14.2: the parent who gave it - their display name, `null` without one (D11: never the login), on a
-     * parent-code pause, or from an older server. */
+    /** Design 100 §14.2: the parent who gave it - their display name, `null` without one (D11: never the login), or on a
+     * parent-code pause. */
     val by: String? = null,
-    /** Design 100 §14.2: when it was given (epoch ms); 0 from an older server. */
+    /** Design 100 §14.2: when it was given (epoch ms); 0 when missing. */
     val atMs: Long = 0,
 )
 
@@ -87,10 +83,6 @@ data class TimePolicy(
     val rules: List<TimeRule> = emptyList(),
     val dailyBudgetMinutes: List<Int?> = emptyList(),
     val lifts: List<Lift> = emptyList(),
-    /** Design 100 §14.2 (QA R2-L4: inside `time_policy`, so it caches and copies with [answer]): this server answers
-     * requests for more time and closes them only by an answer. Missing - an older server - is false: a newer lift
-     * closes the open request (r13's rule, §14.7). */
-    val requestAnswers: Boolean = false,
     /** Design 100 §14.2: the newest answered request asked on the phone's day, or `null`. */
     val answer: TimeAnswer? = null,
 )
@@ -107,10 +99,6 @@ data class TimeAnswer(
     val liftId: Long? = null,
     val minutes: Int? = null,
 )
-
-/** Design 100 §14.5: the launcher shows a parent's "Nei" and the answering parent's name (the server's flash says
- * "… ser det på telefonen" only for a phone claiming it). */
-const val TIME_ANSWER_CAPABILITY = "time_answer_v1"
 
 /** Design 93 §9.1: the policy without the rules whose `untilMs` is at or before [nowMs] - a rule the parent turned on
  * now is gone from its end, whatever its weekday window says (no relock a week later, the phone offline). The phone's
@@ -283,51 +271,6 @@ fun nextBoundary(policy: TimePolicy?, now: Instant, zone: ZoneId, extraInstants:
         }
     }
     return candidates.filter { it.isAfter(now) }.minOrNull()
-}
-
-/**
- * An older server's fixed windows as rules (kid-phone-server's `time_rules::legacy_rules` does the
- * same for its migration). Old meaning: the weekday/weekend window is when the phone may be used
- * (outside it: locked), bedtime is when it's locked; `null` or start == end = no restriction; all
- * on the local minute of day. Calls stayed allowed during both. Names are left empty: the lock
- * screen then shows its own localized label for the kind.
- */
-fun legacyTimePolicy(
-    weekdayStart: Int?,
-    weekdayEnd: Int?,
-    weekendStart: Int?,
-    weekendEnd: Int?,
-    bedtimeStart: Int?,
-    bedtimeEnd: Int?,
-): TimePolicy {
-    val rules = mutableListOf<TimeRule>()
-    if (bedtimeStart != null && bedtimeEnd != null && bedtimeStart != bedtimeEnd) {
-        rules += TimeRule(-1, "", KIND_BEDTIME, callsAllowed = true, days = List(7) { TimeWindow(bedtimeStart, bedtimeEnd) })
-    }
-    fun allowed(day: Int): TimeWindow? {
-        val (s, e) = if (day < 5) weekdayStart to weekdayEnd else weekendStart to weekendEnd
-        return if (s == null || e == null || s == e) null else TimeWindow(s, e)
-    }
-    val windows = (0 until 7).map(::allowed)
-    val combinable = windows.all { it != null && it.start < it.end } &&
-        (0 until 7).all { d -> windows[(d + 1) % 7]!!.start <= windows[d]!!.end }
-    if (combinable) {
-        rules += TimeRule(-2, "", KIND_CUSTOM, callsAllowed = true, days = (0 until 7).map { d ->
-            TimeWindow(windows[d]!!.end, windows[(d + 1) % 7]!!.start)
-        })
-    } else {
-        val morning = windows.map { w -> w?.takeIf { it.start < it.end && it.start > 0 }?.let { TimeWindow(0, it.start) } }
-        val evening = windows.map { w ->
-            when {
-                w == null -> null
-                w.start < w.end -> TimeWindow(w.end, 0)
-                else -> TimeWindow(w.end, w.start)
-            }
-        }
-        if (morning.any { it != null }) rules += TimeRule(-2, "", KIND_CUSTOM, callsAllowed = true, days = morning)
-        if (evening.any { it != null }) rules += TimeRule(-3, "", KIND_CUSTOM, callsAllowed = true, days = evening)
-    }
-    return TimePolicy(rules = rules, dailyBudgetMinutes = List(7) { null })
 }
 
 /** Local date-time of [instant] in [zone]. */

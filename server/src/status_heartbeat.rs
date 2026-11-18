@@ -1,6 +1,6 @@
 //! The heartbeat report (design 95 §3.5, step 95-T2; `testdata/status_heartbeat.json`).
 //!
-//! A launcher claiming [CAPABILITY] sends its full status report with a `"hash"` - its own SHA-256 over the report
+//! The launcher sends its full status report with a `"hash"` - its own SHA-256 over the report
 //! without the [HEARTBEAT_FIELDS] - while the policy says `status_heartbeat: true` and names the same
 //! `status_heartbeat_fields`. After the report was taken (2xx), [keep] stores its body: only the report's known
 //! top-level keys ([REPORT_KEYS]), without the heartbeat fields (so no location is kept here), the lock state and the
@@ -16,18 +16,13 @@
 //! A heartbeat the server can't expand - another list of fields ([fields_tag]), no kept body, another hash, a body kept
 //! by another server version, before the phone's latest enrollment or older than [MAX_AGE_HOURS], or the switch
 //! `STATUS_HEARTBEAT=off` - is answered `{"full_report": true}` ([full_report_wanted]) and stores nothing; the phone
-//! sends the full report at once. An older launcher never sends a hash, and its reports drop whatever was kept.
+//! sends the full report at once. A report without a hash drops whatever was kept.
 
 use axum::Json;
 use axum::response::{IntoResponse, Response};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
-
-/// The launcher's capability: it sends hashes and heartbeats when the policy says `status_heartbeat`. The server needs
-/// no check of it (a heartbeat names itself); the contract test pins the name.
-#[cfg_attr(not(test), allow(dead_code))]
-pub const CAPABILITY: &str = "status_heartbeat_v1";
 
 /// What a heartbeat carries and the hash leaves out: the fields that move on an idle phone (the screen time, the
 /// battery, the lock, the location the phone re-sends, the certificate check's `seen.at_ms` of every sync, the mobile
@@ -245,7 +240,7 @@ async fn expand(
 }
 
 /// After a full report was taken: keeps its [kept_body] under the hash for the phone's next heartbeats, or forgets what
-/// was kept (`None`: an older launcher's report, one sent without a hash, the switch off; a body past
+/// was kept (`None`: a report sent without a hash, the switch off; a body past
 /// [MAX_KEPT_BYTES]).
 pub async fn keep(db: &SqlitePool, device_id: i64, keep: Option<&(String, Value)>) {
     let kept = keep.and_then(|(hash, body)| {

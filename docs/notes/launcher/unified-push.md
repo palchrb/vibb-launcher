@@ -7,9 +7,8 @@ its Play build and its push provider is switched to Vibb One once per account in
 `push/up/vendor/RaiseToForeground.kt` (Apache-2.0, adapted from UnifiedPush's android-distributor at 6daaf14; its header
 lists every change, `NOTICE.md` names it). Built in R1-L (2026-11-17, branch `up`).
 
-It reverses the 2026-10-06 rule ("the launcher must not export a registration receiver", `gotchas-and-history.md`,
-"Removed monitoring and upstream extras") for the receiver only (design 108 §10, the user's Q2): no third party and no
-second connection - pushes ride the one SSE stream to the family's own server.
+The launcher exports a registration receiver (design 108 §10, the user's Q2), but holds no third-party relay and no
+second connection: pushes ride the one SSE stream to the family's own server.
 
 ## The pieces
 
@@ -43,8 +42,7 @@ second connection - pushes ride the one SSE stream to the family's own server.
   `UpView.of(policy).on` = the policy's `unified_push.on` **and** an origin - **only for a policy carrying the parent's
   choice** (`parentChoice`: fresh, or a cache that decodes; code QA M3). A fallback plan or a bare policy leaves the
   components as they are: a disabled receiver makes the connector drop Vibb One, and each Element X account would need
-  its manual switch again. No key (an older server, a policy fetched before the first report claimed
-  `unified_push_v1`) is off. While disabled, `queryBroadcastReceivers` lists no Vibb One.
+  its manual switch again. No key is off. While disabled, `queryBroadcastReceivers` lists no Vibb One.
 - **`UpPackageReceiver`** (`exported="false"`): `PACKAGE_FULLY_REMOVED` / `PACKAGE_DATA_CLEARED` (protected, on the
   implicit-broadcast exception list) drop the app's rows and send a `DELETE` each; the sync's reconcile is the backstop
   (an app no longer installed - a hidden one still is).

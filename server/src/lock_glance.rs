@@ -3,8 +3,7 @@
 //! playing and the newest notifications: missed calls always, and messages from the apps the parent
 //! ticks here (Element X by default), with only the sender unless the parent switches that app's
 //! text on (design 51). The server only stores the ticks and their text flags and sends them as
-//! `PolicyResponse.lock_glance`; the phone never sends back a row, a count or a name (only the
-//! capability `lock_glance_v1`).
+//! `PolicyResponse.lock_glance`; the phone never sends back a row, a count or a name.
 //!
 //! Design 82 (`docs/design/82-meldinger-as-an-app.md`): Meldinger - the launcher's built-in SMS app - has its level
 //! in the same table under [crate::builtin::MESSAGES], set by the same select. It is no installed package, so it is
@@ -20,23 +19,14 @@ use sqlx::SqlitePool;
 #[cfg(test)]
 pub const ELEMENT_X: &str = "io.element.android.x";
 
-/// A launcher that has the glance page reports this capability.
-pub const LOCK_GLANCE_CAPABILITY: &str = "lock_glance_v1";
-
-/// Design 82 D6: a launcher that honours `lock_glance.sms`, Off included, and Meldinger's `app_display` entry reports
-/// this. Used for the pages' notes only, never to change what is sent.
-pub const MESSAGES_APP_CAPABILITY: &str = "messages_app_v1";
-
 /// `lock_glance.sms`'s three words (design 82 D3).
 pub const SMS_OFF: &str = "off";
 pub const SMS_NAME: &str = "name";
 pub const SMS_TEXT: &str = "text";
 
 /// `PolicyResponse.lock_glance` - always sent: the ticked apps (sorted, valid package names only),
-/// each with whether its message text shows too (design 51; before it `apps` were strings and one
-/// `show_text` was the phone's). An older launcher drops the objects and shows missed calls only
-/// until it updates; an older server's strings read as sender only on a new launcher. `sms` is Meldinger's level
-/// (design 82 D3, [sms_level]), always sent: a launcher that knows the key reads a missing one as an older server's.
+/// each with whether its message text shows too (design 51). `sms` is Meldinger's level (design 82 D3,
+/// [sms_level]), always sent.
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct LockGlancePolicy {
     pub apps: Vec<LockGlanceApp>,
@@ -50,11 +40,6 @@ impl LockGlancePolicy {
             apps: Vec::new(),
             sms: SMS_OFF,
         }
-    }
-
-    /// `call_policy.sms_lock_text` for a launcher from before `lock_glance.sms`: true only at Full text.
-    pub fn sms_lock_text(&self) -> bool {
-        self.sms == SMS_TEXT
     }
 }
 
@@ -140,15 +125,15 @@ pub async fn policy_lock_glance(
 }
 
 /// What Lock Screen & PINs' Notifications group warns about (design 31 step 4, typed): there is
-/// no lock without a Child PIN; a reporting launcher without the capability has no glance page
-/// yet; a launcher without notification access shows missed calls only - and Meldinger's rows, which need none
-/// (design 82 D7), while its row is listed and not Off.
+/// no lock without a Child PIN; a launcher without notification access shows missed calls only - and Meldinger's
+/// rows, which need none (design 82 D7), while its row is listed and not Off.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Note {
     NoChildPin,
-    NeedsUpdate,
-    NoNotificationAccess,
-    NoNotificationAccessButMessages,
+    /// No notification access: missed calls only.
+    CallsOnly,
+    /// No notification access: missed calls and Meldinger's rows only.
+    CallsAndMessagesOnly,
 }
 
 impl Note {
@@ -159,15 +144,11 @@ impl Note {
                 "device.lock.glance.no_child_pin",
                 "device.lock.glance.no_child_pin_sub",
             ),
-            Note::NeedsUpdate => (
-                "device.lock.glance.needs_update",
-                "device.lock.glance.needs_update_sub",
-            ),
-            Note::NoNotificationAccess => (
+            Note::CallsOnly => (
                 "device.lock.glance.no_access",
                 "device.lock.glance.no_access_sub",
             ),
-            Note::NoNotificationAccessButMessages => (
+            Note::CallsAndMessagesOnly => (
                 "device.lock.glance.no_access_messages",
                 "device.lock.glance.no_access_messages_sub",
             ),
@@ -185,25 +166,16 @@ impl Note {
 }
 
 /// [messages_shown]: Meldinger's row is listed and not Off.
-pub fn notes(
-    kid_pin_set: bool,
-    reported: bool,
-    capable: bool,
-    listener_enabled: Option<bool>,
-    messages_shown: bool,
-) -> Vec<Note> {
+pub fn notes(kid_pin_set: bool, listener_enabled: Option<bool>, messages_shown: bool) -> Vec<Note> {
     let mut notes = Vec::new();
     if !kid_pin_set {
         notes.push(Note::NoChildPin);
     }
-    if reported && !capable {
-        notes.push(Note::NeedsUpdate);
-    }
     if listener_enabled == Some(false) {
         notes.push(if messages_shown {
-            Note::NoNotificationAccessButMessages
+            Note::CallsAndMessagesOnly
         } else {
-            Note::NoNotificationAccess
+            Note::CallsOnly
         });
     }
     notes
@@ -319,31 +291,18 @@ pub struct LockScreenApp {
     /// Ticked but not in the listed apps ("Not allowed", under its switch that is on), so any tick
     /// can be removed.
     pub note: Option<&'static str>,
-    /// A line under the label that says nothing of the list (design 82 D7: Meldinger's "update Vibb One"): the row
-    /// stays listed, and its saves return to it.
-    pub hint: Option<&'static str>,
 }
 
-/// Meldinger's row (design 82 D7), the group's first while SMS is managed: its stored choice, and with Off stored on
-/// a phone that has reported without [MESSAGES_APP_CAPABILITY] the line that it still shows the name.
-pub fn messages_row(
-    label: String,
-    stored: Option<bool>,
-    reported: bool,
-    capable: bool,
-) -> LockScreenApp {
+/// Meldinger's row (design 82 D7), the group's first while SMS is managed: its stored choice.
+pub fn messages_row(label: String, stored: Option<bool>) -> LockScreenApp {
     LockScreenApp {
         package_name: crate::builtin::MESSAGES.to_string(),
         label,
         on: stored.is_some(),
         show_text: stored == Some(true),
         note: None,
-        hint: (stored.is_none() && reported && !capable).then_some(MESSAGES_OFF_NEEDS_UPDATE),
     }
 }
-
-/// [messages_row]'s hint.
-pub const MESSAGES_OFF_NEEDS_UPDATE: &str = "device.lock.glance.messages_off_needs_update";
 
 /// The subsection's apps: the [listed] ones in their order (the allowed apps, or with no allowlist
 /// every app the phone reports - QA Low 7) with their ticks, then every ticked package that isn't
@@ -365,7 +324,6 @@ pub fn card_apps(
             package_name,
             label,
             note: None,
-            hint: None,
         })
         .collect();
     apps.extend(
@@ -378,7 +336,6 @@ pub fn card_apps(
                 on: true,
                 show_text: *show_text,
                 note: Some(unlisted_note(allowlist, package)),
-                hint: None,
             }),
     );
     apps
@@ -477,32 +434,15 @@ mod tests {
 
     #[test]
     fn every_note() {
-        assert!(notes(true, true, true, Some(true), false).is_empty());
-        assert!(
-            notes(true, false, false, None, false).is_empty(),
-            "no report yet"
-        );
-        let mut all = notes(false, true, false, Some(false), false);
-        assert_eq!(
-            all,
-            [
-                Note::NoChildPin,
-                Note::NeedsUpdate,
-                Note::NoNotificationAccess
-            ]
-        );
-        assert_eq!(notes(true, true, false, None, false), [Note::NeedsUpdate]);
-        assert_eq!(
-            notes(true, true, true, Some(false), false),
-            [Note::NoNotificationAccess]
-        );
+        assert!(notes(true, Some(true), false).is_empty());
+        assert!(notes(true, None, false).is_empty(), "no report yet");
+        let mut all = notes(false, Some(false), false);
+        assert_eq!(all, [Note::NoChildPin, Note::CallsOnly]);
+        assert_eq!(notes(true, Some(false), false), [Note::CallsOnly]);
         // Design 82 D7: Meldinger's rows need no notification access - the note says so only while its row shows.
-        assert_eq!(
-            notes(true, true, true, Some(false), true),
-            [Note::NoNotificationAccessButMessages]
-        );
-        assert!(notes(true, true, true, Some(true), true).is_empty());
-        all.push(Note::NoNotificationAccessButMessages);
+        assert_eq!(notes(true, Some(false), true), [Note::CallsAndMessagesOnly]);
+        assert!(notes(true, Some(true), true).is_empty());
+        all.push(Note::CallsAndMessagesOnly);
         for note in all {
             let words = note.note(crate::i18n::Lang::En);
             // No Child PIN is the parent's choice: a quiet note (2026-11-18).
@@ -569,22 +509,17 @@ mod tests {
         );
     }
 
-    /// Design 82 D7: Meldinger's row - its stored choice, and the update line only for Off on a phone that has
-    /// reported without the capability. Never `note`: the row is always listed.
+    /// Design 82 D7: Meldinger's row - its stored choice. Never `note`: the row is always listed.
     #[test]
     fn meldingers_row() {
-        let row =
-            |stored, reported, capable| messages_row("Messages".into(), stored, reported, capable);
-        let off = row(None, true, false);
+        let row = |stored| messages_row("Messages".into(), stored);
+        let off = row(None);
         assert_eq!(off.package_name, crate::builtin::MESSAGES);
         assert_eq!((off.on, off.show_text, off.note), (false, false, None));
-        assert_eq!(off.hint, Some(MESSAGES_OFF_NEEDS_UPDATE));
-        assert_eq!(row(None, true, true).hint, None);
-        assert_eq!(row(None, false, false).hint, None, "no report yet");
-        let name = row(Some(false), true, false);
-        assert_eq!((name.on, name.show_text, name.hint), (true, false, None));
-        let text = row(Some(true), true, false);
-        assert_eq!((text.on, text.show_text, text.hint), (true, true, None));
+        let name = row(Some(false));
+        assert_eq!((name.on, name.show_text), (true, false));
+        let text = row(Some(true));
+        assert_eq!((text.on, text.show_text), (true, true));
         assert_eq!(
             [None, Some(false), Some(true)].map(level_label),
             [
@@ -630,7 +565,6 @@ mod tests {
                     on: true,
                     show_text: false,
                     note: None,
-                    hint: None,
                 },
                 LockScreenApp {
                     package_name: ELEMENT_X.to_string(),
@@ -638,7 +572,6 @@ mod tests {
                     on: true,
                     show_text: true,
                     note: None,
-                    hint: None,
                 },
                 LockScreenApp {
                     package_name: "com.allowed.later".to_string(),
@@ -646,7 +579,6 @@ mod tests {
                     on: true,
                     show_text: false,
                     note: Some(NOT_ON_PHONE_TICKED),
-                    hint: None,
                 },
                 LockScreenApp {
                     package_name: "com.old.chat".to_string(),
@@ -654,7 +586,6 @@ mod tests {
                     on: true,
                     show_text: false,
                     note: Some(NOT_ALLOWED_TICKED),
-                    hint: None,
                 },
             ]
         );

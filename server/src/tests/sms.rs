@@ -1,6 +1,6 @@
 //! Design 77 step 1, the server's side: the policy's SMS keys against the shared contract
 //! (`testdata/sms_contract.json`, byte-identical in the launcher's test resources - `sms::tests`
-//! compares the copies), D2's derived old keys and migration, the report's `sms_state`, the
+//! compares the copies), D2's modes and migration, the report's `sms_state`, the
 //! `sms-held` intake's checks, states and bound, and the Calls page's two channel rows.
 
 use axum::http::{Method, StatusCode};
@@ -164,11 +164,9 @@ async fn the_policy_is_the_contracts() {
     );
 }
 
-/// D2's wire: each of the nine combinations sends its modes and the old keys derived from them
-/// (failing closed for an older launcher: "Calls not managed, SMS managed" reads `managed: true,
-/// calls_enabled: true, sms_enabled: false`). Every new key is sent in every state.
+/// D2's wire: each of the nine combinations sends its modes, and every SMS key in every state.
 #[tokio::test]
-async fn every_mode_sends_its_derived_old_keys() {
+async fn every_mode_is_sent_with_every_sms_key() {
     let app = TestApp::new().await;
     let (id, token) = app.enrolled_device("phone").await;
     for row in contract()["modes"].as_array().unwrap() {
@@ -180,22 +178,10 @@ async fn every_mode_sends_its_derived_old_keys() {
         )
         .await;
         let policy = app.policy(&token).await["call_policy"].clone();
-        for key in [
-            "calls_mode",
-            "sms_mode",
-            "managed",
-            "calls_enabled",
-            "sms_enabled",
-        ] {
+        for key in ["calls_mode", "sms_mode"] {
             assert_eq!(policy[key], row[key], "{key} in {row}");
         }
-        for key in [
-            "sms_lock_text",
-            "sms_names",
-            "own_numbers",
-            "mmsc_hosts",
-            "sms_held_drop",
-        ] {
+        for key in ["sms_names", "own_numbers", "mmsc_hosts", "sms_held_drop"] {
             assert!(
                 policy.get(key).is_some_and(|v| !v.is_null()),
                 "{key} in {row}"
@@ -204,11 +190,10 @@ async fn every_mode_sends_its_derived_old_keys() {
     }
 }
 
-/// Code QA M2: a phone created from now on starts as before 0130 - both channels "Ikke styrt" - so an older launcher
-/// from the setup QR reads exactly today's unmanaged `call_policy` (no contacts, nothing restricted), and its calls
-/// are left alone.
+/// Code QA M2: a phone created from now on starts with both channels "Ikke styrt": no contacts sent, nothing
+/// restricted, its calls left alone.
 #[tokio::test]
-async fn a_new_phone_reads_as_before_0130() {
+async fn a_new_phone_starts_with_both_channels_unmanaged() {
     let app = TestApp::new().await;
     let (id, token) = app.enrolled_device("phone").await;
     contact(
@@ -224,23 +209,15 @@ async fn a_new_phone_reads_as_before_0130() {
     let policy = app.policy(&token).await["call_policy"].clone();
     assert_eq!(policy["calls_mode"], "unmanaged");
     assert_eq!(policy["sms_mode"], "unmanaged");
-    // The keys an older launcher reads: unmanaged, as before 0130.
-    assert_eq!(policy["managed"], false);
-    assert_eq!(policy["calls_enabled"], true);
-    assert_eq!(policy["sms_enabled"], true);
     assert_eq!(policy["contacts"], json!([]));
-    let stored: (String, String, bool) = sqlx::query_as(
-        "SELECT calls_mode, sms_mode, calls_managed FROM device_policy WHERE device_id = ?",
-    )
-    .bind(id)
-    .fetch_one(&app.db)
-    .await
-    .unwrap();
-    assert_eq!(stored, ("unmanaged".into(), "unmanaged".into(), false));
+    assert_eq!(
+        stored_modes(&app, id).await,
+        ("unmanaged".into(), "unmanaged".into())
+    );
 }
 
-/// Migration 0130 on rows from before it: D2's table (the contract's `migration` rows) - no phone
-/// less restricted and none more - and each contact's texting where its calling was (D3).
+/// Migration 0130 on rows from before it: D2's table - no phone less restricted and none more - and each contact's
+/// texting where its calling was (D3).
 #[tokio::test]
 async fn the_migration_keeps_every_phone_as_it_was() {
     let dir = tempfile::tempdir().unwrap();
@@ -259,9 +236,17 @@ async fn the_migration_keeps_every_phone_as_it_was() {
         .collect::<Vec<_>>()
         .into();
     old.run(&db).await.unwrap();
-    let rows = contract()["migration"].as_array().unwrap().clone();
+    // D2's table: (calls_managed, calls_enabled, sms_enabled) before 0130 -> (calls_mode, sms_mode) after it.
+    let rows = [
+        ((false, false, false), ("unmanaged", "unmanaged")),
+        ((false, true, true), ("unmanaged", "unmanaged")),
+        ((true, false, false), ("off", "off")),
+        ((true, false, true), ("off", "unmanaged")),
+        ((true, true, false), ("managed", "off")),
+        ((true, true, true), ("managed", "unmanaged")),
+    ];
     let mut ids = Vec::new();
-    for row in &rows {
+    for ((managed, calls_enabled, sms_enabled), _) in rows {
         let id: i64 = sqlx::query_scalar("INSERT INTO devices (name) VALUES ('old') RETURNING id")
             .fetch_one(&db)
             .await
@@ -271,9 +256,9 @@ async fn the_migration_keeps_every_phone_as_it_was() {
              VALUES (?, 1, ?, ?, ?)",
         )
         .bind(id)
-        .bind(row["calls_managed"].as_bool().unwrap())
-        .bind(row["calls_enabled"].as_bool().unwrap())
-        .bind(row["sms_enabled"].as_bool().unwrap())
+        .bind(managed)
+        .bind(calls_enabled)
+        .bind(sms_enabled)
         .execute(&db)
         .await
         .unwrap();
@@ -298,15 +283,14 @@ async fn the_migration_keeps_every_phone_as_it_was() {
     db.close().await;
     let options = sqlx::sqlite::SqliteConnectOptions::new().filename(dir.path().join("old.db"));
     let db = sqlx::SqlitePool::connect_with(options).await.unwrap();
-    for (row, id) in rows.iter().zip(ids) {
+    for ((old, (calls, sms)), id) in rows.into_iter().zip(ids) {
         let modes: (String, String) =
             sqlx::query_as("SELECT calls_mode, sms_mode FROM device_policy WHERE device_id = ?")
                 .bind(id)
                 .fetch_one(&db)
                 .await
                 .unwrap();
-        assert_eq!(modes.0, row["calls_mode"].as_str().unwrap(), "{row}");
-        assert_eq!(modes.1, row["sms_mode"].as_str().unwrap(), "{row}");
+        assert_eq!(modes, (calls.into(), sms.into()), "{old:?}");
     }
     let texts: (bool, bool, bool) =
         sqlx::query_as("SELECT sms_in, sms_out, mms FROM device_contacts")
@@ -316,27 +300,21 @@ async fn the_migration_keeps_every_phone_as_it_was() {
     assert_eq!(texts, (false, true, true));
 }
 
-/// The contract's `report`: the capability and `sms_state`, stored through its known keys exactly.
+/// The contract's `report`: `sms_state`, stored through its known keys exactly.
 #[tokio::test]
 async fn the_report_stores_the_sms_state() {
     let app = TestApp::new().await;
     let (id, token) = app.enrolled_device("phone").await;
     let contract = contract();
     let state = contract["report"]["sms_state"].clone();
-    app.post_status(
-        &token,
-        json!({ "capabilities": [contract["capability"]], "sms_state": state }),
-    )
-    .await;
-    let (stored, capabilities): (String, String) = sqlx::query_as(
-        "SELECT sms_state_json, capabilities_json FROM device_status WHERE device_id = ?",
-    )
-    .bind(id)
-    .fetch_one(&app.db)
-    .await
-    .unwrap();
+    app.post_status(&token, json!({ "sms_state": state })).await;
+    let stored: String =
+        sqlx::query_scalar("SELECT sms_state_json FROM device_status WHERE device_id = ?")
+            .bind(id)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
     assert_eq!(serde_json::from_str::<Value>(&stored).unwrap(), state);
-    assert!(capabilities.contains("\"sms_engine_v1\""));
 }
 
 /// The contract's `held.request`, its instants moved into the last hour (the deltas kept).
@@ -583,9 +561,9 @@ async fn the_calls_page_saves_both_channels() {
                 uri,
                 Some(cookie),
                 &[
+                    ("section", "channels"),
                     ("calls_mode", calls),
                     ("sms_mode", sms),
-                    ("default_message_app", "sms"),
                 ],
             )
             .await
@@ -610,15 +588,6 @@ async fn the_calls_page_saves_both_channels() {
         (policy["calls_mode"].clone(), policy["sms_mode"].clone()),
         (json!("off"), json!("unmanaged"))
     );
-    let old: (bool, bool, bool) = sqlx::query_as(
-        "SELECT calls_managed, calls_enabled, sms_enabled FROM device_policy WHERE device_id = ?",
-    )
-    .bind(id)
-    .fetch_one(&app.db)
-    .await
-    .unwrap();
-    assert_eq!(old, (true, false, true));
-
     for (calls, sms) in [("on", "managed"), ("off", ""), ("managed", "maybe")] {
         assert_eq!(
             save(calls, sms).await.status,
@@ -631,7 +600,7 @@ async fn the_calls_page_saves_both_channels() {
             Method::POST,
             &uri,
             Some(&cookie),
-            &[("default_message_app", "sms")],
+            &[("section", "channels"), ("default_message_app", "sms")],
         )
         .await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
@@ -649,21 +618,12 @@ async fn save_modes(
         &format!("/devices/{id}/calls/settings"),
         Some(cookie),
         &[
+            ("section", "channels"),
             ("calls_mode", calls),
             ("sms_mode", sms),
-            ("default_message_app", "sms"),
         ],
     )
     .await
-}
-
-/// A channel radio's state on the page: (checked, disabled).
-fn radio(page: &str, name: &str, value: &str) -> (bool, bool) {
-    let tag = super::tags(page, "input")
-        .into_iter()
-        .find(|tag| tag.attr("name") == Some(name) && tag.attr("value") == Some(value))
-        .unwrap_or_else(|| panic!("no radio {name}={value}"));
-    (tag.has("checked"), tag.has("disabled"))
 }
 
 async fn stored_modes(app: &TestApp, id: i64) -> (String, String) {
@@ -674,149 +634,38 @@ async fn stored_modes(app: &TestApp, id: i64) -> (String, String) {
         .unwrap()
 }
 
-/// Code QA M2, step 4's capability gate brought forward: without `sms_engine_v1` in the phone's last report, the
-/// pairs an older launcher can't do show disabled with "Update Vibb One first" and a save of one is refused in place
-/// (the page again, nothing written); with the capability they are taken (design 113: no "recommended" note).
+/// Design 77 D2: every pair is offered and taken, on a phone that hasn't reported and on one that has (design 113: no
+/// "recommended" note under a choice).
 #[tokio::test]
-async fn the_calls_page_gates_what_an_older_launcher_cant_do() {
+async fn the_calls_page_offers_every_pair() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;
-    app.post_status(&token, json!({ "capabilities": ["call_policy_v1"] }))
-        .await;
-    let page = app
-        .get_page(&format!("/devices/{id}/calls"), &cookie)
-        .await
-        .text();
-    // Step 4: a segmented control of three radios; a choice the phone can't do is a disabled radio, with its line.
-    assert_eq!(radio(&page, "sms_mode", "managed"), (false, true), "{page}");
-    assert_eq!(radio(&page, "sms_mode", "off"), (false, true));
-    assert_eq!(radio(&page, "sms_mode", "unmanaged"), (true, false));
-    assert_eq!(radio(&page, "calls_mode", "off"), (false, false));
-    assert!(
-        page.contains("Managed by Vibb - Update Vibb One first"),
-        "{page}"
-    );
-    assert!(page.contains("Off - Update Vibb One first"));
-    assert!(!page.contains("segment-note"));
-
-    for (calls, sms) in [
-        ("unmanaged", "managed"),
-        ("managed", "managed"),
-        ("off", "managed"),
-        ("unmanaged", "off"),
-    ] {
-        let res = save_modes(&app, &cookie, id, calls, sms).await;
-        assert_eq!(res.status, StatusCode::BAD_REQUEST, "{calls} {sms}");
+    for report in [false, true] {
+        if report {
+            app.post_status(&token, json!({})).await;
+        }
+        let page = app
+            .get_page(&format!("/devices/{id}/calls"), &cookie)
+            .await
+            .text();
+        assert!(page.contains(r#"Managed by Vibb</span>"#), "{page}");
+        assert!(!page.contains("segment-note"));
+        assert!(!page.contains("Update Vibb One"), "{page}");
         assert!(
-            res.text().contains("Update Vibb One first: the phone"),
-            "{calls} {sms}"
+            super::tags(&page, "input")
+                .iter()
+                .filter(|tag| tag.attr("type") == Some("radio"))
+                .all(|tag| !tag.has("disabled"))
         );
-        assert_eq!(
-            stored_modes(&app, id).await,
-            ("unmanaged".into(), "unmanaged".into())
-        );
+        for (calls, sms) in [("unmanaged", "managed"), ("managed", "managed")] {
+            assert!(
+                save_modes(&app, &cookie, id, calls, sms)
+                    .await
+                    .status
+                    .is_redirection()
+            );
+            assert_eq!(stored_modes(&app, id).await, (calls.into(), sms.into()));
+        }
     }
-    // What today's wire can say still saves.
-    assert!(
-        save_modes(&app, &cookie, id, "managed", "off")
-            .await
-            .status
-            .is_redirection()
-    );
-    // Calls "Ikke styrt" needs SMS "Ikke styrt" too: shown disabled while SMS is off.
-    let page = app
-        .get_page(&format!("/devices/{id}/calls"), &cookie)
-        .await
-        .text();
-    assert_eq!(radio(&page, "calls_mode", "unmanaged"), (false, true));
-    assert!(page.contains("Not managed - Update Vibb One first"));
-
-    // With the engine: every pair, and no note under a choice (design 113).
-    app.post_status(
-        &token,
-        json!({ "capabilities": ["call_policy_v1", "sms_engine_v1"] }),
-    )
-    .await;
-    let page = app
-        .get_page(&format!("/devices/{id}/calls"), &cookie)
-        .await
-        .text();
-    assert!(page.contains(r#"Managed by Vibb</span>"#), "{page}");
-    assert!(!page.contains("segment-note"));
-    assert!(!page.contains("- Update Vibb One first"));
-    assert!(
-        super::tags(&page, "input")
-            .iter()
-            .filter(|tag| tag.attr("type") == Some("radio"))
-            .all(|tag| !tag.has("disabled"))
-    );
-    assert!(
-        save_modes(&app, &cookie, id, "unmanaged", "managed")
-            .await
-            .status
-            .is_redirection()
-    );
-    assert_eq!(
-        stored_modes(&app, id).await,
-        ("unmanaged".into(), "managed".into())
-    );
-}
-
-/// Code QA M2: a stored pair the phone's launcher can't do (set up again with an older build): the policy keeps the
-/// fail-closed derived keys, the Calls page says what it costs until the update, and a save that keeps the pair is
-/// still taken (another field's save loosens nothing).
-#[tokio::test]
-async fn a_stored_pair_an_older_launcher_cant_do_is_explained() {
-    let app = TestApp::new().await;
-    let cookie = app.admin_cookie().await;
-    let (id, token) = app.enrolled_device("phone").await;
-    set_modes(&app, id, "unmanaged", "managed").await;
-    app.post_status(&token, json!({ "capabilities": ["call_policy_v1"] }))
-        .await;
-    let policy = app.policy(&token).await["call_policy"].clone();
-    assert_eq!(
-        (
-            policy["managed"].clone(),
-            policy["calls_enabled"].clone(),
-            policy["sms_enabled"].clone()
-        ),
-        (json!(true), json!(true), json!(false))
-    );
-    let page = app
-        .get_page(&format!("/devices/{id}/calls"), &cookie)
-        .await
-        .text();
-    assert!(page.contains("The phone needs an update"), "{page}");
-    // Design 113 (QA M5): what is lost until the update shows under the title, not behind an ⓘ.
-    assert!(
-        page.contains(
-            "<div class=\"attention-sub\">SMS is lost and calls are contacts-only until then.</div>"
-        ),
-        "{page}"
-    );
-    assert!(
-        save_modes(&app, &cookie, id, "unmanaged", "managed")
-            .await
-            .status
-            .is_redirection()
-    );
-
-    set_modes(&app, id, "managed", "managed").await;
-    let page = app
-        .get_page(&format!("/devices/{id}/calls"), &cookie)
-        .await
-        .text();
-    assert!(page.contains("SMS is lost until then."));
-    // Not with the engine.
-    app.post_status(
-        &token,
-        json!({ "capabilities": ["call_policy_v1", "sms_engine_v1"] }),
-    )
-    .await;
-    let page = app
-        .get_page(&format!("/devices/{id}/calls"), &cookie)
-        .await
-        .text();
-    assert!(!page.contains("The phone needs an update"));
 }

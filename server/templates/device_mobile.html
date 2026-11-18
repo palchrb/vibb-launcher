@@ -15,10 +15,9 @@
     {#- Design 95 rev. 3: Mobilnett, a page of the phone's own. Each group is one auto-saving form back to its anchor
         (#mobile-data - the kid's switch is a form of its own there -, #abroad (design 97), #mobile-lock): with JS scroll-restore.js keeps the place, without JS the
         <noscript> Save lands on the group - a save never jumps to the top. The radios are the rows (a check marks the
-        chosen one); a phone whose Vibb One doesn't do it yet has them disabled, with the update line. The state lines
-        under each group only when they say something (mobile_network::card): a wrong state one orange line above its
-        group with its fix behind its ⓘ (design 113 D1 P1), a quiet one a grey row. No sub-line under a choice: each
-        group's explanation is its footer ⓘ (P2, P3). -#}
+        chosen one). The state lines under each group only when they say something (mobile_network::card): a wrong
+        state one orange line above its group with its fix behind its ⓘ (design 113 D1 P1), a quiet one a grey row. No
+        sub-line under a choice: each group's explanation is its footer ⓘ (P2, P3). -#}
     <section id="mobile-data" aria-labelledby="mobile-data-title">
         <h2 class="group-header" id="mobile-data-title">{{ self.t("mobile.data.header") }}</h2>
         {% for line in card.data_lines %}{% if line.warn %}
@@ -33,12 +32,12 @@
         <form method="post" action="/devices/{{ device.id }}/mobile#mobile-data" class="group" role="radiogroup" aria-labelledby="mobile-data-title">
             <input type="hidden" name="group" value="mobile-data">
             <label class="row pick-row" data-choice="on">
-                <input type="radio" name="apps_mobile" value="on"{% if card.apps_mobile == "on" %} checked{% endif %}{% if card.reported && !card.mobile_capable %} disabled{% endif %} data-autosave>
+                <input type="radio" name="apps_mobile" value="on"{% if card.apps_mobile == "on" %} checked{% endif %} data-autosave>
                 <span class="row-label">{{ self.t("mobile.data.on") }}</span>
                 <svg class="choice-check" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 8.5l3.5 3.5 7.5-8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </label>
             <label class="row pick-row" data-choice="vibb">
-                <input type="radio" name="apps_mobile" value="vibb"{% if card.apps_mobile == "vibb" %} checked{% endif %}{% if card.reported && !card.mobile_capable %} disabled{% endif %} data-autosave>
+                <input type="radio" name="apps_mobile" value="vibb"{% if card.apps_mobile == "vibb" %} checked{% endif %} data-autosave>
                 <span class="row-label">{{ self.t("mobile.data.vibb") }}</span>
                 <svg class="choice-check" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 8.5l3.5 3.5 7.5-8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </label>
@@ -50,8 +49,8 @@
         <form method="post" action="/devices/{{ device.id }}/mobile#mobile-data" class="group" data-kid-mobile>
             <input type="hidden" name="group" value="kid-mobile">
             <label class="row">
-                <span class="row-label">{{ self.t("mobile.kid.label") }}{% if card.reported && !card.network_capable %}<span class="row-sub tone-orange" data-hint>{{ self.t("mobile.state.needs_update") }}</span>{% endif %}</span>
-                <input type="checkbox" role="switch" class="sw" name="on" value="on"{% if card.kid_shown %} checked{% endif %}{% if card.reported && !card.network_capable %} disabled{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                <span class="row-label">{{ self.t("mobile.kid.label") }}</span>
+                <input type="checkbox" role="switch" class="sw" name="on" value="on"{% if card.kid_shown %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
             </label>
             <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
         </form>
@@ -72,24 +71,23 @@
                 </details></div>{% endif %}</div>
         </div>
         {% endif %}{% endfor %}
-        {#- Design 97 §3.2: the radios need only data_roaming_v1 (the derived value works there); Bare Vibb on a phone
-            without mobile_network_v2 says it has no data abroad until Vibb One is updated. No "anbefalt" mark (D1).
-            Design 113: "Roaming" in the user's order På, Av, Bare Vibb (the values as stored). -#}
+        {#- Design 97 §3.2: no "anbefalt" mark (D1). Design 113: "Roaming" in the user's order På, Av, Bare Vibb (the
+            values as stored). -#}
         <form method="post" action="/devices/{{ device.id }}/mobile#abroad" class="group" role="radiogroup" aria-labelledby="abroad-title">
             <input type="hidden" name="group" value="abroad">
             <label class="row pick-row" data-choice="home">
-                <input type="radio" name="abroad" value="home"{% if card.abroad == "home" %} checked{% endif %}{% if card.reported && !card.roaming_capable %} disabled{% endif %} data-autosave>
+                <input type="radio" name="abroad" value="home"{% if card.abroad == "home" %} checked{% endif %} data-autosave>
                 <span class="row-label">{{ self.t("mobile.abroad.home") }}</span>
                 <svg class="choice-check" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 8.5l3.5 3.5 7.5-8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </label>
             <label class="row pick-row" data-choice="off">
-                <input type="radio" name="abroad" value="off"{% if card.abroad == "off" %} checked{% endif %}{% if card.reported && !card.roaming_capable %} disabled{% endif %} data-autosave>
+                <input type="radio" name="abroad" value="off"{% if card.abroad == "off" %} checked{% endif %} data-autosave>
                 <span class="row-label">{{ self.t("mobile.abroad.off") }}</span>
                 <svg class="choice-check" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 8.5l3.5 3.5 7.5-8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </label>
             <label class="row pick-row" data-choice="vibb">
-                <input type="radio" name="abroad" value="vibb"{% if card.abroad == "vibb" %} checked{% endif %}{% if card.reported && !card.roaming_capable %} disabled{% endif %} data-autosave>
-                <span class="row-label">{{ self.t("mobile.abroad.vibb") }}{% if card.reported && card.roaming_capable && !card.network_capable %}<span class="row-sub tone-orange" data-hint="vibb-update">{{ self.t("mobile.abroad.vibb_update") }}</span>{% endif %}</span>
+                <input type="radio" name="abroad" value="vibb"{% if card.abroad == "vibb" %} checked{% endif %} data-autosave>
+                <span class="row-label">{{ self.t("mobile.abroad.vibb") }}</span>
                 <svg class="choice-check" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 8.5l3.5 3.5 7.5-8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </label>
             {% for line in card.abroad_lines %}{% if !line.warn %}
@@ -107,8 +105,8 @@
         <form method="post" action="/devices/{{ device.id }}/mobile#mobile-lock" class="group">
             <input type="hidden" name="group" value="mobile-lock">
             <label class="row">
-                <span class="row-label">{{ self.t("mobile.lock.label") }}{% if card.reported && !card.mobile_capable %}<span class="row-sub tone-orange" data-hint>{{ self.t("mobile.state.needs_update") }}</span>{% endif %}</span>
-                <input type="checkbox" role="switch" class="sw" name="on" value="on"{% if card.settings_locked %} checked{% endif %}{% if card.reported && !card.mobile_capable %} disabled{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                <span class="row-label">{{ self.t("mobile.lock.label") }}</span>
+                <input type="checkbox" role="switch" class="sw" name="on" value="on"{% if card.settings_locked %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
             </label>
             {% for line in card.lock_lines %}
             <div class="row" data-mobile-line="{{ line.key }}"><span class="row-label">{{ line.title }}</span></div>

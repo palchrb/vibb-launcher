@@ -226,8 +226,8 @@ impl From<sqlx::Error> for PolicyError {
 /// hashed after [build_policy], so after its `pop_command` and every time-dependent part - and an
 /// `If-None-Match` naming it gets a `304` with no body. The request still counts as the phone's
 /// last access and the pop still happens; the body would only repeat one the phone holds. Never
-/// gzip'd (the PIN hashes, design 95 §3.3) and `no-store` as before. An older launcher sends no
-/// `If-None-Match` and always gets the 200.
+/// gzip'd (the PIN hashes, design 95 §3.3) and `no-store` as before. A request without
+/// `If-None-Match` always gets the 200.
 pub async fn policy(
     State(state): State<AppState>,
     Extension(AuthedDevice(device)): Extension<AuthedDevice>,
@@ -312,43 +312,10 @@ pub(crate) async fn build_policy(
         .transpose()
         .map_err(PolicyError::CorruptAllowlist)?;
 
-    // The legacy schedule fields: the global default unless this device has its own override
-    // turned on - see migrations/0017_schedules_page.sql (since 0115 that switch is the own daily
-    // limit's alone; these frozen fields still follow it). Since step 6 they're frozen (converted
-    // into time rules once, `time_rules::migrate_legacy`) and only read by launchers without
-    // `time_rules_v1`. A missing singleton row means "no schedule" (its migration seeds it); a
-    // query error is a 500.
+    // A missing singleton row means "no global limit" (its migration seeds it); a query error is a 500.
     let global = sqlx::query_as::<_, GlobalSchedule>("SELECT * FROM global_schedule WHERE id = 1")
         .fetch_optional(&state.db)
         .await?;
-    let legacy = if policy.custom_schedule_enabled {
-        (
-            policy.weekday_start_minutes,
-            policy.weekday_end_minutes,
-            policy.weekend_start_minutes,
-            policy.weekend_end_minutes,
-            policy.bedtime_start_minutes,
-            policy.bedtime_end_minutes,
-        )
-    } else {
-        let g = global.clone().unwrap_or_default();
-        (
-            g.weekday_start_minutes,
-            g.weekday_end_minutes,
-            g.weekend_start_minutes,
-            g.weekend_end_minutes,
-            g.bedtime_start_minutes,
-            g.bedtime_end_minutes,
-        )
-    };
-    let (
-        weekday_start_minutes,
-        weekday_end_minutes,
-        weekend_start_minutes,
-        weekend_end_minutes,
-        bedtime_start_minutes,
-        bedtime_end_minutes,
-    ) = legacy;
 
     let time_policy = build_time_policy(state, &policy, global.as_ref()).await?;
     // Design 64 step 2: the phone's zones (centre and radius, never the name) while Regularly,
@@ -364,16 +331,7 @@ pub(crate) async fn build_policy(
             zones.len(),
             crate::zones::watching(watch.as_ref()),
         ),
-        // Q-10: the centres and radii only to a launcher that watches zones itself.
-        zones: if last_capabilities(&state.db, device_id)
-            .await?
-            .iter()
-            .any(|c| c == crate::models::ZONES_CAPABILITY)
-        {
-            crate::zones::policy_zones(&policy.location_mode, &zones)
-        } else {
-            Vec::new()
-        },
+        zones: crate::zones::policy_zones(&policy.location_mode, &zones),
     };
 
     // Design 36 §4.1: Custom with a valid pair is the `dns_upstream` object and "cloudflare" for a
@@ -402,8 +360,7 @@ pub(crate) async fn build_policy(
 
     // The lock's glance page (design 25): cosmetic like the wallpapers - a failing query sends no
     // apps (missed calls only on the phone's lock), never a 500 that would cost the phone its rules. Design 82 D3:
-    // it fails closed for Meldinger too - `sms: "off"`, never an absent key - and the one read's level is what
-    // `call_policy.sms_lock_text` is derived from.
+    // it fails closed for Meldinger too - `sms: "off"`, never an absent key.
     let lock_glance =
         crate::lock_glance::policy_lock_glance(&state.db, device_id, &policy.sms_mode)
             .await
@@ -415,7 +372,7 @@ pub(crate) async fn build_policy(
                 );
                 crate::lock_glance::LockGlancePolicy::unreadable()
             });
-    let call_policy = build_call_policy(state, &policy, lock_glance.sms_lock_text()).await?;
+    let call_policy = build_call_policy(state, &policy).await?;
     // Design 68: fail closed - a failing query is a 500, never `[]`, which would hand every camera back.
     let app_permissions =
         crate::app_permissions::policy_app_permissions(&state.db, device_id).await?;
@@ -442,37 +399,24 @@ pub(crate) async fn build_policy(
     let mut calendar = crate::calendar::policy_calendar(&state.db, device_id).await?;
 
     // Popped last, after every read above has succeeded, and in one statement: a 500 never
-    // consumes a command, and two concurrent polls can't both get the same one. A launcher that
-    // confirms commands (security review L12) confirms each one before running it; one it didn't
-    // confirm - the response was lost, or it refused the policy - is offered again after
+    // consumes a command, and two concurrent polls can't both get the same one. The launcher
+    // confirms each command before running it (security review L12); one it didn't confirm - the
+    // response was lost, or it refused the policy - is offered again after
     // REDELIVER_AFTER_MINUTES, at most MAX_COMMAND_DELIVERIES times in all and only within
     // REDELIVER_WINDOW_MINUTES of its first delivery, so nothing stale ever replays (QA of the
-    // launcher wave, High 1; the phone runs a command once). For an older launcher delivery stays
-    // at-most-once, which is why every command must be safe to simply queue again. A command
-    // the parent cancelled is never handed out, nor - first or again - a pause, ring, stop or
-    // location update past its hour (EXPIRING_COMMANDS, the user's decision 2026-10-12). See
+    // launcher wave, High 1; the phone runs a command once). A command the parent cancelled is
+    // never handed out, nor - first or again - a pause, ring, stop or location update past its
+    // hour (EXPIRING_COMMANDS, the user's decision 2026-10-12). See
     // migrations/0010_find_my_device.sql, 0065_command_receipts.sql, 0068 and handlers::locate.
     let capabilities = last_capabilities(&state.db, device_id).await?;
-    // The quiet row plus a ping (migration 0113): `ping` only to a launcher that knows it, `row` to an older one.
-    calendar.lock_reminders =
-        crate::calendar::served_lock_reminders(&calendar.lock_reminders, &capabilities);
-    // Design 72b D1.6: the marked CalDAV calendar only to a launcher that hands its kid's events over.
-    if capabilities
-        .iter()
-        .any(|c| c == crate::calendar_kid_events::CAPABILITY)
-    {
-        calendar.kid_caldav =
-            crate::calendar_kid_events::policy(&state.db, device_id, state.kid_writes.now())
-                .await?;
-    }
-    // Design 76: the certificate check, only to a launcher that reads it; a read error fails the policy.
-    let server_tls = crate::server_tls::policy(state, device_id, &capabilities).await?;
-    // Design 108 §3.8: app push, only to a launcher that is a distributor; a read error fails the policy.
-    let unified_push = crate::unified_push::policy(&state.db, device_id, &capabilities).await?;
-    let receipts = capabilities
-        .iter()
-        .any(|c| c == crate::models::COMMAND_RECEIPT_CAPABILITY);
-    let popped = pop_command(&state.db, device_id, receipts, policy.kid_pin_rev).await?;
+    // Design 72b D1.6: the marked CalDAV calendar the kid's events are handed to.
+    calendar.kid_caldav =
+        crate::calendar_kid_events::policy(&state.db, device_id, state.kid_writes.now()).await?;
+    // Design 76: the certificate check; a read error fails the policy.
+    let server_tls = crate::server_tls::policy(state, device_id).await?;
+    // Design 108 §3.8: app push; a read error fails the policy.
+    let unified_push = crate::unified_push::policy(&state.db, device_id).await?;
+    let popped = pop_command(&state.db, device_id, policy.kid_pin_rev).await?;
     if let Some((id, _, requested_at, _)) = &popped {
         // Commands run in the order they were asked for (QA Low 1): once this one is out, an older
         // one the phone didn't confirm is never offered again - a lost "pause" must not run after
@@ -490,12 +434,10 @@ pub(crate) async fn build_policy(
         .bind(id)
         .execute(&state.db)
         .await?;
-        if receipts {
-            spawn_redelivery_nudge(state, device_id, *id);
-        }
+        spawn_redelivery_nudge(state, device_id, *id);
     }
-    // `allow_blocked` carries the apps the card listed (QA of cmd-expiry, Low 1); a row queued
-    // before 0068 has none, and the phone then lets out every block, as it did. Install Now's
+    // `allow_blocked` carries the apps the card listed (QA of cmd-expiry, Low 1); a payload that
+    // isn't one is sent as none: the phone then lets nothing out. Install Now's
     // payload is the release tag the row showed (design 37 §3) - a plain tag, only for it.
     // `set_kid_pin` (design 59 §2.1) carries the PIN opened from the row read above, so it is the
     // PIN of this answer's `kid_lock` hash - only in android mode and for a launcher whose last
@@ -528,12 +470,6 @@ pub(crate) async fn build_policy(
 
     Ok(PolicyResponse {
         allowlist,
-        weekday_start_minutes,
-        weekday_end_minutes,
-        weekend_start_minutes,
-        weekend_end_minutes,
-        bedtime_start_minutes,
-        bedtime_end_minutes,
         kiosk_desired: policy.kiosk_desired,
         // The block bit travels as `block_activity_start` only (see PolicyResponse).
         lock_task_features: policy.lock_task_features.unwrap_or(0)
@@ -610,10 +546,6 @@ pub(crate) async fn build_policy(
         app_permissions,
         lock_media_apps,
         abroad: crate::mobile_network::abroad_choice(&policy.abroad).to_string(),
-        data_roaming: crate::mobile_network::derived_roaming(crate::mobile_network::abroad_choice(
-            &policy.abroad,
-        ))
-        .to_string(),
         apps_mobile: crate::mobile_network::apps_choice(&policy.apps_mobile).to_string(),
         mobile_settings_locked: policy.mobile_settings_locked,
         status_heartbeat: state.config.status_heartbeat,
@@ -635,7 +567,6 @@ pub(crate) async fn build_policy(
 pub(crate) async fn pop_command(
     db: &sqlx::SqlitePool,
     device_id: i64,
-    receipts: bool,
     kid_pin_rev: i64,
 ) -> Result<Option<(i64, String, String, Option<String>)>, sqlx::Error> {
     let pop = format!(
@@ -646,7 +577,7 @@ pub(crate) async fn pop_command(
            AND (command NOT IN (?, ?, ?, ?) OR requested_at > datetime('now', ?)) \
            AND (command != ? OR (SELECT kid_pin_rev FROM device_policy \
                 WHERE device_policy.device_id = device_commands.device_id) = ?) \
-           AND (delivered_at IS NULL OR (? AND deliveries < ? \
+           AND (delivered_at IS NULL OR (deliveries < ? \
                 AND delivered_at <= datetime('now', ?) \
                 AND first_delivered_at > datetime('now', ?))) \
           ORDER BY requested_at ASC, id ASC LIMIT 1) \
@@ -665,7 +596,6 @@ pub(crate) async fn pop_command(
         ))
         .bind(crate::kid_lock::SET_KID_PIN)
         .bind(kid_pin_rev)
-        .bind(receipts)
         .bind(crate::models::MAX_COMMAND_DELIVERIES)
         .bind(format!(
             "-{} minutes",
@@ -719,15 +649,12 @@ async fn build_time_policy(
     })
 }
 
-/// Always explicit (QA blocker 3): an unmanaged device gets `managed: false` with defaults and no
-/// contacts, never a missing key - the launcher treats a missing `call_policy` after managed
-/// calls as a suspect response and keeps its last rules. Read errors are 500s like the rest of
-/// `build_policy`. [sms_lock_text] is the old key derived from `lock_glance.sms` (design 82 D3), for a launcher from
-/// before it: true only at Full text.
+/// Always explicit (QA blocker 3): an unmanaged device gets both modes `unmanaged` and no contacts, never a missing
+/// key - the launcher treats a missing `call_policy` after managed calls as a suspect response and keeps its last
+/// rules. Read errors are 500s like the rest of `build_policy`.
 async fn build_call_policy(
     state: &AppState,
     policy: &DevicePolicy,
-    sms_lock_text: bool,
 ) -> Result<CallPolicy, PolicyError> {
     let default_country_code: String =
         sqlx::query_scalar("SELECT default_country_code FROM call_settings WHERE id = 1")
@@ -739,9 +666,7 @@ async fn build_call_policy(
     // Design 77: every SMS key is always sent, also while both channels are unmanaged (QA R2-I1).
     let (sms_names, own_numbers, sms_held_drop) =
         crate::sms::policy_parts(&state.db, policy.device_id).await?;
-    // D2: the old keys derived from the modes, failing closed for a launcher from before them.
-    let managed = policy.managed();
-    let contacts = if managed {
+    let contacts = if policy.any_channel_managed() {
         device_contacts(state, policy.device_id)
             .await?
             .into_iter()
@@ -769,15 +694,11 @@ async fn build_call_policy(
     };
 
     Ok(CallPolicy {
-        managed,
-        calls_enabled: policy.calls_enabled(),
-        sms_enabled: policy.sms_enabled(),
         default_country_code,
         contacts,
         emergency_menu,
         calls_mode: policy.calls_mode.clone(),
         sms_mode: policy.sms_mode.clone(),
-        sms_lock_text,
         sms_groups: policy.sms_groups,
         sms_names,
         own_numbers,
@@ -1224,7 +1145,7 @@ pub async fn dns_events(
     Extension(AuthedDevice(device)): Extension<AuthedDevice>,
     Json(events): Json<Vec<DnsEventReport>>,
 ) -> impl IntoResponse {
-    // The log is a per-phone opt-in (off by default): an older launcher that still reports is
+    // The log is a per-phone opt-in (off by default): a launcher that reports anyway is
     // answered 204 and nothing is stored.
     let enabled: Option<bool> =
         sqlx::query_scalar("SELECT dns_log_enabled FROM device_policy WHERE device_id = ?")
@@ -1551,7 +1472,7 @@ async fn status_intake(
         .as_ref()
         .and_then(crate::notification_channels::clean)
         .map(|value| value.to_string());
-    // Design 115 §2.8: why the phone holds its app-push queue (`None`: it doesn't, or an older launcher).
+    // Design 115 §2.8: why the phone holds its app-push queue (`None`: it doesn't, or the report doesn't say).
     let up_held = report
         .unified_push
         .as_ref()
@@ -1772,21 +1693,10 @@ async fn status_intake(
             crate::parent_events::battery_report(&state, phone, battery).await;
         }
         // Design 102 §3.7: a wide Wi-Fi sign-in and the day's budget used up, each once.
-        if report
-            .capabilities
-            .iter()
-            .any(|c| c == crate::logins::PORTAL_CAPABILITY)
-        {
-            crate::logins::intake(&state, phone, captive_portal_json.as_deref()).await;
-        }
-        // Design 97 §6: the roaming notice, only from a launcher that judges where it is (`where`).
-        let judges_where = report
-            .capabilities
-            .iter()
-            .any(|c| c == crate::mobile_network::NETWORK_CAPABILITY);
+        crate::logins::intake(&state, phone, captive_portal_json.as_deref()).await;
+        // Design 97 §6: the roaming notice, from a report that says where the phone is (`where`).
         if let Some(roaming) = data_roaming_json
             .as_deref()
-            .filter(|_| judges_where)
             .and_then(|json| serde_json::from_str(json).ok())
         {
             crate::mobile_network::roaming_intake(&state, phone, &roaming).await;
@@ -1988,8 +1898,8 @@ async fn status_intake(
         .and_then(|loc| crate::models::checked_location(loc).map(|at| (loc, at)));
     crate::zones::intake(&state, device.id, &fixes, resent.as_ref()).await;
 
-    // Design 87 §4.2: a launcher claiming `app_logos_v1` gets the logos the server wants (200), any other 204.
-    crate::app_logos::answer(&state, device.id, &report.capabilities, &reported_logos).await
+    // Design 87 §4.2: the logos the server wants (200), or 204 when it wants none.
+    crate::app_logos::answer(&state, device.id, &reported_logos).await
 }
 
 /// The phone's report before this one, as the intake compares with it.
@@ -2007,7 +1917,7 @@ struct PreviousReport {
 }
 
 /// The versionCodes a report names (app update notices): the launcher's, the music app's, and
-/// each listed app's that carries one (`installed`; an older launcher's entries carry none).
+/// each listed app's that carries one (`installed`).
 fn installed_codes(
     app_version: Option<&str>,
     app_version_code: Option<i64>,
@@ -2170,7 +2080,7 @@ pub(crate) async fn end_expiring_at_start(db: &sqlx::SqlitePool) {
     }
 }
 
-/// After a command went to a phone that confirms commands: once the re-delivery gap has passed,
+/// After a command went to the phone: once the re-delivery gap has passed,
 /// nudge the phone over its stream if it still hasn't confirmed, so a lost answer is made good
 /// within [crate::models::REDELIVER_WINDOW_MINUTES] rather than at the phone's 30-minute backstop
 /// (QA of the launcher wave, High 1). One nudge per delivery; nothing happens without a stream.
@@ -2219,18 +2129,6 @@ pub(crate) async fn redelivery_nudge(
             false
         }
     }
-}
-
-/// Whether this device's launcher confirms commands before running them (its latest status
-/// report has [crate::models::COMMAND_RECEIPT_CAPABILITY], security review L12).
-pub(crate) async fn sends_command_receipts(
-    db: &sqlx::SqlitePool,
-    device_id: i64,
-) -> Result<bool, sqlx::Error> {
-    Ok(last_capabilities(db, device_id)
-        .await?
-        .iter()
-        .any(|c| c == crate::models::COMMAND_RECEIPT_CAPABILITY))
 }
 
 /// The capabilities of this device's latest status report since its enrollment (none without one,
@@ -2701,7 +2599,7 @@ pub async fn crash_reports(
 /// `POST /api/devices/power` takes at most this much (design 38 §2): two small objects.
 pub const POWER_BODY_LIMIT: usize = 2 * 1024;
 
-/// `POST /api/devices/power` (design 38, capability `power_v1`): `{off?, on?}` - the phone's
+/// `POST /api/devices/power` (design 38): `{off?, on?}` - the phone's
 /// shutdown (sent from `ACTION_SHUTDOWN`, and kept by the phone until a later boot's start is
 /// accepted) and its boot's start. 204, 400 for a body that isn't one or has neither part, 413
 /// above [POWER_BODY_LIMIT], 500 on a DB error (the phone keeps its record). The rows and their
@@ -2951,7 +2849,7 @@ pub fn time_request_id_ok(id: &str) -> bool {
 /// else the event `extra_time_request` keyed by the id (a retry is one row, and a retried third
 /// request is no fourth), pushed only while it is news (asked under 30 min ago at intake), to every
 /// parent with "Asks for more time" on; a stored one closes the day's other open requests
-/// (`superseded`, design 100 §14.4: an older launcher asks again after its 30 minutes). Where the phone stood comes from its own latest report, when
+/// (`superseded`, design 100 §14.4). Where the phone stood comes from its own latest report, when
 /// that is at most 15 minutes old.
 pub async fn time_request(
     State(state): State<AppState>,

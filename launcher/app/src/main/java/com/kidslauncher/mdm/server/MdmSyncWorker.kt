@@ -167,7 +167,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         // rewrite, the queued DELETEs, then a pull while UP is on - on UP's own executor, never blocking the sync.
         com.kidslauncher.mdm.push.up.UpRuntime.policyAccepted(context, freshPolicy, policyGetStartedMs)
         // Design 95 §3.5: an accepted 200 is kept with its ETag (a 304's body is the kept one already); one with a
-        // command is not (its Child PIN stays out of storage, design 59 §1), nor one without an ETag (an older server).
+        // command is not (its Child PIN stays out of storage, design 59 §1), nor one without an ETag.
         when (val step = keptBodyStep(served, freshPolicy)) {
             is KeptBodyStep.Keep -> etags.keep(owner, step.etag, step.body)
             KeptBodyStep.Drop -> etags.drop()
@@ -298,7 +298,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     val commandFix = ranCommand?.command == "locate"
     val forceFreshLocation = commandFix || zoneFix != null
     val preciseFix = commandFix || zoneFix == FreshKind.PRECISE
-    val locationPolicy = decision.policy?.let { it.locationPolicy ?: LEGACY_LOCATION_POLICY }
+    val locationPolicy = decision.policy?.let { it.locationPolicy ?: LocationPolicy() }
     // Security review P-L3: location "Off" - no fix from before the switch stays on the phone.
     if (locationPolicy?.mode == "off") LocateCommands.clearCachedFix(context)
     // P-L2: Location goes back off after a fix unless the CONFIG_LOCATION switch or the zone watch needs it on.
@@ -457,10 +457,6 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
 
     return freshPolicy != null
 }
-
-/** Status-report capability: the update fence, the pending self-update and the notification rule
- * (handy step 11). */
-const val KIOSK_ESCAPES_CAPABILITY = "kiosk_escapes_v1"
 
 /**
  * Design 98 §2.2 step 2: a report-only post before a Flymodus turn-on - no policy GET, no apply(), the same heartbeat
@@ -770,13 +766,12 @@ internal fun lockAnswer(ok: Boolean, ours: Boolean, androidGate: Boolean): Strin
 /**
  * Install Now received (design 37 §4.2): a record of another command is answered first - with its
  * own failure, else "superseded" (failed, QA L5) -, then this one is stored with the running
- * versionCode and versionName; the ordinary gate's last wait is forgotten (QA L4) and a download
+ * versionCode; the ordinary gate's last wait is forgotten (QA L4) and a download
  * waiting for Wi-Fi is gated again (the override is read live, [AppDownloads]' `gate`).
  */
 private suspend fun startInstallNow(context: Context, api: MdmApi, pending: PendingCommand) {
     val receipt = installNowOnReceipt(
         InstallNow.load(context), pending.id, pending.requestedAt, pending.releaseTag, BuildConfig.VERSION_CODE.toLong(),
-        BuildConfig.VERSION_NAME,
     )
     receipt.answerOld?.let { (old, message) ->
         CommandAnswers.result(
@@ -801,7 +796,7 @@ private suspend fun startInstallNow(context: Context, api: MdmApi, pending: Pend
  */
 private suspend fun settleInstallNow(context: Context, api: MdmApi, row: LauncherRow) {
     val record = InstallNow.load(context) ?: return
-    val (ok, message) = installNowOutcome(record, BuildConfig.VERSION_CODE.toLong(), row, BuildConfig.VERSION_NAME)
+    val (ok, message) = installNowOutcome(record, BuildConfig.VERSION_CODE.toLong(), row)
         .answer(BuildConfig.VERSION_NAME) ?: return
     Log.i(LOG_TAG, "Install Now ${record.commandId}: $message")
     CommandAnswers.result(context, api, PendingCommand(record.commandId, INSTALL_NOW_COMMAND, record.requestedAt), ok, message)
@@ -1094,7 +1089,6 @@ private fun handleLauncherUpdate(context: Context, update: TrackedAppUpdate?): L
         nowMs = now,
         failedBackoffMs = if (installNow) 0 else FAILED_RETRY_BACKOFF_MS,
         runningVersionCode = BuildConfig.VERSION_CODE.toLong(),
-        runningVersionName = BuildConfig.VERSION_NAME,
     )
     val row = launcherRow(true, update?.releaseTag, known?.lastInstalledTag, known?.refusedTag, step)
     val download = when (step) {
@@ -1180,8 +1174,6 @@ private suspend fun commitPendingSelfUpdateIfDue(context: Context, api: MdmApi) 
         ownVersionCode = BuildConfig.VERSION_CODE.toLong(),
         ourSigners = SelfUpdate.ourSigners(context),
         archiveSigners = SelfUpdate.signers(archive?.signingInfo),
-        archiveVersionName = archive?.versionName,
-        ownVersionName = BuildConfig.VERSION_NAME,
     )
     val appId = key.toLongOrNull()
     when {
@@ -1404,7 +1396,7 @@ private suspend fun fetchPolicy(
 /** Caches an accepted policy, its [LastEnforcedPlan], the "a policy has been applied" flag, the
  * "this phone has had time rules" flag ([judgeFresh]), the DNS upstream prefs (the provider and
  * `dns_upstream_custom`, design 36 §5.1) and the
- * call prefs ([callPrefsUpdate]: `calls_managed_last` only from an explicit `managed`, and the last
+ * call prefs ([callPrefsUpdate]: `calls_managed_last` only from a sent `call_policy`, and the last
  * managed call rules) in one synchronous `commit()` - they must never disagree, and the generated
  * preference setters only `apply()` asynchronously (see CLAUDE.md on writes racing a process death). */
 private fun storeAcceptedPolicy(context: Context, policy: PolicyResponse): Unit = synchronized(POLICY_CACHE_LOCK) {
@@ -1434,8 +1426,7 @@ private fun storeAcceptedPolicy(context: Context, policy: PolicyResponse): Unit 
     if (!ok) Log.w(LOG_TAG, "Failed to cache the accepted policy")
 }
 
-/** The cached policy blob is written by the sync and once by the vault's migration
- * ([redactCachedPolicy]) - never both at once (design 24b §2). */
+/** Guards the cached policy blob's writes (design 24b §2). */
 internal val POLICY_CACHE_LOCK = Any()
 
 /**

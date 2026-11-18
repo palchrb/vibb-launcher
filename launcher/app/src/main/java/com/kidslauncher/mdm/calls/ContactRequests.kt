@@ -378,7 +378,7 @@ object ContactRequests {
 
     /** At every accepted policy (`performMdmSync`): [reconcileContactRequests] with its rows and contacts. */
     fun policyAccepted(context: Context, callPolicy: CallPolicy?) {
-        val contacts = callPolicy?.takeIf { it.managed }?.contacts?.map { ArrivedContact(it.id, it.number, it.outbound) }
+        val contacts = callPolicy?.takeIf { it.anyChannelManaged }?.contacts?.map { ArrivedContact(it.id, it.number, it.outbound) }
         val rows = callPolicy?.contactRequests.orEmpty()
         val numbers = contacts?.associate { it.id to it.number }.orEmpty()
         update(context) { records ->

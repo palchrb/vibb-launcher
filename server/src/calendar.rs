@@ -16,11 +16,6 @@ use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use unicode_normalization::UnicodeNormalization;
 
-/// A launcher with Dagen reports this capability.
-pub const CALENDAR_CAPABILITY: &str = "calendar_v1";
-/// A launcher that knows `lock_reminders: "ping"` (the quiet row plus one sound) reports this capability; an older one
-/// reads anything but `"row"` as off, so it is sent `"row"` ([served_lock_reminders]).
-pub const PING_CAPABILITY: &str = "calendar_ping_v1";
 /// Rules a phone may have.
 pub const MAX_RULES: usize = 30;
 /// A rule's text to match, in code points after [clean].
@@ -438,14 +433,14 @@ pub struct CalendarPolicy {
     /// The lock's "Neste: …" line (A).
     pub glance_next: bool,
     /// `off`, `row` or `ping` (the row plus one sound, migration 0113): the master switch over every calendar's
-    /// reminder (C). `ping` only to a launcher with [PING_CAPABILITY] ([served_lock_reminders]).
+    /// reminder (C).
     pub lock_reminders: String,
     pub calendars: Vec<PolicyCalendar>,
     pub rules: Vec<Rule>,
     /// The phone's calendar links (design 72 §3, `calendar_feeds`): `[{id, name, rev}]`, `[]` when none.
     pub feeds: Vec<crate::calendar_feeds::PolicyFeed>,
     /// The CalDAV calendar the kid's events are written to (design 72b D1.6): `{id, accepted, back, pending}`, always
-    /// sent - `null` when none is marked or the launcher lacks `calendar_kid_events::CAPABILITY`.
+    /// sent - `null` when none is marked.
     pub kid_caldav: Option<crate::calendar_kid_events::KidCaldavPolicy>,
 }
 
@@ -532,16 +527,6 @@ pub async fn switches(
     .bind(device_id)
     .fetch_optional(db)
     .await
-}
-
-/// The `lock_reminders` a phone is sent: `ping` reads as `row` to a launcher without [PING_CAPABILITY] - it reads
-/// anything but `row` as off, and the quiet row is what it can do.
-pub fn served_lock_reminders(stored: &str, capabilities: &[String]) -> String {
-    if stored == "ping" && !capabilities.iter().any(|c| c == PING_CAPABILITY) {
-        "row".to_string()
-    } else {
-        stored.to_string()
-    }
 }
 
 /// The policy's `calendar` for one phone. A DB error fails the policy (500, the phone keeps its cache): a missing
@@ -761,7 +746,7 @@ pub async fn last_report(
 }
 
 /// Stores a report's `calendar` (status intake): through [sanitize_report] with the phone's rule ids. A report
-/// without it (an older launcher) leaves the last one. Never fails the report: an error is logged.
+/// without it leaves the last one. Never fails the report: an error is logged.
 pub async fn store_report(db: &SqlitePool, device_id: i64, value: Option<&serde_json::Value>) {
     let Some(value) = value else { return };
     let result: Result<Option<CalendarReport>, sqlx::Error> = async {

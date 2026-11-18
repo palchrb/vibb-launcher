@@ -184,11 +184,7 @@ async fn save_probes_then_seals() {
     assert!(!page.contains("data-row=\"status\""), "{page}");
     assert!(page.contains("href=\"/music/storytel\""));
     assert!(page.contains("Storytel Family, which isn't supported yet"));
-    assert!(
-        page.contains(
-            "Kept encrypted on this server; a phone with an older music app keeps a copy."
-        )
-    );
+    assert!(page.contains("Kept encrypted on this server. Lost a phone?"));
     assert!(page.contains("Lost a phone? Remove it, then change the password at Storytel"));
     assert_no_secret(&page, PASSWORD, "/music/settings");
     let again = app
@@ -1686,7 +1682,6 @@ async fn the_cards_show_the_phones_storytel() {
             Some(serde_json::json!({
                 "lock_reason": "NONE",
                 "kiosk_engaged": true,
-                "capabilities": ["music_v1"],
                 "music_state": state
             })),
         )

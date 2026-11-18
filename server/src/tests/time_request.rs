@@ -104,7 +104,6 @@ async fn report(app: &TestApp, token: &str, lock_reason: &str, used: i64, budget
             Some(json!({
                 "lock_reason": lock_reason,
                 "kiosk_engaged": true,
-                "capabilities": ["call_policy_v1", "time_rules_v1"],
                 "time_state": {
                     "day": day.to_string(),
                     "used_minutes": used, "budget_minutes": budget, "extra_minutes": 0,
@@ -418,7 +417,6 @@ async fn the_cap_counts_the_phones_own_day() {
             Some(json!({
                 "lock_reason": "NONE",
                 "kiosk_engaged": true,
-                "capabilities": ["call_policy_v1", "time_rules_v1"],
                 "time_state": {
                     "day": phone.today(now).to_string(), "used_minutes": 10, "budget_minutes": 90,
                     "lock_reason": "NONE", "zone": name,
@@ -540,17 +538,11 @@ fn assert_served(contract: &Value, row: &str, served: &Value) {
 
 /// Design 100 §14.5: the contract's `policy_*` rows are what this server serves (with the instants of the run):
 /// Pappa's "Nei", Mamma's "+30 min", "+30 min" from a parent with no display name (no `by`: never the login, D11),
-/// and Mamma's Quick actions lift with no request (no `answer`). `older_server` is the launcher's row (no flag). The
+/// and Mamma's Quick actions lift with no request (no `answer`). The
 /// rows pin `answer`'s and a lift's keys (`policy_json_keys_snapshot` pins `time_policy`'s own).
 #[tokio::test]
 async fn the_contract_policies() {
     let contract = contract();
-    assert_eq!(contract["capability"], crate::time_answers::CAPABILITY);
-    assert!(
-        contract["older_server"]["time_policy"]
-            .get("request_answers")
-            .is_none()
-    );
     assert_eq!(contract["request"]["id"], RID);
     for (row, parent, value) in [
         ("policy_no", Some(("pappa", "Pappa")), "no"),
@@ -712,64 +704,51 @@ async fn the_card_shows_the_open_request_until_an_answer() {
     assert!(inbox.contains("parent gave 15\u{a0}min"), "{inbox}");
 }
 
-/// "Nei": no lift, a `no` row, the security line and the nudge; the flash promises that the kid sees it only when
-/// the phone's launcher shows it (`time_answer_v1`, §14.7); the inbox says who said no.
+/// "Nei": no lift, a `no` row, the security line and the nudge; the flash says the kid sees it on the phone (§14.7);
+/// the inbox says who said no.
 #[tokio::test]
-async fn no_with_and_without_the_capability() {
-    for (capabilities, flash, words) in [
-        (
-            json!(["call_policy_v1", "time_rules_v1"]),
-            "answer_no",
-            "You said no.",
-        ),
-        (
-            json!(["call_policy_v1", "time_rules_v1", "time_answer_v1"]),
-            "answer_no_seen",
-            "You said no. Anna sees it on the phone.",
-        ),
-    ] {
-        let app = TestApp::new().await;
-        steady_zone(&app).await;
-        let cookie = app.admin_cookie_as("pappa", "Pappa").await;
-        let (id, token) = app.enrolled_device("Anna").await;
-        app.post_status(&token, json!({ "capabilities": capabilities }))
-            .await;
-        assert_eq!(
-            post(&app, &token, body(1, 0)).await.1,
-            json!({"accepted": true})
-        );
-        let mut nudges = app.state.command_notify.subscribe();
-        let res = answer(&app, &cookie, id, &format!("{:032x}", 1), "no").await;
-        assert_redirect(&res, &format!("/devices/{id}?done={flash}"), Some("quick"));
-        assert_eq!(nudges.try_recv().ok(), Some(id));
-        assert_eq!(
-            answer_row(&app, id, &format!("{:032x}", 1)).await,
-            Some(("no".to_string(), None))
-        );
-        let lifts: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM time_lifts")
-            .fetch_one(&app.db)
-            .await
-            .unwrap();
-        assert_eq!(lifts, 0);
-        let lines = super::security_words(&app, "time_request_no", crate::i18n::Lang::En).await;
-        assert_eq!(lines.len(), 1, "{lines:?}");
-        assert!(
-            lines[0].contains("no to a request for more time"),
-            "{lines:?}"
-        );
-        let html = app
-            .get_page(&format!("/devices/{id}?done={flash}"), &cookie)
-            .await
-            .text();
-        assert!(html.contains(words), "{html}");
-        assert!(card(&html).is_none());
-        let inbox = app.get_page("/notifications", &cookie).await.text();
-        assert!(inbox.contains("Pappa said no"), "{inbox}");
-        // The phone: the answer with Pappa's name.
-        let policy = app.policy(&token).await;
-        assert_eq!(policy["time_policy"]["answer"]["answer"], "no");
-        assert_eq!(policy["time_policy"]["answer"]["by"], "Pappa");
-    }
+async fn no_is_written_and_seen() {
+    let (flash, words) = ("answer_no_seen", "You said no. Anna sees it on the phone.");
+    let app = TestApp::new().await;
+    steady_zone(&app).await;
+    let cookie = app.admin_cookie_as("pappa", "Pappa").await;
+    let (id, token) = app.enrolled_device("Anna").await;
+    app.post_status(&token, json!({})).await;
+    assert_eq!(
+        post(&app, &token, body(1, 0)).await.1,
+        json!({"accepted": true})
+    );
+    let mut nudges = app.state.command_notify.subscribe();
+    let res = answer(&app, &cookie, id, &format!("{:032x}", 1), "no").await;
+    assert_redirect(&res, &format!("/devices/{id}?done={flash}"), Some("quick"));
+    assert_eq!(nudges.try_recv().ok(), Some(id));
+    assert_eq!(
+        answer_row(&app, id, &format!("{:032x}", 1)).await,
+        Some(("no".to_string(), None))
+    );
+    let lifts: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM time_lifts")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(lifts, 0);
+    let lines = super::security_words(&app, "time_request_no", crate::i18n::Lang::En).await;
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(
+        lines[0].contains("no to a request for more time"),
+        "{lines:?}"
+    );
+    let html = app
+        .get_page(&format!("/devices/{id}?done={flash}"), &cookie)
+        .await
+        .text();
+    assert!(html.contains(words), "{html}");
+    assert!(card(&html).is_none());
+    let inbox = app.get_page("/notifications", &cookie).await.text();
+    assert!(inbox.contains("Pappa said no"), "{inbox}");
+    // The phone: the answer with Pappa's name.
+    let policy = app.policy(&token).await;
+    assert_eq!(policy["time_policy"]["answer"]["answer"], "no");
+    assert_eq!(policy["time_policy"]["answer"]["by"], "Pappa");
 }
 
 /// D9 decided at the answer (QA R2-M2): asked with the screen time used up, then Leggetid locks (a fresh report):
@@ -889,7 +868,7 @@ async fn the_first_answer_wins() {
     let res = answer(&app, &pappa, id, &second, "no").await;
     assert_redirect(
         &res,
-        &format!("/devices/{id}?done=answer_no"),
+        &format!("/devices/{id}?done=answer_no_seen"),
         Some("quick"),
     );
     let html = app
@@ -1001,7 +980,6 @@ async fn a_pause_of_the_copied_rule_answers_a_request_under_its_copy() {
             Some(json!({
                 "lock_reason": "RULE",
                 "kiosk_engaged": true,
-                "capabilities": ["call_policy_v1", "time_rules_v1"],
                 "time_state": {
                     "day": today.to_string(),
                     "used_minutes": 10, "budget_minutes": 90, "extra_minutes": 0,
@@ -1041,8 +1019,7 @@ async fn a_pause_of_the_copied_rule_answers_a_request_under_its_copy() {
     );
 }
 
-/// §14.4 (QA R2-L6): a newer request of the day supersedes the open one (an older launcher asks again after its 30
-/// minutes) - the card shows the newer, the older's card says so; a request of another day is no longer open; a
+/// §14.4 (QA R2-L6): a newer request of the day supersedes the open one - the card shows the newer, the older's card says so; a request of another day is no longer open; a
 /// retry of the newer one supersedes nothing more.
 #[tokio::test]
 async fn a_second_request_supersedes_the_first() {

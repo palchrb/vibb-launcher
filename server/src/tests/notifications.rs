@@ -387,7 +387,7 @@ async fn the_battery_latches_once() {
         Some(html[start..start + html[start..].find('<').unwrap()].to_string())
     };
 
-    // A report without `battery` (an older launcher): nothing, no line.
+    // A report without `battery`: nothing, no line.
     app.post_status(&token, json!({})).await;
     assert_eq!(low_events().await, 0);
     assert_eq!(line(&app.get_page("/devices", &cookie).await.text()), None);

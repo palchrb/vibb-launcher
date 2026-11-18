@@ -63,19 +63,14 @@ async fn switches_default_off_are_always_sent_and_saved_from_the_device_page() {
         )
     );
 
-    // The phone's state (qa-16b-code #5): a launcher without the boot cover is told to update; one
-    // with it reports a tripped guard, which the card shows as a warning.
-    app.post_status(&token, json!({ "capabilities": ["kiosk_escapes_v1"] }))
-        .await;
+    // The phone's state (qa-16b-code #5): a report without the boot cover says nothing of it; a
+    // tripped guard is a warning on the card.
+    app.post_status(&token, json!({})).await;
     let page = advanced().await;
-    assert!(
-        page.contains("Update Vibb One for the boot cover"),
-        "{page}"
-    );
+    assert!(!page.contains("Update Vibb One"), "{page}");
     app.post_status(
         &token,
-        json!({ "capabilities": ["kiosk_escapes_v1", "boot_cover_v1"],
-                "boot_cover": { "wanted": true, "tripped": true, "last_handover": "nope" } }),
+        json!({ "boot_cover": { "wanted": true, "tripped": true, "last_handover": "nope" } }),
     )
     .await;
     let stored_cover = stored(&app, "boot_cover_json", id).await.unwrap();
@@ -183,19 +178,11 @@ async fn device_page_explains_the_fence_and_the_filter() {
             .await
             .text()
     };
-    // A launcher without the capability.
-    app.post_status(&token, json!({ "capabilities": ["pin_lock_v1"] }))
-        .await;
+    // A report without the fence's state: the card, and no update note.
+    app.post_status(&token, json!({})).await;
     let html = advanced().await;
     assert!(html.contains("Updates &#38; notifications"), "{html}");
-    assert!(
-        html.contains("Update Vibb One for these switches"),
-        "{html}"
-    );
-    assert!(
-        html.contains("neither the update fence nor the notification filter"),
-        "{html}"
-    );
+    assert!(!html.contains("Update Vibb One"), "{html}");
     // The device page has neither the card nor its form any more.
     let summary = app
         .get_page(&device_page(id, Section::Summary), &cookie)
@@ -212,7 +199,6 @@ async fn device_page_explains_the_fence_and_the_filter() {
     .await;
     app.post_status(&token,
         json!({
-            "capabilities": ["kiosk_escapes_v1"],
             "notification_listener_enabled": false,
             "update_fence": {
                 "enabled": true, "state": "none", "unsuspendable": ["com.oem.home"],
@@ -226,7 +212,6 @@ async fn device_page_explains_the_fence_and_the_filter() {
     )
     .await;
     let html = advanced().await;
-    assert!(!html.contains("neither the update fence"), "{html}");
     assert!(html.contains("com.oem.home"), "{html}");
     assert!(html.contains("Last update failed to install"), "{html}");
     assert!(html.contains("launcher-v1.4.0"), "{html}");

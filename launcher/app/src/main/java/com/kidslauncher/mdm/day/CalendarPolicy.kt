@@ -13,16 +13,6 @@ import kotlinx.serialization.json.longOrNull
  * (nothing in it can fail the policy). Pure; CalendarPolicyTest, PolicyResponseCompatTest.
  */
 
-/** A launcher with Dagen reports this capability; the server's Calendar page waits for it. */
-const val CALENDAR_CAPABILITY = "calendar_v1"
-
-/** A launcher that writes the parent's calendar links (design 72) reports this capability. */
-const val CALENDAR_FEEDS_CAPABILITY = "calendar_feeds_v1"
-
-/** A launcher that plays the reminder's ping (`lock_reminders: "ping"`) reports this capability; the server sends
- * `ping` only to it (`row` to an older launcher, which reads anything but `row` as off). */
-const val CALENDAR_PING_CAPABILITY = "calendar_ping_v1"
-
 /** One calendar link (design 72 §3): its uid (32 hex), the name the parent gave it, its set's rev. */
 data class FeedRef(val id: String, val name: String, val rev: String)
 
@@ -66,7 +56,7 @@ data class CalendarPolicy(
     /** The calendar links that read (design 72). */
     val feeds: List<FeedRef> = emptyList(),
     /** `feeds` is an array every element of which read: only then may a link's calendar the policy doesn't name be
-     * deleted (QA L9) - an older server, a bad element, a cached policy delete nothing. */
+     * deleted (QA L9) - a bad element or a cached policy deletes nothing. */
     val feedsComplete: Boolean = false,
     /** The CalDAV calendar the server writes the kid's events to (design 72b D1.6), `null` = none: the kid still writes
      * only in "Min kalender". */
@@ -80,11 +70,8 @@ data class CalendarPolicy(
     override fun toString() = "CalendarPolicy(usable=$usable, rules=${rules.size}, feeds=${feeds.size})"
 
     companion object {
-        /** No usable policy: Dagen off. */
+        /** No usable policy (missing, or not an object): Dagen off. */
         val UNKNOWN = CalendarPolicy(usable = false, onHome = false)
-
-        /** An older server without the key: every calendar shown, no rules, nothing on the lock, no "+". */
-        val OLDER_SERVER = CalendarPolicy(usable = true)
     }
 }
 
@@ -93,14 +80,13 @@ private fun JsonObject.bool(key: String): Boolean? = (this[key] as? JsonPrimitiv
 private fun JsonObject.string(key: String): String? = (this[key] as? JsonPrimitive)?.takeIf { it.isString }?.content
 
 /**
- * `PolicyResponse.calendar` field by field: missing or JSON `null` = an older server ([CalendarPolicy.OLDER_SERVER]);
- * anything but an object = [CalendarPolicy.UNKNOWN]. A switch that isn't a JSON boolean is its default; a calendar row
+ * `PolicyResponse.calendar` field by field: missing, JSON `null` or anything but an object = [CalendarPolicy.UNKNOWN] (fail
+ * closed). A switch that isn't a JSON boolean is its default; a calendar row
  * without a string key is dropped, its `color` a name this launcher doesn't know (or none) is no colour; a rule without
  * a numeric id is dropped, one this launcher can't use is dropped and its id reported.
  */
 fun calendarPolicy(element: JsonElement?): CalendarPolicy {
     val obj = when (element) {
-        null, JsonNull -> return CalendarPolicy.OLDER_SERVER
         is JsonObject -> element
         else -> return CalendarPolicy.UNKNOWN
     }
@@ -127,8 +113,7 @@ fun calendarPolicy(element: JsonElement?): CalendarPolicy {
         val rule = titleRule(id, r)
         if (rule != null) rules += rule else skipped += id
     }
-    // `off`, `row` or `ping` (the row plus one sound); anything else is off - a newer server sends a new form only to
-    // a launcher claiming it, as it sends `row` for `ping` to one without [CALENDAR_PING_CAPABILITY].
+    // `off`, `row` or `ping` (the row plus one sound); anything else is off.
     val reminders = obj.string("lock_reminders")
     val feedRows = obj["feeds"] as? JsonArray
     val feeds = feedRows.orEmpty().mapNotNull { feedRef(it) }.distinctBy { it.id }

@@ -196,10 +196,7 @@ object BootCoverGuard {
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             try {
-                val next = coverCrashed(
-                    read(app), bootCount(app), com.kidslauncher.mdm.BuildConfig.VERSION_CODE.toLong(),
-                    com.kidslauncher.mdm.BuildConfig.VERSION_NAME,
-                )
+                val next = coverCrashed(read(app), bootCount(app), com.kidslauncher.mdm.BuildConfig.VERSION_CODE.toLong())
                 write(app, next)
                 // M-1: android mode keeps the cover enabled (the boot's only direct-boot-aware HOME), inert from now on;
                 // compat-fix-1: so does own mode on a managed phone.

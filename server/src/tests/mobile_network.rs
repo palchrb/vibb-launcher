@@ -5,9 +5,7 @@ use axum::http::{Method, StatusCode};
 use serde_json::{Value, json};
 
 use super::{TestApp, assert_redirect};
-use crate::mobile_network::{
-    MOBILE_CAPABILITY, NETWORK_CAPABILITY, ROAMING_CAPABILITY, clean_mobile, clean_roaming,
-};
+use crate::mobile_network::{clean_mobile, clean_roaming};
 
 const CONTRACT: &str = include_str!("../../testdata/mobile_network.json");
 
@@ -30,19 +28,15 @@ async fn save(
     .await
 }
 
-async fn report(app: &TestApp, token: &str, extra: Value, capabilities: &[&str]) {
-    let mut body = json!({
-        "lock_reason": "NONE",
-        "kiosk_engaged": true,
-        "capabilities": capabilities,
-    });
+async fn report(app: &TestApp, token: &str, extra: Value) {
+    let mut body = json!({"lock_reason": "NONE", "kiosk_engaged": true});
     for (key, value) in extra.as_object().unwrap() {
         body[key] = value.clone();
     }
     let res = app
         .request(Method::POST, "/api/devices/status", Some(token), Some(body))
         .await;
-    // 204, or 200 for a launcher that claims app_logos_v1.
+    // 204, or 200 when logos are wanted.
     assert!(res.status.is_success(), "{} {}", res.status, res.text());
 }
 
@@ -71,20 +65,12 @@ async fn the_contract() {
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("Emma").await;
     let contract = contract();
-    assert_eq!(contract["capabilities"]["data_roaming"], ROAMING_CAPABILITY);
-    assert_eq!(contract["capabilities"]["mobile_data"], MOBILE_CAPABILITY);
-    assert_eq!(
-        contract["capabilities"]["mobile_network"],
-        NETWORK_CAPABILITY
-    );
 
-    // A new phone: the defaults are the first row (design 97 D1: Bare Vibb abroad, so the derived roaming is off and
-    // locked; apps on, the settings locked).
+    // A new phone: the defaults are the first row (design 97 D1: Bare Vibb abroad; apps on, the settings locked).
     let rows = contract["policy"].as_array().unwrap();
     let pick = |p: &Value| {
         json!({
             "abroad": p["abroad"],
-            "data_roaming": p["data_roaming"],
             "apps_mobile": p["apps_mobile"],
             "mobile_settings_locked": p["mobile_settings_locked"],
         })
@@ -105,13 +91,7 @@ async fn the_contract() {
     assert_redirect(&res, &format!("/devices/{id}/mobile"), Some("abroad"));
     assert_eq!(pick(&policy(&app, &token).await), rows[2]);
 
-    report(
-        &app,
-        &token,
-        contract["report"].clone(),
-        &[ROAMING_CAPABILITY, MOBILE_CAPABILITY, NETWORK_CAPABILITY],
-    )
-    .await;
+    report(&app, &token, contract["report"].clone()).await;
     let (roaming, mobile) = stored(&app, id).await;
     let roaming: Value = serde_json::from_str(&roaming.unwrap()).unwrap();
     let mobile: Value = serde_json::from_str(&mobile.unwrap()).unwrap();
@@ -152,15 +132,15 @@ async fn a_bad_save_writes_nothing() {
     }
     let served = policy(&app, &token).await;
     assert_eq!(served["abroad"], "vibb");
-    assert_eq!(served["data_roaming"], "off");
     assert_eq!(served["apps_mobile"], "on");
     let res = save(&app, &cookie, id + 99, &[("group", "mobile-lock")]).await;
     assert_eq!(res.status, StatusCode::NOT_FOUND);
 }
 
-/// The page: the update line before the capability; the phone's state under its group once it reports; the summary's
-/// row value, its lines and the header's roaming part. Design 113: no "only Vibb" line restating the chosen radio, and
-/// mobile data off is orange on the page and the summary's Attention row, not a Mobilnett line or a part of its value.
+/// The page: no update line and no disabled control, before a report and after one; the phone's state under its group
+/// once it reports; the summary's row value, its lines and the header's roaming part. Design 113: no "only Vibb" line
+/// restating the chosen radio, and mobile data off is orange on the page and the summary's Attention row, not a
+/// Mobilnett line or a part of its value.
 #[tokio::test]
 async fn the_page_and_the_summary_say_what_the_phone_reports() {
     let app = TestApp::new().await;
@@ -168,10 +148,14 @@ async fn the_page_and_the_summary_say_what_the_phone_reports() {
     let (id, token) = app.enrolled_device("Lily").await;
     let page = format!("/devices/{id}/mobile");
 
-    report(&app, &token, json!({}), &[]).await;
-    let html = app.get_page(&page, &cookie).await.text();
-    assert!(html.contains("data-mobile-line=\"needs-update\""), "{html}");
-    assert!(html.contains(" disabled data-autosave"));
+    for reported in [false, true] {
+        if reported {
+            report(&app, &token, json!({})).await;
+        }
+        let html = app.get_page(&page, &cookie).await.text();
+        assert!(!html.contains("Vibb One is updated"), "{html}");
+        assert!(!html.contains(" disabled data-autosave"), "{html}");
+    }
 
     save(
         &app,
@@ -188,14 +172,11 @@ async fn the_page_and_the_summary_say_what_the_phone_reports() {
                              "enabled": false, "data_active": true, "modems": 1},
             "mobile_data": {"enabled": true, "sink": "parent", "settings_locked": true},
         }),
-        &[ROAMING_CAPABILITY, MOBILE_CAPABILITY],
     )
     .await;
     let html = app.get_page(&page, &cookie).await.text();
-    assert!(!html.contains("needs-update"));
-    // An older launcher under Bare Vibb (the default) gets no switch line outside a pause (design 97 code QA L5).
-    assert!(!html.contains("data-mobile-line=\"switch\""), "{html}");
-    for line in ["roaming", "lingering"] {
+    // Bare Vibb (the default) with Android's roaming switch off: the orange switch line (design 113).
+    for line in ["switch", "roaming", "lingering"] {
         assert!(
             html.contains(&format!("data-mobile-line=\"{line}\"")),
             "{line}"
@@ -220,7 +201,6 @@ async fn the_page_and_the_summary_say_what_the_phone_reports() {
         &app,
         &token,
         json!({"mobile_data": {"enabled": false, "sink": "off", "settings_locked": true}}),
-        &[MOBILE_CAPABILITY],
     )
     .await;
     let summary = app
@@ -345,7 +325,7 @@ async fn mask(app: &TestApp, token: &str) -> i64 {
 
 /// Design 97 §5: each group saves to its own anchor - the kid's switch to `#mobile-data`, writing bit 32 alone - and the
 /// Home Screen form keeps bit 32 on `section=quick` and on the whole form; the page is a phone sub-page (no bell), in
-/// both languages, with the kid's switch waiting for `mobile_network_v2`.
+/// both languages.
 #[tokio::test]
 async fn the_page_saves_on_its_anchors_and_the_home_form_keeps_bit_32() {
     let app = TestApp::new().await;
@@ -359,20 +339,14 @@ async fn the_page_saves_on_its_anchors_and_the_home_form_keeps_bit_32() {
     let res = save(&app, &cookie, id, &[("group", "kid-mobile"), ("on", "on")]).await;
     assert_redirect(&res, &format!("/devices/{id}/mobile"), Some("mobile-data"));
     assert_eq!(mask(&app, &token).await, 5 | 32);
-    for section in [Some("quick"), None] {
-        let mut fields = vec![("quick_control_wifi", "on")];
-        if let Some(section) = section {
-            fields.push(("section", section));
-        }
-        app.request_form(
-            Method::POST,
-            &format!("/devices/{id}/policy"),
-            Some(&cookie),
-            &fields,
-        )
-        .await;
-        assert_eq!(mask(&app, &token).await, 1 | 32, "{section:?}");
-    }
+    app.request_form(
+        Method::POST,
+        &format!("/devices/{id}/policy"),
+        Some(&cookie),
+        &[("section", "quick"), ("quick_control_wifi", "on")],
+    )
+    .await;
+    assert_eq!(mask(&app, &token).await, 1 | 32);
     save(&app, &cookie, id, &[("group", "kid-mobile")]).await;
     assert_eq!(mask(&app, &token).await, 1);
     let res = save(
@@ -384,7 +358,6 @@ async fn the_page_saves_on_its_anchors_and_the_home_form_keeps_bit_32() {
     .await;
     assert_redirect(&res, &format!("/devices/{id}/mobile"), Some("abroad"));
 
-    // A launcher with data_roaming_v1 alone: the radios work, Bare Vibb says it waits, the kid's switch waits.
     report(
         &app,
         &token,
@@ -392,7 +365,6 @@ async fn the_page_saves_on_its_anchors_and_the_home_form_keeps_bit_32() {
             "data_roaming": {"locked": false, "roaming": false, "enabled": true, "data_active": false},
             "mobile_data": {"enabled": true, "sink": "off", "settings_locked": true},
         }),
-        &[ROAMING_CAPABILITY, MOBILE_CAPABILITY],
     )
     .await;
     let page = format!("/devices/{id}/mobile");
@@ -405,52 +377,14 @@ async fn the_page_saves_on_its_anchors_and_the_home_form_keeps_bit_32() {
                 .as_str()
         )
     );
-    assert!(html.contains("data-hint=\"vibb-update\""));
     assert!(!html.contains("title-bell"), "a phone sub-page has no bell");
     assert!(
         !html.contains("id=\"data-roaming\""),
         "the old group is gone"
     );
-    let kid_form = html.split("data-kid-mobile").nth(1).unwrap();
-    assert!(
-        kid_form
-            .split("</form>")
-            .next()
-            .unwrap()
-            .contains(" disabled data-autosave")
-    );
     // Android's switch on under På: as it should be, so nothing is said about it (design 113).
     assert!(!html.contains("data-mobile-line=\"switch\""), "{html}");
-    // Code QA L5: under Bare Vibb this launcher keeps the derived lock, so no line asks for a step on Android's switch.
-    save(
-        &app,
-        &cookie,
-        id,
-        &[("group", "abroad"), ("abroad", "vibb")],
-    )
-    .await;
-    report(
-        &app,
-        &token,
-        json!({
-            "data_roaming": {"locked": true, "roaming": false, "enabled": false, "data_active": false},
-            "mobile_data": {"enabled": true, "sink": "off", "settings_locked": true},
-        }),
-        &[ROAMING_CAPABILITY, MOBILE_CAPABILITY],
-    )
-    .await;
-    let html = app.get_page(&page, &cookie).await.text();
-    assert!(!html.contains("data-mobile-line=\"switch\""), "{html}");
-    assert!(html.contains("data-hint=\"vibb-update\""));
-    save(
-        &app,
-        &cookie,
-        id,
-        &[("group", "abroad"), ("abroad", "home")],
-    )
-    .await;
-
-    // Design 97's launcher: the kid's switch works; the kid's Off and the abroad sink are worded in Norwegian too.
+    // The kid's Off and the abroad sink are worded in Norwegian too.
     report(
         &app,
         &token,
@@ -459,14 +393,12 @@ async fn the_page_saves_on_its_anchors_and_the_home_form_keeps_bit_32() {
                              "enabled": false, "data_active": true, "modems": 1, "where": "abroad"},
             "mobile_data": {"enabled": true, "sink": "kid", "settings_locked": true, "kid": "off"},
         }),
-        &[ROAMING_CAPABILITY, MOBILE_CAPABILITY, NETWORK_CAPABILITY],
     )
     .await;
     let html = app
         .get_page(&format!("{page}?lang=nb"), &cookie)
         .await
         .text();
-    assert!(!html.contains("data-hint=\"vibb-update\""));
     // Code QA L6: the kid's Off is said once on the page.
     assert!(html.contains("data-mobile-line=\"kid-off\""));
     assert!(!html.contains("data-mobile-line=\"only-vibb-kid\""));
@@ -493,27 +425,25 @@ async fn the_page_saves_on_its_anchors_and_the_home_form_keeps_bit_32() {
     );
 }
 
-/// Design 97 §6: a launcher with `mobile_network_v2` reporting abroad raises one notice per crossing (its key the place
-/// and the instant, to "Roaming"), a repeat of the same place none, and an older launcher's report none.
+/// Design 97 §6: a report abroad raises one notice per crossing (its key the place and the instant, to "Roaming"), a
+/// repeat of the same place none, and a report without `where` none.
 #[tokio::test]
 async fn a_crossing_raises_the_roaming_notice_once() {
     let app = TestApp::new().await;
     let (id, token) = app.enrolled_device("Emma").await;
-    let (_, older) = app.enrolled_device("Jack").await;
+    let (_, other) = app.enrolled_device("Jack").await;
     let abroad = |country: &str| {
         json!({"data_roaming": {"locked": false, "roaming": true, "country": country, "network": "24001",
                                 "enabled": true, "data_active": true, "modems": 1, "where": "abroad"}})
     };
-    let all = [ROAMING_CAPABILITY, MOBILE_CAPABILITY, NETWORK_CAPABILITY];
-    report(&app, &token, abroad("se"), &all).await;
-    report(&app, &token, abroad("se"), &all).await;
-    report(
-        &app,
-        &older,
-        abroad("se"),
-        &[ROAMING_CAPABILITY, MOBILE_CAPABILITY],
-    )
-    .await;
+    report(&app, &token, abroad("se")).await;
+    report(&app, &token, abroad("se")).await;
+    let mut without_where = abroad("se");
+    without_where["data_roaming"]
+        .as_object_mut()
+        .unwrap()
+        .remove("where");
+    report(&app, &other, without_where).await;
     let events: Vec<(i64, String, String, String)> = sqlx::query_as(
         "SELECT device_id, dedup_key, target, params FROM parent_events WHERE kind = 'roaming_started'",
     )

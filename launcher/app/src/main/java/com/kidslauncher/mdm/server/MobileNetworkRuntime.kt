@@ -97,7 +97,7 @@ object MobileNetworkRuntime {
             lift = OfflineOverride.isActive() || RestrictionsPause.isActive(),
             parentVibb = parentSinkOn(p.appsMobile, overrideActive = false),
             where = whereNow(context),
-            choice = abroadChoice(p.abroad, p.dataRoaming),
+            choice = abroadChoice(p),
             dataEnabled = runCatching { dataTelephony(context)?.isDataEnabled }.getOrNull(),
         )
     }

@@ -82,9 +82,6 @@
     <form method="post" action="/devices/{{ device.id }}/music#music-settings" id="music-settings">
         <input type="hidden" name="v" value="2">
         <h2 class="group-header" id="mobile-data-title">{{ self.t("device.music.mobile_data") }}</h2>
-        {% if let Some(note) = music.older_phone %}
-        {% include "partials/note_warning.html" %}
-        {% endif %}
         <div class="group" role="group" aria-labelledby="mobile-data-title">
             <label class="row">
                 <span class="row-label">{{ self.t("device.music.stream_mobile") }}</span>

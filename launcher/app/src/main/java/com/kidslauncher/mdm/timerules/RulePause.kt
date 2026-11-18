@@ -11,9 +11,6 @@ import java.time.ZoneId
  * `server/testdata/`, `RulePauseTest`).
  */
 
-/** The launcher posts its parent-code pauses (`POST /api/devices/rule-pause`) and honours `lifts[].phone_key`. */
-const val RULE_PAUSE_CAPABILITY = "rule_pause_v1"
-
 /** The PWA's own lengths for a rule lift (the server's `time_rules::RULE_LIFT_MINUTES`); the phone offers no other. */
 val RULE_LIFT_MINUTES: List<Int> = listOf(15, 30, 60, 120)
 

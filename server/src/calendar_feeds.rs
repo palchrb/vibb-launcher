@@ -32,8 +32,6 @@ use crate::ics::{self, WireEvent};
 use crate::music_net::{FetchError, Kind, Reach, Source, SourceRequest, SourceResponse};
 use crate::music_sweep::{parse_stamp, stamp};
 
-/// A launcher that writes linked calendars reports this capability.
-pub const CAPABILITY: &str = "calendar_feeds_v1";
 /// Links a phone may have.
 pub const MAX_LINKS_PER_PHONE: i64 = 10;
 /// Sources a server keeps (a family's; more is a multi-tenant server).

@@ -8,7 +8,6 @@ use axum::http::{Method, Request, StatusCode};
 use serde_json::{Value, json};
 
 use super::TestApp;
-use crate::unified_push::CAPABILITY;
 
 const CONTRACT: &str = include_str!("../../testdata/unified_push.json");
 const GATEWAY: &str = include_str!("../../testdata/unified_push_gateway.json");
@@ -27,7 +26,6 @@ fn the_contract_is_identical_to_the_launchers_copy() {
     ))
     .unwrap();
     assert_eq!(launcher, CONTRACT, "the launcher's copy differs");
-    assert_eq!(contract()["capability"], CAPABILITY);
     let pattern = contract()["endpoint"]["pattern"]
         .as_str()
         .unwrap()
@@ -96,8 +94,7 @@ async fn the_contract() {
     let app = TestApp::new().await;
     let contract = contract();
     let (emma, token) = app.enrolled_device("Emma").await;
-    app.post_status(&token, json!({"capabilities": [CAPABILITY]}))
-        .await;
+    app.post_status(&token, json!({})).await;
     let policy = &contract["policy"];
     let served = |p: Value| p["unified_push"].clone();
     let register = &contract["register"];
@@ -907,9 +904,8 @@ async fn vapid_at_the_route() {
         .execute(&app.db)
         .await
         .unwrap();
-    let listed = crate::unified_push::policy(&app.db, device, &[CAPABILITY.to_string()])
+    let listed = crate::unified_push::policy(&app.db, device)
         .await
-        .unwrap()
         .unwrap()
         .refresh;
     assert_eq!(listed.len(), 1);
@@ -921,10 +917,7 @@ async fn vapid_at_the_route() {
         .execute(&app.db)
         .await
         .unwrap();
-    let again = crate::unified_push::policy(&app.db, device, &[CAPABILITY.to_string()])
-        .await
-        .unwrap()
-        .unwrap();
+    let again = crate::unified_push::policy(&app.db, device).await.unwrap();
     assert!(again.refresh.is_empty(), "a verified push ends it");
     // The gateway: a keyed registration's pushkey is rejected and stamped; an unkeyed one's push sets `gateway_at`.
     sqlx::query("UPDATE up_registrations SET vapid_refused_at = NULL")
@@ -1186,8 +1179,7 @@ async fn switch_on_by_default() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (emma, token) = app.enrolled_device("Emma").await;
-    app.post_status(&token, json!({"capabilities": [CAPABILITY]}))
-        .await;
+    app.post_status(&token, json!({})).await;
     assert!(crate::unified_push::switch(&app.db, emma).await.unwrap());
     assert_eq!(app.policy(&token).await["unified_push"]["on"], false);
     sqlx::query(
@@ -1284,7 +1276,7 @@ async fn the_apps_group_lines_of_108b() {
     set_origin(&app, Some(ORIGIN)).await;
     app.post_status(
         &token,
-        json!({"capabilities": [CAPABILITY], "installed_apps": [
+        json!({"installed_apps": [
             {"package_name": "chat.fluffy.fluffychat", "label": "FluffyChat"},
             {"package_name": "org.unifiedpush.example", "label": "UP-Example"}]}),
     )
@@ -1354,7 +1346,7 @@ async fn the_apps_group() {
     set_origin(&app, Some(ORIGIN)).await;
     app.post_status(
         &token,
-        json!({"capabilities": [CAPABILITY], "installed_apps": [
+        json!({"installed_apps": [
             {"package_name": "io.element.android.x", "label": "Element X"},
             {"package_name": "org.unifiedpush.example", "label": "UP-Example"}]}),
     )
@@ -1782,8 +1774,7 @@ async fn attention_rows_of_108c() {
     let cookie = app.admin_cookie().await;
     let (emma, token) = app.enrolled_device("Emma").await;
     set_origin(&app, Some(ORIGIN)).await;
-    app.post_status(&token, json!({"capabilities": [CAPABILITY]}))
-        .await;
+    app.post_status(&token, json!({})).await;
     set_allowlist(&app, emma, &["io.element.android.x"]).await;
     let secret = seed(&app, emma, 1, "io.element.android.x").await;
     let reg = registration_id(&app, &format!("{:032x}", 1)).await;
@@ -2040,8 +2031,7 @@ async fn attention_rows_of_108c() {
     assert_eq!(list_badge(&app, &cookie, emma).await, baseline + 1);
     // A not-ok report in the window.
     sql(&app, "UPDATE device_status SET policy_state = 'error', reported_at = datetime('now', '-20 minutes')").await;
-    app.post_status(&token, json!({"capabilities": [CAPABILITY]}))
-        .await;
+    app.post_status(&token, json!({})).await;
     assert!(
         push_rows(&app, &cookie, emma).await.is_empty(),
         "a report that couldn't apply the policy"
@@ -2202,8 +2192,7 @@ async fn delivery_time_on_the_pages() {
     let cookie = app.admin_cookie().await;
     let (emma, token) = app.enrolled_device("Emma").await;
     let (jack, _) = app.enrolled_device("Jack").await;
-    app.post_status(&token, json!({"capabilities": [CAPABILITY]}))
-        .await;
+    app.post_status(&token, json!({})).await;
     set_origin(&app, Some(ORIGIN)).await;
     let settings = app.get_page("/settings/push", &cookie).await.text();
     assert!(
@@ -2319,7 +2308,6 @@ async fn the_contract_of_115() {
     set_origin(&app, Some(ORIGIN)).await;
     let report = |key: &str| {
         let mut body = contract[key].clone();
-        body["capabilities"] = json!([CAPABILITY]);
         body["mobile_data"] = mobile_data("parent");
         body
     };
@@ -2330,9 +2318,8 @@ async fn the_contract_of_115() {
     );
     app.post_status(&token, report("report_open")).await;
     assert_eq!(up_held_latest(&app, emma).await, None);
-    app.post_status(&token, json!({"capabilities": [CAPABILITY]}))
-        .await;
-    assert_eq!(up_held_latest(&app, emma).await, None, "an older launcher");
+    app.post_status(&token, json!({})).await;
+    assert_eq!(up_held_latest(&app, emma).await, None, "no field");
 
     // The held pull: a push accepted on the open stream is handed out with no generation, so its ack writes no sample.
     set_allowlist(&app, emma, &["io.element.android.x"]).await;
@@ -2447,8 +2434,7 @@ async fn a_hold_quiets_the_waiting_row() {
     let cookie = app.admin_cookie().await;
     let (emma, token) = app.enrolled_device("Emma").await;
     set_origin(&app, Some(ORIGIN)).await;
-    app.post_status(&token, json!({"capabilities": [CAPABILITY]}))
-        .await;
+    app.post_status(&token, json!({})).await;
     set_allowlist(&app, emma, &["io.element.android.x"]).await;
     seed(&app, emma, 1, "io.element.android.x").await;
     let reg = registration_of(&app, registration_id(&app, &format!("{:032x}", 1)).await).await;
@@ -2471,7 +2457,7 @@ async fn a_hold_quiets_the_waiting_row() {
             for (minutes_ago, sink) in rows {
                 app.post_status(
                     token,
-                    json!({"capabilities": [CAPABILITY], "unified_push": {"held": "no_network"},
+                    json!({"unified_push": {"held": "no_network"},
                         "mobile_data": mobile_data(sink)}),
                 )
                 .await;
@@ -2485,8 +2471,7 @@ async fn a_hold_quiets_the_waiting_row() {
                 .await;
             }
             // The latest report (the page's own read) says nothing of the hold.
-            app.post_status(token, json!({"capabilities": [CAPABILITY]}))
-                .await;
+            app.post_status(token, json!({})).await;
         }
     };
     for minutes in [-25, -15, -5] {

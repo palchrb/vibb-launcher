@@ -2,17 +2,9 @@
 
 Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the rest is' lists every note.
 
-## FCM removed, SSE only (design 19, `docs/design/19-remove-fcm.md`, at the monorepo root; server 0.20.0)
+## SSE only (design 19, `docs/design/19-remove-fcm.md`, at the monorepo root)
 
-- **Gone**: `src/fcm.rs`, `src/push.rs` (sender, dispatcher, health, acks, test nudges), `AppState.fcm`, policy `push`,
-  the status `push` (an old launcher still sends it: accepted with 204, stored nowhere - no `deny_unknown_fields`;
-  `fcm_push_v1` in `capabilities` is stored as reported and read by nothing), the card's FCM lines, the direct deps
-  `base64`/`ring`, the dev-dep `tokio/test-util` and the fixture PEM. No vestigial `push` key: every shipped launcher
-  treats a missing key like `fcm_enabled: false` (SSE). `FCM_SERVICE_ACCOUNT_FILE` is ignored (its startup warning went in 0.54.0).
-- **Migration `0048_remove_fcm.sql`**: `DROP TABLE device_push` (the installation IDs were credentials to message a
-  phone), `device_status.push_state_json` set to NULL (column kept, unused). Revoking the service-account key is what
-  makes stored IDs (freed pages, backups) useless (DEPLOY.md, "Removing FCM"). 0.19 refuses a database with 0048:
-  rollback = the `update.sh` backup.
+- `FCM_SERVICE_ACCOUNT_FILE` is ignored.
 - **Keepalive**: `SSE_KEEPALIVE_SECS` default 240 (= `MAX_SSE_KEEPALIVE_SECS`; shipped launchers read with 300 s),
   invalid values fall back to 240; `.env` `SSE_KEEPALIVE_SECS=120` reverts. A proxy in front needs a read timeout
   >= 300 s (`tailscale serve` streams unbuffered).
@@ -22,14 +14,12 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   row says "Online since 08:12" while a stream is open and the phone was in contact within the hour (a silently dead
   peer counts until this server's TCP gives up, so Online also needs the contact). The "Instant changes" line is gone
   (design 31 step 3).
-- Tests: `src/tests/play.rs` (old launcher's `push` dropped, migration 0048, the stream count on About, plus
-  step 7's Play/DNS/keepalive tests), `streams::tests`; `policy_json_keys_snapshot` has no `push`. `TestApp::new`
-  installs the rustls provider like `main` (the FCM tests used to, for the DNS upstream test).
+- Tests: `src/tests/play.rs` (the stream count on About, plus step 7's Play/DNS/keepalive tests), `streams::tests`; `policy_json_keys_snapshot` has no `push`.
 
 ## Play (handy step 7, design `docs/design/07-battery-fcm-play.md`, at the monorepo root; its FCM half removed in 19)
 
 - **Play** (`src/play.rs`): `PLAY_CORE` (vending, gms, gsf) is the launcher's business - never listed on the phone's Apps page, `toggle_app` answers 400 for it, and the first-heartbeat allowlist bootstrap leaves it out. One source per package: turning on a catalog app whose package the phone reports installed by `com.android.vending` writes nothing and returns to its row with the reason (`/devices/{id}/apps?notice=from_play&app=<row>#<row>`; a 409 before design 31 step 6). Security log: `play_install_mode` (a new `install_mode.until_ms`), `app_installed` (a package new since the previous report, with its installer; not on the first report). The device page's "Play and kiosk" card ("Push and Play" until design 19) shows the "Instant changes" line, install mode, the nightly update window and the kiosk app block switch.
-- **Battery (design 19b phase 1, migration `0055_battery_exemption.sql`)**: status `battery_optimization_exempt` (`Option<bool>`, `#[serde(default)]`) is stored in `device_status.battery_optimization_exempt` (NULL from an older launcher or when unreadable); About This Phone shows a "Battery optimisation" row for true ("Off") and false ("On", the fix behind its ⓘ), nothing for NULL. No policy key, no capability.
+- **Battery (design 19b phase 1, migration `0055_battery_exemption.sql`)**: status `battery_optimization_exempt` (`Option<bool>`, `#[serde(default)]`) is stored in `device_status.battery_optimization_exempt` (NULL when unreadable); About This Phone shows a "Battery optimisation" row for true ("Off") and false ("On", the fix behind its ⓘ), nothing for NULL. No policy key.
 - **DNS**: `dns_blocklist` never delivers the exact FCM hosts (for other apps' FCM - Element X - since design 19) (mtalk*, alt*-mtalk, fcm/fcmtoken/fcmregistrations/firebaseinstallations/android.googleapis.com, android.apis.google.com, android.clients.google.com) as blocked (`play::is_fcm_protected`, QA 07 #10). Parents (`google.com`, `googleapis.com`) **are** delivered as set - dropping them opened all of `*.google.com` (fix round #1); the launcher exempts the exact FCM hosts before its suffix walk. Spotify's hosts get the same split **per phone**, only while it is bound to a Spotify account (design 26c, "Vibb music: Spotify on the server"). Every DNS write (upstream, blocklist create/toggle/delete, custom domain, device override) nudges the affected devices; the hourly blocklist refresh doesn't - phones get it with the 30-min backstop. A new catalog release does ("Catalog downloads", "New releases nudge the phones").
 - **The DNS blocklist fails closed, per feed (security review M6).** `compile_blocklist`: a feed whose download fails
   (an error, a non-2xx, over `MAX_FEED_BYTES` = 32 MB decompressed, or nothing that `parse_feed` takes for a domain
@@ -46,9 +36,9 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 ## Kiosk escapes (handy step 11, design `docs/design/11-kiosk-escapes.md`, at the monorepo root)
 
 - **Migration `0036_kiosk_escapes.sql`**: `device_policy.update_fence` and `notification_auto_cancel` (both **default 0**: the fence stays off until the A3 device check passes on the Jelly Star, the notification filter until B5), `device_status.update_fence_json`, `notification_cancels_json`. **Since 2026-10-21 a new phone starts with the notification filter on** (the user: "Varselfilter kan gjerne være på som standard"): `devices::insert_device_with_policy` inserts `notification_auto_cancel = 1`, the pattern of `quick_controls_mask` (the column default stays 0 - SQLite can't change it in place, and no migration was needed), so every phone created before keeps its stored value (`a_new_device_starts_with_all_kid_settings_on`).
-- **Migration `0045_boot_cover.sql`** (design 16b): `device_policy.boot_cover`, **default 0** - the launcher's boot cover, a third checkbox on the same card ("Test it on this phone first"); `PolicyResponse.boot_cover` always sent, missing = off on the launcher. The form returns to `/devices/{id}/advanced#updates` (Advanced › Updates & notifications since design 31 step 3). **Migration `0046_boot_cover_state.sql`**: `device_status.boot_cover_json` - the phone's `boot_cover` report (`kiosk_escapes::BootCoverState`, known fields only, hand-over "cover"/"launcher"), capability `boot_cover_v1`; the card warns about an older launcher, a tripped crash guard (switch off and on to retry) or an arm not shown at the next start. Since 2026-11-17 "not shown" waits for a start after the arm - a `phone_on` event newer than it (`parent_events::last_phone_on_ms`, both instants the phone's clock): a report sent during the shutdown that armed it (the low-battery sync in flight) reads as the last start's cover, or as armed; the launcher also reports the arm before during the boot that armed it.
-- **Wire**: `PolicyResponse.update_fence` and `notification_auto_cancel`, always sent (`policy_json_keys_snapshot`); a launcher on an older server treats both as off. Advanced › Updates & notifications (the device page's "Launcher updates and notifications" card until design 31 step 3; `POST /devices/{id}/kiosk-escapes`, one auto-saving form: a missing checkbox is off, 404 unknown device, nudges) with the privacy text behind its footer's ⓘ (since the ⓘ cut, pwa.md: the filter keeps allowed apps, calls, alarms and emergency alerts and never reads a notification's text; the listener itself reads only app, channel and type and reports only names and counts).
-- **Status** (`src/kiosk_escapes.rs`, pure + unit tests): `update_fence` (`enabled, state, unsuspendable, last_release, home_role_held, pending_tag, pending_since_ms, waiting_for, last_fenced_at_ms, last_released_at_ms`) and `notification_cancels` (`active, entries[{package_name, channel, cancelled, snoozed}], dropped`) are stored **re-serialized through the known fields** like `lock_state`: lists <= 20 entries (extra counted in `dropped`), ids cut to 64 chars, counts never negative - never notification text. `escapes_card` and `boot_cover_notes` return typed `EscapeNote`s (design 31 M5; `EscapeNote::note` words them as a warning above the group or a row in it) for a fence that is up, packages Android refused to pause, a partial fence (no ROLE_HOME), the last release (a failed install is a warning), a downloaded update waiting for the night window (and why), missing notification access, and what the filter removed. Capability `kiosk_escapes_v1` (a reporting launcher without it gets "update the launcher").
+- **Migration `0045_boot_cover.sql`** (design 16b): `device_policy.boot_cover`, **default 0** - the launcher's boot cover, a third checkbox on the same card ("Test it on this phone first"); `PolicyResponse.boot_cover` always sent, missing = off on the launcher. The form returns to `/devices/{id}/advanced#updates` (Advanced › Updates & notifications since design 31 step 3). **Migration `0046_boot_cover_state.sql`**: `device_status.boot_cover_json` - the phone's `boot_cover` report (`kiosk_escapes::BootCoverState`, known fields only, hand-over "cover"/"launcher"), the card warns about a tripped crash guard (switch off and on to retry) or an arm not shown at the next start. Since 2026-11-17 "not shown" waits for a start after the arm - a `phone_on` event newer than it (`parent_events::last_phone_on_ms`, both instants the phone's clock): a report sent during the shutdown that armed it (the low-battery sync in flight) reads as the last start's cover, or as armed; the launcher also reports the arm before during the boot that armed it.
+- **Wire**: `PolicyResponse.update_fence` and `notification_auto_cancel`, always sent (`policy_json_keys_snapshot`). Advanced › Updates & notifications (the device page's "Launcher updates and notifications" card until design 31 step 3; `POST /devices/{id}/kiosk-escapes`, one auto-saving form: a missing checkbox is off, 404 unknown device, nudges) with the privacy text behind its footer's ⓘ (since the ⓘ cut, pwa.md: the filter keeps allowed apps, calls, alarms and emergency alerts and never reads a notification's text; the listener itself reads only app, channel and type and reports only names and counts).
+- **Status** (`src/kiosk_escapes.rs`, pure + unit tests): `update_fence` (`enabled, state, unsuspendable, last_release, home_role_held, pending_tag, pending_since_ms, waiting_for, last_fenced_at_ms, last_released_at_ms`) and `notification_cancels` (`active, entries[{package_name, channel, cancelled, snoozed}], dropped`) are stored **re-serialized through the known fields** like `lock_state`: lists <= 20 entries (extra counted in `dropped`), ids cut to 64 chars, counts never negative - never notification text. `escapes_card` and `boot_cover_notes` return typed `EscapeNote`s (design 31 M5; `EscapeNote::note` words them as a warning above the group or a row in it) for a fence that is up, packages Android refused to pause, a partial fence (no ROLE_HOME), the last release (a failed install is a warning), a downloaded update waiting for the night window (and why), missing notification access, and what the filter removed.
 - **Fix round (qa-11-code.md #5, #8)**: `update_fence` also keeps `last_fenced_at_ms`/`last_released_at_ms` (the phone's last-fence summary, since the live record never reaches a report); a fence reported more than 15 min ago reads "started at ... and the phone hasn't reported since", never "right now"; `last_release` "orphan" (a lost record swept on the phone) and "commit_failed" are warnings like "install_failed". Phone-supplied times are clamped to 1970..2100 and counts to 0..1e6 when sanitizing, and the card uses saturating arithmetic (tested with `i64::MIN`/`MAX`).
 - Tests: `src/tests/step11.rs`, `kiosk_escapes::tests`.
 
@@ -152,21 +142,12 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   Now"; `received_overdue_minutes` makes a Received `install_update` "No answer" only after 25 h
   (`INSTALL_UPDATE_RECEIVED_MINUTES`), every other command after 10 minutes.
 - **The row** (pure `src/install_now.rs`, typed): `launcher_tag_version_code` (the launcher's `launcherTagVersionCode`,
-  both reading the shared `testdata/launcher_tag_codes.json`: since 2026-10-23 a tag from `launcher-v0.36.0-rc.4` on is
-  `X*10_000_000 + Y*10_000 + Z*10 + N`, N the RC number 1..8 or 9 for the release - every build its own code,
-  `scripts/release-version.sh` -, an older tag the old rule's `X*1_000_000 + Y*1_000 + Z`, an RC one less, as the
-  phones on those builds report it; a report below 360004 - an old-rule build - gets every tag read by the old rule,
-  as its own parser does, `tag_code_as_read_by`, so rc.1/rc.2 phones are TooOld for rc.4 to rc.8, qa-versioncode-rc-code
-  Q-1), `release(tag, report)` -> `Standing` NotReported / NoRelease (no release, or the row is off)
-  / UpToDate / Behind (`build_ahead`, the launcher's `launcherBuildAhead`: the tag's code above the report's
-  `app_version_code`, or - legacy of the old rule, for builds tagged before `launcher-v0.36.0-rc.4` - the same code and
-  the tag's name - `release_name`, "0.36.0-rc.2" - another, newer one than
-  the report's `app_version`: every RC of one version shared a code, so rc.2 is behind-worthy over rc.1, never rc.1
-  over rc.2; two names that can't be ordered count as ahead; or a `pending_tag`;
-  a manual upload's label is behind unless the phone runs a build of that name). Ahead by the name alone (the same
-  code) is Behind only when the report claims `same_code_update_v1` (`install_now::SAME_CODE_CAPABILITY`, the
-  launcher's `SAME_CODE_UPDATE_CAPABILITY`), else TooOld: a launcher from before the RC-to-RC fix decides by the code
-  and would answer "Already on X" (qa-rc-to-rc-code R2R-1) / TooOld (behind without capability `install_now_v1`); `offer`
+  both reading the shared `testdata/launcher_tag_codes.json`: `X*10_000_000 + Y*10_000 + Z*10 + N`, N the RC number
+  1..8 or 9 for the release - every build its own code, `scripts/release-version.sh`; a tag from before
+  `launcher-v0.36.0-rc.4` reads by it too, below every build since), `release(tag, report)` -> `Standing` NotReported /
+  NoRelease (no release, or the row is off) / UpToDate / Behind (the tag's code above the report's `app_version_code`
+  - the code alone decides, as on the phone -, or a `pending_tag`; a manual upload's label is behind unless the phone
+  runs a build of that name); `offer`
   adds the newest `install_update`: Asked (Waiting, with Cancel; Sent - not lost - without) and Working (Received, no
   answer, under 25 h) - and Working "Installed - waiting for the phone's report" while the newest answer is
   `installed: X` and the latest report is older than it (`awaiting_report`, at most an hour; qa-37-code M1: in one sync
@@ -180,7 +161,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   line inside - `locate::command_row`, now `pub(crate)`). `refusal` is the POST's rule.
 - **Routes** (`handlers::install_now`, full auth, plain forms, 404 unless the app is the launcher):
   `POST /apps/tracked/{id}/install-now/{device_id}` queues only when the row offers it (`device_command_queued`
-  "install_update <tag>, device N"), else answers `up_to_date`, `too_old`, `no_release`, `not_reported`, `in_progress`
+  "install_update <tag>, device N"), else answers `up_to_date`, `no_release`, `not_reported`, `in_progress`
   (fetched or confirmed - a waiting one is replaced), `not_set_up`, `unknown_phone`; `POST
   .../install-now/{device_id}/cancel/{command_id}` - `locate::cancel_waiting` (the Locate tab's `cancel_command` moved
   into it, `only` = the kind) -> `cancelled` / `too_late` (`device_command_cancelled`); `GET

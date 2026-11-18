@@ -94,7 +94,7 @@ fun firstHelper(matches: List<ResolvedHelper>, forbidden: Set<String>): Resolved
 
 /**
  * The lock-task features to set: the server's (minus the block bit - that travels as its own
- * switch, so an older launcher never gets it), keyguard always, and the block bit when the
+ * switch), keyguard always, and the block bit when the
  * server's [blockActivityStart] switch is on.
  */
 fun lockTaskFeatures(serverFeatures: Long, blockActivityStart: Boolean): Int {

@@ -5,7 +5,6 @@
 use serde_json::{Value, json};
 
 use super::{TestApp, tags};
-use crate::notification_channels::CAPABILITY;
 
 const CONTRACT: &str = include_str!("../../testdata/notification_channels.json");
 
@@ -23,25 +22,21 @@ async fn stored(app: &TestApp, id: i64) -> Option<String> {
     .unwrap()
 }
 
-/// The three report rows are stored exactly; a junk object is cleaned; an older launcher's report stores nothing.
+/// The three report rows are stored exactly; a junk object is cleaned; a report without the key stores nothing.
 #[tokio::test]
 async fn the_report_is_stored_as_the_contract_has_it() {
     let app = TestApp::new().await;
     let (id, token) = app.enrolled_device("Emma").await;
     let contract = contract();
-    assert_eq!(contract["capability"], CAPABILITY);
     for key in ["report", "report_none", "report_all_off"] {
-        app.post_status(
-            &token,
-            json!({"capabilities": [CAPABILITY], "notification_channels": contract[key]}),
-        )
-        .await;
+        app.post_status(&token, json!({"notification_channels": contract[key]}))
+            .await;
         let kept: Value = serde_json::from_str(&stored(&app, id).await.unwrap()).unwrap();
         assert_eq!(kept, contract[key], "{key}");
     }
     app.post_status(
         &token,
-        json!({"capabilities": [CAPABILITY], "notification_channels": {"blocked": ["ring", "nope", "messages"], "x": 1}}),
+        json!({"notification_channels": {"blocked": ["ring", "nope", "messages"], "x": 1}}),
     )
     .await;
     let kept: Value = serde_json::from_str(&stored(&app, id).await.unwrap()).unwrap();
@@ -153,11 +148,8 @@ async fn the_pages_rows() {
             row["shortcuts_bit"].as_bool().unwrap(),
         )
         .await;
-        app.post_status(
-            &token,
-            json!({"capabilities": [CAPABILITY], "notification_channels": row["report"]}),
-        )
-        .await;
+        app.post_status(&token, json!({"notification_channels": row["report"]}))
+            .await;
         let about = app
             .get_page(&format!("/devices/{id}/about"), &cookie)
             .await
@@ -195,7 +187,7 @@ async fn the_info_says_what_is_lost_and_how_to_fix_it() {
         set_policy(&app, id, "managed", "managed", "system", bit).await;
         app.post_status(
             &token,
-            json!({"capabilities": [CAPABILITY], "notification_channels": {"all_off": false, "blocked": ["command_listener", "shortcuts"]}}),
+            json!({"notification_channels": {"all_off": false, "blocked": ["command_listener", "shortcuts"]}}),
         )
         .await;
         let html = app.get_page(&about, &cookie).await.text();
@@ -210,7 +202,7 @@ async fn the_info_says_what_is_lost_and_how_to_fix_it() {
 
     app.post_status(
         &token,
-        json!({"capabilities": [CAPABILITY], "notification_channels": {"all_off": false, "blocked": ["messages", "missed_calls", "app_install"]}}),
+        json!({"notification_channels": {"all_off": false, "blocked": ["messages", "missed_calls", "app_install"]}}),
     )
     .await;
     let html = app.get_page(&about, &cookie).await.text();
@@ -257,7 +249,7 @@ async fn the_info_says_what_is_lost_and_how_to_fix_it() {
     // All on: no ⓘ.
     app.post_status(
         &token,
-        json!({"capabilities": [CAPABILITY], "notification_channels": contract()["report_none"]}),
+        json!({"notification_channels": contract()["report_none"]}),
     )
     .await;
     let html = app.get_page(&about, &cookie).await.text();
@@ -265,31 +257,26 @@ async fn the_info_says_what_is_lost_and_how_to_fix_it() {
     assert_eq!(about_detail(&html), None);
 }
 
-/// No false all-clear and no row from an older launcher: no capability, or the capability without an object (the
-/// phone's read failed), shows nothing on About and raises nothing.
+/// No false all-clear: a report without an object (the phone's read failed) shows nothing on About and raises nothing.
 #[tokio::test]
-async fn an_older_launcher_or_a_failed_read_has_no_row() {
+async fn a_failed_read_has_no_row() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("Emma").await;
     set_policy(&app, id, "managed", "managed", "system", true).await;
-    for body in [
-        json!({"notification_channels": contract()["report_all_off"], "ringer_mode": "normal"}),
-        json!({"capabilities": [CAPABILITY], "ringer_mode": "normal"}),
-    ] {
-        app.post_status(&token, body).await;
-        let about = app
-            .get_page(&format!("/devices/{id}/about"), &cookie)
-            .await
-            .text();
-        assert!(about.contains("id=\"sound\""), "the group shows: {about}");
-        assert_eq!(about_row(&about), None);
-        let summary = app
-            .get_page(&format!("/devices/{id}"), &cookie)
-            .await
-            .text();
-        assert_eq!(attention_title(&summary), None);
-    }
+    app.post_status(&token, json!({"ringer_mode": "normal"}))
+        .await;
+    let about = app
+        .get_page(&format!("/devices/{id}/about"), &cookie)
+        .await
+        .text();
+    assert!(about.contains("id=\"sound\""), "the group shows: {about}");
+    assert_eq!(about_row(&about), None);
+    let summary = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert_eq!(attention_title(&summary), None);
 }
 
 /// §5.3: the row sits right after Notification access off and before the calls rows, links to About's Sound group,
@@ -300,11 +287,8 @@ async fn the_attention_row_has_its_place_and_counts() {
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("Emma").await;
     set_policy(&app, id, "managed", "managed", "system", true).await;
-    app.post_status(
-        &token,
-        json!({"capabilities": [CAPABILITY], "notification_listener_enabled": false}),
-    )
-    .await;
+    app.post_status(&token, json!({"notification_listener_enabled": false}))
+        .await;
     let before = attention_keys(
         &app.get_page(&format!("/devices/{id}"), &cookie)
             .await
@@ -316,7 +300,6 @@ async fn the_attention_row_has_its_place_and_counts() {
     app.post_status(
         &token,
         json!({
-            "capabilities": [CAPABILITY],
             "notification_listener_enabled": false,
             "notification_channels": contract()["report"],
         }),

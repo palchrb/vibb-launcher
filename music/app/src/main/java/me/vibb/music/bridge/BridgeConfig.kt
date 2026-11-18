@@ -52,7 +52,6 @@ object RestrictionKeys {
     const val MANAGED = "managed"
     const val LAUNCHER_PACKAGE = "launcher_package"
     const val LANGUAGE = "language"
-    const val MOBILE_DATA = "mobile_data"
     const val LIBRARY_VERSION = "library_version"
     const val STORYTEL_GENERATION = "storytel_generation"
 
@@ -72,7 +71,7 @@ object RestrictionKeys {
     const val SPOTIFY_DIAG_UNTIL = "spotify_diag_until"
 }
 
-/** The limit without a word from the launcher (an older one): 2 GB (design 30 §1.3, §1.8). */
+/** The limit absent from the launcher's restrictions: 2 GB (design 30 §1.3, §1.8). */
 const val DEFAULT_STORAGE_LIMIT_GB = 2
 
 /** The largest limit read; anything above is junk, read as [DEFAULT_STORAGE_LIMIT_GB] (the launcher's bound). */
@@ -127,17 +126,12 @@ fun bridgeConfig(values: Map<String, Any?>): BridgeConfig {
     )
 }
 
-/**
- * One of design 30's two switches ([key]): when the launcher wrote it, `true` is on and anything else
- * off (as every restriction); when it didn't (a launcher from before design 30), the one old switch
- * `mobile_data`, which such a launcher sets for both (design 30 §1.3).
- */
-fun mobileSwitch(values: Map<String, Any?>, key: String): Boolean =
-    if (key in values) values[key] == true else values[RestrictionKeys.MOBILE_DATA] == true
+/** One of design 30's two switches ([key]): `true` is on, anything else - absent included - off (fail closed). */
+fun mobileSwitch(values: Map<String, Any?>, key: String): Boolean = values[key] == true
 
 /**
  * The parent's storage limit in GB (design 30 §1.3): an Int 1..[MAX_STORAGE_LIMIT_GB] is that many,
- * 0 is no limit (null); absent (an older launcher) or anything else is [DEFAULT_STORAGE_LIMIT_GB].
+ * 0 is no limit (null); absent or anything else is [DEFAULT_STORAGE_LIMIT_GB].
  */
 fun storageLimit(values: Map<String, Any?>): Int? = when (val gb = values[RestrictionKeys.STORAGE_LIMIT_GB]) {
     is Int -> when (gb) {

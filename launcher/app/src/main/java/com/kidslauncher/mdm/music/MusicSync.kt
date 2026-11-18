@@ -111,7 +111,7 @@ object MusicSync {
         for (pkg in MusicTrust.installed(app)) {
             val desired = when {
                 policy == null -> Bundle()
-                music == null -> continue // an older or newer server: keep what is there
+                music == null -> continue // no music object: keep what is there
                 else -> restrictionsBundle(restrictionsFor(music, app.packageName, resolveLauncherLocale(policy.launcherUi?.language), VolumeCap.pctInForce))
             }
             val current = try {

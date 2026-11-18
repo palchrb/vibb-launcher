@@ -257,29 +257,26 @@ async fn a_phones_storage_has_a_budget() {
         0,
         "no fix past the day's budget"
     );
-    // Never the newest report that said it enforces calls (QA L-c): it stays when a report
-    // without the capability replaces the reports after it.
-    for caps in [vec!["call_policy_v1"], vec![], vec![]] {
+    // Each report past the budget replaces the one before it: the phone's newest report stays.
+    for _ in 0..3 {
         let res = app
             .request(
                 Method::POST,
                 "/api/devices/status",
                 Some(&token),
-                Some(
-                    serde_json::json!({ "lock_reason": "CAPS", "kiosk_engaged": true,
-                                         "capabilities": caps }),
-                ),
+                Some(serde_json::json!({ "lock_reason": "LAST", "kiosk_engaged": true })),
             )
             .await;
         assert_eq!(res.status, StatusCode::NO_CONTENT);
     }
     assert_eq!(
-        count(
-            "SELECT COUNT(*) FROM device_status WHERE device_id = ? \
-             AND capabilities_json LIKE '%call_policy_v1%'"
-        )
-        .await,
+        count("SELECT COUNT(*) FROM device_status WHERE device_id = ? AND lock_reason = 'LAST'")
+            .await,
         1
+    );
+    assert_eq!(
+        count("SELECT COUNT(*) FROM device_status WHERE device_id = ?").await,
+        crate::retention::STATUS_ROWS_A_DAY
     );
 
     sqlx::query("UPDATE device_policy SET dns_log_enabled = 1 WHERE device_id = ?")
@@ -442,7 +439,7 @@ fn the_field_tables_keep_every_contract_key() {
         }
         // Design 99 §6.1: the report's `shortcuts` (`shortcuts.json`'s `report` and `report_hidden`), every key kept by
         // the cleaning.
-        if json.get("capability").and_then(|c| c.as_str()) == Some(crate::shortcuts::CAPABILITY) {
+        if path.ends_with("shortcuts.json") {
             for key in ["report", "report_hidden"] {
                 let blob = &json[key];
                 let kept = crate::shortcuts::clean(blob).unwrap();
@@ -452,9 +449,7 @@ fn the_field_tables_keep_every_contract_key() {
         }
         // Design 107 §4: the report's `notification_channels` (`notification_channels.json`'s `report`, `report_none`
         // and `report_all_off`), every key kept by the cleaning.
-        if json.get("capability").and_then(|c| c.as_str())
-            == Some(crate::notification_channels::CAPABILITY)
-        {
+        if path.ends_with("notification_channels.json") {
             for key in ["report", "report_none", "report_all_off"] {
                 let blob = &json[key];
                 let kept = crate::notification_channels::clean(blob).unwrap();
@@ -464,11 +459,7 @@ fn the_field_tables_keep_every_contract_key() {
         }
         // Design 102 §6.2: the report's `captive_portal` and `login_browser` (`login_windows.json`'s `report` and
         // `report_off`), every key kept by the cleaning.
-        if json
-            .pointer("/capabilities/captive_portal")
-            .and_then(|c| c.as_str())
-            == Some(crate::logins::PORTAL_CAPABILITY)
-        {
+        if path.ends_with("login_windows.json") {
             for key in ["report", "report_off"] {
                 let portal = &json[key]["captive_portal"];
                 let browser = &json[key]["login_browser"];
@@ -489,60 +480,6 @@ fn the_field_tables_keep_every_contract_key() {
         }
     }
     assert!(checked >= 1, "time_status_report.json carries a time_state");
-}
-
-/// Launcher round 7 §2 (the battery state) was removed on 2026-10-20, but launcher 0.32.0 still sends
-/// `installed_apps[].battery_exempt`: the report is accepted, the field is dropped (never stored), and the
-/// Apps page says nothing about the background.
-#[tokio::test]
-async fn an_older_launchers_battery_exempt_is_accepted_and_dropped() {
-    let app = TestApp::new().await;
-    let cookie = app.admin_cookie().await;
-    let (id, token) = app.enrolled_device("phone").await;
-    let res = app
-        .request(
-            Method::POST,
-            "/api/devices/status",
-            Some(&token),
-            Some(serde_json::json!({
-                "lock_reason": "NONE",
-                "kiosk_engaged": true,
-                "installed_apps": [
-                    { "package_name": "org.fossify.clock", "label": "Clock", "preinstalled": false,
-                      "installer": "me.vibb.launcher", "battery_exempt": false },
-                    { "package_name": "io.element.android.x", "label": "Element X", "preinstalled": false,
-                      "installer": "me.vibb.launcher", "battery_exempt": true },
-                    { "package_name": "com.android.chrome", "label": "Chrome", "preinstalled": true },
-                ],
-            })),
-        )
-        .await;
-    assert!(res.status.is_success(), "{}", res.text());
-    let apps_json: String = sqlx::query_scalar(
-        "SELECT installed_apps_json FROM device_status WHERE device_id = ? ORDER BY id DESC LIMIT 1",
-    )
-    .bind(id)
-    .fetch_one(&app.db)
-    .await
-    .unwrap();
-    let apps: Vec<crate::models::InstalledApp> = serde_json::from_str(&apps_json).unwrap();
-    let packages: Vec<&str> = apps.iter().map(|a| a.package_name.as_str()).collect();
-    assert_eq!(
-        packages,
-        [
-            "org.fossify.clock",
-            "io.element.android.x",
-            "com.android.chrome"
-        ]
-    );
-    assert!(!apps_json.contains("battery_exempt"), "{apps_json}");
-
-    let html = app
-        .get_page(&device_page(id, Section::Apps), &cookie)
-        .await
-        .text();
-    assert!(html.contains("Clock"), "{html}");
-    assert!(!html.contains("Background:"), "{html}");
 }
 
 #[tokio::test]

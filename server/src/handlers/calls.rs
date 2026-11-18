@@ -27,7 +27,7 @@ use crate::handlers::calls_form::{self, Subs, Way};
 use crate::handlers::device_api::device_contacts;
 use crate::handlers::device_pages::Note;
 use crate::i18n::{Lang, Words, t, t_params};
-use crate::models::{CHANNEL_MODES, Device, DevicePolicy, MESSAGE_APPS, derived_old_keys};
+use crate::models::{CHANNEL_MODES, Device, DevicePolicy, MESSAGE_APPS};
 use crate::phone;
 use crate::photos;
 use crate::sms;
@@ -345,8 +345,6 @@ struct DeviceCallsTemplate {
     emergency_add_number: String,
     emergency_add_name: String,
     emergency_add_error: Option<(&'static str, String)>,
-    /// A refused channel choice (code QA M2), shown under the two rows.
-    settings_error: Option<&'static str>,
     /// Design 77 §8.5's path 2: Google's form that turns a number's chat features off, the RCS line's ⓘ link.
     rcs_form_url: &'static str,
     rcs_form_label: &'static str,
@@ -389,8 +387,6 @@ struct ChannelRow {
     extra: Option<&'static str>,
     /// SMS is managed: the ⓘ leads with Google's form (Messages is hidden then).
     extra_managed: bool,
-    /// "<choice> - Oppdater Vibb One først", one line per choice the phone can't do yet (code QA M2).
-    update_first: Vec<String>,
 }
 
 /// One choice of a segmented control (design 77 D2, the look of the phone switcher's segments): a radio, its short
@@ -400,51 +396,23 @@ struct Segment {
     label: &'static str,
     note: Option<&'static str>,
     selected: bool,
-    /// Shown but not choosable: a channel state this phone's launcher can't do yet.
-    disabled: bool,
 }
 
-/// D2's three choices and the sentence of `mode` for the calls channel (`sms` false) or SMS; `other` is the other
-/// channel's state. `engine`: the phone reports `sms_engine_v1`. Without it (code QA M2, the capability gate) a choice that would make the pair one an older launcher can't do
-/// ([sms::older_launcher_expresses]) shows disabled, with "<choice> - Oppdater Vibb One først" under the row - never
-/// the stored one.
-fn channel_row(
-    lang: Lang,
-    sms: bool,
-    mode: &str,
-    other: &str,
-    engine: bool,
-    rcs_recent: bool,
-) -> ChannelRow {
-    let mut update_first = Vec::new();
+/// D2's three choices and the sentence of `mode` for the calls channel (`sms` false) or SMS.
+fn channel_row(lang: Lang, sms: bool, mode: &str, rcs_recent: bool) -> ChannelRow {
     let options = CHANNEL_MODES
         .iter()
         .map(|value| {
-            let (calls_mode, sms_mode) = if sms {
-                (other, *value)
-            } else {
-                (*value, other)
-            };
-            let disabled =
-                *value != mode && !engine && !sms::older_launcher_expresses(calls_mode, sms_mode);
             let key = match *value {
                 "off" => "device.calls.mode.off",
                 "managed" => "device.calls.mode.managed",
                 _ => "device.calls.mode.unmanaged",
             };
-            if disabled {
-                update_first.push(t_params(
-                    lang,
-                    "device.calls.mode.update_first",
-                    &[("mode", t(lang, key))],
-                ));
-            }
             Segment {
                 value,
                 label: t(lang, key),
                 note: None,
                 selected: *value == mode,
-                disabled,
             }
         })
         .collect();
@@ -486,17 +454,15 @@ fn channel_row(
         options,
         sub: t(lang, sub),
         // §8.5 (code QA M1): the step is shown before the switch, while Messages is still visible (SMS "Ikke styrt"
-        // or "Av" on a phone that can take "Styrt av Vibb"); design 80 D7 (M4): under it for 14 days after the last
+        // or "Av"); design 80 D7 (M4): under it for 14 days after the last
         // channel change ("… hvis du ikke har gjort det", its ⓘ leading with Google's form), then in Avansert.
         extra: match (sms, mode) {
             (false, _) => None,
             (true, "managed") if rcs_recent => Some(t(lang, "device.calls.channel.sms_rcs")),
             (true, "managed") => None,
-            (true, _) if engine => Some(t(lang, "device.calls.channel.sms_rcs_before")),
-            (true, _) => None,
+            (true, _) => Some(t(lang, "device.calls.channel.sms_rcs_before")),
         },
         extra_managed: sms && mode == "managed",
-        update_first,
     }
 }
 
@@ -613,8 +579,6 @@ pub(super) struct Shown<'a> {
     pub(super) emergency_notice: Option<&'static str>,
     /// A refused Add Number: the number and name typed, the field and why.
     pub(super) emergency_add: Option<(&'a str, &'a str, &'static str, String)>,
-    /// A refused channel choice (design 77, code QA M2): why, under the two rows.
-    pub(super) settings_error: Option<&'static str>,
 }
 
 /// `?notice=` codes for the emergency menu.
@@ -849,7 +813,6 @@ async fn load_page(
         .map(|(id, name, number)| (id, format!("{name} · {number}")))
         .collect();
     let report = call_report(state, &policy).await?;
-    let engine = sms::has_engine(&state.db, id).await?;
     let (zone, now) = (Zone::load(&state.db, lang).await, Utc::now());
     let (warnings, mut notes): (Vec<Note>, Vec<Note>) = report
         .findings
@@ -897,8 +860,9 @@ async fn load_page(
                 .get("number")
                 .and_then(|raw| phone::normalize(raw, &default_country_code).ok())
                 .is_some_and(|number| emergency::is_emergency(&number, &default_country_code));
+            // A post the save refused as stale never gets here; all off if one did (fail closed).
             let ((inbound, outbound), (sms_in, sms_out)) =
-                calls_form::resolve(sent, None, emergency);
+                calls_form::resolve(sent, None, emergency).unwrap_or_default();
             [
                 inbound,
                 outbound,
@@ -999,7 +963,6 @@ async fn load_page(
         && add_error.is_none()
         && refused.is_none()
         && emergency_add_error.is_none()
-        && shown.settings_error.is_none()
         && sms_error.is_none()
         && name_add_error.is_none()
         && shown.add_held.is_none()
@@ -1070,22 +1033,8 @@ async fn load_page(
         who: crate::handlers::devices::BandAvatar::of(&device),
         title: format!("{} - {}", device.name, t(lang, "device.page.calls")),
         channels: vec![
-            channel_row(
-                lang,
-                false,
-                &policy.calls_mode,
-                &policy.sms_mode,
-                engine,
-                rcs_recent,
-            ),
-            channel_row(
-                lang,
-                true,
-                &policy.sms_mode,
-                &policy.calls_mode,
-                engine,
-                rcs_recent,
-            ),
+            channel_row(lang, false, &policy.calls_mode, rcs_recent),
+            channel_row(lang, true, &policy.sms_mode, rcs_recent),
         ],
         advanced_open,
         adv_emergency,
@@ -1094,7 +1043,6 @@ async fn load_page(
         number_line,
         rcs_in_advanced: policy.sms_mode == "managed" && !rcs_recent,
         sms_notice: shown.sms_notice,
-        settings_error: shown.settings_error,
         rcs_form_url: RCS_FORM_URL,
         rcs_form_label: RCS_FORM_LABEL,
         default_message_options: message_app_options(lang, Some(&policy.default_message_app), None),
@@ -1221,10 +1169,6 @@ pub(crate) enum Finding {
     MessagesHidden {
         sms_app: String,
     },
-    /// `stopped`: an earlier report had the capability (an older launcher installed since).
-    NotEnforced {
-        stopped: bool,
-    },
     FailClosed,
     NotPhoneApp,
     AnyoneCanCall,
@@ -1239,12 +1183,6 @@ pub(crate) enum Finding {
     },
     SmsAppAllowed {
         sms_app: String,
-    },
-    /// Design 77 (code QA M2): the stored channels are a pair the phone's launcher can't do before its update - it
-    /// loses SMS and/or keeps calls to the contacts until then.
-    NeedsUpdate {
-        sms_lost: bool,
-        calls_contacts_only: bool,
     },
     /// Design 77 §7: SMS is "Styrt av Vibb" but Vibb One isn't the SMS app - messages are lost.
     SmsNotOurs,
@@ -1294,7 +1232,6 @@ impl Finding {
             Finding::Unconfirmed { .. } => CallProblem::Unconfirmed,
             Finding::DialerNotAllowed { .. } => CallProblem::DialerNotAllowed,
             Finding::MessagesHidden { .. } => CallProblem::MessagesHidden,
-            Finding::NotEnforced { .. } => CallProblem::NotEnforced,
             Finding::FailClosed => CallProblem::FailClosed,
             Finding::NotPhoneApp => CallProblem::NotPhoneApp,
             Finding::AnyoneCanCall => CallProblem::AnyoneCanCall,
@@ -1303,7 +1240,6 @@ impl Finding {
             Finding::RulesAfterRestart { .. } => CallProblem::RulesAfterRestart,
             Finding::Reported { .. } => CallProblem::Reported,
             Finding::SmsAppAllowed { .. } => CallProblem::SmsAppAllowed,
-            Finding::NeedsUpdate { .. } => CallProblem::NeedsUpdate,
             Finding::SmsNotOurs => CallProblem::SmsNotOurs,
             Finding::SmsHoldFull { .. } => CallProblem::SmsHoldFull,
             Finding::SmsParseFailures { .. } => CallProblem::SmsParseFailures,
@@ -1391,10 +1327,6 @@ impl Finding {
                 say("device.calls.finding.messages_hidden"),
                 package(sms_app),
             ),
-            Finding::NotEnforced { stopped: true } => {
-                (say("device.calls.finding.stopped_screening"), None)
-            }
-            Finding::NotEnforced { stopped: false } => (say("device.calls.finding.too_old"), None),
             Finding::FailClosed => (say("device.calls.finding.fail_closed"), None),
             Finding::NotPhoneApp => (say("device.calls.finding.not_phone_app"), None),
             Finding::AnyoneCanCall => (say("device.calls.finding.anyone_can_call"), None),
@@ -1426,17 +1358,6 @@ impl Finding {
             Finding::SmsAppAllowed { sms_app } => (
                 say("device.calls.finding.sms_app_allowed"),
                 package(sms_app),
-            ),
-            Finding::NeedsUpdate {
-                sms_lost,
-                calls_contacts_only,
-            } => (
-                say(match (sms_lost, calls_contacts_only) {
-                    (true, true) => "device.calls.finding.needs_update",
-                    (true, false) => "device.calls.finding.needs_update_sms",
-                    _ => "device.calls.finding.needs_update_calls",
-                }),
-                None,
             ),
             Finding::SmsNotOurs => (say("device.calls.finding.sms_not_ours"), None),
             Finding::SmsHoldFull { until: Some(until) } => (
@@ -1474,14 +1395,13 @@ impl Finding {
             Finding::SmsRoleKept => (say("device.calls.finding.sms_role_kept"), None),
         };
         // Where the sentence is the news, it shows under the title (a KEEP: the emergency call,
-        // the call-back window, a call that couldn't show; and what's lost until the update) and
-        // only the fix stays behind the ⓘ (design 113 D1 P1, QA M5).
+        // the call-back window, a call that couldn't show) and only the fix stays behind the ⓘ
+        // (design 113 D1 P1, QA M5).
         let visible = matches!(
             self,
             Finding::EmergencyCall { .. }
                 | Finding::CallbackWindow { .. }
                 | Finding::CallScreenFailed { .. }
-                | Finding::NeedsUpdate { .. }
         );
         let (sub, detail) = if visible {
             (Some(detail), None)
@@ -1549,23 +1469,18 @@ pub(crate) async fn call_report(
         auto_refresh: false,
         emergency_left_attention: false,
     };
-    // The capabilities, `call_state`, the report's time and `sms_state` (design 77).
-    type Latest = (Option<String>, Option<String>, String, Option<String>);
+    // `call_state`, the report's time and `sms_state` (design 77).
+    type Latest = (Option<String>, String, Option<String>);
     let latest: Option<Latest> = sqlx::query_as(
-        "SELECT capabilities_json, call_state_json, reported_at, sms_state_json FROM device_status \
+        "SELECT call_state_json, reported_at, sms_state_json FROM device_status \
          WHERE device_id = ? ORDER BY reported_at DESC, id DESC LIMIT 1",
     )
     .bind(policy.device_id)
     .fetch_optional(&state.db)
     .await?;
-    let Some((capabilities_json, call_state_json, reported_at, sms_state_json)) = latest else {
+    let Some((call_state_json, reported_at, sms_state_json)) = latest else {
         return Ok(report);
     };
-    let capabilities: Vec<String> = capabilities_json
-        .as_deref()
-        .and_then(|json| serde_json::from_str(json).ok())
-        .unwrap_or_default();
-    let capable = capabilities.iter().any(|c| c == CALL_POLICY_CAPABILITY);
     let call_state: serde_json::Value = call_state_json
         .as_deref()
         .and_then(|json| serde_json::from_str(json).ok())
@@ -1644,22 +1559,10 @@ pub(crate) async fn call_report(
             findings.push(Finding::MessagesHidden { sms_app });
         }
     }
-    // Design 77 D2 (code QA M2): a stored pair the phone's launcher can't do yet (a phone set up again with an older
-    // build) - the policy sends the fail-closed derived keys; say what that costs until the update.
-    if !capabilities.iter().any(|c| c == sms::SMS_ENGINE_CAPABILITY)
-        && let Some((sms_lost, calls_contacts_only)) =
-            sms::older_launcher_loses(&policy.calls_mode, &policy.sms_mode)
-    {
-        findings.push(Finding::NeedsUpdate {
-            sms_lost,
-            calls_contacts_only,
-        });
-    }
-    // Design 77 §7: what the engine's `sms_state` says, from a launcher with the engine.
-    if capabilities.iter().any(|c| c == sms::SMS_ENGINE_CAPABILITY)
-        && let Some(sms_state) = sms_state_json
-            .as_deref()
-            .and_then(|json| serde_json::from_str::<serde_json::Value>(json).ok())
+    // Design 77 §7: what the engine's `sms_state` says.
+    if let Some(sms_state) = sms_state_json
+        .as_deref()
+        .and_then(|json| serde_json::from_str::<serde_json::Value>(json).ok())
     {
         sms_findings(
             state,
@@ -1670,21 +1573,9 @@ pub(crate) async fn call_report(
         )
         .await?;
     }
-    // Design 77 D2: the role, screening and call-log findings are the calls channel's (a launcher with the engine
-    // reports `call_state.state` for calls alone, and hands the dialer role back while only SMS is managed).
+    // Design 77 D2: the role, screening and call-log findings are the calls channel's (the launcher reports
+    // `call_state.state` for calls alone, and hands the dialer role back while only SMS is managed).
     if !policy.calls_managed() {
-        return Ok(report);
-    }
-    if !capable {
-        let stopped: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM device_status WHERE device_id = ? \
-             AND capabilities_json LIKE ?)",
-        )
-        .bind(policy.device_id)
-        .bind(format!("%\"{CALL_POLICY_CAPABILITY}\"%"))
-        .fetch_one(&state.db)
-        .await?;
-        findings.push(Finding::NotEnforced { stopped });
         return Ok(report);
     }
     if roles == RoleReport::Pending {
@@ -1726,7 +1617,7 @@ pub(crate) async fn call_report(
     if let Some(error) = text("last_error") {
         findings.push(Finding::Reported { error });
     }
-    if !policy.sms_enabled()
+    if policy.sms_managed()
         && let Some(sms_app) = text("default_sms_package")
         && allowlist
             .as_ref()
@@ -1847,8 +1738,6 @@ pub enum CallProblem {
     DialerNotAllowed,
     /// The SMS app isn't allowed, so the phone hides it.
     MessagesHidden,
-    /// The launcher doesn't (or no longer does) enforce calls.
-    NotEnforced,
     /// The phone can't read its call rules: emergency calls only.
     FailClosed,
     /// Not the phone app, but incoming calls are still screened.
@@ -1865,8 +1754,6 @@ pub enum CallProblem {
     Reported,
     /// SMS is off but the Messages app is allowed.
     SmsAppAllowed,
-    /// Design 77: the channels as set need a launcher update (SMS lost, calls contacts-only until then).
-    NeedsUpdate,
     /// Design 77 §7: SMS managed but Vibb One isn't the SMS app - messages are lost.
     SmsNotOurs,
     /// The waiting list is full (R2-M4).
@@ -1896,7 +1783,6 @@ impl CallProblem {
                 CallProblem::Unconfirmed => "device.calls.problem.unconfirmed",
                 CallProblem::DialerNotAllowed => "device.calls.problem.dialer_not_allowed",
                 CallProblem::MessagesHidden => "device.calls.problem.messages_hidden",
-                CallProblem::NotEnforced => "device.calls.problem.not_enforced",
                 CallProblem::FailClosed => "device.calls.problem.fail_closed",
                 CallProblem::NotPhoneApp => "device.calls.problem.not_phone_app",
                 CallProblem::AnyoneCanCall => "device.calls.problem.anyone_can_call",
@@ -1905,7 +1791,6 @@ impl CallProblem {
                 CallProblem::RulesAfterRestart => "device.calls.problem.restart",
                 CallProblem::Reported => "device.calls.problem.reported",
                 CallProblem::SmsAppAllowed => "device.calls.problem.sms_app_allowed",
-                CallProblem::NeedsUpdate => "device.calls.problem.needs_update",
                 CallProblem::SmsNotOurs => "device.calls.problem.sms_not_ours",
                 CallProblem::SmsHoldFull => "device.calls.problem.hold_full",
                 CallProblem::SmsParseFailures => "device.calls.problem.parse_failures",
@@ -1935,7 +1820,7 @@ impl CallProblem {
 
     /// Every kind, for the tests.
     #[cfg(test)]
-    pub(crate) const ALL: [CallProblem; 24] = [
+    pub(crate) const ALL: [CallProblem; 22] = [
         CallProblem::EmergencyCall,
         CallProblem::CallbackWindow,
         CallProblem::CallScreenFailed,
@@ -1943,7 +1828,6 @@ impl CallProblem {
         CallProblem::Unconfirmed,
         CallProblem::DialerNotAllowed,
         CallProblem::MessagesHidden,
-        CallProblem::NotEnforced,
         CallProblem::FailClosed,
         CallProblem::NotPhoneApp,
         CallProblem::AnyoneCanCall,
@@ -1952,7 +1836,6 @@ impl CallProblem {
         CallProblem::RulesAfterRestart,
         CallProblem::Reported,
         CallProblem::SmsAppAllowed,
-        CallProblem::NeedsUpdate,
         CallProblem::SmsNotOurs,
         CallProblem::SmsHoldFull,
         CallProblem::SmsParseFailures,
@@ -1962,9 +1845,6 @@ impl CallProblem {
         CallProblem::SmsRoleKept,
     ];
 }
-
-/// Capability the launcher reports when it enforces `call_policy`.
-pub(crate) const CALL_POLICY_CAPABILITY: &str = "call_policy_v1";
 
 pub(crate) fn parse_time(value: &str) -> Option<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(value)
@@ -2039,23 +1919,21 @@ pub async fn save_settings(
     Path(id): Path<i64>,
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
-    // Design 80 D8 (design 31 §5.6): the page splits this form in two, each with its section marker, and a marked
-    // post writes only its section - `button` the phone's default Message button (in the page's Avansert),
-    // `channels` the two modes. No marker (an older page) is the write-all of before.
-    let section = form.get("section").map(String::as_str);
-    // Code QA N2: an unknown marker is refused, never the write-all (it would reset the default Message button).
-    if section.is_some_and(|s| s != "button" && s != "channels") {
+    // Design 80 D8 (design 31 §5.6): the page splits this form in two, each with its section marker, and a post
+    // writes only its section - `button` the phone's default Message button (in the page's Avansert), `channels` the
+    // two modes. A missing or unknown marker is refused (code QA N2).
+    let section = form.get("section").map(String::as_str).unwrap_or("");
+    if section != "button" && section != "channels" {
         return bad_request(lang, "error.unknown_section");
     }
-    let default_message_app = form
-        .get("default_message_app")
-        .map(String::as_str)
-        .or((section != Some("button")).then_some("sms"));
-    let Some(default_message_app) = default_message_app.filter(|app| MESSAGE_APPS.contains(app))
-    else {
-        return bad_request(lang, "error.unknown_message_app");
-    };
-    if section == Some("button") {
+    if section == "button" {
+        let Some(default_message_app) = form
+            .get("default_message_app")
+            .map(String::as_str)
+            .filter(|app| MESSAGE_APPS.contains(app))
+        else {
+            return bad_request(lang, "error.unknown_message_app");
+        };
         let result = sqlx::query(
             "UPDATE device_policy SET default_message_app = ?, updated_at = datetime('now') \
              WHERE device_id = ?",
@@ -2074,7 +1952,6 @@ pub async fn save_settings(
             Err(err) => db_error(lang, id, err),
         };
     }
-    let channels_only = section == Some("channels");
     // Design 77 D2: each channel's state; a missing or unknown one is refused, never guessed.
     let mode = |key: &str| {
         form.get(key)
@@ -2084,35 +1961,6 @@ pub async fn save_settings(
     let (Some(calls_mode), Some(sms_mode)) = (mode("calls_mode"), mode("sms_mode")) else {
         return bad_request(lang, "error.unknown_channel_mode");
     };
-    // Code QA M2 (step 4's gate brought forward): a pair an older launcher can't do is taken only from a phone that
-    // reports the engine - else the page again, with why, under the rows. The stored pair is always taken back (an
-    // unchanged choice beside another field's save loosens nothing).
-    if !sms::older_launcher_expresses(calls_mode, sms_mode) {
-        let gate = async {
-            let stored: Option<(String, String)> = sqlx::query_as(
-                "SELECT calls_mode, sms_mode FROM device_policy WHERE device_id = ?",
-            )
-            .bind(id)
-            .fetch_optional(&state.db)
-            .await?;
-            let unchanged = stored.is_some_and(|(c, s)| c == calls_mode && s == sms_mode);
-            Ok::<_, sqlx::Error>(unchanged || sms::has_engine(&state.db, id).await?)
-        }
-        .await;
-        match gate {
-            Ok(true) => {}
-            Ok(false) => {
-                let shown = Shown {
-                    settings_error: Some(t(lang, "device.calls.update_first")),
-                    ..Default::default()
-                };
-                return render(&state, id, StatusCode::BAD_REQUEST, shown, lang).await;
-            }
-            Err(err) => return db_error(lang, id, err),
-        }
-    }
-    // The old columns get D2's derived keys, so a rolled-back server sends the fail-closed view.
-    let (managed, calls_enabled, sms_enabled) = derived_old_keys(calls_mode, sms_mode);
     let result = async {
         // BEGIN IMMEDIATE: it reads the stored mode before it writes (design 109).
         let mut tx = state.db.begin_with("BEGIN IMMEDIATE").await?;
@@ -2127,17 +1975,10 @@ pub async fn save_settings(
             "UPDATE device_policy SET \
              roles_changed_at = CASE WHEN calls_mode != ?1 OR sms_mode != ?2 THEN datetime('now') \
                                      ELSE roles_changed_at END, \
-             calls_mode = ?1, sms_mode = ?2, calls_managed = ?3, calls_enabled = ?4, sms_enabled = ?5, \
-             default_message_app = CASE WHEN ?6 THEN default_message_app ELSE ?7 END, \
-             updated_at = datetime('now') WHERE device_id = ?8",
+             calls_mode = ?1, sms_mode = ?2, updated_at = datetime('now') WHERE device_id = ?3",
         )
         .bind(calls_mode)
         .bind(sms_mode)
-        .bind(managed)
-        .bind(calls_enabled)
-        .bind(sms_enabled)
-        .bind(channels_only)
-        .bind(default_message_app)
         .bind(id)
         .execute(&mut *tx)
         .await?
@@ -2203,7 +2044,7 @@ const REQUEST_ADD_SWITCHES: [bool; 6] = [true, true, false, true, true, false];
 /// the global contact with that number (renaming it - the name is shared by every device that
 /// has it) and attaches it at the end of the list. Its switches are the form's (design 77 R2-M1: the form says
 /// `switches`, and a missing one is off - "Opprett kontakt…" sends "Kan sende melding til" alone); a post without
-/// them gets every flag on, as before. "Kan sende melding til" is never stored for an emergency number (R2-H1). The
+/// the marker is a 400 and writes nothing. "Kan sende melding til" is never stored for an emergency number (R2-H1). The
 /// kid's open requests for the number - and the one "Legg til…" came from (`request`) - are answered `added` in the
 /// same transaction, and that request's Matrix ID becomes the contact's only with "Bruk Matrix-ID-en" ticked
 /// (`use_matrix`; design 77 §14, R2-M1). Back to its row; a refusal renders the page (400) with Add Contact open, what
@@ -2217,15 +2058,18 @@ pub async fn add_contact(
     if let Some(contact_id) = form.get("contact_id") {
         return add_family_contact(&state, lang, id, contact_id).await;
     }
+    // The add form always sends its `switches` marker and both `*_shown` (design 80 D5); without them it is stale.
+    if !form.contains_key("switches") || calls_form::resolve(&form, None, false).is_none() {
+        return bad_request(lang, "error.out_of_date");
+    }
     let name = form.get("name").map(|s| s.trim()).unwrap_or("");
     let raw_number = form.get("number").map(String::as_str).unwrap_or("");
-    let with_switches = form.contains_key("switches");
     let state = &state;
     let form = &form;
     let refuse = |field: &'static str, why: String| async move {
         let shown = Shown {
             add: Some((name, raw_number, field, why)),
-            add_sent: with_switches.then_some(form),
+            add_sent: Some(form),
             ..Default::default()
         };
         render(state, id, StatusCode::BAD_REQUEST, shown, lang).await
@@ -2266,22 +2110,20 @@ pub async fn add_contact(
         Ok(_) => {}
         Err(err) => return db_error(lang, id, err),
     }
-    // Design 80 D3/D5: the form's two-way switches and Avansert resolved to the pairs (a post without `switches`,
-    // an older page, gets every flag on, as before).
-    let switches = if with_switches {
-        let ((inbound, outbound), (sms_in, sms_out)) =
-            calls_form::resolve(form, None, emergency::is_emergency(&number, &cc));
-        [
-            inbound,
-            outbound,
-            form.contains_key("show_on_home"),
-            sms_in,
-            sms_out,
-            form.contains_key("mms"),
-        ]
-    } else {
-        [true; 6]
+    // Design 80 D3/D5: the form's two-way switches and Avansert resolved to the pairs.
+    let Some(((inbound, outbound), (sms_in, sms_out))) =
+        calls_form::resolve(form, None, emergency::is_emergency(&number, &cc))
+    else {
+        return bad_request(lang, "error.out_of_date");
     };
+    let switches = [
+        inbound,
+        outbound,
+        form.contains_key("show_on_home"),
+        sms_in,
+        sms_out,
+        form.contains_key("mms"),
+    ];
     // Design 77 §14 (QA M1): from a kid's live request, a number the family already has keeps its contact's name -
     // judged by the number this form saves, not the one the kid asked for. A different typed name is refused in place,
     // with the kept name in the field and why, never silently ignored; saving again adds the contact under it.
@@ -2304,7 +2146,7 @@ pub async fn add_contact(
                 let why = t_params(lang, "device.requests.kept_refused", &[("contact", &kept)]);
                 let shown = Shown {
                     add: Some((kept.as_str(), raw_number, "name", why)),
-                    add_sent: with_switches.then_some(form),
+                    add_sent: Some(form),
                     ..Default::default()
                 };
                 return render(state, id, StatusCode::BAD_REQUEST, shown, lang).await;
@@ -2507,7 +2349,8 @@ pub(crate) fn valid_matrix_id(value: &str) -> bool {
 /// Saves one contact's flags and Message button, scoped to this device. Back to its row, open;
 /// a Matrix ID that isn't one renders the page (400) with the row open, what was sent and the
 /// reason under the field; a contact that isn't on this phone (removed meanwhile) returns to
-/// `#contacts` saying nothing was saved. An unknown phone is a 404.
+/// `#contacts` saying nothing was saved; a `*_shown` the page sends that is missing or unknown is a
+/// 400 and writes nothing. An unknown phone is a 404.
 pub async fn update_contact(
     State(state): State<AppState>,
     lang: Lang,
@@ -2540,11 +2383,7 @@ pub async fn update_contact(
                     why: t(lang, "device.calls.matrix_refused").to_string(),
                     sent: Some(&form),
                     // Design 80 L2: the redraw shows the channels as the save would have stored them.
-                    pairs: Some(calls_form::resolve(
-                        &form,
-                        Some(stored.pairs),
-                        stored.emergency,
-                    )),
+                    pairs: calls_form::resolve(&form, Some(stored.pairs), stored.emergency),
                 }),
                 ..Default::default()
             };
@@ -2555,13 +2394,17 @@ pub async fn update_contact(
     let result = async {
         let mut tx = state.db.begin().await?;
         let Some(stored) = stored_channels(&mut *tx, id, contact_id).await? else {
-            return Ok(0);
+            return Ok(Some(0));
         };
         // Design 80 D3: each channel's pair from its two-way switch, its one-way switches and what the page showed
         // (the stale-page guard keeps a split made meanwhile); "Kan sende melding til" is never stored for an
         // emergency number (design 77 R2-H1: its switch is disabled, and the policy never sends it).
-        let ((inbound, outbound), (sms_in, sms_out)) =
-            calls_form::resolve(&form, Some(stored.pairs), stored.emergency);
+        // A `*_shown` missing or unknown (a stale page): refused, nothing written.
+        let Some(((inbound, outbound), (sms_in, sms_out))) =
+            calls_form::resolve(&form, Some(stored.pairs), stored.emergency)
+        else {
+            return Ok(None);
+        };
         let updated = sqlx::query(
             "UPDATE device_contacts SET allow_inbound = ?, allow_outbound = ?, show_on_home = ?, \
              sms_in = ?, sms_out = ?, mms = ?, message_app = ?, \
@@ -2583,13 +2426,14 @@ pub async fn update_contact(
         .await?
         .rows_affected();
         tx.commit().await?;
-        Ok::<_, sqlx::Error>(updated)
+        Ok::<_, sqlx::Error>(Some(updated))
     }
     .await;
     match result {
-        Ok(0) => gone(&state, id, contact_id, true, lang).await,
+        Ok(None) => bad_request(lang, "error.out_of_date"),
+        Ok(Some(0)) => gone(&state, id, contact_id, true, lang).await,
         // D9: back to the row, its Avansert as it was (`more`, kept in step by static/contact-form.js).
-        Ok(_) => {
+        Ok(Some(_)) => {
             let more = form.get("more").is_some_and(|m| m == "1");
             saved(&state, id, contact_return(id, contact_id, more))
         }
@@ -3404,8 +3248,6 @@ mod tests {
             Finding::MessagesHidden {
                 sms_app: package.to_string(),
             },
-            Finding::NotEnforced { stopped: true },
-            Finding::NotEnforced { stopped: false },
             Finding::FailClosed,
             Finding::NotPhoneApp,
             Finding::AnyoneCanCall,
@@ -3418,18 +3260,6 @@ mod tests {
             },
             Finding::SmsAppAllowed {
                 sms_app: package.to_string(),
-            },
-            Finding::NeedsUpdate {
-                sms_lost: true,
-                calls_contacts_only: true,
-            },
-            Finding::NeedsUpdate {
-                sms_lost: true,
-                calls_contacts_only: false,
-            },
-            Finding::NeedsUpdate {
-                sms_lost: false,
-                calls_contacts_only: true,
             },
             Finding::SmsNotOurs,
             Finding::SmsHoldFull { until: Some(later) },
@@ -3463,14 +3293,13 @@ mod tests {
                         | Finding::SmsAppAllowed { .. }
                 )
             );
-            // Design 113 D1 P1: the KEEPs and the needs-update finding show their sentence under the
-            // title (`sub`, at most six words beside the times); every other sentence is behind the ⓘ.
+            // Design 113 D1 P1: the KEEPs show their sentence under the title (`sub`, at most six
+            // words beside the times); every other sentence is behind the ⓘ.
             let visible = matches!(
                 finding,
                 Finding::EmergencyCall { .. }
                     | Finding::CallbackWindow { .. }
                     | Finding::CallScreenFailed { .. }
-                    | Finding::NeedsUpdate { .. }
             );
             assert_eq!(note.sub.is_some(), visible, "{finding:?}");
             assert_eq!(note.detail.is_some(), !visible, "{finding:?}");
@@ -3507,7 +3336,7 @@ mod tests {
         // The expert parts are behind the ⓘ.
         let fix = |f: &Finding| f.note(&zone, now).fix.unwrap_or_default();
         assert!(fix(&all[5]).contains(package));
-        assert!(fix(&all[12]).contains("adb shell cmd role add-role-holder"));
-        assert!(fix(&all[16]).contains("IllegalArgumentException"));
+        assert!(fix(&all[10]).contains("adb shell cmd role add-role-holder"));
+        assert!(fix(&all[14]).contains("IllegalArgumentException"));
     }
 }

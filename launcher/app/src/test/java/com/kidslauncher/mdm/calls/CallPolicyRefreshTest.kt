@@ -15,7 +15,7 @@ import org.junit.Test
 class CallPolicyRefreshTest {
 
     private val policy = CallPolicy(
-        managed = true, callsEnabled = true,
+        callsMode = "managed", smsMode = "off",
         contacts = listOf(PolicyContact(7, "Mamma", "+4791234567", inbound = true, outbound = true)),
     )
     private val managedCache = CachedPolicy.Ok(PolicyResponse(allowlist = listOf("a"), callPolicy = policy))
@@ -90,9 +90,9 @@ class CallPolicyRefreshTest {
     }
 
     @Test
-    fun `only an explicit managed false unmanages a phone the DE copy saw managed`() {
+    fun `only both channels unmanaged unmanages a phone the DE copy saw managed`() {
         val explicitOff = CeRead.Ok(
-            CachedPolicy.Ok(PolicyResponse(allowlist = listOf("a"), callPolicy = CallPolicy(managed = false))), false, null,
+            CachedPolicy.Ok(PolicyResponse(allowlist = listOf("a"), callPolicy = CallPolicy(callsMode = "unmanaged", smsMode = "unmanaged"))), false, null,
         )
         val plan = refreshPlan(true, explicitOff, managedDe, managedDe)
         assertEquals(CallPolicyState.Unmanaged, plan.state)

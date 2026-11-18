@@ -53,8 +53,7 @@ data class UpRow(
     override fun toString() = "UpRow(reg=$reg, package=$pkg, state=$state)"
 }
 
-/** The blob under [UpStore.REGS]: [v] its format, [rows] the registrations. Unknown keys of a newer build are dropped
- * by an older one's decode, never a reason to fail. */
+/** The blob under [UpStore.REGS]: [v] its format, [rows] the registrations. Unknown keys are dropped by the decode, never a reason to fail. */
 @Serializable
 data class UpRegsBlob(val v: Int = 1, val rows: List<UpRow> = emptyList())
 
@@ -93,7 +92,6 @@ sealed interface UpRead {
 class UpStore(
     private val prefs: SharedPreferences,
     private val sealed: SealedPrefs = Secrets.prefs,
-    private val migrate: () -> Boolean = { false },
 ) {
     companion object {
         const val PREFS_NAME = "unified_push"
@@ -113,7 +111,7 @@ class UpStore(
             UpStore(context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE))
     }
 
-    fun read(): UpRead = when (val state = sealed.read(prefs, AAD, REGS, migrate())) {
+    fun read(): UpRead = when (val state = sealed.read(prefs, AAD, REGS)) {
         Sealed.Absent -> UpRead.Rows(emptyList())
         Sealed.Unreadable -> UpRead.Unreadable
         is Sealed.Value -> try {

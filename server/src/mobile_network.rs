@@ -12,14 +12,6 @@ use serde_json::{Value, json};
 use crate::i18n::{Lang, t, t_params};
 use crate::models::{DevicePolicy, DeviceStatus};
 
-/// The launcher capability for data roaming (design 94 §4).
-pub const ROAMING_CAPABILITY: &str = "data_roaming_v1";
-/// The launcher capability for Bare Vibb, the settings lock and `mobile_data` (design 95 rev. 3).
-pub const MOBILE_CAPABILITY: &str = "mobile_data_v1";
-/// Design 97 §3.2: the launcher enforces `abroad`, reports `data_roaming.where` and `mobile_data.kid`, and shows the
-/// kid's Mobildata row. The kid's switch on the page and the roaming notice wait for it.
-pub const NETWORK_CAPABILITY: &str = "mobile_network_v2";
-
 /// "Mobildata for apper" (design 95 rev. 3).
 pub const APPS_CHOICES: &[&str] = &["on", "vibb"];
 
@@ -35,12 +27,6 @@ pub fn abroad_choice(stored: &str) -> &'static str {
     }
 }
 
-/// Design 97 §3.1: the policy's `data_roaming` for a launcher from before design 97, derived from the choice so it
-/// never gets more data abroad than chosen - Bare Vibb is `off` there (no data abroad until it is updated).
-pub fn derived_roaming(abroad: &str) -> &'static str {
-    if abroad == "home" { "phone" } else { "off" }
-}
-
 /// The stored "Mobildata for apper" as served: `vibb` or `on`.
 pub fn apps_choice(stored: &str) -> &'static str {
     if stored == "vibb" { "vibb" } else { "on" }
@@ -48,7 +34,7 @@ pub fn apps_choice(stored: &str) -> &'static str {
 
 /// Design 94 §5: the report's `data_roaming`, re-serialised field by field. A booleans that isn't one reads as its safe
 /// value (`false`; `null` for `enabled`), `country` must be `[a-z]{2}`, `network` `[0-9]{5,6}`, `modems` 1..=8, design
-/// 97's `where` one of `home`, `abroad`, `unknown` (else `null`, an older launcher); a value that isn't an object is
+/// 97's `where` one of `home`, `abroad`, `unknown` (else `null`); a value that isn't an object is
 /// `None` (stored `NULL`), never a refused report.
 pub fn clean_roaming(value: &Value) -> Option<String> {
     let object = value.as_object()?;
@@ -85,7 +71,7 @@ pub fn clean_roaming(value: &Value) -> Option<String> {
 
 /// Design 95 rev. 3: the report's `mobile_data`, re-serialised: `enabled` a boolean or `null`, `sink` one of the known
 /// words (else `off`), `settings_locked` a boolean (else `false`); design 97's `kid` `on`, `off` or `null` (the row
-/// hidden, or an older launcher).
+/// hidden).
 pub fn clean_mobile(value: &Value) -> Option<String> {
     let object = value.as_object()?;
     let sink = object
@@ -117,7 +103,7 @@ pub struct RoamingReport {
     pub enabled: Option<bool>,
     pub data_active: bool,
     pub modems: Option<i64>,
-    /// Design 97 §4.1: the launcher's own judgement, `home`, `abroad` or `unknown`; `None` from an older launcher.
+    /// Design 97 §4.1: the launcher's own judgement, `home`, `abroad` or `unknown`; `None` when absent.
     #[serde(default, rename = "where")]
     pub where_is: Option<String>,
 }
@@ -128,28 +114,18 @@ pub struct MobileReport {
     pub enabled: Option<bool>,
     pub sink: String,
     pub settings_locked: bool,
-    /// Design 97 §3.2: the kid's own switch, `on` or `off`; `None` while the row is hidden or from an older launcher.
+    /// Design 97 §3.2: the kid's own switch, `on` or `off`; `None` while the row is hidden.
     #[serde(default)]
     pub kid: Option<String>,
 }
 
-fn has(latest: &DeviceStatus, capability: &str) -> bool {
-    crate::handlers::device_pages::has_capability(Some(latest), capability)
-}
-
-/// The latest report's `data_roaming`, from a launcher that claims [ROAMING_CAPABILITY].
+/// The latest report's `data_roaming`.
 pub fn roaming_report(latest: &DeviceStatus) -> Option<RoamingReport> {
-    if !has(latest, ROAMING_CAPABILITY) {
-        return None;
-    }
     serde_json::from_str(latest.data_roaming_json.as_deref()?).ok()
 }
 
-/// The latest report's `mobile_data`, from a launcher that claims [MOBILE_CAPABILITY].
+/// The latest report's `mobile_data`.
 pub fn mobile_report(latest: &DeviceStatus) -> Option<MobileReport> {
-    if !has(latest, MOBILE_CAPABILITY) {
-        return None;
-    }
     serde_json::from_str(latest.mobile_data_json.as_deref()?).ok()
 }
 
@@ -257,14 +233,9 @@ impl Line {
     }
 }
 
-/// The latest report claims design 97's capability: the kid's switch, the abroad sink and `where` are there.
-fn network_capable(latest: &DeviceStatus) -> bool {
-    has(latest, NETWORK_CAPABILITY)
-}
-
 /// Design 94 §6.1's warnings from the report: a roaming session that outlived the lock (with a launcher that sinks it,
 /// only Vibb uses it), a SIM that still reads roaming on under the lock, a ship network the lock doesn't cover (design
-/// 97: unless the phone's abroad sink covers it - Av or Bare Vibb on a launcher with the capability).
+/// 97: unless the phone's abroad sink covers it - Av or Bare Vibb).
 fn roaming_warnings(
     lang: Lang,
     report: &RoamingReport,
@@ -307,8 +278,8 @@ fn roaming_warnings(
 }
 
 /// Whether the phone's abroad sink covers a ship network Android doesn't count as roaming (design 97 Q97-H1).
-fn sink_covers_ship(policy: &DevicePolicy, latest: &DeviceStatus) -> bool {
-    network_capable(latest) && abroad_choice(&policy.abroad) != "home"
+fn sink_covers_ship(policy: &DevicePolicy) -> bool {
+    abroad_choice(&policy.abroad) != "home"
 }
 
 /// The "only Vibb" line for the report's sink (design 97 §5): only the kid's Off, a quiet value on the summary (design
@@ -343,7 +314,7 @@ pub fn summary_lines(
             &report,
             mobile.as_ref(),
             policy.hardening.disallow_airplane_mode,
-            sink_covers_ship(policy, latest),
+            sink_covers_ship(policy),
         ));
     }
     lines
@@ -383,13 +354,6 @@ pub struct Card {
     pub settings_locked: bool,
     /// The parent shows the kid's own Mobildata switch (`quick_controls_mask` bit 32).
     pub kid_shown: bool,
-    /// The latest report claims each capability; the groups' controls wait for it. The "Roaming" radios need only
-    /// `data_roaming_v1` (the derived value works there, design 97 §3.2); the kid's switch needs `mobile_network_v2`.
-    pub mobile_capable: bool,
-    pub roaming_capable: bool,
-    pub network_capable: bool,
-    /// The phone has reported at all: without a report nothing is said about its Vibb One.
-    pub reported: bool,
     /// Under "Mobildata", "Roaming" and the lock: the phone's state, worded. A `warn` line is orange above its group,
     /// its `sub` behind its ⓘ; a grey line has no `sub`.
     pub data_lines: Vec<Line>,
@@ -399,25 +363,19 @@ pub struct Card {
 
 /// The switch line under "Roaming" (design 97 §5; design 113: Android's switch is said only when it is wrong). Under Av
 /// (`off`): nothing when the report says `locked` (the lock working as chosen), the grey "not on the phone yet" while it
-/// isn't and no pause runs. Code QA L5: nothing under Bare Vibb on a launcher without [NETWORK_CAPABILITY]
-/// ([network_capable] false) - it keeps the derived roaming lock, so a step on Android's switch wouldn't hold; the
-/// radio's update hint says what does. Otherwise (På or Bare Vibb) one orange line only when the switch reads off -
-/// leading with the place while the phone is abroad -, its fix behind the line's ⓘ; on or unknown says nothing.
+/// isn't and no pause runs. Otherwise (På or Bare Vibb) one orange line only when the switch reads off - leading with the
+/// place while the phone is abroad -, its fix behind the line's ⓘ; on or unknown says nothing.
 fn switch_line(
     lang: Lang,
     name: &str,
     abroad: &str,
     report: &RoamingReport,
     paused: bool,
-    network_capable: bool,
 ) -> Option<Line> {
     if abroad == "off" {
         // The lock hasn't reached the phone yet (a choice changed since its report); a pause lifts it on purpose.
         return (!report.locked && !paused)
             .then(|| Line::new(lang, "pending", "mobile.state.pending", None, false));
-    }
-    if abroad == "vibb" && !network_capable {
-        return None;
     }
     if report.enabled != Some(false) {
         return None;
@@ -459,24 +417,8 @@ pub fn card(lang: Lang, name: &str, policy: &DevicePolicy, latest: Option<&Devic
     let mobile = latest.and_then(mobile_report);
     let roaming = latest.and_then(roaming_report);
     let paused = latest.is_some_and(|s| s.paused_at(chrono::Utc::now().timestamp_millis()));
-    let mobile_capable = latest.is_some_and(|s| has(s, MOBILE_CAPABILITY));
-    let roaming_capable = latest.is_some_and(|s| has(s, ROAMING_CAPABILITY));
-    let network_capable = latest.is_some_and(network_capable);
-    let reported = latest.is_some();
-    let update = |lang| {
-        Line::new(
-            lang,
-            "needs-update",
-            "mobile.state.needs_update",
-            None,
-            false,
-        )
-    };
 
     let mut data_lines = Vec::new();
-    if reported && !mobile_capable {
-        data_lines.push(update(lang));
-    }
     if let Some(m) = &mobile {
         // Design 113 (the user's call): Android's own mobile-data switch off is orange, its fix behind the ⓘ.
         if m.enabled == Some(false) {
@@ -494,7 +436,7 @@ pub fn card(lang: Lang, name: &str, policy: &DevicePolicy, latest: Option<&Devic
             data_lines.push(Line::named(lang, "kid-off", "mobile.state.kid_off", name));
         }
     }
-    if apps_mobile == "vibb" && paused && mobile_capable {
+    if apps_mobile == "vibb" && paused && mobile.is_some() {
         data_lines.push(Line::new(
             lang,
             "lifted",
@@ -505,18 +447,8 @@ pub fn card(lang: Lang, name: &str, policy: &DevicePolicy, latest: Option<&Devic
     }
 
     let mut abroad_lines = Vec::new();
-    if reported && !roaming_capable {
-        abroad_lines.push(update(lang));
-    }
     if let Some(report) = &roaming {
-        abroad_lines.extend(switch_line(
-            lang,
-            name,
-            abroad,
-            report,
-            paused,
-            network_capable,
-        ));
+        abroad_lines.extend(switch_line(lang, name, abroad, report, paused));
         // The abroad switch-off line already leads with the place: one mention is enough. QA M1 (design 113): only that
         // variant - the plain orange "off" at home or with `where` unknown keeps the place or national line below it.
         let place_in_switch = report.where_is.as_deref() == Some("abroad")
@@ -546,7 +478,7 @@ pub fn card(lang: Lang, name: &str, policy: &DevicePolicy, latest: Option<&Devic
             report,
             mobile.as_ref(),
             policy.hardening.disallow_airplane_mode,
-            latest.is_some_and(|s| sink_covers_ship(policy, s)),
+            sink_covers_ship(policy),
         ));
     }
 
@@ -569,10 +501,6 @@ pub fn card(lang: Lang, name: &str, policy: &DevicePolicy, latest: Option<&Devic
         settings_locked: policy.mobile_settings_locked,
         kid_shown: policy.quick_controls_mask & crate::handlers::devices::QUICK_CONTROL_MOBILE_DATA
             != 0,
-        mobile_capable,
-        roaming_capable,
-        network_capable,
-        reported,
         data_lines,
         abroad_lines,
         lock_lines,
@@ -673,7 +601,7 @@ pub fn roaming_edge(
     }
 }
 
-/// A report's `data_roaming` from a launcher with [NETWORK_CAPABILITY] against the phone's roaming state (design 97 §6):
+/// A report's `data_roaming` with `where` against the phone's roaming state (design 97 §6):
 /// in one transaction, a compare-and-set on the state as read and the raise only when that changed the row (two
 /// parallel reports tell once), as `parent_events::battery_report`. Failures are logged.
 pub async fn roaming_intake(
@@ -924,9 +852,6 @@ mod tests {
             ..Default::default()
         };
         let mut status = DeviceStatus {
-            capabilities_json: Some(format!(
-                "[\"{ROAMING_CAPABILITY}\",\"{MOBILE_CAPABILITY}\"]"
-            )),
             data_roaming_json: Some(
                 r#"{"locked":false,"roaming":false,"data_active":false}"#.into(),
             ),
@@ -963,9 +888,6 @@ mod tests {
             ..Default::default()
         };
         let status = |roaming: &str| DeviceStatus {
-            capabilities_json: Some(format!(
-                "[\"{ROAMING_CAPABILITY}\",\"{MOBILE_CAPABILITY}\",\"{NETWORK_CAPABILITY}\"]"
-            )),
             data_roaming_json: Some(roaming.into()),
             mobile_data_json: Some(
                 r#"{"enabled":true,"sink":"off","settings_locked":true}"#.into(),

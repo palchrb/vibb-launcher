@@ -104,70 +104,6 @@ pub fn storage_limit(stored: Option<i64>) -> Option<i64> {
     }
 }
 
-/// The two switches on the wire (design 30 §1.3): `(mobile_data, stream_mobile_data,
-/// download_mobile_data)`. `mobile_data` is what an older launcher and music app read, one switch
-/// for both, so it is on only when both are: it never spends data the parent turned off.
-pub fn mobile_data_wire(stream: bool, download: bool) -> (bool, bool, bool) {
-    (stream && download, stream, download)
-}
-
-/// The first versionCodes that pass `extra_bytes` on (design 30 step 3a, 1c95b241): Vibb One
-/// forwards it from launcher-v0.26.0 (an rc build is one less: 25_999) - its `musicState` key list
-/// drops every key it doesn't know -, the music app sends it from music-v0.4.0 (rc: 3_999).
-pub const VIBB_ONE_EXTRA_BYTES_FROM: i64 = 25_999;
-pub const MUSIC_APP_EXTRA_BYTES_FROM: i64 = 3_999;
-
-/// Which app keeps a phone on the one old mobile-data switch (design 30 §1.3): the one whose
-/// reported versionCode is older than the first that passes `extra_bytes` on. Both when both are,
-/// or when a code is unknown.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum OlderApps {
-    VibbOne,
-    MusicApp,
-    Both,
-}
-
-impl OlderApps {
-    /// From Vibb One's `app_version_code` and the music app's `music_state.version_code`.
-    pub fn of(vibb_one: Option<i64>, music_app: Option<i64>) -> Self {
-        let new = |code: Option<i64>, from| code.is_some_and(|code| code >= from);
-        match (
-            new(vibb_one, VIBB_ONE_EXTRA_BYTES_FROM),
-            new(music_app, MUSIC_APP_EXTRA_BYTES_FROM),
-        ) {
-            (true, false) => OlderApps::MusicApp,
-            (false, true) => OlderApps::VibbOne,
-            _ => OlderApps::Both,
-        }
-    }
-
-    /// Device › Music's warning and the summary's Attention row: the key of its title.
-    pub fn title_key(self) -> &'static str {
-        match self {
-            OlderApps::VibbOne => "device.music.update_vibb_one",
-            OlderApps::MusicApp => "device.music.update_music_app",
-            OlderApps::Both => "device.music.update_both",
-        }
-    }
-}
-
-/// The phone runs on the one old mobile-data switch while the parent's two differ (design 30
-/// §1.3): an app report (`cache_bytes`, always sent since design 21) without `extra_bytes` (sent
-/// from the music app's step 3a on, passed on by a launcher of the same step), and which app is too
-/// old ([OlderApps], from the two reported versionCodes). No app report (a fresh phone, or the
-/// launcher's own fields only): nothing to say. Device › Music's warning.
-pub fn older_phone(
-    stream: bool,
-    download: bool,
-    cache_bytes: Option<i64>,
-    extra_bytes: Option<i64>,
-    vibb_one_code: Option<i64>,
-    music_app_code: Option<i64>,
-) -> Option<OlderApps> {
-    (stream != download && cache_bytes.is_some() && extra_bytes.is_none())
-        .then(|| OlderApps::of(vibb_one_code, music_app_code))
-}
-
 /// What the phone stores for music, as Device › Music's rows (design 30 §1.10; typed in design 31
 /// step 7). Without `audio_bytes` (a music app from before design 30) only what it stores.
 #[derive(Debug, PartialEq, Eq)]
@@ -175,7 +111,7 @@ pub struct Storage {
     /// Everything the music app keeps: "1234.5 MB".
     pub stored: String,
     /// The music downloads against the parent's limit (the server's current one): "980.0 MB of
-    /// 2 GB", "980.0 MB (no limit)"; `None` from an older app.
+    /// 2 GB", "980.0 MB (no limit)"; `None` when the app sent none.
     pub downloads: Option<String>,
     /// The played extras in them, only when there are some: "210.0 MB".
     pub extras: Option<String>,
@@ -1353,9 +1289,6 @@ pub async fn tick_fits(
 pub struct MusicPolicy {
     /// The version of `GET /api/devices/music/library` for this phone; `null` = nothing ticked.
     pub library_version: Option<String>,
-    /// Both switches on (design 30 §1.3): an older launcher's and music app's one switch for
-    /// downloads and streaming. Stays: an older launcher refuses a music object without it.
-    pub mobile_data: bool,
     /// Streaming may use mobile data (design 30, default off).
     pub stream_mobile_data: bool,
     /// Downloads, Storytel books included, may use mobile data (design 30, default off).
@@ -1369,11 +1302,11 @@ pub struct MusicPolicy {
     pub storytel_generation: i64,
     /// This phone plays Spotify (design 26c §2.5, §6.2): it is bound to an account (the FK makes
     /// the account exist). The launcher exempts Spotify's hosts from its DNS filter while it is
-    /// true; an older launcher ignores it.
+    /// true.
     pub spotify: bool,
     /// Device › Advanced's Spotify diagnostic log (2026-11-01): until when the music app writes its `VibbSpotify` log
     /// lines, epoch seconds; `null` unless it is running ([spotify_diag_until]). The launcher hands it to the music app
-    /// as the managed config's `spotify_diag_until`; an older launcher ignores it.
+    /// as the managed config's `spotify_diag_until`.
     pub spotify_diag_until: Option<i64>,
 }
 
@@ -1404,15 +1337,10 @@ pub async fn policy_music(
     } else {
         0
     };
-    let (mobile_data, stream_mobile_data, download_mobile_data) = mobile_data_wire(
-        policy.music_stream_mobile_data,
-        policy.music_download_mobile_data,
-    );
     Ok(MusicPolicy {
         library_version,
-        mobile_data,
-        stream_mobile_data,
-        download_mobile_data,
+        stream_mobile_data: policy.music_stream_mobile_data,
+        download_mobile_data: policy.music_download_mobile_data,
         volume_cap_pct: volume_cap(policy.music_volume_cap_pct),
         storage_limit_gb: storage_limit(policy.music_storage_limit_gb),
         storytel_generation,
@@ -1773,7 +1701,7 @@ pub struct Download {
 /// The music app's two package names (release, debug).
 pub const MUSIC_PACKAGES: [&str; 2] = ["me.vibb.music", "me.vibb.music.debug"];
 
-/// `StatusReportRequest.music_state` (capability `music_v1`): the last state the music app reported
+/// `StatusReportRequest.music_state`: the last state the music app reported
 /// through the launcher plus the launcher's own view. Never positions or what is playing.
 #[derive(Deserialize, Serialize, Default, Debug, Clone, PartialEq, Eq)]
 #[serde(default)]
@@ -2060,53 +1988,6 @@ mod tests {
         assert_eq!(gigabytes_up(Lang::En, 3_200_000_000), "3.2 GB");
         assert_eq!(gigabytes_up(Lang::En, 3_200_000_001), "3.3 GB");
         assert_eq!(gigabytes_up(Lang::En, -5), "0.0 GB");
-    }
-
-    #[test]
-    fn an_older_phone_needs_an_app_report_without_extra_bytes() {
-        let app_report = Some(1_000_000);
-        let old = |stream, download, cache, extra| {
-            older_phone(stream, download, cache, extra, None, None).is_some()
-        };
-        // The switches differ, an app report without `extra_bytes`: the warning.
-        assert!(old(true, false, app_report, None));
-        assert!(old(false, true, app_report, None));
-        // Equal switches: the old switch is the same thing.
-        assert!(!old(true, true, app_report, None));
-        assert!(!old(false, false, app_report, None));
-        // A phone that sends `extra_bytes` reads both switches (0 counts: always sent).
-        assert!(!old(true, false, app_report, Some(0)));
-        // No app report (none yet, or the launcher's fields only): nothing to say.
-        assert!(!old(true, false, None, None));
-    }
-
-    /// The warning names only the app that is too old to pass `extra_bytes` on; both when both
-    /// are or a versionCode is unknown.
-    #[test]
-    fn an_older_phone_names_the_app_to_update() {
-        let names = |vibb_one, music_app| {
-            older_phone(true, false, Some(1), None, vibb_one, music_app)
-                .map(|apps| crate::i18n::t(crate::i18n::Lang::En, apps.title_key()))
-        };
-        // launcher-v0.26.0-rc.N and music-v0.4.0-rc.N are the first that pass it on.
-        assert_eq!(names(Some(25_999), Some(2)), Some("Update the music app"));
-        assert_eq!(names(Some(25_000), Some(3_999)), Some("Update Vibb One"));
-        assert_eq!(
-            names(Some(25_998), Some(3_998)),
-            Some("Update Vibb One and the music app")
-        );
-        assert_eq!(names(None, Some(4_000)), Some("Update Vibb One"));
-        assert_eq!(
-            names(Some(26_000), None),
-            Some("Update the music app"),
-            "an unknown music app code with a new Vibb One: the music app"
-        );
-        assert_eq!(names(None, None), Some("Update Vibb One and the music app"));
-        // Both new and still no `extra_bytes` (a dev build): both, as before.
-        assert_eq!(
-            names(Some(26_000), Some(4_000)),
-            Some("Update Vibb One and the music app")
-        );
     }
 
     #[test]
@@ -2437,7 +2318,7 @@ mod tests {
         let state = parse_music_state(sanitize_music_state(&many).as_deref()).unwrap();
         assert_eq!(state.sonos_rooms.len(), MAX_SONOS_ROOMS);
         assert_eq!(state.sonos_rooms[0].name, "Rom 0");
-        // An older music app sends none: an empty list.
+        // A state without rooms: an empty list.
         let old =
             parse_music_state(sanitize_music_state(&serde_json::json!({})).as_deref()).unwrap();
         assert!(old.sonos_rooms.is_empty());

@@ -205,21 +205,19 @@
     </section>
 
     {#- The channels (design 77 D2, design 80 D8): their own form with the section marker - the handler writes only the
-        two modes; a missing or unknown one is refused (400), never read as off. A choice the phone's launcher can't do
-        yet is disabled, and refused in place if sent anyway. -#}
+        two modes; a missing or unknown one is refused (400), never read as off. -#}
     <section id="settings" aria-label="{{ self.t("device.calls.settings_label") }}">
         <form method="post" action="/devices/{{ device.id }}/calls/settings#settings" class="group">
             <input type="hidden" name="section" value="channels">
             {#- Design 77 D2: one three-way choice per channel (off / managed by Vibb / not managed) as a segmented
                 control - three radios that save on change; the chosen states' sentences are in the ⓘ below (design
-                113), no sub-line. A choice the phone can't do yet is disabled, with "<choice> - Oppdater Vibb One
-                først" under the row. -#}
+                113), no sub-line. -#}
             {% for channel in channels %}
             <div class="row row-stacked" data-channel="{{ channel.name }}">
                 <span class="row-label" id="channel-{{ channel.name }}">{{ channel.label }}</span>
                 <div class="segmented" role="radiogroup" aria-labelledby="channel-{{ channel.name }}">
                     {% for option in channel.options %}
-                    <label class="segment"><input type="radio" name="{{ channel.name }}" value="{{ option.value }}"{% if option.selected %} checked{% endif %}{% if option.disabled %} disabled{% endif %} data-autosave><span class="segment-face">{{ option.label }}{% if let Some(note) = option.note %}<span class="segment-note">{{ note }}</span>{% endif %}</span></label>
+                    <label class="segment"><input type="radio" name="{{ channel.name }}" value="{{ option.value }}"{% if option.selected %} checked{% endif %} data-autosave><span class="segment-face">{{ option.label }}{% if let Some(note) = option.note %}<span class="segment-note">{{ note }}</span>{% endif %}</span></label>
                     {% endfor %}
                 </div>
                 {#- Design 77 §8.5 (code QA M1), design 80 D7 (M4): the RCS step before "Styrt av Vibb" is chosen
@@ -237,10 +235,8 @@
                 {% if channel.name == "sms_mode" && number_line %}
                 <a class="row-sub segmented-sub number-line" href="/devices/{{ device.id }}/calls?advanced=1#sms-settings" data-number-line>{{ self.t("device.calls.number_missing") }} <span class="number-line-link">{{ self.t("device.calls.advanced") }} &rsaquo;</span></a>
                 {% endif %}
-                {% for line in channel.update_first %}<span class="row-sub segmented-sub tone-orange">{{ line }}</span>{% endfor %}
             </div>
             {% endfor %}
-            {% if let Some(why) = settings_error %}<p class="field-error" id="channels-error" role="alert">{{ why }}</p>{% endif %}
             {% for note in notes %}
             {% include "partials/note_row.html" %}
             {% endfor %}
@@ -628,13 +624,12 @@
                 </a>
                 {% endif %}
                 <form method="post" action="/devices/{{ device.id }}/calls/sms#sms-settings">
-                    {#- Design 80 D13: "Gruppemeldinger". `groups_shown` says the form has the switch (an older page
-                        leaves the stored value); disabled until the phone claims `sms_groups_v1`, and then without the
-                        marker, so a page drawn before the capability never turns groups off (code QA M1). -#}
-                    {% if sms.groups_capable %}<input type="hidden" name="groups_shown" value="1">{% endif %}
+                    {#- Design 80 D13: "Gruppemeldinger". `groups_shown` says the form has the switch (a post without it
+                        leaves the stored value). -#}
+                    <input type="hidden" name="groups_shown" value="1">
                     <label class="row" data-groups>
-                        <span class="row-label">{{ self.t("device.sms.settings.groups") }}{% if !sms.groups_capable %}<span class="row-sub tone-orange">{{ self.t("device.sms.settings.groups_update_first") }}</span>{% endif %}</span>
-                        <input type="checkbox" role="switch" class="sw" name="sms_groups" value="on"{% if sms.groups %} checked{% endif %}{% if !sms.groups_capable %} disabled{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                        <span class="row-label">{{ self.t("device.sms.settings.groups") }}</span>
+                        <input type="checkbox" role="switch" class="sw" name="sms_groups" value="on"{% if sms.groups %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
                     </label>
                     {% for own in sms.own_rows %}
                     {% if let Some(known) = own.known %}

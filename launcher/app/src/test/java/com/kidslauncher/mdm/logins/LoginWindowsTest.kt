@@ -28,13 +28,6 @@ class LoginWindowsTest {
         ServerJson.decodeFromJsonElement(PolicyResponse.serializer(), JsonObject(row.filterKeys { it in setOf("captive_portal", "login_browser") }))
 
     @Test
-    fun `the capabilities are the contract's`() {
-        val capabilities = contract.getValue("capabilities").jsonObject
-        assertEquals(CAPTIVE_PORTAL_CAPABILITY, capabilities.getValue("captive_portal").jsonPrimitive.content)
-        assertEquals(LOGIN_BROWSER_CAPABILITY, capabilities.getValue("login_browser").jsonPrimitive.content)
-    }
-
-    @Test
     fun `every policy row decodes, and an older server's means on with the code`() {
         for (element in contract.getValue("policy").jsonArray) {
             val row = element.jsonObject

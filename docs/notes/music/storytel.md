@@ -29,9 +29,7 @@ Moved from music/CLAUDE.md on 2026-11-01.
   never cancels a job (a superseded play is dropped by its token, a running mint finishes). The asset call never
   follows the 302 (`follow = false`); a `Location` counts only on a 3xx and only through `mintedUrl` (OkHttp's
   canonical form). A URL is minted per download attempt (the `http_416` refetch too) and per Sonos play, used once,
-  never stored. **The old login goes**: `StorytelLegacy.purge` deletes `storytel.bin`, `storytel_refused.json` (and
-  their `.tmp`) and the Keystore key `vibb_storytel`, once per process from `Sync.writeReport` - never on a mint's path
-  (`SourceScanTest`).
+  never stored.
 - **Storytel downloads** (design 26b §3.3, §4.3, §4.5): the keep set is the first `cache` books in reading order plus
   the bookmarked book and the next; the bookmarked book downloads first, then reading order, one book at a time, none
   below `STORYTEL_FREE_FLOOR` (1.5 GB). Download rows, failures and `mayRetry` name the book by `sourceId`
@@ -63,8 +61,7 @@ Moved from music/CLAUDE.md on 2026-11-01.
   `publicDownloads()`, `privateMintAllowed()`, `debugJwt()` (the fake's `/fake/jwt`, asked instead of the launcher only
   while the app is unmanaged, under `DEBUG_GENERATION` 1; a managed phone's JWT always comes through the bridge), each
   taking the base only for `10.0.2.2` or loopback. With the switch set only a `FAKE-JWT-` goes on, whichever way it
-  came (`debugSwitchJwt`): a `config.json` left on a real phone never sends the family's JWT elsewhere. A
-  `storytel.json` from before design 58 is deleted unread (`SourceScanTest` pins all of it).
+  came (`debugSwitchJwt`): a `config.json` left on a real phone never sends the family's JWT elsewhere.
 - **Storytel on a room** (design 26b §5): a book is speaker-playable downloaded or not (`speakerDropReason`); its
   URL is minted **inside the play's actor job** (`StorytelAccount.mint`, 6 s for the asset call, 10 s in all), never
   for a resume, a seek, the stall retry, adopt or a follow. Every play job carries a token (`!closed && mayPlay()`,

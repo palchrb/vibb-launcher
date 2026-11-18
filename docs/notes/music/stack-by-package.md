@@ -31,7 +31,7 @@ Moved from music/CLAUDE.md on 2026-11-01.
   in memory, the one ask, the waits, the 401 rule, the room's prefetch), `StorytelHttp` (the seam and
   `OkHttpStorytelHttp`), `StorytelEndpoints` (Storytel's API host and the debug switch), `StorytelAccount` (Android: the
   process's one session and API, `mint`, `prefetchIfDue`, `state`). `bridge/StorytelBridgeToken.kt` is the AIDL
-  session call, `bridge/StorytelLegacy.kt` deletes the old stored login. The rules are in `logic/Storytel.kt`.
+  session call. The rules are in `logic/Storytel.kt`.
 - `spotify/` - the phone's Spotify player (26c §4-§5; the server lists, the phone never does): pure `SpotifyRef` (the
   stored target `spotify:<kind>:<id>`, `uriOf`), `SpotifyApi` + `SpotifyHttp` (the Web API's play, transfer, queue,
   shuffle and repeat calls behind a seam, their outcomes and the start's retries), `SdkState` (the page's compact
@@ -85,6 +85,6 @@ Moved from music/CLAUDE.md on 2026-11-01.
   `SonosController.connecting` or `SpotifyRenderer.starting`; no source named).
 - `src/debug/` - the debug feed (`DebugFeedReceiver`, docs/testing/emulator.md §6f; `debug-feed/sonos.json` seeds the
   speaker cache with ip and port for the fake speakers, §6h; `DebugStorytel.kt`: `config.json`'s `storytel_base` for the
-  fake Storytel (an old `storytel.json` is deleted unread), §6i; `DebugSpotify.kt`: `config.json`'s `spotify_base` for the
+  fake Storytel, §6i; `DebugSpotify.kt`: `config.json`'s `spotify_base` for the
   fake Spotify and `record_spotify_states` for the state recorder, §6l). Never in a release
   (`checkReleaseHasNoDebugFeed` scans the APK; `SourceScanTest`).

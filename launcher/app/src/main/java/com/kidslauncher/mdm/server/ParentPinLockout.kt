@@ -84,7 +84,7 @@ data class ParentLockoutState(
     /** From the last wrong try, (level then) x 24 h long: what is left of it is the level now
      * ([levelNow]) - the level is never stored on its own (qa-24-code S1). */
     val decay: BackoffWindow? = null,
-    /** Which parent PIN this is about ([parentPinFingerprint]). */
+    /** Which parent PIN this is about ([PinVaultCore.fingerprint]). */
     val pinFingerprint: String? = null,
 )
 
@@ -171,23 +171,6 @@ fun unreadableParentState(now: LockClocks, fingerprint: String) = ParentLockoutS
     decay = backoffWindow(now, PARENT_LEVEL_DECAY_MS),
     pinFingerprint = fingerprint,
 )
-
-/**
- * The once-only migration from the old counter (`offline_override_failed_attempts`,
- * `offline_override_locked_until`, wall clock): its count carries over; a running lockout becomes
- * level 1 with what is left of it, at most 15 min (a far-future value from a bad clock is
- * capped), and 24 h of decay.
- */
-fun migrateParentLockout(failedAttempts: Int, lockedUntilWallMs: Long, now: LockClocks, fingerprint: String): ParentLockoutState {
-    val failures = failedAttempts.coerceIn(0, PARENT_FREE_TRIES - 1)
-    if (lockedUntilWallMs <= now.wallMs) return ParentLockoutState(failures = failures, pinFingerprint = fingerprint)
-    return ParentLockoutState(
-        failures = failures,
-        lockout = backoffWindow(now, minOf(lockedUntilWallMs - now.wallMs, PARENT_LOCKOUT_BASE_MS)),
-        decay = backoffWindow(now, PARENT_LEVEL_DECAY_MS),
-        pinFingerprint = fingerprint,
-    )
-}
 
 /** "15 min", "1 h 45 min", "24 h" - rounded up to the minute; the units come from the strings. */
 fun lockoutText(remainingMs: Long, hourUnit: String = "h", minuteUnit: String = "min"): String {

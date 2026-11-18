@@ -56,7 +56,7 @@ async fn attach(
 }
 
 #[tokio::test]
-async fn unmanaged_policy_has_explicit_managed_false() {
+async fn unmanaged_policy_has_explicit_modes() {
     let app = TestApp::new().await;
     let (id, token) = app.enrolled_device("phone").await;
     set_unmanaged(&app, id).await;
@@ -64,7 +64,8 @@ async fn unmanaged_policy_has_explicit_managed_false() {
     attach(&app, id, "Mamma", "+4791234567", [true, true, true], 0).await;
 
     let call_policy = &app.policy(&token).await["call_policy"];
-    assert_eq!(call_policy["managed"], json!(false));
+    assert_eq!(call_policy["calls_mode"], json!("unmanaged"));
+    assert_eq!(call_policy["sms_mode"], json!("unmanaged"));
     assert_eq!(call_policy["contacts"], json!([]));
     assert_eq!(call_policy["default_country_code"], json!("47"));
 }
@@ -86,9 +87,8 @@ async fn managed_policy_lists_contacts_with_flags_in_order() {
     .unwrap();
 
     let call_policy = app.policy(&token).await["call_policy"].clone();
-    assert_eq!(call_policy["managed"], json!(true));
-    assert_eq!(call_policy["calls_enabled"], json!(true));
-    assert_eq!(call_policy["sms_enabled"], json!(false));
+    assert_eq!(call_policy["calls_mode"], json!("managed"));
+    assert_eq!(call_policy["sms_mode"], json!("off"));
     assert_eq!(
         call_policy["contacts"],
         json!([
@@ -157,11 +157,13 @@ async fn add(
     name: &str,
     number: &str,
 ) -> super::TestResponse {
+    let mut fields = vec![("name", name), ("number", number)];
+    fields.extend(super::ADD_CONTACT_ALL_ON);
     app.request_form(
         Method::POST,
         &format!("/devices/{device_id}/contacts"),
         Some(cookie),
-        &[("name", name), ("number", number)],
+        &fields,
     )
     .await
 }
@@ -380,7 +382,9 @@ async fn contact_flags_are_scoped_to_the_device() {
             &format!("/devices/{b}/contacts/{contact}"),
             Some(&cookie),
             &[
+                ("calls_shown", "custom"),
                 ("inbound", "on"),
+                ("texts_shown", "custom"),
                 ("message_app", "element"),
                 ("message_address", " @mormor:matrix.org "),
             ],
@@ -434,7 +438,9 @@ async fn contact_flags_are_scoped_to_the_device() {
             &format!("/devices/{b}/contacts/{contact}#contact-{contact}"),
             Some(&cookie),
             &[
+                ("calls_shown", "custom"),
                 ("outbound", "on"),
+                ("texts_shown", "custom"),
                 ("message_app", "element"),
                 ("message_address", "mormor"),
             ],
@@ -461,7 +467,7 @@ async fn contact_flags_are_scoped_to_the_device() {
     assert_eq!(address.as_deref(), Some("@mormor:matrix.org"));
 }
 
-/// Design 77 D2: the form posts both channels' states (and the message button); the policy's old keys follow them.
+/// Design 77 D2: the form posts both channels' states (and the message button); the policy's modes follow them.
 #[tokio::test]
 async fn settings_form_writes_both_channels() {
     let app = TestApp::new().await;
@@ -475,17 +481,25 @@ async fn settings_form_writes_both_channels() {
             &uri,
             Some(&cookie),
             &[
+                ("section", "channels"),
                 ("calls_mode", "managed"),
                 ("sms_mode", "off"),
-                ("default_message_app", "signal"),
             ],
         )
         .await;
     assert!(res.status.is_redirection());
+    let res = app
+        .request_form(
+            Method::POST,
+            &uri,
+            Some(&cookie),
+            &[("section", "button"), ("default_message_app", "signal")],
+        )
+        .await;
+    assert!(res.status.is_redirection());
     let call_policy = app.policy(&token).await["call_policy"].clone();
-    assert_eq!(call_policy["managed"], json!(true));
-    assert_eq!(call_policy["calls_enabled"], json!(true));
-    assert_eq!(call_policy["sms_enabled"], json!(false));
+    assert_eq!(call_policy["calls_mode"], json!("managed"));
+    assert_eq!(call_policy["sms_mode"], json!("off"));
     let default_app: String =
         sqlx::query_scalar("SELECT default_message_app FROM device_policy WHERE device_id = ?")
             .bind(id)
@@ -499,18 +513,24 @@ async fn settings_form_writes_both_channels() {
         Method::POST,
         &uri,
         Some(&cookie),
-        &[("calls_mode", "unmanaged"), ("sms_mode", "unmanaged")],
+        &[
+            ("section", "channels"),
+            ("calls_mode", "unmanaged"),
+            ("sms_mode", "unmanaged"),
+        ],
     )
     .await;
     let call_policy = app.policy(&token).await["call_policy"].clone();
-    assert_eq!(call_policy["managed"], json!(false));
+    assert_eq!(call_policy["calls_mode"], json!("unmanaged"));
+    assert_eq!(call_policy["sms_mode"], json!("unmanaged"));
+    assert_eq!(call_policy["contacts"], json!([]));
 
     let res = app
         .request_form(
             Method::POST,
             &uri,
             Some(&cookie),
-            &[("default_message_app", "whatsapp")],
+            &[("section", "button"), ("default_message_app", "whatsapp")],
         )
         .await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
@@ -519,7 +539,11 @@ async fn settings_form_writes_both_channels() {
             Method::POST,
             "/devices/9999/calls/settings",
             Some(&cookie),
-            &[("calls_mode", "off"), ("sms_mode", "off")],
+            &[
+                ("section", "channels"),
+                ("calls_mode", "off"),
+                ("sms_mode", "off"),
+            ],
         )
         .await;
     assert_eq!(res.status, StatusCode::NOT_FOUND);
@@ -554,11 +578,19 @@ async fn writes_nudge_device() {
     for (uri, fields) in [
         (
             format!("/devices/{id}/calls/settings"),
-            vec![("calls_mode", "managed"), ("sms_mode", "unmanaged")],
+            vec![
+                ("section", "channels"),
+                ("calls_mode", "managed"),
+                ("sms_mode", "unmanaged"),
+            ],
         ),
         (
             format!("/devices/{id}/contacts/{contact}"),
-            vec![("inbound", "on")],
+            vec![
+                ("calls_shown", "custom"),
+                ("inbound", "on"),
+                ("texts_shown", "custom"),
+            ],
         ),
         (format!("/devices/{id}/contacts/{contact}/remove"), vec![]),
     ] {
@@ -714,7 +746,7 @@ async fn status_stores_capabilities_and_call_state() {
     let (id, token) = app.enrolled_device("phone").await;
     app.post_status(
         &token,
-        json!({ "capabilities": ["call_policy_v1"], "call_state": good_call_state() }),
+        json!({ "capabilities": ["android_keyguard_v1"], "call_state": good_call_state() }),
     )
     .await;
     let (caps, call_state): (Option<String>, Option<String>) = sqlx::query_as(
@@ -724,11 +756,11 @@ async fn status_stores_capabilities_and_call_state() {
     .fetch_one(&app.db)
     .await
     .unwrap();
-    assert_eq!(caps.as_deref(), Some(r#"["call_policy_v1"]"#));
+    assert_eq!(caps.as_deref(), Some(r#"["android_keyguard_v1"]"#));
     let call_state: Value = serde_json::from_str(&call_state.unwrap()).unwrap();
     assert_eq!(call_state, good_call_state());
 
-    // An older launcher sends neither; a non-object call_state is not stored.
+    // A report may send neither; a non-object call_state is not stored.
     app.post_status(&token, json!({ "call_state": "garbage" }))
         .await;
     let (caps, call_state): (Option<String>, Option<String>) = sqlx::query_as(
@@ -761,37 +793,18 @@ fn visible(html: &str) -> String {
     out
 }
 
+/// A report without capabilities is read like any other (C1): no "too old to screen calls" warning.
 #[tokio::test]
-async fn calls_page_warns_without_capability() {
+async fn calls_page_needs_no_capability() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;
     set_managed(&app, id, true, true).await;
-
-    app.post_status(&token, json!({})).await;
-    let page = calls_page(&app, &cookie, id).await;
-    assert!(page.contains("Calls aren&#39;t screened"), "{page}");
-    assert!(page.contains("too old to screen calls"), "{page}");
-
-    app.post_status(
-        &token,
-        json!({ "capabilities": ["call_policy_v1"], "call_state": good_call_state() }),
-    )
-    .await;
-    let page = calls_page(&app, &cookie, id).await;
-    assert_eq!(warnings(&page), 0, "{page}");
-
-    // QA #22: a launcher that used to enforce calls and stops reporting it.
-    app.post_status(&token, json!({})).await;
-    let page = calls_page(&app, &cookie, id).await;
-    assert!(
-        page.contains("stopped reporting that it screens calls"),
-        "{page}"
-    );
-
-    // Unmanaged: no capability warning.
-    set_unmanaged(&app, id).await;
-    assert_eq!(warnings(&calls_page(&app, &cookie, id).await), 0);
+    for report in [json!({}), json!({ "call_state": good_call_state() })] {
+        app.post_status(&token, report).await;
+        let page = calls_page(&app, &cookie, id).await;
+        assert_eq!(warnings(&page), 0, "{page}");
+    }
 }
 
 async fn set_unmanaged(app: &TestApp, id: i64) {
@@ -817,11 +830,8 @@ async fn calls_page_shows_role_problems_and_fail_closed() {
     call_state["last_error"] = json!("setDefaultDialerApplication: IllegalArgumentException");
     call_state["call_log_readable"] = json!(false);
     call_state["boot_policy"] = json!("write_failed");
-    app.post_status(
-        &token,
-        json!({ "capabilities": ["call_policy_v1"], "call_state": call_state }),
-    )
-    .await;
+    app.post_status(&token, json!({ "call_state": call_state }))
+        .await;
     let page = calls_page(&app, &cookie, id).await;
     for expected in [
         "Phone can&#39;t read its call rules",
@@ -894,11 +904,8 @@ async fn calls_page_says_whether_incoming_calls_are_filtered() {
         if let Some(held) = held {
             call_state["screening_role_held"] = json!(held);
         }
-        app.post_status(
-            &token,
-            json!({ "capabilities": ["call_policy_v1"], "call_state": call_state }),
-        )
-        .await;
+        app.post_status(&token, json!({ "call_state": call_state }))
+            .await;
         let page = calls_page(&app, &cookie, id).await;
         let summary = app
             .get_page(&format!("/devices/{id}"), &cookie)
@@ -941,11 +948,8 @@ async fn allowlisted_messages_app_with_sms_off_is_flagged() {
         .execute(&app.db)
         .await
         .unwrap();
-    app.post_status(
-        &token,
-        json!({ "capabilities": ["call_policy_v1"], "call_state": good_call_state() }),
-    )
-    .await;
+    app.post_status(&token, json!({ "call_state": good_call_state() }))
+        .await;
     let page = calls_page(&app, &cookie, id).await;
     assert!(page.contains("Messages app allowed with SMS off"), "{page}");
     // Its package only behind the ⓘ.
@@ -980,11 +984,8 @@ async fn emergency_call_is_shown_on_the_device_page() {
     let mut call_state = good_call_state();
     call_state["last_emergency_call_at"] = json!(called.to_rfc3339());
     call_state["callback_window_until"] = json!(until.to_rfc3339());
-    app.post_status(
-        &token,
-        json!({ "capabilities": ["call_policy_v1"], "call_state": call_state }),
-    )
-    .await;
+    app.post_status(&token, json!({ "call_state": call_state }))
+        .await;
     let page = app
         .get_page(&format!("/devices/{id}"), &cookie)
         .await
@@ -1024,11 +1025,8 @@ async fn emergency_call_is_shown_on_the_device_page() {
     let mut call_state = good_call_state();
     call_state["last_emergency_call_at"] = json!((now - chrono::Duration::days(8)).to_rfc3339());
     call_state["callback_window_until"] = json!((now - chrono::Duration::days(8)).to_rfc3339());
-    app.post_status(
-        &token,
-        json!({ "capabilities": ["call_policy_v1"], "call_state": call_state }),
-    )
-    .await;
+    app.post_status(&token, json!({ "call_state": call_state }))
+        .await;
     let page = app
         .get_page(&format!("/devices/{id}"), &cookie)
         .await
@@ -1050,10 +1048,7 @@ async fn an_emergency_call_leaves_attention_when_read_or_after_a_day() {
         let mut call_state = good_call_state();
         call_state["last_emergency_call_at"] =
             json!(at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true));
-        app.post_status(
-            &token,
-            json!({ "capabilities": ["call_policy_v1"], "call_state": call_state }),
-        )
+        app.post_status(&token, json!({ "call_state": call_state }))
     };
     let in_attention = || async {
         app.get_page(&format!("/devices/{id}"), &cookie)
@@ -1326,11 +1321,8 @@ async fn the_calls_page_escapes_what_it_shows() {
     .unwrap();
     let mut call_state = good_call_state();
     call_state["last_error"] = json!("<img src=x onerror=alert(1)>");
-    app.post_status(
-        &token,
-        json!({ "capabilities": ["call_policy_v1"], "call_state": call_state }),
-    )
-    .await;
+    app.post_status(&token, json!({ "call_state": call_state }))
+        .await;
     let html = calls_page(&app, &cookie, id).await;
     assert!(!html.contains("<b>Mor"), "{html}");
     assert!(html.contains("&#60;b&#62;Mor&#60;/b&#62;"), "{html}");

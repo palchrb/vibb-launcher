@@ -254,7 +254,6 @@ class PowerEventsTest {
         assertNull(clientKeyOf(null, "FAKE-TOKEN", null))
         assertTrue("unenrolled: dropped", rebuildNeeded(key, null))
         assertFalse(rebuildNeeded(null, null))
-        assertTrue(POWER_CAPABILITY in STATUS_CAPABILITIES)
     }
 
     private val sources = listOf("src/main/java", "app/src/main/java").map(::File).first { it.isDirectory }

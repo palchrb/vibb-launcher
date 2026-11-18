@@ -54,9 +54,6 @@ const val MUSIC_EXTRA_RESUME = "me.vibb.music.extra.RESUME"
 const val MUSIC_CALL_HOLD = "me.vibb.music.CALL_HOLD"
 const val MUSIC_CALL_RELEASE = "me.vibb.music.CALL_RELEASE"
 
-/** Status-report capability: `music_state` (design 21 §1.3). */
-const val MUSIC_CAPABILITY = "music_v1"
-
 /** Restriction keys the launcher writes for the music app (21 §2, managed config). */
 object MusicRestrictions {
     const val V = "v"
@@ -64,8 +61,6 @@ object MusicRestrictions {
     const val LAUNCHER_PACKAGE = "launcher_package"
     const val LANGUAGE = "language"
 
-    /** Both switches at once (design 30 §1.3): what an older music app reads. */
-    const val MOBILE_DATA = "mobile_data"
     const val LIBRARY_VERSION = "library_version"
     const val STORYTEL_GENERATION = "storytel_generation"
 
@@ -92,7 +87,7 @@ private val JSON = Json { ignoreUnknownKeys = true; explicitNulls = false }
 private val HASH = Regex("[0-9a-f]{64}")
 private val VERSION = Regex("[0-9a-f]{16}")
 
-/** An older server sends no `storage_limit_gb`: the music storage limit it means is this (design 30 §1.3). */
+/** The music storage limit when `storage_limit_gb` is absent (design 30 §1.3). */
 const val DEFAULT_STORAGE_LIMIT_GB = 2
 
 /** The largest limit the launcher takes from the policy (design 30 §1.3); anything above reads as [DEFAULT_STORAGE_LIMIT_GB]. */
@@ -112,14 +107,11 @@ data class MusicPolicy(
     val storytelGeneration: Long,
     /** The policy's `spotify_diag_until` (epoch seconds), 0 = not running - read leniently ([spotifyDiagUntil]). */
     val spotifyDiagUntilS: Long = 0,
-) {
-    /** The old one-switch key (design 30 §1.3): both, so an older music app never spends data the parent turned off. */
-    val mobileData: Boolean get() = streamMobileData && downloadMobileData
-}
+)
 
 /**
- * `PolicyResponse.music`; null when it isn't an object or any field isn't what 21 §1.3 sends (an
- * older or newer server, or one that couldn't build it): the launcher and the music app then keep
+ * `PolicyResponse.music`; null when it isn't an object or any field isn't what 21 §1.3 sends (or one the
+ * server couldn't build): the launcher and the music app then keep
  * what they have. Only a JSON `null` `library_version` means "nothing ticked" - a value the launcher
  * can't read never wipes the kid's downloads or login (qa-21-step3-code M4).
  */
@@ -130,9 +122,8 @@ fun musicPolicy(element: JsonElement?): MusicPolicy? {
         is JsonPrimitive -> v.takeIf { it.isString }?.content?.takeIf { VERSION.matches(it) } ?: return null
         else -> return null
     }
-    val mobileData = (o["mobile_data"] as? JsonPrimitive)?.booleanOrNull ?: return null
-    val stream = mobileSwitch(o, "stream_mobile_data", mobileData) ?: return null
-    val download = mobileSwitch(o, "download_mobile_data", mobileData) ?: return null
+    val stream = mobileSwitch(o, "stream_mobile_data") ?: return null
+    val download = mobileSwitch(o, "download_mobile_data") ?: return null
     val cap = when (val c = o["volume_cap_pct"]) {
         null, is JsonNull -> null
         is JsonPrimitive -> c.intOrNull ?: return null
@@ -145,7 +136,7 @@ fun musicPolicy(element: JsonElement?): MusicPolicy? {
 
 /**
  * The policy's `music.spotify_diag_until` (2026-11-01, Device › Advanced's Spotify diagnostic log): a positive integer
- * is its end in epoch seconds; absent (an older server), `null` (not running) or anything else is 0 - the least
+ * is its end in epoch seconds; absent, `null` (not running) or anything else is 0 - the least
  * important field never refuses the music object, and junk never turns the log on.
  */
 fun spotifyDiagUntil(element: JsonElement?): Long =
@@ -166,7 +157,7 @@ fun storageLimitGb(element: JsonElement?): Int? = when (element) {
 
 /**
  * The policy's volume cap (design 26a §5.3) with a music object [musicPolicy] refuses kept closed
- * (qa-30-s2-code L1): absent (an older server, or one that couldn't build it) = the policy's
+ * (qa-30-s2-code L1): absent (or one the server couldn't build) = the policy's
  * none; readable = its cap (null = off); present but refused = [remembered], the last cap read.
  */
 fun policyCapPct(music: JsonElement?, remembered: Int?): Int? {
@@ -176,20 +167,19 @@ fun policyCapPct(music: JsonElement?, remembered: Int?): Int? {
 }
 
 /**
- * One of design 30's two switches: a JSON Boolean is used; absent (an older server) falls back to
- * [mobileData], which meant both; anything else (a string, a number, `null`) is malformed: null,
- * and [musicPolicy] refuses the object like any other bad field.
+ * One of design 30's two switches: a JSON Boolean is used; absent is off (fail closed); anything else (a string, a
+ * number, `null`) is malformed: null, and [musicPolicy] refuses the object like any other bad field.
  */
-private fun mobileSwitch(o: JsonObject, key: String, mobileData: Boolean): Boolean? = when (val v = o[key]) {
-    null -> mobileData
+private fun mobileSwitch(o: JsonObject, key: String): Boolean? = when (val v = o[key]) {
+    null -> false
     is JsonPrimitive -> v.takeIf { !it.isString }?.booleanOrNull
     else -> null
 }
 
 /**
  * The policy's `music.spotify` (design 26c §6.2): this phone plays Spotify (it is bound to an
- * account), so the DNS filter lets Spotify's hosts through. Read on its own and leniently: absent
- * (an older server), not a boolean, or no `music` object at all is false - whatever else the object
+ * account), so the DNS filter lets Spotify's hosts through. Read on its own and leniently: absent,
+ * not a boolean, or no `music` object at all is false - whatever else the object
  * holds.
  */
 fun musicSpotify(element: JsonElement?): Boolean =
@@ -283,7 +273,6 @@ fun restrictionsFor(policy: MusicPolicy, launcherPackage: String, language: Stri
     MusicRestrictions.MANAGED to true,
     MusicRestrictions.LAUNCHER_PACKAGE to launcherPackage,
     MusicRestrictions.LANGUAGE to language,
-    MusicRestrictions.MOBILE_DATA to policy.mobileData,
     MusicRestrictions.LIBRARY_VERSION to policy.libraryVersion.orEmpty(),
     MusicRestrictions.STORYTEL_GENERATION to policy.storytelGeneration.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
     MusicRestrictions.VOLUME_CAP_PCT to volumeCapRestriction(volumeCapPct),
@@ -429,7 +418,7 @@ fun artBackedOff(failure: ArtFailure?, nowMs: Long): Boolean =
  * Where the two lists may be fetched (the user's rules of 2026-10-19: pictures count as streaming, and the bulk is
  * Wi-Fi only). [now] (the playing item ±5, the queue's next items, the playing Spotify entry's look-ahead) where
  * streaming is allowed: online (INTERNET and a physical transport), never roaming, unmetered or with the policy's
- * streaming switch (`stream_mobile_data`, an older policy's `mobile_data`; design 30 §1.1). [later] (the kept
+ * streaming switch (`stream_mobile_data`; design 30 §1.1). [later] (the kept
  * episodes', Nytt's, the other Spotify entries' look-ahead, and on Wi-Fi every picture of every ticked entry) only
  * online and unmetered, whatever the downloads switch (qa-art-asap-code M1: a want set stored on Wi-Fi fetches
  * nothing of its bulk after a switch to mobile data).

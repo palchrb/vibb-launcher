@@ -2,7 +2,6 @@ package com.kidslauncher.mdm.timerules
 
 import com.kidslauncher.mdm.lock.cardRule
 import com.kidslauncher.mdm.lock.lockEnd
-import com.kidslauncher.mdm.server.STATUS_CAPABILITIES
 import com.kidslauncher.mdm.server.ServerJson
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -73,12 +72,6 @@ class LockNowTest {
             assertEquals(label, case["card_rule"]!!.jsonPrimitive.longOrNull, pick.rule?.id)
             assertEquals(label, case["card_until"]!!.jsonPrimitive.let { if (it.isString) it.content else null }, pick.end?.toString())
         }
-    }
-
-    @Test
-    fun `this launcher claims the contract's capability`() {
-        assertEquals(contract["capability"]!!.jsonPrimitive.content, LOCK_NOW_CAPABILITY)
-        assertTrue(LOCK_NOW_CAPABILITY in STATUS_CAPABILITIES)
     }
 
     @Test

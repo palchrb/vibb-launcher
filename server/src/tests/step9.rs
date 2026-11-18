@@ -40,12 +40,15 @@ async fn managing_calls_stamps_roles_changed_at_only_on_a_change() {
                 Method::POST,
                 uri,
                 Some(cookie),
-                &[("calls_mode", calls), ("sms_mode", sms)],
+                &[
+                    ("section", "channels"),
+                    ("calls_mode", calls),
+                    ("sms_mode", sms),
+                ],
             )
             .await
         }
     };
-    // Pairs an older launcher can do (this phone hasn't reported the engine - code QA M2's gate).
     save("managed", "unmanaged").await;
     assert!(roles_changed_at(&app, id).await.is_some());
 
@@ -78,7 +81,7 @@ async fn role_warnings_wait_for_a_newer_report_but_not_forever() {
         "redirection_role_held": true,
         "call_log_readable": true,
     });
-    let report = json!({ "capabilities": ["call_policy_v1"], "call_state": state });
+    let report = json!({ "call_state": state });
     app.post_status(&token, report.clone()).await;
     let uri = format!("/devices/{id}/calls");
 
@@ -138,7 +141,7 @@ async fn kiosk_block_switch_and_play_not_suspendable() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;
-    // The bit never travels inside lock_task_features (an older launcher has no helpers).
+    // The bit never travels inside lock_task_features.
     sql(
         &app,
         "UPDATE device_policy SET lock_task_features = 127 WHERE device_id = ?",
@@ -242,8 +245,7 @@ async fn an_error_page_never_reloads_itself() {
         id,
     )
     .await;
-    app.post_status(&token, json!({ "capabilities": ["call_policy_v1"] }))
-        .await;
+    app.post_status(&token, json!({})).await;
     sql(
         &app,
         "UPDATE device_status SET reported_at = datetime('now', '-1 minute') WHERE device_id = ?",
@@ -267,7 +269,11 @@ async fn an_error_page_never_reloads_itself() {
             Method::POST,
             &format!("/devices/{id}/contacts"),
             Some(&cookie),
-            &[("name", "Mamma"), ("number", "abc")],
+            &[
+                [("name", "Mamma"), ("number", "abc")].as_slice(),
+                &super::ADD_CONTACT_ALL_ON,
+            ]
+            .concat(),
         )
         .await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
@@ -280,7 +286,11 @@ async fn an_error_page_never_reloads_itself() {
             Method::POST,
             &format!("/devices/{id}/contacts"),
             Some(&cookie),
-            &[("name", "Mamma"), ("number", "90000001")],
+            &[
+                [("name", "Mamma"), ("number", "90000001")].as_slice(),
+                &super::ADD_CONTACT_ALL_ON,
+            ]
+            .concat(),
         )
         .await;
     assert!(res.status.is_redirection());

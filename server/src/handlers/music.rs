@@ -4579,8 +4579,6 @@ pub struct MusicCard {
     /// Streaming and downloads on mobile data (design 30 §1.1).
     pub stream_mobile_data: bool,
     pub download_mobile_data: bool,
-    /// The switches differ and the phone still runs on the old one (design 30 §1.3): above them.
-    pub older_phone: Option<Note>,
     pub volume_cap: Option<i64>,
     /// Every choice and whether it is the current one.
     pub volume_caps: Vec<(i64, bool)>,
@@ -4638,17 +4636,12 @@ fn warning(title: &str, detail: String) -> Note {
 /// entries switched on for the phone).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct MusicWarnings {
-    /// A reporting launcher without `music_v1` while entries are on.
-    pub cant_deliver: bool,
     /// The launcher's bridge to the music app isn't bound.
     pub unreachable: bool,
     /// The phone's own Storytel login was refused (design 26b §4.5).
     pub storytel_refused: bool,
     /// The kept items alone pass the storage limit: what they use ("3.2 GB") and the limit in GB.
     pub over_limit: Option<(String, i64)>,
-    /// The two mobile-data switches differ and the phone still reads the old one (design 30 §1.3):
-    /// which app to update.
-    pub older_phone: Option<music::OlderApps>,
     /// Entries switched on for this phone that the phone reported an error for.
     pub failing_entries: usize,
     /// The phone plays as a Spotify account and its last Spotify outcome is one the parent must
@@ -4717,13 +4710,8 @@ pub fn music_warnings(
     ticked: &[i64],
 ) -> MusicWarnings {
     let report = music::parse_music_state(latest.and_then(|s| s.music_state_json.as_deref()));
-    let capable = latest
-        .and_then(|s| s.capabilities_json.as_deref())
-        .and_then(|j| serde_json::from_str::<Vec<String>>(j).ok())
-        .is_some_and(|caps| caps.iter().any(|c| c == "music_v1"));
     let report = report.as_ref();
     MusicWarnings {
-        cant_deliver: latest.is_some() && !capable && !ticked.is_empty(),
         unreachable: report
             .and_then(|r| r.bridge.as_deref())
             .is_some_and(|b| b != "bound"),
@@ -4741,14 +4729,6 @@ pub fn music_warnings(
                 })
             })
             .and_then(|stored| stored.over_limit),
-        older_phone: music::older_phone(
-            policy.music_stream_mobile_data,
-            policy.music_download_mobile_data,
-            report.and_then(|r| r.cache_bytes),
-            report.and_then(|r| r.extra_bytes),
-            latest.and_then(|s| s.app_version_code),
-            report.and_then(|r| r.version_code),
-        ),
         failing_entries: report
             .map(|r| {
                 ticked
@@ -4894,10 +4874,6 @@ pub(crate) async fn device_card(
     let mut on_phone = Vec::new();
     let mut warnings = Vec::new();
     let storage_limit = music::storage_limit(policy.music_storage_limit_gb);
-    let capable = latest_status
-        .and_then(|s| s.capabilities_json.as_deref())
-        .and_then(|j| serde_json::from_str::<Vec<String>>(j).ok())
-        .is_some_and(|caps| caps.iter().any(|c| c == "music_v1"));
     let stored_rooms: Option<String> =
         sqlx::query_scalar("SELECT music_sonos_rooms_json FROM device_policy WHERE device_id = ?")
             .bind(device_id)
@@ -5002,8 +4978,8 @@ pub(crate) async fn device_card(
             }
             on_phone.extend(spotify_report_row(lang, policy, report.spotify.as_deref()));
         }
-        // A launcher with the bridge sends no `music_state` without the music app (qa-21-step3-code L13).
-        None if capable => on_phone.push(Row::new(
+        // The launcher sends no `music_state` without the music app (qa-21-step3-code L13).
+        None if latest_status.is_some() => on_phone.push(Row::new(
             "app",
             t(lang, "device.music.app"),
             t(
@@ -5026,12 +5002,6 @@ pub(crate) async fn device_card(
             t(lang, "device.music.unreachable_sub").to_string(),
         ));
     }
-    if found.cant_deliver {
-        warnings.push(warning(
-            t(lang, "device.music.cant_deliver"),
-            t(lang, "device.music.cant_deliver_sub").to_string(),
-        ));
-    }
 
     let spotify = spotify_binding_card(
         state,
@@ -5049,13 +5019,6 @@ pub(crate) async fn device_card(
         ticks,
         stream_mobile_data: policy.music_stream_mobile_data,
         download_mobile_data: policy.music_download_mobile_data,
-        // An app report without `extra_bytes` is a phone on the one old switch (design 30 §1.3).
-        older_phone: found.older_phone.map(|apps| {
-            warning(
-                t(lang, apps.title_key()),
-                t(lang, "device.music.older_phone_sub").to_string(),
-            )
-        }),
         volume_cap: music::volume_cap(policy.music_volume_cap_pct),
         volume_caps: VOLUME_CAPS
             .iter()
@@ -5536,27 +5499,12 @@ pub async fn set_device_entry(
     Redirect::to(&format!("/devices/{id}/music#music-entry-{entry_id}")).into_response()
 }
 
-/// The two mobile-data switches of a `POST /devices/{id}/music` (design 30 §3, QA L6): today's
-/// page sends the hidden `v=2` and a checkbox per switch (missing = off); a page opened before the
-/// update sends only `mobile_data`, which meant both, so it sets both.
-pub fn mobile_switches(form: &FormMap) -> (bool, bool) {
-    if form.get("v").is_some_and(|v| v == "2") {
-        (
-            form.contains_key("stream_mobile_data"),
-            form.contains_key("download_mobile_data"),
-        )
-    } else {
-        let both = form.contains_key("mobile_data");
-        (both, both)
-    }
-}
-
-/// `POST /devices/{id}/music`: the mobile-data switches ([mobile_switches]), the volume cap
-/// (`volume_cap`: "off" or one of [VOLUME_CAPS]), the music storage limit (`storage_limit`: "none"
-/// or one of [STORAGE_LIMITS]; missing - a page from before design 30 - keeps the stored one) and
-/// Storytel on this phone (`storytel`). One auto-saving form (Device ›
-/// Music's settings, design 31 §5.6: one group): a missing checkbox is off; back to
-/// `/devices/{id}/music#music-settings`.
+/// `POST /devices/{id}/music`: the two mobile-data switches (`stream_mobile_data`,
+/// `download_mobile_data`; design 30 §3), the volume cap (`volume_cap`: "off" or one of
+/// [VOLUME_CAPS]), the music storage limit (`storage_limit`: "none" or one of [STORAGE_LIMITS]) and
+/// Storytel on this phone (`storytel`). One auto-saving form (Device › Music's settings, design 31
+/// §5.6: one group) marked `v=2`: a post without the marker or the storage limit is a 400 and writes
+/// nothing; a missing checkbox is off; back to `/devices/{id}/music#music-settings`.
 pub async fn save_device_settings(
     State(state): State<AppState>,
     lang: Lang,
@@ -5564,7 +5512,11 @@ pub async fn save_device_settings(
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<FormMap>,
 ) -> Response {
-    let (stream, download) = mobile_switches(&form);
+    if field(&form, "v") != "2" {
+        return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.out_of_date");
+    }
+    let stream = form.contains_key("stream_mobile_data");
+    let download = form.contains_key("download_mobile_data");
     let storytel = form.contains_key("storytel");
     let cap = match field(&form, "volume_cap").trim() {
         "" | "off" => None,
@@ -5575,12 +5527,11 @@ pub async fn save_device_settings(
             }
         },
     };
-    // `Some(new)` = save it (`new` = None is no limit), `None` = keep the stored one.
-    let limit: Option<Option<i64>> = match form.get("storage_limit").map(|v| v.trim()) {
-        None => None,
-        Some("none") => Some(None),
-        Some(value) => match value.parse::<i64>() {
-            Ok(gb) if STORAGE_LIMITS.contains(&gb) => Some(Some(gb)),
+    // `None` is no limit.
+    let limit: Option<i64> = match field(&form, "storage_limit").trim() {
+        "none" => None,
+        value => match value.parse::<i64>() {
+            Ok(gb) if STORAGE_LIMITS.contains(&gb) => Some(gb),
             _ => {
                 return crate::i18n::error(
                     lang,
@@ -5593,15 +5544,14 @@ pub async fn save_device_settings(
     let updated: Result<Option<Option<i64>>, sqlx::Error> = sqlx::query_scalar(
         "UPDATE device_policy SET music_stream_mobile_data = ?, music_download_mobile_data = ?, \
          music_volume_cap_pct = ?, music_storytel = ?, \
-         music_storage_limit_gb = CASE WHEN ? THEN ? ELSE music_storage_limit_gb END, \
+         music_storage_limit_gb = ?, \
          updated_at = datetime('now') WHERE device_id = ? RETURNING music_storage_limit_gb",
     )
     .bind(stream)
     .bind(download)
     .bind(cap)
     .bind(storytel)
-    .bind(limit.is_some())
-    .bind(limit.flatten())
+    .bind(limit)
     .bind(id)
     .fetch_optional(&state.db)
     .await;

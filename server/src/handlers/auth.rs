@@ -1183,20 +1183,11 @@ pub(crate) async fn render_account(
 
 /// The banner after a sign-in that followed failed 2FA codes, until dismissed.
 pub async fn login_warning_of(session: &Session) -> Option<admin_auth::LoginWarning> {
-    let value = session
-        .get_value(admin_auth::LOGIN_WARNING_KEY)
+    session
+        .get(admin_auth::LOGIN_WARNING_KEY)
         .await
         .ok()
-        .flatten()?;
-    match value {
-        // A session from before slice 3a holds the old English sentence: shown as it is.
-        serde_json::Value::String(said) => Some(admin_auth::LoginWarning {
-            failures: 0,
-            ips: Vec::new(),
-            said: Some(said),
-        }),
-        value => serde_json::from_value(value).ok(),
-    }
+        .flatten()
 }
 
 /// An account change's words (Push never lost silently, review L-4): `kept=1` - this browser kept its

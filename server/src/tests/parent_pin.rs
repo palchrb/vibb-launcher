@@ -233,8 +233,12 @@ async fn the_policy_form_leaves_the_pin_alone() {
     save(&app, &cookie, id, &[("new_pin", "583920")]).await;
     let before = stored(&app, id).await;
     for fields in [
-        vec![("vpn_filter_enabled", "on")],
-        vec![("new_pin", "246810"), ("clear_pin", "on")],
+        vec![("section", "filter"), ("vpn_filter_enabled", "on")],
+        vec![
+            ("section", "quick"),
+            ("new_pin", "246810"),
+            ("clear_pin", "on"),
+        ],
     ] {
         let res = app
             .request_form(
@@ -638,19 +642,15 @@ async fn bad_events_are_skipped_or_cleaned_and_bad_bodies_refused() {
 }
 
 /// Lock Screen & PINs has no "Recent use" list any more (the user, 2026-11-03: "helt unødvendig") - the phone's
-/// reported uses are the security log's and Activity's; an older launcher's "the override was used" flag still shows.
+/// reported uses are the security log's and Activity's; the report's old `offline_override_used` flag shows nothing.
 #[tokio::test]
-async fn the_lock_page_lists_no_recent_use_and_keeps_the_old_flag() {
+async fn the_lock_page_lists_no_recent_use() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;
     let lock = device_page(id, Section::Lock);
-    // An older launcher: the old flag.
+    // The phone reports its uses: no flag, and no list on the page.
     post_status_caps(&app, &token, &["pin_lock_v1"], true).await;
-    let html = app.get_page(&lock, &cookie).await.text();
-    assert!(html.contains("data-warning=\"override-used\""), "{html}");
-    // A new one reports its uses: no flag, and no list on the page.
-    post_status_caps(&app, &token, &["pin_lock_v1", "parent_pin_events_v1"], true).await;
     let now = chrono::Utc::now().timestamp_millis();
     let body = serde_json::json!({ "events": [
         event(&hex_id(1), "wrong", "override", now - 30 * 60_000, serde_json::json!({ "failures": 1 })),

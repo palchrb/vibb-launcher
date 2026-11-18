@@ -22,12 +22,12 @@ data class TrackedAppUpdate(
     val downloadUrl: String,
     val isLauncher: Boolean,
     /** SHA-256 (hex) of the file [downloadUrl] serves (design 13 QA #2) - the whole download is
-     * checked against it before installing. `null` = not known (an older server, or not hashed
+     * checked against it before installing. `null` = not known (not hashed
      * yet): then only the install's own checks. */
     val sha256: String? = null,
     /** SHA-256 (lower-case hex) of the app's signing certificate, pinned by the server from its
      * first release (security review M10), with [packageName] (also from the APK). `null` = not
-     * pinned (an older server, or no release yet): such a catalog app isn't downloaded. Checked
+     * pinned (no release yet): such a catalog app isn't downloaded. Checked
      * against the APK before installing ([catalogApkCheck]). */
     val signerSha256: String? = null,
 )

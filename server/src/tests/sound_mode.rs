@@ -122,8 +122,8 @@ async fn the_touch_bit_saves_reaches_the_phone_and_starts_off() {
     );
 }
 
-/// The phone's ringer mode and Do Not Disturb at the last sync: stored when known, NULL from an
-/// older launcher or for a value the launcher never sends, and shown as About This Phone's Sound
+/// The phone's ringer mode and Do Not Disturb at the last sync: stored when known, NULL without
+/// one or for a value the launcher never sends, and shown as About This Phone's Sound
 /// rows (design 31 step 3; the Status card's lines until then). Do Not Disturb on is also an
 /// Attention alarm linking there.
 #[tokio::test]
@@ -149,7 +149,7 @@ async fn sound_state_is_stored_and_shown() {
         Some(value[..value.find('<')?].to_string())
     };
 
-    // An older launcher: no fields, nothing shown.
+    // No fields: nothing shown.
     app.post_status(&token, json!({})).await;
     assert_eq!(stored(&app, id).await, (None, None));
     let html = page(id).await;

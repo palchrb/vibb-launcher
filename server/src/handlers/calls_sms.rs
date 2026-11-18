@@ -101,7 +101,7 @@ pub(super) struct OwnRow {
 }
 
 /// What the phone's newest report says about its own numbers (design 77 D12, design 80 §4.4): each active SIM's slot and
-/// number (`None` while the SIM doesn't know; empty when the report has none - an older launcher, a new phone), and the
+/// number (`None` while the SIM doesn't know; empty when the report has none - a new phone), and the
 /// number it learned from a message.
 pub(crate) struct ReportedOwn {
     pub sims: Vec<(i64, Option<String>)>,
@@ -318,7 +318,7 @@ fn own_rows(
                     None,
                     Some(t(lang, "device.sms.own.unknown_hint").to_string()),
                 ),
-                // No report (an older launcher, a new phone).
+                // No report (a new phone).
                 (None, None) => (
                     None,
                     Some(t(lang, "device.sms.settings.own_number_hint").to_string()),
@@ -403,9 +403,8 @@ pub(super) struct SmsPage {
     pub own_rows: Vec<OwnRow>,
     /// No number from any source: every group text is blocked (said on view while SMS is managed, D7/D8).
     pub number_missing: bool,
-    /// Design 80 D13: "Gruppemeldinger" is on, and the phone claims `sms_groups_v1` (else the switch is disabled).
+    /// Design 80 D13: "Gruppemeldinger" is on.
     pub groups: bool,
-    pub groups_capable: bool,
 }
 
 /// A stored row as the card reads it.
@@ -628,7 +627,6 @@ pub(super) async fn load(
         own_rows,
         number_missing,
         groups,
-        groups_capable: sms::has_capability(db, device_id, sms::SMS_GROUPS_CAPABILITY).await?,
     })
 }
 
@@ -1035,17 +1033,10 @@ pub async fn save_sms(
             }
         }
     }
-    // Design 80 D13: only a post from a page with the switch (`groups_shown`) writes "Gruppemeldinger" - an older page
-    // keeps it - and only for a phone claiming `sms_groups_v1` (the switch is disabled before: it isn't sent).
-    let groups = if form.contains_key("groups_shown") {
-        match sms::has_capability(&state.db, id, sms::SMS_GROUPS_CAPABILITY).await {
-            Ok(true) => Some(form.contains_key("sms_groups")),
-            Ok(false) => None,
-            Err(err) => return db_error(lang, id, err),
-        }
-    } else {
-        None
-    };
+    // Design 80 D13: only a post from a page with the switch (`groups_shown`) writes "Gruppemeldinger".
+    let groups = form
+        .contains_key("groups_shown")
+        .then(|| form.contains_key("sms_groups"));
     let result = async {
         let mut tx = state.db.begin().await?;
         let updated = sqlx::query(

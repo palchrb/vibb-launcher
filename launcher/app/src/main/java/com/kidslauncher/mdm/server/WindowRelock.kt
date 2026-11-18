@@ -406,8 +406,7 @@ object WindowRelock {
         }
     }
 
-    /** The PWA's `allow_blocked`: the `relock_blocked` entries it [listed] go (all with `null`,
-     * from an older server) - each only while its key is the one the PWA showed, and never an app
+    /** The PWA's `allow_blocked`: the `relock_blocked` entries it [listed] go (none with `null`) - each only while its key is the one the PWA showed, and never an app
      * signed with another key than the catalog's pin ([allowBlocked], fix round QA Medium 2, QA of
      * cmd-expiry Low 1); the sync's apply() right after the command shows them again. Returns how
      * many were let out. */

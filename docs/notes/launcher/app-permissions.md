@@ -13,7 +13,7 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
 
 - **Camera off** (§3.2): `PolicyResponse.appPermissions` (raw JSON, read field by field by the pure `appPermissionsOf`
   in `server/EnforcementPlan.kt`: a list of `{package_name, camera: "deny"}`, a bad entry dropped, any other `camera`
-  the default; missing or not a list - an older server, a `Fallback` - is `null` = touch nothing; not in
+  the default; missing or not a list - a `Fallback` - is `null` = touch nothing; not in
   `LastEnforcedPlan`: the denial lives in Android's grant state). Pure `cameraGrants` (`EnforcementPlanTest`): every
   third-party app but ours that requests `CAMERA` is `GRANT_STATE_DENIED` when the parent switched it off and no window
   is open, else `GRANT_STATE_DEFAULT` (the fix cleared, the kid's dialog decides) - **we never GRANT a sensor**, and the
@@ -46,7 +46,7 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   `GET_PERMISSIONS`; `AppAccessReader.report`), for third-party apps but ours only (a system app's privileged grants
   say nothing a parent can change; the code QA's L2): `camera` (`requested` | `admin_denied` - the grant state DENIED)
   when it requests it, then each declared access; left out when empty. Contract
-  `installed_apps_report.json` (`SyncScheduleTest`). Capability `app_permissions_v1` (`APP_PERMISSIONS_CAPABILITY`).
+  `installed_apps_report.json` (`SyncScheduleTest`).
 - **"App access" in the PIN-gated Settings** (§4.2, `SettingsFragmentLauncher.updateAccessRows`): the
   `PreferenceCategory` `settings_mdm_app_access` ("App access" / "Tilgang for apper"), last in `preferences.xml` (after
   "Pause all restrictions", so no other row falls under its header; hidden while empty), filled in code off the main
@@ -68,7 +68,7 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
 ## Vibb One's own notifications turned off (design 107, `docs/design/107-blocked-channels.md`)
 
 - **The report**: every full report carries `notification_channels` (`notify/NotificationChannels.kt`, contract
-  `notification_channels.json`, `NotificationChannelsTest`; capability `notification_channels_v1`): `all_off`
+  `notification_channels.json`, `NotificationChannelsTest`): `all_off`
   (`NotificationManagerCompat.areNotificationsEnabled()` false) and `blocked`, the table's keys (`ReportedChannel`,
   each channel's id without `launcher:`) of the channels at `IMPORTANCE_NONE` or in a blocked group, in the table's
   order. One read at each report build (`NotificationChannelsReader.read`: `notificationChannels`,

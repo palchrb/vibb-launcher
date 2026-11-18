@@ -27,8 +27,7 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   `KidAvatars.toneOf` feeds it `swatchesOf` - the opaque pixels (alpha >= 128) of a 48 px render of the icon's colour layers, counted per 4-bit colour; never androidx Palette, whose default filter drops orange and brown (qa-34-s1-code L2).
 - **Three states** (QA H1; `appdisplay/AppDisplay.kt`): `AppDisplayEntry.icon` `null` = **Vibb style** (default),
   `OWN_ICON` = `"own"` = **the app's own logo** (`ownLogo`), else a glyph. `appDisplayMap` accepts `KNOWN_ICONS` (the
-  glyphs + `own`; `own` always with `auto`) - an older launcher's set (the glyphs alone) drops `own` (with no label the
-  entry is gone, today's look). `appIconKey` gives `|g=own|c=auto`.
+  glyphs + `own`; `own` always with `auto`). `appIconKey` gives `|g=own|c=auto`.
 - **`renderAppIcon`** follows the pure `iconRender(entry, hasMonochrome)` (`IconRender` OwnLogo / Glyph / VibbMono, `IconTonesTest`, qa-34-s1-code L4), which checks `own` first: `drawOwnLogo` - an adaptive icon's background + foreground in their original
   colours at 1.5x, never the monochrome layer, no tint; a legacy icon inset 1/8 on `kid_icon_fallback` `#F1F3F5`; both
   clipped to the circle. Then a parent glyph (`renderSymbolIcon` on the colour's tile, or the app's tone for `auto`).
@@ -195,7 +194,7 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   `AppEnforcer.apply()` writes `TIME_12_24` = "24"/"12" when it differs; "system" writes nothing, except putting back
   what the phone had before our first write (CE prefs `clock_format_state`: `clock_written` our value, `clock_before`
   the phone's own - unset or a hand-set value; N4) once, only while the setting still holds our value; a hand change
-  since is left alone. **No `launcher_ui`** (no policy, an older server, the last-enforced fallback) is no choice
+  since is left alone. **No `launcher_ui`** (no policy, the last-enforced fallback) is no choice
   (`clockFormatChoiceOf(null)` = null) and never writes (L2: else a fallback would put back the parent's 24 h). Not a
   restriction: the override and the pause change nothing, and the write never lifts `DISALLOW_CONFIG_DATE_TIME`
   (pinned: `applyDateTimeLock` is called once, before the write, and nothing after it in `apply()` touches the
@@ -285,7 +284,7 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
 - The server's migration 0076 softens three built-ins in place (same ids and `builtin_key`s, so a kid's pick stays):
   `green` is now the gradient `#2A4A4F -> #101820`, `sky` `#34406A -> #14141F`, `sunset` `#5A3A4A -> #1A1420`. The
   launcher keeps no built-in colours of its own (it draws what `launcher_ui.wallpapers` sends; only navy is its
-  fallback), so an older launcher shows them too. Only the names are ours: `wallpaper_green`/`_sky`/`_sunset` = nb
+  fallback). Only the names are ours: `wallpaper_green`/`_sky`/`_sunset` = nb
   "Fjord", "Kveldshimmel", "Skumring", en "Fjord", "Evening sky", "Dusk" (`KidSettingsActivity.wallpaperLabel`, by
   `builtin_key`).
 - `WallpaperInkTest` lists today's seven built-ins: each reaches 4.5:1 with no label shadow, the three softened ones take

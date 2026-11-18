@@ -2,9 +2,6 @@ package com.kidslauncher.mdm.server
 
 import com.kidslauncher.mdm.server.dto.DnsUpstreamReport
 
-/** The status report's capability for design 36's custom DNS server ([STATUS_CAPABILITIES]). */
-const val DNS_CUSTOM_CAPABILITY = "dns_custom_v1"
-
 /** Why the backup answers (design 36 §4.2), as the status report spells it. */
 enum class BackupReason(val wire: String) {
     BOOTSTRAP("bootstrap"), CONNECT("connect"), TLS("tls"), HTTP("http"), REFUSED("refused"), TIMEOUT("timeout"),

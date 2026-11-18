@@ -22,9 +22,6 @@ import java.time.format.DateTimeFormatter
  * `calendar_kid_events.json` (byte-identical with `server/testdata/`).
  */
 
-/** A launcher that hands its kid's events over reports this capability; without it the server sends `kid_caldav: null`. */
-const val CALENDAR_KID_CALDAV_CAPABILITY = "calendar_kid_caldav_v1"
-
 /** The set's limits (D1.3): a safety net, never a reason to delete. */
 const val KID_SET_ROWS = 300
 const val KID_SET_BYTES = 512_000

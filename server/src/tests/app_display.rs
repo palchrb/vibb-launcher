@@ -150,35 +150,18 @@ async fn a_catalog_default_reaches_every_phone_and_a_phones_choice_replaces_it()
         Some(format!("/devices/{a}/apps#app-{ELEMENT}").as_str())
     );
     assert_eq!(app_display(&app, &token_a).await, chat);
-    // An older page's "Use the app's own" keeps its old meaning - nothing on this phone, even with
-    // the catalog default (an empty row, qa-34-s1-code L1); its "Follow the catalog" resets.
-    for (old, after) in [("own", serde_json::json!([])), ("catalog", chat.clone())] {
-        save(
-            &app,
-            &cookie,
-            a,
-            &[("package_name", ELEMENT), ("label", "Old")],
-        )
-        .await;
-        assert_ne!(app_display(&app, &token_a).await, chat);
-        save(
+    // Another action (an older page's "own" or "catalog") is refused and writes nothing.
+    for old in ["own", "catalog"] {
+        let res = save(
             &app,
             &cookie,
             a,
             &[("package_name", ELEMENT), ("action", old)],
         )
         .await;
-        assert_eq!(app_display(&app, &token_a).await, after, "{old}");
+        assert_eq!(res.status, StatusCode::BAD_REQUEST, "{old}");
+        assert_eq!(app_display(&app, &token_a).await, chat, "{old}");
     }
-    // Reset deletes the empty row the old "own" left: the default is back.
-    save(
-        &app,
-        &cookie,
-        a,
-        &[("package_name", ELEMENT), ("action", "reset")],
-    )
-    .await;
-    assert_eq!(app_display(&app, &token_a).await, chat);
     // Saving exactly the default keeps no row (the phone follows later catalog changes).
     save(
         &app,
@@ -564,7 +547,7 @@ async fn meldinger_has_a_row_and_a_name_and_icon_of_its_own() {
     // SMS not managed, nothing chosen, nothing reported: no row.
     assert_eq!(cell().await, None);
 
-    // The phone has threads to read: the row, saying where SMS stands, and an older Vibb One's note.
+    // The phone has threads to read: the row, saying where SMS stands.
     let res = app
         .request(
             Method::POST,
@@ -581,10 +564,7 @@ async fn meldinger_has_a_row_and_a_name_and_icon_of_its_own() {
         html.contains(r#"row-label">Messages<span class="row-sub">SMS not managed by Vibb<"#),
         "{html}"
     );
-    assert!(
-        html.contains("Shows on the phone after Vibb One is updated"),
-        "{html}"
-    );
+    assert!(!html.contains("data-display-note"), "{html}");
     assert!(
         html.contains(r##"data-auto-glyph="sms" data-auto-tile="#347470""##),
         "{html}"
@@ -607,7 +587,7 @@ async fn meldinger_has_a_row_and_a_name_and_icon_of_its_own() {
         "{html}"
     );
 
-    // SMS managed, and a Vibb One that knows the key: the plain row.
+    // SMS managed: the plain row.
     sqlx::query("UPDATE device_policy SET sms_mode = 'managed' WHERE device_id = ?")
         .bind(id)
         .execute(&app.db)
@@ -619,14 +599,13 @@ async fn meldinger_has_a_row_and_a_name_and_icon_of_its_own() {
             "/api/devices/status",
             Some(&token),
             Some(serde_json::json!({
-                "lock_reason": "NONE", "kiosk_engaged": true, "capabilities": [contract["app"]["capability"]],
+                "lock_reason": "NONE", "kiosk_engaged": true,
             })),
         )
         .await;
     assert!(res.status.is_success());
     let html = cell().await.expect("the row");
     assert!(html.contains(r#"row-label">Messages</span>"#), "{html}");
-    assert!(!html.contains("after Vibb One is updated"), "{html}");
 
     // The contract's entry: a name, a glyph on a colour, off Home.
     let display = &contract["app"]["display"];

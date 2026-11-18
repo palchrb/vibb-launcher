@@ -371,7 +371,7 @@ data class CameraPlan(val writes: Map<String, Int>, val deferred: Boolean)
  * ([windowOpen]: the pause or the override lift it, the relock's apply denies again), else [GRANT_STATE_DEFAULT] - the policy
  * fix cleared, the kid's dialog decides; we never GRANT a sensor. Revoking a granted permission kills the app, so while
  * [callLive] a target going to DENIED from another state that holds the camera now ([held]) is left out and the plan is
- * [CameraPlan.deferred]; one that doesn't hold it is denied at once. [denied] `null` (no `app_permissions` - an older server, a
+ * [CameraPlan.deferred]; one that doesn't hold it is denied at once. [denied] `null` (no `app_permissions`, a
  * `Fallback`) writes nothing, except in a window: every target reading DENIED goes to DEFAULT (we are the only admin, so a
  * `Fallback` phone's pause still lifts it). [current] is each target's grant state now; writes only where it differs ([grantWrite]).
  */
@@ -410,7 +410,7 @@ fun deferredCameraApplyDue(deferred: Boolean, callLive: () -> Boolean): Boolean 
 /**
  * The policy's `app_permissions` (design 68 §3.1), read field by field: the packages whose camera the parent switched
  * off on this phone. An entry without a valid package is dropped; any `camera` but `"deny"` is the default. `null` -
- * the key missing or not a list (an older server, a `Fallback`'s plan) - means "touch nothing" ([cameraGrants]).
+ * the key missing or not a list (a `Fallback`'s plan) - means "touch nothing" ([cameraGrants]).
  */
 fun appPermissionsOf(element: kotlinx.serialization.json.JsonElement?): Set<String>? {
     val list = element as? kotlinx.serialization.json.JsonArray ?: return null

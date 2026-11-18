@@ -11,7 +11,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
 
 use crate::i18n::Lang;
-use crate::models::{DevicePolicy, DeviceStatus};
+use crate::models::DevicePolicy;
 use crate::security::{self, AuthedDevice, CurrentAdmin};
 use crate::{AppState, parent_pin};
 
@@ -22,29 +22,14 @@ pub struct ParentPinCard {
     pub easy: bool,
     /// The flash after a save, `(text, warning)` ([parent_pin::flash_text]).
     pub notice: Option<(&'static str, bool)>,
-    /// The launcher reports parent-PIN events (`parent_pin_events_v1`) - or nothing reported yet.
-    /// Without it the old `offline_override_used` flag shows instead. (The events themselves are the security log's
-    /// and Activity's; the lock page's "Recent use" list went on 2026-11-03, the user: "helt unødvendig".)
-    pub capable: bool,
 }
 
-pub fn card(
-    lang: Lang,
-    policy: &DevicePolicy,
-    latest: Option<&DeviceStatus>,
-    notice: Option<&str>,
-) -> ParentPinCard {
+pub fn card(lang: Lang, policy: &DevicePolicy, notice: Option<&str>) -> ParentPinCard {
     let pin_set = policy.override_pin_hash.is_some();
-    let capable = latest.is_none_or(|s| {
-        s.capabilities_json.as_deref().is_some_and(|caps| {
-            caps.contains(&format!("\"{}\"", parent_pin::PARENT_PIN_EVENTS_CAPABILITY))
-        })
-    });
     ParentPinCard {
         pin_set,
         easy: pin_set && policy.override_pin_easy == Some(true),
         notice: notice.and_then(|code| parent_pin::flash_text(lang, code)),
-        capable,
     }
 }
 

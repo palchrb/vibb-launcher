@@ -1,7 +1,7 @@
 # Launcher notes: Wi-Fi sign-in pages and Chrome only for logins (design 102)
 
 The design is `docs/design/102-captive-portals-and-logins.md` (revision 5 on top), its QA `docs/review/qa-102-design.md`.
-The server's side is `docs/notes/server/status.md`, "Wi-Fi sign-in and logins (design 102)".
+The server's side is `docs/notes/server/logins.md`.
 
 ## Part A: the Wi-Fi sign-in window (`portal/`)
 
@@ -88,7 +88,7 @@ The server's side is `docs/notes/server/status.md`, "Wi-Fi sign-in and logins (d
   `PortalRuntime.start` watches the Wi-Fi networks
   (`FLAG_INCLUDE_LOCATION_INFO` for the SSID) for both.
 - **The report**: `captive_portal` (`CaptivePortalReport`: `handler` from `resolveActivity`, `parent_code_set`, today's
-  code-free use, the last 10 sessions), a full-report field; capability `captive_portal_v1`.
+  code-free use, the last 10 sessions), a full-report field.
 - **Tests**: `PortalRulesTest` (`login_rules.json`: navigation, sites, schemes, approve, frames, passes, close, budget,
   open sessions, wifi rows, revisit), `LoginWindowsTest` (the shared `login_windows.json`), `ParentPinStoreTest` (the
   one-shot entry), `ServerTransportTest` (both configs, the tailnet fence, the DoH rule, the source scan).
@@ -131,7 +131,7 @@ The server's side is `docs/notes/server/status.md`, "Wi-Fi sign-in and logins (d
 - **The redirect back** to the app needs no entry (M15): custom schemes and `intent://` reach the app before the
   blocklist; an https App Link callback's host must be on the list.
 - **The report**: `login_browser` (`BrowserConfig.report`: Chrome's package, `on`/`off`/`absent`/`failed` with the
-  reason, its `versionName`, `written_ms`, `cleared_ms`), a full-report field; capability `login_browser_v1`.
+  reason, its `versionName`, `written_ms`, `cleared_ms`), a full-report field.
 - **Checks owed**: `docs/testing/emulator.md` §6aq (E8, E9) and the Jelly Star's D-C3 to D-C6 (`chrome://policy` with a
   test bundle without `chrome://*`, typed `data:`/`view-source:`/`chrome://flags`/`javascript:`, "Add to Home screen"
   and "Install app", a real Feide or Google login, each preset's hosts).

@@ -17,15 +17,14 @@ The launcher's side is `docs/notes/launcher/logins.md`.
   non-ASCII; at most 100 own entries); `clean_portal`/`clean_browser` (field by field: known words, plausible counts and
   instants, hosts cleaned and cut to 20 visited and 10 blocked hosts and frames, the last 10 sessions; a session without
   a known outcome, start, approval or `opened_ms` is dropped); the events.
-- **The events** (`logins::intake`, only from a launcher with `captive_portal_v1`): `wifi_signin_wide` for a session
+- **The events** (`logins::intake`, from the stored report): `wifi_signin_wide` for a session
   that visited more than 3 sites, had a blocked frame (never a blocked sub-resource alone: portal pages load blocked
   analytics, R2-L3) or timed out, keyed by its `opened_ms` (every report repeats the last 10); `wifi_signin_budget` once
   a day (`budget:<local date>`) when the day's code-free openings or minutes (with each grant step's one and 10) are used
   up. Both told from parameters (`WifiSigninParams`), to `/devices/{id}/logins#logins-wifi`, pushed at once in the day
   and held until 07:00 between 23:00 and 07:00 in the family's zone (`logins::night_push`), one switch "Wi-Fi sign-in".
 - **The parent code's entry**: `parent_pin::Entry::WifiSignin` (`wifi_signin`), its security-log words ("Wi-Fi sign-in
-  opened with the parent code", "at the Wi-Fi sign-in") and the PIN event's place ("Wi-Fi-innlogging"). An older server
-  skips those events with a warning (`handlers/parent_pin.rs`).
+  opened with the parent code", "at the Wi-Fi sign-in") and the PIN event's place ("Wi-Fi-innlogging").
 - **Device › Sign-in** (`/devices/{id}/logins`, `handlers::logins`, `device_logins.html`; linked from the Web Filter
   page's row "Innlogging · Wi-Fi: på · Apper: av"): `#logins-wifi` - the switch with its sub-line (the window, the
   close, the filter's lists not the parent's own DNS server), the code's state linking to Advanced, today's code-free
@@ -39,8 +38,7 @@ The launcher's side is `docs/notes/launcher/logins.md`.
   delivered lists walked by suffix), and the note about other sites and web-page apps. Every save is a `303` back to its
   group's anchor (no jump; `scroll-restore.js`), server-rendered, no new client JS (Safari 14).
 - **Advanced › `#wifi-signin`**: "Krev foreldrekode for Wi-Fi-innlogging" (on by default), "Gjelder også å åpne
-  påloggingssiden igjen", the warning "Ingen foreldrekode er satt …" while the phone reports none set, and "Krever nyere
-  Vibb One" for a phone that reported without the capability; its form posts `section=wifi_signin` to the Sign-in page's
+  påloggingssiden igjen", the warning "Ingen foreldrekode er satt …" while the phone reports none set; its form posts `section=wifi_signin` to the Sign-in page's
   handler, answered with a `303` to `/devices/{id}/advanced#wifi-signin`.
 - **The Apps page**: Chrome's row says "Brukes bare til innlogging (Innlogging-siden)" while the role is on.
 - **The report**: `captive_portal` and `login_browser` are full-report fields (`status_heartbeat::REPORT_KEYS`, not

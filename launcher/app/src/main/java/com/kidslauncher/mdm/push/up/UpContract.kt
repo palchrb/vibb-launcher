@@ -3,9 +3,6 @@ package com.kidslauncher.mdm.push.up
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
-/** Design 108: the status report's capability; only to a launcher claiming it does the server send `unified_push`. */
-const val UNIFIED_PUSH_CAPABILITY = "unified_push_v1"
-
 /** The UnifiedPush Android spec's names (AND_3.1.0, https://unifiedpush.org/developers/spec/android/): only the action
  * and extra names are shared with the connector (Apache-2.0), which is not a dependency - the distributor side is ours,
  * implemented from the spec. */
@@ -43,8 +40,7 @@ object UpSpec {
 
 /** The policy's `unified_push` (design 108 §3.8; the shared contract `unified_push.json`'s `policy` rows): [on] = the
  * phone's switch and a public origin set; [origin] the current one (`null` unset, M4); [regs] the registration keys the
- * server holds; [stopped] the packages the parent stopped. Missing (an older server, or a policy fetched before the
- * first report claimed [UNIFIED_PUSH_CAPABILITY]) = off. */
+ * server holds; [stopped] the packages the parent stopped. Missing = off. */
 @Serializable
 data class UnifiedPushPolicy(
     val on: Boolean = false,
@@ -82,7 +78,7 @@ data class UpRefusalAnswer(val refused: String)
 
 /** `POST /api/devices/up/messages`: the keys of the messages whose broadcast was sent (H1), at most [ACK_MAX]; [held]
  * on every step of the first pull run after a hold (design 115 §2.5: its hand-outs leave no delivery sample), left out
- * when false (no `encodeDefaults`), so an older server reads the body as before. */
+ * when false (no `encodeDefaults`). */
 @Serializable
 data class UpAckBody(val ack: List<String>, val held: Boolean = false)
 

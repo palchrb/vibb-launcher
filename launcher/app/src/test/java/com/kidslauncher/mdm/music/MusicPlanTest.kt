@@ -39,7 +39,7 @@ class MusicPlanTest {
 
     @Test
     fun `the bridge's AIDL is byte-identical in both apps`() {
-        for (name in listOf("IMusicBridge.aidl", "IStorytelCallback.aidl", "ISpotifyTokenCallback.aidl", "IStorytelTokenCallback.aidl")) {
+        for (name in listOf("IMusicBridge.aidl", "ISpotifyTokenCallback.aidl", "IStorytelTokenCallback.aidl")) {
             val ours = module("src/main/aidl/me/vibb/bridge/$name")
             val theirs = repo("music/app/src/main/aidl/me/vibb/bridge/$name")
             assertEquals("$name differs from music/'s copy", theirs.readText(), ours.readText())
@@ -50,7 +50,7 @@ class MusicPlanTest {
             .findAll(module("src/main/aidl/me/vibb/bridge/IMusicBridge.aidl").readText()).map { it.groupValues[1] }.toList()
         assertEquals(
             listOf(
-                "version", "openLibrary", "openCover", "openFile", "releaseFile", "getStorytelLogin", "reportState",
+                "version", "openLibrary", "openCover", "openFile", "releaseFile", "reserved", "reportState",
                 "setNowPlaying", "setForeground", "listingVersion", "openListing", "wantArt", "getSpotifyToken",
                 "getStorytelToken",
             ),
@@ -63,7 +63,6 @@ class MusicPlanTest {
         val ours = javaClass.classLoader!!.getResource("storytel_token_answers.json")!!.readText()
         assertEquals("the music app's copy", repo("music/app/src/test/resources/storytel_token_answers.json").readText(), ours)
         assertEquals("the server's copy", repo("server/testdata/storytel_token_answers.json").readText(), ours)
-        assertTrue("the courier is a capability", STORYTEL_JWT_CAPABILITY in com.kidslauncher.mdm.server.STATUS_CAPABILITIES)
     }
 
     @Test
@@ -76,7 +75,7 @@ class MusicPlanTest {
     @Test
     fun `the policy's spotify - true only as a JSON true, whatever else the music object holds (26c §6_2)`() {
         fun with(value: kotlinx.serialization.json.JsonElement) = buildJsonObject {
-            put("library_version", JsonNull); put("mobile_data", false); put("storytel_generation", 0); put("spotify", value)
+            put("library_version", JsonNull); put("storytel_generation", 0); put("spotify", value)
         }
         assertTrue(musicSpotify(with(JsonPrimitive(true))))
         assertFalse(musicSpotify(with(JsonPrimitive(false))))
@@ -128,7 +127,8 @@ class MusicPlanTest {
 
     private fun policyJson(version: kotlinx.serialization.json.JsonElement = JsonPrimitive("0123456789abcdef"), generation: kotlinx.serialization.json.JsonElement = JsonPrimitive(3)) =
         buildJsonObject {
-            put("library_version", version); put("mobile_data", true); put("volume_cap_pct", 70); put("storytel_generation", generation)
+            put("library_version", version); put("stream_mobile_data", true); put("download_mobile_data", true)
+            put("volume_cap_pct", 70); put("storytel_generation", generation)
         }
 
     @Test
@@ -139,19 +139,18 @@ class MusicPlanTest {
         assertNull("a number", musicPolicy(policyJson(version = JsonPrimitive(5))))
         assertNull("a generation that isn't a number", musicPolicy(policyJson(generation = JsonPrimitive("x"))))
         assertNull("a negative generation", musicPolicy(policyJson(generation = JsonPrimitive(-1))))
-        assertNull("library_version missing", musicPolicy(buildJsonObject { put("mobile_data", true); put("storytel_generation", 0) }))
+        assertNull("library_version missing", musicPolicy(buildJsonObject { put("stream_mobile_data", true); put("storytel_generation", 0) }))
         assertNull("an older server", musicPolicy(null))
         assertNull(musicPolicy(JsonPrimitive(5)))
     }
 
     /** Design 30's music object as the server sends it from step 1 on (`policy_json_keys_snapshot`). */
     private fun policy30(
-        mobile: Boolean = false,
         stream: kotlinx.serialization.json.JsonElement? = JsonPrimitive(false),
         download: kotlinx.serialization.json.JsonElement? = JsonPrimitive(false),
         limit: kotlinx.serialization.json.JsonElement? = JsonPrimitive(2),
     ) = buildJsonObject {
-        put("library_version", JsonNull); put("mobile_data", mobile)
+        put("library_version", JsonNull)
         stream?.let { put("stream_mobile_data", it) }
         download?.let { put("download_mobile_data", it) }
         put("volume_cap_pct", JsonNull)
@@ -160,28 +159,23 @@ class MusicPlanTest {
     }
 
     @Test
-    fun `the policy's music object - two switches, an older server's mobile_data for both, a malformed switch keeps what is there`() {
+    fun `the policy's music object - two switches, a missing one is off, a malformed switch keeps what is there`() {
         assertEquals(MusicPolicy(null, false, false, null, 2, 0), musicPolicy(policy30()))
         val streamOnly = musicPolicy(policy30(stream = JsonPrimitive(true)))!!
         assertTrue(streamOnly.streamMobileData)
         assertFalse(streamOnly.downloadMobileData)
-        assertFalse("the old key is both", streamOnly.mobileData)
         val downloadOnly = musicPolicy(policy30(download = JsonPrimitive(true)))!!
         assertFalse(downloadOnly.streamMobileData)
         assertTrue(downloadOnly.downloadMobileData)
-        val both = musicPolicy(policy30(mobile = true, stream = JsonPrimitive(true), download = JsonPrimitive(true)))!!
-        assertTrue(both.streamMobileData && both.downloadMobileData && both.mobileData)
-        // The new keys win over mobile_data; mobile_data is only the fallback.
-        assertEquals(MusicPolicy(null, false, false, null, 2, 0), musicPolicy(policy30(mobile = true)))
-        // An older server: no new keys - both switches are its one switch, the limit 2 GB.
-        assertEquals(MusicPolicy(null, true, true, null, 2, 0), musicPolicy(policy30(mobile = true, stream = null, download = null, limit = null)))
+        val both = musicPolicy(policy30(stream = JsonPrimitive(true), download = JsonPrimitive(true)))!!
+        assertTrue(both.streamMobileData && both.downloadMobileData)
+        // Fail closed: a missing switch is off, the other one stays as sent.
         assertEquals(MusicPolicy(null, false, false, null, 2, 0), musicPolicy(policy30(stream = null, download = null, limit = null)))
-        assertEquals("one key missing falls back alone", MusicPolicy(null, true, false, null, 2, 0), musicPolicy(policy30(mobile = true, stream = null)))
+        assertEquals("one key missing is off alone", MusicPolicy(null, false, true, null, 2, 0), musicPolicy(policy30(stream = null, download = JsonPrimitive(true))))
         for (bad in listOf(JsonPrimitive("true"), JsonPrimitive(1), JsonNull, buildJsonObject { }, buildJsonArray { })) {
             assertNull("stream_mobile_data = $bad", musicPolicy(policy30(stream = bad)))
             assertNull("download_mobile_data = $bad", musicPolicy(policy30(download = bad)))
         }
-        assertNull("mobile_data is still required", musicPolicy(kotlinx.serialization.json.JsonObject(policy30() - "mobile_data")))
     }
 
     @Test
@@ -512,7 +506,7 @@ class MusicPlanTest {
         val r = restrictionsFor(MusicPolicy(null, true, true, 60, 5, 4), "me.vibb.launcher", "nb", 60)
         assertEquals(
             mapOf(
-                "v" to 1, "managed" to true, "launcher_package" to "me.vibb.launcher", "language" to "nb", "mobile_data" to true, "library_version" to "",
+                "v" to 1, "managed" to true, "launcher_package" to "me.vibb.launcher", "language" to "nb", "library_version" to "",
                 "storytel_generation" to 4, "volume_cap_pct" to 60, "stream_mobile_data" to true, "download_mobile_data" to true, "storage_limit_gb" to 5,
                 "spotify_diag_until" to 0,
             ),
@@ -533,14 +527,13 @@ class MusicPlanTest {
     }
 
     @Test
-    fun `the managed config carries both switches, the limit and mobile_data as both`() {
+    fun `the managed config carries both switches and the limit`() {
         fun written(stream: Boolean, download: Boolean, limit: Int?) =
             restrictionsFor(MusicPolicy(null, stream, download, null, limit, 0), "p", "", null)
         for ((stream, download) in listOf(true to false, false to true, true to true, false to false)) {
             val r = written(stream, download, 2)
             assertEquals("$stream/$download", stream, r[MusicRestrictions.STREAM_MOBILE_DATA])
             assertEquals("$stream/$download", download, r[MusicRestrictions.DOWNLOAD_MOBILE_DATA])
-            assertEquals("an older music app reads both: $stream/$download", stream && download, r[MusicRestrictions.MOBILE_DATA])
         }
         assertEquals(2, written(true, true, 2)[MusicRestrictions.STORAGE_LIMIT_GB])
         assertEquals(10, written(true, true, 10)[MusicRestrictions.STORAGE_LIMIT_GB])
@@ -551,9 +544,10 @@ class MusicPlanTest {
             listOf("stream_mobile_data", "download_mobile_data", "storage_limit_gb"),
             listOf(MusicRestrictions.STREAM_MOBILE_DATA, MusicRestrictions.DOWNLOAD_MOBILE_DATA, MusicRestrictions.STORAGE_LIMIT_GB),
         )
-        // End to end from the policy: an older server's mobile_data reaches the new keys as both, the limit 2 GB.
-        val old = restrictionsFor(musicPolicy(policy30(mobile = true, stream = null, download = null, limit = null))!!, "p", "", null)
-        assertEquals(listOf(true, true, true, 2), listOf("mobile_data", "stream_mobile_data", "download_mobile_data", "storage_limit_gb").map { old[it] })
+        // End to end from the policy: no switch is off on both keys, and no key of the old one switch is written.
+        val none = restrictionsFor(musicPolicy(policy30(stream = null, download = null, limit = null))!!, "p", "", null)
+        assertEquals(listOf(false, false, 2), listOf("stream_mobile_data", "download_mobile_data", "storage_limit_gb").map { none[it] })
+        assertFalse("mobile_data" in none)
     }
 
     @Test
@@ -634,7 +628,6 @@ class MusicPlanTest {
             ServerJson.encodeToString(StatusReportRequest.serializer(), StatusReportRequest(lockReason = "NONE", kioskEngaged = true, musicState = state)),
         ).jsonObject
         assertEquals("me.vibb.music", (json["music_state"]!!.jsonObject["package"] as JsonPrimitive).content)
-        assertTrue(MUSIC_CAPABILITY in com.kidslauncher.mdm.server.STATUS_CAPABILITIES)
     }
 
     @Test

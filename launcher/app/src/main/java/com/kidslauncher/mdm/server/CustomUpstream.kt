@@ -34,7 +34,7 @@ sealed interface UpstreamTarget {
 /**
  * The policy's `dns_upstream`, checked again on the phone (design 36 §4.1): both targets usable -
  * kind `doh` with an `https://` URL OkHttp parses, or kind `dot` with a host and a port 1-65535 -,
- * a `rev`, a backup. Anything else (`null`, an older server, a future kind, a wrong type, a missing
+ * a `rev`, a backup. Anything else (`null`, a future kind, a wrong type, a missing
  * or invalid backup) is `null`: the phone then forwards to the policy's `dns_upstream_provider`.
  */
 fun customUpstreamFrom(element: JsonElement?): CustomUpstream? {

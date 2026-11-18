@@ -55,7 +55,7 @@ class SmsEngineTest {
     private var timeBlocked = false
 
     private fun rules(contacts: List<RuleContact>, names: List<String> = emptyList()) =
-        CallRules(callsEnabled = true, smsEnabled = false, contacts = contacts, callsMode = ChannelMode.MANAGED, smsMode = ChannelMode.MANAGED, smsNames = names)
+        CallRules(callsEnabled = true, smsEnabled = false, contacts = contacts, callsMode = ChannelMode.MANAGED, smsMode = ChannelMode.MANAGED, smsNames = names, smsGroups = true)
 
     private fun judge() = SmsJudge(
         state = rules?.let { CallPolicyState.Managed(it) } ?: CallPolicyState.UnknownFailClosed,

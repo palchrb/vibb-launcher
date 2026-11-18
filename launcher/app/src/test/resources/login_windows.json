@@ -1,5 +1,4 @@
 {
-  "capabilities": {"captive_portal": "captive_portal_v1", "login_browser": "login_browser_v1"},
   "policy": [
     {
       "name": "new_phone",

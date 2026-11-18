@@ -9,8 +9,7 @@ import kotlinx.serialization.Serializable
  * know: a newer server never breaks this launcher; [v] changes only for a breaking shape). Pinned by `weather.json`'s
  * `answer` and `statuses` (byte-identical with `server/testdata/`, `WeatherContractTest`).
  *
- * Since 2026-11-04 the answer carries no place name (the user: "Vi dropper navnet"): an older server's `place` is an
- * unknown key and ignored, and an older launcher's `place` defaults to null when it is missing.
+ * Since 2026-11-04 the answer carries no place name (the user: "Vi dropper navnet").
  *
  * Never logged as it is: every `toString()` here leaves out the temperatures and the times.
  */
@@ -41,7 +40,7 @@ data class WeatherAnswerHour(
     /** 0-2: the period of today's card containing the hour; `null` before 06:00 or on tomorrow's card. */
     val current: Int? = null,
     /** From 18:00 to midnight, while the card is tomorrow's: what is left of this evening ("I kveld", 2026-11-04);
-     * `null` otherwise and from an older server. */
+     * `null` otherwise. */
     val tonight: WeatherAnswerPeriod? = null,
 ) {
     override fun toString() = "WeatherAnswerHour(symbol=$symbol, words=$words, current=$current, tonight=${tonight != null})"

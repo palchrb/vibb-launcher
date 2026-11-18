@@ -9,8 +9,7 @@
 //! The pages (design 31 §3.5, step 9):
 //! - **Settings › Time Rules** (`GET /schedules`, `schedules.html`): everyone's rules as rows ("Off
 //!   for Emil" where a phone has one off), the daily limit's row, a row per phone with its rules
-//!   in force. Links only, no form. `/schedules?device=X` (an old bookmark) redirects to the
-//!   phone's Time Rules page (L5).
+//!   in force. Links only, no form.
 //! - **Daily Limit** (`GET /schedules/screen-time`, `schedule_budget.html`): everyone's 7 limits,
 //!   one form (`POST /schedules/global`).
 //! - **The rule editor** (`GET /schedules/rules/{id}`, chained with its POST; `GET
@@ -27,9 +26,9 @@
 //! delete of a rule deleted in another tab lands on that list with nothing written. The daily limit
 //! to `/schedules/screen-time?saved=1#screen-time`. A rule's switch for a phone
 //! (`/devices/{id}/time/rules/{rule_id}`) to `#everyone` / `#own-rules`. `/schedules/device/{id}`
-//! takes `section` (§5.6, H1): `limit` writes only the Own limit switch (→ `#screen-time`; an
-//! older tab's `switch` the same), `budget` only the limits (→ `?saved=budget#screen-time`), none
-//! both (an older tab). A refused rule or limit renders its page
+//! takes `section` (§5.6, H1): `limit` writes only the Own limit switch (→ `#screen-time`),
+//! `budget` only the limits (→ `?saved=budget#screen-time`), anything else is a 400. A refused rule
+//! or limit renders its page
 //! again (400) with what was typed and the reason under the field, which is focused.
 //!
 //! Every write validates first (nothing written on a refusal), answers 404 for an unknown device or
@@ -360,18 +359,12 @@ struct SchedulesTemplate {
 }
 crate::i18n::words!(SchedulesTemplate);
 
-/// GET `/schedules`: Settings › Time Rules. `?device=X` redirects to that phone's Time page.
+/// GET `/schedules`: Settings › Time Rules.
 pub async fn show_schedules(
     State(state): State<AppState>,
     lang: Lang,
     Query(params): Query<HashMap<String, String>>,
 ) -> Response {
-    if let Some(id) = params
-        .get("device")
-        .and_then(|v| v.trim().parse::<i64>().ok())
-    {
-        return Redirect::to(&format!("/devices/{id}/time")).into_response();
-    }
     let budget_json: Option<String> =
         match sqlx::query_scalar("SELECT daily_budget_json FROM global_schedule WHERE id = 1")
             .fetch_optional(&state.db)
@@ -1641,9 +1634,7 @@ pub async fn save_global_schedule(
 }
 
 /// POST `/schedules/device/{id}`: a phone's Own limit switch (`section=limit`, field `own_limit`)
-/// or its own limits (`section=budget`). An older tab's `section=switch` (the Own rules switch
-/// until migration 0115, field `custom_schedule_enabled`) writes the same column, now the limit's
-/// switch alone; without a section (a page from before design 31 step 9) both.
+/// or its own limits (`section=budget`); any other section, or none, is a 400.
 pub async fn save_device_schedule(
     State(state): State<AppState>,
     lang: Lang,
@@ -1653,11 +1644,9 @@ pub async fn save_device_schedule(
 ) -> Response {
     let fields = form_pairs(&body);
     let section = field(&fields, "section");
-    let (switch, limits, switch_field) = match section {
-        "limit" => (true, false, "own_limit"),
-        "switch" => (true, false, "custom_schedule_enabled"),
-        "budget" => (false, true, ""),
-        "" => (true, true, "custom_schedule_enabled"),
+    let limits = match section {
+        "limit" => false,
+        "budget" => true,
         _ => {
             return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.unknown_section");
         }
@@ -1679,7 +1668,7 @@ pub async fn save_device_schedule(
     } else {
         None
     };
-    let custom_enabled = switch.then(|| fields.iter().any(|(k, _)| k == switch_field));
+    let custom_enabled = (!limits).then(|| fields.iter().any(|(k, _)| k == "own_limit"));
     // A NULL bind keeps the column (COALESCE), so a section writes only its own.
     match sqlx::query(
         "UPDATE device_policy SET \
@@ -1720,10 +1709,10 @@ pub async fn save_device_schedule(
             )
             .await;
             nudge(&state, Some(id)).await;
-            match section {
-                "limit" | "switch" => Redirect::to(&format!("/devices/{id}/time#screen-time")),
-                "budget" => Redirect::to(&format!("/devices/{id}/time?saved=budget#screen-time")),
-                _ => Redirect::to(&format!("/devices/{id}/time")),
+            if limits {
+                Redirect::to(&format!("/devices/{id}/time?saved=budget#screen-time"))
+            } else {
+                Redirect::to(&format!("/devices/{id}/time#screen-time"))
             }
             .into_response()
         }
@@ -1854,8 +1843,6 @@ struct DeviceTimeTemplate {
     budget: Vec<BudgetInput>,
     budget_corrupt: bool,
     budget_saved: bool,
-    /// Design 98 §4.4.5: the phone reports `rule_pause_v1` - the Now group's ⓘ says what its parent code can pause.
-    rule_pause: bool,
 }
 crate::i18n::words!(DeviceTimeTemplate);
 
@@ -2009,16 +1996,6 @@ async fn render_device_time(
     };
 
     let mut warnings = Vec::new();
-    if crate::handlers::devices::launcher_without_rules(latest.as_ref()) {
-        warnings.push(Note {
-            warning: true,
-            title: t(lang, "device.time.too_old").to_string(),
-            value: None,
-            sub: None,
-            detail: Some(t(lang, "device.time.too_old_sub").to_string()),
-            fix: None,
-        });
-    }
     if report.as_ref().is_some_and(|(_, r)| r.ledger_unreadable) {
         warnings.push(Note {
             warning: true,
@@ -2057,10 +2034,6 @@ async fn render_device_time(
                 None => budget_inputs(lang, &policy.daily_budget_json),
             },
             budget_saved: !refused && query.get("saved").map(String::as_str) == Some("budget"),
-            rule_pause: crate::handlers::device_pages::has_capability(
-                latest.as_ref(),
-                crate::handlers::rule_pause::CAPABILITY,
-            ),
             device,
         },
         if refused {

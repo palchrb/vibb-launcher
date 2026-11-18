@@ -2,7 +2,6 @@ package com.kidslauncher.mdm.timerules
 
 import com.kidslauncher.mdm.server.LockReason
 import com.kidslauncher.mdm.server.ServerJson
-import com.kidslauncher.mdm.server.TIME_RULES_CAPABILITY
 import com.kidslauncher.mdm.server.dto.StatusReportRequest
 import com.kidslauncher.mdm.server.dto.TimeState
 import kotlinx.serialization.json.jsonObject
@@ -35,7 +34,7 @@ class TimeStateZoneTest {
     private fun encoded(timeState: TimeState): String = ServerJson.encodeToString(
         StatusReportRequest.serializer(),
         StatusReportRequest(
-            lockReason = "BEDTIME", kioskEngaged = true, capabilities = listOf("call_policy_v1", TIME_RULES_CAPABILITY),
+            lockReason = "BEDTIME", kioskEngaged = true,
             timeState = timeState,
         ),
     )

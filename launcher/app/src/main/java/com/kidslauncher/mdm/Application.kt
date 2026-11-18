@@ -20,7 +20,6 @@ import com.kidslauncher.mdm.server.CommandListenerService
 import com.kidslauncher.mdm.server.KidVpnService
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.preferences.firstLaunchResetDue
-import com.kidslauncher.mdm.preferences.migratePreferencesToNewVersion
 import com.kidslauncher.mdm.preferences.resetPreferences
 import com.kidslauncher.mdm.ui.home.nextAppLoad
 import kotlinx.coroutines.CoroutineScope
@@ -407,9 +406,6 @@ class Application : android.app.Application() {
         // page. Never throws.
         com.kidslauncher.mdm.portal.PortalRuntime.start(this)
 
-        // Try to restore old preferences
-        migratePreferencesToNewVersion(this)
-
         // First time opening the app: set defaults
         // (the rest of first-launch setup happens in HomeActivity#onStart). Never on a phone that
         // enrolled before Home's first start - the reset would drop its token and policy (design 59d §8.17).
@@ -477,13 +473,6 @@ class Application : android.app.Application() {
                 com.kidslauncher.mdm.server.RelockTrigger.TIMER
             },
         )
-        // The parent PIN's one-time vault migration (Keystore keygen, commits) off the main thread,
-        // before a Settings visit needs it (QA Low 11).
-        val app = this
-        CoroutineScope(Dispatchers.IO).launch { com.kidslauncher.mdm.server.ParentPin.prepareVault(app) }
-        // Design r10 §4: the device token, the kid PIN and the reset token sealed at once, off the main thread (a
-        // main-thread read never migrates) - so a reset token isn't left plain until the next window.
-        CoroutineScope(Dispatchers.IO).launch { com.kidslauncher.mdm.server.Secrets.migrateAll(app) }
         // Design 24b's fix round (QA High 1): an app that could read the parent PIN, at every start.
         com.kidslauncher.mdm.server.ForeignAccess.checkInBackground(this)
 
@@ -561,7 +550,7 @@ class Application : android.app.Application() {
                 }
             } catch (e: Exception) {
                 android.util.Log.e("Application", "Setup (after the lock) failed, continuing", e)
-                com.kidslauncher.mdm.crash.CrashReports.record(app, e)
+                com.kidslauncher.mdm.crash.CrashReports.record(this@Application, e)
             }
             // Design 59 F3 (F3R-5): the tail's own share, next to "Unlocked setup took" (the head).
             android.util.Log.i("Application", "Unlocked setup tail took ${android.os.SystemClock.elapsedRealtime() - tailStart} ms")

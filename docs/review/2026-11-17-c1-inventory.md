@@ -20,9 +20,13 @@ are written `server/src/...`.
   columns that only old launchers used stay. Dropping them is a later, optional migration and is not in C1.
 - A shared contract file changes on both sides in the same commit. That commit also updates
   `policy_json_keys_snapshot` and `PolicyResponseCompatTest` whenever a policy key goes.
-- The launcher, the music app and the server ship together after C1. Install the launcher and music RCs on the
-  emulators before tagging the server. Watchtower pulls a new server image as soon as it is tagged, and the current
-  launcher still requires `music.mobile_data` (see M-1 below).
+- The launcher, the music app and the server ship together after C1, **the server first** (C1 code QA M1,
+  2026-11-18). The C1 launcher claims only `android_keyguard_v1`, so a server from before C1 takes it for an old
+  launcher and leaves out `unified_push` (its registrations dropped, Element X's push lost), `server_tls`, the zones
+  and `kid_caldav`, and sends commands without receipts. The other order is safe: rc.7 still claims everything and
+  the C1 server sends every key; only rc.7's music settings stay frozen (it refuses a `music` object without
+  `mobile_data`, M-1 below) until the launcher updates. The emulators may get the RCs before the server tag; the
+  kid's phone gets the C1 launcher and music RCs (and Install Now) only after the C1 server is live (Watchtower).
 - The Jelly Star arrives with a fresh install of stable v0.40.0, built after C1. Everything it needs stays: the
   provisioning QR path, release signing (`RELEASE_CERT_SHA256`), today's versionCode rule, the self-update and
   install path (`pendingApkCheck`, `NOT_OURS`), the update fence's write and release path, and `FcmHosts` (other
@@ -74,7 +78,7 @@ and none is claimed at runtime, so every gate on them is compatibility between v
 | B-3 | Old columns written only for a rollback | `server/src/handlers/calls.rs:2103-2125`; doc `server/src/models.rs:164-167` | An older server binary after a rollback | REMOVE the writes; the columns stay. C1 ships forward only | low | `tests/sms.rs:270,610` |
 | B-4 | `call_policy.sms_lock_text` | `server/src/lock_glance.rs:55-58`; `server/src/handlers/device_api.rs:406,418,725-731,780`; `server/src/models.rs:1457-1458` | Launchers before design 82 | REMOVE | low (contract) | `tests/lock_glance.rs` (400, 1007); `sms_contract.json` `app.lock` |
 | B-5 | `data_roaming` derived from `abroad` | `server/src/mobile_network.rs:38-42` (`derived_roaming`); `server/src/handlers/device_api.rs:613-616`; `server/src/models.rs:1391-1394` | Launchers before design 97 | REMOVE (with L-4) | low (contract) | `mobile_network.json` `policy` rows; `tests/mobile_network.rs`; snapshot |
-| B-6 | `music.mobile_data` one switch | `server/src/music.rs:107-111` (`mobile_data_wire`), `:1356-1358,1407` | Older launcher and music app | REMOVE **only in lockstep with M-1** | **high if out of order**: today's launcher rejects the music object without it (`L/music/MusicPlan.kt:133`) | `tests/music.rs:1268-1273` |
+| B-6 | `music.mobile_data` one switch | `server/src/music.rs:107-111` (`mobile_data_wire`), `:1356-1358,1407` | Older launcher and music app | REMOVE **only in lockstep with M-1** | **low, server first** (C1 code QA M1): rc.7 rejects the music object without it (`L/music/MusicPlan.kt:133`) and keeps its last music settings until it updates | `tests/music.rs:1268-1273` |
 | B-7 | "Update the app" for the old music switch | `server/src/music.rs:113-169` (`OlderApps`, `older_phone`, `*_EXTRA_BYTES_FROM`); `server/src/attention.rs:85,170,281-282,342,392,446,796`; `server/src/handlers/music.rs:4587,4652,4751,5060-5063`; i18n `device.music.update_*`, `older_phone_sub` | Older launcher or music app, by versionCode | REMOVE | low | `music.rs` in-file (2066, 2086); `tests/music.rs` `the_page_says_an_older_phone_uses_mobile_data_only_with_both` (1580) |
 | B-8 | Relock fallback when a report has no `relock_blocks` | `server/src/window_relock.rs:383,434-435,545-578,968`; `server/src/handlers/window_relock.rs:126-145` | An older launcher's relock report | REMOVE | med | `tests/window_relock.rs` (111, 207); `window_relock.rs` `an_older_launchers_relock_lists_its_blocked_apps` (1245) |
 | B-9 | Update Location failure strings | `server/src/handlers/locate.rs:511-517,569-573` | Old "done + failure text" answers | REMOVE | low | `locate.rs` in-file (3121) |
@@ -123,7 +127,7 @@ and none is claimed at runtime, so every gate on them is compatibility between v
 
 | # | Item | file:line | Keeps compatible | Verdict | Risk | Tests touched |
 |---|---|---|---|---|---|---|
-| M-1 | `mobile_data` one-switch fallback, three-sided | `M/.../bridge/BridgeConfig.kt:55,129-136`; `M/.../data/Store.kt:115-117` (debug feed); launcher `L/music/MusicPlan.kt:67-68,116-117,130-135,176-188,286`; server B-6 | Launcher and server before design 30. The user's music app is 0.6.1-rc.1, past design 30 | REMOVE in one commit across all three, then ship the launcher and music RCs before the server | **high if out of order** (the current launcher requires `mobile_data`) | BridgeTest (82-190), GuardsTest (446-472); launcher MusicPlanTest (79-163), MusicMediaPlanTest, MusicFileDownloadsTest; `bridge_contract.json` in both apps (byte-identical) |
+| M-1 | `mobile_data` one-switch fallback, three-sided | `M/.../bridge/BridgeConfig.kt:55,129-136`; `M/.../data/Store.kt:115-117` (debug feed); launcher `L/music/MusicPlan.kt:67-68,116-117,130-135,176-188,286`; server B-6 | Launcher and server before design 30. The user's music app is 0.6.1-rc.1, past design 30 | REMOVE in one commit across all three; ship the server first (C1 code QA M1): rc.7 then keeps its last music settings until it updates | **low, server first** (rc.7 refuses a `music` object without `mobile_data` and keeps what it has) | BridgeTest (82-190), GuardsTest (446-472); launcher MusicPlanTest (79-163), MusicMediaPlanTest, MusicFileDownloadsTest; `bridge_contract.json` in both apps (byte-identical) |
 | M-2 | Old Storytel login purge | `M/.../bridge/StorytelLegacy.kt` (whole file); `M/.../sync/Sync.kt:24,303-304`; `M/.../storytel/StorytelAccount.kt:26` | Music app with its own login before design 58 | REMOVE | low (at worst a dead sealed file on a phone that never synced since) | StorytelLegacyTest (delete); SourceScanTest:955-975 |
 | M-3 | Debug feed's `storytel.json` drop | `music/app/src/debug/.../DebugStorytel.kt:38-46`; `DebugFeedReceiver.kt:43,89` | Debug feed seeded the pre-58 way | REMOVE | none | SourceScanTest:654-668 (keep the manifest asserts) |
 | M-4 | AIDL `getStorytelLogin` and `IStorytelCallback.aidl` | `*/app/src/main/aidl/me/vibb/bridge/IMusicBridge.aidl:28-31` (6th method); `IStorytelCallback.aidl`; launcher `MusicBridgeService.kt:91-95` with `answerStorytel` | Music app before design 58 step 2 | REMOVE the method's meaning but **keep the slot**: swap it for a no-argument `oneway void reserved();` at the same position (same transaction code), so `IStorytelCallback.aidl` and `answerStorytel` can go | **high if deleted outright**: 8 later methods would shift their transaction codes (AIDL numbers by order) | BridgeTest (26, 37), MusicPlanTest (42-53); both AIDL copies byte-identical |
@@ -221,8 +225,10 @@ About 160 are real branches covered above; the rest are comment-only (B-22, L-22
 14. **Config**: B-16 after ASK-2.
 15. **Comment sweep**: B-22, L-22, M-5/M-6 wording (mechanical), and D-9's compatibility sentences not taken with
     their code commits. Then the docs rewrites D-6, D-7 and the D-3 chain.
-16. **Ship together**: launcher and music RCs installed on the emulators first, then the server tag (Watchtower). An
-    emulator check of a fresh QR enrolment plus one sync and one status report: the policy decodes, every PWA page
+16. **Ship together, the server first** (C1 code QA M1): the RCs may go on the emulators before the server tag, but
+    the kid's phone gets the C1 launcher and music RCs only after the C1 server is live (Watchtower), and its Install
+    Now waits for the server tag. If a C1 launcher ever meets an older server, expect the UP apps to re-register
+    afterwards. An emulator check of a fresh QR enrolment plus one sync and one status report: the policy decodes, every PWA page
     draws without "Oppdater Vibb One", and an Install Now offers the next RC.
 
 The PLAN entry is marked in the merge commit as each step lands (the queue upkeep rule).

@@ -190,8 +190,6 @@ pub fn flash_text(lang: crate::i18n::Lang, code: &str) -> Option<(&'static str, 
 /// many. More gets 413: a guard against a launcher that sends more than it should, which then
 /// drops that batch as refused (`pinEventsLeaveQueue`).
 pub const PIN_EVENTS_MAX: usize = 100;
-/// The launcher reports parent-PIN events (status `capabilities`).
-pub const PARENT_PIN_EVENTS_CAPABILITY: &str = "parent_pin_events_v1";
 /// Events are kept this many days (by `received_at`, `retention::prune`).
 pub const PIN_EVENT_DAYS: i64 = 90;
 /// 2020-01-01T00:00:00Z: an event before this comes from a phone whose clock is off.

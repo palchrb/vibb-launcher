@@ -331,15 +331,12 @@ async fn policy_json_keys_snapshot() {
             "app_permissions",
             "app_updates_wifi_only",
             "apps_mobile",
-            "bedtime_end_minutes",
-            "bedtime_start_minutes",
             "block_activity_start",
             "bluetooth_any_device",
             "boot_cover",
             "calendar",
             "call_policy",
             "captive_portal",
-            "data_roaming",
             "dns_filter_version",
             "dns_log_enabled",
             "dns_upstream",
@@ -363,16 +360,14 @@ async fn policy_json_keys_snapshot() {
             "quick_controls_mask",
             "rule_pause",
             "screen_timeout_seconds",
+            "server_tls",
             "status_gzip",
             "status_heartbeat",
             "status_heartbeat_fields",
             "time_policy",
+            "unified_push",
             "update_fence",
             "vpn_filter_enabled",
-            "weekday_end_minutes",
-            "weekday_start_minutes",
-            "weekend_end_minutes",
-            "weekend_start_minutes",
         ]
     );
 
@@ -380,7 +375,6 @@ async fn policy_json_keys_snapshot() {
         "app_permissions",
         "app_updates_wifi_only",
         "apps_mobile",
-        "data_roaming",
         "mobile_settings_locked",
         "block_activity_start",
         "bluetooth_any_device",
@@ -403,10 +397,12 @@ async fn policy_json_keys_snapshot() {
         "quick_controls_mask",
         "rule_pause",
         "screen_timeout_seconds",
+        "server_tls",
         "status_gzip",
         "status_heartbeat",
         "status_heartbeat_fields",
         "time_policy",
+        "unified_push",
         "update_fence",
         "vpn_filter_enabled",
     ] {
@@ -423,18 +419,11 @@ async fn policy_json_keys_snapshot() {
             "day_minutes": 20, "grant": 0})
     );
     assert!(object["login_browser"].is_null());
-    // Design 108 §3.8: `unified_push` only to a launcher with `unified_push_v1`, `{on, origin, regs, stopped, refresh}`; every
-    // row in `tests::unified_push` (`unified_push.json`'s `policy`).
-    assert!(!object.contains_key("unified_push"));
-    app.post_status(
-        &token,
-        serde_json::json!({"capabilities": [crate::unified_push::CAPABILITY]}),
-    )
-    .await;
-    let distributor = app.policy(&token).await;
-    let mut up_keys: Vec<&str> = distributor["unified_push"]
+    // Design 108 §3.8: `unified_push`, `{on, origin, regs, stopped, refresh}`; every row in `tests::unified_push`
+    // (`unified_push.json`'s `policy`).
+    let mut up_keys: Vec<&str> = object["unified_push"]
         .as_object()
-        .expect("unified_push for a distributor")
+        .expect("unified_push")
         .keys()
         .map(String::as_str)
         .collect();
@@ -448,19 +437,15 @@ async fn policy_json_keys_snapshot() {
     assert_eq!(
         call_keys,
         [
-            "calls_enabled",
             "calls_mode",
             "contact_requests",
             "contacts",
             "default_country_code",
             "emergency_menu",
-            "managed",
             "mmsc_hosts",
             "own_numbers",
-            "sms_enabled",
             "sms_groups",
             "sms_held_drop",
-            "sms_lock_text",
             "sms_mode",
             "sms_names",
         ]
@@ -554,7 +539,7 @@ async fn policy_json_keys_snapshot() {
     );
     assert_eq!(time_policy["request_answers"], serde_json::json!(true));
     // The launcher's TimeRule DTO: a rule's keys (`calendar_allowed` since 0119, Kalender usable
-    // during the rule - the launcher's default is false, so an older server keeps it closed;
+    // during the rule - the launcher's default is false;
     // `silent` since 0121, the phone's own Do Not Disturb during the rule - also false by default;
     // design 93's `until_ms` and `card_first`, a rule turned on now's end and card choice).
     sqlx::query(
@@ -622,11 +607,10 @@ async fn policy_json_keys_snapshot() {
     // reads exactly this shape (`PolicyResponseCompatTest`); a rule's and a calendar's keys in
     // `calendar::the_policy_carries_the_rules_and_the_calendars`. Design 72: `feeds`, the phone's calendar links
     // (`[]` without one; a link's keys in `calendar::a_link_reaches_the_policy_and_the_phone`, `calendar_feeds.json`).
-    // `lock_reminders` is `off`, `row` or (migration 0113) `ping` - the row plus one sound, only to a launcher
-    // claiming `calendar_ping_v1`, `row` to an older one, which reads anything but `row` as off
-    // (`calendar::the_ping_saves_and_reaches_only_a_launcher_that_knows_it`; the launcher's `CalendarPolicyTest`).
-    // Design 72b: `kid_caldav`, the CalDAV calendar the kid's events are written to - `null` unless one is marked and
-    // the launcher claims `calendar_kid_caldav_v1` (its object's keys in `calendar_kid_events.json`'s `policy`).
+    // `lock_reminders` is `off`, `row` or (migration 0113) `ping` - the row plus one sound
+    // (`calendar::the_ping_saves_and_reaches_the_phone`; the launcher's `CalendarPolicyTest`).
+    // Design 72b: `kid_caldav`, the CalDAV calendar the kid's events are written to - `null` unless one is marked
+    // (its object's keys in `calendar_kid_events.json`'s `policy`).
     assert_eq!(
         object["calendar"],
         serde_json::json!({
@@ -643,15 +627,14 @@ async fn policy_json_keys_snapshot() {
 
     // The launcher's (nullable, step 1: ignored) music DTO (design 21): every key, a fresh phone's
     // defaults; only `library_version`, `volume_cap_pct` and `storage_limit_gb` may be null. `null`
-    // as a whole only when it can't be read (tests/music.rs). Design 30: `mobile_data` stays (both
-    // switches on), the two switches and the storage limit (a fresh phone's 2 GB) are added. Design
+    // as a whole only when it can't be read (tests/music.rs). Design 30: the two switches and the
+    // storage limit (a fresh phone's 2 GB). Design
     // 26c: `spotify` (bound to an account; the launcher's DNS exemption). 2026-11-01: `spotify_diag_until` (Device ›
     // Advanced's diagnostic log; null unless it runs - the launcher reads it on its own, leniently).
     assert_eq!(
         object["music"],
         serde_json::json!({
             "library_version": null,
-            "mobile_data": false,
             "stream_mobile_data": false,
             "download_mobile_data": false,
             "volume_cap_pct": null,
@@ -684,23 +667,9 @@ async fn policy_json_keys_snapshot() {
     assert_eq!(object["lock_media_apps"], serde_json::json!([]));
     assert_eq!(denied["lock_media_apps"], serde_json::json!([]));
 
-    // Design 76: `server_tls` only for a launcher with `server_pin_v1` - `{}` while watching (no `enforce`, R-1), the
-    // launcher's raw `serverTls` (PolicyResponseCompatTest, ServerPinsTest).
-    app.post_status(
-        &token,
-        serde_json::json!({"capabilities": [crate::server_tls::CAPABILITY]}),
-    )
-    .await;
-    let capable = app.policy(&token).await;
-    let mut capable_keys: Vec<&str> = capable
-        .as_object()
-        .unwrap()
-        .keys()
-        .map(String::as_str)
-        .collect();
-    capable_keys.retain(|k| !keys.contains(k));
-    assert_eq!(capable_keys, ["server_tls"]);
-    assert_eq!(capable["server_tls"], serde_json::json!({}));
+    // Design 76: `server_tls` - `{}` while watching (no `enforce`, R-1), the launcher's raw `serverTls`
+    // (PolicyResponseCompatTest, ServerPinsTest).
+    assert_eq!(object["server_tls"], serde_json::json!({}));
 }
 
 #[tokio::test]

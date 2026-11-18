@@ -6,8 +6,6 @@ use serde_json::{Value, json};
 
 use super::TestApp;
 
-const CAP: &str = "window_relock_v1";
-
 /// Design 24b §1.7's literal, as the launcher sends it.
 fn literal(at_ms: i64) -> Value {
     json!({ "at_ms": at_ms, "trigger": "timer", "windows": ["override"],
@@ -24,10 +22,14 @@ fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
 
-/// A status report from a launcher with [CAP] (`extra`'s `capabilities` replace it).
-async fn post_status(app: &TestApp, token: &str, mut extra: Value) {
-    let keys = extra.as_object_mut().unwrap();
-    keys.entry("capabilities").or_insert_with(|| json!([CAP]));
+/// The phone's `relock_blocks` entry for the literal's blocked app, blocked by a relock at `at_ms`.
+fn relock_block(at_ms: i64) -> Value {
+    json!({ "package_name": "com.example.app",
+            "signer": "3f2a00000000000000000000000000000000000000000000000000000000c0de",
+            "reason": "unknown", "found": "relock", "at_ms": at_ms })
+}
+
+async fn post_status(app: &TestApp, token: &str, extra: Value) {
     app.post_status(token, extra).await;
 }
 
@@ -68,7 +70,8 @@ async fn the_last_relock_shows_on_the_summary_for_a_week() {
     .execute(&app.db)
     .await
     .unwrap();
-    let mut relock = literal(now_ms() - 3_600_000);
+    let at = now_ms() - 3_600_000;
+    let mut relock = literal(at);
     relock["accessibility_enabled"] = json!(["com.evil.ally"]);
     relock["apps_disabled"] = json!(["com.android.inputmethod.latin"]);
     relock["own_notifications_off"] = json!(true);
@@ -76,7 +79,7 @@ async fn the_last_relock_shows_on_the_summary_for_a_week() {
     post_status(
         &app,
         &token,
-        json!({ "relock": relock,
+        json!({ "relock": relock, "relock_blocks": [relock_block(at)],
                 "installed_apps": [{ "package_name": "com.evil.ally", "label": "Ally <b>" }] }),
     )
     .await;
@@ -108,7 +111,7 @@ async fn the_last_relock_shows_on_the_summary_for_a_week() {
     // Words, never the step's code.
     assert!(found.contains("Certificates"), "{found}");
     assert!(!found.contains("ca_certs"), "{found}");
-    // An older launcher's relock blocks: listed with Allow these apps….
+    // The relock's block: listed with Allow these apps….
     let blocked = group(&html, "blocked-apps");
     assert!(
         blocked.contains("data-block=\"com.example.app\""),
@@ -187,10 +190,11 @@ async fn a_blocked_app_with_another_key_than_the_catalogs_is_called_out() {
     .execute(&app.db)
     .await
     .unwrap();
+    let at = now_ms() - 60_000;
     post_status(
         &app,
         &token,
-        json!({ "relock": literal(now_ms() - 60_000) }),
+        json!({ "relock": literal(at), "relock_blocks": [relock_block(at)] }),
     )
     .await;
     let html = app
@@ -204,8 +208,6 @@ async fn a_blocked_app_with_another_key_than_the_catalogs_is_called_out() {
     );
     assert!(blocked.contains("99999999…99999999"), "{blocked}");
     assert!(!blocked.contains("allow-blocked"), "{blocked}");
-    // An older launcher's imposter waits for nothing: no Attention row for it.
-    assert!(!html.contains("data-attention=\"blocked-apps\""), "{html}");
 }
 
 /// QA of pause-end-report (M1, L2): Quick actions shows the pause as of the newest report - its age once it is old, and
@@ -256,7 +258,7 @@ async fn an_old_reports_pause_says_its_age_and_ends_by_the_clock() {
 }
 
 #[tokio::test]
-async fn lock_again_follows_the_status_and_the_capability() {
+async fn lock_again_follows_the_status() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;
@@ -308,33 +310,6 @@ async fn lock_again_follows_the_status_and_the_capability() {
     )
     .await;
     assert!(!page(&app, id, &cookie).await.contains(&button));
-    // An older launcher: no button, but the pause is still an alarm.
-    let res = app
-        .request(
-            Method::POST,
-            "/api/devices/status",
-            Some(&token),
-            Some(
-                json!({ "lock_reason": "NONE", "kiosk_engaged": true, "restrictions_paused": true,
-                         "capabilities": ["pin_lock_v1"] }),
-            ),
-        )
-        .await;
-    assert_eq!(res.status, StatusCode::NO_CONTENT);
-    let html = page(&app, id, &cookie).await;
-    assert!(!html.contains(&button));
-    assert!(!html.contains("start-pause"), "{html}");
-    // ... and its quick actions still say that the pause ends by itself.
-    let quick = group(&html, "quick");
-    assert!(quick.contains(paused), "{quick}");
-    assert!(
-        quick.contains("Can&#39;t be locked again from here"),
-        "{quick}"
-    );
-    assert!(
-        html.contains("data-attention=\"restrictions-paused\""),
-        "{html}"
-    );
 }
 
 #[tokio::test]
@@ -710,10 +685,10 @@ async fn an_install_time_block_is_listed_allowed_and_cleared() {
     assert_eq!(stored, None);
 }
 
-/// QA Low 10: "Allow these apps" goes once the phone answered one pressed after the relock, and
-/// each command's answer - or that there is none - shows in Activity, its row (design 48).
+/// "Allow these apps" stays until the phone reports the blocks gone, and each command's answer - or
+/// that there is none - shows in Activity, its row (design 48).
 #[tokio::test]
-async fn the_phones_answers_show_and_an_answered_allow_hides_its_button() {
+async fn the_phones_answers_show_and_the_blocks_go_with_its_report() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;
@@ -724,10 +699,11 @@ async fn the_phones_answers_show_and_an_answered_allow_hides_its_button() {
     .execute(&app.db)
     .await
     .unwrap();
+    let at = now_ms() - 3_600_000;
     post_status(
         &app,
         &token,
-        json!({ "relock": literal(now_ms() - 3_600_000) }),
+        json!({ "relock": literal(at), "relock_blocks": [relock_block(at)] }),
     )
     .await;
     let button = format!("action=\"/devices/{id}/allow-blocked#blocked-apps\"");
@@ -762,11 +738,6 @@ async fn the_phones_answers_show_and_an_answered_allow_hides_its_button() {
         )
         .await;
     assert_eq!(res.status, StatusCode::NO_CONTENT);
-    let html = app
-        .get_page(&format!("/devices/{id}"), &cookie)
-        .await
-        .text();
-    assert!(!html.contains(&button), "{html}");
     let page = app
         .get_page(&format!("/devices/{id}/activity"), &cookie)
         .await
@@ -775,11 +746,18 @@ async fn the_phones_answers_show_and_an_answered_allow_hides_its_button() {
         group(&page, "activity").contains(">1 app allowed<"),
         "{page}"
     );
-    // The list itself stays with the report it came from; nothing waits any more.
-    assert!(
-        group(&html, "blocked-apps").contains("data-block=\"com.example.app\""),
-        "{html}"
-    );
+    // The phone's next report lists no blocks: no button, nothing waits.
+    post_status(
+        &app,
+        &token,
+        json!({ "relock": literal(at), "relock_blocks": [] }),
+    )
+    .await;
+    let html = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(!html.contains(&button), "{html}");
     assert!(!html.contains("blocked app waits"), "{html}");
 }
 

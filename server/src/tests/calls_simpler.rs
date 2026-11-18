@@ -26,11 +26,8 @@ async fn managed_phone(app: &TestApp) -> (i64, String) {
 
 /// A status report with the engine and this `sms_state`.
 async fn report(app: &TestApp, token: &str, sms_state: serde_json::Value) {
-    app.post_status(
-        token,
-        json!({ "capabilities": ["call_policy_v1", "sms_engine_v1"], "sms_state": sms_state }),
-    )
-    .await;
+    app.post_status(token, json!({ "sms_state": sms_state }))
+        .await;
 }
 
 /// A contact on the phone with its six flags `[inbound, outbound, home, sms_in, sms_out, mms]`.
@@ -154,7 +151,8 @@ fn contact_html(html: &str, contact: i64) -> &str {
 
 /// D3 through the contact's form, as autosave posts it: a two-way switch sets both flags, a one-way change under
 /// "on" is taken, a split channel is "Tilpasset" and kept when another field saves, a stale page never undoes a
-/// split (L1), `custom` and an older page take the pair as posted, and `more` brings the Avansert back (D9).
+/// split (L1), `custom` takes the pair as posted, a missing `*_shown` is refused, and `more` brings the Avansert back
+/// (D9).
 #[tokio::test]
 async fn a_contacts_two_way_switches_set_both_flags() {
     let app = TestApp::new().await;
@@ -292,21 +290,27 @@ async fn a_contacts_two_way_switches_set_both_flags() {
         flags(&app, id, c).await,
         [false, true, false, true, false, false]
     );
-    // An older page (no `*_shown`, the old six switches): today's behaviour; an unknown value too (N4).
-    let old: Vec<(String, String)> = [
-        ("inbound", "on"),
-        ("sms_out", "on"),
-        ("texts_shown", "v2"),
-        ("texts", "on"),
-    ]
-    .iter()
-    .map(|(k, v)| (k.to_string(), v.to_string()))
-    .collect();
-    post(&app, &cookie, &action, &old).await;
-    assert_eq!(
-        flags(&app, id, c).await,
-        [true, false, false, false, true, false]
-    );
+    // A missing or unknown `*_shown` (a stale page) is refused and writes nothing.
+    for old in [
+        vec![("inbound", "on"), ("sms_out", "on")],
+        vec![
+            ("calls_shown", "custom"),
+            ("inbound", "on"),
+            ("texts_shown", "v2"),
+            ("texts", "on"),
+        ],
+    ] {
+        let old: Vec<(String, String)> = old
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        let res = post(&app, &cookie, &action, &old).await;
+        assert_eq!(res.status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            flags(&app, id, c).await,
+            [false, true, false, true, false, false]
+        );
+    }
 
     // D9: a save with the Avansert open comes back with it open.
     let html = page(&app, &cookie, &calls).await;
@@ -575,7 +579,13 @@ async fn add_contact_ways_in_and_the_own_number() {
                 Method::POST,
                 &action,
                 Some(&cookie),
-                &[("name", "Meg"), ("number", number), ("switches", "on")],
+                &[
+                    ("name", "Meg"),
+                    ("number", number),
+                    ("switches", "on"),
+                    ("calls_shown", "custom"),
+                    ("texts_shown", "custom"),
+                ],
             )
             .await;
         assert_eq!(res.status, StatusCode::BAD_REQUEST, "{number}");
@@ -614,7 +624,7 @@ async fn add_contact_ways_in_and_the_own_number() {
 }
 
 /// D8: `/calls/settings` split by its section marker - each saving one leaves the other unchanged - and no marker is
-/// the write-all of before.
+/// refused.
 #[tokio::test]
 async fn the_settings_form_is_split_by_section() {
     let app = TestApp::new().await;
@@ -665,17 +675,19 @@ async fn the_settings_form_is_split_by_section() {
         stored().await,
         ("unmanaged".into(), "managed".into(), "signal".into())
     );
-    // No marker: today's write-all (a missing button reads as SMS).
-    app.request_form(
-        Method::POST,
-        &uri,
-        Some(&cookie),
-        &[("calls_mode", "managed"), ("sms_mode", "managed")],
-    )
-    .await;
+    // No marker: refused, nothing written.
+    let res = app
+        .request_form(
+            Method::POST,
+            &uri,
+            Some(&cookie),
+            &[("calls_mode", "managed"), ("sms_mode", "managed")],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
     assert_eq!(
         stored().await,
-        ("managed".into(), "managed".into(), "sms".into())
+        ("unmanaged".into(), "managed".into(), "signal".into())
     );
     // A button post without its picker is refused.
     let res = app
@@ -959,11 +971,8 @@ async fn the_page_keeps_on_view_what_needs_a_decision() {
 
 /// A report claiming the engine and the group switch, with this `sms_state`.
 async fn report_groups(app: &TestApp, token: &str, sms_state: serde_json::Value) {
-    app.post_status(
-        token,
-        json!({ "capabilities": ["call_policy_v1", "sms_engine_v1", "sms_groups_v1"], "sms_state": sms_state }),
-    )
-    .await;
+    app.post_status(token, json!({ "sms_state": sms_state }))
+        .await;
 }
 
 async fn groups_on(app: &TestApp, id: i64) -> bool {
@@ -974,11 +983,10 @@ async fn groups_on(app: &TestApp, id: i64) -> bool {
         .unwrap()
 }
 
-/// D13: the switch is drawn disabled until the phone claims `sms_groups_v1` (a post can't turn it off then); with it,
-/// only a post carrying `groups_shown` writes it (an older page keeps it). Off: the policy says so, Avansert's row
-/// says "Group texts off", a blocked group row says why, and the missing number's lines are silent.
+/// D13: only a post carrying `groups_shown` writes the switch (a post without it keeps it). Off: the policy says so,
+/// Avansert's row says "Group texts off", a blocked group row says why, and the missing number's lines are silent.
 #[tokio::test]
-async fn the_group_switch_needs_the_capability_and_its_marker() {
+async fn the_group_switch_needs_its_marker() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = managed_phone(&app).await;
@@ -993,21 +1001,9 @@ async fn the_group_switch_needs_the_capability_and_its_marker() {
     let html = page(&app, &cookie, &calls).await;
     let row = part(&html, "data-groups", "</label>");
     assert!(
-        row.contains("Update Vibb One first") && row.contains("checked disabled"),
+        !row.contains("Update Vibb One") && !row.contains("disabled"),
         "{row}"
     );
-    app.request_form(Method::POST, &sms, Some(&cookie), &[("groups_shown", "1")])
-        .await;
-    assert!(groups_on(&app, id).await, "no capability: kept");
-
-    report_groups(
-        &app,
-        &token,
-        json!({ "own_numbers": [{ "slot": 1, "number": null }] }),
-    )
-    .await;
-    let html = page(&app, &cookie, &calls).await;
-    assert!(!part(&html, "data-groups", "</label>").contains("disabled"));
     let res = app
         .request_form(Method::POST, &sms, Some(&cookie), &[("groups_shown", "1")])
         .await;
@@ -1017,7 +1013,7 @@ async fn the_group_switch_needs_the_capability_and_its_marker() {
         app.policy(&token).await["call_policy"]["sms_groups"],
         json!(false)
     );
-    // An older page (no marker) keeps it off; the switch turned on with the marker writes it.
+    // A post without the marker keeps it off; the switch turned on with the marker writes it.
     app.request_form(Method::POST, &sms, Some(&cookie), &[("own_number_1", "")])
         .await;
     assert!(!groups_on(&app, id).await);
@@ -1169,32 +1165,6 @@ async fn own_numbers(app: &TestApp, id: i64) -> Vec<(i64, String)> {
         .unwrap()
 }
 
-/// M1: a page drawn before the phone claimed `sms_groups_v1` (the switch disabled) has no `groups_shown`, so saving
-/// another field after the phone updated never turns group texts off.
-#[tokio::test]
-async fn a_page_drawn_before_the_capability_never_turns_groups_off() {
-    let app = TestApp::new().await;
-    let cookie = app.admin_cookie().await;
-    let (id, token) = managed_phone(&app).await;
-    let sms = format!("/devices/{id}/calls/sms");
-    let stale = page(&app, &cookie, &format!("/devices/{id}/calls")).await;
-    let drawn = fields_of(&stale, &sms);
-    assert!(!drawn.iter().any(|(k, _)| k == "groups_shown"), "{drawn:?}");
-    report_groups(&app, &token, json!({})).await;
-    post(&app, &cookie, &sms, &drawn).await;
-    assert!(
-        groups_on(&app, id).await,
-        "the stale page left groups as they were"
-    );
-    // Drawn with the capability, the marker is there.
-    let fresh = page(&app, &cookie, &format!("/devices/{id}/calls")).await;
-    assert!(
-        fields_of(&fresh, &sms)
-            .iter()
-            .any(|(k, _)| k == "groups_shown")
-    );
-}
-
 /// L1: a number the phone only learned (anyone can send the message that taught it) never blocks a contact; added as
 /// one, the policy carries it - the phone then drops the learned number (`OwnLearning.current`) - and the page no
 /// longer offers it as the phone's number.
@@ -1221,6 +1191,8 @@ async fn a_learned_number_can_be_added_as_a_contact() {
                 ("name", "Klassekamerat"),
                 ("number", "+4790000009"),
                 ("switches", "on"),
+                ("calls_shown", "custom"),
+                ("texts_shown", "custom"),
             ],
         )
         .await;
@@ -1389,6 +1361,7 @@ async fn an_emergency_number_added_without_js_follows_the_texts_switch() {
                 ("name", ""),
                 ("number", "113"),
                 ("switches", "on"),
+                ("calls_shown", "custom"),
                 ("texts_shown", "off"),
                 ("texts", "on"),
             ],

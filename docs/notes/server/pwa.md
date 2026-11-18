@@ -52,13 +52,6 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   ones are left out (`provisioning::valid_locale`/`valid_time_zone`), the settings form refuses
   malformed values (400, nothing written). Hardening switch `disallow_config_locale`
   (`device_policy`, default 1) -> `DISALLOW_CONFIG_LOCALE` on the phone.
-- **FCM by installation ID** (migration `0035`, qa-fixround-2026-10-06 #2; removed with FCM in design 19, the
-  table is dropped by 0048): the launcher registers
-  by Firebase installation ID (firebase-messaging 25.1+) and reports `push.fcm_token_kind`
-  ("fid"/"token", stored as `device_push.fcm_token_kind`). `fcm::TargetKind::of` (report when it
-  agrees with the value, else the shape: an FID is 22 chars of base64url, a token has ':') picks
-  `message.fid` or `message.token` - `token` is deprecated and takes FIDs only during Firebase's
-  migration period. `FcmSender::send` takes a `fcm::Target {id, kind}`; the fake records kinds.
 
 ## Fix round 1 (2026-10-18, QA `docs/review/qa-r1-server-code.md`)
 
@@ -140,8 +133,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   the raw state's word and colour.
 - **Lock badge and screen time** (`src/time_state.rs`, from the last `time_state`): **the end ("until 14:30",
   "until 07:00 tomorrow") only when provably right** (the parent's rule): the phone reports its own zone
-  (`time_state.zone`, the launcher's `ZoneId.systemDefault().id` since design 34 P13; an older launcher sends none and
-  gets no end) and it is exactly Phone Setup's IANA name (another zone, an offset id, garbage or another case: no end;
+  (`time_state.zone`, the launcher's `ZoneId.systemDefault().id` since design 34 P13; none gets no end) and it is exactly Phone Setup's IANA name (another zone, an offset id, garbage or another case: no end;
   `TimeReport::parse` keeps only a non-empty string of at most 64 bytes, nothing else reads it), the report is
   fresh, from today and inside one window of the active rule, the end is exactly one instant in the zone
   (`Zone::single_instant`: not in a spring-forward gap, where the phone unlocks at the jump, nor in a fall-back
@@ -247,9 +239,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `show_text = 0`, or with `show_text = 1` - back to the app's row (Off on a row listed only because it was on: to
   `#notifications`, qa-browser-fixes-code L1), the phone nudged, a security-log line per change only
   (`lock_screen_app_changed` on/off, `lock_screen_text_changed` for the text; a save that changes nothing logs
-  nothing). 400 for a bad package or a `show` that isn't one of the three; a body without `show` (a Lock page loaded
-  before the select posts `on`) and a post to the removed `/lock-screen/apps/text` answer 400 "This page is out of
-  date - reload it." (`lock_glance::stale_page`, nothing written; the route can go a release later). The write is one
+  nothing). 400 for a bad package or a `show` that isn't one of the three (or none), nothing written. The write is one
   `BEGIN IMMEDIATE` transaction (two saves racing wait for each other). 404 unknown phone, 500 on a
   DB error - nothing written. **The stored data and the policy are unchanged** (`device_lock_glance_apps` row or
   none, `show_text`; `policy_json_keys_snapshot` untouched): no launcher or contract change. Tests:
@@ -274,10 +264,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `device_policy.lock_buzz_on_notification`, migration 0136, off by default; 404 for an unknown phone), back to
   `#lock-buzz`, the phone nudged, a `lock_buzz_changed` security-log line when the value changed
   (`lock_glance::buzz_log_line`); sent as `launcher_ui.lock_buzz_on_notification`, always. One switch for everything
-  that brings a row to the lock - Meldinger has none of its own, and no app has a buzz choice. A phone that has
-  reported and whose last report lacks `messages_app_v1` (the buzz ships in that launcher release) shows the orange
-  line "This phone does not buzz yet - update Vibb One" under the switch (`lock_buzz_needs_update`); never before
-  the first report. Tests:
+  that brings a row to the lock - Meldinger has none of its own, and no app has a buzz choice. Tests:
   `lock_glance::the_buzz_switch_saves_logs_nudges_and_reaches_the_policy`, the redirect table in `device_pages`,
   `policy_json_keys_snapshot`.
 - **Where the forms return** (§5.1, pinned by `device_pages::lock_forms_return_to_the_page`): `kid-lock` →
@@ -313,7 +300,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   (an adb command) shown behind an ⓘ after its sentence (`partials/note_warning.html`), never in the visible text.
 - **Fix round (qa-31-s4-code):** "On the phone · Locked · 10:59" carries the report's local time, so an old report
   never reads as now; `device_pages::load_policy` gives a 500 on a DB error (About, Advanced and this page), never the
-  defaults' "Child PIN · Off"; `device_pages::has_capability` is the pages' one capability check; the device page asks
+  defaults' "Child PIN · Off"; `device_pages::has_capability` is the one capability check (C1: today only `android_keyguard_v1`, C3's); the device page asks
   `parent_pin::card` for the notices only (`with_events = false`), not the 10-event list (since 2026-10-20 the
   summary doesn't ask it at all, and `with_events` is gone).
 - **Shared builders:** `devices::app_rows` (the Apps list's rows, parsed allowlist, installed apps, downloads) is the
@@ -337,8 +324,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - **Web Filter** (`GET /devices/{id}/filter`, `device_pages::view_filter`, `device_filter.html`; row "Web Filter ·
   On/Off"): the Web filter switch (`/policy` with `section=filter`); Blocklists, one inline select each - "As for
   everyone (On|Off)" (the list as everyone has it; "Default (On)" until 2026-11-01) / On / Off, the footer "As for
-  everyone follows the switch in Settings › Web Filter." (`device.filter.*`) (`/dns/devices/{id}/blocklists/{list}/override`, `setting=default|on|off`; an
-  older form's `clear` / `enabled` still works; 400 other values, 404 unknown phone or list), with the list's download
+  everyone follows the switch in Settings › Web Filter." (`device.filter.*`) (`/dns/devices/{id}/blocklists/{list}/override`, `setting=default|on|off`; 400
+  other values or none, 404 unknown phone or list), with the list's download
   problem as a short title (`dns_filter::FeedState::problem`; the global page keeps its sentence); Blocked / Allowed
   on this phone (`/dns/domains/new` with `device_id`, `/dns/domains/{id}/delete`; a name that isn't a domain goes back
   to its group with `?notice=not_a_domain_block|allow#blocked|allowed` from this page, a 400 from `/dns`; a domain
@@ -348,17 +335,15 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   by the phone's time in local time (a garbled phone time reads "Time unknown" and sorts last). Every read the page
   needs fails as a 500 (the code QA fix round, `qa-31-s5-code.md`).
 - **`section` on `/devices/{id}/policy`** (§5.6, H1): `quick` writes only `quick_controls_mask` and returns to
-  `/home`, `filter` only `vpn_filter_enabled` and returns to `/filter`; no section (an older tab) writes both and returns
-  to the device page; another value 400. `kiosk_desired = 1` and the lock-task features in every case; 404 unknown phone,
+  `/home`, `filter` only `vpn_filter_enabled` and returns to `/filter`; none or another value 400. `kiosk_desired = 1` and the lock-task features in every case; 404 unknown phone,
   500 on a DB error (it used to log and redirect).
 - **`back`** (§5.1) on the domain and list routes (`dns_filter::back_to`): `back=filter` returns to the phone's Web
   Filter page - the phone from the path or the deleted row, never from the form -, anything else to the form's group on
   `/dns` (step 14). Every form on the two phone pages returns to its group (`#layout`, `#wallpapers`,
   `#quick-controls`; `#filter`, `#lists`, `#blocked`, `#allowed`, `#log`; scroll-restore keeps the place), pinned by
   `tests::device_pages::home_and_filter_forms_return_to_their_page`.
-- **Old URLs** (L5): `/dns?device=X` → `/devices/X/filter`, `/dns/log?device=X` → `/devices/X/filter#log`. `/dns`
-  and `/dns/log` are in "The rest of Settings" below.
-- Tests: `src/tests/device_pages.rs` (both pages, the rows, the section test, the redirect table, the old URLs, bad
+- `/dns` and `/dns/log` are in "The rest of Settings" below.
+- Tests: `src/tests/device_pages.rs` (both pages, the rows, the section test, the redirect table, bad
   input, unreadable parts, a phone not set up), repointed `launcher_ui.rs`, `wallpapers.rs`, `sound_mode.rs`,
   `cleanup.rs` (the log), `dns_blocklist.rs` (the phone's list problem), `lock_glance.rs`, `devices_list.rs`, `shell.rs`.
 
@@ -392,7 +377,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - **Where the forms return** (§5.1, `tests::device_pages::apps_forms_return_to_their_rows`, built from the rendered
   forms): a switch (`/apps/toggle`, `back=apps`) to its row, `/devices/{id}/apps#app-<package>` (`#catalog-<id>` for a
   catalog app without a package; `devices::app_anchor`) - the row moves between the groups and the fragment finds it,
-  with or without JS; `back=music` (or a page's old `anchor=music`) to Device › Music (step 7, below); a Name
+  with or without JS; `back=music` to Device › Music (step 7, below); a Name
   and icon save to the same row (the action carries the fragment, for a refusal rendered in the answer);
   `/app-updates` to `#downloads`. The blocked apps' "tick it" and the Apps tab's phone rows link to the rows.
 - **`toggle_app`** takes a package name (the status intake's rule) or exactly what the catalog row it names stores (an
@@ -439,8 +424,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 
 ## Device › Apps: Permissions (design 68, `docs/design/68-app-permissions.md` §4.1, migration `0102_app_permissions.sql`)
 
-- **What the parent sees**: an allowed app the phone reports something about (`installed_apps[].access`, launcher
-  `app_permissions_v1`; third-party apps only, the phone reports none for a system app) gets a second sub-line under
+- **What the parent sees**: an allowed app the phone reports something about (`installed_apps[].access`; third-party apps
+  only, the phone reports none for a system app) gets a second sub-line under
   its row with only what needs a look - "Camera off" (a stored row and the report reads `admin_denied`; "Camera off ·
   waiting for the phone" while it still reads `requested`, "Camera off · back on while restrictions are paused" while
   the last report says paused - the pause lifts it), then each declared access "<name>: not approved / unknown" (an
@@ -452,8 +437,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   allowed the camera."), and one line per declared access with the way to approve it while it isn't ("On the phone:
   Settings (parent code) › Pause all restrictions › App access › <app>: <access>"; Alarms & reminders add ", then open
   <app> once while restrictions are paused" - Etar's first start outside a pause crashes, E4's M2). A stored row for an app that no
-  longer asks is inert (no switch, no word). While the phone has reported its apps without `app_permissions_v1`, one
-  `row-note` "Update Vibb One to manage apps' permissions" sits above the Allowed list.
+  longer asks is inert (no switch, no word).
 - **Show as a media player on the lock screen** (2026-11-04, the user: "En bryter per app i pwa, tastefully
   implementert"; migration `0127_lock_media_apps.sql`, `device_lock_media_apps`): the phone's lock tile shows another
   app's playback only for a media app (its manifest's category audio or video, or a browser - so a messenger's voice
@@ -501,7 +485,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - **The page** (`GET /devices/{id}/music`, chained with the settings form's POST; `device_pages::view_music`,
   `device_music.html`, its parts from `handlers::music::device_card`; the device page's row "Music · 6 in library",
   "None" with nothing on, "Needs attention" (orange) while the page shows a warning, "Couldn't read" on a failed
-  read): warnings at the top (Vibb One can't deliver music yet, the music app not reachable), **Music app** (the catalog
+  read): warnings at the top (the music app not reachable), **Music app** (the catalog
   switch, "Not in the catalog ›" to `/music/settings#app` without a catalog row), **Library** (one switch per entry,
   `#music-entry-<id>`, the phone's error for the entry under its name while it is on), the **settings form**
   `#music-settings` (one form, `v=2`, design 30: Mobile data, Storage limit and Volume cap pickers, Storytel - groups
@@ -511,9 +495,9 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   group, local). A phone not set up has the page. Every read is a 500 on a DB error ("Couldn't read this phone"),
   never an empty library or default settings.
 - **Attention** (qa-31-s7-code M1): `handlers::music::music_warnings` (typed `MusicWarnings`) feeds both the page's
-  warnings and six orange rows - "Vibb One can't deliver music yet" and "Music app not reachable" (→ the page),
+  warnings and four orange rows - "Music app not reachable" (→ the page),
   "Storytel refused the phone's login" (→ `#storytel-title`), "Music over the storage limit" (→ `#storage-title`),
-  "Update Vibb One and the music app" / "Update Vibb One" / "Update the music app" (`OlderApps::title`, → `#music-settings`), "N music entries fail on the phone" (only entries on for the
+  "N music entries fail on the phone" (only entries on for the
   phone, one row, → `#library`); `attention::Sources::music_ticked` carries the entries on.
 - **Where the forms return** (§5.1, `tests::device_pages::music_forms_return_to_their_groups`, built from the
   rendered forms, each fragment checked to hold its form): the app switch to `#music-app`, refused to `?music_notice=from_play|not_an_app#music-app` (the reason in that group), a catalog row
@@ -534,11 +518,10 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   to Advanced › Connection; the lock only while a rule locks - `devices::badge_and_screen`, the Devices list's rules,
   so no end unless the phone reports Phone Setup's zone -; today's bar while a line says the screen time); **Attention** (`attention::items`, the list's count); the
   **foreign-app warning** with its steps (`#foreign-access`); **Quick Actions** (`#quick`: while the last report has the restrictions paused, one plain line first,
-  `.quick-note` - "The pause ends by itself, or tap Lock again to end it now.", an older launcher's own words; no red
+  `.quick-note` - "The pause ends by itself, or tap Lock again to end it now."; no red
   since 2026-10-26: the Attention row "Restrictions paused ›" that lands here is the one red alert -; +15 min, +30 min, +1 h,
   Pause a rule… as a `<details>` sheet with only the rules that apply, Lock again while a pause or Play install mode
-  runs, Unlock for 2 h… behind a `<details>` confirm while no pause is on - both only for a `window_relock_v1`
-  launcher -, Locate as a link to `/devices/locate?device={id}`; an open sheet spans the grid; after Lock again or
+  runs, Unlock for 2 h… behind a `<details>` confirm while no pause is on, Locate as a link to `/devices/locate?device={id}`; an open sheet spans the grid; after Lock again or
   Unlock the summary loads `auto-reload.js` (`?v=4`, every 3 s, the place kept, never once a save started or while a
   `<details>` is open) while the newer of the two is unanswered or answered but not in the newest report yet -
   `restrictions_paused` after Unlock, no pause or Play install mode after Lock again -, never after a refusal or a
@@ -558,7 +541,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `/devices/{id}?done=extra|pause|gone#quick` (`lifts::summary_group`; a refused pause says why there), End now →
   `?done=ended|over#today`; `end-windows`/`start-pause` → `?notice=…#quick`, `allow-blocked` →
   `?notice=allow_blocked_sent#blocked-apps` (the group shows for its flash even when the list is gone). A lift without
-  `back` (an older tab) lands on the summary too. The commands' payloads, `allow_form_value` and the once-per-relock
+  `back` lands on the summary too. The commands' payloads, `allow_form_value` and the once-per-relock
   rule are unchanged.
 - **Reads**: the phone, its settings, its last report, its lifts, the catalog's pins and the 24b answers are a 500 on
   a DB error (without the pins an imposter would be offered, without the answers an answered Allow; the Devices list's
@@ -762,12 +745,10 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   as in Requests; qa-pwa-fixes-d Q-9) and its `CommandStatus` with the newest fix's own time (`captured_at`):
   **asking** while it waits, is sent (not yet confirmed, offered again, can't confirm) or is received in time -
   "Asking the phone…", left out right after the press (`?requested=1`: the wait's own `#fix_wait` line
-  says it); **found** - a done answer that isn't one of the launcher's no-fix words (`LOCATE_FAILURES`: location off,
-  no fix, too old) - for `ANSWER_SHOWN_MINUTES` (10) after `acknowledged_at`, and only while the newest fix is the
+  says it); **found** - a done answer - for `ANSWER_SHOWN_MINUTES` (10) after `acknowledged_at`, and only while the newest fix is the
   one it found (taken after the ask, not after the answer: an older fix - an upload that lagged, a mock kept out -
   would contradict it, a newer one says it itself; Q-8), "Found within 5 m" with its time ("14:29", exact in
-  `title`; an older launcher's plain "ok" reads "Found"); **failed** - those words or a failed
-  result ("Location is off on the phone", "The phone couldn't find its location"), never fetched within its hour
+  `title`; a plain "ok" reads "Found"); **failed** - a failed result ("Location is off on the phone", "The phone couldn't find its location"), never fetched within its hour
   ("No position - the phone is offline", the ask's time), received but never answered or never confirmed ("No
   position - the phone didn't answer") - until a fix taken after the answer (or the ask).
   Otherwise no row: the newest point and the time row say it. No "Answer to" line under it any more;
@@ -775,7 +756,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `handlers::locate::tests::the_answer_row_comes_and_goes`, `locate_page::the_answer_row_shows_only_while_it_says_something`.
 - **Requests (design 48 §1.4; supersedes Recent below)**: `locate::requests` (section `#recent`, titled by the
   partial's `show(recent, "Requests")`) lists `LOCATE_KINDS` by `CommandStatus` (`in_requests`): in flight at any age
-  (`Waiting`, `Sent{NotYet|OfferedAgain|CantConfirm}`, `Received{overdue: false}`, `Erasing`), gone wrong within 24 h
+  (`Waiting`, `Sent{NotYet|OfferedAgain}`, `Received{overdue: false}`, `Erasing`), gone wrong within 24 h
   (`Failed`, `Expired`, `Sent{Lost}`, `Received{overdue: true}`), and the newest Ring / Stop Ringing / Lock / Erase
   whatever its status; never `Cancelled{Parent}` - skipped before the newest of each kind is picked, so a cancelled request never hides the last real one -, never a Done locate. Shown when it has a row or the Cancel's line;
   Cancel still lands on `#recent`. Every command row's time is `Zone::at` (the clock on every row). Tests:
@@ -1398,7 +1379,7 @@ man er inne på en device". Branch `pwa-fixes-b`.
   the static rest were cut; the tests assert the new words. The code QA's fix round (`docs/review/qa-pwa-polish-a-code.md`
   Q-1..Q-5) put back what a parent acts on, in the fewest words: the alarms after a restart on Android's lock, the
   Parent PIN's two hours and lockout remedy, what Vibb One's lock doesn't protect, the Storytel password's truth until
-  design 58 step 3 (a phone with an older music app keeps a copy) and the lost-phone remedy, and a clause each where a
+  design 58 step 3 and the lost-phone remedy, and a clause each where a
   parent would otherwise be surprised (SMS off hides Messages, a phone with its own rules, the 24 h rule, the Install
   Now minute and Update fence, safe mode's restrictions, the filter's kept notifications, Locate needs location, Off
   turns location off, the Tailscale key by hand, what a backup leaves out, the lock's colour without "Also on the lock
@@ -1776,15 +1757,14 @@ man er inne på en device". Branch `pwa-fixes-b`.
   `i18n::error`). The cards' status lines (`SweepView`: Checking…, Waiting…, Checked …, Last check failed …, the
   phones' lines, the Spotify card's notes) come in the `Zone`'s language; `music::kind_key` gives a kind's key,
   `ORDERS` holds keys, the offline choices are worded by `cache_label`/`storytel_caches`, the category icons and
-  colours by `icon_word`/`color_word`, `spotify::LoginOutcome::text(lang, …)` the login's notice and
-  `OlderApps::title_key` Device › Music's update warning. `music::parse_link` (the Add-link form) and
+  colours by `icon_word`/`color_word`, `spotify::LoginOutcome::text(lang, …)` the login's notice. `music::parse_link` (the Add-link form) and
   `music_import::parse` (the Import form) refuse with a key (`music.link.*`, `music.import.not_json`/`no_sections`)
   the handler words; the import's skip reasons word `parse_link`'s keys since slice 4.
   `static/music-cards.js` (`?v=4`) asks `/music/cards` in the page's `<html lang>` (`cardsUrl`). Left for slice 4 (done, below):
   the helpers' sentences inside those lines - `music::sweep_error_text`, `CheckError::message`, `entry_error_text`,
   `StorytelError::message`, the Spotify link and add refusals (`spotify::*::message`, `add_refusal`),
   `music::check_link`'s refusals, `music_import`'s skip reasons (`Skip::reason`), `photos::PhotoError::message`,
-  `music::storage`'s sizes - and the summary's Music row and Attention (`OlderApps::title` stays English there).
+  `music::storage`'s sizes - and the summary's Music row and Attention.
 - **Slice 3e, part A (Settings' core pages)**: the Settings hub, Notifications (the inbox) and Notification
   Settings, Time Rules, a rule's editor and Daily Limit, Web Filter, Blocked Activity, Wallpapers, Software Updates,
   Backups and Phone Setup are worded (`settings.*`, the shared `settings.schedule.*` and `settings.hint_*`), with the
@@ -2177,8 +2157,7 @@ pointer here.
   for. Step 1 is the server and the contract alone: no launcher sends `logo` yet, so every page looks as before.
 - **`app_logos.rs`**: the intake (`take_logos` strips the logos from the stored snapshot, `intake` moves
   `device_app_logos` - 0140 - and prunes the files only the removed or replaced rows named), the answer (`answer`:
-  `200 {"wanted_logos"}` to a launcher claiming `app_logos_v1`, at most 40, allowed apps first, then by package; 204
-  otherwise), the upload (`upload`: the table of design 87 §4.3 in its order; `reencode` decodes under limits - the
+  `200 {"wanted_logos"}`, at most 40, allowed apps first, then by package; 204 when it wants none), the upload (`upload`: the table of design 87 §4.3 in its order; `reencode` decodes under limits - the
   PNG signature, `PngDecoder::with_limits` at 128 x 128 and 1 MiB, exactly 128 square - and writes 8-bit RGBA with
   the server's own encoder; under `photos::PROCESSING`), the caps (4,000 files and 64 MB in all, 300 files and 12 MB
   named by one phone's rows, 300 uploads a phone a day charged before the decode, a refused hash not asked for again
@@ -2350,8 +2329,7 @@ Server only: no launcher or API change, no migration. The user's "Vi går for a!
   tid; each running pause with Avslutt nå), then "Noe annet" (or "Regler"): one form to `/rules-now` whose `mode`
   radios (`#m-on`, `#m-pause`, `.qa-mode`) are its first children, so `.when-on` / `.when-pause` switch with sibling
   selectors only (Chrome 80 / iOS 14). `#m-on` is disabled while a rule is on (one at a time), without the phone's zone
-  and in the day's last minute. Each `<option>` carries its mode line and warnings (`data-line`, `data-warn`); "Skole
-  gjelder allerede til 14:30" only for a phone without `lock_now_v1`. A refusal's words show in the sheet it reopens.
+  and in the day's last minute. Each `<option>` carries its mode line and warnings (`data-line`, `data-warn`). A refusal's words show in the sheet it reopens.
 - **`static/quick-sheets.js`** (ES5, `jstest/quick-sheets.test.js`): a tile opens its sheet in place (no reload, the
   address kept, the focus to the sheet's head without a scroll), the open tile or Lukk closes it, the other rule tile
   only switches the mode; "Alle regler" leaves in Slå på nå; a length fills Til, typing Til clears the lengths; the
@@ -2360,8 +2338,8 @@ Server only: no launcher or API change, no migration. The user's "Vi går for a!
   the words; a save in place closes a shown sheet, as the reload did.
 - **Open for setup**: while the report shows the restrictions pause or Play install mode, `#setup-open` sits inside
   `#quick` above its header (where Attention's row lands): "Åpnet for oppsett til 17:10" (the newest answered
-  `start_pause` + 2 h), "Apper og Play Butikk er åpne" and Lås igjen (`/end-windows`); an older launcher's own words and
-  no action. **Avansert's first row** (`device_advanced.html`, `#setup`, a `window_relock_v1` phone only,
+  `start_pause` + 2 h), "Apper og Play Butikk er åpne" and Lås igjen (`/end-windows`). **Avansert's first row**
+  (`device_advanced.html`, `#setup`, once the phone has reported,
   `quick_actions::setup_card`): since design 103 §3 one row that opens in place - `<details class="row-sheet">`, its
   chevron turning down, no outline, no second tile or title, no Lukk - whose sheet holds one line ("Apper,
   innstillinger og Play åpnes i 2 timer.", `device.advanced.setup.line`), the orange line while a rule is turned on,
@@ -2384,8 +2362,7 @@ column allows `eea` for a later round, the page doesn't offer it), and "Lås mob
 (`mobile_settings_locked`, on by default). An unknown value or group is a 400 with nothing written; `settings_log`
 writes the line; each save nudges the phone. The radio rows are `.pick-row` (style.css v110).
 
-The choices are disabled with "Virker etter at Vibb One er oppdatert" while the latest report doesn't claim
-`mobile_data_v1` / `data_roaming_v1`; a phone not set up has them live. The phone's state, worded by
+The phone's state, worded by
 `mobile_network::card` from the report's cleaned `data_roaming` and `mobile_data`, sits under each group: design 94
 §6.1's table (locked, unlocked in a pause, the phone's choice on/off, where it roams, the lingering session - "Bare
 Vibb bruker roamingdata fra før låsen" when the launcher sinks it - and a SIM still reading roaming on), "Mobildata:
@@ -2459,18 +2436,17 @@ posted by `static/scroll-restore.js` (`?v=9`) itself, and the return replaces th
 ## Flymodus, the Oppsett card (design 98 step 5, 2026-11-14, branch `design-98`, `docs/design/98-airplane-mode-assistant.md` §6)
 
 - **Home Screen › Hurtigkontroller**: the kid's "Flymodus" switch (`quick_controls_mask` bit 64,
-  `devices::QUICK_CONTROL_AIRPLANE`) only for a phone that reported `airplane_mode_v1`; the form then carries
-  `airplane_row=1`, and `update_policy` takes bit 64 from the switch only with it - without it (an older launcher's
-  page, an older tab) bit 64 is kept as bit 32 is (`(mask & kept_bits) | ?`). A new phone has it on (D1). Its sub-line
-  (`airplane_mode::home_sub`): the parent's "Blokker flymodus", the role not chosen yet, or no Wi-Fi in airplane mode.
+  `devices::QUICK_CONTROL_AIRPLANE`), always drawn; `update_policy` takes bit 64 from the switch and keeps bit 32. A
+  new phone has it on (D1). Its sub-line (`airplane_mode::home_sub`): the parent's "Blokker flymodus", and from a
+  report with `airplane_mode` the role not chosen yet or no Wi-Fi in airplane mode.
 - **The summary**: "Flymodus på siden 21:03" is a header part (`phone_status::with_airplane`, hook `data-airplane`)
   in place of "Offline"/"No contact", last on the second line while in touch; from `on` (the open period's start) or
   a `going_on` report for 10 minutes (`airplane_mode::on_since`). Under Attention, `#airplane-state`: a period ended
   within 12 h, the emergency call that ended it, and the role lost - "held before" is any stored report with
   `assistant: true` (`airplane_mode::assistant_held_before`; it goes with `device_status`' retention, the card's step
   stays).
-- **The Oppsett card** (`#oppsett`, `airplane_mode::setup_steps`, a launcher with `airplane_mode_v1` only - its words
-  name that launcher's notification): Bakgrunnstilkobling, Endre systeminnstillinger (bit 16 or a clock format),
+- **The Oppsett card** (`#oppsett`, `airplane_mode::setup_steps`, from a report with `airplane_mode` - its words
+  name the launcher's notification): Bakgrunnstilkobling, Endre systeminnstillinger (bit 16 or a clock format),
   Digital assistent (bit 64), Wi-Fi i flymodus (bit 64 and the role), Standardapper endret, Samtalefilter (calls managed
   and `call_state.screening_role_held`/`redirection_role_held` false - the report's existing keys, D10). Åpne for
   oppsett is the start-pause with `back=setup` (`?notice=setup_start_pause_sent#oppsett`); "Ikke nå" is
@@ -2487,21 +2463,19 @@ posted by `static/scroll-restore.js` (`?v=9`) itself, and the return replaces th
 ## Snarveier (design 99 step 2, 2026-11-15, branch `design-99-server`, `docs/design/99-snarveier.md` §5-§6)
 
 - **Home Screen › Hurtigkontroller**: "Snarveier i varsellisten" (`quick_controls_mask` bit 128,
-  `devices::QUICK_CONTROL_SHORTCUTS`), the form's first row, only for a phone that reported `shortcuts_v1`; the form
-  then carries `shortcuts_row=1`, and `update_policy` takes bit 128 from the switch only with it - without it bit 128
-  is kept as 64 and 32 are (`kept_bits`). On for new phones (`DEFAULT_QUICK_CONTROLS`) and set on every existing phone
-  by `0148_shortcuts.sql` (D2). Its sub-line (`shortcuts::home_sub`, the kid named, never a pronoun): hidden by the kid
+  `devices::QUICK_CONTROL_SHORTCUTS`), the form's first row, always drawn; `update_policy` takes bit 128 from the
+  switch. On for new phones (`DEFAULT_QUICK_CONTROLS`) and set on every existing phone
+  by `0148_shortcuts.sql` (D2). Its sub-line (`shortcuts::home_sub`, the kid named, never a pronoun; only from a report with `shortcuts`): hidden by the kid
   (with the bit on or off), else with the bit on what the kid chose ("Emma chose: Flashlight, Sound, ...", the
   items' names from `shortcuts::ITEMS` in the page's language) or "No shortcuts are shown now." (no items: nothing
   offered or none chosen, which the report can't tell apart - code QA C99-L3; it was "None of the switches below is
   on.", untrue when the kid chose none). The
-  ⓘ gains the panel's paragraph (`data-shortcuts-info`) and the footer the sentence `device.home.quick_footer_shortcuts`
-  - a key of its own, shown only with the row, so an older launcher's page doesn't promise a panel it hasn't got.
+  ⓘ has the panel's paragraph (`data-shortcuts-info`) and the footer the sentence `device.home.quick_footer_shortcuts`.
 - **The report**: `shortcuts` (`{shown, hidden, items}`, a full-report field, not a heartbeat field), cleaned by
   `shortcuts::clean` (the contract's `clean` rows) into `device_status.shortcuts_json`; read through
-  `shortcuts::report`, which wants the capability.
+  `shortcuts::report` (nothing stored: no line).
 - **About This Phone**: "Snarveier" in the software list - the items' names, "Skjult av Emma", "Ingen" (bit on, no
-  items) or "Av" (bit 128 off); only from a launcher with `shortcuts_v1`.
+  items) or "Av" (bit 128 off); only from a report with `shortcuts`.
 - Tests: `tests::shortcuts` (the contract: stored reports, `clean` rows, the table, the copies; the migration's bit;
   the form's keep on both sections; the sub-lines; the ⓘ and footer; About; nb and en).
 
@@ -2592,8 +2566,7 @@ Pinned by `shell::the_app_shell_scrolls_main_not_the_document`; measured by `jst
 - **The report**: `notification_channels` (`{all_off, blocked}`, a full-report field, not a heartbeat field), cleaned
   by `notification_channels::clean` (the table's keys only, each once, in its order; a missing or non-array `blocked`
   is `[]`) into `device_status.notification_channels_json`; read through `notification_channels::report`, which wants
-  the capability `notification_channels_v1` *and* a stored object (a failed read on the phone is no row, never a false
-  "All on"). No security event (Q5).
+  a stored object (a failed read on the phone is no row, never a false "All on"). No security event (Q5).
 - **Which channels count** (§5.1): Meldinger's three while `sms_mode == "managed"`, the three call channels while
   `calls_mode == "managed"`, the others always; Snarveier never (its own rows say it). The names are the phone's
   (`notification_channels::CHANNELS`, the contract's `channels`), in the phone's language when `launcher_ui.language`
@@ -2603,13 +2576,13 @@ Pinned by `shell::the_app_shell_scrolls_main_not_the_document`; measured by `jst
   "Alle av" or an orange channel (Meldinger, Tapte anrop, Samtaler). The ⓘ (only when something is off): the lead, a
   sentence for each named channel with an effect (`effect` keys), the fix (the pause and the phone's "Varsler fra Vibb
   One" row, and - since a channel blocked before the dialer role came back stays locked with a grey switch, gate §6ax -
-  calls and SMS to "Ikke styrt" first if a switch is grey). No row from an older launcher.
+  calls and SMS to "Ikke styrt" first if a switch is grey).
 - **Attention** (`Kind::NotificationsOff`, Action, key `notifications-off`, right after `NoNotificationAccess`, to
   `/about#sound`): a blocked Meldinger or Tapte anrop while its feature counts ("Varsler slått av: Meldinger, Tapte
   anrop", the names unquoted), or the app-wide switch off while SMS or calls are managed ("Alle varsler fra Vibb One er
   av"). Never Samtaler (the phone still rings), the minor channels or Snarveier. The Devices list's badge counts it.
 - Tests: `notification_channels::tests` (the `clean` rows, the table), `tests::notification_channels` (stored reports,
-  every `pages` row through About and the summary, the ⓘ in nb and en, an older launcher and a failed read, the row's
+  every `pages` row through About and the summary, the ⓘ in nb and en, a failed read, the row's
   place and the badge), `intake_limits` (the three reports kept), `attention::tests` (order, title, target).
 
 - **Row values wrap between words only** (2026-11-17, the user's iPhone screenshots: "Manage / d by / Vibb", "O / n"):

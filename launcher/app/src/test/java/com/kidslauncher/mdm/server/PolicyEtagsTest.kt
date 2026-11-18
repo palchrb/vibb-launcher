@@ -17,7 +17,7 @@ import retrofit2.Response
 /** Design 95 §3.5 (step 95-T1): the kept raw policy body, `If-None-Match`, and a 304 decoded as the 200 it repeats. */
 class PolicyEtagsTest {
     private val prefs = ParentPinStoreTest.FakePrefs()
-    private val store = PolicyEtagStore(prefs, SealedPrefs(SealedPrefsTest.FakeBox()) { _, _ -> }) { true }
+    private val store = PolicyEtagStore(prefs, SealedPrefs(SealedPrefsTest.FakeBox()) { _, _ -> })
     private val owner = PolicyOwner.of(390009, "https://vibb.example/", "token-a")
     private val body = """{"allowlist": [], "kiosk_desired": true, "an_unknown_key": 1}"""
     private val serverError = FreshDecode.Failed("server error")

@@ -22,9 +22,6 @@
         {% if let Some(default) = form.catalog_default %}
         <p class="hint">{{ self.tp("apps.display.catalog_default", [("default", default.as_str())]) }}</p>
         {% endif %}
-        {% if let Some(note) = form.note %}
-        <p class="hint" data-display-note>{{ note }}</p>
-        {% endif %}
         {% if let Some(error) = form.error %}
         <div class="error">{{ error }}</div>
         {% endif %}

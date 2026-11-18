@@ -7,15 +7,15 @@ import com.kidslauncher.mdm.server.dto.PolicyResponse
 
 /*
  * Which call rules are in force, derived from the cached policy and two prefs written in the same
- * commit as that cache (MdmSyncWorker.storeAcceptedPolicy): `calls_managed_last` (the last
- * accepted policy's explicit `call_policy.managed`) and `last_call_rules` (its rules). Pure, tested
+ * commit as that cache (MdmSyncWorker.storeAcceptedPolicy): `calls_managed_last` (whether the last
+ * accepted policy had either channel managed) and `last_call_rules` (its rules). Pure, tested
  * in CallPolicyStateTest. CallPolicyStore holds the result in memory for the call services.
  */
 
 fun CallPolicy.toRules(): CallRules {
     val (calls, sms) = channelModes(this)
     return CallRules(
-        // The old switches as the derived wire keys say them (D2), for the readers that still ask them.
+        // The two switches the modes give, for the readers that still ask them.
         callsEnabled = calls != ChannelMode.OFF,
         smsEnabled = sms == ChannelMode.UNMANAGED,
         defaultCc = defaultCountryCode,
@@ -29,7 +29,6 @@ fun CallPolicy.toRules(): CallRules {
         callsMode = calls,
         smsMode = sms,
         smsNames = smsNames,
-        smsLockText = smsLockText,
         ownNumbers = ownNumbers.map { OwnNumberRule(it.slot, it.number) },
         mmscHosts = mmscHosts.map { MmscRule(it.mccmnc, it.hosts) },
         smsGroups = smsGroups,
@@ -37,20 +36,12 @@ fun CallPolicy.toRules(): CallRules {
 }
 
 /**
- * Design 77 D2: the two channels' states of a `call_policy`. A server with the SMS engine sends `calls_mode` and
- * `sms_mode` ([CallPolicy.callsMode]); an older one only `managed`/`calls_enabled`/`sms_enabled`, read by D2's
- * migration table (`sms_contract.json`'s `migration` rows): not managed is both "Ikke styrt", else calls on/off and SMS
- * unfiltered/off. A value that isn't one of the three never gets here: [com.kidslauncher.mdm.server.judgeFresh] rejects
- * the policy - and should one be cached, it reads as "Av" (fail closed) for that channel.
+ * Design 77 D2: the two channels' states of a `call_policy` ([CallPolicy.callsMode], [CallPolicy.smsMode]). A missing
+ * one, or a value that isn't one of the three, reads as "Av" (fail closed) for that channel - though
+ * [com.kidslauncher.mdm.server.judgeFresh] rejects an unknown value, and a missing pair once the phone has seen one.
  */
-fun channelModes(policy: CallPolicy): Pair<ChannelMode, ChannelMode> {
-    if (policy.callsMode != null || policy.smsMode != null) {
-        return (ChannelMode.of(policy.callsMode) ?: ChannelMode.OFF) to (ChannelMode.of(policy.smsMode) ?: ChannelMode.OFF)
-    }
-    if (!policy.managed) return ChannelMode.UNMANAGED to ChannelMode.UNMANAGED
-    return (if (policy.callsEnabled) ChannelMode.MANAGED else ChannelMode.OFF) to
-        (if (policy.smsEnabled) ChannelMode.UNMANAGED else ChannelMode.OFF)
-}
+fun channelModes(policy: CallPolicy): Pair<ChannelMode, ChannelMode> =
+    (ChannelMode.of(policy.callsMode) ?: ChannelMode.OFF) to (ChannelMode.of(policy.smsMode) ?: ChannelMode.OFF)
 
 fun encodeCallRules(rules: CallRules): String = ServerJson.encodeToString(CallRules.serializer(), rules)
 
@@ -65,8 +56,8 @@ fun decodeCallRules(json: String?): CallRules? {
 }
 
 /**
- * - A cached policy with an explicit `managed: false`, or no `call_policy` on a phone whose calls
- *   were never managed (an older server): [CallPolicyState.Unmanaged].
+ * - A cached policy with both channels `unmanaged`, or no `call_policy` on a phone whose calls
+ *   were never managed: [CallPolicyState.Unmanaged].
  * - A cached managed `call_policy`: its rules.
  * - Anything else while [callsManagedLast] is set (no `call_policy` in the cache, cache corrupt
  *   or missing): the [lastRules] stored with the last managed policy - so parents can still call
@@ -97,9 +88,9 @@ fun callPolicyState(cached: CachedPolicy, callsManagedLast: Boolean, lastRules: 
 data class CallPrefsUpdate(val callsManagedLast: Boolean, val lastCallRules: String?)
 
 /**
- * Only an explicit `managed` value changes `calls_managed_last` (QA blocker 3). A policy without
- * `call_policy` is only ever accepted on a phone whose calls weren't managed, so it changes
- * nothing. `managed: false` clears the stored rules.
+ * Only a sent `call_policy` changes `calls_managed_last` (QA blocker 3). A policy without it is
+ * only ever accepted on a phone whose calls weren't managed, so it changes nothing. Both channels
+ * `unmanaged` clears the stored rules.
  */
 fun callPrefsUpdate(accepted: PolicyResponse): CallPrefsUpdate? {
     val callPolicy = accepted.callPolicy ?: return null
@@ -110,6 +101,6 @@ fun callPrefsUpdate(accepted: PolicyResponse): CallPrefsUpdate? {
     }
 }
 
-/** Whether either channel is under our control: D2's derived wire `managed`, judged from the modes when they're sent. */
+/** Whether either channel is under our control (a missing mode reads as "Av": managed). */
 val CallPolicy.anyChannelManaged: Boolean
     get() = channelModes(this).let { (calls, sms) -> calls != ChannelMode.UNMANAGED || sms != ChannelMode.UNMANAGED }

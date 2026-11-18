@@ -13,14 +13,10 @@ class CalendarPolicyTest {
     private fun read(json: String) = calendarPolicy(ServerJson.parseToJsonElement(json))
 
     @Test
-    fun `missing is an older server, anything but an object is unknown`() {
-        assertEquals(CalendarPolicy.OLDER_SERVER, calendarPolicy(null))
-        assertEquals(CalendarPolicy.OLDER_SERVER, calendarPolicy(JsonNull))
+    fun `missing, null and anything but an object are unknown`() {
+        assertEquals(CalendarPolicy.UNKNOWN, calendarPolicy(null))
+        assertEquals(CalendarPolicy.UNKNOWN, calendarPolicy(JsonNull))
         for (odd in listOf("[]", "5", "\"x\"", "true")) assertEquals(odd, CalendarPolicy.UNKNOWN, read(odd))
-        with(CalendarPolicy.OLDER_SERVER) {
-            assertTrue(usable && onHome)
-            assertFalse(kidAdds || glanceNext || lockReminders)
-        }
         assertFalse(CalendarPolicy.UNKNOWN.usable || CalendarPolicy.UNKNOWN.onHome)
     }
 

@@ -55,11 +55,8 @@ class ParentPinCallersTest {
     }
 
     @Test
-    fun `the old counter is read only by the store's migration`() {
-        for (token in listOf("offlineOverrideFailedAttempts", "offlineOverrideLockedUntil")) {
-            assertEquals(token, setOf("ParentPinStore.kt"), sources.filterValues { token in it }.keys.map { File(it).name }.toSet())
-        }
-        for (token in listOf("offline_override_failed_attempts", "offline_override_locked_until")) {
+    fun `the old counter is gone`() {
+        for (token in listOf("offlineOverrideFailedAttempts", "offlineOverrideLockedUntil", "offline_override_failed_attempts", "offline_override_locked_until")) {
             assertEquals(token, emptySet<String>(), sources.filterValues { token in it }.keys)
         }
     }

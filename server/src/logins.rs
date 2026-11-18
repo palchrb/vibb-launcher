@@ -18,11 +18,6 @@ use serde_json::{Map, Value, json};
 
 use crate::models::DevicePolicy;
 
-/// A launcher that reports `captive_portal` and opens the Wi-Fi sign-in window claims this.
-pub const PORTAL_CAPABILITY: &str = "captive_portal_v1";
-/// A launcher that runs Chrome's login role (`login_browser`) claims this.
-pub const BROWSER_CAPABILITY: &str = "login_browser_v1";
-
 /// The one browser the role accepts (D8); the launcher refuses any other package.
 pub const CHROME: &str = "com.android.chrome";
 
@@ -515,7 +510,7 @@ pub fn night_push(
 }
 
 /// The report's events (§3.7): each wide session once (keyed by its `opened_ms`), and the budget used up once a day
-/// (keyed by the family's local date). Only from a launcher that claims [PORTAL_CAPABILITY] (the caller checks).
+/// (keyed by the family's local date).
 pub async fn intake(
     state: &crate::AppState,
     phone: &crate::parent_events::Phone,

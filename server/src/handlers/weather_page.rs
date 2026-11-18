@@ -8,8 +8,8 @@
 //!   /devices/{id}/weather/zone`, one of this phone's zones or none), `device_policy.weather_zone_id` - never in the
 //!   policy.
 //!
-//! Each change is in the security log (the zone by its name, never coordinates) and nudges the phone. The old page's
-//! address, `/devices/{id}/weather`, leads to the group ([view]). The page never shows the cell or the forecast.
+//! Each change is in the security log (the zone by its name, never coordinates) and nudges the phone. The page never
+//! shows the cell or the forecast.
 
 use std::collections::HashMap;
 
@@ -19,13 +19,9 @@ use axum::response::{IntoResponse, Redirect, Response};
 use axum::{Extension, Form};
 
 use crate::AppState;
-use crate::handlers::device_pages::has_capability;
 use crate::i18n::Lang;
-use crate::models::{DevicePolicy, DeviceStatus};
+use crate::models::DevicePolicy;
 use crate::security::{self, CurrentAdmin};
-
-/// The launcher capability of a Vibb One that shows the weather.
-pub const CAPABILITY: &str = "lock_weather_v1";
 
 /// One choice of the zone select.
 pub struct ZoneChoice {
@@ -42,8 +38,6 @@ pub struct WeatherCard {
     pub no_zone: bool,
     /// On, Location isn't Regularly and no zone: the lock shows no weather now.
     pub needs_position: bool,
-    /// On and the phone's Vibb One doesn't report [CAPABILITY].
-    pub needs_update: bool,
 }
 
 /// The group's state: the switch, this phone's zones (a deleted or foreign one never shows as chosen), the notes.
@@ -51,7 +45,6 @@ pub async fn card(
     state: &AppState,
     id: i64,
     policy: &DevicePolicy,
-    latest: Option<&DeviceStatus>,
 ) -> Result<WeatherCard, sqlx::Error> {
     let zones = crate::zones::list(&state.db, id).await?;
     let on = policy.lock_weather;
@@ -62,7 +55,6 @@ pub async fn card(
         on,
         no_zone: chosen.is_none(),
         needs_position: on && policy.location_mode != "interval" && chosen.is_none(),
-        needs_update: on && !has_capability(latest, CAPABILITY),
         zones: zones
             .into_iter()
             .map(|z| ZoneChoice {
@@ -72,12 +64,6 @@ pub async fn card(
             })
             .collect(),
     })
-}
-
-/// GET `/devices/{id}/weather`, the page the group lived on before (design 75 §12): old links and bookmarks land on the
-/// lock page's Weather group.
-pub async fn view(Path(id): Path<i64>) -> Response {
-    Redirect::to(&format!("/devices/{id}/lock#weather")).into_response()
 }
 
 fn save_failed(lang: Lang, id: i64, err: sqlx::Error) -> Response {

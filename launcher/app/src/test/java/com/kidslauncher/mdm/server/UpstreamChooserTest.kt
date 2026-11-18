@@ -149,7 +149,7 @@ class UpstreamChooserTest {
     }
 
     @Test
-    fun `the status field is the contract's, and dns_custom_v1 is announced`() {
+    fun `the status field is the contract's`() {
         val since = 1_000_000L
         val s = afterTransport(healthy, 0, since, BackupReason.TLS)
         // Design 67: an ongoing outage since 55 s after the backup period began.
@@ -160,11 +160,10 @@ class UpstreamChooserTest {
         val encoded = ServerJson.encodeToString(
             StatusReportRequest.serializer(),
             StatusReportRequest(
-                lockReason = "NONE", kioskEngaged = true, capabilities = listOf(DNS_CUSTOM_CAPABILITY, DNS_BYPASS_CAPABILITY), dnsUpstream = report,
+                lockReason = "NONE", kioskEngaged = true, dnsUpstream = report,
             ),
         )
         assertEquals(contract.trimEnd(), encoded)
-        assertTrue(DNS_CUSTOM_CAPABILITY in STATUS_CAPABILITIES)
         // Healthy: "custom", never a reason; no outage, no times.
         val back = upstreamReport(afterAnswer(s, s.gen, since + 9_000), 4, ReachState(), since + 10_000, 2_000_000)
         assertEquals(DnsUpstreamReport(4, "custom", 1_999_000, null, null, null), back)

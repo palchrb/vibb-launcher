@@ -39,9 +39,6 @@ import kotlinx.serialization.Serializable
  * gets text, and Settings' "Vibb One notifications" row opens Android's page during a pause (Q4).
  */
 
-/** The capability: every full report carries `notification_channels` (the server's `notification_channels_v1`). */
-const val NOTIFICATION_CHANNELS_CAPABILITY = "notification_channels_v1"
-
 /** The sync reason of a block-state broadcast and of the Settings row's return. */
 const val NOTIFICATION_CHANNELS_SYNC_REASON = "notification_channels"
 
@@ -86,7 +83,7 @@ data class ChannelReading(val id: String, val importance: Int, val group: String
 
 /**
  * The report from what Android says (pure; the contract's `read` rows). A channel is off at IMPORTANCE_NONE or in a
- * blocked group. Only the table's ids count, Snarveier's only as [shortcutsId] (the channel in use): an older `.N` id,
+ * blocked group. Only the table's ids count, Snarveier's only as [shortcutsId] (the channel in use): an old `.N` id,
  * an unknown id and Android 16's reserved `android.app.*` channels are skipped. A channel that doesn't exist is not
  * off. [appEnabled]: `areNotificationsEnabled()`.
  */

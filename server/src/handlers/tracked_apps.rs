@@ -2471,7 +2471,7 @@ pub(crate) fn catalog_release_installed(app: &TrackedApp, version: &InstalledVer
 /// `apps` (the phone's checked catalog rows, neither the launcher's nor the music app's) whose
 /// package the phone lists at a higher versionCode than the previous report did, which is the
 /// row's stored release ([catalog_release_installed]); with its `from` (the previous versionName,
-/// when it differs from the new version). No previous code (an older launcher's report, or a new
+/// when it differs from the new version). No previous code (a report without one, or a new
 /// app) is no update.
 pub(crate) fn listed_app_updates<'a>(
     apps: &'a [TrackedApp],
@@ -4240,7 +4240,7 @@ pub async fn upload_tracked_app_release(
 
 /// `POST /apps/tracked/{id}/display` (design 14): the catalog default for how the app shows on the
 /// kid's phones (by the row's package name; a phone's own choice replaces it); it may be any of
-/// design 34's three states. `action` "reset" (an older page's "own") clears it. Refused input: 400, the page with the entered values, the error by the field and
+/// design 34's three states. `action` "reset" clears it, "save" (or none) saves, anything else is a 400. Refused input: 400, the page with the entered values, the error by the field and
 /// that field focused. Saved: back to the card, open (`?open=display#display`: it doesn't fold up
 /// under the parent, the browser pass of 2026-10-14, 6f); nudges every phone (cosmetic, cheap).
 pub async fn save_display(
@@ -4250,7 +4250,12 @@ pub async fn save_display(
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
     let field = |name: &str| form.get(name).map(String::as_str).unwrap_or("");
-    let values = if matches!(field("action"), "reset" | "own") {
+    let reset = match field("action") {
+        "reset" => true,
+        "" | "save" => false,
+        _ => return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.out_of_date"),
+    };
+    let values = if reset {
         crate::app_display::DisplayValues::empty()
     } else {
         match crate::app_display::validate(field("label"), field("icon"), field("color")) {

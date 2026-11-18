@@ -127,7 +127,7 @@ class AirplaneRouteTest {
         val sync = File(root, "server/MdmSyncWorker.kt").readText().substringAfter("suspend fun performMdmSync(")
         assertTrue(sync.indexOf("AirplaneRoute.putBackIfMarked(context)") in 0 until sync.indexOf("fetchPolicy("))
         val app = File(root, "Application.kt").readText().substringAfter("private fun initRest() {")
-        assertTrue(app.indexOf("AirplaneRoute.putBackIfMarked(this)") in 0 until app.indexOf("migratePreferencesToNewVersion"))
+        assertTrue(app.indexOf("AirplaneRoute.putBackIfMarked(this)") in 0 until app.indexOf("firstLaunchResetDue("))
         // The route never writes the lock-task list itself.
         val route = File(root, "assistant/AirplaneRoute.kt").readText()
         assertFalse("setLockTaskPackages" in route || "setLockTaskFeatures" in route || "setStatusBarDisabled" in route)

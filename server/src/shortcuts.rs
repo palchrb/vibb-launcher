@@ -1,6 +1,6 @@
 //! Design 99: Snarveier, the kid's quick panel in the shade. The report's `shortcuts` cleaned ([clean]), the items'
-//! table ([ITEMS]) and the capability. The shared contract is `testdata/shortcuts.json` (byte-identical in the
-//! launcher's test resources): `capability`, `bit`, `max_items`, `items` (this table), `report`/`report_hidden` and the
+//! table ([ITEMS]). The shared contract is `testdata/shortcuts.json` (byte-identical in the
+//! launcher's test resources): `bit`, `max_items`, `items` (this table), `report`/`report_hidden` and the
 //! `clean` rows.
 //!
 //! The pages' parts (§5.2, §5.3): the stored report read back ([report]), the Home Screen row's sub-line ([home_sub])
@@ -15,9 +15,6 @@ use crate::handlers::devices::{
 };
 use crate::i18n::{Lang, t, t_params};
 use crate::models::{DevicePolicy, DeviceStatus};
-
-/// The capability a launcher claims once it reports `shortcuts` and posts the panel (bit 128).
-pub const CAPABILITY: &str = "shortcuts_v1";
 
 /// The panel holds at most this many items (D1: four in one row).
 pub const MAX_ITEMS: usize = 4;
@@ -141,19 +138,12 @@ pub struct Report {
     pub items: Vec<String>,
 }
 
-/// The latest report's `shortcuts`, from a launcher that claims [CAPABILITY] (§6.3: an older launcher has no row and
-/// no line). A launcher with the capability and no stored object reads as nothing shown, nothing hidden, no items.
+/// The latest report's `shortcuts`, when it has one.
 pub fn report(latest: &DeviceStatus) -> Option<Report> {
-    if !crate::handlers::device_pages::has_capability(Some(latest), CAPABILITY) {
-        return None;
-    }
-    Some(
-        latest
-            .shortcuts_json
-            .as_deref()
-            .and_then(|json| serde_json::from_str(json).ok())
-            .unwrap_or_default(),
-    )
+    latest
+        .shortcuts_json
+        .as_deref()
+        .and_then(|json| serde_json::from_str(json).ok())
 }
 
 /// The items' names in `lang`, in the panel's order, joined by ", " (an unknown key is skipped).

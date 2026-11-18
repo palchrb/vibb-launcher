@@ -16,8 +16,6 @@ use serde_json::Value;
 use crate::display_time::Zone;
 use crate::i18n::{t, t_count, t_params};
 
-/// The launcher reports `relock` and handles the two commands.
-pub const WINDOW_RELOCK_CAPABILITY: &str = "window_relock_v1";
 /// The commands of this design: their own insert, never deleted by another command and deleting
 /// none (QA #8). `start_pause` (the fix round, QA High 1): the phone's 2-hour pause, started here
 /// without the parent PIN on the phone.
@@ -28,8 +26,7 @@ pub const OWN_INSERT_COMMANDS: [&str; 3] = [END_WINDOWS, ALLOW_BLOCKED, START_PA
 
 /// At most this many package names per list (the launcher's `RELOCK_LIST_MAX`).
 pub const LIST_MAX: usize = 8;
-/// The summary shows a relock's findings, an older launcher's blocked apps and the commands'
-/// answers this long.
+/// The summary shows a relock's findings and the commands' answers this long.
 pub const WARN_MS: i64 = 7 * 24 * 60 * 60 * 1000;
 /// Phone-supplied times are kept within 1970..2100, counts within 0..1000.
 const MAX_MS: i64 = 4_102_444_800_000;
@@ -380,7 +377,7 @@ pub enum BlockWhy {
     /// Signed with another key than the catalog's pin (M10): not the catalog's app whatever its
     /// name, so it stays blocked through "Allow these apps".
     NotCatalogs,
-    /// Blocked when the phone locked again; why is unknown (or an older launcher's relock).
+    /// Blocked when the phone locked again; why is unknown.
     Relock,
 }
 
@@ -431,8 +428,7 @@ pub struct Blocks {
     pub allow: Vec<AllowedBlock>,
     /// How many more the phone has than it lists (QA of cmd-expiry, Low 2).
     pub more: Option<i64>,
-    /// The Attention row's count ("2 blocked apps wait"): every listed block - or, from an older
-    /// launcher's relock, the ones "Allow these apps" still lets out.
+    /// The Attention row's count ("2 blocked apps wait"): every listed block.
     pub waiting: usize,
 }
 
@@ -450,7 +446,7 @@ impl Blocks {
     }
 }
 
-/// What [blocks] and [relock_blocked] read besides the phone's list.
+/// What [blocks] reads besides the phone's list.
 pub struct BlockContext<'a> {
     /// The catalog's pinned signers (M10): package -> key.
     pub pins: &'a HashMap<String, String>,
@@ -539,39 +535,6 @@ pub fn blocks(list: &[RelockBlock], total: Option<i64>, ctx: &BlockContext) -> B
         items,
         allow,
         more,
-    }
-}
-
-/// An older launcher (no `relock_blocks`): its last relock's `blocked` apps, for a week. "Allow
-/// these apps" lets out the ones that aren't imposters, until the phone has answered one pressed
-/// after that relock ([allowed_since_relock], QA Low 10) - then they are gone and only the list
-/// stays.
-pub fn relock_blocked(r: &RelockReport, allowed_since: bool, ctx: &BlockContext) -> Blocks {
-    if ctx.now.timestamp_millis() - r.at_ms > WARN_MS {
-        return Blocks::default();
-    }
-    let mut items = Vec::new();
-    let mut allow = Vec::new();
-    for p in &r.blocked {
-        let signer = r.blocked_signers.get(p).map(String::as_str);
-        let why = if ctx.differs(p, signer) {
-            BlockWhy::NotCatalogs
-        } else {
-            BlockWhy::Relock
-        };
-        if !why.imposter() && !allowed_since {
-            allow.push(AllowedBlock {
-                package_name: p.clone(),
-                signer: signer.map(str::to_string),
-            });
-        }
-        items.push(ctx.item(p, signer, why, false, Some(r.at_ms)));
-    }
-    Blocks {
-        waiting: allow.len(),
-        items,
-        allow,
-        more: None,
     }
 }
 
@@ -963,12 +926,6 @@ pub fn waiting_flash(command: &str) -> Option<(&'static str, &'static str)> {
     }
 }
 
-/// "Allow these apps" stays only until the phone has answered one pressed after the relock - the
-/// report doesn't change, but the blocks it lists are gone (QA Low 10).
-pub fn allowed_since_relock(answer: Option<&CommandAnswer>, relock_at_ms: i64) -> bool {
-    answer.is_some_and(|a| a.acknowledged_ms.is_some() && a.requested_ms > relock_at_ms)
-}
-
 /// The one-shot flash after a command was queued (`?notice=`): the summary group its form is in
 /// (where the redirect lands, design 31 §3.0), and its key.
 pub fn flash(code: &str) -> Option<(&'static str, &'static str)> {
@@ -1239,51 +1196,6 @@ mod tests {
         }
     }
 
-    /// An older launcher (no `relock_blocks`): the relock's blocked apps, a catalog imposter kept
-    /// with no button, and the button gone once an "Allow" pressed after the relock was answered.
-    #[test]
-    fn an_older_launchers_relock_lists_its_blocked_apps() {
-        let r = report();
-        let (none, zone) = (HashMap::new(), oslo());
-        let b = relock_blocked(&r, false, &ctx(&none, None, &none, &zone));
-        assert_eq!(b.items.len(), 1);
-        assert_eq!(b.items[0].why, BlockWhy::Relock);
-        assert_eq!(b.items[0].key.as_deref(), Some("3f2a0000…0000c0de"));
-        assert_eq!(b.items[0].when, "14:40 · 3 h ago");
-        assert_eq!(b.waiting, 1);
-        assert_eq!(
-            allow_form_value(&b.allow),
-            format!("com.example.app:{}", r.blocked_signers["com.example.app"])
-        );
-        // The catalog pins another key: not the catalog's app - it stays, and alone it gets no button.
-        let pins = HashMap::from([("com.example.app".to_string(), "9".repeat(64))]);
-        let b = relock_blocked(&r, false, &ctx(&pins, None, &none, &zone));
-        assert_eq!(b.items[0].why, BlockWhy::NotCatalogs);
-        assert_eq!(b.items[0].pin.as_deref(), Some("99999999…99999999"));
-        assert!(b.allow.is_empty());
-        assert_eq!(b.waiting, 0);
-        // The catalog's own key: the button.
-        let pins = HashMap::from([(
-            "com.example.app".to_string(),
-            r.blocked_signers["com.example.app"].clone(),
-        )]);
-        assert_eq!(
-            relock_blocked(&r, false, &ctx(&pins, None, &none, &zone))
-                .allow
-                .len(),
-            1
-        );
-        // Answered since the relock: the list stays, the button and the count go.
-        let b = relock_blocked(&r, true, &ctx(&none, None, &none, &zone));
-        assert_eq!((b.items.len(), b.allow.len(), b.waiting), (1, 0, 0));
-        // A week later: nothing.
-        let late = BlockContext {
-            now: DateTime::from_timestamp_millis(r.at_ms + WARN_MS + 1).unwrap(),
-            ..ctx(&none, None, &none, &zone)
-        };
-        assert_eq!(relock_blocked(&r, false, &late), Blocks::default());
-    }
-
     #[test]
     fn the_log_line_and_the_flashes() {
         // Worded when read (design 70 §4): the time in the reader's zone (UTC in the test's).
@@ -1300,30 +1212,6 @@ mod tests {
         assert_eq!(flash("start_pause_sent").unwrap().0, "quick");
         assert_eq!(flash("allow_blocked_sent").unwrap().0, "blocked-apps");
         assert_eq!(flash("parent_pin_saved"), None);
-    }
-
-    #[test]
-    fn allow_these_apps_goes_once_an_answered_one_is_newer_than_the_relock() {
-        let allowed = CommandAnswer {
-            command: ALLOW_BLOCKED.to_string(),
-            requested_ms: NOW - 2 * 60 * 60 * 1000,
-            acknowledged_ms: Some(NOW),
-            result: Some("allowed: 1 apps".to_string()),
-            delivered: true,
-            cancelled: false,
-            succeeded: Some(true),
-        };
-        assert!(allowed_since_relock(
-            Some(&allowed),
-            NOW - 3 * 60 * 60 * 1000
-        ));
-        assert!(!allowed_since_relock(Some(&allowed), NOW - 60 * 60 * 1000));
-        let unanswered = CommandAnswer {
-            acknowledged_ms: None,
-            ..allowed
-        };
-        assert!(!allowed_since_relock(Some(&unanswered), 0));
-        assert!(!allowed_since_relock(None, 0));
     }
 
     /// The summary waits for the phone (reloads) after Lock again or Unlock 2 h…: unanswered, or
@@ -1363,7 +1251,7 @@ mod tests {
             (vec![answered(lock.clone(), true)], false, false, false),
             // Play install mode still on at the newest report: Lock again still waits (Q-3).
             (vec![answered(lock.clone(), true)], false, true, true),
-            // An older launcher's answer has no flag: as a success.
+            // An answer without the flag: as a success.
             (
                 vec![CommandAnswer {
                     succeeded: None,
@@ -1526,24 +1414,6 @@ mod tests {
         );
         let many: Vec<String> = (0..30).map(|i| format!("org.example.app{i}:")).collect();
         assert_eq!(parse_allow_form(&many.join(",")).len(), BLOCKS_MAX);
-        // An older launcher's relock: its allowable apps, with their keys.
-        let mut r = RelockReport {
-            at_ms: NOW - 60_000,
-            blocked: vec!["org.example.a".to_string(), "org.example.b".to_string()],
-            ..Default::default()
-        };
-        r.blocked_signers
-            .insert("org.example.a".to_string(), "a".repeat(64));
-        r.blocked_signers
-            .insert("org.example.b".to_string(), "b".repeat(64));
-        let pins = HashMap::from([("org.example.b".to_string(), "9".repeat(64))]);
-        assert_eq!(
-            relock_blocked(&r, false, &ctx(&pins, None, &none, &zone)).allow,
-            vec![AllowedBlock {
-                package_name: "org.example.a".to_string(),
-                signer: Some("a".repeat(64))
-            }]
-        );
     }
 
     /// QA of cmd-expiry, Low 2: more blocks than listed say so.

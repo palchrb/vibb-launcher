@@ -8,8 +8,7 @@
 //!
 //! The per-phone parts (a list on or off for one phone, its own domains, the blocked-domain log)
 //! are on the phone's Web Filter page since design 31 step 5 (`device_pages::view_filter`,
-//! `/devices/{id}/filter`); `/dns?device=` and `/dns/log?device=` redirect there. Their POST
-//! routes are shared and return to the page named in their `back` field ([back_to]).
+//! `/devices/{id}/filter`). Their POST routes are shared and return to the page named in their `back` field ([back_to]).
 
 use askama::Template;
 use axum::extract::{Path, Query, State};
@@ -263,20 +262,12 @@ fn backup_reason_text(reason: &str) -> Option<&'static str> {
     })
 }
 
-/// A phone's last report, as its lines need it: its capabilities and its `dns_upstream`.
+/// A phone's last report, as its lines need it: its `dns_upstream`.
 struct LastReport<'a> {
-    capabilities: Option<&'a str>,
     dns_upstream: Option<&'a str>,
     /// When it came, while the phone is Offline or Disconnected (the Attention rows' rule):
     /// what it says may be over.
     stale_since: Option<chrono::DateTime<chrono::Utc>>,
-}
-
-impl LastReport<'_> {
-    fn claims(&self, capability: &str) -> bool {
-        self.capabilities
-            .is_some_and(|caps| caps.contains(&format!("\"{capability}\"")))
-    }
 }
 
 /// Where the phones look names up, for the DNS Server group's lines: the parent's servers at
@@ -429,10 +420,6 @@ fn phone_line(
                 (format!("{line}{at_last_report}"), true)
             }),
         Lookups::Custom { rev } => match (&report, &state) {
-            (Some(report), _) if !report.claims(dns_server::DNS_CUSTOM_CAPABILITY) => Some((
-                t(lang, "settings.web_filter.line.update_for_custom").to_string(),
-                true,
-            )),
             // A provider report while Custom is in force (even at rev 0) is never the backup.
             (Some(_), Some(state)) if state.rev == rev && state.in_use != "provider" => {
                 match outage_since(state) {
@@ -483,26 +470,12 @@ fn phone_line(
 }
 
 /// A phone's lines under the Each Phone group (design 67 §2.4), only while its filter is on and
-/// only what is owed: an update while its last report lacks `dns_bypass_v1`, and a line for each
-/// allowed browser in [DOH_IGNORING_BROWSERS]; in `lang`.
-fn bypass_lines(
-    lang: Lang,
-    name: &str,
-    filter_on: bool,
-    report: Option<&LastReport>,
-    allowlist: Option<&str>,
-) -> Vec<String> {
+/// only what is owed: a line for each allowed browser in [DOH_IGNORING_BROWSERS]; in `lang`.
+fn bypass_lines(lang: Lang, name: &str, filter_on: bool, allowlist: Option<&str>) -> Vec<String> {
     if !filter_on {
         return Vec::new();
     }
     let mut lines = Vec::new();
-    if report.is_some_and(|report| !report.claims(dns_server::DNS_BYPASS_CAPABILITY)) {
-        lines.push(t_params(
-            lang,
-            "settings.web_filter.line.update_for_bypass",
-            &[("name", name)],
-        ));
-    }
     let allowed: Vec<String> = allowlist
         .and_then(|json| serde_json::from_str(json).ok())
         .unwrap_or_default();
@@ -530,11 +503,10 @@ async fn phone_lines(
         Option<String>,
         Option<String>,
         Option<String>,
-        Option<String>,
     );
     let rows: Vec<Row> = sqlx::query_as(
         "SELECT d.id, d.name, COALESCE(p.vpn_filter_enabled, 1), s.reported_at, \
-                s.capabilities_json, s.dns_upstream_json, p.allowlist_json \
+                s.dns_upstream_json, p.allowlist_json \
          FROM devices d \
          LEFT JOIN device_policy p ON p.device_id = d.id \
          LEFT JOIN device_status s ON s.id = (SELECT id FROM device_status \
@@ -547,7 +519,7 @@ async fn phone_lines(
     let zone = Zone::load(&state.db, lang).await;
     let now = chrono::Utc::now();
     let (mut server, mut bypass) = (Vec::new(), Vec::new());
-    for (id, name, filter_on, reported_at, caps, upstream, allowlist) in &rows {
+    for (id, name, filter_on, reported_at, upstream, allowlist) in &rows {
         let stale = devices.iter().find(|d| d.id == *id).is_some_and(|device| {
             matches!(
                 crate::handlers::devices::connection_of(state, device, now),
@@ -555,17 +527,10 @@ async fn phone_lines(
             )
         });
         let report = reported_at.as_deref().map(|at| LastReport {
-            capabilities: caps.as_deref(),
             dns_upstream: upstream.as_deref(),
             stale_since: crate::display_time::parse_db_utc(at).filter(|_| stale),
         });
-        let lines = bypass_lines(
-            lang,
-            name,
-            *filter_on,
-            report.as_ref(),
-            allowlist.as_deref(),
-        );
+        let lines = bypass_lines(lang, name, *filter_on, allowlist.as_deref());
         bypass.extend(lines.into_iter().map(|line| (*id, line)));
         if let Some((line, warn)) = phone_line(name, *filter_on, report, lookups, &zone, now) {
             server.push((*id, line, warn));
@@ -587,12 +552,6 @@ fn query_value(value: Option<&String>) -> String {
     form_urlencoded::byte_serialize(value.as_bytes()).collect()
 }
 
-/// `?device=X` (an old bookmark or link): the phone's parts are on its Web Filter page now
-/// (design 31 §3.1, L5). Anything that isn't a phone id is ignored.
-fn old_device_param(params: &HashMap<String, String>) -> Option<i64> {
-    params.get("device").and_then(|s| s.parse::<i64>().ok())
-}
-
 fn read_failed(lang: Lang, err: sqlx::Error) -> Response {
     tracing::error!(%err, "couldn't read the web filter");
     crate::i18n::error(
@@ -609,9 +568,6 @@ pub async fn show_dns_filter(
     lang: Lang,
     Query(params): Query<HashMap<String, String>>,
 ) -> Response {
-    if let Some(id) = old_device_param(&params) {
-        return Redirect::to(&format!("/devices/{id}/filter")).into_response();
-    }
     render_page(&state, &params, None, lang).await
 }
 
@@ -1139,8 +1095,7 @@ pub(crate) fn doh_allowed_notice(params: &HashMap<String, String>) -> Option<Str
 }
 
 /// One phone's setting for one blocklist: `setting` = `default` (no override: the list as it is
-/// for everyone), `on` or `off`. An older page's form (`clear`, else the `enabled` checkbox) still
-/// works. Anything else is a 400; an unknown phone or list a 404. Nudges the phone; back to `back`
+/// for everyone), `on` or `off`. Anything else, or none, is a 400; an unknown phone or list a 404. Nudges the phone; back to `back`
 /// ([back_to]).
 pub async fn set_device_blocklist_override(
     State(state): State<AppState>,
@@ -1152,11 +1107,9 @@ pub async fn set_device_blocklist_override(
         Some("default") => None,
         Some("on") => Some(true),
         Some("off") => Some(false),
-        Some(_) => {
+        _ => {
             return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.unknown_setting");
         }
-        None if form.contains_key("clear") => None,
-        None => Some(form.contains_key("enabled")),
     };
     let result = match setting {
         None => {
@@ -1229,15 +1182,8 @@ crate::i18n::words!(DnsLogTemplate);
 
 /// Blocked Activity (`/dns/log`): the phones, each with its log off or today's count (since local
 /// midnight in the Phone Setup zone, as the Settings row counts), linking to the log on its Web
-/// Filter page (design 31 steps 5 and 14). `?device=X` redirects there (L5). A DB error is a 500.
-pub async fn show_dns_log(
-    State(state): State<AppState>,
-    lang: Lang,
-    Query(params): Query<HashMap<String, String>>,
-) -> Response {
-    if let Some(id) = old_device_param(&params) {
-        return Redirect::to(&format!("/devices/{id}/filter#log")).into_response();
-    }
+/// Filter page (design 31 steps 5 and 14). A DB error is a 500.
+pub async fn show_dns_log(State(state): State<AppState>, lang: Lang) -> Response {
     let zone = crate::display_time::Zone::load(&state.db, lang).await;
     let since = crate::handlers::settings_hub::utc_start_of_day(zone.local(chrono::Utc::now()));
     let phones = sqlx::query_as::<_, (i64, String, Option<bool>, i64)>(

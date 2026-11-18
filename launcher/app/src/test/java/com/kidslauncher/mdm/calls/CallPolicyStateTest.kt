@@ -15,15 +15,15 @@ import org.junit.Test
 class CallPolicyStateTest {
 
     private val contact = PolicyContact(7, "Mamma", "+4791234567", inbound = true, outbound = true, showOnHome = true)
-    private val managedCalls = CallPolicy(managed = true, callsEnabled = true, smsEnabled = false, contacts = listOf(contact))
+    private val managedCalls = CallPolicy(callsMode = "managed", smsMode = "off", contacts = listOf(contact))
     private val rules = managedCalls.toRules()
     private val withCalls = PolicyResponse(allowlist = listOf("a"), callPolicy = managedCalls)
-    private val unmanagedCalls = PolicyResponse(allowlist = listOf("a"), callPolicy = CallPolicy(managed = false))
+    private val unmanagedCalls = PolicyResponse(allowlist = listOf("a"), callPolicy = CallPolicy(callsMode = "unmanaged", smsMode = "unmanaged"))
     private val oldServer = PolicyResponse(allowlist = listOf("a"))
     private val otherRules = CallRules(callsEnabled = true, contacts = listOf(RuleContact(1, "Old", "+4790000000", inbound = true)))
 
     @Test
-    fun `explicit managed false is Unmanaged`() {
+    fun `both channels unmanaged is Unmanaged`() {
         assertEquals(CallPolicyState.Unmanaged, callPolicyState(CachedPolicy.Ok(unmanagedCalls), false, null))
         assertEquals(CallPolicyState.Unmanaged, callPolicyState(CachedPolicy.Ok(unmanagedCalls), true, otherRules))
     }
@@ -58,7 +58,7 @@ class CallPolicyStateTest {
     }
 
     @Test
-    fun `prefs are only written from an explicit managed value`() {
+    fun `prefs are only written from a sent call_policy`() {
         assertNull(callPrefsUpdate(oldServer))
         assertEquals(CallPrefsUpdate(false, null), callPrefsUpdate(unmanagedCalls))
         val update = callPrefsUpdate(withCalls)!!
@@ -79,7 +79,7 @@ class CallPolicyStateTest {
         assertEquals(CallRules(), decodeCallRules("""{"future": 1}"""))
     }
 
-    // QA 02 criterion T7: judgeFresh and the explicit managed rule.
+    // QA 02 criterion T7: judgeFresh and a missing call_policy.
 
     @Test
     fun `missing call_policy after managed calls is suspect`() {
@@ -98,7 +98,7 @@ class CallPolicyStateTest {
     }
 
     @Test
-    fun `explicit managed false is accepted after managed calls`() {
+    fun `both channels unmanaged is accepted after managed calls`() {
         assertEquals(FreshVerdict.ACCEPT, judgeFresh(unmanagedCalls, CachedPolicy.Ok(withCalls), true, callsManagedLast = true))
     }
 

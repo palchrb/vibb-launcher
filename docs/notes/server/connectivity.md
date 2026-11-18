@@ -84,8 +84,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   HttpOnly, Strict) or `handy` with `INSECURE_COOKIES` (`security::session_layer`); `SESSION_INACTIVITY_DAYS`
   (`NetConfig`, default 30), and since 0.55.0 (security review L6) `SESSION_MAX_DAYS` (default 90, 1-3650): the sign-in's
   time (`admin_auth::SIGNED_IN_AT_KEY`, set at the sign-in's last step) ends the session that long after, however
-  often it is used (`load_active_admin`, `SignInWhy::TooOld`); a session from before has no time and starts its clock
-  at its next request, so the upgrade signs nobody out (`admin_auth::a_session_ends_after_its_absolute_lifetime`). `kid_phone_server reset-2fa <user>` (`main::run_command`) clears TOTP, lock and counter,
+  often it is used (`load_active_admin`, `SignInWhy::TooOld`); a session without the time is past it
+  (`admin_auth::a_session_ends_after_its_absolute_lifetime`). `kid_phone_server reset-2fa <user>` (`main::run_command`) clears TOTP, lock and counter,
   bumps the epoch and replaces the password with a new one in `data/initial-admin-password-<id>` (QA 22 M4; one file per
   account since design 62, which also restores a removed account and clears a one-time password's expiry). `admin_headers`: HSTS, nosniff, Referrer-Policy, X-Frame-Options, COOP, Permissions-Policy,
   CSP (`ADMIN_CSP`; phase 2 since 0.55.0, design 22 S7 and security review L5: `script-src 'self'`, no
@@ -136,8 +136,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `security_events` pruned after 180 days, a phone's own lines sooner (`retention::prune`, `retention-and-crashes.md`). The TOTP secret stays in the DB (QA b, DEPLOY.md).
 - **Docker and startup** (D1, `src/startup.rs`, `Dockerfile`, `deploy/image-smoke.sh`): `DEPLOY_KIND` (`NetConfig`,
   systemd default, the image sets docker). Startup for every kind: `check_data_writable` ("data/ is not writable by
-  uid N", exit 1); `remove_host_files` (since the server stopped acting on its host, 2026-11-04: what the old root
-  helper's requests left in `data/`, `startup::HOST_FILES`); `apply_restore_request` (every restore: `data/restore_request`
+  uid N", exit 1); `apply_restore_request` (every restore: `data/restore_request`
   written by `backups::restore_in_container`, which exits 3 a second later for the restart policy, or on a systemd
   install by the owner over SSH before `systemctl restart` - DEPLOY.md, "Backups"; startup deletes the marker
   first, checks the name/zip/`kidphone.db` (at most `RESTORE_MAX_BYTES`, 1 GiB), copies the DB +
@@ -503,16 +502,15 @@ phone has a token): `POST /devices/{id}/leave-tailnet` (`handlers::devices::leav
 through `locate::queue_command` (logged `device_command_queued`) and returns to `#connection` with
 `?notice=tailnet_leave_queued`; without the box `?notice=tailnet_unconfirmed` and nothing is queued. The row shows
 only while the phone's last status report says `tailnet_joined: true` (migration `0125_tailnet_joined.sql`,
-`device_status.tailnet_joined`, `DeviceStatus.tailnet_joined`; the contract's `report`): an older launcher (no field)
-or a phone not on the tailnet doesn't see it. The confirm says the phone then reaches the server only at its direct
+`device_status.tailnet_joined`, `DeviceStatus.tailnet_joined`; the contract's `report`): a phone with no field or not on the tailnet doesn't see it. The confirm says the phone then reaches the server only at its direct
 address; a phone whose server URL is a Tailscale address refuses ("Stayed on the tailnet",
 `locate.answer.tailnet_only`). It never expires (like a lock). The launcher's answers are the shared contract
 `testdata/leave_tailnet.json` (`tests::leave_tailnet`), worded by `locate::reword` (`locate.answer.left_tailnet`,
-`not_on_tailnet`, `leave_tailnet_failed`, `tailnet_only`); an older launcher answers "too old".
+`not_on_tailnet`, `leave_tailnet_failed`, `tailnet_only`).
 
 ## The phones' certificate check (design 76, `docs/design/76-server-issuer-pin.md`)
 
-The launcher (capability `server_pin_v1`) checks the chain Android validated for this server against its built-in set
+The launcher checks the chain Android validated for this server against its built-in set
 (Let's Encrypt, ZeroSSL's Sectigo - the launcher's alone, `ServerPins.kt`; the server never judges a chain) and
 enforces it only once this server says so. `src/server_tls.rs` (migration `0129_server_tls.sql`, `device_server_tls`,
 one row per phone, no row = `watching`):
@@ -532,8 +530,7 @@ one row per phone, no row = `watching`):
   row only after a 2xx over a working connection); past 8 rows `seen` rows go first, then refusals no longer sent and
   older than a week, only then the oldest refusal (verification L-a). The last report's `seen` is kept
   (`seen_in_set`, `None` for a report without one - the tailnet -, `seen_name`).
-- **Policy** (`server_tls::policy`, in `build_policy`): only for a phone whose last report has `server_pin_v1` -
-  `{}` watching (no `enforce`: the phone keeps its flag, R-1), `{"enforce": true}` on, `{"enforce": false}` off; each
+- **Policy** (`server_tls::policy`, in `build_policy`): always sent - `{}` watching (no `enforce`: the phone keeps its flag, R-1), `{"enforce": true}` on, `{"enforce": false}` off; each
   with `recovery_url` when the server knows its tailnet recovery address (`server_tls::recovery_url`: `PHONE_RECOVERY_URL`,
   else the setup QR's address when it is tailnet http, else this box's tailnet address - the source picked toward
   100.100.100.100 / `fd7a:115c:a1e0::53` on a connected UDP socket, nothing sent, never in the tests, and only while
@@ -541,7 +538,7 @@ one row per phone, no row = `watching`):
   verification n2) - on a listener bound to it, to `0.0.0.0` for IPv4, or to `[::]` for IPv6 and for IPv4 only when
   that socket's `IPV6_V6ONLY` read off at its bind (`note_listener`, verification n3); code QA H-1); a read error fails the policy. Pinned by
   `policy_json_keys_snapshot`.
-- **Device › Advanced › Certificate check** (`#server-tls`, after Connection, only with the capability): the state as
+- **Device › Advanced › Certificate check** (`#server-tls`, after Connection): the state as
   one row, from the server's state and what the phone reports (code QA M-1: "on - only Let's Encrypt or ZeroSSL" only
   while the phone says it enforces, "on - the phone takes it at its next sync", "on here, but this phone can't take
   it - … comes from X"; "watching - on from …"; "not on - this phone saw a certificate from … - not switched on by

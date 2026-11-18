@@ -140,11 +140,6 @@
             <div class="attention-text">{{ self.t("device.lock.easy") }}<div class="attention-sub"><details class="info"><summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("device.lock.easy_sub") }}</p></div></details></div></div>
         </div>
         {% endif %}
-        {% if offline_override_used && !parent.capable %}
-        <div class="attention attention-action" data-warning="override-used">
-            <div class="attention-text">{{ self.t("device.lock.used_offline") }}<div class="attention-sub"><details class="info"><summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("device.lock.used_offline_sub") }}</p></div></details></div></div>
-        </div>
-        {% endif %}
         <div class="group">
             <details class="edit cell"{% if parent_open %} open{% endif %}>
                 <summary class="row">
@@ -230,7 +225,7 @@
             </form>
             <form method="post" action="/devices/{{ device.id }}/lock-buzz#lock-buzz" class="cell" id="lock-buzz">
                 <label class="row">
-                    <span class="row-label">{{ self.t("device.lock.buzz") }}{% if lock_buzz_needs_update %}<span class="row-sub tone-orange" data-hint>{{ self.t("device.lock.buzz_needs_update") }}</span>{% endif %}</span>
+                    <span class="row-label">{{ self.t("device.lock.buzz") }}</span>
                     <input type="checkbox" role="switch" class="sw" name="on" value="on"{% if lock_buzz %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
                 </label>
                 <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
@@ -255,11 +250,6 @@
         {% if weather.needs_position %}
         <div class="attention" data-note="needs-position">
             <div class="attention-text">{{ self.t("device.weather.needs_position") }}<div class="attention-sub"><a href="/devices/{{ device.id }}/location-settings">{{ self.t("device.weather.needs_position_link") }}</a></div></div>
-        </div>
-        {% endif %}
-        {% if weather.needs_update %}
-        <div class="attention attention-action" data-warning="needs-update">
-            <div class="attention-text">{{ self.t("device.weather.needs_update") }}</div>
         </div>
         {% endif %}
         <div class="group">
@@ -333,7 +323,7 @@
                 <input type="hidden" name="package_name" value="{{ app.package_name }}">
                 {% if app.note.is_some() %}<input type="hidden" name="unlisted" value="1">{% endif %}
                 <label class="row">
-                    <span class="row-label">{{ app.label }}{% if let Some(note) = app.note %}<span class="row-sub">{{ self.t(note) }}</span>{% endif %}{% if let Some(hint) = app.hint %}<span class="row-sub tone-orange" data-hint>{{ self.t(hint) }}</span>{% endif %}</span>
+                    <span class="row-label">{{ app.label }}{% if let Some(note) = app.note %}<span class="row-sub">{{ self.t(note) }}</span>{% endif %}</span>
                     <select class="pick" name="show" data-autosave>
                         <option value="off"{% if !app.on %} selected{% endif %}>{{ self.t("common.off") }}</option>
                         <option value="name"{% if app.on && !app.show_text %} selected{% endif %}>{{ self.t("device.lock.name_only") }}</option>

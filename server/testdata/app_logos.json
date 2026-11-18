@@ -1,5 +1,4 @@
 {
-  "capability": "app_logos_v1",
   "size_px": 128,
   "max_bytes": 81920,
   "max_per_phone": 300,
@@ -21,9 +20,6 @@
         "label": "Notes",
         "preinstalled": true
       }
-    ],
-    "capabilities": [
-      "app_logos_v1"
     ]
   },
   "answer": {

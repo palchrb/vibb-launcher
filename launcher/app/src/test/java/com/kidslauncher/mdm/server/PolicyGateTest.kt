@@ -134,7 +134,7 @@ class PolicyGateTest {
         )
     }
 
-    private val lastPlan = LastEnforcedPlan.of(managed.copy(bedtimeStartMinutes = 1260, bedtimeEndMinutes = 420))
+    private val lastPlan = LastEnforcedPlan.of(managed.copy(screenTimeoutSeconds = 60))
 
     @Test
     fun `absent cache after a policy was applied falls back to the last enforced plan`() {
@@ -142,7 +142,7 @@ class PolicyGateTest {
         assertEquals(PolicyToApply.Fallback(lastPlan.toPolicy()), decision)
         assertEquals(listOf("org.example.music"), decision.policy?.allowlist)
         assertEquals(true, decision.policy?.kioskDesired)
-        assertEquals(1260, decision.policy?.bedtimeStartMinutes)
+        assertEquals(60, decision.policy?.screenTimeoutSeconds)
     }
 
     @Test
@@ -244,10 +244,10 @@ class PolicyGateTest {
         assertEquals(timePolicy.copy(lifts = emptyList()), plan.timePolicy)
         val decoded = LastEnforcedPlan.decode(LastEnforcedPlan.encode(plan))!!
         assertEquals(timePolicy.copy(lifts = emptyList()), decoded.toPolicy().timePolicy)
-        // A plan written by an older build has no time policy: its windows are converted.
-        val old = LastEnforcedPlan.decode("""{"allowlist":[],"bedtime_start_minutes":1260,"bedtime_end_minutes":420}""")!!
-        assertNull(old.timePolicy)
-        assertEquals(1, KidModeEnforcer.timePolicyOf(old.toPolicy())!!.rules.size)
+        // A plan without a time policy has no rules.
+        val none = LastEnforcedPlan.decode("""{"allowlist":[]}""")!!
+        assertNull(none.timePolicy)
+        assertTrue(KidModeEnforcer.timePolicyOf(none.toPolicy())!!.rules.isEmpty())
     }
 
     @Test
@@ -292,14 +292,14 @@ class PolicyGateTest {
     private val withModes = managed.copy(
         callPolicy = com.kidslauncher.mdm.server.dto.CallPolicy(callsMode = "managed", smsMode = "managed"),
     )
-    private val oldShape = managed.copy(callPolicy = com.kidslauncher.mdm.server.dto.CallPolicy(managed = true, callsEnabled = true))
+    private val noModes = managed.copy(callPolicy = com.kidslauncher.mdm.server.dto.CallPolicy())
 
     @Test
     fun `channel modes - missing after they were seen, or unknown, is rejected`() {
-        assertEquals(FreshVerdict.ACCEPT, judgeFresh(oldShape, CachedPolicy.Ok(managed), true))
-        assertEquals(FreshVerdict.ACCEPT, judgeFresh(withModes, CachedPolicy.Ok(oldShape), true))
-        assertEquals(FreshVerdict.REJECT_SUSPECT, judgeFresh(oldShape, CachedPolicy.Ok(withModes), true))
-        assertEquals(FreshVerdict.REJECT_SUSPECT, judgeFresh(oldShape, CachedPolicy.Corrupt("x"), true, channelModesSeen = true))
+        assertEquals(FreshVerdict.ACCEPT, judgeFresh(noModes, CachedPolicy.Ok(managed), true))
+        assertEquals(FreshVerdict.ACCEPT, judgeFresh(withModes, CachedPolicy.Ok(noModes), true))
+        assertEquals(FreshVerdict.REJECT_SUSPECT, judgeFresh(noModes, CachedPolicy.Ok(withModes), true))
+        assertEquals(FreshVerdict.REJECT_SUSPECT, judgeFresh(noModes, CachedPolicy.Corrupt("x"), true, channelModesSeen = true))
         val half = managed.copy(callPolicy = com.kidslauncher.mdm.server.dto.CallPolicy(callsMode = "managed"))
         assertEquals(FreshVerdict.REJECT_SUSPECT, judgeFresh(half, CachedPolicy.Ok(managed), true))
         val unknown = managed.copy(callPolicy = com.kidslauncher.mdm.server.dto.CallPolicy(callsMode = "managed", smsMode = "filtered"))

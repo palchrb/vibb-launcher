@@ -25,12 +25,10 @@ import java.util.UUID
 
 private const val LOG_TAG = "SmsNotifier"
 
-/** Design 77 §6.8: the message notifications - HIGH, so a message peeks as a banner (2026-11-17; the first version,
- * `launcher:messages`, was DEFAULT and never peeked, and Android can't raise a channel's importance, so it is deleted in
- * [SmsNotifier.createChannels]), and LOW for a message stored under a time rule without calls ("stored and notified
+/** Design 77 §6.8: the message notifications - HIGH, so a message peeks as a banner (2026-11-17: Android can't raise a
+ * channel's importance, hence `_v2`), and LOW for a message stored under a time rule without calls ("stored and notified
  * silently", §6.7). */
 const val NOTIFICATION_CHANNEL_MESSAGES = "launcher:messages_v2"
-private const val OLD_CHANNEL_MESSAGES = "launcher:messages"
 const val NOTIFICATION_CHANNEL_MESSAGES_SILENT = "launcher:messages_silent"
 
 /**
@@ -71,7 +69,6 @@ object SmsNotifier {
 
     fun createChannels(context: Context) {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
-        manager.deleteNotificationChannel(OLD_CHANNEL_MESSAGES)
         manager.createNotificationChannel(
             NotificationChannel(NOTIFICATION_CHANNEL_MESSAGES, context.getString(R.string.notification_channel_messages), NotificationManager.IMPORTANCE_HIGH),
         )
@@ -189,7 +186,7 @@ object SmsNotifier {
         val passesFilter = passesFilter(context)
         main.post {
             val mark = SmsGlance.comeBack(conversationId, seq)
-            val level = smsLockLevel(com.kidslauncher.mdm.badges.GlanceStore.policy.sms, com.kidslauncher.mdm.calls.CallPolicyStore.state)
+            val level = smsLockLevel(com.kidslauncher.mdm.badges.GlanceStore.policy.sms)
             val gainsRow = smsGainsRow(level, unreadAfter, mark, seq)
             if (smsPostAlerts(posted = true, silent = silent, enabled = enabled, channelImportance = importance, passesFilter = passesFilter, gainsRow = gainsRow)) {
                 com.kidslauncher.mdm.lock.PinLockRuntime.noticeCame()

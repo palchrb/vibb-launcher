@@ -385,7 +385,6 @@ async fn an_unreadable_table_sends_no_apps_and_the_rest_of_the_policy() {
     );
     let before = app.policy(&token).await;
     assert_eq!(before["lock_glance"]["sms"], "text");
-    assert_eq!(before["call_policy"]["sms_lock_text"], true);
     // The trigger names the table, so it goes first.
     sqlx::query("DROP TRIGGER devices_get_lock_glance_default")
         .execute(&app.db)
@@ -396,16 +395,10 @@ async fn an_unreadable_table_sends_no_apps_and_the_rest_of_the_policy() {
         .await
         .unwrap();
     let after = app.policy(&token).await;
-    // Fail closed for Meldinger too: `sms` is "off", never absent (a new launcher would read an absent one as an
-    // older server's rule), and the derived old key is false.
+    // Fail closed for Meldinger too: `sms` is "off", never absent.
     assert_eq!(after["lock_glance"], json!({ "apps": [], "sms": "off" }));
-    assert_eq!(after["call_policy"]["sms_lock_text"], false);
     let strip = |mut v: Value| {
         v.as_object_mut().unwrap().remove("lock_glance");
-        v["call_policy"]
-            .as_object_mut()
-            .unwrap()
-            .remove("sms_lock_text");
         v
     };
     assert_eq!(strip(before), strip(after));
@@ -655,33 +648,6 @@ async fn refused_saves_write_nothing() {
         )
         .await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST, "no value");
-    // A Lock page from before the select (qa-srv-sweep-resume-code L6b): its switch posts `on`,
-    // its text switch the removed route - both say to reload, nothing written.
-    for (route, fields) in [
-        (
-            "lock-screen/apps",
-            vec![("package_name", ELEMENT_X), ("on", "on")],
-        ),
-        (
-            "lock-screen/apps/text",
-            vec![("package_name", ELEMENT_X), ("show_text", "on")],
-        ),
-    ] {
-        let res = app
-            .request_form(
-                Method::POST,
-                &format!("/devices/{id}/{route}"),
-                Some(&cookie),
-                &fields,
-            )
-            .await;
-        assert_eq!(res.status, StatusCode::BAD_REQUEST, "{route}");
-        assert_eq!(
-            res.text(),
-            "This page is out of date - reload it.",
-            "{route}"
-        );
-    }
     // 400: the text of something that isn't a package.
     assert_eq!(
         switch(&app, Some(&cookie), id, "not a package", true)
@@ -962,10 +928,9 @@ async fn the_page_shows_each_note() {
         !html.contains("attention-action") && !html.contains("data-warning"),
         "{html}"
     );
-    assert!(!html.contains("Vibb One can&#39;t show these yet"));
     assert!(!html.contains("Missed calls only"));
 
-    // A launcher without the capability and without notification access; a Child PIN.
+    // A launcher without notification access; a Child PIN.
     sqlx::query(
         "UPDATE device_policy SET kid_pin_hash = 'aGFzaA', kid_pin_salt = 'c2FsdA', \
          kid_pin_length = 4 WHERE device_id = ?",
@@ -983,10 +948,9 @@ async fn the_page_shows_each_note() {
     .await;
     let html = page().await;
     assert!(!html.contains("without a Child PIN"));
-    assert!(html.contains("Vibb One can&#39;t show these yet"), "{html}");
     assert!(html.contains("Missed calls only"), "{html}");
 
-    // An up-to-date launcher with access: no warnings.
+    // A launcher with access: no warnings.
     report(
         &app,
         &token,
@@ -999,8 +963,7 @@ async fn the_page_shows_each_note() {
 }
 
 /// Design 82 D7: Meldinger's row is the group's first and only while SMS is managed; every save returns to its own
-/// cell (Off too - it stays listed), reaches the policy as `lock_glance.sms` with the derived `sms_lock_text`, and
-/// is logged without the key.
+/// cell (Off too - it stays listed), reaches the policy as `lock_glance.sms`, and is logged without the key.
 #[tokio::test]
 async fn meldingers_row_is_first_only_while_sms_is_managed_and_saves_in_place() {
     let app = TestApp::new().await;
@@ -1010,7 +973,7 @@ async fn meldingers_row_is_first_only_while_sms_is_managed_and_saves_in_place() 
         || async { subsection(&app.get_page(&lock_page(id), &cookie).await.text()).to_string() };
     let anchor = format!("lock-screen-app-{MESSAGES}");
 
-    // SMS not managed: no row, and a stored Full text goes out as the name - the old key false with it.
+    // SMS not managed: no row, and a stored Full text goes out as the name.
     let stored_text = |text: bool| {
         sqlx::query(
             "UPDATE device_lock_glance_apps SET show_text = ? WHERE device_id = ? AND package_name = ?",
@@ -1024,7 +987,6 @@ async fn meldingers_row_is_first_only_while_sms_is_managed_and_saves_in_place() 
     assert_eq!(form_of(&page().await, MESSAGES), None);
     let policy = app.policy(&token).await;
     assert_eq!(policy["lock_glance"]["sms"], "name");
-    assert_eq!(policy["call_policy"]["sms_lock_text"], false);
     // Back to the seed, Name only.
     stored_text(false).await.unwrap();
 
@@ -1045,17 +1007,12 @@ async fn meldingers_row_is_first_only_while_sms_is_managed_and_saves_in_place() 
         "{html}"
     );
 
-    for (value, sms, text) in [
-        ("off", "off", false),
-        ("text", "text", true),
-        ("name", "name", false),
-    ] {
+    for (value, sms) in [("off", "off"), ("text", "text"), ("name", "name")] {
         let res = show(&app, Some(&cookie), id, MESSAGES, value).await;
         super::assert_redirect(&res, &lock_page(id), Some(&anchor));
         app.assert_lands(&res, &cookie).await;
         let policy = app.policy(&token).await;
         assert_eq!(policy["lock_glance"]["sms"], sms);
-        assert_eq!(policy["call_policy"]["sms_lock_text"], text);
         assert_eq!(
             policy["lock_glance"]["apps"],
             json!([{ "package": ELEMENT_X, "show_text": false }])
@@ -1078,51 +1035,36 @@ async fn meldingers_row_is_first_only_while_sms_is_managed_and_saves_in_place() 
     );
 }
 
-/// Design 82 D7: the row's own line for Off on a phone that can't hide the row yet, and the no-access note that
-/// counts Meldinger while its row shows.
+/// Design 82 D7: the no-access note counts Meldinger while its row shows.
 #[tokio::test]
-async fn meldingers_row_says_what_an_older_phone_shows_and_the_access_note_counts_it() {
+async fn the_access_note_counts_meldingers_row() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;
     let page =
         || async { subsection(&app.get_page(&lock_page(id), &cookie).await.text()).to_string() };
     sms_managed(&app, id).await;
-    const HINT: &str = "This phone still shows the name and how many - update Vibb One";
 
-    // A launcher from before `messages_app_v1`, without notification access.
+    // A launcher without notification access.
     report(
         &app,
         &token,
         &[],
-        json!({ "capabilities": ["lock_glance_v1"], "notification_listener_enabled": false }),
+        json!({ "notification_listener_enabled": false }),
     )
     .await;
     let html = page().await;
     assert!(html.contains("Missed calls and Messages only"), "{html}");
-    assert!(!form_of(&html, MESSAGES).unwrap().contains(HINT));
+    assert!(!form_of(&html, MESSAGES).unwrap().contains("data-hint"));
 
     show(&app, Some(&cookie), id, MESSAGES, "off").await;
     let html = page().await;
     assert!(html.contains("Missed calls only"), "{html}");
     assert!(!html.contains("Missed calls and Messages only"), "{html}");
     let form = form_of(&html, MESSAGES).unwrap();
-    assert!(form.contains(HINT), "{form}");
-    // Still its own cell: the hint is not the "unlisted" note.
+    assert!(!form.contains("data-hint"), "{form}");
+    // Still its own cell: no "unlisted" note.
     assert!(!form.contains("unlisted"), "{form}");
-
-    // An up-to-date launcher hides the row at Off: no line.
-    report(
-        &app,
-        &token,
-        &[],
-        json!({
-            "capabilities": ["lock_glance_v1", crate::lock_glance::MESSAGES_APP_CAPABILITY],
-            "notification_listener_enabled": true,
-        }),
-    )
-    .await;
-    assert!(!page().await.contains(HINT));
 }
 
 /// Design 82 D1: the prefix is reserved. A reported app under it is dropped at intake, and neither the allow switch
@@ -1370,31 +1312,7 @@ async fn the_buzz_switch_saves_logs_nudges_and_reaches_the_policy() {
     // Design 113: no sub-line under the switch (the group's ⓘ says what it buzzes for).
     assert!(!cell.contains("row-sub"), "{cell}");
     assert!(!cell.contains(" checked"), "off by default: {cell}");
-    // Code QA S4: a phone that has reported on a Vibb One from before the buzz (it ships with `messages_app_v1`)
-    // says so under the switch - never before the first report, and not once it is updated.
-    let hint = || async {
-        app.get_page(&lock_page(id), &cookie)
-            .await
-            .text()
-            .contains("This phone does not buzz yet - update Vibb One")
-    };
-    assert!(!cell.contains("data-hint"), "no report yet: {cell}");
-    report(
-        &app,
-        &token,
-        &[],
-        json!({ "capabilities": ["lock_glance_v1"] }),
-    )
-    .await;
-    assert!(hint().await);
-    report(
-        &app,
-        &token,
-        &[],
-        json!({ "capabilities": [crate::lock_glance::MESSAGES_APP_CAPABILITY] }),
-    )
-    .await;
-    assert!(!hint().await);
+    assert!(!cell.contains("data-hint"), "{cell}");
 
     let mut nudges = app.state.command_notify.subscribe();
     for on in [true, true, false] {

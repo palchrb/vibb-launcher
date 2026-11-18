@@ -12,10 +12,6 @@ use crate::display_time::Zone;
 use crate::parent_events::{ExtraTimeParams, Kind, TimeAsk};
 use crate::time_state::TimeReport;
 
-/// The launcher's status capability (`time_request.json`'s `capability`): it shows a parent's "Nei" and the name. Read
-/// only for the "Nei" flash's words (§14.4, §14.7).
-pub const CAPABILITY: &str = "time_answer_v1";
-
 /// The phone's newest report as `(reported_at, its time report)`; `None` before the first.
 pub async fn latest_report(
     db: &SqlitePool,
@@ -333,8 +329,7 @@ pub async fn copied_rule(
 }
 
 /// A request taken at intake closes the phone's other unanswered requests of the day (`superseded`, §14.4, QA R2-L6):
-/// called only after the new one was stored, in the intake's transaction. An older launcher asks again after its 30
-/// minutes; the card then shows the newest.
+/// called only after the new one was stored, in the intake's transaction; the card then shows the newest.
 pub async fn supersede(
     conn: &mut SqliteConnection,
     device_id: i64,

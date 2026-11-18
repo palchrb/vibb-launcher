@@ -49,7 +49,7 @@ class ParentPinEventsTest {
     @Test
     fun `after an upload only the sent ids leave, and events added meanwhile stay`() {
         val prefs = ParentPinStoreTest.FakePrefs()
-        val store = ParentPinStore(prefs, ParentPinStoreTest.FakeLegacy()) { _, _ -> }
+        val store = ParentPinStore(prefs) { _, _ -> }
         val sent = listOf(event("a", PIN_EVENT_WRONG), event("b", PIN_EVENT_UNLOCKED))
         store.saveQueue(sent)
         val snapshot = store.queue()

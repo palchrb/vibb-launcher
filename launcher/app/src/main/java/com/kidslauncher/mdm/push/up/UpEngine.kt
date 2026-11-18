@@ -355,7 +355,7 @@ class UpEngine(
      * A fresh policy fetched at [requestStartMs] was accepted (design 108 §2.3, §5.5): the reconcile, the origin's
      * rewrite, the apps no longer installed, the queued `DELETE`s. [view] is that fresh policy's own (code QA M3: never
      * the cache read back, so a failed cache commit or a corrupt cache can't drop every row); [regs] its `regs`
-     * (`null`: the key missing, an older server).
+     * (`null`: the key missing).
      *
      * A store that doesn't open changes nothing - for [UNREADABLE_GRACE_MS]; after that it is dropped and treated as
      * empty (code QA L4), so the reconcile deletes the server's rows and the apps' endpoints answer 410 (each app

@@ -56,12 +56,12 @@ object PinLockStore {
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
     /** The kid PIN as the last apply saw it ([KidLockConfig.usable] may be false: bad hash); `null` when none is
-     * stored or it doesn't open (design r10: unreadable). Main thread: opens, never migrates (QA R10-7). */
-    fun config(context: Context): KidLockConfig? = configFrom(prefs(context), Secrets.prefs, Secrets.migrateHere())
+     * stored or it doesn't open (design r10: unreadable). */
+    fun config(context: Context): KidLockConfig? = configFrom(prefs(context), Secrets.prefs)
 
-    internal fun configFrom(p: SharedPreferences, sealed: SealedPrefs, migrate: Boolean): KidLockConfig? {
-        val hash = sealed.read(p, HASH_AAD, PIN_HASH, migrate) as? Sealed.Value ?: return null
-        val salt = when (val read = sealed.read(p, SALT_AAD, PIN_SALT, migrate)) {
+    internal fun configFrom(p: SharedPreferences, sealed: SealedPrefs): KidLockConfig? {
+        val hash = sealed.read(p, HASH_AAD, PIN_HASH) as? Sealed.Value ?: return null
+        val salt = when (val read = sealed.read(p, SALT_AAD, PIN_SALT)) {
             is Sealed.Value -> read.plain
             Sealed.Absent -> ""
             Sealed.Unreadable -> return null
@@ -102,8 +102,7 @@ object PinLockStore {
             if (requested != null) e.putBoolean(KEYGUARD_REQUESTED, requested)
         }
         // Code QA Q-7: a Keep touches no sealed key, so it commits a plain editor without SealedPrefs' LOCK - the crash
-        // guard's save on the main thread never waits for a migration's keygen (N6). It can't race the migration's
-        // commit: that one writes only its own key.
+        // guard's save on the main thread never waits for a seal's keygen (N6).
         if (write == PinWrite.Keep) {
             val editor = p.edit()
             base(editor)

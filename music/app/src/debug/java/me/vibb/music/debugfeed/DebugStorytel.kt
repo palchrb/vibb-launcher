@@ -34,15 +34,6 @@ object DebugStorytel {
             Log.i(TAG, "storytel: ${base ?: "the real hosts"}")
         }
     }
-
-    /**
-     * `storytel.json`, a fake login from before design 58: the phone no longer takes a login (an unmanaged run asks
-     * the fake's `/fake/jwt`, design 58 §5.6), so it is deleted unread - it sits on shared storage - with one fixed line.
-     */
-    fun dropLogin(f: File) {
-        f.delete()
-        Log.w(TAG, "storytel.json: the phone takes no login since design 58 - deleted unread")
-    }
 }
 
 /**

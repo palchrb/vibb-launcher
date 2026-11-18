@@ -23,7 +23,7 @@ import me.vibb.music.media.MediaCache
  * an unmanaged app asks the fake's `/fake/jwt` under generation `DEBUG_GENERATION` - while with the switch
  * set only a `FAKE-JWT-` goes on, whichever way it came (design 58 §5.6). Every call that asks runs off the
  * main thread: [mint] and [prefetchIfDue] are suspends on IO, [state] is called from the sync's report
- * (IO). Nothing here logs. The old login on disk is StorytelLegacy's (the sync's), never this class's.
+ * (IO). Nothing here logs.
  */
 class StorytelAccount private constructor(
     private val api: StorytelApi,

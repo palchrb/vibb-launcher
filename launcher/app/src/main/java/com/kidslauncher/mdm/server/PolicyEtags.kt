@@ -25,7 +25,6 @@ import java.security.MessageDigest
 class PolicyEtagStore(
     private val prefs: SharedPreferences,
     private val sealed: SealedPrefs = Secrets.prefs,
-    private val migrate: () -> Boolean = Secrets::migrateHere,
 ) {
     companion object {
         const val PREFS_NAME = "policy_etag"
@@ -38,7 +37,7 @@ class PolicyEtagStore(
 
     /** The kept body for [now], or `null` (and dropped) when there is none for it. Never throws. */
     fun usable(now: PolicyOwner): KeptPolicy? {
-        val kept = when (val state = sealed.read(prefs, AAD, KEY, migrate())) {
+        val kept = when (val state = sealed.read(prefs, AAD, KEY)) {
             Sealed.Absent -> return null
             Sealed.Unreadable -> null
             is Sealed.Value -> decodeKept(state.plain)
@@ -151,7 +150,7 @@ sealed interface KeptBodyStep {
 
 /**
  * The kept body after [accepted] - the policy as accepted, **before** `cacheablePolicy` - arrived as [served]
- * (code QA L1): a 200 is kept only with an ETag (an older server sends none) and without a `pending_command` (one-shot,
+ * (code QA L1): a 200 is kept only with an ETag and without a `pending_command` (one-shot,
  * and `set_kid_pin`'s carries the Child PIN, which goes no further than its command - design 59 §1); a 304 leaves it.
  */
 fun keptBodyStep(served: ServedPolicy?, accepted: PolicyResponse): KeptBodyStep {

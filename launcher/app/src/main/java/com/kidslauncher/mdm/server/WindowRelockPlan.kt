@@ -45,9 +45,6 @@ object RelockFailure {
     val ALL = setOf(CREDENTIAL, SIGNER_CHECK, APPLY, PERMITTED_LISTS, PROXIES, CA_CERTS, NOTIFICATIONS, DETECTIONS, FINISH)
 }
 
-/** Status capability: the launcher reports `relock` and `foreign_access`, and takes `end_windows`/`allow_blocked`/`start_pause`. */
-const val WINDOW_RELOCK_CAPABILITY = "window_relock_v1"
-
 /** `end_windows`'s answer: "ended: pause, install mode", or "nothing was open". */
 fun endWindowsResult(ended: Set<WindowKind>, installMode: Boolean): String {
     val names = WindowKind.entries.filter { it in ended }.map { it.wire } + listOfNotNull("install mode".takeIf { installMode })
@@ -343,12 +340,12 @@ fun signerCheck(
 }
 
 /**
- * The PWA's `allow_blocked` (fix round QA Medium 2): the blocks go, except an app whose signing
+ * The PWA's `allow_blocked` (fix round QA Medium 2): the listed blocks go, except an app whose signing
  * key differs from the catalog's pin - that one is not the catalog's app, whatever its name.
  * [listed] (QA of cmd-expiry, Low 1): the apps the PWA listed, package -> the key it showed
  * (`null` = unreadable then); only a listed block whose key is still that one ([shownSigner], as
  * [currentBlocks] reports it) goes - not one that came after the parent looked, nor an app
- * replaced since. `null` (an older server): every block. A package that is gone leaves anyway.
+ * replaced since. `null` (none sent): nothing - fail closed. A package that is gone leaves anyway.
  */
 fun allowBlocked(
     blocked: Map<String, Set<String>?>,
@@ -359,7 +356,7 @@ fun allowBlocked(
     val now = installed[name] ?: return@filter false
     val pin = lockedSigners[name]?.takeIf { it.isNotEmpty() }
     if (pin != null && !sameSigner(pin, now)) return@filter true
-    listed != null && (name !in listed || listed[name] != shownSigner(now)?.takeIf(::isSignerHex))
+    listed == null || name !in listed || listed[name] != shownSigner(now)?.takeIf(::isSignerHex)
 }
 
 /**

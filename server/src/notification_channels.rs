@@ -1,6 +1,6 @@
 //! Design 107: the Vibb One notification channels the phone has turned off. The report's `notification_channels`
-//! cleaned ([clean]), the channels' table ([CHANNELS]) and the capability. The shared contract is
-//! `testdata/notification_channels.json` (byte-identical in the launcher's test resources): `capability`, `channels`
+//! cleaned ([clean]) and the channels' table ([CHANNELS]). The shared contract is
+//! `testdata/notification_channels.json` (byte-identical in the launcher's test resources): `channels`
 //! (this table), `report`/`report_none`/`report_all_off`, the launcher's `read` rows, the `clean` rows and the `pages`
 //! rows (About's value and colour, the Attention title).
 //!
@@ -17,9 +17,6 @@ use serde_json::{Value, json};
 
 use crate::i18n::{Lang, t, t_params};
 use crate::models::{DevicePolicy, DeviceStatus};
-
-/// The capability a launcher claims once every full report carries `notification_channels`.
-pub const CAPABILITY: &str = "notification_channels_v1";
 
 /// What a channel serves: it counts only while the policy has Vibb run that feature (§5.1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -255,12 +252,9 @@ pub struct Report {
     pub blocked: Vec<String>,
 }
 
-/// The latest report's `notification_channels`: only from a launcher that claims [CAPABILITY] *and* sent an object
-/// (§4). With the capability but nothing stored the phone's read failed: no row, never a false "All on".
+/// The latest report's `notification_channels`, only when it sent an object (§4). Nothing stored: the phone's read
+/// failed - no row, never a false "All on".
 pub fn report(latest: &DeviceStatus) -> Option<Report> {
-    if !crate::handlers::device_pages::has_capability(Some(latest), CAPABILITY) {
-        return None;
-    }
     latest
         .notification_channels_json
         .as_deref()
@@ -455,7 +449,6 @@ mod tests {
             })
             .collect();
         assert_eq!(Value::from(channels), contract()["channels"]);
-        assert_eq!(contract()["capability"], CAPABILITY);
         for channel in CHANNELS {
             // Meldinger's id is versioned: Android can't raise a channel's importance, so High got a new id.
             let id = if channel.key == "messages" {

@@ -103,7 +103,7 @@ fun networkLabel(caps: NetCaps?): String = when {
 enum class ResumeAction {
     /** 206 starting exactly where the partial file ends: append. */
     APPEND,
-    /** 200: the whole file (an older server, or no partial): write it from the start. */
+    /** 200: the whole file (or no partial): write it from the start. */
     TRUNCATE,
     /** The file changed (412), the server's range doesn't fit our partial, or a 416 for a partial
      * that isn't the whole file: delete the partial and start over at once (no backoff). */
@@ -163,7 +163,7 @@ fun releaseTagHeader(tag: String): String {
 }
 
 /** A response's release tag doesn't match the one asked for (QA #2: a sync replaced the file).
- * No header (an older server) can't be checked - the hash and the install's signature check
+ * No header can't be checked - the hash and the install's signature check
  * still are. */
 fun releaseTagMismatch(headerValue: String?, expectedTag: String): Boolean =
     headerValue != null && headerValue != releaseTagHeader(expectedTag)
@@ -248,15 +248,6 @@ fun sweepFiles(files: List<String>, records: List<DownloadRecord>, activeFile: S
  * failed fetch: only this, never "not advertised", QA #4). */
 fun installedRecords(records: List<DownloadRecord>, installedTags: Map<Long, String?>): List<DownloadRecord> =
     records.filter { installedTags[it.appId] == it.tag }
-
-/** The cache files older builds downloaded into (`tracked_app_<id>_<nanos>.apk`) - deleted once
- * an hour old (an older build's install may still read one right after an update). */
-const val LEGACY_FILE_AGE_MS = 60 * 60_000L
-
-fun legacyCacheFilesToDelete(files: List<Pair<String, Long>>, nowMs: Long): List<String> =
-    files.filter { (name, modifiedMs) ->
-        name.startsWith("tracked_app_") && name.endsWith(".apk") && nowMs - modifiedMs >= LEGACY_FILE_AGE_MS
-    }.map { it.first }
 
 /** The order the runner takes GO downloads in: catalog apps first, our own update last - first
  * while the parent's Install Now runs ([launcherFirst], qa-37-code M2: "at once" doesn't wait

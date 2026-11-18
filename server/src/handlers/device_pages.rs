@@ -268,40 +268,26 @@ pub(crate) fn short_version(full: &str) -> &str {
     full.split(['-', '+']).next().unwrap_or(full).trim()
 }
 
-/// The music app's first versionCode under today's rule (`music-v0.5.0-rc.4`: `MUSIC_FIRST` in
-/// `scripts/release-version.sh`); every code of the old rule is below it. The shared contract's
-/// `music_codes` rows (`testdata/launcher_tag_codes.json`, also checked by the script's
-/// `--selftest`) tie the two.
-const MUSIC_NEW_RULE_FROM: i64 = 50_004;
-
-/// The music app's version from its versionCode (the repo's release scheme, root CLAUDE.md). Today's
-/// rule, from [MUSIC_NEW_RULE_FROM] on: `X*10_000_000 + Y*10_000 + Z*10 + N`, N the RC number (1..8)
-/// or 9 for the release - "0.5.0-rc.4" for 50004, "1.2.3" for 10020039; a code ending in 0 is no
-/// release build (`None`). Below it the old rule, `X*1_000_000 + Y*1_000 + Z` with an RC one lower,
-/// so a code ending in 999 reads as the next release, "0.3.0 (pre-release)" for 2999 (qa-31-s3-code
-/// N2; a real x.y.999 would be mislabelled, which the scheme made unlikely). The ⓘ has the code itself.
+/// The music app's version from its versionCode (the repo's release scheme, root CLAUDE.md,
+/// `scripts/release-version.sh`): `X*10_000_000 + Y*10_000 + Z*10 + N`, N the RC number (1..8) or 9
+/// for the release - "0.5.0-rc.4" for 50004, "1.2.3" for 10020039; a code ending in 0, or not above
+/// 0, is no release build (`None`). The shared contract's `music_codes` rows
+/// (`testdata/launcher_tag_codes.json`) are its cases. The ⓘ has the code itself.
 pub(crate) fn version_of_code(code: i64) -> Option<String> {
-    if code >= MUSIC_NEW_RULE_FROM {
-        let version = format!(
-            "{}.{}.{}",
-            code / 10_000_000,
-            (code / 10_000) % 1_000,
-            (code / 10) % 1_000
-        );
-        return match code % 10 {
-            0 => None,
-            9 => Some(version),
-            n => Some(format!("{version}-rc.{n}")),
-        };
+    if code <= 0 {
+        return None;
     }
-    let parts = |c: i64| format!("{}.{}.{}", c / 1_000_000, (c / 1_000) % 1_000, c % 1_000);
-    (code > 0).then(|| {
-        if code % 1_000 == 999 {
-            format!("{} (pre-release)", parts(code + 1))
-        } else {
-            parts(code)
-        }
-    })
+    let version = format!(
+        "{}.{}.{}",
+        code / 10_000_000,
+        (code / 10_000) % 1_000,
+        (code / 10) % 1_000
+    );
+    match code % 10 {
+        0 => None,
+        9 => Some(version),
+        n => Some(format!("{version}-rc.{n}")),
+    }
 }
 
 /// The music app as the phone reported it: its version from the versionCode ("Installed" without
@@ -428,7 +414,8 @@ pub(crate) async fn load_policy(
     }
 }
 
-/// The last report lists the launcher capability `name`.
+/// The last report lists the launcher capability `name`: the one check of a claim (C1 kept the mechanism for the
+/// first feature after v0.40.0; today only C3's `android_keyguard_v1` is read).
 pub(crate) fn has_capability(latest: Option<&DeviceStatus>, name: &str) -> bool {
     latest
         .and_then(|s| s.capabilities_json.as_deref())
@@ -600,8 +587,7 @@ pub async fn view_about(
                 .detail(dnd.detail(lang)),
             );
         }
-        // Design 107 §5.2: the Vibb One notifications turned off on the phone, from a launcher with
-        // `notification_channels_v1` that sent its reading.
+        // Design 107 §5.2: the Vibb One notifications turned off on the phone, from a report that sent its reading.
         if let Some(channels) = crate::notification_channels::report(status) {
             let row = crate::notification_channels::about(lang, &policy, &channels);
             sound.push(
@@ -688,8 +674,8 @@ pub async fn view_about(
             ),
             None => {}
         }
-        // Design 98 §6.2: the Digital assistant role (Flymodus' route) and Wi-Fi in airplane mode, from a launcher
-        // with `airplane_mode_v1`.
+        // Design 98 §6.2: the Digital assistant role (Flymodus' route) and Wi-Fi in airplane mode, from the report's
+        // `airplane_mode`.
         if let Some(airplane) = crate::airplane_mode::report(status) {
             software.push(if airplane.assistant {
                 Row::new("assistant", t(lang, "device.about.assistant"), "Vibb One")
@@ -720,8 +706,7 @@ pub async fn view_about(
                 ),
             ));
         }
-        // Design 99 §5.3: Snarveier - what the kid picked, hidden by the kid, or off - from a launcher with
-        // `shortcuts_v1`.
+        // Design 99 §5.3: Snarveier - what the kid picked, hidden by the kid, or off - from the report's `shortcuts`.
         if let Some(shortcuts) = crate::shortcuts::report(status) {
             software.push(Row::new(
                 "shortcuts",
@@ -858,7 +843,7 @@ struct AdvancedTemplate {
     device: Device,
     hardening: Hardening,
     /// The last report's `backup_service_enabled`: `Some(true)` a warning; `Some(false)` and `None`
-    /// (older launcher, unreadable) nothing (design 113: no row in any state).
+    /// (unreadable) nothing (design 113: no row in any state).
     backup_service_enabled: Option<bool>,
     block_activity_start: bool,
     /// App screens: Play is openable (block off, Play not suspendable): a sentence behind the block switch's ⓘ.
@@ -872,9 +857,9 @@ struct AdvancedTemplate {
     access: crate::handlers::devices::AccessCard,
     /// The Spotify diagnostic log ([SpotifyDiagCard]); `None` on a phone that doesn't play Spotify.
     spotify_diag: Option<SpotifyDiagCard>,
-    /// Design 76: the certificate check's group; `None` until the phone's last report has `server_pin_v1`.
+    /// Design 76: the certificate check's group; `None` until the phone has reported.
     server_tls: Option<crate::server_tls::Card>,
-    /// Design 93 §6.6: "Åpne for oppsett", the first row (a `window_relock_v1` phone only).
+    /// Design 93 §6.6: "Åpne for oppsett", the first row (once the phone has reported).
     setup: Option<crate::handlers::quick_actions::SetupCard>,
     /// Design 102 revision 5: "Krev foreldrekode for Wi-Fi-innlogging" (`#wifi-signin`).
     wifi_signin: crate::handlers::logins::CodeCard,
@@ -929,26 +914,24 @@ pub async fn view_advanced(
         .iter()
         .map(|n| n.note(&zone, now))
         .partition(|n| n.warning);
-    // Design 76: a read error hides the group (logged) - it never costs the page.
-    let server_tls =
-        if crate::server_tls::capable(latest.as_ref().and_then(|s| s.capabilities_json.as_deref()))
-        {
-            match crate::server_tls::load(&state.db, id).await {
-                Ok(row) => Some(crate::server_tls::card(
-                    &row,
-                    &zone,
-                    now,
-                    query.get("notice").map(String::as_str),
-                    crate::server_tls::recovery_url(&state).await.as_deref(),
-                )),
-                Err(err) => {
-                    tracing::error!(device_id = id, %err, "can't read the certificate check");
-                    None
-                }
+    // Design 76: the group once the phone has reported; a read error hides it (logged) - it never costs the page.
+    let server_tls = if latest.is_some() {
+        match crate::server_tls::load(&state.db, id).await {
+            Ok(row) => Some(crate::server_tls::card(
+                &row,
+                &zone,
+                now,
+                query.get("notice").map(String::as_str),
+                crate::server_tls::recovery_url(&state).await.as_deref(),
+            )),
+            Err(err) => {
+                tracing::error!(device_id = id, %err, "can't read the certificate check");
+                None
             }
-        } else {
-            None
-        };
+        }
+    } else {
+        None
+    };
     let setup = match crate::handlers::quick_actions::setup_card(
         &state.db,
         &device,
@@ -1038,14 +1021,12 @@ struct LockTemplate {
     /// The page answers Show Child PIN: `static/reveal.js` turns its history entry into a GET
     /// (a reload never posts the password again) and hides the PIN when the page is left.
     reveal_answer: bool,
-    /// Parent PIN: set, easy, its flash, whether the phone reports its uses.
+    /// Parent PIN: set, easy, its flash.
     parent: crate::handlers::parent_pin::ParentPinCard,
     /// A refused (or easy) Parent PIN opens its form again.
     parent_open: bool,
     /// Managed without a Parent PIN (the Attention alarm's facts).
     no_parent_pin: bool,
-    /// An older launcher's "the offline override was used" (no PIN events).
-    offline_override_used: bool,
     /// Screen: "Turn off after", the options, and what the phone last applied when it differs.
     screen_timeout_seconds: i64,
     screen_timeout_options: Vec<(i64, &'static str)>,
@@ -1058,8 +1039,6 @@ struct LockTemplate {
     lock_wake: bool,
     /// "Buzz for a notification" (design 82 W3, `/lock-buzz`).
     lock_buzz: bool,
-    /// The phone has reported and its Vibb One is from before the buzz: the switch's orange line (code QA S4).
-    lock_buzz_needs_update: bool,
     /// The Notifications group: one switch per app and, on a ticked one, its text switch.
     lock_screen: crate::lock_glance::LockScreenCard,
     lock_screen_warnings: Vec<Note>,
@@ -1293,8 +1272,6 @@ fn phone_lock<'a>(
 ) -> crate::kid_lock::PhoneLock<'a> {
     crate::kid_lock::PhoneLock {
         state,
-        reported: latest.is_some(),
-        capable: has_capability(latest, crate::kid_lock::PIN_LOCK_CAPABILITY),
         android_capable: has_capability(latest, crate::kid_lock::ANDROID_KEYGUARD_CAPABILITY),
         pin_waiting,
     }
@@ -1328,8 +1305,7 @@ async fn newest_pin_send(
     let Some(newest) = newest else {
         return Ok(None);
     };
-    let receipts = crate::handlers::device_api::sends_command_receipts(&state.db, id).await?;
-    Ok(crate::kid_lock::pin_send(&newest, receipts, zone, now))
+    Ok(crate::kid_lock::pin_send(&newest, zone, now))
 }
 
 /// Lock Screen & PINs, with `notice`'s flash and, after "Show Child PIN…", its answer (a wrong
@@ -1400,12 +1376,11 @@ async fn render_lock(
     if let Some(send) = pin_send.filter(|_| child.pin_set) {
         child_rows.push(crate::kid_lock::LockNote::PinSent(send).note(lang, None));
     }
-    let parent = crate::handlers::parent_pin::card(lang, &policy, latest.as_ref(), notice);
-    let weather =
-        match crate::handlers::weather_page::card(state, id, &policy, latest.as_ref()).await {
-            Ok(weather) => weather,
-            Err(err) => return read_failed(lang, id, "the phone's zones", err),
-        };
+    let parent = crate::handlers::parent_pin::card(lang, &policy, notice);
+    let weather = match crate::handlers::weather_page::card(state, id, &policy).await {
+        Ok(weather) => weather,
+        Err(err) => return read_failed(lang, id, "the phone's zones", err),
+    };
 
     let backgrounds: Vec<_> = crate::handlers::wallpapers::device_choices(state, lang, id)
         .await
@@ -1467,7 +1442,6 @@ async fn render_lock(
         reveal_shown,
         parent_open: parent.notice.is_some_and(|(_, warning)| warning),
         no_parent_pin: crate::handlers::devices::managed_without_pin(&policy),
-        offline_override_used: latest.as_ref().is_some_and(|s| s.offline_override_used),
         screen_timeout_seconds,
         screen_timeout_options: crate::models::SCREEN_TIMEOUTS.to_vec(),
         // Only when the phone runs another value than the chosen one (it applies it at its
@@ -1481,11 +1455,6 @@ async fn render_lock(
         backgrounds,
         lock_wake: policy.lock_wake_on_notification,
         lock_buzz: policy.lock_buzz_on_notification,
-        // Design 82's code QA S4: the buzz ships in the launcher release that reports `messages_app_v1` (there is no
-        // capability of its own), so a phone whose last report lacks it never buzzes - say so by the switch, as the
-        // Apps row's "older Vibb One" note: only once the phone has reported, never before.
-        lock_buzz_needs_update: latest.is_some()
-            && !has_capability(latest.as_ref(), crate::lock_glance::MESSAGES_APP_CAPABILITY),
         lock_screen_warnings: lock_screen.notes.iter().map(|n| n.note(lang)).collect(),
         lock_screen,
         child,
@@ -1524,7 +1493,7 @@ pub(crate) fn notification_access_note(lang: Lang, latest: Option<&DeviceStatus>
 /// for "24" or "12" and the last report says `clock_format_applied` false - no "Modify system
 /// settings" access, or Android refused the write. Home Screen's warning above the Language
 /// group; the adb grant and the Settings path behind its ⓘ. "Same as the phone" never warns, nor
-/// does an older launcher that doesn't report it.
+/// does a report without it.
 /// How to grant Vibb One "Modify system settings" (PLAN fix backlog, 2026-10-24) is
 /// `device.write_settings_steps`: the on-phone path first - Vibb One's Settings row that opens Android's page -, adb as
 /// the shortcut. About This Phone's row (after a line saying what needs it) and the clock format's warning (code QA
@@ -1576,13 +1545,13 @@ struct HomeTemplate {
     quick_touch: bool,
     /// Security review S-L5: the Bluetooth page pairs any device (`bluetooth_any_device`).
     bluetooth_any_device: bool,
-    /// Design 98 §6.1: the kid's Flymodus switch (bit 64), its row only for a launcher with `airplane_mode_v1` - its
-    /// sub-line when it says something and whether it is orange (`airplane_mode::home_sub`).
-    airplane_row: Option<Option<(String, bool)>>,
+    /// Design 98 §6.1: the kid's Flymodus switch (bit 64) - its sub-line when it says something and whether it is
+    /// orange (`airplane_mode::home_sub`).
+    airplane_sub: Option<(String, bool)>,
     quick_airplane: bool,
-    /// Design 99 §5.2: Snarveier (bit 128), its row only for a launcher with `shortcuts_v1` - its sub-line when it says
-    /// something (`shortcuts::home_sub`).
-    shortcuts_row: Option<Option<String>>,
+    /// Design 99 §5.2: Snarveier (bit 128) - its sub-line when it says something (`shortcuts::home_sub`, from a
+    /// report that has `shortcuts`).
+    shortcuts_sub: Option<String>,
     quick_shortcuts: bool,
 }
 crate::i18n::words!(HomeTemplate);
@@ -1615,17 +1584,12 @@ pub async fn view_home(State(state): State<AppState>, lang: Lang, Path(id): Path
         Err(err) => return read_failed(lang, id, "the last report", err),
     };
     let mask = policy.quick_controls_mask;
-    let airplane_row = latest
-        .as_ref()
-        .filter(|s| has_capability(Some(s), crate::airplane_mode::CAPABILITY))
-        .map(|s| {
-            let report = crate::airplane_mode::report(s).unwrap_or_default();
-            crate::airplane_mode::home_sub(lang, &policy, &report)
-        });
-    let shortcuts_row = latest
+    let airplane_report = latest.as_ref().and_then(crate::airplane_mode::report);
+    let airplane_sub = crate::airplane_mode::home_sub(lang, &policy, airplane_report.as_ref());
+    let shortcuts_sub = latest
         .as_ref()
         .and_then(crate::shortcuts::report)
-        .map(|report| crate::shortcuts::home_sub(lang, &device.name, &policy, &report));
+        .and_then(|report| crate::shortcuts::home_sub(lang, &device.name, &policy, &report));
     Html(
         HomeTemplate {
             lang,
@@ -1643,9 +1607,9 @@ pub async fn view_home(State(state): State<AppState>, lang: Lang, Path(id): Path
             quick_sound: mask & QUICK_CONTROL_SOUND != 0,
             quick_touch: mask & QUICK_CONTROL_TOUCH != 0,
             bluetooth_any_device: policy.bluetooth_any_device,
-            airplane_row,
+            airplane_sub,
             quick_airplane: mask & crate::handlers::devices::QUICK_CONTROL_AIRPLANE != 0,
-            shortcuts_row,
+            shortcuts_sub,
             quick_shortcuts: mask & crate::handlers::devices::QUICK_CONTROL_SHORTCUTS != 0,
             device,
         }
@@ -1763,8 +1727,7 @@ impl FilterTemplate {
 /// (`/dns/domains/new`, `/dns/domains/{id}/delete`, with `back=filter`) and the blocked-domain log
 /// (`/dns/log/{id}` and its newest 200 entries, local times). Every form returns here without a
 /// fragment, except a refused domain: `?notice=not_a_domain_block|allow#blocked|allowed`, the
-/// refusal under its group's add row (qa-31-s5-code L1). `/dns?device=` and `/dns/log?device=`
-/// redirect here.
+/// refusal under its group's add row (qa-31-s5-code L1).
 pub async fn view_filter(
     State(state): State<AppState>,
     lang: Lang,
@@ -2104,9 +2067,6 @@ struct AppsTemplate {
     reported: bool,
     /// Design 102 §5.2: Chrome is the phone's login browser (the role on, Chrome not ticked) - its row says so.
     login_role: bool,
-    /// Design 68: the phone reported its apps without `app_permissions_v1` - "Update Vibb One to manage apps'
-    /// permissions" above the Allowed list.
-    update_note: Option<&'static str>,
     /// Something installs now: the page reloads every 3 s for the percentage
     /// (`static/auto-reload.js`) - never on a refused save's page, the answer to a POST.
     installing: bool,
@@ -2435,9 +2395,6 @@ pub(crate) async fn render_apps(
         if !on_home {
             form.summary = format!("{} · {}", form.summary, t(lang, "apps.not_on_home"));
         }
-        form.note = (latest.is_some()
-            && !has_capability(latest.as_ref(), crate::lock_glance::MESSAGES_APP_CAPABILITY))
-        .then_some(t(lang, "apps.builtin.update_note"));
         let label = current.and_then(|values| values.label.clone());
         let row = crate::handlers::devices::UnifiedAppRow {
             // Design 113: a line only while SMS isn't managed.
@@ -2477,9 +2434,8 @@ pub(crate) async fn render_apps(
         );
     }
     // 2026-11-12: Kalender (Dagen, design 69), under Meldinger - whether it is on Home, and a link to Device › Calendar
-    // where that and the rest are set. Only for a Vibb One with Dagen, or before the first report (a new phone gets
-    // one). It sends nothing new: no Name and icon (the phone reads none for Kalender).
-    if latest.is_none() || has_capability(latest.as_ref(), crate::calendar::CALENDAR_CAPABILITY) {
+    // where that and the rest are set. It sends nothing new: no Name and icon (the phone reads none for Kalender).
+    {
         let on_home = match crate::calendar::switches(&state.db, id).await {
             Ok(switches) => switches.map_or(crate::calendar::default_switches().0, |s| s.0),
             Err(err) => return read_failed(lang, id, "the phone's calendar switches", err),
@@ -2557,9 +2513,6 @@ pub(crate) async fn render_apps(
         lang,
         id,
         &names,
-        latest
-            .as_ref()
-            .map(|_| has_capability(latest.as_ref(), crate::unified_push::CAPABILITY)),
         &zone,
         latest.as_ref().map(|st| st.reported_at.as_str()),
     )
@@ -2588,9 +2541,6 @@ pub(crate) async fn render_apps(
             }),
             allowed,
             not_allowed,
-            update_note: (latest.is_some()
-                && !has_capability(latest.as_ref(), crate::models::APP_PERMISSIONS_CAPABILITY))
-            .then_some(crate::i18n::t(lang, "apps.perms.update_note")),
             reported: latest.is_some(),
             login_role: policy.login_browser_enabled && !crate::logins::chrome_ticked(&policy),
             installing,
@@ -2678,8 +2628,8 @@ pub async fn view_music(
     .into_response()
 }
 
-/// The escapes card from the policy and the last report (capabilities, the fence, the filter,
-/// the listener, the boot cover).
+/// The escapes card from the policy and the last report (the fence, the filter, the listener,
+/// the boot cover).
 pub(crate) fn escapes_card(
     policy: &DevicePolicy,
     latest: Option<&DeviceStatus>,
@@ -2687,12 +2637,9 @@ pub(crate) fn escapes_card(
     last_phone_on_ms: Option<i64>,
 ) -> crate::kiosk_escapes::EscapesCard {
     use crate::kiosk_escapes as ke;
-    let capability = |name: &str| has_capability(latest, name);
     let mut card = ke::escapes_card(
         policy.update_fence,
         policy.notification_auto_cancel,
-        capability(ke::KIOSK_ESCAPES_CAPABILITY),
-        latest.is_some(),
         ke::parse_update_fence(latest.and_then(|s| s.update_fence_json.as_deref())).as_ref(),
         ke::parse_notification_cancels(latest.and_then(|s| s.notification_cancels_json.as_deref()))
             .as_ref(),
@@ -2703,8 +2650,6 @@ pub(crate) fn escapes_card(
     // Design 16b (qa-16b-code #5): what the phone says about the boot cover.
     card.notes.extend(ke::boot_cover_notes(
         policy.boot_cover,
-        capability(ke::BOOT_COVER_CAPABILITY),
-        latest.is_some(),
         ke::parse_boot_cover(latest.and_then(|s| s.boot_cover_json.as_deref())).as_ref(),
         last_phone_on_ms,
     ));
@@ -2785,20 +2730,7 @@ mod tests {
         assert_eq!(short_version("0.23.6-debug"), "0.23.6");
         assert_eq!(short_version("0.23.6"), "0.23.6");
         assert_eq!(short_version("1.0.0+build.5"), "1.0.0");
-        // The old rule (every music tag up to music-v0.5.0-rc.3).
-        assert_eq!(version_of_code(3_000), Some("0.3.0".to_string()));
-        assert_eq!(version_of_code(4_000), Some("0.4.0".to_string()));
-        assert_eq!(version_of_code(2), Some("0.0.2".to_string()));
-        // A release candidate: one below its release.
-        assert_eq!(
-            version_of_code(2_999),
-            Some("0.3.0 (pre-release)".to_string())
-        );
-        assert_eq!(
-            version_of_code(4_999),
-            Some("0.5.0 (pre-release)".to_string())
-        );
-        // Today's rule, from music-v0.5.0-rc.4 on (scripts/release-version.sh).
+        // scripts/release-version.sh's rule.
         assert_eq!(version_of_code(50_004), Some("0.5.0-rc.4".to_string()));
         assert_eq!(version_of_code(50_009), Some("0.5.0".to_string()));
         assert_eq!(version_of_code(10_020_039), Some("1.2.3".to_string()));
@@ -2818,7 +2750,7 @@ mod tests {
         let contract: serde_json::Value =
             serde_json::from_str(include_str!("../../testdata/launcher_tag_codes.json")).unwrap();
         let rows = contract["music_codes"].as_array().unwrap();
-        assert!(rows.len() >= 10);
+        assert!(rows.len() >= 3);
         for row in rows {
             let code = row["code"].as_i64().unwrap();
             assert_eq!(

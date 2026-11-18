@@ -8,10 +8,6 @@ import kotlinx.serialization.Serializable
  * contract `airplane_mode.json` (byte-identical with `server/testdata/`, `AirplaneModeTest`).
  */
 
-/** The launcher reports `airplane_mode` and shows the kid's Flymodus row (bit 64); the server's Home page shows its
- * switch only for a phone claiming it. */
-const val AIRPLANE_MODE_CAPABILITY = "airplane_mode_v1"
-
 /** One airplane-mode period (§5.1): [onBy] `kid` or `other`; [offBy] `kid`, `parent`, `emergency` or `other`. Only the
  * last period may be open ([offMs]/[offBy] `null`). */
 @Serializable

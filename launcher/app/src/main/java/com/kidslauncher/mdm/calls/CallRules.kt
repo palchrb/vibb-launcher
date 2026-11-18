@@ -89,16 +89,13 @@ data class CallRules(
     val smsMode: ChannelMode = if (smsEnabled) ChannelMode.UNMANAGED else ChannelMode.OFF,
     /** Design 77 D17: the parent's sender names, as typed ([com.kidslauncher.mdm.sms.engine.SmsNames] folds them). */
     val smsNames: List<String> = emptyList(),
-    /** Design 77 §6.8: the lock glance's message row may show the text (step 5). */
-    val smsLockText: Boolean = false,
     /** Design 77 D12: the phone's own numbers the parent typed, per SIM slot (normalised) - the group rule's. */
     val ownNumbers: List<OwnNumberRule> = emptyList(),
     /** Design 77 D10: the carriers' MMS servers by the SIM's MCC/MNC; empty until step 0 fills the server's table, and
      * then every MMS fails closed ("Bildet kunne ikke hentes"). */
     val mmscHosts: List<MmscRule> = emptyList(),
-    /** Design 80 D13: group texts allowed at all ("Gruppemeldinger"). Rules stored before it have none: `true`, as the
-     * policy's absent key (D12's members rule under it still fails closed). */
-    val smsGroups: Boolean = true,
+    /** Design 80 D13: group texts allowed at all ("Gruppemeldinger"); absent is off, as the policy's key. */
+    val smsGroups: Boolean = false,
 ) {
     @Transient
     val inbound: Set<String> = contacts.filter { it.inbound }.mapTo(mutableSetOf()) { it.number }

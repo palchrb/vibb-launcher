@@ -265,8 +265,7 @@ async fn the_quick_actions_follow_the_phone() {
     );
 
     add_rule(&app, "Skole <i>").await;
-    app.post_status(&token, json!({ "capabilities": ["window_relock_v1"] }))
-        .await;
+    app.post_status(&token, json!({})).await;
     let html = app
         .get_page(&format!("/devices/{id}"), &cookie)
         .await
@@ -347,7 +346,7 @@ async fn the_tiles_say_their_state() {
         for (key, value) in extra.as_object().unwrap() {
             state[key] = value.clone();
         }
-        json!({ "time_state": state, "capabilities": ["window_relock_v1"] })
+        json!({ "time_state": state })
     };
     let quick = || async {
         let html = app
@@ -435,8 +434,7 @@ async fn every_form_on_the_summary_returns_to_its_group() {
     .await
     .unwrap();
     app.post_status(&token,
-        json!({ "capabilities": ["window_relock_v1"],
-                "install_mode": { "until_ms": chrono::Utc::now().timestamp_millis() + 600_000 },
+        json!({ "install_mode": { "until_ms": chrono::Utc::now().timestamp_millis() + 600_000 },
                 "relock_blocks": [{ "package_name": "org.example.game", "signer": null,
                                     "reason": "outside_play", "found": "install", "at_ms": null }] }),
     )

@@ -1,7 +1,7 @@
 //! Design 76: the launcher's certificate check, switched on per phone by this server
 //! (`docs/design/76-server-issuer-pin.md` D2; migration 0129).
 //!
-//! Every phone with [CAPABILITY] checks the chain Android validated for this server against its built-in set (Let's
+//! Every phone checks the chain Android validated for this server against its built-in set (Let's
 //! Encrypt's roots, ZeroSSL's operator Sectigo's - the launcher's alone: the server never judges a chain) and reports
 //! what it sees in every status report: `server_tls: {enforcing, seen?: {in_set, name, pin, network, at_ms},
 //! outside: [{kind, host, name, pin, network, at_ms}]}` (`testdata/server_tls_report.json`, [sanitize]). Per phone the
@@ -16,8 +16,7 @@
 //!   parent and an SSE nudge (R-4) - sticky until "Turn it on again" (`watching`) or "Turn the check on now" (`on`).
 //!
 //! A new outside sighting of a phone that has shown in-set chains is pushed at most once a day per phone (`watching`
-//! and `on`; R-2(c)): a split horizon or an attack, the parent hears of both. A launcher without [CAPABILITY] gets no
-//! `server_tls`. Every state also carries `recovery_url` when this server knows the plain-http tailnet address a phone
+//! and `on`; R-2(c)): a split horizon or an attack, the parent hears of both. Every state also carries `recovery_url` when this server knows the plain-http tailnet address a phone
 //! refusing its certificate can be pointed at ([recovery_url], code QA H-1).
 
 use std::net::IpAddr;
@@ -29,8 +28,6 @@ use crate::AppState;
 use crate::display_time::Zone;
 use crate::i18n::{t, t_params};
 
-/// The launcher's capability (`SERVER_PIN_CAPABILITY`): it reads the policy's `server_tls` and reports its own.
-pub const CAPABILITY: &str = "server_pin_v1";
 /// In-set sightings spanning this much receive time switch a watched phone on.
 pub const WINDOW: Duration = Duration::hours(72);
 /// ... on at least this many distinct days (server time, UTC dates).
@@ -749,23 +746,16 @@ pub async fn store<'e, E: sqlx::SqliteExecutor<'e>>(
     Ok(())
 }
 
-/// The policy's `server_tls` for a phone whose last report has `capabilities`: `None` (absent) without
-/// [CAPABILITY]. A read error fails the policy (the phone keeps its cache), never a made-up state.
-pub async fn policy(
-    state: &AppState,
-    device_id: i64,
-    capabilities: &[String],
-) -> Result<Option<serde_json::Value>, sqlx::Error> {
-    if !capabilities.iter().any(|c| c == CAPABILITY) {
-        return Ok(None);
-    }
+/// The policy's `server_tls`, always sent. A read error fails the policy (the phone keeps its cache), never a
+/// made-up state.
+pub async fn policy(state: &AppState, device_id: i64) -> Result<serde_json::Value, sqlx::Error> {
     let row = load(&state.db, device_id).await?;
     let recovery = recovery_url(state).await;
-    Ok(Some(policy_value(row.state, recovery.as_deref())))
+    Ok(policy_value(row.state, recovery.as_deref()))
 }
 
 /// A status report's `server_tls` (raw), received now: the new state stored in one transaction, then the outside
-/// push (once a day). A report without it (an older launcher) changes nothing; a failure is logged.
+/// push (once a day). A report without it changes nothing; a failure is logged.
 pub async fn intake(state: &AppState, device_id: i64, raw: Option<&serde_json::Value>) {
     let Some(report) = raw.and_then(sanitize) else {
         return;
@@ -1063,13 +1053,6 @@ pub fn card(
             })
         }),
     }
-}
-
-/// Whether the phone's last report has [CAPABILITY] (the group shows only then).
-pub fn capable(capabilities_json: Option<&str>) -> bool {
-    capabilities_json
-        .and_then(|json| serde_json::from_str::<Vec<String>>(json).ok())
-        .is_some_and(|caps| caps.iter().any(|c| c == CAPABILITY))
 }
 
 #[cfg(test)]

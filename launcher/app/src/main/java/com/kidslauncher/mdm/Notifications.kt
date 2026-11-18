@@ -11,8 +11,6 @@ import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 
-/** Upstream's crash channel, deleted at start (crashes are reported to the server). */
-private const val NOTIFICATION_CHANNEL_CRASH = "launcher:crash"
 val NOTIFICATION_CHANNEL_RING = "launcher:ring"
 const val RING_NOTIFICATION_ID = 1001
 val NOTIFICATION_CHANNEL_LISTENER = "launcher:command_listener"
@@ -110,8 +108,6 @@ fun createNotificationChannels(context: Context) {
         val notificationManager =
             context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
-        // Crashes go to the server since the 2026-10-06 cleanup; drop the old crash channel.
-        notificationManager.deleteNotificationChannel(NOTIFICATION_CHANNEL_CRASH)
         createCallChannels(context)
         createMissedCallChannel(context)
         // HIGH importance + own channel so this reliably heads-up/appears even over the lock

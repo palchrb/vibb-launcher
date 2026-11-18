@@ -11,17 +11,13 @@ import kotlinx.serialization.Serializable
  * result that doesn't reach the server waits in the outbox for the next sync.
  */
 
-/** Status-report capability: this launcher confirms commands, so the server may offer one again. */
-const val COMMAND_RECEIPT_CAPABILITY = "command_receipt_v1"
-
 /** Commands remembered as run - far more than the server's three deliveries of one command. */
 const val MAX_SEEN_COMMANDS = 32
 
 /**
  * What names a command: its id with the server's `requested_at` (QA of the launcher wave, Medium
  * 1) - a restored server backup winds the id counter back, and another server starts again at 1,
- * so an id alone can name a new command the phone mistakes for one it ran. An older server sends
- * no time: the id alone.
+ * so an id alone can name a new command the phone mistakes for one it ran. No time: the id alone.
  */
 fun commandKey(id: Long, requestedAt: String?): String = if (requestedAt.isNullOrBlank()) "$id" else "$id@$requestedAt"
 
@@ -88,8 +84,7 @@ enum class AnswerFate {
 
 /**
  * What the server's answer ([code], `null` = none: no network, a timeout) means for an answer of
- * [kind]: a 2xx is sent; 401, 408, 429, a 5xx and no answer keep it; a 404 drops a receipt (an
- * older server has no receipt endpoint) and a result alike; any other 4xx drops it - a server
+ * [kind]: a 2xx is sent; 401, 408, 429, a 5xx and no answer keep it; a 404 drops a receipt and a result alike; any other 4xx drops it - a server
  * that refuses it now always will, and the queue is short.
  */
 fun answerFate(code: Int?): AnswerFate = when (code) {

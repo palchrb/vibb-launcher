@@ -57,36 +57,38 @@ impl Way {
 ///
 /// A two-way switch the parent changed sets both flags to its value. Otherwise the pair is taken as posted, except
 /// that a post which left the switch alone with the pair exactly as `shown` implies keeps the stored pair (L1: a stale
-/// tab saving another field never undoes a split made meanwhile). `custom`, a missing or an unknown `shown` (an older
-/// page, N4) is the pair as posted - today's behaviour.
+/// tab saving another field never undoes a split made meanwhile). `custom` is the pair as posted; any other `shown`
+/// (missing or unknown) is `None`, refused.
 pub(crate) fn both_ways(
     shown: Option<&str>,
     two_way: bool,
     posted: (bool, bool),
     stored: Option<(bool, bool)>,
-) -> (bool, bool) {
-    let implied = match shown {
-        Some("on") => true,
-        Some("off") => false,
-        _ => return posted,
+) -> Option<(bool, bool)> {
+    let implied = match shown? {
+        "on" => true,
+        "off" => false,
+        "custom" => return Some(posted),
+        _ => return None,
     };
     if two_way != implied {
-        return (two_way, two_way);
+        return Some((two_way, two_way));
     }
     if posted == (implied, implied) {
-        return stored.unwrap_or(posted);
+        return Some(stored.unwrap_or(posted));
     }
-    posted
+    Some(posted)
 }
 
 /// A contact form's two channels as stored after D3: `(allow_inbound, allow_outbound)` and `(sms_in, sms_out)`. For an
 /// emergency number (`emergency`, R2-H1) the texts row is `sms_out` alone and `sms_in` is never stored. `stored` is
-/// the contact's stored pairs (`None` for Add Contact).
+/// the contact's stored pairs (`None` for Add Contact). `None`: a `*_shown` the page always sends is missing or
+/// unknown - the post is refused.
 pub(crate) fn resolve(
     form: &HashMap<String, String>,
     stored: Option<((bool, bool), (bool, bool))>,
     emergency: bool,
-) -> ((bool, bool), (bool, bool)) {
+) -> Option<((bool, bool), (bool, bool))> {
     let on = |key: &str| form.contains_key(key);
     let shown = |key: &str| form.get(key).map(String::as_str);
     let calls = both_ways(
@@ -94,26 +96,27 @@ pub(crate) fn resolve(
         on("calls"),
         (on("inbound"), on("outbound")),
         stored.map(|(calls, _)| calls),
-    );
+    )?;
     let texts = if emergency {
         // Code QA L5: the texts row is `sms_out` alone, but Add Contact (the number typed, so not known as an emergency
         // number when drawn) posts the two-way switch too: it resolves as the pair `(sms_out, sms_out)`, so turning it
         // off without JS turns `sms_out` off. A contact's own emergency row posts no `texts_shown`: `sms_out` as posted.
         let out = on("sms_out");
         let stored = stored.map(|(_, (_, out))| (out, out));
-        (
-            false,
-            both_ways(shown("texts_shown"), on("texts"), (out, out), stored).1,
-        )
+        let pair = match shown("texts_shown") {
+            None => (out, out),
+            sent => both_ways(sent, on("texts"), (out, out), stored)?,
+        };
+        (false, pair.1)
     } else {
         both_ways(
             shown("texts_shown"),
             on("texts"),
             (on("sms_in"), on("sms_out")),
             stored.map(|(_, texts)| texts),
-        )
+        )?
     };
-    (calls, (texts.0 && !emergency, texts.1))
+    Some((calls, (texts.0 && !emergency, texts.1)))
 }
 
 /// D6: the closed contact row's value and its second line. `calls` is (in, out) - in: the contact calls the kid -,
@@ -225,44 +228,48 @@ pub(crate) fn one_way_labels(lang: Lang, kid: &str, contact: (&str, &str)) -> [S
 mod tests {
     use super::*;
 
-    /// Every row of D3's table, an unknown `*_shown` read as absent (N4), and the stale-page guard (L1).
+    /// Every row of D3's table, a missing or unknown `*_shown` refused, and the stale-page guard (L1).
     #[test]
     fn both_ways_follows_the_table() {
         let split = Some((true, false));
         // `on`, the switch still on: the pair as posted, so a one-way change in Avansert is taken.
         assert_eq!(
             both_ways(Some("on"), true, (false, true), split),
-            (false, true)
+            Some((false, true))
         );
         // `on`, the switch turned off: both off.
         assert_eq!(
             both_ways(Some("on"), false, (true, true), split),
-            (false, false)
+            Some((false, false))
         );
         assert_eq!(
             both_ways(Some("on"), false, (true, false), None),
-            (false, false)
+            Some((false, false))
         );
         // `off`, the switch turned on: both on.
         assert_eq!(
             both_ways(Some("off"), true, (false, false), split),
-            (true, true)
+            Some((true, true))
         );
         // `off`, unchanged: the pair as posted.
         assert_eq!(
             both_ways(Some("off"), false, (true, false), None),
-            (true, false)
+            Some((true, false))
         );
-        // `custom` and an older page (absent, or any other value): the pair as posted, the switch ignored.
-        for shown in [Some("custom"), None, Some("v2"), Some("")] {
+        // `custom`: the pair as posted, the switch ignored.
+        assert_eq!(
+            both_ways(Some("custom"), true, (true, false), split),
+            Some((true, false))
+        );
+        assert_eq!(
+            both_ways(Some("custom"), false, (false, true), split),
+            Some((false, true))
+        );
+        // Missing or unknown: refused.
+        for shown in [None, Some("v2"), Some("")] {
             assert_eq!(
                 both_ways(shown, true, (true, false), split),
-                (true, false),
-                "{shown:?}"
-            );
-            assert_eq!(
-                both_ways(shown, false, (false, true), split),
-                (false, true),
+                None,
                 "{shown:?}"
             );
         }
@@ -270,16 +277,16 @@ mod tests {
         // another tab stored meanwhile.
         assert_eq!(
             both_ways(Some("on"), true, (true, true), split),
-            (true, false)
+            Some((true, false))
         );
         assert_eq!(
             both_ways(Some("off"), false, (false, false), split),
-            (true, false)
+            Some((true, false))
         );
         // ...and a new contact (nothing stored) takes the pair.
         assert_eq!(
             both_ways(Some("on"), true, (true, true), None),
-            (true, true)
+            Some((true, true))
         );
     }
 
@@ -304,18 +311,34 @@ mod tests {
             "sms_in",
             "sms_out",
         ]);
-        assert_eq!(resolve(&sent, None, true), ((true, true), (false, true)));
+        assert_eq!(
+            resolve(&sent, None, true),
+            Some(((true, true), (false, true)))
+        );
         // Turned on: the kid's way on, never `sms_in`.
-        let sent = form(&["texts_shown=off", "texts", "sms_in"]);
-        assert_eq!(resolve(&sent, None, true), ((false, false), (false, true)));
+        let sent = form(&["calls_shown=off", "texts_shown=off", "texts", "sms_in"]);
+        assert_eq!(
+            resolve(&sent, None, true),
+            Some(((false, false), (false, true)))
+        );
         // A plain number: the two-way switch turned on sets both.
-        assert_eq!(resolve(&sent, None, false), ((false, false), (true, true)));
+        assert_eq!(
+            resolve(&sent, None, false),
+            Some(((false, false), (true, true)))
+        );
         // Code QA L5: Add Contact without JS - "Kan sende og få meldinger" turned off, Avansert's `sms_out` still on: off.
-        let sent = form(&["texts_shown=on", "sms_out"]);
-        assert_eq!(resolve(&sent, None, true), ((false, false), (false, false)));
-        // A contact's own emergency row (no `texts_shown`): `sms_out` as posted.
-        let sent = form(&["sms_out"]);
-        assert_eq!(resolve(&sent, None, true), ((false, false), (false, true)));
+        let sent = form(&["calls_shown=off", "texts_shown=on", "sms_out"]);
+        assert_eq!(
+            resolve(&sent, None, true),
+            Some(((false, false), (false, false)))
+        );
+        // A contact's own emergency row (no `texts_shown`): `sms_out` as posted; a plain number's is refused.
+        let sent = form(&["calls_shown=off", "sms_out"]);
+        assert_eq!(
+            resolve(&sent, None, true),
+            Some(((false, false), (false, true)))
+        );
+        assert_eq!(resolve(&sent, None, false), None);
     }
 
     /// D1's sub-lines for each mode pair (M2; design 113: one quiet word, and `texts` under SMS Off is «SMS av»).

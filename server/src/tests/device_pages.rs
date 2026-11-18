@@ -52,7 +52,7 @@ async fn about_this_phone_shows_the_last_reports_facts() {
             "interruption_filter": "all",
             "policy_state": "cache_corrupt",
             "battery_optimization_exempt": true,
-            "music_state": { "package": "me.vibb.music", "version_code": 3000 },
+            "music_state": { "package": "me.vibb.music", "version_code": 60009 },
             "time_state": { "lock_reason": "SCHOOL", "active_rule_name": "Skole" },
         }),
     )
@@ -111,8 +111,8 @@ async fn about_this_phone_shows_the_last_reports_facts() {
     assert_eq!(value(&html, "do-not-disturb").as_deref(), Some("Off"));
     assert_eq!(value(&html, "vibb").as_deref(), Some("0.23.6"));
     assert!(html.contains("Full version: 0.23.6-debug."));
-    assert_eq!(value(&html, "music-app").as_deref(), Some("0.3.0"));
-    assert!(html.contains("me.vibb.music, version code 3000."));
+    assert_eq!(value(&html, "music-app").as_deref(), Some("0.6.0"));
+    assert!(html.contains("me.vibb.music, version code 60009."));
     assert_eq!(
         value(&html, "settings").as_deref(),
         Some("Saved settings unreadable")
@@ -1425,7 +1425,7 @@ async fn home_and_filter_forms_return_to_their_page() {
 
 /// H1 (§5.6): the quick controls (Home Screen) and the filter switch (Web Filter) share
 /// `/devices/{id}/policy`; a post with a section writes only that section, so saving one page
-/// never turns off what the other page set. A post without one (an older tab) writes both.
+/// never turns off what the other page set. A post without one is refused.
 #[tokio::test]
 async fn a_policy_section_leaves_the_other_section_alone() {
     let app = TestApp::new().await;
@@ -1475,14 +1475,15 @@ async fn a_policy_section_leaves_the_other_section_alone() {
     let res = post(vec![("section", "filter"), ("vpn_filter_enabled", "on")]).await;
     assert_redirect(&res, &device_page(id, Section::Filter), Some("filter"));
     assert_eq!(state(&app).await, (1, true, 1));
-    // No section: both, as before, back to the device page.
-    let res = post(vec![("quick_control_sound", "on")]).await;
-    assert_redirect(&res, &device_page(id, Section::Summary), None);
-    assert_eq!(state(&app).await, (8, false, 1));
-    // An unknown section writes nothing; an unknown phone is a 404.
-    let res = post(vec![("section", "all"), ("quick_control_wifi", "on")]).await;
-    assert_eq!(res.status, StatusCode::BAD_REQUEST);
-    assert_eq!(state(&app).await, (8, false, 1));
+    // No section or an unknown one writes nothing; an unknown phone is a 404.
+    for fields in [
+        vec![("quick_control_sound", "on")],
+        vec![("section", "all"), ("quick_control_wifi", "on")],
+    ] {
+        let res = post(fields).await;
+        assert_eq!(res.status, StatusCode::BAD_REQUEST);
+        assert_eq!(state(&app).await, (1, true, 1));
+    }
     let res = app
         .request_form(
             Method::POST,
@@ -1494,20 +1495,13 @@ async fn a_policy_section_leaves_the_other_section_alone() {
     assert_eq!(res.status, StatusCode::NOT_FOUND);
 }
 
-/// Old bookmarks and links (§3.1, L5): `/dns?device=` and `/dns/log?device=` open the phone's
-/// Web Filter page (the log at its group); the global pages link each phone there.
+/// §3.1: the global pages link each phone to its Web Filter page and hold no per-phone form.
 #[tokio::test]
-async fn old_per_phone_filter_urls_redirect_to_the_filter_page() {
+async fn the_global_filter_pages_link_each_phone_there() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("Anna").await;
-    let res = app.get_page(&format!("/dns?device={id}"), &cookie).await;
-    assert_redirect(&res, &device_page(id, Section::Filter), None);
-    let res = app
-        .get_page(&format!("/dns/log?device={id}"), &cookie)
-        .await;
-    assert_redirect(&res, &device_page(id, Section::Filter), Some("log"));
-    for page in ["/dns", "/dns?device=", "/dns/log"] {
+    for page in ["/dns", "/dns/log"] {
         let res = app.get_page(page, &cookie).await;
         assert_eq!(res.status, StatusCode::OK, "{page}");
         let html = res.text();
@@ -1996,7 +1990,8 @@ async fn apps_holds_the_moved_forms() {
     ids.sort_unstable();
     ids.dedup();
     assert_eq!(ids.len(), all);
-    assert_eq!(all, 5);
+    // Kalender's built-in row is one of them on every phone (C1 step 12b).
+    assert_eq!(all, 6);
     assert!(!html.contains("type=\"search\""));
     let footer = &not_allowed[not_allowed.find("<details class=\"info\">").unwrap()..];
     assert!(
@@ -2182,24 +2177,21 @@ async fn apps_forms_return_to_their_rows() {
 /// Design 68 §4.1: an allowed app's Permissions - the sub-line, the camera switch only for an app that asks for the
 /// camera, a declared access with the way to approve it - and its form: a save lands on its own details, open
 /// (`?perms=<package>#perms-<package>`), writes the row the policy sends and nudges; a bad camera value is a 400, Play's
-/// core and Vibb are refused at their row; the update note while the launcher lacks `app_permissions_v1`.
+/// core and Vibb are refused at their row.
 #[tokio::test]
 async fn the_permissions_form_returns_to_its_open_details() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("Anna").await;
     let element = "io.element.android.x";
-    let report = |caps: serde_json::Value| {
-        json!({
-            "capabilities": caps,
-            "installed_apps": [
-                { "package_name": element, "label": "Element X", "preinstalled": false,
-                  "access": { "camera": "requested", "manage_media": "denied" } },
-                { "package_name": "org.example.plain", "label": "Plain", "preinstalled": false },
-            ],
-        })
-    };
-    app.post_status(&token, report(json!([]))).await;
+    let report = json!({
+        "installed_apps": [
+            { "package_name": element, "label": "Element X", "preinstalled": false,
+              "access": { "camera": "requested", "manage_media": "denied" } },
+            { "package_name": "org.example.plain", "label": "Plain", "preinstalled": false },
+        ],
+    });
+    app.post_status(&token, report).await;
     sqlx::query("UPDATE device_policy SET allowlist_json = ? WHERE device_id = ?")
         .bind(format!("[\"{element}\", \"org.example.plain\"]"))
         .bind(id)
@@ -2207,13 +2199,6 @@ async fn the_permissions_form_returns_to_its_open_details() {
         .await
         .unwrap();
     let page = device_page(id, Section::Apps);
-    let html = app.get_page(&page, &cookie).await.text();
-    assert!(
-        html.contains("class=\"row row-note tone-orange\" data-row=\"update-note\""),
-        "an older launcher: the note, orange"
-    );
-    app.post_status(&token, report(json!(["app_permissions_v1"])))
-        .await;
     let html = app.get_page(&page, &cookie).await.text();
     assert!(!html.contains("data-row=\"update-note\""));
     let anchor = format!("perms-{element}");
@@ -2877,7 +2862,6 @@ async fn music_phone(app: &TestApp, cookie: &str) -> (i64, String, [i64; 2], i64
             .unwrap();
     app.post_status(&token,
         json!({
-            "capabilities": ["music_v1"],
             "music_state": {"package": "me.vibb.music", "bridge": "bound",
                             "sonos_rooms": [{"uid": STUA, "name": "Stua"}, {"uid": KJOKKEN, "name": "Kjøkken"}]}
         }),
@@ -3177,7 +3161,6 @@ async fn music_refusals_land_in_their_group_and_the_page_fails_loudly() {
     app.post_status(
         &token,
         json!({
-            "capabilities": ["music_v1"],
             "installed_apps": [{"package_name": "me.vibb.music", "label": "Musikk",
                                 "installer": "com.android.vending"}]
         }),

@@ -20,7 +20,6 @@ import kotlinx.serialization.builtins.serializer
 class WindowRelockStore(
     private val prefs: SharedPreferences,
     private val sealed: SealedPrefs = Secrets.prefs,
-    private val migrate: () -> Boolean = Secrets::migrateHere,
 ) {
 
     companion object {
@@ -182,7 +181,7 @@ class WindowRelockStore(
 
     /** The reset-password token (hex), sealed on disk (design r10 §3.3); `null` also when it doesn't open - then
      * `tokenUsable` is false and the next window sets a new one. */
-    fun token(): String? = (sealed.read(prefs, TOKEN_AAD, TOKEN, migrate()) as? Sealed.Value)?.plain
+    fun token(): String? = (sealed.read(prefs, TOKEN_AAD, TOKEN) as? Sealed.Value)?.plain
 
     /** Sealed and committed; false when it couldn't be (then `setResetPasswordToken` isn't called). */
     fun saveToken(hex: String): Boolean = sealed.edit(prefs) { it.putSealed(TOKEN_AAD, TOKEN, hex) }

@@ -110,16 +110,10 @@ class SmsGlanceTest {
         val on = rows(showText = true).single()
         assertEquals("the newest, cleaned", "Kommer du? snart", on.text)
         assertEquals(off.upToSeq, on.upToSeq)
-        // The level (design 82 D4): the policy's word as it is, whatever the rules say; without one (an older server)
-        // the old switch - the text only with managed rules that say so, otherwise the name.
-        val withText = CallPolicyState.Managed(rules.copy(smsLockText = true))
-        assertEquals(SmsLockLevel.OFF, smsLockLevel(GlanceSms.OFF, withText))
-        assertEquals(SmsLockLevel.NAME, smsLockLevel(GlanceSms.NAME, withText))
-        assertEquals(SmsLockLevel.TEXT, smsLockLevel(GlanceSms.TEXT, CallPolicyState.UnknownFailClosed))
-        assertEquals(SmsLockLevel.TEXT, smsLockLevel(GlanceSms.LEGACY, withText))
-        for (state in listOf(CallPolicyState.Managed(rules), CallPolicyState.Unmanaged, CallPolicyState.UnknownFailClosed)) {
-            assertEquals(state.toString(), SmsLockLevel.NAME, smsLockLevel(GlanceSms.LEGACY, state))
-        }
+        // The level (design 82 D4): the policy's word as it is.
+        assertEquals(SmsLockLevel.OFF, smsLockLevel(GlanceSms.OFF))
+        assertEquals(SmsLockLevel.NAME, smsLockLevel(GlanceSms.NAME))
+        assertEquals(SmsLockLevel.TEXT, smsLockLevel(GlanceSms.TEXT))
         assertFalse("the redacted row", on.toString().contains("Kommer") || on.toString().contains("4791234567"))
     }
 

@@ -1,6 +1,5 @@
 package com.kidslauncher.mdm.server
 
-import android.content.SharedPreferences
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -23,12 +22,10 @@ class SealedPrefsTest {
         var openFailures = 0
         var recreated = 0
         var broken = false
-        var onSeal: () -> Unit = {}
 
         override fun keyBroken() = broken || key == null
 
         override fun seal(aad: String, plain: ByteArray): ByteArray {
-            onSeal()
             if (sealFailures > 0) {
                 sealFailures--
                 throw ProviderException("keystore busy")
@@ -59,17 +56,6 @@ class SealedPrefsTest {
         }
     }
 
-    /** [inner] with a hook run once, right after the [at]th `getString` read its value. */
-    private class HookPrefs(val inner: ParentPinStoreTest.FakePrefs, val at: Int, val hook: () -> Unit) : SharedPreferences by inner {
-        var reads = 0
-
-        override fun getString(key: String, defValue: String?): String? {
-            val value = inner.getString(key, defValue)
-            if (++reads == at) hook()
-            return value
-        }
-    }
-
     private val token = "0123456789abcdef0123456789abcdef"
     private val aad = "default/mdm.device_token"
     private val key = "mdm.device_token"
@@ -87,8 +73,8 @@ class SealedPrefsTest {
         val stored = prefs.map[key] as String
         assertTrue(stored.startsWith(SealedPrefs.PREFIX))
         assertFalse(token in stored)
-        assertEquals(Sealed.Value(token), restarted().read(prefs, aad, key, migrate = true))
-        assertEquals(Sealed.Absent, sealed.read(prefs, aad, "other", migrate = true))
+        assertEquals(Sealed.Value(token), restarted().read(prefs, aad, key))
+        assertEquals(Sealed.Absent, sealed.read(prefs, aad, "other"))
         assertFalse("the value never prints", token in Sealed.Value(token).toString())
     }
 
@@ -97,32 +83,22 @@ class SealedPrefsTest {
         sealed.edit(prefs) { it.putSealed(aad, key, token) }
         prefs.map["moved"] = prefs.map[key]
         val other = restarted()
-        assertEquals(Sealed.Unreadable, other.read(prefs, "window_relock/token", "moved", migrate = true))
+        assertEquals(Sealed.Unreadable, other.read(prefs, "window_relock/token", "moved"))
         prefs.map["bad"] = "ks1:!!not base64"
-        assertEquals(Sealed.Unreadable, other.read(prefs, "pin_lock_state/pin_hash", "bad", migrate = true))
-        assertEquals(Sealed.Unreadable, other.read(prefs, "pin_lock_state/pin_hash", "bad", migrate = true))
+        assertEquals(Sealed.Unreadable, other.read(prefs, "pin_lock_state/pin_hash", "bad"))
+        assertEquals(Sealed.Unreadable, other.read(prefs, "pin_lock_state/pin_hash", "bad"))
         assertEquals("ks1:!!not base64", prefs.map["bad"])
         assertEquals(2, logged.size)
     }
 
     @Test
-    fun `a legacy plaintext is sealed into the same key in one commit, and never again`() {
+    fun `a plaintext without the prefix is unreadable, logged once, and left alone`() {
         prefs.map[key] = token
-        assertEquals(Sealed.Value(token), sealed.read(prefs, aad, key, migrate = true))
-        val stored = prefs.map[key] as String
-        assertTrue(stored.startsWith(SealedPrefs.PREFIX))
-        assertEquals(1, prefs.commits)
-        assertEquals(Sealed.Value(token), restarted().read(prefs, aad, key, migrate = true))
-        assertEquals(stored, prefs.map[key])
-        assertEquals(1, prefs.commits)
-    }
-
-    @Test
-    fun `a read without migrate returns the legacy value and writes nothing`() {
-        prefs.map[key] = token
-        assertEquals(Sealed.Value(token), sealed.read(prefs, aad, key, migrate = false))
+        assertEquals(Sealed.Unreadable, sealed.read(prefs, aad, key))
+        assertEquals(Sealed.Unreadable, sealed.read(prefs, aad, key))
         assertEquals(token, prefs.map[key])
         assertEquals(0, prefs.commits)
+        assertEquals(1, logged.size)
     }
 
     @Test
@@ -131,19 +107,9 @@ class SealedPrefsTest {
         val stored = prefs.map[key]
         val other = restarted()
         box.openFailures = 1
-        assertEquals(Sealed.Unreadable, other.read(prefs, aad, key, migrate = true))
+        assertEquals(Sealed.Unreadable, other.read(prefs, aad, key))
         assertEquals(stored, prefs.map[key])
-        assertEquals(Sealed.Value(token), other.read(prefs, aad, key, migrate = true))
-    }
-
-    @Test
-    fun `a failing seal in the migration keeps the plaintext, and the next read seals it`() {
-        prefs.map[key] = token
-        box.sealFailures = 1
-        assertEquals(Sealed.Value(token), sealed.read(prefs, aad, key, migrate = true))
-        assertEquals(token, prefs.map[key])
-        assertEquals(Sealed.Value(token), sealed.read(prefs, aad, key, migrate = true))
-        assertTrue((prefs.map[key] as String).startsWith(SealedPrefs.PREFIX))
+        assertEquals(Sealed.Value(token), other.read(prefs, aad, key))
     }
 
     @Test
@@ -155,34 +121,6 @@ class SealedPrefsTest {
     }
 
     @Test
-    fun `a commit from another thread between the migration's two reads isn't overwritten`() {
-        prefs.map[key] = token
-        val newer = "fedcba9876543210fedcba9876543210"
-        // The first getString is the read outside the lock; the second thread's sealed write lands before the
-        // migration re-reads under it.
-        val hooked = HookPrefs(prefs, at = 1) {
-            Thread { sealed.edit(prefs) { it.putSealed(aad, key, newer) } }.apply { start(); join() }
-        }
-        assertEquals(Sealed.Value(token), sealed.read(hooked, aad, key, migrate = true))
-        assertEquals(Sealed.Value(newer), restarted().read(prefs, aad, key, migrate = true))
-    }
-
-    @Test
-    fun `a write waiting for the lock lands after the migration's commit`() {
-        prefs.map[key] = token
-        val newer = "fedcba9876543210fedcba9876543210"
-        var writer: Thread? = null
-        box.onSeal = {
-            box.onSeal = {}
-            writer = Thread { sealed.edit(prefs) { it.putSealed(aad, key, newer) } }.also { it.start() }
-            while (writer!!.state != Thread.State.BLOCKED && writer!!.isAlive) Thread.sleep(1)
-        }
-        sealed.read(prefs, aad, key, migrate = true)
-        writer!!.join()
-        assertEquals(Sealed.Value(newer), restarted().read(prefs, aad, key, migrate = true))
-    }
-
-    @Test
     fun `the token's write retries once, then makes a new key, then gives up writing nothing`() {
         box.broken = true
         box.sealFailures = 1
@@ -191,7 +129,7 @@ class SealedPrefsTest {
         box.sealFailures = 2
         assertTrue(sealed.putRecovering(prefs, aad, key, token))
         assertEquals(1, box.recreated)
-        assertEquals(Sealed.Value(token), restarted().read(prefs, aad, key, migrate = true))
+        assertEquals(Sealed.Value(token), restarted().read(prefs, aad, key))
         val fresh = ParentPinStoreTest.FakePrefs()
         box.sealFailures = 3
         assertFalse(sealed.putRecovering(fresh, aad, key, token))
@@ -209,7 +147,7 @@ class SealedPrefsTest {
         assertEquals(0, box.recreated)
         assertTrue(box.key === keyBefore)
         assertFalse(key in prefs.map)
-        assertEquals(Sealed.Value(token), restarted().read(prefs, "pin_lock_state/pin_hash", "pin_hash", migrate = false))
+        assertEquals(Sealed.Value(token), restarted().read(prefs, "pin_lock_state/pin_hash", "pin_hash"))
     }
 
     /** Code QA Q-3: a stored token never reads as absent for the first-launch reset - not even one no key opens. */
@@ -221,7 +159,7 @@ class SealedPrefsTest {
         assertTrue(tokenStored(token))
         assertTrue(tokenStored("ks1:" + "A".repeat(40)))
         prefs.map[key] = "ks1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-        assertEquals(Sealed.Unreadable, restarted().read(prefs, aad, key, migrate = false))
+        assertEquals(Sealed.Unreadable, restarted().read(prefs, aad, key))
         assertTrue(tokenStored(prefs.getString(key, null)))
         val present = sources().getValue("server/SealedPrefs.kt").substringAfter("fun present(): Boolean").substringBefore("\n")
         assertEquals(" = tokenStored(prefs().getString(key(), null))", present)
@@ -268,12 +206,11 @@ class SealedPrefsTest {
                 // Design 98 §2.2 step 2: the sync and Flymodus's report-only post.
                 "server/MdmSyncWorker.kt" to 2, "server/CommandListenerService.kt" to 1, "server/AppInstallReceiver.kt" to 1,
                 "server/AppDownloads.kt" to 1, "server/PowerEvents.kt" to 1, "music/MusicSync.kt" to 2,
-                "music/MusicFileDownloads.kt" to 1, "music/MusicBridgeService.kt" to 3,
+                "music/MusicFileDownloads.kt" to 1, "music/MusicBridgeService.kt" to 2,
                 // Design 75: the lock weather's pull.
                 "weather/WeatherPull.kt" to 1,
                 // Design 108: app push's device API calls.
                 "push/up/UpRuntime.kt" to 1,
-                "server/SealedPrefs.kt" to 1,
             ),
             sites,
         )
@@ -289,8 +226,8 @@ class SealedPrefsTest {
         val relock = all.getValue("server/WindowRelockStore.kt")
         for (raw in listOf("getString(PIN_HASH", "putString(PIN_HASH", "getString(PIN_SALT", "putString(PIN_SALT")) assertFalse(raw, raw in store)
         for (raw in listOf("getString(TOKEN", "putString(TOKEN")) assertFalse(raw, raw in relock)
-        assertTrue(store.contains("sealed.read(p, HASH_AAD, PIN_HASH, migrate)"))
-        assertTrue(relock.contains("sealed.read(prefs, TOKEN_AAD, TOKEN, migrate())"))
+        assertTrue(store.contains("sealed.read(p, HASH_AAD, PIN_HASH)"))
+        assertTrue(relock.contains("sealed.read(prefs, TOKEN_AAD, TOKEN)"))
         assertTrue(relock.contains("sealed.edit(prefs) { it.putSealed(TOKEN_AAD, TOKEN, hex) }"))
     }
 

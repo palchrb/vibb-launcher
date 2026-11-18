@@ -18,11 +18,7 @@ async fn managed_phone(app: &TestApp) -> (i64, String) {
         .execute(&app.db)
         .await
         .unwrap();
-    app.post_status(
-        &token,
-        json!({ "capabilities": ["call_policy_v1", "sms_engine_v1"] }),
-    )
-    .await;
+    app.post_status(&token, json!({})).await;
     (id, token)
 }
 
@@ -178,6 +174,8 @@ async fn each_allow_path_grants_texts_in_alone() {
                 ("name", "Trener"),
                 ("number", "+4790000099"),
                 ("switches", "on"),
+                ("calls_shown", "custom"),
+                ("texts_shown", "custom"),
                 ("sms_in", "on"),
             ],
         )
@@ -193,7 +191,7 @@ async fn each_allow_path_grants_texts_in_alone() {
     .await
     .unwrap();
     assert_eq!(flags, (false, false, false, true, false, false));
-    // A plain Add Contact (no switches field, as before) still gets every flag on.
+    // An Add Contact without the `switches` marker (a stale page) is refused and adds nothing.
     let res = app
         .request_form(
             Method::POST,
@@ -202,16 +200,13 @@ async fn each_allow_path_grants_texts_in_alone() {
             &[("name", "Pappa"), ("number", "+4790000002")],
         )
         .await;
-    assert!(res.status.is_redirection());
-    let flags: (bool, bool, bool) = sqlx::query_as(
-        "SELECT sms_in, sms_out, mms FROM device_contacts dc JOIN contacts c ON c.id = dc.contact_id \
-         WHERE dc.device_id = ? AND c.phone_number = '+4790000002'",
-    )
-    .bind(id)
-    .fetch_one(&app.db)
-    .await
-    .unwrap();
-    assert_eq!(flags, (true, true, true));
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    let added: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM contacts WHERE phone_number = '+4790000002'")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(added, 0);
 
     // Allow Texts from Mamma: sms_in alone.
     let allow = |n: u32| format!("/devices/{id}/calls/held/{n:032x}/allow");
@@ -278,7 +273,7 @@ async fn each_allow_path_grants_texts_in_alone() {
             .as_array()
             .unwrap()
             .len(),
-        3
+        2
     );
 }
 
@@ -490,7 +485,6 @@ async fn the_sms_settings_save_in_place() {
     );
     app.assert_lands(&res, &cookie).await;
     let policy = app.policy(&token).await["call_policy"].clone();
-    assert_eq!(policy["sms_lock_text"], json!(false), "the stale switch");
     assert_eq!(app.policy(&token).await["lock_glance"]["sms"], "name");
     assert_eq!(
         policy["own_numbers"],
@@ -548,9 +542,28 @@ async fn the_contacts_messages_group() {
             .await
         }
     };
-    let res = save(mamma, &[("inbound", "on"), ("sms_in", "on"), ("mms", "on")]).await;
+    let res = save(
+        mamma,
+        &[
+            ("calls_shown", "custom"),
+            ("inbound", "on"),
+            ("texts_shown", "custom"),
+            ("sms_in", "on"),
+            ("mms", "on"),
+        ],
+    )
+    .await;
     app.assert_lands(&res, &cookie).await;
-    let res = save(ambulance, &[("inbound", "on"), ("sms_in", "on")]).await;
+    // An emergency number's row posts no `texts_shown`.
+    let res = save(
+        ambulance,
+        &[
+            ("calls_shown", "custom"),
+            ("inbound", "on"),
+            ("sms_in", "on"),
+        ],
+    )
+    .await;
     assert!(res.status.is_redirection());
     let texts: Vec<(bool, bool, bool)> = sqlx::query_as(
         "SELECT sms_in, sms_out, mms FROM device_contacts WHERE device_id = ? ORDER BY contact_id",
@@ -797,13 +810,13 @@ async fn every_settling_marks_the_event_read_for_every_parent() {
     }
 }
 
-/// §8.5 (code QA M1): the RCS step shows before "Styrt av Vibb" is chosen - SMS "Ikke styrt" or "Av" on a phone that
-/// can take it - and under it, with Google's form behind the ⓘ; not for a phone without the engine.
+/// §8.5 (code QA M1): the RCS step shows before "Styrt av Vibb" is chosen - SMS "Ikke styrt" or "Av" - and under
+/// it, with Google's form behind the ⓘ.
 #[tokio::test]
 async fn the_rcs_step_shows_before_and_under_managed() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
-    let (id, token) = managed_phone(&app).await;
+    let (id, _) = managed_phone(&app).await;
     let rcs = |page: &str| {
         let start = page.find("data-rcs")?;
         Some(page[start..start + page[start..].find("</div>").unwrap()].to_string())
@@ -839,19 +852,6 @@ async fn the_rcs_step_shows_before_and_under_managed() {
             "{mode}: {line}"
         );
     }
-    // Without the engine "Styrt av Vibb" can't be chosen, so there is no step before it.
-    sqlx::query("UPDATE device_policy SET sms_mode = 'unmanaged' WHERE device_id = ?")
-        .bind(id)
-        .execute(&app.db)
-        .await
-        .unwrap();
-    app.post_status(&token, json!({ "capabilities": ["call_policy_v1"] }))
-        .await;
-    let page = app
-        .get_page(&format!("/devices/{id}/calls"), &cookie)
-        .await
-        .text();
-    assert!(rcs(&page).is_none(), "{page}");
 }
 
 /// Code QA L2: the intake refuses a held row of a class with no allow path; a blocked one is taken.
@@ -1004,6 +1004,8 @@ async fn add_contact_never_lets_an_emergency_number_text_in() {
                 ("name", "Ambulanse"),
                 ("number", "113"),
                 ("switches", "on"),
+                ("calls_shown", "custom"),
+                ("texts_shown", "custom"),
                 ("inbound", "on"),
                 ("sms_in", "on"),
             ],
@@ -1072,7 +1074,6 @@ async fn the_pools_and_the_findings() {
     app.post_status(
         &token,
         json!({
-            "capabilities": ["call_policy_v1", "sms_engine_v1"],
             "sms_state": {
                 "role_held": false, "mode_applied": "managed", "parse_failures": 2, "mmsc_known": false,
                 "mms_data_allowed": true, "hold_full": { "numbers": false, "names": true },

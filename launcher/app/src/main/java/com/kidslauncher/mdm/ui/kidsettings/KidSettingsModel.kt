@@ -183,8 +183,8 @@ fun wallpaperTiles(choices: List<Wallpaper>, current: Wallpaper): List<Wallpaper
 /**
  * Design 64 step 2 (the user's decision 6, 2026-10-24): the calm line "This phone shares where it
  * is with mum and dad." - no control - while the phone shares its location at all: device owner,
- * an accepted policy, and its location mode isn't "off" (an older server's policy without
- * `location_policy` is the old every-10-minutes trail, so it shares). Only when asked shares on
+ * an accepted policy, and its location mode isn't "off" (a policy without
+ * `location_policy` is the every-10-minutes trail, so it shares). Only when asked shares on
  * request, Regularly and the zones continuously - both are sharing. Never from a corrupt cache or
  * before the first policy (nothing is shared then).
  */

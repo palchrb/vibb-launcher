@@ -1,5 +1,4 @@
 {
-  "capability": "lock_now_v1",
   "policy": {
     "rules": [
       {

@@ -396,7 +396,7 @@ pub(crate) async fn time_glance(
     (lock, screen, battery)
 }
 
-/// A report's time and its typed `time_state` (or, from an older launcher, its lock reason).
+/// A report's time and its typed `time_state` (or, without one, its lock reason).
 pub(crate) fn time_report(
     reported_at: &str,
     lock_reason: &str,
@@ -444,19 +444,8 @@ pub(crate) fn badge_and_screen(
 /// A managed phone (an app list or managed calls) without a Parent PIN: its Settings can't be
 /// opened on the phone (the device page's red card, an Attention alarm).
 pub(crate) fn managed_without_pin(policy: &DevicePolicy) -> bool {
-    (policy.allowlist_json.is_some() || policy.managed()) && policy.override_pin_hash.is_none()
-}
-
-/// The phone reported, without `time_rules_v1`: it still runs the old schedule.
-pub(crate) fn launcher_without_rules(latest: Option<&DeviceStatus>) -> bool {
-    latest.is_some_and(|s| {
-        !s.capabilities_json
-            .as_deref()
-            .and_then(|j| serde_json::from_str::<Vec<String>>(j).ok())
-            .unwrap_or_default()
-            .iter()
-            .any(|c| c == "time_rules_v1")
-    })
+    (policy.allowlist_json.is_some() || policy.any_channel_managed())
+        && policy.override_pin_hash.is_none()
 }
 
 /// A phone's name is at most this many characters (it fills a row and a page title).
@@ -884,7 +873,7 @@ pub struct AccessCard {
     /// The flash after Disconnect Phone: the text, and whether it is a refusal.
     pub notice: Option<(&'static str, bool)>,
     /// The last report says the phone is on the tailnet (`tailnet_joined`): "Leave Tailnet…" shows. Set by
-    /// Advanced only; false from an older launcher.
+    /// Advanced only.
     pub tailnet_joined: bool,
 }
 
@@ -1034,13 +1023,11 @@ pub(crate) const QUICK_CONTROL_TOUCH: i64 = 16;
 /// phone's mask is not changed. A launcher before design 97 ignores the bit.
 pub(crate) const QUICK_CONTROL_MOBILE_DATA: i64 = 32;
 /// The kid's own Flymodus switch (design 98 §6.1): shown on the phone once Vibb One is the Digital assistant. Set by
-/// the Home Screen form only while it shows the row (`airplane_row`, a launcher with `airplane_mode_v1`), else kept.
-/// In a new device's default (D1); an existing phone's mask is not changed. A launcher before design 98 ignores it.
+/// the Home Screen form. In a new device's default (D1); an existing phone's mask is not changed.
 pub(crate) const QUICK_CONTROL_AIRPLANE: i64 = 64;
 /// Snarveier, the kid's quick panel in the shade (design 99 §5.1): its items follow the bits above. Set by the Home
-/// Screen form only while it shows the row (`shortcuts_row`, a launcher with `shortcuts_v1`), else kept. In a new
-/// device's default and set on every existing phone by migration 0148 (D2: Home's flashlight tile goes in the same
-/// launcher). A launcher before design 99 ignores it.
+/// Screen form. In a new device's default and set on every existing phone by migration 0148 (D2: Home's flashlight
+/// tile goes in the same launcher).
 pub(crate) const QUICK_CONTROL_SHORTCUTS: i64 = 128;
 /// A new device's `quick_controls_mask`: every switch on but touch (`insert_device_with_policy`), the kid's Mobildata
 /// switch included (design 97 D3), Flymodus (design 98 D1) and Snarveier (design 99 D2).
@@ -1222,17 +1209,10 @@ pub(crate) async fn lock_screen_card(
     let empty_text = lock_glance::empty_text(latest_status.is_some(), allowlist.is_some());
     let launcher =
         |package: &str| crate::handlers::device_api::installed_by_launcher(state, Some(package));
-    let claims = |capability: &str| {
-        latest_status
-            .and_then(|s| s.capabilities_json.as_deref())
-            .is_some_and(|caps| caps.contains(&format!("\"{capability}\"")))
-    };
     // [messages_shown]: Meldinger's row is listed and not Off - its rows need no notification access.
     let notes = |messages_shown: bool| {
         lock_glance::notes(
             crate::kid_lock::policy_kid_lock(policy).is_some(),
-            latest_status.is_some(),
-            claims(lock_glance::LOCK_GLANCE_CAPABILITY),
             latest_status.and_then(|s| s.notification_listener_enabled),
             messages_shown,
         )
@@ -1273,8 +1253,6 @@ pub(crate) async fn lock_screen_card(
             messages_name
                 .unwrap_or_else(|| crate::i18n::t(lang, "device.sms.messages").to_string()),
             ticked.get(crate::builtin::MESSAGES).copied(),
-            latest_status.is_some(),
-            claims(lock_glance::MESSAGES_APP_CAPABILITY),
         )
     });
     let notes = notes(messages.as_ref().is_some_and(|row| row.on));
@@ -1322,8 +1300,7 @@ async fn messages_row_listed(db: &sqlx::SqlitePool, device_id: i64) -> bool {
 
 /// `POST /devices/{id}/apps/display` (design 14): this phone's name, icon and colour for one app.
 /// `action` "reset" = the phone's row goes (it follows the catalog default, else Vibb style;
-/// design 34 P1 - an older page's "catalog" does the same, its "own" keeps its old meaning: an
-/// empty row, Vibb style on this phone even with a catalog default), else save the fields (Vibb
+/// design 34 P1), "save" (or none) saves the fields, anything else is a 400 (Vibb
 /// style with no name on a phone with a catalog default keeps an empty row: Vibb style there). A
 /// choice equal to the catalog default, or nothing without a default, keeps no row. Refused input: 400,
 /// Device › Apps with that app's form open, the entered values and the error by the field, the
@@ -1418,12 +1395,13 @@ pub async fn save_app_display(
             response
         }
     };
-    // "reset" (and an older page's "Follow the catalog") deletes the row; an older page's "Use the
-    // app's own" keeps its old meaning - nothing chosen on this phone, an empty row over a catalog
-    // default (Vibb style there; qa-34-s1-code L1).
-    let action = field("action");
-    let reset = matches!(action, "reset" | "catalog");
-    let values = if reset || action == "own" {
+    // "reset" deletes the row.
+    let reset = match field("action") {
+        "reset" => true,
+        "" | "save" => false,
+        _ => return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "error.out_of_date"),
+    };
+    let values = if reset {
         DisplayValues::empty()
     } else if builtin && field("icon").trim() == crate::app_display::OWN {
         // Design 82 D9: a part of Vibb One has no app logo to show.
@@ -2207,7 +2185,7 @@ async fn render_device(
     // The Calls & Contacts row: "8 contacts" while calls are managed; a failed read says so,
     // never "0 contacts". The call report's findings feed Attention; a report that can't be read
     // says so on the row, so an empty Attention never reads as "all good" (qa-31-s8-code N4).
-    let contact_count: Option<i64> = if policy.managed() {
+    let contact_count: Option<i64> = if policy.any_channel_managed() {
         sqlx::query_scalar("SELECT COUNT(*) FROM device_contacts WHERE device_id = ?")
             .bind(id)
             .fetch_one(&state.db)
@@ -2222,7 +2200,7 @@ async fn render_device(
         .map(|report| report.problems())
         .map_err(|err| tracing::error!(device_id = id, %err, "failed to read the call report"))
         .ok();
-    let calls_value = match (policy.managed(), contact_count) {
+    let calls_value = match (policy.any_channel_managed(), contact_count) {
         _ if call_problems.is_none() => unreadable(),
         (false, _) => t(lang, "device.summary.value.not_managed").to_string(),
         (true, None) => unreadable(),
@@ -2336,9 +2314,7 @@ async fn render_device(
     // "Needs attention" while Device › Time shows a warning, as the Music row does.
     let (time_value, time_attention) = match &time_rules {
         Err(_) => (unreadable(), false),
-        Ok(_) if facts.ledger_unreadable || facts.launcher_without_rules => {
-            (needs_attention(), true)
-        }
+        Ok(_) if facts.ledger_unreadable => (needs_attention(), true),
         // A rule or the own limit in force that doesn't read: the phone gets a 500 for its
         // settings until it is saved again (qa-31-s9-code N5).
         Ok(rules)
@@ -2535,8 +2511,6 @@ async fn render_device(
                         .unwrap_or_else(|| b.name.clone())
                 }),
             screen: screen_time.as_ref(),
-            lock_again: relock.lock_again,
-            relock_capable: crate::handlers::window_relock::takes_commands(latest.as_ref()),
             refusal,
             zone: &zone,
             now,
@@ -2683,8 +2657,7 @@ pub(crate) fn toggle_refusal(lang: Lang, code: &str) -> Option<&'static str> {
 /// (`device_pending_uninstalls`) when the phone's last report has the package installed and not
 /// preinstalled (a preinstalled app can only be hidden).
 ///
-/// Where it returns (§5.1): `back=music` (or `anchor=music`, a page from before design 31 step 6)
-/// to Device › Music (`/devices/{id}/music#music-app`, its group; a refusal
+/// Where it returns (§5.1): `back=music` to Device › Music (`/devices/{id}/music#music-app`, its group; a refusal
 /// to `?music_notice=<code>#music-app`, the reason in that group), anything else to the app's row
 /// on Device › Apps (`#app-<package>`): the row moves between Allowed and Not allowed, and the
 /// fragment finds it again, with or without JS.
@@ -2762,13 +2735,9 @@ pub async fn toggle_app(
     let page = |params: &str, fragment: &str| {
         crate::handlers::device_pages::apps_url(id, params, from, fragment)
     };
-    // Device › Music's switch (`back=music`, or an older page's `anchor=music`) returns there: the
-    // page on a save, its group with the reason on a refusal (design 31 step 7).
-    let music = form
-        .get("back")
-        .or_else(|| form.get("anchor"))
-        .map(String::as_str)
-        == Some("music");
+    // Device › Music's switch (`back=music`) returns there: the page on a save, its group with the
+    // reason on a refusal (design 31 step 7).
+    let music = form.get("back").map(String::as_str) == Some("music");
     let refused = |code: &str, anchor: &str| {
         crate::settings_log::refused(Redirect::to(&if music {
             format!("/devices/{id}/music?music_notice={code}#music-app")
@@ -3098,8 +3067,7 @@ pub(crate) async fn remove_from_allowlist(
 /// the two live on two pages, so the form says which part it carries (§5.6, H1): `section=quick`
 /// writes only the quick controls and returns to their group, `/devices/{id}/home#quick-controls`,
 /// `section=filter` only the filter and returns to `/devices/{id}/filter#filter` (§5.1.4). A
-/// form without `section` (an older tab) writes both, as before, and returns to the device page;
-/// an unknown section is a 400. Unticked = off, as every checkbox. 404 for an unknown phone, 500
+/// missing or unknown section is a 400. Unticked = off, as every checkbox. 404 for an unknown phone, 500
 /// on a DB error (nothing written either way); nudges the phone. `Form<HashMap<...>>` is safe:
 /// nothing here is a repeated-name checkbox group.
 pub async fn update_policy(
@@ -3109,10 +3077,9 @@ pub async fn update_policy(
     Form(fields): Form<std::collections::HashMap<String, String>>,
 ) -> axum::response::Response {
     let (quick, filter, back) = match fields.get("section").map(String::as_str) {
-        None => (true, true, format!("/devices/{id}")),
         Some("quick") => (true, false, format!("/devices/{id}/home#quick-controls")),
         Some("filter") => (false, true, format!("/devices/{id}/filter#filter")),
-        Some(_) => {
+        _ => {
             return crate::i18n::error(
                 lang,
                 axum::http::StatusCode::BAD_REQUEST,
@@ -3159,23 +3126,11 @@ pub async fn update_policy(
     if fields.contains_key("quick_control_touch") {
         quick_controls_mask |= QUICK_CONTROL_TOUCH;
     }
-    // Design 98 §6.1 (Q98-M9): bit 64 is this form's only while it shows the Flymodus row (`airplane_row`); a form
-    // without it (an older launcher's page, an older tab) keeps the stored bit, as it keeps 32.
-    let airplane_row = fields.contains_key("airplane_row");
-    if airplane_row && fields.contains_key("quick_control_airplane") {
+    if fields.contains_key("quick_control_airplane") {
         quick_controls_mask |= QUICK_CONTROL_AIRPLANE;
     }
-    // Design 99 §5.2: bit 128 (Snarveier) the same way, only while the form shows its row (`shortcuts_row`).
-    let shortcuts_row = fields.contains_key("shortcuts_row");
-    if shortcuts_row && fields.contains_key("quick_control_shortcuts") {
+    if fields.contains_key("quick_control_shortcuts") {
         quick_controls_mask |= QUICK_CONTROL_SHORTCUTS;
-    }
-    let mut kept_bits = QUICK_CONTROL_MOBILE_DATA;
-    if !airplane_row {
-        kept_bits |= QUICK_CONTROL_AIRPLANE;
-    }
-    if !shortcuts_row {
-        kept_bits |= QUICK_CONTROL_SHORTCUTS;
     }
 
     // Security review S-L5: pairing any Bluetooth device, not only headphones and speakers (a quick-controls field).
@@ -3192,9 +3147,8 @@ pub async fn update_policy(
          WHERE device_id = ?",
     )
     .bind(lock_task_features)
-    // Design 97 §5: bit 32 (the kid's Mobildata switch) is the Mobilnett page's; this form keeps it. Design 98: and bit
-    // 64 while the form has no Flymodus row; design 99: and bit 128 while it has no Snarveier row.
-    .bind(kept_bits)
+    // Design 97 §5: bit 32 (the kid's Mobildata switch) is the Mobilnett page's; this form keeps it.
+    .bind(QUICK_CONTROL_MOBILE_DATA)
     .bind(quick.then_some(quick_controls_mask))
     .bind(quick.then_some(bluetooth_any_device))
     .bind(filter.then_some(vpn_filter_enabled))
@@ -3618,8 +3572,7 @@ pub async fn update_hardening(
 
 /// Home Screen's language ("system", "nb", "en"), apps per row (3 or 4) and the phone's clock
 /// format ("system", "24", "12"; design 34 P12): one auto-saving form (design 31 §5.6); an unknown
-/// value is a 400 and nothing is written. A form without `clock_format` (a page cached before the
-/// field existed) keeps the stored format (qa-34-design L10). Back to its group,
+/// or missing clock format is a 400 and nothing is written. Back to its group,
 /// `/devices/{id}/home#layout` (§5.1.4).
 pub async fn update_launcher_ui(
     State(state): State<AppState>,
@@ -3632,10 +3585,10 @@ pub async fn update_launcher_ui(
         .get("home_columns")
         .and_then(|c| c.parse::<i64>().ok())
         .unwrap_or(3);
-    let clock_format = form.get("clock_format").map(String::as_str);
+    let clock_format = form.get("clock_format").map(String::as_str).unwrap_or("");
     if !crate::models::LAUNCHER_LANGUAGES.contains(&language)
         || !(columns == 3 || columns == 4)
-        || clock_format.is_some_and(|f| !crate::models::CLOCK_FORMATS.contains(&f))
+        || !crate::models::CLOCK_FORMATS.contains(&clock_format)
     {
         return crate::i18n::error(
             lang,
@@ -3645,7 +3598,7 @@ pub async fn update_launcher_ui(
     }
     let result = sqlx::query(
         "UPDATE device_policy SET launcher_language = ?, home_columns = ?, \
-         clock_format = COALESCE(?, clock_format), updated_at = datetime('now') \
+         clock_format = ?, updated_at = datetime('now') \
          WHERE device_id = ?",
     )
     .bind(language)

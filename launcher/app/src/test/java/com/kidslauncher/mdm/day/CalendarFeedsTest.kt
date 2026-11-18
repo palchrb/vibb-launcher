@@ -75,7 +75,6 @@ class CalendarFeedsTest {
             listOf(CalendarFeedReportRow(r.getValue("id").jsonPrimitive.content, r.getValue("applied_rev").jsonPrimitive.content, 0, 0)),
         )
         assertEquals(report, encoded)
-        assertEquals("calendar_feeds_v1", CALENDAR_FEEDS_CAPABILITY)
     }
 
     @Test

@@ -93,7 +93,7 @@ pub struct Battery {
 }
 
 impl Battery {
-    /// From a report's two columns; `None` without a level (an older launcher).
+    /// From a report's two columns; `None` without a level.
     pub fn of(level: Option<i64>, charging: Option<bool>) -> Option<Battery> {
         level.map(|level| Battery {
             level,

@@ -17,10 +17,6 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.atomic.AtomicBoolean
 
-/** The launcher's capability (design 75 §3.6): the lock glance shows the weather. The server's Device › Weather says
- * the phone needs an update until a report names it. */
-const val LOCK_WEATHER_CAPABILITY = "lock_weather_v1"
-
 /**
  * The lock's weather pulls (design 75 §5.4), only ever to our own server's API client - never MET or yr
  * (`WeatherGuardTest`). When: at the end of every sync ([afterSync], before the self-update commit, inside the sync's

@@ -8,17 +8,11 @@ import kotlinx.serialization.Serializable
  * `LoginWindowsTest`): the policy's `captive_portal` (Part A, the Wi-Fi sign-in window) and `login_browser` (Part B,
  * Chrome only for logins), and the add field's entry rule the launcher also applies before Chrome sees a site. */
 
-/** A launcher that opens the Wi-Fi sign-in window and reports `captive_portal` claims this. */
-const val CAPTIVE_PORTAL_CAPABILITY = "captive_portal_v1"
-
-/** A launcher that runs Chrome's login role and reports `login_browser` claims this. */
-const val LOGIN_BROWSER_CAPABILITY = "login_browser_v1"
-
 /** The one browser the role accepts (D8): anything else is `failed` with reason `package`, and nothing is unhidden. */
 const val CHROME_PACKAGE = "com.android.chrome"
 
-/** The policy's `captive_portal` (§6.1). Missing (an older server) reads as these defaults: on, with the parent code
- * required (fail closed - a parent on an older server can't turn the code off), 10 minutes an opening, 4 openings and
+/** The policy's `captive_portal` (§6.1). Missing reads as these defaults: on, with the parent code
+ * required (fail closed), 10 minutes an opening, 4 openings and
  * 20 minutes a day without a code, no grant. */
 @Serializable
 data class CaptivePortalPolicy(
@@ -38,7 +32,7 @@ data class LoginBrowserPolicy(
     val hosts: List<String> = emptyList(),
 )
 
-/** The phone's `captive_portal`, the server's or the older server's defaults. */
+/** The phone's `captive_portal`, the server's or the defaults. */
 fun portalPolicyOf(policy: PolicyResponse?): CaptivePortalPolicy = policy?.captivePortal ?: CaptivePortalPolicy()
 
 /** The phone's `login_browser`'s sites, each through [loginEntry] (an invalid one is dropped, never written to

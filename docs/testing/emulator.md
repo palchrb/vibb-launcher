@@ -657,7 +657,7 @@ next to the launcher; no device owner or server is needed for these checks.
 #   curl -sH "Authorization: Bearer $TOKEN" $SERVER/api/devices/music/files/5 > debug-feed/files/5
 #   curl -sH "Authorization: Bearer $TOKEN" $SERVER/api/devices/music/covers/$HASH > debug-feed/covers/$HASH
 # Optional debug-feed/config.json (design 30): {"stream_mobile_data": true, "download_mobile_data": false,
-#   "storage_limit_gb": 2} - the two switches and the limit in GB (0 = none); a bare "mobile_data" sets both switches
+#   "storage_limit_gb": 2} - the two switches and the limit in GB (0 = none)
 R=me.vibb.music.debug/me.vibb.music.debugfeed.DebugFeedReceiver
 adb shell am broadcast -n $R        # once: the app creates its (empty) debug-feed folder
 adb push debug-feed /sdcard/Android/data/me.vibb.music.debug/files/
@@ -947,12 +947,11 @@ echo '{"storytel_base": "http://10.0.2.2:8730"}' > debug-feed/config.json
 R=me.vibb.music.debug/me.vibb.music.debugfeed.DebugFeedReceiver
 adb push debug-feed /sdcard/Android/data/me.vibb.music.debug/files/
 adb shell am broadcast -n $R        # "storytel: http://10.0.2.2:8730"
-adb logcat -s VibbMusicDebugFeed StorytelLegacy WM-WorkerWrapper ExoPlayerImpl
+adb logcat -s VibbMusicDebugFeed WM-WorkerWrapper ExoPlayerImpl
 adb shell run-as me.vibb.music.debug cat files/music/report.json     # "storytel", "downloads", "item_errors"
 ```
 
-A `storytel.json` left in the feed from before design 58 is deleted unread ("storytel.json: the phone takes no login
-since design 58 - deleted unread"). The session lives in the process's memory: `adb shell am force-stop
+The session lives in the process's memory: `adb shell am force-stop
 me.vibb.music.debug` starts the next run with no JWT (one `jwt` line again), which ends a `refused` or `busy` wait
 too. The library snapshot's other entries have no listings here and stay hidden. What to check (design 26b §8 step 3,
 design 58 §9):
@@ -991,11 +990,6 @@ design 58 §9):
 - **Copy only**: with the fake running, play a downloaded book, seek back and forth and skip to the other downloaded
   book: no new `asset` or `cdn` line appears in the fake's log while it plays. Then stop the fake (Ctrl+C): the books
   still play and seek.
-- **The old login goes** (design 58 §5.5, §9): install the previous debug music app (before design 58), seed its login
-  the old way (`echo '{"email": "k@example.invalid", "password": "hemmelig"}' > debug-feed/storytel.json`, pushed and
-  broadcast: "a login seeded"), let it download a book, then install this one and sync: `adb shell run-as
-  me.vibb.music.debug ls no_backup` names no `storytel.bin` or `storytel_refused.json`, and logcat has `StorytelLegacy`'s
-  "storytel: the old login deleted" once (not again at the next sync).
 - **No secrets** (none of these may match; the second is one recursive grep over the app's private data - Room's
   `music.db` and its `-wal`, Media3's `databases/exoplayer_internal.db` and its WAL, `shared_prefs`, `files/music/`
   with the report, `no_backup/` with the cache and `renderer.json`; it must name no file - no JWT is ever written, and
@@ -1824,7 +1818,7 @@ counts each, `, M left` when an entry is due again at once. At 320x569 dp, nb an
 
 ## 6b. Step 7: Play (optional)
 
-FCM is gone since design 19: every build uses the SSE stream, and About This Phone says "Online
+Every build uses the SSE stream, and About This Phone says "Online
 since ..." while the phone holds it. For Play tests:
 
 - Use an AVD with a **Google Play** system image (Play Store + Play services).

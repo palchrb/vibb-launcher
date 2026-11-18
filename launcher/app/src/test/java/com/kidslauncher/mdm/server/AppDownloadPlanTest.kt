@@ -191,17 +191,6 @@ class AppDownloadPlanTest {
     }
 
     @Test
-    fun `old cache files go once an hour old`() {
-        val files = listOf(
-            "tracked_app_5_123.apk" to now - LEGACY_FILE_AGE_MS,
-            "tracked_app_6_456.apk" to now - LEGACY_FILE_AGE_MS + 1,
-            "other.apk" to 0L,
-            "tracked_app_7_789.tmp" to 0L,
-        )
-        assertEquals(listOf("tracked_app_5_123.apk"), legacyCacheFilesToDelete(files, now))
-    }
-
-    @Test
     fun `catalog apps go first, our own update last`() {
         val records = listOf(DownloadRecord(1, "l", isLauncher = true), DownloadRecord(2, "a"), DownloadRecord(3, "b"))
         assertEquals(listOf(2L, 3L, 1L), downloadOrder(records).map { it.appId })

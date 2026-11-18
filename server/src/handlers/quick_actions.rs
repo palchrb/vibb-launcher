@@ -10,7 +10,7 @@ use chrono::{DateTime, Utc};
 
 use crate::display_time::{Zone, parse_db_utc};
 use crate::i18n::{Lang, t, t_params};
-use crate::lock_now::{self, LockNowRow, kind_rank};
+use crate::lock_now::{self, LockNowRow};
 use crate::models::DeviceStatus;
 use crate::time_rules::TimeRuleRow;
 
@@ -50,9 +50,6 @@ pub(crate) struct RunningView {
 /// The row right under the phone's header while it is open for setup (§6.1 item 1).
 pub(crate) struct SetupRow {
     pub text: String,
-    /// Only for a launcher that can't be locked again from here (`pause_ends_old`).
-    pub sub: Option<String>,
-    pub lock_again: bool,
 }
 
 pub(crate) struct QuickActions {
@@ -158,27 +155,6 @@ pub(crate) fn mode_line(lang: Lang, rule: &TimeRuleRow, apps: &HashMap<String, S
     }
 }
 
-/// For a launcher without `lock_now_v1` (§4.2): the rule of the same or a stronger kind already in
-/// force at the phone's `now_local`, and its end - the card shows it, not the turned-on rule.
-fn already(
-    rule: &TimeRuleRow,
-    rules: &[TimeRuleRow],
-    now_local: chrono::NaiveDateTime,
-) -> Option<(String, chrono::NaiveDateTime)> {
-    rules
-        .iter()
-        .filter(|r| r.id != rule.id && kind_rank(&r.kind) <= kind_rank(&rule.kind))
-        .find_map(|r| {
-            let days = crate::time_rules::parse_days(&r.days_json)
-                .map(|d| crate::time_rules::served_days(&d))
-                .ok()?;
-            let end = crate::time_state::covering_ends(&days, now_local)
-                .into_iter()
-                .max()?;
-            Some((r.name.clone(), end))
-        })
-}
-
 /// What the builder reads, besides the database.
 pub(crate) struct Inputs<'a> {
     pub device_id: i64,
@@ -191,9 +167,6 @@ pub(crate) struct Inputs<'a> {
     /// - the screen-time lock counts as none (design 101 §4.1): the Pause tile may say "Ingen regel nå".
     pub no_rule_now: bool,
     pub screen: Option<&'a crate::time_state::ScreenTime>,
-    /// `RelockCard::lock_again` and whether the launcher takes the commands.
-    pub lock_again: bool,
-    pub relock_capable: bool,
     /// A refusal's words from `?done=` (shown in the sheet).
     pub refusal: Option<String>,
     pub zone: &'a Zone,
@@ -235,11 +208,6 @@ pub(crate) async fn build(
     let now_local = tz.map(|tz| now.with_timezone(&tz).naive_local());
     let now_minute = now_local.map(lock_now::minute_of).unwrap_or(0);
     let lock = lock_now::running(db, input.device_id, now).await?;
-    let capable_now = input.latest.is_some_and(|s| {
-        s.capabilities_json
-            .as_deref()
-            .is_some_and(|c| c.contains(&format!("\"{}\"", lock_now::CAPABILITY)))
-    });
 
     // The phone's clock: a lock's times are its local wall time; another zone than Phone Setup's says so.
     let phone_time = |lock: &LockNowRow, clock: String| {
@@ -428,8 +396,6 @@ pub(crate) async fn build(
                 (true, None) => t(lang, "device.summary.qa.setup_open").to_string(),
                 (false, _) => t(lang, "device.summary.qa.setup_play").to_string(),
             },
-            sub: (!input.lock_again).then(|| t(lang, "device.summary.pause_ends_old").to_string()),
-            lock_again: input.lock_again,
         }
     });
 
@@ -453,9 +419,7 @@ pub(crate) async fn build(
             let name = crate::time_rules::shown_name(lang, &rule.name);
             let mut warnings = Vec::new();
             if open_for_setup {
-                warnings.push(if !input.relock_capable {
-                    t(lang, "device.summary.qa.warn_no_relock").to_string()
-                } else if let Some(at) = until {
+                warnings.push(if let Some(at) = until {
                     t_params(
                         lang,
                         "device.summary.qa.warn_setup",
@@ -479,24 +443,6 @@ pub(crate) async fn build(
                 ));
             }
             warnings.extend(all_paused.clone());
-            if !capable_now
-                && let Some(local) = now_local
-                && let Some((other, end)) = already(rule, input.rules, local)
-            {
-                let at = if end.date() > local.date() {
-                    t(lang, "device.summary.rules_now.midnight").to_string()
-                } else {
-                    end.format("%H:%M").to_string()
-                };
-                warnings.push(t_params(
-                    lang,
-                    "device.summary.qa.warn_already",
-                    &[
-                        ("rule", &crate::time_rules::shown_name(lang, &other)),
-                        ("at", &at),
-                    ],
-                ));
-            }
             RuleOption {
                 id: rule.id,
                 school: rule.kind == "school",
@@ -587,8 +533,8 @@ pub(crate) async fn build(
     })
 }
 
-/// The Avansert page's first row, "Åpne for oppsett" (design 93 §6.6), for a launcher that takes
-/// the commands (`window_relock_v1`); `None` for an older one.
+/// The Avansert page's first row, "Åpne for oppsett" (design 93 §6.6), for a phone that has
+/// reported; `None` before its first report.
 pub(crate) struct SetupCard {
     /// Open for setup at the newest report: the sheet holds Lås igjen instead of the open button.
     pub open: bool,
@@ -613,7 +559,7 @@ pub(crate) async fn setup_card(
     zone: &Zone,
     now: DateTime<Utc>,
 ) -> Result<Option<SetupCard>, sqlx::Error> {
-    if !crate::handlers::window_relock::takes_commands(latest) {
+    if latest.is_none() {
         return Ok(None);
     }
     let lang = zone.lang();

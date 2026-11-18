@@ -17,23 +17,10 @@ fn block<'a>(script: &'a str, start: &str, end: &str) -> &'a str {
     &script[at..at + len + end.len() + 1]
 }
 
-/// The host helpers' removal, the same text in both scripts: from its comment to the end of
-/// `remove_host_helpers`.
-fn removal(script: &str) -> &str {
-    let at = script
-        .find("# The host helpers' removal.")
-        .expect("the removal's comment");
-    let end = at + script[at..].find("remove_host_helpers() {").unwrap();
-    let len = script[end..].find("\n}\n").unwrap();
-    &script[at..end + len + 3]
-}
-
 /// Neither script installs anything that acts for the server - no root watcher, scheduler, backup
-/// copy, request file or version stamp in data/ - and both remove what an older install has, with
-/// the same text: update.sh before it stops the service, install.sh after it starts it.
+/// copy, request file or version stamp in data/.
 #[test]
-fn no_host_helper_is_installed_and_both_scripts_remove_them() {
-    assert_eq!(removal(INSTALL), removal(UPDATE));
+fn no_host_helper_is_installed() {
     for script in [INSTALL, UPDATE] {
         for gone in [
             "ACTIONS_EOF",
@@ -52,179 +39,16 @@ fn no_host_helper_is_installed_and_both_scripts_remove_them() {
         ] {
             assert!(!script.contains(gone), "{gone}");
         }
-        for line in [
-            "VERSION_FILE=\"/var/lib/kid-phone-server/installed_version\"",
-            "OLD_UPDATER_DIR=\"/opt/kid-phone-server-updater\"",
-        ] {
-            assert_eq!(script.matches(&format!("\n{line}\n")).count(), 1, "{line}");
-        }
+        let line = "VERSION_FILE=\"/var/lib/kid-phone-server/installed_version\"";
+        assert_eq!(script.matches(&format!("\n{line}\n")).count(), 1, "{line}");
         assert_eq!(
             block(script, "installed_version() {", "}"),
             block(INSTALL, "installed_version() {", "}")
         );
     }
-    let update_removes = UPDATE
-        .find("\nremove_host_helpers\n")
-        .expect("update.sh removes them");
-    assert!(
-        update_removes
-            > UPDATE
-                .find("\ndownload_release \"$TMP_EXTRACT\"\n")
-                .unwrap()
-    );
-    assert!(update_removes < UPDATE.find("\nsystemctl stop kid-phone-server\n").unwrap());
-    let install_removes = INSTALL
-        .find("\nremove_host_helpers\n")
-        .expect("install.sh too");
-    assert!(
-        install_removes
-            > INSTALL
-                .find("\nsystemctl restart kid-phone-server\n")
-                .unwrap()
-    );
     // The version the next update's downgrade check reads, root's - never in data/.
     assert!(UPDATE.contains("\n    record_version \"$NEW_VERSION\"\n"));
     assert!(INSTALL.contains("\nrecord_version \"$INSTALLED_VERSION\"\n"));
-}
-
-/// Runs `body` under bash in `sandbox` with `stubs` (commands on a PATH of their own, each a
-/// script body); cut off after 20 s (a hang is a failure).
-fn run_in_sandbox(
-    body: &str,
-    stubs: &[(&str, &str)],
-    sandbox: &std::path::Path,
-) -> std::process::Output {
-    let bin = sandbox.join("stub-bin");
-    std::fs::create_dir_all(&bin).unwrap();
-    for (name, stub) in stubs {
-        let path = bin.join(name);
-        std::fs::write(&path, format!("#!/bin/sh\n{stub}\n")).unwrap();
-        let mut permissions = std::fs::metadata(&path).unwrap().permissions();
-        std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
-        std::fs::set_permissions(&path, permissions).unwrap();
-    }
-    let path = sandbox.join("run.sh");
-    std::fs::write(&path, body).unwrap();
-    let output = std::process::Command::new("timeout")
-        .arg("20")
-        .arg("bash")
-        .arg(&path)
-        .env(
-            "PATH",
-            format!("{}:{}", bin.display(), std::env::var("PATH").unwrap()),
-        )
-        .output()
-        .expect("bash runs");
-    assert_ne!(output.status.code(), Some(124), "hung");
-    output
-}
-
-/// An install from before, run for real in a sandbox: the watcher's path unit and the two timers
-/// are disabled, their units and drop-ins and the helpers' directory deleted, the installed
-/// version moved to VERSION_FILE; a helper's running service is never stopped (an older server's
-/// Update button runs update.sh inside it); the server's own unit and anything else stay.
-#[test]
-fn an_old_install_loses_its_host_helpers() {
-    let sandbox = tempfile::tempdir().unwrap();
-    let root = sandbox.path();
-    let units = root.join("etc/systemd/system");
-    let updater = root.join("opt/kid-phone-server-updater");
-    std::fs::create_dir_all(&units).unwrap();
-    std::fs::create_dir_all(&updater).unwrap();
-    std::fs::create_dir_all(root.join("opt/kid-phone-server/data")).unwrap();
-    let old_units = [
-        "kid-phone-server-updater.path",
-        "kid-phone-server-updater.service",
-        "kid-phone-server-scheduler.timer",
-        "kid-phone-server-scheduler.service",
-        "kid-phone-server-backup-sync.timer",
-        "kid-phone-server-backup-sync.service",
-    ];
-    for unit in old_units {
-        std::fs::write(units.join(unit), "[Unit]\n").unwrap();
-    }
-    for dropin in ["updater", "scheduler", "backup-sync", "server"] {
-        let dir = units.join(format!("kid-phone-server-{dropin}.service.d"));
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("x.conf"), "[Service]\n").unwrap();
-    }
-    std::fs::write(units.join("kid-phone-server.service"), "[Unit]\n").unwrap();
-    for file in [
-        "actions.sh",
-        "watcher.sh",
-        "scheduler.sh",
-        "backup_sync.sh",
-        "last_run_date",
-    ] {
-        std::fs::write(updater.join(file), "#!/bin/sh\n").unwrap();
-    }
-    std::fs::write(updater.join("installed_version"), "v0.66.1").unwrap();
-
-    let log = root.join("systemctl.log");
-    let body = |version_file: &str| {
-        let mut body = format!(
-            "set -euo pipefail\nINSTALL_DIR=\"{root}/opt/kid-phone-server\"\n\
-             VERSION_FILE=\"{version_file}\"\nOLD_UPDATER_DIR=\"{updater}\"\n{installed}\n{removal}\n\
-             remove_host_helpers\n",
-            root = root.display(),
-            updater = updater.display(),
-            installed = block(UPDATE, "installed_version() {", "}"),
-            removal = removal(UPDATE),
-        );
-        body = body.replace("/etc/systemd/system", &units.display().to_string());
-        body
-    };
-    let version_file = root.join("var/lib/kid-phone-server/installed_version");
-    let stubs = [(
-        "systemctl",
-        &*format!("echo \"$*\" >>\"{}\"", log.display()),
-    )];
-    let output = run_in_sandbox(&body(&version_file.display().to_string()), &stubs, root);
-    assert!(output.status.success(), "{output:?}");
-
-    for unit in old_units {
-        assert!(!units.join(unit).exists(), "{unit}");
-    }
-    for dropin in ["updater", "scheduler", "backup-sync"] {
-        assert!(
-            !units
-                .join(format!("kid-phone-server-{dropin}.service.d"))
-                .exists()
-        );
-    }
-    assert!(units.join("kid-phone-server.service").exists());
-    assert!(
-        units
-            .join("kid-phone-server-server.service.d/x.conf")
-            .exists()
-    );
-    assert!(!updater.exists());
-    assert_eq!(std::fs::read_to_string(&version_file).unwrap(), "v0.66.1");
-    let calls = std::fs::read_to_string(&log).unwrap();
-    for unit in [
-        "kid-phone-server-updater.path",
-        "kid-phone-server-scheduler.timer",
-        "kid-phone-server-backup-sync.timer",
-    ] {
-        assert!(
-            calls.contains(&format!("disable --now {unit}\n")),
-            "{calls}"
-        );
-    }
-    assert!(calls.ends_with("daemon-reload\n"), "{calls}");
-    for line in calls.lines() {
-        assert!(
-            !line.contains(".service"),
-            "a helper's service is never stopped: {line}"
-        );
-        assert!(!line.starts_with("stop"), "{line}");
-    }
-
-    // Again (install.sh after update.sh, or a re-run): nothing left to do, the version kept.
-    std::fs::write(&version_file, "v0.67.0").unwrap();
-    let output = run_in_sandbox(&body(&version_file.display().to_string()), &stubs, root);
-    assert!(output.status.success(), "{output:?}");
-    assert_eq!(std::fs::read_to_string(&version_file).unwrap(), "v0.67.0");
 }
 
 /// Security review M5: root installs only what the pinned key signed - the tarball in install.sh

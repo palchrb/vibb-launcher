@@ -36,9 +36,6 @@ fun enqueuePinEvent(queue: List<ParentPinEvent>, event: ParentPinEvent): List<Pa
     return out
 }
 
-/** Status-report capability: this launcher reports parent-PIN use to `POST /api/devices/pin-events`. */
-const val PARENT_PIN_EVENTS_CAPABILITY = "parent_pin_events_v1"
-
 /**
  * Whether a sent batch leaves the queue after the server's answer ([code], `null` = no answer):
  * yes after a 2xx; also after any other 4xx except 401, 404, 408 and 429 - a server that refuses

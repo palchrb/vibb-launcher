@@ -16,7 +16,6 @@
       "reason": "stale"
     }
   ],
-  "capability": "time_answer_v1",
   "policy_no": {
     "time_policy": {
       "request_answers": true,
@@ -103,19 +102,6 @@
       }
     }
   },
-  "older_server": {
-    "time_policy": {
-      "lifts": [
-        {
-          "id": 8,
-          "target": "budget",
-          "rule_id": null,
-          "minutes": 15,
-          "expires_at_ms": 1793077800000
-        }
-      ]
-    }
-  },
   "states": [
     {
       "name": "nothing asked",
@@ -135,7 +121,6 @@
         "id": "0123456789abcdef0123456789abcdef",
         "asked_at_ms": 1793034120000,
         "day": "2026-10-26",
-        "lift_id_at_ask": 7,
         "state": "PENDING"
       },
       "count": null,
@@ -153,7 +138,6 @@
         "id": "0123456789abcdef0123456789abcdef",
         "asked_at_ms": 1793034120000,
         "day": "2026-10-26",
-        "lift_id_at_ask": 7,
         "state": "PENDING"
       },
       "count": null,
@@ -171,7 +155,6 @@
         "id": "0123456789abcdef0123456789abcdef",
         "asked_at_ms": 1793034120000,
         "day": "2026-10-26",
-        "lift_id_at_ask": 7,
         "state": "ASKED"
       },
       "count": {
@@ -192,7 +175,6 @@
         "id": "0123456789abcdef0123456789abcdef",
         "asked_at_ms": 1793034120000,
         "day": "2026-10-26",
-        "lift_id_at_ask": 7,
         "state": "ASKED"
       },
       "count": {
@@ -213,7 +195,6 @@
         "id": "0123456789abcdef0123456789abcdef",
         "asked_at_ms": 1793034120000,
         "day": "2026-10-26",
-        "lift_id_at_ask": 7,
         "state": "ASKED"
       },
       "count": {
@@ -234,7 +215,6 @@
         "id": "0123456789abcdef0123456789abcdef",
         "asked_at_ms": 1793034120000,
         "day": "2026-10-26",
-        "lift_id_at_ask": 7,
         "state": "ASKED"
       },
       "count": {
@@ -255,7 +235,6 @@
         "id": "0123456789abcdef0123456789abcdef",
         "asked_at_ms": 1793034120000,
         "day": "2026-10-26",
-        "lift_id_at_ask": 7,
         "state": "ASKED"
       },
       "count": {
@@ -276,7 +255,6 @@
         "id": "0123456789abcdef0123456789abcdef",
         "asked_at_ms": 1793034120000,
         "day": "2026-10-26",
-        "lift_id_at_ask": 7,
         "state": "ASKED"
       },
       "count": {
@@ -297,7 +275,6 @@
         "id": "0123456789abcdef0123456789abcdef",
         "asked_at_ms": 1793034120000,
         "day": "2026-10-26",
-        "lift_id_at_ask": 7,
         "state": "ASKED"
       },
       "count": {
@@ -318,7 +295,6 @@
         "id": "0123456789abcdef0123456789abcdef",
         "asked_at_ms": 1793034120000,
         "day": "2026-10-26",
-        "lift_id_at_ask": 7,
         "state": "PENDING"
       },
       "count": null,
@@ -351,7 +327,6 @@
         "id": "0123456789abcdef0123456789abcdef",
         "asked_at_ms": 1793034120000,
         "day": "2026-10-25",
-        "lift_id_at_ask": 7,
         "state": "ASKED"
       },
       "count": {
@@ -372,7 +347,6 @@
         "id": "ffffffffffffffffffffffffffffffff",
         "asked_at_ms": 1793034120000,
         "day": "2026-10-26",
-        "lift_id_at_ask": 7,
         "state": "ASKED"
       },
       "count": {
@@ -409,27 +383,6 @@
       "state": "idle",
       "shade_note": "none",
       "screen_note": "given:Mamma:30",
-      "can_ask": true
-    },
-    {
-      "name": "an older server: a newer lift is the answer",
-      "record": {
-        "id": "0123456789abcdef0123456789abcdef",
-        "asked_at_ms": 1793034120000,
-        "day": "2026-10-26",
-        "lift_id_at_ask": 7,
-        "state": "ASKED"
-      },
-      "count": {
-        "day": "2026-10-26",
-        "accepted": 1
-      },
-      "policy": "older_server",
-      "day": "2026-10-26",
-      "now_ms": 1793034720000,
-      "state": "answered_yes",
-      "shade_note": "none",
-      "screen_note": "given:15",
       "can_ask": true
     }
   ]

@@ -1583,8 +1583,7 @@ async fn the_sign_in_log_lines_hold_no_cookie_value_and_no_query() {
 }
 
 /// Security review L6: a session ends `SESSION_MAX_DAYS` (90) after its sign-in however often it is
-/// used; one from before the cap (no sign-in time) starts its clock at its next request, so an
-/// upgrade signs nobody out. A real sign-in sets the time.
+/// used; one without a sign-in time is past it. A real sign-in sets the time.
 #[tokio::test]
 async fn a_session_ends_after_its_absolute_lifetime() {
     use crate::admin_auth::{EPOCH_KEY, SIGNED_IN_AT_KEY, now_secs};
@@ -1603,13 +1602,12 @@ async fn a_session_ends_after_its_absolute_lifetime() {
     let session = tower_sessions::Session::new(None, store, None);
     session.insert("admin_id", admin_id).await.unwrap();
     session.insert(EPOCH_KEY, epoch).await.unwrap();
-    assert!(
+    assert_eq!(
         security::load_active_admin(&app.state, &session)
             .await
-            .is_ok()
+            .err(),
+        Some(security::SignInWhy::TooOld)
     );
-    let started: Option<u64> = session.get(SIGNED_IN_AT_KEY).await.unwrap();
-    assert!(started.is_some_and(|at| at.abs_diff(now_secs()) < 60));
     let day = 86_400;
     session
         .insert(SIGNED_IN_AT_KEY, now_secs() - 89 * day)

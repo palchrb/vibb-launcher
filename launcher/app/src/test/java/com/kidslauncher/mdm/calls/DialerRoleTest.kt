@@ -30,11 +30,11 @@ class DialerRoleTest {
 
     /** QA 02 criterion T13 (the local half). */
     @Test
-    fun `an old server releases the role only on a phone whose calls were never managed`() {
-        val oldServer = com.kidslauncher.mdm.server.dto.PolicyResponse(allowlist = listOf("a"))
-        val never = callPolicyState(com.kidslauncher.mdm.server.CachedPolicy.Ok(oldServer), callsManagedLast = false, lastRules = null)
+    fun `a policy without call_policy releases the role only on a phone whose calls were never managed`() {
+        val noCalls = com.kidslauncher.mdm.server.dto.PolicyResponse(allowlist = listOf("a"))
+        val never = callPolicyState(com.kidslauncher.mdm.server.CachedPolicy.Ok(noCalls), callsManagedLast = false, lastRules = null)
         assertEquals(RoleAction.RELEASE, dialerRoleAction(never, roleHeld = true, takenByUs = true))
-        // After managed calls the old server's response is rejected and the cache keeps the rules;
+        // After managed calls such a response is rejected and the cache keeps the rules;
         // even with only the last rules left, the role stays.
         val after = callPolicyState(com.kidslauncher.mdm.server.CachedPolicy.Corrupt("x"), callsManagedLast = true, lastRules = CallRules())
         assertEquals(RoleAction.NONE, dialerRoleAction(after, roleHeld = true, takenByUs = true))

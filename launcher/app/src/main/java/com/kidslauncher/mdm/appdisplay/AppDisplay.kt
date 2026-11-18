@@ -28,8 +28,7 @@ const val AUTO_COLOR = "auto"
  * [AppGlyphs.ICONS]; its colour is always [AUTO_COLOR]. */
 const val OWN_ICON = "own"
 
-/** Every icon key this launcher can draw: the glyphs and [OWN_ICON]. An older launcher's set
- * (the glyphs alone) drops `own` like any unknown icon (design 14 QA #1). */
+/** Every icon key this launcher can draw: the glyphs and [OWN_ICON]; any other key is unknown (design 14 QA #1). */
 val KNOWN_ICONS: Set<String> = AppGlyphs.ICONS.keys + OWN_ICON
 
 /** The parent's choice for one package: [label] `null` = the app's own name; [icon] `null` = Vibb
@@ -104,7 +103,7 @@ private fun JsonObject.string(key: String): String? =
  * policy and only drops what can't be used: an unknown icon keeps the label, a bad label keeps the
  * icon, an unknown or missing colour is [AUTO_COLOR]; an entry without a valid package or with
  * neither a label, an icon nor `on_home: false` is left out (only JSON `false` is off); the first entry of a package wins. [OWN_ICON] is kept
- * (design 34 P1), always with [AUTO_COLOR]; [icons] without it is an older launcher's shape.
+ * (design 34 P1), always with [AUTO_COLOR].
  */
 fun appDisplayMap(
     element: JsonElement?,

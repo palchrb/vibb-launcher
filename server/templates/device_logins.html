@@ -22,7 +22,7 @@
             <form method="post" action="/devices/{{ device.id }}/logins#logins-wifi" class="cell">
                 <input type="hidden" name="section" value="wifi">
                 <label class="row">
-                    <span class="row-label">{{ self.t("logins.wifi.label") }}{% if reported && !portal_capable %}<span class="row-sub tone-orange" data-hint>{{ self.t("logins.needs_update") }}</span>{% endif %}</span>
+                    <span class="row-label">{{ self.t("logins.wifi.label") }}</span>
                     <input type="checkbox" role="switch" class="sw" name="on" value="on"{% if wifi_on %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
                 </label>
                 <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
@@ -77,7 +77,7 @@
         <form method="post" action="/devices/{{ device.id }}/logins#logins-apps" class="group">
             <input type="hidden" name="section" value="apps">
             <label class="row">
-                <span class="row-label">{{ self.t("logins.apps.label") }}{% if reported && !browser_capable %}<span class="row-sub tone-orange" data-hint>{{ self.t("logins.needs_update") }}</span>{% endif %}</span>
+                <span class="row-label">{{ self.t("logins.apps.label") }}</span>
                 <input type="checkbox" role="switch" class="sw" name="on" value="on"{% if apps_on %} checked{% endif %}{% if chrome_ticked %} disabled{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
             </label>
             {% if chrome_ticked %}

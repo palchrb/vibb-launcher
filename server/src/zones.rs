@@ -449,7 +449,7 @@ async fn store_fix(
 
 /// The phone's location setting takes fixes (security review P1): anything but "Off". The phone
 /// sends none under Off; a fix that comes all the same (a report sent before the phone had the new
-/// policy, an older launcher, a rooted phone) is never stored. Under "Only when asked" the phone
+/// policy, a rooted phone) is never stored. Under "Only when asked" the phone
 /// sends a fix for an Update Location, at low battery and at shutdown (2026-10-25) - all asked for.
 /// A phone without a policy row reads as a new phone's ("Only when asked"); a read that fails
 /// takes nothing (logged).
@@ -736,7 +736,7 @@ pub fn policy_zones(mode: &str, zones: &[Zone]) -> Vec<PolicyZone> {
 
 /// The Regularly interval the phone is served (decision 3): `max(chosen, 30)` while the mode is
 /// Regularly, the phone has zones and its watch holds fences (`watching`); the parent's choice
-/// otherwise - an older launcher, no zones, a phone whose fences couldn't be registered.
+/// otherwise - no zones, no watch reported yet, a phone whose fences couldn't be registered.
 pub fn served_interval(mode: &str, chosen: i64, zones: usize, watching: bool) -> i64 {
     if mode == "interval" && zones > 0 && watching {
         chosen.max(HEARTBEAT_FLOOR_MINUTES)

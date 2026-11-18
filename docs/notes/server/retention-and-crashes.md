@@ -6,7 +6,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 
 - **Blocked-domain log**: `device_policy.dns_log_enabled`, **default off** (the migration deleted every existing
   entry), sent as `PolicyResponse.dns_log_enabled` (always; the launcher records and reports only while it is on).
-  `POST /api/devices/dns-events` stores nothing for a phone with the log off (204, an older launcher still sends).
+  `POST /api/devices/dns-events` stores nothing for a phone with the log off (204).
   Since 0.55.0 (security review L3) each event is checked (`DnsEventReport::checked`, the wire shape unchanged): the
   domain only as a lowercased hostname of at most 253 characters (labels of 1-63 letters, digits, `-`, `_`; anything
   else skipped), the category without control characters and at most 64, `blocked_at` as RFC 3339 clamped to the
@@ -38,8 +38,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   for - the review's "only within a window after a `locate`" would drop the last two, so it wasn't built.
 - **Status history** (`device_status`: screen time in `time_state_json`, call state, app lists): **48 hours** since
   0.57.0 (`STATUS_HISTORY_HOURS`; was 30 days, which nothing read - security review P2), and kept besides: each
-  phone's newest report from before the 48 hours (its newest at all while it is silent) and the newest one with
-  `call_policy_v1` (the calls warning "stopped reporting that it enforces calls" rests on it, qa-cleanup #7). Every
+  phone's newest report from before the 48 hours (its newest at all while it is silent), so a phone's newest report
+  always stays. Every
   page, Attention, the intake's comparisons (`app_updated`, new apps, foreign access, unseen boots) and the policy read
   the newest report; the storage budget counts a rolling 24 hours of them, hence two days. The report from before the
   window is the power route's "newest report before the boot" for a phone back after days off: kept however many
@@ -54,7 +54,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `play_install_mode`, `boot_unseen`, `phone_app_blocked`, `phone_foreign_access`, `phone_relock_findings`,
   `mock_location_ignored`, `phone_lines_dropped` after `PHONE_LOG_DAYS` (30, an unseen boot's Attention window; the
   status they come from is 48 hours), `parent_pin_used`, `parent_pin_lockout` after `PIN_EVENT_DAYS` (90, as the PIN
-  events); `storytel_login_sent` (the parent's credential handed to a phone) keeps 180. `prune` runs one statement per
+  events); an old `storytel_login_sent` row (the retired login route's, design 58 step 3) keeps the log's 180 and its
+  label. `prune` runs one statement per
   window shorter than 180; `admin::every_written_event_has_a_label` checks every `PhoneLine::ALL` label. A wrong sign-in's typed username is cleared after `SIGN_IN_NAME_HOURS`
   (24; a password typed into the name field), its line and address kept; `music_entry_added` names a feed by its host
   only (`feed at example.org`: a private feed's URL may carry a token). The Security Log's footer says the windows.
@@ -74,8 +75,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `cleanup::a_failing_table_leaves_the_rest_of_the_pass`).
 - **A phone's storage budget** (0.55.0, security review L4, `retention::Budget`, `STATUS_ROWS_A_DAY`, `CRASH_HASHES`):
   what one token can add in a rolling day, far above what a phone sends. Past 500 status reports a day (the shortest location interval alone is 144; QA L-c) each new one
-  replaces the one before it (`replace_over_budget`: the newest stays current, never the newest report with
-  `call_policy_v1`); past 3000 fixes (`zones::intake`, the newest of a report that fit), 10 000 blocked domains or 500
+  replaces the one before it (`replace_over_budget`: the newest stays current, never the phone's newest report); past 3000 fixes (`zones::intake`, the newest of a report that fit), 10 000 blocked domains or 500
   parent-PIN events a day the new ones aren't stored (logged); at most 50 crash hashes per phone, the oldest reported
   going first. A count that can't be read is logged and drops nothing. Security-log lines and inbox events have their own hourly budgets (L1). `intake_limits::a_phones_storage_has_a_budget`.
 - Tests: `src/tests/cleanup.rs`.
@@ -83,8 +83,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   DEPLOY.md, "Backups"). They stay in `data/backups/`: since 2026-11-04 the server never acts on its host, so nothing
   copies them off the machine (the root copy to a USB drive, `backup_sync.sh`, which pruned the drive to the same
   count, is gone) - a copy the owner keeps elsewhere is theirs to prune. The live mirror (`data/live_mirror.db`, a
-  whole database refreshed every 90 s for that drive) is gone too, and deleted at the next start
-  (`startup::HOST_FILES`).
+  whole database refreshed every 90 s for that drive) is gone too.
 
 ## Crash reports (cleanup 2026-10-06, `src/crashes.rs`, migration `0040_device_crashes.sql`)
 
@@ -96,14 +95,6 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   (counts add up), shown on About This Phone › Diagnostics (newest 5, each a row whose ⓘ has the trace), pruned 30
   days after the phone last reported it (`retention::prune`). It replaced upstream's on-phone crash screen.
 
-## Removed monitoring (2026-10-06)
+## What the server collects
 
-The conversation journal (`device_journal_entries`, media in `data/journal_media`, `/api/devices/journal*`, the
-`/devices/{id}/journal` viewer) and browser history (`device_browser_history_entries`, `/api/devices/browser-history`,
-`/devices/{id}/browser-history`) are gone: migration `0038_remove_monitoring.sql` drops the tables, startup deleted the
-media directory (`retention::remove_journal_media`, removed with the other one-shot cleanups in 0.54.0), and connections run with `secure_delete` on so deleted rows are
-overwritten. So is the MollySocket installer (`deploy/install_mollysocket.sh`) and the launcher's UnifiedPush
-distributor it relied on (DEPLOY.md has the removal steps for an existing MollySocket). Principle: collect only what's
-needed to manage the phone, delete on a schedule, never store notification or message content. Since design 108 (2026-11-16, the user reversed the 2026-10-06 rule) Vibb One is the
-distributor again, with no third-party relay: pushes ride the one event stream to the family's own server, bodies are
-held seconds to 24 h and never logged, Matrix bodies minimised - see `docs/notes/server/unified-push.md`.
+Collect only what's needed to manage the phone, delete on a schedule, never store notification or message content. Connections run with `secure_delete` on so deleted rows are overwritten. Vibb One is the UnifiedPush distributor (design 108) with no third-party relay: pushes ride the one event stream to the family's own server, bodies are held seconds to 24 h and never logged, Matrix bodies minimised - see `docs/notes/server/unified-push.md`.

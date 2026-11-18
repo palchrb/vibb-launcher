@@ -218,7 +218,7 @@ the setup notification.
   `ui/kidsettings/ShortcutsPickerActivity` (a page in Home's task): check boxes, up to four, "Flytt opp"/"Flytt ned"
   buttons on the chosen rows (no dragging: gesture and 3-button navigation alike), a fifth refused with a line. The
   picks are CE prefs `shortcuts`/`picks` (a JSON list; unknown keys kept).
-- **The report** `shortcuts: {shown, hidden, items}` (capability `shortcuts_v1`, a full-report field), the contract
+- **The report** `shortcuts: {shown, hidden, items}` (a full-report field), the contract
   `shortcuts.json` (root `CLAUDE.md`).
 
 ## Innstillinger as a task of its own (design 111, `docs/design/111-kid-settings-task.md`, branch `kid-settings-task`)

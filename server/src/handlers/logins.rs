@@ -23,7 +23,7 @@ use chrono::{DateTime, Utc};
 
 use crate::AppState;
 use crate::display_time::Zone;
-use crate::handlers::device_pages::{has_capability, load_device, load_latest, load_policy};
+use crate::handlers::device_pages::{load_device, load_latest, load_policy};
 use crate::i18n::{Lang, Words, t, t_params};
 use crate::logins::{self, BrowserReport, PortalReport};
 use crate::models::{Device, DevicePolicy, DeviceStatus};
@@ -63,10 +63,6 @@ struct LoginsTemplate {
     who: crate::handlers::devices::BandAvatar,
     title: String,
     device: Device,
-    /// The phone has reported at least once.
-    reported: bool,
-    portal_capable: bool,
-    browser_capable: bool,
     wifi_on: bool,
     require_code: bool,
     /// The value of "I dag uten kode": "1 av 4 · 5 av 20 min", only with a report that has `captive_portal`.
@@ -89,18 +85,12 @@ struct LoginsTemplate {
 }
 crate::i18n::words!(LoginsTemplate);
 
-/// The stored `captive_portal`, from a launcher that claims it.
+/// The stored `captive_portal`, when the latest report has one.
 pub fn portal_report(latest: Option<&DeviceStatus>) -> Option<PortalReport> {
-    if !has_capability(latest, logins::PORTAL_CAPABILITY) {
-        return None;
-    }
-    Some(
-        latest?
-            .captive_portal_json
-            .as_deref()
-            .and_then(|json| serde_json::from_str(json).ok())
-            .unwrap_or_default(),
-    )
+    latest?
+        .captive_portal_json
+        .as_deref()
+        .and_then(|json| serde_json::from_str(json).ok())
 }
 
 fn browser_report(latest: Option<&DeviceStatus>) -> Option<BrowserReport> {
@@ -138,18 +128,15 @@ pub fn row_sub(lang: Lang, policy: &DevicePolicy) -> String {
 /// Advanced's `#wifi-signin` row: the switch and its warning (§3.7).
 pub struct CodeCard {
     pub require_code: bool,
-    /// "No parent code is set …" or "Needs a newer Vibb One", when one applies.
+    /// "No parent code is set …", when it applies.
     pub warning: Option<&'static str>,
 }
 
-/// The row from the phone's settings and its last report: the capability's line for a phone that reported without
-/// it, else the no-code warning while the phone reports none set.
+/// The row from the phone's settings and its last report: the no-code warning while the phone reports none set.
 pub fn code_card(policy: &DevicePolicy, latest: Option<&DeviceStatus>) -> CodeCard {
-    let warning = match (latest, portal_report(latest)) {
-        (Some(_), None) => Some("logins.code.needs_update"),
-        (_, Some(report)) if !report.parent_code_set => Some("logins.code.none_set"),
-        _ => None,
-    };
+    let warning = portal_report(latest)
+        .filter(|report| !report.parent_code_set)
+        .map(|_| "logins.code.none_set");
     CodeCard {
         require_code: policy.captive_portal_require_code,
         warning,
@@ -259,15 +246,8 @@ fn start_key(start: &str) -> &'static str {
 }
 
 /// The role's state while it is on (§5.2), and whether it is wrong (orange): no report since the save (grey), Chrome
-/// missing or failed (orange). Nothing once the phone says it is on (design 113, P4), nor for a phone without the
-/// capability: the switch's own hint says it needs a newer Vibb One (said once).
-fn apps_state(
-    latest: Option<&DeviceStatus>,
-    report: Option<&BrowserReport>,
-) -> Option<(&'static str, bool)> {
-    if latest.is_some() && !has_capability(latest, logins::BROWSER_CAPABILITY) {
-        return None;
-    }
+/// missing or failed (orange). Nothing once the phone says it is on (design 113, P4).
+fn apps_state(report: Option<&BrowserReport>) -> Option<(&'static str, bool)> {
     match report.map(|r| r.state.as_str()) {
         Some("on") => None,
         Some("absent") => Some(("logins.apps.state.absent", true)),
@@ -374,9 +354,6 @@ pub async fn view(
             lang,
             who: crate::handlers::devices::BandAvatar::of(&device),
             title: format!("{} · {}", t(lang, "logins.page"), device.name),
-            reported: latest.is_some(),
-            portal_capable: has_capability(latest, logins::PORTAL_CAPABILITY),
-            browser_capable: has_capability(latest, logins::BROWSER_CAPABILITY),
             wifi_on: policy.captive_portal_enabled,
             require_code: policy.captive_portal_require_code,
             today,
@@ -390,7 +367,7 @@ pub async fn view(
             chrome_present,
             // "Chrome finnes ikke på telefonen" already says what "Chrome mangler" would (said once).
             apps_state: apps_on
-                .then(|| apps_state(latest, browser_report(latest).as_ref()))
+                .then(|| apps_state(browser_report(latest).as_ref()))
                 .flatten()
                 .filter(|(key, _)| {
                     !(*key == "logins.apps.state.absent" && chrome_present == Some(false))

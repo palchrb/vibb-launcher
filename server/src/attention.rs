@@ -69,16 +69,12 @@ pub enum Kind {
     AppPushOutside(usize),
     Calls(CallProblem),
     LedgerUnreadable,
-    LauncherWithoutRules,
     /// Device › Music's warnings (design 31 step 7 fix round, qa-31-s7-code M1), from
-    /// `music::music_warnings` like the page's: Vibb without music while entries are on, the music
-    /// app not reachable, Storytel's login refused, over the storage limit, the old mobile-data
-    /// switch, entries the phone can't fetch (one row for all).
-    MusicCantDeliver,
+    /// `music::music_warnings` like the page's: the music app not reachable, Storytel's login
+    /// refused, over the storage limit, entries the phone can't fetch (one row for all).
     MusicUnreachable,
     MusicStorytelRefused,
     MusicOverLimit,
-    MusicOlderPhone(crate::music::OlderApps),
     MusicFailing(usize),
     /// The phone's Spotify account can't play (design 26c §4.4: the login, the app, Premium or
     /// the phone's web player) - the music app's tiles say "Spør en voksen".
@@ -152,12 +148,9 @@ impl AttentionItem {
             Kind::AppPushOutside(_) => "app-push-outside",
             Kind::Calls(_) => "calls",
             Kind::LedgerUnreadable => "screen-time-record",
-            Kind::LauncherWithoutRules => "launcher-without-rules",
-            Kind::MusicCantDeliver => "music-cant-deliver",
             Kind::MusicUnreachable => "music-unreachable",
             Kind::MusicStorytelRefused => "music-storytel-refused",
             Kind::MusicOverLimit => "music-over-limit",
-            Kind::MusicOlderPhone(_) => "music-older-phone",
             Kind::MusicFailing(_) => "music-entries",
             Kind::MusicSpotify => "music-spotify",
             Kind::MusicSpotifyLogin => "music-spotify-login",
@@ -195,14 +188,13 @@ pub struct Facts {
     pub no_notification_access: bool,
     /// Design 107: the notification channels' row, if it is raised (`notification_channels::attention`).
     pub notifications_off: Option<crate::notification_channels::Attention>,
-    /// Design 113: the report's `mobile_data.enabled` is `false` (a launcher with `mobile_data_v1`); unknown is `false`.
+    /// Design 113: the report's `mobile_data.enabled` is `false`; unknown is `false`.
     pub mobile_data_off: bool,
     /// Design 108c: the app push rows (`unified_push::health::attention`).
     pub app_push: crate::unified_push::health::AppPushAttention,
     /// From the call report, in its order (`Waiting` left out by [items]).
     pub calls: Vec<CallProblem>,
     pub ledger_unreadable: bool,
-    pub launcher_without_rules: bool,
     /// Not a row: calls are managed and the launcher screens them, so a no-calls rule really
     /// blocks calls (the lock badge's "calls off", qa-31-s2-code M3).
     pub calls_enforced: bool,
@@ -254,15 +246,10 @@ pub fn items(lang: Lang, device_id: i64, facts: &Facts) -> Vec<AttentionItem> {
         add(problem.needs_attention(), Kind::Calls(*problem));
     }
     add(facts.ledger_unreadable, Kind::LedgerUnreadable);
-    add(facts.launcher_without_rules, Kind::LauncherWithoutRules);
     let music = &facts.music;
-    add(music.cant_deliver, Kind::MusicCantDeliver);
     add(music.unreachable, Kind::MusicUnreachable);
     add(music.storytel_refused, Kind::MusicStorytelRefused);
     add(music.over_limit.is_some(), Kind::MusicOverLimit);
-    if let Some(apps) = music.older_phone {
-        add(true, Kind::MusicOlderPhone(apps));
-    }
     add(
         music.failing_entries > 0,
         Kind::MusicFailing(music.failing_entries),
@@ -312,12 +299,9 @@ fn level(kind: Kind) -> Level {
         | Kind::AppPushOutside(_)
         | Kind::Calls(_)
         | Kind::LedgerUnreadable
-        | Kind::LauncherWithoutRules
-        | Kind::MusicCantDeliver
         | Kind::MusicUnreachable
         | Kind::MusicStorytelRefused
         | Kind::MusicOverLimit
-        | Kind::MusicOlderPhone(_)
         | Kind::MusicFailing(_)
         | Kind::MusicSpotify
         | Kind::MusicSpotifyLogin
@@ -358,12 +342,9 @@ fn title(lang: Lang, kind: Kind) -> String {
         }
         Kind::Calls(problem) => problem.title(lang),
         Kind::LedgerUnreadable => t(lang, "device.attention.screen_time_record"),
-        Kind::LauncherWithoutRules => t(lang, "device.attention.launcher_without_rules"),
-        Kind::MusicCantDeliver => t(lang, "device.attention.music_cant_deliver"),
         Kind::MusicUnreachable => t(lang, "device.attention.music_unreachable"),
         Kind::MusicStorytelRefused => t(lang, "device.attention.music_storytel_refused"),
         Kind::MusicOverLimit => t(lang, "device.attention.music_over_limit"),
-        Kind::MusicOlderPhone(apps) => t(lang, apps.title_key()),
         Kind::MusicFailing(n) => {
             return t_count(lang, "device.attention.music_failing", count(n), &[]);
         }
@@ -404,17 +385,16 @@ fn target(kind: Kind, id: i64) -> String {
             return format!("/devices/{id}/calls");
         }
         // Device › Time's warnings at the top of the page (step 9): no fragment needed.
-        Kind::LedgerUnreadable | Kind::LauncherWithoutRules => {
+        Kind::LedgerUnreadable => {
             return format!("/devices/{id}/time");
         }
         // Device › Music's warnings at the top of the page: no fragment needed.
-        Kind::MusicCantDeliver | Kind::MusicUnreachable => {
+        Kind::MusicUnreachable => {
             return format!("/devices/{id}/music");
         }
         // The others above their own group (its header) or by their rows.
         Kind::MusicStorytelRefused => ("/music", "storytel-title"),
         Kind::MusicOverLimit => ("/music", "storage-title"),
-        Kind::MusicOlderPhone(_) => ("/music", "music-settings"),
         Kind::MusicFailing(_) => ("/music", "library"),
         Kind::MusicSpotify
         | Kind::MusicSpotifyLogin
@@ -424,13 +404,10 @@ fn target(kind: Kind, id: i64) -> String {
     format!("/devices/{id}{page}#{anchor}")
 }
 
-/// A rule's "calls off" is real: calls are managed and the call report doesn't say the launcher
-/// can't screen them. The lock badge's "· calls off" on every page reads it (qa-31-s9-code N1).
+/// A rule's "calls off" is real: calls are managed and the call report doesn't say nothing screens
+/// them. The lock badge's "· calls off" on every page reads it (qa-31-s9-code N1).
 pub fn calls_enforced(policy: &DevicePolicy, problems: &[CallProblem]) -> bool {
-    policy.calls_managed()
-        && !problems
-            .iter()
-            .any(|p| matches!(p, CallProblem::NotEnforced | CallProblem::AnyoneCanCall))
+    policy.calls_managed() && !problems.contains(&CallProblem::AnyoneCanCall)
 }
 
 /// What [facts_of] reads; the summary passes the parts it has built.
@@ -618,18 +595,14 @@ pub fn facts_of(s: &Sources, now_ms: i64) -> Facts {
         };
     }
     let (policy, latest) = (s.policy, s.latest);
-    let capability = |name: &str| {
-        latest
-            .and_then(|st| st.capabilities_json.as_deref())
-            .is_some_and(|caps| caps.contains(&format!("\"{name}\"")))
-    };
     let lock_state =
         crate::kid_lock::parse_lock_state(latest.and_then(|st| st.lock_state_json.as_deref()));
     let lock_phone = crate::kid_lock::PhoneLock {
         state: lock_state.as_ref(),
-        reported: latest.is_some(),
-        capable: capability(crate::kid_lock::PIN_LOCK_CAPABILITY),
-        android_capable: capability(crate::kid_lock::ANDROID_KEYGUARD_CAPABILITY),
+        android_capable: crate::handlers::device_pages::has_capability(
+            latest,
+            crate::kid_lock::ANDROID_KEYGUARD_CAPABILITY,
+        ),
         pin_waiting: false,
     };
     let escapes =
@@ -703,7 +676,6 @@ pub fn facts_of(s: &Sources, now_ms: i64) -> Facts {
             .and_then(|st| st.time_state_json.as_deref())
             .and_then(crate::time_state::TimeReport::parse)
             .is_some_and(|report| report.ledger_unreadable),
-        launcher_without_rules: crate::handlers::devices::launcher_without_rules(latest),
         calls_enforced: calls_enforced(policy, s.call_problems),
         // Device › Music's own warnings, so the rows and the page agree.
         music: {
@@ -758,13 +730,10 @@ mod tests {
             },
             calls: vec![CallProblem::Waiting, CallProblem::AnyoneCanCall],
             ledger_unreadable: true,
-            launcher_without_rules: true,
             music: crate::handlers::music::MusicWarnings {
-                cant_deliver: true,
                 unreachable: true,
                 storytel_refused: true,
                 over_limit: Some(("3.2 GB".to_string(), 2)),
-                older_phone: Some(crate::music::OlderApps::Both),
                 failing_entries: 2,
                 spotify_cant_play: true,
                 spotify_account: crate::handlers::music::SpotifyAccountWarnings {
@@ -858,12 +827,9 @@ mod tests {
                 "2 apps' notifications go via an outside service",
                 "Anyone can call this phone",
                 "Screen-time record unreadable",
-                "Vibb One too old for time rules",
-                "Vibb One can't deliver music yet",
                 "Music app not reachable",
                 "Storytel refused the phone's login",
                 "Music over the storage limit",
-                "Update Vibb One and the music app",
                 "2 music entries fail on the phone",
                 "No Spotify app set up",
                 "Spotify login needs renewing",
@@ -971,21 +937,15 @@ mod tests {
         }
         // Step 9: Device › Time, its warnings at the top.
         assert_eq!(target("screen-time-record"), "/devices/7/time");
-        assert_eq!(target("launcher-without-rules"), "/devices/7/time");
         assert_eq!(target("calls"), "/devices/7/calls");
         // Step 7's fix round: Device › Music - the top warnings without a fragment, the others at
         // their group.
-        assert_eq!(target("music-cant-deliver"), "/devices/7/music");
         assert_eq!(target("music-unreachable"), "/devices/7/music");
         assert_eq!(
             target("music-storytel-refused"),
             "/devices/7/music#storytel-title"
         );
         assert_eq!(target("music-over-limit"), "/devices/7/music#storage-title");
-        assert_eq!(
-            target("music-older-phone"),
-            "/devices/7/music#music-settings"
-        );
         assert_eq!(target("music-entries"), "/devices/7/music#library");
     }
 }

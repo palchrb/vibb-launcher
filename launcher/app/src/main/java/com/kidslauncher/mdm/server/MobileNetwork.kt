@@ -1,5 +1,6 @@
 package com.kidslauncher.mdm.server
 
+import com.kidslauncher.mdm.server.dto.PolicyResponse
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -10,19 +11,8 @@ import kotlinx.serialization.Serializable
  * (`MobileNetworkTest`).
  */
 
-/** Design 94: the policy's `data_roaming` is enforced and `data_roaming` is in every report. */
-const val DATA_ROAMING_CAPABILITY = "data_roaming_v1"
-
-/** Design 95 rev. 3: the policy's `apps_mobile` (Bare Vibb) and `mobile_settings_locked` are enforced, and
- * `mobile_data` is in every report. */
-const val MOBILE_DATA_CAPABILITY = "mobile_data_v1"
-
-/** Design 97 §3.2: the policy's `abroad` is enforced, the report carries `data_roaming.where` and `mobile_data.kid`, and
- * the kid's Mobildata row shows with `quick_controls_mask` bit 32. */
-const val MOBILE_NETWORK_CAPABILITY = "mobile_network_v2"
-
-/** Design 97 §3.1: "I utlandet" as this launcher enforces it. [LEGACY] is an older server's `"phone"`: revision 3's rule,
- * no lock and no abroad sink. */
+/** Design 97 §3.1: "I utlandet" as this launcher enforces it. [NONE] is no policy yet (a Device Owner before its first
+ * policy): no lock and no abroad sink. */
 enum class AbroadChoice(val wire: String) {
     /** Ingen data: Android's roaming locked off, and the abroad sink for what the lock can't cover. */
     OFF("off"),
@@ -32,18 +22,15 @@ enum class AbroadChoice(val wire: String) {
 
     /** Som hjemme: mobile data abroad as at home. */
     HOME("home"),
-    LEGACY("legacy"),
+    NONE("none"),
 }
 
-/** Design 97 §3.1, failing closed: the policy's `abroad` when this build knows it, `OFF` for any other value; with no
- * `abroad` (an older server) revision 3's `data_roaming` - `"phone"` or nothing is [AbroadChoice.LEGACY], anything else
- * `OFF`. */
-fun abroadChoice(abroad: String?, dataRoaming: String?): AbroadChoice = when (abroad) {
-    "off" -> AbroadChoice.OFF
+/** Design 97 §3.1, failing closed: the policy's `abroad` when this build knows it, `OFF` for a missing or any other
+ * value; [AbroadChoice.NONE] only with no policy at all. */
+fun abroadChoice(policy: PolicyResponse?): AbroadChoice = when (policy?.abroad) {
     "vibb" -> AbroadChoice.VIBB
     "home" -> AbroadChoice.HOME
-    null -> if (dataRoaming == null || dataRoaming == "phone") AbroadChoice.LEGACY else AbroadChoice.OFF
-    else -> AbroadChoice.OFF
+    else -> if (policy == null) AbroadChoice.NONE else AbroadChoice.OFF
 }
 
 /** Design 97 §4.2: `DISALLOW_DATA_ROAMING` under Ingen data, lifted by the pause, "Åpne for oppsett" and the offline
@@ -95,12 +82,12 @@ fun whereOf(
     return if (simMcc == net.take(3)) Where.HOME else Where.ABROAD
 }
 
-/** Design 95 rev. 3 item 3: `DISALLOW_CONFIG_MOBILE_NETWORKS` while the parent's switch is on, lifted by the pause. An
- * older server's missing key (`null`) sets nothing. */
+/** Design 95 rev. 3 item 3: `DISALLOW_CONFIG_MOBILE_NETWORKS` while the parent's switch is on, lifted by the pause. A missing
+ * key (`null`) sets nothing. */
 fun mobileSettingsLocked(value: Boolean?, overrideActive: Boolean): Boolean = value == true && !overrideActive
 
 /** The parent's "Mobildata for apper: Bare Vibb" in force: `"vibb"`, and fail closed on a value this build doesn't
- * know; `"on"` and an older server's `null` don't. Lifted by the pause (D3). */
+ * know; `"on"` and `null` don't. Lifted by the pause (D3). */
 fun parentSinkOn(appsMobile: String?, overrideActive: Boolean): Boolean = when (appsMobile) {
     null, "on" -> false
     else -> !overrideActive
@@ -338,7 +325,7 @@ const val RELOCK_TRIES = 2
 fun dataRoamingRelock(locked: Boolean, readings: Map<Int, Boolean?>, tries: Map<Int, Int>): Set<Int> =
     if (!locked) emptySet() else readings.filter { (sub, on) -> on == true && (tries[sub] ?: 0) < RELOCK_TRIES }.keys
 
-/** Design 94 §5: `data_roaming` in every report of a launcher with [DATA_ROAMING_CAPABILITY]. */
+/** Design 94 §5: `data_roaming` in every report. */
 @Serializable
 data class DataRoamingReport(
     /** `hasUserRestriction(DISALLOW_DATA_ROAMING)`, as Android has it now. */
@@ -359,7 +346,7 @@ data class DataRoamingReport(
     @SerialName("where") val whereIs: String,
 )
 
-/** Design 95 rev. 3: `mobile_data` in every report of a launcher with [MOBILE_DATA_CAPABILITY]. */
+/** Design 95 rev. 3: `mobile_data` in every report. */
 @Serializable
 data class MobileDataReport(
     /** Android's own mobile-data switch on the default data SIM (`isDataEnabled()`), `null` when unreadable. */

@@ -26,15 +26,10 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   each phone's Music page `/devices/{id}/music` (design 31 step 7, "Device › Music" below; the device page's card
   `#music` before): the app switch = `toggle_app` with `back=music`, an auto-saving switch per entry, the
   `#music-settings` form - since design 30 two switches, "Stream on mobile data" / "Download on mobile data" (a hidden
-  `v=2` marks today's page; a post without it is a page from before the update, and its one `mobile_data` checkbox
-  sets both - `handlers::music::mobile_switches`), the "Storage limit" picker (1/2/5/10 GB/No limit, `storage_limit` =
-  a choice or `none`, else 400; missing = the stored one kept), the warning "Update Vibb One and the music app" while the
-  switches differ and the phone's app report (`cache_bytes`) has no `extra_bytes` (`music::older_phone`; it names only the app that is too old - `music::OlderApps` from
-  `app_version_code` >= 25_999 (launcher-v0.26.0-rc) and `music_state.version_code` >= 3_999 (music-v0.4.0-rc), the
-  first that pass `extra_bytes` on: "Update the music app", "Update Vibb One", else both), the storage
+  `v=2` marks today's page; a post without it is a 400), the "Storage limit" picker (1/2/5/10 GB/No limit,
+  `storage_limit` = a choice or `none`, else 400, missing too), the storage
   rows and the "Over the storage limit" warning (`music::storage`, typed: stored, downloads against the limit, the
-  played extras, the kept items over the limit; from the report's `audio_bytes`/`extra_bytes`, which a music app from
-  design 30 step 3a on always sends - without them, an older app, only "Stored on the phone"; `MusicState` keeps and
+  played extras, the kept items over the limit; from the report's `audio_bytes`/`extra_bytes`, the music app always sends - without them only "Stored on the phone"; `MusicState` keeps and
   clamps both like `cache_bytes`), event `music_phone_settings` naming both switches and the limit -, volume cap
   Off/90/80/70/60 - NULL = off, the Storytel switch, the Sonos rooms at `#music-sonos` - "All rooms" or one switch per
   room the phone reported, `POST /devices/{id}/music/sonos-rooms`, event `music_sonos_rooms_changed` (detail clipped
@@ -42,15 +37,14 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   phone's `music_state`. Every form redirects to its page and group; a 400 re-renders with the values and the error
   by the autofocused field. Changes nudge the phones they reach and log `music_*` / `storytel_login_*` events. PWA
   text is English like the rest.
-- **Wire**: `PolicyResponse.music` = `{library_version, mobile_data, stream_mobile_data, download_mobile_data,
+- **Wire**: `PolicyResponse.music` = `{library_version, stream_mobile_data, download_mobile_data,
   volume_cap_pct, storage_limit_gb, storytel_generation, spotify}` (`spotify`: the phone is bound to a Spotify
   account, design 26c; always the key; `null` when the library query fails, QA #3;
-  `policy_json_keys_snapshot`). Design 30: `mobile_data` stays for an older launcher (it refuses a music object
-  without it) and is `stream && download` (`music::mobile_data_wire`: AND never spends data the parent turned off);
-  `storage_limit_gb` is the stored choice, `null` = no limit, a stored non-choice is sent as 2
+  `policy_json_keys_snapshot`). Design 30: the two switches as stored (the old one-switch `mobile_data` went in C1;
+  the launcher reads a missing switch as off); `storage_limit_gb` is the stored choice, `null` = no limit, a stored non-choice is sent as 2
   (`music::storage_limit`). The library (`music::library_for`):
   16 hex of SHA-256 over the JSON **without** its `version` (QA #4; `sonos_rooms` - null or the allowed uids, after
-  `covers`, ignored by an older music app, which then allows every room - is hashed like every other field), pinned
+  `covers` - is hashed like every other field), pinned
   by `music_library_snapshot` in `testdata/music_library.json` (the music app keeps a copy). Ticks and uploads that
   would push a phone's library past 3 MB are refused / taken back. Own files not on disk are listed `missing` (startup
   check, and on a 404 while serving), never dropped.
@@ -72,8 +66,9 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - **Storytel** (`music_secret`): AES-256-GCM, random nonce, AAD `storytel-v1:<key fingerprint>`; the key from
   `MUSIC_SECRET_KEY` or the 0600 key file `data/keys/music-secret.key` (0700 directory, written through a temp file and
   a rename; `data/` is all the unit may write, and no backup copies `data/keys/`). Write-only in the PWA; `generation` +1 on save and
-  clear; policy generation 0 unless the phone's switch is on and a login is stored; the device route is `no-store`,
-  404 (switch off / none), 503 (no key, other key). Never in a page, log, status or event.
+  clear; policy generation 0 unless the phone's switch is on and a login is stored. The login never leaves the server: a
+  phone gets only the server's Storytel JWT (`POST /api/devices/music/storytel/token`, design 58); the old login route
+  went in design 58 step 3, and its path is the fallback's empty 404 for good. Never in a page, log, status or event.
 - **Catalog**: `newest_matching_release` honours `release_tag_prefix` (`release_allowed`: never `server-v*`; with a
   prefix only its tags; without one never `music-v*`), so the launcher row can't take `vibb-music.apk`. Editable on the
   app's page and the add form.
@@ -454,8 +449,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   CDN host (`akamaized.net` stays delivered; the launcher exempts the exact hosts before its walk) - from the
   categories **and** the custom blocks, and `compute_dns_filter_version` hashes `\nspotify:true` **while bound**
   (bind and unbind each move it; an unbound phone keeps the version it had). A parent's own block of `spotify.com` is
-  overridden on that phone for every app: the device card's Web Filter part says so, and **`/dns?device=<id>`
-  marks** each of the phone's custom blocks the rule names "not applied while Spotify is on for this phone" and lists
+  overridden on that phone for every app: the device card's Web Filter part says so, and **the phone's Web Filter
+  page marks** each of the phone's custom blocks the rule names "not applied while Spotify is on for this phone" and lists
   the site-wide ones it overrides (`handlers::dns_filter`). `HOST_SUFFIXES`/`EXACT_HOSTS` are checked against
   `testdata/spotify_hosts.json`, byte-identical with both apps' copies (`spotify::tests::hosts_match_the_contract`
   reads all three) - **provisional** until the user's DNS capture lands, before any tag of this release, as one commit

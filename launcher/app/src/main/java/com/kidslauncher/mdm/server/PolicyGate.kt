@@ -1,5 +1,6 @@
 package com.kidslauncher.mdm.server
 
+import com.kidslauncher.mdm.calls.anyChannelManaged
 import com.kidslauncher.mdm.server.dto.HardeningPolicy
 import com.kidslauncher.mdm.server.dto.PolicyResponse
 import com.kidslauncher.mdm.timerules.TimePolicy
@@ -87,16 +88,16 @@ val com.kidslauncher.mdm.server.dto.CallPolicy.hasChannelModes: Boolean
  *   unusable (corrupt, or missing although a policy was applied before) - in those cases we can't
  *   prove the phone was unmanaged, so we don't open it up.
  * - no `call_policy` at all on a phone whose calls were managed ([callsManagedLast], written with
- *   the cache, or a cached managed `call_policy`): our server always sends it with an explicit
- *   `managed`, so a missing key is a rolled-back, buggy or forged response (QA blocker 3). The
- *   cached policy, with the last managed call rules, stays in force.
+ *   the cache, or a cached `call_policy` with either channel managed): our server always sends it,
+ *   so a missing key is a rolled-back, buggy or forged response (QA blocker 3). The cached policy,
+ *   with the last managed call rules, stays in force.
  * - no `time_policy` on a phone that has had one ([timePolicySeen], written with the cache, or a
  *   cached policy with one): our server always sends it (handy step 6), so the rules, budget and
- *   lifts the phone has stay in force rather than falling back to the frozen legacy windows.
+ *   lifts the phone has stay in force.
  * - a `call_policy` without `calls_mode`/`sms_mode` on a phone that has had them ([channelModesSeen], written with the
  *   cache, or a cached policy with them; design 77 D2): a rolled-back server can't loosen a channel silently. A mode
  *   that isn't one of the three is rejected always - we can't tell what it would allow.
- * A legitimate `[]`, removing the PIN, or `call_policy.managed = false` is accepted.
+ * A legitimate `[]`, removing the PIN, or both channels `unmanaged` is accepted.
  */
 fun judgeFresh(
     fresh: PolicyResponse,
@@ -112,7 +113,7 @@ fun judgeFresh(
     }
     if (fresh.callPolicy == null) {
         val callsWereManaged = callsManagedLast ||
-            (cached is CachedPolicy.Ok && cached.policy.callPolicy?.managed == true)
+            (cached is CachedPolicy.Ok && cached.policy.callPolicy?.anyChannelManaged == true)
         if (callsWereManaged) return FreshVerdict.REJECT_SUSPECT
     }
     fresh.callPolicy?.let { callPolicy ->
@@ -143,15 +144,9 @@ data class LastEnforcedPlan(
     val allowlist: List<String>? = emptyList(),
     val kioskDesired: Boolean = true,
     val lockTaskFeatures: Long = LOCK_TASK_FEATURE_KEYGUARD.toLong(),
-    val weekdayStartMinutes: Int? = null,
-    val weekdayEndMinutes: Int? = null,
-    val weekendStartMinutes: Int? = null,
-    val weekendEndMinutes: Int? = null,
-    val bedtimeStartMinutes: Int? = null,
-    val bedtimeEndMinutes: Int? = null,
     /** The hardening switches, so a fallback keeps the parent's choices (`null` = defaults). */
     val hardening: HardeningPolicy? = null,
-    /** The time rules and budget, without lifts (`null` = the windows above, converted). */
+    /** The time rules and budget, without lifts (`null` = none). */
     val timePolicy: TimePolicy? = null,
     /** The kiosk app block switch (step 9); missing = off, like [PolicyResponse.blockActivityStart]. */
     val blockActivityStart: Boolean = false,
@@ -159,14 +154,11 @@ data class LastEnforcedPlan(
     val screenTimeoutSeconds: Int? = null,
     /** "App updates only on Wi-Fi" (design 13), so an unusable cache doesn't spend mobile data. */
     val appUpdatesWifiOnly: Boolean? = null,
-    /** Design 94 §3: the parent's roaming choice. An older record without it reads `"off"` (fail closed, like the
-     * rest of the fallback); an older server's `null` stays `null` (the phone's choice). */
-    val dataRoaming: String? = "off",
-    /** Design 97: "I utlandet"; an older record has none and reads through [dataRoaming] ([abroadChoice]). */
+    /** Design 97: "I utlandet"; a stored record without it reads Ingen data ([abroadChoice], fail closed). */
     val abroad: String? = null,
-    /** Design 95 rev. 3: Bare Vibb (`"vibb"`) or not; an older record or server reads as on. */
+    /** Design 95 rev. 3: Bare Vibb (`"vibb"`) or not; missing reads as on. */
     val appsMobile: String? = null,
-    /** Design 95 rev. 3 item 3: the mobile-network settings lock; an older record reads locked (fail closed). */
+    /** Design 95 rev. 3 item 3: the mobile-network settings lock; missing reads locked (fail closed). */
     val mobileSettingsLocked: Boolean? = true,
     /** Design 97 code QA L3: the Home Screen's switches, so a fallback keeps the kid's own Mobildata Off (bit 32); an
      * older record reads none. */
@@ -176,18 +168,11 @@ data class LastEnforcedPlan(
         allowlist = allowlist,
         kioskDesired = kioskDesired,
         lockTaskFeatures = lockTaskFeatures,
-        weekdayStartMinutes = weekdayStartMinutes,
-        weekdayEndMinutes = weekdayEndMinutes,
-        weekendStartMinutes = weekendStartMinutes,
-        weekendEndMinutes = weekendEndMinutes,
-        bedtimeStartMinutes = bedtimeStartMinutes,
-        bedtimeEndMinutes = bedtimeEndMinutes,
         hardening = hardening,
         timePolicy = timePolicy,
         blockActivityStart = blockActivityStart,
         screenTimeoutSeconds = screenTimeoutSeconds,
         appUpdatesWifiOnly = appUpdatesWifiOnly,
-        dataRoaming = dataRoaming,
         abroad = abroad,
         appsMobile = appsMobile,
         mobileSettingsLocked = mobileSettingsLocked,
@@ -199,18 +184,11 @@ data class LastEnforcedPlan(
             allowlist = policy.allowlist,
             kioskDesired = policy.kioskDesired,
             lockTaskFeatures = policy.lockTaskFeatures,
-            weekdayStartMinutes = policy.weekdayStartMinutes,
-            weekdayEndMinutes = policy.weekdayEndMinutes,
-            weekendStartMinutes = policy.weekendStartMinutes,
-            weekendEndMinutes = policy.weekendEndMinutes,
-            bedtimeStartMinutes = policy.bedtimeStartMinutes,
-            bedtimeEndMinutes = policy.bedtimeEndMinutes,
             hardening = policy.hardening,
             timePolicy = policy.timePolicy?.copy(lifts = emptyList()),
             blockActivityStart = policy.blockActivityStart,
             screenTimeoutSeconds = policy.screenTimeoutSeconds,
             appUpdatesWifiOnly = policy.appUpdatesWifiOnly,
-            dataRoaming = policy.dataRoaming,
             abroad = policy.abroad,
             appsMobile = policy.appsMobile,
             mobileSettingsLocked = policy.mobileSettingsLocked,

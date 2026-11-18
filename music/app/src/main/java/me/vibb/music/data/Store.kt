@@ -112,8 +112,8 @@ class Store private constructor(context: Context) {
         }
         set(value) = prefs.edit().putInt(RestrictionKeys.STORAGE_LIMIT_GB, value ?: 0).apply()
 
-    /** An unmanaged phone's switch: the debug feed's, else its old one `mobile_data` (a feed from before design
-     * 30) - the managed config's rule, on the feed's prefs, which use the same key names (qa-30-s3a-code L2). */
+    /** An unmanaged phone's switch: the debug feed's - the managed config's rule, on the feed's prefs, which use the
+     * same key names (qa-30-s3a-code L2). */
     private fun unmanagedSwitch(key: String): Boolean = mobileSwitch(prefs.all, key)
 
     private fun loadLibrary(): Library? = runCatching { libraryFile.readText() }.getOrNull()?.let(LibraryParser::parse)

@@ -25,10 +25,6 @@ fn the_contract_is_identical_to_the_launchers_copy() {
         .map(|m| m.as_i64().unwrap())
         .collect();
     assert_eq!(lengths, crate::time_rules::RULE_LIFT_MINUTES);
-    assert_eq!(
-        contract["capability"],
-        crate::handlers::rule_pause::CAPABILITY
-    );
     assert_eq!(contract["request"], contract["answers"][0]["body"]);
     let launcher = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -230,7 +226,7 @@ async fn the_contract_answers() {
         .cloned()
         .unwrap();
     assert_eq!(copy["copy_of"], 2);
-    // An older launcher's lift (no key) serves none.
+    // A lift without a key serves none.
     assert!(
         contract["policy"]["time_policy"]["lifts"][0]
             .get("phone_key")
@@ -295,8 +291,7 @@ async fn the_pwa_words_the_phones_pause() {
     assert_eq!(res.json(), json!({"accepted": true, "lift_ids": [1]}));
     app.post_status(
         &token,
-        json!({"capabilities": [crate::handlers::rule_pause::CAPABILITY, "time_rules_v1"],
-               "time_state": {"day": "2026-11-14", "used_minutes": 0, "lock_reason": "NONE", "lifts_active": [1]}}),
+        json!({"time_state": {"day": "2026-11-14", "used_minutes": 0, "lock_reason": "NONE", "lifts_active": [1]}}),
     )
     .await;
     let summary = format!("/devices/{id}");

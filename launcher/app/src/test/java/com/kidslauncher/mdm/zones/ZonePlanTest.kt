@@ -1,8 +1,6 @@
 package com.kidslauncher.mdm.zones
 
 import com.kidslauncher.mdm.server.LocationAction as L
-import com.kidslauncher.mdm.server.STATUS_CAPABILITIES
-import com.kidslauncher.mdm.server.ZONES_CAPABILITY
 import com.kidslauncher.mdm.server.dto.PolicyZone
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -162,7 +160,7 @@ class ZonePlanTest {
         assertFalse(zoneWatchActive(owner = true, managed = true, policy = interval.copy(zones = emptyList())))
         assertFalse(zoneWatchActive(owner = true, managed = true, policy = interval.copy(mode = "on_request")))
         assertFalse(zoneWatchActive(owner = true, managed = true, policy = interval.copy(mode = "off")))
-        // An older server (no location_policy): no zones.
+        // No location_policy: no zones.
         assertFalse(zoneWatchActive(owner = true, managed = true, policy = null))
     }
 
@@ -171,7 +169,7 @@ class ZonePlanTest {
         val now = 1_800_000_000_000L
         val policies = listOf(
             null,
-            com.kidslauncher.mdm.server.LEGACY_LOCATION_POLICY,
+            com.kidslauncher.mdm.server.dto.LocationPolicy(),
             interval.copy(zones = emptyList()),
             interval.copy(zones = emptyList(), intervalMinutes = 10),
             interval.copy(mode = "on_request", zones = emptyList()),
@@ -398,12 +396,6 @@ class ZonePlanTest {
         assertEquals(false, sureSide(north(182.0, accuracy = 30f), home))
         assertEquals(null, sureSide(north(30.0, accuracy = null), home))
         assertEquals(listOf("KEEP", "SIDE_CHANGED"), CheckVerdict.values().map { it.name })
-    }
-
-    @Test
-    fun `the launcher claims the zone watch`() {
-        assertTrue(ZONES_CAPABILITY in STATUS_CAPABILITIES)
-        assertEquals("zones_v1", ZONES_CAPABILITY)
     }
 
     private fun source(path: String) = File("src/main/java/com/kidslauncher/mdm/$path").readText()

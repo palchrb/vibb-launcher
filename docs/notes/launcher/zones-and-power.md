@@ -13,7 +13,7 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   the sticky `ACTION_BATTERY_CHANGED` (`ContextCompat.registerReceiver(context, null, ..)`, as `SelfUpdate`'s ECBM read) through the pure `BatteryReport.of(level, scale,
   status, plugged, low)`: level = round(level x 100 / scale) clamped 0..100, charging = plugged != 0 or status
   CHARGING/FULL, low = `EXTRA_BATTERY_LOW`; `null` (left out) without a sticky intent, with the level -1 or a scale
-  <= 0, or on any exception. Capability `battery_v1` (`BATTERY_CAPABILITY`, in `STATUS_CAPABILITIES`).
+  <= 0, or on any exception.
 - **The trigger**: `Application.initRest` calls `BatteryStatus.watch(this)` - one runtime receiver
   (`RECEIVER_NOT_EXPORTED`; the system's broadcasts still reach it) for `ACTION_BATTERY_LOW` and `ACTION_BATTERY_OKAY`
   that calls `SyncRunner.request(app, "battery")`, so the report with `low=true` lands within seconds (OKAY: the
@@ -42,7 +42,7 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   emergency call placed elsewhere is recorded and synced too (`telecomMarkSeen`), unless one is known from the last
   hour. The window rules: `docs/notes/launcher/calls.md`, "Incoming".
 - Tests: `BatteryReportTest` (`of`: rounding, clamp, the charging rule, every null case; the report with and without
-  `battery`; the receiver's registration, actions and catches by source), `SyncScheduleTest` (`battery_v1`),
+  `battery`; the receiver's registration, actions and catches by source),
   `EmergencyConnectsTest` (one sync and one instant per call over its states, the creation-time fallback, a second
   call, never before the unlock and at the next state after it, `emergencyRecord`/`reportedEmergencyAt`, the
   service's wiring and the request's catch by source; `BatteryReportTest` counts `report()`'s catch too). Emulator check: `docs/testing/emulator.md` §6n.
@@ -55,7 +55,7 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   turned on · off since 21:14, battery was 2 %" (the server's words; design 38 §3) from the phone's own signals:
   Android's shutdown broadcast and the first process start of a boot. Pure rules and the glue in
   `server/PowerEvents.kt` (`PowerEventsTest`), the body `dto/PowerReport.kt` (`POST /api/devices/power`,
-  `MdmApi.sendPower`), capability `power_v1` (`POWER_CAPABILITY`, in `STATUS_CAPABILITIES`; `SyncScheduleTest`).
+  `MdmApi.sendPower`).
 - **The record** (DE prefs `power_events`, so the start is written in direct boot; nothing about the user or the
   PIN): at most one shutdown (`off_at_ms`, `off_boot_count`, `off_level`/`off_charging`/`off_low`, `off_reboot`,
   `off_reason` - absent = unknown -, `off_sent`) and one start (`on_*`); a new one replaces the old (an unsent old one
@@ -63,7 +63,7 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   `PowerEvents`' lock with one `commit()` (`update`): the shutdown receiver on the main thread races the sync's thread
   (qa-38-design L3). A sent shutdown is **kept** (`off_sent`) and sent again with the next start until a later
   boot's start is accepted, so the server pairs them in one body (QA H1); kept parts older than 7 days go unsent
-  (`stale`, `POWER_STALE_MS`) - an old server's 404 ends there too.
+  (`stale`, `POWER_STALE_MS`).
 - **The shutdown**: `BootCover`'s `ACTION_SHUTDOWN` receiver (from `PinLockRuntime.init`, `RECEIVER_NOT_EXPORTED`;
   ShutdownThread sends it to registered receivers only) is the process's **one** shutdown receiver (QA M3): first
   the cover's synchronous writes as before (`coverAtShutdown`: `KeyguardCover.onShutdown`, the boot cover's arm),
@@ -99,7 +99,7 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   process, the cover's writes before `PowerEvents.onShutdown`, each caught, the commit before `goAsync`, `finish()` in
   a `finally`, the record's writes `commit()` never `apply()`, the boot cover's synchronous arm in
   `coverAtShutdown` - the code QA's L1 -, the wiring in `Application`, `MdmSyncWorker` and `TsnetClient`),
-  `KeyguardCoverPlanTest` (the cover's part is `coverAtShutdown`), `SyncScheduleTest` (`power_v1`). Emulator check: `docs/testing/emulator.md` §6p.
+  `KeyguardCoverPlanTest` (the cover's part is `coverAtShutdown`). Emulator check: `docs/testing/emulator.md` §6p.
 - **The last position** (2026-10-25, design 38 "Last position"): the shutdown's `off` carries `location` - the newest
   fix already held (`LocateCommands.newestKnown`, pure `shutdownLocation`: none without a fix or a location policy,
   under "Off" - `noteLocationPolicy` from every sync, the cache's at `init` -, or for a mock fix), never a fresh one;
@@ -127,7 +127,7 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   `ZoneSeries.kt` (GPL, not the MIT directories), log tag `ZoneWatch`. Wire: `LocationPolicy.zones`
   (`PolicyZone(id, latitude, longitude, radiusM)` - never a name; missing = none), `StatusReportRequest.extraLocations`
   and `zoneWatch` (`ZoneWatchReport`), `LocationReport.provider`/`mock`; contract `zone_status_report.json`
-  (`ZoneReportTest`); capability `zones_v1` (the server sends the zones' centres only to a launcher claiming it).
+  (`ZoneReportTest`).
 - **One gate** (qa-design-64-step2-code Q-2, the coordinator's decision): everything below - the fences, the passive
   feed, the motion gate, the heartbeat, the backstop counting from the beat, the series, the balanced path, the queue
   - runs only while `zoneWatchActive` (device owner, managed, Regularly **with zones**; `ZoneWatch.zonesOn`). Without

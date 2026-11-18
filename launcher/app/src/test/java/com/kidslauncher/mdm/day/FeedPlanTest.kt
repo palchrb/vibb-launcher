@@ -143,7 +143,7 @@ class FeedPlanTest {
         // A bad element still leaves the good ones applied.
         assertEquals(1, read("""{"feeds": [$one, 5]}""").feeds.size)
         assertEquals(emptyList<String>(), feedCalendarsGone(CalendarPolicy.UNKNOWN, uids))
-        assertEquals(emptyList<String>(), feedCalendarsGone(CalendarPolicy.OLDER_SERVER, uids))
+        assertEquals(emptyList<String>(), feedCalendarsGone(CalendarPolicy(usable = true), uids))
     }
 
     @Test

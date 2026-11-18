@@ -16,15 +16,6 @@
         #lock, #calendars); <noscript> Save without JS. The calendars are one form that writes exactly the rows it
         was sent. Title rules: each row's up/down returns to the row (#rule-<id>). Nothing here holds an event: the
         calendars are the phone's last report. -#}
-    {% if !capable %}
-    <div class="attention attention-action" data-warning="calendar-not-capable">
-        <div class="attention-text">{{ self.t("calendar.not_capable") }}<div class="attention-sub">
-            <details class="info">
-                <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
-                <div class="info-panel"><p>{{ self.t("calendar.not_capable_sub") }}</p></div>
-            </details></div></div>
-    </div>
-    {% endif %}
 
     <section id="dagen" aria-labelledby="dagen-title">
         <h2 class="group-header" id="dagen-title">{{ self.t("calendar.dagen.title") }}</h2>
@@ -34,9 +25,9 @@
                 <input type="checkbox" role="switch" class="sw" name="on_home" value="on"{% if on_home %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
             </label>
             <label class="row row-stacked">
-                <span class="row-label">{{ self.t("calendar.kid.label") }}{% if kid_caldav_older %}<span class="row-sub" data-kid-caldav-older>{{ self.t("calendar.kid_caldav.older") }}</span>{% endif %}</span>
+                <span class="row-label">{{ self.t("calendar.kid.label") }}</span>
                 <select class="pick" name="kid" data-autosave>
-                    {% for k in kid_choices %}<option value="{{ k.value }}"{% if k.selected %} selected{% endif %}{% if k.disabled %} disabled{% endif %}>{{ k.label }}</option>{% endfor %}
+                    {% for k in kid_choices %}<option value="{{ k.value }}"{% if k.selected %} selected{% endif %}>{{ k.label }}</option>{% endfor %}
                 </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </label>
             {#- Design 72b D5.2: while a CalDAV calendar is the pick, one line per state - counts only, never a title;
@@ -72,7 +63,7 @@
                 <input type="checkbox" role="switch" class="sw" name="glance_next" value="on"{% if glance_next %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
             </label>
             <label class="row">
-                <span class="row-label">{{ self.t("calendar.lock.reminders") }}{% if ping_older %}<span class="row-sub tone-orange" data-ping-older>{{ self.t("calendar.lock.ping_older") }}</span>{% endif %}</span>
+                <span class="row-label">{{ self.t("calendar.lock.reminders") }}</span>
                 <select class="pick" name="reminders" data-autosave>
                     <option value="off"{% if reminders == "off" %} selected{% endif %}>{{ self.t("calendar.lock.reminders.off") }}</option>
                     <option value="row"{% if reminders == "row" %} selected{% endif %}>{{ self.t("calendar.lock.reminders.row") }}</option>

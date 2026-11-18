@@ -36,9 +36,8 @@ class LocationPolicyTest {
     }
 
     @Test
-    fun `an older server keeps the old 10-minute behaviour`() {
-        assertEquals(LocationAction.CACHED, locationAction(null, false, 5 * minute))
-        assertEquals(LocationAction.FRESH, locationAction(null, false, 10 * minute))
+    fun `no location policy reads as only when asked`() {
+        assertEquals(LocationAction.NONE, locationAction(null, false, 60 * minute))
         assertEquals(LocationAction.FRESH, locationAction(null, true, 0))
     }
 

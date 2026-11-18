@@ -82,7 +82,7 @@ pub struct PolicyAppDisplay {
     pub icon: Option<String>,
     pub color: String,
     /// Design 69 §4.4: `false` = off Home and the app list except during a pause (a sync app such as ICSx5 or
-    /// DAVx5 that must stay allowed); sent only when `false` (missing = on, as an older server).
+    /// DAVx5 that must stay allowed); sent only when `false` (missing = on).
     #[serde(skip_serializing_if = "is_true")]
     pub on_home: bool,
 }
@@ -451,8 +451,6 @@ pub struct AppDisplayForm {
     /// Design 82 D9: the form of a part of Vibb One ([Self::builtin]) - no "App logo", and "Automatic" is its own
     /// look. `None` for an app.
     pub builtin: Option<BuiltinLook>,
-    /// A line over the fields, in the page's language (design 82 D10: an older Vibb One doesn't show the choice yet).
-    pub note: Option<&'static str>,
     /// Design 87 §8.2: the app's real logo (its URL), which the preview shows for "App logo"; "Automatic" keeps
     /// "Vibb style" (R2-M6). `None` while no phone has sent one.
     pub logo: Option<String>,
@@ -545,7 +543,6 @@ impl AppDisplayForm {
             on_home: None,
             on_home_words: None,
             builtin: None,
-            note: None,
             logo: None,
         }
     }

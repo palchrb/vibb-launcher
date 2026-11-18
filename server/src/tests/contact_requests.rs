@@ -400,6 +400,8 @@ async fn add_from_a_request() {
                 ("name", "Ola"),
                 ("number", "+4791234567"),
                 ("switches", "on"),
+                ("calls_shown", "custom"),
+                ("texts_shown", "custom"),
                 ("inbound", "on"),
                 ("outbound", "on"),
                 ("sms_in", "on"),
@@ -447,6 +449,8 @@ async fn add_from_a_request() {
             ("name", "Lur"),
             ("number", "+4791234598"),
             ("switches", "on"),
+            ("calls_shown", "custom"),
+            ("texts_shown", "custom"),
             ("request", &theirs),
             ("use_matrix", "on"),
         ],
@@ -476,6 +480,8 @@ async fn add_from_a_request() {
             ("name", "Kari"),
             ("number", "+4791234580"),
             ("switches", "on"),
+            ("calls_shown", "custom"),
+            ("texts_shown", "custom"),
             ("request", &request),
             ("use_matrix", "on"),
         ],
@@ -560,7 +566,11 @@ async fn decline_a_request() {
         Method::POST,
         &format!("/devices/{id}/contacts"),
         Some(&cookie),
-        &[("name", "Ola 2"), ("number", "91234568")],
+        &[
+            [("name", "Ola 2"), ("number", "91234568")].as_slice(),
+            &super::ADD_CONTACT_ALL_ON,
+        ]
+        .concat(),
     )
     .await;
     let states: Vec<String> = sqlx::query_scalar(
@@ -695,7 +705,11 @@ async fn a_lapsed_request_blocks_nothing() {
         Method::POST,
         &format!("/devices/{id}/contacts"),
         Some(&cookie),
-        &[("name", "Venn"), ("number", "+4791234561")],
+        &[
+            [("name", "Venn"), ("number", "+4791234561")].as_slice(),
+            &super::ADD_CONTACT_ALL_ON,
+        ]
+        .concat(),
     )
     .await;
     let states: Vec<(String, String)> = sqlx::query_as(
@@ -819,6 +833,8 @@ async fn a_request_never_renames_a_family_contact() {
                     ("name", name),
                     ("number", number),
                     ("switches", "on"),
+                    ("calls_shown", "custom"),
+                    ("texts_shown", "custom"),
                     ("outbound", "on"),
                     ("request", request),
                     ("use_matrix", "on"),
@@ -937,6 +953,8 @@ async fn the_prefill_and_retry_rules() {
                 ("name", "Ola"),
                 ("number", "12"),
                 ("switches", "on"),
+                ("calls_shown", "custom"),
+                ("texts_shown", "custom"),
                 ("request", &request),
                 ("use_matrix", "on"),
             ],
@@ -1002,7 +1020,11 @@ async fn decisions_stay_on_their_phone() {
         Method::POST,
         &format!("/devices/{anna}/contacts"),
         Some(&cookie),
-        &[("name", "Ola"), ("number", "+4791234567")],
+        &[
+            [("name", "Ola"), ("number", "+4791234567")].as_slice(),
+            &super::ADD_CONTACT_ALL_ON,
+        ]
+        .concat(),
     )
     .await;
     assert_eq!(rows(&app, per).await[0].4, "open");

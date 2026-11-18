@@ -721,8 +721,8 @@ mod tests {
 
     /// A fake GitHub on loopback: `/latest/<name>` redirects to `/files/<name>` (as GitHub's
     /// `releases/latest/download/` does), which serves `testdata/apk/<name>`; and the launcher
-    /// releases of `palchrb/vibb-launcher` - 0.0.1 (code 1, the fixtures' own) and the newer
-    /// prerelease 0.0.2 (code 2).
+    /// releases of `palchrb/vibb-launcher` - 0.0.0-rc.1 (code 1, the fixtures' own) and the newer
+    /// 0.0.0-rc.2 (code 2).
     async fn fake_github() -> String {
         use axum::extract::Path;
         use axum::response::{IntoResponse, Redirect};
@@ -747,12 +747,12 @@ mod tests {
                 "/repos/palchrb/vibb-launcher/releases",
                 axum::routing::get(|| async {
                     axum::Json(serde_json::json!([
-                        {"tag_name": "launcher-v0.0.3", "draft": true, "prerelease": false},
+                        {"tag_name": "launcher-v0.0.0-rc.3", "draft": true, "prerelease": false},
                         {"tag_name": "server-v9.0.0", "prerelease": false,
                          "published_at": "2026-11-01T10:00:00Z"},
-                        {"tag_name": "launcher-v0.0.2", "prerelease": true,
+                        {"tag_name": "launcher-v0.0.0-rc.2", "prerelease": true,
                          "published_at": "2026-11-10T10:00:00Z"},
-                        {"tag_name": "launcher-v0.0.1", "prerelease": false,
+                        {"tag_name": "launcher-v0.0.0-rc.1", "prerelease": false,
                          "published_at": "2026-10-21T10:00:00Z"},
                     ]))
                 }),
@@ -828,7 +828,7 @@ mod tests {
             checked("fixture-key1.apk", KEY1_CHECKSUM, None).await,
             Checked {
                 verdict: Verdict::Older {
-                    newest: "0.0.2".to_string()
+                    newest: "0.0.0-rc.2".to_string()
                 },
                 version: Some("1".to_string()),
                 published: published("2026-10-21T10:00:00Z"),
@@ -873,7 +873,7 @@ mod tests {
     }
 
     /// Without the release list, the catalog row's stored release still counts: a stored
-    /// `launcher-v0.0.2` (code 2) makes the code-1 launcher older.
+    /// `launcher-v0.0.0-rc.2` (code 2) makes the code-1 launcher older.
     #[test]
     fn the_catalog_row_alone_judges_older() {
         let config = {
@@ -885,13 +885,13 @@ mod tests {
             crate::apk::read_identity(std::path::Path::new("testdata/apk/fixture-key1.apk"))
                 .unwrap();
         let known = Known {
-            newest: Some(("0.0.2".to_string(), 2)),
+            newest: Some(("0.0.0-rc.2".to_string(), 2)),
             published: Vec::new(),
         };
         assert_eq!(
             judge(&identity, &config, KEY1_CHECKSUM, &known).verdict,
             Verdict::Older {
-                newest: "0.0.2".to_string()
+                newest: "0.0.0-rc.2".to_string()
             }
         );
         assert_eq!(

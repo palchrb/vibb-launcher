@@ -38,7 +38,7 @@ class RemindersTest {
 
     @Test
     fun `each calendar's mode decides the start`() {
-        val row = today(CalendarPolicy.OLDER_SERVER).view.timed.first { it.eventId == 10L }
+        val row = today(CalendarPolicy(usable = true)).view.timed.first { it.eventId == 10L }
         assertNull(reminderStart(row, Remind.Off, listOf(15)))
         assertEquals(at(17, 15), reminderStart(row, Remind.Before(15), null))
         // Own: the earliest alarm at most 120 min before - a day-before alarm doesn't count; MINUTES_DEFAULT is none.
@@ -63,7 +63,7 @@ class RemindersTest {
         assertNull(reminderNow(today(off), off, at(17, 20)))
         val notHome = policy("""{"on_home": false, "lock_reminders": "row", "calendars": [{"key": "c04e7b19a2f6d853", "remind": "before", "remind_minutes": 15}]}""")
         assertNull(reminderNow(today(notHome), notHome, at(17, 20)))
-        assertNull(reminderNow(today(CalendarPolicy.OLDER_SERVER), CalendarPolicy.OLDER_SERVER, at(17, 20)))
+        assertNull(reminderNow(today(CalendarPolicy(usable = true)), CalendarPolicy(usable = true), at(17, 20)))
         // Own reminders: from the event's own alarm.
         val own = remind("c04e7b19a2f6d853", "own")
         assertEquals(10L, reminderNow(today(own, mapOf(10L to listOf(30))), own, at(17, 0))!!.eventId)

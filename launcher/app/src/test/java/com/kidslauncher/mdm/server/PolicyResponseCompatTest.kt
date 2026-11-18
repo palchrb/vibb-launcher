@@ -1,5 +1,6 @@
 package com.kidslauncher.mdm.server
 
+import com.kidslauncher.mdm.calls.anyChannelManaged
 import com.kidslauncher.mdm.calls.toRules
 import com.kidslauncher.mdm.server.dto.CallPolicy
 import com.kidslauncher.mdm.server.dto.CallState
@@ -23,7 +24,7 @@ import java.io.File
 
 /**
  * The cached policy blob and the server response must keep decoding across launcher and server
- * versions. The fixture has exactly the 17 keys kid-phone-server's `policy_json_keys_snapshot`
+ * versions. The fixture has a core subset of the keys the server's `policy_json_keys_snapshot`
  * test pins, in the server's field order, with realistic values.
  */
 class PolicyResponseCompatTest {
@@ -31,12 +32,6 @@ class PolicyResponseCompatTest {
     private val serverResponse = """
         {
           "allowlist": ["org.example.music", "org.example.chat"],
-          "weekday_start_minutes": 420,
-          "weekday_end_minutes": 1200,
-          "weekend_start_minutes": 480,
-          "weekend_end_minutes": 1260,
-          "bedtime_start_minutes": 1260,
-          "bedtime_end_minutes": 420,
           "kiosk_desired": true,
           "lock_task_features": 63,
           "override_pin_hash": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
@@ -56,7 +51,6 @@ class PolicyResponseCompatTest {
         assertTrue(cached is CachedPolicy.Ok)
         val policy = (cached as CachedPolicy.Ok).policy
         assertEquals(listOf("org.example.music", "org.example.chat"), policy.allowlist)
-        assertEquals(1260, policy.bedtimeStartMinutes)
         assertEquals(true, policy.kioskDesired)
         assertEquals(63L, policy.lockTaskFeatures)
         assertEquals(3L, policy.quickControlsMask)
@@ -67,21 +61,20 @@ class PolicyResponseCompatTest {
         assertEquals(FreshDecode.Ok(policy), decodeFresh(serverResponse))
     }
 
-    /** Design 94 and design 95 rev. 3: the Mobilnett keys (the server's `policy_json_keys_snapshot` literal); missing
-     * (an older server) = roaming the phone's choice, apps on mobile data, the settings unlocked. */
+    /** Design 95 rev. 3 and design 97: the Mobilnett keys (the server's `policy_json_keys_snapshot` literal); a policy
+     * without `abroad` reads Ingen data (fail closed), without the others apps on mobile data and the settings unlocked. */
     @Test
-    fun `the Mobilnett keys decode, and missing means nothing is locked`() {
+    fun `the Mobilnett keys decode, and a missing abroad locks`() {
         val policy = ServerJson.decodeFromString(
             PolicyResponse.serializer(),
-            """{"abroad": "vibb", "data_roaming": "off", "apps_mobile": "vibb", "mobile_settings_locked": true}""",
+            """{"abroad": "vibb", "apps_mobile": "vibb", "mobile_settings_locked": true}""",
         )
-        assertEquals("off", policy.dataRoaming)
-        assertEquals(AbroadChoice.VIBB, abroadChoice(policy.abroad, policy.dataRoaming))
+        assertEquals(AbroadChoice.VIBB, abroadChoice(policy))
         assertEquals("vibb", policy.appsMobile)
         assertEquals(true, policy.mobileSettingsLocked)
         val older = decodeCached(serverResponse).let { (it as CachedPolicy.Ok).policy }
-        assertEquals(AbroadChoice.LEGACY, abroadChoice(older.abroad, older.dataRoaming))
-        assertFalse(roamingLocked(abroadChoice(older.abroad, older.dataRoaming), lift = false))
+        assertEquals(AbroadChoice.OFF, abroadChoice(older))
+        assertTrue(roamingLocked(abroadChoice(older), lift = false))
         assertFalse(parentSinkOn(older.appsMobile, overrideActive = false))
         assertFalse(mobileSettingsLocked(older.mobileSettingsLocked, overrideActive = false))
     }
@@ -123,8 +116,8 @@ class PolicyResponseCompatTest {
         assertNull(LastEnforcedPlan.of(policy("""["de.danoeh.antennapod"]""")).toPolicy().lockMediaApps)
     }
 
-    /** Design 76: `server_tls` (the server's `policy_json_keys_snapshot`: `{}` for a watched phone with `server_pin_v1`,
-     * absent without it) - raw JSON read by `enforceOf`, so nothing in it fails the policy; never in the fallback. */
+    /** Design 76: `server_tls` (the server's `policy_json_keys_snapshot`: always sent, `{}` for a watched phone; absent
+     * from an older server) - raw JSON read by `enforceOf`, so nothing in it fails the policy; never in the fallback. */
     @Test
     fun `server_tls decodes raw, never fails the policy, and the fallback never carries it`() {
         fun policy(value: String) = ServerJson.decodeFromString(PolicyResponse.serializer(), """{"server_tls": $value}""")
@@ -170,12 +163,6 @@ class PolicyResponseCompatTest {
     }
 
     @Test
-    fun `the parent-PIN events capability is the string the server looks for (qa-24-code Low 6)`() {
-        assertEquals("parent_pin_events_v1", PARENT_PIN_EVENTS_CAPABILITY)
-        assertTrue(PARENT_PIN_EVENTS_CAPABILITY in STATUS_CAPABILITIES)
-    }
-
-    @Test
     fun `parent PIN events use the server's keys - design 24's literal`() {
         val batch = ParentPinEventBatch(
             listOf(ParentPinEvent("0123456789abcdef0123456789abcdef", "unlocked", "override", 1_760_000_000_000, 1_760_007_200_000, null, null)),
@@ -216,8 +203,6 @@ class PolicyResponseCompatTest {
             ServerJson.encodeToString(StatusReportRequest.serializer(), StatusReportRequest(lockReason = "NONE", kioskEngaged = true)),
         ).jsonObject
         assertTrue("relock" !in none)
-        assertEquals("window_relock_v1", WINDOW_RELOCK_CAPABILITY)
-        assertTrue(WINDOW_RELOCK_CAPABILITY in STATUS_CAPABILITIES)
     }
 
     @Test
@@ -404,7 +389,6 @@ class PolicyResponseCompatTest {
             setOf("wanted", "tripped", "last_armed_at_ms", "last_shown_at_ms", "last_handover", "last_handover_at_ms"),
             json["boot_cover"]!!.jsonObject.keys,
         )
-        assertEquals("boot_cover_v1", com.kidslauncher.mdm.lock.BOOT_COVER_CAPABILITY)
     }
 
     @Test
@@ -561,7 +545,7 @@ class PolicyResponseCompatTest {
     fun `music never fails the policy and is carried as is (21)`() {
         fun withMusic(music: String) = serverResponse.replaceFirst("{", "{\"music\": $music,")
         val today = withMusic(
-            """{"library_version": "0123456789abcdef", "mobile_data": false, "stream_mobile_data": true, "download_mobile_data": false, """ +
+            """{"library_version": "0123456789abcdef", "stream_mobile_data": true, "download_mobile_data": false, """ +
                 """"volume_cap_pct": null, "storage_limit_gb": 2, "storytel_generation": 0, "spotify": true, "spotify_diag_until": null}""",
         )
         val policy = (decodeCached(today) as CachedPolicy.Ok).policy
@@ -569,7 +553,7 @@ class PolicyResponseCompatTest {
         assertEquals("0123456789abcdef", music["library_version"]!!.jsonPrimitive.content)
         assertEquals(
             setOf(
-                "library_version", "mobile_data", "stream_mobile_data", "download_mobile_data", "volume_cap_pct", "storage_limit_gb",
+                "library_version", "stream_mobile_data", "download_mobile_data", "volume_cap_pct", "storage_limit_gb",
                 "storytel_generation", "spotify", "spotify_diag_until",
             ),
             music.keys,
@@ -585,21 +569,21 @@ class PolicyResponseCompatTest {
         // 2026-11-01: `spotify_diag_until` (Device › Advanced's Spotify diagnostic log) is read leniently - null (not
         // running), absent (an older server) or junk is 0 and never refuses the music object; a running one is its end.
         val running = withMusic(
-            """{"library_version": null, "mobile_data": false, "volume_cap_pct": null, "storage_limit_gb": 2, "storytel_generation": 0, "spotify": true, "spotify_diag_until": 1793000000}""",
+            """{"library_version": null, "volume_cap_pct": null, "storage_limit_gb": 2, "storytel_generation": 0, "spotify": true, "spotify_diag_until": 1793000000}""",
         )
         assertEquals(1_793_000_000L, com.kidslauncher.mdm.music.musicPolicy((decodeCached(running) as CachedPolicy.Ok).policy.music)!!.spotifyDiagUntilS)
         for (junk in listOf("\"1793000000\"", "-5", "1.5", "true", "{}", "99999999999")) {
-            val odd = withMusic("""{"library_version": null, "mobile_data": false, "volume_cap_pct": null, "storytel_generation": 0, "spotify_diag_until": $junk}""")
+            val odd = withMusic("""{"library_version": null, "volume_cap_pct": null, "storytel_generation": 0, "spotify_diag_until": $junk}""")
             assertEquals(junk, 0L, com.kidslauncher.mdm.music.musicPolicy((decodeCached(odd) as CachedPolicy.Ok).policy.music)!!.spotifyDiagUntilS)
         }
-        assertFalse(com.kidslauncher.mdm.music.musicSpotify((decodeCached(withMusic("""{"library_version": null, "mobile_data": false, "volume_cap_pct": null, "storytel_generation": 0}""")) as CachedPolicy.Ok).policy.music))
+        assertFalse(com.kidslauncher.mdm.music.musicSpotify((decodeCached(withMusic("""{"library_version": null, "volume_cap_pct": null, "storytel_generation": 0}""")) as CachedPolicy.Ok).policy.music))
         assertEquals(FreshDecode.Ok(policy), decodeFresh(today))
         assertEquals(CachedPolicy.Ok(policy), decodeCached(ServerJson.encodeToString(PolicyResponse.serializer(), policy)))
         for (odd in listOf(
             "null", "{}", "5", "\"x\"", "[]",
-            """{"library_version": 5, "mobile_data": "yes", "volume_cap_pct": "60", "storytel_generation": null}""",
-            """{"library_version": null, "mobile_data": false, "volume_cap_pct": null, "storytel_generation": 0, "spotify": "yes"}""",
-            """{"library_version": null, "mobile_data": false, "stream_mobile_data": "yes", "storage_limit_gb": "2", "storytel_generation": 0}""",
+            """{"library_version": 5, "stream_mobile_data": "yes", "volume_cap_pct": "60", "storytel_generation": null}""",
+            """{"library_version": null, "volume_cap_pct": null, "storytel_generation": 0, "spotify": "yes"}""",
+            """{"library_version": null, "stream_mobile_data": "yes", "storage_limit_gb": "2", "storytel_generation": 0}""",
         )) {
             assertTrue(odd, decodeCached(withMusic(odd)) is CachedPolicy.Ok)
             assertTrue(odd, decodeFresh(withMusic(odd)) is FreshDecode.Ok)
@@ -611,24 +595,22 @@ class PolicyResponseCompatTest {
 
     /** Design 25: `lock_glance` - the server's literal (per app since design 51), a missing key,
      * `null`, an array, a bad `apps` entry: the policy always decodes and the cache round trip keeps it. A missing key (or `null`)
-     * means the server's own default in a fresh response, and unknown (missed calls only) in the
-     * cache - a cache an older build wrote never has the key (QA Low 11). */
+     * is unknown (missed calls only, Meldinger Off). */
     @Test
-    fun `lock_glance never fails the policy, and missing means default fresh, unknown cached (25)`() {
+    fun `lock_glance never fails the policy, and missing means unknown (25)`() {
         fun withGlance(glance: String) = serverResponse.replaceFirst("{", "{\"lock_glance\": $glance,")
         // The server's literal for a fresh device (policy_json_keys_snapshot); `sms` is Meldinger's level (design 82 D3).
         val today = withGlance("""{"apps": [{"package": "io.element.android.x", "show_text": false}], "sms": "name"}""")
         val policy = (decodeCached(today) as CachedPolicy.Ok).policy
         assertEquals(setOf("apps", "sms"), policy.lockGlance!!.jsonObject.keys)
         val expected = com.kidslauncher.mdm.badges.GlancePolicy(mapOf("io.element.android.x" to false), com.kidslauncher.mdm.badges.GlanceSms.NAME)
-        assertEquals(expected, com.kidslauncher.mdm.badges.lockGlancePolicy(policy.lockGlance, fresh = false))
-        assertEquals(expected, com.kidslauncher.mdm.badges.lockGlancePolicy(policy.lockGlance, fresh = true))
+        assertEquals(expected, com.kidslauncher.mdm.badges.lockGlancePolicy(policy.lockGlance))
         assertEquals(FreshDecode.Ok(policy), decodeFresh(today))
         assertEquals(CachedPolicy.Ok(policy), decodeCached(ServerJson.encodeToString(PolicyResponse.serializer(), policy)))
         val withText = (decodeCached(withGlance("""{"apps": [{"package": "org.example.chat", "show_text": true}, {"package": "io.element.android.x", "show_text": false}], "sms": "text"}""")) as CachedPolicy.Ok).policy
         assertEquals(
             com.kidslauncher.mdm.badges.GlancePolicy(mapOf("io.element.android.x" to false, "org.example.chat" to true), com.kidslauncher.mdm.badges.GlanceSms.TEXT),
-            com.kidslauncher.mdm.badges.lockGlancePolicy(withText.lockGlance, fresh = true),
+            com.kidslauncher.mdm.badges.lockGlancePolicy(withText.lockGlance),
         )
         // Nothing in it fails the policy; what can't be used is dropped.
         for (odd in listOf(
@@ -639,24 +621,18 @@ class PolicyResponseCompatTest {
             assertTrue(odd, decodeFresh(withGlance(odd)) is FreshDecode.Ok)
         }
         val bad = (decodeFresh(withGlance("""{"apps": [5, null, "not a package", "io.element.android.x"], "show_text": "true"}""")) as FreshDecode.Ok).policy
-        // (No `sms`: a server before design 82 - Meldinger by its old switch.)
-        assertEquals(expected.copy(sms = com.kidslauncher.mdm.badges.GlanceSms.LEGACY), com.kidslauncher.mdm.badges.lockGlancePolicy(bad.lockGlance, fresh = true))
+        // A string entry is no app; no `sms` is Meldinger Off.
+        assertEquals(com.kidslauncher.mdm.badges.GlancePolicy.UNKNOWN, com.kidslauncher.mdm.badges.lockGlancePolicy(bad.lockGlance))
         // Not an object: the apps unknown, and Meldinger Off (design 82 D4).
         val array = (decodeFresh(withGlance("""["io.element.android.x"]""")) as FreshDecode.Ok).policy
-        assertEquals(com.kidslauncher.mdm.badges.GlancePolicy.UNKNOWN, com.kidslauncher.mdm.badges.lockGlancePolicy(array.lockGlance, fresh = true))
+        assertEquals(com.kidslauncher.mdm.badges.GlancePolicy.UNKNOWN, com.kidslauncher.mdm.badges.lockGlancePolicy(array.lockGlance))
         assertEquals(com.kidslauncher.mdm.badges.GlanceSms.OFF, com.kidslauncher.mdm.badges.GlancePolicy.UNKNOWN.sms)
-        // An older server: no key. Fresh = its default (Element X, sender only); cached = unknown.
-        // The status report's capability the server's notes look for.
-        assertEquals("lock_glance_v1", com.kidslauncher.mdm.lock.LOCK_GLANCE_CAPABILITY)
-        assertTrue(com.kidslauncher.mdm.lock.LOCK_GLANCE_CAPABILITY in STATUS_CAPABILITIES)
+        // No key: unknown.
         val older = (decodeFresh(serverResponse) as FreshDecode.Ok).policy
         assertNull(older.lockGlance)
-        assertEquals(com.kidslauncher.mdm.badges.GlancePolicy.SERVER_DEFAULT, com.kidslauncher.mdm.badges.lockGlancePolicy(older.lockGlance, fresh = true))
-        assertEquals(mapOf("io.element.android.x" to false), com.kidslauncher.mdm.badges.GlancePolicy.SERVER_DEFAULT.apps)
-        assertEquals(com.kidslauncher.mdm.badges.GlanceSms.LEGACY, com.kidslauncher.mdm.badges.GlancePolicy.SERVER_DEFAULT.sms)
-        assertEquals(com.kidslauncher.mdm.badges.GlancePolicy.UNKNOWN, com.kidslauncher.mdm.badges.lockGlancePolicy(older.lockGlance, fresh = false))
+        assertEquals(com.kidslauncher.mdm.badges.GlancePolicy.UNKNOWN, com.kidslauncher.mdm.badges.lockGlancePolicy(older.lockGlance))
         val explicitNull = (decodeFresh(withGlance("null")) as FreshDecode.Ok).policy
-        assertEquals(com.kidslauncher.mdm.badges.GlancePolicy.SERVER_DEFAULT, com.kidslauncher.mdm.badges.lockGlancePolicy(explicitNull.lockGlance, fresh = true))
+        assertEquals(com.kidslauncher.mdm.badges.GlancePolicy.UNKNOWN, com.kidslauncher.mdm.badges.lockGlancePolicy(explicitNull.lockGlance))
         assertTrue(com.kidslauncher.mdm.badges.GlancePolicy.UNKNOWN.apps.isEmpty())
         // The rest of the policy is the same either way, and the fallback never carries it.
         assertEquals(older, policy.copy(lockGlance = null))
@@ -701,8 +677,7 @@ class PolicyResponseCompatTest {
             assertTrue(odd, !com.kidslauncher.mdm.day.calendarPolicy((decodeFresh(withCalendar(odd)) as FreshDecode.Ok).policy.calendar).feedsComplete)
         }
         assertEquals(CachedPolicy.Ok(policy), decodeCached(ServerJson.encodeToString(PolicyResponse.serializer(), policy)))
-        // The quiet row plus a ping (migration 0113): `ping`, sent only to a launcher claiming calendar_ping_v1 - the
-        // row with its sound, carried as is. An older launcher is sent `row` (it reads anything else as off).
+        // The quiet row plus a ping (migration 0113): `ping` - the row with its sound, carried as is.
         val pinged = (
             decodeFresh(
                 withCalendar(
@@ -730,7 +705,7 @@ class PolicyResponseCompatTest {
         }
         val older = (decodeFresh(serverResponse) as FreshDecode.Ok).policy
         assertNull(older.calendar)
-        assertEquals(com.kidslauncher.mdm.day.CalendarPolicy.OLDER_SERVER, com.kidslauncher.mdm.day.calendarPolicy(older.calendar))
+        assertEquals(com.kidslauncher.mdm.day.CalendarPolicy.UNKNOWN, com.kidslauncher.mdm.day.calendarPolicy(older.calendar))
         assertNull(LastEnforcedPlan.of(policy).toPolicy().calendar)
     }
 
@@ -909,7 +884,7 @@ class PolicyResponseCompatTest {
     fun `a call_policy object from a newer server decodes`() {
         val withCalls = serverResponse.replace(
             "\"packages_to_uninstall\"",
-            "\"call_policy\": {\"managed\": true, \"calls_enabled\": true, \"contacts\": []}, \"packages_to_uninstall\""
+            "\"call_policy\": {\"calls_mode\": \"managed\", \"sms_mode\": \"off\", \"contacts\": []}, \"packages_to_uninstall\""
         )
         assertTrue(decodeCached(withCalls) is CachedPolicy.Ok)
     }
@@ -923,13 +898,13 @@ class PolicyResponseCompatTest {
         ).jsonObject["policy"]!!.jsonObject["contact_requests"].toString()
         val withRows = serverResponse.replace(
             "\"packages_to_uninstall\"",
-            "\"call_policy\": {\"managed\": true, \"contacts\": [], \"contact_requests\": $rows}, \"packages_to_uninstall\"",
+            "\"call_policy\": {\"contacts\": [], \"contact_requests\": $rows}, \"packages_to_uninstall\"",
         )
         val callPolicy = (decodeCached(withRows) as CachedPolicy.Ok).policy.callPolicy!!
         assertEquals(listOf("open", "declined", "added"), callPolicy.contactRequests.map { it.state })
         val older = serverResponse.replace(
             "\"packages_to_uninstall\"",
-            "\"call_policy\": {\"managed\": true, \"contacts\": []}, \"packages_to_uninstall\"",
+            "\"call_policy\": {\"contacts\": []}, \"packages_to_uninstall\"",
         )
         assertTrue((decodeCached(older) as CachedPolicy.Ok).policy.callPolicy!!.contactRequests.isEmpty())
     }
@@ -948,11 +923,10 @@ class PolicyResponseCompatTest {
         assertEquals(1, callPolicy.ownNumbers.size)
         assertTrue(callPolicy.mmscHosts.isEmpty())
         assertEquals(1, callPolicy.smsHeldDrop.size)
-        assertFalse(callPolicy.smsLockText)
-        // Design 80 D13: `sms_groups` always sent; absent from an older server it is on (today's behaviour).
+        // Design 80 D13: `sms_groups` always sent; absent is off.
         assertTrue(callPolicy.smsGroups)
-        val beforeGroups = serverResponse.replace("\"packages_to_uninstall\"", "\"call_policy\": {\"managed\": true, \"contacts\": []}, \"packages_to_uninstall\"")
-        assertTrue((decodeCached(beforeGroups) as CachedPolicy.Ok).policy.callPolicy!!.smsGroups)
+        val withoutGroups = serverResponse.replace("\"packages_to_uninstall\"", "\"call_policy\": {\"contacts\": []}, \"packages_to_uninstall\"")
+        assertFalse((decodeCached(withoutGroups) as CachedPolicy.Ok).policy.callPolicy!!.smsGroups)
         val old = ServerJson.decodeFromString(PolicyContact.serializer(), """{"id": 1, "name": "A", "number": "+4790000001", "inbound": true, "outbound": true}""")
         assertEquals(listOf(false, false, false), listOf(old.smsIn, old.smsOut, old.mms))
         // Unknown keys of a later step (§14's contact_requests) never fail the policy.
@@ -966,12 +940,16 @@ class PolicyResponseCompatTest {
     }
 
     @Test
-    fun `an empty call_policy object is a deny-default managed policy`() {
+    fun `an empty call_policy object is a deny-default policy, both channels off`() {
         val withEmpty = serverResponse.replace(
             "\"packages_to_uninstall\"", "\"call_policy\": {}, \"packages_to_uninstall\""
         )
         val callPolicy = (decodeCached(withEmpty) as CachedPolicy.Ok).policy.callPolicy!!
-        assertEquals(CallPolicy(managed = true, callsEnabled = false, smsEnabled = false), callPolicy)
+        assertEquals(CallPolicy(), callPolicy)
+        assertEquals(
+            com.kidslauncher.mdm.calls.ChannelMode.OFF to com.kidslauncher.mdm.calls.ChannelMode.OFF,
+            com.kidslauncher.mdm.calls.channelModes(callPolicy),
+        )
         assertEquals("an older server's: no menu (112 alone)", null, callPolicy.emergencyMenu)
         assertTrue(callPolicy.contacts.isEmpty())
     }
@@ -983,7 +961,7 @@ class PolicyResponseCompatTest {
             "\"packages_to_uninstall\"",
             """
             "call_policy": {
-              "managed": true, "calls_enabled": true, "sms_enabled": false, "default_country_code": "47",
+              "calls_mode": "managed", "sms_mode": "off", "default_country_code": "47",
               "contacts": [
                 {"id": 3, "name": "Mamma", "number": "+4790000001", "inbound": true, "outbound": true,
                  "show_on_home": true, "message_app": "element", "message_address": "@mamma:example.org"},
@@ -997,8 +975,7 @@ class PolicyResponseCompatTest {
         )
         val policy = (decodeCached(withCalls) as CachedPolicy.Ok).policy
         val callPolicy = policy.callPolicy!!
-        assertTrue(callPolicy.managed)
-        assertEquals(false, callPolicy.smsEnabled)
+        assertEquals("managed" to "off", callPolicy.callsMode to callPolicy.smsMode)
         assertEquals(
             PolicyContact(3, "Mamma", "+4790000001", true, true, true, "element", "@mamma:example.org"),
             callPolicy.contacts[0],
@@ -1015,22 +992,22 @@ class PolicyResponseCompatTest {
     }
 
     @Test
-    fun `explicit managed false decodes and round trips`() {
+    fun `both channels unmanaged decode and round trip`() {
         val withCalls = serverResponse.replace(
             "\"packages_to_uninstall\"",
-            "\"call_policy\": {\"managed\": false, \"calls_enabled\": true, \"sms_enabled\": true, \"default_country_code\": \"47\", \"contacts\": []}, \"packages_to_uninstall\""
+            "\"call_policy\": {\"calls_mode\": \"unmanaged\", \"sms_mode\": \"unmanaged\", \"default_country_code\": \"47\", \"contacts\": []}, \"packages_to_uninstall\""
         )
         val policy = (decodeCached(withCalls) as CachedPolicy.Ok).policy
-        assertEquals(false, policy.callPolicy!!.managed)
+        assertFalse(policy.callPolicy!!.anyChannelManaged)
         val reencoded = ServerJson.encodeToString(PolicyResponse.serializer(), policy)
-        assertEquals(false, (decodeCached(reencoded) as CachedPolicy.Ok).policy.callPolicy!!.managed)
+        assertFalse((decodeCached(reencoded) as CachedPolicy.Ok).policy.callPolicy!!.anyChannelManaged)
     }
 
     /** kid-phone-server stores `capabilities` and `call_state` from these keys. */
     @Test
     fun `status report call fields use the server's keys`() {
         val report = StatusReportRequest(
-            lockReason = "NONE", kioskEngaged = true, capabilities = listOf("call_policy_v1"),
+            lockReason = "NONE", kioskEngaged = true,
             callState = CallState(
                 state = "managed", dialerRoleHeld = true, redirectionRoleHeld = false, screeningRoleHeld = true,
                 defaultDialer = "x", systemDialer = "y", smsRestricted = true, outgoingRestricted = false,
@@ -1039,7 +1016,7 @@ class PolicyResponseCompatTest {
             ),
         )
         val json = ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), report)).jsonObject
-        assertEquals("[\"call_policy_v1\"]", json["capabilities"].toString())
+        assertNull("an empty list is left out", json["capabilities"])
         val callState = json["call_state"]!!.jsonObject
         assertEquals(
             setOf(
@@ -1058,7 +1035,7 @@ class PolicyResponseCompatTest {
         val withUi = serverResponse.replace(
             "\"packages_to_uninstall\"",
             """
-            "call_policy": {"managed": true, "calls_enabled": true, "sms_enabled": true, "default_country_code": "47",
+            "call_policy": {"calls_mode": "managed", "sms_mode": "unmanaged", "default_country_code": "47",
               "contacts": [{"id": 3, "name": "Mamma", "number": "+4790000001", "inbound": true, "outbound": true,
                 "show_on_home": true, "message_app": "sms", "message_address": null, "photo": "$photo"}]},
             "launcher_ui": {"language": "nb", "home_columns": 4},
@@ -1230,10 +1207,9 @@ class PolicyResponseCompatTest {
         assertNull(time.lifts[0].phoneKey)
         assertNull(time.rules[0].copyOf)
         assertEquals(false, policy.rulePause)
-        // Design 100 §14.2: an older server's lifts name no parent and no instant, and it answers no request.
+        // Design 100 §14.2: lifts without `by`/`at_ms` read as none, and no answer.
         assertNull(time.lifts[1].by)
         assertEquals(0L, time.lifts[1].atMs)
-        assertEquals(false, time.requestAnswers)
         assertNull(time.answer)
         val answered = (decodeCached(
             withTime.replace(
@@ -1245,7 +1221,6 @@ class PolicyResponseCompatTest {
         ) as CachedPolicy.Ok).policy.timePolicy!!
         assertEquals("Mamma", answered.lifts[1].by)
         assertEquals(1759646400000L, answered.lifts[1].atMs)
-        assertEquals(true, answered.requestAnswers)
         assertEquals(
             com.kidslauncher.mdm.timerules.TimeAnswer("0123456789abcdef0123456789abcdef", "yes", "Mamma", 1759646400000L, 10L, 15),
             answered.answer,
@@ -1259,7 +1234,7 @@ class PolicyResponseCompatTest {
         assertNull(old.locationPolicy)
 
         val report = StatusReportRequest(
-            lockReason = "SCHOOL", kioskEngaged = true, capabilities = listOf("call_policy_v1", TIME_RULES_CAPABILITY),
+            lockReason = "SCHOOL", kioskEngaged = true,
             timeState = com.kidslauncher.mdm.server.dto.TimeState(
                 day = "2026-10-05", usedMinutes = 42, budgetMinutes = 90, extraMinutes = 30, activeRuleId = 4,
                 activeRuleName = "Skole", callsBlocked = true, lockReason = "SCHOOL", liftsActive = listOf(10),
@@ -1271,7 +1246,6 @@ class PolicyResponseCompatTest {
                 "calls_blocked", "lock_reason", "lifts_active"),
             json["time_state"]!!.jsonObject.keys,
         )
-        assertEquals("[\"call_policy_v1\",\"time_rules_v1\"]", json["capabilities"].toString())
     }
 
     /** Design 64 step 2: `location_policy.zones` as the server's `policy_json_keys_snapshot` and
@@ -1375,8 +1349,8 @@ class PolicyResponseCompatTest {
         assertNull(older.loginBrowser)
     }
 
-    /** Design 108 §3.8: `unified_push` (the server's `policy_json_keys_snapshot`, sent only to a launcher claiming
-     * `unified_push_v1`) - missing (an older server), or without an origin, is off. */
+    /** Design 108 §3.8: `unified_push` (the server's `policy_json_keys_snapshot`, always sent) - missing (an older
+     * server), or without an origin, is off. */
     @Test
     fun `unified_push decodes, missing or without an origin is off (108)`() {
         val policy = (decodeCached(
@@ -1396,6 +1370,12 @@ class PolicyResponseCompatTest {
         assertTrue(com.kidslauncher.mdm.push.up.UpView.of(noRefresh).refresh.isEmpty())
         val noOrigin = (decodeCached("""{"unified_push": {"on": true, "origin": null, "regs": [], "stopped": []}}""") as CachedPolicy.Ok).policy
         assertFalse(com.kidslauncher.mdm.push.up.UpView.of(noOrigin).on)
+        // The server's literal for a fresh phone, with `server_tls` beside it (both always sent).
+        val fresh = (decodeCached(
+            """{"server_tls": {}, "unified_push": {"on": false, "origin": null, "regs": [], "stopped": [], "refresh": []}}""",
+        ) as CachedPolicy.Ok).policy
+        assertFalse(com.kidslauncher.mdm.push.up.UpView.of(fresh).on)
+        assertNull(enforceOf(fresh.serverTls))
         val older = (decodeCached(serverResponse) as CachedPolicy.Ok).policy
         assertNull(older.unifiedPush)
         assertFalse(com.kidslauncher.mdm.push.up.UpView.of(older).on)

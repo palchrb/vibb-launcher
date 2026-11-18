@@ -431,7 +431,7 @@ async fn invalid_rule_and_budget_forms_are_rejected() {
             Method::POST,
             "/schedules/device/9999",
             Some(&cookie),
-            &[("b0", "10")],
+            &[("section", "budget"), ("b0", "10")],
         )
         .await;
     assert_eq!(res.status, StatusCode::NOT_FOUND);
@@ -708,16 +708,6 @@ async fn time_state_is_stored_and_shown() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;
-    // An older launcher: no time_rules_v1 -> warning.
-    app.request(
-        Method::POST,
-        "/api/devices/status",
-        Some(&token),
-        Some(json!({"lock_reason": "NONE", "kiosk_engaged": true, "capabilities": ["call_policy_v1"]})),
-    )
-    .await;
-    let page = app.get_page(&device_page(id, Section::Time), &cookie).await;
-    assert!(page.text().contains("Vibb One too old for time rules"));
     let today = chrono::Utc::now()
         .with_timezone(&chrono_tz::Europe::Oslo)
         .date_naive()
@@ -731,7 +721,6 @@ async fn time_state_is_stored_and_shown() {
             Some(json!({
                 "lock_reason": "SCHOOL",
                 "kiosk_engaged": true,
-                "capabilities": ["call_policy_v1", "time_rules_v1"],
                 "time_state": {
                     "day": today, "used_minutes": 42, "budget_minutes": 90,
                     "extra_minutes": 30, "active_rule_id": 1, "active_rule_name": "Skole",
@@ -1023,21 +1012,6 @@ async fn legacy_schedules_become_rules_once() {
     assert_eq!(flag, 1);
 }
 
-#[tokio::test]
-async fn legacy_fields_are_still_sent_for_older_launchers() {
-    let app = TestApp::new().await;
-    let (_, token) = app.enrolled_device("phone").await;
-    sqlx::query(
-        "UPDATE global_schedule SET bedtime_start_minutes = 1260, bedtime_end_minutes = 420",
-    )
-    .execute(&app.db)
-    .await
-    .unwrap();
-    let p = app.policy(&token).await;
-    assert_eq!(p["bedtime_start_minutes"], 1260);
-    assert_eq!(p["bedtime_end_minutes"], 420);
-}
-
 // QA step 6 fix round
 
 async fn count(app: &TestApp, sql: &str) -> i64 {
@@ -1085,7 +1059,7 @@ async fn new_admin_routes_refuse_without_a_session_and_write_nothing() {
         ("/schedules/global".into(), vec![("b0", "5")]),
         (
             format!("/schedules/device/{id}"),
-            vec![("custom_schedule_enabled", "on"), ("b0", "5")],
+            vec![("section", "budget"), ("b0", "5")],
         ),
         (
             format!("/schedules/device/{id}"),
@@ -1233,7 +1207,6 @@ async fn report_time_state(app: &TestApp, token: &str, state: serde_json::Value)
             Some(token),
             Some(json!({
                 "lock_reason": "NONE", "kiosk_engaged": true,
-                "capabilities": ["call_policy_v1", "time_rules_v1"],
                 "time_state": state
             })),
         )
@@ -1376,7 +1349,7 @@ async fn parent_edits_are_in_the_security_log() {
         Method::POST,
         &format!("/schedules/device/{id}"),
         Some(&cookie),
-        &[("b0", "30")],
+        &[("section", "limit")],
     )
     .await;
     app.request_form(
