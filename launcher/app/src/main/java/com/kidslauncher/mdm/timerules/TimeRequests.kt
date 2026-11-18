@@ -201,8 +201,6 @@ fun newTimeRequestId(random: SecureRandom = SecureRandom()): String {
     return bytes.joinToString("") { "%02x".format(it) }
 }
 
-/** The largest lift id in [policy] (0 without one). */
-
 private const val LOG_TAG = "TimeRequests"
 
 /** Device-protected prefs file for the record and the count (one `commit()` each write, under [TimeRequests]'s lock). */

@@ -340,7 +340,7 @@ fun signerCheck(
 }
 
 /**
- * The PWA's `allow_blocked` (fix round QA Medium 2): the blocks go, except an app whose signing
+ * The PWA's `allow_blocked` (fix round QA Medium 2): the listed blocks go, except an app whose signing
  * key differs from the catalog's pin - that one is not the catalog's app, whatever its name.
  * [listed] (QA of cmd-expiry, Low 1): the apps the PWA listed, package -> the key it showed
  * (`null` = unreadable then); only a listed block whose key is still that one ([shownSigner], as

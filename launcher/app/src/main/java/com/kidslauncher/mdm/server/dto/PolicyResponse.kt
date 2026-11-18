@@ -118,16 +118,13 @@ data class PolicyResponse(
     /** The lock's glance page (design 25): `{apps: [{package, show_text}, ...]}` - the apps whose
      * messages show on the PIN lock's first page, each with whether its text shows too (design 51). Raw JSON read field
      * by field by [com.kidslauncher.mdm.badges.lockGlancePolicy], so nothing in it can fail the
-     * policy (like [music] and `app_display`). Missing from a fresh response =
-     * the server's own default (Element X, sender only); missing from the cache (written by a
-     * build before design 25) = unknown, missed calls only (QA Low 11). Not in
+     * policy (like [music] and `app_display`). Missing = unknown, missed calls only (QA Low 11). Not in
      * [com.kidslauncher.mdm.server.LastEnforcedPlan]. */
     val lockGlance: kotlinx.serialization.json.JsonElement? = null,
     /** Dagen (design 69 §4.1): `{on_home, kid_adds, glance_next, lock_reminders, calendars: [{key, shown, remind,
      * remind_minutes, writable_for_kid}], rules: [{id, calendar, field, match, pattern, action, text}]}`. Raw JSON read
      * field by field by [com.kidslauncher.mdm.day.calendarPolicy], so nothing in it can fail the policy. Missing =
-     * every calendar shown, no rules, nothing on the lock. Not in
-     * [com.kidslauncher.mdm.server.LastEnforcedPlan]: without a usable cache Dagen is off. */
+     * unknown, Dagen off - as without a usable cache, since it is not in [com.kidslauncher.mdm.server.LastEnforcedPlan]. */
     val calendar: kotlinx.serialization.json.JsonElement? = null,
     /** Design 76 D2: `{"enforce": true}` (the server's `on`), `{"enforce": false}` (the parent's off) or `{}` (the
      * server's `watching`: keep the flag, R-1); absent for a launcher without
