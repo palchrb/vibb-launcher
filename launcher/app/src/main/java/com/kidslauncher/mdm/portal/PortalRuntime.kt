@@ -129,8 +129,7 @@ object PortalRuntime {
     @Synchronized
     fun grants(context: Context, policy: CaptivePortalPolicy = policy()): PortalGrants {
         val prefs = prefs(context)
-        val stored = prefs.getString(KEY_GRANTS, null)?.let { runCatching { PortalJson.decodeFromString(PortalGrantsJson.serializer(), it).grants() }.getOrNull() }
-            ?: prefs.getString(KEY_OLD_BUDGET, null)?.let { runCatching { PortalJson.decodeFromString(OldBudgetJson.serializer(), it).grants() }.getOrNull() }
+        val stored = storedGrants(prefs.getString(KEY_GRANTS, null), prefs.getString(KEY_OLD_BUDGET, null))
         val grants = grantsToday(stored, LocalDate.now(), policy.grant)
         if (grants != stored || prefs.contains(KEY_OLD_BUDGET)) save(context, grants)
         return grants
@@ -375,6 +374,12 @@ internal data class PortalGrantsJson(
         fun of(g: PortalGrants) = PortalGrantsJson(g.date, g.left, g.seen)
     }
 }
+
+/** The stored grants: the `grants` pref, else the daily count's old `budget` pref's grant fields (today's unused grants
+ * handed over once), else `null` (a fresh state); a malformed pref is `null`. Pure, `PortalRulesTest`. */
+internal fun storedGrants(grantsJson: String?, oldBudgetJson: String?): PortalGrants? =
+    grantsJson?.let { runCatching { PortalJson.decodeFromString(PortalGrantsJson.serializer(), it).grants() }.getOrNull() }
+        ?: oldBudgetJson?.let { runCatching { PortalJson.decodeFromString(OldBudgetJson.serializer(), it).grants() }.getOrNull() }
 
 /** The daily count's stored state until 2026-11-18, read once for its grant fields (an update keeps a grant). */
 @kotlinx.serialization.Serializable

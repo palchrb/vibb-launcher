@@ -28,7 +28,8 @@ The launcher's side is `docs/notes/launcher/logins.md`.
 - **Device › Sign-in** (`/devices/{id}/logins`, `handlers::logins`, `device_logins.html`; linked from the Web Filter
   page's row "Innlogging · Wi-Fi: på · Apper: av"): `#logins-wifi` - the switch with its sub-line (the window, the
   close, the filter's lists not the parent's own DNS server), the code's state linking to Advanced, "Gi én
-  innlogging til nå" (`section=grant`, bumps the counter, uncapped; the (i) says it needs the phone online);
+  innlogging til nå" (`section=grant`, bumps the counter, uncapped; shown only with Foreldrekode on, where a grant
+  matters; the (i) says it lasts the day and needs the phone online);
   `#logins-recent` - the last sign-ins with how each was approved, the sites visited and the blocked hosts;
   `#logins-apps` - "Innlogging i apper med Chrome" (`section=apps`; disabled with the reason while Chrome is ticked, a
   forged on refused), the clear's cost under it (D13), "Chrome finnes ikke på telefonen", the phone's state (Klar,

@@ -212,6 +212,21 @@ async fn the_pages_and_their_saves() {
     .await
     .unwrap();
     assert!(!require);
+    // With the code off every opening is free: no grant button, no word about it behind the (i).
+    let off = app.get_page(&page, &cookie).await.text();
+    assert!(
+        !off.contains("data-grant") && !off.contains("Allow one more sign-in now"),
+        "{off}"
+    );
+    save(
+        &app,
+        &cookie,
+        id,
+        &[("section", "wifi_signin"), ("on", "on")],
+    )
+    .await;
+    let on = app.get_page(&page, &cookie).await.text();
+    assert!(on.contains("data-grant"), "{on}");
 
     for (fields, anchor) in [
         (vec![("section", "wifi"), ("on", "on")], "logins-wifi"),

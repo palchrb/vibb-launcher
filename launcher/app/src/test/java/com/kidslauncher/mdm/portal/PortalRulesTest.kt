@@ -120,6 +120,16 @@ class PortalRulesTest {
             assertEquals(row.name(), grantsOf(row.getValue("expect").jsonObject), g)
             assertEquals(row.name(), row.bool("grant_left"), grantLeft(g))
         }
+        // The daily count's old pref hands today's unused grants over once (2026-11-18).
+        val old = """{"date":"2026-11-18","openings":4,"ms":1200000,"grantUsed":2,"grantOpenings":1,"grantSeen":7}"""
+        assertEquals(PortalGrants("2026-11-18", 1, 7), storedGrants(null, old))
+        assertEquals(
+            PortalGrants("2026-11-18", 0, 7),
+            storedGrants(null, """{"date":"2026-11-18","openings":4,"ms":0,"grantUsed":1,"grantOpenings":2,"grantSeen":7}"""),
+        )
+        assertNull(storedGrants(null, "{not json"))
+        assertNull(storedGrants(null, null))
+        assertEquals(PortalGrants("2026-11-18", 3, 9), storedGrants("""{"date":"2026-11-18","left":3,"seen":9}""", old))
         val now = 1_794_000_000_000L
         for (row in rows("open_sessions")) {
             val opened = now - row.getValue("opened_ago_ms").jsonPrimitive.long
