@@ -207,6 +207,22 @@ fun glanceLevel(ticked: Boolean, secret: Boolean, showText: Boolean, messaging: 
 fun glanceTitle(group: Boolean, conversationTitle: String?, newestSender: String?, title: String?): String? =
     if (group && conversationTitle != null) conversationTitle else newestSender ?: conversationTitle ?: title
 
+/**
+ * Design 115 §3: the row's title as the glance shows it. A plain notification ([shape] `PLAIN`, no [sender]: its title is
+ * `EXTRA_TITLE`) titled with the app's own Android label ([appLabel], e.g. Element X's "N new messages" fallback) shows
+ * no title, so the row names the app by its display name (the parent's, the kid's rename) instead. A MessagingStyle
+ * conversation's or sender's name is never replaced (QA M4). The fold (QA L9): the label cut as a title is, both NFC,
+ * `lowercase(Locale.ROOT)`.
+ */
+fun glanceShownTitle(title: String?, shape: GlanceShape, sender: String?, appLabel: String?): String? {
+    if (title == null || shape != GlanceShape.PLAIN || sender != null) return title
+    val label = glanceFold(appLabel) ?: return title
+    return if (glanceFold(title) == label) null else title
+}
+
+private fun glanceFold(text: String?): String? = cleanGlanceText(text, GLANCE_TITLE_MAX)
+    ?.let { java.text.Normalizer.normalize(it, java.text.Normalizer.Form.NFC).lowercase(java.util.Locale.ROOT) }
+
 /** What a notification's title names (2026-10-25, PLAN "Contact photos on the glance's message rows"): one sender
  * ([DIRECT] - a MessagingStyle conversation that isn't a group: its title is the sender), a group by its own name
  * ([GROUP] - its newest sender is kept beside the name), or anything else ([PLAIN]: another style's title, or a group

@@ -16,7 +16,10 @@ import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.push.up.vendor.RaiseToForeground
 import com.kidslauncher.mdm.server.CachedPolicy
 import com.kidslauncher.mdm.server.DeviceToken
+import com.kidslauncher.mdm.server.KidVpnService
+import com.kidslauncher.mdm.server.MobileNetworkRuntime
 import com.kidslauncher.mdm.server.ServerJson
+import com.kidslauncher.mdm.server.VpnShape
 import com.kidslauncher.mdm.server.cachedPolicy
 import com.kidslauncher.mdm.server.createMdmApi
 import com.kidslauncher.mdm.server.dto.PolicyResponse
@@ -39,6 +42,19 @@ private const val BOOT_STEP_MS = 600_000L
 
 /** The pull's timed partial wake lock (§5.5). */
 private const val PULL_WAKELOCK_MS = 30_000L
+
+/** Design 115 §2.4: the "net" pull after the last shape change (the routes and the lockdown's removal in place by then),
+ * and its one retry when only the wanted shape still held. */
+private const val NET_PULL_MS = 2_000L
+private const val NET_RETRY_MS = 10_000L
+
+/** Design 115 (gate row 4): after a hold, every pull and send waits this long after the last shape change - the routes
+ * and the lockdown's removal reach the apps a moment after the tunnel switches (a sync's own pull 60 ms after it handed
+ * out a message whose fetch failed). Below [NET_PULL_MS], so the "net" pull is never held by it. */
+private const val SETTLE_MS = 1_500L
+
+/** Design 115 §2.4: a MESSAGE whose send found the phone held - reported as failed, so never acknowledged. */
+class UpHeldException : IllegalStateException("held")
 
 /**
  * Design 108's distributor on the phone (§5), on two single-thread executors (code QA H1):
@@ -75,6 +91,9 @@ object UpRuntime {
 
     /** The late sends' ack pull ([work] only). */
     private var flush: ScheduledFuture<*>? = null
+
+    /** Design 115's "net" pull after a hold ([work] only; its own future, QA L3). */
+    private var netPull: ScheduledFuture<*>? = null
 
     private fun engine(context: Context): UpEngine = engine ?: synchronized(this) {
         engine ?: build(context.applicationContext).also { engine = it }
@@ -214,6 +233,14 @@ object UpRuntime {
         val app = context.applicationContext
         if (!isUserUnlocked(app)) return
         if (!view().on) return
+        // Design 115: held, no wake lock and no request - the engine only notes it.
+        val parts = holdParts(app)
+        if (parts.hold != UpHold.NONE) {
+            Log.i(LOG_TAG, "Pull for $reason held (${parts.hold.wire})")
+            // Code QA L2: held only by a moment's view of the network (or the settle) - the "net" pull asks again.
+            post { engine(app).noteHeld(askPull = parts.onlyWanted) }
+            return
+        }
         acquireWakeLock(app)
         post {
             val engine = engine(app)
@@ -233,10 +260,94 @@ object UpRuntime {
         if (again) post { step(engine) } else releaseIfIdle()
     }
 
-    /** The pull's wake lock released once nothing is left: no pull running and no raise bound. */
+    /** The pull's wake lock released once nothing is left: no pull running, no raise bound, no "net" pull waiting. */
     private fun releaseIfIdle() {
-        if (engine?.pullActive == true || raising > 0) return
+        if (engine?.pullActive == true || raising > 0 || netPull?.isDone == false) return
         releaseWakeLock()
+    }
+
+    /**
+     * Design 115 §2.4: the VPN's shape changed - from `KidVpnService` (a tunnel established, the service gone) and from
+     * `MobileNetworkRuntime.writeAlwaysOn`. Computed on [work] (QA L2), never on the caller's thread; nothing to do
+     * before the engine exists (no hold was seen in this process).
+     */
+    fun shapeChanged() {
+        shapeChangedAt = android.os.SystemClock.elapsedRealtime()
+        post { engine?.shapeChanged() }
+    }
+
+    /** When the VPN's shape last changed ([shapeChanged]), elapsed ms. */
+    @Volatile
+    private var shapeChangedAt = Long.MIN_VALUE / 2
+
+    /** What [UpRules.holdOf] reads, and whether only the wanted shape holds (the views of the network disagreeing for a
+     * moment, QA M1). The tunnel in the sink answers at once (QA L4). */
+    private class HoldParts(val hold: UpHold, val onlyWanted: Boolean)
+
+    private fun holdParts(app: Context, settle: Boolean = true): HoldParts {
+        if (!view().on) return HoldParts(UpHold.NONE, false)
+        val tunnel = KidVpnService.tunnelShape
+        if (tunnel == VpnShape.SINK) return HoldParts(UpHold.NO_NETWORK, false)
+        val persisted = MobileNetworkRuntime.storedShape()
+        // QA L1: the decision cuts the apps only through our lockdown (read only when it says the sink).
+        val lockdown = persisted == VpnShape.SINK && MobileNetworkRuntime.lockdownOurs(app)
+        val running = KidVpnService.serviceRunning
+        val net = if (running) KidVpnService.serviceNet(app) else null
+        val hold = UpRules.holdOf(true, tunnel, persisted, lockdown, running, MobileNetworkRuntime.storedInputs(), net)
+        if (hold != UpHold.NONE) return HoldParts(hold, !(persisted == VpnShape.SINK && lockdown))
+        // The hold just ended: held until the apps' network has settled (the "net" pull comes after it).
+        val settling = settle && engine?.held == true &&
+            android.os.SystemClock.elapsedRealtime() - shapeChangedAt < SETTLE_MS
+        return if (settling) HoldParts(UpHold.NO_NETWORK, true) else HoldParts(UpHold.NONE, false)
+    }
+
+    /** Design 115 §2.8: the status report's `unified_push` - while UP is on and the phone unlocked; `null` (left out)
+     * otherwise. */
+    fun report(context: Context): UpReport? {
+        val app = context.applicationContext
+        if (!isUserUnlocked(app) || !view().on) return null
+        return try {
+            UpReport(holdParts(app, settle = false).hold.wire)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /** The "net" pull (QA L3): the wake lock now, the pull [delayMs] after the last ask - each ask moves it ([work]). */
+    private fun scheduleNetPull(app: Context, delayMs: Long, retry: Boolean) {
+        netPull?.cancel(false)
+        acquireWakeLock(app)
+        netPull = try {
+            work.schedule({
+                try {
+                    runNetPull(app, retry)
+                } catch (e: Exception) {
+                    Log.w(LOG_TAG, "The net pull failed: ${e.javaClass.simpleName}")
+                    netPull = null
+                    releaseIfIdle()
+                }
+            }, delayMs, TimeUnit.MILLISECONDS)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "App push couldn't queue the net pull: ${e.javaClass.simpleName}")
+            null
+        }
+    }
+
+    private fun runNetPull(app: Context, retry: Boolean) {
+        netPull = null
+        val engine = engine(app)
+        val parts = holdParts(app)
+        if (parts.hold != UpHold.NONE) {
+            engine.noteHeld()
+            if (retry && parts.onlyWanted) {
+                Log.i(LOG_TAG, "Still held by the network's view: once more in ${NET_RETRY_MS / 1000} s")
+                scheduleNetPull(app, NET_RETRY_MS, retry = false)
+            } else {
+                releaseIfIdle()
+            }
+            return
+        }
+        if (engine.requestPull("net")) step(engine) else releaseIfIdle()
     }
 
     /** UP's two exported components follow the policy's `unified_push.on` (§5.1): disabled, no app sees Vibb One as
@@ -341,9 +452,9 @@ object UpRuntime {
             false
         }
 
-        override fun pull(acks: List<String>): UpMessagesAnswer? = try {
-            if (com.kidslauncher.mdm.BuildConfig.DEBUG) Log.d(LOG_TAG, "Pull acking [${acks.joinToString(" ") { it.take(8) }}]")
-            val response = runBlocking { createMdmApi(url, token, callTimeoutMs = PULL_TIMEOUT_MS).upMessages(UpAckBody(acks)) }
+        override fun pull(acks: List<String>, held: Boolean): UpMessagesAnswer? = try {
+            if (com.kidslauncher.mdm.BuildConfig.DEBUG) Log.d(LOG_TAG, "Pull acking [${acks.joinToString(" ") { it.take(8) }}] held=$held")
+            val response = runBlocking { createMdmApi(url, token, callTimeoutMs = PULL_TIMEOUT_MS).upMessages(UpAckBody(acks, held)) }
             if (!response.isSuccessful) {
                 response.errorBody()?.close()
                 Log.w(LOG_TAG, "A pull got ${response.code()}")
@@ -426,6 +537,11 @@ object UpRuntime {
             flush = work.schedule({ requestPull(app, "ack") }, delayMs, TimeUnit.MILLISECONDS)
         }
 
+        override fun hold(): UpHold = holdParts(app).hold
+
+        /** On [work] (the engine's calls). */
+        override fun pullAfterHold() = scheduleNetPull(app, NET_PULL_MS, retry = true)
+
         override fun hasRaiseService(app: String): Boolean = try {
             this.app.packageManager.queryIntentServices(
                 Intent(UpSpec.RAISE_TO_FOREGROUND).setPackage(app),
@@ -477,6 +593,14 @@ object UpRuntime {
                 )
                 Log.i(LOG_TAG, "NEW_ENDPOINT to $app (raised)")
                 return
+            }
+            // Design 115 §2.4: the apps lost their network since the pull (Wi-Fi dropped mid-pull): not sent, not
+            // acknowledged; the hold is noted and the "net" pull asked, and the message comes again after the hold.
+            val hold = holdParts(this.app).hold
+            if (hold != UpHold.NONE) {
+                Log.i(LOG_TAG, "MESSAGE to $app held (${hold.wire})")
+                post { engine?.noteHeld(askPull = true) }
+                throw UpHeldException()
             }
             this.app.sendBroadcast(
                 Intent(UpSpec.MESSAGE).setPackage(app).addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES)

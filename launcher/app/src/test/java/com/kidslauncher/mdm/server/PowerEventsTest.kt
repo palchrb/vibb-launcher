@@ -292,7 +292,9 @@ class PowerEventsTest {
         // The boot cover's arm in the shared receiver stays synchronous (qa-38-code L1 c).
         val coverPart = body(code("BootCover.kt"), "private fun coverAtShutdown(")
         assertTrue("setEnabled(app, armed, \"shutdown\", synchronous = true)" in coverPart)
-        assertTrue("prefs(app).edit().putLong(KEY_ARMED_AT, System.currentTimeMillis()).commit()" in coverPart)
+        // 2026-11-17: the arm with its boot and the arm before it, in one commit().
+        assertTrue(Regex("""prefs\(app\)\.edit\(\)\s+\.putLong\(KEY_ARMED_AT, next\.atMs \?: 0L\)[\s\S]*?\.commit\(\)""").containsMatchIn(coverPart))
+        assertFalse(".apply()" in coverPart)
         assertTrue("SHUTDOWN_POST_TIMEOUT_MS" in body(code("PowerEvents.kt"), "fun prepare("))
         assertEquals(3_000L, SHUTDOWN_POST_TIMEOUT_MS)
         assertTrue("callTimeout(it, TimeUnit.MILLISECONDS)" in code("MdmApi.kt"))

@@ -492,6 +492,9 @@ pub struct Sources<'a> {
     pub spotify_account: crate::handlers::music::SpotifyAccountWarnings,
     /// The app push rows (`unified_push::health::attention`), read by the caller.
     pub app_push: &'a crate::unified_push::health::AppPushAttention,
+    /// The newest `phone_on`'s instant (`parent_events::last_phone_on_ms`): the boot cover's "not shown" waits for a
+    /// start after the arm.
+    pub last_phone_on_ms: Option<i64>,
 }
 
 /// Whether the reported Do Not Disturb is the launcher's own for a silent time rule: the report's
@@ -626,6 +629,12 @@ pub async fn facts(state: &AppState, device: &Device, connection: ConnectionStat
         tracing::error!(device_id = id, %err, "attention: can't read the app push state");
         Default::default()
     });
+    let last_phone_on_ms = crate::parent_events::last_phone_on_ms(&state.db, id)
+        .await
+        .unwrap_or_else(|err| {
+            tracing::error!(device_id = id, %err, "attention: can't read the last start");
+            None
+        });
     facts_of(
         &Sources {
             device,
@@ -639,6 +648,7 @@ pub async fn facts(state: &AppState, device: &Device, connection: ConnectionStat
             music_ticked: &music_ticked,
             spotify_account,
             app_push: &app_push,
+            last_phone_on_ms,
         },
         now_ms,
     )
@@ -669,7 +679,9 @@ pub fn facts_of(s: &Sources, now_ms: i64) -> Facts {
     };
     let play =
         crate::handlers::device_pages::play_notes(latest, policy.block_activity_start, now_ms);
-    let escapes = crate::handlers::device_pages::escapes_card(policy, latest, now_ms).notes;
+    let escapes =
+        crate::handlers::device_pages::escapes_card(policy, latest, now_ms, s.last_phone_on_ms)
+            .notes;
     Facts {
         not_set_up: false,
         report_stale: matches!(

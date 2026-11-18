@@ -57,6 +57,8 @@ object VoipCalls {
     private const val KEY_BOOT = "boot"
     private const val KEY_RING_ENDED = "ring_ended_elapsed"
     private const val KEY_RING_STARTED = "ring_started_elapsed"
+    private const val KEY_CALL_SEEN = "call_seen"
+    private const val KEY_CALL_GONE = "call_gone_elapsed"
     private const val KEY_FSI_DENIED = "fsi_denied"
 
     /** Design r7 §1.1.3: package -> wall ms of its last ring over the lock ([encodeVoipRang]). */
@@ -125,6 +127,8 @@ object VoipCalls {
                 // the listener's first report (qa-16-17-code #7).
                 ringEndedElapsedMs = ringEnded ?: unverifiedSinceElapsed.takeIf { ringStarted == null },
                 ringStartedElapsedMs = ringStarted,
+                callSeen = prefs.getBoolean(KEY_CALL_SEEN, false),
+                callGoneElapsedMs = prefs.getLong(KEY_CALL_GONE, -1L).takeIf { it >= 0L },
             )
         }
         fsiDenied = prefs.getStringSet(KEY_FSI_DENIED, emptySet()).orEmpty().sorted()
@@ -197,7 +201,7 @@ object VoipCalls {
         phase = verdict.phase
         pinnedPackage = verdict.pinned
         ringingPackage = newRecord?.packageName?.takeIf { verdict.phase == VoipPhase.RINGING }
-        if (phase != VoipPhase.NONE || pinnedPackage != null) handler.postDelayed(poll, POLL_MS)
+        if (phase != VoipPhase.NONE || pinnedPackage != null) handler.postDelayed(poll, voipPollMs(newRecord, SystemClock.elapsedRealtime(), POLL_MS))
         if (oldPhase != phase || oldPinned != pinnedPackage) {
             // Package names only - never a key, a tag or anything from the notification's text.
             Log.i(LOG_TAG, "VoIP $oldPhase -> $phase, pinned ${pinnedPackage ?: "-"}")
@@ -309,11 +313,12 @@ object VoipCalls {
         val editor = prefs(context).edit()
         if (r == null) {
             editor.remove(KEY_PACKAGE).remove(KEY_UNTIL).remove(KEY_ELAPSED).remove(KEY_BOOT)
-                .remove(KEY_RING_ENDED).remove(KEY_RING_STARTED)
+                .remove(KEY_RING_ENDED).remove(KEY_RING_STARTED).remove(KEY_CALL_SEEN).remove(KEY_CALL_GONE)
         } else {
             editor.putString(KEY_PACKAGE, r.packageName).putLong(KEY_UNTIL, r.start.untilWallMs)
                 .putLong(KEY_ELAPSED, r.start.elapsedStartMs).putInt(KEY_BOOT, r.start.bootCount)
                 .putLong(KEY_RING_ENDED, r.ringEndedElapsedMs ?: -1L).putLong(KEY_RING_STARTED, r.ringStartedElapsedMs ?: -1L)
+                .putBoolean(KEY_CALL_SEEN, r.callSeen).putLong(KEY_CALL_GONE, r.callGoneElapsedMs ?: -1L)
         }
         editor.apply()
     }

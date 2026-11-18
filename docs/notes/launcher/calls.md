@@ -315,7 +315,7 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
   and the time-rule screen need (history, the unread total, the role), refreshed after every event, every rule change
   and at Home's start; its listeners also tell the screens of a rule change that touched no conversation. A thread in
   front (`SmsRuntime.threadInFront`) marks its messages read and gets no notification for them.
-- **Ways in:** Home's tile (`GridTile.Messages`, after the phone book, the teal tone `kid_messages_tile`, the chat glyph,
+- **Ways in:** Home's tile (`GridTile.Messages`, after the phone book, the teal tone `kid_messages_tile`, its own `ic_kid_sms` glyph,
   the unread total as its badge); the time-rule screen's "Meldinger" row (`LockRow.Messages`, where the rule allows
   calls and Home shows the tile; never opened by itself after an unlock); the notification's tap (the thread over the
   list, `PendingIntent.getActivities`, told apart by the thread intent's identifier); the contact sheet's Message button

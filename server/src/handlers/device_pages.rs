@@ -976,7 +976,13 @@ pub async fn view_advanced(
         Ok(setup) => setup,
         Err(err) => return read_failed(lang, id, "the opening for setup", err),
     };
-    let escapes = escapes_card(&policy, latest.as_ref(), now_ms);
+    let last_phone_on_ms = crate::parent_events::last_phone_on_ms(&state.db, id)
+        .await
+        .unwrap_or_else(|err| {
+            tracing::error!(device_id = id, %err, "can't read the last start");
+            None
+        });
+    let escapes = escapes_card(&policy, latest.as_ref(), now_ms, last_phone_on_ms);
     let (escape_warnings, escape_rows): (Vec<Note>, Vec<Note>) = escapes
         .notes
         .iter()
@@ -2691,6 +2697,7 @@ pub(crate) fn escapes_card(
     policy: &DevicePolicy,
     latest: Option<&DeviceStatus>,
     now_ms: i64,
+    last_phone_on_ms: Option<i64>,
 ) -> crate::kiosk_escapes::EscapesCard {
     use crate::kiosk_escapes as ke;
     let capability = |name: &str| has_capability(latest, name);
@@ -2712,6 +2719,7 @@ pub(crate) fn escapes_card(
         capability(ke::BOOT_COVER_CAPABILITY),
         latest.is_some(),
         ke::parse_boot_cover(latest.and_then(|s| s.boot_cover_json.as_deref())).as_ref(),
+        last_phone_on_ms,
     ));
     card
 }

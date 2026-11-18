@@ -348,7 +348,7 @@ class StatusBarHealTest {
         assertTrue(answered, answered.contains("gestureAskRetryDue(askFromGesture, gestureAskRetried, offs == PinLockRuntime.screenOffs, askedAt, SystemClock.elapsedRealtime())"))
         assertTrue(answered, answered.indexOf("gestureAskRetryDue(") < answered.indexOf("closeAsk(cancelled"))
         assertTrue(answered, answered.contains("handler.postDelayed({ askAfterGesture(retry = true) }, GESTURE_ASK_RETRY_DELAY_MS)"))
-        val gestureAsk = activity.substringAfter("private fun askAfterGesture(retry: Boolean) {").substringBefore("private fun askAndroid()")
+        val gestureAsk = activity.substringAfter("private fun askAfterGesture(retry: Boolean) {").substringBefore("private fun askAndroid(")
         assertTrue(gestureAsk, gestureAsk.contains("if (!resumed || isFinishing || finishingAfterUnlock || PinLockRuntime.mode != LockMode.LOCKED) return"))
         assertTrue(gestureAsk, gestureAsk.contains("gestureAskRetried = retry"))
         assertTrue(gestureAsk, gestureAsk.contains("if (!interactiveNow() || PinLockRuntime.callLiveNow(this)) return"))

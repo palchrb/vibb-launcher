@@ -204,7 +204,8 @@ pub async fn seed(app: &TestApp, lang: crate::i18n::Lang) -> Family {
                             "voip_fsi_denied": ["io.element.android.x"] },
             "update_fence": { "enabled": true, "state": "installing", "since_ms": now_ms - 60_000,
                               "home_role_held": false, "waiting_for": "install_now_download" },
-            "boot_cover": { "wanted": true, "last_armed_at_ms": now_ms - 3_600_000 },
+            // Armed before the start the events below tell (80 minutes ago), so the cover reads as not shown.
+            "boot_cover": { "wanted": true, "last_armed_at_ms": now_ms - 6_000_000 },
             "app_downloads": { "wifi_only": true, "network": "metered", "entries": [{
                 "tracked_app_id": tracked, "release_tag": "v2.0.0", "state": "downloading",
                 "bytes": 4_000_000, "total": 12_345_678 }] },

@@ -270,6 +270,9 @@ class KidVpnService : VpnService() {
             val old = state.tunnel
             state.established(established, SystemClock.elapsedRealtime())
             shape = wanted
+            tunnelShape = wanted
+            // Design 115 §2.4: a new tunnel - app push looks at its hold again (posted, never on this thread).
+            com.kidslauncher.mdm.push.up.UpRuntime.shapeChanged()
             scope.launch { readLoop(established, wanted) }
             if (old != null && old !== established) {
                 try {
@@ -595,6 +598,7 @@ class KidVpnService : VpnService() {
     private fun stopSelfCleanly() {
         val fd = state.stop()
         shape = null
+        tunnelShape = null
         if (running === state) running = null
         main.removeCallbacksAndMessages(null)
         DnsFilterEngine.onCustomChanged = null
@@ -610,6 +614,8 @@ class KidVpnService : VpnService() {
         scope.cancel()
         evictProviderDoh()
         Thread(dotPool::close, "dns-evict").start()
+        // Design 115 §2.4: no tunnel and no watcher any more.
+        com.kidslauncher.mdm.push.up.UpRuntime.shapeChanged()
         try {
             fd?.close()
         } catch (e: Exception) {
@@ -643,6 +649,19 @@ class KidVpnService : VpnService() {
         /** The running service, for the status report. */
         @Volatile
         private var live: KidVpnService? = null
+
+        /** Design 115: the shape the tunnel has now (`shape`'s mirror), `null` without one. A tunnel that died keeps it,
+         * as `shape` does: the sink's lockdown still cuts the apps. */
+        @Volatile
+        var tunnelShape: VpnShape? = null
+            private set
+
+        /** Design 115: a service instance runs (its network watcher with it). */
+        val serviceRunning: Boolean get() = live != null
+
+        /** Design 115 (QA M1 (a)): the network the running service decides its shape from ([serviceShape]) - its
+         * watcher's last, or before the first callback the launcher's own; `null` with none running. */
+        fun serviceNet(context: Context): BestNet? = live?.let { it.lastBest ?: MobileNetworkRuntime.bestNet(context) }
 
         /** The status report's `dns_upstream` (design 36 §4.2, design 67 §3.2): the parent's servers
          * or the provider, with "DNS can't be reached" - only while the tunnel is up; `null` (left

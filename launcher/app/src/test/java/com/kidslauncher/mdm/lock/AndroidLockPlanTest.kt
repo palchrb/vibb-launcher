@@ -108,6 +108,46 @@ class AndroidLockPlanTest {
         assertTrue(body(activity, "onWindowFocusChanged").contains("handler.postDelayed(askCheck"))
     }
 
+    /** 2026-11-17 check, item 4: Android 16's status-bar long press drops the pad our ask brought up for an empty shade. */
+    @Test
+    fun `a pad SystemUI dropped at once is asked for once more - Android 16 and up, never twice, never over a pad`() {
+        fun due(sdk: Int = 36, retried: Boolean = false, age: Long? = 400L, sameScreenOn: Boolean = true, locked: Boolean = true) =
+            padDropRetryDue(sdk, retried, age, sameScreenOn, locked)
+        assertTrue("jelly36: the focus back 0.4 s after the ask", due())
+        assertTrue("Android 17", due(sdk = 37))
+        assertFalse("Android 15: no such long press", due(sdk = 35))
+        assertFalse("Android 14", due(sdk = 34))
+        assertFalse("the one re-ask went", due(retried = true))
+        assertFalse("no ask open (answered)", due(age = null))
+        assertTrue(due(age = PAD_DROP_WINDOW_MS - 1))
+        assertFalse("the kid's own Back on the pad, later", due(age = PAD_DROP_WINDOW_MS))
+        assertFalse("elapsed going backwards", due(age = -1L))
+        assertFalse("a screen-off since the ask", due(sameScreenOn = false))
+        assertFalse("the keyguard went away (the PIN typed)", due(locked = false))
+        fun now(same: Boolean = true, focused: Boolean = true, locked: Boolean = true, interactive: Boolean = true, asking: Boolean = true, call: Boolean = false) =
+            padDropReaskNow(same, focused, locked, interactive, asking, call)
+        assertTrue(now())
+        assertFalse("a pad that is up holds the focus: never a second ask over it", now(focused = false))
+        assertFalse("answered or asked anew since", now(same = false))
+        assertFalse(now(locked = false))
+        assertFalse("dark", now(interactive = false))
+        assertFalse("the glance left its ask, or isn't in front", now(asking = false))
+        assertFalse("a call began", now(call = true))
+        assertEquals(36, PAD_DROP_MIN_SDK)
+        assertEquals(listOf(1_000L, 500L), listOf(PAD_DROP_WINDOW_MS, PAD_DROP_RETRY_DELAY_MS))
+        assertTrue("the re-ask is due before the old recovery reads the state", PAD_DROP_WINDOW_MS + PAD_DROP_RETRY_DELAY_MS < ANDROID_ASK_TIMEOUT_MS)
+        // The glue: from the focus coming back, once per ask, the re-ask by the rule; every fresh ask resets it.
+        val activity = code("$lock/PinLockActivity.kt")
+        val focus = body(activity, "onWindowFocusChanged")
+        assertTrue(focus, focus.contains("if (padDropRetryDue(Build.VERSION.SDK_INT, padDropRetried, askAge(), askedOffs == PinLockRuntime.screenOffs, keyguardLockedNow())) {"))
+        assertTrue(focus, focus.contains("handler.postDelayed({ padDropReask(id) }, PAD_DROP_RETRY_DELAY_MS)"))
+        val reask = body(activity, "padDropReask")
+        assertTrue(reask, reask.contains("padDropReaskNow(id == askId && askedAt != null, hasWindowFocus(), keyguardLockedNow(), interactiveNow(), lockAsking, PinLockRuntime.callLiveNow(this))"))
+        assertTrue(reask, reask.contains("askAndroid(padRetry = true)"))
+        assertTrue(body(activity, "askAndroid").contains("padDropRetried = padRetry"))
+        assertTrue(body(activity, "keyguardLockedNow").contains("false"))
+    }
+
     @Test
     fun `the process start - the boot's first CE start UNLOCKED, every later one LOCKED`() {
         assertTrue(processStartUnlocked(face = true, bootCount = 7, storedBootCount = 6))

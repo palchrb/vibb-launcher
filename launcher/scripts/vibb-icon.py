@@ -6,14 +6,12 @@
 Source: pi/art/vibb-appikon-natt-skarp.svg in palchrb/vibb (Vibb mark (c) palchrb, see NOTICE.md)
 - the SHARP artboard, since Android launchers mask the icon themselves. The rings are
 hand-shaped polylines (the radius wanders ~4% around the turn), so their path data is copied as
-is, not approximated. Writes, under launcher/app/src/main/res/drawable/:
+is, not approximated. Writes, under launcher/app/src/main/res/drawable/ (not ic_stat_vibb.xml, the notification
+small icon: since 2026-11-17 it is the mark's two-ring variant from palchrb's logo set, a source file of its own):
 
 - ic_launcher_foreground.xml - the adaptive icon's foreground (and themed/monochrome layer):
   the four rings (#f0a884, stroke 2.6) and the core (#fbe4dc), scaled into the 66 dp safe zone
   of the 108 dp canvas. The background is @color/vibb_night (#0c0c14).
-- ic_stat_vibb.xml - the notification small icon (design 99, Snarveier's header): the same rings and core in white
-  on transparent (Android draws a small icon from its alpha alone), the outer ring's outer edge in the 22 dp live
-  area of the 24 dp canvas.
 - splash_vibb_breathe.xml - an AnimatedVectorDrawable for the Home splash: one "breath" of
   pi/art/vibb-logo-pust-240-natt.svg (rings scale 0.94 -> 1.04 and fade 0.55 -> 1, the outer ring
   first; core 0.9 -> 1.08), compressed from the 4 s loop to under 1000 ms. 288 dp canvas with
@@ -81,24 +79,6 @@ def foreground(paths, core, reach):
     android:viewportHeight="108">
     <group android:translateX="54" android:translateY="54" android:scaleX="{scale:.4f}" android:scaleY="{scale:.4f}">
 {body}        <path android:pathData="{circle(core)}" android:fillColor="{CORE}" />
-    </group>
-</vector>
-"""
-
-
-def small_icon(paths, core, reach):
-    scale = 11.0 / reach  # the outer ring's outer edge 11 dp from the centre: the 22 dp live area of 24 dp
-    body = "".join(
-        f'        <path android:pathData="{d}" android:strokeColor="#FFFFFFFF" android:strokeWidth="{STROKE}" />\n'
-        for d in paths
-    )
-    return HEADER + f"""<vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="24dp"
-    android:height="24dp"
-    android:viewportWidth="24"
-    android:viewportHeight="24">
-    <group android:translateX="12" android:translateY="12" android:scaleX="{scale:.4f}" android:scaleY="{scale:.4f}">
-{body}        <path android:pathData="{circle(core)}" android:fillColor="#FFFFFFFF" />
     </group>
 </vector>
 """
@@ -201,8 +181,6 @@ def main():
     assert len(paths) == len(LEADS_S), "expected the four rings of the Vibb mark"
     with open(os.path.join(DRAWABLE, "ic_launcher_foreground.xml"), "w", encoding="utf-8") as f:
         f.write(foreground(paths, core, reach))
-    with open(os.path.join(DRAWABLE, "ic_stat_vibb.xml"), "w", encoding="utf-8") as f:
-        f.write(small_icon(paths, core, reach))
     with open(os.path.join(DRAWABLE, "splash_vibb_breathe.xml"), "w", encoding="utf-8") as f:
         f.write(splash(paths, core, reach))
     with open(PWA_MARK, "w", encoding="utf-8") as f:

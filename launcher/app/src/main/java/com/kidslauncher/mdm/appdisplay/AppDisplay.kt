@@ -73,13 +73,13 @@ fun builtinEntry(map: Map<String, AppDisplayEntry>, key: String): AppDisplayEntr
  * a white glyph drawable, [tile] the tile's colour (ARGB; `null` = its own teal, `R.color.kid_messages_tile`), [name]
  * the parent's name (`null` = `R.string.messages_title`). The defaults are its own look.
  */
-data class MessagesLook(val glyph: Int = R.drawable.app_glyph_chat, val tile: Int? = null, val name: String? = null) {
+data class MessagesLook(val glyph: Int = R.drawable.ic_kid_sms, val tile: Int? = null, val name: String? = null) {
     fun tileColor(context: Context): Int = tile ?: context.getColor(R.color.kid_messages_tile)
 
     fun shownName(context: Context): String = name ?: context.getString(R.string.messages_title)
 }
 
-/** Meldinger's look from its entry: the chosen glyph, else the chat glyph; the colour **only with a chosen glyph**, as
+/** Meldinger's look from its entry: the chosen glyph, else its own bubble with dots (`ic_kid_sms`, 2026-11-17); the colour **only with a chosen glyph**, as
  * for every app (a glyph with [AUTO_COLOR] keeps the teal); the app's-own-logo key is no glyph of ours. */
 fun messagesLook(entry: AppDisplayEntry?): MessagesLook {
     val glyph = entry?.icon?.let { AppGlyphs.ICONS[it] } ?: return MessagesLook(name = entry?.label)
@@ -193,13 +193,15 @@ object AppDisplay {
         } catch (e: Exception) {
             null
         }
-        val own = try {
-            val pm = context.packageManager
-            pm.getApplicationLabel(pm.getApplicationInfo(packageName, 0)).toString()
-        } catch (e: Exception) {
-            packageName
-        }
-        return displayLabel(label(packageName), kidRename, own)
+        return displayLabel(label(packageName), kidRename, ownLabel(context, packageName) ?: packageName)
+    }
+
+    /** The app's own Android label; `null` when it can't be read (design 115 §3: never the package name). */
+    fun ownLabel(context: Context, packageName: String): String? = try {
+        val pm = context.packageManager
+        pm.getApplicationLabel(pm.getApplicationInfo(packageName, 0)).toString()
+    } catch (e: Exception) {
+        null
     }
 
     /** Reads the cached policy (`Ok` only - a corrupt or missing cache shows the apps' own names);

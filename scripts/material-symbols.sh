@@ -24,6 +24,9 @@
 #   SHORTCUT_GLYPHS below)
 #   launcher/app/src/main/res/drawable/ic_kid_call_<key>.xml   (Siste's incoming and outgoing calls, design 106;
 #   CALL_GLYPHS below)
+#   launcher/app/src/main/res/drawable/ic_kid_<key>.xml   (Home's built-in tiles Telefonbok, Innstillinger and Meldinger,
+#   2026-11-17; BUILTIN_GLYPHS below) and server/static/app-icons/sms.svg (Meldinger's own glyph in the PWA's preview,
+#   not a parent choice, so not in app_icons.json)
 #   music/app/src/main/res/drawable/player_glyph_<key>.xml   (the music player's 15 s back / 30 s on and the favourite
 #   heart, design 50; PLAYER_GLYPHS below)
 # Every converted file says what it was converted from (Apache-2.0 §4(b)).
@@ -80,6 +83,9 @@ brightness_high f0293c231724d9e6ad511b66465daa621c086c11c8106e88476dead94633fec4
 more_time b30b77839a4137f89c5b620b71ec47676806e594aac5f55bad87486a9d58993e
 call_received ded40fee193027c17c40f3782636bc2b2c96d05cffbfb707d8036bc354775547
 call_made cc1bf7cef8167639587f0fea7cd6a03d0afecf322f0aa0e8cf33743dd4c9c90c
+call 799229c2538fa32f883fd41afff038016cf0cbeed0ed84da4b6bc1a5653d3464
+settings 349d48c9515c5cc92bfd22fc5cab61a6d9b90e680825edfa5f77e15f4b2265ef
+sms 95c3e37542e516a28c7ee1227e81e4e6044cdee8b7b5de796d84931a7f5673fa
 HASHES
 
 while read -r name sha; do
@@ -154,8 +160,13 @@ SHORTCUT_GLYPHS = {"sound": "volume_up", "vibrate": "vibration", "airplane": "ai
                    "more_time": "more_time", "music": "music_note"}
 # Siste in the phone book (design 106 §3.6): a call that came in and one the kid made.
 CALL_GLYPHS = {"in": "call_received", "out": "call_made"}
+# Home's built-in tiles (2026-11-17, the user: one Material Symbols set): Telefonbok the handset, Innstillinger the gear,
+# Meldinger the bubble with dots (a parent-chosen "chat" app keeps the plain bubble). Also the time-rule screen's
+# phone-book row and Meldinger's default look (AppDisplay.kt's MessagesLook, the server's MESSAGES_LOOK).
+BUILTIN_GLYPHS = {"phone_book": "call", "settings": "settings", "sms": "sms"}
+write_web_svg("server/static/app-icons", "sms", "sms")
 for prefix, glyphs in (("lock_glyph", LOCK_GLYPHS), ("torch_glyph", TORCH_GLYPHS), ("clock_glyph", CLOCK_GLYPHS),
-                       ("shortcut_glyph", SHORTCUT_GLYPHS), ("ic_kid_call", CALL_GLYPHS)):
+                       ("shortcut_glyph", SHORTCUT_GLYPHS), ("ic_kid_call", CALL_GLYPHS), ("ic_kid", BUILTIN_GLYPHS)):
     for key, name in glyphs.items():
         with open(f"launcher/app/src/main/res/drawable/{prefix}_{key}.xml", "w") as out:
             out.write('<?xml version="1.0" encoding="utf-8"?>\n'

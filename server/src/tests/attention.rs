@@ -157,6 +157,17 @@ async fn each_fact_raises_its_own_row() {
         .execute(&app.db)
         .await
         .unwrap();
+        if key == "boot-cover-not-shown" {
+            // 2026-11-17: "not shown" only once the phone started after the arm.
+            sqlx::query(
+                "INSERT INTO parent_events (device_id, kind, dedup_key, title, summary, target, happened_at) \
+                 VALUES (?, 'phone_on', 'on', 'on', 'on', '/devices', datetime('now'))",
+            )
+            .bind(id)
+            .execute(&app.db)
+            .await
+            .unwrap();
+        }
         report(&app, &token, json!({"capabilities": escapes})).await;
         assert_eq!(rows(&app, &cookie, id).await, Vec::<String>::new(), "{key}");
         report(&app, &token, extra).await;

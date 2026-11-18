@@ -1695,6 +1695,11 @@ pub struct StatusReportRequest {
     /// `notification_channels::clean`. A full-report field, not a heartbeat field. Absent from older launchers.
     #[serde(default)]
     pub notification_channels: Option<serde_json::Value>,
+    /// Design 115 §2.8: `{held}` - why the phone holds its app-push queue (`no_network`) or `none`; raw, cleaned by
+    /// `unified_push::clean_report` into `device_status.up_held`. A full-report field, sent while UP is on. Absent from
+    /// older launchers.
+    #[serde(default)]
+    pub unified_push: Option<serde_json::Value>,
     /// Design 76: the launcher's certificate check (`testdata/server_tls_report.json`'s `report`), raw - read
     /// within limits by `server_tls::sanitize`, so nothing in it can fail the report. Absent from older launchers.
     #[serde(default)]

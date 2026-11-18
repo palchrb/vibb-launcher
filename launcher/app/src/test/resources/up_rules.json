@@ -1,5 +1,5 @@
 {
-  "comment": "Design 108's launcher-only rules (§5.1, §5.4, §2.3): UpRulesTest, UpDeliveryPlanTest, UpReconcileTest. The rows are one phone's registrations; the times are wall-clock ms.",
+  "comment": "Design 108's launcher-only rules (§5.1, §5.4, §2.3): UpRulesTest, UpDeliveryPlanTest, UpReconcileTest. Design 115's hold rows (§2.3): inputs filter,parent_sink,roaming_locked,abroad_armed,kid_off; net cellular,roaming,abroad,unsure (null: none seen); running and lockdown true unless given. The rows are one phone's registrations; the times are wall-clock ms.",
   "rows": [
     {"reg": "c0ffee00000000000000000000000001", "pkg": "org.unifiedpush.example", "token": "tok-example-1", "secret": "FakeSecretForTheContract001", "endpoint": "https://phones.example.com/up/FakeSecretForTheContract001", "state": "confirmed", "created_at_ms": 1000, "confirmed_at_ms": 2000},
     {"reg": "c0ffee00000000000000000000000002", "pkg": "io.element.android.x", "token": "tok-element-1", "secret": "FakeSecretForTheContract002", "endpoint": "https://phones.example.com/up/FakeSecretForTheContract002", "state": "confirmed", "created_at_ms": 4000, "confirmed_at_ms": 5000, "message": "@emma:example.org"},
@@ -96,7 +96,28 @@
     {"case": "not listed: never", "now_ms": 3456000000, "in_use": true, "reg": "c0ffee00000000000000000000000002", "refresh": [], "row": {}, "send": false},
     {"case": "refused is refreshed the same way", "now_ms": 3456000000, "in_use": true, "reg": "c0ffee00000000000000000000000002", "refresh": [{"reg": "c0ffee00000000000000000000000002", "why": "refused"}], "row": {}, "send": true},
     {"case": "an unknown why reads as outside", "now_ms": 3456000000, "in_use": true, "reg": "c0ffee00000000000000000000000002", "refresh": [{"reg": "c0ffee00000000000000000000000002", "why": "later"}], "row": {}, "send": true},
-    {"case": "a pending row is never refreshed", "now_ms": 3456000000, "in_use": true, "reg": "c0ffee00000000000000000000000003", "refresh": [{"reg": "c0ffee00000000000000000000000003", "why": "outside"}], "row": {}, "send": false}
+    {"case": "a pending row is never refreshed", "now_ms": 3456000000, "in_use": true, "reg": "c0ffee00000000000000000000000003", "refresh": [{"reg": "c0ffee00000000000000000000000003", "why": "outside"}], "row": {}, "send": false},
+    {"case": "design 115: due and in use, but held - waits", "now_ms": 3456000000, "in_use": true, "held": true, "reg": "c0ffee00000000000000000000000002", "refresh": [{"reg": "c0ffee00000000000000000000000002", "why": "outside"}], "row": {}, "send": false}
+  ],
+  "hold": [
+    {"case": "Wi-Fi, Bare Vibb", "on": true, "inputs": "1,1,0,0,0", "net": "0,0,0,0", "decided": "filter", "tunnel": "filter", "held": "none"},
+    {"case": "cellular, Bare Vibb", "on": true, "inputs": "1,1,0,0,0", "net": "1,0,0,0", "decided": "sink", "tunnel": "sink", "held": "no_network"},
+    {"case": "cellular, the kid's Off", "on": true, "inputs": "1,0,0,0,1", "net": "1,0,0,0", "decided": "sink", "tunnel": "sink", "held": "no_network"},
+    {"case": "Wi-Fi, the kid's Off", "on": true, "inputs": "0,0,0,0,1", "net": "0,0,0,0", "decided": "pass", "tunnel": "pass", "held": "none"},
+    {"case": "abroad, I utlandet Bare Vibb", "on": true, "inputs": "0,0,0,1,0", "net": "1,1,1,0", "decided": "sink", "tunnel": "sink", "held": "no_network"},
+    {"case": "cellular roaming that can't be placed, abroad armed", "on": true, "inputs": "0,0,0,1,0", "net": "1,1,0,1", "decided": "pass", "tunnel": "pass", "held": "no_network"},
+    {"case": "roaming session past the lock", "on": true, "inputs": "1,0,1,0,0", "net": "1,1,0,0", "decided": "sink", "tunnel": "sink", "held": "no_network"},
+    {"case": "cellular, mobile data on", "on": true, "inputs": "1,0,0,0,0", "net": "1,0,0,0", "decided": "filter", "tunnel": "filter", "held": "none"},
+    {"case": "cellular, filter off, nothing armed, no service", "on": true, "inputs": "0,0,0,0,0", "net": "1,0,0,0", "decided": "none", "tunnel": null, "running": false, "held": "none"},
+    {"case": "Wi-Fi just dropped: wanted sink, tunnel still pass", "on": true, "inputs": "0,1,0,0,0", "net": "1,0,0,0", "decided": "pass", "tunnel": "pass", "held": "no_network"},
+    {"case": "Wi-Fi back: wanted pass, decided pass, tunnel still sink", "on": true, "inputs": "0,1,0,0,0", "net": "0,0,0,0", "decided": "pass", "tunnel": "sink", "held": "no_network"},
+    {"case": "the sink's establish failed: lockdown, the old filter tunnel", "on": true, "inputs": "1,1,0,0,0", "net": "1,0,0,0", "decided": "sink", "tunnel": "filter", "held": "no_network"},
+    {"case": "no network seen, the persisted sink kept", "on": true, "inputs": "1,1,0,0,0", "net": null, "decided": "sink", "tunnel": null, "held": "no_network"},
+    {"case": "decided sink, no tunnel, Wi-Fi seen: the service dead under lockdown", "on": true, "inputs": "1,1,0,0,0", "net": "0,0,0,0", "decided": "sink", "tunnel": null, "running": false, "held": "no_network"},
+    {"case": "decided sink without our lockdown (the VPN taken over)", "on": true, "inputs": "1,1,0,0,0", "net": "0,0,0,0", "decided": "sink", "tunnel": null, "running": false, "lockdown": false, "held": "none"},
+    {"case": "a pause: Bare Vibb lifted, filter off", "on": true, "inputs": "0,0,0,0,0", "net": "1,0,0,0", "decided": "none", "tunnel": null, "running": false, "held": "none"},
+    {"case": "a pause, the kid's Off (no lift touches it)", "on": true, "inputs": "0,0,0,0,1", "net": "1,0,0,0", "decided": "sink", "tunnel": "sink", "held": "no_network"},
+    {"case": "UP off", "on": false, "inputs": "1,1,0,0,0", "net": "1,0,0,0", "decided": "sink", "tunnel": "sink", "held": "none"}
   ],
   "pass": [
     {"case": "a ping and a refresh due together: one NEW_ENDPOINT, the ping's, the refresh counted done (L2)", "boot": 7, "now_ms": 3456000000, "in_use": true, "reg": "c0ffee00000000000000000000000002", "refresh": [{"reg": "c0ffee00000000000000000000000002", "why": "outside"}], "row": {"last_app_ack_ms": 1382400000}, "sends": ["ping"], "dead": false, "refresh_ms": 3456000000},

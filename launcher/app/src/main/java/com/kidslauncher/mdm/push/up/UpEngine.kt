@@ -43,8 +43,9 @@ interface UpServer {
     /** True when the server has no such registration any more (204). */
     fun unregister(reg: String): Boolean
 
-    /** One pull: [acks] deleted, then the next batch; `null` when it failed (the acks are kept). */
-    fun pull(acks: List<String>): UpMessagesAnswer?
+    /** One pull: [acks] deleted, then the next batch; `null` when it failed (the acks are kept). [held]: the first run
+     * after a hold (design 115 §2.5). */
+    fun pull(acks: List<String>, held: Boolean = false): UpMessagesAnswer?
 }
 
 /** The phone side: the connector's broadcasts, the target app's state, and the raise-and-send. */
@@ -66,6 +67,13 @@ interface UpPhone {
 
     /** Asks for a pull after [delayMs] (the acks of sends that happened after the last pull). */
     fun pullLater(delayMs: Long)
+
+    /** Design 115: whether the apps have no network now (the VPN's sink), so the queue stays on the server. */
+    fun hold(): UpHold
+
+    /** Design 115 §2.4: the "net" pull, 2 s after the last ask (each ask moves it), with its own wake lock; it checks
+     * the hold again when it runs and tries once more 10 s later when only the wanted shape still holds. */
+    fun pullAfterHold()
 }
 
 
@@ -111,6 +119,15 @@ class UpEngine(
 
     private var pullRunning = false
     private var pullAgain = false
+
+    /** Design 115 §2.5 (QA M5, the one owner): a hold was seen since the last pull run that said so. Every step of the
+     * next run posts `held`; cleared only when such a run ends with an answer. Memory only: a new process opens a new
+     * stream generation, so its hand-outs never count the hold anyway. */
+    @Volatile
+    private var heldSeen = false
+
+    /** A hold was seen and no pull run has said so yet (the runtime's settle after a shape change reads it). */
+    val held: Boolean get() = heldSeen
 
     /** A pull is running or trails (the runtime's wake lock, code QA L2). */
     val pullActive: Boolean get() = pullRunning
@@ -379,7 +396,11 @@ class UpEngine(
         keep = keep.map { UpRules.clamped(it, now) }
         // Design 108b: the liveness ping and the refresh, on the kept rows (the rewritten endpoints included): one
         // NEW_ENDPOINT per row (L2), the ping's id when a ping is due.
-        val pass = if (view.on) UpRules.pass(keep, view.refresh, boot(), now, phone.inUse()) else UpRules.UpPass(emptyList(), emptyList())
+        val pass = if (view.on) {
+            UpRules.pass(keep, view.refresh, boot(), now, phone.inUse(), held = phone.hold() != UpHold.NONE)
+        } else {
+            UpRules.UpPass(emptyList(), emptyList())
+        }
         keep = applyPass(keep, pass)
         // L8: nothing is sent for a pass whose stamps couldn't be stored (it would send again at every sync and unlock).
         val stored = keep == rows || store.write(keep)
@@ -401,7 +422,7 @@ class UpEngine(
         val rows = rowsOrNull() ?: return
         val now = clock()
         val clamped = rows.map { UpRules.clamped(it, now) }
-        val pass = UpRules.pass(clamped, view.refresh, boot(), now, phone.inUse())
+        val pass = UpRules.pass(clamped, view.refresh, boot(), now, phone.inUse(), held = phone.hold() != UpHold.NONE)
         val after = applyPass(clamped, pass)
         if (pass.sends.isEmpty() && pass.dead.isEmpty() && after == rows) return
         val store = store()
@@ -453,10 +474,37 @@ class UpEngine(
         }
     }
 
-    /** A pull was asked for (an `up` event, a reopen, a sync, the acks of late sends): one runs, one more trails. */
+    /**
+     * Design 115: the runtime refused a pull for the hold before it took the wake lock, or (with [askPull]) a MESSAGE's
+     * send found the phone held (QA M1 (c)): noted, and for a send the "net" pull asked - a hold that ends with no change
+     * of shape (a moment's disagreement of the views) still gets its pull.
+     */
+    fun noteHeld(askPull: Boolean = false) {
+        heldSeen = true
+        if (askPull) phone.pullAfterHold()
+    }
+
+    /**
+     * Design 115 §2.4: the VPN's shape changed (a tunnel, a decision, the service gone). A hold is noted; once any hold
+     * was seen, the "net" pull is asked (QA M1 (b): not a transition judged at this one call - the pull checks again).
+     */
+    fun shapeChanged() {
+        if (!unlocked() || !view().on) return
+        if (phone.hold() != UpHold.NONE) heldSeen = true
+        if (heldSeen) phone.pullAfterHold()
+    }
+
+    /** A pull was asked for (an `up` event, a reopen, a sync, the acks of late sends): one runs, one more trails. Held
+     * (design 115), none runs and the messages stay on the server. */
     fun requestPull(reason: String): Boolean {
         if (!unlocked()) return false
         if (!view().on) return false
+        val hold = phone.hold()
+        if (hold != UpHold.NONE) {
+            heldSeen = true
+            log("Pull held (${hold.wire})")
+            return false
+        }
         if (pullRunning) {
             pullAgain = true
             return false
@@ -485,8 +533,16 @@ class UpEngine(
         // A send that never happened leaves its entry; the map stays small whatever happens.
         if (delivering.size > DELIVERING_MAX) delivering.clear()
         persistDelivered(rows)
+        // Design 115: held at a step (Wi-Fi dropped mid-pull) ends the pull; the acks wait for the first pull after it.
+        val hold = phone.hold()
+        if (hold != UpHold.NONE) {
+            heldSeen = true
+            log("Pull held (${hold.wire})")
+            return finishPull(false)
+        }
         val sending = acks.take(ACK_MAX)
-        val answer = api.pull(sending)
+        val held = heldSeen
+        val answer = api.pull(sending, held)
         if (answer == null) return finishPull(false)
         acks.removeAll(sending.toSet())
         val now = rowsOrNull() ?: return finishPull(false)
@@ -521,6 +577,8 @@ class UpEngine(
         // Code QA M1: `more` loops only when this step handled something new; a batch still in the raise waits for its
         // sends ([sent] asks a pull 6 s later), never spins.
         val again = (answer.more && handled > 0) || pullAgain || acks.size > ACK_MAX
+        // QA M5: a run that said `held` and got its answers ends the mark; a failed call above keeps it for the next run.
+        if (held && !again) heldSeen = false
         return finishPull(again)
     }
 

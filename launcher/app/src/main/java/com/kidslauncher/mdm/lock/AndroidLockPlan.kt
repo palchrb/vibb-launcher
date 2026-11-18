@@ -141,6 +141,38 @@ fun askRecoveryDue(askAgeMs: Long?, focused: Boolean): Boolean =
     askAgeMs != null && askAgeMs >= ANDROID_ASK_TIMEOUT_MS && focused
 
 /**
+ * The empty shade over the pad (2026-11-17 check, item 4; Android 16 and up): SystemUI 16 reads a swipe down on the
+ * glance as a status-bar long press that ignores the disabled shade and leaves its expansion waiting; the pad our ask
+ * brings up releases it, and SystemUI drops the pad again (`PRIMARY_BOUNCER -> OCCLUDED`, no answer to the ask) - the
+ * glance's window has the focus back within ~0.4 s, with an empty shade over it. A second ask then brings the pad over
+ * the shade. So, as the gesture ask's one retry ([gestureAskRetryDue]): the focus back within [PAD_DROP_WINDOW_MS] of
+ * an open, unanswered ask ([askAgeMs]), the same screen-on ([sameScreenOn]) and the keyguard still locked
+ * ([keyguardLocked]) asks once more after [PAD_DROP_RETRY_DELAY_MS] - never twice ([retried]), never before Android 16
+ * ([sdkInt]: 14 and 15 have no such long press and never showed it).
+ */
+fun padDropRetryDue(sdkInt: Int, retried: Boolean, askAgeMs: Long?, sameScreenOn: Boolean, keyguardLocked: Boolean): Boolean =
+    sdkInt >= PAD_DROP_MIN_SDK && !retried && askAgeMs != null && askAgeMs in 0 until PAD_DROP_WINDOW_MS && sameScreenOn &&
+        keyguardLocked
+
+/**
+ * [padDropRetryDue]'s ask, when its delay is up: only while it is still that ask, open with no answer ([sameAsk]), and
+ * still nothing of SystemUI over the glance ([focused] - a pad that is up holds the focus, so a second ask never goes
+ * over it), the keyguard locked, the screen on, the glance LOCKED in front and asking ([lockAsking]) and no call. Any
+ * of them false or unreadable: no retry - the old 2 s recovery ([askRecoveryDue]) as before.
+ */
+fun padDropReaskNow(sameAsk: Boolean, focused: Boolean, keyguardLocked: Boolean, interactive: Boolean, lockAsking: Boolean, callLive: Boolean): Boolean =
+    sameAsk && focused && keyguardLocked && interactive && lockAsking && !callLive
+
+/** [padDropRetryDue]: Android 16 (`Build.VERSION_CODES.BAKLAVA`). */
+const val PAD_DROP_MIN_SDK = 36
+
+/** [padDropRetryDue]: the dropped pad gave the focus back ~0.4 s after the ask on `jelly36`. */
+const val PAD_DROP_WINDOW_MS = 1_000L
+
+/** [padDropRetryDue]: the drop's transition is over by then. */
+const val PAD_DROP_RETRY_DELAY_MS = 500L
+
+/**
  * 59 §3.1 (Q59-2, L-4): this process start is UNLOCKED - the boot's **first** CE start with the face (CE
  * unlocked means the PIN was typed) - by the boot count against CE `android_boot_count`, which every CE
  * start writes in every mode. An unknown boot count is a later start: LOCKED.

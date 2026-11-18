@@ -1089,6 +1089,24 @@ pub async fn offs_now<'e, E: sqlx::SqliteExecutor<'e>>(
     .await
 }
 
+/// The newest `phone_on`'s instant of `device` (its `happened_at`, the phone's clock, as ms): the boot cover's "not
+/// shown" waits for a start after the arm (`kiosk_escapes::boot_cover_notes`, 2026-11-17).
+pub async fn last_phone_on_ms<'e, E: sqlx::SqliteExecutor<'e>>(
+    db: E,
+    device: i64,
+) -> Result<Option<i64>, sqlx::Error> {
+    let at: Option<String> = sqlx::query_scalar(
+        "SELECT MAX(happened_at) FROM parent_events WHERE device_id = ? AND kind = 'phone_on'",
+    )
+    .bind(device)
+    .fetch_one(db)
+    .await?;
+    Ok(at
+        .as_deref()
+        .and_then(crate::display_time::parse_db_utc)
+        .map(|at| at.timestamp_millis()))
+}
+
 /// The status lines' [OffSince] between a shutdown and the next start (design 38 §3.4), the battery
 /// from the off's parameters (design 70), or read from an older row's stored words. Nothing for a
 /// restart the phone announced or while the off's push is still held ([OFF_HOLD] from its arrival,

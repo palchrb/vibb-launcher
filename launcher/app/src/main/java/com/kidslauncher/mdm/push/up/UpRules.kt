@@ -1,5 +1,9 @@
 package com.kidslauncher.mdm.push.up
 
+import com.kidslauncher.mdm.server.BestNet
+import com.kidslauncher.mdm.server.VpnInputs
+import com.kidslauncher.mdm.server.VpnShape
+import com.kidslauncher.mdm.server.applyShape
 import com.kidslauncher.mdm.server.dto.PolicyResponse
 import java.security.SecureRandom
 import java.util.Base64
@@ -27,6 +31,15 @@ data class UpView(
 
     /** The package may hold registrations: on, on the allowlist (any on an unmanaged phone), not stopped. */
     fun mayRegister(pkg: String): Boolean = on && (allowlist == null || pkg in allowlist) && pkg !in stopped
+}
+
+/** Design 115: why the phone holds its app-push queue (no pull, no send). [wire] is the status report's
+ * `unified_push.held`. */
+enum class UpHold(val wire: String) {
+    NONE("none"),
+
+    /** The VPN's sink: every app but Vibb One is cut from the network (design 95 rev. 3, 97). */
+    NO_NETWORK("no_network"),
 }
 
 /** A REGISTER's way, from [UpRules.registerDecision]. */
@@ -318,8 +331,9 @@ object UpRules {
      * [inUse] (the phone is interactive and not idle: the app's own discovery needs the network). A row never listed, a
      * pending one and a `reg` the phone doesn't hold are never refreshed.
      */
-    fun refreshes(rows: List<UpRow>, refresh: List<UpRefresh>, nowMs: Long, inUse: Boolean): List<UpSend> {
-        if (!inUse || refresh.isEmpty()) return emptyList()
+    fun refreshes(rows: List<UpRow>, refresh: List<UpRefresh>, nowMs: Long, inUse: Boolean, held: Boolean = false): List<UpSend> {
+        // Design 115 §2.4: held, the app can't reach its server to re-register; the refresh waits like a phone not in use.
+        if (!inUse || held || refresh.isEmpty()) return emptyList()
         val listed = refresh.map { it.reg }.toSet()
         return rows.filter { it.confirmed && it.reg in listed && refreshDue(it, nowMs) }
             .map { UpSend(it.copy(refreshMs = nowMs), newId(), "refresh") }
@@ -332,16 +346,34 @@ object UpRules {
 
     /** [liveness] and [refreshes] in one pass, one `NEW_ENDPOINT` per row (L2): a refresh due with a ping (or its re-send)
      * rides on it - the ping's id - and counts as done. */
-    fun pass(rows: List<UpRow>, refresh: List<UpRefresh>, boot: Int, nowMs: Long, inUse: Boolean): UpPass {
+    fun pass(rows: List<UpRow>, refresh: List<UpRefresh>, boot: Int, nowMs: Long, inUse: Boolean, held: Boolean = false): UpPass {
         val live = liveness(rows, boot, nowMs)
         val deadRegs = live.dead.map { it.reg }.toSet()
         val sends = live.sends.toMutableList()
-        for (send in refreshes(rows.filter { it.reg !in deadRegs }, refresh, nowMs, inUse)) {
+        for (send in refreshes(rows.filter { it.reg !in deadRegs }, refresh, nowMs, inUse, held)) {
             val at = sends.indexOfFirst { it.row.reg == send.row.reg }
             if (at >= 0) sends[at] = sends[at].copy(row = sends[at].row.copy(refreshMs = nowMs)) else sends += send
         }
         return UpPass(sends, live.dead)
     }
+
+    /**
+     * Design 115 §2.3: held while any view of the VPN says the sink - the tunnel the service has up ([tunnel], `null`
+     * without one), the shape last decided ([decided]: the sink's lockdown cuts the apps even when its tunnel failed,
+     * design 95 code QA M1) and the shape the service's own view of the network asks for ([wanted]: a Wi-Fi -> cellular
+     * switch is held before the tunnel follows). So the hold starts early and ends late. UP off holds nothing.
+     */
+    fun hold(on: Boolean, tunnel: VpnShape?, decided: VpnShape?, wanted: VpnShape?): UpHold =
+        if (on && (tunnel == VpnShape.SINK || decided == VpnShape.SINK || wanted == VpnShape.SINK)) UpHold.NO_NETWORK else UpHold.NONE
+
+    /**
+     * [hold] from what the runtime reads (QA L1, M1 (a)): the persisted decision [persisted] counts only while Android's
+     * always-on VPN is ours with lockdown ([lockdown]: what cuts the apps without a tunnel), and the wanted shape only
+     * while the VPN service runs ([running]) - `applyShape` on the stored [inputs] with the network the service's watcher
+     * saw last ([net]), the service's own rule (`serviceShape`).
+     */
+    fun holdOf(on: Boolean, tunnel: VpnShape?, persisted: VpnShape?, lockdown: Boolean, running: Boolean, inputs: VpnInputs, net: BestNet?): UpHold =
+        hold(on, tunnel, persisted.takeIf { lockdown }, if (running) applyShape(inputs, net, persisted) else null)
 
     /** A registration key: 16 random bytes, 32 lowercase hex. */
     fun newReg(): String = hex(16)
