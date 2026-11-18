@@ -1417,3 +1417,31 @@ recommendation and are still asked (answered in revision 3b).
 | **L11** §2.3 and row 1 disagree | §2.3: the phone reads `parent_pin` from its policy, `device_owner` is its own reading |
 | Question 1 | 4 hours recommended (§3.2's `setup_hold_max_ms` 14400000, §6.1.3, §10, §11, §12); answered: 4 hours |
 | Question 2 | Home leads to the flow, as guidance, with M2/M3 built with it (§6.2.1, §12); answered: yes |
+
+## Build notes (launcher, 2026-11-18)
+
+Built on branch `design-114-build`; the launcher side's code notes are `docs/notes/launcher/setup.md`.
+- **Versions checked:** against the Android 14 (API 34) and 16 (API 36) platform APIs the code calls; every API used
+  is API 34 or lower (`canUseFullScreenIntent` and `ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT` 34,
+  `isDataEnabledForReason` and `ACTION_APP_OPEN_BY_DEFAULT_SETTINGS` 31, `READ_BASIC_PHONE_STATE` 33), so there is no
+  version gate and lint's NewApi has nothing to flag; predictive back (16 at targetSdk 36) goes through an
+  `OnBackPressedCallback`; edge-to-edge (15+) by `fitsSystemWindows`. Not run on a device yet: the emulator gate
+  (§11, `docs/testing/emulator.md` §6bb) waits for the user's OK; Android 17 is owed (no emulator).
+- **`write_settings_used`** reads bit 8 (Sound) too, beside bit 16 and the clock format: the kid's ringtone picks write
+  `Settings.System`, and the server's `airplane_mode::write_settings_needed` already counted it. The contract's
+  `needed` rows pin it.
+- **The Parent PIN reading on the phone** comes from the vault (`ParentPin.status().configured`): since design 24b the
+  cached policy carries no PIN hash.
+- **The flow's position** is the first missing step not put off; `SetupRun` keeps the skips, the steps shown (for
+  "2 av 7") and the steps whose page is missing for the run.
+- **Row 8 while Vibb is the dialer:** Android greys an off channel's switch (design 107's gate §6ax), so the step's
+  line adds "Er en bryter grå: sett Anrop og SMS til «Ikke styrt» i foreldreappen først, og tilbake etterpå." (the old
+  Settings row's words, shortened).
+- **Row 17's line** (`setup_how_fingerprint`, "Legg til et fingeravtrykk." / "Add a fingerprint."): §5.6 has no ⓘ text
+  for it; the phone's screen needs one line.
+- **The restricted-setting line of §7.2** isn't built: it is added only if the gate finds the switch greyed.
+- **Removed with the moved Settings rows:** their pure row-state helpers (`assistantRowState`, `wifiApmRowState`,
+  `writeSettingsRowState`, `batteryRowState`, `fingerprintStateText`/`ActionText`, `mediaLockText`,
+  `notificationsRowText`, `setupStepsLeft`, `screeningRowShown`, `assistantRowShown`), their strings and tests.
+- **The approved small fix of this round:** `settings_mdm_server_url_tailnet_http` keeps the state ("Vanlig http,
+  bare gjennom tailnettet.") and loses the advice sentence (docs/review/2026-11-18-choices-not-warnings.md).

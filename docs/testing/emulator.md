@@ -5004,6 +5004,13 @@ Run on `jelly36` (16) and `compat34` (14) with §6ay's rig and a probe that fetc
 the rows, the results and the one fix it found (the 1.5 s settle after a shape change) are in
 `docs/testing/2026-11-18-up-held-gate.md`. Owed: row 8 (abroad), Android 17, the Jelly Star with Element X.
 
+## 6bb. The phone's setup: the hold and the guided flow (design 114, branch `design-114-build`) - not run yet
+
+Needs the user's OK first. The rows are design 114 §11's table (rows 1-16), on `compat34` (14, `-wipe-data`) and
+`jelly36` (16, a restore taken before enrolment); a fresh enrolment each time (the hold starts only on a phone that
+never applied a policy). The phone "Testtelefon" with a test Parent PIN set before the code (Connect needs it). The
+adb shortcuts the PWA no longer shows are in `docs/setup/android-settings.md`, "The emulator's adb shortcuts".
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:
