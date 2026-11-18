@@ -4455,12 +4455,14 @@ mod entries {
             save(999, kid.to_string()).await.status,
             StatusCode::NOT_FOUND
         );
-        // One account on two phones: a note (a short title, one sentence) on both pages, and the
-        // Attention row on both summaries (qa-26c-merge2-code L3).
+        // One account on two phones: a quiet note (a short title, one sentence) on both pages, no
+        // Attention row on the summaries (2026-11-18: the PWA allows it).
         save(ola, kid.to_string()).await;
         for device in [ella, ola] {
             let page = card(device).await;
             assert!(page.contains("Two phones share one account"), "{page}");
+            assert!(page.contains("data-note"), "{page}");
+            assert!(!page.contains("data-warning"), "{page}");
             assert!(page.contains(
                 "Ella's and Ola's phones both play as Ella, and Spotify plays on one phone at a \
                  time: give each child their own."
@@ -4473,7 +4475,7 @@ mod entries {
             );
             let summary = page_text(&app.get_page(&format!("/devices/{device}"), &cookie).await);
             assert!(
-                summary.contains("Two phones share a Spotify account"),
+                !summary.contains("Two phones share a Spotify account"),
                 "{summary}"
             );
         }
@@ -4565,7 +4567,7 @@ mod entries {
         assert_eq!(binding(&app, ella).await, None);
         let page = card(ella).await;
         assert!(page.contains(
-            "<span class=\"row-sub tone-orange\" data-row=\"spotify-off\">Its Spotify entry isn't sent.</span>"
+            "<span class=\"row-sub\" data-row=\"spotify-off\">Its Spotify entry isn't sent.</span>"
         ));
         assert!(
             !filter(ella)

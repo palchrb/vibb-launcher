@@ -64,7 +64,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   "Access" card until design 31 step 3; a phone not set up has the summary's Connect This Phone group instead): the live
   code's kind and local expiry, New Setup Code (re-enroll: disconnects the enrolled phone), Set Up with QR Code,
   Disconnect Phone… (a `<details>` confirm with the required box; `POST /devices/{id}/revoke`; `token_hash = NULL`,
-  index, streams closed, `access_revoked`; back to `/devices/{id}/advanced?notice=…#connection`, the flash in the group).
+  index, streams closed, `access_revoked`; back to `/devices/{id}/advanced?notice=…#connection`, the flash in the group; the revoked state is a quiet line in the group, no Attention row, 2026-11-18).
 - **Admin auth** (S4, `src/admin_auth.rs`, migration `0053_admin_auth.sql`; no step-up, user decision U2): argon2
   (verify and change) runs in `spawn_blocking` behind `AppState.passwords` (`PasswordGate`: 1 running, 4 queued, else
   429), an unknown username verifies a dummy hash. Wrong passwords never lock the account (only the per-IP ban, now

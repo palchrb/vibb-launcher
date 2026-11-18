@@ -164,16 +164,15 @@ pub enum PlayNote {
     InstallMode { until_ms: i64 },
     /// A device-admin policy waits for a restart (`models::admin_policy_effects`).
     RestartOnce(Vec<&'static str>),
-    /// Android won't suspend Play on this phone; `block_on`: the kiosk app block is on.
-    NotSuspendable { block_on: bool },
 }
 
 impl PlayNote {
     pub fn note(&self, zone: &Zone, now: DateTime<Utc>) -> Note {
         let lang = zone.lang();
         match self {
+            // Install mode is the parent's own choice: a quiet line, never a warning (2026-11-18).
             PlayNote::InstallMode { until_ms } => Note {
-                warning: true,
+                warning: false,
                 title: t_params(
                     lang,
                     "device.advanced.play.install_mode",
@@ -208,24 +207,6 @@ impl PlayNote {
                 )),
                 fix: None,
             },
-            PlayNote::NotSuspendable { block_on } => Note {
-                warning: true,
-                title: t(lang, "device.advanced.play.not_suspendable").to_string(),
-                value: None,
-                sub: None,
-                detail: Some(
-                    t(
-                        lang,
-                        if *block_on {
-                            "device.advanced.play.blocked_while_on"
-                        } else {
-                            "device.advanced.play.block_off"
-                        },
-                    )
-                    .to_string(),
-                ),
-                fix: None,
-            },
         }
     }
 }
@@ -234,6 +215,10 @@ impl PlayNote {
 pub(crate) struct PlayCard {
     /// `device_policy.block_activity_start` (handy step 9).
     pub block_activity_start: bool,
+    /// Android won't suspend Play and the block is off: apps can open the Play Store. The parent's
+    /// choice, a sentence behind the block switch's ⓘ (2026-11-18). With the block on, Play's
+    /// missing suspension shows nothing.
+    pub openable: bool,
     pub notes: Vec<PlayNote>,
 }
 
@@ -254,16 +239,14 @@ pub(crate) async fn play_card(
             .unwrap_or(true);
     PlayCard {
         block_activity_start,
-        notes: play_notes(latest, block_activity_start, now_ms),
+        openable: !block_activity_start
+            && latest.is_some_and(|st| st.play_store_suspendable == Some(false)),
+        notes: play_notes(latest, now_ms),
     }
 }
 
 /// [PlayCard]'s notes, in the old card's order. Pure.
-pub(crate) fn play_notes(
-    latest: Option<&DeviceStatus>,
-    block_activity_start: bool,
-    now_ms: i64,
-) -> Vec<PlayNote> {
+pub(crate) fn play_notes(latest: Option<&DeviceStatus>, now_ms: i64) -> Vec<PlayNote> {
     let mut notes = Vec::new();
     let Some(status) = latest else {
         return notes;
@@ -276,11 +259,6 @@ pub(crate) fn play_notes(
         crate::models::admin_policy_effects(status.admin_policies_pending_json.as_deref());
     if !effects.is_empty() {
         notes.push(PlayNote::RestartOnce(effects));
-    }
-    if status.play_store_suspendable == Some(false) {
-        notes.push(PlayNote::NotSuspendable {
-            block_on: block_activity_start,
-        });
     }
     notes
 }
@@ -536,11 +514,7 @@ fn connection_rows(
             t(lang, "device.about.network"),
             access.via.label(lang),
         )
-        .class(if access.via == crate::limits::Via::Public {
-            "row-value-action"
-        } else {
-            ""
-        })
+        // Outside the tailnet is a quiet value (2026-11-18), the addresses behind the ⓘ.
         .detail(access.detail(lang)),
         None => Row::new(
             "network",
@@ -686,7 +660,12 @@ pub async fn view_about(
                     t(lang, "apps.perms.access.write_settings"),
                     t(lang, "device.summary.blocked.not_allowed"),
                 )
-                .class("row-value-action")
+                // Orange only while a feature the parent chose needs the grant (2026-11-18).
+                .class(if crate::airplane_mode::write_settings_needed(&policy) {
+                    "row-value-action"
+                } else {
+                    ""
+                })
                 .detail(Some(format!(
                     "{} {}",
                     t(lang, "device.about.write_settings_sub"),
@@ -706,7 +685,12 @@ pub async fn view_about(
                     t(lang, "device.about.assistant"),
                     t(lang, "device.about.assistant_not_chosen"),
                 )
-                .class("row-value-action")
+                // Orange only while the kid's Flymodus switch is on (2026-11-18).
+                .class(if crate::airplane_mode::assistant_needed(&policy) {
+                    "row-value-action"
+                } else {
+                    ""
+                })
                 .detail(Some(t(lang, "device.airplane.assistant_steps")))
             });
             software.push(Row::new(
@@ -862,6 +846,8 @@ struct AdvancedTemplate {
     /// (unreadable) nothing (design 113: no row in any state).
     backup_service_enabled: Option<bool>,
     block_activity_start: bool,
+    /// App screens: Play is openable (block off, Play not suspendable): a sentence behind the block switch's ⓘ.
+    play_openable: bool,
     /// App screens: warnings above the group, rows in it.
     play_warnings: Vec<Note>,
     play_rows: Vec<Note>,
@@ -980,6 +966,7 @@ pub async fn view_advanced(
             hardening: policy.hardening.clone(),
             backup_service_enabled: latest.as_ref().and_then(|s| s.backup_service_enabled),
             block_activity_start: play.block_activity_start,
+            play_openable: play.openable,
             play_warnings,
             play_rows,
             escapes,
@@ -2821,30 +2808,28 @@ mod tests {
 
     #[test]
     fn play_notes_follow_the_report() {
-        assert!(play_notes(None, true, 0).is_empty());
+        assert!(play_notes(None, 0).is_empty());
         let status = DeviceStatus {
             install_mode_until_ms: Some(10_000),
             admin_policies_pending_json: Some(r#"["disable-camera","wipe-data"]"#.to_string()),
             play_store_suspendable: Some(false),
             ..Default::default()
         };
-        let notes = play_notes(Some(&status), false, 5_000);
+        let notes = play_notes(Some(&status), 5_000);
         assert_eq!(
             notes,
             vec![
                 PlayNote::InstallMode { until_ms: 10_000 },
                 PlayNote::RestartOnce(vec!["device.advanced.play.effect.camera"]),
-                PlayNote::NotSuspendable { block_on: false },
             ]
         );
         // Install mode that has ended: no note.
-        let later = play_notes(Some(&status), true, 10_000);
+        let later = play_notes(Some(&status), 10_000);
         assert!(
             !later
                 .iter()
                 .any(|n| matches!(n, PlayNote::InstallMode { .. }))
         );
-        assert!(later.contains(&PlayNote::NotSuspendable { block_on: true }));
         let zone = Zone::from_setting("Europe/Oslo");
         let now = DateTime::from_timestamp_millis(5_000).unwrap();
         let words: Vec<Note> = notes.iter().map(|n| n.note(&zone, now)).collect();
@@ -2854,14 +2839,9 @@ mod tests {
             .map(|n| n.note(&zone.in_lang(crate::i18n::Lang::Nb), now))
             .collect();
         assert_eq!(nb[0].title, "Play Butikk er åpen til 01:00");
-        assert!(words[0].warning);
+        // Install mode is the parent's choice: a quiet line; the restart is a warning.
+        assert!(!words[0].warning);
         assert_eq!(words[1].title, "Restart the phone once");
-        assert!(
-            words[2]
-                .detail
-                .as_deref()
-                .unwrap()
-                .contains("screens is off, so apps can open")
-        );
+        assert!(words[1].warning);
     }
 }

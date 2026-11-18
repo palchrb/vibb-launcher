@@ -1250,14 +1250,15 @@ async fn the_weather_group_saves_on_its_anchors() {
     assert!(!theirs_on);
 }
 
-/// §6's note: no fresh position and no zone.
+/// §6's note: no fresh position and no zone (a note, not a warning).
 #[tokio::test]
 async fn the_page_says_when_the_lock_shows_no_weather() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = phone(&app, "n", true, "on_request").await;
     let html = group(&app.get_page(&page(id), &cookie).await.text());
-    assert!(html.contains(r#"data-warning="needs-position""#), "{html}");
+    assert!(html.contains(r#"data-note="needs-position""#), "{html}");
+    assert!(!html.contains(r#"data-warning="needs-position""#), "{html}");
     assert!(!html.contains("needs-update"), "{html}");
     let home = zone(&app, id, "Hjemme", 59.9399, 10.7601).await;
     set_zone(&app, id, Some(home)).await;

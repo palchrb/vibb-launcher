@@ -375,16 +375,30 @@ async fn about_shows_the_last_access() {
         .text();
     assert!(network(&page).contains("None since restart"), "{page}");
     // Through the local proxy from the internet, then over the tailnet.
-    for client in ["203.0.113.7", "198.51.100.2", "100.101.102.103"] {
-        let mut request = device_request(Method::GET, "/api/devices/policy", Some(&token), "");
-        request
-            .headers_mut()
-            .insert("x-forwarded-for", client.parse().unwrap());
-        let res = app
-            .send_via(&app.device_router(), LOOPBACK_PEER, request)
-            .await;
-        assert_eq!(res.status, StatusCode::OK);
-    }
+    let reach = |client: &'static str| {
+        let (app, token) = (&app, token.clone());
+        async move {
+            let mut request = device_request(Method::GET, "/api/devices/policy", Some(&token), "");
+            request
+                .headers_mut()
+                .insert("x-forwarded-for", client.parse().unwrap());
+            let res = app
+                .send_via(&app.device_router(), LOOPBACK_PEER, request)
+                .await;
+            assert_eq!(res.status, StatusCode::OK);
+        }
+    };
+    reach("203.0.113.7").await;
+    reach("198.51.100.2").await;
+    // "Outside the tailnet" is a quiet value (2026-11-18), the addresses behind the ⓘ.
+    let text = app
+        .get_page(&format!("/devices/{id}/about"), &cookie)
+        .await
+        .text();
+    let row = network(&text);
+    assert!(row.contains(">Outside the tailnet</span>"), "{text}");
+    assert!(!row.contains("row-value-action"), "{text}");
+    reach("100.101.102.103").await;
     let text = app
         .get_page(&format!("/devices/{id}/about"), &cookie)
         .await

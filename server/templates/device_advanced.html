@@ -205,6 +205,7 @@
                 <div class="info-panel">
                     <p>{{ self.t("device.advanced.block_screens_footer") }}</p>
                     <p>{{ self.t("device.advanced.block_screens_info") }}</p>
+                    {% if play_openable %}<p data-note="play-openable">{{ self.t("device.advanced.play.block_off") }}</p>{% endif %}
                 </div>
             </details>
         </div>
@@ -293,7 +294,7 @@
     <section id="connection" aria-labelledby="connection-title">
         <h2 class="group-header" id="connection-title">{{ self.t("device.about.connection") }}</h2>
         {% if !access.has_token %}
-        <div class="attention attention-alarm" data-warning="access-removed">
+        <div class="attention" data-note="access-removed">
             <div class="attention-text">{{ self.t("device.advanced.access_removed") }}<div class="attention-sub">
                 <details class="info">
                     <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>

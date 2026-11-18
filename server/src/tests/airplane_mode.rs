@@ -189,6 +189,28 @@ async fn the_home_form_takes_bit_64_from_its_row() {
         ),
         "{html}"
     );
+    // About: "Not chosen" is orange only while the kid's Flymodus switch (bit 64) is on (2026-11-18).
+    let about_url = format!("/devices/{id}/about");
+    let about = app.get_page(&about_url, &cookie).await.text();
+    let value = &about[about.find("data-row=\"assistant\"").expect("the row")..];
+    let value = &value[value.find("class=\"row-value").unwrap()..];
+    let value = &value[..value.find('>').unwrap()];
+    assert!(value.contains("row-value-action"), "{value}");
+    sqlx::query("UPDATE device_policy SET quick_controls_mask = quick_controls_mask & ~64 WHERE device_id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let about = app.get_page(&about_url, &cookie).await.text();
+    let value = &about[about.find("data-row=\"assistant\"").expect("the row")..];
+    let value = &value[value.find("class=\"row-value").unwrap()..];
+    let value = &value[..value.find('>').unwrap()];
+    assert!(!value.contains("row-value-action"), "{value}");
+    sqlx::query("UPDATE device_policy SET quick_controls_mask = quick_controls_mask | 64 WHERE device_id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
     assert!(html.contains("data-airplane-info"));
     assert!(!html.contains("title-bell"), "a phone sub-page has no bell");
     let nb = app
