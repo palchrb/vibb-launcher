@@ -211,7 +211,6 @@ class SealedPrefsTest {
                 "weather/WeatherPull.kt" to 1,
                 // Design 108: app push's device API calls.
                 "push/up/UpRuntime.kt" to 1,
-                "server/SealedPrefs.kt" to 1,
             ),
             sites,
         )

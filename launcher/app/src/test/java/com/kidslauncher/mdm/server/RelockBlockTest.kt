@@ -68,8 +68,10 @@ class RelockBlockTest {
         assertEquals(mapOf(CHAT to EVIL), check.signers)
         // "Allow these apps": the pinned app with another key stays, a sideloaded one goes.
         val blocked = mapOf(CHAT to setOf(REAL), "org.example.side" to null)
-        assertEquals(mapOf(CHAT to setOf(REAL)), allowBlocked(blocked, mapOf(CHAT to setOf(EVIL), "org.example.side" to setOf("bbbb")), pins))
-        assertEquals(emptyMap<String, Set<String>?>(), allowBlocked(blocked, mapOf(CHAT to setOf(REAL, "rotated"), "org.example.side" to setOf("bbbb")), pins))
+        val evil = mapOf(CHAT to setOf(EVIL), "org.example.side" to setOf("bbbb"))
+        assertEquals(mapOf(CHAT to setOf(REAL)), allowBlocked(blocked, evil, pins, everyListed(evil)))
+        val rotated = mapOf(CHAT to setOf(REAL, "rotated"), "org.example.side" to setOf("bbbb"))
+        assertEquals(emptyMap<String, Set<String>?>(), allowBlocked(blocked, rotated, pins, everyListed(rotated)))
     }
 
     @Test
@@ -184,7 +186,8 @@ class RelockBlockTest {
         val store = WindowRelockStore(ParentPinStoreTest.FakePrefs())
         store.saveBlocked(mapOf(CHAT to setOf(REAL), "org.example.side" to null))
         assertEquals(mapOf(CHAT to setOf(REAL), "org.example.side" to null), store.blocked())
-        val after = allowBlocked(store.blocked(), mapOf(CHAT to setOf(EVIL), "org.example.side" to setOf("bbbb")), emptyMap())
+        val installed = mapOf(CHAT to setOf(EVIL), "org.example.side" to setOf("bbbb"))
+        val after = allowBlocked(store.blocked(), installed, emptyMap(), everyListed(installed))
         assertTrue(store.saveAllowed(after, mapOf(CHAT to 2L, "org.example.side" to 3L)))
         assertTrue(store.blocked().isEmpty())
         assertEquals(mapOf(CHAT to 2L, "org.example.side" to 3L), store.allowed())
@@ -243,7 +246,7 @@ class RelockBlockTest {
         assertEquals(RELOCK_BLOCKS_MAX + 3, currentBlocksTotal(many, manySigners))
 
         // "Allow these apps": the debug build goes (with its note), the imposter stays.
-        val left = allowBlocked(store.blocked(), signers, mapOf(CHAT to setOf(pinKey)))
+        val left = allowBlocked(store.blocked(), signers, mapOf(CHAT to setOf(pinKey)), everyListed(signers))
         assertTrue(store.saveAllowed(left, mapOf(music to installed.updatedAt, "org.example.old" to 1L)))
         assertEquals(setOf(CHAT), store.blocked().keys)
         assertEquals(setOf(CHAT), store.blockNotes().keys)
@@ -300,4 +303,8 @@ class RelockBlockTest {
         const val REAL = "a1a1"
         const val EVIL = "e5e5"
     }
+
+    /** The PWA listed every block with the key it shows now. */
+    private fun everyListed(installed: Map<String, Set<String>>): Map<String, String?> =
+        installed.mapValues { (_, signers) -> shownSigner(signers)?.takeIf(::isSignerHex) }
 }

@@ -387,7 +387,7 @@ class BootCoverManifestTest {
             assertFalse(piece, initRest.substringBefore("PinLockRuntime.init(this)").contains(piece))
         }
         assertTrue(tail.indexOf("MusicMedia.init(this)") < tail.indexOf("Torch.init(this)"))
-        assertTrue(tail.contains("CrashReports.record(app, e)"))
+        assertTrue(tail.contains("CrashReports.record(this@Application, e)"))
         // F3R-5: the tail's own time, next to the head's "Unlocked setup took".
         assertTrue(tail.indexOf("val tailStart = android.os.SystemClock.elapsedRealtime()") in 0 until tail.indexOf("MusicMedia.init(this)"))
         assertTrue(tail.substringAfter("CrashReports.record(app, e)").contains("\"Unlocked setup tail took \${android.os.SystemClock.elapsedRealtime() - tailStart} ms\""))
