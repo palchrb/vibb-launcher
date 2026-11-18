@@ -416,6 +416,8 @@ pub(crate) async fn build_policy(
     let server_tls = crate::server_tls::policy(state, device_id).await?;
     // Design 108 §3.8: app push; a read error fails the policy.
     let unified_push = crate::unified_push::policy(&state.db, device_id).await?;
+    // Design 114 §4.3: the ticked setup steps; a read error fails the policy.
+    let setup = crate::setup_status::policy(&state.db, device_id).await?;
     let popped = pop_command(&state.db, device_id, policy.kid_pin_rev).await?;
     if let Some((id, _, requested_at, _)) = &popped {
         // Commands run in the order they were asked for (QA Low 1): once this one is out, an older
@@ -556,6 +558,7 @@ pub(crate) async fn build_policy(
         login_browser,
         server_tls,
         unified_push,
+        setup,
     })
 }
 
@@ -1477,6 +1480,9 @@ async fn status_intake(
         .unified_push
         .as_ref()
         .and_then(crate::unified_push::clean_report);
+    // Design 114 §4.2: the setup readings no other field carries, and the hold's end by the earlier of its clocks.
+    let setup_json = report.setup.as_ref().and_then(crate::setup_status::clean);
+    let setup_hold_until_ms = crate::setup_status::hold_until(setup_json.as_deref(), arrived_ms);
     // Design 64 step 2: the phone's zone watch, known keys only.
     let zone_watch_json = report
         .zone_watch
@@ -1515,8 +1521,8 @@ async fn status_intake(
           relock_blocks_total, clock_format_applied, battery_level, battery_charging, dns_upstream_json, \
           write_settings_granted, zone_watch_json, tailnet_joined, sms_state_json, data_roaming_json, \
           mobile_data_json, airplane_mode_json, shortcuts_json, captive_portal_json, login_browser_json, \
-          notification_channels_json, up_held) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          notification_channels_json, up_held, setup_json, setup_hold_until_ms) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(device.id)
     .bind(&report.lock_reason)
@@ -1582,6 +1588,8 @@ async fn status_intake(
     .bind(&login_browser_json)
     .bind(&notification_channels_json)
     .bind(&up_held)
+    .bind(&setup_json)
+    .bind(setup_hold_until_ms)
     .execute(&state.db)
     .await
     .ok();

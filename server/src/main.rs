@@ -65,6 +65,7 @@ mod retention;
 mod security;
 mod server_tls;
 mod settings_log;
+mod setup_status;
 mod shortcuts;
 mod sms;
 mod sound_mode;
