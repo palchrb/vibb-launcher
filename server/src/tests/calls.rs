@@ -836,7 +836,8 @@ async fn calls_page_shows_role_problems_and_fail_closed() {
     let page = calls_page(&app, &cookie, id).await;
     for expected in [
         "Phone can&#39;t read its call rules",
-        "Anyone can call this phone",
+        // The screening role held without the dialer role: incoming calls are still screened.
+        "Vibb One isn&#39;t the phone app",
         "Emergency callback may not work",
         "Calls blocked after a restart",
         "Phone reported a calls problem",
