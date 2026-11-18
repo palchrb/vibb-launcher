@@ -427,6 +427,11 @@ async fn every_form_in_the_add_flow_lands_where_it_should() {
     // Design 113: a launcher that works shows no launcher group (and no Check Again) here;
     // Settings › Phone Setup keeps it.
     assert!(!html.contains("/settings/provisioning/launcher-check#launcher"));
+    // Check Again's answer still lands: an empty #launcher stays, drawing nothing (a save never jumps to the top).
+    assert!(
+        html.contains("<section id=\"launcher\"></section>"),
+        "{html}"
+    );
     assert_eq!(actions, [qr_action.clone(), code_action.clone()]);
     let form_at = html.find(&format!("action=\"{qr_action}\"")).unwrap();
     assert!(settings_pages::encloses(&html, "qr", form_at));

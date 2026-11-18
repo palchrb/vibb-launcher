@@ -1381,7 +1381,9 @@ async fn the_security_log_reads_as_labelled_rows() {
             &[("ip", "192.0.2.8")],
         )
         .await;
-    assert_redirect(&res, "/security", Some("banned"));
+    assert_redirect(&res, "/security", Some("activity"));
+    // #activity renders with and without a ban, so the stale Unban lands on it.
+    assert!(page.contains("id=\"activity\""));
 
     sqlx::query("ALTER TABLE security_events RENAME TO broken")
         .execute(&app.db)

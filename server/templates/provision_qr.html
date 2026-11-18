@@ -40,7 +40,9 @@
 
     {#- Design 113: the launcher check only when something is wrong or it is checking; in the works state the Android a
         new phone needs is in the QR footer's ⓘ. -#}
-    {% if let Some(launcher) = launcher %}{% if launcher.state != "works" %}{% include "partials/launcher_check.html" %}{% endif %}{% endif %}
+    {#- Check Again answers to #launcher: the landing stays when the group is gone (an empty section draws nothing), so the
+        save never jumps to the top. -#}
+    {% if let Some(launcher) = launcher %}{% if launcher.state != "works" %}{% include "partials/launcher_check.html" %}{% else %}<section id="launcher"></section>{% endif %}{% else %}<section id="launcher"></section>{% endif %}
 
     {#- The QR code renders in the POST's answer, in this group: the form posts to #qr, so the
         answer lands on it with or without JS. The Wi-Fi password is never stored or shown again. -#}

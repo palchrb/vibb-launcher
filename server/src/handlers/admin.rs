@@ -241,7 +241,8 @@ pub async fn unban_ip(
         }
     };
     if !lifted {
-        return Redirect::to("/security#banned").into_response();
+        // #banned is gone when no ban is left; #activity always renders (a save never jumps to the top).
+        return Redirect::to("/security#activity").into_response();
     }
     let ip: String = form_urlencoded::byte_serialize(form.ip.as_bytes()).collect();
     Redirect::to(&format!("/security?unbanned={ip}#banned")).into_response()
