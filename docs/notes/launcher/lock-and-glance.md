@@ -527,7 +527,7 @@ name - Element X's "N new messages" fallback reads "Chat"; a conversation's or a
   luminance alone, which a light grey can beat in sRGB blending, code QA L1). White text over a white blurred ground:
   58 % gives 4.2:1, so it is raised there (`GlanceGlassTest`). The lock's own scrim (`lockScrimForImage`) already
   darkens a light photo, so the raise is rare: on the gate's light, dark and busy pictures the cards measured 14-18:1
-  for white and 7.7-9.5:1 for `kid_core_dim`.
+  for white and 7.7-9.4:1 for `kid_core_dim`.
 - **Fallback**: glass only over a decoded photo (`glassOn`); a colour, a gradient, the night mark, a photo that isn't
   decoded, an empty root or any fault making the copy (logged by its class) leave the cards exactly as today - the
   layouts' own drawables. The time-rule screen's card (`activity_lock.xml`) stays solid.
