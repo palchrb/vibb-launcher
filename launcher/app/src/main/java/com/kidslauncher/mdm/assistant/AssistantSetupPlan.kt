@@ -34,7 +34,8 @@ fun movedRoles(before: DefaultAppsSnapshot, after: DefaultAppsSnapshot): List<St
     "home".takeIf { before.home && !after.home },
     "call_screening".takeIf { before.callScreening && !after.callScreening },
     "call_redirection".takeIf { before.callRedirection && !after.callRedirection },
-    "browser".takeIf { before.browser != null && after.browser != null && before.browser != after.browser },
+    // Code QA L3: from the chooser (no default) there is no way back on Android's page, so it is never listed.
+    "browser".takeIf { before.browser != null && before.browser != "android" && after.browser != null && before.browser != after.browser },
 )
 
 /** §3.2: the window closes for good once it is no longer active (the role became ours, the page answered, 5 minutes,

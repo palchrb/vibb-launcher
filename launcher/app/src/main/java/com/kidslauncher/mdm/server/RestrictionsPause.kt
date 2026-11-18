@@ -155,6 +155,8 @@ object RestrictionsPause {
             if (dpm != null && dpm.isDeviceOwnerApp(app.packageName)) {
                 val admin = android.content.ComponentName(app, MdmDeviceAdminReceiver::class.java)
                 QuickControls.fixOwnPermission(app, dpm, admin, android.Manifest.permission.POST_NOTIFICATIONS)
+                // Code QA L1: fine location before the start snapshot reads the Wi-Fi proxies (no apply has run yet).
+                for (permission in OWN_LOCATION_PERMISSIONS) QuickControls.selfGrantPermission(app, dpm, admin, permission)
             }
         } catch (e: Exception) {
             Log.w("RestrictionsPause", "The hold's notification grant failed: ${e.javaClass.simpleName}")

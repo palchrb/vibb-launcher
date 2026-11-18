@@ -909,7 +909,7 @@
     <string name="setup_how_data_saver">Slå på Ubegrenset databruk.</string>
     <string name="setup_how_background">Velg Tillat.</string>
     <string name="setup_how_vibb_notifications">Slå på varslene som er av.</string>
-    <string name="setup_how_vibb_notifications_role">Er en bryter grå: sett Anrop og SMS til «Ikke styrt» i foreldreappen først, og tilbake etterpå.</string>
+    <string name="setup_how_vibb_notifications_role">Grå bryter? Sett Anrop og SMS til «Ikke styrt» i foreldreappen, og tilbake etterpå.</string>
     <string name="setup_how_full_screen_intent">Slå på Tillat fullskjermvarsler.</string>
     <string name="setup_how_write_settings">Slå på Tillat.</string>
     <string name="setup_how_assistant">Velg Vibb One, og trykk OK.</string>
@@ -918,7 +918,6 @@
     <string name="setup_how_default_apps">Velg dem tilbake.</string>
     <string name="setup_how_map_play_links">Åpne som standard: slå av Åpne støttede linker.</string>
     <string name="setup_how_map_vibb_links">Åpne som standard: slå på Åpne støttede linker, og kryss av alle.</string>
-    <string name="setup_how_fingerprint">Legg til et fingeravtrykk.</string>
     <string name="setup_how_vibration">Lyd og vibrasjon › Vibrasjon og haptikk: ringevibrasjon og varselvibrasjon på.</string>
     <string name="setup_how_touch_feedback">Lyd og vibrasjon › Vibrasjon og haptikk: berøringsrespons på.</string>
     <string name="setup_how_lock_clock">Skjerm › Låseskjerm: dobbeltlinjet klokke av.</string>

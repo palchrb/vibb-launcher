@@ -85,6 +85,14 @@ class SetupFlowActivity : UIObjectActivity() {
         binding = ActivitySetupFlowBinding.inflate(layoutInflater)
         setContentView(binding.root)
         if (intent?.getBooleanExtra(EXTRA_FROM_SETTINGS, false) == true && savedInstanceState == null) SetupRun.reset()
+        // Code QA L4: the page in flight survives a recreation, so its window still ends at the return.
+        savedInstanceState?.let { state ->
+            openedStep = state.getString(STATE_OPENED)?.let { SetupStep.of(it) }
+            wifiPanelShown = state.getBoolean(STATE_WIFI_SHOWN)
+            wifiPanelPaused = state.getBoolean(STATE_WIFI_PAUSED)
+            heldRun = state.getBoolean(STATE_HELD)
+            callFilterQueue = state.getParcelableArrayList(STATE_QUEUE, Intent::class.java).orEmpty()
+        }
         // §6.2.1: Back does nothing while the hold lasts (a dispatcher callback: predictive back on 16 at targetSdk 36
         // never calls onBackPressed); otherwise it closes the flow.
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
@@ -92,6 +100,15 @@ class SetupFlowActivity : UIObjectActivity() {
                 if (!RestrictionsPause.holdActive()) finish()
             }
         })
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putString(STATE_OPENED, openedStep?.key)
+        outState.putBoolean(STATE_WIFI_SHOWN, wifiPanelShown)
+        outState.putBoolean(STATE_WIFI_PAUSED, wifiPanelPaused)
+        outState.putBoolean(STATE_HELD, heldRun)
+        outState.putParcelableArrayList(STATE_QUEUE, ArrayList(callFilterQueue))
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -102,6 +119,12 @@ class SetupFlowActivity : UIObjectActivity() {
 
     override fun onResume() {
         super.onResume()
+        // Code QA L6: the hold ended while Android's page was in front - close into Home, not "Not open".
+        if (heldRun && !RestrictionsPause.holdActive()) {
+            SetupRun.reset()
+            finish()
+            return
+        }
         WindowRelock.addListener(windowListener)
         AppEnforcer.addAppliedListener(appliedListener)
         if (wifiPanelShown && wifiPanelPaused) endWifiStepNow("resume")
@@ -406,18 +429,23 @@ class SetupFlowActivity : UIObjectActivity() {
 
     companion object {
         private const val EXTRA_FROM_SETTINGS = "me.vibb.launcher.extra.SETUP_FROM_SETTINGS"
+        private const val STATE_OPENED = "opened_step"
+        private const val STATE_WIFI_SHOWN = "wifi_panel_shown"
+        private const val STATE_WIFI_PAUSED = "wifi_panel_paused"
+        private const val STATE_HELD = "held_run"
+        private const val STATE_QUEUE = "call_filter_queue"
 
         /** The notifications' tap (the setup notice, the hold's window notice): its own task. */
         fun intent(context: Context): Intent =
             Intent(context, SetupFlowActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 
         /** §6.2.1: from Home's resume during the hold - a foreground start; the flow's task comes to the front. */
-        fun startFromHome(activity: Activity) {
-            try {
-                activity.startActivity(intent(activity))
-            } catch (e: Exception) {
-                Log.w(LOG_TAG, "Couldn't start the setup flow: ${e.javaClass.simpleName}")
-            }
+        fun startFromHome(activity: Activity): Boolean = try {
+            activity.startActivity(intent(activity))
+            true
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't start the setup flow: ${e.javaClass.simpleName}")
+            false
         }
 
         /** §6.3: parent Settings' "Oppsett" row - a new run. */

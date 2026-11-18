@@ -70,8 +70,9 @@ class SetupStepsTest {
             val names = row.getValue("names").jsonObject
             assertEquals(step.key, names.str("en"), en[resName(step.nameRes)])
             assertEquals(step.key, names.str("nb"), nb[resName(step.nameRes)])
-            // A screen has its one line; the two steps that are never screens have none.
-            assertEquals(step.key, step.screen, step.howRes != null)
+            // A screen has its one line (the fingerprint's name says it, code QA L8); the two steps that are never
+            // screens have none.
+            assertEquals(step.key, step.screen && step != SetupStep.FINGERPRINT, step.howRes != null)
             step.howRes?.let {
                 assertTrue(step.key, !en[resName(it)].isNullOrBlank())
                 assertTrue(step.key, !nb[resName(it)].isNullOrBlank())

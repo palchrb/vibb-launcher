@@ -115,7 +115,8 @@ object AssistantSetup {
      * original holders. */
     fun openPickWindow(context: Context, keepSnapshot: Boolean = false): Boolean {
         if (!setupWindowOpen()) return false
-        val kept = if (keepSnapshot) movedFrom(context) else null
+        // Code QA L2: while roles are listed, every step's window keeps the original holders and the list.
+        val kept = if (keepSnapshot || AirplaneRuntime.defaultAppsChanged(context).isNotEmpty()) movedFrom(context) else null
         val snap = kept ?: snapshot(context)
         prefs(context).edit().putString(KEY_SNAPSHOT, ServerJson.encodeToString(DefaultAppsSnapshot.serializer(), snap)).commit()
         storeWindow(context, KEY_PICK, BootClock.windowStart(ASSISTANT_PICK_MS))

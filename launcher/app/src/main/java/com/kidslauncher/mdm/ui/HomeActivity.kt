@@ -560,8 +560,9 @@ class HomeActivity : UIObjectActivity() {
         if (redirectToLockScreenIfLocked()) return
         // Design 114 §6.2.1: during the setup hold Home leads to the setup flow (guidance, not a lock) - its own task
         // brought to the front, so a Home press from Android's page returns to the same screen.
-        if (com.kidslauncher.mdm.server.RestrictionsPause.holdActive()) {
+        if (com.kidslauncher.mdm.server.RestrictionsPause.holdActive() &&
             com.kidslauncher.mdm.setup.SetupFlowActivity.startFromHome(this)
+        ) {
             return
         }
         resumeContent()

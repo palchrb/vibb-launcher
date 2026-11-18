@@ -32,6 +32,8 @@ class AssistantSetupTest {
         assertEquals(emptyList<String>(), movedRoles(before, before.copy(dialer = false, sms = false)))
         assertEquals(listOf("home", "call_screening", "browser"), movedRoles(before, before.copy(home = false, callScreening = false, browser = "com.android.chrome")))
         assertEquals(listOf("call_redirection"), movedRoles(before, before.copy(callRedirection = false)))
+        // Code QA L3: a browser moved from the chooser has no way back on Android's page - never listed.
+        assertEquals(emptyList<String>(), movedRoles(before.copy(browser = "android"), before.copy(browser = "com.android.chrome")))
         // A role that wasn't Vibb's before isn't Vibb's loss.
         assertEquals(emptyList<String>(), movedRoles(before.copy(callScreening = false), before.copy(callScreening = false)))
         assertTrue(movedRoles(before, before.copy(home = false)).all { it in setOf("home", "call_screening", "call_redirection", "browser") })
@@ -59,7 +61,7 @@ class AssistantSetupTest {
         val main = listOf("src/main", "app/src/main").map { java.io.File(it) }.first { it.isDirectory }
         val setup = java.io.File(main, "java/com/kidslauncher/mdm/assistant/AssistantSetup.kt").readText()
         val open = setup.substringAfter("fun openPickWindow(").substringBefore("fun endPickWindow(")
-        assertTrue("val kept = if (keepSnapshot) movedFrom(context) else null" in open)
+        assertTrue("val kept = if (keepSnapshot || AirplaneRuntime.defaultAppsChanged(context).isNotEmpty()) movedFrom(context) else null" in open)
         assertTrue("if (kept == null) AirplaneRuntime.storeDefaultAppsChanged(context, emptyList())" in open)
         val flow = java.io.File(main, "java/com/kidslauncher/mdm/setup/SetupFlowActivity.kt").readText()
         assertTrue("openPickWindow(app, keepSnapshot = step == SetupStep.DEFAULT_APPS)" in flow)

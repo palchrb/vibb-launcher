@@ -99,10 +99,15 @@ class SetupFlowTest {
 
     @Test
     fun `the progress counts the run's screens`() {
-        assertEquals(1 to 3, flowProgress(setOf("a"), listOf(SetupStep.LOCATION)).let { it.first to 3 })
-        val run = setOf("location", "background", "assistant")
-        assertEquals(2 to 3, flowProgress(run, listOf(SetupStep.BACKGROUND, SetupStep.ASSISTANT)))
-        assertEquals(3 to 3, flowProgress(run, listOf(SetupStep.ASSISTANT)))
+        // Code QA M1: the steps ahead count - the first screen of seven reads "1 av 7".
+        val seven = listOf(
+            SetupStep.LOCATION, SetupStep.NOTIFICATION_ACCESS, SetupStep.MOBILE_DATA, SetupStep.DATA_SAVER,
+            SetupStep.BACKGROUND, SetupStep.ASSISTANT, SetupStep.CALL_FILTER,
+        )
+        assertEquals(1 to 7, flowProgress(setOf("location"), seven))
+        // Two done (shown, gone from the run), five ahead: "3 av 7".
+        assertEquals(3 to 7, flowProgress(setOf("location", "notification_access", "mobile_data"), seven.drop(2)))
+        assertEquals(7 to 7, flowProgress(seven.map { it.key }.toSet(), seven.takeLast(1)))
     }
 
     @Test

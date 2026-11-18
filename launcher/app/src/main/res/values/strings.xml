@@ -1000,7 +1000,7 @@
     <string name="setup_how_data_saver">Turn on Unrestricted data.</string>
     <string name="setup_how_background">Choose Allow.</string>
     <string name="setup_how_vibb_notifications">Turn on the notifications that are off.</string>
-    <string name="setup_how_vibb_notifications_role">If a switch is grey: set Calls and SMS to “Not managed” in the parent app first, and back afterwards.</string>
+    <string name="setup_how_vibb_notifications_role">Switch grey? Set Calls and SMS to “Not managed” in the parent app, and back afterwards.</string>
     <string name="setup_how_full_screen_intent">Turn on Allow full-screen notifications.</string>
     <string name="setup_how_write_settings">Turn on Allow.</string>
     <string name="setup_how_assistant">Choose Vibb One, then OK.</string>
@@ -1009,7 +1009,6 @@
     <string name="setup_how_default_apps">Choose them back.</string>
     <string name="setup_how_map_play_links">Open by default: turn off Open supported links.</string>
     <string name="setup_how_map_vibb_links">Open by default: turn on Open supported links, and tick them all.</string>
-    <string name="setup_how_fingerprint">Add a fingerprint.</string>
     <string name="setup_how_vibration">Sound &amp; vibration › Vibration &amp; haptics: ring and notification vibration on.</string>
     <string name="setup_how_touch_feedback">Sound &amp; vibration › Vibration &amp; haptics: touch feedback on.</string>
     <string name="setup_how_lock_clock">Display › Lock screen: double-line clock off.</string>

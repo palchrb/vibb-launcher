@@ -24,7 +24,7 @@ enum class StepLevel { ACTION, ALARM }
 /**
  * §2.2, in table order (the order everywhere). [pageActions] are the Android actions the flow's "Åpne" tries, in order
  * (`null`: no page on the phone - never a flow screen); [howRes] the screen's one line, `null` for the two steps that
- * are never screens.
+ * are never screens and for the fingerprint (its name says it, code QA L8).
  */
 enum class SetupStep(
     val key: String,
@@ -121,7 +121,8 @@ enum class SetupStep(
     FINGERPRINT(
         "fingerprint", StepNeed.OPTIONAL, StepReadBy.PHONE, StepWhen.ANDROID_LOCK, StepSummary.COUNT, StepLevel.ACTION,
         emptyList(), listOf("android.settings.BIOMETRIC_ENROLL", "android.settings.FINGERPRINT_ENROLL"),
-        R.string.setup_step_fingerprint, R.string.setup_how_fingerprint,
+        // Code QA L8: no line - "Legg til et fingeravtrykk." only repeated the name; Åpne opens the enrolment itself.
+        R.string.setup_step_fingerprint, null,
     ),
     VIBRATION(
         "vibration", StepNeed.OPTIONAL, StepReadBy.PARENT, StepWhen.ALWAYS, StepSummary.COUNT, StepLevel.ACTION,
@@ -267,7 +268,9 @@ fun flowButtons(step: SetupStep, pageMissing: Boolean): List<FlowButton> {
 /** "2 av 7": [runKeys] every step shown as a screen in this run so far (the current one included), [remaining] the
  * run's step screens still ahead (the current first). */
 fun flowProgress(runKeys: Set<String>, remaining: List<SetupStep>): Pair<Int, Int> {
-    val total = runKeys.size.coerceAtLeast(1)
-    val done = runKeys.size - remaining.count { it.key in runKeys }
+    // Code QA M1: the steps ahead count too, so the line says how many are left.
+    val keys = runKeys + remaining.map { it.key }
+    val total = keys.size.coerceAtLeast(1)
+    val done = total - remaining.size
     return (done + 1).coerceIn(1, total) to total
 }

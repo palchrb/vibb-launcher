@@ -19,7 +19,6 @@ import com.kidslauncher.mdm.server.BatteryExemption
 import com.kidslauncher.mdm.server.CachedPolicy
 import com.kidslauncher.mdm.server.FingerprintEnrol
 import com.kidslauncher.mdm.server.MobileNetworkRuntime
-import com.kidslauncher.mdm.server.ParentPin
 import com.kidslauncher.mdm.server.RestrictionsPause
 import com.kidslauncher.mdm.server.WriteSettingsAccess
 import com.kidslauncher.mdm.server.cachedPolicy
@@ -115,7 +114,6 @@ object SetupReadings {
 
     /** Every step's reading (§2.2), from the same sources the report's other fields use. */
     fun readings(context: Context, policy: PolicyResponse? = policy()): Map<String, Boolean?> = buildMap {
-        put("parent_pin", read { ParentPin.status(context).configured })
         putAll(ownReadings(context))
         put("notification_access", read { BadgeStore.accessGranted(context) })
         put("background", BatteryExemption.exempt(context))
@@ -165,6 +163,16 @@ object SetupReadings {
 
     /** N, as the PWA counts it for the same report. */
     fun count(context: Context): Int = setupCount(missing(context))
+
+    /** §4.1 (code QA L9): the listener connected or disconnected - a sync only when that differs from the last state
+     * seen (kept across processes), so a rebind at every process start asks for nothing. */
+    fun listenerChanged(context: Context, connected: Boolean) {
+        val prefs = context.createDeviceProtectedStorageContext().getSharedPreferences("setup_readings", Context.MODE_PRIVATE)
+        val seen = if (prefs.contains("listener")) prefs.getBoolean("listener", false) else null
+        if (seen == connected) return
+        prefs.edit().putBoolean("listener", connected).apply()
+        com.kidslauncher.mdm.push.SyncRunner.request(context, SETUP_SYNC_REASON)
+    }
 
     @Volatile
     private var watching = false
