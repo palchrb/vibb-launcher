@@ -72,6 +72,7 @@ pub(crate) mod seeded_family;
 mod server_tls;
 mod settings_log;
 pub(crate) mod settings_pages;
+mod setup_status;
 mod shell;
 mod shortcuts;
 mod sms;

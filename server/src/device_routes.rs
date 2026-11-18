@@ -114,6 +114,12 @@ pub fn device_routes(state: AppState) -> Router<AppState> {
                 handlers::contact_requests::BODY_LIMIT,
             )),
         )
+        // Design 114 §4.4: the setup flow's "Gjort" on a step the parent ticks.
+        .route(
+            "/api/devices/setup/ticks",
+            post(crate::setup_status::tick)
+                .layer(DefaultBodyLimit::max(crate::setup_status::TICK_BODY_LIMIT)),
+        )
         // Design 77 D16: the phone's held and blocked senders - who and when, never what.
         .route(
             "/api/devices/sms-held",

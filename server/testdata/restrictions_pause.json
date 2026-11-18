@@ -1,3 +1,4 @@
 {
-  "pause_max_ms": 7200000
+  "pause_max_ms": 7200000,
+  "setup_hold_max_ms": 14400000
 }

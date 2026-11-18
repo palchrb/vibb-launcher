@@ -61,6 +61,17 @@ class PolicyResponseCompatTest {
         assertEquals(FreshDecode.Ok(policy), decodeFresh(serverResponse))
     }
 
+    /** Design 114 §4.3: the policy's `setup` (the server's `policy_json_keys_snapshot` literal); missing means none
+     * ticked, and a bad value never fails the policy's other keys' decode. */
+    @Test
+    fun `setup decodes, and missing means nothing ticked`() {
+        val with = (decodeCached(serverResponse.dropLast(1) + ""","setup": {"ticked": ["vibration"]}}""") as CachedPolicy.Ok).policy
+        assertEquals(listOf("vibration"), with.setup?.ticked)
+        assertEquals(null, (decodeCached(serverResponse) as CachedPolicy.Ok).policy.setup)
+        val empty = (decodeCached(serverResponse.dropLast(1) + ""","setup": {}}""") as CachedPolicy.Ok).policy
+        assertEquals(emptyList<String>(), empty.setup?.ticked)
+    }
+
     /** Design 95 rev. 3 and design 97: the Mobilnett keys (the server's `policy_json_keys_snapshot` literal); a policy
      * without `abroad` reads Ingen data (fail closed), without the others apps on mobile data and the settings unlocked. */
     @Test

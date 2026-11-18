@@ -135,6 +135,14 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     } catch (e: Exception) {
         Log.w(LOG_TAG, "Rule pause upload failed: ${e.javaClass.simpleName}")
     }
+    // Design 114 §4.4: the flow's ticks go before the policy GET too, so this sync's policy carries them.
+    try {
+        com.kidslauncher.mdm.setup.SetupTicks.upload(context, api)
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Log.w(LOG_TAG, "Setup tick upload failed: ${e.javaClass.simpleName}")
+    }
     val policyGetStartedMs = System.currentTimeMillis()
     val freshOutcome = when (val fetched = fetchPolicy(api, etags, owner, { served = it }) { policyHandshake = it.handshake }) {
         null -> FreshOutcome.UNREACHABLE
@@ -163,6 +171,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         storeAcceptedPolicy(context, freshPolicy)
         // Design 98 §4.4.4: the parent code's pauses read this policy (an ack, or ended in the PWA after the ack).
         com.kidslauncher.mdm.timerules.PhonePauses.policyAccepted(context, freshPolicy.timePolicy, policyGetStartedMs)
+        com.kidslauncher.mdm.setup.SetupTicks.policyAccepted(context, freshPolicy.setup)
         // Design 108 §2.3, §5.5: app push's reconcile (`regs` by the request's start, the race rule), the origin's
         // rewrite, the queued DELETEs, then a pull while UP is on - on UP's own executor, never blocking the sync.
         com.kidslauncher.mdm.push.up.UpRuntime.policyAccepted(context, freshPolicy, policyGetStartedMs)
@@ -611,6 +620,13 @@ private fun statusReportOf(
         notificationChannels = com.kidslauncher.mdm.notify.NotificationChannelsReader.read(context),
         // Design 115 §2.8: whether app push is held for the apps' network (the Attention guard on the server reads it).
         unifiedPush = com.kidslauncher.mdm.push.up.UpRuntime.report(context),
+        // Design 114 §4.1: the setup readings no other field carries, and the hold's end while it lasts.
+        setup = try {
+            com.kidslauncher.mdm.setup.SetupReadings.report(context).json()
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Setup report failed: ${e.javaClass.simpleName}")
+            null
+        },
     )
 }
 
@@ -708,8 +724,13 @@ private suspend fun dispatchPendingCommand(
         // Settings switch, locking again by itself, without the PIN on a phone that may have an
         // app able to read it.
         "start_pause" -> {
-            RestrictionsPause.start(context, BootClock.windowStart(RESTRICTIONS_PAUSE_DURATION_MS))
-            reportCommandResult(context, api, pending, success = true, message = "paused for 2 hours")
+            // Design 114 §6.1.2: the setup hold stays as it is - a 2-hour pause would shorten it.
+            if (RestrictionsPause.holdActive()) {
+                reportCommandResult(context, api, pending, success = true, message = "in setup")
+            } else {
+                RestrictionsPause.start(context, BootClock.windowStart(RESTRICTIONS_PAUSE_DURATION_MS))
+                reportCommandResult(context, api, pending, success = true, message = "paused for 2 hours")
+            }
             requestFollowUpSync(context)
         }
 

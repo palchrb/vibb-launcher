@@ -581,20 +581,46 @@ pub struct DeviceStatus {
     /// by handlers::calls::call_report on its own; design 98's Oppsett card reads the screening roles from it here.
     #[sqlx(default)]
     pub call_state_json: Option<String>,
+    /// Design 114 §4.2 (migration 0157): the report's `setup`, cleaned (`setup_status::clean`); read through
+    /// `setup_status::readings_of`.
+    #[sqlx(default)]
+    pub setup_json: Option<String>,
+    /// Design 114 §4.2: the setup hold's end, `min(hold_until_ms, reported_at + hold_left_ms)` (`setup_status::hold_until`),
+    /// `None` without the hold. [DeviceStatus::paused_at] keeps a held report paused up to it.
+    #[sqlx(default)]
+    pub setup_hold_until_ms: Option<i64>,
 }
 
 /// The launcher's longest "pause all restrictions" (`RESTRICTIONS_PAUSE_DURATION_MS`, 2 hours from the PIN or the
 /// parent's Unlock; a reboot ends it sooner) - both pinned by `testdata/restrictions_pause.json`.
 pub const RESTRICTIONS_PAUSE_MAX_MS: i64 = 2 * 60 * 60 * 1000;
 
+/// Design 114 §3.2: the setup hold's ceiling (`SETUP_HOLD_DURATION_MS` on the phone, 4 hours from a fresh enrolment;
+/// "Ferdig", the PWA's Lock Again and a restart end it sooner) - pinned by `testdata/restrictions_pause.json`'s
+/// `setup_hold_max_ms`.
+pub const SETUP_HOLD_MAX_MS: i64 = 4 * 60 * 60 * 1000;
+
 impl DeviceStatus {
     /// Whether this report's pause can still be on at `now_ms` - what every page shows (2026-11-04). The phone reports
     /// a pause's end at once; one that ended while the phone sent nothing (no network) is over by the clock: a report
     /// older than the longest pause isn't paused any more. An unreadable `reported_at` keeps the report's word.
+    ///
+    /// Design 114 §6.1.4: a report in the setup hold (`setup_hold_until_ms` stored) stays paused while
+    /// `now < min(setup_hold_until_ms, reported_at + SETUP_HOLD_MAX_MS)` - a phone can't keep the PWA's open state
+    /// longer than its own ceiling.
     pub fn paused_at(&self, now_ms: i64) -> bool {
-        self.restrictions_paused
-            && crate::display_time::parse_db_utc(&self.reported_at)
-                .is_none_or(|at| now_ms - at.timestamp_millis() < RESTRICTIONS_PAUSE_MAX_MS)
+        if !self.restrictions_paused {
+            return false;
+        }
+        let at =
+            crate::display_time::parse_db_utc(&self.reported_at).map(|at| at.timestamp_millis());
+        match self.setup_hold_until_ms {
+            Some(until) => match at {
+                Some(at) => now_ms < until.min(at.saturating_add(SETUP_HOLD_MAX_MS)),
+                None => now_ms < until,
+            },
+            None => at.is_none_or(|at| now_ms - at < RESTRICTIONS_PAUSE_MAX_MS),
+        }
     }
 }
 
@@ -626,12 +652,47 @@ mod paused_at_tests {
         assert!(report(true, "yesterday").paused_at(at_ms));
     }
 
+    fn held(reported_at: &str, until: i64) -> DeviceStatus {
+        DeviceStatus {
+            setup_hold_until_ms: Some(until),
+            ..report(true, reported_at)
+        }
+    }
+
+    #[test]
+    fn a_held_report_stays_paused_until_its_end_and_never_past_the_ceiling() {
+        let at = "2026-11-04 10:00:00";
+        let at_ms = crate::display_time::parse_db_utc(at)
+            .unwrap()
+            .timestamp_millis();
+        let hour = 3_600_000;
+        // Past two hours, up to the hold's end.
+        let until = at_ms + 3 * hour;
+        assert!(held(at, until).paused_at(at_ms + 2 * hour + 1));
+        assert!(held(at, until).paused_at(until - 1));
+        assert!(!held(at, until).paused_at(until));
+        // An end past the ceiling is cut by it.
+        let far = at_ms + 10 * hour;
+        assert!(held(at, far).paused_at(at_ms + SETUP_HOLD_MAX_MS - 1));
+        assert!(!held(at, far).paused_at(at_ms + SETUP_HOLD_MAX_MS));
+        // Not paused stays not paused; without the hold, the two-hour rule.
+        assert!(
+            !DeviceStatus {
+                setup_hold_until_ms: Some(until),
+                ..report(false, at)
+            }
+            .paused_at(at_ms)
+        );
+        assert!(!report(true, at).paused_at(at_ms + 2 * hour));
+    }
+
     #[test]
     fn the_longest_pause_is_the_shared_contracts() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let ours = std::fs::read_to_string(dir.join("testdata/restrictions_pause.json")).unwrap();
         let contract: serde_json::Value = serde_json::from_str(&ours).unwrap();
         assert_eq!(contract["pause_max_ms"], RESTRICTIONS_PAUSE_MAX_MS);
+        assert_eq!(contract["setup_hold_max_ms"], SETUP_HOLD_MAX_MS);
         let launcher = dir.join("../launcher/app/src/test/resources/restrictions_pause.json");
         let theirs = std::fs::read_to_string(&launcher)
             .unwrap_or_else(|e| panic!("{}: {e}", launcher.display()));
@@ -1344,6 +1405,9 @@ pub struct PolicyResponse {
     pub server_tls: serde_json::Value,
     /// Design 108 §3.8: app push (`unified_push::policy`), always sent: `on`, `origin`, `regs`, `stopped`, `refresh`.
     pub unified_push: crate::unified_push::UpPolicy,
+    /// Design 114 §4.3: `{"ticked": [keys]}`, always sent - the parent steps ticked in the PWA or on the phone, which
+    /// the phone leaves out of its flow and its count. Pinned by `policy_json_keys_snapshot`.
+    pub setup: crate::setup_status::SetupPolicy,
 }
 
 /// `PolicyResponse.kid_lock`.
@@ -1614,6 +1678,11 @@ pub struct StatusReportRequest {
     /// within limits by `server_tls::sanitize`, so nothing in it can fail the report.
     #[serde(default)]
     pub server_tls: Option<serde_json::Value>,
+    /// Design 114 §4.1: `{device_owner, mobile_data, location, data_saver, full_screen_intent, fingerprint,
+    /// hold_until_ms?, hold_left_ms?}`, raw - cleaned by `setup_status::clean`. A full-report field, not a heartbeat
+    /// field.
+    #[serde(default)]
+    pub setup: Option<serde_json::Value>,
     /// Design 35 §2.5: `{level, charging, low}` from Android's battery broadcast. Anything
     /// that isn't one with a level in 0..=100 is dropped, never the
     /// report ([lenient_battery]).

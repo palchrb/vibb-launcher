@@ -20,7 +20,6 @@ import com.kidslauncher.mdm.NOTIFICATION_CHANNEL_VPN_FILTER
 import com.kidslauncher.mdm.NOTIFICATION_CHANNEL_WINDOW
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.assistant.NOTIFICATION_CHANNEL_SETUP
-import com.kidslauncher.mdm.server.SystemPageAccess
 import com.kidslauncher.mdm.server.systemPageIntent
 import com.kidslauncher.mdm.shortcuts.SHORTCUTS_CHANNEL_BASE
 import com.kidslauncher.mdm.shortcuts.ShortcutsRuntime
@@ -45,14 +44,16 @@ const val NOTIFICATION_CHANNELS_SYNC_REASON = "notification_channels"
 /** The report's key of Snarveier's channel in use ([ShortcutsRuntime.currentChannelId]). */
 const val SHORTCUTS_KEY = "shortcuts"
 
-/** One channel the report can name: its key (the id without `launcher:`), its id and the phone's own name for it. */
-enum class ReportedChannel(val key: String, val id: String, val nameRes: Int) {
-    MESSAGES("messages", NOTIFICATION_CHANNEL_MESSAGES, R.string.notification_channel_messages),
-    MISSED_CALLS("missed_calls", NOTIFICATION_CHANNEL_MISSED_CALLS, R.string.notification_channel_missed_calls),
-    CALLS("calls", NOTIFICATION_CHANNEL_CALLS, R.string.notification_channel_calls),
-    MESSAGES_SILENT("messages_silent", NOTIFICATION_CHANNEL_MESSAGES_SILENT, R.string.notification_channel_messages_silent),
-    MESSAGES_REACTIONS("messages_reactions", NOTIFICATION_CHANNEL_REACTIONS, R.string.notification_channel_messages_reactions),
-    CALLS_SILENT("calls_silent", NOTIFICATION_CHANNEL_CALLS_SILENT, R.string.notification_channel_calls_silent),
+/** One channel the report can name: its key (the id without `launcher:`), its id and the phone's own name for it; its
+ * [feature] (`sms`, `calls`, `null` always in use) and whether it counts as [orange] while that feature is in use
+ * (design 107 §5.1, the contract's `channels` table; design 114's `vibb_notifications` step reads it). */
+enum class ReportedChannel(val key: String, val id: String, val nameRes: Int, val feature: String? = null, val orange: Boolean = false) {
+    MESSAGES("messages", NOTIFICATION_CHANNEL_MESSAGES, R.string.notification_channel_messages, "sms", true),
+    MISSED_CALLS("missed_calls", NOTIFICATION_CHANNEL_MISSED_CALLS, R.string.notification_channel_missed_calls, "calls", true),
+    CALLS("calls", NOTIFICATION_CHANNEL_CALLS, R.string.notification_channel_calls, "calls", true),
+    MESSAGES_SILENT("messages_silent", NOTIFICATION_CHANNEL_MESSAGES_SILENT, R.string.notification_channel_messages_silent, "sms"),
+    MESSAGES_REACTIONS("messages_reactions", NOTIFICATION_CHANNEL_REACTIONS, R.string.notification_channel_messages_reactions, "sms"),
+    CALLS_SILENT("calls_silent", NOTIFICATION_CHANNEL_CALLS_SILENT, R.string.notification_channel_calls_silent, "calls"),
     COMMAND_LISTENER("command_listener", NOTIFICATION_CHANNEL_LISTENER, R.string.notification_channel_listener),
     RING("ring", NOTIFICATION_CHANNEL_RING, R.string.notification_channel_ring),
     WINDOW("window", NOTIFICATION_CHANNEL_WINDOW, R.string.notification_channel_window),
@@ -109,32 +110,19 @@ fun channelsReport(
     )
 }
 
-/** Settings' "Vibb One notifications" row (§6): what is off (never Snarveier - its own "Vis i varsellisten igjen" says
- * that) and what the tap does now. */
-data class NotificationsRow(
-    val allOff: Boolean,
-    val off: List<ReportedChannel>,
-    /** The summary's second part, by [SystemPageAccess]. */
-    val action: Int,
-)
-
 /**
- * The row from the report and the page's access (pure); `null` hides it: nothing read, or nothing but Snarveier off.
- * [dialerRoleHeld]: Vibb is the dialer, so every `launcher:` channel is locked and Android's page greys a switch that is
- * off (gate §6ax step 3) - the tap's words then say to hand the role back first, as the PWA's ⓘ does.
+ * Design 107 §5.2's orange (About › Sound's value, the server's `notification_channels::about`): the app-wide switch off,
+ * or an orange channel off whose feature is in use ([smsManaged], [callsManaged]: the policy's `sms_mode`/`calls_mode`
+ * are `managed`). Never Snarveier. Design 114's `vibb_notifications` step is done while this is false.
  */
-fun notificationsRowText(report: NotificationChannelsReport?, access: SystemPageAccess, dialerRoleHeld: Boolean = false): NotificationsRow? {
-    report ?: return null
-    val off = report.blocked.mapNotNull { ReportedChannel.of(it) }.filter { it != ReportedChannel.SHORTCUTS }
-    if (!report.allOff && off.isEmpty()) return null
-    val action = when (access) {
-        SystemPageAccess.CAN_OPEN -> if (dialerRoleHeld) R.string.settings_notifications_open_role else R.string.settings_notifications_open
-        SystemPageAccess.PAUSE_FIRST -> R.string.settings_notifications_pause_first
-        SystemPageAccess.WAIT -> R.string.settings_notifications_wait
-        SystemPageAccess.NO_PAGE -> R.string.settings_notifications_no_page
+fun channelsOrange(report: NotificationChannelsReport, smsManaged: Boolean, callsManaged: Boolean): Boolean =
+    report.allOff || report.blocked.mapNotNull { ReportedChannel.of(it) }.any { channel ->
+        channel != ReportedChannel.SHORTCUTS && channel.orange && when (channel.feature) {
+            "sms" -> smsManaged
+            "calls" -> callsManaged
+            else -> true
+        }
     }
-    return NotificationsRow(report.allOff, off, action)
-}
 
 object NotificationChannelsReader {
     private const val LOG_TAG = "NotificationChannels"
