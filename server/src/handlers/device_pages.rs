@@ -612,8 +612,7 @@ pub async fn view_about(
                 .detail(dnd.detail(lang)),
             );
         }
-        // Design 107 §5.2: the Vibb One notifications turned off on the phone, from a launcher with
-        // `notification_channels_v1` that sent its reading.
+        // Design 107 §5.2: the Vibb One notifications turned off on the phone, from a report that sent its reading.
         if let Some(channels) = crate::notification_channels::report(status) {
             let row = crate::notification_channels::about(lang, &policy, &channels);
             sound.push(
@@ -695,8 +694,8 @@ pub async fn view_about(
             ),
             None => {}
         }
-        // Design 98 §6.2: the Digital assistant role (Flymodus' route) and Wi-Fi in airplane mode, from a launcher
-        // with `airplane_mode_v1`.
+        // Design 98 §6.2: the Digital assistant role (Flymodus' route) and Wi-Fi in airplane mode, from the report's
+        // `airplane_mode`.
         if let Some(airplane) = crate::airplane_mode::report(status) {
             software.push(if airplane.assistant {
                 Row::new("assistant", t(lang, "device.about.assistant"), "Vibb One")
@@ -722,8 +721,7 @@ pub async fn view_about(
                 ),
             ));
         }
-        // Design 99 §5.3: Snarveier - what the kid picked, hidden by the kid, or off - from a launcher with
-        // `shortcuts_v1`.
+        // Design 99 §5.3: Snarveier - what the kid picked, hidden by the kid, or off - from the report's `shortcuts`.
         if let Some(shortcuts) = crate::shortcuts::report(status) {
             software.push(Row::new(
                 "shortcuts",
@@ -872,7 +870,7 @@ struct AdvancedTemplate {
     access: crate::handlers::devices::AccessCard,
     /// The Spotify diagnostic log ([SpotifyDiagCard]); `None` on a phone that doesn't play Spotify.
     spotify_diag: Option<SpotifyDiagCard>,
-    /// Design 76: the certificate check's group; `None` until the phone's last report has `server_pin_v1`.
+    /// Design 76: the certificate check's group; `None` until the phone has reported.
     server_tls: Option<crate::server_tls::Card>,
     /// Design 93 §6.6: "Åpne for oppsett", the first row (once the phone has reported).
     setup: Option<crate::handlers::quick_actions::SetupCard>,
@@ -929,26 +927,24 @@ pub async fn view_advanced(
         .iter()
         .map(|n| n.note(&zone, now))
         .partition(|n| n.warning);
-    // Design 76: a read error hides the group (logged) - it never costs the page.
-    let server_tls =
-        if crate::server_tls::capable(latest.as_ref().and_then(|s| s.capabilities_json.as_deref()))
-        {
-            match crate::server_tls::load(&state.db, id).await {
-                Ok(row) => Some(crate::server_tls::card(
-                    &row,
-                    &zone,
-                    now,
-                    query.get("notice").map(String::as_str),
-                    crate::server_tls::recovery_url(&state).await.as_deref(),
-                )),
-                Err(err) => {
-                    tracing::error!(device_id = id, %err, "can't read the certificate check");
-                    None
-                }
+    // Design 76: the group once the phone has reported; a read error hides it (logged) - it never costs the page.
+    let server_tls = if latest.is_some() {
+        match crate::server_tls::load(&state.db, id).await {
+            Ok(row) => Some(crate::server_tls::card(
+                &row,
+                &zone,
+                now,
+                query.get("notice").map(String::as_str),
+                crate::server_tls::recovery_url(&state).await.as_deref(),
+            )),
+            Err(err) => {
+                tracing::error!(device_id = id, %err, "can't read the certificate check");
+                None
             }
-        } else {
-            None
-        };
+        }
+    } else {
+        None
+    };
     let setup = match crate::handlers::quick_actions::setup_card(
         &state.db,
         &device,
@@ -1562,13 +1558,13 @@ struct HomeTemplate {
     quick_touch: bool,
     /// Security review S-L5: the Bluetooth page pairs any device (`bluetooth_any_device`).
     bluetooth_any_device: bool,
-    /// Design 98 §6.1: the kid's Flymodus switch (bit 64), its row only for a launcher with `airplane_mode_v1` - its
-    /// sub-line when it says something and whether it is orange (`airplane_mode::home_sub`).
-    airplane_row: Option<Option<(String, bool)>>,
+    /// Design 98 §6.1: the kid's Flymodus switch (bit 64) - its sub-line when it says something and whether it is
+    /// orange (`airplane_mode::home_sub`).
+    airplane_sub: Option<(String, bool)>,
     quick_airplane: bool,
-    /// Design 99 §5.2: Snarveier (bit 128), its row only for a launcher with `shortcuts_v1` - its sub-line when it says
-    /// something (`shortcuts::home_sub`).
-    shortcuts_row: Option<Option<String>>,
+    /// Design 99 §5.2: Snarveier (bit 128) - its sub-line when it says something (`shortcuts::home_sub`, from a
+    /// report that has `shortcuts`).
+    shortcuts_sub: Option<String>,
     quick_shortcuts: bool,
 }
 crate::i18n::words!(HomeTemplate);
@@ -1601,17 +1597,12 @@ pub async fn view_home(State(state): State<AppState>, lang: Lang, Path(id): Path
         Err(err) => return read_failed(lang, id, "the last report", err),
     };
     let mask = policy.quick_controls_mask;
-    let airplane_row = latest
-        .as_ref()
-        .filter(|s| has_capability(Some(s), crate::airplane_mode::CAPABILITY))
-        .map(|s| {
-            let report = crate::airplane_mode::report(s).unwrap_or_default();
-            crate::airplane_mode::home_sub(lang, &policy, &report)
-        });
-    let shortcuts_row = latest
+    let airplane_report = latest.as_ref().and_then(crate::airplane_mode::report);
+    let airplane_sub = crate::airplane_mode::home_sub(lang, &policy, airplane_report.as_ref());
+    let shortcuts_sub = latest
         .as_ref()
         .and_then(crate::shortcuts::report)
-        .map(|report| crate::shortcuts::home_sub(lang, &device.name, &policy, &report));
+        .and_then(|report| crate::shortcuts::home_sub(lang, &device.name, &policy, &report));
     Html(
         HomeTemplate {
             lang,
@@ -1629,9 +1620,9 @@ pub async fn view_home(State(state): State<AppState>, lang: Lang, Path(id): Path
             quick_sound: mask & QUICK_CONTROL_SOUND != 0,
             quick_touch: mask & QUICK_CONTROL_TOUCH != 0,
             bluetooth_any_device: policy.bluetooth_any_device,
-            airplane_row,
+            airplane_sub,
             quick_airplane: mask & crate::handlers::devices::QUICK_CONTROL_AIRPLANE != 0,
-            shortcuts_row,
+            shortcuts_sub,
             quick_shortcuts: mask & crate::handlers::devices::QUICK_CONTROL_SHORTCUTS != 0,
             device,
         }
@@ -2535,9 +2526,6 @@ pub(crate) async fn render_apps(
         lang,
         id,
         &names,
-        latest
-            .as_ref()
-            .map(|_| has_capability(latest.as_ref(), crate::unified_push::CAPABILITY)),
         &zone,
         latest.as_ref().map(|st| st.reported_at.as_str()),
     )

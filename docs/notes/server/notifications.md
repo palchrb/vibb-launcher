@@ -420,8 +420,7 @@ Notifications on it). `docs/design/45-notifications-inbox-first.md`, `docs/desig
   both give); the answer in the event's `params` (`json_set` `answer`, `by` - the PWA's name, display name else login, a
   snapshot -, `minutes`; QA R2-L7). After the commit the security line (`lifts::lift_line`'s `time_lift` for a yes; the
   new `time_request_no` for "Nei") and `command_notify`. It lands on `/devices/{id}?done=<code>#quick`: `extra`/`pause`
-  (the lift's flash), `answer_no` "Du svarte nei." or `answer_no_seen` "Du svarte nei. Anna ser det på telefonen." when
-  the phone's newest report claims `time_answer_v1` (`time_answers::CAPABILITY`, §14.7), and the stale card's
+  (the lift's flash), `answer_no_seen` "Du svarte nei. Anna ser det på telefonen." (§14.7), and the stale card's
   `answered_already` "{parent} har allerede svart." (the redirect carries `&request=<id>`; `time_answers::last_answerer`
   names who answered that very request - display name, else login - code QA L6),
   `asked_again` "{name} har spurt på nytt.", `request_gone` "Forespørselen er ikke åpen lenger." (refusals: red, nothing

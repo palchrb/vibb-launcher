@@ -315,8 +315,6 @@ async fn each_music_warning_raises_its_row_and_marks_the_music_row() {
     let music =
         |state: Value| json!({"capabilities": ["time_rules_v1", "music_v1"], "music_state": state});
     let cases: Vec<(&str, Value)> = vec![
-        // A launcher without music while an entry is on.
-        ("music-cant-deliver", json!({})),
         (
             "music-unreachable",
             music(json!({"package": "me.vibb.music", "bridge": "unbound"})),

@@ -3630,7 +3630,7 @@ async fn the_phone_reports_music_state_with_known_fields_only() {
     assert_eq!(row_value(&page, "storytel"), None);
     assert!(!page.contains("login failed") && !page.contains("login_failed"));
 
-    // A launcher with the bridge but no music app: it sends no music_state (qa-21-step3-code L13).
+    // A phone without the music app: it sends no music_state (qa-21-step3-code L13).
     let report_without_state = |apps: serde_json::Value| json!({"lock_reason": "NONE", "kiosk_engaged": true, "capabilities": ["music_v1"], "installed_apps": apps});
     app.request(
         Method::POST,
@@ -3658,20 +3658,7 @@ async fn the_phone_reports_music_state_with_known_fields_only() {
     // is no value for a parent (qa-31-s7-code L3).
     assert_eq!(row_value(&page, "library"), None);
     assert!(!page.contains(" kB"));
-
-    // A launcher without music_v1 while entries are on: a warning at the top.
-    app.request(
-        Method::POST,
-        "/api/devices/status",
-        Some(&token),
-        Some(json!({"lock_reason": "NONE", "kiosk_engaged": true})),
-    )
-    .await;
-    let page = music_page(&app, &cookie, device).await;
-    assert!(
-        page.find("deliver music yet").expect("the warning")
-            < page.find("id=\"music-app\"").unwrap()
-    );
+    assert!(!page.contains("deliver music yet"));
 }
 
 // ------------------------------------------------------------------------------------------------

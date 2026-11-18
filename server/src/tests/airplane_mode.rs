@@ -23,7 +23,7 @@ async fn stored(app: &TestApp, id: i64) -> Option<String> {
     .unwrap()
 }
 
-/// The report rows are stored exactly; an older launcher's report stores nothing.
+/// The report rows are stored exactly; a report without the key stores nothing.
 #[tokio::test]
 async fn the_report_is_stored_as_the_contract_has_it() {
     let app = TestApp::new().await;
@@ -131,12 +131,11 @@ fn airplane(on: bool, assistant: bool, wifi_kept: Value, periods: Value) -> Valu
            "default_apps_changed": [], "periods": periods})
 }
 
-/// §6.1 (Q98-M9): the Home Screen form shows the Flymodus row only for a launcher with the capability and then says
-/// so (`airplane_row`); a save without the row keeps bit 64 (and 32), on `section=quick` and on the whole form; a save
-/// with the row takes the bit from the switch. The row's sub-lines and ⓘ, in both languages; the page is a phone
-/// sub-page (no bell) and every save lands on `#quick-controls`.
+/// §6.1: the Home Screen form always shows the Flymodus row and takes bit 64 from its switch, keeping 32. The row's
+/// sub-lines (only from a report with `airplane_mode`) and ⓘ, in both languages; the page is a phone sub-page (no
+/// bell) and every save lands on `#quick-controls`.
 #[tokio::test]
-async fn the_home_form_keeps_bit_64_without_its_row() {
+async fn the_home_form_takes_bit_64_from_its_row() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("Emma").await;
@@ -159,14 +158,14 @@ async fn the_home_form_keeps_bit_64_without_its_row() {
         }
     };
 
-    // An older launcher: no row, and the form keeps 64 and 32.
+    // A report without `airplane_mode`: the row, no sub-line.
     app.post_status(&token, json!({})).await;
     let html = app.get_page(&home, &cookie).await.text();
-    assert!(!html.contains("quick_control_airplane"), "{html}");
-    assert!(!html.contains("airplane_row"));
-    let res = save(vec![("section", "quick"), ("quick_control_wifi", "on")]).await;
-    assert!(res.status.is_redirection(), "{}", res.text());
-    assert_eq!(mask(&app, &token).await, 1 | 32 | 64);
+    assert_eq!(
+        super::input_checked(&html, "quick_control_airplane", "on"),
+        Some(true)
+    );
+    assert!(!html.contains("data-airplane-sub"), "{html}");
 
     // Design 98's launcher, the role not chosen yet: the row, its sub-line and the ⓘ.
     report(
@@ -177,10 +176,6 @@ async fn the_home_form_keeps_bit_64_without_its_row() {
     )
     .await;
     let html = app.get_page(&home, &cookie).await.text();
-    assert!(
-        html.contains("<input type=\"hidden\" name=\"airplane_row\" value=\"1\">"),
-        "{html}"
-    );
     assert_eq!(
         super::input_checked(&html, "quick_control_airplane", "on"),
         Some(true)
@@ -210,13 +205,8 @@ async fn the_home_form_keeps_bit_64_without_its_row() {
     );
     assert!(nb.contains("Nødsamtaler virker fortsatt"));
 
-    // With the row: the switch decides bit 64, 32 is still kept.
-    let res = save(vec![
-        ("section", "quick"),
-        ("airplane_row", "1"),
-        ("quick_control_wifi", "on"),
-    ])
-    .await;
+    // The switch decides bit 64, 32 is still kept.
+    let res = save(vec![("section", "quick"), ("quick_control_wifi", "on")]).await;
     assert_redirect(&res, &home, Some("quick-controls"));
     app.assert_lands(&res, &cookie).await;
     assert_eq!(mask(&app, &token).await, 1 | 32);
@@ -229,26 +219,15 @@ async fn the_home_form_keeps_bit_64_without_its_row() {
     );
     let res = save(vec![
         ("section", "quick"),
-        ("airplane_row", "1"),
         ("quick_control_wifi", "on"),
         ("quick_control_airplane", "on"),
     ])
     .await;
     assert!(res.status.is_redirection());
     assert_eq!(mask(&app, &token).await, 1 | 32 | 64);
-    save(vec![
-        ("section", "quick"),
-        ("airplane_row", "1"),
-        ("quick_control_wifi", "on"),
-    ])
-    .await;
+    save(vec![("section", "quick"), ("quick_control_wifi", "on")]).await;
     assert_eq!(mask(&app, &token).await, 1 | 32);
-    let res = save(vec![
-        ("section", "quick"),
-        ("airplane_row", "1"),
-        ("quick_control_airplane", "on"),
-    ])
-    .await;
+    let res = save(vec![("section", "quick"), ("quick_control_airplane", "on")]).await;
     assert_redirect(&res, &home, Some("quick-controls"));
     assert_eq!(mask(&app, &token).await, 32 | 64);
 

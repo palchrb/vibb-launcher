@@ -907,9 +907,8 @@ async fn vapid_at_the_route() {
         .execute(&app.db)
         .await
         .unwrap();
-    let listed = crate::unified_push::policy(&app.db, device, &[CAPABILITY.to_string()])
+    let listed = crate::unified_push::policy(&app.db, device)
         .await
-        .unwrap()
         .unwrap()
         .refresh;
     assert_eq!(listed.len(), 1);
@@ -921,10 +920,7 @@ async fn vapid_at_the_route() {
         .execute(&app.db)
         .await
         .unwrap();
-    let again = crate::unified_push::policy(&app.db, device, &[CAPABILITY.to_string()])
-        .await
-        .unwrap()
-        .unwrap();
+    let again = crate::unified_push::policy(&app.db, device).await.unwrap();
     assert!(again.refresh.is_empty(), "a verified push ends it");
     // The gateway: a keyed registration's pushkey is rejected and stamped; an unkeyed one's push sets `gateway_at`.
     sqlx::query("UPDATE up_registrations SET vapid_refused_at = NULL")

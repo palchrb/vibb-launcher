@@ -1365,15 +1365,11 @@ pub struct PolicyResponse {
     /// Design 102 §6.1: Chrome only for logins (`logins::browser_policy`), `null` while the role is off or Chrome is
     /// ticked as a normal app. Always the key. An older launcher ignores it.
     pub login_browser: Option<crate::logins::LoginBrowserPolicy>,
-    /// Design 76 D2: the certificate check for a launcher with `server_pin_v1` (`server_tls::policy`): `{}` while
-    /// watching (no `enforce`: the phone keeps its flag), `{"enforce": true}` on, `{"enforce": false}` the parent's
-    /// off. Left out for an older launcher.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub server_tls: Option<serde_json::Value>,
-    /// Design 108 §3.8: app push for a launcher with `unified_push_v1` (`unified_push::policy`): `on`, `origin`,
-    /// `regs`, `stopped`. Left out for an older launcher, which then has no distributor.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub unified_push: Option<crate::unified_push::UpPolicy>,
+    /// Design 76 D2: the certificate check (`server_tls::policy`), always sent: `{}` while watching (no `enforce`: the
+    /// phone keeps its flag), `{"enforce": true}` on, `{"enforce": false}` the parent's off.
+    pub server_tls: serde_json::Value,
+    /// Design 108 §3.8: app push (`unified_push::policy`), always sent: `on`, `origin`, `regs`, `stopped`, `refresh`.
+    pub unified_push: crate::unified_push::UpPolicy,
 }
 
 /// `PolicyResponse.kid_lock`.

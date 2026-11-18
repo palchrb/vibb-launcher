@@ -511,7 +511,7 @@ address; a phone whose server URL is a Tailscale address refuses ("Stayed on the
 
 ## The phones' certificate check (design 76, `docs/design/76-server-issuer-pin.md`)
 
-The launcher (capability `server_pin_v1`) checks the chain Android validated for this server against its built-in set
+The launcher checks the chain Android validated for this server against its built-in set
 (Let's Encrypt, ZeroSSL's Sectigo - the launcher's alone, `ServerPins.kt`; the server never judges a chain) and
 enforces it only once this server says so. `src/server_tls.rs` (migration `0129_server_tls.sql`, `device_server_tls`,
 one row per phone, no row = `watching`):
@@ -531,8 +531,7 @@ one row per phone, no row = `watching`):
   row only after a 2xx over a working connection); past 8 rows `seen` rows go first, then refusals no longer sent and
   older than a week, only then the oldest refusal (verification L-a). The last report's `seen` is kept
   (`seen_in_set`, `None` for a report without one - the tailnet -, `seen_name`).
-- **Policy** (`server_tls::policy`, in `build_policy`): only for a phone whose last report has `server_pin_v1` -
-  `{}` watching (no `enforce`: the phone keeps its flag, R-1), `{"enforce": true}` on, `{"enforce": false}` off; each
+- **Policy** (`server_tls::policy`, in `build_policy`): always sent - `{}` watching (no `enforce`: the phone keeps its flag, R-1), `{"enforce": true}` on, `{"enforce": false}` off; each
   with `recovery_url` when the server knows its tailnet recovery address (`server_tls::recovery_url`: `PHONE_RECOVERY_URL`,
   else the setup QR's address when it is tailnet http, else this box's tailnet address - the source picked toward
   100.100.100.100 / `fd7a:115c:a1e0::53` on a connected UDP socket, nothing sent, never in the tests, and only while

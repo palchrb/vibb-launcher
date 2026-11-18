@@ -15,7 +15,7 @@
     <div class="group group-avatars group-small group-apps">
         {% if app_push.on %}
         <div class="row" data-row="app-push-switch">
-            <span class="row-label">{{ self.t("app_push.switch") }}{% if app_push.needs_update %}<span class="row-sub tone-orange">{{ self.t("app_push.needs_update") }}</span>{% else if !app_push.origin_set %}<span class="row-sub tone-orange">{{ self.t("app_push.no_origin") }}</span>{% endif %}</span>
+            <span class="row-label">{{ self.t("app_push.switch") }}{% if !app_push.origin_set %}<span class="row-sub tone-orange">{{ self.t("app_push.no_origin") }}</span>{% endif %}</span>
             <span class="row-value">{{ self.t("app_push.hub.on") }}</span>
         </div>
         <details class="confirm cell" id="app-push-off">

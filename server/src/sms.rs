@@ -17,26 +17,6 @@ use crate::AppState;
 use crate::handlers::device_api::{Field, known_fields};
 use crate::security::{self, AuthedDevice, Detail, PhoneLine};
 
-/// Whether the phone's newest status report claims `capability` (no report: no). Its last caller is
-/// `handlers::time_answer` (C1 step 12f takes both out).
-pub async fn has_capability(
-    db: &sqlx::SqlitePool,
-    device_id: i64,
-    capability: &str,
-) -> Result<bool, sqlx::Error> {
-    let latest: Option<Option<String>> = sqlx::query_scalar(
-        "SELECT capabilities_json FROM device_status WHERE device_id = ? \
-         ORDER BY reported_at DESC, id DESC LIMIT 1",
-    )
-    .bind(device_id)
-    .fetch_optional(db)
-    .await?;
-    Ok(latest
-        .flatten()
-        .and_then(|json| serde_json::from_str::<Vec<String>>(&json).ok())
-        .is_some_and(|caps| caps.iter().any(|c| c == capability)))
-}
-
 /// D17: a sender name is at most 11 characters (an alphanumeric TP-OA holds 11 GSM-7 characters).
 pub const NAME_MAX: usize = 11;
 

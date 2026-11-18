@@ -12,8 +12,8 @@ use crate::display_time::Zone;
 use crate::parent_events::{ExtraTimeParams, Kind, TimeAsk};
 use crate::time_state::TimeReport;
 
-/// The launcher's status capability (`time_request.json`'s `capability`): it shows a parent's "Nei" and the name. Read
-/// only for the "Nei" flash's words (§14.4, §14.7).
+/// The launcher's status capability (`time_request.json`'s `capability`): it shows a parent's "Nei" and the name.
+#[cfg(test)]
 pub const CAPABILITY: &str = "time_answer_v1";
 
 /// The phone's newest report as `(reported_at, its time report)`; `None` before the first.

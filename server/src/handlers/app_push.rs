@@ -338,8 +338,6 @@ pub struct AppPushGroup {
     pub on: bool,
     /// A public origin is set (otherwise the switch's row says it is missing).
     pub origin_set: bool,
-    /// The phone reported without `unified_push_v1`: "Vibb One needs an update".
-    pub needs_update: bool,
     pub apps: Vec<AppPushRow>,
     pub stopped: Vec<StoppedRow>,
     /// "Element X isn't using Vibb for notifications" and the fix behind its ⓘ, worded.
@@ -379,14 +377,12 @@ type AppRow = (
     Option<String>,
 );
 
-/// The group for one phone. `names` holds every app the page lists (by package); `capability` is whether the phone's
-/// last report claims `unified_push_v1` (`None` before its first report).
+/// The group for one phone. `names` holds every app the page lists (by package).
 pub(crate) async fn group(
     state: &AppState,
     lang: Lang,
     device_id: i64,
     names: &HashMap<String, AppName>,
-    capability: Option<bool>,
     zone: &Zone,
     reported_at: Option<&str>,
 ) -> Result<AppPushGroup, sqlx::Error> {
@@ -580,7 +576,6 @@ pub(crate) async fn group(
     Ok(AppPushGroup {
         on,
         origin_set,
-        needs_update: capability == Some(false),
         apps,
         stopped,
         missing,

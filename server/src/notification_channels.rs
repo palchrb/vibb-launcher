@@ -18,7 +18,9 @@ use serde_json::{Value, json};
 use crate::i18n::{Lang, t, t_params};
 use crate::models::{DevicePolicy, DeviceStatus};
 
-/// The capability a launcher claims once every full report carries `notification_channels`.
+/// The capability a launcher claims once every full report carries `notification_channels` (the shared contract's
+/// `capability`).
+#[cfg(test)]
 pub const CAPABILITY: &str = "notification_channels_v1";
 
 /// What a channel serves: it counts only while the policy has Vibb run that feature (§5.1).
@@ -255,12 +257,9 @@ pub struct Report {
     pub blocked: Vec<String>,
 }
 
-/// The latest report's `notification_channels`: only from a launcher that claims [CAPABILITY] *and* sent an object
-/// (§4). With the capability but nothing stored the phone's read failed: no row, never a false "All on".
+/// The latest report's `notification_channels`, only when it sent an object (§4). Nothing stored: the phone's read
+/// failed - no row, never a false "All on".
 pub fn report(latest: &DeviceStatus) -> Option<Report> {
-    if !crate::handlers::device_pages::has_capability(Some(latest), CAPABILITY) {
-        return None;
-    }
     latest
         .notification_channels_json
         .as_deref()

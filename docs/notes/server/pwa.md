@@ -484,7 +484,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - **The page** (`GET /devices/{id}/music`, chained with the settings form's POST; `device_pages::view_music`,
   `device_music.html`, its parts from `handlers::music::device_card`; the device page's row "Music · 6 in library",
   "None" with nothing on, "Needs attention" (orange) while the page shows a warning, "Couldn't read" on a failed
-  read): warnings at the top (Vibb One can't deliver music yet, the music app not reachable), **Music app** (the catalog
+  read): warnings at the top (the music app not reachable), **Music app** (the catalog
   switch, "Not in the catalog ›" to `/music/settings#app` without a catalog row), **Library** (one switch per entry,
   `#music-entry-<id>`, the phone's error for the entry under its name while it is on), the **settings form**
   `#music-settings` (one form, `v=2`, design 30: Mobile data, Storage limit and Volume cap pickers, Storytel - groups
@@ -494,7 +494,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   group, local). A phone not set up has the page. Every read is a 500 on a DB error ("Couldn't read this phone"),
   never an empty library or default settings.
 - **Attention** (qa-31-s7-code M1): `handlers::music::music_warnings` (typed `MusicWarnings`) feeds both the page's
-  warnings and five orange rows - "Vibb One can't deliver music yet" and "Music app not reachable" (→ the page),
+  warnings and four orange rows - "Music app not reachable" (→ the page),
   "Storytel refused the phone's login" (→ `#storytel-title`), "Music over the storage limit" (→ `#storage-title`),
   "N music entries fail on the phone" (only entries on for the
   phone, one row, → `#library`); `attention::Sources::music_ticked` carries the entries on.
@@ -2435,18 +2435,17 @@ posted by `static/scroll-restore.js` (`?v=9`) itself, and the return replaces th
 ## Flymodus, the Oppsett card (design 98 step 5, 2026-11-14, branch `design-98`, `docs/design/98-airplane-mode-assistant.md` §6)
 
 - **Home Screen › Hurtigkontroller**: the kid's "Flymodus" switch (`quick_controls_mask` bit 64,
-  `devices::QUICK_CONTROL_AIRPLANE`) only for a phone that reported `airplane_mode_v1`; the form then carries
-  `airplane_row=1`, and `update_policy` takes bit 64 from the switch only with it - without it (an older launcher's
-  page, an older tab) bit 64 is kept as bit 32 is (`(mask & kept_bits) | ?`). A new phone has it on (D1). Its sub-line
-  (`airplane_mode::home_sub`): the parent's "Blokker flymodus", the role not chosen yet, or no Wi-Fi in airplane mode.
+  `devices::QUICK_CONTROL_AIRPLANE`), always drawn; `update_policy` takes bit 64 from the switch and keeps bit 32. A
+  new phone has it on (D1). Its sub-line (`airplane_mode::home_sub`): the parent's "Blokker flymodus", and from a
+  report with `airplane_mode` the role not chosen yet or no Wi-Fi in airplane mode.
 - **The summary**: "Flymodus på siden 21:03" is a header part (`phone_status::with_airplane`, hook `data-airplane`)
   in place of "Offline"/"No contact", last on the second line while in touch; from `on` (the open period's start) or
   a `going_on` report for 10 minutes (`airplane_mode::on_since`). Under Attention, `#airplane-state`: a period ended
   within 12 h, the emergency call that ended it, and the role lost - "held before" is any stored report with
   `assistant: true` (`airplane_mode::assistant_held_before`; it goes with `device_status`' retention, the card's step
   stays).
-- **The Oppsett card** (`#oppsett`, `airplane_mode::setup_steps`, a launcher with `airplane_mode_v1` only - its words
-  name that launcher's notification): Bakgrunnstilkobling, Endre systeminnstillinger (bit 16 or a clock format),
+- **The Oppsett card** (`#oppsett`, `airplane_mode::setup_steps`, from a report with `airplane_mode` - its words
+  name the launcher's notification): Bakgrunnstilkobling, Endre systeminnstillinger (bit 16 or a clock format),
   Digital assistent (bit 64), Wi-Fi i flymodus (bit 64 and the role), Standardapper endret, Samtalefilter (calls managed
   and `call_state.screening_role_held`/`redirection_role_held` false - the report's existing keys, D10). Åpne for
   oppsett is the start-pause with `back=setup` (`?notice=setup_start_pause_sent#oppsett`); "Ikke nå" is
@@ -2463,21 +2462,19 @@ posted by `static/scroll-restore.js` (`?v=9`) itself, and the return replaces th
 ## Snarveier (design 99 step 2, 2026-11-15, branch `design-99-server`, `docs/design/99-snarveier.md` §5-§6)
 
 - **Home Screen › Hurtigkontroller**: "Snarveier i varsellisten" (`quick_controls_mask` bit 128,
-  `devices::QUICK_CONTROL_SHORTCUTS`), the form's first row, only for a phone that reported `shortcuts_v1`; the form
-  then carries `shortcuts_row=1`, and `update_policy` takes bit 128 from the switch only with it - without it bit 128
-  is kept as 64 and 32 are (`kept_bits`). On for new phones (`DEFAULT_QUICK_CONTROLS`) and set on every existing phone
-  by `0148_shortcuts.sql` (D2). Its sub-line (`shortcuts::home_sub`, the kid named, never a pronoun): hidden by the kid
+  `devices::QUICK_CONTROL_SHORTCUTS`), the form's first row, always drawn; `update_policy` takes bit 128 from the
+  switch. On for new phones (`DEFAULT_QUICK_CONTROLS`) and set on every existing phone
+  by `0148_shortcuts.sql` (D2). Its sub-line (`shortcuts::home_sub`, the kid named, never a pronoun; only from a report with `shortcuts`): hidden by the kid
   (with the bit on or off), else with the bit on what the kid chose ("Emma chose: Flashlight, Sound, ...", the
   items' names from `shortcuts::ITEMS` in the page's language) or "No shortcuts are shown now." (no items: nothing
   offered or none chosen, which the report can't tell apart - code QA C99-L3; it was "None of the switches below is
   on.", untrue when the kid chose none). The
-  ⓘ gains the panel's paragraph (`data-shortcuts-info`) and the footer the sentence `device.home.quick_footer_shortcuts`
-  - a key of its own, shown only with the row, so an older launcher's page doesn't promise a panel it hasn't got.
+  ⓘ has the panel's paragraph (`data-shortcuts-info`) and the footer the sentence `device.home.quick_footer_shortcuts`.
 - **The report**: `shortcuts` (`{shown, hidden, items}`, a full-report field, not a heartbeat field), cleaned by
   `shortcuts::clean` (the contract's `clean` rows) into `device_status.shortcuts_json`; read through
-  `shortcuts::report`, which wants the capability.
+  `shortcuts::report` (nothing stored: no line).
 - **About This Phone**: "Snarveier" in the software list - the items' names, "Skjult av Emma", "Ingen" (bit on, no
-  items) or "Av" (bit 128 off); only from a launcher with `shortcuts_v1`.
+  items) or "Av" (bit 128 off); only from a report with `shortcuts`.
 - Tests: `tests::shortcuts` (the contract: stored reports, `clean` rows, the table, the copies; the migration's bit;
   the form's keep on both sections; the sub-lines; the ⓘ and footer; About; nb and en).
 
@@ -2568,8 +2565,7 @@ Pinned by `shell::the_app_shell_scrolls_main_not_the_document`; measured by `jst
 - **The report**: `notification_channels` (`{all_off, blocked}`, a full-report field, not a heartbeat field), cleaned
   by `notification_channels::clean` (the table's keys only, each once, in its order; a missing or non-array `blocked`
   is `[]`) into `device_status.notification_channels_json`; read through `notification_channels::report`, which wants
-  the capability `notification_channels_v1` *and* a stored object (a failed read on the phone is no row, never a false
-  "All on"). No security event (Q5).
+  a stored object (a failed read on the phone is no row, never a false "All on"). No security event (Q5).
 - **Which channels count** (§5.1): Meldinger's three while `sms_mode == "managed"`, the three call channels while
   `calls_mode == "managed"`, the others always; Snarveier never (its own rows say it). The names are the phone's
   (`notification_channels::CHANNELS`, the contract's `channels`), in the phone's language when `launcher_ui.language`

@@ -360,10 +360,12 @@ async fn policy_json_keys_snapshot() {
             "quick_controls_mask",
             "rule_pause",
             "screen_timeout_seconds",
+            "server_tls",
             "status_gzip",
             "status_heartbeat",
             "status_heartbeat_fields",
             "time_policy",
+            "unified_push",
             "update_fence",
             "vpn_filter_enabled",
         ]
@@ -395,10 +397,12 @@ async fn policy_json_keys_snapshot() {
         "quick_controls_mask",
         "rule_pause",
         "screen_timeout_seconds",
+        "server_tls",
         "status_gzip",
         "status_heartbeat",
         "status_heartbeat_fields",
         "time_policy",
+        "unified_push",
         "update_fence",
         "vpn_filter_enabled",
     ] {
@@ -415,18 +419,11 @@ async fn policy_json_keys_snapshot() {
             "day_minutes": 20, "grant": 0})
     );
     assert!(object["login_browser"].is_null());
-    // Design 108 §3.8: `unified_push` only to a launcher with `unified_push_v1`, `{on, origin, regs, stopped, refresh}`; every
-    // row in `tests::unified_push` (`unified_push.json`'s `policy`).
-    assert!(!object.contains_key("unified_push"));
-    app.post_status(
-        &token,
-        serde_json::json!({"capabilities": [crate::unified_push::CAPABILITY]}),
-    )
-    .await;
-    let distributor = app.policy(&token).await;
-    let mut up_keys: Vec<&str> = distributor["unified_push"]
+    // Design 108 §3.8: `unified_push`, `{on, origin, regs, stopped, refresh}`; every row in `tests::unified_push`
+    // (`unified_push.json`'s `policy`).
+    let mut up_keys: Vec<&str> = object["unified_push"]
         .as_object()
-        .expect("unified_push for a distributor")
+        .expect("unified_push")
         .keys()
         .map(String::as_str)
         .collect();
@@ -670,23 +667,9 @@ async fn policy_json_keys_snapshot() {
     assert_eq!(object["lock_media_apps"], serde_json::json!([]));
     assert_eq!(denied["lock_media_apps"], serde_json::json!([]));
 
-    // Design 76: `server_tls` only for a launcher with `server_pin_v1` - `{}` while watching (no `enforce`, R-1), the
-    // launcher's raw `serverTls` (PolicyResponseCompatTest, ServerPinsTest).
-    app.post_status(
-        &token,
-        serde_json::json!({"capabilities": [crate::server_tls::CAPABILITY]}),
-    )
-    .await;
-    let capable = app.policy(&token).await;
-    let mut capable_keys: Vec<&str> = capable
-        .as_object()
-        .unwrap()
-        .keys()
-        .map(String::as_str)
-        .collect();
-    capable_keys.retain(|k| !keys.contains(k));
-    assert_eq!(capable_keys, ["server_tls"]);
-    assert_eq!(capable["server_tls"], serde_json::json!({}));
+    // Design 76: `server_tls` - `{}` while watching (no `enforce`, R-1), the launcher's raw `serverTls`
+    // (PolicyResponseCompatTest, ServerPinsTest).
+    assert_eq!(object["server_tls"], serde_json::json!({}));
 }
 
 #[tokio::test]

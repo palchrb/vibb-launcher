@@ -214,4 +214,4 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   the summary's running pause says "Satt med foreldrekoden på telefonen" in place of a parent's name, End now ends it
   as any lift; Activity words it by its window ("Leggetid på pause 21:10–21:40 (foreldrekoden)"); the parent-PIN
   event's entry `rule_pause` is "Regelskjermen", with its end in the inbox and its place in the push; the Time page's
-  Now group has the ⓘ for a phone reporting `rule_pause_v1`. Tests: `tests::rule_pause`.
+  Now group has its ⓘ. Tests: `tests::rule_pause`.

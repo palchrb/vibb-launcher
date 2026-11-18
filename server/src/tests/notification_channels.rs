@@ -23,7 +23,7 @@ async fn stored(app: &TestApp, id: i64) -> Option<String> {
     .unwrap()
 }
 
-/// The three report rows are stored exactly; a junk object is cleaned; an older launcher's report stores nothing.
+/// The three report rows are stored exactly; a junk object is cleaned; a report without the key stores nothing.
 #[tokio::test]
 async fn the_report_is_stored_as_the_contract_has_it() {
     let app = TestApp::new().await;
@@ -265,31 +265,26 @@ async fn the_info_says_what_is_lost_and_how_to_fix_it() {
     assert_eq!(about_detail(&html), None);
 }
 
-/// No false all-clear and no row from an older launcher: no capability, or the capability without an object (the
-/// phone's read failed), shows nothing on About and raises nothing.
+/// No false all-clear: a report without an object (the phone's read failed) shows nothing on About and raises nothing.
 #[tokio::test]
-async fn an_older_launcher_or_a_failed_read_has_no_row() {
+async fn a_failed_read_has_no_row() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("Emma").await;
     set_policy(&app, id, "managed", "managed", "system", true).await;
-    for body in [
-        json!({"notification_channels": contract()["report_all_off"], "ringer_mode": "normal"}),
-        json!({"capabilities": [CAPABILITY], "ringer_mode": "normal"}),
-    ] {
-        app.post_status(&token, body).await;
-        let about = app
-            .get_page(&format!("/devices/{id}/about"), &cookie)
-            .await
-            .text();
-        assert!(about.contains("id=\"sound\""), "the group shows: {about}");
-        assert_eq!(about_row(&about), None);
-        let summary = app
-            .get_page(&format!("/devices/{id}"), &cookie)
-            .await
-            .text();
-        assert_eq!(attention_title(&summary), None);
-    }
+    app.post_status(&token, json!({"ringer_mode": "normal"}))
+        .await;
+    let about = app
+        .get_page(&format!("/devices/{id}/about"), &cookie)
+        .await
+        .text();
+    assert!(about.contains("id=\"sound\""), "the group shows: {about}");
+    assert_eq!(about_row(&about), None);
+    let summary = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert_eq!(attention_title(&summary), None);
 }
 
 /// §5.3: the row sits right after Notification access off and before the calls rows, links to About's Sound group,

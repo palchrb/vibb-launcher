@@ -9,7 +9,7 @@
 //! - **The store** ([store]): registrations by the SHA-256 of their secret, the queue, the tombstones.
 //! - **The nudge** ([notify]): a content-free `up` event on the phone's command stream, coalesced on the trailing
 //!   edge; the phone fetches the queue.
-//! - **The policy's `unified_push`** ([policy]) for a launcher with [CAPABILITY]; every allowlist writer calls
+//! - **The policy's `unified_push`** ([policy]), always sent; every allowlist writer calls
 //!   [prune_disallowed].
 //! - **The public origin** (`unified_push_settings`, `/settings/push`): saving one turns app push on for every phone
 //!   whose own switch is on (on by default, Q3/A1); clearing it deletes every registration. A changed origin keeps the
@@ -38,7 +38,9 @@ use serde::Serialize;
 
 use crate::AppState;
 
-/// The launcher's capability: it reads the policy's `unified_push` and talks to the device API (§3.7).
+/// The launcher's capability: it reads the policy's `unified_push` and talks to the device API (§3.7; the shared
+/// contract's `capability`).
+#[cfg(test)]
 pub const CAPABILITY: &str = "unified_push_v1";
 /// The previous origin is accepted this long after a change (M4).
 pub const PREVIOUS_ORIGIN_DAYS: i64 = 30;
@@ -57,7 +59,7 @@ pub const KNOWN_UP_APPS: &[(&str, &str, bool)] = &[
     ("chat.fluffy.fluffychat", "FluffyChat", true),
 ];
 
-/// The policy's `unified_push` (§3.8), only to a launcher whose last report claims [CAPABILITY].
+/// The policy's `unified_push` (§3.8), always sent.
 #[derive(Serialize, Debug, Clone, PartialEq, Eq)]
 pub struct UpPolicy {
     /// The phone's switch (on by default) and a public origin set.
@@ -453,16 +455,8 @@ pub async fn previous_origins(db: &sqlx::SqlitePool) -> Result<Vec<(String, Stri
     .await
 }
 
-/// The policy's `unified_push` for a phone whose last report has `capabilities`: `None` (the key left out) without
-/// [CAPABILITY]. A read error fails the policy (the phone keeps its cache), never a made-up state.
-pub async fn policy(
-    db: &sqlx::SqlitePool,
-    device_id: i64,
-    capabilities: &[String],
-) -> Result<Option<UpPolicy>, sqlx::Error> {
-    if !capabilities.iter().any(|c| c == CAPABILITY) {
-        return Ok(None);
-    }
+/// The policy's `unified_push`. A read error fails the policy (the phone keeps its cache), never a made-up state.
+pub async fn policy(db: &sqlx::SqlitePool, device_id: i64) -> Result<UpPolicy, sqlx::Error> {
     let origin = settings(db).await?.public_origin;
     let switch = switch(db, device_id).await?;
     let regs: Vec<String> =
@@ -484,7 +478,7 @@ pub async fn policy(
     .bind(device_id)
     .fetch_all(db)
     .await?;
-    Ok(Some(UpPolicy {
+    Ok(UpPolicy {
         on: switch && origin.is_some(),
         origin,
         regs,
@@ -500,7 +494,7 @@ pub async fn policy(
                 },
             })
             .collect(),
-    }))
+    })
 }
 
 /// The phone's own switch (`devices.unified_push`, on by default); an unknown phone reads off.

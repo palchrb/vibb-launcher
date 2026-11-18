@@ -14,7 +14,9 @@ use crate::display_time::Zone;
 use crate::i18n::{Lang, t, t_params};
 use crate::models::{DevicePolicy, DeviceStatus};
 
-/// The capability a launcher claims once it reports `airplane_mode` and shows the kid's Flymodus row (bit 64).
+/// The capability a launcher claims once it reports `airplane_mode` and shows the kid's Flymodus row (bit 64; the
+/// shared contract's `capability`).
+#[cfg(test)]
 pub const CAPABILITY: &str = "airplane_mode_v1";
 
 /// A report with `going_on` alone says "on" this long (§6.2, Q98-L2): a turn-on that failed after its report sends
@@ -165,12 +167,8 @@ pub struct Report {
     pub periods: Vec<Period>,
 }
 
-/// The latest report's `airplane_mode`, from a launcher that claims [CAPABILITY] (§6.4: an older launcher has no row
-/// and no step).
+/// The latest report's `airplane_mode`, when it has one.
 pub fn report(latest: &DeviceStatus) -> Option<Report> {
-    if !crate::handlers::device_pages::has_capability(Some(latest), CAPABILITY) {
-        return None;
-    }
     serde_json::from_str(latest.airplane_mode_json.as_deref()?).ok()
 }
 
@@ -275,19 +273,24 @@ pub async fn assistant_held_before(
 }
 
 /// The Home Screen row's sub-line (§6.1; design 113 QA M6), only when it says something, and whether it is orange: the
-/// parent's "Blokker flymodus" (grey); with bit 64 on, the role not held yet (orange - the kid sees no switch) or, with
-/// the role, no Wi-Fi in airplane mode (grey). With bit 64 off nothing is said about the role (the (i) says when the
-/// switch shows). The parts join with " · ".
-pub fn home_sub(lang: Lang, policy: &DevicePolicy, report: &Report) -> Option<(String, bool)> {
+/// parent's "Blokker flymodus" (grey); with bit 64 on and a report, the role not held yet (orange - the kid sees no
+/// switch) or, with the role, no Wi-Fi in airplane mode (grey). With bit 64 off or no report nothing is said about the
+/// role (the (i) says when the switch shows). The parts join with " · ".
+pub fn home_sub(
+    lang: Lang,
+    policy: &DevicePolicy,
+    report: Option<&Report>,
+) -> Option<(String, bool)> {
     let mut parts: Vec<String> = Vec::new();
     if policy.hardening.disallow_airplane_mode {
         parts.push(t(lang, "device.home.airplane_blocked").to_string());
     }
     let bit = policy.quick_controls_mask & crate::handlers::devices::QUICK_CONTROL_AIRPLANE != 0;
-    let no_role = bit && !report.assistant;
+    let report = report.filter(|_| bit);
+    let no_role = report.is_some_and(|r| !r.assistant);
     if no_role {
         parts.push(t(lang, "device.home.airplane_no_role").to_string());
-    } else if bit && report.wifi_kept != Some(true) {
+    } else if report.is_some_and(|r| r.wifi_kept != Some(true)) {
         parts.push(t(lang, "device.home.airplane_offline").to_string());
     }
     (!parts.is_empty()).then(|| (parts.join(" · "), no_role))

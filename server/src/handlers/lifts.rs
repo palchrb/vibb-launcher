@@ -329,9 +329,8 @@ pub(crate) fn done_flash(code: &str) -> Option<(&'static str, &'static str, bool
         "gone" => ("pause", "device.summary.flash.gone", true),
         "ended" => ("lifts", "device.summary.flash.ended", false),
         "over" => ("lifts", "device.summary.flash.over", false),
-        // Design 100 §14.4: the answer card's answers - "Nei" (with the launcher's promise, `time_answer_v1`), and
-        // a stale card's three reasons, nothing written.
-        "answer_no" => ("extra", "device.summary.flash.answer_no", false),
+        // Design 100 §14.4: the answer card's answers - "Nei" (the kid sees it on the phone), and a stale card's three
+        // reasons, nothing written.
         "answer_no_seen" => ("extra", "device.summary.flash.answer_no_seen", false),
         "answered_already" => ("extra", "device.summary.flash.answered_already", true),
         "asked_again" => ("extra", "device.summary.flash.asked_again", true),
@@ -639,7 +638,6 @@ mod tests {
             "gone",
             "ended",
             "over",
-            "answer_no",
             "answer_no_seen",
             "answered_already",
             "asked_again",

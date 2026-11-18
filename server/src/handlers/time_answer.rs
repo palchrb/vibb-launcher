@@ -133,11 +133,8 @@ pub async fn answer(
         Outcome::Done(Given::No, _) => {
             no_line(&state, &admin, id).await;
             let _ = state.command_notify.send(id);
-            // §14.7: only a launcher that shows "Nei" is promised to.
-            match crate::sms::has_capability(&state.db, id, time_answers::CAPABILITY).await {
-                Ok(true) => "answer_no_seen",
-                _ => "answer_no",
-            }
+            // §14.7: the launcher shows "Nei" and the name.
+            "answer_no_seen"
         }
         Outcome::Stale(Standing::Unknown) => {
             return crate::i18n::error(lang, StatusCode::NOT_FOUND, "error.no_such_request");

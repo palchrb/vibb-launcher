@@ -1023,13 +1023,11 @@ pub(crate) const QUICK_CONTROL_TOUCH: i64 = 16;
 /// phone's mask is not changed. A launcher before design 97 ignores the bit.
 pub(crate) const QUICK_CONTROL_MOBILE_DATA: i64 = 32;
 /// The kid's own Flymodus switch (design 98 §6.1): shown on the phone once Vibb One is the Digital assistant. Set by
-/// the Home Screen form only while it shows the row (`airplane_row`, a launcher with `airplane_mode_v1`), else kept.
-/// In a new device's default (D1); an existing phone's mask is not changed. A launcher before design 98 ignores it.
+/// the Home Screen form. In a new device's default (D1); an existing phone's mask is not changed.
 pub(crate) const QUICK_CONTROL_AIRPLANE: i64 = 64;
 /// Snarveier, the kid's quick panel in the shade (design 99 §5.1): its items follow the bits above. Set by the Home
-/// Screen form only while it shows the row (`shortcuts_row`, a launcher with `shortcuts_v1`), else kept. In a new
-/// device's default and set on every existing phone by migration 0148 (D2: Home's flashlight tile goes in the same
-/// launcher). A launcher before design 99 ignores it.
+/// Screen form. In a new device's default and set on every existing phone by migration 0148 (D2: Home's flashlight
+/// tile goes in the same launcher).
 pub(crate) const QUICK_CONTROL_SHORTCUTS: i64 = 128;
 /// A new device's `quick_controls_mask`: every switch on but touch (`insert_device_with_policy`), the kid's Mobildata
 /// switch included (design 97 D3), Flymodus (design 98 D1) and Snarveier (design 99 D2).
@@ -3128,23 +3126,11 @@ pub async fn update_policy(
     if fields.contains_key("quick_control_touch") {
         quick_controls_mask |= QUICK_CONTROL_TOUCH;
     }
-    // Design 98 §6.1 (Q98-M9): bit 64 is this form's only while it shows the Flymodus row (`airplane_row`); a form
-    // without it (an older launcher's page, an older tab) keeps the stored bit, as it keeps 32.
-    let airplane_row = fields.contains_key("airplane_row");
-    if airplane_row && fields.contains_key("quick_control_airplane") {
+    if fields.contains_key("quick_control_airplane") {
         quick_controls_mask |= QUICK_CONTROL_AIRPLANE;
     }
-    // Design 99 §5.2: bit 128 (Snarveier) the same way, only while the form shows its row (`shortcuts_row`).
-    let shortcuts_row = fields.contains_key("shortcuts_row");
-    if shortcuts_row && fields.contains_key("quick_control_shortcuts") {
+    if fields.contains_key("quick_control_shortcuts") {
         quick_controls_mask |= QUICK_CONTROL_SHORTCUTS;
-    }
-    let mut kept_bits = QUICK_CONTROL_MOBILE_DATA;
-    if !airplane_row {
-        kept_bits |= QUICK_CONTROL_AIRPLANE;
-    }
-    if !shortcuts_row {
-        kept_bits |= QUICK_CONTROL_SHORTCUTS;
     }
 
     // Security review S-L5: pairing any Bluetooth device, not only headphones and speakers (a quick-controls field).
@@ -3161,9 +3147,8 @@ pub async fn update_policy(
          WHERE device_id = ?",
     )
     .bind(lock_task_features)
-    // Design 97 §5: bit 32 (the kid's Mobildata switch) is the Mobilnett page's; this form keeps it. Design 98: and bit
-    // 64 while the form has no Flymodus row; design 99: and bit 128 while it has no Snarveier row.
-    .bind(kept_bits)
+    // Design 97 §5: bit 32 (the kid's Mobildata switch) is the Mobilnett page's; this form keeps it.
+    .bind(QUICK_CONTROL_MOBILE_DATA)
     .bind(quick.then_some(quick_controls_mask))
     .bind(quick.then_some(bluetooth_any_device))
     .bind(filter.then_some(vpn_filter_enabled))

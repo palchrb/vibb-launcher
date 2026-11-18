@@ -413,10 +413,10 @@ pub(crate) async fn build_policy(
     // Design 72b D1.6: the marked CalDAV calendar the kid's events are handed to.
     calendar.kid_caldav =
         crate::calendar_kid_events::policy(&state.db, device_id, state.kid_writes.now()).await?;
-    // Design 76: the certificate check, only to a launcher that reads it; a read error fails the policy.
-    let server_tls = crate::server_tls::policy(state, device_id, &capabilities).await?;
-    // Design 108 §3.8: app push, only to a launcher that is a distributor; a read error fails the policy.
-    let unified_push = crate::unified_push::policy(&state.db, device_id, &capabilities).await?;
+    // Design 76: the certificate check; a read error fails the policy.
+    let server_tls = crate::server_tls::policy(state, device_id).await?;
+    // Design 108 §3.8: app push; a read error fails the policy.
+    let unified_push = crate::unified_push::policy(&state.db, device_id).await?;
     let receipts = capabilities
         .iter()
         .any(|c| c == crate::models::COMMAND_RECEIPT_CAPABILITY);
@@ -1701,13 +1701,7 @@ async fn status_intake(
             crate::parent_events::battery_report(&state, phone, battery).await;
         }
         // Design 102 §3.7: a wide Wi-Fi sign-in and the day's budget used up, each once.
-        if report
-            .capabilities
-            .iter()
-            .any(|c| c == crate::logins::PORTAL_CAPABILITY)
-        {
-            crate::logins::intake(&state, phone, captive_portal_json.as_deref()).await;
-        }
+        crate::logins::intake(&state, phone, captive_portal_json.as_deref()).await;
         // Design 97 §6: the roaming notice, from a report that says where the phone is (`where`).
         if let Some(roaming) = data_roaming_json
             .as_deref()

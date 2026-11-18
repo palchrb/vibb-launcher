@@ -116,8 +116,8 @@ class PolicyResponseCompatTest {
         assertNull(LastEnforcedPlan.of(policy("""["de.danoeh.antennapod"]""")).toPolicy().lockMediaApps)
     }
 
-    /** Design 76: `server_tls` (the server's `policy_json_keys_snapshot`: `{}` for a watched phone with `server_pin_v1`,
-     * absent without it) - raw JSON read by `enforceOf`, so nothing in it fails the policy; never in the fallback. */
+    /** Design 76: `server_tls` (the server's `policy_json_keys_snapshot`: always sent, `{}` for a watched phone; absent
+     * from an older server) - raw JSON read by `enforceOf`, so nothing in it fails the policy; never in the fallback. */
     @Test
     fun `server_tls decodes raw, never fails the policy, and the fallback never carries it`() {
         fun policy(value: String) = ServerJson.decodeFromString(PolicyResponse.serializer(), """{"server_tls": $value}""")
@@ -1363,8 +1363,8 @@ class PolicyResponseCompatTest {
         assertNull(older.loginBrowser)
     }
 
-    /** Design 108 §3.8: `unified_push` (the server's `policy_json_keys_snapshot`, sent only to a launcher claiming
-     * `unified_push_v1`) - missing (an older server), or without an origin, is off. */
+    /** Design 108 §3.8: `unified_push` (the server's `policy_json_keys_snapshot`, always sent) - missing (an older
+     * server), or without an origin, is off. */
     @Test
     fun `unified_push decodes, missing or without an origin is off (108)`() {
         val policy = (decodeCached(
@@ -1384,6 +1384,12 @@ class PolicyResponseCompatTest {
         assertTrue(com.kidslauncher.mdm.push.up.UpView.of(noRefresh).refresh.isEmpty())
         val noOrigin = (decodeCached("""{"unified_push": {"on": true, "origin": null, "regs": [], "stopped": []}}""") as CachedPolicy.Ok).policy
         assertFalse(com.kidslauncher.mdm.push.up.UpView.of(noOrigin).on)
+        // The server's literal for a fresh phone, with `server_tls` beside it (both always sent).
+        val fresh = (decodeCached(
+            """{"server_tls": {}, "unified_push": {"on": false, "origin": null, "regs": [], "stopped": [], "refresh": []}}""",
+        ) as CachedPolicy.Ok).policy
+        assertFalse(com.kidslauncher.mdm.push.up.UpView.of(fresh).on)
+        assertNull(enforceOf(fresh.serverTls))
         val older = (decodeCached(serverResponse) as CachedPolicy.Ok).policy
         assertNull(older.unifiedPush)
         assertFalse(com.kidslauncher.mdm.push.up.UpView.of(older).on)

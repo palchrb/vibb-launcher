@@ -26,7 +26,9 @@ use serde_json::json;
 use crate::AppState;
 use crate::security::AuthedDevice;
 
-/// The capability a launcher claims once it offers Foreldrekode on the time-rule screen (§4.4.6): the Time page's ⓘ.
+/// The capability a launcher claims once it offers Foreldrekode on the time-rule screen (§4.4.6; the shared contract's
+/// `capability`).
+#[cfg(test)]
 pub const CAPABILITY: &str = "rule_pause_v1";
 /// `POST /api/devices/rule-pause` takes at most this much (8 rules).
 pub const BODY_LIMIT: usize = 2048;

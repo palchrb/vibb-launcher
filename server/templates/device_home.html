@@ -85,24 +85,16 @@
         {#- One form for the five and Bluetooth's any-device switch: `section=quick` writes only these (§5.6, H1), not the web filter. -#}
         <form method="post" action="/devices/{{ device.id }}/policy#quick-controls" class="group">
             <input type="hidden" name="section" value="quick">
-            {#- Design 99 §5.2: Snarveier (bit 128), first, only for a launcher with shortcuts_v1; the form then says it
-                carries the bit (shortcuts_row), else the save keeps it. -#}
-            {% if let Some(shortcuts_sub) = shortcuts_row %}
-            <input type="hidden" name="shortcuts_row" value="1">
+            {#- Design 99 §5.2: Snarveier (bit 128), first. -#}
             <label class="row" data-row="shortcuts">
                 <span class="row-label">{{ self.t("device.home.shortcuts") }}{% if let Some(line) = shortcuts_sub %}<span class="row-sub" data-shortcuts-sub>{{ line }}</span>{% endif %}</span>
                 <input type="checkbox" role="switch" class="sw" name="quick_control_shortcuts" value="on"{% if quick_shortcuts %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
             </label>
-            {% endif %}
-            {#- Design 98 §6.1: the kid's Flymodus switch (bit 64), only for a launcher with airplane_mode_v1; the form then
-                says it carries the bit (airplane_row), else the save keeps it. -#}
-            {% if let Some(airplane_sub) = airplane_row %}
-            <input type="hidden" name="airplane_row" value="1">
+            {#- Design 98 §6.1: the kid's Flymodus switch (bit 64). -#}
             <label class="row" data-row="airplane">
                 <span class="row-label">{{ self.t("device.home.airplane") }}{% if let Some((line, warn)) = airplane_sub %}<span class="row-sub{% if warn %} tone-orange{% endif %}" data-airplane-sub>{{ line }}</span>{% endif %}</span>
                 <input type="checkbox" role="switch" class="sw" name="quick_control_airplane" value="on"{% if quick_airplane %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
             </label>
-            {% endif %}
             <label class="row">
                 <span class="row-label">{{ self.t("device.home.wifi") }}</span>
                 <input type="checkbox" role="switch" class="sw" name="quick_control_wifi" value="on"{% if quick_wifi %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
@@ -134,11 +126,11 @@
             <details class="info">
                 <summary aria-label="{{ self.t("device.home.quick_info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
-                    <p>{{ self.t("device.home.quick_footer") }}{% if shortcuts_row.is_some() %} <span data-shortcuts-footer>{{ self.t("device.home.quick_footer_shortcuts") }}</span>{% endif %} {{ self.t("device.home.quick_mobile") }}</p>
-                    {% if shortcuts_row.is_some() %}<p data-shortcuts-info>{{ self.tp("device.home.shortcuts_info", [("name", device.name.as_str())]) }}</p>{% endif %}
+                    <p>{{ self.t("device.home.quick_footer") }} <span data-shortcuts-footer>{{ self.t("device.home.quick_footer_shortcuts") }}</span> {{ self.t("device.home.quick_mobile") }}</p>
+                    <p data-shortcuts-info>{{ self.tp("device.home.shortcuts_info", [("name", device.name.as_str())]) }}</p>
                     <p>{{ self.t("device.home.quick_info") }}</p>
                     <p>{{ self.t("device.home.bluetooth_any_sub") }}</p>
-                    {% if airplane_row.is_some() %}<p data-airplane-info>{{ self.t("device.home.airplane_info") }}</p>{% endif %}
+                    <p data-airplane-info>{{ self.t("device.home.airplane_info") }}</p>
                 </div>
             </details>
         </div>

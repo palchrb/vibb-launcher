@@ -17,7 +17,7 @@ The launcher's side is `docs/notes/launcher/logins.md`.
   non-ASCII; at most 100 own entries); `clean_portal`/`clean_browser` (field by field: known words, plausible counts and
   instants, hosts cleaned and cut to 20 visited and 10 blocked hosts and frames, the last 10 sessions; a session without
   a known outcome, start, approval or `opened_ms` is dropped); the events.
-- **The events** (`logins::intake`, only from a launcher with `captive_portal_v1`): `wifi_signin_wide` for a session
+- **The events** (`logins::intake`, from the stored report): `wifi_signin_wide` for a session
   that visited more than 3 sites, had a blocked frame (never a blocked sub-resource alone: portal pages load blocked
   analytics, R2-L3) or timed out, keyed by its `opened_ms` (every report repeats the last 10); `wifi_signin_budget` once
   a day (`budget:<local date>`) when the day's code-free openings or minutes (with each grant step's one and 10) are used

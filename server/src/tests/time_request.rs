@@ -707,64 +707,56 @@ async fn the_card_shows_the_open_request_until_an_answer() {
     assert!(inbox.contains("parent gave 15\u{a0}min"), "{inbox}");
 }
 
-/// "Nei": no lift, a `no` row, the security line and the nudge; the flash promises that the kid sees it only when
-/// the phone's launcher shows it (`time_answer_v1`, §14.7); the inbox says who said no.
+/// "Nei": no lift, a `no` row, the security line and the nudge; the flash says the kid sees it on the phone (§14.7);
+/// the inbox says who said no.
 #[tokio::test]
-async fn no_with_and_without_the_capability() {
-    for (capabilities, flash, words) in [
-        (
-            json!(["call_policy_v1", "time_rules_v1"]),
-            "answer_no",
-            "You said no.",
-        ),
-        (
-            json!(["call_policy_v1", "time_rules_v1", "time_answer_v1"]),
-            "answer_no_seen",
-            "You said no. Anna sees it on the phone.",
-        ),
-    ] {
-        let app = TestApp::new().await;
-        steady_zone(&app).await;
-        let cookie = app.admin_cookie_as("pappa", "Pappa").await;
-        let (id, token) = app.enrolled_device("Anna").await;
-        app.post_status(&token, json!({ "capabilities": capabilities }))
-            .await;
-        assert_eq!(
-            post(&app, &token, body(1, 0)).await.1,
-            json!({"accepted": true})
-        );
-        let mut nudges = app.state.command_notify.subscribe();
-        let res = answer(&app, &cookie, id, &format!("{:032x}", 1), "no").await;
-        assert_redirect(&res, &format!("/devices/{id}?done={flash}"), Some("quick"));
-        assert_eq!(nudges.try_recv().ok(), Some(id));
-        assert_eq!(
-            answer_row(&app, id, &format!("{:032x}", 1)).await,
-            Some(("no".to_string(), None))
-        );
-        let lifts: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM time_lifts")
-            .fetch_one(&app.db)
-            .await
-            .unwrap();
-        assert_eq!(lifts, 0);
-        let lines = super::security_words(&app, "time_request_no", crate::i18n::Lang::En).await;
-        assert_eq!(lines.len(), 1, "{lines:?}");
-        assert!(
-            lines[0].contains("no to a request for more time"),
-            "{lines:?}"
-        );
-        let html = app
-            .get_page(&format!("/devices/{id}?done={flash}"), &cookie)
-            .await
-            .text();
-        assert!(html.contains(words), "{html}");
-        assert!(card(&html).is_none());
-        let inbox = app.get_page("/notifications", &cookie).await.text();
-        assert!(inbox.contains("Pappa said no"), "{inbox}");
-        // The phone: the answer with Pappa's name.
-        let policy = app.policy(&token).await;
-        assert_eq!(policy["time_policy"]["answer"]["answer"], "no");
-        assert_eq!(policy["time_policy"]["answer"]["by"], "Pappa");
-    }
+async fn no_is_written_and_seen() {
+    let (capabilities, flash, words) = (
+        json!(["call_policy_v1", "time_rules_v1", "time_answer_v1"]),
+        "answer_no_seen",
+        "You said no. Anna sees it on the phone.",
+    );
+    let app = TestApp::new().await;
+    steady_zone(&app).await;
+    let cookie = app.admin_cookie_as("pappa", "Pappa").await;
+    let (id, token) = app.enrolled_device("Anna").await;
+    app.post_status(&token, json!({ "capabilities": capabilities }))
+        .await;
+    assert_eq!(
+        post(&app, &token, body(1, 0)).await.1,
+        json!({"accepted": true})
+    );
+    let mut nudges = app.state.command_notify.subscribe();
+    let res = answer(&app, &cookie, id, &format!("{:032x}", 1), "no").await;
+    assert_redirect(&res, &format!("/devices/{id}?done={flash}"), Some("quick"));
+    assert_eq!(nudges.try_recv().ok(), Some(id));
+    assert_eq!(
+        answer_row(&app, id, &format!("{:032x}", 1)).await,
+        Some(("no".to_string(), None))
+    );
+    let lifts: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM time_lifts")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(lifts, 0);
+    let lines = super::security_words(&app, "time_request_no", crate::i18n::Lang::En).await;
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(
+        lines[0].contains("no to a request for more time"),
+        "{lines:?}"
+    );
+    let html = app
+        .get_page(&format!("/devices/{id}?done={flash}"), &cookie)
+        .await
+        .text();
+    assert!(html.contains(words), "{html}");
+    assert!(card(&html).is_none());
+    let inbox = app.get_page("/notifications", &cookie).await.text();
+    assert!(inbox.contains("Pappa said no"), "{inbox}");
+    // The phone: the answer with Pappa's name.
+    let policy = app.policy(&token).await;
+    assert_eq!(policy["time_policy"]["answer"]["answer"], "no");
+    assert_eq!(policy["time_policy"]["answer"]["by"], "Pappa");
 }
 
 /// D9 decided at the answer (QA R2-M2): asked with the screen time used up, then Leggetid locks (a fresh report):
@@ -884,7 +876,7 @@ async fn the_first_answer_wins() {
     let res = answer(&app, &pappa, id, &second, "no").await;
     assert_redirect(
         &res,
-        &format!("/devices/{id}?done=answer_no"),
+        &format!("/devices/{id}?done=answer_no_seen"),
         Some("quick"),
     );
     let html = app

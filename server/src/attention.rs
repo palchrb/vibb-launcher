@@ -76,10 +76,8 @@ pub enum Kind {
     Calls(CallProblem),
     LedgerUnreadable,
     /// Device › Music's warnings (design 31 step 7 fix round, qa-31-s7-code M1), from
-    /// `music::music_warnings` like the page's: Vibb without music while entries are on, the music
-    /// app not reachable, Storytel's login refused, over the storage limit, entries the phone can't
-    /// fetch (one row for all).
-    MusicCantDeliver,
+    /// `music::music_warnings` like the page's: the music app not reachable, Storytel's login
+    /// refused, over the storage limit, entries the phone can't fetch (one row for all).
     MusicUnreachable,
     MusicStorytelRefused,
     MusicOverLimit,
@@ -161,7 +159,6 @@ impl AttentionItem {
             Kind::AppPushOutside(_) => "app-push-outside",
             Kind::Calls(_) => "calls",
             Kind::LedgerUnreadable => "screen-time-record",
-            Kind::MusicCantDeliver => "music-cant-deliver",
             Kind::MusicUnreachable => "music-unreachable",
             Kind::MusicStorytelRefused => "music-storytel-refused",
             Kind::MusicOverLimit => "music-over-limit",
@@ -267,7 +264,6 @@ pub fn items(lang: Lang, device_id: i64, facts: &Facts) -> Vec<AttentionItem> {
     }
     add(facts.ledger_unreadable, Kind::LedgerUnreadable);
     let music = &facts.music;
-    add(music.cant_deliver, Kind::MusicCantDeliver);
     add(music.unreachable, Kind::MusicUnreachable);
     add(music.storytel_refused, Kind::MusicStorytelRefused);
     add(music.over_limit.is_some(), Kind::MusicOverLimit);
@@ -324,7 +320,6 @@ fn level(kind: Kind) -> Level {
         | Kind::AppPushOutside(_)
         | Kind::Calls(_)
         | Kind::LedgerUnreadable
-        | Kind::MusicCantDeliver
         | Kind::MusicUnreachable
         | Kind::MusicStorytelRefused
         | Kind::MusicOverLimit
@@ -372,7 +367,6 @@ fn title(lang: Lang, kind: Kind) -> String {
         }
         Kind::Calls(problem) => problem.title(lang),
         Kind::LedgerUnreadable => t(lang, "device.attention.screen_time_record"),
-        Kind::MusicCantDeliver => t(lang, "device.attention.music_cant_deliver"),
         Kind::MusicUnreachable => t(lang, "device.attention.music_unreachable"),
         Kind::MusicStorytelRefused => t(lang, "device.attention.music_storytel_refused"),
         Kind::MusicOverLimit => t(lang, "device.attention.music_over_limit"),
@@ -424,7 +418,7 @@ fn target(kind: Kind, id: i64) -> String {
             return format!("/devices/{id}/time");
         }
         // Device › Music's warnings at the top of the page: no fragment needed.
-        Kind::MusicCantDeliver | Kind::MusicUnreachable => {
+        Kind::MusicUnreachable => {
             return format!("/devices/{id}/music");
         }
         // The others above their own group (its header) or by their rows.
@@ -779,7 +773,6 @@ mod tests {
             calls: vec![CallProblem::Waiting, CallProblem::AnyoneCanCall],
             ledger_unreadable: true,
             music: crate::handlers::music::MusicWarnings {
-                cant_deliver: true,
                 unreachable: true,
                 storytel_refused: true,
                 over_limit: Some(("3.2 GB".to_string(), 2)),
@@ -881,7 +874,6 @@ mod tests {
                 "2 apps' notifications go via an outside service",
                 "Anyone can call this phone",
                 "Screen-time record unreadable",
-                "Vibb One can't deliver music yet",
                 "Music app not reachable",
                 "Storytel refused the phone's login",
                 "Music over the storage limit",
@@ -1005,7 +997,6 @@ mod tests {
         assert_eq!(target("calls"), "/devices/7/calls");
         // Step 7's fix round: Device › Music - the top warnings without a fragment, the others at
         // their group.
-        assert_eq!(target("music-cant-deliver"), "/devices/7/music");
         assert_eq!(target("music-unreachable"), "/devices/7/music");
         assert_eq!(
             target("music-storytel-refused"),

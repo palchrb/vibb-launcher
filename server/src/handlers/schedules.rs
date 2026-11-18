@@ -1843,8 +1843,6 @@ struct DeviceTimeTemplate {
     budget: Vec<BudgetInput>,
     budget_corrupt: bool,
     budget_saved: bool,
-    /// Design 98 §4.4.5: the phone reports `rule_pause_v1` - the Now group's ⓘ says what its parent code can pause.
-    rule_pause: bool,
 }
 crate::i18n::words!(DeviceTimeTemplate);
 
@@ -2036,10 +2034,6 @@ async fn render_device_time(
                 None => budget_inputs(lang, &policy.daily_budget_json),
             },
             budget_saved: !refused && query.get("saved").map(String::as_str) == Some("budget"),
-            rule_pause: crate::handlers::device_pages::has_capability(
-                latest.as_ref(),
-                crate::handlers::rule_pause::CAPABILITY,
-            ),
             device,
         },
         if refused {

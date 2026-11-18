@@ -404,19 +404,6 @@ async fn the_reports_events() {
         ["wifi_signin_wide", "wifi_signin_budget"]
     );
 
-    // A launcher without the capability raises nothing.
-    let (other, other_token) = app.enrolled_device("Jack").await;
-    app.post_status(
-        &other_token,
-        json!({"captive_portal": {"today": {"openings": 9}, "sessions": [session(now, &[], &["x.example"])]}}),
-    )
-    .await;
-    assert!(
-        super::told_events(&app, other, crate::i18n::Lang::En)
-            .await
-            .is_empty()
-    );
-
     // The Wi-Fi keypad's right code: a stored PIN event, worded as the Wi-Fi sign-in's.
     let body = json!({"events": [{"id": "00112233445566778899aabbccddeeff", "kind": "unlocked",
         "entry": "wifi_signin", "at_ms": now - 1_000}]});

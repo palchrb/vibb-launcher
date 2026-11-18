@@ -4634,8 +4634,6 @@ fn warning(title: &str, detail: String) -> Note {
 /// entries switched on for the phone).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct MusicWarnings {
-    /// A reporting launcher without `music_v1` while entries are on.
-    pub cant_deliver: bool,
     /// The launcher's bridge to the music app isn't bound.
     pub unreachable: bool,
     /// The phone's own Storytel login was refused (design 26b §4.5).
@@ -4716,13 +4714,8 @@ pub fn music_warnings(
     ticked: &[i64],
 ) -> MusicWarnings {
     let report = music::parse_music_state(latest.and_then(|s| s.music_state_json.as_deref()));
-    let capable = latest
-        .and_then(|s| s.capabilities_json.as_deref())
-        .and_then(|j| serde_json::from_str::<Vec<String>>(j).ok())
-        .is_some_and(|caps| caps.iter().any(|c| c == "music_v1"));
     let report = report.as_ref();
     MusicWarnings {
-        cant_deliver: latest.is_some() && !capable && !ticked.is_empty(),
         unreachable: report
             .and_then(|r| r.bridge.as_deref())
             .is_some_and(|b| b != "bound"),
@@ -4885,10 +4878,6 @@ pub(crate) async fn device_card(
     let mut on_phone = Vec::new();
     let mut warnings = Vec::new();
     let storage_limit = music::storage_limit(policy.music_storage_limit_gb);
-    let capable = latest_status
-        .and_then(|s| s.capabilities_json.as_deref())
-        .and_then(|j| serde_json::from_str::<Vec<String>>(j).ok())
-        .is_some_and(|caps| caps.iter().any(|c| c == "music_v1"));
     let stored_rooms: Option<String> =
         sqlx::query_scalar("SELECT music_sonos_rooms_json FROM device_policy WHERE device_id = ?")
             .bind(device_id)
@@ -4993,8 +4982,8 @@ pub(crate) async fn device_card(
             }
             on_phone.extend(spotify_report_row(lang, policy, report.spotify.as_deref()));
         }
-        // A launcher with the bridge sends no `music_state` without the music app (qa-21-step3-code L13).
-        None if capable => on_phone.push(Row::new(
+        // The launcher sends no `music_state` without the music app (qa-21-step3-code L13).
+        None if latest_status.is_some() => on_phone.push(Row::new(
             "app",
             t(lang, "device.music.app"),
             t(
@@ -5015,12 +5004,6 @@ pub(crate) async fn device_card(
         warnings.push(warning(
             t(lang, "device.music.unreachable"),
             t(lang, "device.music.unreachable_sub").to_string(),
-        ));
-    }
-    if found.cant_deliver {
-        warnings.push(warning(
-            t(lang, "device.music.cant_deliver"),
-            t(lang, "device.music.cant_deliver_sub").to_string(),
         ));
     }
 

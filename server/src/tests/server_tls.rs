@@ -65,9 +65,8 @@ async fn a_launcher_report_moves_the_state() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("Anna").await;
-    // An older launcher: no `server_tls` in the policy, no group on the page.
-    app.post_status(&token, json!({})).await;
-    assert!(app.policy(&token).await.get("server_tls").is_none());
+    // No report yet: `server_tls` watching in the policy, no group on the page.
+    assert_eq!(app.policy(&token).await["server_tls"], json!({}));
     assert_eq!(advanced(&app, id, &cookie, "").await, None);
 
     // The contract's report: one in-set sighting and two outside rows - stored, the switch-on stopped, pushed once.

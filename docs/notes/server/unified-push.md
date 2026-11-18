@@ -72,7 +72,7 @@ fails is taken back.
 
 ## The policy and the allowlist
 
-`unified_push` `{on, origin, regs, stopped}` only to a launcher claiming `unified_push_v1` (`on` = the phone's switch
+`unified_push` `{on, origin, regs, stopped, refresh}`, always sent (`on` = the phone's switch
 `devices.unified_push`, on by default, and an origin set). Every allowlist writer calls
 `unified_push::prune_disallowed` (a source scan, `every_allowlist_writer_prunes`, keeps it so): an app that leaves the
 list loses its registrations. **How a writer calls it (R1-SR M2):** on the connection it wrote with - inside its own

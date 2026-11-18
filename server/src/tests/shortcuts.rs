@@ -25,7 +25,7 @@ async fn stored(app: &TestApp, id: i64) -> Option<String> {
     .unwrap()
 }
 
-/// The report rows are stored exactly; an older launcher's report stores nothing.
+/// The report rows are stored exactly; a report without the key stores nothing.
 #[tokio::test]
 async fn the_report_is_stored_as_the_contract_has_it() {
     let app = TestApp::new().await;
@@ -146,13 +146,10 @@ async fn set_mask(app: &TestApp, id: i64, mask: i64) {
         .unwrap();
 }
 
-/// A report from design 99's launcher: `shortcuts` and the capability (with design 98's, so both rows show).
+/// A report with `shortcuts`.
 async fn report(app: &TestApp, token: &str, shortcuts: Value) {
-    app.post_status(
-        token,
-        json!({"capabilities": [CAPABILITY, crate::airplane_mode::CAPABILITY], "shortcuts": shortcuts}),
-    )
-    .await;
+    app.post_status(token, json!({"shortcuts": shortcuts}))
+        .await;
 }
 
 /// The Home Screen row's sub-line, if the page has one.
@@ -161,12 +158,11 @@ fn sub_line(html: &str) -> Option<&str> {
     Some(&html[start..start + html[start..].find("</span>")?])
 }
 
-/// §5.2 (as Q98-M9): the Home Screen form shows the Snarveier row - first - only for a launcher with the capability
-/// and then says so (`shortcuts_row`); a save without the row keeps bit 128 (and 64, 32), on `section=quick` and on
-/// the whole form; a save with the row takes the bit from the switch. The ⓘ and the footer, in both languages; the
-/// page is a phone sub-page (no bell) and every save lands on `#quick-controls`.
+/// §5.2: the Home Screen form always shows the Snarveier row - first - and takes bit 128 from its switch, keeping 32.
+/// The ⓘ and the footer, in both languages; the page is a phone sub-page (no bell) and every save lands on
+/// `#quick-controls`.
 #[tokio::test]
-async fn the_home_form_keeps_bit_128_without_its_row() {
+async fn the_home_form_takes_bit_128_from_its_row() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("Emma").await;
@@ -185,24 +181,19 @@ async fn the_home_form_keeps_bit_128_without_its_row() {
         }
     };
 
-    // An older launcher: no row, no ⓘ paragraph, no footer sentence, and the form keeps 128 (and 64 and 32).
+    // A report without `shortcuts`: the row, no sub-line.
     app.post_status(&token, json!({})).await;
     let html = app.get_page(&home, &cookie).await.text();
-    assert!(!html.contains("quick_control_shortcuts"), "{html}");
-    assert!(!html.contains("shortcuts_row"));
-    assert!(!html.contains("data-shortcuts-info"));
-    assert!(!html.contains("The switches apply to both Settings and Shortcuts."));
-    let res = save(vec![("section", "quick"), ("quick_control_wifi", "on")]).await;
-    assert!(res.status.is_redirection(), "{}", res.text());
-    assert_eq!(mask(&app, &token).await, 1 | 32 | 64 | 128);
+    assert_eq!(
+        super::input_checked(&html, "quick_control_shortcuts", "on"),
+        Some(true)
+    );
+    assert_eq!(sub_line(&html), None);
 
-    // Design 99's launcher: the row first, on, saving itself on #quick-controls; its sub-line, the ⓘ and the footer.
+    // A report with `shortcuts`: the row first, on, saving itself on #quick-controls; its sub-line, the ⓘ and the
+    // footer.
     report(&app, &token, contract()["report"].clone()).await;
     let html = app.get_page(&home, &cookie).await.text();
-    assert!(
-        html.contains("<input type=\"hidden\" name=\"shortcuts_row\" value=\"1\">"),
-        "{html}"
-    );
     assert!(html.contains("Shortcuts in the notifications"), "{html}");
     let at = |name: &str| html.find(&format!("name=\"{name}\"")).unwrap();
     assert!(at("quick_control_shortcuts") < at("quick_control_airplane"));
@@ -241,40 +232,28 @@ async fn the_home_form_keeps_bit_128_without_its_row() {
     ));
     assert!(nb.contains("Bryterne gjelder både Innstillinger og Snarveier."));
 
-    // With the row: the switch decides bit 128; 64 (no Flymodus row in these saves) and 32 are still kept.
-    let res = save(vec![
-        ("section", "quick"),
-        ("shortcuts_row", "1"),
-        ("quick_control_wifi", "on"),
-    ])
-    .await;
+    // The switch decides bit 128 (and Flymodus' 64, off in these saves); 32 is kept.
+    let res = save(vec![("section", "quick"), ("quick_control_wifi", "on")]).await;
     assert_redirect(&res, &home, Some("quick-controls"));
     app.assert_lands(&res, &cookie).await;
-    assert_eq!(mask(&app, &token).await, 1 | 32 | 64);
+    assert_eq!(mask(&app, &token).await, 1 | 32);
     let res = save(vec![
         ("section", "quick"),
-        ("shortcuts_row", "1"),
         ("quick_control_wifi", "on"),
         ("quick_control_shortcuts", "on"),
     ])
     .await;
     assert!(res.status.is_redirection());
-    assert_eq!(mask(&app, &token).await, 1 | 32 | 64 | 128);
-    save(vec![
-        ("section", "quick"),
-        ("shortcuts_row", "1"),
-        ("quick_control_wifi", "on"),
-    ])
-    .await;
-    assert_eq!(mask(&app, &token).await, 1 | 32 | 64);
+    assert_eq!(mask(&app, &token).await, 1 | 32 | 128);
+    save(vec![("section", "quick"), ("quick_control_wifi", "on")]).await;
+    assert_eq!(mask(&app, &token).await, 1 | 32);
     let res = save(vec![
         ("section", "quick"),
-        ("shortcuts_row", "1"),
         ("quick_control_shortcuts", "on"),
     ])
     .await;
     assert_redirect(&res, &home, Some("quick-controls"));
-    assert_eq!(mask(&app, &token).await, 32 | 64 | 128);
+    assert_eq!(mask(&app, &token).await, 32 | 128);
 }
 
 /// §5.2's sub-lines from the stored report: what the kid chose, that the kid hid it (the bit on or off), that no
@@ -330,10 +309,9 @@ async fn the_home_row_says_what_the_kid_did() {
     assert_eq!(sub_line(&page("en").await), Some("None"));
     assert_eq!(sub_line(&page("nb").await), Some("Ingen"));
 
-    // A launcher with the capability that sent no `shortcuts` reads as nothing offered.
-    app.post_status(&token, json!({"capabilities": [CAPABILITY]}))
-        .await;
-    assert_eq!(sub_line(&page("en").await), Some("None"));
+    // A report that sent no `shortcuts` says nothing.
+    app.post_status(&token, json!({})).await;
+    assert_eq!(sub_line(&page("en").await), None);
 }
 
 /// The value of About This Phone's Snarveier row.
@@ -344,7 +322,7 @@ fn about_value(html: &str) -> Option<&str> {
 }
 
 /// §5.3: one line in About This Phone's list - the kid's items, "Hidden by Emma", or "Off" with bit 128 off - only
-/// from a launcher with the capability; nb and en.
+/// from a report with `shortcuts`; nb and en.
 #[tokio::test]
 async fn about_this_phone_says_the_shortcuts() {
     let app = TestApp::new().await;
@@ -357,7 +335,7 @@ async fn about_this_phone_says_the_shortcuts() {
     app.post_status(&token, json!({"app_version": "0.40.0"}))
         .await;
     let html = app.get_page(&about, &cookie).await.text();
-    assert_eq!(about_value(&html), None, "an older launcher: no line");
+    assert_eq!(about_value(&html), None, "no `shortcuts`: no line");
 
     report(&app, &token, contract()["report"].clone()).await;
     let html = app.get_page(&about, &cookie).await.text();
