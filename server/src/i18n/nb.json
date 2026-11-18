@@ -4124,8 +4124,6 @@
   "device.lock.time_unknown": "ukjent tid",
   "device.lock.note.times.one": "{count} gang",
   "device.lock.note.times.other": "{count} ganger",
-  "device.lock.note.safe_mode": "Sikker modus er tillatt",
-  "device.lock.note.safe_mode_sub": "Sikker modus starter telefonen uten Vibb One, så den hopper over låsen. Slå på Blokker sikker modus under Avansert › Begrensninger.",
   "device.lock.note.needs_update": "Vibb One må oppdateres",
   "device.lock.note.needs_update_sub": "Denne versjonen har ingen lås. Til den er oppdatert, beholder telefonen sin egen skjermlås, hvis den har en.",
   "device.lock.note.needs_update_short": "Ingen lås til da",

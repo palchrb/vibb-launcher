@@ -1927,6 +1927,9 @@ impl CallProblem {
                 | CallProblem::MmsUnchecked
                 | CallProblem::MmsNoData
                 | CallProblem::SmsRoleKept
+                // SMS off and the Messages app ticked are both the parent's choices, and the phone hides the app
+                // anyway: a quiet row, never a warning (2026-11-18).
+                | CallProblem::SmsAppAllowed
         )
     }
 
@@ -3457,6 +3460,7 @@ mod tests {
                         | Finding::MmsUnchecked { .. }
                         | Finding::MmsNoData
                         | Finding::SmsRoleKept
+                        | Finding::SmsAppAllowed { .. }
                 )
             );
             // Design 113 D1 P1: the KEEPs and the needs-update finding show their sentence under the

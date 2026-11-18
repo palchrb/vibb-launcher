@@ -414,8 +414,6 @@ impl Inactive {
 /// What the Child PIN group says about the lock: warnings above the group, states as rows in it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LockNote {
-    /// Safe mode is allowed while a Child PIN is set: safe mode skips the lock (QA 10 #7).
-    SafeModeAllowed,
     /// The reporting launcher doesn't have the lock.
     NeedsUpdate,
     /// The lock is off on the phone, and why.
@@ -635,11 +633,6 @@ impl LockNote {
         let w = |key: &str| t(lang, key).to_string();
         let times = |n: i64| t_count(lang, "device.lock.note.times", n, &[]);
         match self {
-            LockNote::SafeModeAllowed => warning(
-                "device.lock.note.safe_mode",
-                w("device.lock.note.safe_mode_sub"),
-                None,
-            ),
             // The title alone doesn't carry the news: a short visible line (design 113, QA M5).
             LockNote::NeedsUpdate => Note {
                 sub: Some(w("device.lock.note.needs_update_short")),
@@ -930,9 +923,8 @@ pub fn lock_card(policy: &DevicePolicy, phone: &PhoneLock, now_ms: i64) -> LockC
     if kid_lock.is_none() {
         return card;
     }
-    if !policy.hardening.disallow_safe_boot {
-        card.notes.push(LockNote::SafeModeAllowed);
-    }
+    // Safe mode allowed (Block safe mode off) is the parent's choice, never a warning here (2026-11-18): the switch's
+    // own ⓘ on Advanced says safe mode skips the lock.
     if phone.reported && !phone.capable {
         card.notes.push(LockNote::NeedsUpdate);
         return card;
@@ -1283,13 +1275,10 @@ mod tests {
     }
 
     #[test]
-    fn card_warns_about_safe_boot_capability_and_inactive_states() {
+    fn card_warns_about_capability_and_inactive_states() {
         let mut p = policy_with_pins(Some("1234"), Some("999999"));
         let card = lock_card(&p, &phone(None, false, true), 0);
-        assert_eq!(
-            card.notes,
-            [LockNote::SafeModeAllowed, LockNote::NeedsUpdate]
-        );
+        assert_eq!(card.notes, [LockNote::NeedsUpdate]);
 
         p.hardening.disallow_safe_boot = true;
         for (inactive, typed) in [
@@ -1367,7 +1356,6 @@ mod tests {
     #[test]
     fn warnings_are_short_and_keep_commands_behind_the_info() {
         let notes = [
-            LockNote::SafeModeAllowed,
             LockNote::NeedsUpdate,
             LockNote::Off(Inactive::Unmanaged),
             LockNote::Off(Inactive::AndroidCredential),

@@ -4124,8 +4124,6 @@
   "device.lock.time_unknown": "time unknown",
   "device.lock.note.times.one": "{count} time",
   "device.lock.note.times.other": "{count} times",
-  "device.lock.note.safe_mode": "Safe mode is allowed",
-  "device.lock.note.safe_mode_sub": "Safe mode starts the phone without Vibb One, so it skips the lock. Turn on Block safe mode in Advanced › Restrictions.",
   "device.lock.note.needs_update": "Vibb One needs an update",
   "device.lock.note.needs_update_sub": "This version has no lock. Until it updates, the phone keeps its own screen lock, if any.",
   "device.lock.note.needs_update_short": "No lock until then",

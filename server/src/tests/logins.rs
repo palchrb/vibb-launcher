@@ -304,11 +304,11 @@ async fn the_pages_and_their_saves() {
     .unwrap();
     let ticked = app.get_page(&page, &cookie).await.text();
     assert!(ticked.contains("data-row=\"chrome-ticked\""));
-    // The orange line alone, the fix behind its ⓘ.
+    // A quiet line (2026-11-18: the parent ticked Chrome), the fix behind its ⓘ.
     let line = &ticked[ticked.find("data-row=\"chrome-ticked\"").unwrap()..];
     let line = &line[..line.find("</details>").unwrap()];
     assert!(
-        line.contains("tone-orange\">Chrome is allowed as a normal app</span>"),
+        line.contains("<span class=\"row-label\">Chrome is allowed as a normal app</span>"),
         "{line}"
     );
     assert!(line.contains("Untick it under Apps"), "{line}");

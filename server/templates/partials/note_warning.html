@@ -1,8 +1,9 @@
 {#- A sub-page warning (design 31 §4.2, design 113 D1 P1): its orange title above the group it belongs
     to (`device_pages::Note`, as `note`); then the short visible consequence (`note.sub`) where one is
     set; then one ⓘ holding the sentence (`note.detail`) and the fix (`note.fix`) - "More info", or
-    "How to fix it" when the panel holds only a fix. -#}
-<div class="attention attention-action" data-warning>
+    "How to fix it" when the panel holds only a fix. A note that isn't a warning (`note.warning` false: what follows
+    from the parent's own choice, 2026-11-18) has the same shape without the orange. -#}
+<div {% if note.warning %}class="attention attention-action" data-warning{% else %}class="attention" data-note{% endif %}>
     <div class="attention-text">{{ note.title }}{% if note.sub.is_some() || note.detail.is_some() || note.fix.is_some() %}<div class="attention-sub">
         {%- if let Some(sub) = note.sub %}{{ sub }}{% endif %}
         {%- if note.detail.is_some() || note.fix.is_some() %}

@@ -55,7 +55,7 @@
             {% endfor %}
             {% if zones.location_unlocked %}
             <a class="row" href="/devices/{{ device.id }}/advanced#restrictions" data-note="location-unlocked">
-                <span class="row-label tone-orange">{{ self.t("locate.zones.unlocked") }}</span>
+                <span class="row-label">{{ self.t("locate.zones.unlocked") }}</span>
                 <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </a>
             {% endif %}

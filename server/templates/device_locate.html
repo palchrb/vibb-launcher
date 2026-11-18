@@ -50,8 +50,9 @@
         <p class="map-legend"><span><span class="seen-dot seen-fresh" aria-hidden="true"></span>{{ self.t("locate.all.fresh") }}</span><span><span class="seen-dot seen-old" aria-hidden="true"></span>{{ self.t("locate.all.old") }}</span></p>
     </section>
 
+    {#- Location Off is the parent's choice: a quiet state line, its consequence behind the ⓘ (2026-11-18). -#}
     {% if view.location_off %}
-    <div class="attention attention-action" data-warning="location-off">
+    <div class="attention" data-note="location-off">
         <div class="attention-text">{{ self.t("locate.off.title") }}<div class="attention-sub">
             <details class="info">
                 <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
