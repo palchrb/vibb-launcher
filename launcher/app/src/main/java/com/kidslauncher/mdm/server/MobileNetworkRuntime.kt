@@ -144,6 +144,8 @@ object MobileNetworkRuntime {
      * it needs - only on a change, so a sync that decides the same shape writes nothing. Never throws.
      */
     fun writeAlwaysOn(context: Context, shape: VpnShape) {
+        // Design 115 (code QA L1): app push is told only of a real change of the decision or of Android's always-on.
+        var changed = storedShape() != shape
         runCatching { LauncherPreferences.mdm().vpnShape(shape.wire) }
         val wanted = alwaysOnFor(shape)
         try {
@@ -154,14 +156,15 @@ object MobileNetworkRuntime {
             val current = dpm.getAlwaysOnVpnPackage(admin)
             val currentLockdown = current != null && dpm.isAlwaysOnVpnLockdownEnabled(admin)
             if (current == pkg && currentLockdown == wanted.lockdown) return
+            changed = true
             dpm.setAlwaysOnVpnPackage(admin, pkg, wanted.lockdown, emptySet())
             Log.i(LOG_TAG, "Always-on: ${pkg ?: "none"}, lockdown ${wanted.lockdown} (${shape.wire})")
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Couldn't set always-on for ${shape.wire}: ${e.javaClass.simpleName}")
         } finally {
             // Design 115 §2.4 (QA L2): after the decision and Android's always-on are both written, app push looks at
-            // its hold again (on its own thread).
-            com.kidslauncher.mdm.push.up.UpRuntime.shapeChanged()
+            // its hold again (on its own thread) - only when one of them changed.
+            if (changed) com.kidslauncher.mdm.push.up.UpRuntime.shapeChanged()
         }
     }
 

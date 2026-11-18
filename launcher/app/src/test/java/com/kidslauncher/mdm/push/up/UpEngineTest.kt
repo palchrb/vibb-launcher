@@ -392,16 +392,20 @@ class UpEngineTest {
         assertEquals(listOf(message.key), engine.pendingAcks())
         // The hold ends: the kept ack rides the first pull, which says held on each of its steps; the next run doesn't.
         phone.hold = UpHold.NONE
-        server.pulls += UpMessagesAnswer(emptyList(), more = true)
+        val next = UpWireMessage("deadbeef000000000000000000000007", "c0ffee00000000000000000000000002", "high", "AAEC")
+        server.pulls += UpMessagesAnswer(listOf(next), more = true)
         server.pulls += UpMessagesAnswer(emptyList())
         assertTrue(engine.requestPull("net"))
+        assertTrue(engine.pullStep())
+        // Code QA L4: the run's second step says held too; the mark goes only when the run ends with an answer.
+        assertTrue(engine.held)
         assertFalse(engine.pullStep())
         assertEquals(listOf(message.key), server.pullAcks[1])
-        assertEquals(listOf(true), server.pullHeld.drop(1))
+        assertEquals(listOf(true, true), server.pullHeld.drop(1))
         assertFalse(engine.held)
         assertTrue(engine.requestPull("sse"))
         assertFalse(engine.pullStep())
-        assertEquals(listOf(true, false), server.pullHeld.drop(1))
+        assertEquals(listOf(true, true, false), server.pullHeld.drop(1))
     }
 
     @Test

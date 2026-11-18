@@ -234,10 +234,11 @@ object UpRuntime {
         if (!isUserUnlocked(app)) return
         if (!view().on) return
         // Design 115: held, no wake lock and no request - the engine only notes it.
-        val hold = holdParts(app).hold
-        if (hold != UpHold.NONE) {
-            Log.i(LOG_TAG, "Pull for $reason held (${hold.wire})")
-            post { engine(app).noteHeld() }
+        val parts = holdParts(app)
+        if (parts.hold != UpHold.NONE) {
+            Log.i(LOG_TAG, "Pull for $reason held (${parts.hold.wire})")
+            // Code QA L2: held only by a moment's view of the network (or the settle) - the "net" pull asks again.
+            post { engine(app).noteHeld(askPull = parts.onlyWanted) }
             return
         }
         acquireWakeLock(app)
