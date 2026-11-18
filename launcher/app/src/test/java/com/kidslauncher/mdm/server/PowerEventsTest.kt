@@ -219,7 +219,7 @@ class PowerEventsTest {
             assertTrue(writer, "synchronized(locationPolicyLock) {" in body(power, writer))
         }
         assertTrue("if (!locationPolicyNoted) locationPolicy = cached" in body(power, "private fun noteCachedLocationPolicy("))
-        assertTrue("noteCachedLocationPolicy(currentPolicyDecision()" in body(power, "fun init("))
+        assertTrue("noteCachedLocationPolicy(enforcedLocationPolicy(currentPolicyDecision().policy))" in body(power, "fun init("))
         assertEquals(2, Regex("""locationPolicy = """).findAll(power).count())
     }
 

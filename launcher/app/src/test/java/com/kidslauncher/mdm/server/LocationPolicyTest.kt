@@ -1,9 +1,14 @@
 package com.kidslauncher.mdm.server
 
+import com.kidslauncher.mdm.push.BACKSTOP_INTERVAL_MS
+import com.kidslauncher.mdm.push.backstopDelayMs
 import com.kidslauncher.mdm.server.dto.LocationPolicy
+import com.kidslauncher.mdm.server.dto.PolicyResponse
+import com.kidslauncher.mdm.server.dto.PolicyZone
 import android.location.LocationManager
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -72,5 +77,72 @@ class LocationPolicyTest {
         assertEquals(listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER), own.providers)
         assertEquals(15_000L, own.boundMs)
         assertFalse(own.oneUpdate)
+    }
+
+    // Security review P-M1 (2026-11-17 apps review): the location under every policy the phone may enforce.
+
+    private val managed = PolicyResponse(allowlist = listOf("org.example.music"), kioskDesired = true)
+    private val zone = PolicyZone(id = 7, latitude = 59.9, longitude = 10.7, radiusM = 150)
+
+    /** What a fallback enforces once the accepted [policy]'s plan went through the prefs and the cache is unusable. */
+    private fun fallbackFrom(policy: PolicyResponse): PolicyResponse? {
+        val stored = LastEnforcedPlan.decode(LastEnforcedPlan.encode(LastEnforcedPlan.of(policy)))
+        val decision = choosePolicy(null, CachedPolicy.Corrupt("boom"), policyEverApplied = true, lastEnforced = stored)
+        assertTrue(decision is PolicyToApply.Fallback)
+        return decision.policy
+    }
+
+    @Test
+    fun `a fallback keeps the parent's location choice, zones included`() {
+        for (chosen in listOf(
+            LocationPolicy("off", 30),
+            LocationPolicy("on_request", 45),
+            LocationPolicy("interval", 60, listOf(zone)),
+        )) {
+            assertEquals(chosen, enforcedLocationPolicy(fallbackFrom(managed.copy(locationPolicy = chosen))))
+        }
+        // With no cache at all (absent after a policy was applied) the same.
+        val off = LocationPolicy("off", 30)
+        val plan = LastEnforcedPlan.of(managed.copy(locationPolicy = off))
+        assertEquals(off, enforcedLocationPolicy(choosePolicy(null, CachedPolicy.Absent, true, plan).policy))
+    }
+
+    @Test
+    fun `under a fallback the parent's Off stays off - no fix, not even for a locate, and Location goes off`() {
+        val policy = enforcedLocationPolicy(fallbackFrom(managed.copy(locationPolicy = LocationPolicy("off", 30))))
+        assertEquals(LocationAction.NONE, locationAction(policy, forced = false, sinceLastFreshMs = Long.MAX_VALUE))
+        assertEquals(LocationAction.NONE, locationAction(policy, forced = true, sinceLastFreshMs = Long.MAX_VALUE))
+        assertEquals(false, systemLocationTarget(policy, hardeningForcesOn = true))
+        assertEquals(BACKSTOP_INTERVAL_MS, backstopDelayMs(sseConnected = true, locationPolicy = policy, sinceLastFreshLocationMs = Long.MAX_VALUE))
+    }
+
+    @Test
+    fun `with no parent choice known a fallback is only when asked - never a fix every 10 minutes`() {
+        val written = LastEnforcedPlan.decode("""{"allowlist":["org.example.music"],"kiosk_desired":true}""")!!
+        for (fallback in listOf(
+            // A plan written before P-M1's fix carries no location policy.
+            choosePolicy(null, CachedPolicy.Corrupt("boom"), policyEverApplied = true, lastEnforced = written).policy,
+            // Neither the cache nor the plan reads.
+            choosePolicy(null, CachedPolicy.Corrupt("boom"), policyEverApplied = true, lastEnforced = null).policy,
+            // A fallback from a policy without one.
+            fallbackFrom(managed),
+        )) {
+            val policy = enforcedLocationPolicy(fallback)
+            assertEquals("on_request", policy?.mode)
+            assertTrue(policy!!.zones.isEmpty())
+            assertEquals(LocationAction.NONE, locationAction(policy, forced = false, sinceLastFreshMs = Long.MAX_VALUE))
+            assertEquals("the parent's locate still answers", LocationAction.FRESH, locationAction(policy, forced = true, sinceLastFreshMs = 0))
+            assertEquals(BACKSTOP_INTERVAL_MS, backstopDelayMs(true, policy, Long.MAX_VALUE))
+        }
+    }
+
+    @Test
+    fun `fresh and cached policies go by their own location policy, a phone never managed by none`() {
+        val every20 = LocationPolicy("interval", 20)
+        val withIt = managed.copy(locationPolicy = every20)
+        assertEquals(every20, enforcedLocationPolicy(choosePolicy(withIt, CachedPolicy.Absent, false, null).policy))
+        assertEquals(every20, enforcedLocationPolicy(choosePolicy(null, CachedPolicy.Ok(withIt), true, null).policy))
+        assertEquals("on_request", enforcedLocationPolicy(choosePolicy(null, CachedPolicy.Ok(managed), true, null).policy)?.mode)
+        assertNull(enforcedLocationPolicy(choosePolicy(null, CachedPolicy.Absent, policyEverApplied = false, lastEnforced = null).policy))
     }
 }
