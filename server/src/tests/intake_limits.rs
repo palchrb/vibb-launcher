@@ -257,29 +257,26 @@ async fn a_phones_storage_has_a_budget() {
         0,
         "no fix past the day's budget"
     );
-    // Never the newest report that said it enforces calls (QA L-c): it stays when a report
-    // without the capability replaces the reports after it.
-    for caps in [vec!["call_policy_v1"], vec![], vec![]] {
+    // Each report past the budget replaces the one before it: the phone's newest report stays.
+    for _ in 0..3 {
         let res = app
             .request(
                 Method::POST,
                 "/api/devices/status",
                 Some(&token),
-                Some(
-                    serde_json::json!({ "lock_reason": "CAPS", "kiosk_engaged": true,
-                                         "capabilities": caps }),
-                ),
+                Some(serde_json::json!({ "lock_reason": "LAST", "kiosk_engaged": true })),
             )
             .await;
         assert_eq!(res.status, StatusCode::NO_CONTENT);
     }
     assert_eq!(
-        count(
-            "SELECT COUNT(*) FROM device_status WHERE device_id = ? \
-             AND capabilities_json LIKE '%call_policy_v1%'"
-        )
-        .await,
+        count("SELECT COUNT(*) FROM device_status WHERE device_id = ? AND lock_reason = 'LAST'")
+            .await,
         1
+    );
+    assert_eq!(
+        count("SELECT COUNT(*) FROM device_status WHERE device_id = ?").await,
+        crate::retention::STATUS_ROWS_A_DAY
     );
 
     sqlx::query("UPDATE device_policy SET dns_log_enabled = 1 WHERE device_id = ?")

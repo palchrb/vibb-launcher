@@ -911,7 +911,7 @@ pub fn command_expires(command: &str) -> bool {
     EXPIRING_COMMANDS.contains(&command)
 }
 
-/// How long a delivered command may go unconfirmed before the page says it may be lost.
+/// How long a confirmed command may go without an answer before the page says "No answer".
 const UNCONFIRMED_AFTER_MINUTES: i64 = 10;
 
 /// Design 37: Install Now's answer comes after a download and an install, and may wait for a call
@@ -928,8 +928,7 @@ pub fn received_overdue_minutes(command: &str) -> i64 {
     }
 }
 
-/// A phone that confirms commands (capability [COMMAND_RECEIPT_CAPABILITY]) gets a command it
-/// didn't confirm again, at most this many deliveries in all.
+/// A phone gets a command it didn't confirm again, at most this many deliveries in all.
 pub const MAX_COMMAND_DELIVERIES: i64 = 3;
 
 /// The gap before an unconfirmed command is offered again (the phone confirms within seconds).
@@ -953,10 +952,6 @@ pub const COMMAND_OPEN: &str =
 /// older than it belongs to an earlier install (design 59 S59-2, S59-3).
 pub const ENROLLED_AT: &str =
     "COALESCE((SELECT enrolled_at FROM devices WHERE devices.id = ?1), '')";
-
-/// Status-report capability of a launcher that confirms each command before running it
-/// (`POST /api/devices/command-receipt`, security review L12).
-pub const COMMAND_RECEIPT_CAPABILITY: &str = "command_receipt_v1";
 
 fn minutes_since(at: &str, now: chrono::NaiveDateTime) -> Option<i64> {
     chrono::NaiveDateTime::parse_from_str(at, "%Y-%m-%d %H:%M:%S")
@@ -995,11 +990,10 @@ impl DeviceCommand {
 
     /// Where the command stands, for the Locate page's Recent rows (design 31 step 13, M5; the
     /// words are `handlers::locate`'s). Delivery is "the phone fetched it", not "it ran" (security
-    /// review L12): a phone with `receipts` (it confirms every command before running it) gets an
-    /// unconfirmed one again, up to [MAX_COMMAND_DELIVERIES]; one that is never confirmed may have
-    /// been lost, and the page says so, so the parent sends it again. An older launcher's wipe
-    /// never confirms. `now` is UTC, like the stored times.
-    pub fn status(&self, now: chrono::NaiveDateTime, receipts: bool) -> CommandStatus {
+    /// review L12): the phone confirms every command before running it and gets an unconfirmed one
+    /// again, up to [MAX_COMMAND_DELIVERIES]; one that is never confirmed may have been lost, and
+    /// the page says so, so the parent sends it again. `now` is UTC, like the stored times.
+    pub fn status(&self, now: chrono::NaiveDateTime) -> CommandStatus {
         let at = |text: &str| crate::display_time::parse_db_utc(text);
         if self.result.is_some() {
             let at = self.acknowledged_at.as_deref().and_then(at);
@@ -1053,24 +1047,16 @@ impl DeviceCommand {
                 .map(|asked| asked + chrono::Duration::minutes(COMMAND_EXPIRY_MINUTES));
             return CommandStatus::Waiting { expires };
         };
-        let waited = minutes_since(delivered, now);
-        let unconfirmed = if receipts {
-            // It confirms within seconds: after REDELIVER_AFTER_MINUTES it is offered again, and
-            // after the last delivery (or the window) it is lost.
-            if waited.is_none_or(|m| m < REDELIVER_AFTER_MINUTES) {
+        // It confirms within seconds: after REDELIVER_AFTER_MINUTES it is offered again, and after
+        // the last delivery (or the window) it is lost.
+        let unconfirmed =
+            if minutes_since(delivered, now).is_none_or(|m| m < REDELIVER_AFTER_MINUTES) {
                 Unconfirmed::NotYet
             } else if self.redeliverable(now) {
                 Unconfirmed::OfferedAgain
             } else {
                 Unconfirmed::Lost
-            }
-        } else if self.command == "wipe" {
-            Unconfirmed::CantConfirm
-        } else if waited.is_some_and(|m| m >= UNCONFIRMED_AFTER_MINUTES) {
-            Unconfirmed::Lost
-        } else {
-            Unconfirmed::NotYet
-        };
+            };
         CommandStatus::Sent {
             at: at(delivered),
             unconfirmed,
@@ -1133,14 +1119,12 @@ pub enum CancelledBy {
 /// A fetched command the phone hasn't confirmed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Unconfirmed {
-    /// Just fetched; a confirmation comes within seconds (or, from an older launcher, a result).
+    /// Just fetched; a confirmation comes within seconds.
     NotYet,
     /// Offered again when the phone next syncs.
     OfferedAgain,
     /// Never confirmed: it may not have reached the phone.
     Lost,
-    /// An older launcher's wipe: it can't confirm one.
-    CantConfirm,
 }
 
 /// A command's name as the parent knows it (§4.3), never its id: the catalog key of the Locate

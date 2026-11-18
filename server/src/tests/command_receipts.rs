@@ -6,7 +6,7 @@ use serde_json::json;
 
 use super::TestApp;
 
-/// A status report that says the launcher confirms commands.
+/// A status report.
 async fn report_receipts(app: &TestApp, token: &str) {
     let res = app
         .request(
@@ -133,17 +133,6 @@ async fn an_unconfirmed_command_is_offered_again_to_a_phone_that_confirms() {
     assert_eq!(receipt(&app, &token, ring).await, StatusCode::NO_CONTENT);
     age_delivery(&app, ring, 30).await;
     assert!(app.policy(&token).await["pending_command"].is_null());
-}
-
-#[tokio::test]
-async fn an_older_launcher_gets_a_command_once() {
-    let app = TestApp::new().await;
-    let (device, token) = app.enrolled_device("phone").await;
-    let id = queue(&app, device, "lock").await;
-    assert_eq!(app.policy(&token).await["pending_command"]["id"], id);
-    age_delivery(&app, id, 30).await;
-    assert!(app.policy(&token).await["pending_command"].is_null());
-    assert_eq!(row(&app, id).await.1, 1);
 }
 
 #[tokio::test]

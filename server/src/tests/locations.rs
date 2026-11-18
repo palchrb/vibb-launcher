@@ -262,7 +262,7 @@ async fn the_cleanup_migration_removes_bad_rows() {
 }
 
 /// Security review L12 (server part): a command the phone fetched is "delivered", not done; one
-/// it never confirms is shown as possibly lost, so the parent sends it again. A wipe can't confirm.
+/// it never confirms is shown as possibly lost, so the parent sends it again.
 #[tokio::test]
 async fn a_delivered_command_is_not_shown_as_done() {
     let app = TestApp::new().await;
@@ -277,7 +277,6 @@ async fn a_delivered_command_is_not_shown_as_done() {
             None,
             None,
         ),
-        ("wipe", Some("datetime('now', '-30 minutes')"), None, None),
         (
             "locate",
             Some("datetime('now', '-30 minutes')"),
@@ -298,8 +297,8 @@ async fn a_delivered_command_is_not_shown_as_done() {
         .await
         .unwrap();
     }
-    // Find Phone (design 88): what is in flight - the waiting ring, the lock not confirmed yet,
-    // the wipe that can't confirm; the stop, possibly lost, is in the phone's Activity page below.
+    // Find Phone (design 88): what is in flight - the waiting ring, the lock not confirmed yet; the
+    // stop, possibly lost, is in the phone's Activity page below.
     let page = app
         .get_page(&format!("/devices/{id}/find"), &cookie)
         .await
@@ -312,12 +311,6 @@ async fn a_delivered_command_is_not_shown_as_done() {
         row("lock")
     );
     assert!(!page.contains("data-command=\"stop_ring\""), "{page}");
-    assert!(
-        row("wipe").contains("can&#39;t confirm an erase"),
-        "{}",
-        row("wipe")
-    );
-    assert!(!row("wipe").contains("Send it again"));
     // A result is done: not a request any more (design 48 §1.4), a row of the phone's Activity.
     assert!(!page.contains("data-command=\"locate\""), "{page}");
     let page = app

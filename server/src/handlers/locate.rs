@@ -571,7 +571,7 @@ fn answer_state(
         CommandStatus::Waiting { .. }
         | CommandStatus::Received { overdue: false, .. }
         | CommandStatus::Sent {
-            unconfirmed: Unconfirmed::NotYet | Unconfirmed::OfferedAgain | Unconfirmed::CantConfirm,
+            unconfirmed: Unconfirmed::NotYet | Unconfirmed::OfferedAgain,
             ..
         } => Some(AnswerState::Asking),
         CommandStatus::Cancelled { .. } | CommandStatus::Erasing { .. } => None,
@@ -1021,9 +1021,7 @@ async fn answered_since(
     let Some(command) = command else {
         return Ok(None);
     };
-    let receipts =
-        crate::handlers::device_api::sends_command_receipts(&state.db, device_id).await?;
-    let status = command.status(now.naive_utc(), receipts);
+    let status = command.status(now.naive_utc());
     Ok(Some(!matches!(
         answer_state(Lang::En, &command, &status, None, now),
         Some(AnswerState::Asking)
@@ -1332,11 +1330,6 @@ fn status_words(
                 "red",
                 line("locate.status.line.lost"),
             ),
-            Unconfirmed::CantConfirm => (
-                "locate.status.sent",
-                "grey",
-                line("locate.status.line.cant_confirm"),
-            ),
         },
     };
     (t(lang, word), tone, line)
@@ -1347,11 +1340,10 @@ pub(crate) fn command_row(
     names: &crate::parents::Names,
     zone: &Zone,
     now: DateTime<Utc>,
-    receipts: bool,
 ) -> CommandRow {
     let lang = zone.lang();
     let naive_now = now.naive_utc();
-    let status = command.status(naive_now, receipts);
+    let status = command.status(naive_now);
     let (word, tone, line) = status_words(&status, zone, now);
     // A result is the row's line: what the phone did, in its own words reworded.
     // A result is the row's line: what the phone did, reworded. An erase the phone reported as
@@ -1443,15 +1435,13 @@ pub(crate) async fn requests(
         query = query.bind(*kind);
     }
     let commands = query.fetch_all(&state.db).await?;
-    let receipts =
-        crate::handlers::device_api::sends_command_receipts(&state.db, device_id).await?;
     let names = crate::parents::Names::load(&state.db).await?;
     let since = now - chrono::Duration::hours(REQUESTS_HOURS);
     let mut seen = std::collections::HashSet::new();
     let rows = commands
         .iter()
         .filter(|command| {
-            let status = command.status(now.naive_utc(), receipts);
+            let status = command.status(now.naive_utc());
             // The parent's own Cancel never hides the last real one of its kind.
             if matches!(
                 status,
@@ -1466,7 +1456,7 @@ pub(crate) async fn requests(
             let lately = parse_db_utc(&command.requested_at).is_some_and(|t| t >= since);
             in_requests(&status, lately, newest)
         })
-        .map(|command| command_row(command, &names, zone, now, receipts))
+        .map(|command| command_row(command, &names, zone, now))
         .collect();
     Ok(Recent {
         device_id,
@@ -1475,8 +1465,8 @@ pub(crate) async fn requests(
     })
 }
 
-/// A request still in flight (design 48 §1.4), at any age: waiting, sent and not yet confirmed
-/// (or one that can't be), received and not overdue, erasing.
+/// A request still in flight (design 48 §1.4), at any age: waiting, sent and not yet confirmed,
+/// received and not overdue, erasing.
 fn in_flight(status: &CommandStatus) -> bool {
     matches!(
         status,
@@ -1484,9 +1474,7 @@ fn in_flight(status: &CommandStatus) -> bool {
             | CommandStatus::Erasing { .. }
             | CommandStatus::Received { overdue: false, .. }
             | CommandStatus::Sent {
-                unconfirmed: Unconfirmed::NotYet
-                    | Unconfirmed::OfferedAgain
-                    | Unconfirmed::CantConfirm,
+                unconfirmed: Unconfirmed::NotYet | Unconfirmed::OfferedAgain,
                 ..
             }
     )
@@ -1858,9 +1846,7 @@ async fn locate_view(
     .await?;
     let answer = match newest_locate {
         Some(command) => {
-            let receipts =
-                crate::handlers::device_api::sends_command_receipts(&state.db, id).await?;
-            let status = command.status(now.naive_utc(), receipts);
+            let status = command.status(now.naive_utc());
             let newest_fix = newest.as_ref().and_then(|l| parse_db_utc(&l.captured_at));
             answer_state(lang, &command, &status, newest_fix, now)
                 .and_then(|state| answer_view(state, waiting_for_fix, zone, now))
@@ -3341,10 +3327,6 @@ mod tests {
             CommandStatus::Waiting { expires: None },
             CommandStatus::Sent {
                 at,
-                unconfirmed: Unconfirmed::CantConfirm,
-            },
-            CommandStatus::Sent {
-                at,
                 unconfirmed: Unconfirmed::OfferedAgain,
             },
         ] {
@@ -3366,7 +3348,6 @@ mod tests {
         for (status, always) in [
             (sent(Unconfirmed::NotYet), true),
             (sent(Unconfirmed::OfferedAgain), true),
-            (sent(Unconfirmed::CantConfirm), true),
             (CommandStatus::Erasing { at: None }, true),
             (
                 CommandStatus::Received {

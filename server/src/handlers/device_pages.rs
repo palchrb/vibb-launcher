@@ -1317,8 +1317,7 @@ async fn newest_pin_send(
     let Some(newest) = newest else {
         return Ok(None);
     };
-    let receipts = crate::handlers::device_api::sends_command_receipts(&state.db, id).await?;
-    Ok(crate::kid_lock::pin_send(&newest, receipts, zone, now))
+    Ok(crate::kid_lock::pin_send(&newest, zone, now))
 }
 
 /// Lock Screen & PINs, with `notice`'s flash and, after "Show Child PIN…", its answer (a wrong

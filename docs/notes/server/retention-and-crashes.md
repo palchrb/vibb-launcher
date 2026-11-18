@@ -38,8 +38,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   for - the review's "only within a window after a `locate`" would drop the last two, so it wasn't built.
 - **Status history** (`device_status`: screen time in `time_state_json`, call state, app lists): **48 hours** since
   0.57.0 (`STATUS_HISTORY_HOURS`; was 30 days, which nothing read - security review P2), and kept besides: each
-  phone's newest report from before the 48 hours (its newest at all while it is silent) and the newest one with
-  `call_policy_v1` (the calls warning "stopped reporting that it enforces calls" rests on it, qa-cleanup #7). Every
+  phone's newest report from before the 48 hours (its newest at all while it is silent), so a phone's newest report
+  always stays. Every
   page, Attention, the intake's comparisons (`app_updated`, new apps, foreign access, unseen boots) and the policy read
   the newest report; the storage budget counts a rolling 24 hours of them, hence two days. The report from before the
   window is the power route's "newest report before the boot" for a phone back after days off: kept however many
@@ -75,8 +75,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `cleanup::a_failing_table_leaves_the_rest_of_the_pass`).
 - **A phone's storage budget** (0.55.0, security review L4, `retention::Budget`, `STATUS_ROWS_A_DAY`, `CRASH_HASHES`):
   what one token can add in a rolling day, far above what a phone sends. Past 500 status reports a day (the shortest location interval alone is 144; QA L-c) each new one
-  replaces the one before it (`replace_over_budget`: the newest stays current, never the newest report with
-  `call_policy_v1`); past 3000 fixes (`zones::intake`, the newest of a report that fit), 10 000 blocked domains or 500
+  replaces the one before it (`replace_over_budget`: the newest stays current, never the phone's newest report); past 3000 fixes (`zones::intake`, the newest of a report that fit), 10 000 blocked domains or 500
   parent-PIN events a day the new ones aren't stored (logged); at most 50 crash hashes per phone, the oldest reported
   going first. A count that can't be read is logged and drops nothing. Security-log lines and inbox events have their own hourly budgets (L1). `intake_limits::a_phones_storage_has_a_budget`.
 - Tests: `src/tests/cleanup.rs`.

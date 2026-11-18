@@ -1846,9 +1846,6 @@ impl CallProblem {
     ];
 }
 
-/// Capability the launcher reports when it enforces `call_policy`.
-pub(crate) const CALL_POLICY_CAPABILITY: &str = "call_policy_v1";
-
 pub(crate) fn parse_time(value: &str) -> Option<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(value)
         .ok()

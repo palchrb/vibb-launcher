@@ -585,7 +585,7 @@ async fn a_save_racing_a_poll_never_loses_the_new_pin() {
     // The poll read rev 1; the save of 2468 commits before its pop (the row it queued waits).
     save(&app, &cookie, id, "2468").await;
     assert_eq!(kept(&app, id).await.rev, 2);
-    let stale = crate::handlers::device_api::pop_command(&app.db, id, true, 1)
+    let stale = crate::handlers::device_api::pop_command(&app.db, id, 1)
         .await
         .unwrap();
     assert!(stale.is_none(), "{stale:?}");
@@ -596,7 +596,7 @@ async fn a_save_racing_a_poll_never_loses_the_new_pin() {
         .execute(&app.db)
         .await
         .unwrap();
-    let ring = crate::handlers::device_api::pop_command(&app.db, id, true, 1)
+    let ring = crate::handlers::device_api::pop_command(&app.db, id, 1)
         .await
         .unwrap();
     assert_eq!(ring.map(|r| r.1).as_deref(), Some("ring"));

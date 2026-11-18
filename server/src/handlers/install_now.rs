@@ -118,13 +118,7 @@ pub(crate) async fn install_row(
         .as_ref()
         .filter(|c| install_now::answer_fresh(c, now.naive_utc()))
         .map(|c| {
-            crate::handlers::locate::command_row(
-                c,
-                &crate::parents::Names::default(),
-                zone,
-                now,
-                true,
-            )
+            crate::handlers::locate::command_row(c, &crate::parents::Names::default(), zone, now)
         });
     Ok(InstallRow {
         value: offer.value(lang).map(str::to_string),

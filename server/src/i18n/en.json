@@ -2086,7 +2086,6 @@
   "locate.status.line.not_yet": "Not confirmed yet.",
   "locate.status.line.offered_again": "Not confirmed; sent again when the phone is back.",
   "locate.status.line.lost": "It may not have reached the phone. Send it again.",
-  "locate.status.line.cant_confirm": "This phone's Vibb One can't confirm an erase. An erased phone stops reporting.",
   "locate.command.ring": "Ring",
   "locate.command.stop_ring": "Stop Ringing",
   "locate.command.lock": "Lock",

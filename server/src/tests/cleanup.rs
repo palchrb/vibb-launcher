@@ -695,43 +695,41 @@ async fn crash_traces_are_escaped_on_about() {
     assert!(!page.contains("<init>"), "{page}");
 }
 
+/// A-3 (C1): pruning keeps each phone's newest report - the one from before the window when the phone hasn't
+/// reported since - and drops the older ones.
 #[tokio::test]
-async fn pruning_keeps_the_last_report_that_enforced_calls() {
+async fn pruning_keeps_each_phones_newest_report() {
     let app = super::TestApp::new().await;
     let db = &app.db;
     let (id, _) = app.create_device("kid").await;
-    sqlx::query("UPDATE device_policy SET calls_mode = 'managed', sms_mode = 'unmanaged' WHERE device_id = ?")
-        .bind(id)
-        .execute(db)
-        .await
-        .unwrap();
-    for (caps, age) in [
-        (Some(r#"["call_policy_v1"]"#), "-50 days"),
-        (Some(r#"["call_policy_v1"]"#), "-40 days"),
-        (None, "-35 days"),
-        (None, "-1 days"),
+    let (quiet, _) = app.create_device("quiet").await;
+    for (device, age) in [
+        (id, "-50 days"),
+        (id, "-40 days"),
+        (id, "-35 days"),
+        (id, "-1 days"),
+        (quiet, "-60 days"),
+        (quiet, "-30 days"),
     ] {
         sqlx::query(
-            "INSERT INTO device_status (device_id, capabilities_json, reported_at) \
-             VALUES (?, ?, datetime('now', ?))",
+            "INSERT INTO device_status (device_id, reported_at) VALUES (?, datetime('now', ?))",
         )
-        .bind(id)
-        .bind(caps)
+        .bind(device)
         .bind(age)
         .execute(db)
         .await
         .unwrap();
     }
-    // The -50 days row goes; -35 is the newest from before the window, -40 the call keeper.
-    assert_eq!(crate::retention::prune(db).await.status_reports, 1);
-    assert_eq!(
-        count(
-            db,
-            "SELECT COUNT(*) FROM device_status WHERE capabilities_json LIKE '%call_policy_v1%'"
-        )
-        .await,
-        1
-    );
+    // -50 and -40 go (-35 is the newest from before the window, -1 the newest); the quiet phone keeps -30.
+    assert_eq!(crate::retention::prune(db).await.status_reports, 3);
+    let kept: Vec<(i64, i64)> = sqlx::query_as(
+        "SELECT device_id, CAST(julianday('now') - julianday(reported_at) AS INTEGER) FROM device_status \
+         ORDER BY device_id, reported_at",
+    )
+    .fetch_all(db)
+    .await
+    .unwrap();
+    assert_eq!(kept, [(id, 35), (id, 1), (quiet, 30)]);
 }
 
 /// Security review P1, P6, P7: a fix the phone re-sent as still current counts from that re-send;

@@ -399,15 +399,14 @@ pub(crate) async fn build_policy(
     let mut calendar = crate::calendar::policy_calendar(&state.db, device_id).await?;
 
     // Popped last, after every read above has succeeded, and in one statement: a 500 never
-    // consumes a command, and two concurrent polls can't both get the same one. A launcher that
-    // confirms commands (security review L12) confirms each one before running it; one it didn't
-    // confirm - the response was lost, or it refused the policy - is offered again after
+    // consumes a command, and two concurrent polls can't both get the same one. The launcher
+    // confirms each command before running it (security review L12); one it didn't confirm - the
+    // response was lost, or it refused the policy - is offered again after
     // REDELIVER_AFTER_MINUTES, at most MAX_COMMAND_DELIVERIES times in all and only within
     // REDELIVER_WINDOW_MINUTES of its first delivery, so nothing stale ever replays (QA of the
-    // launcher wave, High 1; the phone runs a command once). For an older launcher delivery stays
-    // at-most-once, which is why every command must be safe to simply queue again. A command
-    // the parent cancelled is never handed out, nor - first or again - a pause, ring, stop or
-    // location update past its hour (EXPIRING_COMMANDS, the user's decision 2026-10-12). See
+    // launcher wave, High 1; the phone runs a command once). A command the parent cancelled is
+    // never handed out, nor - first or again - a pause, ring, stop or location update past its
+    // hour (EXPIRING_COMMANDS, the user's decision 2026-10-12). See
     // migrations/0010_find_my_device.sql, 0065_command_receipts.sql, 0068 and handlers::locate.
     let capabilities = last_capabilities(&state.db, device_id).await?;
     // Design 72b D1.6: the marked CalDAV calendar the kid's events are handed to.
@@ -417,10 +416,7 @@ pub(crate) async fn build_policy(
     let server_tls = crate::server_tls::policy(state, device_id).await?;
     // Design 108 §3.8: app push; a read error fails the policy.
     let unified_push = crate::unified_push::policy(&state.db, device_id).await?;
-    let receipts = capabilities
-        .iter()
-        .any(|c| c == crate::models::COMMAND_RECEIPT_CAPABILITY);
-    let popped = pop_command(&state.db, device_id, receipts, policy.kid_pin_rev).await?;
+    let popped = pop_command(&state.db, device_id, policy.kid_pin_rev).await?;
     if let Some((id, _, requested_at, _)) = &popped {
         // Commands run in the order they were asked for (QA Low 1): once this one is out, an older
         // one the phone didn't confirm is never offered again - a lost "pause" must not run after
@@ -438,9 +434,7 @@ pub(crate) async fn build_policy(
         .bind(id)
         .execute(&state.db)
         .await?;
-        if receipts {
-            spawn_redelivery_nudge(state, device_id, *id);
-        }
+        spawn_redelivery_nudge(state, device_id, *id);
     }
     // `allow_blocked` carries the apps the card listed (QA of cmd-expiry, Low 1); a row queued
     // before 0068 has none, and the phone then lets out every block, as it did. Install Now's
@@ -573,7 +567,6 @@ pub(crate) async fn build_policy(
 pub(crate) async fn pop_command(
     db: &sqlx::SqlitePool,
     device_id: i64,
-    receipts: bool,
     kid_pin_rev: i64,
 ) -> Result<Option<(i64, String, String, Option<String>)>, sqlx::Error> {
     let pop = format!(
@@ -584,7 +577,7 @@ pub(crate) async fn pop_command(
            AND (command NOT IN (?, ?, ?, ?) OR requested_at > datetime('now', ?)) \
            AND (command != ? OR (SELECT kid_pin_rev FROM device_policy \
                 WHERE device_policy.device_id = device_commands.device_id) = ?) \
-           AND (delivered_at IS NULL OR (? AND deliveries < ? \
+           AND (delivered_at IS NULL OR (deliveries < ? \
                 AND delivered_at <= datetime('now', ?) \
                 AND first_delivered_at > datetime('now', ?))) \
           ORDER BY requested_at ASC, id ASC LIMIT 1) \
@@ -603,7 +596,6 @@ pub(crate) async fn pop_command(
         ))
         .bind(crate::kid_lock::SET_KID_PIN)
         .bind(kid_pin_rev)
-        .bind(receipts)
         .bind(crate::models::MAX_COMMAND_DELIVERIES)
         .bind(format!(
             "-{} minutes",
@@ -2088,7 +2080,7 @@ pub(crate) async fn end_expiring_at_start(db: &sqlx::SqlitePool) {
     }
 }
 
-/// After a command went to a phone that confirms commands: once the re-delivery gap has passed,
+/// After a command went to the phone: once the re-delivery gap has passed,
 /// nudge the phone over its stream if it still hasn't confirmed, so a lost answer is made good
 /// within [crate::models::REDELIVER_WINDOW_MINUTES] rather than at the phone's 30-minute backstop
 /// (QA of the launcher wave, High 1). One nudge per delivery; nothing happens without a stream.
@@ -2137,18 +2129,6 @@ pub(crate) async fn redelivery_nudge(
             false
         }
     }
-}
-
-/// Whether this device's launcher confirms commands before running them (its latest status
-/// report has [crate::models::COMMAND_RECEIPT_CAPABILITY], security review L12).
-pub(crate) async fn sends_command_receipts(
-    db: &sqlx::SqlitePool,
-    device_id: i64,
-) -> Result<bool, sqlx::Error> {
-    Ok(last_capabilities(db, device_id)
-        .await?
-        .iter()
-        .any(|c| c == crate::models::COMMAND_RECEIPT_CAPABILITY))
 }
 
 /// The capabilities of this device's latest status report since its enrollment (none without one,

@@ -234,8 +234,6 @@ pub(crate) async fn rows(
                 .collect()
         })
         .unwrap_or_default();
-    let receipts =
-        crate::handlers::device_api::sends_command_receipts(&state.db, device_id).await?;
     let names = crate::parents::Names::load(&state.db).await?;
 
     // (when, outside the cap, the row)
@@ -244,7 +242,7 @@ pub(crate) async fn rows(
         let at = parse_db_utc(&command.requested_at);
         let cancellable = command.cancellable(now.naive_utc());
         if cancellable || at.is_some_and(|t| t >= since) {
-            let row = command_row(command, &names, zone, now, receipts);
+            let row = command_row(command, &names, zone, now);
             all.push((at, cancellable, ActivityRow::Command(row)));
         }
     }

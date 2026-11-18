@@ -242,7 +242,7 @@ pub fn release(tag: Option<&str>, report: Option<&Report>) -> Standing {
 /// answer under its 25 h. Anything else (an answer, Cancel, "No answer", lost) gives the row its
 /// button back.
 fn open_status(command: &DeviceCommand, now: NaiveDateTime) -> Option<CommandStatus> {
-    let status = command.status(now, true);
+    let status = command.status(now);
     match status {
         CommandStatus::Waiting { .. }
         | CommandStatus::Received { overdue: false, .. }

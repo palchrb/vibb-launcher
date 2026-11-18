@@ -2086,7 +2086,6 @@
   "locate.status.line.not_yet": "Ikke bekreftet ennå.",
   "locate.status.line.offered_again": "Ikke bekreftet; sendes igjen når telefonen er tilbake.",
   "locate.status.line.lost": "Den har kanskje ikke nådd telefonen. Send den igjen.",
-  "locate.status.line.cant_confirm": "Vibb One på denne telefonen kan ikke bekrefte en sletting. En slettet telefon slutter å melde fra.",
   "locate.command.ring": "Ring",
   "locate.command.stop_ring": "Stopp ringingen",
   "locate.command.lock": "Lås",

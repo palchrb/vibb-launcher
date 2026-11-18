@@ -544,10 +544,9 @@ impl PinAnswer {
 }
 
 /// The newest [SET_KID_PIN] of this enrollment as a [PinSend]; `None` for another command, or one
-/// cancelled or expired (nothing to say). `receipts`: the phone confirms commands.
+/// cancelled or expired (nothing to say).
 pub fn pin_send(
     command: &crate::models::DeviceCommand,
-    receipts: bool,
     zone: &crate::display_time::Zone,
     now: chrono::DateTime<chrono::Utc>,
 ) -> Option<PinSend> {
@@ -561,7 +560,7 @@ pub fn pin_send(
             |t| zone.at(t, now),
         )
     };
-    Some(match command.status(now.naive_utc(), receipts) {
+    Some(match command.status(now.naive_utc()) {
         CommandStatus::Done { at: answered } | CommandStatus::Failed { at: answered } => {
             let raw = command.result.as_deref().unwrap_or_default();
             match PinAnswer::parse(raw) {
@@ -1744,7 +1743,7 @@ mod tests {
             .unwrap()
             .with_timezone(&chrono::Utc);
         let value = |c: &crate::models::DeviceCommand| {
-            pin_send(c, true, &zone, now)
+            pin_send(c, &zone, now)
                 .map(|send| LockNote::PinSent(send).note(Lang::En, None))
                 .map(|n| (n.value.unwrap(), n.detail))
         };
@@ -1776,7 +1775,7 @@ mod tests {
         let mut cancelled = command(None, false, false);
         cancelled.cancelled_at = Some("2026-10-20 12:01:00".to_string());
         cancelled.cancel_reason = Some("keyguard_own".to_string());
-        assert_eq!(pin_send(&cancelled, true, &zone, now), None);
+        assert_eq!(pin_send(&cancelled, &zone, now), None);
         for (raw, answer) in [
             ("pin set", PinAnswer::Set),
             ("own lock", PinAnswer::OwnLock),
