@@ -94,6 +94,8 @@ launcher and the music app, in nb and en alike:
 
 **Supported Android: 14 to 17** (the user, 2026-11-16: "alt fremover skal være 14-17 kompatibelt"). Both apps are minSdk 34 and every change must work on Android 14, 15, 16 and 17: an API above 34 behind a `Build.VERSION.SDK_INT` gate with a sane path on 14 (lint's NewApi in CI catches a missing gate, never suppress it), and a platform behaviour that differs between them (Device Owner, lock task, roles, notifications and Modes, VPN, telephony, location, WebView) checked against each version's behaviour changes. A design note names the versions it was checked on; an emulator gate that depends on the version runs on the lowest and the highest it touches. The Jelly Star runs Android 16 (Unihertz's update, from September 2026).
 
+**No backwards compatibility on the phones yet** (the user, 2026-11-18: "Husk dette sånn genrelt ift backwards compatibility; det er enda ikke viktig" - only emulators run Vibb so far): no migration path for phone-side data or stored state and no code for older launcher/music versions; a new format drops or resets the old one. The server's database migrations still run (the user's server holds real data), and a release still ships the server first.
+
 Server (from `server/`): `cargo test`, `cargo fmt --check`, `cargo clippy --all-targets`.
 
 Launcher (from `launcher/`, JDK 17, `local.properties` with `sdk.dir=...`):
