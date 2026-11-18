@@ -217,6 +217,15 @@ impl Kind {
         }
     }
 
+    /// Made by a parent's session, not reported by a phone (privacy review 2026-11-17 M2): never held to a phone's
+    /// [EVENTS_AN_HOUR].
+    pub fn parent_made(self) -> bool {
+        matches!(
+            self,
+            Kind::AppAdded | Kind::ContactAdded | Kind::LocationRegular | Kind::ServerTlsOff
+        )
+    }
+
     /// The push's `Urgency` header.
     pub fn urgency(self) -> &'static str {
         if self.urgent() { "high" } else { "normal" }
@@ -1294,7 +1303,18 @@ pub async fn raise(
         .bind(event.kind.wire())
         .fetch_one(&mut *conn)
         .await?;
-        if this_hour >= EVENTS_AN_HOUR {
+        // Code QA M1 (2026-11-18): a parent's own safety change is never dropped - a session made it, not the phone -
+        // and a parent-code pause the phone posted is stored past the budget without a push of its own: it lifts a
+        // rule, so the inbox must have it ("told, not capped").
+        let parent_made = event.kind.parent_made();
+        let pause = event.kind == Kind::PinUsed && event.dedup_key.starts_with("rule_pause:");
+        if this_hour >= EVENTS_AN_HOUR && pause {
+            tracing::warn!(
+                device_id,
+                "a phone's pauses are past their hourly budget; stored, not pushed"
+            );
+            push = Push::No;
+        } else if this_hour >= EVENTS_AN_HOUR && !parent_made {
             tracing::warn!(
                 device_id,
                 kind = event.kind.wire(),

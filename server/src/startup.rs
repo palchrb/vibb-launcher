@@ -56,6 +56,8 @@ pub struct AppliedRestore {
     /// Who asked, from the PWA's marker (privacy review 2026-11-17 M1, `backups::restore_marker`): the username and
     /// the display name, for the line the restored database gets. `None` for the owner's one-line marker over SSH.
     pub by: Option<(String, String)>,
+    /// When it was asked (the PWA's marker's fourth line, code QA L5); `None` over SSH or when it doesn't read.
+    pub asked_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 const DB_SUFFIXES: [&str; 3] = ["", "-wal", "-shm"];
@@ -96,7 +98,7 @@ pub async fn record_restore(db: &sqlx::SqlitePool, restore: &AppliedRestore) {
     let told = crate::parent_events::backup_restored(
         restore.by.as_ref().map_or("", |(_, name)| name.as_str()),
         &restore.filename,
-        chrono::Utc::now(),
+        restore.asked_at.unwrap_or_else(chrono::Utc::now),
         crate::parent_events::Push::No,
     );
     let raised = async {
@@ -148,6 +150,10 @@ pub(crate) fn apply_restore_request_capped(
         (Some(username), name) => Some((username.clone(), name.unwrap_or(username))),
         (None, _) => None,
     };
+    let asked_at = lines
+        .next()
+        .and_then(|ms| ms.parse::<i64>().ok())
+        .and_then(chrono::DateTime::from_timestamp_millis);
     if !(filename.starts_with("backup-")
         && filename.ends_with(".zip")
         && !filename.contains('/')
@@ -238,6 +244,7 @@ pub(crate) fn apply_restore_request_capped(
         filename,
         prerestore_dir,
         by,
+        asked_at,
     }))
 }
 

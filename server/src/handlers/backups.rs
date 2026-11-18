@@ -1005,11 +1005,23 @@ pub async fn restore_backup(
 }
 
 /// The restore marker's text (privacy review M1): the backup's name, then who asked (the username and the display
-/// name), so the next start writes the restore's line, with them, into the restored database
-/// (`startup::apply_restore_request`). The owner's one-line marker over SSH names no one.
-pub fn restore_marker(filename: &str, username: &str, name: &str) -> String {
+/// name) and when (epoch ms), so the next start writes the restore's line, with them, into the restored database
+/// (`startup::apply_restore_request`), its event keyed and timed as the one pushed before the restart (code QA L5).
+/// The owner's one-line marker over SSH names no one.
+pub fn restore_marker(
+    filename: &str,
+    username: &str,
+    name: &str,
+    at: chrono::DateTime<chrono::Utc>,
+) -> String {
     let line = |text: &str| text.replace(['\n', '\r'], " ");
-    format!("{}\n{}\n{}\n", line(filename), line(username), line(name))
+    format!(
+        "{}\n{}\n{}\n{}\n",
+        line(filename),
+        line(username),
+        line(name),
+        at.timestamp_millis()
+    )
 }
 
 /// The restore in the container (design 22 §6): the marker `data/restore_request` names the
@@ -1021,7 +1033,8 @@ pub fn restore_marker(filename: &str, username: &str, name: &str) -> String {
 async fn restore_in_container(state: &AppState, who: &Who, filename: &str, lang: Lang) -> Response {
     let admin = &who.admin;
     let marker = state.data_dir.join(crate::startup::RESTORE_REQUEST);
-    let text = restore_marker(filename, &admin.username, admin.name());
+    let asked_at = chrono::Utc::now();
+    let text = restore_marker(filename, &admin.username, admin.name(), asked_at);
     if let Err(err) = tokio::fs::write(&marker, text).await {
         tracing::error!(%err, "couldn't write the restore request");
         let answer = Answer::refused("backups", t(lang, "settings.backups.restore_failed"));
@@ -1038,7 +1051,7 @@ async fn restore_in_container(state: &AppState, who: &Who, filename: &str, lang:
     let told = crate::parent_events::backup_restored(
         admin.name(),
         filename,
-        chrono::Utc::now(),
+        asked_at,
         crate::parent_events::Push::Now,
     );
     let raised = async {

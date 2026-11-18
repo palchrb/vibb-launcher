@@ -819,10 +819,12 @@ push varsel ... kanskje man kan få valget". Branch `pwa-fixes-b`.
   ticked for a phone or a package newly allowed), `contact_added` (a new `device_contacts` row: Add Contact, from the
   family, a held message's or the kid's request's add), `custom_dns_set` (the phones' DNS server becomes the family's
   own, or its address changes - never the address), `location_regular` (a phone's location turned to Regularly),
-  `backup_downloaded` and `backup_restored`. One per real change: a save that changes nothing raises nothing.
+  `backup_downloaded` and `backup_restored`. One per real change: a save that changes nothing raises nothing. A
+  parent's change is never held to a phone's `EVENTS_AN_HOUR` (`Kind::parent_made`; code QA M1), and a phone pause's
+  `pin_used` past it is stored without a push.
 - Backups: Download (now a POST), Restore and Upload ask for the password again (`admin_auth::reauth`, a passkey
   where the parent has one here, `passkeys::reauth_route`); `backup_downloaded`/`backup_uploaded` are logged. A
   restore is pushed from the database it replaces before the restart (`restart_soon` waits up to 10 s for it to
-  leave); the marker names who asked (`backups::restore_marker`), and the next start writes `backup_restored` with
+  leave); the marker names who asked and when (`backups::restore_marker`), and the next start writes `backup_restored` with
   them and the inbox's line, not pushed again, into the restored database (`startup::record_restore`).
 - Tests: `tests::safety_changes`, `parent_events::tests` (the rows and every kind in both languages).

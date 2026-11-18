@@ -394,17 +394,23 @@ initial-admin-password`. Sign in as `admin` and change it - the server deletes i
   the image and must belong to uid 65532 (`chown -R 65532:65532 dir`), or the server stops with "data/ is not
   writable by uid 65532".
 - **Updating** (privacy review 2026-11-17 H1): by hand, `./update-image.sh X.Y.Z` in the folder with `compose.yaml`.
-  It looks up the release's image digest, runs `gh attestation verify oci://ghcr.io/palchrb/handy-server@<digest>
-  --owner palchrb` - the build provenance the release workflow signed for exactly that image -, and only when that
-  passes writes `HANDY_VERSION` and `HANDY_DIGEST` into `.env` and runs `docker compose pull && docker compose up -d`.
-  Compose pulls by the digest, so what runs is what was verified, and a refused check changes nothing. It needs
-  `docker` with buildx and `gh` signed in (`gh auth login`, any account: it only reads). No Watchtower for this
+  It looks up the release's image digest and runs `gh attestation verify oci://ghcr.io/palchrb/handy-server@<digest>`
+  pinned to `--repo palchrb/vibb-launcher`, `--signer-workflow .../server-release.yml`, `--source-ref
+  refs/tags/server-vX.Y.Z` and `--deny-self-hosted-runners`: a pass means the project's release workflow, on GitHub's
+  own runners, built exactly that image for that tag - not just any workflow of the account. Only then it writes
+  `HANDY_VERSION` and `HANDY_DIGEST` into `.env` and runs `docker compose pull && docker compose up -d`. Compose pulls
+  by the digest, so what runs is what was verified, and a refused check changes nothing. It needs `docker` with
+  buildx, `jq` and `gh` signed in (`gh auth login`, any account: it only reads). No Watchtower for this
   container, and never `latest`: an image pushed to the tag would otherwise run within the hour, unchecked - the
   GitHub account alone would be the key to the server and so to the phones. The label in `compose.yaml` keeps a
   Watchtower the host runs for other containers off this one. Settings › Software Updates shows this server's
   version and the newest release; it never updates anything itself. Before migrating the database, the new
   version copies it to `data/backups/pre-migrate-<from>-<to>.db` (the newest 3 are kept). A pre-migration copy keeps
   what the old schema held until it rotates out (e.g. 0126's dropped `weather_places`, the cells' old place names).
+- **Moving from Watchtower** (an install from before 2026-11-18, `HANDY_VERSION=latest`): copy the new
+  `compose.yaml` and `update-image.sh` from `server/deploy/` over the old ones, then `./update-image.sh X.Y.Z` with the
+  version Settings › Software Updates shows; check `docker compose config | grep image` names `@sha256:`. The label
+  keeps Watchtower off this container from then on; remove Watchtower if nothing else uses it.
 - **Rolling back**: put the pre-migration copy back, then the old release, verified the same way:
 
   ```

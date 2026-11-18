@@ -111,6 +111,13 @@ async fn a_download_asks_for_the_password_and_is_told() {
         "{page}"
     );
     assert!(!page.contains(&format!("href=\"{url}\"")), "{page}");
+    // Code QA L1: the form is cleared after it is sent (static/backups.js).
+    assert!(page.contains(&format!(
+        "action=\"{url}#backups\" class=\"confirm-body\" data-download>"
+    )));
+    assert!(
+        page.contains("<script src=\"/static/backups.js?v=1\" defer data-swap-ready></script>")
+    );
 
     let res = app.get_page(&url, &cookie).await;
     assert_eq!(res.status, StatusCode::METHOD_NOT_ALLOWED);
@@ -236,6 +243,27 @@ async fn a_restore_asks_for_the_password_and_is_told_in_both_databases() {
         "pushed before the restart"
     );
 
+    let key = |app: &TestApp| {
+        let db = app.db.clone();
+        async move {
+            sqlx::query_scalar::<_, String>(
+                "SELECT dedup_key FROM parent_events WHERE kind = 'backup_restored'",
+            )
+            .fetch_one(&db)
+            .await
+            .unwrap()
+        }
+    };
+    let pushed_key = key(&app).await;
+    // The marker's fourth line: when it was asked (code QA L5).
+    let marker_text = std::fs::read_to_string(&marker).unwrap();
+    let asked_at = marker_text
+        .lines()
+        .nth(3)
+        .and_then(|ms| ms.parse::<i64>().ok())
+        .and_then(chrono::DateTime::from_timestamp_millis);
+    assert!(asked_at.is_some(), "{marker_text}");
+
     // The next start, in the restored database (here the same one, emptied of the event and its push first).
     sqlx::query("DELETE FROM push_deliveries; DELETE FROM parent_events")
         .execute(&app.db)
@@ -245,6 +273,7 @@ async fn a_restore_asks_for_the_password_and_is_told_in_both_databases() {
         filename: file.clone(),
         prerestore_dir: app.state.data_dir.join("backups/prerestore-x"),
         by: Some(("parent".to_string(), "Mamma".to_string())),
+        asked_at,
     };
     crate::startup::record_restore(&app.db, &restore).await;
     let logged = lines(&app, "backup_restored").await;
@@ -253,6 +282,11 @@ async fn a_restore_asks_for_the_password_and_is_told_in_both_databases() {
     let told = events(&app, "backup_restored").await;
     assert_eq!(told.len(), 1, "{told:?}");
     assert!(told[0].1.contains("\"parent\":\"Mamma\""), "{told:?}");
+    assert_eq!(
+        key(&app).await,
+        pushed_key,
+        "the same key and time as the one pushed"
+    );
     assert_eq!(
         pushes(&app, "backup_restored").await,
         0,
@@ -361,4 +395,29 @@ async fn a_safety_change_is_told_once_per_real_change() {
             .any(|(_, title, _)| title == "parent set Location to Regularly on Emma's phone"),
         "{words:?}"
     );
+}
+
+/// Code QA M1: a parent's change is never dropped at a phone's hourly budget of events - 21 apps allowed in a row give
+/// 21 rows, the last pushed like the first.
+#[tokio::test]
+async fn a_parents_changes_are_never_past_a_phones_budget() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    subscribe(&app).await;
+    let (id, _token) = app.enrolled_device("Emma").await;
+    let n = crate::parent_events::EVENTS_AN_HOUR + 1;
+    for i in 0..n {
+        let package = format!("com.example.app{i}");
+        let res = app
+            .request_form(
+                Method::POST,
+                &format!("/devices/{id}/apps/toggle"),
+                Some(&cookie),
+                &[("package_name", package.as_str()), ("selected", "on")],
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.text());
+    }
+    assert_eq!(events(&app, "app_added").await.len() as i64, n);
+    assert_eq!(pushes(&app, "app_added").await, n);
 }

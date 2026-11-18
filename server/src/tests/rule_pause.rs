@@ -451,3 +451,31 @@ async fn every_phone_pause_is_told_once() {
         "{words:?}"
     );
 }
+
+/// Code QA M1: a phone pause past the phone's hourly budget of events is still told in the inbox (stored without a
+/// push of its own), never dropped - it lifts a rule.
+#[tokio::test]
+async fn a_pause_past_the_hourly_budget_is_still_told() {
+    let (app, id, token) = emma().await;
+    let now = chrono::Utc::now().timestamp_millis();
+    let n = crate::parent_events::EVENTS_AN_HOUR + 1;
+    for i in 0..n {
+        let started = now - 60_000 - i * 1_000;
+        let res = post(
+            &app,
+            &token,
+            json!({"key": format!("0123456789abcdef0123456789ab{i:04x}"), "minutes": 15,
+                   "started_at_ms": started, "rules": [{"rule_id": 2, "until_ms": started + 15 * 60_000}]}),
+        )
+        .await;
+        assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    }
+    let told: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM parent_events WHERE device_id = ? AND kind = 'pin_used'",
+    )
+    .bind(id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(told, n);
+}

@@ -1538,9 +1538,16 @@ async fn backups_answer_in_their_groups() {
         )
         .await;
     assert_redirect(&res, "/backups?done=restore", Some("backups"));
+    let text = std::fs::read_to_string(&marker).unwrap();
+    let lines: Vec<&str> = text.lines().collect();
     assert_eq!(
-        std::fs::read_to_string(&marker).unwrap(),
-        format!("{docker_file}\nparent\nparent\n")
+        lines[..3],
+        [docker_file.as_str(), "parent", "parent"],
+        "{text}"
+    );
+    assert!(
+        lines[3].parse::<i64>().is_ok(),
+        "the asked-at instant: {text}"
     );
     // (The container then exits for its restart - not in tests - with its database closed.)
     drop(docker);

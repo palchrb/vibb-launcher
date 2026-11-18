@@ -36,7 +36,7 @@
                         passkey); a refusal renders the page with that form open and the reason under its field. -#}
                     <details class="confirm"{% if downloading %} open{% endif %}>
                         <summary class="row">{{ self.t("settings.backups.download") }}…</summary>
-                        <form method="post" action="/backups/{{ b.filename }}/download#backups" class="confirm-body">
+                        <form method="post" action="/backups/{{ b.filename }}/download#backups" class="confirm-body" data-download>
                             {% include "partials/reauth_passkey.html" %}
                             {% let why = self.why("download", b.filename, "password") %}
                             <label class="field-label" for="download_{{ b.filename }}"{% if passkey_only %} hidden{% endif %}>{{ self.t("device.lock.your_password") }}</label>
@@ -165,6 +165,7 @@
     </section>
     </div>
 </main>
+<script src="/static/backups.js?v=1" defer data-swap-ready></script>
 {% if passkey_reauth %}<script src="/static/passkey.js?v=9" defer data-swap-ready></script>{% endif %}
 </body>
 </html>
