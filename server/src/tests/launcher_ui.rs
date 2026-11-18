@@ -549,8 +549,8 @@ async fn replaced_and_removed_photos_are_deleted() {
     assert!(stored_files(&app).is_empty());
 }
 
-/// Vibb can't read notifications: Home Screen warns (the sentence visible, the adb command only
-/// behind its ⓘ, design 31 §4.2) and the device page's Attention row links there.
+/// Design 114 §5.4: Vibb can't read notifications - Home Screen's #layout has one orange line to the step on Device ›
+/// Oppsett (no ⓘ in it, no adb anywhere), and the summary counts it in the setup row.
 #[tokio::test]
 async fn missing_notification_access_is_a_warning() {
     let app = TestApp::new().await;
@@ -562,14 +562,17 @@ async fn missing_notification_access_is_a_warning() {
             "notification_listener_enabled": enabled,
         })
     };
-    let warning = "Notification access off";
-    let row = format!("href=\"/devices/{id}/home#layout\" data-attention=\"notification-access\"");
+    let line = format!(
+        "<a class=\"attention attention-action\" href=\"/devices/{id}/setup#step-notification_access\" \
+         data-setup-warning=\"notification_access\">"
+    );
+    let row = format!("href=\"/devices/{id}/setup\" data-attention=\"setup\"");
 
     let page = app
         .get_page(&device_page(id, Section::Home), &cookie)
         .await
         .text();
-    assert!(!page.contains(warning));
+    assert!(!page.contains(&line));
     for (enabled, shown) in [
         (json!(false), true),
         (json!(true), false),
@@ -588,20 +591,21 @@ async fn missing_notification_access_is_a_warning() {
             .get_page(&device_page(id, Section::Home), &cookie)
             .await
             .text();
-        assert_eq!(page.contains(warning), shown);
+        assert_eq!(page.contains(&line), shown, "{page}");
+        assert!(!page.contains("adb "));
         let summary = app
             .get_page(&device_page(id, Section::Summary), &cookie)
             .await
             .text();
         assert_eq!(summary.contains(&row), shown);
         if shown {
-            // In the target's section, above its group; the command only in the ⓘ panel.
-            let at = page.find(warning).unwrap();
+            // In the target's section, above its form; a link with no ⓘ inside.
+            let at = page.find(&line).unwrap();
             assert!(page[..at].contains("<section id=\"layout\""));
-            assert!(!page[..at].contains("<form"));
-            let command = page.find("allow_listener").expect("the fix");
-            let panel = page[..command].rfind("<details class=\"info\">").unwrap();
-            assert!(at < panel && !page[panel..command].contains("</details>"));
+            assert!(!page[page[..at].rfind("<section").unwrap()..at].contains("<form"));
+            let end = at + page[at..].find("</a>").unwrap();
+            assert!(!page[at..end].contains("<details"));
+            assert!(page[at..end].contains("Notification access is off"));
         }
     }
 }
@@ -691,15 +695,15 @@ async fn the_clock_format_column_takes_only_its_three_values() {
     }
 }
 
-/// Design 34 P12: the phone reports `clock_format_applied`; false while the policy asks for 24 h
-/// or 12 h is a warning on Home Screen (its title alone, the adb grant behind its ⓘ - design 113).
-/// True, null, no field and "Same as the phone" show nothing.
+/// Design 114 §5.4: a clock format in use needs "Modify system settings" - while the phone reports it not granted, one
+/// orange line at the clock (`#layout`, not `#quick-controls`: the clock is the choice in use); "Same as the phone",
+/// the grant, or no report show nothing. `clock_format_applied` is still stored.
 #[tokio::test]
 async fn clock_format_not_applied_is_a_warning() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;
-    let warning = "Clock format not applied";
+    let warning = "data-setup-warning=\"write_settings\"";
     let home = device_page(id, Section::Home);
     let launcher = format!("/devices/{id}/launcher");
     let set_format = async |format: &str| {
@@ -721,16 +725,17 @@ async fn clock_format_not_applied_is_a_warning() {
     assert!(!page().await.contains(warning), "no report yet");
 
     set_format("24").await;
-    for (applied, shown) in [
+    for (granted, shown) in [
         (Some(json!(false)), true),
         (Some(json!(true)), false),
         (Some(json!(null)), false),
         (None, false),
         (Some(json!(false)), true),
     ] {
-        let mut body = json!({ "lock_reason": "NONE", "kiosk_engaged": true });
-        if let Some(applied) = &applied {
-            body["clock_format_applied"] = applied.clone();
+        let mut body =
+            json!({ "lock_reason": "NONE", "kiosk_engaged": true, "clock_format_applied": false });
+        if let Some(granted) = &granted {
+            body["write_settings_granted"] = granted.clone();
         }
         let res = app
             .request(
@@ -749,33 +754,19 @@ async fn clock_format_not_applied_is_a_warning() {
         .fetch_one(&app.db)
         .await
         .unwrap();
-        assert_eq!(stored, applied.as_ref().and_then(|a| a.as_bool()));
+        assert_eq!(stored, Some(false));
         let html = page().await;
-        assert_eq!(html.contains(warning), shown, "{stored:?}");
+        assert_eq!(html.contains(warning), shown, "{granted:?}");
         if shown {
-            // In the Language group's section, above its form; the command only in the ⓘ panel.
             let at = html.find(warning).unwrap();
-            assert!(html[..at].contains("<section id=\"layout\""));
-            assert!(!html[..at].contains("<form"));
-            assert!(!html.contains("change its clock format yet."));
-            let command = html.find("WRITE_SETTINGS allow").expect("the fix");
-            let panel = html[..command].rfind("<details class=\"info\">").unwrap();
-            assert!(at < panel && !html[panel..command].contains("</details>"));
-            // The on-phone path names the launcher's label (design 34 P11, qa-34-s12-code L1) and
-            // its Settings row (2026-10-24), before the adb shortcut.
-            assert!(
-                html[panel..command]
-                    .contains("Settings › Pause all restrictions › Modify system settings")
-                    && html[panel..command].contains("Vibb One"),
-                "{html}"
-            );
+            let section = &html[html[..at].rfind("<section").unwrap()..at];
+            assert!(section.contains("id=\"layout\""), "{section}");
+            assert_eq!(html.matches(warning).count(), 1, "said once");
         }
     }
-    // The last report still says false, but "Same as the phone" asks for nothing.
+    // Same as the phone: nothing to apply, nothing said.
     set_format("system").await;
     assert!(!page().await.contains(warning));
-    set_format("12").await;
-    assert!(page().await.contains(warning));
 }
 
 #[tokio::test]

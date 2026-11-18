@@ -55,8 +55,14 @@ pub async fn update_parent_pin(
             "error.save_failed_log",
         )
     };
+    // Design 114 §5.8: from Connect (`back=provision`, the only value read), a refusal keeps it.
+    let from_connect = form.get("back").map(String::as_str) == Some("provision");
     let back = |code: &str| {
-        Redirect::to(&format!("/devices/{id}/lock?notice={code}#parent-pin")).into_response()
+        let keep = if from_connect { "back=provision&" } else { "" };
+        Redirect::to(&format!(
+            "/devices/{id}/lock?{keep}notice={code}#parent-pin"
+        ))
+        .into_response()
     };
     let current =
         match sqlx::query_as::<_, DevicePolicy>("SELECT * FROM device_policy WHERE device_id = ?")
@@ -161,6 +167,11 @@ pub async fn update_parent_pin(
     .await;
     // The phone re-syncs at once and takes the new PIN.
     let _ = state.command_notify.send(id);
+    // Design 114 §5.8: a PIN saved from Connect lands back on the QR's form (the form says it worked; no flash).
+    // `clear_pin` ignores `back`.
+    if from_connect && !form.contains_key("clear_pin") {
+        return Redirect::to(&format!("/devices/{id}/provision#qr")).into_response();
+    }
     back(code)
 }
 

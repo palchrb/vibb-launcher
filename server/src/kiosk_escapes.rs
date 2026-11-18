@@ -226,8 +226,6 @@ pub enum EscapeNote {
         overdue: bool,
         waiting_for: Option<&'static str>,
     },
-    /// The filter is on, but the launcher has no notification access.
-    FilterWithoutAccess,
     /// The filter is on, but not active on the phone yet.
     FilterNotActive,
     /// The boot cover crashed twice in one start and switched itself off.
@@ -244,7 +242,6 @@ impl EscapeNote {
         match self {
             EscapeNote::Unsuspendable(_)
             | EscapeNote::PartialFence
-            | EscapeNote::FilterWithoutAccess
             | EscapeNote::BootCoverTripped
             | EscapeNote::BootCoverNotShown { .. } => true,
             EscapeNote::LastRelease(release) => release.failed(),
@@ -374,11 +371,6 @@ impl EscapeNote {
                     Some(format!("{}.", detail.join(". "))),
                 )
             }
-            EscapeNote::FilterWithoutAccess => (
-                "device.advanced.escape.filter_no_access",
-                None,
-                w("device.advanced.escape.filter_no_access_sub"),
-            ),
             EscapeNote::FilterNotActive => (
                 "device.advanced.escape.filter",
                 w("device.advanced.escape.filter_not_active"),
@@ -461,9 +453,8 @@ pub fn escapes_card(
             });
         }
     }
-    if notification_auto_cancel && listener_enabled == Some(false) {
-        card.notes.push(EscapeNote::FilterWithoutAccess);
-    }
+    // The filter on without notification access is design 114's setup step `notification_access`, its warning line
+    // at `#updates`.
     if let Some(cancels) = cancels {
         if notification_auto_cancel && !cancels.active && listener_enabled != Some(false) {
             card.notes.push(EscapeNote::FilterNotActive);
@@ -786,15 +777,9 @@ mod tests {
         assert_eq!(card.removed[0].package_name, "pkg0");
         assert_eq!(card.removed[0].snoozed, 1);
         assert_eq!(card.more_removed, 3);
+        // Design 114: no notification access is the setup step's line, not a note here.
         let no_access = escapes_card(false, true, None, None, Some(false), 0);
-        assert_eq!(no_access.notes, vec![EscapeNote::FilterWithoutAccess]);
-        assert!(
-            no_access.notes[0]
-                .note(&oslo(), at(0))
-                .detail
-                .unwrap()
-                .contains("no notification access")
-        );
+        assert!(no_access.notes.is_empty(), "{:?}", no_access.notes);
         // On, but not active on the phone yet.
         let idle = NotificationCancels {
             active: false,

@@ -1,6 +1,13 @@
 {#- One value row (`device_pages::Row`, as `row`): label · value, the exact time in `title`, and
-    when it has a sentence the whole row opens it as an ⓘ panel (design 31 §3.0, §4.4). -#}
-{% if let Some(detail) = row.detail %}
+    when it has a sentence the whole row opens it as an ⓘ panel (design 31 §3.0, §4.4); a row for a missing setup step
+    is a link to it on Device › Oppsett (design 114 §5.5). -#}
+{% if let Some(href) = row.href %}
+<a class="row" href="{{ href }}" data-row="{{ row.key }}">
+    <span class="row-label">{{ row.label }}</span>
+    <span class="row-value{% if !row.value_class.is_empty() %} {{ row.value_class }}{% endif %}"{% if let Some(exact) = row.title %} title="{{ exact }}"{% endif %}>{{ row.value }}</span>
+    <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+</a>
+{% else if let Some(detail) = row.detail %}
 <details class="info cell" data-row="{{ row.key }}">
     <summary class="row">
         <span class="row-label">{{ row.label }}</span>

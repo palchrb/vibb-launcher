@@ -85,9 +85,9 @@ fn about_detail(html: &str) -> Option<String> {
     Some(unescape(&row[start..start + row[start..].find("</p>")?]))
 }
 
-/// The summary's Attention row for the channels: its title.
-fn attention_title(html: &str) -> Option<String> {
-    let at = html.find("data-attention=\"notifications-off\"")?;
+/// The summary's setup row (design 114, which folds design 107's own row): its title.
+fn setup_title(html: &str) -> Option<String> {
+    let at = html.find("data-attention=\"setup\"")?;
     let rest = &html[at..];
     let start =
         rest.find("<span class=\"attention-text\">")? + "<span class=\"attention-text\">".len();
@@ -131,7 +131,8 @@ async fn set_policy(app: &TestApp, id: i64, sms: &str, calls: &str, language: &s
     .unwrap();
 }
 
-/// Every `pages` row through About (en) and the summary's Attention: the value, its colour and the title (or no row).
+/// Every `pages` row through About (en) and the summary: the value and its colour; an orange row is design 114's setup
+/// step `vibb_notifications` - About's row links to it, the summary's setup row counts it, design 107's own row is gone.
 #[tokio::test]
 async fn the_pages_rows() {
     let app = TestApp::new().await;
@@ -157,14 +158,23 @@ async fn the_pages_rows() {
         let (value, orange) = about_row(&about).unwrap_or_else(|| panic!("{case}: no row"));
         assert_eq!(value, row["value"].as_str().unwrap(), "{case}");
         assert_eq!(orange, row["orange"].as_bool().unwrap(), "{case}");
+        assert_eq!(
+            about.contains(&format!(
+                "<a class=\"row\" href=\"/devices/{id}/setup#step-vibb_notifications\" data-row=\"notifications\">"
+            )),
+            orange,
+            "{case}"
+        );
         let summary = app
             .get_page(&format!("/devices/{id}"), &cookie)
             .await
             .text();
+        assert!(!summary.contains("notifications-off"), "{case}");
         assert_eq!(
-            attention_title(&summary).as_deref(),
-            row["attention"].as_str(),
-            "{case}"
+            setup_title(&summary).is_some(),
+            orange,
+            "{case}: {:?}",
+            setup_title(&summary)
         );
     }
 }
@@ -205,14 +215,9 @@ async fn the_info_says_what_is_lost_and_how_to_fix_it() {
         json!({"notification_channels": {"all_off": false, "blocked": ["messages", "missed_calls", "app_install"]}}),
     )
     .await;
+    // Design 114 §5.5: an orange row is a missing setup step - a link to it, the how on Device › Oppsett.
     let html = app.get_page(&about, &cookie).await.text();
-    let detail = about_detail(&html).unwrap();
-    assert!(detail.starts_with("These Vibb One notifications are turned off on the phone. “Messages”: new messages make no sound"), "{detail}");
-    assert!(detail.contains(" “Missed calls”: a missed call doesn't show in the notification shade. The badge on the contact still shows. To turn"), "{detail}");
-    assert!(
-        !detail.contains("App installs"),
-        "a minor channel has no sentence: {detail}"
-    );
+    assert_eq!(about_detail(&html), None);
     let nb = app
         .get_page(&format!("{about}?lang=nb"), &cookie)
         .await
@@ -228,22 +233,13 @@ async fn the_info_says_what_is_lost_and_how_to_fix_it() {
         nb.contains("<span class=\"row-label\">Varsler</span>"),
         "{nb}"
     );
-    let detail = about_detail(&nb).unwrap();
-    assert!(detail.starts_with("Disse varslene fra Vibb One er slått av på telefonen. «Meldinger»: nye meldinger gir ingen lyd"), "{detail}");
-    assert!(
-        detail.ends_with(
-            "Slå på de som er nevnt over, og slå av pausen igjen. Er en bryter grå, sett først Samtaler og SMS til \
-             «Ikke styrt» under Anrop og SMS, og sett dem tilbake etterpå."
-        ),
-        "{detail}"
-    );
     let summary = app
         .get_page(&format!("/devices/{id}?lang=nb"), &cookie)
         .await
         .text();
     assert_eq!(
-        attention_title(&summary).as_deref(),
-        Some("Varsler slått av: Meldinger, Tapte anrop")
+        setup_title(&summary).as_deref(),
+        Some("Oppsett: 1 steg igjen")
     );
 
     // All on: no ⓘ.
@@ -276,24 +272,25 @@ async fn a_failed_read_has_no_row() {
         .get_page(&format!("/devices/{id}"), &cookie)
         .await
         .text();
-    assert_eq!(attention_title(&summary), None);
+    assert_eq!(setup_title(&summary), None);
 }
 
-/// §5.3: the row sits right after Notification access off and before the calls rows, links to About's Sound group,
-/// and the Devices list's badge counts it.
+/// Design 114: the channels off and notification access off are two steps of one setup row, which the Devices list's
+/// badge counts once; design 107's own row and the notification-access row are gone.
 #[tokio::test]
-async fn the_attention_row_has_its_place_and_counts() {
+async fn the_setup_row_counts_the_channels_once() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("Emma").await;
     set_policy(&app, id, "managed", "managed", "system", true).await;
     app.post_status(&token, json!({"notification_listener_enabled": false}))
         .await;
-    let before = attention_keys(
-        &app.get_page(&format!("/devices/{id}"), &cookie)
-            .await
-            .text(),
-    );
+    let summary = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert_eq!(setup_title(&summary).as_deref(), Some("Setup: 1 step left"));
+    let before = attention_keys(&summary);
     let list = app.get_page("/devices", &cookie).await.text();
     assert_eq!(badge(&list, id), before.len());
 
@@ -310,12 +307,18 @@ async fn the_attention_row_has_its_place_and_counts() {
         .await
         .text();
     let keys = attention_keys(&summary);
-    let at = keys.iter().position(|k| k == "notifications-off").unwrap();
-    assert_eq!(keys[at - 1], "notification-access", "{keys:?}");
-    assert!(keys[at + 1..].iter().all(|k| k != "notification-access"));
-    assert_eq!(keys.len(), before.len() + 1);
+    assert_eq!(keys, before, "one setup row for both");
+    assert!(
+        !keys
+            .iter()
+            .any(|k| k == "notifications-off" || k == "notification-access")
+    );
+    assert_eq!(
+        setup_title(&summary).as_deref(),
+        Some("Setup: 2 steps left")
+    );
     assert!(summary.contains(&format!(
-        "<a class=\"attention attention-action\" href=\"/devices/{id}/about#sound\" data-attention=\"notifications-off\">"
+        "<a class=\"attention attention-action\" href=\"/devices/{id}/setup\" data-attention=\"setup\">"
     )));
     let list = app.get_page("/devices", &cookie).await.text();
     assert_eq!(badge(&list, id), keys.len());

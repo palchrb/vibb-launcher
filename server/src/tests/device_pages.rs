@@ -182,6 +182,7 @@ async fn a_phone_not_set_up_has_little_to_say_and_can_still_be_removed() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.create_device("Mia").await;
+    app.set_parent_pin(id).await;
     let about = app
         .get_page(&device_page(id, Section::About), &cookie)
         .await
@@ -262,6 +263,7 @@ async fn advanced_forms_return_to_their_groups() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("Anna").await;
+    app.set_parent_pin(id).await;
     let html = app
         .get_page(&device_page(id, Section::Advanced), &cookie)
         .await
@@ -429,6 +431,7 @@ async fn a_live_code_shows_on_connection_without_the_code() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("Anna").await;
+    app.set_parent_pin(id).await;
     let res = app
         .request_form(
             Method::POST,

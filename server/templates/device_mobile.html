@@ -20,6 +20,7 @@
         sub-line under a choice: each group's explanation is its footer ⓘ (P2, P3). -#}
     <section id="mobile-data" aria-labelledby="mobile-data-title">
         <h2 class="group-header" id="mobile-data-title">{{ self.t("mobile.data.header") }}</h2>
+        {% for line in setup_warnings.at("mobile-data") %}{% include "partials/setup_warning.html" %}{% endfor %}
         {% for line in card.data_lines %}{% if line.warn %}
         <div class="attention attention-action" data-mobile-line="{{ line.key }}">
             <div class="attention-text">{{ line.title }}{% if let Some(sub) = line.sub %}<div class="attention-sub">

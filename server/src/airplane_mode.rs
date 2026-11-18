@@ -3,8 +3,8 @@
 //! `testdata/airplane_mode.json` (byte-identical in the launcher's test resources).
 //!
 //! The pages' parts (§6): the stored report read back ([report]), the summary's lines ([summary_lines]; "Flymodus på
-//! siden 21:03" is the header's, `phone_status::with_airplane`), the Oppsett card's steps ([setup_steps]) and the
-//! Home Screen row's sub-line ([home_sub]).
+//! siden 21:03" is the header's, `phone_status::with_airplane`) and the Home Screen row's sub-line ([home_sub]). The
+//! setup steps it needs (the role, Wi-Fi in airplane mode, the default apps) are design 114's `setup_status`.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -198,15 +198,9 @@ pub struct Line {
 }
 
 /// The summary's lines under the header (§6.2): "An emergency call turned airplane mode off at 14:02" when the call
-/// ended the newest period within [ENDED_SHOWN_MS] (any other ended period is an Activity row since design 101), and the warning
-/// while the kid's switch is on and the role, held before ([assistant_held_before]), is lost now. Empty without a report.
-pub fn summary_lines(
-    zone: &Zone,
-    now: DateTime<Utc>,
-    policy: &DevicePolicy,
-    report: Option<&Report>,
-    held_before: bool,
-) -> Vec<Line> {
+/// ended the newest period within [ENDED_SHOWN_MS] (any other ended period is an Activity row since design 101). The
+/// role lost is design 114's setup step `assistant`, counted in the summary's setup row. Empty without a report.
+pub fn summary_lines(zone: &Zone, now: DateTime<Utc>, report: Option<&Report>) -> Vec<Line> {
     let lang = zone.lang();
     let Some(report) = report else {
         return Vec::new();
@@ -235,74 +229,16 @@ pub fn summary_lines(
             });
         }
     }
-    if policy.quick_controls_mask & crate::handlers::devices::QUICK_CONTROL_AIRPLANE != 0
-        && !report.assistant
-        && held_before
-    {
-        lines.push(Line {
-            key: "role-lost",
-            title: t(lang, "device.summary.airplane.role_lost").to_string(),
-            steps: Some(t(lang, "device.airplane.assistant_steps").to_string()),
-            warn: true,
-        });
-    }
     lines
 }
 
-/// Whether any stored report of the phone said the role was held (§3.6: "held before, lost now" warns; a phone that
-/// never had it gets the Oppsett card's step instead). Reports go with `device_status`' retention, so a role lost long
-/// ago stops warning once its last `assistant: true` is pruned - the card's step stays.
-pub async fn assistant_held_before(
-    db: &sqlx::SqlitePool,
-    device_id: i64,
-) -> Result<bool, sqlx::Error> {
-    sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM device_status WHERE device_id = ? \
-         AND airplane_mode_json IS NOT NULL AND json_valid(airplane_mode_json) \
-         AND json_extract(airplane_mode_json, '$.assistant') = 1)",
-    )
-    .bind(device_id)
-    .fetch_one(db)
-    .await
-}
-
-/// The Home Screen row's sub-line (§6.1; design 113 QA M6), only when it says something, and whether it is orange: the
-/// parent's "Blokker flymodus" (grey); with bit 64 on and a report, the role not held yet (orange - the kid sees no
-/// switch) or, with the role, no Wi-Fi in airplane mode (grey). With bit 64 off or no report nothing is said about the
-/// role (the (i) says when the switch shows). The parts join with " · ".
-pub fn home_sub(
-    lang: Lang,
-    policy: &DevicePolicy,
-    report: Option<&Report>,
-) -> Option<(String, bool)> {
-    let mut parts: Vec<String> = Vec::new();
-    if policy.hardening.disallow_airplane_mode {
-        parts.push(t(lang, "device.home.airplane_blocked").to_string());
-    }
-    let bit = policy.quick_controls_mask & crate::handlers::devices::QUICK_CONTROL_AIRPLANE != 0;
-    let report = report.filter(|_| bit);
-    let no_role = report.is_some_and(|r| !r.assistant);
-    if no_role {
-        parts.push(t(lang, "device.home.airplane_no_role").to_string());
-    } else if report.is_some_and(|r| r.wifi_kept != Some(true)) {
-        parts.push(t(lang, "device.home.airplane_offline").to_string());
-    }
-    (!parts.is_empty()).then(|| (parts.join(" · "), no_role))
-}
-
-/// A role in `default_apps_changed`, in plain words ("Anropsfilter", "Nettleser", "Startskjerm").
-pub fn role_words(lang: Lang, role: &str) -> &'static str {
-    t(
-        lang,
-        match role {
-            "home" => "device.summary.setup.role.home",
-            "dialer" => "device.summary.setup.role.dialer",
-            "sms" => "device.summary.setup.role.sms",
-            "call_screening" => "device.summary.setup.role.call_screening",
-            "call_redirection" => "device.summary.setup.role.call_redirection",
-            _ => "device.summary.setup.role.browser",
-        },
-    )
+/// The Home Screen row's sub-line (§6.1), only when it says something: the parent's "Blokker flymodus" (grey). The role
+/// and Wi-Fi in airplane mode are design 114's setup steps, said by their warning lines at `#quick-controls`.
+pub fn home_sub(lang: Lang, policy: &DevicePolicy) -> Option<String> {
+    policy
+        .hardening
+        .disallow_airplane_mode
+        .then(|| t(lang, "device.home.airplane_blocked").to_string())
 }
 
 /// A feature the parent chose needs Android's "Modify system settings": the touch switch (bit 16), the Sound bit
@@ -318,136 +254,4 @@ pub fn write_settings_needed(policy: &DevicePolicy) -> bool {
 /// The kid's Flymodus switch (bit 64) is on: it needs the Digital assistant role.
 pub fn assistant_needed(policy: &DevicePolicy) -> bool {
     policy.quick_controls_mask & crate::handlers::devices::QUICK_CONTROL_AIRPLANE != 0
-}
-
-/// One step of the Oppsett card (§6.2).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SetupStep {
-    /// The step's part of the needed set ([setup_key]) and the page's hook (`data-setup-step`): `background`,
-    /// `write_settings`, `assistant`, `wifi`, `default_apps:<roles>`, `call_filter`.
-    pub id: String,
-    pub label: String,
-    pub sub: String,
-}
-
-/// The steps the phone needs and hasn't done (§6.2), in the card's order (the launcher has "Fullfør oppsett" and its
-/// notification, which the card's words name):
-/// - Bakgrunnstilkobling, always (the report's `battery_optimization_exempt` false);
-/// - Endre systeminnstillinger, only with the touch switch (bit 16), the Sound bit (8) or a clock format in use;
-/// - Digital assistent, only with the kid's Flymodus switch (bit 64);
-/// - Wi-Fi i flymodus, only with bit 64 and the role held, done once the phone stored `wifi_kept` (true or false);
-/// - Standardapper endret, while `default_apps_changed` names a role;
-/// - Samtalefilter (D10), while calls are managed and the report's `call_state` says the call screening or the call
-///   redirection role isn't held.
-pub fn setup_steps(
-    lang: Lang,
-    policy: &DevicePolicy,
-    latest: Option<&DeviceStatus>,
-) -> Vec<SetupStep> {
-    let Some(latest) = latest else {
-        return Vec::new();
-    };
-    let Some(report) = report(latest) else {
-        return Vec::new();
-    };
-    let step = |id: &str, label: &str, sub: String| SetupStep {
-        id: id.to_string(),
-        label: t(lang, label).to_string(),
-        sub,
-    };
-    let mut steps = Vec::new();
-    if latest.battery_optimization_exempt == Some(false) {
-        steps.push(step(
-            "background",
-            "device.summary.setup.background",
-            t(lang, "device.summary.setup.background_sub").to_string(),
-        ));
-    }
-    if write_settings_needed(policy) && latest.write_settings_granted == Some(false) {
-        steps.push(step(
-            "write_settings",
-            "apps.perms.access.write_settings",
-            t(lang, "device.about.write_settings_sub").to_string(),
-        ));
-    }
-    if assistant_needed(policy) {
-        if !report.assistant {
-            steps.push(step(
-                "assistant",
-                "device.about.assistant",
-                t(lang, "device.summary.setup.assistant_sub").to_string(),
-            ));
-        } else if report.wifi_kept.is_none() {
-            steps.push(step(
-                "wifi",
-                "device.about.wifi_airplane",
-                t(lang, "device.summary.setup.wifi_sub").to_string(),
-            ));
-        }
-    }
-    if !report.default_apps_changed.is_empty() {
-        let names: Vec<&str> = report
-            .default_apps_changed
-            .iter()
-            .map(|role| role_words(lang, role))
-            .collect();
-        let mut sub = t_params(
-            lang,
-            "device.summary.setup.default_apps_sub",
-            &[("apps", &names.join(", "))],
-        );
-        if report.default_apps_changed.iter().any(|r| r == "sms") {
-            sub = format!("{sub} {}", t(lang, "device.summary.setup.default_apps_sms"));
-        }
-        steps.push(step(
-            &format!("default_apps:{}", report.default_apps_changed.join("+")),
-            "device.summary.setup.default_apps",
-            sub,
-        ));
-    }
-    let call_state: Option<Value> = latest
-        .call_state_json
-        .as_deref()
-        .and_then(|json| serde_json::from_str(json).ok());
-    let held = |key: &str| {
-        call_state
-            .as_ref()
-            .and_then(|state| state.get(key))
-            .and_then(Value::as_bool)
-    };
-    if policy.calls_managed()
-        && (held("screening_role_held") == Some(false)
-            || held("redirection_role_held") == Some(false))
-    {
-        steps.push(step(
-            "call_filter",
-            "device.summary.setup.call_filter",
-            t(lang, "device.summary.setup.call_filter_sub").to_string(),
-        ));
-    }
-    steps
-}
-
-/// The needed set as stored by "Ikke nå" (`device_policy.setup_card_hidden`): the card shows again once it changes.
-pub fn setup_key(steps: &[SetupStep]) -> String {
-    steps
-        .iter()
-        .map(|s| s.id.as_str())
-        .collect::<Vec<_>>()
-        .join(",")
-}
-
-/// The Oppsett card: its steps, and whether it shows (a step is needed and "Ikke nå" didn't hide this set).
-pub struct SetupCard {
-    pub steps: Vec<SetupStep>,
-    pub shown: bool,
-}
-
-impl SetupCard {
-    pub fn of(lang: Lang, policy: &DevicePolicy, latest: Option<&DeviceStatus>) -> SetupCard {
-        let steps = setup_steps(lang, policy, latest);
-        let shown = !steps.is_empty()
-            && policy.setup_card_hidden.as_deref() != Some(setup_key(&steps).as_str());
-        SetupCard { steps, shown }
-    }
 }

@@ -207,6 +207,7 @@
     {#- The channels (design 77 D2, design 80 D8): their own form with the section marker - the handler writes only the
         two modes; a missing or unknown one is refused (400), never read as off. -#}
     <section id="settings" aria-label="{{ self.t("device.calls.settings_label") }}">
+        {% for line in setup_warnings.at("settings") %}{% include "partials/setup_warning.html" %}{% endfor %}
         <form method="post" action="/devices/{{ device.id }}/calls/settings#settings" class="group">
             <input type="hidden" name="section" value="channels">
             {#- Design 77 D2: one three-way choice per channel (off / managed by Vibb / not managed) as a segmented

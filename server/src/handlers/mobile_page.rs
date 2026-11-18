@@ -34,6 +34,8 @@ struct MobileTemplate {
     title: String,
     device: Device,
     card: Card,
+    /// Design 114 §5.4: mobile data off and Data Saver, at Mobildata (`#mobile-data`).
+    setup_warnings: crate::setup_status::Warnings,
 }
 crate::i18n::words!(MobileTemplate);
 
@@ -61,6 +63,12 @@ pub async fn view(State(state): State<AppState>, lang: Lang, Path(id): Path<i64>
             who: crate::handlers::devices::BandAvatar::of(&device),
             title: crate::i18n::t(lang, "device.page.mobile").to_string(),
             card: mobile_network::card(lang, &device.name, &policy, latest.as_ref()),
+            setup_warnings: crate::setup_status::page_warnings(
+                lang,
+                &policy,
+                latest.as_ref(),
+                "mobile",
+            ),
             device,
         }
         .render()

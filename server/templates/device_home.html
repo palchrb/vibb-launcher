@@ -16,12 +16,7 @@
         #quick-controls): without JS the answer lands on the form, with JS scroll-restore.js keeps
         the place (§5.1.4); <noscript> Save without JS. -#}
     <section id="layout" aria-label="{{ self.t("device.home.layout_label") }}">
-        {% if let Some(note) = notification_warning %}
-        {% include "partials/note_warning.html" %}
-        {% endif %}
-        {% if let Some(note) = clock_warning %}
-        {% include "partials/note_warning.html" %}
-        {% endif %}
+        {% for line in setup_warnings.at("layout") %}{% include "partials/setup_warning.html" %}{% endfor %}
         {#- One form (design 31 §5.6): the handler writes all three values (design 34 P12). -#}
         <form method="post" action="/devices/{{ device.id }}/launcher#layout" class="group">
             <label class="row">
@@ -82,6 +77,7 @@
 
     <section id="quick-controls" aria-labelledby="quick-controls-title">
         <h2 class="group-header" id="quick-controls-title">{{ self.t("device.home.quick") }}</h2>
+        {% for line in setup_warnings.at("quick-controls") %}{% include "partials/setup_warning.html" %}{% endfor %}
         {#- One form for the five and Bluetooth's any-device switch: `section=quick` writes only these (§5.6, H1), not the web filter. -#}
         <form method="post" action="/devices/{{ device.id }}/policy#quick-controls" class="group">
             <input type="hidden" name="section" value="quick">
@@ -92,7 +88,7 @@
             </label>
             {#- Design 98 §6.1: the kid's Flymodus switch (bit 64). -#}
             <label class="row" data-row="airplane">
-                <span class="row-label">{{ self.t("device.home.airplane") }}{% if let Some((line, warn)) = airplane_sub %}<span class="row-sub{% if warn %} tone-orange{% endif %}" data-airplane-sub>{{ line }}</span>{% endif %}</span>
+                <span class="row-label">{{ self.t("device.home.airplane") }}{% if let Some(line) = airplane_sub %}<span class="row-sub" data-airplane-sub>{{ line }}</span>{% endif %}</span>
                 <input type="checkbox" role="switch" class="sw" name="quick_control_airplane" value="on"{% if quick_airplane %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
             </label>
             <label class="row">

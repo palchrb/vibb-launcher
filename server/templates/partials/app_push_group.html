@@ -3,6 +3,8 @@
     Design 113: a wrong state is a short orange line, its detail behind an ⓘ; the explanation is the footer's ⓘ. -#}
 <section id="app-push" aria-labelledby="app-push-title">
     <h2 class="group-header" id="app-push-title">{{ self.t("app_push.group") }}</h2>
+    {#- Design 114 §5.4: a missing setup step this group needs (the template's `setup_warnings`). -#}
+    {% for line in setup_warnings.at("app-push") %}{% include "partials/setup_warning.html" %}{% endfor %}
     {% for (title, fix) in app_push.missing %}
     <div class="attention attention-action" data-warning="up-missing">
         <div class="attention-text">{{ title }}<div class="attention-sub">

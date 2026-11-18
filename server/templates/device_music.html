@@ -253,6 +253,7 @@
     {% if !music.on_phone.is_empty() %}
     <section id="on-phone" aria-labelledby="on-phone-title">
         <h2 class="group-header" id="on-phone-title">{{ self.t("device.music.on_phone") }}</h2>
+        {% for line in setup_warnings.at("on-phone") %}{% include "partials/setup_warning.html" %}{% endfor %}
         <div class="group">
             {% for row in music.on_phone %}
             {% include "partials/info_row.html" %}

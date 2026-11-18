@@ -933,10 +933,9 @@ pub fn flash(code: &str) -> Option<(&'static str, &'static str)> {
         "end_windows_sent" => ("quick", "device.summary.flash.end_windows_sent"),
         "start_pause_sent" => ("quick", "device.summary.flash.start_pause_sent"),
         "allow_blocked_sent" => ("blocked-apps", "device.summary.flash.allow_blocked_sent"),
-        // Design 98 §6.2: the Oppsett card's two forms (`back=setup`, and "Ikke nå").
-        "setup_start_pause_sent" => ("oppsett", "device.summary.flash.start_pause_sent"),
-        "setup_end_windows_sent" => ("oppsett", "device.summary.flash.end_windows_sent"),
-        "setup_hidden" => ("oppsett", "device.summary.setup.hidden"),
+        // Design 114 §5.1: Device › Oppsett's open group (`back=setup`).
+        "setup_start_pause_sent" => ("open", "device.summary.flash.start_pause_sent"),
+        "setup_end_windows_sent" => ("open", "device.summary.flash.end_windows_sent"),
         _ => return None,
     })
 }

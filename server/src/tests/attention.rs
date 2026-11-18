@@ -92,10 +92,8 @@ async fn each_fact_raises_its_own_row() {
             "restart-once",
             json!({"admin_policies_pending": ["disable-keyguard-features"]}),
         ),
-        (
-            "notification-access",
-            json!({"notification_listener_enabled": false}),
-        ),
+        // Design 114: notification access off is a setup step, counted in the setup row.
+        ("setup", json!({"notification_listener_enabled": false})),
         (
             "screen-time-record",
             json!({"time_state": {"day": "2026-10-13", "used_minutes": 0, "budget_minutes": 60,
@@ -104,10 +102,12 @@ async fn each_fact_raises_its_own_row() {
                                   "lock_reason": "NONE", "lifts_active": [],
                                   "ledger_unreadable": true}}),
         ),
-        // Design 113: Android's own mobile-data switch off.
+        // Design 114: Android's own mobile-data switch off is a setup step (design 113's own row folded, QA H1).
+        ("setup", json!({"setup": {"mobile_data": false}})),
+        // Design 114 §5.2 (QA M4): not device owner is its own red row, and the steps don't raise the setup row.
         (
-            "mobile-data-off",
-            json!({"mobile_data": {"enabled": false, "sink": "off", "settings_locked": true}}),
+            "not-device-owner",
+            json!({"setup": {"device_owner": false, "location": false}}),
         ),
     ];
     for (key, extra) in cases {
