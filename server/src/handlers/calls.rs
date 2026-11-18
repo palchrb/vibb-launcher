@@ -3297,7 +3297,6 @@ mod tests {
         // The expert parts are behind the ⓘ.
         let fix = |f: &Finding| f.note(&zone, now).fix.unwrap_or_default();
         assert!(fix(&all[5]).contains(package));
-        assert!(fix(&all[10]).contains("adb shell cmd role add-role-holder"));
-        assert!(fix(&all[14]).contains("IllegalArgumentException"));
+        assert!(fix(&all[13]).contains("IllegalArgumentException"));
     }
 }
