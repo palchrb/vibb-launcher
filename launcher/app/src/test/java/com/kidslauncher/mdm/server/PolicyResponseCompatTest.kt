@@ -61,6 +61,16 @@ class PolicyResponseCompatTest {
         assertEquals(FreshDecode.Ok(policy), decodeFresh(serverResponse))
     }
 
+    /** Design 110 §7.5: `map_links` (the server's `policy_json_keys_snapshot` literal, `{"on": false}` for a new phone)
+     * decodes; missing is off (every row in `MapLinksContractTest`). */
+    @Test
+    fun `map_links decodes, and missing is off`() {
+        val on = decodeFresh(serverResponse.replace("\"allowlist\":", "\"map_links\": {\"on\": true}, \"allowlist\":"))
+        assertEquals(true, ((on as FreshDecode.Ok).policy).mapLinks?.on)
+        assertEquals(true, com.kidslauncher.mdm.map.mapLinksOn(on.policy))
+        assertFalse(com.kidslauncher.mdm.map.mapLinksOn((decodeCached(serverResponse) as CachedPolicy.Ok).policy))
+    }
+
     /** Design 95 rev. 3 and design 97: the Mobilnett keys (the server's `policy_json_keys_snapshot` literal); a policy
      * without `abroad` reads Ingen data (fail closed), without the others apps on mobile data and the settings unlocked. */
     @Test

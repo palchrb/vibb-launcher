@@ -44,7 +44,7 @@ const CACHE_MAX: usize = 500;
 /// The integration's gate: one call out at a time, 200 ms apart ([Gated]); a resolve is admitted only while at most
 /// one other is in flight or waiting, else `busy` at once (§8.1, QA 3).
 pub struct Gate {
-    admit: tokio::sync::Semaphore,
+    pub(crate) admit: tokio::sync::Semaphore,
     pub(crate) source: Gated,
 }
 

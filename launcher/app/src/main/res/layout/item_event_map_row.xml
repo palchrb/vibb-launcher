@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Design 110 §7.3: Dagen's "Kart" row for a map link in an event (EventActivity.bindMapRows). -->
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    style="@style/KidManageLink"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:text="@string/map_links_day_row" />

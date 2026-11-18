@@ -380,6 +380,17 @@ async fn a_third_caller_is_busy_at_once_and_a_held_call_runs_out() {
     let second = ask(2);
     let third = async {
         app.fetch.wait_in_flight().await;
+        while app
+            .state
+            .integrations
+            .map_links
+            .gate
+            .admit
+            .available_permits()
+            > 0
+        {
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        }
         // One in flight, one waiting at the gate: the third is told at once.
         let started = std::time::Instant::now();
         let answer = ask(3).await;

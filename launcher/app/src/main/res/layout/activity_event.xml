@@ -81,6 +81,15 @@
                 android:textIsSelectable="false"
                 android:textSize="14sp"
                 android:visibility="gone" />
+
+            <!-- Design 110 §7.3: a "Kart" row for each map link in the location or the description (EventActivity). -->
+            <LinearLayout
+                android:id="@+id/event_maps"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:orientation="vertical"
+                android:visibility="gone" />
         </LinearLayout>
 
         <LinearLayout

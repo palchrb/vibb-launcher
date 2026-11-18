@@ -367,6 +367,13 @@ object AppEnforcer {
         if (parentChoice) {
             com.kidslauncher.mdm.push.up.UpRuntime.setComponentsEnabled(context, com.kidslauncher.mdm.push.up.UpView.of(policy).on)
         }
+        // Design 110 §6.2, the same pattern: the map links go to Vibb's handler whatever the switch (a PPA, so no chooser
+        // once a browser is there too); whether it is used is the handler's enabled state, switched only by a policy
+        // carrying the parent's choice. Not a restriction: never lifted.
+        enforceMapLinkPin(dpm, admin, context)
+        if (parentChoice) {
+            com.kidslauncher.mdm.map.MapLinksRuntime.setEnabled(context, com.kidslauncher.mdm.map.mapLinksOn(policy))
+        }
 
         // Hardening that the server switched off is cleared first, before anything below can
         // throw - "Block USB debugging" off is how a parent gets adb back (QA step 4 #8). The
@@ -1746,6 +1753,7 @@ object AppEnforcer {
         enforceCallLogPin(dpm, admin, context)
         enforceCaptivePortalPin(dpm, admin, context)
         enforceUpLinkPin(dpm, admin, context)
+        enforceMapLinkPin(dpm, admin, context)
     }
 
     /**
@@ -1782,6 +1790,25 @@ object AppEnforcer {
             dpm.addPersistentPreferredActivity(admin, filter, ComponentName(context, com.kidslauncher.mdm.push.up.UpLinkActivity::class.java))
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Failed to set the UnifiedPush link's handler", e)
+        }
+    }
+
+    /**
+     * Design 110 §6.2: Google Maps and Apple Maps links go to [com.kidslauncher.mdm.map.MapLinkActivity] - two filters
+     * (every path on the map hosts, `/maps…` on the general ones; [com.kidslauncher.mdm.map.MapLinksRuntime.preferredFilters]),
+     * set on every [apply] and in `HomePin`'s re-seat with the other PPAs of ours (the sixth). A PPA can't beat an app
+     * Android approved for the host (Play services' system-configured short links, a verified Google Maps), which is
+     * what the two steps on the phone are for. With the switch off the handler is disabled and the links resolve as if
+     * Vibb weren't there.
+     */
+    private fun enforceMapLinkPin(dpm: DevicePolicyManager, admin: ComponentName, context: Context) {
+        val handler = com.kidslauncher.mdm.map.MapLinksRuntime.component(context)
+        for (filter in com.kidslauncher.mdm.map.MapLinksRuntime.preferredFilters()) {
+            try {
+                dpm.addPersistentPreferredActivity(admin, filter, handler)
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "Failed to set the map links' handler", e)
+            }
         }
     }
 

@@ -255,6 +255,19 @@
         <item name="android:windowAnimationStyle">@null</item>
     </style>
 
+    <!-- Design 110: the map links' handler (MapLinkActivity) - nothing of its own on screen but its calm note in the
+         kid's dialog look; transparent, no dim of its own, no animation. -->
+    <style name="MapLinkTheme" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowIsFloating">false</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:windowAnimationStyle">@null</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+
     <style name="PlayLinkBlockedButton" parent="@android:style/Widget.Material.Button.Colored">
         <item name="android:textColor">@color/kid_ground</item>
     </style>

@@ -91,6 +91,10 @@ screen" off. Confirmed by the user on their emulator 2026-10-24 ("den fiksen fun
 
 ## Google Maps links open in Organic Maps through GeoShare (2026-11-04)
 
+**Superseded by design 110 (map links, 2026-11-18):** Vibb One handles the links itself (the PWA's Device › Apps ›
+"Map links" switch and the two steps in Vibb One's PIN-gated Settings › Map links). Remove GeoShare from a phone that
+has it: its link selections move to Vibb One at step 2 anyway. Kept below as the record of what was measured.
+
 A Google Maps share link (`https://maps.app.goo.gl/...`) tapped in Element X or a browser goes to Google Play services,
 which holds `*.app.goo.gl` by Android's own system configuration (`pm get-app-links com.google.android.gms` shows it
 `system_configured`). Without Google Maps installed, Play services answers "App isn't available - Google Play services

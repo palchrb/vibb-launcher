@@ -174,6 +174,9 @@ data class PolicyResponse(
      * `unified_push_v1`. Missing = off: the receiver and the Link Activity disabled
      * ([com.kidslauncher.mdm.push.up.UpView]). */
     val unifiedPush: com.kidslauncher.mdm.push.up.UnifiedPushPolicy? = null,
+    /** Design 110 §7.5: map links - the parent's switch (`{on}`). Missing = off: the handler disabled
+     * ([com.kidslauncher.mdm.map.mapLinksOn]). Pinned by `map_links/contract.json`'s `policy` rows. */
+    val mapLinks: com.kidslauncher.mdm.map.MapLinksPolicy? = null,
 )
 
 /** `PolicyResponse.kidLock` - `security::hash_pin` on the server (PBKDF2-SHA256, see

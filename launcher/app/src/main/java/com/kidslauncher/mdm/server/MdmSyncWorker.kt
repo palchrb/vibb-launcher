@@ -611,6 +611,8 @@ private fun statusReportOf(
         notificationChannels = com.kidslauncher.mdm.notify.NotificationChannelsReader.read(context),
         // Design 115 §2.8: whether app push is held for the apps' network (the Attention guard on the server reads it).
         unifiedPush = com.kidslauncher.mdm.push.up.UpRuntime.report(context),
+        // Design 110 §7.5: the map links' target and the steps (the server keeps the reach of a report outside a pause).
+        mapLinks = com.kidslauncher.mdm.map.MapLinksRuntime.report(context),
     )
 }
 

@@ -929,4 +929,25 @@
     <string name="wifi_portal_reopen">Åpne påloggingssiden</string>
     <string name="wifi_portal_reopen_sub">Logg av eller se hvor lenge du har igjen</string>
     <string name="home_portal_line">Wi-Fi-en vil at du logger på</string>
+
+    <!-- Design 110: map links - the kid's notes (§7.4), Meldinger's links (Q1) and the PIN-gated Settings' group. -->
+    <string name="map_links_waiting">Åpner kartet …</string>
+    <string name="map_links_note_missing">Kartet kan ikke åpnes her. Spør en voksen om %1$s.</string>
+    <string name="map_links_note_suspended">%1$s er ikke tilgjengelig akkurat nå.</string>
+    <string name="map_links_note_no_place">Fant ikke noe sted i denne lenken.</string>
+    <string name="map_links_note_list">Dette er en liste med steder. Den kan ikke åpnes i %1$s.</string>
+    <string name="map_links_note_dead">Denne lenken virker ikke lenger.</string>
+    <string name="map_links_note_retry">Fikk ikke åpnet lenken nå. Prøv igjen når du har nett.</string>
+    <string name="map_links_open_browser">Åpne i nettleseren</string>
+    <string name="message_link_cant_open">Denne lenken kan ikke åpnes her.</string>
+    <string name="map_links_settings">Kartlenker</string>
+    <string name="map_links_step_holder">Google Play-tjenester</string>
+    <string name="map_links_step_holder_todo">Slå av «Åpne støttede linker»</string>
+    <string name="map_links_step_vibb">Vibb Ones lenker</string>
+    <string name="map_links_step_vibb_todo">Slå på «Åpne støttede linker» og kryss av alle</string>
+    <string name="map_links_step_done">Ferdig</string>
+    <string name="map_links_step_back">Gi Google Play-tjenester lenkene tilbake</string>
+    <string name="map_links_step_back_todo">Slå på «Åpne støttede linker» igjen</string>
+    <string name="map_links_pause_first">Sett alle begrensninger på pause først</string>
+    <string name="map_links_day_row">Kart</string>
 </resources>

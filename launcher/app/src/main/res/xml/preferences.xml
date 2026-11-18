@@ -112,6 +112,24 @@
         android:title="@string/settings_mdm_restrictions_paused"
         android:summary="@string/settings_mdm_restrictions_paused_summary" />
 
+    <!-- Design 110 §6.2, §6.3: "Kartlenker" - the two one-time steps on Android's "Open by default" pages while the
+         switch is on, and the row that gives Google Play services its links back while it is off; shown and summarised
+         in code (MapLinkRows), each page only in a pause. -->
+    <PreferenceCategory
+        android:key="settings_map_links"
+        android:title="@string/map_links_settings"
+        app:isPreferenceVisible="false">
+        <Preference
+            android:key="settings_map_links_holder"
+            android:title="@string/map_links_step_holder" />
+        <Preference
+            android:key="settings_map_links_vibb"
+            android:title="@string/map_links_step_vibb" />
+        <Preference
+            android:key="settings_map_links_back"
+            android:title="@string/map_links_step_back" />
+    </PreferenceCategory>
+
     <!-- Design 68 §4.2: one row per allowed app and special access it declares (Android's page for it, in a pause),
          filled in code; hidden while empty. Last, so no other row falls under its header. -->
     <PreferenceCategory

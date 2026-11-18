@@ -1,0 +1,435 @@
+{
+ "_doc": "Design 110, the launcher's own rules (MapLinksTest): every link form to its reading, mapLinkPlan's first step, the step after each answer and the links a message shows. The shared rules are map_links/contract.json's.",
+ "forms": [
+  {
+   "name": "G9 Android share",
+   "url": "https://maps.google.com?q=Artbox+AS,+Drammensveien+133,+0277+Oslo&ftid=0x46416db4338a09ff:0x7d7d788043d1f40e&entry=gps",
+   "kind": "LOOKUP",
+   "lat": null,
+   "ftid": "0x46416db4338a09ff:0x7d7d788043d1f40e",
+   "label": "Artbox AS, Drammensveien 133, 0277 Oslo",
+   "query": "Drammensveien 133, 0277 Oslo"
+  },
+  {
+   "name": "G4 point, a name only",
+   "url": "https://www.google.com/maps/place/Steak+no+Don/@34.5945482,133.7583428,17z/data=!4m6!3m5!1s0x3551565394d96b57:0x1c9bdbc5990908bf!8m2!3d34.5945482!4d133.7583428",
+   "kind": "LOOKUP",
+   "lat": 34.5945482,
+   "lon": 133.7583428,
+   "z": 17,
+   "label": "Steak no Don",
+   "ftid": "0x3551565394d96b57:0x1c9bdbc5990908bf"
+  },
+  {
+   "name": "G4 point and address",
+   "url": "https://www.google.com/maps/place/Kiwi+Majorstuen,+Kirkeveien+64,+0364+Oslo/@59.93,10.71,16z/data=!4m6!3m5!1s0x46416e7d6a2b1c3d:0x1234!8m2!3d59.9301!4d10.7151",
+   "kind": "PIN",
+   "lat": 59.9301,
+   "lon": 10.7151,
+   "z": 16,
+   "label": "Kiwi Majorstuen, Kirkeveien 64, 0364 Oslo",
+   "uri": "geo:59.930100,10.715100?z=16&q=59.930100,10.715100(Kiwi%20Majorstuen%2C%20Kirkeveien%2064%2C%200364%20Oslo)"
+  },
+  {
+   "name": "G3 q point",
+   "url": "https://maps.google.com/?q=59.9139,10.7522",
+   "kind": "PIN",
+   "lat": 59.9139,
+   "lon": 10.7522,
+   "label": null,
+   "uri": "geo:59.913900,10.752200?z=17"
+  },
+  {
+   "name": "G3 ll alone",
+   "url": "https://maps.google.com/?ll=59.91,10.75",
+   "kind": "PIN",
+   "lat": 59.91,
+   "lon": 10.75
+  },
+  {
+   "name": "a text and sll: a centred search, never a pin",
+   "url": "https://maps.google.com/?q=Kiwi&sll=59.91,10.75",
+   "kind": "SEARCH",
+   "query": "Kiwi",
+   "centre": [
+    59.91,
+    10.75
+   ],
+   "uri": "geo:59.910000,10.750000?q=Kiwi"
+  },
+  {
+   "name": "a text and ll: a centred search",
+   "url": "https://maps.google.com/?q=Kiwi&ll=59.91,10.75",
+   "kind": "SEARCH",
+   "query": "Kiwi",
+   "centre": [
+    59.91,
+    10.75
+   ]
+  },
+  {
+   "name": "G6 dropped pin",
+   "url": "https://www.google.com/maps/place/42.578496,1.895566/data=!4m4!3m3!8m2!3d42.5784957!4d1.8955661",
+   "kind": "PIN",
+   "lat": 42.5784957,
+   "lon": 1.8955661,
+   "label": null
+  },
+  {
+   "name": "G8 search point",
+   "url": "https://www.google.com/maps/search/39.920439,+116.331538?entry=s",
+   "kind": "PIN",
+   "lat": 39.920439,
+   "lon": 116.331538
+  },
+  {
+   "name": "G8 search text",
+   "url": "https://www.google.com/maps/search/Kiwi+T%C3%A5sen",
+   "kind": "SEARCH",
+   "query": "Kiwi Tåsen",
+   "centre": null,
+   "uri": "geo:0,0?q=Kiwi%20T%C3%A5sen"
+  },
+  {
+   "name": "G10 map view",
+   "url": "https://www.google.no/maps/@59.91,10.75,15z",
+   "kind": "PIN",
+   "lat": 59.91,
+   "lon": 10.75,
+   "z": 15,
+   "label": null,
+   "uri": "geo:59.910000,10.750000?z=15"
+  },
+  {
+   "name": "G2 destination point",
+   "url": "https://www.google.com/maps/dir/?api=1&destination=59.91,10.75",
+   "kind": "PIN",
+   "lat": 59.91,
+   "lon": 10.75
+  },
+  {
+   "name": "G2 daddr text",
+   "url": "https://maps.google.com/maps?saddr=Home&daddr=Storgata+1,+Oslo",
+   "kind": "SEARCH",
+   "query": "Storgata 1, Oslo"
+  },
+  {
+   "name": "G7 plus code",
+   "url": "https://www.google.com/maps/place/9FFG%2BQR",
+   "kind": "NONE"
+  },
+  {
+   "name": "G11 cid",
+   "url": "https://maps.google.com/?cid=9042516119118803982",
+   "kind": "LOOKUP",
+   "ftid": "0x0:0x7d7d788043d1f40e",
+   "query": null,
+   "centre": null
+  },
+  {
+   "name": "G12 list",
+   "url": "https://www.google.com/maps/placelists/list/abc",
+   "kind": "LIST"
+  },
+  {
+   "name": "G12 My Maps",
+   "url": "https://www.google.com/maps/d/viewer?mid=1",
+   "kind": "LIST"
+  },
+  {
+   "name": "G1 wrapper",
+   "url": "https://maps.app.goo.gl/?link=https%3A%2F%2Fmaps.google.com%2F%3Fq%3D59.9%2C10.7",
+   "kind": "PIN",
+   "lat": 59.9,
+   "lon": 10.7
+  },
+  {
+   "name": "a short link",
+   "url": "https://maps.app.goo.gl/ZtCcrVTKt54Dx2hVA",
+   "kind": "RESOLVE",
+   "short": "https://maps.app.goo.gl/ZtCcrVTKt54Dx2hVA"
+  },
+  {
+   "name": "http upgraded",
+   "url": "http://maps.app.goo.gl/AbC?g_st=x",
+   "kind": "RESOLVE",
+   "short": "https://maps.app.goo.gl/AbC"
+  },
+  {
+   "name": "an Apple short link",
+   "url": "https://maps.apple/p/7E-Brjrk_THN14",
+   "kind": "RESOLVE",
+   "short": "https://maps.apple/p/7E-Brjrk_THN14"
+  },
+  {
+   "name": "A1",
+   "url": "https://maps.apple.com/place?name=Artbox%20AS&address=Drammensveien%20133,%200277%20Oslo&coordinate=59.9223615,10.6868892",
+   "kind": "PIN",
+   "lat": 59.9223615,
+   "lon": 10.6868892,
+   "label": "Artbox AS, Drammensveien 133, 0277 Oslo"
+  },
+  {
+   "name": "A1 Apple's dropped pin",
+   "url": "https://maps.apple.com/place?address=Thomash%C3%B6he,+12053+Berlin,+Germany&coordinate=52.4737758,13.4373898&name=Marked%20Location",
+   "kind": "PIN",
+   "lat": 52.4737758,
+   "lon": 13.4373898,
+   "label": "Thomashöhe, 12053 Berlin, Germany"
+  },
+  {
+   "name": "A1 the name repeated in the address",
+   "url": "https://maps.apple.com/place?name=Kiwi&address=Kiwi,%20Storgata%201&coordinate=59.9,10.7",
+   "kind": "PIN",
+   "label": "Kiwi, Storgata 1"
+  },
+  {
+   "name": "A2",
+   "url": "https://maps.apple.com/?ll=59.9,10.7&q=Kiwi",
+   "kind": "PIN",
+   "lat": 59.9,
+   "lon": 10.7,
+   "label": "Kiwi"
+  },
+  {
+   "name": "A3 centred search",
+   "url": "https://maps.apple.com/?q=Kiwi&sll=59.91,10.75",
+   "kind": "SEARCH",
+   "query": "Kiwi",
+   "centre": [
+    59.91,
+    10.75
+   ]
+  },
+  {
+   "name": "A3 an address alone",
+   "url": "https://maps.apple.com/?address=Storgata%201,%200155%20Oslo",
+   "kind": "SEARCH",
+   "query": "Storgata 1, 0155 Oslo",
+   "uri": "geo:0,0?q=Storgata%201%2C%200155%20Oslo"
+  },
+  {
+   "name": "A4 directions",
+   "url": "https://maps.apple.com/directions?destination=59.9,10.7",
+   "kind": "PIN",
+   "lat": 59.9,
+   "lon": 10.7
+  },
+  {
+   "name": "A6 an id alone",
+   "url": "https://maps.apple.com/place?auid=1234567",
+   "kind": "NONE"
+  },
+  {
+   "name": "a label with ( ) & æøå",
+   "url": "https://maps.apple.com/?ll=59.9,10.7&q=Kaf%C3%A9%20(%C3%98%20%26%20%C3%85)",
+   "kind": "PIN",
+   "label": "Kafé (Ø & Å)",
+   "uri": "geo:59.900000,10.700000?z=17&q=59.900000,10.700000(Kaf%C3%A9%20%28%C3%98%20%26%20%C3%85%29)"
+  },
+  {
+   "name": "not a map link",
+   "url": "https://example.com/maps",
+   "kind": "NONE"
+  },
+  {
+   "name": "Google Search",
+   "url": "https://www.google.com/?q=pizza",
+   "kind": "NONE"
+  },
+  {
+   "name": "not a web link",
+   "url": "geo:59.9,10.7",
+   "kind": "NONE"
+  }
+ ],
+ "plan": [
+  {
+   "name": "a time rule or the keyguard: nothing",
+   "locked": true,
+   "target": "ALLOWED",
+   "url": "https://maps.google.com/?q=59.9,10.7",
+   "step": "nothing"
+  },
+  {
+   "name": "no target",
+   "locked": false,
+   "target": "MISSING",
+   "url": "https://maps.google.com/?q=59.9,10.7",
+   "step": "note:TARGET_MISSING"
+  },
+  {
+   "name": "a hidden target",
+   "locked": false,
+   "target": "HIDDEN",
+   "url": "https://maps.google.com/?q=59.9,10.7",
+   "step": "note:TARGET_MISSING"
+  },
+  {
+   "name": "a suspended target",
+   "locked": false,
+   "target": "SUSPENDED",
+   "url": "https://maps.google.com/?q=59.9,10.7",
+   "step": "note:TARGET_SUSPENDED"
+  },
+  {
+   "name": "a pin",
+   "locked": false,
+   "target": "ALLOWED",
+   "url": "https://maps.google.com/?q=59.9,10.7",
+   "step": "open"
+  },
+  {
+   "name": "a search",
+   "locked": false,
+   "target": "ALLOWED",
+   "url": "https://maps.apple.com/?q=Kiwi",
+   "step": "open"
+  },
+  {
+   "name": "a short link asks",
+   "locked": false,
+   "target": "ALLOWED",
+   "url": "https://maps.app.goo.gl/AbC",
+   "step": "ask_short"
+  },
+  {
+   "name": "a place id asks",
+   "locked": false,
+   "target": "ALLOWED",
+   "url": "https://maps.google.com?q=Artbox&ftid=0x46416db4338a09ff:0x7d7d788043d1f40e",
+   "step": "ask_ftid"
+  },
+  {
+   "name": "no place",
+   "locked": false,
+   "target": "ALLOWED",
+   "url": "https://maps.apple.com/place?auid=1",
+   "step": "note:NO_PLACE"
+  },
+  {
+   "name": "a list",
+   "locked": false,
+   "target": "ALLOWED",
+   "url": "https://www.google.com/maps/placelists/list/abc",
+   "step": "note:LIST"
+  }
+ ],
+ "after": [
+  {
+   "name": "no answer for a short link: try again",
+   "url": "https://maps.app.goo.gl/AbC",
+   "status": 0,
+   "body": null,
+   "step": "note:RETRY"
+  },
+  {
+   "name": "no answer for a place id: the fallback search",
+   "url": "https://maps.google.com?q=Artbox+AS,+Drammensveien+133,+0277+Oslo&ftid=0x46416db4338a09ff:0x7d7d788043d1f40e",
+   "status": 0,
+   "body": null,
+   "step": "open:geo:59.947246,10.889123?q=Drammensveien%20133%2C%200277%20Oslo"
+  },
+  {
+   "name": "nothing found, a point in the link: its own pin",
+   "url": "https://www.google.com/maps/place/Steak+no+Don/data=!4m6!3m5!1s0x3551565394d96b57:0x1c9bdbc5990908bf!8m2!3d34.5945482!4d133.7583428",
+   "status": 200,
+   "body": {},
+   "step": "open:geo:34.594548,133.758343?z=17&q=34.594548,133.758343(Steak%20no%20Don)"
+  },
+  {
+   "name": "a place for a link with its own point: the link's point, the place's name and address",
+   "url": "https://www.google.com/maps/place/Steak+no+Don/data=!4m6!3m5!1s0x3551565394d96b57:0x1c9bdbc5990908bf!8m2!3d34.5945482!4d133.7583428",
+   "status": 200,
+   "body": {
+    "place": {
+     "lat": 34.59,
+     "lon": 133.75,
+     "name": "Steak no Don",
+     "address": "4 Chome-7-28 Oimatsucho, Kurashiki"
+    }
+   },
+   "step": "open:geo:34.594548,133.758343?z=17&q=34.594548,133.758343(Steak%20no%20Don%2C%204%20Chome-7-28%20Oimatsucho%2C%20Kurashiki)"
+  },
+  {
+   "name": "a 409: try again and sync",
+   "url": "https://maps.app.goo.gl/AbC",
+   "status": 409,
+   "body": {
+    "error": "off"
+   },
+   "step": "note:RETRY+sync"
+  },
+  {
+   "name": "a dead link",
+   "url": "https://maps.app.goo.gl/AbC",
+   "status": 422,
+   "body": {
+    "error": "dead"
+   },
+   "step": "note:DEAD"
+  },
+  {
+   "name": "a short link to a list",
+   "url": "https://maps.app.goo.gl/AbC",
+   "status": 200,
+   "body": {
+    "url": "https://www.google.com/maps/placelists/list/x"
+   },
+   "step": "note:LIST"
+  },
+  {
+   "name": "a short link to a search",
+   "url": "https://maps.app.goo.gl/AbC",
+   "status": 200,
+   "body": {
+    "url": "https://www.google.com/maps/search/Kiwi"
+   },
+   "step": "open:geo:0,0?q=Kiwi"
+  },
+  {
+   "name": "a place id without text, nothing found",
+   "url": "https://maps.google.com/?cid=9042516119118803982",
+   "status": 200,
+   "body": {},
+   "step": "note:NO_PLACE"
+  }
+ ],
+ "links": [
+  {
+   "text": "Se https://maps.app.goo.gl/AbC.",
+   "links": [
+    "https://maps.app.goo.gl/AbC"
+   ]
+  },
+  {
+   "text": "(se https://example.com/a_(b))",
+   "links": [
+    "https://example.com/a_(b)"
+   ]
+  },
+  {
+   "text": "Ring 99887766 eller skriv til per@example.com",
+   "links": []
+  },
+  {
+   "text": "http://x.no og HTTPS://y.no/z?q=1, ok",
+   "links": [
+    "http://x.no",
+    "HTTPS://y.no/z?q=1"
+   ]
+  },
+  {
+   "text": "Storgata 1, 0155 Oslo",
+   "links": []
+  },
+  {
+   "text": "www.example.com uten skjema",
+   "links": []
+  },
+  {
+   "text": "https://",
+   "links": []
+  }
+ ]
+}

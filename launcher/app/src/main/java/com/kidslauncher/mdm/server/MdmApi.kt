@@ -173,6 +173,11 @@ interface MdmApi {
     /** Design 108 §3.7: the sent messages' keys acknowledged, then `{messages, more}`. */
     @POST("api/devices/up/messages")
     suspend fun upMessages(@Body body: com.kidslauncher.mdm.push.up.UpAckBody): Response<ResponseBody>
+
+    /** Design 110 §8.1: a short link or a place id resolved by the server - the raw answer (`{url?, place?}` or
+     * `{error}`), read by [com.kidslauncher.mdm.map.mapLinkAfter]. */
+    @POST("api/devices/map-links/resolve")
+    suspend fun resolveMapLink(@Body body: okhttp3.RequestBody): Response<ResponseBody>
 }
 
 /** [callTimeoutMs] bounds a whole call (design 38's prepared shutdown client); `null` = none.

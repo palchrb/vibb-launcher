@@ -155,6 +155,9 @@ data class StatusReportRequest(
      * the phone unlocked; left out otherwise. A full-report field. Pinned by `unified_push.json`'s `report` rows
      * (`UnifiedPushContractTest`). */
     val unifiedPush: com.kidslauncher.mdm.push.up.UpReport? = null,
+    /** Design 110 §7.5: the map links' target, its state, the two steps and what reaches Vibb One. A full-report
+     * field. Pinned by `map_links/contract.json`'s `report` rows (`MapLinksContractTest`). */
+    val mapLinks: com.kidslauncher.mdm.map.MapLinksReport? = null,
 )
 
 /**

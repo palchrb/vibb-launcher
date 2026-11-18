@@ -86,4 +86,5 @@ Area notes, moved verbatim from this file on 2026-11-01; read only the ones your
 - `docs/notes/launcher/security.md` - Parent PIN hardening (design 24); Windows that lock again, the parent-PIN vault, unseen boots (design 24b); The phone's secrets sealed under a Keystore key (design r10); Security review, launcher wave; The server address: https only (security review S-M1); The server's certificate issuer, pinned (design 76)
 - `docs/notes/launcher/logins.md` - Wi-Fi sign-in pages (Part A, `portal/`) and Chrome only for logins (Part B, `logins/`) (design 102)
 - `docs/notes/launcher/unified-push.md` - Vibb One as the UnifiedPush distributor (design 108): the exported receiver and Link Activity, the store, the pull and the raise, the reconcile
+- `docs/notes/launcher/map-links.md` - Map links (design 110): `map/` (the one provider file `MapLinkForms`, the neutral rest), the handler and its PPA, the two steps in the PIN-gated Settings, Meldinger's web links, Dagen's "Kart" row, the report
 - `docs/notes/launcher/gotchas-and-history.md` - Non-obvious gotchas; Retention; Crash reports; MY_PACKAGE_REPLACED

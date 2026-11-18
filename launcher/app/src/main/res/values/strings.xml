@@ -1021,4 +1021,25 @@
     <string name="wifi_portal_reopen">Open the sign-in page</string>
     <string name="wifi_portal_reopen_sub">Log out or see time left</string>
     <string name="home_portal_line">This Wi-Fi wants you to sign in</string>
+
+    <!-- Design 110: map links - the kid's notes (§7.4), Meldinger's links (Q1) and the PIN-gated Settings' group. -->
+    <string name="map_links_waiting">Opening the map …</string>
+    <string name="map_links_note_missing">This map can\'t be opened here. Ask a grown-up about %1$s.</string>
+    <string name="map_links_note_suspended">%1$s isn\'t available right now.</string>
+    <string name="map_links_note_no_place">Couldn\'t find a place in this link.</string>
+    <string name="map_links_note_list">This is a list of places. It can\'t be opened in %1$s.</string>
+    <string name="map_links_note_dead">This link doesn\'t work any more.</string>
+    <string name="map_links_note_retry">Couldn\'t open the link right now. Try again when you\'re online.</string>
+    <string name="map_links_open_browser">Open in browser</string>
+    <string name="message_link_cant_open">This link can\'t be opened here.</string>
+    <string name="map_links_settings">Map links</string>
+    <string name="map_links_step_holder">Google Play services</string>
+    <string name="map_links_step_holder_todo">Turn off “Open supported links”</string>
+    <string name="map_links_step_vibb">Vibb One\'s links</string>
+    <string name="map_links_step_vibb_todo">Turn on “Open supported links” and tick them all</string>
+    <string name="map_links_step_done">Done</string>
+    <string name="map_links_step_back">Let Google Play services open links again</string>
+    <string name="map_links_step_back_todo">Turn “Open supported links” back on</string>
+    <string name="map_links_pause_first">Pause all restrictions first</string>
+    <string name="map_links_day_row">Map</string>
 </resources>
