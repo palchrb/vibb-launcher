@@ -214,8 +214,8 @@ class StorytelSession(
 
     /**
      * When the download worker comes back after an outage (wall clock): [COME_BACK_MS] doubling with each
-     * consecutive outage stop, at most [COME_BACK_MAX_MS] (S2-2: an old launcher or a server away for a weekend
-     * costs a few jobs an hour, not 30). Under [lock] or with only a read of [outages].
+     * consecutive outage stop, at most [COME_BACK_MAX_MS] (S2-2: a server away for a weekend costs a few
+     * jobs an hour, not 30). Under [lock] or with only a read of [outages].
      */
     private fun comeBack(): Long =
         wallMs() + minOf(COME_BACK_MS shl (outages - 1).coerceIn(0, 4), COME_BACK_MAX_MS)

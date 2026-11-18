@@ -652,13 +652,7 @@ class SourceScanTest {
     }
 
     @Test
-    fun `the debug feed's storytel_json is deleted unread - the phone takes no login (design 58 §5_6)`() {
-        val debug = code(moduleFile("src/debug/java/me/vibb/music/debugfeed/DebugStorytel.kt"))
-        val drop = debug.substringAfter("fun dropLogin(").substringBefore("\n    }\n")
-        assertTrue(drop.contains("f.delete()"))
-        assertFalse("never read", drop.contains("readText") || drop.contains("readBytes"))
-        assertFalse("no login code in the debug feed", debug.contains("StorytelLogin") || debug.contains("seedLogin"))
-        assertTrue(code(moduleFile("src/debug/java/me/vibb/music/debugfeed/DebugFeedReceiver.kt")).contains("?.let { f -> DebugStorytel.dropLogin(f) }"))
+    fun `the debug start-up provider is not exported and runs before WorkManager`() {
         val manifest = code(moduleFile("src/debug/AndroidManifest.xml"))
         assertTrue(manifest.contains("android:name=\"me.vibb.music.debugfeed.DebugStartup\""))
         val provider = manifest.substringAfter("DebugStartup").substringBefore("/>")
@@ -951,28 +945,6 @@ class SourceScanTest {
         }
         assertEquals(nb["headset_no_contact_row"], nb["room_no_contact"])
         assertEquals(en["headset_no_contact_row"], en["room_no_contact"])
-    }
-
-    /**
-     * Design 58 §5.5 (QA 58-15): the old login's Keystore key and file are named only where they are deleted, and the
-     * purge runs from the sync's report only - never on a mint's path (`StorytelAccount`), so a room's 10 s mint never
-     * waits for the Keystore.
-     */
-    @Test
-    fun `the old Storytel login is named only by its purge, which only the sync's report calls`() {
-        for (f in sources("src/main") + sources("src/debug")) {
-            val text = code(f)
-            for (name in listOf("AndroidKeyStore", "storytel.bin", "vibb_storytel")) {
-                if (text.contains(name)) assertEquals("${f.path} names $name", "StorytelLegacy.kt", f.name)
-            }
-            if (text.contains("StorytelLegacy.purge(")) assertEquals(f.path, "Sync.kt", f.name)
-        }
-        val sync = code(moduleFile("src/main/java/me/vibb/music/sync/Sync.kt"))
-        val report = sync.substringAfter("suspend fun writeReport(context: Context)").substringBefore("val storytel = StorytelAccount.get(context).state()")
-        assertTrue("before the report's state", report.contains("StorytelLegacy.purge(context)"))
-        val legacy = code(moduleFile("src/main/java/me/vibb/music/bridge/StorytelLegacy.kt"))
-        assertTrue(legacy.contains("if (!flag.compareAndSet(false, true)) return false"))
-        assertTrue(legacy.contains("purgeOnce(done, context.noBackupFilesDir, ::deleteKey)"))
     }
 
     /**

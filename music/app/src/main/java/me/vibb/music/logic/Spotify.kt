@@ -236,7 +236,7 @@ fun spotifyHeldRecently(held: Boolean, heldForMs: Long): Boolean = held && heldF
 /**
  * Whether the web player hears a call (N3): the launcher's (`CALL_HOLD` .. `CALL_RELEASE`, sent at every call's begin while
  * the music app has a session - "a call began") or the audio mode's (a ringing or active system call, `callMode`: the
- * backstop for a launcher without notification-listener access or an older one): a play tapped during a call starts
+ * backstop for a launcher without notification-listener access): a play tapped during a call starts
  * nothing then (qa-26c-6l-fixes L2), and nothing plays after it that the call didn't pause.
  */
 fun spotifyInCall(launcherInCall: Boolean, modeInCall: Boolean): Boolean = launcherInCall || modeInCall

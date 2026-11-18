@@ -112,8 +112,7 @@ object BridgeSync {
     }
 
     /**
-     * At the end of the sync, next to [push]: the pictures wanted (design 27 §2.2). An older launcher
-     * ignores the call (an unknown oneway transaction), and the app shows series covers, as before.
+     * At the end of the sync, next to [push]: the pictures wanted (design 27 §2.2).
      */
     suspend fun wantArt(context: Context, want: WantedArt) {
         if (!Bridge.config(context).managed) return

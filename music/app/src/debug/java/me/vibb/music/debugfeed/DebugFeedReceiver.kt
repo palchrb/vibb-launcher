@@ -40,8 +40,6 @@ import java.io.File
  *                                     DebugStartup; record_spotify_states: the web player's
  *                                     states and events into debug-feed/sdk_states/<start>.jsonl, design 26c
  *                                     §9.4, DebugSpotify)
- *   debug-feed/storytel.json          a fake login from before design 58: deleted unread (the phone takes no
- *                                     login; an unmanaged run with storytel_base asks the fake's /fake/jwt)
  *   debug-feed/sonos.json             optional: Sonos speakers merged into the uid -> ip cache, for the
  *                                     emulator's fake speaker (no multicast there, so no SSDP; design 26a
  *                                     §8 step 1): {"players": [{"uid": "RINCON_FAKE0140101400", "name": "Stua",
@@ -86,7 +84,6 @@ class DebugFeedReceiver : BroadcastReceiver() {
         DebugStorytel.applyBase(context)
         DebugSpotify.applyBase(context)
         DebugSpotify.applyRecorder(context)
-        File(dir, "storytel.json").takeIf { it.isFile }?.let { f -> DebugStorytel.dropLogin(f) }
         File(dir, "sonos.json").takeIf { it.isFile }?.let { f -> seedSonos(context, f) }
         val libraryFile = File(dir, "library.json")
         if (libraryFile.isFile) {
