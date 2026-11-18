@@ -455,7 +455,9 @@ class GlancePanel(
      * still covers the keypad stage. */
     fun ground(drawable: android.graphics.drawable.Drawable, picture: GlassGround) = guarded("ground") {
         glance.root.background = drawable
+        // Made now when the root has its size (this may run inside the frame's pre-draw, after the glass's own).
         glass.ground(picture)
+        glass.sync()
     }
 
     /** The font scale changed under the lock (it handles `fontScale` itself, emulator round N8): the
