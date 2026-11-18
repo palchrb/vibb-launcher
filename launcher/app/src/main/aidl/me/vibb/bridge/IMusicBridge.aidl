@@ -5,7 +5,6 @@
 package me.vibb.bridge;
 
 import me.vibb.bridge.ISpotifyTokenCallback;
-import me.vibb.bridge.IStorytelCallback;
 import me.vibb.bridge.IStorytelTokenCallback;
 
 interface IMusicBridge {
@@ -24,10 +23,8 @@ interface IMusicBridge {
     /** The music app has its copy of file [id] (checked against [sha256]): the launcher deletes its own. */
     oneway void releaseFile(long id, String sha256);
 
-    /** Retired from design 58 step 3: the launcher then answers generation 0 ("delete yours") whenever
-     *  [haveGeneration] isn't the policy's, and never asks the server; the music app no longer calls it after step 2.
-     *  Kept for the transaction codes. */
-    oneway void getStorytelLogin(long haveGeneration, IStorytelCallback callback);
+    /** An empty slot (once the retired Storytel login): it keeps the later methods' transaction codes. */
+    oneway void reserved();
 
     /** The music app's state: key "report" (a JSON object, for `music_state`), and "held_files" /
      *  "held_sha256" (the own files it holds: the launcher never fetches those again). */

@@ -657,7 +657,7 @@ next to the launcher; no device owner or server is needed for these checks.
 #   curl -sH "Authorization: Bearer $TOKEN" $SERVER/api/devices/music/files/5 > debug-feed/files/5
 #   curl -sH "Authorization: Bearer $TOKEN" $SERVER/api/devices/music/covers/$HASH > debug-feed/covers/$HASH
 # Optional debug-feed/config.json (design 30): {"stream_mobile_data": true, "download_mobile_data": false,
-#   "storage_limit_gb": 2} - the two switches and the limit in GB (0 = none); a bare "mobile_data" sets both switches
+#   "storage_limit_gb": 2} - the two switches and the limit in GB (0 = none)
 R=me.vibb.music.debug/me.vibb.music.debugfeed.DebugFeedReceiver
 adb shell am broadcast -n $R        # once: the app creates its (empty) debug-feed folder
 adb push debug-feed /sdcard/Android/data/me.vibb.music.debug/files/

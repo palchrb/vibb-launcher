@@ -449,20 +449,6 @@ async fn each_music_warning_raises_its_row_and_marks_the_music_row() {
             .unwrap();
         assert!(rows(&app, &cookie, id).await.is_empty(), "{key}");
     }
-    // The older-phone warning: the two switches differ while the phone sends no `extra_bytes`.
-    let (id, token) = clean_phone(&app, "older").await;
-    sqlx::query("UPDATE device_policy SET music_stream_mobile_data = 1 WHERE device_id = ?")
-        .bind(id)
-        .execute(&app.db)
-        .await
-        .unwrap();
-    report(
-        &app,
-        &token,
-        music(json!({"package": "me.vibb.music", "bridge": "bound", "cache_bytes": 1_000_000})),
-    )
-    .await;
-    assert_eq!(rows(&app, &cookie, id).await, ["music-older-phone"]);
     // An error for an entry that isn't on for the phone is nothing to fix (N3).
     let (id, token) = clean_phone(&app, "off").await;
     report(

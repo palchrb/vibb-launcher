@@ -498,9 +498,9 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   group, local). A phone not set up has the page. Every read is a 500 on a DB error ("Couldn't read this phone"),
   never an empty library or default settings.
 - **Attention** (qa-31-s7-code M1): `handlers::music::music_warnings` (typed `MusicWarnings`) feeds both the page's
-  warnings and six orange rows - "Vibb One can't deliver music yet" and "Music app not reachable" (→ the page),
+  warnings and five orange rows - "Vibb One can't deliver music yet" and "Music app not reachable" (→ the page),
   "Storytel refused the phone's login" (→ `#storytel-title`), "Music over the storage limit" (→ `#storage-title`),
-  "Update Vibb One and the music app" / "Update Vibb One" / "Update the music app" (`OlderApps::title`, → `#music-settings`), "N music entries fail on the phone" (only entries on for the
+  "N music entries fail on the phone" (only entries on for the
   phone, one row, → `#library`); `attention::Sources::music_ticked` carries the entries on.
 - **Where the forms return** (§5.1, `tests::device_pages::music_forms_return_to_their_groups`, built from the
   rendered forms, each fragment checked to hold its form): the app switch to `#music-app`, refused to `?music_notice=from_play|not_an_app#music-app` (the reason in that group), a catalog row
@@ -1763,15 +1763,14 @@ man er inne på en device". Branch `pwa-fixes-b`.
   `i18n::error`). The cards' status lines (`SweepView`: Checking…, Waiting…, Checked …, Last check failed …, the
   phones' lines, the Spotify card's notes) come in the `Zone`'s language; `music::kind_key` gives a kind's key,
   `ORDERS` holds keys, the offline choices are worded by `cache_label`/`storytel_caches`, the category icons and
-  colours by `icon_word`/`color_word`, `spotify::LoginOutcome::text(lang, …)` the login's notice and
-  `OlderApps::title_key` Device › Music's update warning. `music::parse_link` (the Add-link form) and
+  colours by `icon_word`/`color_word`, `spotify::LoginOutcome::text(lang, …)` the login's notice. `music::parse_link` (the Add-link form) and
   `music_import::parse` (the Import form) refuse with a key (`music.link.*`, `music.import.not_json`/`no_sections`)
   the handler words; the import's skip reasons word `parse_link`'s keys since slice 4.
   `static/music-cards.js` (`?v=4`) asks `/music/cards` in the page's `<html lang>` (`cardsUrl`). Left for slice 4 (done, below):
   the helpers' sentences inside those lines - `music::sweep_error_text`, `CheckError::message`, `entry_error_text`,
   `StorytelError::message`, the Spotify link and add refusals (`spotify::*::message`, `add_refusal`),
   `music::check_link`'s refusals, `music_import`'s skip reasons (`Skip::reason`), `photos::PhotoError::message`,
-  `music::storage`'s sizes - and the summary's Music row and Attention (`OlderApps::title` stays English there).
+  `music::storage`'s sizes - and the summary's Music row and Attention.
 - **Slice 3e, part A (Settings' core pages)**: the Settings hub, Notifications (the inbox) and Notification
   Settings, Time Rules, a rule's editor and Daily Limit, Web Filter, Blocked Activity, Wallpapers, Software Updates,
   Backups and Phone Setup are worded (`settings.*`, the shared `settings.schedule.*` and `settings.hint_*`), with the

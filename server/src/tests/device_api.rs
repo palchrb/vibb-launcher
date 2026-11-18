@@ -631,15 +631,14 @@ async fn policy_json_keys_snapshot() {
 
     // The launcher's (nullable, step 1: ignored) music DTO (design 21): every key, a fresh phone's
     // defaults; only `library_version`, `volume_cap_pct` and `storage_limit_gb` may be null. `null`
-    // as a whole only when it can't be read (tests/music.rs). Design 30: `mobile_data` stays (both
-    // switches on), the two switches and the storage limit (a fresh phone's 2 GB) are added. Design
+    // as a whole only when it can't be read (tests/music.rs). Design 30: the two switches and the
+    // storage limit (a fresh phone's 2 GB). Design
     // 26c: `spotify` (bound to an account; the launcher's DNS exemption). 2026-11-01: `spotify_diag_until` (Device ›
     // Advanced's diagnostic log; null unless it runs - the launcher reads it on its own, leniently).
     assert_eq!(
         object["music"],
         serde_json::json!({
             "library_version": null,
-            "mobile_data": false,
             "stream_mobile_data": false,
             "download_mobile_data": false,
             "volume_cap_pct": null,

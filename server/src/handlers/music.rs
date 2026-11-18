@@ -4583,8 +4583,6 @@ pub struct MusicCard {
     /// Streaming and downloads on mobile data (design 30 §1.1).
     pub stream_mobile_data: bool,
     pub download_mobile_data: bool,
-    /// The switches differ and the phone still runs on the old one (design 30 §1.3): above them.
-    pub older_phone: Option<Note>,
     pub volume_cap: Option<i64>,
     /// Every choice and whether it is the current one.
     pub volume_caps: Vec<(i64, bool)>,
@@ -4647,9 +4645,6 @@ pub struct MusicWarnings {
     pub storytel_refused: bool,
     /// The kept items alone pass the storage limit: what they use ("3.2 GB") and the limit in GB.
     pub over_limit: Option<(String, i64)>,
-    /// The two mobile-data switches differ and the phone still reads the old one (design 30 §1.3):
-    /// which app to update.
-    pub older_phone: Option<music::OlderApps>,
     /// Entries switched on for this phone that the phone reported an error for.
     pub failing_entries: usize,
     /// The phone plays as a Spotify account and its last Spotify outcome is one the parent must
@@ -4748,14 +4743,6 @@ pub fn music_warnings(
                 })
             })
             .and_then(|stored| stored.over_limit),
-        older_phone: music::older_phone(
-            policy.music_stream_mobile_data,
-            policy.music_download_mobile_data,
-            report.and_then(|r| r.cache_bytes),
-            report.and_then(|r| r.extra_bytes),
-            latest.and_then(|s| s.app_version_code),
-            report.and_then(|r| r.version_code),
-        ),
         failing_entries: report
             .map(|r| {
                 ticked
@@ -5056,13 +5043,6 @@ pub(crate) async fn device_card(
         ticks,
         stream_mobile_data: policy.music_stream_mobile_data,
         download_mobile_data: policy.music_download_mobile_data,
-        // An app report without `extra_bytes` is a phone on the one old switch (design 30 §1.3).
-        older_phone: found.older_phone.map(|apps| {
-            warning(
-                t(lang, apps.title_key()),
-                t(lang, "device.music.older_phone_sub").to_string(),
-            )
-        }),
         volume_cap: music::volume_cap(policy.music_volume_cap_pct),
         volume_caps: VOLUME_CAPS
             .iter()

@@ -75,13 +75,12 @@ pub enum Kind {
     LedgerUnreadable,
     /// Device › Music's warnings (design 31 step 7 fix round, qa-31-s7-code M1), from
     /// `music::music_warnings` like the page's: Vibb without music while entries are on, the music
-    /// app not reachable, Storytel's login refused, over the storage limit, the old mobile-data
-    /// switch, entries the phone can't fetch (one row for all).
+    /// app not reachable, Storytel's login refused, over the storage limit, entries the phone can't
+    /// fetch (one row for all).
     MusicCantDeliver,
     MusicUnreachable,
     MusicStorytelRefused,
     MusicOverLimit,
-    MusicOlderPhone(crate::music::OlderApps),
     MusicFailing(usize),
     /// The phone's Spotify account can't play (design 26c §4.4: the login, the app, Premium or
     /// the phone's web player) - the music app's tiles say "Spør en voksen".
@@ -165,7 +164,6 @@ impl AttentionItem {
             Kind::MusicUnreachable => "music-unreachable",
             Kind::MusicStorytelRefused => "music-storytel-refused",
             Kind::MusicOverLimit => "music-over-limit",
-            Kind::MusicOlderPhone(_) => "music-older-phone",
             Kind::MusicFailing(_) => "music-entries",
             Kind::MusicSpotify => "music-spotify",
             Kind::MusicSpotifyLogin => "music-spotify-login",
@@ -274,9 +272,6 @@ pub fn items(lang: Lang, device_id: i64, facts: &Facts) -> Vec<AttentionItem> {
     add(music.unreachable, Kind::MusicUnreachable);
     add(music.storytel_refused, Kind::MusicStorytelRefused);
     add(music.over_limit.is_some(), Kind::MusicOverLimit);
-    if let Some(apps) = music.older_phone {
-        add(true, Kind::MusicOlderPhone(apps));
-    }
     add(
         music.failing_entries > 0,
         Kind::MusicFailing(music.failing_entries),
@@ -334,7 +329,6 @@ fn level(kind: Kind) -> Level {
         | Kind::MusicUnreachable
         | Kind::MusicStorytelRefused
         | Kind::MusicOverLimit
-        | Kind::MusicOlderPhone(_)
         | Kind::MusicFailing(_)
         | Kind::MusicSpotify
         | Kind::MusicSpotifyLogin
@@ -383,7 +377,6 @@ fn title(lang: Lang, kind: Kind) -> String {
         Kind::MusicUnreachable => t(lang, "device.attention.music_unreachable"),
         Kind::MusicStorytelRefused => t(lang, "device.attention.music_storytel_refused"),
         Kind::MusicOverLimit => t(lang, "device.attention.music_over_limit"),
-        Kind::MusicOlderPhone(apps) => t(lang, apps.title_key()),
         Kind::MusicFailing(n) => {
             return t_count(lang, "device.attention.music_failing", count(n), &[]);
         }
@@ -437,7 +430,6 @@ fn target(kind: Kind, id: i64) -> String {
         // The others above their own group (its header) or by their rows.
         Kind::MusicStorytelRefused => ("/music", "storytel-title"),
         Kind::MusicOverLimit => ("/music", "storage-title"),
-        Kind::MusicOlderPhone(_) => ("/music", "music-settings"),
         Kind::MusicFailing(_) => ("/music", "library"),
         Kind::MusicSpotify
         | Kind::MusicSpotifyLogin
@@ -797,7 +789,6 @@ mod tests {
                 unreachable: true,
                 storytel_refused: true,
                 over_limit: Some(("3.2 GB".to_string(), 2)),
-                older_phone: Some(crate::music::OlderApps::Both),
                 failing_entries: 2,
                 spotify_cant_play: true,
                 spotify_account: crate::handlers::music::SpotifyAccountWarnings {
@@ -901,7 +892,6 @@ mod tests {
                 "Music app not reachable",
                 "Storytel refused the phone's login",
                 "Music over the storage limit",
-                "Update Vibb One and the music app",
                 "2 music entries fail on the phone",
                 "No Spotify app set up",
                 "Spotify login needs renewing",
@@ -1028,10 +1018,6 @@ mod tests {
             "/devices/7/music#storytel-title"
         );
         assert_eq!(target("music-over-limit"), "/devices/7/music#storage-title");
-        assert_eq!(
-            target("music-older-phone"),
-            "/devices/7/music#music-settings"
-        );
         assert_eq!(target("music-entries"), "/devices/7/music#library");
     }
 }

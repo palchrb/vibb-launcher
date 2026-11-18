@@ -554,7 +554,7 @@ class PolicyResponseCompatTest {
     fun `music never fails the policy and is carried as is (21)`() {
         fun withMusic(music: String) = serverResponse.replaceFirst("{", "{\"music\": $music,")
         val today = withMusic(
-            """{"library_version": "0123456789abcdef", "mobile_data": false, "stream_mobile_data": true, "download_mobile_data": false, """ +
+            """{"library_version": "0123456789abcdef", "stream_mobile_data": true, "download_mobile_data": false, """ +
                 """"volume_cap_pct": null, "storage_limit_gb": 2, "storytel_generation": 0, "spotify": true, "spotify_diag_until": null}""",
         )
         val policy = (decodeCached(today) as CachedPolicy.Ok).policy
@@ -562,7 +562,7 @@ class PolicyResponseCompatTest {
         assertEquals("0123456789abcdef", music["library_version"]!!.jsonPrimitive.content)
         assertEquals(
             setOf(
-                "library_version", "mobile_data", "stream_mobile_data", "download_mobile_data", "volume_cap_pct", "storage_limit_gb",
+                "library_version", "stream_mobile_data", "download_mobile_data", "volume_cap_pct", "storage_limit_gb",
                 "storytel_generation", "spotify", "spotify_diag_until",
             ),
             music.keys,
@@ -578,21 +578,21 @@ class PolicyResponseCompatTest {
         // 2026-11-01: `spotify_diag_until` (Device › Advanced's Spotify diagnostic log) is read leniently - null (not
         // running), absent (an older server) or junk is 0 and never refuses the music object; a running one is its end.
         val running = withMusic(
-            """{"library_version": null, "mobile_data": false, "volume_cap_pct": null, "storage_limit_gb": 2, "storytel_generation": 0, "spotify": true, "spotify_diag_until": 1793000000}""",
+            """{"library_version": null, "volume_cap_pct": null, "storage_limit_gb": 2, "storytel_generation": 0, "spotify": true, "spotify_diag_until": 1793000000}""",
         )
         assertEquals(1_793_000_000L, com.kidslauncher.mdm.music.musicPolicy((decodeCached(running) as CachedPolicy.Ok).policy.music)!!.spotifyDiagUntilS)
         for (junk in listOf("\"1793000000\"", "-5", "1.5", "true", "{}", "99999999999")) {
-            val odd = withMusic("""{"library_version": null, "mobile_data": false, "volume_cap_pct": null, "storytel_generation": 0, "spotify_diag_until": $junk}""")
+            val odd = withMusic("""{"library_version": null, "volume_cap_pct": null, "storytel_generation": 0, "spotify_diag_until": $junk}""")
             assertEquals(junk, 0L, com.kidslauncher.mdm.music.musicPolicy((decodeCached(odd) as CachedPolicy.Ok).policy.music)!!.spotifyDiagUntilS)
         }
-        assertFalse(com.kidslauncher.mdm.music.musicSpotify((decodeCached(withMusic("""{"library_version": null, "mobile_data": false, "volume_cap_pct": null, "storytel_generation": 0}""")) as CachedPolicy.Ok).policy.music))
+        assertFalse(com.kidslauncher.mdm.music.musicSpotify((decodeCached(withMusic("""{"library_version": null, "volume_cap_pct": null, "storytel_generation": 0}""")) as CachedPolicy.Ok).policy.music))
         assertEquals(FreshDecode.Ok(policy), decodeFresh(today))
         assertEquals(CachedPolicy.Ok(policy), decodeCached(ServerJson.encodeToString(PolicyResponse.serializer(), policy)))
         for (odd in listOf(
             "null", "{}", "5", "\"x\"", "[]",
-            """{"library_version": 5, "mobile_data": "yes", "volume_cap_pct": "60", "storytel_generation": null}""",
-            """{"library_version": null, "mobile_data": false, "volume_cap_pct": null, "storytel_generation": 0, "spotify": "yes"}""",
-            """{"library_version": null, "mobile_data": false, "stream_mobile_data": "yes", "storage_limit_gb": "2", "storytel_generation": 0}""",
+            """{"library_version": 5, "stream_mobile_data": "yes", "volume_cap_pct": "60", "storytel_generation": null}""",
+            """{"library_version": null, "volume_cap_pct": null, "storytel_generation": 0, "spotify": "yes"}""",
+            """{"library_version": null, "stream_mobile_data": "yes", "storage_limit_gb": "2", "storytel_generation": 0}""",
         )) {
             assertTrue(odd, decodeCached(withMusic(odd)) is CachedPolicy.Ok)
             assertTrue(odd, decodeFresh(withMusic(odd)) is FreshDecode.Ok)

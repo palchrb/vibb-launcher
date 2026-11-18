@@ -19,13 +19,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.longOrNull
 import me.vibb.bridge.IMusicBridge
 import me.vibb.bridge.ISpotifyTokenCallback
-import me.vibb.bridge.IStorytelCallback
 import me.vibb.bridge.IStorytelTokenCallback
 import java.io.File
 
@@ -88,10 +84,9 @@ class MusicBridgeService : Service() {
             MusicFileDownloads.request(app)
         }
 
-        override fun getStorytelLogin(haveGeneration: Long, callback: IStorytelCallback?) {
+        /** The empty slot (the retired Storytel login): nothing to do beyond the caller check. */
+        override fun reserved() {
             check()
-            callback ?: return
-            scope.launch { answerStorytel(haveGeneration, callback) }
         }
 
         override fun reportState(state: Bundle?) {
@@ -252,44 +247,6 @@ class MusicBridgeService : Service() {
     private companion object {
         @Volatile
         var lastHeldNudge: Set<String> = emptySet()
-    }
-
-    /**
-     * The Storytel login (21 §2): when the music app's generation isn't the policy's (`!=`, QA #7 -
-     * a DB restore may lower it), fetched over the tailnet and answered through the callback, in
-     * memory only. Generation 0, or no login on the server: "delete yours". A failure answers
-     * nothing; the music app asks again at its next sync.
-     */
-    private suspend fun answerStorytel(have: Long, callback: IStorytelCallback) {
-        val want = musicPolicy(currentPolicyDecision().policy?.music)?.storytelGeneration ?: return
-        if (want == have) return
-        try {
-            if (want == 0L) {
-                callback.onLogin(0, null, null)
-                return
-            }
-            val mdm = LauncherPreferences.mdm()
-            val url = mdm.serverUrl() ?: return
-            val token = com.kidslauncher.mdm.server.DeviceToken.get() ?: return
-            val response = createMusicServer(url, token).storytel()
-            when {
-                response.code() == 404 -> {
-                    response.body()?.close()
-                    callback.onLogin(0, null, null)
-                }
-                response.isSuccessful -> {
-                    val body = response.body()?.use { it.string() } ?: return
-                    val o = Json.parseToJsonElement(body) as? JsonObject ?: return
-                    val generation = o["generation"]?.jsonPrimitive?.longOrNull ?: return
-                    val email = o["email"]?.jsonPrimitive?.content ?: return
-                    val password = o["password"]?.jsonPrimitive?.content ?: return
-                    callback.onLogin(generation, email, password)
-                }
-                else -> response.body()?.close()
-            }
-        } catch (e: Exception) {
-            Log.w(LOG_TAG, "Storytel login not answered (${e.javaClass.simpleName})")
-        }
     }
 }
 

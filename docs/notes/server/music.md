@@ -27,10 +27,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `#music` before): the app switch = `toggle_app` with `back=music`, an auto-saving switch per entry, the
   `#music-settings` form - since design 30 two switches, "Stream on mobile data" / "Download on mobile data" (a hidden
   `v=2` marks today's page; a post without it is a 400), the "Storage limit" picker (1/2/5/10 GB/No limit,
-  `storage_limit` = a choice or `none`, else 400, missing too), the warning "Update Vibb One and the music app" while the
-  switches differ and the phone's app report (`cache_bytes`) has no `extra_bytes` (`music::older_phone`; it names only the app that is too old - `music::OlderApps` from
-  `app_version_code` >= 25_999 (launcher-v0.26.0-rc) and `music_state.version_code` >= 3_999 (music-v0.4.0-rc), the
-  first that pass `extra_bytes` on: "Update the music app", "Update Vibb One", else both), the storage
+  `storage_limit` = a choice or `none`, else 400, missing too), the storage
   rows and the "Over the storage limit" warning (`music::storage`, typed: stored, downloads against the limit, the
   played extras, the kept items over the limit; from the report's `audio_bytes`/`extra_bytes`, which a music app from
   design 30 step 3a on always sends - without them, an older app, only "Stored on the phone"; `MusicState` keeps and
@@ -41,12 +38,11 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   phone's `music_state`. Every form redirects to its page and group; a 400 re-renders with the values and the error
   by the autofocused field. Changes nudge the phones they reach and log `music_*` / `storytel_login_*` events. PWA
   text is English like the rest.
-- **Wire**: `PolicyResponse.music` = `{library_version, mobile_data, stream_mobile_data, download_mobile_data,
+- **Wire**: `PolicyResponse.music` = `{library_version, stream_mobile_data, download_mobile_data,
   volume_cap_pct, storage_limit_gb, storytel_generation, spotify}` (`spotify`: the phone is bound to a Spotify
   account, design 26c; always the key; `null` when the library query fails, QA #3;
-  `policy_json_keys_snapshot`). Design 30: `mobile_data` stays for an older launcher (it refuses a music object
-  without it) and is `stream && download` (`music::mobile_data_wire`: AND never spends data the parent turned off);
-  `storage_limit_gb` is the stored choice, `null` = no limit, a stored non-choice is sent as 2
+  `policy_json_keys_snapshot`). Design 30: the two switches as stored (the old one-switch `mobile_data` went in C1;
+  the launcher reads a missing switch as off); `storage_limit_gb` is the stored choice, `null` = no limit, a stored non-choice is sent as 2
   (`music::storage_limit`). The library (`music::library_for`):
   16 hex of SHA-256 over the JSON **without** its `version` (QA #4; `sonos_rooms` - null or the allowed uids, after
   `covers`, ignored by an older music app, which then allows every room - is hashed like every other field), pinned

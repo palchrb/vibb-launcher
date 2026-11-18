@@ -29,9 +29,6 @@ interface MusicServer {
     /** `GET /api/devices/music/covers/{hash}`. */
     suspend fun cover(hash: String): Response<ResponseBody>
 
-    /** `GET /api/devices/music/storytel` (404 = none or switched off, 503 = no usable key). */
-    suspend fun storytel(): Response<ResponseBody>
-
     /** `GET /api/devices/music/files/{id}`: a blocking call, so the runner can cancel it (design 13 §4). */
     fun file(id: Long, range: String?, ifMatch: String?): Call<ResponseBody>
 
@@ -55,9 +52,6 @@ private interface MusicApi {
     @Streaming
     @GET("api/devices/music/covers/{hash}")
     suspend fun cover(@Path("hash") hash: String): Response<ResponseBody>
-
-    @GET("api/devices/music/storytel")
-    suspend fun storytel(): Response<ResponseBody>
 
     @Streaming
     @GET("api/devices/music/files/{id}")
@@ -93,7 +87,6 @@ fun createMusicServer(baseUrl: String, token: String): MusicServer {
         override suspend fun library(ifNoneMatch: String?) = api.library(ifNoneMatch?.let { "\"$it\"" })
         override suspend fun listing(entryId: Long, ifNoneMatch: String?) = api.listing(entryId, ifNoneMatch?.let { "\"$it\"" })
         override suspend fun cover(hash: String) = api.cover(hash)
-        override suspend fun storytel() = api.storytel()
         override fun file(id: Long, range: String?, ifMatch: String?) = api.file(id, range, ifMatch)
         override suspend fun spotifyToken() = api.spotifyToken()
         override suspend fun storytelToken(stale: String?) = api.storytelToken(staleBody(stale))

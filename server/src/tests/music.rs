@@ -1064,7 +1064,6 @@ async fn the_policy_carries_a_small_music_object() {
         music_policy(&app, &token).await,
         json!({
             "library_version": null,
-            "mobile_data": false,
             "stream_mobile_data": false,
             "download_mobile_data": false,
             "volume_cap_pct": null,
@@ -1112,7 +1111,6 @@ async fn the_policy_carries_a_small_music_object() {
         json!(false),
         "a missing checkbox is off"
     );
-    assert_eq!(music["mobile_data"], json!(false), "both only when both");
     assert_eq!(music["volume_cap_pct"], json!(70));
     assert_eq!(music["storage_limit_gb"], json!(5));
     assert_eq!(
@@ -1140,12 +1138,8 @@ async fn the_policy_carries_a_small_music_object() {
     .await;
     let music = music_policy(&app, &token).await;
     assert_eq!(
-        (
-            &music["stream_mobile_data"],
-            &music["download_mobile_data"],
-            &music["mobile_data"]
-        ),
-        (&json!(false), &json!(true), &json!(false))
+        (&music["stream_mobile_data"], &music["download_mobile_data"]),
+        (&json!(false), &json!(true))
     );
     // A post without the page's marker or without the limit is refused and writes nothing.
     for fields in [
@@ -1279,16 +1273,6 @@ async fn the_policy_carries_a_small_music_object() {
         )
         .await;
     assert_eq!(res.status, StatusCode::NOT_FOUND);
-}
-
-#[test]
-fn mobile_data_on_the_wire_is_both_switches() {
-    use crate::music::mobile_data_wire;
-    // (mobile_data, stream_mobile_data, download_mobile_data)
-    assert_eq!(mobile_data_wire(true, false), (false, true, false));
-    assert_eq!(mobile_data_wire(false, true), (false, false, true));
-    assert_eq!(mobile_data_wire(true, true), (true, true, true));
-    assert_eq!(mobile_data_wire(false, false), (false, false, false));
 }
 
 #[tokio::test]
@@ -1490,26 +1474,6 @@ async fn report_music_state(app: &TestApp, token: &str, state: Value) {
     assert_eq!(res.status, StatusCode::NO_CONTENT);
 }
 
-/// Today's Music settings form with these switches.
-async fn save_switches(app: &TestApp, cookie: &str, device: i64, stream: bool, download: bool) {
-    let mut fields = vec![("v", "2"), ("storage_limit", "2")];
-    if stream {
-        fields.push(("stream_mobile_data", "on"));
-    }
-    if download {
-        fields.push(("download_mobile_data", "on"));
-    }
-    let res = app
-        .request_form(
-            Method::POST,
-            &format!("/devices/{device}/music"),
-            Some(cookie),
-            &fields,
-        )
-        .await;
-    assert_eq!(res.status, StatusCode::SEE_OTHER);
-}
-
 /// The phone's Music page (Device › Music).
 pub(super) async fn music_page(app: &TestApp, cookie: &str, device: i64) -> String {
     let res = app
@@ -1517,79 +1481,6 @@ pub(super) async fn music_page(app: &TestApp, cookie: &str, device: i64) -> Stri
         .await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.text());
     res.text()
-}
-
-#[tokio::test]
-async fn the_page_says_an_older_phone_uses_mobile_data_only_with_both() {
-    let app = TestApp::new().await;
-    let cookie = app.admin_cookie().await;
-    let (device, token) = app.enrolled_device("phone").await;
-    const NOTE: &str = "uses mobile data for music only when both switches are on.";
-    // No report yet: nothing, whatever the switches.
-    save_switches(&app, &cookie, device, true, false).await;
-    assert!(!music_page(&app, &cookie, device).await.contains(NOTE));
-    // Only the launcher's fields (before the app's first report): not an app report.
-    report_music_state(
-        &app,
-        &token,
-        json!({"package": "me.vibb.music", "version_code": 1000, "bridge": "bound"}),
-    )
-    .await;
-    assert!(!music_page(&app, &cookie, device).await.contains(NOTE));
-    // An app report (`cache_bytes`) without `extra_bytes`: the switches differ, so the warning,
-    // above the two switches.
-    report_music_state(
-        &app,
-        &token,
-        json!({"package": "me.vibb.music", "bridge": "bound", "cache_bytes": 1_000_000}),
-    )
-    .await;
-    let shown = music_page(&app, &cookie, device).await;
-    let form = settings_form(&shown);
-    assert!(form.contains(NOTE), "{shown}");
-    assert!(form.contains("Update Vibb One and the music app"));
-    assert!(form.find(NOTE) < form.find("name=\"stream_mobile_data\""));
-    // A music app new enough to send `extra_bytes` (music-v0.4.0): Vibb One dropped it, so only
-    // Vibb One is named - on the page and in the summary's Attention row.
-    report_music_state(
-        &app,
-        &token,
-        json!({"package": "me.vibb.music", "version_code": 4_000, "bridge": "bound",
-               "cache_bytes": 1_000_000}),
-    )
-    .await;
-    let form = settings_form(&music_page(&app, &cookie, device).await).to_string();
-    assert!(form.contains("Update Vibb One") && !form.contains("and the music app"));
-    let summary = app
-        .get_page(&format!("/devices/{device}"), &cookie)
-        .await
-        .text();
-    assert!(summary.contains("Update Vibb One") && !summary.contains("and the music app"));
-    save_switches(&app, &cookie, device, false, true).await;
-    assert!(music_page(&app, &cookie, device).await.contains(NOTE));
-    // Equal switches: nothing to say.
-    save_switches(&app, &cookie, device, true, true).await;
-    assert!(!music_page(&app, &cookie, device).await.contains(NOTE));
-    save_switches(&app, &cookie, device, false, false).await;
-    assert!(!music_page(&app, &cookie, device).await.contains(NOTE));
-    // A report with `extra_bytes` (design 30 step 3a; 0 counts, it is always sent) is a phone
-    // that reads both switches: no warning while they differ.
-    save_switches(&app, &cookie, device, true, false).await;
-    report_music_state(
-        &app,
-        &token,
-        json!({"package": "me.vibb.music", "bridge": "bound", "cache_bytes": 1_000_000,
-               "audio_bytes": 900_000, "extra_bytes": 0}),
-    )
-    .await;
-    let shown = music_page(&app, &cookie, device).await;
-    assert!(!shown.contains(NOTE), "{shown}");
-    // The report landed (a refused one is stored as nothing, which would hide the warning too).
-    assert_eq!(row_value(&shown, "stored").as_deref(), Some("1.0 MB"));
-    assert_eq!(
-        row_value(&shown, "downloads").as_deref(),
-        Some("0.9 MB of 2 GB")
-    );
 }
 
 #[tokio::test]

@@ -10,7 +10,6 @@
     "managed": "boolean",
     "launcher_package": "string",
     "language": "string",
-    "mobile_data": "boolean",
     "library_version": "string",
     "storytel_generation": "int",
     "volume_cap_pct": "int",

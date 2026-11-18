@@ -206,7 +206,7 @@ class SealedPrefsTest {
                 // Design 98 §2.2 step 2: the sync and Flymodus's report-only post.
                 "server/MdmSyncWorker.kt" to 2, "server/CommandListenerService.kt" to 1, "server/AppInstallReceiver.kt" to 1,
                 "server/AppDownloads.kt" to 1, "server/PowerEvents.kt" to 1, "music/MusicSync.kt" to 2,
-                "music/MusicFileDownloads.kt" to 1, "music/MusicBridgeService.kt" to 3,
+                "music/MusicFileDownloads.kt" to 1, "music/MusicBridgeService.kt" to 2,
                 // Design 75: the lock weather's pull.
                 "weather/WeatherPull.kt" to 1,
                 // Design 108: app push's device API calls.

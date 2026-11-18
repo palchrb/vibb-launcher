@@ -94,7 +94,7 @@ class MusicMediaPlanTest {
         assertNull(capPctInForce(null, managed = true, overrideActive = false))
         // The cap comes from the policy's music object; an unreadable one is no cap and no failure.
         val policy = kotlinx.serialization.json.Json.parseToJsonElement(
-            """{"library_version": null, "mobile_data": false, "volume_cap_pct": 70, "storytel_generation": 0}""",
+            """{"library_version": null, "volume_cap_pct": 70, "storytel_generation": 0}""",
         )
         assertEquals(70, musicPolicy(policy)?.volumeCapPct)
     }
@@ -102,9 +102,9 @@ class MusicMediaPlanTest {
     @Test
     fun `a music object the launcher refuses keeps the last cap, never lifts it (qa-30-s2-code L1)`() {
         fun music(json: String) = kotlinx.serialization.json.Json.parseToJsonElement(json)
-        val capped = music("""{"library_version": null, "mobile_data": false, "volume_cap_pct": 60, "storytel_generation": 0}""")
-        val off = music("""{"library_version": null, "mobile_data": false, "volume_cap_pct": null, "storytel_generation": 0}""")
-        val refused = music("""{"library_version": null, "mobile_data": false, "stream_mobile_data": "yes", "volume_cap_pct": 60, "storytel_generation": 0}""")
+        val capped = music("""{"library_version": null, "volume_cap_pct": 60, "storytel_generation": 0}""")
+        val off = music("""{"library_version": null, "volume_cap_pct": null, "storytel_generation": 0}""")
+        val refused = music("""{"library_version": null, "stream_mobile_data": "yes", "volume_cap_pct": 60, "storytel_generation": 0}""")
         assertEquals("read: its cap", 60, policyCapPct(capped, remembered = 80))
         assertNull("read: off is off", policyCapPct(off, remembered = 80))
         assertEquals("refused: the last cap stays", 80, policyCapPct(refused, remembered = 80))
@@ -112,7 +112,7 @@ class MusicMediaPlanTest {
         assertEquals("refused as a whole value", 70, policyCapPct(kotlinx.serialization.json.JsonPrimitive(5), remembered = 70))
         assertNull("no music object (an older server): the policy's none", policyCapPct(null, remembered = 80))
         // A stray storage limit never refuses the object, so it never touches the cap.
-        val strayLimit = music("""{"library_version": null, "mobile_data": false, "volume_cap_pct": 60, "storage_limit_gb": 0.5, "storytel_generation": 0}""")
+        val strayLimit = music("""{"library_version": null, "volume_cap_pct": 60, "storage_limit_gb": 0.5, "storytel_generation": 0}""")
         assertEquals(60, policyCapPct(strayLimit, remembered = null))
         // The glue: VolumeCap.refresh takes the cap through policyCapPct with the remembered one, and remembers what it got.
         val cap = listOf(java.io.File("src/main/java/com/kidslauncher/mdm/music/VolumeCap.kt"), java.io.File("app/src/main/java/com/kidslauncher/mdm/music/VolumeCap.kt"))
