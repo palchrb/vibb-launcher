@@ -1042,6 +1042,8 @@ struct LockTemplate {
     /// The Notifications group: one switch per app and, on a ticked one, its text switch.
     lock_screen: crate::lock_glance::LockScreenCard,
     lock_screen_warnings: Vec<Note>,
+    /// Each lock-screen row's tile, as the Apps page shows it (package -> [AppTile]).
+    lock_tiles: std::collections::HashMap<String, AppTile>,
     /// The parent has a passkey for this host: Show Child PIN offers "Confirm with passkey"
     /// (design 74 D1.6).
     passkey_reauth: bool,
@@ -1399,6 +1401,10 @@ async fn render_lock(
     let lock_screen =
         crate::handlers::devices::lock_screen_card(state, lang, &policy, latest.as_ref(), &rows)
             .await;
+    let lock_tiles = match lock_tiles(state, id, &lock_screen).await {
+        Ok(tiles) => tiles,
+        Err(err) => return read_failed(lang, id, "the phone's app tiles", err),
+    };
     // Design r7 §1.1.3: which apps rang over the lock, named as the Apps page names them.
     let labels: std::collections::HashMap<String, String> = rows
         .apps
@@ -1456,6 +1462,7 @@ async fn render_lock(
         lock_wake: policy.lock_wake_on_notification,
         lock_buzz: policy.lock_buzz_on_notification,
         lock_screen_warnings: lock_screen.notes.iter().map(|n| n.note(lang)).collect(),
+        lock_tiles,
         lock_screen,
         child,
         parent,
@@ -1879,6 +1886,39 @@ pub async fn view_filter(
     .into_response()
 }
 
+/// An app's tile (design 87 §8.1, revision 3): the real logo over the letter, else the chosen glyph on its colour,
+/// else the letter - what `partials/device_app_row.html` draws, here for the Lock page's list.
+pub struct AppTile {
+    pub logo: Option<String>,
+    pub icon: Option<(String, &'static str)>,
+    pub letter: String,
+}
+
+/// The tiles of the lock-screen list's rows, from the same reads and rule as the Apps page.
+async fn lock_tiles(
+    state: &AppState,
+    id: i64,
+    card: &crate::lock_glance::LockScreenCard,
+) -> Result<std::collections::HashMap<String, AppTile>, sqlx::Error> {
+    use crate::app_display as display;
+    let defaults = display::catalog_defaults(&state.db).await?;
+    let own = display::device_rows(&state.db, id).await?;
+    let logos = crate::app_logos::phone_logos(state, id).await?;
+    Ok(card
+        .apps
+        .iter()
+        .map(|app| {
+            let package = &app.package_name;
+            let tile = AppTile {
+                logo: logos.get(package).cloned(),
+                icon: display::icon_of(&own, &defaults, package),
+                letter: crate::handlers::devices::initial(&app.label),
+            };
+            (package.clone(), tile)
+        })
+        .collect())
+}
+
 /// One app on Device › Apps: the row `devices::app_rows` built, where it is (`devices::app_anchor`),
 /// its tile, its name-and-icon form and why a switch was refused.
 pub struct AppView {
@@ -2269,13 +2309,7 @@ pub(crate) async fn render_apps(
         let phone_row = own.get(&package);
         let default = defaults.get(&package);
         let current = phone_row.or(default);
-        let icon = current.and_then(|values| {
-            values
-                .icon
-                .as_deref()
-                .filter(|key| display::icon_known(key))
-                .map(|key| (key.to_string(), display::tile_of(&values.color)))
-        });
+        let icon = display::icon_of(&own, &defaults, &package);
         let display = (row.checked && !row.is_launcher && display::valid_package_name(&package))
             .then(|| {
                 let mut form = AppDisplayForm::new(
