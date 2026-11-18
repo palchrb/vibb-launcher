@@ -77,10 +77,12 @@ selftest() {
     check launcher-v0.36.0 360009
     check launcher-v0.36.1-rc.1 360011
     check launcher-v0.36.0-rc.3 -
+    check launcher-v0.35.9 -
     check launcher-v1.2.3-rc.8 10020038
     check music-v0.5.0-rc.4 50004
     check music-v0.5.0 50009
     check music-v0.5.0-rc.3 -
+    check music-v0.4.9 -
     check music-v1.0.0 10000009
     # The ranges.
     check launcher-v199.999.999 1999999999
