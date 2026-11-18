@@ -124,9 +124,4 @@ class StorytelTokenCourierTest {
         assertFalse(module("src/main/java/com/kidslauncher/mdm/music/StorytelTokenCourier.kt").readText().contains("Log."))
     }
 
-    @Test
-    fun `the launcher tells the server it carries the courier`() {
-        assertEquals("storytel_jwt_v1", STORYTEL_JWT_CAPABILITY)
-        assertTrue(STORYTEL_JWT_CAPABILITY in com.kidslauncher.mdm.server.STATUS_CAPABILITIES)
-    }
 }

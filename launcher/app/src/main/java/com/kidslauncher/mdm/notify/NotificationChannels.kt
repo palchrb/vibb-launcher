@@ -39,9 +39,6 @@ import kotlinx.serialization.Serializable
  * gets text, and Settings' "Vibb One notifications" row opens Android's page during a pause (Q4).
  */
 
-/** The capability: every full report carries `notification_channels` (the server's `notification_channels_v1`). */
-const val NOTIFICATION_CHANNELS_CAPABILITY = "notification_channels_v1"
-
 /** The sync reason of a block-state broadcast and of the Settings row's return. */
 const val NOTIFICATION_CHANNELS_SYNC_REASON = "notification_channels"
 

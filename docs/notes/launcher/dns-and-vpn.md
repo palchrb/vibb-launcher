@@ -154,7 +154,7 @@ Also found and fixed on the same test pass: **`CommandListenerService`'s SSE `Ok
   bootstrap|connect|tls|http|refused|timeout, unreachable_since_ms, unreachable_until_ms}`, with a provider `{rev: 0,
   in_use: provider, since_ms: null, reason: null, ...}` (`providerReport`), never an address (`upstreamReport`;
   contract `dns_upstream_status.json`, byte-identical with `../server/testdata/`, `DnsUpstreamStatusTest`,
-  `UpstreamChooserTest`). Capability `dns_custom_v1` in `STATUS_CAPABILITIES`.
+  `UpstreamChooserTest`).
 - **DNS can't be reached** (design 67 §3, pure `server/UpstreamReach.kt`; glue `ReachTracker`, one `AtomicReference`
   per `KidVpnService` instance, CAS): `CustomDns.resolve` and `DnsFilterEngine.resolveProvider` return `Resolved(bytes,
   answered)` and `reachKind` reads it - FAILED: dropped with no server bytes, whatever the cause (every attempt a
@@ -199,7 +199,7 @@ Also found and fixed on the same test pass: **`CommandListenerService`'s SSE `Ok
 **The browsers' secure DNS** (design 67 §2, `docs/design/67-dns-bypass.md`; security review S-M3 - before it, one
 "Use secure DNS" switch in an allowed browser bypassed the whole filter). A VPN/DNS-level filter can't tell a DoH request
 from any other HTTPS, so three parts, all following `vpnFilterEnabled` (lifted by the override, the pause and the
-parent's switch) and claimed together as capability `dns_bypass_v1` (`DNS_BYPASS_CAPABILITY`):
+parent's switch):
 - **The managed config** (`server/BrowserConfig.kt`, `server/BrowserDoh.kt` until design 102 renamed and widened it
   with Chrome's login role, `docs/notes/launcher/logins.md`; the only part that really closes it, in browsers that read
   it): `AppEnforcer.applyHeld` calls `BrowserConfig.apply` before the plan since design 102 (Q102-M3); pure `browserDohPlan(filterOn,
@@ -244,7 +244,7 @@ parent's switch) and claimed together as capability `dns_bypass_v1` (`DNS_BYPASS
   an unlisted DoH host or an IP-literal template (`https://1.1.1.1/dns-query`). Routing the resolvers' IPs into the
   tunnel is design 67's non-goal.
 - Tests: `DnsFilterEngineTest` (the file's lines, hits and misses, the order, the load before the early return),
-  `NxdomainTest`, `BrowserDohTest`, `SyncScheduleTest` (the capability), `CustomDnsGuardsTest` (the canary before the lists).
+  `NxdomainTest`, `BrowserDohTest`, `CustomDnsGuardsTest` (the canary before the lists).
 
 ## Three shapes, one owner of always-on (design 95 revision 3, "Bare Vibb", 2026-11-13)
 

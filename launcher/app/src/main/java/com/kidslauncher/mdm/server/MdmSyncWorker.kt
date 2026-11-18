@@ -458,10 +458,6 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     return freshPolicy != null
 }
 
-/** Status-report capability: the update fence, the pending self-update and the notification rule
- * (handy step 11). */
-const val KIOSK_ESCAPES_CAPABILITY = "kiosk_escapes_v1"
-
 /**
  * Design 98 §2.2 step 2: a report-only post before a Flymodus turn-on - no policy GET, no apply(), the same heartbeat
  * hash state, under [syncMutex]; [airplaneGoingOn] makes the parent's page say "Flymodus på". The caller bounds it

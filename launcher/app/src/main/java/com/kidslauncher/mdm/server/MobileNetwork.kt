@@ -11,17 +11,6 @@ import kotlinx.serialization.Serializable
  * (`MobileNetworkTest`).
  */
 
-/** Design 94: the policy's `data_roaming` is enforced and `data_roaming` is in every report. */
-const val DATA_ROAMING_CAPABILITY = "data_roaming_v1"
-
-/** Design 95 rev. 3: the policy's `apps_mobile` (Bare Vibb) and `mobile_settings_locked` are enforced, and
- * `mobile_data` is in every report. */
-const val MOBILE_DATA_CAPABILITY = "mobile_data_v1"
-
-/** Design 97 §3.2: the policy's `abroad` is enforced, the report carries `data_roaming.where` and `mobile_data.kid`, and
- * the kid's Mobildata row shows with `quick_controls_mask` bit 32. */
-const val MOBILE_NETWORK_CAPABILITY = "mobile_network_v2"
-
 /** Design 97 §3.1: "I utlandet" as this launcher enforces it. [NONE] is no policy yet (a Device Owner before its first
  * policy): no lock and no abroad sink. */
 enum class AbroadChoice(val wire: String) {
@@ -336,7 +325,7 @@ const val RELOCK_TRIES = 2
 fun dataRoamingRelock(locked: Boolean, readings: Map<Int, Boolean?>, tries: Map<Int, Int>): Set<Int> =
     if (!locked) emptySet() else readings.filter { (sub, on) -> on == true && (tries[sub] ?: 0) < RELOCK_TRIES }.keys
 
-/** Design 94 §5: `data_roaming` in every report of a launcher with [DATA_ROAMING_CAPABILITY]. */
+/** Design 94 §5: `data_roaming` in every report. */
 @Serializable
 data class DataRoamingReport(
     /** `hasUserRestriction(DISALLOW_DATA_ROAMING)`, as Android has it now. */
@@ -357,7 +346,7 @@ data class DataRoamingReport(
     @SerialName("where") val whereIs: String,
 )
 
-/** Design 95 rev. 3: `mobile_data` in every report of a launcher with [MOBILE_DATA_CAPABILITY]. */
+/** Design 95 rev. 3: `mobile_data` in every report. */
 @Serializable
 data class MobileDataReport(
     /** Android's own mobile-data switch on the default data SIM (`isDataEnabled()`), `null` when unreadable. */

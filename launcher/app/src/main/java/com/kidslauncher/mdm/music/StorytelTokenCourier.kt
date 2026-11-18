@@ -30,9 +30,6 @@ const val STORYTEL_BUSY_DEFAULT_MS = 30_000L
 /** A `refused` answer without a usable `retry_after_s` waits this long (the server's cooldown). */
 const val STORYTEL_REFUSED_DEFAULT_MS = 3_600_000L
 
-/** The status report's capability: this launcher carries the courier (design 58 §3.4; the server's Music page reads it). */
-const val STORYTEL_JWT_CAPABILITY = "storytel_jwt_v1"
-
 private val WORD = Regex("[a-z_]{1,32}")
 private val SESSION = Regex("[0-9]{1,18}:[0-9a-f]{16}")
 private val JWT = Regex("[\\x21-\\x7e]{1,8192}")

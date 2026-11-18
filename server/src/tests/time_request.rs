@@ -545,7 +545,6 @@ fn assert_served(contract: &Value, row: &str, served: &Value) {
 #[tokio::test]
 async fn the_contract_policies() {
     let contract = contract();
-    assert_eq!(contract["capability"], crate::time_answers::CAPABILITY);
     assert_eq!(contract["request"]["id"], RID);
     for (row, parent, value) in [
         ("policy_no", Some(("pappa", "Pappa")), "no"),
@@ -711,17 +710,12 @@ async fn the_card_shows_the_open_request_until_an_answer() {
 /// the inbox says who said no.
 #[tokio::test]
 async fn no_is_written_and_seen() {
-    let (capabilities, flash, words) = (
-        json!(["call_policy_v1", "time_rules_v1", "time_answer_v1"]),
-        "answer_no_seen",
-        "You said no. Anna sees it on the phone.",
-    );
+    let (flash, words) = ("answer_no_seen", "You said no. Anna sees it on the phone.");
     let app = TestApp::new().await;
     steady_zone(&app).await;
     let cookie = app.admin_cookie_as("pappa", "Pappa").await;
     let (id, token) = app.enrolled_device("Anna").await;
-    app.post_status(&token, json!({ "capabilities": capabilities }))
-        .await;
+    app.post_status(&token, json!({})).await;
     assert_eq!(
         post(&app, &token, body(1, 0)).await.1,
         json!({"accepted": true})

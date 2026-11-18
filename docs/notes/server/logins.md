@@ -39,8 +39,7 @@ The launcher's side is `docs/notes/launcher/logins.md`.
   delivered lists walked by suffix), and the note about other sites and web-page apps. Every save is a `303` back to its
   group's anchor (no jump; `scroll-restore.js`), server-rendered, no new client JS (Safari 14).
 - **Advanced › `#wifi-signin`**: "Krev foreldrekode for Wi-Fi-innlogging" (on by default), "Gjelder også å åpne
-  påloggingssiden igjen", the warning "Ingen foreldrekode er satt …" while the phone reports none set, and "Krever nyere
-  Vibb One" for a phone that reported without the capability; its form posts `section=wifi_signin` to the Sign-in page's
+  påloggingssiden igjen", the warning "Ingen foreldrekode er satt …" while the phone reports none set; its form posts `section=wifi_signin` to the Sign-in page's
   handler, answered with a `303` to `/devices/{id}/advanced#wifi-signin`.
 - **The Apps page**: Chrome's row says "Brukes bare til innlogging (Innlogging-siden)" while the role is on.
 - **The report**: `captive_portal` and `login_browser` are full-report fields (`status_heartbeat::REPORT_KEYS`, not

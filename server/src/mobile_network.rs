@@ -12,15 +12,6 @@ use serde_json::{Value, json};
 use crate::i18n::{Lang, t, t_params};
 use crate::models::{DevicePolicy, DeviceStatus};
 
-/// The launcher's capabilities for data roaming (design 94 §4), Bare Vibb with the settings lock (design 95 rev. 3)
-/// and design 97's `abroad`; nothing reads them since C1, the contract test compares them until step 13.
-#[cfg(test)]
-pub const ROAMING_CAPABILITY: &str = "data_roaming_v1";
-#[cfg(test)]
-pub const MOBILE_CAPABILITY: &str = "mobile_data_v1";
-#[cfg(test)]
-pub const NETWORK_CAPABILITY: &str = "mobile_network_v2";
-
 /// "Mobildata for apper" (design 95 rev. 3).
 pub const APPS_CHOICES: &[&str] = &["on", "vibb"];
 

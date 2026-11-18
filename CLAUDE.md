@@ -160,8 +160,7 @@ checked catalog app) is `server/testdata/installed_apps_report.json`, byte-ident
 `app_updates::the_installed_apps_contract_raises_app_updated` posts it, and both compare the copies.
 The launcher's `POST /api/devices/time-request` body and the three answers (design r13 §2.5), and the parent's answer
 as the policy carries it (design 100 §14.5), are `server/testdata/time_request.json`, byte-identical in
-`launcher/app/src/test/resources/`: `request`, `answers`, `capability` (`time_answer_v1`: the launcher shows "Nei" and the
-name; the server reads it only for the "Nei" flash), `policy_no`/`policy_yes`/`policy_unnamed`/`policy_lift_only`/
+`launcher/app/src/test/resources/`: `request`, `answers`, `policy_no`/`policy_yes`/`policy_unnamed`/`policy_lift_only`/
 `policy_ended` (the `time_policy` fragment the server serves: `request_answers: true`, `answer {request_id, answer, by?,
 at_ms, lift_id?, minutes?}`, lifts with `by?`/`at_ms`; `policy_ended` a yes whose pause was ended early - no `lift_id`,
 no `minutes`) and `states` (the launcher's
@@ -254,8 +253,7 @@ every `policy` row; both compare the copies. The built-in set itself stays the l
 never judges a chain. The policy's `server_tls` is pinned by `policy_json_keys_snapshot` and `ServerPinsTest`.
 
 The SMS engine's contract (design 77 §7, step 1) is `server/testdata/sms_contract.json`, byte-identical in
-`launcher/app/src/test/resources/`: `capability` (`sms_engine_v1`) and `groups_capability` (`sms_groups_v1`, design 80
-D13), `modes` (each mode pair: the server sends it, the launcher applies it), `policy` (a seeded `call_policy` with the SMS keys:
+`launcher/app/src/test/resources/`: `modes` (each mode pair: the server sends it, the launcher applies it), `policy` (a seeded `call_policy` with the SMS keys:
 the per-contact `sms_in`/`sms_out`/`mms`, `sms_names`, `own_numbers`, `mmsc_hosts`, `sms_held_drop`, design 80's
 `sms_groups`; `groups_off` the switch off; design 83's `mmsc_hosts_row`, a SIM's row of entries), `report` (the exact
 `sms_state` with design 80's `own_learned`, design 82's `has_history` and design 83's `sim_operators` and
@@ -264,9 +262,9 @@ valid or not - the server's `mmsc_hosts::valid_entry`, the launcher's `MmsGate.v
 sender cleaned by its class before it leaves the phone), `intake` (the server's sender check), `names` and
 `name_matches` (D17's letter rule and fold), and `app` (design 82, Meldinger as an app: its `key`
 `me.vibb.builtin.messages`; `lock`, the server's stored choice and `sms_mode` to `lock_glance.sms`; `lock_read`, the
-launcher's reading of a `lock_glance` to the word and the level shown, a missing key or word Off; `capability`, `messages_app_v1`, which the launcher claims; `display`, the
+launcher's reading of a `lock_glance` to the word and the level shown, a missing key or word Off; `display`, the
 key's `launcher_ui.app_display` entry - a name, a glyph on a colour, off Home). The server's `sms::tests` produce the
-policy, post the report and the held body and run every row (`the_app_lock_rows` the `app` rows and the capability;
+policy, post the report and the held body and run every row (`the_app_lock_rows` the `app` rows;
 `tests::app_display::meldinger_has_a_row_and_a_name_and_icon_of_its_own` saves and sends exactly `display`); the
 launcher's `SmsContractTest` decodes and encodes them exactly and runs the rows (`display` read as Meldinger's look);
 both compare the copies. The receive and send rules (D4/D5) stay the launcher's alone, in
@@ -283,7 +281,7 @@ reads each answer and policy row and runs the vectors through its own check; bot
 `call_policy.contact_requests` is pinned by `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTest`.
 
 The apps' real logos (design 87) are `server/testdata/app_logos.json`, byte-identical in
-`launcher/app/src/test/resources/`: `capability` (`app_logos_v1`), the limits (`size_px`, `max_bytes`, `max_per_phone`,
+`launcher/app/src/test/resources/`: the limits (`size_px`, `max_bytes`, `max_per_phone`,
 `max_wanted`), a test PNG (`png_base64`, a disc with a text chunk the server's re-encode drops) and its `png_sha256`,
 `report` (the exact status body with `installed_apps[].logo`), `answer` (the report's `200 {"wanted_logos"}`), `upload`
 (`POST /api/devices/app-logos/{hash}`, `image/png`) and `answers` (each upload case's status). The server's
@@ -293,7 +291,7 @@ The apps' real logos (design 87) are `server/testdata/app_logos.json`, byte-iden
 report's answer.
 
 A rule turned on now (design 93, "Slå på nå") is `server/testdata/lock_now.json`, byte-identical in
-`launcher/app/src/test/resources/`: `capability` (`lock_now_v1`), `policy` (a `time_policy` the server serves: a copy of
+`launcher/app/src/test/resources/`: `policy` (a `time_policy` the server serves: a copy of
 Leggetid first - negative `id`, one weekday's window, `until_ms`, `card_first: true` -, a scheduled Skole and Leggetid
 with `until_ms: null` and `card_first: false`, a pause of Leggetid and its twin for the copy - every lift with design 100's
 `by` and `at_ms`, and the `time_policy`'s `request_answers: true`), `policy_end_locked` (the
@@ -305,8 +303,7 @@ rewrites them); the launcher's `LockNowTest` decodes them and runs every case th
 
 The round "Mobilnett" (design 94, data roaming; design 95 revision 3, Bare Vibb and the mobile-network settings lock;
 design 97, "I utlandet", `where` and the kid's switch) is
-`server/testdata/mobile_network.json`, byte-identical in `launcher/app/src/test/resources/`: `capabilities`
-(`data_roaming_v1`, `mobile_data_v1`, `mobile_network_v2`), `policy` (the top-level `abroad`,
+`server/testdata/mobile_network.json`, byte-identical in `launcher/app/src/test/resources/`: `policy` (the top-level `abroad`,
 `apps_mobile` and `mobile_settings_locked` for a new phone and after each save), `abroad_choice` (the launcher's
 reading of `abroad`, a missing one Ingen data, no policy `none`), the rule rows `roaming_locked` and `settings_locked`
 (each with the pause's lift), `where` (the launcher's home/abroad/unknown from telephony), `shapes` (the VPN's shape,
@@ -320,7 +317,7 @@ decodes the policy rows, runs every rule, `where`, shape and kid-row row through
 `kidMobileRow`, and encodes `report` exactly; both compare the copies. The policy's three keys are pinned by `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTest`.
 
 The heartbeat report (design 95 §3.5, step 95-T2) is `server/testdata/status_heartbeat.json`, byte-identical in
-`launcher/app/src/test/resources/`: `capability` (`status_heartbeat_v1`), `policy` (the top-level `status_heartbeat`,
+`launcher/app/src/test/resources/`: `policy` (the top-level `status_heartbeat`,
 `status_heartbeat_fields` and `status_gzip`), `heartbeat_fields` (what a heartbeat carries and the phone's hash leaves
 out) and `fields_tag` (their name in a heartbeat), `full` (a full report with its `hash`), `heartbeat` (the heartbeat
 that names it), `heartbeat_other_fields` (one naming another list) and `answers` (`{"full_report": true}`). The hash is the
@@ -331,7 +328,7 @@ server's `tests::status_heartbeat` posts `full` and `heartbeat` and checks what 
 compare the copies. The policy's three keys are pinned by `policy_json_keys_snapshot` and `StatusReportsTest`.
 
 Flymodus through the Digital assistant role (design 98) is `server/testdata/airplane_mode.json`, byte-identical in
-`launcher/app/src/test/resources/`: `capability` (`airplane_mode_v1`) and `bit` (64 in `quick_controls_mask`), `rows`
+`launcher/app/src/test/resources/`: `bit` (64 in `quick_controls_mask`), `rows`
 (the kid's Flymodus row and the section from `{mask, role, restricted, on, wifi_up, busy, last_error, error_age_ms}`,
 the Off-only rows included), `report` and `report_open` (the exact `airplane_mode` of a status report), `clean` (the
 server's field-by-field cleaning), `emergency` (`line`: a call and a period to the emergency event's airplane line;
@@ -343,7 +340,7 @@ its pure functions; the server's `tests::airplane_mode` posts the reports and ch
 `quick_controls_mask`.
 
 The parent code's pause of the rule in force on the phone (design 98 §4.4, Foreldrekode) is
-`server/testdata/rule_pause.json`, byte-identical in `launcher/app/src/test/resources/`: `capability` (`rule_pause_v1`),
+`server/testdata/rule_pause.json`, byte-identical in `launcher/app/src/test/resources/`:
 `lengths` (the PWA's `RULE_LIFT_MINUTES`), `policy` (the top-level `rule_pause: true`, a copy's `copy_of` and the lifts
 with `phone_key` - since design 100 every lift with `at_ms`, the PWA's with `by`, and `time_policy.request_answers`), `request` (the exact `POST /api/devices/rule-pause` body), `answers` (each body's status and answer:
 accepted, a retry's same ids, `over`, `unknown_rule`, the refused 400s; its instants are moved to the last minutes),
@@ -357,7 +354,7 @@ checks the `time_lifts` rows and the security event, and serves `policy`'s lift 
 pinned by `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTest`.
 
 Snarveier, the kid's quick panel in the shade (design 99), is `server/testdata/shortcuts.json`, byte-identical in
-`launcher/app/src/test/resources/`: `capability` (`shortcuts_v1`), `bit` (128 in `quick_controls_mask`), `max_items`
+`launcher/app/src/test/resources/`: `bit` (128 in `quick_controls_mask`), `max_items`
 (4), `items` (each key with its gating bit, `null` for none, and its names in nb and en), `defaults` (the default order),
 `report` and `report_hidden` (the exact `shortcuts` of a status report) and `clean` (the server's cleaning: unknown keys
 and duplicates dropped, cut to four, never shown while hidden, a non-object dropped). The launcher's `ShortcutsTest`
@@ -367,7 +364,7 @@ page's sub-lines from the names, and `intake_limits` keeps the report's keys; bo
 bit 128 rides in `quick_controls_mask`.
 
 Wi-Fi sign-in and Chrome only for logins (design 102) is `server/testdata/login_windows.json`, byte-identical in
-`launcher/app/src/test/resources/`: `capabilities` (`captive_portal_v1`, `login_browser_v1`), `policy` (the top-level
+`launcher/app/src/test/resources/`: `policy` (the top-level
 `captive_portal` and `login_browser` for a new phone and after the page's saves: the switch, Advanced's parent-code
 requirement, "one more", the role, a preset ticked and unticked with an own entry equal to its host kept, Chrome
 ticked), `older_server` (the launcher's reading of a policy with neither key: on, `require_code: true`, the role off),
@@ -382,7 +379,7 @@ check (`loginEntry`); both compare the copies. The window's and the role's own r
 `PolicyResponseCompatTest`.
 
 The blocked notification channels (design 107) are `server/testdata/notification_channels.json`, byte-identical in
-`launcher/app/src/test/resources/`: `capability` (`notification_channels_v1`), `channels` (the table in display order:
+`launcher/app/src/test/resources/`: `channels` (the table in display order:
 `{key, id, nb, en, feature, orange, attention}`, the names the phone's own strings), `report`, `report_none` and
 `report_all_off` (the exact `notification_channels` of a status report), `read` (the launcher's reading of Android's
 channels, groups and app-wide switch, Snarveier's channel in use, Android 16's reserved `android.app.*` skipped),
@@ -394,7 +391,7 @@ launcher's `NotificationChannelsTest` checks its table and names against `channe
 row through `channelsReport` and encodes the reports exactly; both compare the copies. No policy key.
 
 App push (design 108, Vibb as the UnifiedPush distributor) is `server/testdata/unified_push.json`, byte-identical in
-`launcher/app/src/test/resources/`: `capability` (`unified_push_v1`), `policy` (the policy's `unified_push`
+`launcher/app/src/test/resources/`: `policy` (the policy's `unified_push`
 `{on, origin, regs, stopped, refresh}` in the rows `off`, `on_empty`, `on_two`, `stopped`, `origin_changed`, and design 108b's
 `refresh_outside` and `refresh_refused` - `refresh` is `[{reg, why: outside|refused}]`, an unknown `why` read as `outside`), `older_server`
 (a policy without the key: UP off, the receiver disabled), `register` (the exact `POST /api/devices/up/registrations`

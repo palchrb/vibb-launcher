@@ -599,7 +599,7 @@ async fn meldinger_has_a_row_and_a_name_and_icon_of_its_own() {
             "/api/devices/status",
             Some(&token),
             Some(serde_json::json!({
-                "lock_reason": "NONE", "kiosk_engaged": true, "capabilities": [contract["app"]["capability"]],
+                "lock_reason": "NONE", "kiosk_engaged": true,
             })),
         )
         .await;

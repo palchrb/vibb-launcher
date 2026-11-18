@@ -45,10 +45,6 @@ use crate::models::InstalledApp;
 use crate::photos::is_valid_hash;
 use crate::security::AuthedDevice;
 
-/// What a launcher that reports and uploads logos claims in its status report's `capabilities` (the shared
-/// contract's `capability`).
-#[cfg(test)]
-pub const CAPABILITY: &str = "app_logos_v1";
 /// A logo is exactly this many pixels a side.
 pub const SIZE_PX: u32 = 128;
 /// The largest upload (R2-L1: a 128 x 128 RGBA PNG that doesn't compress is about 65.7 KB); the route's body limit.

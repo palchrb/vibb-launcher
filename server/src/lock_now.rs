@@ -15,10 +15,6 @@ use sqlx::SqlitePool;
 
 use crate::time_rules::{DayWindow, LAST_MINUTE, PolicyLift, PolicyTimeRule, TimeRuleRow};
 
-/// The capability a launcher claims once it honours `until_ms` and `card_first` (design 93 §9.3; the shared
-/// contract's `capability`).
-#[cfg(test)]
-pub const CAPABILITY: &str = "lock_now_v1";
 /// The lengths "Slå på nå" offers, in hours (§4.4); "Ut dagen" is the fourth choice.
 pub const LENGTH_HOURS: [i64; 3] = [1, 2, 3];
 /// The minutes "Forleng" adds (§6.2); "Ut dagen" is the third choice.
@@ -879,7 +875,6 @@ mod tests {
         let path = "testdata/lock_now.json";
         let mut contract: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
-        assert_eq!(contract["capability"], CAPABILITY);
         let dir = tempfile::tempdir().unwrap();
         let db =
             crate::connect_db(&format!("sqlite://{}", dir.path().join("t.db").display())).await;

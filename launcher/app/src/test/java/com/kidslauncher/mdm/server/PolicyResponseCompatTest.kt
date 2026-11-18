@@ -163,12 +163,6 @@ class PolicyResponseCompatTest {
     }
 
     @Test
-    fun `the parent-PIN events capability is the string the server looks for (qa-24-code Low 6)`() {
-        assertEquals("parent_pin_events_v1", PARENT_PIN_EVENTS_CAPABILITY)
-        assertTrue(PARENT_PIN_EVENTS_CAPABILITY in STATUS_CAPABILITIES)
-    }
-
-    @Test
     fun `parent PIN events use the server's keys - design 24's literal`() {
         val batch = ParentPinEventBatch(
             listOf(ParentPinEvent("0123456789abcdef0123456789abcdef", "unlocked", "override", 1_760_000_000_000, 1_760_007_200_000, null, null)),
@@ -209,8 +203,6 @@ class PolicyResponseCompatTest {
             ServerJson.encodeToString(StatusReportRequest.serializer(), StatusReportRequest(lockReason = "NONE", kioskEngaged = true)),
         ).jsonObject
         assertTrue("relock" !in none)
-        assertEquals("window_relock_v1", WINDOW_RELOCK_CAPABILITY)
-        assertTrue(WINDOW_RELOCK_CAPABILITY in STATUS_CAPABILITIES)
     }
 
     @Test
@@ -397,7 +389,6 @@ class PolicyResponseCompatTest {
             setOf("wanted", "tripped", "last_armed_at_ms", "last_shown_at_ms", "last_handover", "last_handover_at_ms"),
             json["boot_cover"]!!.jsonObject.keys,
         )
-        assertEquals("boot_cover_v1", com.kidslauncher.mdm.lock.BOOT_COVER_CAPABILITY)
     }
 
     @Test
@@ -637,9 +628,6 @@ class PolicyResponseCompatTest {
         assertEquals(com.kidslauncher.mdm.badges.GlancePolicy.UNKNOWN, com.kidslauncher.mdm.badges.lockGlancePolicy(array.lockGlance))
         assertEquals(com.kidslauncher.mdm.badges.GlanceSms.OFF, com.kidslauncher.mdm.badges.GlancePolicy.UNKNOWN.sms)
         // No key: unknown.
-        // The status report's capability the server's notes look for.
-        assertEquals("lock_glance_v1", com.kidslauncher.mdm.lock.LOCK_GLANCE_CAPABILITY)
-        assertTrue(com.kidslauncher.mdm.lock.LOCK_GLANCE_CAPABILITY in STATUS_CAPABILITIES)
         val older = (decodeFresh(serverResponse) as FreshDecode.Ok).policy
         assertNull(older.lockGlance)
         assertEquals(com.kidslauncher.mdm.badges.GlancePolicy.UNKNOWN, com.kidslauncher.mdm.badges.lockGlancePolicy(older.lockGlance))
@@ -689,8 +677,7 @@ class PolicyResponseCompatTest {
             assertTrue(odd, !com.kidslauncher.mdm.day.calendarPolicy((decodeFresh(withCalendar(odd)) as FreshDecode.Ok).policy.calendar).feedsComplete)
         }
         assertEquals(CachedPolicy.Ok(policy), decodeCached(ServerJson.encodeToString(PolicyResponse.serializer(), policy)))
-        // The quiet row plus a ping (migration 0113): `ping`, sent only to a launcher claiming calendar_ping_v1 - the
-        // row with its sound, carried as is. An older launcher is sent `row` (it reads anything else as off).
+        // The quiet row plus a ping (migration 0113): `ping` - the row with its sound, carried as is.
         val pinged = (
             decodeFresh(
                 withCalendar(
@@ -1020,7 +1007,7 @@ class PolicyResponseCompatTest {
     @Test
     fun `status report call fields use the server's keys`() {
         val report = StatusReportRequest(
-            lockReason = "NONE", kioskEngaged = true, capabilities = listOf("call_policy_v1"),
+            lockReason = "NONE", kioskEngaged = true,
             callState = CallState(
                 state = "managed", dialerRoleHeld = true, redirectionRoleHeld = false, screeningRoleHeld = true,
                 defaultDialer = "x", systemDialer = "y", smsRestricted = true, outgoingRestricted = false,
@@ -1029,7 +1016,7 @@ class PolicyResponseCompatTest {
             ),
         )
         val json = ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), report)).jsonObject
-        assertEquals("[\"call_policy_v1\"]", json["capabilities"].toString())
+        assertNull("an empty list is left out", json["capabilities"])
         val callState = json["call_state"]!!.jsonObject
         assertEquals(
             setOf(
@@ -1247,7 +1234,7 @@ class PolicyResponseCompatTest {
         assertNull(old.locationPolicy)
 
         val report = StatusReportRequest(
-            lockReason = "SCHOOL", kioskEngaged = true, capabilities = listOf("call_policy_v1", TIME_RULES_CAPABILITY),
+            lockReason = "SCHOOL", kioskEngaged = true,
             timeState = com.kidslauncher.mdm.server.dto.TimeState(
                 day = "2026-10-05", usedMinutes = 42, budgetMinutes = 90, extraMinutes = 30, activeRuleId = 4,
                 activeRuleName = "Skole", callsBlocked = true, lockReason = "SCHOOL", liftsActive = listOf(10),
@@ -1259,7 +1246,6 @@ class PolicyResponseCompatTest {
                 "calls_blocked", "lock_reason", "lifts_active"),
             json["time_state"]!!.jsonObject.keys,
         )
-        assertEquals("[\"call_policy_v1\",\"time_rules_v1\"]", json["capabilities"].toString())
     }
 
     /** Design 64 step 2: `location_policy.zones` as the server's `policy_json_keys_snapshot` and

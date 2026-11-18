@@ -40,9 +40,6 @@ val BUILTIN_PINS: List<BuiltinPin> = listOf(
     BuiltinPin("Sectigo Public Server Authentication Root E46", "sLVjNUaFYfW7n6EtgBeEpjOlcnBdNPMrZDRF36iwBdE="),
 )
 
-/** The status report's capability: this launcher reads the policy's `server_tls` and reports its own. */
-const val SERVER_PIN_CAPABILITY = "server_pin_v1"
-
 /** At most this many outside sightings are kept and reported (design 76 D3). */
 const val OUTSIDE_MAX = 8
 

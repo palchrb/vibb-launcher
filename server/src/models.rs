@@ -564,11 +564,11 @@ pub struct DeviceStatus {
     #[sqlx(default)]
     pub mobile_data_json: Option<String>,
     /// Design 98 §5.1 (migration 0146): the report's `airplane_mode`, cleaned (`airplane_mode::clean`); read through
-    /// `airplane_mode::report`, which wants the capability. `None` from older launchers.
+    /// `airplane_mode::report`. `None` from older launchers.
     #[sqlx(default)]
     pub airplane_mode_json: Option<String>,
     /// Design 99 §6.1 (migration 0148): the report's `shortcuts`, cleaned (`shortcuts::clean`); read through
-    /// `shortcuts::report`, which wants the capability. `None` from older launchers.
+    /// `shortcuts::report`. `None` from older launchers.
     #[sqlx(default)]
     pub shortcuts_json: Option<String>,
     /// Design 102 §6.2 (migration 0150): the report's `captive_portal`, cleaned (`logins::clean_portal`). `None` from
@@ -579,7 +579,7 @@ pub struct DeviceStatus {
     #[sqlx(default)]
     pub login_browser_json: Option<String>,
     /// Design 107 §4 (migration 0151): the report's `notification_channels`, cleaned (`notification_channels::clean`);
-    /// read through `notification_channels::report`, which wants the capability. `None` from older launchers.
+    /// read through `notification_channels::report`. `None` from older launchers.
     #[sqlx(default)]
     pub notification_channels_json: Option<String>,
     /// The report's `call_state` (migrations/0022_calls.sql), its known keys (`device_api::CALL_STATE_FIELDS`). Read
@@ -1279,7 +1279,7 @@ pub struct PolicyResponse {
     /// remote kill switch.
     pub block_activity_start: bool,
     /// Handy's own PIN lock (handy step 10): `{pin_hash, pin_salt, pin_length}`, or `null` = lock
-    /// off. Always sent. A launcher without `pin_lock_v1` ignores it. Only ever in this response
+    /// off. Always sent. Only ever in this response
     /// (CE storage on the phone) - never in a status report, a log or a page.
     pub kid_lock: Option<KidLock>,
     /// Screen timeout in seconds (migrations/0032), always sent: one of [SCREEN_TIMEOUTS]. The
@@ -1532,7 +1532,7 @@ pub struct StatusReportRequest {
     /// and capped (`app_downloads::sanitize`).
     #[serde(default)]
     pub app_downloads: Option<serde_json::Value>,
-    /// Vibb music (design 21, capability `music_v1`): what the music app last reported through the
+    /// Vibb music (design 21): what the music app last reported through the
     /// launcher - opaque, stored through the known fields only (`music::sanitize_music_state`).
     #[serde(default)]
     pub music_state: Option<serde_json::Value>,
@@ -1577,7 +1577,7 @@ pub struct StatusReportRequest {
     /// Absent from older launchers.
     #[serde(default)]
     pub clock_format_applied: Option<bool>,
-    /// Design 36 §4.2 (capability `dns_custom_v1`): `{rev, in_use, since_ms, reason}` - which of
+    /// Design 36 §4.2: `{rev, in_use, since_ms, reason}` - which of
     /// the parent's servers the phone forwards to, only while its filter runs with Custom. Stored
     /// through the known words only (`dns_server::sanitize_dns_upstream`); never an address.
     #[serde(default)]
@@ -1591,32 +1591,32 @@ pub struct StatusReportRequest {
     /// `report`). Absent from older launchers.
     #[serde(default)]
     pub tailnet_joined: Option<bool>,
-    /// Design 94 §5 (capability `data_roaming_v1`): `{locked, roaming, country, network, enabled, data_active,
+    /// Design 94 §5: `{locked, roaming, country, network, enabled, data_active,
     /// modems}`, raw - cleaned field by field by `mobile_network::clean_roaming`, so nothing in it can fail the report.
     /// Absent from older launchers.
     #[serde(default)]
     pub data_roaming: Option<serde_json::Value>,
-    /// Design 95 rev. 3 (capability `mobile_data_v1`): `{enabled, sink, settings_locked}`, raw - cleaned by
+    /// Design 95 rev. 3: `{enabled, sink, settings_locked}`, raw - cleaned by
     /// `mobile_network::clean_mobile`. Absent from older launchers.
     #[serde(default)]
     pub mobile_data: Option<serde_json::Value>,
-    /// Design 98 §5.1 (capability `airplane_mode_v1`): `{on, going_on, assistant, wifi_kept, last_error,
+    /// Design 98 §5.1: `{on, going_on, assistant, wifi_kept, last_error,
     /// default_apps_changed, periods}`, raw - cleaned by `airplane_mode::clean`. Absent from older launchers.
     #[serde(default)]
     pub airplane_mode: Option<serde_json::Value>,
-    /// Design 99 §6.1 (capability `shortcuts_v1`): `{shown, hidden, items}`, raw - cleaned by `shortcuts::clean`. A
+    /// Design 99 §6.1: `{shown, hidden, items}`, raw - cleaned by `shortcuts::clean`. A
     /// full-report field, not a heartbeat field. Absent from older launchers.
     #[serde(default)]
     pub shortcuts: Option<serde_json::Value>,
-    /// Design 102 §6.2 (capability `captive_portal_v1`): `{handler, parent_code_set, today, sessions}`, raw - cleaned
+    /// Design 102 §6.2: `{handler, parent_code_set, today, sessions}`, raw - cleaned
     /// by `logins::clean_portal`. A full-report field. Absent from older launchers.
     #[serde(default)]
     pub captive_portal: Option<serde_json::Value>,
-    /// Design 102 §6.2 (capability `login_browser_v1`): `{package, state, version_name, written_ms, reason,
+    /// Design 102 §6.2: `{package, state, version_name, written_ms, reason,
     /// cleared_ms}`, raw - cleaned by `logins::clean_browser`. A full-report field. Absent from older launchers.
     #[serde(default)]
     pub login_browser: Option<serde_json::Value>,
-    /// Design 107 §2 (capability `notification_channels_v1`): `{all_off, blocked}`, raw - cleaned by
+    /// Design 107 §2: `{all_off, blocked}`, raw - cleaned by
     /// `notification_channels::clean`. A full-report field, not a heartbeat field. Absent from older launchers.
     #[serde(default)]
     pub notification_channels: Option<serde_json::Value>,
@@ -1645,7 +1645,7 @@ pub struct StatusReportRequest {
     pub extra_locations: Vec<LocationReport>,
     /// Design 64 step 2: `{fences, motion_sensor, location_on, background_location,
     /// mock_ignored}` - the phone's zone watch (`zones::sanitize_zone_watch`, known keys only).
-    /// `fences > 0` is the capability the served interval's floor waits for. Absent from older
+    /// `fences > 0` is what the served interval's floor waits for. Absent from older
     /// launchers.
     #[serde(default)]
     pub zone_watch: Option<serde_json::Value>,

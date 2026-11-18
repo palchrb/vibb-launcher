@@ -27,7 +27,6 @@ class ZoneReportTest {
             lockReason = "NONE",
             kioskEngaged = true,
             location = LocationReport(59.91417, 10.7522, 15.0f, "2026-10-24T08:14:05Z", provider = "gps"),
-            capabilities = listOf(ZONES_CAPABILITY),
             extraLocations = listOf(
                 LocationReport(59.9229, 10.7522, 30.0f, "2026-10-24T08:02:00Z", provider = "fused"),
                 LocationReport(59.91417, 10.7522, 25.0f, "2026-10-24T08:12:03.250Z", provider = "fused"),

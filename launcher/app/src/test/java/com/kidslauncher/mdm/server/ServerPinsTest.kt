@@ -256,7 +256,6 @@ class ServerPinsTest {
         assertEquals(mapOf("ServerTransport.kt" to 1), callers("certificatePinner("))
         // The report: the ring sent, dropped by the report's own connection.
         assertTrue(sync.contains("if (sent.isSuccessful) ServerPinStore.reported(context, tlsSent, pinConnection(apiPath, sent.raw.handshake))"))
-        assertTrue(SERVER_PIN_CAPABILITY in STATUS_CAPABILITIES)
     }
 
     /** Code QA H-1: the recovery address is taken only over a passing or a tailnet connection, only as tailnet http. */

@@ -24,9 +24,6 @@ import kotlin.math.roundToInt
  * kid's PIN or the parent code, from the unlock path (LockGlanceGuardTest).
  */
 
-/** The status report's capability: this launcher has the glance page (the server's notes read it). */
-const val LOCK_GLANCE_CAPABILITY = "lock_glance_v1"
-
 /**
  * The lock's stages: the glance page, our keypad, or - as Android's face (design 59d step B, Q59d-6) - [ASK]: Android's
  * PIN pad is asked for from the glance page; our keypad is never visible or focusable there.

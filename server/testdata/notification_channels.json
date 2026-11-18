@@ -1,5 +1,4 @@
 {
-  "capability": "notification_channels_v1",
   "channels": [
     {"key": "messages", "id": "launcher:messages_v2", "nb": "Meldinger", "en": "Messages", "feature": "sms", "orange": true, "attention": true},
     {"key": "missed_calls", "id": "launcher:missed_calls", "nb": "Tapte anrop", "en": "Missed calls", "feature": "calls", "orange": true, "attention": true},

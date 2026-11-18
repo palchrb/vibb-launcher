@@ -28,9 +28,6 @@ use crate::AppState;
 use crate::display_time::Zone;
 use crate::i18n::{t, t_params};
 
-/// The launcher's capability (`SERVER_PIN_CAPABILITY`): it reads the policy's `server_tls` and reports its own.
-#[cfg(test)]
-pub const CAPABILITY: &str = "server_pin_v1";
 /// In-set sightings spanning this much receive time switch a watched phone on.
 pub const WINDOW: Duration = Duration::hours(72);
 /// ... on at least this many distinct days (server time, UTC dates).

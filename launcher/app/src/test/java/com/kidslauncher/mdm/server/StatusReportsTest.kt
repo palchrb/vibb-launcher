@@ -45,7 +45,6 @@ class StatusReportsTest {
         installedApps = listOf(InstalledApp("org.example.app", "Example", false, "me.vibb.launcher", 7)),
         appVersion = "0.40.0",
         appVersionCode = 400009,
-        capabilities = listOf(STATUS_HEARTBEAT_CAPABILITY),
         battery = BatteryReport(80, charging = false, low = false),
         serverTls = tls,
     )
@@ -60,8 +59,6 @@ class StatusReportsTest {
         val serverCopy = File("../../server/testdata/status_heartbeat.json")
         assertTrue("${serverCopy.absolutePath} not found", serverCopy.isFile)
         assertEquals(serverCopy.readText(), text)
-        assertEquals(STATUS_HEARTBEAT_CAPABILITY, contract["capability"]!!.jsonPrimitive.content)
-        assertTrue(STATUS_HEARTBEAT_CAPABILITY in STATUS_CAPABILITIES)
         assertEquals(HEARTBEAT_FIELDS, contract["heartbeat_fields"]!!.jsonArray.map { it.jsonPrimitive.content })
         assertEquals(HEARTBEAT_FIELDS_TAG, contract["fields_tag"]!!.jsonPrimitive.content)
 

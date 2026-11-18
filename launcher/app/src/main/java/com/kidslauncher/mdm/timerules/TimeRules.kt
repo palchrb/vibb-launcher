@@ -50,9 +50,6 @@ data class TimeRule(
     val copyOf: Long? = null,
 )
 
-/** Design 93 §9.3: the launcher honours `until_ms` and `card_first` (the server's `lock_now::CAPABILITY`). */
-const val LOCK_NOW_CAPABILITY = "lock_now_v1"
-
 const val KIND_SCHOOL = "school"
 const val KIND_BEDTIME = "bedtime"
 const val KIND_CUSTOM = "custom"
@@ -102,10 +99,6 @@ data class TimeAnswer(
     val liftId: Long? = null,
     val minutes: Int? = null,
 )
-
-/** Design 100 §14.5: the launcher shows a parent's "Nei" and the answering parent's name (the server's flash says
- * "… ser det på telefonen" only for a phone claiming it). */
-const val TIME_ANSWER_CAPABILITY = "time_answer_v1"
 
 /** Design 93 §9.1: the policy without the rules whose `untilMs` is at or before [nowMs] - a rule the parent turned on
  * now is gone from its end, whatever its weekday window says (no relock a week later, the phone offline). The phone's

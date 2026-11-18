@@ -1,6 +1,5 @@
 package com.kidslauncher.mdm.day
 
-import com.kidslauncher.mdm.server.STATUS_CAPABILITIES
 import com.kidslauncher.mdm.server.ServerJson
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -42,14 +41,11 @@ class ReminderPingTest {
     private val loud = PingQuiet(ringerNormal = true, interruptionsAll = true, inCall = false, ruleOn = false, rowVisible = true)
 
     @Test
-    fun `ping is the row plus the sound, an unknown value is off, and the capability is claimed`() {
+    fun `ping is the row plus the sound, an unknown value is off`() {
         with(policy("ping")) { assertTrue(lockReminders && lockPing) }
         with(policy("row")) { assertTrue(lockReminders && !lockPing) }
-        // A value this launcher doesn't know is off, as before: a server sends a new form only to a launcher that
-        // claims it (`row` for `ping` without calendar_ping_v1 - what an older launcher reads as the row).
+        // A value this launcher doesn't know is off.
         for (odd in listOf("loud", "PING", "")) with(policy(odd)) { assertFalse(odd, lockReminders || lockPing) }
-        assertEquals("calendar_ping_v1", CALENDAR_PING_CAPABILITY)
-        assertTrue(CALENDAR_PING_CAPABILITY in STATUS_CAPABILITIES)
     }
 
     @Test

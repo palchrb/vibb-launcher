@@ -1,5 +1,4 @@
 {
-  "capability": "rule_pause_v1",
   "lengths": [15, 30, 60, 120],
   "policy": {
     "rule_pause": true,

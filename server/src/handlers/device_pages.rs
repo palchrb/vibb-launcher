@@ -436,7 +436,8 @@ pub(crate) async fn load_policy(
     }
 }
 
-/// The last report lists the launcher capability `name`.
+/// The last report lists the launcher capability `name`: the one check of a claim (C1 kept the mechanism for the
+/// first feature after v0.40.0; today only C3's `android_keyguard_v1` is read).
 pub(crate) fn has_capability(latest: Option<&DeviceStatus>, name: &str) -> bool {
     latest
         .and_then(|s| s.capabilities_json.as_deref())

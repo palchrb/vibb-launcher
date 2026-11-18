@@ -8,12 +8,6 @@ import kotlinx.serialization.Serializable
  * `LoginWindowsTest`): the policy's `captive_portal` (Part A, the Wi-Fi sign-in window) and `login_browser` (Part B,
  * Chrome only for logins), and the add field's entry rule the launcher also applies before Chrome sees a site. */
 
-/** A launcher that opens the Wi-Fi sign-in window and reports `captive_portal` claims this. */
-const val CAPTIVE_PORTAL_CAPABILITY = "captive_portal_v1"
-
-/** A launcher that runs Chrome's login role and reports `login_browser` claims this. */
-const val LOGIN_BROWSER_CAPABILITY = "login_browser_v1"
-
 /** The one browser the role accepts (D8): anything else is `failed` with reason `package`, and nothing is unhidden. */
 const val CHROME_PACKAGE = "com.android.chrome"
 

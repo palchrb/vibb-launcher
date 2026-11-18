@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 
 use super::{TestApp, assert_redirect};
 use crate::handlers::devices::{DEFAULT_QUICK_CONTROLS, QUICK_CONTROL_SHORTCUTS};
-use crate::shortcuts::{CAPABILITY, ITEMS, MAX_ITEMS, clean};
+use crate::shortcuts::{ITEMS, MAX_ITEMS, clean};
 
 const CONTRACT: &str = include_str!("../../testdata/shortcuts.json");
 
@@ -31,7 +31,6 @@ async fn the_report_is_stored_as_the_contract_has_it() {
     let app = TestApp::new().await;
     let (id, token) = app.enrolled_device("Emma").await;
     let contract = contract();
-    assert_eq!(contract["capability"], CAPABILITY);
     assert_eq!(contract["bit"], QUICK_CONTROL_SHORTCUTS);
     for key in ["report", "report_hidden"] {
         let res = app
@@ -42,7 +41,6 @@ async fn the_report_is_stored_as_the_contract_has_it() {
                 Some(json!({
                     "lock_reason": "NONE",
                     "kiosk_engaged": true,
-                    "capabilities": [CAPABILITY],
                     "shortcuts": contract[key],
                 })),
             )

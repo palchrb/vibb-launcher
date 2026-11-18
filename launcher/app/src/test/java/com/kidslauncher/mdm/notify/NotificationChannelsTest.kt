@@ -1,7 +1,6 @@
 package com.kidslauncher.mdm.notify
 
 import com.kidslauncher.mdm.R
-import com.kidslauncher.mdm.server.STATUS_CAPABILITIES
 import com.kidslauncher.mdm.server.ServerJson
 import com.kidslauncher.mdm.server.SystemPageAccess
 import kotlinx.serialization.json.boolean
@@ -37,9 +36,6 @@ class NotificationChannelsTest {
 
     @Test
     fun `the table is the contract's, named as the phone names them`() {
-        assertEquals("notification_channels_v1", contract.getValue("capability").jsonPrimitive.content)
-        assertEquals(NOTIFICATION_CHANNELS_CAPABILITY, contract.getValue("capability").jsonPrimitive.content)
-        assertTrue(NOTIFICATION_CHANNELS_CAPABILITY in STATUS_CAPABILITIES)
         val rows = contract.getValue("channels").jsonArray.map { it.jsonObject }
         assertEquals(rows.map { it.getValue("key").jsonPrimitive.content }, ReportedChannel.entries.map { it.key })
         assertEquals(rows.map { it.getValue("id").jsonPrimitive.content }, ReportedChannel.entries.map { it.id })

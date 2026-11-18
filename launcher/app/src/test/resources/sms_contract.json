@@ -1,6 +1,4 @@
 {
-  "capability": "sms_engine_v1",
-  "groups_capability": "sms_groups_v1",
   "modes": [
     {"calls_mode": "off", "sms_mode": "off"},
     {"calls_mode": "off", "sms_mode": "managed"},
@@ -158,7 +156,6 @@
   ],
   "app": {
     "key": "me.vibb.builtin.messages",
-    "capability": "messages_app_v1",
     "display": {"package_name": "me.vibb.builtin.messages", "label": "Tekst", "icon": "mail", "color": "plum", "on_home": false},
     "lock": [
       {"stored": null, "sms_mode": "managed", "sms": "off"},

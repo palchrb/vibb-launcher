@@ -300,27 +300,21 @@ async fn the_migration_keeps_every_phone_as_it_was() {
     assert_eq!(texts, (false, true, true));
 }
 
-/// The contract's `report`: the capability and `sms_state`, stored through its known keys exactly.
+/// The contract's `report`: `sms_state`, stored through its known keys exactly.
 #[tokio::test]
 async fn the_report_stores_the_sms_state() {
     let app = TestApp::new().await;
     let (id, token) = app.enrolled_device("phone").await;
     let contract = contract();
     let state = contract["report"]["sms_state"].clone();
-    app.post_status(
-        &token,
-        json!({ "capabilities": [contract["capability"]], "sms_state": state }),
-    )
-    .await;
-    let (stored, capabilities): (String, String) = sqlx::query_as(
-        "SELECT sms_state_json, capabilities_json FROM device_status WHERE device_id = ?",
-    )
-    .bind(id)
-    .fetch_one(&app.db)
-    .await
-    .unwrap();
+    app.post_status(&token, json!({ "sms_state": state })).await;
+    let stored: String =
+        sqlx::query_scalar("SELECT sms_state_json FROM device_status WHERE device_id = ?")
+            .bind(id)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
     assert_eq!(serde_json::from_str::<Value>(&stored).unwrap(), state);
-    assert!(capabilities.contains("\"sms_engine_v1\""));
 }
 
 /// The contract's `held.request`, its instants moved into the last hour (the deltas kept).

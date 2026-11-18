@@ -25,7 +25,6 @@ class CalendarReportTest {
         val report = StatusReportRequest(
             lockReason = "NONE",
             kioskEngaged = true,
-            capabilities = listOf(CALENDAR_CAPABILITY),
             calendar = CalendarReport(
                 readable = true,
                 calendars = listOf(
@@ -41,7 +40,6 @@ class CalendarReportTest {
             ServerJson.encodeToString(StatusReportRequest.serializer(), StatusReportRequest(lockReason = "NONE", kioskEngaged = true)),
         ).jsonObject
         assertFalse(none.containsKey("calendar"))
-        assertEquals("calendar_v1", CALENDAR_CAPABILITY)
     }
 
     @Test

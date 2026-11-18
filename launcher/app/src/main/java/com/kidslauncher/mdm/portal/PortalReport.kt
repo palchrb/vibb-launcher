@@ -3,7 +3,7 @@ package com.kidslauncher.mdm.portal
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
-/** Design 102 §6.2: the status report's `captive_portal` (capability `captive_portal_v1`), a full-report field. Every
+/** Design 102 §6.2: the status report's `captive_portal`, a full-report field. Every
  * field without a default, so each one is sent; pinned by `login_windows.json`'s `report` (`LoginWindowsTest`). */
 @Serializable
 data class CaptivePortalReport(
@@ -45,7 +45,7 @@ data class PortalSession(
     val approved: String,
 )
 
-/** Design 102 §6.2: the status report's `login_browser` (capability `login_browser_v1`). */
+/** Design 102 §6.2: the status report's `login_browser`. */
 @Serializable
 data class LoginBrowserReport(
     @SerialName("package") val packageName: String?,

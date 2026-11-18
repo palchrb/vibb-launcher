@@ -63,7 +63,6 @@ class MusicPlanTest {
         val ours = javaClass.classLoader!!.getResource("storytel_token_answers.json")!!.readText()
         assertEquals("the music app's copy", repo("music/app/src/test/resources/storytel_token_answers.json").readText(), ours)
         assertEquals("the server's copy", repo("server/testdata/storytel_token_answers.json").readText(), ours)
-        assertTrue("the courier is a capability", STORYTEL_JWT_CAPABILITY in com.kidslauncher.mdm.server.STATUS_CAPABILITIES)
     }
 
     @Test
@@ -629,7 +628,6 @@ class MusicPlanTest {
             ServerJson.encodeToString(StatusReportRequest.serializer(), StatusReportRequest(lockReason = "NONE", kioskEngaged = true, musicState = state)),
         ).jsonObject
         assertEquals("me.vibb.music", (json["music_state"]!!.jsonObject["package"] as JsonPrimitive).content)
-        assertTrue(MUSIC_CAPABILITY in com.kidslauncher.mdm.server.STATUS_CAPABILITIES)
     }
 
     @Test

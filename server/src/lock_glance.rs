@@ -19,11 +19,6 @@ use sqlx::SqlitePool;
 #[cfg(test)]
 pub const ELEMENT_X: &str = "io.element.android.x";
 
-/// Design 82 D6: a launcher that honours `lock_glance.sms`, Off included, and Meldinger's `app_display` entry reports
-/// this (the shared contract's `app.capability`).
-#[cfg(test)]
-pub const MESSAGES_APP_CAPABILITY: &str = "messages_app_v1";
-
 /// `lock_glance.sms`'s three words (design 82 D3).
 pub const SMS_OFF: &str = "off";
 pub const SMS_NAME: &str = "name";

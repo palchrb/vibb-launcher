@@ -2599,7 +2599,7 @@ pub async fn crash_reports(
 /// `POST /api/devices/power` takes at most this much (design 38 §2): two small objects.
 pub const POWER_BODY_LIMIT: usize = 2 * 1024;
 
-/// `POST /api/devices/power` (design 38, capability `power_v1`): `{off?, on?}` - the phone's
+/// `POST /api/devices/power` (design 38): `{off?, on?}` - the phone's
 /// shutdown (sent from `ACTION_SHUTDOWN`, and kept by the phone until a later boot's start is
 /// accepted) and its boot's start. 204, 400 for a body that isn't one or has neither part, 413
 /// above [POWER_BODY_LIMIT], 500 on a DB error (the phone keeps its record). The rows and their

@@ -1,5 +1,4 @@
 {
-  "capability": "unified_push_v1",
   "policy": {
     "off": {"on": false, "origin": null, "regs": [], "stopped": [], "refresh": []},
     "on_empty": {"on": true, "origin": "https://phones.example.com", "regs": [], "stopped": [], "refresh": []},

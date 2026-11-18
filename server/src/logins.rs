@@ -18,13 +18,6 @@ use serde_json::{Map, Value, json};
 
 use crate::models::DevicePolicy;
 
-/// A launcher that reports `captive_portal` and opens the Wi-Fi sign-in window claims this (the shared contract's).
-#[cfg(test)]
-pub const PORTAL_CAPABILITY: &str = "captive_portal_v1";
-/// A launcher that runs Chrome's login role (`login_browser`) claims this (the shared contract's).
-#[cfg(test)]
-pub const BROWSER_CAPABILITY: &str = "login_browser_v1";
-
 /// The one browser the role accepts (D8); the launcher refuses any other package.
 pub const CHROME: &str = "com.android.chrome";
 

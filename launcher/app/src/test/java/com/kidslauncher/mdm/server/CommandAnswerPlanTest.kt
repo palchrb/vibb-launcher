@@ -86,7 +86,7 @@ class CommandAnswerPlanTest {
     }
 
     @Test
-    fun `the receipt uses the server's keys and the capability is reported`() {
+    fun `the receipt uses the server's keys`() {
         val json = ServerJson.parseToJsonElement(
             ServerJson.encodeToString(CommandReceiptRequest.serializer(), CommandReceiptRequest(42, at)),
         ).jsonObject
@@ -107,8 +107,6 @@ class CommandAnswerPlanTest {
             """{"id": 42, "command": "lock", "requested_at": "$at"}""",
         )
         assertEquals(at, pending.requestedAt)
-        assertEquals("command_receipt_v1", COMMAND_RECEIPT_CAPABILITY)
-        assertTrue(COMMAND_RECEIPT_CAPABILITY in STATUS_CAPABILITIES)
     }
 
     /** The dispatch confirms before anything runs (a wipe included) and doesn't run a repeat. */

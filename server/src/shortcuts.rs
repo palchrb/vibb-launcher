@@ -1,6 +1,6 @@
 //! Design 99: Snarveier, the kid's quick panel in the shade. The report's `shortcuts` cleaned ([clean]), the items'
-//! table ([ITEMS]) and the capability. The shared contract is `testdata/shortcuts.json` (byte-identical in the
-//! launcher's test resources): `capability`, `bit`, `max_items`, `items` (this table), `report`/`report_hidden` and the
+//! table ([ITEMS]). The shared contract is `testdata/shortcuts.json` (byte-identical in the
+//! launcher's test resources): `bit`, `max_items`, `items` (this table), `report`/`report_hidden` and the
 //! `clean` rows.
 //!
 //! The pages' parts (§5.2, §5.3): the stored report read back ([report]), the Home Screen row's sub-line ([home_sub])
@@ -15,11 +15,6 @@ use crate::handlers::devices::{
 };
 use crate::i18n::{Lang, t, t_params};
 use crate::models::{DevicePolicy, DeviceStatus};
-
-/// The capability a launcher claims once it reports `shortcuts` and posts the panel (bit 128; the shared contract's
-/// `capability`).
-#[cfg(test)]
-pub const CAPABILITY: &str = "shortcuts_v1";
 
 /// The panel holds at most this many items (D1: four in one row).
 pub const MAX_ITEMS: usize = 4;

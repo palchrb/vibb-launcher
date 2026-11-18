@@ -40,9 +40,6 @@ import kotlinx.coroutines.launch
 
 private const val LOG_TAG = "PinLock"
 
-/** Status-report capability: this launcher has handy's own PIN lock and reads `kid_lock`. */
-const val PIN_LOCK_CAPABILITY = "pin_lock_v1"
-
 /** Design 105 §2.2: the screen-on's clock pass runs this long past [ALARM_SCREEN_SETTLE_MS], so it reads the screen lit. */
 private const val CLOCK_SETTLE_PASS_MARGIN_MS = 100L
 

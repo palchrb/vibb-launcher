@@ -1,5 +1,5 @@
 //! Design 98: Flymodus through the Digital assistant role. The report's `airplane_mode` cleaned field by field
-//! ([clean]), the emergency line's rule ([emergency_line]) and the capability. The shared contract is
+//! ([clean]) and the emergency line's rule ([emergency_line]). The shared contract is
 //! `testdata/airplane_mode.json` (byte-identical in the launcher's test resources).
 //!
 //! The pages' parts (§6): the stored report read back ([report]), the summary's lines ([summary_lines]; "Flymodus på
@@ -13,11 +13,6 @@ use serde_json::{Value, json};
 use crate::display_time::Zone;
 use crate::i18n::{Lang, t, t_params};
 use crate::models::{DevicePolicy, DeviceStatus};
-
-/// The capability a launcher claims once it reports `airplane_mode` and shows the kid's Flymodus row (bit 64; the
-/// shared contract's `capability`).
-#[cfg(test)]
-pub const CAPABILITY: &str = "airplane_mode_v1";
 
 /// A report with `going_on` alone says "on" this long (§6.2, Q98-L2): a turn-on that failed after its report sends
 /// another report at once, and one that never came back is no longer read as on.
@@ -321,8 +316,8 @@ pub struct SetupStep {
     pub sub: String,
 }
 
-/// The steps the phone needs and hasn't done (§6.2), in the card's order, from a launcher with [CAPABILITY] (the one
-/// with "Fullfør oppsett" and its notification, which the card's words name):
+/// The steps the phone needs and hasn't done (§6.2), in the card's order (the launcher has "Fullfør oppsett" and its
+/// notification, which the card's words name):
 /// - Bakgrunnstilkobling, always (the report's `battery_optimization_exempt` false);
 /// - Endre systeminnstillinger, only with the touch switch (bit 16) or a clock format in use;
 /// - Digital assistent, only with the kid's Flymodus switch (bit 64);

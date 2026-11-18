@@ -8,7 +8,7 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 
 use super::{Section, TestApp, TestResponse, device_page};
-use crate::app_logos::{CAPABILITY, MAX_BYTES, MAX_LOGOS_PER_PHONE, MAX_WANTED, SIZE_PX};
+use crate::app_logos::{MAX_BYTES, MAX_LOGOS_PER_PHONE, MAX_WANTED, SIZE_PX};
 
 const CONTRACT: &str = include_str!("../../testdata/app_logos.json");
 
@@ -29,7 +29,6 @@ fn status_body(apps: serde_json::Value) -> serde_json::Value {
     json!({
         "lock_reason": "NONE",
         "kiosk_engaged": true,
-        "capabilities": [CAPABILITY],
         "installed_apps": apps,
     })
 }
@@ -113,7 +112,6 @@ async fn the_contract() {
     let app = TestApp::new().await;
     let (_, token) = app.enrolled_device("Emma").await;
     let contract: serde_json::Value = serde_json::from_str(CONTRACT).unwrap();
-    assert_eq!(contract["capability"], CAPABILITY);
     assert_eq!(contract["size_px"], SIZE_PX);
     assert_eq!(contract["max_bytes"], MAX_BYTES);
     assert_eq!(contract["max_per_phone"], MAX_LOGOS_PER_PHONE);

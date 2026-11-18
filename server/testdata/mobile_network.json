@@ -1,5 +1,4 @@
 {
-  "capabilities": {"data_roaming": "data_roaming_v1", "mobile_data": "mobile_data_v1", "mobile_network": "mobile_network_v2"},
   "policy": [
     {"abroad": "vibb", "apps_mobile": "on", "mobile_settings_locked": true},
     {"abroad": "home", "apps_mobile": "vibb", "mobile_settings_locked": false},

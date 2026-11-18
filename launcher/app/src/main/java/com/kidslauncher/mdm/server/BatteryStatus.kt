@@ -12,9 +12,6 @@ import com.kidslauncher.mdm.server.dto.BatteryReport
 
 private const val LOG_TAG = "BatteryStatus"
 
-/** Design 35 §2.5: the report carries `battery` ([BatteryStatus]); the server keys off the field. */
-const val BATTERY_CAPABILITY = "battery_v1"
-
 /** [SyncRunner.request]'s reason for Android's battery-low and battery-okay edges. */
 const val BATTERY_SYNC_REASON = "battery"
 

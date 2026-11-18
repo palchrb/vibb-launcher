@@ -70,12 +70,6 @@ class SmsContractTest {
     }
 
     @Test
-    fun `the capability is the one the launcher claims`() {
-        assertEquals(contract.str("capability"), SMS_ENGINE_CAPABILITY)
-        assertTrue(SMS_ENGINE_CAPABILITY in com.kidslauncher.mdm.server.STATUS_CAPABILITIES)
-    }
-
-    @Test
     fun `each mode pair is applied as sent`() {
         for (row in rows("modes")) {
             val calls = ChannelMode.of(row.str("calls_mode"))!!
@@ -137,9 +131,7 @@ class SmsContractTest {
     /** Design 80 D13: the group switch's capability, and `call_policy.sms_groups` - sent true and false, absent from an
      * older server read as true (today's behaviour). */
     @Test
-    fun `the group switch is claimed and decodes, absent as off`() {
-        assertEquals(contract.str("groups_capability"), SMS_GROUPS_CAPABILITY)
-        assertTrue(SMS_GROUPS_CAPABILITY in com.kidslauncher.mdm.server.STATUS_CAPABILITIES)
+    fun `the group switch decodes, absent as off`() {
         val policy = contract["policy"]!!.jsonObject
         val on = ServerJson.decodeFromString(CallPolicy.serializer(), policy["call_policy"].toString())
         assertTrue(on.smsGroups && on.toRules().smsGroups)
@@ -169,10 +161,8 @@ class SmsContractTest {
      * as the server sends it - is Meldinger's alone: read only as a built-in's, never as an installed app's, and it
      * gives the glyph on its colour, the name, and the tile off Home outside a window. */
     @Test
-    fun `Meldinger's capability is claimed and its display entry is read as its look`() {
+    fun `Meldinger's display entry is read as its look`() {
         val app = contract["app"]!!.jsonObject
-        assertEquals(app.str("capability"), MESSAGES_APP_CAPABILITY)
-        assertTrue(MESSAGES_APP_CAPABILITY in com.kidslauncher.mdm.server.STATUS_CAPABILITIES)
         val map = appDisplayMap(JsonArray(listOf(app["display"]!!)))
         val entry = builtinEntry(map, BUILTIN_MESSAGES)
         assertEquals(AppDisplayEntry("Tekst", "mail", "plum", onHome = false), entry)

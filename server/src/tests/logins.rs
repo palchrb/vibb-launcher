@@ -6,9 +6,7 @@ use axum::http::{Method, StatusCode};
 use serde_json::{Value, json};
 
 use super::{TestApp, assert_redirect};
-use crate::logins::{
-    BROWSER_CAPABILITY, PORTAL_CAPABILITY, clean_browser, clean_portal, valid_entry,
-};
+use crate::logins::{clean_browser, clean_portal, valid_entry};
 
 const CONTRACT: &str = include_str!("../../testdata/login_windows.json");
 
@@ -46,11 +44,7 @@ fn row(contract: &Value, name: &str) -> Value {
 }
 
 async fn report(app: &TestApp, token: &str, extra: Value) {
-    let mut body = json!({"capabilities": [PORTAL_CAPABILITY, BROWSER_CAPABILITY]});
-    for (key, value) in extra.as_object().unwrap() {
-        body[key] = value.clone();
-    }
-    app.post_status(token, body).await;
+    app.post_status(token, extra).await;
 }
 
 async fn stored(app: &TestApp, id: i64) -> (Option<String>, Option<String>) {
@@ -72,14 +66,6 @@ async fn the_contract() {
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("Emma").await;
     let contract = contract();
-    assert_eq!(
-        contract["capabilities"]["captive_portal"],
-        PORTAL_CAPABILITY
-    );
-    assert_eq!(
-        contract["capabilities"]["login_browser"],
-        BROWSER_CAPABILITY
-    );
 
     assert_eq!(pick(&app.policy(&token).await), row(&contract, "new_phone"));
     for fields in [

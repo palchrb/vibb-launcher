@@ -10,8 +10,8 @@ import kotlin.math.roundToInt
  * why the phone isn't enforcing the server's current policy (see
  * [com.kidslauncher.mdm.server.policyState]); [restrictionsPaused] is the PIN-gated Settings
  * kill-switch ([com.kidslauncher.mdm.server.RestrictionsPause]). The server shows both as
- * warnings on the device page. [capabilities] says what this launcher enforces (`call_policy_v1`:
- * the server's `call_policy`); [callState] is what it did about calls. */
+ * warnings on the device page. [capabilities] is [com.kidslauncher.mdm.server.STATUS_CAPABILITIES]; [callState] is
+ * what it did about calls. */
 @Serializable
 data class StatusReportRequest(
     val lockReason: String,
@@ -59,7 +59,7 @@ data class StatusReportRequest(
     val appDownloads: AppDownloadsReport? = null,
     /** The boot cover (design 16b) - see [BootCoverReport]. */
     val bootCover: BootCoverReport? = null,
-    /** Vibb music (design 21 §1.3, capability `music_v1`): the music app's last report and the
+    /** Vibb music (design 21 §1.3): the music app's last report and the
      * bridge; null without a music app. */
     val musicState: kotlinx.serialization.json.JsonObject? = null,
     /** Design 19b: the launcher is on Android's power-save allowlist
@@ -93,7 +93,7 @@ data class StatusReportRequest(
      * should be but isn't - no "Modify system settings" access, or the write was refused - (false);
      * `null` (left out) for "Follow the phone" or no policy ([com.kidslauncher.mdm.server.ClockFormatSetting.report]). */
     val clockFormatApplied: Boolean? = null,
-    /** Design 36 §4.2 (capability `dns_custom_v1`): which of the parent's DNS servers the phone
+    /** Design 36 §4.2: which of the parent's DNS servers the phone
      * forwards to, and since design 67 whether DNS can be reached (provider mode too) - see
      * [DnsUpstreamReport]; `null` (left out) unless the filter's tunnel is up
      * (`KidVpnService.dnsUpstreamReport`). */
@@ -115,39 +115,39 @@ data class StatusReportRequest(
      * out). The server stores every one, then judges the zones once. Pinned by
      * `zone_status_report.json` (`ZoneReportTest`). */
     val extraLocations: List<LocationReport>? = null,
-    /** Design 64 step 2 (capability `zones_v1`): the phone's zone watch - see [ZoneWatchReport];
+    /** Design 64 step 2: the phone's zone watch - see [ZoneWatchReport];
      * `null` = not device owner (left out). */
     val zoneWatch: ZoneWatchReport? = null,
-    /** Design 69 §4.2 (capability `calendar_v1`): which calendars the phone has - see [CalendarReport]; `null` = not
+    /** Design 69 §4.2: which calendars the phone has - see [CalendarReport]; `null` = not
      * read yet (left out). Never an event, a title, a count or a time. Pinned by `calendar_status_report.json`
      * (`CalendarReportTest`). */
     val calendar: CalendarReport? = null,
-    /** Design 76 (capability `server_pin_v1`): the certificate check - the stored flag, this sync's chain as seen
+    /** Design 76: the certificate check - the stored flag, this sync's chain as seen
      * and the outside sightings ([com.kidslauncher.mdm.server.ServerTlsReport]). Pinned by `server_tls_report.json`
      * (`ServerPinsTest`). */
     val serverTls: com.kidslauncher.mdm.server.ServerTlsReport? = null,
-    /** Design 77 §7 (capability `sms_engine_v1`): what the message engine did - see [SmsState]; `null` = the engine
+    /** Design 77 §7: what the message engine did - see [SmsState]; `null` = the engine
      * couldn't be read (left out). No content. Pinned by `sms_contract.json` (`SmsContractTest`). */
     val smsState: SmsState? = null,
-    /** Design 94 §5 (capability `data_roaming_v1`): the roaming lock, where the phone roams, whether roaming data is
+    /** Design 94 §5: the roaming lock, where the phone roams, whether roaming data is
      * in use; `null` = telephony unreadable (left out). Pinned by `mobile_network.json` (`MobileNetworkTest`). */
     val dataRoaming: com.kidslauncher.mdm.server.DataRoamingReport? = null,
-    /** Design 95 rev. 3 (capability `mobile_data_v1`): Android's mobile-data switch, why only Vibb uses cellular, the
+    /** Design 95 rev. 3: Android's mobile-data switch, why only Vibb uses cellular, the
      * mobile-network settings lock. Pinned by `mobile_network.json`. */
     val mobileData: com.kidslauncher.mdm.server.MobileDataReport? = null,
-    /** Design 98 §5.1 (capability `airplane_mode_v1`): Flymodus, the assistant role, Wi-Fi in airplane mode and the
+    /** Design 98 §5.1: Flymodus, the assistant role, Wi-Fi in airplane mode and the
      * periods. A full-report field (not in `status_heartbeat_fields`). Pinned by `airplane_mode.json`
      * (`AirplaneModeTest`). */
     val airplaneMode: com.kidslauncher.mdm.assistant.AirplaneModeReport? = null,
-    /** Design 99 §6.1 (capability `shortcuts_v1`): Snarveier - posted now, hidden by the kid, the panel's keys. A
+    /** Design 99 §6.1: Snarveier - posted now, hidden by the kid, the panel's keys. A
      * full-report field (not in `status_heartbeat_fields`). Pinned by `shortcuts.json` (`ShortcutsTest`). */
     val shortcuts: com.kidslauncher.mdm.shortcuts.ShortcutsReport? = null,
-    /** Design 102 §6.2 (capability `captive_portal_v1`): the Wi-Fi sign-in window's handler, today's use and the last
+    /** Design 102 §6.2: the Wi-Fi sign-in window's handler, today's use and the last
      * sessions. A full-report field. Pinned by `login_windows.json` (`LoginWindowsTest`). */
     val captivePortal: com.kidslauncher.mdm.portal.CaptivePortalReport? = null,
-    /** Design 102 §6.2 (capability `login_browser_v1`): Chrome's login role on the phone. A full-report field. */
+    /** Design 102 §6.2: Chrome's login role on the phone. A full-report field. */
     val loginBrowser: com.kidslauncher.mdm.portal.LoginBrowserReport? = null,
-    /** Design 107 §2 (capability `notification_channels_v1`): the app-wide switch and Vibb One's channels turned off;
+    /** Design 107 §2: the app-wide switch and Vibb One's channels turned off;
      * `null` = unreadable (left out). A full-report field (not in `status_heartbeat_fields`). Pinned by
      * `notification_channels.json` (`NotificationChannelsTest`). */
     val notificationChannels: com.kidslauncher.mdm.notify.NotificationChannelsReport? = null,

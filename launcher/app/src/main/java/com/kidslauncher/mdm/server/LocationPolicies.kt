@@ -31,10 +31,6 @@ enum class LocationAction {
 
 const val MIN_LOCATION_INTERVAL_MINUTES = 10
 
-/** Status-report capability (design 64 step 2): this launcher watches the policy's zones itself -
- * one platform fence per zone, a crossing's fixes sent at once, `zone_watch` in every report. */
-const val ZONES_CAPABILITY = "zones_v1"
-
 /**
  * [forced]: a `locate` command asked for the phone's location now (security review P-L2: a `ring` is no request for
  * the location). [sinceLastFreshMs]: wall

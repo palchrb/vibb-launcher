@@ -1701,7 +1701,7 @@ pub struct Download {
 /// The music app's two package names (release, debug).
 pub const MUSIC_PACKAGES: [&str; 2] = ["me.vibb.music", "me.vibb.music.debug"];
 
-/// `StatusReportRequest.music_state` (capability `music_v1`): the last state the music app reported
+/// `StatusReportRequest.music_state`: the last state the music app reported
 /// through the launcher plus the launcher's own view. Never positions or what is playing.
 #[derive(Deserialize, Serialize, Default, Debug, Clone, PartialEq, Eq)]
 #[serde(default)]

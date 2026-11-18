@@ -1,5 +1,4 @@
 {
-  "capability": "airplane_mode_v1",
   "bit": 64,
   "rows": [
     {"case": "on with the role, airplane mode off", "mask": 64, "role": true, "restricted": false, "on": false, "wifi_up": false, "busy": null, "last_error": null, "error_age_ms": null, "state": "off", "section": "rows"},

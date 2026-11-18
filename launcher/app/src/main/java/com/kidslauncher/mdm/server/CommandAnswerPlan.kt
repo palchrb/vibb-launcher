@@ -11,9 +11,6 @@ import kotlinx.serialization.Serializable
  * result that doesn't reach the server waits in the outbox for the next sync.
  */
 
-/** Status-report capability: this launcher confirms commands, so the server may offer one again. */
-const val COMMAND_RECEIPT_CAPABILITY = "command_receipt_v1"
-
 /** Commands remembered as run - far more than the server's three deliveries of one command. */
 const val MAX_SEEN_COMMANDS = 32
 

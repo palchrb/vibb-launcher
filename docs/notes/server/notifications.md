@@ -227,7 +227,7 @@ Notifications on it). `docs/design/45-notifications-inbox-first.md`, `docs/desig
   `POST /api/devices/power` `{off?, on?}` (`models::PowerReport`: `PowerOff {at_ms, boot_count, battery, reboot,
   reason}`, `PowerOn {at_ms, boot_count, battery}`; `battery` through `lenient_battery`, `reason` any non-string =
   none) -> 204; neither part or not one -> 400; > 2 KiB -> 413; a DB error 500 (the phone keeps its record). No
-  `device_status` row, no security log line. Capability `power_v1` (an old launcher never calls it). Contract
+  `device_status` row, no security log line. Contract
   `testdata/power_report.json`, byte-identical in the launcher's test resources (root `CLAUDE.md`).
 - **The state machine** (pure `parent_events::power_events(&report, last_report, &phone) -> PowerPlan {events,
   drop_held_off, quiet_start, release_held_off, dropped}`, applied in one transaction, then `push.wake()` if a row or a delivery

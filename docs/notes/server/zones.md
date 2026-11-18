@@ -94,7 +94,7 @@ at each fix, as below.
   ("device 3 (Anna): Home") - the phone and the zone's name, **never coordinates**; labels "Zone added/changed/deleted"
   (`handlers::admin`). Every save nudges the phone (`command_notify`), for step 2's fences.
 - **Not in step 1** (step 2 built them, below): the served interval's floor `max(chosen, 30 min)` with zones (decision 3) comes with step 2, to
-  phones that report `zones_v1` - the Locate page says nothing about it yet, its footer gives today's timing ("within
+  every phone - the Locate page says nothing about it yet, its footer gives today's timing ("within
   about two intervals"); the mock-location flag (decision 7): the status body has none today (`models::LocationReport`
   is latitude, longitude, accuracy, time), so nothing is ignored or counted yet - step 2 adds the flag and the count;
   the kid's line (decision 6) is the launcher's.

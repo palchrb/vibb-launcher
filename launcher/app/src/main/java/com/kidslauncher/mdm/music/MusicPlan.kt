@@ -54,9 +54,6 @@ const val MUSIC_EXTRA_RESUME = "me.vibb.music.extra.RESUME"
 const val MUSIC_CALL_HOLD = "me.vibb.music.CALL_HOLD"
 const val MUSIC_CALL_RELEASE = "me.vibb.music.CALL_RELEASE"
 
-/** Status-report capability: `music_state` (design 21 §1.3). */
-const val MUSIC_CAPABILITY = "music_v1"
-
 /** Restriction keys the launcher writes for the music app (21 §2, managed config). */
 object MusicRestrictions {
     const val V = "v"

@@ -11,10 +11,6 @@ import kotlinx.serialization.json.jsonPrimitive
 
 private const val LOG_TAG = "BrowserConfig"
 
-/** The status report's capability once design 67's bypass fixes are in (the browsers' managed
- * config, the built-in secure-DNS hosts, Firefox's canary): the server stops asking for an update. */
-const val DNS_BYPASS_CAPABILITY = "dns_bypass_v1"
-
 /** Chromium's policy (`DnsOverHttpsMode`, Android 85+): `off` turns the browser's own secure DNS off. */
 const val DOH_MODE_KEY = "DnsOverHttpsMode"
 const val DOH_MODE_OFF = "off"

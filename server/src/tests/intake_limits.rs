@@ -439,7 +439,7 @@ fn the_field_tables_keep_every_contract_key() {
         }
         // Design 99 §6.1: the report's `shortcuts` (`shortcuts.json`'s `report` and `report_hidden`), every key kept by
         // the cleaning.
-        if json.get("capability").and_then(|c| c.as_str()) == Some(crate::shortcuts::CAPABILITY) {
+        if path.ends_with("shortcuts.json") {
             for key in ["report", "report_hidden"] {
                 let blob = &json[key];
                 let kept = crate::shortcuts::clean(blob).unwrap();
@@ -449,9 +449,7 @@ fn the_field_tables_keep_every_contract_key() {
         }
         // Design 107 §4: the report's `notification_channels` (`notification_channels.json`'s `report`, `report_none`
         // and `report_all_off`), every key kept by the cleaning.
-        if json.get("capability").and_then(|c| c.as_str())
-            == Some(crate::notification_channels::CAPABILITY)
-        {
+        if path.ends_with("notification_channels.json") {
             for key in ["report", "report_none", "report_all_off"] {
                 let blob = &json[key];
                 let kept = crate::notification_channels::clean(blob).unwrap();
@@ -461,11 +459,7 @@ fn the_field_tables_keep_every_contract_key() {
         }
         // Design 102 §6.2: the report's `captive_portal` and `login_browser` (`login_windows.json`'s `report` and
         // `report_off`), every key kept by the cleaning.
-        if json
-            .pointer("/capabilities/captive_portal")
-            .and_then(|c| c.as_str())
-            == Some(crate::logins::PORTAL_CAPABILITY)
-        {
+        if path.ends_with("login_windows.json") {
             for key in ["report", "report_off"] {
                 let portal = &json[key]["captive_portal"];
                 let browser = &json[key]["login_browser"];

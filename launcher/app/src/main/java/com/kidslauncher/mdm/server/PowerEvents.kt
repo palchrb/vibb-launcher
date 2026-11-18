@@ -28,9 +28,6 @@ import kotlinx.serialization.Serializable
 
 private const val LOG_TAG = "PowerEvents"
 
-/** Status-report capability: this launcher reports its shutdowns and starts. */
-const val POWER_CAPABILITY = "power_v1"
-
 /** A kept `off` (sent or not) and an `on` older than this are dropped unsent ([stale]): an old
  * server's 404 ends there too. */
 const val POWER_STALE_MS = 7L * 24 * 60 * 60 * 1000

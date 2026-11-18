@@ -5,7 +5,6 @@
 use serde_json::{Value, json};
 
 use super::{TestApp, tags};
-use crate::notification_channels::CAPABILITY;
 
 const CONTRACT: &str = include_str!("../../testdata/notification_channels.json");
 
@@ -29,19 +28,15 @@ async fn the_report_is_stored_as_the_contract_has_it() {
     let app = TestApp::new().await;
     let (id, token) = app.enrolled_device("Emma").await;
     let contract = contract();
-    assert_eq!(contract["capability"], CAPABILITY);
     for key in ["report", "report_none", "report_all_off"] {
-        app.post_status(
-            &token,
-            json!({"capabilities": [CAPABILITY], "notification_channels": contract[key]}),
-        )
-        .await;
+        app.post_status(&token, json!({"notification_channels": contract[key]}))
+            .await;
         let kept: Value = serde_json::from_str(&stored(&app, id).await.unwrap()).unwrap();
         assert_eq!(kept, contract[key], "{key}");
     }
     app.post_status(
         &token,
-        json!({"capabilities": [CAPABILITY], "notification_channels": {"blocked": ["ring", "nope", "messages"], "x": 1}}),
+        json!({"notification_channels": {"blocked": ["ring", "nope", "messages"], "x": 1}}),
     )
     .await;
     let kept: Value = serde_json::from_str(&stored(&app, id).await.unwrap()).unwrap();
@@ -153,11 +148,8 @@ async fn the_pages_rows() {
             row["shortcuts_bit"].as_bool().unwrap(),
         )
         .await;
-        app.post_status(
-            &token,
-            json!({"capabilities": [CAPABILITY], "notification_channels": row["report"]}),
-        )
-        .await;
+        app.post_status(&token, json!({"notification_channels": row["report"]}))
+            .await;
         let about = app
             .get_page(&format!("/devices/{id}/about"), &cookie)
             .await
@@ -195,7 +187,7 @@ async fn the_info_says_what_is_lost_and_how_to_fix_it() {
         set_policy(&app, id, "managed", "managed", "system", bit).await;
         app.post_status(
             &token,
-            json!({"capabilities": [CAPABILITY], "notification_channels": {"all_off": false, "blocked": ["command_listener", "shortcuts"]}}),
+            json!({"notification_channels": {"all_off": false, "blocked": ["command_listener", "shortcuts"]}}),
         )
         .await;
         let html = app.get_page(&about, &cookie).await.text();
@@ -210,7 +202,7 @@ async fn the_info_says_what_is_lost_and_how_to_fix_it() {
 
     app.post_status(
         &token,
-        json!({"capabilities": [CAPABILITY], "notification_channels": {"all_off": false, "blocked": ["messages", "missed_calls", "app_install"]}}),
+        json!({"notification_channels": {"all_off": false, "blocked": ["messages", "missed_calls", "app_install"]}}),
     )
     .await;
     let html = app.get_page(&about, &cookie).await.text();
@@ -257,7 +249,7 @@ async fn the_info_says_what_is_lost_and_how_to_fix_it() {
     // All on: no ⓘ.
     app.post_status(
         &token,
-        json!({"capabilities": [CAPABILITY], "notification_channels": contract()["report_none"]}),
+        json!({"notification_channels": contract()["report_none"]}),
     )
     .await;
     let html = app.get_page(&about, &cookie).await.text();
@@ -295,11 +287,8 @@ async fn the_attention_row_has_its_place_and_counts() {
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("Emma").await;
     set_policy(&app, id, "managed", "managed", "system", true).await;
-    app.post_status(
-        &token,
-        json!({"capabilities": [CAPABILITY], "notification_listener_enabled": false}),
-    )
-    .await;
+    app.post_status(&token, json!({"notification_listener_enabled": false}))
+        .await;
     let before = attention_keys(
         &app.get_page(&format!("/devices/{id}"), &cookie)
             .await
@@ -311,7 +300,6 @@ async fn the_attention_row_has_its_place_and_counts() {
     app.post_status(
         &token,
         json!({
-            "capabilities": [CAPABILITY],
             "notification_listener_enabled": false,
             "notification_channels": contract()["report"],
         }),

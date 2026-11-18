@@ -299,7 +299,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   (an adb command) shown behind an ⓘ after its sentence (`partials/note_warning.html`), never in the visible text.
 - **Fix round (qa-31-s4-code):** "On the phone · Locked · 10:59" carries the report's local time, so an old report
   never reads as now; `device_pages::load_policy` gives a 500 on a DB error (About, Advanced and this page), never the
-  defaults' "Child PIN · Off"; `device_pages::has_capability` is the pages' one capability check; the device page asks
+  defaults' "Child PIN · Off"; `device_pages::has_capability` is the one capability check (C1: today only `android_keyguard_v1`, C3's); the device page asks
   `parent_pin::card` for the notices only (`with_events = false`), not the 10-event list (since 2026-10-20 the
   summary doesn't ask it at all, and `with_events` is gone).
 - **Shared builders:** `devices::app_rows` (the Apps list's rows, parsed allowlist, installed apps, downloads) is the

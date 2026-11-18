@@ -90,8 +90,6 @@ class TimeRequestsTest {
      * lifts' `by` and `at_ms`. */
     @Test
     fun `every policy row decodes`() {
-        assertEquals(TIME_ANSWER_CAPABILITY, parsed.getValue("capability").jsonPrimitive.content)
-        assertTrue(TIME_ANSWER_CAPABILITY in com.kidslauncher.mdm.server.STATUS_CAPABILITIES)
         val no = policy("policy_no")
         assertEquals(TimeAnswer("0123456789abcdef0123456789abcdef", "no", "Pappa", 1_793_034_600_000), no.answer)
         val yes = policy("policy_yes")

@@ -16,7 +16,6 @@
       "reason": "stale"
     }
   ],
-  "capability": "time_answer_v1",
   "policy_no": {
     "time_policy": {
       "request_answers": true,

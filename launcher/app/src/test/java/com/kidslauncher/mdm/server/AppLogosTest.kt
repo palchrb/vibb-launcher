@@ -9,7 +9,6 @@ import com.kidslauncher.mdm.appdisplay.readWantedLogosBody
 import com.kidslauncher.mdm.appdisplay.uploadCallTimeoutMs
 import com.kidslauncher.mdm.appdisplay.uploadGoesOn
 import com.kidslauncher.mdm.appdisplay.wantedLogosOf
-import com.kidslauncher.mdm.server.dto.APP_LOGOS_CAPABILITY
 import com.kidslauncher.mdm.server.dto.APP_LOGOS_MAX_WANTED
 import com.kidslauncher.mdm.server.dto.APP_LOGO_MAX_BYTES
 import com.kidslauncher.mdm.server.dto.APP_LOGO_SIZE_PX
@@ -38,7 +37,6 @@ class AppLogosTest {
 
     @Test
     fun `the constants are the contract's`() {
-        assertEquals(APP_LOGOS_CAPABILITY, contract["capability"]!!.jsonPrimitive.content)
         assertEquals(APP_LOGO_SIZE_PX, contract["size_px"]!!.jsonPrimitive.int)
         assertEquals(APP_LOGO_MAX_BYTES, contract["max_bytes"]!!.jsonPrimitive.int)
         assertEquals(APP_LOGOS_MAX_WANTED, contract["max_wanted"]!!.jsonPrimitive.int)
@@ -62,7 +60,6 @@ class AppLogosTest {
                 InstalledApp("org.example.drawing", "Drawing", false, logo = hash),
                 InstalledApp("org.example.notes", "Notes", true),
             ),
-            capabilities = listOf(APP_LOGOS_CAPABILITY),
         )
         assertEquals(contract["report"], ServerJson.encodeToJsonElement(StatusReportRequest.serializer(), report))
     }
@@ -161,18 +158,13 @@ class AppLogosTest {
         assertNull("over the upload limit: never reported (R2-L1)", logoHashOf(ByteArray(APP_LOGO_MAX_BYTES + 1)))
     }
 
-    @Test
-    fun `the launcher claims the capability`() {
-        assertTrue(APP_LOGOS_CAPABILITY in STATUS_CAPABILITIES)
-    }
-
     /** R2-M4: the uploads are cosmetic - after the report, the time-critical steps and the DNS events, before the
      * weather and the self-update commit (which stays last). */
     @Test
     fun `the upload step sits among the cosmetic steps`() {
         val src = listOf("src", "app/src").map { java.io.File(it) }.first { java.io.File(it, "main/java").isDirectory }
         val sync = java.io.File(src, "main/java/com/kidslauncher/mdm/server/MdmSyncWorker.kt").readText()
-        val body = sync.substringAfter("suspend fun performMdmSync(").substringBefore("\nconst val KIOSK_ESCAPES_CAPABILITY")
+        val body = sync.substringAfter("suspend fun performMdmSync(").substringBefore("\n    return freshPolicy != null\n}")
         val anchors = listOf(
             "api.sendStatus(", "wantedLogos = try {", "CommandAnswers.flush(context, api)",
             "reportBlockedDnsEvents(context, api)", "AppLogos.upload(context, api, wantedLogos)",

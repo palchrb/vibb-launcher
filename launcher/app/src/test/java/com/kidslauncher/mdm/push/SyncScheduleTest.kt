@@ -1,7 +1,6 @@
 package com.kidslauncher.mdm.push
 
 import com.kidslauncher.mdm.server.ServerJson
-import com.kidslauncher.mdm.server.STATUS_CAPABILITIES
 import com.kidslauncher.mdm.server.dto.InstallModeReport
 import com.kidslauncher.mdm.server.dto.InstalledApp
 import com.kidslauncher.mdm.server.dto.LocationPolicy
@@ -100,26 +99,18 @@ class SyncScheduleTest {
 
     // Wire format
 
-    /** Design 19 (QA #6): no `push` object and no `fcm_push_v1` any more. */
+    /** Design 19 (QA #6): no `push` object any more. */
     @Test
-    fun `the status report carries neither push nor fcm_push_v1`() {
+    fun `the status report carries no push`() {
         val report = StatusReportRequest(
             lockReason = "NONE",
             kioskEngaged = true,
             installedApps = listOf(InstalledApp("org.example", "Example", false, installer = "com.android.vending")),
-            capabilities = STATUS_CAPABILITIES,
             installMode = InstallModeReport(untilMs = 99),
             playWindowActive = true,
         )
         val json = ServerJson.encodeToJsonElement(StatusReportRequest.serializer(), report).jsonObject
         assertFalse("push" in json)
-        assertFalse("fcm_push_v1" in json["capabilities"].toString())
-        assertTrue("play_policy_v1" in json["capabilities"].toString())
-        assertTrue("battery_v1" in json["capabilities"].toString()) // design 35 step 3
-        assertTrue("power_v1" in json["capabilities"].toString()) // design 38
-        assertTrue("dns_bypass_v1" in json["capabilities"].toString()) // design 67
-        assertTrue("app_permissions_v1" in json["capabilities"].toString()) // design 68
-        assertFalse(STATUS_CAPABILITIES.any { "fcm" in it })
         assertEquals("99", json["install_mode"]!!.jsonObject["until_ms"].toString())
         assertEquals("true", json["play_window_active"].toString())
         assertTrue("installer" in json["installed_apps"].toString())

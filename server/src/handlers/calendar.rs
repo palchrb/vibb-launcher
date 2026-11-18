@@ -1049,8 +1049,8 @@ pub async fn save_dagen(
 }
 
 /// The source id of `uid` when the phone may mark it for the kid's events (design 72b D5.5): a `caldav` source
-/// ticked for this phone, not `writable: false` at its account's last Test, and a launcher with the capability -
-/// or it is the pick already (an autosave of the form keeps it).
+/// ticked for this phone and not `writable: false` at its account's last Test - or it is the pick already (an
+/// autosave of the form keeps it).
 async fn caldav_source(state: &AppState, id: i64, uid: &str) -> Result<Option<i64>, sqlx::Error> {
     if !calendar_feeds::valid_uid(uid) {
         return Ok(None);

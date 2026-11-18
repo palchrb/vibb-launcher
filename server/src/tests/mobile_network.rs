@@ -5,9 +5,7 @@ use axum::http::{Method, StatusCode};
 use serde_json::{Value, json};
 
 use super::{TestApp, assert_redirect};
-use crate::mobile_network::{
-    MOBILE_CAPABILITY, NETWORK_CAPABILITY, ROAMING_CAPABILITY, clean_mobile, clean_roaming,
-};
+use crate::mobile_network::{clean_mobile, clean_roaming};
 
 const CONTRACT: &str = include_str!("../../testdata/mobile_network.json");
 
@@ -30,12 +28,8 @@ async fn save(
     .await
 }
 
-async fn report(app: &TestApp, token: &str, extra: Value, capabilities: &[&str]) {
-    let mut body = json!({
-        "lock_reason": "NONE",
-        "kiosk_engaged": true,
-        "capabilities": capabilities,
-    });
+async fn report(app: &TestApp, token: &str, extra: Value) {
+    let mut body = json!({"lock_reason": "NONE", "kiosk_engaged": true});
     for (key, value) in extra.as_object().unwrap() {
         body[key] = value.clone();
     }
@@ -71,12 +65,6 @@ async fn the_contract() {
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("Emma").await;
     let contract = contract();
-    assert_eq!(contract["capabilities"]["data_roaming"], ROAMING_CAPABILITY);
-    assert_eq!(contract["capabilities"]["mobile_data"], MOBILE_CAPABILITY);
-    assert_eq!(
-        contract["capabilities"]["mobile_network"],
-        NETWORK_CAPABILITY
-    );
 
     // A new phone: the defaults are the first row (design 97 D1: Bare Vibb abroad; apps on, the settings locked).
     let rows = contract["policy"].as_array().unwrap();
@@ -103,13 +91,7 @@ async fn the_contract() {
     assert_redirect(&res, &format!("/devices/{id}/mobile"), Some("abroad"));
     assert_eq!(pick(&policy(&app, &token).await), rows[2]);
 
-    report(
-        &app,
-        &token,
-        contract["report"].clone(),
-        &[ROAMING_CAPABILITY, MOBILE_CAPABILITY, NETWORK_CAPABILITY],
-    )
-    .await;
+    report(&app, &token, contract["report"].clone()).await;
     let (roaming, mobile) = stored(&app, id).await;
     let roaming: Value = serde_json::from_str(&roaming.unwrap()).unwrap();
     let mobile: Value = serde_json::from_str(&mobile.unwrap()).unwrap();
@@ -168,7 +150,7 @@ async fn the_page_and_the_summary_say_what_the_phone_reports() {
 
     for reported in [false, true] {
         if reported {
-            report(&app, &token, json!({}), &[]).await;
+            report(&app, &token, json!({})).await;
         }
         let html = app.get_page(&page, &cookie).await.text();
         assert!(!html.contains("Vibb One is updated"), "{html}");
@@ -190,7 +172,6 @@ async fn the_page_and_the_summary_say_what_the_phone_reports() {
                              "enabled": false, "data_active": true, "modems": 1},
             "mobile_data": {"enabled": true, "sink": "parent", "settings_locked": true},
         }),
-        &[ROAMING_CAPABILITY, MOBILE_CAPABILITY],
     )
     .await;
     let html = app.get_page(&page, &cookie).await.text();
@@ -220,7 +201,6 @@ async fn the_page_and_the_summary_say_what_the_phone_reports() {
         &app,
         &token,
         json!({"mobile_data": {"enabled": false, "sink": "off", "settings_locked": true}}),
-        &[MOBILE_CAPABILITY],
     )
     .await;
     let summary = app
@@ -385,7 +365,6 @@ async fn the_page_saves_on_its_anchors_and_the_home_form_keeps_bit_32() {
             "data_roaming": {"locked": false, "roaming": false, "enabled": true, "data_active": false},
             "mobile_data": {"enabled": true, "sink": "off", "settings_locked": true},
         }),
-        &[ROAMING_CAPABILITY, MOBILE_CAPABILITY],
     )
     .await;
     let page = format!("/devices/{id}/mobile");
@@ -414,7 +393,6 @@ async fn the_page_saves_on_its_anchors_and_the_home_form_keeps_bit_32() {
                              "enabled": false, "data_active": true, "modems": 1, "where": "abroad"},
             "mobile_data": {"enabled": true, "sink": "kid", "settings_locked": true, "kid": "off"},
         }),
-        &[ROAMING_CAPABILITY, MOBILE_CAPABILITY, NETWORK_CAPABILITY],
     )
     .await;
     let html = app
@@ -458,15 +436,14 @@ async fn a_crossing_raises_the_roaming_notice_once() {
         json!({"data_roaming": {"locked": false, "roaming": true, "country": country, "network": "24001",
                                 "enabled": true, "data_active": true, "modems": 1, "where": "abroad"}})
     };
-    let all = [ROAMING_CAPABILITY, MOBILE_CAPABILITY, NETWORK_CAPABILITY];
-    report(&app, &token, abroad("se"), &all).await;
-    report(&app, &token, abroad("se"), &all).await;
+    report(&app, &token, abroad("se")).await;
+    report(&app, &token, abroad("se")).await;
     let mut without_where = abroad("se");
     without_where["data_roaming"]
         .as_object_mut()
         .unwrap()
         .remove("where");
-    report(&app, &other, without_where, &all).await;
+    report(&app, &other, without_where).await;
     let events: Vec<(i64, String, String, String)> = sqlx::query_as(
         "SELECT device_id, dedup_key, target, params FROM parent_events WHERE kind = 'roaming_started'",
     )

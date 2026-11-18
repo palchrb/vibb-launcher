@@ -13,9 +13,6 @@ import java.time.LocalDateTime
  * `lockReason`. SCREEN_TIME = the daily budget is used up; BEDTIME/SCHOOL/RULE = a time rule of
  * that kind (RULE = custom) is active. The names are stored, so existing values must stay.
  */
-/** Status-report capability: this launcher enforces `time_policy` (handy step 6). */
-const val TIME_RULES_CAPABILITY = "time_rules_v1"
-
 enum class LockReason {
     NONE, SCREEN_TIME, BEDTIME, SCHOOL, RULE
 }

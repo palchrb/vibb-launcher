@@ -136,10 +136,8 @@ class RulePauseTest {
     }
 
     @Test
-    fun `the lengths and the capability`() {
+    fun `the lengths`() {
         assertEquals(contract["lengths"]!!.jsonArray.map { it.jsonPrimitive.content.toInt() }, RULE_LIFT_MINUTES)
-        assertEquals(contract["capability"]!!.jsonPrimitive.content, RULE_PAUSE_CAPABILITY)
-        assertTrue(RULE_PAUSE_CAPABILITY in com.kidslauncher.mdm.server.STATUS_CAPABILITIES)
     }
 
     @Test

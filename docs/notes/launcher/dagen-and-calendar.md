@@ -108,8 +108,7 @@ glance's "Lås opp og åpne Kalender" (`day_title`, `glance_reminder_action`). "
   (`EnforcementPlan`), and an app with `app_display.on_home: false` is off Home and the drawer except while the pause or
   the override is open (`onHomeListable` in `AppFilter`).
 - **The quiet row plus a ping** (2026-11-01, branch `reminder-ping`): `lock_reminders: "ping"` = the row
-  (`lockReminders`) plus `lockPing`; any other value but `row` stays off (the server sends `ping` only to a launcher
-  claiming `calendar_ping_v1`, `row` to an older one). Pure `day/ReminderPing.kt` (`reminderPing`: PLAY only with ping,
+  (`lockReminders`) plus `lockPing`; any other value but `row` stays off. Pure `day/ReminderPing.kt` (`reminderPing`: PLAY only with ping,
   ringer NORMAL, no Do Not Disturb, no call - `AudioManager.getMode()` -, no time rule in force, bedtime included, the
   row visible - the screen off or the lock's glance up, `GlanceCalendar.showing` (QA M2) - and on time: within
   `PING_LATE_MS` (90 s) of the row coming up, `reminderUpSince` (its reminder's start, or the start of the sooner event
@@ -123,7 +122,7 @@ glance's "Lås opp og åpne Kalender" (`day_title`, `glance_reminder_action`). "
   notification sound with `USAGE_NOTIFICATION`/`CONTENT_TYPE_SONIFICATION`, once (`goAsync` held 4 s): no
   notification, nothing in the shade, no vibration. Logcat tag `ReminderPing` ("Reminder up: PLAY" / "QUIET").
 - **Contracts**: the policy's `calendar` (`PolicyResponseCompatTest`), the report's `calendar` (`CalendarReport`,
-  `calendar_status_report.json`, `CalendarReportTest`), capability `calendar_v1`.
+  `calendar_status_report.json`, `CalendarReportTest`).
 - **Not device-tested**: design 69 §7 (`docs/testing/emulator.md` §6w): ICSx5's and DAVx5's NAME/account type/access
   level, the local calendar's insert as a plain app, the two-line caps and "›" at font 1.0 and 1.3, the glance
   geometry, DAVx5's round trip of the `vibb-` UID, `requestSync`, a far-future day.
@@ -168,7 +167,7 @@ glance's "Lås opp og åpne Kalender" (`day_title`, `glance_reminder_action`). "
   (`asFeedAdapter`, QA L10; a plain delete only marks DELETED); `applyFeedBatch` reads IllegalArgumentException,
   SQLiteException and OperationApplicationException as refused, anything else (no client, a dead provider) as gone. The
   report's `calendar.feeds` (`CalendarFeeds.report`, `CalendarFeedReportRow(id, applied_rev, refused, unknown_zone)`;
-  left out when empty). Capability `calendar_feeds_v1` (`CALENDAR_FEEDS_CAPABILITY`).
+  left out when empty).
 - Tests: `CalendarFeedsTest` (the shared `calendar_feeds.json`: `feed` maps to exactly `provider` in its zone, the key,
   the policy's and the report's rows, both copies), `FeedPlanTest`, `FeedEventsTest` (the columns, all-day, floating,
   an unknown zone, EXDATE's fallback, the sync-adapter URI by source), `KidEventTest` (the kid's four writes above the
@@ -184,8 +183,7 @@ glance's "Lås opp og åpne Kalender" (`day_title`, `glance_reminder_action`). "
   back, pending}`, `null` otherwise); the kid keeps writing in "Min kalender" (no `writable_for_kid` is sent while
   marked, so `kidCalendarOf` picks it), and the server writes the events into the calendar with the password it keeps -
   the phone never sees it, the account or the host. The parent's edits and deletes there come back and are applied in
-  "Min kalender" (the calendar wins). The kid sees nothing new but that; no permission, no adb. Capability
-  `calendar_kid_caldav_v1` (`CALENDAR_KID_CALDAV_CAPABILITY`).
+  "Min kalender" (the calendar wins). The kid sees nothing new but that; no permission, no adb.
 - **Pure** (`day/KidCaldav.kt`): `kidCaldavPolicy` (missing or malformed = off), D2.7's `canonicalText` (`\r\n`/`\r` as
   `\n`, C0 but LF/TAB out, cut by code point 200/200/2000) and `kidVersion`/`kidHash` (16 hex of SHA-256 over the
   serde-compatible canonical JSON), `kidSnapshot` (this phone's rows - `ownedByVibb`, the UID pattern, live, no series -

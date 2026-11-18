@@ -539,7 +539,7 @@ one row per phone, no row = `watching`):
   verification n2) - on a listener bound to it, to `0.0.0.0` for IPv4, or to `[::]` for IPv6 and for IPv4 only when
   that socket's `IPV6_V6ONLY` read off at its bind (`note_listener`, verification n3); code QA H-1); a read error fails the policy. Pinned by
   `policy_json_keys_snapshot`.
-- **Device › Advanced › Certificate check** (`#server-tls`, after Connection, only with the capability): the state as
+- **Device › Advanced › Certificate check** (`#server-tls`, after Connection): the state as
   one row, from the server's state and what the phone reports (code QA M-1: "on - only Let's Encrypt or ZeroSSL" only
   while the phone says it enforces, "on - the phone takes it at its next sync", "on here, but this phone can't take
   it - … comes from X"; "watching - on from …"; "not on - this phone saw a certificate from … - not switched on by

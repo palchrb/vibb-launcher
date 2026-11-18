@@ -19,7 +19,7 @@ fn the_contract_matches_the_launchers_copy() {
 }
 
 fn capable() -> Value {
-    json!({"capabilities": [crate::server_tls::CAPABILITY]})
+    json!({})
 }
 
 /// The contract's report, its instants moved to the last hour.
@@ -37,7 +37,6 @@ fn report_now() -> Value {
     {
         row["at_ms"] = json!(now - 3_600_000 + i as i64 * 60_000);
     }
-    report["capabilities"] = json!([crate::server_tls::CAPABILITY]);
     report
 }
 
@@ -215,13 +214,12 @@ async fn a_fresh_phone_is_watched_and_shows_when_it_switches_on() {
         "no on-now while nothing was seen"
     );
     // Junk in the report never fails it.
+    app.post_status(&token, json!({"server_tls": "on"})).await;
     app.post_status(
         &token,
-        json!({"capabilities": [crate::server_tls::CAPABILITY], "server_tls": "on"}),
+        json!({"server_tls": {"outside": [1, {"kind": "x"}]}}),
     )
     .await;
-    app.post_status(&token, json!({"capabilities": [crate::server_tls::CAPABILITY], "server_tls": {"outside": [1, {"kind": "x"}]}}))
-        .await;
     assert_eq!(
         crate::server_tls::load(&app.db, id).await.unwrap(),
         crate::server_tls::Row::default()

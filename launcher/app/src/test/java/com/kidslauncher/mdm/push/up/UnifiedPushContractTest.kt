@@ -1,7 +1,6 @@
 package com.kidslauncher.mdm.push.up
 
 import com.kidslauncher.mdm.server.CachedPolicy
-import com.kidslauncher.mdm.server.STATUS_CAPABILITIES
 import com.kidslauncher.mdm.server.ServerJson
 import com.kidslauncher.mdm.server.UP_EVENT
 import com.kidslauncher.mdm.server.decodeCached
@@ -29,12 +28,6 @@ class UnifiedPushContractTest {
     fun `the two copies of the contract are identical`() {
         val serverCopy = listOf("../../server/testdata/unified_push.json", "../server/testdata/unified_push.json").map(::File).first { it.exists() }
         assertEquals(serverCopy.readText(), contractText)
-    }
-
-    @Test
-    fun `the capability is claimed`() {
-        assertEquals(contract["capability"]!!.jsonPrimitive.content, UNIFIED_PUSH_CAPABILITY)
-        assertTrue(UNIFIED_PUSH_CAPABILITY in STATUS_CAPABILITIES)
     }
 
     @Test

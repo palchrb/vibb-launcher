@@ -5,7 +5,7 @@ use axum::http::Method;
 use serde_json::{Value, json};
 
 use super::{TestApp, assert_redirect};
-use crate::airplane_mode::{CAPABILITY, Period, clean, emergency_line};
+use crate::airplane_mode::{Period, clean, emergency_line};
 
 const CONTRACT: &str = include_str!("../../testdata/airplane_mode.json");
 
@@ -29,7 +29,6 @@ async fn the_report_is_stored_as_the_contract_has_it() {
     let app = TestApp::new().await;
     let (id, token) = app.enrolled_device("Emma").await;
     let contract = contract();
-    assert_eq!(contract["capability"], CAPABILITY);
     assert_eq!(contract["bit"], 64);
     for key in ["report", "report_open"] {
         let res = app
@@ -40,7 +39,6 @@ async fn the_report_is_stored_as_the_contract_has_it() {
                 Some(json!({
                     "lock_reason": "NONE",
                     "kiosk_engaged": true,
-                    "capabilities": [CAPABILITY],
                     "airplane_mode": contract[key],
                 })),
             )
@@ -116,10 +114,9 @@ async fn mask(app: &TestApp, token: &str) -> i64 {
         .unwrap()
 }
 
-/// A report from design 98's launcher: `airplane_mode` and the capability, with `extra`'s keys.
+/// A report with `airplane_mode` and `extra`'s keys.
 async fn report(app: &TestApp, token: &str, airplane: Value, extra: Value) {
-    let mut body =
-        json!({"capabilities": [CAPABILITY, "window_relock_v1"], "airplane_mode": airplane});
+    let mut body = json!({"airplane_mode": airplane});
     for (key, value) in extra.as_object().unwrap() {
         body[key] = value.clone();
     }

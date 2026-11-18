@@ -268,17 +268,6 @@ class MobileNetworkTest {
         assertEquals(Pair(null, null), roamingPlace(true, "", ""))
     }
 
-    @Test
-    fun `this launcher claims the capabilities`() {
-        val capabilities = contract["capabilities"]!!.jsonObject
-        assertEquals(capabilities["data_roaming"]!!.jsonPrimitive.content, DATA_ROAMING_CAPABILITY)
-        assertEquals(capabilities["mobile_data"]!!.jsonPrimitive.content, MOBILE_DATA_CAPABILITY)
-        assertEquals(capabilities["mobile_network"]!!.jsonPrimitive.content, MOBILE_NETWORK_CAPABILITY)
-        assertTrue(DATA_ROAMING_CAPABILITY in STATUS_CAPABILITIES)
-        assertTrue(MOBILE_DATA_CAPABILITY in STATUS_CAPABILITIES)
-        assertTrue(MOBILE_NETWORK_CAPABILITY in STATUS_CAPABILITIES)
-    }
-
     /** Design 94 §3: a fallback keeps the parent's choices; an older record fails closed. */
     @Test
     fun `the last enforced plan keeps the choices, an older record locks`() {

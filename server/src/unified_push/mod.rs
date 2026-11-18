@@ -38,10 +38,6 @@ use serde::Serialize;
 
 use crate::AppState;
 
-/// The launcher's capability: it reads the policy's `unified_push` and talks to the device API (§3.7; the shared
-/// contract's `capability`).
-#[cfg(test)]
-pub const CAPABILITY: &str = "unified_push_v1";
 /// The previous origin is accepted this long after a change (M4).
 pub const PREVIOUS_ORIGIN_DAYS: i64 = 30;
 /// Registrations per app and per phone (§5.1: below the spec's "over 1000" - a runaway app must not mint thousands

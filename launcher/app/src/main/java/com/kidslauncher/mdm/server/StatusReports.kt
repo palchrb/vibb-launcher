@@ -32,8 +32,6 @@ import java.util.zip.GZIPOutputStream
  * server inflates it inside its token check, within its body limit. An older server says neither: the report goes as before.
  */
 
-const val STATUS_HEARTBEAT_CAPABILITY = "status_heartbeat_v1"
-
 /** The report's fields a heartbeat carries and the hash leaves out (the server's `status_heartbeat::HEARTBEAT_FIELDS`,
  * by the contract). */
 val HEARTBEAT_FIELDS: List<String> = listOf(

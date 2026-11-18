@@ -616,10 +616,6 @@ mod tests {
         use crate::lock_glance::{SMS_NAME, SMS_OFF, SMS_TEXT, sms_level};
         let app = &contract()["app"];
         assert_eq!(app["key"], crate::builtin::MESSAGES);
-        assert_eq!(
-            app["capability"],
-            crate::lock_glance::MESSAGES_APP_CAPABILITY
-        );
         for row in app["lock"].as_array().unwrap() {
             let sms = sms_level(row["stored"].as_bool(), row["sms_mode"].as_str().unwrap());
             assert_eq!(row["sms"], sms, "{row}");

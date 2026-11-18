@@ -12,9 +12,6 @@ package com.kidslauncher.mdm.lock
  * Pure, tested in BootCoverPlanTest.
  */
 
-/** Status-report capability: this launcher has the boot cover and reads `boot_cover`. */
-const val BOOT_COVER_CAPABILITY = "boot_cover_v1"
-
 /** The cover's process (`android:process=":bootcover"`): Application.onCreate does nothing there. */
 const val BOOT_COVER_PROCESS_SUFFIX = ":bootcover"
 

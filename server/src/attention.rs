@@ -625,16 +625,14 @@ pub fn facts_of(s: &Sources, now_ms: i64) -> Facts {
         };
     }
     let (policy, latest) = (s.policy, s.latest);
-    let capability = |name: &str| {
-        latest
-            .and_then(|st| st.capabilities_json.as_deref())
-            .is_some_and(|caps| caps.contains(&format!("\"{name}\"")))
-    };
     let lock_state =
         crate::kid_lock::parse_lock_state(latest.and_then(|st| st.lock_state_json.as_deref()));
     let lock_phone = crate::kid_lock::PhoneLock {
         state: lock_state.as_ref(),
-        android_capable: capability(crate::kid_lock::ANDROID_KEYGUARD_CAPABILITY),
+        android_capable: crate::handlers::device_pages::has_capability(
+            latest,
+            crate::kid_lock::ANDROID_KEYGUARD_CAPABILITY,
+        ),
         pin_waiting: false,
     };
     let play =

@@ -1,8 +1,6 @@
 package com.kidslauncher.mdm.zones
 
 import com.kidslauncher.mdm.server.LocationAction as L
-import com.kidslauncher.mdm.server.STATUS_CAPABILITIES
-import com.kidslauncher.mdm.server.ZONES_CAPABILITY
 import com.kidslauncher.mdm.server.dto.PolicyZone
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -398,12 +396,6 @@ class ZonePlanTest {
         assertEquals(false, sureSide(north(182.0, accuracy = 30f), home))
         assertEquals(null, sureSide(north(30.0, accuracy = null), home))
         assertEquals(listOf("KEEP", "SIDE_CHANGED"), CheckVerdict.values().map { it.name })
-    }
-
-    @Test
-    fun `the launcher claims the zone watch`() {
-        assertTrue(ZONES_CAPABILITY in STATUS_CAPABILITIES)
-        assertEquals("zones_v1", ZONES_CAPABILITY)
     }
 
     private fun source(path: String) = File("src/main/java/com/kidslauncher/mdm/$path").readText()
