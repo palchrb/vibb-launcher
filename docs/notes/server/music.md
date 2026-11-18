@@ -438,7 +438,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   (`MusicWarnings.spotify_cant_play`, `Kind::MusicSpotify`); and the account's side from the accounts table
   (`music::spotify_account_warnings`, read by `attention::facts` and the summary into `Sources.spotify_account`):
   "Spotify login needs renewing" (ended, refused, another key; the phone's `reauthorize` then raises no second row),
-  "Spotify login ends soon" (14 days), "Two phones share a Spotify account", "No Spotify app set up". The library row
+  "Spotify login ends soon" (14 days), "No Spotify app set up" (two phones on one account is a quiet note on the Music page, no row, 2026-11-18). The library row
   (Music tab): "Spotify playlist · 42 tracks · 1 phone", "Open in Spotify" (`rel="noopener noreferrer"`) in place of the
   Offline select; the entry page: "42 tracks · read as Ella", context mode's notice, the left-out count, the phones'
   lines ("Plays as Ella", "Not sent - Spotify is off on this phone"; `gated`/`phone_count` follow the binding as the
