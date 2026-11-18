@@ -13,7 +13,7 @@ import android.text.style.ClickableSpan
 import android.util.Log
 import android.view.MotionEvent
 import android.widget.TextView
-import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.map.MapLinkActivity
 import com.kidslauncher.mdm.map.MapLinkForms
@@ -28,8 +28,9 @@ import com.kidslauncher.mdm.map.MapLinksRuntime
  *
  * - a map link, while the parent's switch is on, goes straight to Vibb's own handler ([MapLinkActivity]) - no
  *   Android resolution, no phone step needed;
- * - any other link is a plain `VIEW` to the one app Android names for it (an allowed browser, or an allowed app that
- *   holds the link) - never a chooser; with none, the kid's calm note.
+ * - any other link is a plain `VIEW` to the one app Android names for it that the parent allows ([messageLinkTarget]:
+ *   the allowlist, the login browser, Vibb One - never Play services, and nothing during a time rule) - never a
+ *   chooser; with none, the kid's calm note.
  *
  * The text keeps its long press (the reactions): only a press that starts on a link is the link's.
  */
@@ -104,29 +105,58 @@ object MessageLinks {
                 context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(https)).setClass(context, MapLinkActivity::class.java))
                 return
             }
-            val view = Intent(Intent.ACTION_VIEW, Uri.parse(url)).addCategory(Intent.CATEGORY_BROWSABLE)
+            // Code QA L4: an intent filter's scheme is lowercase ("HTTPS://" matches nothing).
+            val view = Intent(Intent.ACTION_VIEW, Uri.parse(url).normalizeScheme()).addCategory(Intent.CATEGORY_BROWSABLE)
             val pkg = handler(context, view)
             if (pkg == null) {
-                Toast.makeText(context, R.string.message_link_cant_open, Toast.LENGTH_SHORT).show()
+                cantOpen(context)
                 return
             }
             context.startActivity(view.setPackage(pkg).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         } catch (e: Exception) {
             Log.w("MessageLinks", "Couldn't open a link: ${e.javaClass.simpleName}")
-            Toast.makeText(context, R.string.message_link_cant_open, Toast.LENGTH_SHORT).show()
+            cantOpen(context)
         }
     }
 
-    /** The one app that opens [view]: Android's own answer when it names an app, else the first of the candidates
-     * that isn't suspended - never Android's chooser. */
+    /** The kid's calm note (§7.4, code QA L5): one sheet, one OK, in the page's own dialog look. */
+    private fun cantOpen(context: Context) {
+        AlertDialog.Builder(context)
+            .setMessage(R.string.message_link_cant_open)
+            .setPositiveButton(android.R.string.ok, null)
+            .show()
+    }
+
+    /** The one app that opens [view] ([messageLinkTarget]): Android's own answer first, then its other candidates,
+     * each only while not suspended. */
     private fun handler(context: Context, view: Intent): String? {
         val pm = context.packageManager
         val flags = PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_DEFAULT_ONLY.toLong())
         val usable = { info: ApplicationInfo -> info.flags and ApplicationInfo.FLAG_SUSPENDED == 0 && info.enabled }
-        pm.resolveActivity(view, flags)?.activityInfo
-            ?.takeIf { it.packageName != "android" && usable(it.applicationInfo) }
-            ?.let { return it.packageName }
-        return pm.queryIntentActivities(view, flags).map { it.activityInfo }
-            .firstOrNull { it.packageName != "android" && usable(it.applicationInfo) }?.packageName
+        val first = pm.resolveActivity(view, flags)?.activityInfo?.takeIf { usable(it.applicationInfo) }?.packageName
+        val rest = pm.queryIntentActivities(view, flags).map { it.activityInfo }.filter { usable(it.applicationInfo) }.map { it.packageName }
+        val policy = com.kidslauncher.mdm.server.currentPolicyDecision().policy
+        val allowlist = policy?.allowlist
+        val allowed = allowlist?.let { list ->
+            list.toSet() + setOfNotNull(
+                com.kidslauncher.mdm.logins.loginRolePackage(com.kidslauncher.mdm.logins.loginRoleOf(policy.loginBrowser, list)),
+                context.packageName,
+            )
+        }
+        val locked = com.kidslauncher.mdm.preferences.LauncherPreferences.mdm().lockReason() != com.kidslauncher.mdm.server.LockReason.NONE
+        return messageLinkTarget(listOfNotNull(first) + rest, allowed, locked)
     }
 }
+
+/**
+ * The one app a message's web link may open (code QA M1): the first of Android's [candidates] (its own answer first)
+ * the parent allows - [allowed] is the policy's allowlist with the login browser and Vibb One, `null` on a phone
+ * without one (nothing is restricted there) - never Android's chooser, Play services or its framework (never
+ * restricted, so never allowed by the list's absence either), and nothing during a time rule ([locked]).
+ */
+fun messageLinkTarget(candidates: List<String>, allowed: Set<String>?, locked: Boolean): String? =
+    if (locked) {
+        null
+    } else {
+        candidates.firstOrNull { it != "android" && it !in com.kidslauncher.mdm.play.PLAY_NEVER_RESTRICT && (allowed == null || it in allowed) }
+    }

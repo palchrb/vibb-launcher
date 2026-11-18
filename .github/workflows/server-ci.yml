@@ -121,6 +121,9 @@ jobs:
       - run: node --test jstest/*.test.js
       # Reports warnings without failing the build; the existing ones predate the test harness.
       - run: cargo clippy --all-targets --locked
+      # The integrations (docs/notes/server/integrations.md): a build without them still compiles (build only; the
+      # core's snapshot tests pin the default build).
+      - run: cargo check --no-default-features --locked
 
   # The container image (design 22 §6), without pushing, as the release builds it: the static musl
   # binary built natively on a runner of each architecture (plain cargo, no cross, no QEMU), then

@@ -127,7 +127,10 @@ open class EventActivity : KidPageActivity() {
     private fun bindMapRows(text: String) {
         val box = binding.eventMaps
         box.removeAllViews()
-        val links = if (com.kidslauncher.mdm.map.MapLinksRuntime.on(this)) {
+        // Code QA L6: only for a target that can open (allowed, or suspended: its own note says so).
+        val target = com.kidslauncher.mdm.map.MapLinksRuntime.target(this).second
+        val usable = target == com.kidslauncher.mdm.map.TargetState.ALLOWED || target == com.kidslauncher.mdm.map.TargetState.SUSPENDED
+        val links = if (usable && com.kidslauncher.mdm.map.MapLinksRuntime.on(this)) {
             com.kidslauncher.mdm.map.MapLinks.webLinks(text).map { text.substring(it.first, it.last + 1) }
                 .filter(com.kidslauncher.mdm.map.MapLinkForms::isMapLink).distinct().take(2)
         } else {

@@ -1344,8 +1344,8 @@ pub struct PolicyResponse {
     pub server_tls: serde_json::Value,
     /// Design 108 §3.8: app push (`unified_push::policy`), always sent: `on`, `origin`, `regs`, `stopped`, `refresh`.
     pub unified_push: crate::unified_push::UpPolicy,
-    /// The integrations' keys (`integrations::Integrations::policy`), each at the top level and each only for a
-    /// launcher that claims it: design 110's `map_links`.
+    /// The integrations' keys (`integrations::Integrations::policy`), each at the top level: design 110's `map_links`
+    /// (always sent).
     #[serde(flatten)]
     pub integrations: serde_json::Map<String, serde_json::Value>,
 }

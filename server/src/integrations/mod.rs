@@ -11,6 +11,9 @@
 //! The trait is kept to what the first integration needs; Spotify, Storytel, Sonos and NRK move in later and add only
 //! what they need. Every hook but the name, the routes and the health has a do-nothing default.
 
+// A build without any integration (`--no-default-features`) keeps the boundary's pieces unused.
+#![cfg_attr(not(feature = "map_links"), allow(dead_code, unused_imports))]
+
 use std::sync::Arc;
 
 use axum::Router;
@@ -66,13 +69,12 @@ pub trait Integration: Send + Sync {
     /// The last success and failure of its calls out.
     fn health(&self) -> Health;
 
-    /// Its key in this phone's policy, if any (`capabilities` from the phone's last report). A read error fails the
+    /// Its key in this phone's policy, if any. A read error fails the
     /// policy, as every other part's does.
     fn policy<'a>(
         &'a self,
         _state: &'a AppState,
         _device_id: i64,
-        _capabilities: &'a [String],
     ) -> BoxFut<'a, Result<Option<(&'static str, serde_json::Value)>, sqlx::Error>> {
         Box::pin(async { Ok(None) })
     }
@@ -165,11 +167,10 @@ impl Integrations {
         &self,
         state: &AppState,
         device_id: i64,
-        capabilities: &[String],
     ) -> Result<serde_json::Map<String, serde_json::Value>, sqlx::Error> {
         let mut keys = serde_json::Map::new();
         for one in self.all() {
-            if let Some((key, value)) = one.policy(state, device_id, capabilities).await? {
+            if let Some((key, value)) = one.policy(state, device_id).await? {
                 keys.insert(key.to_string(), value);
             }
         }

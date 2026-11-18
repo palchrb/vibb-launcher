@@ -8,7 +8,8 @@
 //!   host rebuilt through [links::short_link]), then one GET to Google's place lookup - all within one 5 s deadline,
 //!   through the integration's own gate (one at a time, 200 ms apart; a third caller is `busy` at once).
 //! - **Limits**: 30 resolves per phone an hour; 100 calls out an hour server-wide.
-//! - **The cache**: 10 minutes for an answer found, 1 minute for a failure; at most 500 entries; in memory only.
+//! - **The cache**: a long link and a place 10 minutes; a dead link and Google's answer without a place 1 minute; a
+//!   call that got no answer not at all. At most 500 entries; in memory only.
 //! - **The log** has the host and the outcome only: no id, no text, no point.
 
 use std::collections::{HashMap, VecDeque};
@@ -90,11 +91,17 @@ impl Window {
     }
 }
 
-/// What the cache keeps: a short link's whole answer, or a lookup's place (or none).
+/// What the cache keeps: a short link's long link, or a lookup's place (or none).
 #[derive(Clone, Debug)]
 enum Cached {
-    Short(Result<ShortAnswer, Refusal>),
+    /// A short link's long link (or its `dead`).
+    Short(Result<String, Refusal>),
     Place(Option<Place>),
+}
+
+/// A place's cache key: the language, the id and the link's text (the `text` check depends on it).
+fn place_key(hl: &str, ftid: &str, text: Option<&str>) -> String {
+    format!("place {hl} {ftid} {}", text.unwrap_or(""))
 }
 
 #[derive(Default)]
@@ -306,7 +313,9 @@ async fn count(db: &sqlx::SqlitePool, outcome: Outcome) {
 }
 
 impl MapLinks {
-    /// A short link's answer: from the cache, or its hops and (when the long link needs one) a lookup.
+    /// A short link's answer: its long link from the cache or its hops (a dead link kept a minute), then - when the long
+    /// link needs one - the place through [MapLinks::cached_lookup], under the place's own key (code QA M2: a failed
+    /// lookup never rides on the long link's 10 minutes).
     async fn short(
         &self,
         db: &sqlx::SqlitePool,
@@ -314,52 +323,71 @@ impl MapLinks {
         hl: &str,
     ) -> Result<ShortAnswer, Refusal> {
         let now = Instant::now();
-        let key = format!("short {hl} {short}");
-        if let Some(Cached::Short(cached)) = self.cache.get(&key, now) {
-            return cached;
-        }
-        let Ok(_admitted) = self.gate.admit.try_acquire() else {
-            return Err(Refusal::Busy);
-        };
         let deadline = now + self.deadline;
-        let long = match tokio::time::timeout_at(deadline, self.hops(short)).await {
-            Ok(Ok(long)) => long,
-            Ok(Err(refusal)) => {
-                if refusal == Refusal::Dead {
-                    self.cache.put(
-                        key,
-                        Cached::Short(Err(refusal)),
-                        KEEP_FAILED,
-                        Instant::now(),
-                    );
+        let key = format!("short {short}");
+        let mut admitted = None;
+        let long = match self.cache.get(&key, now) {
+            Some(Cached::Short(cached)) => cached?,
+            _ => {
+                let Ok(permit) = self.gate.admit.try_acquire() else {
+                    return Err(Refusal::Busy);
+                };
+                admitted = Some(permit);
+                match tokio::time::timeout_at(deadline, self.hops(short)).await {
+                    Ok(Ok(long)) => {
+                        self.cache.put(
+                            key,
+                            Cached::Short(Ok(long.clone())),
+                            KEEP_FOUND,
+                            Instant::now(),
+                        );
+                        long
+                    }
+                    Ok(Err(refusal)) => {
+                        if refusal == Refusal::Dead {
+                            self.cache.put(
+                                key,
+                                Cached::Short(Err(refusal)),
+                                KEEP_FAILED,
+                                Instant::now(),
+                            );
+                        }
+                        return Err(refusal);
+                    }
+                    Err(_) => {
+                        self.health.error(chrono::Utc::now(), "unreachable");
+                        tracing::info!(host = %host_of(short), outcome = "unreachable", "map links: short link");
+                        return Err(Refusal::Unreachable);
+                    }
                 }
-                return Err(refusal);
-            }
-            Err(_) => {
-                self.health.error(chrono::Utc::now(), "unreachable");
-                tracing::info!(host = %host_of(short), outcome = "unreachable", "map links: short link");
-                return Err(Refusal::Unreachable);
             }
         };
         let facts = links::facts(&long);
         let place = match &facts.ftid {
             Some(ftid) if !facts.has_point || !links::has_address(facts.text.as_deref()) => {
-                self.lookup_within(db, ftid, facts.text.as_deref(), hl, deadline)
-                    .await
+                let text = facts.text.as_deref();
+                match self.cache.get(&place_key(hl, ftid, text), Instant::now()) {
+                    Some(Cached::Place(place)) => place,
+                    _ => {
+                        if admitted.is_none() {
+                            admitted = self.gate.admit.try_acquire().ok();
+                        }
+                        if admitted.is_some() {
+                            self.cached_lookup(db, ftid, text, hl, deadline).await
+                        } else {
+                            count(db, Outcome::Busy).await;
+                            None
+                        }
+                    }
+                }
             }
             _ => None,
         };
-        let body = ShortAnswer {
+        drop(admitted);
+        Ok(ShortAnswer {
             url: Some(long),
             place,
-        };
-        self.cache.put(
-            key,
-            Cached::Short(Ok(body.clone())),
-            KEEP_FOUND,
-            Instant::now(),
-        );
-        Ok(body)
+        })
     }
 
     /// A feature id's place: from the cache, or one lookup through the gate (`busy` counted when it can't be).
@@ -371,22 +399,42 @@ impl MapLinks {
         hl: &str,
         deadline: Instant,
     ) -> Option<Place> {
-        let key = format!("place {hl} {ftid} {}", text.unwrap_or(""));
-        if let Some(Cached::Place(place)) = self.cache.get(&key, Instant::now()) {
+        if let Some(Cached::Place(place)) =
+            self.cache.get(&place_key(hl, ftid, text), Instant::now())
+        {
             return place;
         }
         let Ok(_admitted) = self.gate.admit.try_acquire() else {
             count(db, Outcome::Busy).await;
             return None;
         };
-        let place = self.lookup_within(db, ftid, text, hl, deadline).await;
-        let keep = if place.is_some() {
-            KEEP_FOUND
-        } else {
-            KEEP_FAILED
+        self.cached_lookup(db, ftid, text, hl, deadline).await
+    }
+
+    /// One lookup, its answer kept: a place 10 minutes, Google's answer without one a minute; a lookup that never got
+    /// an answer (unreachable, ours busy) isn't kept, so the next tap asks again.
+    async fn cached_lookup(
+        &self,
+        db: &sqlx::SqlitePool,
+        ftid: &str,
+        text: Option<&str>,
+        hl: &str,
+        deadline: Instant,
+    ) -> Option<Place> {
+        let (outcome, place) = self.lookup_within(db, ftid, text, hl, deadline).await;
+        let keep = match outcome {
+            Outcome::Unreachable | Outcome::Busy => None,
+            _ if place.is_some() => Some(KEEP_FOUND),
+            _ => Some(KEEP_FAILED),
         };
-        self.cache
-            .put(key, Cached::Place(place.clone()), keep, Instant::now());
+        if let Some(keep) = keep {
+            self.cache.put(
+                place_key(hl, ftid, text),
+                Cached::Place(place.clone()),
+                keep,
+                Instant::now(),
+            );
+        }
         place
     }
 
@@ -398,7 +446,7 @@ impl MapLinks {
         text: Option<&str>,
         hl: &str,
         deadline: Instant,
-    ) -> Option<Place> {
+    ) -> (Outcome, Option<Place>) {
         let (outcome, place) = tokio::time::timeout_at(deadline, self.lookup(ftid, text, hl))
             .await
             .unwrap_or((Outcome::Unreachable, None));
@@ -414,7 +462,7 @@ impl MapLinks {
             outcome = outcome.code(),
             "map links: place lookup"
         );
-        place
+        (outcome, place)
     }
 
     async fn lookup(&self, ftid: &str, text: Option<&str>, hl: &str) -> (Outcome, Option<Place>) {

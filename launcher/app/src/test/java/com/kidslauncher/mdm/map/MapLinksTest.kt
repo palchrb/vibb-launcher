@@ -138,8 +138,8 @@ class MapLinksTest {
         assertTrue(!browserOffered(windowOpen = false, browser = "org.example.browser", ownPackage = "me.vibb.launcher"))
     }
 
-    /** §7.1: the manifest's two filters are exactly the PPA's ([MapLinksRuntime.ANY_PATH_HOSTS], `/maps` on
-     * [MapLinksRuntime.MAPS_PATH_HOSTS]); disabled until the switch; no autoVerify. */
+    /** §7.1: the manifest's two filters are exactly the PPA's ([MapLinkForms.ANY_PATH_HOSTS], `/maps` on
+     * [MapLinkForms.MAPS_PATH_HOSTS]); disabled until the switch; no autoVerify. */
     @Test
     fun `the manifest's filters are the preferred activity's`() {
         val manifest = listOf(File("src/main/AndroidManifest.xml"), File("app/src/main/AndroidManifest.xml")).first { it.exists() }.readText()
@@ -148,8 +148,8 @@ class MapLinksTest {
         val filters = activity.split("<intent-filter>").drop(1)
         assertEquals(2, filters.size)
         val hosts = filters.map { f -> Regex("android:host=\"([^\"]+)\"").findAll(f).map { it.groupValues[1] }.toList() }
-        assertEquals(MapLinksRuntime.ANY_PATH_HOSTS, hosts[0])
-        assertEquals(MapLinksRuntime.MAPS_PATH_HOSTS, hosts[1])
+        assertEquals(MapLinkForms.ANY_PATH_HOSTS, hosts[0])
+        assertEquals(MapLinkForms.MAPS_PATH_HOSTS, hosts[1])
         assertTrue(!filters[0].contains("pathPrefix") && filters[1].contains("android:pathPrefix=\"/maps\""))
         for (f in filters) {
             for (needed in listOf("android.intent.action.VIEW", "android.intent.category.DEFAULT", "android.intent.category.BROWSABLE", "scheme=\"http\"", "scheme=\"https\"")) {
@@ -157,10 +157,10 @@ class MapLinksTest {
             }
         }
         // Every host the handler takes is a map link by the shared rules.
-        for (host in MapLinksRuntime.ANY_PATH_HOSTS) {
+        for (host in MapLinkForms.ANY_PATH_HOSTS) {
             val probe = if (host == "maps.app.goo.gl") "https://$host/AbC" else if (host == "maps.apple") "https://$host/p/AbC" else "https://$host/maps?q=1,2"
             assertTrue(host, MapLinkForms.isMapLink(probe))
         }
-        for (host in MapLinksRuntime.MAPS_PATH_HOSTS) assertTrue(host, MapLinkForms.isMapLink("https://$host/maps/AbC"))
+        for (host in MapLinkForms.MAPS_PATH_HOSTS) assertTrue(host, MapLinkForms.isMapLink("https://$host/maps/AbC"))
     }
 }

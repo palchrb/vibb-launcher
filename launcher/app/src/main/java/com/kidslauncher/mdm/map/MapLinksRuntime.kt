@@ -56,18 +56,9 @@ fun pickTarget(states: List<Pair<String, TargetState>>): Pair<String?, TargetSta
 /** The Android side of design 110: the handler's switch, the target, the steps' pages, the report. */
 object MapLinksRuntime {
 
-    /** The two filters of [MapLinkActivity] (manifest and persistent preferred activity alike, §7.1): every path on
-     * the map hosts, `/maps…` on the general ones. Each its own filter: paths apply to every authority of one. */
-    val ANY_PATH_HOSTS = listOf(
-        "maps.app.goo.gl", "maps.google.com", "maps.google.no", "maps.google.se", "maps.google.dk", "maps.google.fi",
-        "maps.google.de", "maps.google.co.uk", "maps.apple.com", "maps.apple",
-    )
-    val MAPS_PATH_HOSTS = listOf(
-        "www.google.com", "google.com", "www.google.no", "www.google.se", "www.google.dk", "www.google.fi",
-        "www.google.de", "www.google.co.uk", "goo.gl",
-    )
-
-    fun preferredFilters(): List<IntentFilter> = listOf(ANY_PATH_HOSTS to null, MAPS_PATH_HOSTS to "/maps").map { (hosts, path) ->
+    /** The two filters of [MapLinkActivity] (manifest and persistent preferred activity alike, §7.1), from the
+     * hosts [MapLinkForms] names. Each its own filter: paths apply to every authority of one. */
+    fun preferredFilters(): List<IntentFilter> = listOf(MapLinkForms.ANY_PATH_HOSTS to null, MapLinkForms.MAPS_PATH_HOSTS to "/maps").map { (hosts, path) ->
         IntentFilter(Intent.ACTION_VIEW).apply {
             addCategory(Intent.CATEGORY_DEFAULT)
             addCategory(Intent.CATEGORY_BROWSABLE)
@@ -150,7 +141,7 @@ object MapLinksRuntime {
     }
 
     /** A link to [host] that its filter takes (for the reach and the selectable check). */
-    private fun probe(host: String) = if (host in MAPS_PATH_HOSTS) "https://$host/maps/probe" else "https://$host/probe"
+    private fun probe(host: String) = if (host in MapLinkForms.MAPS_PATH_HOSTS) "https://$host/maps/probe" else "https://$host/probe"
 
     fun vibbHosts(context: Context): VibbHosts {
         val ours = userState(context, context.packageName)?.hostToStateMap ?: return VibbHosts(0, 0, 0)

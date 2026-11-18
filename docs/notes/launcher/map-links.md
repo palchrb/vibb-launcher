@@ -19,8 +19,9 @@ the phone never talks to Google or Apple.
   "Open by default" page (only in a pause): Google Play services' "Open supported links" off, then Vibb One's on with
   every link ticked. With the switch off and Play services' links still off, one row gives them back (Q4).
 - **Meldinger** (Q1): every web link in a bubble is underlined and tappable (`ui/messages/MessageLinks.kt`); a map
-  link goes straight to the handler while the switch is on, any other link to the one app Android names, else a note.
-- **Dagen**: a "Kart" row per map link (at most two) in an event's location or description.
+  link goes straight to the handler while the switch is on; any other link goes to the one app Android names that the parent allows (`messageLinkTarget`: the allowlist, the login browser, Vibb One; never Play services; nothing during a time rule), else the calm note. The bubble's ink plus an underline is the user's choice (2026-11-18).
+- **Dagen**: a "Kart" row per map link (at most two) in an event's location or description, for an allowed or suspended target.
+- Vibb's legacy PIN lock isn't checked (phase D removes it; lock task blocks the start under it).
 - **The report** `map_links`: the target, its state, Play services' link handling (`DomainVerificationManager`, API 31),
   Vibb One's hosts `{selected, selectable, declared}` and `reach` per class of link (what Android resolves a probe to).
 - Contracts: `map_links/contract.json` (shared, `MapLinksContractTest`), `map_link_rules.json` (the launcher's,

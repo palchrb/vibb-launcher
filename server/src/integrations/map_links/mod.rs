@@ -104,7 +104,6 @@ impl Integration for MapLinks {
         &'a self,
         state: &'a AppState,
         device_id: i64,
-        _capabilities: &'a [String],
     ) -> BoxFut<'a, Result<Option<(&'static str, Value)>, sqlx::Error>> {
         Box::pin(async move {
             let on = is_on(&state.db, device_id).await?;

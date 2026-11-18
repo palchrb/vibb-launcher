@@ -610,3 +610,51 @@ fn the_integration_is_named_and_healthy_from_the_start() {
     assert_eq!(links.name(), "map_links");
     assert_eq!(links.health(), crate::integrations::Health::default());
 }
+
+/// Code QA M2: a short link's lookup that got no answer isn't kept with the long link - the next tap asks again and
+/// gets the place, without asking the short link again; Google's answer without a place is kept a minute.
+#[tokio::test]
+async fn a_lookup_without_an_answer_is_asked_again() {
+    let contract = contract();
+    let app = TestApp::new().await;
+    let (_, token) = phone_on(&app).await;
+    let request = contract["resolve"]["requests"]["short"].clone();
+    let short = request["url"].as_str().unwrap();
+    let ftid = contract["resolve"]["requests"]["ftid"]["ftid"]
+        .as_str()
+        .unwrap();
+    let long = server_rows()["hops"][0]["answers"][0]["location"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    app.fetch.redirect(short, 302, &long);
+    let lookup = preview::lookup_url(ftid, "no");
+    app.fetch
+        .fail(&lookup, crate::music_net::FetchError::Timeout);
+    assert_eq!(
+        resolve(&app, &token, request.clone()).await,
+        (StatusCode::OK, json!({"url": long}))
+    );
+    answer_lookup(&app, ftid, "artbox");
+    let (status, body) = resolve(&app, &token, request.clone()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["place"]["name"], "Artbox AS");
+    let calls = app.fetch.calls.lock().unwrap().clone();
+    assert_eq!(
+        calls.iter().filter(|c| c.as_str() == short).count(),
+        1,
+        "{calls:?}"
+    );
+    // Google's answer without a place: kept a minute (the third tap doesn't ask).
+    let app = TestApp::new().await;
+    let (_, token) = phone_on(&app).await;
+    app.fetch.redirect(short, 302, &long);
+    answer_lookup(&app, ftid, "consent");
+    assert_eq!(
+        resolve(&app, &token, request.clone()).await.1,
+        json!({"url": long})
+    );
+    answer_lookup(&app, ftid, "artbox");
+    assert_eq!(resolve(&app, &token, request).await.1, json!({"url": long}));
+    assert_eq!(app.fetch.count(), 2);
+}

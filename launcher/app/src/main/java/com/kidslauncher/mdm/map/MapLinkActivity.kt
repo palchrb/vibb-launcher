@@ -64,7 +64,7 @@ class MapLinkActivity : AppCompatActivity() {
     }
 
     private fun run(step: MapStep, parsed: MapParse) {
-        if (stopped) return
+        if (stopped || isFinishing) return
         when (step) {
             MapStep.Nothing -> finish()
             is MapStep.Open -> open(step.uri)
@@ -96,7 +96,8 @@ class MapLinkActivity : AppCompatActivity() {
                 dialog = AlertDialog.Builder(this@MapLinkActivity, R.style.KidAlertDialog)
                     .setMessage(R.string.map_links_waiting)
                     .setCancelable(true)
-                    .setOnCancelListener { finish() }
+                    // Code QA L2: backing out stops the answer from starting anything.
+                    .setOnCancelListener { leave() }
                     .show()
             }
             val (status, answer) = withContext(Dispatchers.IO) {
@@ -159,6 +160,12 @@ class MapLinkActivity : AppCompatActivity() {
             }
         }
         dialog = builder.show()
+    }
+
+    private fun leave() {
+        stopped = true
+        job?.cancel()
+        finish()
     }
 
     override fun onStop() {

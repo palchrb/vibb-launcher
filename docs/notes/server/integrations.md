@@ -7,13 +7,20 @@ server does with an outside service for the phones - lives inside one boundary f
 ## The shape
 
 - **Code**: `server/src/integrations/<name>/`, behind the Cargo feature `<name>` (in `default`, so a normal build has
-  it; `cargo build --no-default-features` leaves every integration out). Nothing outside `src/integrations/` names it.
+  it; `cargo build --no-default-features` leaves every integration out, and `server-ci.yml`'s build job checks that
+  it compiles so). Nothing outside `src/integrations/` names it, with two stated exceptions (code QA L7): the status
+  report's wire field (`StatusReportRequest.map_links`, raw `Value`, and its name in `status_heartbeat::REPORT_KEYS`) -
+  the report is one struct the heartbeat expands, and a flattened map there would change how every other field
+  deserializes; and the core's snapshot tests (`policy_json_keys_snapshot`, the migrations' order, the app lock's
+  router walk), which pin the default build. A featureless build compiles; its tests aren't run.
 - **The trait** (`src/integrations/mod.rs`, `Integration`): `name()`, `device_routes()` (merged into the device API
   behind the device token, `device_routes.rs`), `admin_routes()` (merged into the admin router behind the session,
   `main.rs`), `health()` - and three hooks with do-nothing defaults: `policy()` (its top-level policy key, flattened
   into `PolicyResponse.integrations`), `intake()` (its part of a status report, from `StatusReportRequest`) and
   `apps_group()` (its group on Device › Apps, rendered by the integration; the page prints `integration_groups` after
   App push and knows nothing else).
+- **No capability**: the trait's `policy` takes no capabilities (map links' key is always sent, the user's 2026-11-18
+  rule); a later integration that needs a claim adds the parameter.
 - **State**: `AppState.integrations` (`Integrations`), one field per integration under its feature, each with its own
   client, gate, cache and limits. The tests build it with `Integrations::with_source(fetch)` (the canned fetch).
 - **Tables**: its own migration and its own table names (`map_link_devices`, `map_link_lookups`; migration 0159). No
@@ -38,5 +45,7 @@ server does with an outside service for the phones - lives inside one boundary f
   once for a third caller), 30 resolves per phone an hour, 100 calls out an hour, the 10-minute cache, the counter.
 - `page.rs`: the Apps group, its line (`server.json`'s `pwa_lines`) and the save (`#map-links`).
 - No capability gates `map_links` in the policy (the user, 2026-11-18: no backwards compatibility on the phones yet).
+- The cache keeps a short link's long link and each place under its own key: a lookup that got no answer is asked
+  again on the next tap (code QA M2).
 - Not built here: the Settings hub's 7-day counts by outcome (§8.4) - the counter is there for C2's generic health
   page to show.

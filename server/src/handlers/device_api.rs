@@ -416,12 +416,8 @@ pub(crate) async fn build_policy(
     let server_tls = crate::server_tls::policy(state, device_id).await?;
     // Design 108 §3.8: app push; a read error fails the policy.
     let unified_push = crate::unified_push::policy(&state.db, device_id).await?;
-    // The integrations' keys (design 110's `map_links`), each for a launcher that claims it; a read error fails the
-    // policy.
-    let integrations = state
-        .integrations
-        .policy(state, device_id, &capabilities)
-        .await?;
+    // The integrations' keys (design 110's `map_links`, always sent); a read error fails the policy.
+    let integrations = state.integrations.policy(state, device_id).await?;
     let popped = pop_command(&state.db, device_id, policy.kid_pin_rev).await?;
     if let Some((id, _, requested_at, _)) = &popped {
         // Commands run in the order they were asked for (QA Low 1): once this one is out, an older

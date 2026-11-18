@@ -14,6 +14,17 @@ object MapLinkForms {
      * handling off, §6.3's row gives it back. */
     const val SHORT_LINK_HOLDER = "com.google.android.gms"
 
+    /** The hosts [MapLinkActivity] takes (its manifest's two filters, `MapLinksRuntime.preferredFilters`, pinned by
+     * `MapLinksTest`): every path on the map hosts, `/maps…` on the general ones (code QA L7: named here alone). */
+    val ANY_PATH_HOSTS = listOf(
+        "maps.app.goo.gl", "maps.google.com", "maps.google.no", "maps.google.se", "maps.google.dk", "maps.google.fi",
+        "maps.google.de", "maps.google.co.uk", "maps.apple.com", "maps.apple",
+    )
+    val MAPS_PATH_HOSTS = listOf(
+        "www.google.com", "google.com", "www.google.no", "www.google.se", "www.google.dk", "www.google.fi",
+        "www.google.de", "www.google.co.uk", "goo.gl",
+    )
+
     /** A short link's id: `[A-Za-z0-9_-]{1,64}`. */
     private fun shortId(id: String) = id.length in 1..64 && id.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' || it == '_' || it == '-' }
 

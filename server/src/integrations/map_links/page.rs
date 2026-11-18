@@ -25,6 +25,9 @@ pub struct Line {
     pub text: String,
     pub orange: bool,
     pub info: Option<String>,
+    /// Under the switch; `false` for what follows from a choice the parent made (Google Maps allowed, the switch off
+    /// with Play services' links still off), which is a quiet note in the footer's ⓘ (code QA L10, "Words in the UI").
+    pub shown: bool,
 }
 
 #[derive(Template)]
@@ -100,6 +103,7 @@ fn line(lang: Lang, code: &'static str, orange: bool, app: &str) -> Line {
         text: words(text),
         orange,
         info: info.map(words),
+        shown: !matches!(code, "held" | "off_play"),
     }
 }
 

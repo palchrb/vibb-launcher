@@ -51,6 +51,9 @@ object MapLinks {
 
     private const val MAX_LABEL = 120
 
+    /** The longest link a message's text gives (the handler's own limit). */
+    const val MAX_LINK = 2048
+
     /** A label cut to 120 characters at a word (§2). */
     fun cutLabel(text: String): String {
         val clean = text.trim().replace(Regex("\\s+"), " ")
@@ -159,12 +162,22 @@ object MapLinks {
         while (true) {
             val m = start.find(text, from) ?: break
             var end = m.range.first
-            while (end < text.length && !text[end].isWhitespace() && text[end] != '<' && text[end] != '>' && text[end] != '"') end++
+            // Code QA L3: a link is at most MAX_LINK long, and its brackets are counted once (no quadratic trim).
+            val limit = minOf(text.length, m.range.first + MAX_LINK)
+            while (end < limit && !text[end].isWhitespace() && text[end] != '<' && text[end] != '>' && text[end] != '"') end++
+            var opens = 0
+            var closes = 0
+            for (i in m.range.first until end) {
+                if (text[i] == '(') opens++ else if (text[i] == ')') closes++
+            }
             while (end > m.range.last + 1) {
                 val c = text[end - 1]
-                val opens = text.substring(m.range.first, end).count { it == '(' }
-                val closes = text.substring(m.range.first, end).count { it == ')' }
-                if (c in ".,;:!?'" || (c == ')' && closes > opens)) end-- else break
+                if (c in ".,;:!?'" || (c == ')' && closes > opens)) {
+                    if (c == ')') closes--
+                    end--
+                } else {
+                    break
+                }
             }
             if (end > m.range.last + 1 && LinkUrl.parse(text.substring(m.range.first, end)) != null) {
                 found += m.range.first until end
