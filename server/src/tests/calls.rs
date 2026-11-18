@@ -827,6 +827,7 @@ async fn calls_page_shows_role_problems_and_fail_closed() {
     call_state["state"] = json!("fail_closed");
     call_state["dialer_role_held"] = json!(false);
     call_state["redirection_role_held"] = json!(false);
+    call_state["screening_role_held"] = json!(true);
     call_state["last_error"] = json!("setDefaultDialerApplication: IllegalArgumentException");
     call_state["call_log_readable"] = json!(false);
     call_state["boot_policy"] = json!("write_failed");
@@ -878,12 +879,8 @@ async fn calls_page_says_whether_incoming_calls_are_filtered() {
     let screening = "data-setup-warning=\"call_filter\"";
     for (dialer, held, present, absent) in [
         (false, None, vec![anyone], vec![not_phone_app, screening]),
-        (
-            false,
-            Some(false),
-            vec![anyone],
-            vec![not_phone_app, screening],
-        ),
+        // Neither role: the warning, and the setup step's line too (it reads both roles).
+        (false, Some(false), vec![anyone], vec![not_phone_app]),
         (
             false,
             Some(true),
