@@ -466,8 +466,11 @@ async fn battery_exemption_is_stored_and_shown() {
     let html = about_page(&app, id).await;
     let row = &html[html.find("data-row=\"battery\"").expect("the row")..];
     assert!(row.contains(">On</span>"), "{html}");
-    assert!(row.contains("Changes may arrive late"), "{html}");
-    assert!(row.contains("Background connection"), "{html}");
+    // Design 114 §5.5: a link to the setup step, its how there - no detail here, no adb.
+    assert!(html.contains(&format!(
+        "<a class=\"row\" href=\"/devices/{id}/setup#step-background\" data-row=\"battery\">"
+    )));
+    assert!(!html.contains("adb "), "{html}");
 
     app.post_status(&token, json!({ "battery_optimization_exempt": true }))
         .await;
@@ -510,11 +513,8 @@ async fn write_settings_grant_is_stored_and_shown() {
     let html = about_page(&app, id).await;
     let row = &html[html.find("data-row=\"write-settings\"").expect("the row")..];
     assert!(row.contains(">Not allowed</span>"), "{html}");
-    let on_phone = row
-        .find("Pause all restrictions › Modify system settings")
-        .expect("the on-phone path");
-    let adb = row.find("adb shell appops").expect("the shortcut");
-    assert!(on_phone < adb, "the on-phone path comes first: {html}");
+    // Design 114: no adb anywhere; with nothing that needs it, the row says only what it is for.
+    assert!(!html.contains("adb "), "{html}");
     // Orange only while a feature the parent chose needs the grant (the touch switch or a clock format).
     let value_tag = |html: &str| {
         let row = &html[html.find("data-row=\"write-settings\"").expect("the row")..];
