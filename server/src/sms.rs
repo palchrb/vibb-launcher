@@ -17,38 +17,8 @@ use crate::AppState;
 use crate::handlers::device_api::{Field, known_fields};
 use crate::security::{self, AuthedDevice, Detail, PhoneLine};
 
-/// The launcher's capability: it has the engine and reads `calls_mode`/`sms_mode` (design 77 §7).
-pub const SMS_ENGINE_CAPABILITY: &str = "sms_engine_v1";
-
-/// D2, R2-L7: whether a launcher without the engine does a channel pair exactly as asked - calls managed or off with
-/// SMS off or not managed, or both not managed. Anything else it does stricter (SMS lost, calls contacts-only), so the
-/// Calls page offers it only once the phone reports [SMS_ENGINE_CAPABILITY] (code QA M2).
-pub fn older_launcher_expresses(calls_mode: &str, sms_mode: &str) -> bool {
-    matches!(
-        (calls_mode, sms_mode),
-        ("unmanaged", "unmanaged") | ("managed" | "off", "off" | "unmanaged")
-    )
-}
-
-/// What a launcher without the engine makes of a stored pair it can't express (`None`: none): whether SMS the parent
-/// wanted is lost (SMS "Styrt av Vibb" reads as SMS off) and whether calls the parent left alone are contacts-only
-/// (calls "Ikke styrt" with SMS restricted reads as managed calls).
-pub fn older_launcher_loses(calls_mode: &str, sms_mode: &str) -> Option<(bool, bool)> {
-    (!older_launcher_expresses(calls_mode, sms_mode))
-        .then(|| (sms_mode == "managed", calls_mode == "unmanaged"))
-}
-
-/// Design 80 D13: the launcher honours `call_policy.sms_groups` ("Gruppemeldinger") and reports
-/// `sms_state.own_learned`. Until a phone claims it the Calls page draws the switch disabled - an older engine would
-/// ignore an "off".
-pub const SMS_GROUPS_CAPABILITY: &str = "sms_groups_v1";
-
-/// Whether the phone's newest status report claims the engine (no report: no).
-pub async fn has_engine(db: &sqlx::SqlitePool, device_id: i64) -> Result<bool, sqlx::Error> {
-    has_capability(db, device_id, SMS_ENGINE_CAPABILITY).await
-}
-
-/// Whether the phone's newest status report claims `capability` (no report: no).
+/// Whether the phone's newest status report claims `capability` (no report: no). Its last caller is
+/// `handlers::time_answer` (C1 step 12f takes both out).
 pub async fn has_capability(
     db: &sqlx::SqlitePool,
     device_id: i64,
@@ -655,27 +625,6 @@ mod tests {
             std::fs::read("testdata/sms_contract.json").unwrap(),
             std::fs::read("../launcher/app/src/test/resources/sms_contract.json").unwrap(),
             "server/testdata/sms_contract.json and the launcher's copy differ"
-        );
-    }
-
-    /// Code QA M2: what a launcher without the engine loses of each stored pair it can't express.
-    #[test]
-    fn the_older_launcher_loses() {
-        assert_eq!(contract()["capability"], SMS_ENGINE_CAPABILITY);
-        assert_eq!(contract()["groups_capability"], SMS_GROUPS_CAPABILITY);
-        assert_eq!(older_launcher_loses("managed", "off"), None);
-        assert_eq!(
-            older_launcher_loses("unmanaged", "managed"),
-            Some((true, true))
-        );
-        assert_eq!(
-            older_launcher_loses("managed", "managed"),
-            Some((true, false))
-        );
-        assert_eq!(older_launcher_loses("off", "managed"), Some((true, false)));
-        assert_eq!(
-            older_launcher_loses("unmanaged", "off"),
-            Some((false, true))
         );
     }
 

@@ -807,13 +807,13 @@ async fn every_settling_marks_the_event_read_for_every_parent() {
     }
 }
 
-/// §8.5 (code QA M1): the RCS step shows before "Styrt av Vibb" is chosen - SMS "Ikke styrt" or "Av" on a phone that
-/// can take it - and under it, with Google's form behind the ⓘ; not for a phone without the engine.
+/// §8.5 (code QA M1): the RCS step shows before "Styrt av Vibb" is chosen - SMS "Ikke styrt" or "Av" - and under
+/// it, with Google's form behind the ⓘ.
 #[tokio::test]
 async fn the_rcs_step_shows_before_and_under_managed() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
-    let (id, token) = managed_phone(&app).await;
+    let (id, _) = managed_phone(&app).await;
     let rcs = |page: &str| {
         let start = page.find("data-rcs")?;
         Some(page[start..start + page[start..].find("</div>").unwrap()].to_string())
@@ -849,19 +849,6 @@ async fn the_rcs_step_shows_before_and_under_managed() {
             "{mode}: {line}"
         );
     }
-    // Without the engine "Styrt av Vibb" can't be chosen, so there is no step before it.
-    sqlx::query("UPDATE device_policy SET sms_mode = 'unmanaged' WHERE device_id = ?")
-        .bind(id)
-        .execute(&app.db)
-        .await
-        .unwrap();
-    app.post_status(&token, json!({ "capabilities": ["call_policy_v1"] }))
-        .await;
-    let page = app
-        .get_page(&format!("/devices/{id}/calls"), &cookie)
-        .await
-        .text();
-    assert!(rcs(&page).is_none(), "{page}");
 }
 
 /// Code QA L2: the intake refuses a held row of a class with no allow path; a blocked one is taken.

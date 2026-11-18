@@ -8,7 +8,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - **`contacts` is a global address book** keyed by the normalised number (`src/phone.rs`): adding a number another device already has reuses the row and renames it for every device (the page says so). Changing the default country code does not renormalise stored numbers.
 - **Number normalisation is a shared contract with the launcher**: `src/phone.rs` and the launcher's `calls/PhoneNumbers.kt` run the same `testdata/phone_vectors.json` (the launcher keeps a byte-identical copy; each test suite compares the two when the sibling repo is checked out next to it). ASCII digits only; `*`/`#`/`,`/`;` rejected (MMI/USSD never allowlisted); 3-6 digits = short number, matched exactly; no suffix matching. Change both sides and both copies together.
 - **`PolicyResponse.call_policy` is always sent, with both channels' modes** (QA blocker 3, `device_api::build_call_policy`): unmanaged devices get `{"calls_mode": "unmanaged", "sms_mode": "unmanaged", ...defaults, "contacts": []}`. The launcher rejects a whole response without the key once its calls were managed, so a rolled-back server can't silently unmanage calls - never make this key optional. Contacts are ordered by `sort_order, name`; `message_app` is resolved against the device default server-side.
-- **Status reports carry `capabilities` (`["call_policy_v1"]`) and `call_state`** (the launcher's `CallState` object: role holders, restrictions, fail-closed state, last error, last emergency call, callback window), stored capped as JSON in `device_status.capabilities_json`/`call_state_json` - since 0.55.0 (security review L10) `call_state` through its known keys (`device_api::CALL_STATE_FIELDS`, every key the launcher's `CallState` sends: each of its shape or `null`, else dropped; `last_error` clipped to 300 characters, as the launcher keeps it, a package or time longer than its field dropped; any other key dropped; `intake_limits::call_and_time_state_keep_their_known_keys`). `calls::call_report` turns them into typed `calls::Finding`s (design 31 step 8; each one's `CallProblem` is an Attention row, its `note` the calls page's warning): launcher can't enforce calls (or stopped reporting it - an older launcher), dialer/call-redirection role missing, whether incoming calls are still filtered without the dialer role (`screening_role_held`, security review L7: the call-screening role's holder screens them; neither = "not filtered - anyone can call"), the call-screening role missing while the launcher is the phone app - a plain hint, not an error (`CallReport.screening_hint`, the "Call screening · Not granted" row: the launcher hangs up calls that aren't allowed, but another app could screen first - the phone can't read who holds the role -, so grant it with adb, the command behind the row's ⓘ; absent from older launchers = nothing; no "accept the prompt": Android refuses exclusive-role prompts under the launcher's DISALLOW_CONFIG_DEFAULT_APPS), fail-closed, a reported error, an unreadable call log (`call_log_readable: false`), the Messages app allowlisted while SMS is off, and an emergency call / an open callback window. The calls page keeps an emergency call as a warning for 7 days; its Attention row (`CallReport::problems`) goes once any parent has read the call's `emergency_call` inbox event (`parent_events::emergency_call_read`: the event's dedup key is the call's instant) and at the latest 24 h after the call (`EMERGENCY_ATTENTION_HOURS`; with no event the day alone).
+- **Status reports carry `capabilities` (`["call_policy_v1"]`) and `call_state`** (the launcher's `CallState` object: role holders, restrictions, fail-closed state, last error, last emergency call, callback window), stored capped as JSON in `device_status.capabilities_json`/`call_state_json` - since 0.55.0 (security review L10) `call_state` through its known keys (`device_api::CALL_STATE_FIELDS`, every key the launcher's `CallState` sends: each of its shape or `null`, else dropped; `last_error` clipped to 300 characters, as the launcher keeps it, a package or time longer than its field dropped; any other key dropped; `intake_limits::call_and_time_state_keep_their_known_keys`). `calls::call_report` turns them into typed `calls::Finding`s (design 31 step 8; each one's `CallProblem` is an Attention row, its `note` the calls page's warning): dialer/call-redirection role missing, whether incoming calls are still filtered without the dialer role (`screening_role_held`, security review L7: the call-screening role's holder screens them; neither = "not filtered - anyone can call"), the call-screening role missing while the launcher is the phone app - a plain hint, not an error (`CallReport.screening_hint`, the "Call screening · Not granted" row: the launcher hangs up calls that aren't allowed, but another app could screen first - the phone can't read who holds the role -, so grant it with adb, the command behind the row's ⓘ; absent from older launchers = nothing; no "accept the prompt": Android refuses exclusive-role prompts under the launcher's DISALLOW_CONFIG_DEFAULT_APPS), fail-closed, a reported error, an unreadable call log (`call_log_readable: false`), the Messages app allowlisted while SMS is off, and an emergency call / an open callback window. The calls page keeps an emergency call as a warning for 7 days; its Attention row (`CallReport::problems`) goes once any parent has read the call's `emergency_call` inbox event (`parent_events::emergency_call_read`: the event's dedup key is the call's instant) and at the latest 24 h after the call (`EMERGENCY_ATTENTION_HOURS`; with no event the day alone).
 - Emergency numbers are never configured here: the launcher always allows them. The override PIN and "pause" don't open calls beyond the call rules (decision after QA review); since step 6 they do lift a time rule's call block (school), back to the normal call rules.
 
 ## Emulator fixes (handy step 9 part B, design `docs/design/09-sms-and-fixes.md`, at the monorepo root)
@@ -101,7 +101,7 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
   `the_migration_keeps_every_phone_as_it_was`; no phone goes to SMS `managed`); a phone created since starts as before 0130, both
   channels `unmanaged` (code QA M2: the setup QR installs the newest stable launcher, which may not have the engine, and
   an older launcher reads SMS `managed` as SMS off and calls `unmanaged` beside it as contacts-only). The parent picks
-  "Styrt av Vibb" once the phone reports `sms_engine_v1` (the gate below). `DevicePolicy::any_channel_managed()` is
+  "Styrt av Vibb". `DevicePolicy::any_channel_managed()` is
   either channel not `unmanaged`; `calls_managed()` and `sms_managed()` are each channel alone. The
   readers that mean the calls channel use `calls_managed()`: the call report's role/screening/call-log findings and the
   B1 "waiting" rule's early return (a launcher with the engine reports `call_state.state` for calls alone), "Dialer not
@@ -145,15 +145,8 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
   the contract's `names` and `name_matches` rows.
 - **The Calls page, the minimum until step 4**: the three switches became two rows, "Samtaler"/"SMS" ("Calls"/"SMS"),
   each a picker Off / Managed by Vibb / Not managed with D2's sub-line; the form posts `calls_mode` and `sms_mode` (an
-  unknown or missing one is a 400). **The capability gate** (step 4's, brought forward by code QA M2): until the
-  phone's last report claims `sms_engine_v1` (`sms::has_engine`), a pair an older launcher can't do
-  (`sms::older_launcher_expresses`: anything but calls managed/off with SMS off/not managed, or both not managed) shows
-  disabled, "<choice> - Oppdater Vibb One først", and a save of one is refused in place (the page again, 400, "Oppdater
-  Vibb One først: telefonens versjon kan ikke dette ennå." under the rows; the stored pair is always taken back). With
-  the capability SMS's choice reads "Styrt av Vibb (anbefalt)"; no phone is switched by itself. A stored pair the
-  phone can't do (set up again with an older build) keeps the fail-closed derived keys and the calls report's finding
-  "Telefonen må oppdateres" with what it costs (`Finding::NeedsUpdate`: "SMS går tapt og samtaler er bare til kontakter
-  til da.", or the half that applies). Built in step 4 (the next section): the segmented control, the contact form's "Meldinger" group, the own-number fields, the lock-text switch, "Meldinger som venter",
+  unknown or missing one is a 400). SMS's choice reads "Styrt av Vibb (anbefalt)"; no phone is switched by itself
+  (C1 step 12a took out the capability gate on `sms_engine_v1`: every pair is offered and taken). Built in step 4 (the next section): the segmented control, the contact form's "Meldinger" group, the own-number fields, the lock-text switch, "Meldinger som venter",
   the blocked list, the sender-name card, the `sms_held` event with its push and `PushBudget`, the findings.
 - Contract: `testdata/sms_contract.json`, byte-identical in the launcher's test resources (`sms::tests`). Tests:
   `sms::tests`, `tests::sms`.
@@ -165,11 +158,10 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
   sibling selectors only, no `:has()`), each saving on change (`data-autosave`, the `<noscript>` Save; a radio checked
   from the keyboard saves on Enter/Space or when the focus leaves the group, never on each arrow - code QA L6,
   `autosave.js` v=3). The chosen state's sub-line under it. SMS's RCS step (§8.5, code QA M1): before "Styrt av Vibb"
-  is chosen ("Ikke styrt" or "Av" on a phone with the engine) "Før du velger Styrt av Vibb: slå av chatfunksjoner i
+  is chosen ("Ikke styrt" or "Av") "Før du velger Styrt av Vibb: slå av chatfunksjoner i
   Meldinger.", under it "Slå av chatfunksjoner i Meldinger først."; its ⓘ links Google's form
-  (`calls::RCS_FORM_URL`, messages.google.com/disable-chat) for a phone whose Messages is already hidden. With
-  `sms_engine_v1`, SMS's managed segment carries a quiet "anbefalt"; without it the capability gate is step 1's: a
-  choice the phone can't do is a disabled radio, with "<choice> - Oppdater Vibb One først" under the row.
+  (`calls::RCS_FORM_URL`, messages.google.com/disable-chat) for a phone whose Messages is already hidden. SMS's managed
+  segment carries a quiet "anbefalt".
 - **Each contact's "Meldinger" group** (D3): "Kan sende melding til {kid}" (`sms_in`), "Kan få melding fra {kid}"
   (`sms_out`), "Bilder i meldinger" (`mms`), in the contact's one form with the call switches (a missing one is off).
   For an emergency number (`emergency::is_emergency`) "Kan sende melding til" is disabled with "Nødnumre kan ikke sende
@@ -380,9 +372,8 @@ Steps 1 and 2: server and template only - no policy key, contract file, migratio
 - **Step 3, "Gruppemeldinger" and the learned number** (D13, §4.4; one commit with the launcher):
   `device_policy.sms_groups` (migration 0134, default on), sent as `call_policy.sms_groups` always
   (`policy_json_keys_snapshot`, `sms_contract.json`'s `policy` and `groups_off`). The switch sits in the SMS form
-  (Avansert › Meldinger) with a hidden `groups_shown`: only a post with it writes `sms_groups` (an older page keeps
-  it), and only for a phone whose last report claims `sms_groups_v1` (`sms::SMS_GROUPS_CAPABILITY`,
-  `sms::has_capability`) - before, the switch is drawn disabled with "Oppdater Vibb One først". Off: Avansert's row adds
+  (Avansert › Meldinger) with a hidden `groups_shown`: only a post with it writes `sms_groups` (a post without
+  it keeps it). Off: Avansert's row adds
   "Gruppemeldinger av", a blocked group row says "Gruppemeldinger er slått av", and the missing-number lines are silent
   (nothing is lost for want of the number). `sms_state.own_learned` (`sms::sanitize_state`: `null`, or every number by
   `sender_ok` and a full `+` number, `at` >= 0, at most two in `conflict`; anything else drops the key) gives the
@@ -391,12 +382,10 @@ Steps 1 and 2: server and template only - no policy key, contract file, migratio
   "Endre…"; a conflict is the field with "To meldinger viste ulike numre: {a} og {b}. Skriv inn det riktige." and "Bruk
   {number}" beside each (`source=conflict:<0|1>`). Those store the reported number into the first active slot with no
   stored number. A learned number counts for "number missing" only while it is in use, and is refused as a contact
-  (`calls_sms::phone_numbers`). Tests: `tests::calls_simpler::the_group_switch_needs_the_capability_and_its_marker`,
+  (`calls_sms::phone_numbers`). Tests: `tests::calls_simpler::the_group_switch_needs_its_marker`,
   `the_learned_number_and_a_conflict`, `tests::sms` (the policy with `sms_groups` both ways), `sms::tests` (the report's
   `own_learned`, its conflict row and the hostile ones).
 - **The code QA's fix round** (`docs/review/qa-80-code.md`; these replace what the bullets above say):
-  - `groups_shown` is drawn only with an enabled switch (`sms_groups_v1` claimed), so a page drawn before the
-    capability never turns groups off (M1).
   - **A learned number is no bar to a contact** (L1): `phone_numbers` (Add Contact's refusal, the family list) holds
     only the stored and the SIM-reported numbers - anyone can send the message that taught the phone. Added as a
     contact, it reaches the phone, which drops the learned number; the page no longer offers a learned number that
@@ -422,8 +411,7 @@ Steps 1 and 2: server and template only - no policy key, contract file, migratio
     line names the kid (N5). "Tilpasset" takes the switch's box as its minimum (`flex: 0 0 auto; min-width: 51px`, no
     gap of its own; second pass V3): at the default size its label wraps as beside the switch, so a save moves nothing;
     at a larger font the word takes room from the label and is never clipped (N3). Avansert › Meldinger has hairlines between its rows (`.group-lines`).
-  - Tests: `tests::calls_simpler::a_page_drawn_before_the_capability_never_turns_groups_off`,
-    `a_learned_number_can_be_added_as_a_contact`, `a_stale_sms_form_keeps_a_number_stored_meanwhile`,
+  - Tests: `tests::calls_simpler::a_learned_number_can_be_added_as_a_contact`, `a_stale_sms_form_keeps_a_number_stored_meanwhile`,
     `bruk_dette_nummeret_only_for_a_number_the_tap_stores`, `an_emergency_number_added_without_js_follows_the_texts_switch`,
     `an_unknown_settings_section_is_refused`; `contact_requests::the_prefill_and_retry_rules` (every switch, the name);
     the reconnect jstest for `data-reopens`; second pass: `a_stale_learned_offer_stores_nothing` and the auto-reload

@@ -984,11 +984,10 @@ async fn groups_on(app: &TestApp, id: i64) -> bool {
         .unwrap()
 }
 
-/// D13: the switch is drawn disabled until the phone claims `sms_groups_v1` (a post can't turn it off then); with it,
-/// only a post carrying `groups_shown` writes it (an older page keeps it). Off: the policy says so, Avansert's row
-/// says "Group texts off", a blocked group row says why, and the missing number's lines are silent.
+/// D13: only a post carrying `groups_shown` writes the switch (a post without it keeps it). Off: the policy says so,
+/// Avansert's row says "Group texts off", a blocked group row says why, and the missing number's lines are silent.
 #[tokio::test]
-async fn the_group_switch_needs_the_capability_and_its_marker() {
+async fn the_group_switch_needs_its_marker() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = managed_phone(&app).await;
@@ -1003,21 +1002,9 @@ async fn the_group_switch_needs_the_capability_and_its_marker() {
     let html = page(&app, &cookie, &calls).await;
     let row = part(&html, "data-groups", "</label>");
     assert!(
-        row.contains("Update Vibb One first") && row.contains("checked disabled"),
+        !row.contains("Update Vibb One") && !row.contains("disabled"),
         "{row}"
     );
-    app.request_form(Method::POST, &sms, Some(&cookie), &[("groups_shown", "1")])
-        .await;
-    assert!(groups_on(&app, id).await, "no capability: kept");
-
-    report_groups(
-        &app,
-        &token,
-        json!({ "own_numbers": [{ "slot": 1, "number": null }] }),
-    )
-    .await;
-    let html = page(&app, &cookie, &calls).await;
-    assert!(!part(&html, "data-groups", "</label>").contains("disabled"));
     let res = app
         .request_form(Method::POST, &sms, Some(&cookie), &[("groups_shown", "1")])
         .await;
@@ -1027,7 +1014,7 @@ async fn the_group_switch_needs_the_capability_and_its_marker() {
         app.policy(&token).await["call_policy"]["sms_groups"],
         json!(false)
     );
-    // An older page (no marker) keeps it off; the switch turned on with the marker writes it.
+    // A post without the marker keeps it off; the switch turned on with the marker writes it.
     app.request_form(Method::POST, &sms, Some(&cookie), &[("own_number_1", "")])
         .await;
     assert!(!groups_on(&app, id).await);
@@ -1177,32 +1164,6 @@ async fn own_numbers(app: &TestApp, id: i64) -> Vec<(i64, String)> {
         .fetch_all(&app.db)
         .await
         .unwrap()
-}
-
-/// M1: a page drawn before the phone claimed `sms_groups_v1` (the switch disabled) has no `groups_shown`, so saving
-/// another field after the phone updated never turns group texts off.
-#[tokio::test]
-async fn a_page_drawn_before_the_capability_never_turns_groups_off() {
-    let app = TestApp::new().await;
-    let cookie = app.admin_cookie().await;
-    let (id, token) = managed_phone(&app).await;
-    let sms = format!("/devices/{id}/calls/sms");
-    let stale = page(&app, &cookie, &format!("/devices/{id}/calls")).await;
-    let drawn = fields_of(&stale, &sms);
-    assert!(!drawn.iter().any(|(k, _)| k == "groups_shown"), "{drawn:?}");
-    report_groups(&app, &token, json!({})).await;
-    post(&app, &cookie, &sms, &drawn).await;
-    assert!(
-        groups_on(&app, id).await,
-        "the stale page left groups as they were"
-    );
-    // Drawn with the capability, the marker is there.
-    let fresh = page(&app, &cookie, &format!("/devices/{id}/calls")).await;
-    assert!(
-        fields_of(&fresh, &sms)
-            .iter()
-            .any(|(k, _)| k == "groups_shown")
-    );
 }
 
 /// L1: a number the phone only learned (anyone can send the message that taught it) never blocks a contact; added as

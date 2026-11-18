@@ -763,7 +763,7 @@ async fn status_stores_capabilities_and_call_state() {
     let call_state: Value = serde_json::from_str(&call_state.unwrap()).unwrap();
     assert_eq!(call_state, good_call_state());
 
-    // An older launcher sends neither; a non-object call_state is not stored.
+    // A report may send neither; a non-object call_state is not stored.
     app.post_status(&token, json!({ "call_state": "garbage" }))
         .await;
     let (caps, call_state): (Option<String>, Option<String>) = sqlx::query_as(
@@ -796,37 +796,18 @@ fn visible(html: &str) -> String {
     out
 }
 
+/// A report without capabilities is read like any other (C1): no "too old to screen calls" warning.
 #[tokio::test]
-async fn calls_page_warns_without_capability() {
+async fn calls_page_needs_no_capability() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;
     set_managed(&app, id, true, true).await;
-
-    app.post_status(&token, json!({})).await;
-    let page = calls_page(&app, &cookie, id).await;
-    assert!(page.contains("Calls aren&#39;t screened"), "{page}");
-    assert!(page.contains("too old to screen calls"), "{page}");
-
-    app.post_status(
-        &token,
-        json!({ "capabilities": ["call_policy_v1"], "call_state": good_call_state() }),
-    )
-    .await;
-    let page = calls_page(&app, &cookie, id).await;
-    assert_eq!(warnings(&page), 0, "{page}");
-
-    // QA #22: a launcher that used to enforce calls and stops reporting it.
-    app.post_status(&token, json!({})).await;
-    let page = calls_page(&app, &cookie, id).await;
-    assert!(
-        page.contains("stopped reporting that it screens calls"),
-        "{page}"
-    );
-
-    // Unmanaged: no capability warning.
-    set_unmanaged(&app, id).await;
-    assert_eq!(warnings(&calls_page(&app, &cookie, id).await), 0);
+    for report in [json!({}), json!({ "call_state": good_call_state() })] {
+        app.post_status(&token, report).await;
+        let page = calls_page(&app, &cookie, id).await;
+        assert_eq!(warnings(&page), 0, "{page}");
+    }
 }
 
 async fn set_unmanaged(app: &TestApp, id: i64) {

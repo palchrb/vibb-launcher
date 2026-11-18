@@ -306,8 +306,7 @@ pub struct BadgeContext<'a> {
     /// When the report reached this server.
     pub reported_at: DateTime<Utc>,
     pub connection: &'a ConnectionState,
-    /// Calls are managed and the launcher screens them (the call report has no
-    /// `NotEnforced`/`AnyoneCanCall`).
+    /// Calls are managed and the launcher screens them (the call report has no `AnyoneCanCall`).
     pub calls_enforced: bool,
 }
 

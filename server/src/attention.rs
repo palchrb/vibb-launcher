@@ -440,13 +440,10 @@ fn target(kind: Kind, id: i64) -> String {
     format!("/devices/{id}{page}#{anchor}")
 }
 
-/// A rule's "calls off" is real: calls are managed and the call report doesn't say the launcher
-/// can't screen them. The lock badge's "· calls off" on every page reads it (qa-31-s9-code N1).
+/// A rule's "calls off" is real: calls are managed and the call report doesn't say nothing screens
+/// them. The lock badge's "· calls off" on every page reads it (qa-31-s9-code N1).
 pub fn calls_enforced(policy: &DevicePolicy, problems: &[CallProblem]) -> bool {
-    policy.calls_managed()
-        && !problems
-            .iter()
-            .any(|p| matches!(p, CallProblem::NotEnforced | CallProblem::AnyoneCanCall))
+    policy.calls_managed() && !problems.contains(&CallProblem::AnyoneCanCall)
 }
 
 /// What [facts_of] reads; the summary passes the parts it has built.
