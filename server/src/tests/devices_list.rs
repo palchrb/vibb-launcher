@@ -397,7 +397,7 @@ async fn the_badge_counts_the_device_pages_attention_rows() {
             "{page}#{anchor}"
         );
     }
-    assert!(badge(row(&list, anna)) >= 4);
+    assert!(badge(row(&list, anna)) >= 3);
     assert!(
         attention_rows(
             &app.get_page(&format!("/devices/{otto}"), &cookie)

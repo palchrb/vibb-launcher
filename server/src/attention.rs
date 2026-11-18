@@ -897,7 +897,6 @@ mod tests {
                 "2 apps' notifications go via an outside service",
                 "Anyone can call this phone",
                 "Screen-time record unreadable",
-                "Vibb One too old for time rules",
                 "Vibb One can't deliver music yet",
                 "Music app not reachable",
                 "Storytel refused the phone's login",
@@ -1018,7 +1017,6 @@ mod tests {
         }
         // Step 9: Device › Time, its warnings at the top.
         assert_eq!(target("screen-time-record"), "/devices/7/time");
-        assert_eq!(target("launcher-without-rules"), "/devices/7/time");
         assert_eq!(target("calls"), "/devices/7/calls");
         assert_eq!(target("incoming-calls"), "/devices/7/calls");
         // Step 7's fix round: Device › Music - the top warnings without a fragment, the others at

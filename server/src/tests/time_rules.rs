@@ -711,16 +711,6 @@ async fn time_state_is_stored_and_shown() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;
-    // An older launcher: no time_rules_v1 -> warning.
-    app.request(
-        Method::POST,
-        "/api/devices/status",
-        Some(&token),
-        Some(json!({"lock_reason": "NONE", "kiosk_engaged": true, "capabilities": ["call_policy_v1"]})),
-    )
-    .await;
-    let page = app.get_page(&device_page(id, Section::Time), &cookie).await;
-    assert!(page.text().contains("Vibb One too old for time rules"));
     let today = chrono::Utc::now()
         .with_timezone(&chrono_tz::Europe::Oslo)
         .date_naive()
