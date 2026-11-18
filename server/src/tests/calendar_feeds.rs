@@ -177,12 +177,13 @@ async fn the_page_shows_a_link_and_waits_for_the_phone() {
     }
     assert!(link.contains("data-link-host>skole.example.no<"), "{link}");
     assert!(link.contains("data-value=\"events\""), "{link}");
-    // No `calendar_feeds_v1` yet: update Vibb One; the calendar is listed at once by its key.
-    assert!(link.contains("Update Vibb One on the phone"));
+    // Not on the phone yet: it waits (no update note since C1); the calendar is listed at once by its key.
+    assert!(!link.contains("Update Vibb One"));
+    assert!(link.contains("Waiting for the phone"), "{link}");
     assert!(page.contains(&format!("data-calendar=\"{key}\"")));
     assert!(page.contains("Calendar link · Waiting for the phone"));
 
-    // The phone claims the capability and reports the calendar: the row is a calendar link like any other.
+    // The phone reports the calendar: the row is a calendar link like any other.
     app.post_status(
         &token,
         json!({
@@ -203,7 +204,6 @@ async fn the_page_shows_a_link_and_waits_for_the_phone() {
         .text();
     let link = app.get_page(&link_path, &cookie).await.text();
     assert!(!page.contains("Waiting for the phone") && !link.contains("Waiting for the phone"));
-    assert!(!link.contains("Update Vibb One on the phone"));
     assert!(link.contains("save 2 events"), "{link}");
     assert!(page.contains("May be the same as the calendar link Skolen"));
     // The kid's calendar is never a link's.
