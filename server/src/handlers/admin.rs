@@ -273,9 +273,10 @@ mod tests {
 
     /// Literals near a security-event writer that are not event ids: form fields, notice codes
     /// and command names.
-    const NOT_EVENTS: [&str; 41] = [
+    const NOT_EVENTS: [&str; 42] = [
         // Design 93: the Regler sheet's flash codes next to its security events.
         "changed_elsewhere",
+        "on_busy",
         "on_over",
         // Design 59: the Child PIN group's notices and the reveal's form action.
         "keyguard_needs_pin",
