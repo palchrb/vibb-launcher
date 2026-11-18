@@ -355,12 +355,14 @@ where the same removals arrive.
 
 **Recommended: the host's network, with the host's Tailscale and Caddy.** The proxies' defaults then hold, and Docker
 never hides the client's address. The files are in the repo: `server/deploy/compose.yaml`, `server/deploy/env.example`
-(copy it as `.env`) and `server/deploy/Caddyfile.example` (option (c) above). `compose.yaml`:
+(copy it as `.env`), `server/deploy/update-image.sh` and `server/deploy/Caddyfile.example` (option (c) above).
+`compose.yaml`:
 
 ```yaml
 services:
   handy:
-    image: ghcr.io/palchrb/handy-server:${HANDY_VERSION}
+    image: ghcr.io/palchrb/handy-server:${HANDY_VERSION}@${HANDY_DIGEST:?run ./update-image.sh X.Y.Z first}
+    labels: {com.centurylinklabs.watchtower.enable: "false"}
     restart: unless-stopped
     network_mode: host
     env_file: .env
@@ -372,17 +374,17 @@ services:
 volumes: {handy-data: {}, handy-keys: {}}
 ```
 
-`.env` next to it (the settings from section 2 and "Launcher provisioning settings" go here too):
+`.env` next to it (the settings from section 2 and "Launcher provisioning settings" go here too; `update-image.sh`
+writes `HANDY_VERSION` and `HANDY_DIGEST`):
 
 ```
-HANDY_VERSION=0.23.0
 TZ=Europe/Oslo
 DEVICE_BIND_ADDR=127.0.0.1:3101
 LAUNCHER_SIGNATURE_CHECKSUM=...
 ```
 
 `TZ` matters: backups and the update check run on local time, and the image is UTC otherwise. Then
-`docker compose up -d`. With no `ADMIN_PASSWORD` set, the first start writes a password to
+`./update-image.sh X.Y.Z` with the newest release (see "Updating" below): it verifies the image and starts it. With no `ADMIN_PASSWORD` set, the first start writes a password to
 `/app/data/initial-admin-password` (the log names the file, never the password). The image has no shell, so copy it
 out: `docker compose cp handy:/app/data/initial-admin-password . && cat initial-admin-password && rm
 initial-admin-password`. Sign in as `admin` and change it - the server deletes its copy then.
@@ -391,18 +393,24 @@ initial-admin-password`. Sign in as `admin` and change it - the server deletes i
   volume, so copies of the data volume don't carry it. Use named volumes: a bind-mounted directory isn't seeded from
   the image and must belong to uid 65532 (`chown -R 65532:65532 dir`), or the server stops with "data/ is not
   writable by uid 65532".
-- **Updating**: by pulling a new image - [Watchtower](https://containrrr.dev/watchtower/) does it by itself for an
-  image tag that moves (`HANDY_VERSION=latest`), or by hand: `docker compose pull && docker compose up -d` (with
-  `HANDY_VERSION` pinned, set it to the new `X.Y.Z` first). Settings › Software Updates shows this server's version
-  and the newest release, and says how; it never updates anything itself. Before migrating the database, the new
+- **Updating** (privacy review 2026-11-17 H1): by hand, `./update-image.sh X.Y.Z` in the folder with `compose.yaml`.
+  It looks up the release's image digest, runs `gh attestation verify oci://ghcr.io/palchrb/handy-server@<digest>
+  --owner palchrb` - the build provenance the release workflow signed for exactly that image -, and only when that
+  passes writes `HANDY_VERSION` and `HANDY_DIGEST` into `.env` and runs `docker compose pull && docker compose up -d`.
+  Compose pulls by the digest, so what runs is what was verified, and a refused check changes nothing. It needs
+  `docker` with buildx and `gh` signed in (`gh auth login`, any account: it only reads). No Watchtower for this
+  container, and never `latest`: an image pushed to the tag would otherwise run within the hour, unchecked - the
+  GitHub account alone would be the key to the server and so to the phones. The label in `compose.yaml` keeps a
+  Watchtower the host runs for other containers off this one. Settings › Software Updates shows this server's
+  version and the newest release; it never updates anything itself. Before migrating the database, the new
   version copies it to `data/backups/pre-migrate-<from>-<to>.db` (the newest 3 are kept). A pre-migration copy keeps
   what the old schema held until it rotates out (e.g. 0126's dropped `weather_places`, the cells' old place names).
-- **Rolling back**: set the old `HANDY_VERSION`, put the pre-migration copy back, start:
+- **Rolling back**: put the pre-migration copy back, then the old release, verified the same way:
 
   ```
   docker compose stop handy
   docker run --rm -v handy-data:/data busybox sh -c 'cp /data/backups/pre-migrate-<from>-<to>.db /data/kidphone.db && rm -f /data/kidphone.db-wal /data/kidphone.db-shm && chown 65532:65532 /data/kidphone.db'
-  docker compose up -d
+  ./update-image.sh <the old X.Y.Z>
   ```
 
   (The volume's name may carry the compose project's prefix: `docker volume ls`.)

@@ -1,17 +1,21 @@
 # Vibb Phone server in Docker (server >= 0.23.0) - server/DEPLOY.md, "Docker".
 #
-# Copy this file and env.example (as .env) to a folder on the host, fill in .env, then:
-#   docker compose up -d
+# Copy this file, update-image.sh and env.example (as .env) to a folder on the host, fill in .env, then:
+#   ./update-image.sh X.Y.Z      (the newest server-vX.Y.Z release: it verifies the image, then starts it)
 #   docker compose cp handy:/app/data/initial-admin-password . && cat initial-admin-password && rm initial-admin-password
 # Sign in as admin and change the password.
 #
 # The host's network: the host's Tailscale and Caddy (Caddyfile.example) put HTTPS in front, and the server sees the
 # real client address, which its admin gate needs. It listens on 127.0.0.1 only (BIND_ADDR, DEVICE_BIND_ADDR).
-# Updating: pull a new image - Watchtower does it by itself for a tag that moves (HANDY_VERSION=latest), or set
-# HANDY_VERSION in .env, then `docker compose pull && docker compose up -d`. The server never updates itself.
+# Updating (privacy review 2026-11-17 H1): `./update-image.sh X.Y.Z` (next to this file). It checks the release's
+# build attestation (`gh attestation verify`) and only then pins HANDY_VERSION and HANDY_DIGEST in .env and runs
+# `docker compose up -d`: the image is pulled by that digest, never a tag that moves. No Watchtower for this container
+# (the label keeps a Watchtower the host runs for others off it). The server never updates itself.
 services:
   handy:
-    image: ghcr.io/palchrb/handy-server:${HANDY_VERSION}
+    image: ghcr.io/palchrb/handy-server:${HANDY_VERSION}@${HANDY_DIGEST:?run ./update-image.sh X.Y.Z first}
+    labels:
+      com.centurylinklabs.watchtower.enable: "false"
     restart: unless-stopped
     network_mode: host
     env_file: .env
