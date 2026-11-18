@@ -2236,15 +2236,10 @@ async fn render_device(
         .ok()
         .flatten();
 
-    // The phone's effective rules: the Time row, Pause a rule…, the badge, and whether a calls-off
-    // rule applies while calls aren't managed (an Attention row).
+    // The phone's effective rules: the Time row, Pause a rule…, the badge and the Do Not Disturb row.
     let time_rules = crate::time_rules::effective_rule_rows(&state.db, id)
         .await
         .map_err(|err| tracing::error!(device_id = id, %err, "can't read the phone's rules"));
-    let incoming_calls_unblocked = !policy.calls_managed()
-        && time_rules
-            .as_ref()
-            .is_ok_and(|rules| rules.iter().any(|r| !r.calls_allowed));
     let dnd_is_rules_own = crate::attention::dnd_is_rules_own(
         &state.db,
         id,
@@ -2317,7 +2312,6 @@ async fn render_device(
             latest: latest.as_ref(),
             relock: &relock,
             call_problems: &call_problems,
-            incoming_calls_not_blocked: incoming_calls_unblocked,
             dnd_is_rules_own,
             connection,
             music_ticked: music_ticked.as_deref().unwrap_or(&[]),

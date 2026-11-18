@@ -108,7 +108,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   applies) lands on the summary's Quick actions with its reason; an unknown kind or another phone's rule stays a plain
   400 / 404 (no page sends one). Times must be `HH:MM` (what `<input type="time">` sends).
 - **Attention**: the screen-time record and Vibb too old for time rules → `/devices/{id}/time` (the warnings at its
-  top); incoming calls not blocked → Calls & Contacts. `TimeReport` now also reads `extra_minutes` and
+  top). A calls-off rule on a phone whose calls aren't managed is no row and no warning (2026-11-18: the parent's
+  choice): the rule's and Bedtime's calls switch say behind their ⓘ that only outgoing calls stop. `TimeReport` now also reads `extra_minutes` and
   `ledger_unreadable`; `time_state::rule_days` gives the badge its rules (the Devices list's too).
 - Tests: `src/tests/time_pages.rs` (the four pages, `device_time_rules_has_the_rules_alone`, the redirect table, the
   section test, refusals, local times and the zone-less badge, failed reads, the device page's row), repointed

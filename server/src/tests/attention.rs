@@ -206,7 +206,7 @@ async fn each_fact_raises_its_own_row() {
         .unwrap();
     assert_eq!(rows(&app, &cookie, no_pin).await, ["no-parent-pin"]);
 
-    // A no-calls rule while calls aren't managed: incoming calls still ring.
+    // A no-calls rule while calls aren't managed: the parent's choice, no row (2026-11-18).
     let (rule_phone, _) = clean_phone(&app, "rule").await;
     sqlx::query("UPDATE device_policy SET custom_schedule_enabled = 1 WHERE device_id = ?")
         .bind(rule_phone)
@@ -221,7 +221,7 @@ async fn each_fact_raises_its_own_row() {
     .execute(&app.db)
     .await
     .unwrap();
-    assert_eq!(rows(&app, &cookie, rule_phone).await, ["incoming-calls"]);
+    assert_eq!(rows(&app, &cookie, rule_phone).await, Vec::<String>::new());
 
     // A Child PIN set, but the lock off on the phone.
     let (lock_phone, token) = clean_phone(&app, "lock").await;
@@ -586,8 +586,6 @@ async fn a_silent_rules_own_do_not_disturb_is_no_row() {
     let (id, token) = clean_phone(&app, "Emma").await;
     let add = |name: &'static str, silent: bool| {
         sqlx::query_scalar::<_, i64>(
-            // Calls allowed: a rule that blocks them raises its own row (incoming-calls) on a phone whose calls
-            // aren't managed, and that row is not this test's.
             "INSERT INTO time_rules (name, kind, calls_allowed, exempt_apps_json, silent, days_json) \
              VALUES (?, 'school', 1, '[]', ?, '[null,null,null,null,null,null,null]') RETURNING id",
         )

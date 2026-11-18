@@ -47,7 +47,6 @@ pub enum Kind {
     AccessRevoked,
     PolicyProblem,
     UnseenRestarts,
-    IncomingCallsNotBlocked,
     ChildLockOff,
     /// Design 59 §2.3: Android's lock on the phone opens with a PIN that isn't the Child PIN.
     ChildPinChanged,
@@ -107,7 +106,6 @@ impl Kind {
             Kind::NoParentPin
                 | Kind::EasyParentPin
                 | Kind::AccessRevoked
-                | Kind::IncomingCallsNotBlocked
                 | Kind::AppPushWaiting
                 | Kind::AppPushRefused(_)
                 | Kind::AppPushOutside(_)
@@ -149,7 +147,6 @@ impl AttentionItem {
             Kind::AccessRevoked => "access-revoked",
             Kind::PolicyProblem => "policy-problem",
             Kind::UnseenRestarts => "unseen-restarts",
-            Kind::IncomingCallsNotBlocked => "incoming-calls",
             Kind::ChildLockOff => "child-lock-off",
             Kind::ChildPinChanged => "child-pin-changed",
             Kind::BlockedApps(_) => "blocked-apps",
@@ -198,7 +195,6 @@ pub struct Facts {
     pub access_revoked: bool,
     pub policy_problem: bool,
     pub unseen_restarts: bool,
-    pub incoming_calls_not_blocked: bool,
     pub child_lock_off: bool,
     /// Design 59: the phone's Android PIN was changed on the phone (`kid_lock::pin_changed_on_phone`).
     pub child_pin_changed: bool,
@@ -248,10 +244,6 @@ pub fn items(lang: Lang, device_id: i64, facts: &Facts) -> Vec<AttentionItem> {
     add(facts.access_revoked, Kind::AccessRevoked);
     add(facts.policy_problem, Kind::PolicyProblem);
     add(facts.unseen_restarts, Kind::UnseenRestarts);
-    add(
-        facts.incoming_calls_not_blocked,
-        Kind::IncomingCallsNotBlocked,
-    );
     add(facts.child_lock_off, Kind::ChildLockOff);
     add(facts.child_pin_changed, Kind::ChildPinChanged);
     add(
@@ -325,7 +317,6 @@ fn level(kind: Kind) -> Level {
         | Kind::AccessRevoked
         | Kind::PolicyProblem
         | Kind::UnseenRestarts
-        | Kind::IncomingCallsNotBlocked
         | Kind::ChildLockOff => Level::Alarm,
         Kind::BlockedApps(_)
         | Kind::ChildPinChanged
@@ -369,7 +360,6 @@ fn title(lang: Lang, kind: Kind) -> String {
         Kind::AccessRevoked => t(lang, "device.attention.access_revoked"),
         Kind::PolicyProblem => t(lang, "device.attention.policy_problem"),
         Kind::UnseenRestarts => t(lang, "device.attention.unseen_restarts"),
-        Kind::IncomingCallsNotBlocked => t(lang, "device.attention.incoming_calls"),
         Kind::ChildLockOff => t(lang, "device.attention.child_lock_off"),
         Kind::ChildPinChanged => t(lang, "device.attention.child_pin_changed"),
         Kind::BlockedApps(n) => {
@@ -439,7 +429,7 @@ fn target(kind: Kind, id: i64) -> String {
         Kind::AppPushWaiting | Kind::AppPushRefused(_) | Kind::AppPushOutside(_) => {
             ("/apps", "app-push")
         }
-        Kind::IncomingCallsNotBlocked | Kind::Calls(_) => {
+        Kind::Calls(_) => {
             return format!("/devices/{id}/calls");
         }
         // Device › Time's warnings at the top of the page (step 9): no fragment needed.
@@ -481,8 +471,6 @@ pub struct Sources<'a> {
     pub relock: &'a RelockCard,
     /// The call report's problems.
     pub call_problems: &'a [CallProblem],
-    /// Calls aren't managed while a no-calls rule is in force (Device › Time's warning).
-    pub incoming_calls_not_blocked: bool,
     /// The Do Not Disturb the report shows is a silent rule's own ([dnd_is_rules_own]): no row.
     pub dnd_is_rules_own: bool,
     pub connection: ConnectionState,
@@ -599,12 +587,10 @@ pub async fn facts(state: &AppState, device: &Device, connection: ConnectionStat
             Vec::new()
         }
     };
-    // Read once for both the calls row and the Do Not Disturb row.
+    // The Do Not Disturb row reads the rules.
     let rules = crate::time_rules::effective_rule_rows(&state.db, id)
         .await
         .unwrap_or_default();
-    let incoming_calls_not_blocked =
-        !policy.calls_managed() && rules.iter().any(|rule| !rule.calls_allowed);
     let dnd_is_rules_own = dnd_is_rules_own(&state.db, id, latest, &rules).await;
     let music_ticked = crate::handlers::music::ticked_entries(&state.db, id)
         .await
@@ -642,7 +628,6 @@ pub async fn facts(state: &AppState, device: &Device, connection: ConnectionStat
             latest,
             relock: &relock,
             call_problems: &call_problems,
-            incoming_calls_not_blocked,
             dnd_is_rules_own,
             connection,
             music_ticked: &music_ticked,
@@ -715,7 +700,6 @@ pub fn facts_of(s: &Sources, now_ms: i64) -> Facts {
             )
             .is_some()
         }),
-        incoming_calls_not_blocked: s.incoming_calls_not_blocked,
         // Lock Screen & PINs' own notes, so the rows and the page agree.
         child_lock_off: crate::kid_lock::lock_off(policy, &lock_phone),
         child_pin_changed: crate::kid_lock::pin_changed_on_phone(policy, &lock_phone),
@@ -792,7 +776,6 @@ mod tests {
             access_revoked: true,
             policy_problem: true,
             unseen_restarts: true,
-            incoming_calls_not_blocked: true,
             child_lock_off: true,
             child_pin_changed: true,
             blocked_apps: 2,
@@ -880,7 +863,6 @@ mod tests {
                 "no-parent-pin",
                 "easy-parent-pin",
                 "access-revoked",
-                "incoming-calls",
                 // Design 108c: the server's own data, never "at last report".
                 "app-push-waiting",
                 "app-push-refused",
@@ -905,7 +887,6 @@ mod tests {
                 "Access removed",
                 "Phone can't apply its settings",
                 "Phone started without Vibb One",
-                "Incoming calls aren't blocked",
                 "Lock is off on the phone",
                 "Phone's PIN isn't the Child PIN",
                 "2 blocked apps wait",
@@ -1047,7 +1028,6 @@ mod tests {
         assert_eq!(target("screen-time-record"), "/devices/7/time");
         assert_eq!(target("launcher-without-rules"), "/devices/7/time");
         assert_eq!(target("calls"), "/devices/7/calls");
-        assert_eq!(target("incoming-calls"), "/devices/7/calls");
         // Step 7's fix round: Device › Music - the top warnings without a fragment, the others at
         // their group.
         assert_eq!(target("music-cant-deliver"), "/devices/7/music");

@@ -812,6 +812,9 @@ struct RuleScope {
     /// The rule applies to the phone: not switched off for it (always true for everyone's and a
     /// new rule).
     in_force: bool,
+    /// Calls aren't managed on the phone (for everyone's rules: on some phone), so a rule without calls stops only
+    /// outgoing calls: a quiet line behind the calls switch's ⓘ - the parent's choice, never a warning (2026-11-18).
+    calls_unmanaged: bool,
 }
 
 impl RuleScope {
@@ -868,6 +871,8 @@ struct RuleTemplate {
     kinds: Vec<(&'static str, &'static str)>,
     /// The page's own `?lang=`, kept on its form's action and the save's redirect (design 70 §3).
     asked: Option<Lang>,
+    /// [RuleScope::calls_unmanaged]: the calls switch's ⓘ says only outgoing calls stop.
+    calls_unmanaged: bool,
 }
 crate::i18n::words!(RuleTemplate);
 
@@ -945,6 +950,7 @@ fn render_rule(
             },
             rule,
             asked,
+            calls_unmanaged: scope.calls_unmanaged,
         },
         status,
     )
@@ -956,23 +962,35 @@ async fn scope_of(
     device: Option<i64>,
     lang: Lang,
 ) -> Result<RuleScope, Box<Response>> {
+    // `calls_mode = 'unmanaged'` is `DevicePolicy::calls_managed`'s "no".
     let Some(id) = device else {
-        return Ok(RuleScope {
-            device: None,
-            in_force: true,
-        });
+        return match sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS (SELECT 1 FROM device_policy WHERE calls_mode = 'unmanaged')",
+        )
+        .fetch_one(&state.db)
+        .await
+        {
+            Ok(calls_unmanaged) => Ok(RuleScope {
+                device: None,
+                in_force: true,
+                calls_unmanaged,
+            }),
+            Err(err) => Err(Box::new(read_failed_in(lang, err, "the phones' calls"))),
+        };
     };
-    match sqlx::query_scalar::<_, String>(
-        "SELECT d.name FROM devices d JOIN device_policy p ON p.device_id = d.id WHERE d.id = ?",
+    match sqlx::query_as::<_, (String, bool)>(
+        "SELECT d.name, p.calls_mode = 'unmanaged' FROM devices d JOIN device_policy p ON p.device_id = d.id \
+         WHERE d.id = ?",
     )
     .bind(id)
     .fetch_optional(&state.db)
     .await
     {
         // A phone's own rules apply unless switched off ([show_rule] reads its switch).
-        Ok(Some(name)) => Ok(RuleScope {
+        Ok(Some((name, calls_unmanaged))) => Ok(RuleScope {
             device: Some((id, name)),
             in_force: true,
+            calls_unmanaged,
         }),
         Ok(None) => Err(Box::new(crate::i18n::error(
             lang,
@@ -2009,16 +2027,6 @@ async fn render_device_time(
             // The consequence is the news: under the title, not behind an ⓘ (design 113, QA M5).
             sub: Some(t(lang, "device.time.ledger_unreadable_sub").to_string()),
             detail: None,
-            fix: None,
-        });
-    }
-    if !policy.calls_managed() && effective.iter().any(|r| !r.calls_allowed) {
-        warnings.push(Note {
-            warning: true,
-            title: t(lang, "device.time.incoming_not_blocked").to_string(),
-            value: None,
-            sub: None,
-            detail: Some(t(lang, "device.time.incoming_not_blocked_sub").to_string()),
             fix: None,
         });
     }
