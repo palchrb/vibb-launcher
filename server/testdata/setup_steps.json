@@ -29,7 +29,7 @@
     {"key": "touch", "page": "home", "anchor": "quick-controls"},
     {"key": "clock_format", "page": "home", "anchor": "layout"},
     {"key": "badges", "page": "home", "anchor": "layout"},
-    {"key": "glance", "page": "lock", "anchor": "lock-screen"},
+    {"key": "glance", "page": "lock", "anchor": "notifications"},
     {"key": "music_card", "page": "music", "anchor": "on-phone"},
     {"key": "notification_filter", "page": "advanced", "anchor": "updates"},
     {"key": "calls", "page": "calls", "anchor": "settings"},
