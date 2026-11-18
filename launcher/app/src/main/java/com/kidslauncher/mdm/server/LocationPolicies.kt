@@ -1,6 +1,7 @@
 package com.kidslauncher.mdm.server
 
 import com.kidslauncher.mdm.server.dto.LocationPolicy
+import com.kidslauncher.mdm.server.dto.PolicyResponse
 
 /*
  * When a location goes into the status report - pure, tested in LocationPolicyTest. The parent
@@ -30,6 +31,15 @@ enum class LocationAction {
 }
 
 const val MIN_LOCATION_INTERVAL_MINUTES = 10
+
+/**
+ * Security review P-M1 (2026-11-17 apps review): the location policy the phone goes by under the enforced [policy] - a
+ * fresh or cached policy's, or under a [PolicyToApply.Fallback] the parent's choice the [LastEnforcedPlan] carries. A
+ * policy without one (a plan written before P-M1's fix, [NOTHING_ALLOWED_FALLBACK]) is "Only when asked": no parent
+ * choice known is never a fix every N minutes, and the parent's `locate` still answers. `null` only on a phone that has
+ * never had a policy.
+ */
+fun enforcedLocationPolicy(policy: PolicyResponse?): LocationPolicy? = policy?.let { it.locationPolicy ?: LocationPolicy() }
 
 /**
  * [forced]: a `locate` command asked for the phone's location now (security review P-L2: a `ring` is no request for

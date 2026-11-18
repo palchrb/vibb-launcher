@@ -128,7 +128,7 @@ class WifiNetworksActivity : KidPageActivity() {
         } else {
             CallPolicyStore.ensureLoaded(this)
             val forcesOn = hardeningPlan(policy.hardening, hardeningManaged(policy.allowlist, CallPolicyStore.state.managed)).forceLocationOn
-            locationStaysOn(policy.locationPolicy ?: com.kidslauncher.mdm.server.dto.LocationPolicy(), forcesOn, ZoneWatch.zonesOn(this, policy))
+            locationStaysOn(com.kidslauncher.mdm.server.enforcedLocationPolicy(policy), forcesOn, ZoneWatch.zonesOn(this, policy))
         }
     } catch (e: Exception) {
         false

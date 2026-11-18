@@ -298,7 +298,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     val commandFix = ranCommand?.command == "locate"
     val forceFreshLocation = commandFix || zoneFix != null
     val preciseFix = commandFix || zoneFix == FreshKind.PRECISE
-    val locationPolicy = decision.policy?.let { it.locationPolicy ?: LocationPolicy() }
+    val locationPolicy = enforcedLocationPolicy(decision.policy)
     // Security review P-L3: location "Off" - no fix from before the switch stays on the phone.
     if (locationPolicy?.mode == "off") LocateCommands.clearCachedFix(context)
     // P-L2: Location goes back off after a fix unless the CONFIG_LOCATION switch or the zone watch needs it on.

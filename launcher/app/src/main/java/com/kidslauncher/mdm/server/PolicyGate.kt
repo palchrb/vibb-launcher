@@ -2,6 +2,7 @@ package com.kidslauncher.mdm.server
 
 import com.kidslauncher.mdm.calls.anyChannelManaged
 import com.kidslauncher.mdm.server.dto.HardeningPolicy
+import com.kidslauncher.mdm.server.dto.LocationPolicy
 import com.kidslauncher.mdm.server.dto.PolicyResponse
 import com.kidslauncher.mdm.timerules.TimePolicy
 import kotlinx.serialization.Serializable
@@ -163,6 +164,10 @@ data class LastEnforcedPlan(
     /** Design 97 code QA L3: the Home Screen's switches, so a fallback keeps the kid's own Mobildata Off (bit 32); an
      * older record reads none. */
     val quickControlsMask: Long = 0,
+    /** Security review P-M1 (2026-11-17 apps review): the parent's location choice - off, on request or every N
+     * minutes, with the zones - so a fallback never tracks more than the parent chose; a record without it (written
+     * before the fix) reads as on request ([enforcedLocationPolicy]). */
+    val locationPolicy: LocationPolicy? = null,
 ) {
     fun toPolicy(): PolicyResponse = PolicyResponse(
         allowlist = allowlist,
@@ -177,6 +182,7 @@ data class LastEnforcedPlan(
         appsMobile = appsMobile,
         mobileSettingsLocked = mobileSettingsLocked,
         quickControlsMask = quickControlsMask,
+        locationPolicy = locationPolicy,
     )
 
     companion object {
@@ -193,6 +199,7 @@ data class LastEnforcedPlan(
             appsMobile = policy.appsMobile,
             mobileSettingsLocked = policy.mobileSettingsLocked,
             quickControlsMask = policy.quickControlsMask,
+            locationPolicy = policy.locationPolicy,
         )
 
         /** `null` if missing or unreadable. */

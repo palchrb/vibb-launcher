@@ -37,7 +37,8 @@ import kotlinx.serialization.Serializable
  * ([LauncherUi]); `null` means the defaults. [timePolicy] is the named time rules,
  * daily budget and the parent's lifts (handy step 6); `null` means no rules. Once a phone has had one, a
  * response without it is rejected ([com.kidslauncher.mdm.server.judgeFresh]). [locationPolicy]: when location
- * goes into the status report; `null` keeps the every-sync behaviour.
+ * goes into the status report; `null` reads as on request ([com.kidslauncher.mdm.server.enforcedLocationPolicy]). Kept
+ * by [com.kidslauncher.mdm.server.LastEnforcedPlan] (security review P-M1).
  * A 0.19 server's `push` (FCM, removed in design 19) is an unknown key and ignored.
  * [kidLock]: the kid's PIN for handy's own lock screen (step 10).
  */

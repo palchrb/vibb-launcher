@@ -160,6 +160,14 @@ PLAN's C2 ("filter on, tunnel down").
   into tracking every 10 minutes. The server is reachable in those cases, so the fixes are uploaded.
 - **Fix:** carry `locationPolicy` in `LastEnforcedPlan`, written and read like `hardening`. With nothing known, use
   `on_request`, never the legacy interval (`server/PolicyGate.kt`, `server/MdmSyncWorker.kt`). Size S. Not visible.
+- **Fixed 2026-11-18** (`sec-location-fallback`): C1 had already made "nothing known" `on_request`
+  (`LocationPolicy()`), but a fallback still lost the parent's choice: "Off" became "on request" (a `locate` answered
+  with a fix, the shutdown and low-battery fixes sent, the cached fix kept, Location not forced off) and "Regularly"
+  lost its zones. `LastEnforcedPlan` now carries `locationPolicy` (zones included), and one pure
+  `enforcedLocationPolicy` (`server/LocationPolicies.kt`) is what the sync, the backstop, the shutdown's position and
+  the Wi-Fi page read. A plan written before the fix and `NOTHING_ALLOWED_FALLBACK` read as `on_request`; a phone that
+  never had a policy has none. `LocationPolicyTest` covers each path. No server change: the server always sends
+  `location_policy`.
 
 ## Low: security
 
