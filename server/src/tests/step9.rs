@@ -257,9 +257,11 @@ async fn an_error_page_never_reloads_itself() {
     )
     .await;
     // Waiting: the plain page reloads, a 400 with the typed contact doesn't (qa-09-code #9).
-    assert!(page(&app, &cookie, &format!("/devices/{id}/calls"))
-        .await
-        .contains("data-waits"));
+    assert!(
+        page(&app, &cookie, &format!("/devices/{id}/calls"))
+            .await
+            .contains("data-waits")
+    );
     let res = app
         .request_form(
             Method::POST,
