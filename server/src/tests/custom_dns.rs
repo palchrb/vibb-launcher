@@ -135,7 +135,7 @@ async fn a_custom_server_is_saved_write_only_and_lands_on_its_group() {
         )
     );
     let page = app.get_page("/dns", &cookie).await.text();
-    assert!(field(&page, "custom_server").contains("Set (dns.example · DNS-over-HTTPS)."));
+    assert!(custom_sub(&page).contains("dns.example · DNS-over-HTTPS"));
     assert!(field(&page, "custom_backup").contains("Set (1.1.1.3 · DNS-over-TLS)."));
     assert!(
         // The stored path never shows (the prefill's own `/dns-query` is ours, not the parent's).
