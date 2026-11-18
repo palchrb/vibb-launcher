@@ -2,17 +2,9 @@
 
 Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the rest is' lists every note.
 
-## FCM removed, SSE only (design 19, `docs/design/19-remove-fcm.md`, at the monorepo root; server 0.20.0)
+## SSE only (design 19, `docs/design/19-remove-fcm.md`, at the monorepo root)
 
-- **Gone**: `src/fcm.rs`, `src/push.rs` (sender, dispatcher, health, acks, test nudges), `AppState.fcm`, policy `push`,
-  the status `push` (an old launcher still sends it: accepted with 204, stored nowhere - no `deny_unknown_fields`;
-  `fcm_push_v1` in `capabilities` is stored as reported and read by nothing), the card's FCM lines, the direct deps
-  `base64`/`ring`, the dev-dep `tokio/test-util` and the fixture PEM. No vestigial `push` key: every shipped launcher
-  treats a missing key like `fcm_enabled: false` (SSE). `FCM_SERVICE_ACCOUNT_FILE` is ignored (its startup warning went in 0.54.0).
-- **Migration `0048_remove_fcm.sql`**: `DROP TABLE device_push` (the installation IDs were credentials to message a
-  phone), `device_status.push_state_json` set to NULL (column kept, unused). Revoking the service-account key is what
-  makes stored IDs (freed pages, backups) useless (DEPLOY.md, "Removing FCM"). 0.19 refuses a database with 0048:
-  rollback = the `update.sh` backup.
+- An old launcher's status `push` is accepted with 204 and stored nowhere (no `deny_unknown_fields`); `fcm_push_v1` in `capabilities` is stored as reported and read by nothing. `FCM_SERVICE_ACCOUNT_FILE` is ignored.
 - **Keepalive**: `SSE_KEEPALIVE_SECS` default 240 (= `MAX_SSE_KEEPALIVE_SECS`; shipped launchers read with 300 s),
   invalid values fall back to 240; `.env` `SSE_KEEPALIVE_SECS=120` reverts. A proxy in front needs a read timeout
   >= 300 s (`tailscale serve` streams unbuffered).
@@ -22,9 +14,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   row says "Online since 08:12" while a stream is open and the phone was in contact within the hour (a silently dead
   peer counts until this server's TCP gives up, so Online also needs the contact). The "Instant changes" line is gone
   (design 31 step 3).
-- Tests: `src/tests/play.rs` (old launcher's `push` dropped, migration 0048, the stream count on About, plus
-  step 7's Play/DNS/keepalive tests), `streams::tests`; `policy_json_keys_snapshot` has no `push`. `TestApp::new`
-  installs the rustls provider like `main` (the FCM tests used to, for the DNS upstream test).
+- Tests: `src/tests/play.rs` (the stream count on About, plus step 7's Play/DNS/keepalive tests), `streams::tests`; `policy_json_keys_snapshot` has no `push`.
 
 ## Play (handy step 7, design `docs/design/07-battery-fcm-play.md`, at the monorepo root; its FCM half removed in 19)
 

@@ -1,7 +1,7 @@
 # Launcher notes: Wi-Fi sign-in pages and Chrome only for logins (design 102)
 
 The design is `docs/design/102-captive-portals-and-logins.md` (revision 5 on top), its QA `docs/review/qa-102-design.md`.
-The server's side is `docs/notes/server/status.md`, "Wi-Fi sign-in and logins (design 102)".
+The server's side is `docs/notes/server/logins.md`.
 
 ## Part A: the Wi-Fi sign-in window (`portal/`)
 

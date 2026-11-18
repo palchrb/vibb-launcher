@@ -1824,7 +1824,7 @@ counts each, `, M left` when an entry is due again at once. At 320x569 dp, nb an
 
 ## 6b. Step 7: Play (optional)
 
-FCM is gone since design 19: every build uses the SSE stream, and About This Phone says "Online
+Every build uses the SSE stream, and About This Phone says "Online
 since ..." while the phone holds it. For Play tests:
 
 - Use an AVD with a **Google Play** system image (Play Store + Play services).

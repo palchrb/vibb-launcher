@@ -1,16 +1,14 @@
 # handy (repo `palchrb/vibb-launcher`)
 
 A kid's phone setup: an Android launcher that is also the Device Owner agent, and the self-hosted
-admin server it talks to. One repo since 2026-10-05; both parts were separate forks before and were
-imported with full history (`git subtree`), so old commit hashes in the docs still resolve.
+admin server it talks to. Old commit hashes in the docs still resolve.
 
 ## Layout
 
 - `launcher/` - Android app, called **Vibb One** for users (debug "Vibb One (debug)", design 34 P11) - Kotlin,
   Gradle; applicationId `me.vibb.launcher`, debug `me.vibb.launcher.debug`, since 2026-10-06 - the Kotlin
-  namespace/class names stay `com.kidslauncher.mdm` and the release asset stays `kids-launcher-mdm.apk`. Was the
-  `kids-launcher-mdm` fork. Details: `launcher/CLAUDE.md`.
-- `server/` - admin server + device API (Rust/Axum/SQLite). Was the `kid-phone-server` fork.
+  namespace/class names stay `com.kidslauncher.mdm` and the release asset stays `kids-launcher-mdm.apk`. Details: `launcher/CLAUDE.md`.
+- `server/` - admin server + device API (Rust/Axum/SQLite).
   Details: `server/CLAUDE.md`, deployment `server/DEPLOY.md` (Pi + systemd, and the Docker image
   from `server/Dockerfile`).
 - `docs/notes/server/` - the server's area notes, moved out of `server/CLAUDE.md` (which keeps the core and an index)
@@ -99,7 +97,7 @@ Launcher (from `launcher/`, JDK 17, `local.properties` with `sdk.dir=...`):
 `./gradlew assembleDebug assembleRelease testDebugUnitTest`. Music app (from `music/`, the same JDK and
 `local.properties`): `./gradlew assembleDebug assembleRelease testDebugUnitTest -PwarningsAsErrors=true`.
 Without `app/libs/tsnet.aar` the debug build falls
-back to a stub and a release build fails (security review L13; `-PrequireTsnet=true` fails any build). No Firebase config is needed: FCM was removed in design 19 (the
+back to a stub and a release build fails (security review L13; `-PrequireTsnet=true` fails any build). No Firebase config is needed (the
 SSE stream is the only nudge), and `assembleRelease` fails if Firebase or Play services comes back on the
 release classpath.
 
@@ -453,9 +451,7 @@ plan, the `regs` reconcile, the origin rewrite) stay the launcher's alone, in
   code), below every new code, and the launcher and the server still read those tags so
   (`launcher_tag_codes.json`). Only
   stable launcher releases become GitHub's "latest", so
-  `releases/latest/download/kids-launcher-mdm.apk` is the provisioning QR's URL. The release build no
-  longer reads the `HANDY_FCM_*` repository variables (design 19); they can go once a `launcher-v*` tag on
-  design 19's launcher commit or later has been built (an older tag would still check them).
+  `releases/latest/download/kids-launcher-mdm.apk` is the provisioning QR's URL.
 - `music-vX.Y.Z` (or `-rc.N`) on a `main` commit -> `vibb-music.apk` + `.sha256`, signed with the
   launcher's key in the `release` environment (its deployment rule must allow `music-v*` tags too; the same
   `RELEASE_CERT_SHA256` check), versionCode as the launcher's (the same script; the first tag under today's rule

@@ -52,13 +52,6 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   ones are left out (`provisioning::valid_locale`/`valid_time_zone`), the settings form refuses
   malformed values (400, nothing written). Hardening switch `disallow_config_locale`
   (`device_policy`, default 1) -> `DISALLOW_CONFIG_LOCALE` on the phone.
-- **FCM by installation ID** (migration `0035`, qa-fixround-2026-10-06 #2; removed with FCM in design 19, the
-  table is dropped by 0048): the launcher registers
-  by Firebase installation ID (firebase-messaging 25.1+) and reports `push.fcm_token_kind`
-  ("fid"/"token", stored as `device_push.fcm_token_kind`). `fcm::TargetKind::of` (report when it
-  agrees with the value, else the shape: an FID is 22 chars of base64url, a token has ':') picks
-  `message.fid` or `message.token` - `token` is deprecated and takes FIDs only during Firebase's
-  migration period. `FcmSender::send` takes a `fcm::Target {id, kind}`; the fake records kinds.
 
 ## Fix round 1 (2026-10-18, QA `docs/review/qa-r1-server-code.md`)
 

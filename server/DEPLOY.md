@@ -222,6 +222,9 @@ nudges a phone) that is quiet except for a keepalive every `SSE_KEEPALIVE_SECS` 
 buffering and no compression on it** - for nginx `proxy_buffering off; proxy_read_timeout 330s; proxy_http_version
 1.1;`. Cloudflare's proxy cuts connections idle for 100 s: use DNS-only there, or `SSE_KEEPALIVE_SECS=90`.
 
+`SSE_KEEPALIVE_SECS` (5-240, default 240): each keepalive wakes the phone's radio, and the launcher reconnects after 300 s of
+silence. `SSE_KEEPALIVE_SECS=120` in `.env` shortens it.
+
 ### The phones' certificate check (design 76)
 
 Vibb One (with `server_pin_v1`) talks to this server over https only through a certificate chain from **Let's Encrypt
@@ -451,27 +454,6 @@ To install from a different fork, prefix `bash` with `KPS_REPO=owner/repo` (for 
 (`server/deploy/`), publish server releases as `server-vX.Y.Z`, and sign them with its own key, pinned in its scripts
 ("Release signing").
 
-**Installs from before the root helpers were removed (server 0.66 and older)** had a root-owned watcher
-(`kid-phone-server-updater.path`/`.service`, `/opt/kid-phone-server-updater/actions.sh` and `watcher.sh`) that did what
-the PWA asked - the update, restart, apt check and upgrade, Tailscale update, reboot, formatting a drive, a restore -,
-a root timer for the OS/Tailscale schedule (`kid-phone-server-scheduler.timer`, `scheduler.sh` reading
-`data/schedule.conf`) and one copying the backups to a USB drive (`kid-phone-server-backup-sync.timer`,
-`backup_sync.sh`). The first `update.sh` (or `install.sh`) of 0.67.0 or later removes them, the last time root
-touches them: it disables the path unit and both timers, deletes their units, drop-ins and
-`/opt/kid-phone-server-updater/`, and keeps the installed version (for the downgrade check) in
-`/var/lib/kid-phone-server/installed_version`. A helper that is running right now is left to finish (the old server's
-"Update now" runs `update.sh` inside the watcher's own service, so that update works one last time and removes it). The
-new server deletes what the old requests left in `data/` at its first start (`update_requested`, `schedule.conf`,
-`app_update_schedule.conf`, `watcher_version`, `live_mirror.db`, ...). A backup drive at `/mnt/kid-phone-server-backup`
-and its `/etc/fstab` line stay as they are (its copies are no longer refreshed): copy backups there yourself, or
-`sudo umount /mnt/kid-phone-server-backup` and delete the line.
-
-**Installs from before the monorepo** (installed from `palchrb/kid-phone-server`): the server itself follows the move
-(`SERVER_RELEASE_REPO=palchrb/kid-phone-server` and the old `LAUNCHER_APK_URL` in `.env` are read as the new defaults,
-and a launcher row in the Apps catalog that watches `palchrb/kids-launcher-mdm` is repointed by a migration). Run
-`update.sh` from the URL above (or re-run the installer from it); both keep `.env` and the database.
-(The old repo's `deploy/update.sh` is replaced by a stub that forwards here - `docs/legacy/kid-phone-server-update.sh`.)
-
 Updates only ever go forward: `update.sh` refuses a release that isn't newer than the installed one (and Software
 Updates calls an older release "You have the latest version"). To go back on purpose (see "Rolling back" below for the database), run `update.sh` with
 `KPS_ALLOW_DOWNGRADE=1` - it then installs the newest release even if older.
@@ -612,51 +594,8 @@ the launcher app" (or uploaded it as a manual app with the launcher's package), 
 logs a warning naming yours instead: if it is the launcher, turn the switch on on its page (Source & Signing). To stop launcher updates, untick "Enabled" on its page - a launcher row that is deleted comes
 back at the next start. The **music app** is still added by hand (Music › Settings, "Add to the App Catalog").
 
-#### Rollout of the package rename (`com.kidslauncher.mdm` -> `me.vibb.launcher`, 2026-10-06)
-
-A renamed launcher is a different app to Android. Launcher builds from before the rename install whatever APK the
-launcher row serves, without checking its package - so a renamed release reaching such a phone is installed **next to**
-the old launcher as a second app. And once this server is updated, the provisioning QR names
-`me.vibb.launcher/...` (an `.env` holding the old default is read as the new one). Do it in this order:
-
-1. **Phones still on the old package**: provision them again with the renamed launcher (wipe, then the QR or
-   `adb shell dpm set-device-owner me.vibb.launcher/com.kidslauncher.mdm.server.MdmDeviceAdminReceiver`) - or, until you
-   can, untick "Enabled" on the launcher's page under Apps, so no phone is offered the renamed APK.
-2. **Tag the renamed launcher** as a stable `launcher-vX.Y.Z` release, so it is GitHub's "latest" and
-   `releases/latest/download/kids-launcher-mdm.apk` is the renamed build.
-3. **Only then update this server.** Until step 2 is done, the provisioning QR doesn't work (it names the new package
-   while "latest" still serves the old one) - provision with adb meanwhile.
-
 A release launcher can't be downgraded: Android refuses an install with a lower versionCode. If a launcher release is
 broken, fix it forward by releasing the old (or fixed) code under a higher `launcher-v*` tag.
-
-## Removing FCM (server 0.20.0, launcher design 19)
-
-FCM is gone: the phones' own connection to this server (the SSE stream) is the only way changes reach them at once, and
-every phone also checks in by itself every 30 minutes (15 while its connection is down). One launcher APK now works the
-same with anyone's server, and no nudge goes through Google. Other apps' notifications (Element X) still use Google's
-push service: Play services stays installed and is never restricted. The Devices list and the phone's About This Phone
-say whether it is connected right now (Online / Away / Offline).
-
-Order, if this server ever had FCM configured:
-
-1. Release and install the server first (`server-v0.20.0` or later, `update.sh`). Migration 0048 drops the stored FCM
-   installation IDs. A phone that was using FCM gets no nudges from this update until its next check-in (at most
-   30 minutes), then switches to the stream by itself; "Sync now" in its Settings or a reboot shortens that.
-2. Remove `FCM_SERVICE_ACCOUNT_FILE` from `/opt/kid-phone-server/.env` (the server ignores it; 0.20.0-0.53.x
-   also logged a warning at startup), delete the key file (`sudo rm /etc/kid-phone-server/fcm-service-account.json`) and every
-   other copy, and **revoke the key**: delete the service account (or its key) in Google Cloud IAM - that is what makes
-   the stored IDs and any old backup useless. Then delete the Firebase project.
-3. Then the launcher (a `launcher-v*` tag on design 19's launcher commits or later). Only after that tag's release
-   build has run, delete the repository variables `HANDY_FCM_PROJECT_ID`, `HANDY_FCM_APPLICATION_ID`,
-   `HANDY_FCM_API_KEY` and `HANDY_FCM_SENDER_ID` (Settings > Secrets and variables > Actions > Variables): a tag on an
-   older commit still checks them.
-
-Rolling back to 0.19 means restoring the `update.sh` backup ("Rolling back the server" above): 0.19 refuses to start
-on a database with migration 0048.
-
-`SSE_KEEPALIVE_SECS` (5-240, default 240 since 0.20.0, 120 before): each keepalive wakes the phone's radio, and the
-launcher reconnects after 300 s of silence. `SSE_KEEPALIVE_SECS=120` in `.env` reverts to the old default.
 
 ## Vibb music library (server 0.21.0, design 21 step 1)
 
@@ -788,58 +727,6 @@ Spotify client ID - each family registers its own (bring your own app, Spotify's
   line on a real server); the Music page's "From Spotify ›" row says "No app", then "Signed in" after a login.
 - Rolling back means restoring the `update.sh` backup: an older server refuses to start on a database with
   migration 0074.
-
-## Server 0.23.0 (design 22): two listeners, the admin gate, Docker
-
-- **What changes for an existing Pi**: nothing has to be done - the admin keeps answering on `127.0.0.1:3100` behind
-  `tailscale serve`, and the phones keep their URLs. But the admin now refuses clients that aren't on the tailnet or
-  the box itself (`ADMIN_PUBLIC`, section 2): a setup that reached the admin from the home LAN (`BIND_ADDR` on a LAN
-  address) needs Tailscale, or `ADMIN_PUBLIC=on` knowingly.
-- Everyone is signed out once (the cookie's new name), and open enrollment codes stop working (only their hashes are
-  stored now; typed codes last 15 minutes, setup-QR codes 30). The provisioning page makes its QR code with a button
-  now, and the Tailscale key is no longer shown on Settings > Phone Setup.
-- Limits on the phones' API: a phone's own token is never slowed by other clients; an address that keeps sending bad
-  tokens or wrong typed codes gets 429 for 10 minutes. About This Phone shows when and how each phone last
-  reached the server; Advanced › Connection can disconnect it (revoke its access).
-- Rolling back to 0.22 means restoring the `update.sh` backup: 0.22 refuses a database with migration 0052 (and 0053).
-
-## Server 0.24.0 (security review, server part)
-
-- **Everyone is signed out once**, the parent who pressed "Update now" too: sessions from before the update are ended,
-  since older backups hold their ids (M2).
-- `data/` and everything in it become readable by the service user only; the service runs with `UMask=0077` (the
-  update adds it as a drop-in). A restore signs everyone out.
-- The DNS blocklist fails closed: a feed that can't be downloaded keeps its previous domains, also across a restart
-  without internet (the server keeps each feed's last good copy in `data/dns_feeds/`). A feed that has never loaded
-  (a mistyped URL) is left out until it does, the rest still reaches the phones. The Web Filter page (Settings) shows each
-  feed's state, a phone's Web Filter page (the phone's own lists, domains and log) a short "Not loaded yet" or
-  "Last download failed". Feeds may also be `127.0.0.1` hosts files or adblock `||domain^` lists.
-- **Catalog apps are pinned** to their Android package and signing key, read from the APK of their first release
-  (releases already cached are pinned at the first start): a later release of another package or signed with another
-  key is refused, and the app's page says so. So is a first release naming a system package, or an app a phone
-  already has from Play or as a system app. A phone allows a catalog app once the launcher has installed it there. If the developer really changed keys, "Forget Package and Key…" (Source & Signing) on
-  the app's page lets the next release set them again.
-- **A new phone starts with only its clock, calculator, camera, Vibb Music, phone app and Messages allowed** (never
-  Settings, a browser or a file manager): it can call and text, but every other app stays hidden until you allow it
-  on its page. The device page warns when the phone app or Messages isn't allowed (then only emergency calls work, or
-  texts can't be read or sent). Phones already set up keep their lists.
-- **Signed releases**: from 0.24.0 on, root installs and runs only release files signed with the project's key
-  ("Release signing" under "Updating"; the repo owner sets the key up once before tagging 0.24.0).
-- Rolling back to 0.23 means restoring the `update.sh` backup: 0.23 refuses a database that 0.24 migrated (0061, 0062).
-
-## The parent app is "Vibb Phone" (design 31, from the release after 0.24.0)
-
-Release note for the parent app's rename and new tab bar:
-
-> The parent app is now called **Vibb Phone**. On Android, the home-screen name updates by itself within a few days
-> (Chrome may ask you to accept it). **On iPhone and iPad the icon keeps its old name**: remove it and add it again
-> from Safari (Share › Add to Home Screen), or rename it by hand. Nothing else changes: you stay signed in, and your
-> bookmarks keep working.
-
-- The bottom bar has five tabs: **Devices · Apps · Locate · Music · Settings**. Time Rules, Web Filter (the old
-  DNS/Filters) and Blocked Activity are rows at the top of Settings; Provisioning is Settings › Phone Setup.
-- The manifest keeps its URL and gets `"id": "/"` (the id it already had implicitly), so an installed app is not
-  reinstalled. The two-factor issuer in authenticator apps stays "Kids Device MDM" (it only labels new entries).
 
 ## The Locate map (design 33)
 
@@ -998,12 +885,8 @@ asks for the file name and restarts the container itself ("Docker" above).
   it is - a JPEG doesn't compress further. That is about 0.5-1.5 MB per contact with a photo against 30-60 KB for its
   square: 30 photos make each zip about 30 MB, so 14 kept backups need a few hundred MB in `data/backups/`. Removing a photo removes its original at once; the backups keep it until they are deleted.
 
-## Removed: MollySocket and the launcher's UnifiedPush distributor
+## MollySocket
 
-The optional MollySocket installer (`deploy/install_mollysocket.sh`) and the launcher's built-in UnifiedPush distributor
-(an ntfy.sh relay) were removed on 2026-10-06, together with the conversation journal and browser history (migration
-0038 drops their tables, and the server deletes `data/journal_media` at startup; backups made before the update still
-contain them until the backup schedule prunes them). An existing MollySocket install keeps running on its own until you
-remove it (`sudo systemctl disable --now mollysocket`, then delete `/opt/mollysocket` and its `tailscale serve` on
-port 8443). Since design 108 Vibb One is the distributor again, without a third-party relay: see "App push
-(UnifiedPush)" above.
+The server ships no MollySocket installer. An existing MollySocket install keeps running on its own until you remove it
+(`sudo systemctl disable --now mollysocket`, then delete `/opt/mollysocket` and its `tailscale serve` on port 8443).
+Vibb One is the UnifiedPush distributor (design 108), without a third-party relay: see "App push (UnifiedPush)" above.

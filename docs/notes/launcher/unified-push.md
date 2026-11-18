@@ -7,9 +7,8 @@ its Play build and its push provider is switched to Vibb One once per account in
 `push/up/vendor/RaiseToForeground.kt` (Apache-2.0, adapted from UnifiedPush's android-distributor at 6daaf14; its header
 lists every change, `NOTICE.md` names it). Built in R1-L (2026-11-17, branch `up`).
 
-It reverses the 2026-10-06 rule ("the launcher must not export a registration receiver", `gotchas-and-history.md`,
-"Removed monitoring and upstream extras") for the receiver only (design 108 §10, the user's Q2): no third party and no
-second connection - pushes ride the one SSE stream to the family's own server.
+The launcher exports a registration receiver (design 108 §10, the user's Q2), but holds no third-party relay and no
+second connection: pushes ride the one SSE stream to the family's own server.
 
 ## The pieces
 
