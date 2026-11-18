@@ -866,6 +866,11 @@ impl Page {
         i64::try_from(self.ticked.len()).unwrap_or(i64::MAX)
     }
 
+    /// "På telefonen" has a row that isn't an alarm row (code QA L7: no empty group under the alarm rows).
+    pub fn has_phone_rows(&self) -> bool {
+        self.phone.iter().any(|row| !row.alarm)
+    }
+
     /// Nothing missing: "Alt er gjort".
     pub fn all_done(&self) -> bool {
         self.phone.is_empty()
@@ -901,9 +906,15 @@ fn row(input: &PageInput, step: &'static Step) -> Row {
     if let Some(latest) = input.latest {
         match step.key {
             "vibb_notifications" => {
-                value = crate::notification_channels::report(latest).map(|report| {
-                    crate::notification_channels::about(lang, input.policy, &report).value
-                });
+                if let Some(report) = crate::notification_channels::report(latest) {
+                    value = Some(
+                        crate::notification_channels::about(lang, input.policy, &report).value,
+                    );
+                    // Code QA L3: design 107's consequences of the channels off, said once, here.
+                    let effects =
+                        crate::notification_channels::effects(lang, input.policy, &report);
+                    why = (!effects.is_empty()).then(|| effects.join(" "));
+                }
             }
             "default_apps" => {
                 if let Some(airplane) = crate::airplane_mode::report(latest) {
@@ -1009,30 +1020,54 @@ impl Warnings {
     }
 }
 
+/// The parent's choices the warning lines sit at (§5.4): the need rule's inputs and the switches only a line reads
+/// (code QA M1: "a choice the parent made is never a warning" - a choice that is off says nothing).
+#[derive(Clone, Debug)]
+pub struct Choices {
+    pub inputs: Inputs,
+    /// Fjern varsler (`notification_auto_cancel`).
+    pub notification_filter: bool,
+    /// Wi-Fi sign-in (`captive_portal_enabled`).
+    pub wifi_signin: bool,
+    /// Locate isn't Off.
+    pub locate: bool,
+    /// The phone's app-push switch (only the Apps page reads it).
+    pub app_push: bool,
+}
+
+impl Choices {
+    /// From the policy; app push off unless the caller read its switch ([page_warnings_app_push]).
+    pub fn of(policy: &DevicePolicy, latest: Option<&DeviceStatus>) -> Choices {
+        Choices {
+            inputs: inputs_of(policy, latest),
+            notification_filter: policy.notification_auto_cancel,
+            wifi_signin: policy.captive_portal_enabled,
+            locate: policy.location_mode != "off",
+            app_push: false,
+        }
+    }
+}
+
 /// The warning lines for `page`'s sections (§5.4): a section's lines are the missing steps whose `features` name it,
-/// each step once per page (QA M1), in table order. Only steps that apply warn, so a choice the parent turned off
-/// raises nothing.
+/// each step once per page (QA M1), in table order, at the first of its features on this page the parent has on. A
+/// step whose features here are all off says nothing on this page (code QA M1).
 pub fn warnings(
     lang: crate::i18n::Lang,
     device_id: i64,
     page: &str,
-    inputs: &Inputs,
+    choices: &Choices,
     missing: &[&'static Step],
 ) -> Warnings {
     let mut out: Vec<(&'static str, Vec<Warning>)> = Vec::new();
     for step in missing {
         let Some(warn) = step.warn else { continue };
         // Its features on this page; the line goes to the first one the parent has on (the clock format at
-        // `#layout`, the touch and sound switches at `#quick-controls`), else to the first.
-        let here: Vec<&Feature> = step
+        // `#layout`, the touch and sound switches at `#quick-controls`), none when every one is off.
+        let Some(feature) = step
             .features
             .iter()
             .filter_map(|key| FEATURES.iter().find(|f| f.key == *key && f.page == page))
-            .collect();
-        let Some(feature) = here
-            .iter()
-            .find(|f| feature_on(f.key, inputs))
-            .or_else(|| here.first())
+            .find(|f| feature_on(f.key, choices))
         else {
             continue;
         };
@@ -1062,15 +1097,37 @@ pub fn page_warnings(
         lang,
         policy.device_id,
         page,
-        &inputs_of(policy, latest),
+        &Choices::of(policy, latest),
         &missing,
     )
 }
 
-/// Whether the parent has the choice `feature` on, where the policy says (a step that warns at two sections of one
-/// page goes to the one in use); a choice the policy can't tell is on.
-fn feature_on(feature: &str, inputs: &Inputs) -> bool {
+/// [page_warnings] for the Apps page, with the phone's app-push switch (`app_push_on`): `background` and `data_saver`
+/// warn at `#app-push` only while it is on.
+pub fn page_warnings_app_push(
+    lang: crate::i18n::Lang,
+    policy: &DevicePolicy,
+    latest: Option<&DeviceStatus>,
+    page: &str,
+    app_push_on: bool,
+) -> Warnings {
+    let (missing, _) = state_of(policy, latest, &[]);
+    let choices = Choices {
+        app_push: app_push_on,
+        ..Choices::of(policy, latest)
+    };
+    warnings(lang, policy.device_id, page, &choices, &missing)
+}
+
+/// Whether the parent has the choice `feature` on (a step that warns at two sections of one page goes to the one in
+/// use; one that is off says nothing). `badges`, `glance` and `music_card` have no switch: on.
+fn feature_on(feature: &str, choices: &Choices) -> bool {
+    let inputs = &choices.inputs;
     match feature {
+        "notification_filter" => choices.notification_filter,
+        "wifi_signin" => choices.wifi_signin,
+        "locate" => choices.locate,
+        "app_push" => choices.app_push,
         "touch" => inputs.mask & (QUICK_CONTROL_TOUCH | QUICK_CONTROL_SOUND) != 0,
         "clock_format" => inputs.clock_format != "system",
         "airplane" => inputs.airplane(),

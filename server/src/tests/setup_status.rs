@@ -144,7 +144,7 @@ async fn the_phones_tick_answers_as_the_contract() {
     let lines = super::security_words(&app, "setup_tick_phone", crate::i18n::Lang::Nb).await;
     assert_eq!(lines.len(), 1, "{lines:?}");
     assert!(
-        lines[0].contains("Vibrasjon ved trykk avkrysset på telefonen"),
+        lines[0].contains("Vibrasjon ved trykk") && !lines[0].contains("avkrysset"),
         "{lines:?}"
     );
     // A retry ticks nothing new and writes no line.
@@ -288,6 +288,52 @@ async fn no_setup_code_without_the_parent_pin() {
         .text();
     assert!(connect.contains("name=\"wifi_ssid\""));
     assert!(connect.contains("regenerate-code"));
+
+    // Code QA L2: a code made, then the PIN removed - the code is void.
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/regenerate-code"),
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    super::assert_redirect(&res, &format!("/devices/{id}/provision"), Some("qr"));
+    let code = || async {
+        sqlx::query_scalar::<_, Option<String>>(
+            "SELECT enrollment_code_hash FROM devices WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+    };
+    assert!(code().await.is_some());
+    app.request_form(
+        Method::POST,
+        &format!("/devices/{id}/parent-pin"),
+        Some(&cookie),
+        &[("clear_pin", "1")],
+    )
+    .await;
+    assert_eq!(code().await, None, "the code went with the PIN");
+
+    // Code QA L1: an easy PIN from Connect stays on the PIN form with its warning, `back` kept.
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/parent-pin"),
+            Some(&cookie),
+            &[("new_pin", "123456"), ("back", "provision")],
+        )
+        .await;
+    assert_eq!(
+        res.location(),
+        Some(
+            format!("/devices/{id}/lock?back=provision&notice=parent_pin_saved_easy#parent-pin")
+                .as_str()
+        )
+    );
 }
 
 /// Device › Oppsett (§5.1): the groups and rows' ids, a parent tick saved back on its row and moved to "Ticked", the
@@ -380,4 +426,84 @@ async fn the_setup_page_and_its_ticks() {
     )));
     assert!(!summary.contains("data-attention=\"setup\""));
     assert!(!html.contains("adb "));
+}
+
+/// Code QA M1: a line sits only at a choice that is on - Fjern varsler, Wi-Fi sign-in and app push turned off raise
+/// nothing there, though the steps stay counted.
+#[tokio::test]
+async fn no_line_at_a_choice_that_is_off() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("Testtelefon").await;
+    app.post_status(
+        &token,
+        json!({"notification_listener_enabled": false, "battery_optimization_exempt": false,
+               "setup": {"device_owner": true, "location": false, "data_saver": false}}),
+    )
+    .await;
+    let page = |path: &str| format!("/devices/{id}/{path}");
+    // Wi-Fi sign-in on (the default): the location line; off: none.
+    let html = app.get_page(&page("logins"), &cookie).await.text();
+    assert!(html.contains("data-setup-warning=\"location\""), "{html}");
+    // Fjern varsler off (the default): no notification-access line at #updates.
+    let html = app.get_page(&page("advanced"), &cookie).await.text();
+    assert!(!html.contains("data-setup-warning=\"notification_access\""));
+    sqlx::query(
+        "UPDATE device_policy SET captive_portal_enabled = 0, location_mode = 'off' WHERE device_id = ?",
+    )
+    .bind(id)
+    .execute(&app.state.db)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE devices SET unified_push = 0 WHERE id = ?")
+        .bind(id)
+        .execute(&app.state.db)
+        .await
+        .unwrap();
+    let html = app.get_page(&page("logins"), &cookie).await.text();
+    assert!(!html.contains("data-setup-warning=\"location\""), "{html}");
+    let html = app.get_page(&page("apps"), &cookie).await.text();
+    assert!(!html.contains("data-setup-warning=\"background\""));
+    assert!(!html.contains("data-setup-warning=\"data_saver\""));
+    // Still counted on the summary.
+    let summary = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(summary.contains("data-attention=\"setup\""), "{summary}");
+}
+
+/// Code QA M2: before the first report the summary's Oppsett row has no value - never "Complete" for a phone nothing
+/// has been read from.
+#[tokio::test]
+async fn the_setup_row_says_nothing_before_a_report() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let row_of = |html: &str| {
+        html.split("data-row=\"setup\"")
+            .nth(1)
+            .and_then(|rest| rest.split("</a>").next())
+            .unwrap_or_default()
+            .to_string()
+    };
+    let (new, _) = app.create_device("Testtelefon").await;
+    let html = app
+        .get_page(&format!("/devices/{new}"), &cookie)
+        .await
+        .text();
+    let row = row_of(&html);
+    assert!(!row.contains("row-value"), "{row}");
+    let (id, token) = app.enrolled_device("Andre").await;
+    let html = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(!row_of(&html).contains("Complete"));
+    app.post_status(&token, json!({"battery_optimization_exempt": true}))
+        .await;
+    let html = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(row_of(&html).contains("row-value"));
 }

@@ -159,6 +159,14 @@ pub async fn enroll(
     if let Err(err) = crate::zones::forget_sides(&state.db, device_id).await {
         tracing::error!(device_id, %err, "can't forget the zones' sides at enrollment");
     }
+    // Design 114 (code QA L6): the parent's setup ticks were the old phone's - a reset phone has Android's defaults.
+    if let Err(err) = sqlx::query("DELETE FROM device_setup_ticks WHERE device_id = ?")
+        .bind(device_id)
+        .execute(&state.db)
+        .await
+    {
+        tracing::error!(device_id, %err, "can't forget the setup ticks at enrollment");
+    }
     state.command_streams.close_device(device_id);
     state.enrollment.refresh(&state.db).await;
     // A command meant for the phone this row had before - a wipe for a lost one - must never

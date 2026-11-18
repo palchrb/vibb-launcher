@@ -4584,7 +4584,7 @@
   "setup.warn.map_play_links": "Play-tjenester tar kartlenkene",
   "setup.warn.map_vibb_links": "Vibb One åpner ikke alle kartlenker",
   "security.event.setup_tick_phone": "Oppsettsteg avkrysset på telefonen",
-  "security.detail.setup_tick.phone": "telefon {device}: {step} avkrysset på telefonen",
+  "security.detail.setup_tick.phone": "telefon {device}: {step}",
 
   "setup.page.title": "Oppsett",
   "setup.summary.one": "Oppsett: {count} steg igjen",
@@ -4603,7 +4603,7 @@
   "setup.all_done": "Alt er gjort",
   "setup.no_report": "Venter på telefonen",
   "setup.why.background": "Endringer kan komme sent mens telefonen sover.",
-  "setup.why.assistant": "Velg Vibb One - trengs for Flymodus",
+  "setup.why.assistant": "Trengs for Flymodus.",
   "setup.why.wifi_airplane": "Uten den er telefonen helt uten nett i flymodus.",
   "setup.why.default_apps": "Meldinger som kom mens en annen app hadde SMS-rollen, ligger i den appen.",
   "setup.why.call_filter": "Vibb One trenger anropsfilter og viderekobling for å styre samtalene.",

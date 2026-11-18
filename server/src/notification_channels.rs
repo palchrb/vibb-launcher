@@ -366,6 +366,20 @@ pub fn about(lang: Lang, policy: &DevicePolicy, report: &Report) -> AboutRow {
     }
 }
 
+/// The effect sentences of the counted channels that are off (§5.2's ⓘ without its lead and fix): design 114's
+/// Device › Oppsett says them on the `vibb_notifications` row (code QA L3). Empty when nothing counted is off.
+pub fn effects(lang: Lang, policy: &DevicePolicy, report: &Report) -> Vec<String> {
+    let names = names_lang(policy, lang);
+    counted(policy, report)
+        .iter()
+        .filter_map(|channel| {
+            channel
+                .effect
+                .map(|effect| t_params(lang, effect, &[("name", &quoted(lang, names, channel))]))
+        })
+        .collect()
+}
+
 /// What the summary's Attention row said (§5.3), typed: the app-wide switch, or the attention channels that count.
 /// Design 114 folds the row into the setup row (`setup_status`'s `vibb_notifications`, by About's orange); the rule
 /// stays for the contract's `pages` rows' `attention` column, which the tests run.

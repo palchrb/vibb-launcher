@@ -4584,7 +4584,7 @@
   "setup.warn.map_play_links": "Play services takes the map links",
   "setup.warn.map_vibb_links": "Vibb One doesn't open every map link",
   "security.event.setup_tick_phone": "Setup step ticked on the phone",
-  "security.detail.setup_tick.phone": "phone {device}: {step} ticked on the phone",
+  "security.detail.setup_tick.phone": "phone {device}: {step}",
 
   "setup.page.title": "Setup",
   "setup.summary.one": "Setup: {count} step left",
@@ -4603,7 +4603,7 @@
   "setup.all_done": "All done",
   "setup.no_report": "Waiting for the phone",
   "setup.why.background": "Changes may arrive late while the phone sleeps.",
-  "setup.why.assistant": "Choose Vibb One - needed for airplane mode",
+  "setup.why.assistant": "Needed for airplane mode.",
   "setup.why.wifi_airplane": "Without it the phone is fully offline in airplane mode.",
   "setup.why.default_apps": "Messages that arrived while another app had the SMS role are in that app.",
   "setup.why.call_filter": "Vibb One needs call screening and call redirection to manage calls.",

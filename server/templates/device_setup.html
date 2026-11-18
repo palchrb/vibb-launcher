@@ -76,6 +76,7 @@
         </div>
         {% endif %}
         {% endif %}{% endfor %}
+        {% if page.has_phone_rows() %}
         <div class="group">
             {% for row in page.phone %}{% if !row.alarm %}
             <details class="info cell" id="step-{{ row.key }}" data-setup-step="{{ row.key }}">
@@ -88,6 +89,7 @@
             </details>
             {% endif %}{% endfor %}
         </div>
+        {% endif %}
     </section>
     {% endif %}
 

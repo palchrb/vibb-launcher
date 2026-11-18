@@ -2509,11 +2509,12 @@ pub(crate) async fn render_apps(
     Html(
         AppsTemplate {
             lang,
-            setup_warnings: crate::setup_status::page_warnings(
+            setup_warnings: crate::setup_status::page_warnings_app_push(
                 lang,
                 &policy,
                 latest.as_ref(),
                 "apps",
+                app_push.on,
             ),
             app_push,
             who: crate::handlers::devices::BandAvatar::of(&device),

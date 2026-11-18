@@ -568,7 +568,7 @@
         <a class="row" href="/devices/{{ device.id }}/setup" data-row="setup">
             <span class="tile tile-grey"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><path d="M3 4.5l1.5 1.5 3-3M3 9.5l1.5 1.5 3-3M9.5 5h5M9.5 10h5M3 14h11.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
             <span class="row-label">{{ self.t("setup.page.title") }}</span>
-            <span class="row-value">{{ setup_value }}</span>
+            {% if let Some(value) = setup_value %}<span class="row-value">{{ value }}</span>{% endif %}
             <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </a>
         <a class="row" href="/devices/{{ device.id }}/about" data-row="about">

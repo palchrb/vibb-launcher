@@ -1145,7 +1145,8 @@ struct DeviceDetailTemplate {
     airplane_lines: Vec<crate::airplane_mode::Line>,
     /// Design 114 §5.2: Device › Oppsett's row value - "3 igjen", "I oppsett" or "Fullført", quiet (the Attention row
     /// says it in orange).
-    setup_value: String,
+    /// `None` before the phone's first report (code QA M2: nothing has been read yet).
+    setup_value: Option<String>,
     about_value: Option<String>,
 }
 crate::i18n::words!(DeviceDetailTemplate);
@@ -2622,18 +2623,20 @@ async fn render_device(
 }
 
 /// Device › Oppsett's row value on the summary (design 114 §5.2): "I oppsett" during the hold, "{n} igjen" while
-/// required steps are left, else "Fullført". Quiet: the Attention row is the orange one.
+/// required steps are left, else "Fullført"; no value before the first report (code QA M2). Quiet: the Attention row
+/// is the orange one.
 fn setup_value(
     lang: Lang,
     policy: &DevicePolicy,
     latest: Option<&crate::models::DeviceStatus>,
     now_ms: i64,
-) -> String {
-    if latest.is_some_and(|st| crate::setup_status::in_hold(st, now_ms)) {
-        return t(lang, "setup.value.hold").to_string();
+) -> Option<String> {
+    let latest = latest?;
+    if crate::setup_status::in_hold(latest, now_ms) {
+        return Some(t(lang, "setup.value.hold").to_string());
     }
-    let (missing, _) = crate::setup_status::state_of(policy, latest, &[]);
-    match crate::setup_status::count(&missing) {
+    let (missing, _) = crate::setup_status::state_of(policy, Some(latest), &[]);
+    Some(match crate::setup_status::count(&missing) {
         0 => t(lang, "setup.value.done").to_string(),
         n => t_count(
             lang,
@@ -2641,7 +2644,7 @@ fn setup_value(
             i64::try_from(n).unwrap_or(i64::MAX),
             &[],
         ),
-    }
+    })
 }
 
 /// Where an app's row is on Device › Apps (design 31 step 6): `app-<package>` - the anchor the
