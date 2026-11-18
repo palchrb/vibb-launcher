@@ -1351,7 +1351,7 @@
   "device.calls.update_first": "Oppdater Vibb One først: telefonens versjon kan ikke dette ennå.",
   "device.calls.channel.calls_off": "Bare nødnumre kan ringes.",
   "device.calls.channel.calls_managed": "Bare kontaktene du har tillatt kan ringe og bli ringt.",
-  "device.calls.channel.calls_unmanaged": "Alle kan ringe, og telefonen kan ringe hvem som helst.",
+  "device.calls.channel.calls_unmanaged": "Alle kan ringe, og telefonen kan ringe hvem som helst. En regel stopper da bare utgående anrop.",
   "device.calls.channel.sms_off": "SMS er av. Meldinger til telefonen går tapt.",
   "device.calls.channel.sms_managed": "Bare kontaktene og avsendernavnene du har tillatt. Andre meldinger venter på deg.",
   "device.calls.channel.sms_unmanaged": "Alle kan sende SMS, og alle meldingsapper virker. Vibb filtrerer ikke.",

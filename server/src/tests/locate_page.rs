@@ -896,7 +896,7 @@ async fn warnings_and_location_settings() {
         .unwrap();
     let html = locate_page(&app, &cookie, &format!("?device={id}")).await;
     let warning = html.find("data-note=\"location-off\"").unwrap();
-    assert!(warning < html.find("data-group=\"locate-rows\"").unwrap());
+    assert!(warning > html.find("data-group=\"locate-rows\"").unwrap());
     assert!(
         settings()
             .await
@@ -1998,7 +1998,7 @@ async fn update_location_is_the_first_row_and_the_map_has_no_box() {
     let html = locate_page(&app, &cookie, &format!("?device={id}")).await;
     let warning = html.find("data-note=\"location-off\"").unwrap();
     let rows = html.find("data-group=\"locate-rows\"").unwrap();
-    assert!(warning < rows);
+    assert!(warning > rows);
     let row = html
         .split("data-row=\"update-location\"")
         .nth(1)

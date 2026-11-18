@@ -569,7 +569,7 @@ async fn the_calls_page_saves_both_channels() {
         .text();
     // Design 113: no sub-line under a channel; the chosen modes' sentences lead the calls ⓘ.
     assert!(page.contains(
-        "<p>Anyone can call, and the phone can call anyone. Anyone can text, and every messaging app works. \
+        "<p>Anyone can call, and the phone can call anyone. A rule then stops only outgoing calls. Anyone can text, and every messaging app works. \
          Vibb doesn&#39;t filter.</p>"
     ), "{page}");
     assert!(!page.contains("segmented-sub\">Anyone"));

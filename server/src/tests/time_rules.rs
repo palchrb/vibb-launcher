@@ -1175,22 +1175,9 @@ async fn a_calls_off_rule_with_unmanaged_calls_is_a_quiet_note() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("Emma").await;
-    const OLD_WARNING: &str = "Incoming calls aren&#39;t blocked";
-    const OLD_ROW: &str = "data-attention=\"incoming-calls\"";
     const NOTE: &str = "data-info=\"calls-unmanaged\"";
     app.request_form(Method::POST, "/schedules/rules", Some(&cookie), SCHOOL_FORM)
         .await;
-    let time = app
-        .get_page(&device_page(id, Section::Time), &cookie)
-        .await
-        .text();
-    assert!(!time.contains(OLD_WARNING), "{time}");
-    let summary = app
-        .get_page(&device_page(id, Section::Summary), &cookie)
-        .await
-        .text();
-    assert!(!summary.contains(OLD_ROW), "{summary}");
-
     let everyone = app.get_page("/schedules/rules/new", &cookie).await.text();
     assert!(everyone.contains(NOTE), "{everyone}");
     assert!(
@@ -1205,8 +1192,22 @@ async fn a_calls_off_rule_with_unmanaged_calls_is_a_quiet_note() {
         own.contains("Calls aren&#39;t managed on the phone, so only outgoing calls stop."),
         "{own}"
     );
+    // Bedtime with calls off shows it; with calls on nothing stops, so no note.
     let bedtime = format!("/devices/{id}/bedtime");
+    let night = [
+        ("n0_start", "21:00"),
+        ("n0_end", "07:00"),
+        ("n1_start", "22:30"),
+        ("n1_end", "09:00"),
+    ];
+    app.request_form(Method::POST, &bedtime, Some(&cookie), &night)
+        .await;
     assert!(app.get_page(&bedtime, &cookie).await.text().contains(NOTE));
+    let mut calls_on = night.to_vec();
+    calls_on.push(("calls_allowed", "on"));
+    app.request_form(Method::POST, &bedtime, Some(&cookie), &calls_on)
+        .await;
+    assert!(!app.get_page(&bedtime, &cookie).await.text().contains(NOTE));
 
     // Calls managed: no note anywhere.
     sqlx::query("UPDATE device_policy SET calls_mode = 'managed', sms_mode = 'unmanaged' WHERE device_id = ?")

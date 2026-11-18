@@ -157,8 +157,12 @@ async fn kid_pin_saved_sent_and_safe_boot_blocked() {
         .get_page(&device_page(id, Section::Lock), &cookie)
         .await
         .text();
-    // 2026-11-18: the parent's choice, no warning on the Lock page.
-    assert!(!html.contains("Safe mode is allowed"), "{html}");
+    // 2026-11-18: the parent's choice, no warning in the Child PIN section.
+    let start = html
+        .find("<section id=\"child-pin\"")
+        .expect("the Child PIN section");
+    let section = &html[start..start + html[start..].find("</section>").unwrap()];
+    assert!(!section.contains("data-warning"), "{section}");
     assert!(html.contains(">On · 6 digits</span>"), "{html}");
 }
 

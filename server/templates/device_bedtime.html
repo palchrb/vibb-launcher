@@ -65,7 +65,7 @@
                     <div class="info-panel">
                         <p>{{ self.t("device.bedtime.silent_sub") }}</p>
                         <p>{{ self.t("device.bedtime.calls_footer") }}</p>
-                        {% if calls_unmanaged %}<p data-info="calls-unmanaged">{{ self.t("time_rules.calls_unmanaged") }}</p>{% endif %}
+                        {% if calls_unmanaged && !rule.calls_allowed %}<p data-info="calls-unmanaged">{{ self.t("time_rules.calls_unmanaged") }}</p>{% endif %}
                     </div>
                 </details>
             </div>

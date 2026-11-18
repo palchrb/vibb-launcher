@@ -1351,7 +1351,7 @@
   "device.calls.update_first": "Update Vibb One first: the phone's version can't do this yet.",
   "device.calls.channel.calls_off": "Only emergency numbers can be called.",
   "device.calls.channel.calls_managed": "Only the contacts you allow can call and be called.",
-  "device.calls.channel.calls_unmanaged": "Anyone can call, and the phone can call anyone.",
+  "device.calls.channel.calls_unmanaged": "Anyone can call, and the phone can call anyone. A rule then stops only outgoing calls.",
   "device.calls.channel.sms_off": "SMS is off. Messages to the phone are lost.",
   "device.calls.channel.sms_managed": "Only the contacts and sender names you allow. Other messages wait for you.",
   "device.calls.channel.sms_unmanaged": "Anyone can text, and every messaging app works. Vibb doesn't filter.",

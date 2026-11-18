@@ -68,8 +68,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   the page shows the record or Vibb-too-old warning or a rule or the own limit in force doesn't read, "Couldn't read"
   on a failed read). The user's tidy (2026-11-01: "recent ... kan vi bare kutte ut, det er allerede i hoved loggen",
   "ta bort mulighet til å pause rules og gi extra time her, for det er bare duplicat", a switch per rule) and its
-  approved mockup: warnings (Vibb too old for time rules, the screen-time record unreadable, incoming calls not
-  blocked), **Now** (the Time lock as §3.10's badge - `time_state::lock_badge`, so the end shows only when provably
+  approved mockup: warnings (Vibb too old for time rules, the screen-time record unreadable; a calls-off rule on a phone
+  with calls not managed is no warning, only a note behind the rule's calls switch while that switch is off), **Now** (the Time lock as §3.10's badge - `time_state::lock_badge`, so the end shows only when provably
   right, which needs the phone's `time_state.zone` - sent since design 34 P13 -, today's screen time with the extra
   minutes, the report's age with the exact local time in `title`), **Bedtime** (design 66, below), **Everyone's Rules**
   (`#everyone`: one row per rule, its days and calls under the name, a switch for this phone - `partials/rule_switch.html`,

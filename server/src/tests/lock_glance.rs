@@ -953,9 +953,15 @@ async fn the_page_shows_each_note() {
     let page =
         || async { subsection(&app.get_page(&lock_page(id), &cookie).await.text()).to_string() };
 
-    // No report yet, no Child PIN: only the PIN warning.
+    // No report yet, no Child PIN: only the quiet "No lock without a Child PIN" row (the parent's own choice: a
+    // `data-note` row in the group, never the orange block).
     let html = page().await;
     assert!(html.contains("No lock without a Child PIN"), "{html}");
+    assert!(html.contains("data-note=\"no-child-pin\""), "{html}");
+    assert!(
+        !html.contains("attention-action") && !html.contains("data-warning"),
+        "{html}"
+    );
     assert!(!html.contains("Vibb One can&#39;t show these yet"));
     assert!(!html.contains("Missed calls only"));
 
