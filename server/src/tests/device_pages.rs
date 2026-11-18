@@ -1971,7 +1971,8 @@ async fn apps_holds_the_moved_forms() {
     ids.sort_unstable();
     ids.dedup();
     assert_eq!(ids.len(), all);
-    assert_eq!(all, 5);
+    // Kalender's built-in row is one of them on every phone (C1 step 12b).
+    assert_eq!(all, 6);
     assert!(!html.contains("type=\"search\""));
     let footer = &not_allowed[not_allowed.find("<details class=\"info\">").unwrap()..];
     assert!(
