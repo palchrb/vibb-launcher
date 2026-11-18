@@ -678,7 +678,7 @@ class PinLockActivity : AppCompatActivity() {
             val state = WallpaperStore.state
             if (!state.lockReady) return
             binding.root.background = lockGround(state)
-            glance?.ground(lockGround(state))
+            glance?.ground(lockGround(state), GlassGround(state.lock.fill, state.lockBitmap, state.lockScrimArgb))
         } catch (e: Throwable) {
             Log.w(LOG_TAG, "The lock's background couldn't be set: ${e.javaClass.simpleName}")
         }
