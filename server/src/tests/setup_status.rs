@@ -289,7 +289,7 @@ async fn no_setup_code_without_the_parent_pin() {
     assert!(connect.contains("name=\"wifi_ssid\""));
     assert!(connect.contains("regenerate-code"));
 
-    // Code QA L2: a code made, then the PIN removed - the code is void.
+    // Code QA L2: a code made (with the PIN, the page shows it), then the PIN removed - the code is void.
     let res = app
         .request_form(
             Method::POST,
@@ -298,7 +298,7 @@ async fn no_setup_code_without_the_parent_pin() {
             &[],
         )
         .await;
-    super::assert_redirect(&res, &format!("/devices/{id}/provision"), Some("qr"));
+    assert_eq!(res.status, StatusCode::OK);
     let code = || async {
         sqlx::query_scalar::<_, Option<String>>(
             "SELECT enrollment_code_hash FROM devices WHERE id = ?",
