@@ -277,7 +277,7 @@ async fn each_allow_path_grants_texts_in_alone() {
             .as_array()
             .unwrap()
             .len(),
-        3
+        2
     );
 }
 

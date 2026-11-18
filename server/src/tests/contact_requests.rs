@@ -1013,7 +1013,11 @@ async fn decisions_stay_on_their_phone() {
         Method::POST,
         &format!("/devices/{anna}/contacts"),
         Some(&cookie),
-        &[("name", "Ola"), ("number", "+4791234567")],
+        &[
+            [("name", "Ola"), ("number", "+4791234567")].as_slice(),
+            &super::ADD_CONTACT_ALL_ON,
+        ]
+        .concat(),
     )
     .await;
     assert_eq!(rows(&app, per).await[0].4, "open");
