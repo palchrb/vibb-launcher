@@ -55,7 +55,7 @@ pub enum Kind {
     NotHomeApp,
     /// The boot cover was armed but not shown: another home screen came up at boot.
     BootCoverNotShown,
-    CallsOnly,
+    NoNotificationAccess,
     /// Design 107 §5.3: Meldinger or Tapte anrop turned off on the phone while Vibb runs it, or every Vibb One
     /// notification off while SMS or calls are managed ([Facts::notifications_off] holds which).
     NotificationsOff,
@@ -140,7 +140,7 @@ impl AttentionItem {
             Kind::RestartOnce => "restart-once",
             Kind::NotHomeApp => "not-home-app",
             Kind::BootCoverNotShown => "boot-cover-not-shown",
-            Kind::CallsOnly => "notification-access",
+            Kind::NoNotificationAccess => "notification-access",
             Kind::NotificationsOff => "notifications-off",
             Kind::MobileDataOff => "mobile-data-off",
             Kind::AppPushWaiting => "app-push-waiting",
@@ -230,7 +230,7 @@ pub fn items(lang: Lang, device_id: i64, facts: &Facts) -> Vec<AttentionItem> {
     add(facts.restart_once, Kind::RestartOnce);
     add(facts.not_home_app, Kind::NotHomeApp);
     add(facts.boot_cover_not_shown, Kind::BootCoverNotShown);
-    add(facts.no_notification_access, Kind::CallsOnly);
+    add(facts.no_notification_access, Kind::NoNotificationAccess);
     add(facts.notifications_off.is_some(), Kind::NotificationsOff);
     add(facts.mobile_data_off, Kind::MobileDataOff);
     add(facts.app_push.waiting_since.is_some(), Kind::AppPushWaiting);
@@ -291,7 +291,7 @@ fn level(kind: Kind) -> Level {
         | Kind::RestartOnce
         | Kind::NotHomeApp
         | Kind::BootCoverNotShown
-        | Kind::CallsOnly
+        | Kind::NoNotificationAccess
         | Kind::NotificationsOff
         | Kind::MobileDataOff
         | Kind::AppPushWaiting
@@ -329,7 +329,7 @@ fn title(lang: Lang, kind: Kind) -> String {
         Kind::RestartOnce => t(lang, "device.attention.restart_once"),
         Kind::NotHomeApp => t(lang, "device.attention.not_home_app"),
         Kind::BootCoverNotShown => t(lang, "device.attention.boot_cover_not_shown"),
-        Kind::CallsOnly => t(lang, "device.attention.notification_access"),
+        Kind::NoNotificationAccess => t(lang, "device.attention.notification_access"),
         // Worded from its facts in [items] (the names); this is its all-off form.
         Kind::NotificationsOff => t(lang, "device.attention.notifications_all_off"),
         Kind::MobileDataOff => t(lang, "device.attention.mobile_data_off"),
@@ -376,7 +376,7 @@ fn target(kind: Kind, id: i64) -> String {
         Kind::NotHomeApp | Kind::BootCoverNotShown => ("/advanced", "updates"),
         Kind::NoParentPin | Kind::EasyParentPin => ("/lock", "parent-pin"),
         Kind::ChildLockOff | Kind::ChildPinChanged => ("/lock", "child-pin"),
-        Kind::CallsOnly => ("/home", "layout"),
+        Kind::NoNotificationAccess => ("/home", "layout"),
         Kind::MobileDataOff => ("/mobile", "mobile-data"),
         Kind::AppPushWaiting | Kind::AppPushRefused(_) | Kind::AppPushOutside(_) => {
             ("/apps", "app-push")

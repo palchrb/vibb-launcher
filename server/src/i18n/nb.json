@@ -1583,7 +1583,6 @@
   "error.not_an_app": "Ikke en app - ingenting ble endret.",
   "error.change_app": "Kunne ikke endre denne appen - sjekk serverloggen.",
   "error.launcher_always_on": "Vibb One er alltid på.",
-  "error.unknown_section": "Ukjent del",
   "error.out_of_date": "Denne siden er utdatert - last den inn på nytt.",
   "error.send_failed": "Kunne ikke sende - ingenting ble lagt i kø. Sjekk serverloggen.",
   "error.unknown_launcher_ui": "Ukjent språk, kolonneantall eller klokkeformat",

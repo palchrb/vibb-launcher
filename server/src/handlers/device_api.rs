@@ -436,8 +436,8 @@ pub(crate) async fn build_policy(
         .await?;
         spawn_redelivery_nudge(state, device_id, *id);
     }
-    // `allow_blocked` carries the apps the card listed (QA of cmd-expiry, Low 1); a row queued
-    // before 0068 has none, and the phone then lets out every block, as it did. Install Now's
+    // `allow_blocked` carries the apps the card listed (QA of cmd-expiry, Low 1); a payload that
+    // isn't one is sent as none: the phone then lets nothing out. Install Now's
     // payload is the release tag the row showed (design 37 §3) - a plain tag, only for it.
     // `set_kid_pin` (design 59 §2.1) carries the PIN opened from the row read above, so it is the
     // PIN of this answer's `kid_lock` hash - only in android mode and for a launcher whose last

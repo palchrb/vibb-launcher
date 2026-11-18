@@ -1583,7 +1583,6 @@
   "error.not_an_app": "Not an app - nothing was changed.",
   "error.change_app": "Couldn't change this app - check the server log.",
   "error.launcher_always_on": "Vibb One is always on.",
-  "error.unknown_section": "Unknown section",
   "error.out_of_date": "This page is out of date - reload it.",
   "error.send_failed": "Couldn't send - nothing was queued. Check the server log.",
   "error.unknown_launcher_ui": "Unknown language, column count or clock format",

@@ -125,15 +125,14 @@ impl Budget {
 
 /// Past [STATUS_ROWS_A_DAY] reports in a rolling day, a new report replaces the one before it
 /// (`previous_id`, just read) instead of adding to the history - so the newest report is always
-/// the latest and a phone's day holds at most the budget plus one. Never the phone's newest report.
-/// A failure is logged: the row stays.
+/// the latest and a phone's day holds at most the budget plus one. Called after the new report is
+/// inserted, so `previous_id` is never the phone's newest. A failure is logged: the row stays.
 pub async fn replace_over_budget(db: &SqlitePool, device_id: i64, previous_id: i64) {
     let result = sqlx::query(
         "DELETE FROM device_status WHERE id = ?1 AND device_id = ?2 \
            AND reported_at > datetime('now', '-1 day') \
            AND (SELECT COUNT(*) FROM device_status \
-                WHERE device_id = ?2 AND reported_at > datetime('now', '-1 day')) > ?3 \
-           AND id IS NOT (SELECT MAX(id) FROM device_status WHERE device_id = ?2)",
+                WHERE device_id = ?2 AND reported_at > datetime('now', '-1 day')) > ?3",
     )
     .bind(previous_id)
     .bind(device_id)
