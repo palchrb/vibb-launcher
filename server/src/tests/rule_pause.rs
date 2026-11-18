@@ -398,12 +398,11 @@ async fn the_pwa_words_the_phones_pause() {
     );
 }
 
-/// Security review 2026-11-17 M2: a token alone can't keep a rule lifted. A new key while another phone pause lifts a
-/// rule is refused as over (nothing stored, the phone's pause ends at its next policy), at most three starts lie within
-/// a day of each other, and a retry of a stored key answers as before. Each stored pause is the inbox's parent-PIN line
-/// for the time-rule screen - one row with the phone's own PIN event for it, whichever comes first.
+/// Security review 2026-11-17 M2, by the user's choice (2026-11-18): no cap - every phone-set pause is told. A second
+/// pause while the first lifts is stored like any other, and each stored pause is the inbox's parent-PIN line for the
+/// time-rule screen, one row with the phone's own PIN event for it, whichever comes first; a retry adds none.
 #[tokio::test]
-async fn a_phone_pause_is_bounded_and_told() {
+async fn every_phone_pause_is_told_once() {
     let (app, id, token) = emma().await;
     let now = chrono::Utc::now().timestamp_millis();
     let key = |n: u8| format!("0123456789abcdef0123456789abcd{n:02x}");
@@ -411,33 +410,15 @@ async fn a_phone_pause_is_bounded_and_told() {
         json!({"key": key, "minutes": 15, "started_at_ms": started,
                "rules": [{"rule_id": 2, "until_ms": started + 15 * 60_000}]})
     };
-    let refused = json!({"accepted": true, "lift_ids": [], "over": true});
     let first = body(&key(0x11), now - 60_000);
     let res = post(&app, &token, first.clone()).await;
     assert_eq!(res.json(), json!({"accepted": true, "lift_ids": [1]}));
-    // Another while it lifts: refused, nothing stored; the first's retry answers as before.
     let res = post(&app, &token, body(&key(0x12), now - 30_000)).await;
-    assert_eq!(res.json(), refused);
+    assert_eq!(res.json(), json!({"accepted": true, "lift_ids": [2]}));
     let res = post(&app, &token, first.clone()).await;
     assert_eq!(res.json(), json!({"accepted": true, "lift_ids": [1]}));
-    // Pauses already over (posted after a time offline): two more fit the day, the next is refused.
-    let hour = 60 * 60_000;
-    let res = post(&app, &token, body(&key(0x13), now - 3 * hour)).await;
-    assert_eq!(
-        res.json(),
-        json!({"accepted": true, "lift_ids": [2], "over": true})
-    );
-    let res = post(&app, &token, body(&key(0x14), now - 4 * hour)).await;
-    assert_eq!(
-        res.json(),
-        json!({"accepted": true, "lift_ids": [3], "over": true})
-    );
-    let res = post(&app, &token, body(&key(0x15), now - 5 * hour)).await;
-    assert_eq!(res.json(), refused);
-    let stored = rows(&app).await;
-    assert_eq!(stored.len(), 3, "{stored:?}");
+    assert_eq!(rows(&app).await.len(), 2);
 
-    // One line per stored pause; the phone's own PIN event for the first adds none.
     let pin_used = || async {
         sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM parent_events WHERE device_id = ? AND kind = 'pin_used'",
@@ -447,7 +428,7 @@ async fn a_phone_pause_is_bounded_and_told() {
         .await
         .unwrap()
     };
-    assert_eq!(pin_used().await, 3);
+    assert_eq!(pin_used().await, 2);
     let until = first["rules"][0]["until_ms"].as_i64().unwrap();
     let pin = json!({"events": [{"id": "fedcba9876543210fedcba9876543210", "kind": "unlocked",
                                  "entry": "rule_pause", "at_ms": now - 60_000, "until_ms": until}]});
@@ -460,7 +441,7 @@ async fn a_phone_pause_is_bounded_and_told() {
         )
         .await;
     assert!(res.status.is_success(), "{} {}", res.status, res.text());
-    assert_eq!(pin_used().await, 3);
+    assert_eq!(pin_used().await, 2);
     let words = super::told_events(&app, id, crate::i18n::Lang::En).await;
     assert!(
         words.iter().all(

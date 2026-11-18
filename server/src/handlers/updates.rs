@@ -1,7 +1,7 @@
 //! Settings › Software Updates (`/updates`): this server's version, the newest `server-v*` release
 //! and how the owner updates it - versions only. The server never acts on its host (the user,
 //! 2026-11-04): no update button, no restart, no system or Tailscale updates, no schedule, and it
-//! reads nothing of the host's state. In Docker the image is pulled (Watchtower, or by hand); on a
+//! reads nothing of the host's state. In Docker the host's `./update-image.sh` checks and pulls the image; on a
 //! systemd install the owner runs `update.sh` over SSH (DEPLOY.md, "Updating").
 
 use askama::Template;

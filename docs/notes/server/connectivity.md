@@ -152,8 +152,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   reqwest/rustls, any status passes), `reset-2fa <user>`. **The server never acts on its host**, in Docker or on a
   systemd install (the user, 2026-11-04): the root-helper routes (`/update/*`, `/system/*`, `/backups/format-drive`),
   the live mirror, the app-update scheduler and the external drive are gone, and Software Updates (`updates::page`,
-  pure) shows versions only - in docker "Version X is out" with the image pull (Watchtower, or `docker compose pull &&
-  docker compose up -d`, and `HANDY_VERSION=X` when pinned) behind its ⓘ, on a systemd install the `update.sh`
+  pure) shows versions only - in docker "Version X is out" with `./update-image.sh X.Y.Z` (the host script that checks the
+  image's attestation before it pulls it by digest, privacy review 2026-11-17 H1) behind its ⓘ, on a systemd install the `update.sh`
   command. Backups' Restore… restarts the container in docker and shows the SSH command on a systemd install.
   Image: distroless static nonroot (uid 65532) pinned by digest, a busybox stage seeds `data/` and `data/keys/`
   (0700) owned by 65532, `BIND_ADDR=127.0.0.1:3100`, `HEALTHCHECK` = `healthcheck`. CI `server-image` (only when the

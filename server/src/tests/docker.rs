@@ -455,7 +455,7 @@ fn app_data(latest: Option<&str>, update_available: bool) -> system_update::AppU
 
 /// Software Updates shows versions only (the user, 2026-11-04): no form, no host state; how to
 /// update is behind the Version row's ⓘ, never in its visible text (design 31 §4.2, design 113) - in Docker the image
-/// pull (Watchtower, or by hand, with the version for a pinned HANDY_VERSION), on a systemd
+/// host's `./update-image.sh` with the newer version (privacy review 2026-11-17 H1), on a systemd
 /// install the update.sh command for the configured repo.
 #[test]
 fn the_updates_page_says_how_to_update() {
@@ -478,14 +478,17 @@ fn the_updates_page_says_how_to_update() {
     assert!(docker.contains("Version 0.24.0 is out"), "{docker}");
     let (summary, panel) = how(&docker);
     assert!(!summary.contains("docker compose"), "{summary}");
-    assert!(panel.contains("Watchtower"));
-    assert!(panel.contains("docker compose pull &#38;&#38; docker compose up -d"));
-    assert!(panel.contains("HANDY_VERSION pinned in .env, set it to 0.24.0"));
+    // Privacy review 2026-11-17 H1: the host script that checks the attestation, never Watchtower.
+    assert!(!panel.contains("Watchtower"), "{panel}");
+    assert!(
+        panel.contains("<code>./update-image.sh 0.24.0</code>"),
+        "{panel}"
+    );
     assert!(!panel.contains("update.sh"));
     let current = page(true, "v0.23.0", false);
     // Design 113: up to date shows no latest row.
     assert!(!current.contains("data-row=\"latest\""), "{current}");
-    assert!(!current.contains("HANDY_VERSION"));
+    assert!(current.contains("./update-image.sh X.Y.Z"), "{current}");
 
     let pi = page(false, "v0.24.0", true);
     assert!(pi.contains("Version 0.24.0 is out"));

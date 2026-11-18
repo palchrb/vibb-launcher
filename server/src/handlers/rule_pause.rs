@@ -16,12 +16,10 @@
 //! parent ended. A pause already over is stored as an over row and answered `"over": true`. The first post writes the
 //! phone line `time_lift_phone` and nudges the phone.
 //!
-//! Security review 2026-11-17 M2: the parent code is checked on the phone only, so a token alone could lift the rules
-//! for good. A new key is refused - `{"accepted": true, "lift_ids": [], "over": true}`, nothing stored: the phone acks it
-//! and its pause ends at the next policy, which doesn't carry the key - while another phone pause still lifts a rule
-//! (when this one would lift one too), or when [MAX_A_DAY] keys already started within a day of its start. Each new
-//! pause raises the time-rule screen's parent-PIN event (`parent_events::Phone::rule_pause`, under the "Parent PIN
-//! used" switch), keyed by its end with the phone's own PIN event, so the inbox has one line whichever comes first.
+//! Security review 2026-11-17 M2: the parent code is checked on the phone only, so a token alone could lift a rule.
+//! By the user's choice (2026-11-18) there is no cap: every new pause is told instead - it raises the time-rule
+//! screen's parent-PIN event (`parent_events::Phone::rule_pause`, pushed under the "Parent PIN used" switch), keyed by
+//! its end like the phone's own PIN event for it, so the inbox has one line per pause whichever comes first.
 
 use axum::Extension;
 use axum::Json;
@@ -41,11 +39,6 @@ const CLOCK_SLACK_MS: i64 = 5 * 60_000;
 const MAX_AGE_MS: i64 = 7 * 24 * 60 * 60_000;
 /// The most rules one pause names.
 pub const MAX_RULES: usize = 8;
-/// The most parent-code pauses whose starts lie within a day of each other (security review 2026-11-17 M2): the kid's
-/// own asks for more time are capped at three a day too. With one live at a time and two hours each, a token alone
-/// lifts a rule six hours a day at most, and stores at most 24 keys in the 7 days a start may lie back. A parent who
-/// wants more pauses the rule from the PWA, which has no cap.
-pub const MAX_A_DAY: i64 = 3;
 
 /// The phone's post (`rule_pause.json`'s `request`). Unknown keys are ignored.
 #[derive(Debug, serde::Deserialize)]
@@ -100,49 +93,8 @@ struct Paused {
 enum Outcome {
     /// No rule the phone has.
     UnknownRule,
-    /// A new key refused (M2): another phone pause lifts a rule, or the day's pauses are used.
-    Refused,
     /// Stored (or a retry's rows found): the ids, the rules this post inserted, and every rule of the pause.
     Stored(Vec<i64>, Vec<Paused>, Vec<Paused>),
-}
-
-/// Whether a new key may be stored (M2), inside the post's `BEGIN IMMEDIATE`: no other phone pause still lifting a
-/// rule when this one would lift one (`lifts_now`), and fewer than [MAX_A_DAY] other keys started within a day of
-/// `created_at` (the pause's start as stored).
-async fn new_key_allowed(
-    conn: &mut sqlx::SqliteConnection,
-    device_id: i64,
-    key: &str,
-    created_at: chrono::DateTime<chrono::Utc>,
-    lifts_now: bool,
-    now: chrono::DateTime<chrono::Utc>,
-) -> Result<bool, sqlx::Error> {
-    if lifts_now {
-        let live: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM time_lifts WHERE device_id = ? AND phone_key IS NOT NULL \
-             AND phone_key <> ? AND ended_early_at IS NULL AND expires_at > ?)",
-        )
-        .bind(device_id)
-        .bind(key)
-        .bind(crate::lock_now::db_time(now))
-        .fetch_one(&mut *conn)
-        .await?;
-        if live {
-            return Ok(false);
-        }
-    }
-    let day = chrono::Duration::days(1);
-    let near: i64 = sqlx::query_scalar(
-        "SELECT COUNT(DISTINCT phone_key) FROM time_lifts WHERE device_id = ? AND phone_key IS NOT NULL \
-         AND phone_key <> ? AND created_at > ? AND created_at < ?",
-    )
-    .bind(device_id)
-    .bind(key)
-    .bind(crate::lock_now::db_time(created_at - day))
-    .bind(crate::lock_now::db_time(created_at + day))
-    .fetch_one(&mut *conn)
-    .await?;
-    Ok(near < MAX_A_DAY)
 }
 
 /// `POST /api/devices/rule-pause` (bearer): see the module doc. A DB error is a `500` (the phone retries).
@@ -206,13 +158,6 @@ pub async fn intake(
         .bind(&body.key)
         .fetch_all(&mut *tx)
         .await?;
-        // A retry of a stored key answers as before; a new one only within M2's bounds.
-        let lifts_now = paused.iter().any(|p| p.until_ms > now_ms);
-        if existing.is_empty()
-            && !new_key_allowed(&mut tx, device.id, &body.key, started, lifts_now, now).await?
-        {
-            return Ok(Outcome::Refused);
-        }
         let mut inserted: Vec<&Paused> = Vec::new();
         for p in &paused {
             if existing.contains(&p.rule_id) {
@@ -262,13 +207,6 @@ pub async fn intake(
         Ok(Outcome::Stored(ids, inserted, paused)) => (ids, inserted, paused),
         Ok(Outcome::UnknownRule) => {
             return Json(json!({"accepted": false, "reason": "unknown_rule"})).into_response();
-        }
-        Ok(Outcome::Refused) => {
-            tracing::warn!(
-                device_id = device.id,
-                "a phone pause refused: another is live, or the day's are used"
-            );
-            return Json(json!({"accepted": true, "lift_ids": [], "over": true})).into_response();
         }
         Err(err) => {
             tracing::error!(device_id = device.id, %err, "can't store the phone's rule pause");
