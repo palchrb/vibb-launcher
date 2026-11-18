@@ -68,7 +68,7 @@ struct Kid {
     calendar: String,
 }
 
-const CAPABILITIES: [&str; 3] = ["calendar_v1", "calendar_feeds_v1", CAPABILITY];
+const CAPABILITIES: [&str; 3] = ["calendar_v1", "calendar_feeds_v1", "calendar_kid_caldav_v1"];
 
 async fn report_capabilities(app: &TestApp, token: &str, capabilities: &[&str]) {
     app.post_status(token, json!({ "capabilities": capabilities }))
@@ -1706,37 +1706,10 @@ async fn the_select_offers_the_calendar_and_the_mark_ends_with_its_tick() {
 }
 
 #[tokio::test]
-async fn an_older_launcher_and_an_unwritable_calendar_cant_be_picked() {
+async fn an_unwritable_calendar_cant_be_picked() {
     let k = kid_with(Some(false)).await;
     // `writable: false` at the last Test: not offered, and refused.
     assert!(!k.page().await.contains("caldav:"));
-    let k = kid().await;
-    k.pick("phone").await;
-    report_capabilities(&k.app, &k.token, &["calendar_v1", "calendar_feeds_v1"]).await;
-    let page = k.page().await;
-    assert!(
-        page.contains(&format!(
-            r#"<option value="caldav:{}" disabled>"#,
-            k.calendar
-        )),
-        "{page}"
-    );
-    assert!(page.contains("data-kid-caldav-older"));
-    assert_eq!(
-        k.pick(&format!("caldav:{}", k.calendar)).await.status,
-        StatusCode::BAD_REQUEST
-    );
-    // A pick saved while the capability was there stays; the policy is `null` until it is back.
-    report_capabilities(&k.app, &k.token, &CAPABILITIES).await;
-    k.pick(&format!("caldav:{}", k.calendar)).await;
-    report_capabilities(&k.app, &k.token, &["calendar_v1", "calendar_feeds_v1"]).await;
-    assert_eq!(
-        k.pick(&format!("caldav:{}", k.calendar)).await.status,
-        StatusCode::SEE_OTHER
-    );
-    assert_eq!(k.policy().await, Value::Null);
-    let res = k.post(&k.set(vec![])).await;
-    assert_eq!(res.status, StatusCode::CONFLICT);
 }
 
 #[tokio::test]

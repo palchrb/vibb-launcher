@@ -186,7 +186,7 @@ async fn the_page_shows_a_link_and_waits_for_the_phone() {
     app.post_status(
         &token,
         json!({
-            "capabilities": [calendar_feeds::CAPABILITY, "calendar_v1"],
+            "capabilities": ["calendar_feeds_v1", "calendar_v1"],
             "calendar": {"readable": true, "calendars": [
                 {"key": key, "account_type": "LOCAL", "name": "Skolen", "access_level": 200},
                 {"key": "9f3a61c2d84be705", "account_type": "at.bitfire.icsdroid", "name": "Skole (ICSx5)",

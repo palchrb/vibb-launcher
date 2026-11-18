@@ -375,11 +375,10 @@ pub async fn show_link(
         Ok::<_, sqlx::Error>((
             calendar_feeds::links(&state.db, id).await?,
             calendar::last_report(&state.db, id).await?,
-            crate::handlers::device_api::last_capabilities(&state.db, id).await?,
         ))
     }
     .await;
-    let (links, report, capabilities) = match loaded {
+    let (links, report) = match loaded {
         Ok(found) => found,
         Err(err) => return read_failed(lang, err, "a calendar link"),
     };
@@ -398,9 +397,7 @@ pub async fn show_link(
         .flat_map(|r| &r.calendars)
         .any(|c| c.key == calendar_feeds::calendar_key(&link.uid));
     let mut notes = Vec::new();
-    if !capabilities.iter().any(|c| c == calendar_feeds::CAPABILITY) {
-        notes.push(t(lang, "calendar.links.update_phone").to_string());
-    } else if !on_phone {
+    if !on_phone {
         notes.push(t(lang, "calendar.links.waiting").to_string());
     }
     let count = |key: &str, n: i64| t_count(lang, key, n, &[]);

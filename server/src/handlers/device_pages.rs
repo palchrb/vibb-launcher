@@ -2476,9 +2476,8 @@ pub(crate) async fn render_apps(
         );
     }
     // 2026-11-12: Kalender (Dagen, design 69), under Meldinger - whether it is on Home, and a link to Device › Calendar
-    // where that and the rest are set. Only for a Vibb One with Dagen, or before the first report (a new phone gets
-    // one). It sends nothing new: no Name and icon (the phone reads none for Kalender).
-    if latest.is_none() || has_capability(latest.as_ref(), crate::calendar::CALENDAR_CAPABILITY) {
+    // where that and the rest are set. It sends nothing new: no Name and icon (the phone reads none for Kalender).
+    {
         let on_home = match crate::calendar::switches(&state.db, id).await {
             Ok(switches) => switches.map_or(crate::calendar::default_switches().0, |s| s.0),
             Err(err) => return read_failed(lang, id, "the phone's calendar switches", err),

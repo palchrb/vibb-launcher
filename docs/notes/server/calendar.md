@@ -96,7 +96,6 @@ unreadable provider - stays the selected choice, "The chosen calendar - not on t
 accounts, below "Device › Calendar's sources"), Calendars shown (`#calendars`: the phone's last report, one auto-saving form writing exactly the rows it
 was sent - a missing `remind_<key>` keeps it -, a saved calendar gone from the phone greyed with Remove, the setup
 steps without a report), Title rules (`#rules`: the list in order, up/down back to `#rule-<id>`, "Add a rule…").
-"This phone's Vibb One doesn't have the Calendar app yet" until the last report claims `calendar_v1`.
 
 2026-10-27 polish (the user's iPhone look at the nb page): each of Dagen, On the lock screen and Calendars shown has one
 short footer line and the rest behind its ⓘ (`<details class="info">`, as About and Calls); the kid's calendar is a
@@ -113,10 +112,8 @@ before the event - silent, or with one notification sound as it comes up", the l
 left out (silent or vibrate, Do Not Disturb, a time rule or bedtime, a call, the phone in use; never a vibration). Stored as the row
 plus `device_policy.calendar_lock_ping` (migration `0113_calendar_lock_ping.sql`: 0103's CHECK on
 `calendar_lock_reminders` can't take a third value without rebuilding `device_policy`; after S4's 0111/0112);
-`calendar::switches` reads the pair back as `ping`. The policy's `lock_reminders` is `ping` only to a launcher whose
-last report claims `calendar_ping_v1` (`calendar::served_lock_reminders`, in `build_policy`): an older launcher reads
-anything but `row` as off, so it is sent `row`, and the page says "This phone's Vibb One can't play the sound yet - it
-shows the quiet row" (`data-ping-older`). `tests::calendar::the_ping_saves_and_reaches_only_a_launcher_that_knows_it`.
+`calendar::switches` reads the pair back as `ping`, and the policy's `lock_reminders` says it.
+`tests::calendar::the_ping_saves_and_reaches_the_phone`.
 
 Every route is behind the full session (`require_full_auth`; `tests::calendar::every_calendar_route_needs_a_session`:
 signed out, each GET and POST is the login redirect and writes nothing).
@@ -156,8 +153,7 @@ Device › Apps' allowed list has a row for Kalender under Meldinger's (`device_
 `calendar_month` on `#496C9C`, the launcher's `kid_day_tile`), the value "On Home" / "Not on Home" from
 `calendar_on_home` (the Calendar page's switch; the defaults before a row), a link to `/devices/{id}/calendar#dagen`.
 Server-only: nothing new is sent, and it has no Name and icon - the phone reads no `app_display` entry for Kalender (a
-key for it would be a launcher change). It shows for a Vibb One whose last report has `calendar_v1`, and before the
-first report (a new phone gets a Vibb One with Dagen); never for an older one. Test:
+key for it would be a launcher change). It shows for every phone. Test:
 `tests::calendar::kalender_has_a_row_on_device_apps`.
 
 ## Words
@@ -234,13 +230,12 @@ ICSx5/DAVx5 stay possible. Step 2 (CalDAV, read-only, the password on the server
   `policy_json_keys_snapshot`) and `GET /api/devices/calendar/feeds/{uid}` (bearer; `handlers::calendar::device_feed`
   through `music_api::versioned_json`: `ETag` = rev, 304, gzip; 404 unless this phone has the link). The report's
   `calendar.feeds` (`[{id, applied_rev, refused, unknown_zone}]`, `calendar::sanitize_report`, at most 10 rows with a valid id, the counts capped at 2000 - QA L1) says
-  what the phone applied. Contract `testdata/calendar_feeds.json` (root `CLAUDE.md`). Capability `calendar_feeds_v1`.
+  what the phone applied. Contract `testdata/calendar_feeds.json` (root `CLAUDE.md`).
 - **The page** (since 2026-11-01 the look of variant B, below - "Device › Calendar's sources"): the link's own page
   (`GET .../calendar/links/{uid}`): its name (auto-saving, back to `#name`), its host, Fetching (`#fetch`: the failure
   in words with the set's age - orange -, Last fetched and Events once a fetch was stored ("27.10. 14:05" - the
   date's form is the catalog's `calendar.links.when_date`, "10/27 14:05" in English), Next (not while the key is
-  lost), the notes - "Venter på telefonen" until the report lists its key, "Oppdater Vibb One …" without
-  `calendar_feeds_v1`, the phone's refused series, `unknown_tz`, `cut`, churn, the LAN warning -, "Hent nå" (`/fetch`:
+  lost), the notes - "Venter på telefonen" until the report lists its key, the phone's refused series, `unknown_tz`, `cut`, churn, the LAN warning -, "Hent nå" (`/fetch`:
   at most once per source per 5 minutes - else `?notice=fetch_wait` -, the fetch before the answer, in
   `settings_log::NOT_SAVES`, back to `#fetch`)), "Fjern…" (confirmed, back to the Calendar page's `#sources`). The add
   form (Add Calendar's link, `POST /devices/{id}/calendar/links`): the link and an optional name (empty → the feed's
@@ -393,7 +388,7 @@ ends. `src/calendar_kid_events.rs` (the endpoint, the plan, the job, the way bac
   ON DELETE CASCADE: unticking, removing the account, deleting the phone take them; another pick deletes them in the
   same transaction (`calendar_kid_events::unmark`); the same pick again (an autosave) keeps everything.
 - **The endpoint** `POST /api/devices/calendar/kid-events` (bearer, `calendar_kid_events::post`): 409 `not_marked`
-  (none marked, another calendar, no `calendar_kid_caldav_v1`), 429 + `Retry-After` (one per 10 s), 413 `too_big`
+  (none marked, another calendar), 429 + `Retry-After` (one per 10 s), 413 `too_big`
   (events over 512 KB; said on the page), 400 `bad_set` / `tag_pinned` - the whole set: every key read explicitly,
   D4.9's UID pattern, a tag another device holds. A 200 `{accepted, pending, back}` answers at once after the
   acknowledgements (`applied`: only the uid's current `back_id` clears it, `sent_hash` := that version; an acked delete
@@ -452,11 +447,10 @@ ends. `src/calendar_kid_events.rs` (the endpoint, the plan, the job, the way bac
 - **The rows the write path reads or writes are stamped** with the answer's instant (`fetch_wait`: a write, a 412's or
   404's hand-back, a release), so a REPORT sent before it never judges them; the hold's count is each plan's own,
   never a running maximum.
-- **The policy's `calendar.kid_caldav`** `{id, accepted, back, pending}` (always sent, `null` without a mark or
-  without the capability; `policy_json_keys_snapshot`); the nudge only when `pending` reaches 0, `back` goes above 0 or
+- **The policy's `calendar.kid_caldav`** `{id, accepted, back, pending}` (always sent, `null` without a mark;
+  `policy_json_keys_snapshot`); the nudge only when `pending` reaches 0, `back` goes above 0 or
   a stop is new.
-- **The PWA**: the select's CalDAV options (not one `writable: false` at the last Test; disabled with "Oppdater Vibb One
-  …" for an older launcher, a saved pick kept), the status under it (`calendar.kid_caldav.status.*`, counts only:
+- **The PWA**: the select's CalDAV options (not one `writable: false` at the last Test), the status under it (`calendar.kid_caldav.status.*`, counts only:
   "Skrevet 15:12 · 12 avtaler", waiting, hand-backs waiting, cut, too big; orange: the stops, the account's stop with a
   link to its page, the clock, refused events, a refused set naming the old phone for a pinned tag, the two holds),
   the account page's "Barnets avtaler skrives hit", the untick's notice (`?notice=kid_caldav_ended&cal=<id>` on the
@@ -471,5 +465,5 @@ ends. `src/calendar_kid_events.rs` (the endpoint, the plan, the job, the way bac
   canonical rows, the writer's folding and escaping, the hrefs, every guard against the stateful fake
   `tests::fake_dav` - conditions, no redirects, H1/H2/R-M2/R-L1/R-L2's paths, the rewrite switch, cut, ended, the
   clock, the holds, the confirm, the 403 bodies, 401/507/400/409, weak and missing ETags, the claim, the backoff and the
-  pace, the nudge, the select, the untick, an older launcher, the cascades). **Not verified against a real server**
+  pace, the nudge, the select, the untick, the cascades). **Not verified against a real server**
   (design 72b §10): the emulator's §6z with Radicale and one real account (iCloud preferred).

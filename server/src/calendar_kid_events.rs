@@ -44,9 +44,6 @@ use crate::calendar_feeds::FeedError;
 use crate::ics::{self, KidResource, KidWhen};
 use crate::music_sweep::{parse_stamp, stamp};
 
-/// A launcher that hands its kid's events over reports this capability; without it the policy's `kid_caldav` is
-/// `null` and the PWA offers no CalDAV calendar for them (D5.3).
-pub const CAPABILITY: &str = "calendar_kid_caldav_v1";
 /// Rows in a set (D1.3).
 pub const MAX_ROWS: usize = 300;
 /// The set's `events` as JSON, in bytes (D1.3); past it a 413.
@@ -962,7 +959,7 @@ async fn replan(
 // ---- counts, the policy ------------------------------------------------------------------------
 
 /// The policy's `calendar.kid_caldav` (D1.6): the marked calendar's feed uid, the last set taken, the hand-backs and
-/// the writes waiting. `None` when nothing is marked (the caller also sends `null` without [CAPABILITY]).
+/// the writes waiting. `None` when nothing is marked.
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct KidCaldavPolicy {
     pub id: String,
@@ -1095,12 +1092,7 @@ async fn post_inner(
     body: &[u8],
 ) -> Result<Response, sqlx::Error> {
     let now = state.kid_writes.now();
-    let capable = crate::handlers::device_api::last_capabilities(&state.db, device_id)
-        .await?
-        .iter()
-        .any(|c| c == CAPABILITY);
-    let Some((source_id, source_uid, _)) = marked(&state.db, device_id).await?.filter(|_| capable)
-    else {
+    let Some((source_id, source_uid, _)) = marked(&state.db, device_id).await? else {
         return Ok(error_answer(StatusCode::CONFLICT, "not_marked"));
     };
     let value: Option<Value> = serde_json::from_slice(body).ok();

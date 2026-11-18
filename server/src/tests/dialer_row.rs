@@ -89,7 +89,7 @@ async fn the_managed_row_links_to_calls() {
     let cookie = app.admin_cookie().await;
     // The dialer is missing from the allowlist: still not in Not allowed.
     let (id, token) = phone(&app, Some(&[OTHER]), "managed", true).await;
-    // A Vibb One with Dagen: Kalender's built-in row is on the page too (and Meldinger's with SMS managed).
+    // Kalender's built-in row is on the page too (and Meldinger's with SMS managed).
     app.post_status(
         &token,
         serde_json::json!({
@@ -98,7 +98,6 @@ async fn the_managed_row_links_to_calls() {
                 {"package_name": OTHER, "label": "Chess"},
             ],
             "call_state": {"system_dialer": DIALER},
-            "capabilities": [crate::calendar::CALENDAR_CAPABILITY],
         }),
     )
     .await;

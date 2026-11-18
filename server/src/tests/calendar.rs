@@ -220,8 +220,8 @@ async fn the_page_lists_the_groups_and_the_reported_calendars() {
     assert!(at(r#"id="calendars""#) < at(r#"id="rules""#));
     assert!(html.contains("ICSx5 · skole.kommune.no"), "{html}");
     assert!(html.contains("DAVx5 · nextcloud.example.no"));
-    // The contract's report claims calendar_v1; the master switch is off, so each reminder says so.
-    assert!(!html.contains("calendar-not-capable"));
+    // The master switch is off, so each reminder says so.
+    assert!(!html.contains("Update Vibb One"));
     assert_eq!(html.matches("data-reminders-off").count(), 3);
     // The kid's calendar: off, the phone's own (the default) and the one writable DAVx5 calendar.
     assert!(
@@ -233,7 +233,7 @@ async fn the_page_lists_the_groups_and_the_reported_calendars() {
         !html.contains(r#"<option value="9f3a61c2d84be705">"#),
         "ICSx5 is read-only"
     );
-    // A phone without a report says what to do; Norwegian when the browser asks for it and the account has no
+    // A phone without a report: no calendars yet, nothing to update; Norwegian when the browser asks for it and the account has no
     // language yet (design 70: the account's own wins once stored).
     let (other, _) = app.enrolled_device("Ola").await;
     sqlx::query("UPDATE admin_users SET lang = NULL")
@@ -252,7 +252,7 @@ async fn the_page_lists_the_groups_and_the_reported_calendars() {
     let nb = app.send(request).await.text();
     assert!(nb.contains(r#"<html lang="nb">"#));
     assert!(nb.contains("Kalendere som vises") && nb.contains(r#"data-calendars="no-report""#));
-    assert!(nb.contains("calendar-not-capable"));
+    assert!(!nb.contains("Oppdater Vibb One"));
     // That request stored Norwegian as the account's: the summary row is Norwegian too, without the header. Three
     // reported, none hidden.
     let summary = app
@@ -1074,11 +1074,10 @@ async fn save_reminders(app: &TestApp, page: &str, cookie: &str, value: &str) {
 }
 
 /// The quiet row plus a ping (PLAN "Lock-screen reminders: a third option", migration 0113): the select's third value
-/// saves (stored as the row with `calendar_lock_ping`), reads back selected, and the policy says `ping` only to a
-/// launcher claiming `calendar_ping_v1` - an older one reads anything but `row` as off, so it is sent `row` and the
-/// page says it shows the quiet row. Back to the row clears the ping.
+/// saves (stored as the row with `calendar_lock_ping`), reads back selected, and the policy says `ping`. Back to the
+/// row clears the ping.
 #[tokio::test]
-async fn the_ping_saves_and_reaches_only_a_launcher_that_knows_it() {
+async fn the_ping_saves_and_reaches_the_phone() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = reported(&app).await;
@@ -1092,43 +1091,20 @@ async fn the_ping_saves_and_reaches_only_a_launcher_that_knows_it() {
     .await
     .unwrap();
     assert_eq!(stored, ("row".to_string(), 1));
-    // The report's launcher claims `calendar_v1` only: the row, and the page says so.
     assert_eq!(
         app.policy(&token).await["calendar"]["lock_reminders"],
-        json!("row")
+        json!("ping")
     );
     let html = page_nb(&app, &page, &cookie).await;
     assert!(
         html.contains(r#"<option value="ping" selected>Stille rad + lyd</option>"#),
         "{html}"
     );
-    assert!(html.contains(
-        r#"<span class="row-sub" data-ping-older>Vibb One på telefonen kan ikke lyden ennå - den viser den stille raden</span>"#
-    ));
     assert!(!html.contains("data-reminders-off"));
     assert!(
         html.contains("«Stille rad + lyd» spiller telefonens varsellyd én gang når raden kommer.")
     );
     assert!(html.contains("i en samtale, eller mens telefonen er i bruk. Aldri vibrasjon."));
-    // A launcher that knows the ping gets it; the note goes.
-    let mut report: Value = serde_json::from_str(CALENDAR_REPORT).unwrap();
-    report["capabilities"] = json!(["calendar_v1", crate::calendar::PING_CAPABILITY]);
-    app.request(
-        Method::POST,
-        "/api/devices/status",
-        Some(&token),
-        Some(report),
-    )
-    .await;
-    assert_eq!(
-        app.policy(&token).await["calendar"]["lock_reminders"],
-        json!("ping")
-    );
-    assert!(
-        !page_nb(&app, &page, &cookie)
-            .await
-            .contains("data-ping-older")
-    );
     let en = app.get_page(&page, &cookie).await.text();
     assert!(en.contains(r#"<option value="ping" selected>Quiet row + sound</option>"#));
     // Back to the quiet row: the ping goes with it; Off is off.
@@ -1380,9 +1356,7 @@ async fn kalender_has_a_row_on_device_apps() {
     );
     assert!(messages.expect("Meldinger's row") < at);
 
-    // A Vibb One without Dagen: no row; one with it: the row again.
+    // After a report without capabilities: the row still.
     report(json!([])).await;
-    assert!(row().await.is_none());
-    report(json!([crate::calendar::CALENDAR_CAPABILITY])).await;
     assert!(row().await.is_some());
 }

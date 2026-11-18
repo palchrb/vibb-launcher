@@ -37,8 +37,6 @@
   "advanced.spotify_diag.info": "Les den med en datamaskin: adb logcat -s VibbSpotify. Den viser hva som skjer og når - aldri kontoen, tilgangsnøkler eller hva som spilles. Den slår seg av selv etter 15 minutter. Telefonen må ha oppdatert Vibb One og musikkappen for å kjenne den.",
 
   "calendar.title": "Kalender",
-  "calendar.not_capable": "Vibb One på denne telefonen kjenner ikke Kalender-appen ennå",
-  "calendar.not_capable_sub": "Det du velger her, når telefonen når Vibb One er oppdatert.",
 
   "calendar.summary.label": "Kalender",
   "calendar.summary.shown": "{count} vises",
@@ -65,7 +63,6 @@
   "calendar.lock.reminders.off": "Av",
   "calendar.lock.reminders.row": "Stille rad",
   "calendar.lock.reminders.ping": "Stille rad + lyd",
-  "calendar.lock.ping_older": "Vibb One på telefonen kan ikke lyden ennå - den viser den stille raden",
   "calendar.lock.footer": "Alle i nærheten av telefonen kan se låseskjermen.",
   "calendar.lock.info_label": "Om låseskjermen",
   "calendar.lock.info": "En tittel kan nevne et sted. Tittelreglene nedenfor gjelder også her.",
@@ -171,7 +168,6 @@
   "calendar.error.move": "Flytt en regel opp eller ned.",
   "calendar.kid.gone": "Den valgte kalenderen - ikke på telefonen nå",
   "calendar.kid.caldav_option": "{name} · {server} (skrives av serveren)",
-  "calendar.kid_caldav.older": "Oppdater Vibb One for å skrive barnets avtaler hit",
   "calendar.kid_caldav.here": "Barnets avtaler skrives hit",
   "calendar.kid_caldav.ended": "Barnets avtaler skrives ikke lenger til {name} - det som er skrevet, blir liggende i kalenderen",
   "calendar.kid_caldav.ended_account": "Barnets avtaler skrives ikke lenger til den kalenderen - det som er skrevet, blir liggende der",
@@ -218,7 +214,6 @@
   "calendar.links.key_new_sub": "Lim inn hver lenke som er merket nedenfor på nytt med Legg til kalender - samme lenke beholder kalenderens innstillinger.",
   "calendar.links.kind": "Kalenderlenke",
   "calendar.links.waiting": "Venter på telefonen",
-  "calendar.links.update_phone": "Oppdater Vibb One på telefonen for å se denne kalenderen",
   "calendar.links.maybe_same": "Kan være den samme som kalenderlenken {name}",
   "calendar.links.fetch_wait": "Hentet for et øyeblikk siden - prøv igjen om noen minutter.",
   "calendar.links.status.fetched.one": "Hentet {when} · {count} hendelse",

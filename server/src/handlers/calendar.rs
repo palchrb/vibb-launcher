@@ -173,8 +173,6 @@ pub struct KidChoice {
     pub value: String,
     pub label: String,
     pub selected: bool,
-    /// A CalDAV calendar offered to an older Vibb One (design 72b D5.3): shown, not choosable.
-    pub disabled: bool,
 }
 
 /// One line of the status under the select while a CalDAV calendar is the pick (design 72b D5.2): counts only.
@@ -197,11 +195,8 @@ struct CalendarTemplate {
     title: String,
     device_id: i64,
     device_name: String,
-    capable: bool,
     on_home: bool,
     kid_choices: Vec<KidChoice>,
-    /// A CalDAV calendar is offered disabled: this phone's Vibb One can't hand its events over yet (D5.3).
-    kid_caldav_older: bool,
     /// The status under the select while a CalDAV calendar is the pick (D5.2).
     kid_status: Vec<KidStatusLine>,
     /// The kid's mass delete is held: "Put them back on the phone" (D2.6).
@@ -211,9 +206,6 @@ struct CalendarTemplate {
     glance_next: bool,
     /// The select's value: `off`, `row` or `ping` (the row plus one sound, migration 0113).
     reminders: &'static str,
-    /// `ping` chosen for a phone whose Vibb One shows the row but doesn't know the sound yet (no
-    /// `calendar::PING_CAPABILITY`): it is sent `row`, and the row says so.
-    ping_older: bool,
     state: ReportState,
     calendars: Vec<CalendarView>,
     rules: Vec<RuleView>,
@@ -387,13 +379,11 @@ fn kid_choices(
             value: "off".to_string(),
             label: t(lang, "calendar.kid.off").to_string(),
             selected: !kid_adds,
-            disabled: false,
         },
         KidChoice {
             value: "phone".to_string(),
             label: t(lang, "calendar.kid.phone").to_string(),
             selected: kid_adds && chosen.is_none() && !caldav.iter().any(|c| c.selected),
-            disabled: false,
         },
     ];
     for c in report.map(|r| r.calendars.as_slice()).unwrap_or_default() {
@@ -402,7 +392,6 @@ fn kid_choices(
                 value: c.key.clone(),
                 label: c.name.clone(),
                 selected: kid_adds && chosen == Some(c.key.as_str()),
-                disabled: false,
             });
         }
     }
@@ -413,7 +402,6 @@ fn kid_choices(
             value: key.to_string(),
             label: t(lang, "calendar.kid.gone").to_string(),
             selected: kid_adds,
-            disabled: false,
         });
     }
     // Design 72b D5.1: the CalDAV calendars ticked for this phone, written by the server.
@@ -422,14 +410,12 @@ fn kid_choices(
 }
 
 /// The CalDAV calendars ticked for this phone that the kid's events may be written to (design 72b D5.1): not one its
-/// last Test says the account can't write to (`writable: false`) unless it is the pick already; disabled for an
-/// older Vibb One unless picked (D5.3).
+/// last Test says the account can't write to (`writable: false`) unless it is the pick already.
 fn caldav_kid_choices(
     lang: Lang,
     links: &[calendar_feeds::LinkRow],
     accounts: &[crate::caldav::AccountView],
     marked: Option<&str>,
-    capable: bool,
 ) -> Vec<KidChoice> {
     let mut out = Vec::new();
     for link in links.iter().filter(|l| l.kind == "caldav") {
@@ -452,7 +438,6 @@ fn caldav_kid_choices(
                 &[("name", &link.name), ("server", &server)],
             ),
             selected,
-            disabled: !capable && !selected,
         });
     }
     out
@@ -682,7 +667,6 @@ pub async fn view_calendar(
             calendar::calendars(&state.db, id).await?,
             calendar::rules(&state.db, id).await?,
             calendar::last_report(&state.db, id).await?,
-            crate::handlers::device_api::last_capabilities(&state.db, id).await?,
             calendar_feeds::links(&state.db, id).await?,
             crate::caldav::accounts(&state.db).await?,
             crate::calendar_kid_events::marked_uid(&state.db, id).await?,
@@ -690,11 +674,10 @@ pub async fn view_calendar(
         ))
     }
     .await;
-    let (switches, saved, rules, report, capabilities, links, accounts, marked, kid_status) =
-        match loaded {
-            Ok(found) => found,
-            Err(err) => return read_failed(lang, err, "the calendar settings"),
-        };
+    let (switches, saved, rules, report, links, accounts, marked, kid_status) = match loaded {
+        Ok(found) => found,
+        Err(err) => return read_failed(lang, err, "the calendar settings"),
+    };
     let zone = crate::display_time::Zone::load(&state.db, lang).await;
     let now = chrono::Utc::now();
     let link_keys: HashMap<String, &calendar_feeds::LinkRow> = links
@@ -810,12 +793,7 @@ pub async fn view_calendar(
     let (sources, links_key_new) =
         calendar_sources::source_rows(state, lang, &zone, now, id, &links, &accounts);
     // Design 72b: the CalDAV calendars the kid's events may be written to, and the status while one is the pick.
-    let kid_capable = capabilities
-        .iter()
-        .any(|c| c == crate::calendar_kid_events::CAPABILITY);
-    let caldav_choices =
-        caldav_kid_choices(lang, &links, &accounts, marked.as_deref(), kid_capable);
-    let kid_caldav_older = caldav_choices.iter().any(|c| c.disabled);
+    let caldav_choices = caldav_kid_choices(lang, &links, &accounts, marked.as_deref());
     let marked_link = marked
         .as_deref()
         .and_then(|uid| links.iter().find(|l| l.uid == uid));
@@ -863,22 +841,13 @@ pub async fn view_calendar(
             title: t(lang, "calendar.title").to_string(),
             device_id: id,
             device_name,
-            capable: capabilities
-                .iter()
-                .any(|c| c == calendar::CALENDAR_CAPABILITY),
             on_home,
             kid_choices: kid_choices(lang, kid_adds, report.as_ref(), &saved, caldav_choices),
-            kid_caldav_older,
             kid_status: kid_lines,
             kid_restore,
             kid_server,
             glance_next,
             reminders,
-            ping_older: reminders == "ping"
-                && capabilities
-                    .iter()
-                    .any(|c| c == calendar::CALENDAR_CAPABILITY)
-                && !capabilities.iter().any(|c| c == calendar::PING_CAPABILITY),
             state: state_of,
             calendars,
             rules: rule_views,
@@ -1099,13 +1068,6 @@ async fn caldav_source(state: &AppState, id: i64, uid: &str) -> Result<Option<i6
     };
     if already {
         return Ok(Some(source));
-    }
-    let capable = crate::handlers::device_api::last_capabilities(&state.db, id)
-        .await?
-        .iter()
-        .any(|c| c == crate::calendar_kid_events::CAPABILITY);
-    if !capable {
-        return Ok(None);
     }
     let accounts = crate::caldav::accounts(&state.db).await?;
     let writable = accounts

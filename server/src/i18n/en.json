@@ -37,8 +37,6 @@
   "advanced.spotify_diag.info": "Read it with a computer: adb logcat -s VibbSpotify. It says what happens and when - never the account, a token or what is playing. It turns itself off after 15 minutes. The phone needs an updated Vibb One and music app to know it.",
 
   "calendar.title": "Calendar",
-  "calendar.not_capable": "This phone's Vibb One doesn't have the Calendar app yet",
-  "calendar.not_capable_sub": "What you set here reaches it once Vibb One is updated.",
 
   "calendar.summary.label": "Calendar",
   "calendar.summary.shown": "{count} shown",
@@ -65,7 +63,6 @@
   "calendar.lock.reminders.off": "Off",
   "calendar.lock.reminders.row": "Quiet row",
   "calendar.lock.reminders.ping": "Quiet row + sound",
-  "calendar.lock.ping_older": "This phone's Vibb One can't play the sound yet - it shows the quiet row",
   "calendar.lock.footer": "Anyone near the phone can see the lock screen.",
   "calendar.lock.info_label": "About the lock screen",
   "calendar.lock.info": "A title can name a place. The title rules below apply here too.",
@@ -171,7 +168,6 @@
   "calendar.error.move": "Move a rule up or down.",
   "calendar.kid.gone": "The chosen calendar - not on the phone now",
   "calendar.kid.caldav_option": "{name} · {server} (written by the server)",
-  "calendar.kid_caldav.older": "Update Vibb One to write the kid's events here",
   "calendar.kid_caldav.here": "The kid's events are written here",
   "calendar.kid_caldav.ended": "The kid's events are no longer written to {name} - what was written stays in the calendar",
   "calendar.kid_caldav.ended_account": "The kid's events are no longer written to that calendar - what was written stays in it",
@@ -218,7 +214,6 @@
   "calendar.links.key_new_sub": "Paste each link marked below again with Add Calendar - the same link keeps its calendar's settings.",
   "calendar.links.kind": "Calendar link",
   "calendar.links.waiting": "Waiting for the phone",
-  "calendar.links.update_phone": "Update Vibb One on the phone to see this calendar",
   "calendar.links.maybe_same": "May be the same as the calendar link {name}",
   "calendar.links.fetch_wait": "Fetched a moment ago - try again in a few minutes.",
   "calendar.links.status.fetched.one": "Fetched {when} · {count} event",

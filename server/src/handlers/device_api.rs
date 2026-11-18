@@ -419,18 +419,9 @@ pub(crate) async fn build_policy(
     // location update past its hour (EXPIRING_COMMANDS, the user's decision 2026-10-12). See
     // migrations/0010_find_my_device.sql, 0065_command_receipts.sql, 0068 and handlers::locate.
     let capabilities = last_capabilities(&state.db, device_id).await?;
-    // The quiet row plus a ping (migration 0113): `ping` only to a launcher that knows it, `row` to an older one.
-    calendar.lock_reminders =
-        crate::calendar::served_lock_reminders(&calendar.lock_reminders, &capabilities);
-    // Design 72b D1.6: the marked CalDAV calendar only to a launcher that hands its kid's events over.
-    if capabilities
-        .iter()
-        .any(|c| c == crate::calendar_kid_events::CAPABILITY)
-    {
-        calendar.kid_caldav =
-            crate::calendar_kid_events::policy(&state.db, device_id, state.kid_writes.now())
-                .await?;
-    }
+    // Design 72b D1.6: the marked CalDAV calendar the kid's events are handed to.
+    calendar.kid_caldav =
+        crate::calendar_kid_events::policy(&state.db, device_id, state.kid_writes.now()).await?;
     // Design 76: the certificate check, only to a launcher that reads it; a read error fails the policy.
     let server_tls = crate::server_tls::policy(state, device_id, &capabilities).await?;
     // Design 108 §3.8: app push, only to a launcher that is a distributor; a read error fails the policy.
