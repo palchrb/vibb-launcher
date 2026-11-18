@@ -456,6 +456,27 @@ async fn the_pages_show_the_logos() {
         .text();
     assert!(lily_page.contains(&tile(&sha(&own))), "{lily_page}");
 
+    // The Lock page's lock-screen list: the same tile, the logo over its letter, else the letter.
+    let lock = app
+        .get_page(&device_page(emma, Section::Lock), &cookie)
+        .await
+        .text();
+    let row_of = |package: &str| {
+        let at = lock
+            .find(&format!("id=\"lock-screen-app-{package}\""))
+            .unwrap();
+        lock[at..at + lock[at..].find("</label>").unwrap()].to_string()
+    };
+    let drawing = row_of("org.example.drawing");
+    assert!(drawing.contains("app-row-tile app-row-logo"), "{drawing}");
+    assert!(drawing.contains(&tile(&sha(&common))), "{drawing}");
+    let notes = row_of("org.example.notes");
+    assert!(
+        notes.contains("<span class=\"app-row-tile\" aria-hidden=\"true\">N</span>"),
+        "{notes}"
+    );
+    assert!(!notes.contains("<img"), "{notes}");
+
     // The Apps tab: the logo two phones name, not the third's.
     let catalog: i64 = sqlx::query_scalar(
         "INSERT INTO tracked_apps (name, package_name, github_repo) VALUES ('Drawing', 'org.example.drawing', 'o/r') \

@@ -288,6 +288,24 @@ fn sanitized(label: Option<String>, icon: Option<String>, color: String) -> Disp
     DisplayValues { label, icon, color }
 }
 
+/// The icon a phone shows for [package] on its colour (its own choice, else the catalog's), when the key is known:
+/// the Apps page's tile and the Lock page's list use it alike.
+pub fn icon_of(
+    own: &std::collections::BTreeMap<String, DisplayValues>,
+    defaults: &std::collections::BTreeMap<String, DisplayValues>,
+    package: &str,
+) -> Option<(String, &'static str)> {
+    own.get(package)
+        .or_else(|| defaults.get(package))
+        .and_then(|values| {
+            values
+                .icon
+                .as_deref()
+                .filter(|key| icon_known(key))
+                .map(|key| (key.to_string(), tile_of(&values.color)))
+        })
+}
+
 /// The catalog defaults by package name (rows with a package and a label or an icon; the first
 /// row of a package wins).
 pub async fn catalog_defaults(

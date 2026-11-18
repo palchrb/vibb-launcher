@@ -333,6 +333,7 @@
                 <input type="hidden" name="package_name" value="{{ app.package_name }}">
                 {% if app.note.is_some() %}<input type="hidden" name="unlisted" value="1">{% endif %}
                 <label class="row">
+                    {% if let Some(tile) = lock_tiles.get(app.package_name.as_str()) %}{% if let Some(src) = tile.logo %}<span class="app-row-tile app-row-logo" aria-hidden="true">{{ tile.letter }}<img src="{{ src }}" alt="" decoding="async"></span>{% else if let Some((icon, colour)) = tile.icon %}<span class="app-row-tile" style="background: {{ colour }}" aria-hidden="true"><img src="/static/app-icons/{{ icon }}.svg" alt=""></span>{% else %}<span class="app-row-tile" aria-hidden="true">{{ tile.letter }}</span>{% endif %}{% endif %}
                     <span class="row-label">{{ app.label }}{% if let Some(note) = app.note %}<span class="row-sub">{{ self.t(note) }}</span>{% endif %}{% if let Some(hint) = app.hint %}<span class="row-sub tone-orange" data-hint>{{ self.t(hint) }}</span>{% endif %}</span>
                     <select class="pick" name="show" data-autosave>
                         <option value="off"{% if !app.on %} selected{% endif %}>{{ self.t("common.off") }}</option>
