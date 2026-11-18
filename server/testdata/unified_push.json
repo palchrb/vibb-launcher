@@ -47,6 +47,7 @@
   "messages": {
     "path": "/api/devices/up/messages",
     "body": {"ack": ["deadbeef000000000000000000000001", "deadbeef000000000000000000000002"]},
+    "body_held": {"ack": ["deadbeef000000000000000000000001"], "held": true},
     "answer": {
       "messages": [
         {"key": "deadbeef000000000000000000000003", "reg": "c0ffee00000000000000000000000002", "urgency": "high", "body": "eyJub3RpZmljYXRpb24iOnsiZXZlbnRfaWQiOiIkZmFrZUV2ZW50MDAwMTpleGFtcGxlLm9yZyIsInJvb21faWQiOiIhZmFrZVJvb20wMDAxOmV4YW1wbGUub3JnIiwidHlwZSI6Im0ucm9vbS5tZXNzYWdlIiwiY291bnRzIjp7InVucmVhZCI6Mn0sInByaW8iOiJoaWdoIiwiZGV2aWNlcyI6W3siYXBwX2lkIjoiaW8uZWxlbWVudC5hbmRyb2lkLngiLCJwdXNoa2V5X3RzIjoxNzkwMDAwMDAwLCJkYXRhIjp7ImNzIjoiZmFrZS1jbGllbnQtc2VjcmV0In19XX19"},
@@ -55,6 +56,20 @@
       "more": false
     }
   },
+  "report": {"unified_push": {"held": "no_network"}},
+  "report_open": {"unified_push": {"held": "none"}},
+  "clean": [
+    {"in": {"held": "no_network"}, "stored": "no_network"},
+    {"in": {"held": "none"}, "stored": null},
+    {"in": {"held": "app_off"}, "stored": "app_off"},
+    {"in": {"held": 5}, "stored": null},
+    {"in": {"held": null}, "stored": null},
+    {"in": {"held": "No Network"}, "stored": null},
+    {"in": {"held": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, "stored": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+    {"in": {"held": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, "stored": null},
+    {"in": "x", "stored": null},
+    {"in": {}, "stored": null}
+  ],
   "event": {"name": "up", "data": "up"},
   "endpoint": {"pattern": "^https://[^/]+/up/[A-Za-z0-9_-]{27}$"}
 }

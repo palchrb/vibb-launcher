@@ -50,6 +50,7 @@ import com.kidslauncher.mdm.sms.SmsHome
 import com.kidslauncher.mdm.badges.GlanceSubtitle
 import com.kidslauncher.mdm.badges.glanceNameSuffix
 import com.kidslauncher.mdm.badges.glanceRowContact
+import com.kidslauncher.mdm.badges.glanceShownTitle
 import com.kidslauncher.mdm.badges.glanceRowBadge
 import com.kidslauncher.mdm.badges.glanceSpokenParts
 import com.kidslauncher.mdm.badges.glanceSubtitle
@@ -239,6 +240,8 @@ class GlancePanel(
     }
 
     private val labels = HashMap<String, String>()
+    /** Design 115 §3: the apps' own Android labels (`""` when unreadable), cleared with [labels]. */
+    private val ownLabels = HashMap<String, String>()
     /** Home's icons for the rows, shared with the time-rule screen (qa-34-s7-code N4). */
     private val icons = AppIconLoader(activity, KidAvatars.dp(activity, 36f), LOG_TAG)
     private val changed: () -> Unit = { render() }
@@ -430,6 +433,7 @@ class GlancePanel(
         ClockFormat.unwatch(activity, clockWatch)
         clockWatch = null
         labels.clear()
+        ownLabels.clear()
     }
 
     /** The lock's background behind the page (design 25, "Lock background") - opaque, the page
@@ -1381,7 +1385,9 @@ class GlancePanel(
         if (view is ViewGroup) for (i in 0 until view.childCount) sensitive(view.getChildAt(i))
     }
 
-    private fun bindMessage(view: ViewLockGlanceRowBinding, row: GlanceMessageRow) {
+    private fun bindMessage(view: ViewLockGlanceRowBinding, shown: GlanceMessageRow) {
+        // Design 115 §3: a plain notification titled with the app's own label reads as the app's display name.
+        val row = shown.copy(title = glanceShownTitle(shown.title, shown.shape, shown.sender, ownLabel(shown.packageName)))
         val label = label(row.packageName)
         val res = activity.resources
         val messages = res.getQuantityString(R.plurals.glance_messages, row.count, row.count)
@@ -1549,6 +1555,10 @@ class GlancePanel(
             }
         }
     }
+
+    /** The app's own Android label, `null` when unreadable (design 115 §3). */
+    private fun ownLabel(packageName: String): String? =
+        ownLabels.getOrPut(packageName) { AppDisplay.ownLabel(activity, packageName).orEmpty() }.ifEmpty { null }
 
     /** The app's name as the kid sees it (the parent's, the kid's rename, the app's own). */
     private fun label(packageName: String): String =

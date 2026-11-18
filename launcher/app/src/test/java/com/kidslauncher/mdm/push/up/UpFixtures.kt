@@ -77,8 +77,12 @@ class FakeUpServer : UpServer {
         return unregisterWorks
     }
 
-    override fun pull(acks: List<String>): UpMessagesAnswer? {
+    /** Each pull's `held` (design 115). */
+    val pullHeld = mutableListOf<Boolean>()
+
+    override fun pull(acks: List<String>, held: Boolean): UpMessagesAnswer? {
         pullAcks += acks
+        pullHeld += held
         return if (pulls.isEmpty()) UpMessagesAnswer() else pulls.removeFirst()
     }
 }
@@ -94,6 +98,10 @@ class FakeUpPhone : UpPhone {
     val delivering = mutableListOf<RaiseToForeground.Message>()
     var onSent: (RaiseToForeground.Message) -> Unit = {}
     var pullsLater = 0
+
+    /** Design 115: the hold the phone reports, and the "net" pulls asked. */
+    var hold = UpHold.NONE
+    var pullsAfterHold = 0
 
     override fun newEndpoint(pkg: String, token: String, endpoint: String, id: String) {
         sent += "NEW_ENDPOINT $pkg $token $endpoint"
@@ -122,6 +130,12 @@ class FakeUpPhone : UpPhone {
 
     override fun pullLater(delayMs: Long) {
         pullsLater++
+    }
+
+    override fun hold() = hold
+
+    override fun pullAfterHold() {
+        pullsAfterHold++
     }
 
     /** The raise's sends went out: reported to the engine as the runtime does. */

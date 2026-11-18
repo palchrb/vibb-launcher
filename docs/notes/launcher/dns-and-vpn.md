@@ -265,6 +265,10 @@ applied) and the best non-VPN network the service's watcher sees:
   starts the moment Wi-Fi drops (the filter off, with Bare Vibb on or the roaming lock on - code QA M2, so a roaming
   session that outlived the lock and survives a stay on Wi-Fi is sunk when Wi-Fi drops).
 
+**App push follows the shape** (design 115): every new tunnel, the service's stop and each `writeAlwaysOn` call
+`UpRuntime.shapeChanged()`; while any view says the sink the launcher pulls no app push, and leaving it asks the pull
+(`docs/notes/launcher/unified-push.md`, "Held while the apps have no network").
+
 **The launcher is excluded in every shape** (`addDisallowedApplication(packageName)`), so tsnet too: none of its
 sockets move at a switch, the SSE stream and a sync survive it, and the launcher's own lookups (the server's name)
 now use the network's resolver instead of the filter - a dead filter upstream no longer takes the sync with it. A

@@ -1551,6 +1551,11 @@ async fn status_intake(
         .as_ref()
         .and_then(crate::notification_channels::clean)
         .map(|value| value.to_string());
+    // Design 115 §2.8: why the phone holds its app-push queue (`None`: it doesn't, or an older launcher).
+    let up_held = report
+        .unified_push
+        .as_ref()
+        .and_then(crate::unified_push::clean_report);
     // Design 64 step 2: the phone's zone watch, known keys only.
     let zone_watch_json = report
         .zone_watch
@@ -1589,8 +1594,8 @@ async fn status_intake(
           relock_blocks_total, clock_format_applied, battery_level, battery_charging, dns_upstream_json, \
           write_settings_granted, zone_watch_json, tailnet_joined, sms_state_json, data_roaming_json, \
           mobile_data_json, airplane_mode_json, shortcuts_json, captive_portal_json, login_browser_json, \
-          notification_channels_json) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          notification_channels_json, up_held) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(device.id)
     .bind(&report.lock_reason)
@@ -1655,6 +1660,7 @@ async fn status_intake(
     .bind(&captive_portal_json)
     .bind(&login_browser_json)
     .bind(&notification_channels_json)
+    .bind(&up_held)
     .execute(&state.db)
     .await
     .ok();

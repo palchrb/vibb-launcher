@@ -139,15 +139,40 @@ async fn waiting_since(
         }
         (Some(_), None) => false,
         // (a) Never fetched although the phone took its policy three times, with no report saying it couldn't apply it.
+        // Design 115 §2.8: only the policies served after the last report that said the phone holds on purpose.
         (None, _) => {
-            let from = DateTime::from_timestamp_millis(created).unwrap_or(now)
+            let mut from = DateTime::from_timestamp_millis(created).unwrap_or(now)
                 + Duration::minutes(WAITING_SETTLE_MIN);
             let to = now - Duration::minutes(2);
+            if let Some(held) = last_held_report(&state.db, device_id, from, to).await? {
+                from = from.max(held + Duration::seconds(1));
+            }
             state.unified_push.policies_served(device_id, from, to) >= WAITING_POLICIES
                 && !policy_problem_between(&state.db, device_id, from, to).await?
         }
     };
     Ok(raised.then(|| DateTime::from_timestamp_millis(created).unwrap_or(now)))
+}
+
+/// Design 115 §2.8: the last report in the window that said the phone holds its queue on purpose - only with a sink
+/// reason in the same report (QA M2: the server's own reading, so a hold that is wrong never hides the row).
+async fn last_held_report(
+    db: &SqlitePool,
+    device_id: i64,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+) -> Result<Option<DateTime<Utc>>, sqlx::Error> {
+    let last: Option<String> = sqlx::query_scalar(
+        "SELECT MAX(reported_at) FROM device_status WHERE device_id = ? AND reported_at >= ? \
+         AND reported_at <= ? AND up_held IS NOT NULL \
+         AND COALESCE(json_extract(mobile_data_json, '$.sink'), 'off') <> 'off'",
+    )
+    .bind(device_id)
+    .bind(db_text(from))
+    .bind(db_text(to))
+    .fetch_one(db)
+    .await?;
+    Ok(last.as_deref().and_then(parse_db_utc))
 }
 
 async fn policy_problem_between(

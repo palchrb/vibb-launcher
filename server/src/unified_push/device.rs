@@ -219,6 +219,10 @@ pub async fn unregister(
 struct Pull {
     #[serde(default)]
     ack: Vec<String>,
+    /// Design 115 §2.5: the first pull run after a hold. Its hand-outs keep no stream generation, so their acks leave no
+    /// delivery sample (the hold isn't delivery time).
+    #[serde(default)]
+    held: bool,
 }
 
 pub async fn messages(
@@ -233,7 +237,11 @@ pub async fn messages(
         return StatusCode::BAD_REQUEST.into_response();
     }
     let now_ms = chrono::Utc::now().timestamp_millis();
-    let stream = super::stream_generation(&state, device.id);
+    let stream = if pull.held {
+        None
+    } else {
+        super::stream_generation(&state, device.id)
+    };
     match store::pull(&state.db, device.id, &pull.ack, now_ms, stream).await {
         Ok(pulled) => Json(pulled).into_response(),
         Err(err) => failed(err),

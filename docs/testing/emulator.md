@@ -5004,6 +5004,12 @@ guest's `screenrecord` and cut into frames (`ffmpeg -vf fps=20`). **`compat34`**
 
 Rows 2, 3 and 6 on the 17 image are optional (design 111 §3).
 
+## 6ba. App push held while the apps have no network (design 115, 2026-11-18)
+
+Run on `jelly36` (16) and `compat34` (14) with §6ay's rig and a probe that fetches once per MESSAGE, one after another;
+the rows, the results and the one fix it found (the 1.5 s settle after a shape change) are in
+`docs/testing/2026-11-18-up-held-gate.md`. Owed: row 8 (abroad), Android 17, the Jelly Star with Element X.
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:

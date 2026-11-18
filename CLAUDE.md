@@ -405,7 +405,9 @@ bodies, every answer - `ok`, a retry, the 409 refusals `off`/`stopped`/`not_allo
 `body_vapid_changed` (the same `reg`, another valid key: the same endpoint, the key updated) and `body_vapid_not_a_point`
 with the answers `ok_vapid`, `vapid_changed` and `vapid_not_a_point`), `unregister` (the `DELETE`'s
 204), `messages` (the exact `POST /api/devices/up/messages` body with acks and an answer with a minimised Matrix body
-and a binary one, base64), `event` (the SSE event `up`/`up`) and `endpoint` (the endpoint's form). The server's
+and a binary one, base64; design 115's `body_held`, the first pull after a hold), `event` (the SSE event `up`/`up`),
+`endpoint` (the endpoint's form), and design 115's `report`/`report_open` (the exact `unified_push` of a status report,
+held and not) and `clean` (the server's `unified_push::clean_report` into `device_status.up_held`). The server's
 `tests::unified_push` produces the policy rows and the answers from seeded data; the launcher's
 `UnifiedPushContractTest` encodes the bodies, decodes every answer and policy row and maps each refusal; both compare
 the copies. The server-only rows of the push routes are `server/testdata/unified_push_gateway.json`
@@ -414,7 +416,8 @@ the copies. The server-only rows of the push routes are `server/testdata/unified
 The policy's `unified_push` is pinned by `policy_json_keys_snapshot` and the
 launcher's `PolicyResponseCompatTest`. The distributor's own rules (register, unregister and ack decisions, the delivery
 plan, the `regs` reconcile, the origin rewrite) stay the launcher's alone, in
-`launcher/app/src/test/resources/up_rules.json` (`UpRulesTest`, `UpDeliveryPlanTest`, `UpReconcileTest`).
+`launcher/app/src/test/resources/up_rules.json` (`UpRulesTest`, `UpDeliveryPlanTest`, `UpReconcileTest`), with design
+115's hold rows (`hold`: the VPN's views to held or not).
 
 ## CI and releases
 

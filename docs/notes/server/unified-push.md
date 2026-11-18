@@ -165,3 +165,19 @@ calls the same function, so the row and the page agree. "The phone reported" is 
   minutes old, so a phone catching up after a lost ack never blinks it. "At most the newest 5,000" is shown when a
   phone's samples reach the cap (`>=`, exactly 5,000 reads as maybe cut); the Settings count then says per phone.
 - **Dev databases:** a database migrated at cb040b347 (0153 with `vapid_refused_why`) must be recreated.
+
+## Held while the apps have no network (design 115)
+
+`docs/design/115-up-held-without-network.md` §2.5, §2.8. The launcher pulls nothing while the VPN's sink cuts the apps;
+the queue waits on the server under its TTL and caps, as for a phone that is off.
+
+- **The report:** `unified_push: {"held": ...}` (a full-report field, in `status_heartbeat::REPORT_KEYS` so a heartbeat
+  carries it), cleaned by `unified_push::clean_report` (a word of 1-32 `[a-z_]` other than `none`) into
+  `device_status.up_held` (migration 0156); NULL for `none`, anything else and older launchers.
+- **The waiting row's guard (arm (a)):** only the policies served after the last report in the window that said held
+  **and** named a sink other than `off` in its own `mobile_data_json` (`health::last_held_report`; the server's own
+  reading, so a wrong hold never hides the row). A hold that ends: the next three syncs count again.
+- **`held` on the pull** (`device::Pull`): such a pull hands out with no stream generation, so its pushes' acks leave no
+  `up_delivery` sample (the hold isn't delivery time).
+- Tests: `tests::unified_push::{the_contract_of_115, a_hold_quiets_the_waiting_row}`; the contract's `report`,
+  `report_open`, `clean` and `messages.body_held`.

@@ -1,6 +1,10 @@
 package com.kidslauncher.mdm.push.up
 
+import com.kidslauncher.mdm.server.BestNet
 import com.kidslauncher.mdm.server.ServerJson
+import com.kidslauncher.mdm.server.VpnInputs
+import com.kidslauncher.mdm.server.VpnShape
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -124,6 +128,32 @@ class UpRulesTest {
         }
     }
 
+    private fun bits(element: kotlinx.serialization.json.JsonElement?): List<Boolean>? =
+        element?.takeIf { it != JsonNull }?.jsonPrimitive?.content?.split(",")?.map { it == "1" }
+
+    @Test
+    fun `design 115 - every hold row holds or not as written, from the three views of the VPN`() {
+        val shapes = { e: kotlinx.serialization.json.JsonElement? -> e?.takeIf { it != JsonNull }?.let { VpnShape.of(it.jsonPrimitive.content)!! } }
+        val rows = rules["hold"]!!.jsonArray.map { it.jsonObject }
+        assertTrue(rows.size >= 15)
+        for (case in rows) {
+            val name = case["case"]!!.jsonPrimitive.content
+            val i = bits(case["inputs"])!!
+            val inputs = VpnInputs(filterOn = i[0], parentSink = i[1], roamingLocked = i[2], abroadArmed = i[3], kidOff = i[4])
+            val net = bits(case["net"])?.let { BestNet(cellular = it[0], roaming = it[1], abroad = it[2], unsure = it[3]) }
+            val held = UpRules.holdOf(
+                on = case["on"]!!.jsonPrimitive.content == "true",
+                tunnel = shapes(case["tunnel"]),
+                persisted = shapes(case["decided"]),
+                lockdown = case["lockdown"]?.jsonPrimitive?.content != "false",
+                running = case["running"]?.jsonPrimitive?.content != "false",
+                inputs = inputs,
+                net = net,
+            )
+            assertEquals(name, case["held"]!!.jsonPrimitive.content, held.wire)
+        }
+    }
+
     @Test
     fun `every refresh row is sent or waits as written (section 3, 3)`() {
         for (case in rules["refresh"]!!.jsonArray.map { it.jsonObject }) {
@@ -131,7 +161,8 @@ class UpRulesTest {
             val row = UpFixtures.rowWith(case["reg"]!!.jsonPrimitive.content, case["row"]!!.jsonObject)
             val now = case["now_ms"]!!.jsonPrimitive.long
             val refresh = case["refresh"]!!.jsonArray.map { ServerJson.decodeFromJsonElement(UpRefresh.serializer(), it) }
-            val sends = UpRules.refreshes(listOf(row), refresh, now, case["in_use"]!!.jsonPrimitive.content == "true")
+            val held = case["held"]?.jsonPrimitive?.content == "true"
+            val sends = UpRules.refreshes(listOf(row), refresh, now, case["in_use"]!!.jsonPrimitive.content == "true", held)
             assertEquals(name, case["send"]!!.jsonPrimitive.content == "true", sends.isNotEmpty())
             sends.singleOrNull()?.let { assertEquals(name, now, it.row.refreshMs) }
         }

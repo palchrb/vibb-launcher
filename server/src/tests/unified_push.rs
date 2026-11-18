@@ -2246,3 +2246,254 @@ async fn delivery_time_on_the_pages() {
         .text();
     assert!(!other.contains("data-row=\"app-push-delivery\""));
 }
+
+// ---- Design 115: app push held while the apps have no network ------------------------------------------------------
+
+/// The `mobile_data` a held phone reports beside `unified_push` (design 95 rev. 3's sink reason).
+fn mobile_data(sink: &str) -> Value {
+    json!({"enabled": true, "sink": sink, "settings_locked": false})
+}
+
+async fn up_held_latest(app: &TestApp, device: i64) -> Option<String> {
+    sqlx::query_scalar(
+        "SELECT up_held FROM device_status WHERE device_id = ? ORDER BY reported_at DESC, id DESC LIMIT 1",
+    )
+    .bind(device)
+    .fetch_one(&app.db)
+    .await
+    .unwrap()
+}
+
+async fn delivery_samples(app: &TestApp, device: i64) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM up_delivery WHERE device_id = ?")
+        .bind(device)
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+}
+
+/// §2.8 and §2.5: the contract's report rows stored as `up_held`, every `clean` row, a `held` pull that leaves no
+/// delivery sample while the next plain one does, and a held report carried through a heartbeat (QA L7).
+#[tokio::test]
+async fn the_contract_of_115() {
+    use crate::unified_push::store::{self, Push};
+    let contract = contract();
+    for row in contract["clean"].as_array().unwrap() {
+        assert_eq!(
+            crate::unified_push::clean_report(&row["in"]),
+            row["stored"].as_str().map(str::to_string),
+            "{row}"
+        );
+    }
+    let app = TestApp::new().await;
+    let (emma, token) = app.enrolled_device("Emma").await;
+    set_origin(&app, Some(ORIGIN)).await;
+    let report = |key: &str| {
+        let mut body = contract[key].clone();
+        body["capabilities"] = json!([CAPABILITY]);
+        body["mobile_data"] = mobile_data("parent");
+        body
+    };
+    app.post_status(&token, report("report")).await;
+    assert_eq!(
+        up_held_latest(&app, emma).await.as_deref(),
+        Some("no_network")
+    );
+    app.post_status(&token, report("report_open")).await;
+    assert_eq!(up_held_latest(&app, emma).await, None);
+    app.post_status(&token, json!({"capabilities": [CAPABILITY]}))
+        .await;
+    assert_eq!(up_held_latest(&app, emma).await, None, "an older launcher");
+
+    // The held pull: a push accepted on the open stream is handed out with no generation, so its ack writes no sample.
+    set_allowlist(&app, emma, &["io.element.android.x"]).await;
+    seed(&app, emma, 1, "io.element.android.x").await;
+    let reg = registration_of(&app, registration_id(&app, &format!("{:032x}", 1)).await).await;
+    let _stream = app.state.command_streams.open(emma);
+    let generation = crate::unified_push::stream_generation(&app.state, emma);
+    assert!(generation.is_some());
+    let push = Push {
+        body: b"x",
+        urgency: "normal",
+        topic: None,
+        ttl_secs: 86_400,
+    };
+    let enqueue = || async {
+        let Ok(store::Queued::Key(key)) = store::enqueue(
+            &app.db,
+            &reg,
+            &push,
+            chrono::Utc::now().timestamp_millis() - 60_000,
+            generation,
+        )
+        .await
+        else {
+            panic!("not queued")
+        };
+        key
+    };
+    let path = contract["messages"]["path"].as_str().unwrap();
+    let key = enqueue().await;
+    let res = app
+        .request(
+            Method::POST,
+            path,
+            Some(&token),
+            Some(contract["messages"]["body_held"].clone()),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    assert_eq!(res.json()["messages"][0]["key"], json!(key));
+    let res = app
+        .request(
+            Method::POST,
+            path,
+            Some(&token),
+            Some(json!({"ack": [key]})),
+        )
+        .await;
+    assert_eq!(res.json(), json!({"messages": [], "more": false}));
+    assert_eq!(delivery_samples(&app, emma).await, 0, "a held pull's push");
+    // The next plain pull's push leaves its sample.
+    let key = enqueue().await;
+    let res = app
+        .request(Method::POST, path, Some(&token), Some(json!({"ack": []})))
+        .await;
+    assert_eq!(res.json()["messages"][0]["key"], json!(key));
+    app.request(
+        Method::POST,
+        path,
+        Some(&token),
+        Some(json!({"ack": [key]})),
+    )
+    .await;
+    assert_eq!(delivery_samples(&app, emma).await, 1, "a plain pull's push");
+
+    // A heartbeat expands into the kept held report (QA L7).
+    let heartbeat: Value =
+        serde_json::from_str(include_str!("../../testdata/status_heartbeat.json")).unwrap();
+    let mut full = heartbeat["full"].clone();
+    full["unified_push"] = contract["report"]["unified_push"].clone();
+    full["mobile_data"] = mobile_data("parent");
+    let res = app
+        .request(
+            Method::POST,
+            "/api/devices/status",
+            Some(&token),
+            Some(full),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.text());
+    let res = app
+        .request(
+            Method::POST,
+            "/api/devices/status",
+            Some(&token),
+            Some(heartbeat["heartbeat"].clone()),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.text());
+    let rows: Vec<(Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT up_held, lock_reason FROM device_status WHERE device_id = ? ORDER BY id DESC LIMIT 2",
+    )
+    .bind(emma)
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        rows,
+        [
+            (Some("no_network".into()), Some("TIME_RULE".into())),
+            (Some("no_network".into()), Some("NONE".into()))
+        ]
+    );
+}
+
+/// §2.8: 108c's arm (a) counts only the policies served after the last held report - and a held report counts only
+/// with a sink in the same report (QA M2).
+#[tokio::test]
+async fn a_hold_quiets_the_waiting_row() {
+    use crate::unified_push::store::{self, Push};
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (emma, token) = app.enrolled_device("Emma").await;
+    set_origin(&app, Some(ORIGIN)).await;
+    app.post_status(&token, json!({"capabilities": [CAPABILITY]}))
+        .await;
+    set_allowlist(&app, emma, &["io.element.android.x"]).await;
+    seed(&app, emma, 1, "io.element.android.x").await;
+    let reg = registration_of(&app, registration_id(&app, &format!("{:032x}", 1)).await).await;
+    let now = chrono::Utc::now();
+    let at = |minutes: i64| now + chrono::Duration::minutes(minutes);
+    let push = Push {
+        body: b"x",
+        urgency: "normal",
+        topic: None,
+        ttl_secs: 86_400,
+    };
+    store::enqueue(&app.db, &reg, &push, at(-40).timestamp_millis(), Some(7))
+        .await
+        .unwrap();
+    let served = &app.state.unified_push;
+    let reports = |rows: &'static [(i64, &'static str)]| {
+        let (app, token) = (&app, &token);
+        async move {
+            sql(app, "DELETE FROM device_status").await;
+            for (minutes_ago, sink) in rows {
+                app.post_status(
+                    token,
+                    json!({"capabilities": [CAPABILITY], "unified_push": {"held": "no_network"},
+                        "mobile_data": mobile_data(sink)}),
+                )
+                .await;
+                sql(
+                    app,
+                    &format!(
+                        "UPDATE device_status SET reported_at = datetime('now', '-{minutes_ago} minutes') \
+                         WHERE id = (SELECT MAX(id) FROM device_status)"
+                    ),
+                )
+                .await;
+            }
+            // The latest report (the page's own read) says nothing of the hold.
+            app.post_status(token, json!({"capabilities": [CAPABILITY]}))
+                .await;
+        }
+    };
+    for minutes in [-25, -15, -5] {
+        served.note_policy_served_at(emma, at(minutes));
+    }
+    reports(&[]).await;
+    assert_eq!(
+        push_rows(&app, &cookie, emma).await,
+        ["app-push-waiting"],
+        "no hold"
+    );
+    // Each served policy followed by a held report: nothing counted.
+    reports(&[(24, "parent"), (14, "parent"), (4, "kid")]).await;
+    assert!(
+        push_rows(&app, &cookie, emma).await.is_empty(),
+        "held throughout"
+    );
+    // A held report, then three policies after it: counted.
+    reports(&[(28, "parent")]).await;
+    assert_eq!(
+        push_rows(&app, &cookie, emma).await,
+        ["app-push-waiting"],
+        "the hold ended"
+    );
+    // A held report before C + 10 min changes nothing.
+    reports(&[(35, "parent")]).await;
+    assert_eq!(
+        push_rows(&app, &cookie, emma).await,
+        ["app-push-waiting"],
+        "too early"
+    );
+    // Held reports with no sink in the same report: the phone's word alone doesn't count (QA M2).
+    reports(&[(24, "off"), (14, "off"), (4, "off")]).await;
+    assert_eq!(
+        push_rows(&app, &cookie, emma).await,
+        ["app-push-waiting"],
+        "no sink"
+    );
+}
