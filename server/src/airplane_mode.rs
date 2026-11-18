@@ -274,25 +274,23 @@ pub async fn assistant_held_before(
     .await
 }
 
-/// The Home Screen row's sub-line (§6.1), only when it says something: the parent's "Blokker flymodus", the role not
-/// held yet, or no Wi-Fi in airplane mode while the switch is on. `name` is the phone's.
-pub fn home_sub(lang: Lang, name: &str, policy: &DevicePolicy, report: &Report) -> Option<String> {
+/// The Home Screen row's sub-line (§6.1; design 113 QA M6), only when it says something, and whether it is orange: the
+/// parent's "Blokker flymodus" (grey); with bit 64 on, the role not held yet (orange - the kid sees no switch) or, with
+/// the role, no Wi-Fi in airplane mode (grey). With bit 64 off nothing is said about the role (the (i) says when the
+/// switch shows). The parts join with " · ".
+pub fn home_sub(lang: Lang, policy: &DevicePolicy, report: &Report) -> Option<(String, bool)> {
     let mut parts: Vec<String> = Vec::new();
     if policy.hardening.disallow_airplane_mode {
         parts.push(t(lang, "device.home.airplane_blocked").to_string());
     }
-    if !report.assistant {
-        parts.push(t_params(
-            lang,
-            "device.home.airplane_no_role",
-            &[("name", name)],
-        ));
-    } else if policy.quick_controls_mask & crate::handlers::devices::QUICK_CONTROL_AIRPLANE != 0
-        && report.wifi_kept != Some(true)
-    {
+    let bit = policy.quick_controls_mask & crate::handlers::devices::QUICK_CONTROL_AIRPLANE != 0;
+    let no_role = bit && !report.assistant;
+    if no_role {
+        parts.push(t(lang, "device.home.airplane_no_role").to_string());
+    } else if bit && report.wifi_kept != Some(true) {
         parts.push(t(lang, "device.home.airplane_offline").to_string());
     }
-    (!parts.is_empty()).then(|| parts.join(" "))
+    (!parts.is_empty()).then(|| (parts.join(" · "), no_role))
 }
 
 /// A role in `default_apps_changed`, in plain words ("Anropsfilter", "Nettleser", "Startskjerm").

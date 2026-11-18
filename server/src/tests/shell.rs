@@ -1104,7 +1104,7 @@ async fn every_form_on_every_page_lands_on_its_own_group() {
         ),
         (
             format!("/music/entries/{spotify_entry}"),
-            "data-hint=\"spotify-streams\"".to_string(),
+            "data-hint=\"spotify-order\"".to_string(),
         ),
     ] {
         let html = app.get_page(&page, &cookie).await.text();

@@ -34,7 +34,6 @@
                 <label class="row choice-row" for="source-fdroid"><span class="row-label">{{ self.t("apps.source.fdroid") }}</span><svg class="choice-check check-fdroid" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 8.5l3.5 3.5 7.5-8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></label>
                 <label class="row choice-row" for="source-manual"><span class="row-label">{{ self.t("apps.add.source_manual") }}</span><svg class="choice-check check-manual" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 8.5l3.5 3.5 7.5-8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></label>
             </div>
-            <p class="group-footer">{{ self.t("apps.add.source_footer") }}</p>
 
             <div class="fdroid-only">
                 <div class="group form-group">
@@ -89,7 +88,7 @@
                             <input type="checkbox" role="switch" class="sw" name="include_prereleases" value="on"{% if include_prereleases %} checked{% endif %}><span class="knob" aria-hidden="true"></span>
                         </label>
                     </div>
-                    <p class="group-footer">{{ self.t("apps.add.prereleases_footer") }}</p>
+                    <div class="group-footer"><details class="info"><summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("apps.add.prereleases_footer") }}</p></div></details></div>
                 </details>
             </div>
 
@@ -102,7 +101,8 @@
                     </label>
                     {% if error_field == "release_wait_hours" %}{% if let Some(e) = error %}<p class="flash flash-error" id="release_wait_hours-error" data-flash="release_wait_hours">{{ e }}</p>{% endif %}{% endif %}
                 </div>
-                <p class="group-footer">{{ self.t("apps.wait.footer") }}{% if first_waits %} {{ self.t("apps.wait.first_footer") }}{% endif %}</p>
+                {#- The wait's (i): the row is the <label>, so it sits in the group's footer (design 113 P2). -#}
+                <div class="group-footer"><details class="info"><summary aria-label="{{ self.t("apps.update.wait_about") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("apps.wait.footer") }}</p>{% if first_waits %}<p>{{ self.t("apps.wait.first_footer") }}</p>{% endif %}</div></details></div>
             </div>
         </div>
 

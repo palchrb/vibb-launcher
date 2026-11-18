@@ -447,7 +447,7 @@ fn app_data(latest: Option<&str>, update_available: bool) -> system_update::AppU
 }
 
 /// Software Updates shows versions only (the user, 2026-11-04): no form, no host state; how to
-/// update is behind the row's ⓘ, never in its visible text (design 31 §4.2) - in Docker the image
+/// update is behind the Version row's ⓘ, never in its visible text (design 31 §4.2, design 113) - in Docker the image
 /// pull (Watchtower, or by hand, with the version for a pinned HANDY_VERSION), on a systemd
 /// install the update.sh command for the configured repo.
 #[test]
@@ -462,7 +462,7 @@ fn the_updates_page_says_how_to_update() {
         .0
     };
     let how = |page: &str| {
-        let row = &page[page.find("data-row=\"how\"").unwrap()..];
+        let row = &page[page.find("data-row=\"version\"").unwrap()..];
         let row = &row[..row.find("</details>").unwrap()];
         let (summary, panel) = row.split_once("</summary>").unwrap();
         (summary.to_string(), panel.to_string())
@@ -476,7 +476,8 @@ fn the_updates_page_says_how_to_update() {
     assert!(panel.contains("HANDY_VERSION pinned in .env, set it to 0.24.0"));
     assert!(!panel.contains("update.sh"));
     let current = page(true, "v0.23.0", false);
-    assert!(current.contains("You have the latest version"), "{current}");
+    // Design 113: up to date shows no latest row.
+    assert!(!current.contains("data-row=\"latest\""), "{current}");
     assert!(!current.contains("HANDY_VERSION"));
 
     let pi = page(false, "v0.24.0", true);

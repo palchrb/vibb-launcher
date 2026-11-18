@@ -174,11 +174,6 @@ pub async fn repair_menus(
     Ok(changed)
 }
 
-/// The row the phone shows large and red: the first number on the fixed list (design 73 §3).
-pub fn big_row(menu: &[MenuEntry], cc: &str) -> Option<usize> {
-    menu.iter().position(|e| is_emergency(&e.number, cc))
-}
-
 /// Whether the row at `at` may go: the list keeps at least one number on the fixed list (and so is never empty).
 pub fn can_remove(menu: &[MenuEntry], at: usize, cc: &str) -> bool {
     menu.iter()
@@ -273,13 +268,6 @@ mod tests {
         assert!(!can_remove(&[entry("112")], 0, "47"), "never empty");
         // 113 is no emergency number in Sweden.
         assert!(!can_remove(&[entry("112"), entry("113")], 0, "46"));
-    }
-
-    #[test]
-    fn the_big_row_is_the_first_emergency_number() {
-        let menu = [entry("+4791234567"), entry("113"), entry("112")];
-        assert_eq!(big_row(&menu, "47"), Some(1));
-        assert_eq!(big_row(&[entry("+4791234567")], "47"), None);
     }
 
     #[test]

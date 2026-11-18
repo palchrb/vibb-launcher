@@ -84,15 +84,18 @@ write and never waits on a second pool connection (which a `BEGIN IMMEDIATE` wri
 
 ## The PWA
 
-Settings › App push (`/settings/push`): the address (`https://` and an origin, never a Tailscale IP), the prefill from
-Phone Setup that never saves by itself, "Saving turns on app push for every phone", a warning without
-`DEVICE_BIND_ADDR`, each replaced address's end (every one within its 30 days), "Last seen from outside" (the newest discovery, written at most once a
-minute to `unified_push_settings.last_discovery_at`, and the newest accepted push). Emptying the field clears it:
-every registration deleted. Device › Apps' "App push" group (`#app-push`): the switch (on: a row and "Turn Off App
+Settings › App push (`/settings/push`; nb "App-push", designs 112 and 113): the address (`https://` and an origin, never
+a Tailscale IP) with its ⓘ, the prefill from Phone Setup that never saves by itself, "Saving turns app push on for every
+phone with its switch on" while no address is saved, one short orange line without `DEVICE_BIND_ADDR` (the env var
+behind its ⓘ), each replaced address's end (every one within its 30 days), the page's explanation behind the footer ⓘ,
+and one "Delivery" group: "Last seen from outside" (the later of the newest discovery, written at most once a minute to
+`unified_push_settings.last_discovery_at`, and the newest accepted push; "Not yet" orange only while a registration is
+over an hour old, `seen_late`) and "Usually delivered in". Emptying the field clears it: every registration deleted. Device › Apps' "App push" group (`#app-push`): the switch (on: a row and "Turn Off App
 Push…" with its sheet; off: an auto-saving switch), a row per app with registrations ("2 accounts · last delivered
 14:02", "No delivery in 7 days", "Stop…"), the stopped apps with Allow Again, and the "isn't using Vibb" warning for an
-allowed, installed Element X without a registration (`KNOWN_UP_APPS`), and "Many pushes: about N a day" for a noisy
-app: Element X keeps its Play build, and its push
+allowed, installed Element X without a registration (`KNOWN_UP_APPS`; the fix behind its ⓘ), and "About N pushes a day"
+for a noisy app (design 113: a short orange line, its detail behind the app row's ⓘ; the explanation is the group's
+footer ⓘ): Element X keeps its Play build, and its push
 provider is switched to Vibb One once per account in Element X (Settings › Notifications › Advanced › Push provider);
 Google is the same setting back. Words `app_push.*` (the parent web push owns `push.*`).
 
@@ -119,8 +122,10 @@ Google is the same setting back. Words `app_push.*` (the parent web push owns `p
 - **Policy `unified_push.refresh`** `[{reg, why}]`, by `reg`: `outside` while `outside_gateway_at` is within 7 days and
   `gateway_at` isn't after it; `refused` (wins when both) while `vapid_refused_at` is within a day and no push was
   accepted after it (`last_push_at`). Pinned by `policy_json_keys_snapshot` and `the_contract`.
-- **PWA** (Device › Apps › App push), per app: "Only pushes signed by the app's server" (a key held), the outside
-  warning (marked), and "Pushes not signed … were refused, last …" (within 7 days; a `time`/`address` refusal says our clock or address is off instead). "Signed" shows only for a key the check enforces (a P-256 point). No save: nothing can jump.
+- **PWA** (Device › Apps › App push), per app: "Goes via an outside service" (marked) and "Pushes refused, last …"
+  (within 7 days), each a short orange line with its detail behind the app row's ⓘ (the refusal's cause: not signed,
+  or our clock or address is off for `time`/`address`; the fix once Attention raised it). No "signed" line since
+  design 113 (the good state shows nothing). No save: nothing can jump.
   `KNOWN_UP_APPS` is `(package, name, opens_itself)` and holds FluffyChat, whose text says to open it once (`handlers/app_push.rs` picks `app_push.missing_open` or `app_push.missing` by the bool; design §8's `missing_key` became the bool).
 - **The server's clock** matters for `exp`: DEPLOY.md's "App push" says so. **Release the server before the launcher
   RC** (an R1 server answers a key update without storing it).
@@ -153,10 +158,11 @@ calls the same function, so the row and the page agree. "The phone reported" is 
   (`fetched_ms - created_at_ms`, at least 0) was on the stream generation it was accepted on (`stream_ms`, the
   stream registry's `since` while a stream is open, kept at the first hand-out only if unchanged). Pruned hourly: older
   than 24 h and beyond 5,000 per phone. `health::delivery_figure`: nearest-rank median and 95th percentile with the
-  count, only median and count below 20 samples. Shown on Settings › App push (`#delivery`, every phone together) and
-  as one line on Device › Apps' App push group; `app_push::duration_words` floors each unit.
+  count, only median and count below 20 samples. Shown on Settings › App push (`#delivery`, every phone together: the
+  median as the row's value, the 95th percentile and the count under it) and as one line on Device › Apps' App push
+  group (the median and the count); `app_push::duration_words` floors each unit.
 - Tests: `tests::unified_push::{attention_rows_of_108c, accept_stores_the_stream_generation,
-  delivery_time_on_the_pages}`, `store::tests::delivery_samples_follow_the_stream`, `health::tests`,
+  delivery_time_on_the_pages, seen_late_on_settings}`, `store::tests::delivery_samples_follow_the_stream`, `health::tests`,
   `app_push::tests`, `attention::tests`.
 - **Known gap (delivery time, accepted):** a push accepted on a stream that died silently (no FIN) and pulled by the
   phone's sync *before* its new stream registers still sees the old generation, so that sample includes the outage

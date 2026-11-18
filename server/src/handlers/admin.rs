@@ -2,8 +2,8 @@
 //! `security_events` audit trail - sign-ins and failed ones, lockouts, refused requests,
 //! enrollments, the parent's changes and what the phones report (`security::record_security_event`
 //! and its siblings write it). Design 31 step 14: each event a row with a label instead of its
-//! id ([event_label]), the time in the Phone Setup zone; since 2026-11-03 who, the detail and the
-//! exact time shown under it (no ⓘ).
+//! id ([event_label]), the time in the Phone Setup zone; since 2026-11-03 who and the detail shown
+//! under it, and (design 113) the exact time as the time's `title`.
 
 use crate::i18n::Words;
 use askama::Template;
@@ -18,8 +18,8 @@ use crate::display_time::{Zone, parse_db_utc};
 use crate::i18n::Lang;
 use crate::models::{BannedIp, SecurityEvent};
 
-/// One event as a plain row: label · when, and under it everything about it - who, the detail,
-/// the exact time (the user, 2026-11-03: no ⓘ to open).
+/// One event as a plain row: label · when, and under it who and the detail (the user, 2026-11-03:
+/// no ⓘ to open); the exact time is the time's `title` (design 113).
 struct EventRow {
     label: String,
     /// "Mamma (mamma) · 10.0.0.3 · " then the row's words in the reader's language (`params`,
@@ -241,7 +241,8 @@ pub async fn unban_ip(
         }
     };
     if !lifted {
-        return Redirect::to("/security#banned").into_response();
+        // #banned is gone when no ban is left; #activity always renders (a save never jumps to the top).
+        return Redirect::to("/security#activity").into_response();
     }
     let ip: String = form_urlencoded::byte_serialize(form.ip.as_bytes()).collect();
     Redirect::to(&format!("/security?unbanned={ip}#banned")).into_response()

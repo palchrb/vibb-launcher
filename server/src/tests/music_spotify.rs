@@ -437,7 +437,7 @@ async fn not_configured_shows_the_steps() {
     let res = app.get_page("/music/settings", &cookie).await;
     assert_eq!(res.status, StatusCode::OK);
     let page = res.text().replace("&#39;", "'");
-    assert!(page.contains("No Spotify app is set up on this server yet"));
+    assert!(page.contains("No Spotify app yet"));
     assert!(page.contains("developer.spotify.com/dashboard"));
     assert!(page.contains("At most 5 accounts can use a Development-mode app"));
     assert!(page.contains("<details id=\"spotify-setup\" open"));
@@ -609,9 +609,7 @@ async fn the_environment_wins() {
         }
     };
     let page = get(router.clone()).await;
-    assert!(page.contains(
-        "Client ID<span class=\"row-sub\">Set by the server's configuration</span></span>"
-    ));
+    assert!(page.contains("Client ID<span class=\"row-sub\">From .env</span></span>"));
     assert!(page.contains("<span class=\"row-value\">ending in 3210</span>"));
     assert!(page.contains("value=\"fedcba9876543210fedcba9876543210\""));
     assert!(page.contains(" readonly"));
@@ -827,14 +825,14 @@ async fn the_callback_logs_an_account_in() {
         .unwrap();
     assert_eq!(minted.token.secret(), "FAKE-ACCESS-1");
     assert_eq!(app.fetch.count(), 0);
-    // The page then says who logged in, with the 6-month line.
+    // The page then says who logged in; no login-date line while the login is fine (design 113).
     let page = app
         .get_page("/music/settings?login=ok", &cookie)
         .await
         .text()
         .replace("&#39;", "'");
     assert!(page.contains("Logged in as Ella."), "{page}");
-    assert!(page.contains("log in again before"));
+    assert!(!page.contains("log in again before"));
 
     // A replay of the same callback finds nothing.
     let res = callback(
@@ -1352,10 +1350,11 @@ async fn remove_clear_and_a_new_client_id() {
         .await
         .text()
         .replace("&#39;", "'");
-    assert!(page.contains("No Spotify app is set up on this server yet"));
+    assert!(page.contains("No Spotify app yet"));
 }
 
-/// §2.2: "log in again before" 180 days on, a warning from 14 days before, and the ended login.
+/// §2.2: nothing while the login is fine (design 113), a warning from 14 days before the 180 days end, and the
+/// ended login.
 #[tokio::test]
 async fn the_six_month_line() {
     let app = TestApp::new().await;
@@ -1369,10 +1368,8 @@ async fn the_six_month_line() {
         .await
         .text()
         .replace("&#39;", "'");
-    assert!(
-        page.contains("Logged in 12 Oct 2026 - log in again before 10 Apr 2027"),
-        "{page}"
-    );
+    assert!(page.contains("data-row=\"account\""), "{page}");
+    assert!(!page.contains("log in again before"), "{page}");
     assert!(!page.contains("login ends on"));
     app.state
         .music_sweep
@@ -3476,17 +3473,9 @@ mod entries {
             add(&app, &cookie, &[("link", link.as_str())]).await,
             "Set up your Spotify app first.",
         );
-        not_ready(
-            &page,
-            "No Spotify app is saved - set it up first",
-            "spotify",
-        );
+        not_ready(&page, "No Spotify app yet", "spotify");
         let shown = page_text(&app.get_page("/music/spotify", &cookie).await);
-        not_ready(
-            &shown,
-            "No Spotify app is saved - set it up first",
-            "spotify",
-        );
+        not_ready(&shown, "No Spotify app yet", "spotify");
         assert!(shown.contains("<span class=\"row-value\">Not set up yet</span>"));
         assert_eq!(from_spotify(&app, &cookie).await, "No app");
         save_app(&app, LOOPBACK_REDIRECT).await;
@@ -3669,7 +3658,7 @@ mod entries {
              playlist in your child's Spotify account, or invite your child to collaborate on \
              yours and join from your child's account."
         ));
-        assert!(page.contains("Turn it on for a phone on that phone's Music page."));
+        assert!(page.contains("Order: as in Spotify"));
 
         // A short link: two hops, then the album.
         app.fetch.redirect(
@@ -4148,8 +4137,9 @@ mod entries {
         assert_eq!(check(&app, id, later).await.error, None);
         let page = page_text(&app.get_page(&path, &cookie).await);
         assert!(!page.contains("name=\"order\""), "{page}");
-        assert!(page.contains("Spotify picks the order"));
-        assert!(page.contains("no logged-in account may list this one's tracks"));
+        // Design 113: one order line, the reason behind its ⓘ.
+        assert!(page.contains("Order: as in Spotify"), "{page}");
+        assert!(page.contains("data-hint=\"spotify-order\""), "{page}");
         let res = app
             .request_form(
                 Method::POST,
@@ -4193,14 +4183,13 @@ mod entries {
         );
         let page = page_text(&app.get_page(&format!("/music/entries/{id}"), &cookie).await);
         assert!(!page.contains("name=\"order\""), "{page}");
-        assert!(
-            page.contains("Spotify picks the order: an artist plays as Spotify does."),
-            "{page}"
-        );
-        assert!(!page.contains("no logged-in account may list"), "{page}");
+        // Design 113: one order line, the artist's why behind its ⓘ - never the playlist's.
+        assert!(page.contains("data-hint=\"spotify-order\""), "{page}");
+        assert!(page.contains("Order: as in Spotify"), "{page}");
+        assert!(!page.contains("No logged-in account owns"), "{page}");
         assert!(
             page.contains("An artist plays as Spotify picks"),
-            "the TRACKS note stays"
+            "the artist's why, in the order line's (i)"
         );
     }
 
@@ -4374,12 +4363,12 @@ mod entries {
             page.contains(&format!("<option value=\"{kid}\">Ella</option>")),
             "{page}"
         );
-        // Design 31's shapes (qa-26c-merge2-code M2): one footer sentence, a row to the accounts,
-        // and the picker's no-JS Save (L2).
+        // Design 31's shapes (qa-26c-merge2-code M2): one footer sentence (design 113: behind its
+        // (i) alone), a row to the accounts, and the picker's no-JS Save (L2).
         assert!(page.contains(
-            "<p class=\"group-footer\">One account per phone: the child's own Premium account, \
-             never yours.</p>"
+            "<p>One account per phone: the child's own Premium account, never yours.</p>"
         ));
+        assert!(!page.contains("<p class=\"group-footer\">One account per phone"));
         assert!(
             page.contains(
                 "href=\"/music/settings#spotify-accounts\" data-row=\"spotify-accounts\""
@@ -4432,10 +4421,9 @@ mod entries {
         );
         let page = card(ella).await;
         assert!(page.contains(&format!("<option value=\"{kid}\" selected>Ella</option>")));
-        assert!(
-            page.contains("<span class=\"row-sub\" data-row=\"spotify-login\">Log in again before"),
-            "{page}"
-        );
+        // Design 113 P4: a login that isn't ending says nothing.
+        assert!(!page.contains("spotify-login"), "{page}");
+        assert!(!page.contains("Log in again before"), "{page}");
         // The DNS note, now that step 3 makes it true (qa-26c-step2b-code L3): the delivered list
         // and the launcher's filter leave Spotify's hosts out while the phone is bound.
         assert!(
@@ -4577,7 +4565,7 @@ mod entries {
         assert_eq!(binding(&app, ella).await, None);
         let page = card(ella).await;
         assert!(page.contains(
-            "<span class=\"row-sub\" data-row=\"spotify-off\">Its Spotify entry isn't sent.</span>"
+            "<span class=\"row-sub tone-orange\" data-row=\"spotify-off\">Its Spotify entry isn't sent.</span>"
         ));
         assert!(
             !filter(ella)
@@ -5101,17 +5089,14 @@ mod phones {
         let bound = page().await;
         assert!(
             bound.contains(
-                "spotify.com<span class=\"row-sub\" data-spotify-override>Not applied while this phone plays Spotify</span>"
+                "spotify.com<span class=\"row-sub\" data-spotify-override>Off while Spotify plays</span>"
             ),
             "{bound}"
         );
         assert!(bound.contains("ads.example</span>"), "{bound}");
         assert_eq!(bound.matches("data-spotify-override").count(), 1);
-        // One footer under the filter switch while bound; the rest behind its ⓘ (qa-26c-merge2-code
-        // M2).
-        assert!(bound.contains(
-            "Blocks the lists and domains below, except Spotify&#39;s while this phone plays Spotify."
-        ));
+        // One footer under the filter switch while bound, its ⓘ alone (qa-26c-merge2-code M2, design 113).
+        assert!(!bound.contains("Blocks the lists and domains below"));
         let filter = &bound[bound.find("<section id=\"filter\"").unwrap()..];
         let filter = &filter[..filter.find("</section>").unwrap()];
         assert_eq!(filter.matches("group-footer").count(), 1, "{filter}");
@@ -5295,7 +5280,7 @@ mod settings_group {
 
     /// §1.6: one phone per account. Picking a phone binds it (moving it from another account) and
     /// unbinds the account's other phones; "No phone" unbinds them all; an unknown phone or
-    /// account is a 400 with nothing written. The row says where it plays.
+    /// account is a 400 with nothing written. The picker says where it plays (the row too, for several).
     #[tokio::test]
     async fn plays_on_binds_one_phone_per_account() {
         let app = TestApp::new().await;
@@ -5314,7 +5299,14 @@ mod settings_group {
                 let cell = &page[page
                     .find(&format!("id=\"spotify-account-{account}\""))
                     .unwrap()..];
-                let line = &cell[cell.find("data-plays-on>").unwrap() + 14..];
+                // The row's "Plays on" line shows only when the picker can't say it (design 113).
+                let row = &cell[..cell.find("</div>").unwrap()];
+                let line = row
+                    .find("data-plays-on>")
+                    .map(|at| &row[at + 14..])
+                    .map_or(String::new(), |line| {
+                        line[..line.find('<').unwrap()].to_string()
+                    });
                 let select = &cell[cell
                     .find(&format!("id=\"spotify-account-{account}-plays-on\""))
                     .unwrap()..];
@@ -5323,7 +5315,7 @@ mod settings_group {
                     .split("<option")
                     .find(|o| o.contains(" selected>"))
                     .map(|o| o[o.find('>').unwrap() + 1..o.find('<').unwrap()].to_string());
-                (line[..line.find('<').unwrap()].to_string(), chosen)
+                (line, chosen)
             }
         };
         let post = |account: i64, device: &str| {
@@ -5342,10 +5334,10 @@ mod settings_group {
         };
         assert_eq!(
             plays_on(ella).await,
-            ("Plays on no phone yet".into(), Some("No phone".into()))
+            (String::new(), Some("No phone".into()))
         );
 
-        // Several phones (Device › Music bound them): the picker says so.
+        // Several phones (Device › Music bound them): the picker says so, the row names them.
         bind(&app, anna_phone, ella).await;
         bind(&app, spare, ella).await;
         bind(&app, ola_phone, ola).await;
@@ -5383,9 +5375,9 @@ mod settings_group {
         assert!(revision(&app).await > before, "the phones sync");
         assert_eq!(
             plays_on(ella).await,
-            ("Plays on Olas telefon".into(), Some("Olas telefon".into()))
+            (String::new(), Some("Olas telefon".into()))
         );
-        assert_eq!(plays_on(ola).await.0, "Plays on no phone yet");
+        assert_eq!(plays_on(ola).await.1, Some("No phone".into()));
         let logged: Vec<String> = super::events(&app, "music_spotify_binding_changed").await;
         assert_eq!(logged.len(), 3, "{logged:?}");
         assert!(logged.contains(&format!("phone {ola_phone}: Spotify plays as Ella")));
@@ -5417,7 +5409,7 @@ mod settings_group {
         assert_eq!(binding(&app, ola_phone).await, None);
         assert_eq!(
             plays_on(ella).await,
-            ("Plays on no phone yet".into(), Some("No phone".into()))
+            (String::new(), Some("No phone".into()))
         );
     }
 

@@ -21,14 +21,16 @@
             {% for row in blocklists %}
             <form method="post" action="/dns/blocklists/{{ row.list.id }}/toggle#lists" class="cell" data-list="{{ row.list.id }}">
                 <label class="row">
-                    <span class="row-label">{{ row.list.name }}<span class="row-sub" data-scope>{{ row.scope }}</span>{% if !row.sub.is_empty() %}<span class="row-sub{% if row.failing %} text-alarm{% endif %}">{{ row.sub }}</span>{% endif %}</span>
+                    <span class="row-label">{{ row.list.name }}{% if let Some(scope) = row.scope %}<span class="row-sub" data-scope>{{ scope }}</span>{% endif %}{% if !row.sub.is_empty() && !row.failing %}<span class="row-sub">{{ row.sub }}</span>{% endif %}</span>
                     <input type="checkbox" role="switch" class="sw" name="enabled" value="on"{% if row.list.enabled %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
                 </label>
                 <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
             </form>
+            {#- Design 113: a failing list's problem is an orange row right after its switch row, the story behind its ⓘ
+                (never an ⓘ inside the switch's label). -#}
             {% if let Some(detail) = row.detail %}
             <details class="info cell" data-list-problem="{{ row.list.id }}">
-                <summary class="row"><span class="row-label row-label-quiet">{{ self.t("settings.web_filter.what_happened") }}</span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.tp("settings.web_filter.problem_label", [("name", row.list.name.as_str())]) }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <summary class="row"><span class="row-label tone-orange">{{ row.sub }}</span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.tp("settings.web_filter.problem_label", [("name", row.list.name.as_str())]) }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel"><p>{{ detail }}</p></div>
             </details>
             {% endif %}
@@ -36,9 +38,14 @@
             <p class="row row-note">{{ self.t("device.filter.no_lists") }}</p>
             {% endfor %}
             {#- Design 67 §2.2: built into the phone, no switch - the Web Filter switch lifts it. -#}
-            <div class="row" data-list="builtin-doh">
-                <span class="row-label">{{ self.t("settings.web_filter.doh_servers") }}<span class="row-sub">{{ self.t("settings.web_filter.doh_servers_sub") }}</span></span>
-            </div>
+            <details class="info cell" data-list="builtin-doh">
+                <summary class="row">
+                    <span class="row-label">{{ self.t("settings.web_filter.doh_servers") }}</span>
+                    <span class="row-value">{{ self.t("settings.web_filter.doh_servers_value") }}</span>
+                    <svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("common.more_info") }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>
+                </summary>
+                <div class="info-panel"><p>{{ self.t("settings.web_filter.doh_servers_sub") }}</p></div>
+            </details>
             <details class="disclosure cell" id="add-list"{% if refused == "lists" %} open{% endif %}>
                 <summary class="row row-button">{{ self.t("settings.web_filter.add_list") }}</summary>
                 <form method="post" action="/dns/blocklists/new#lists" class="form-group">
@@ -48,14 +55,15 @@
                     </div>
                     <div class="field">
                         <label class="field-label" for="bl_url">{{ self.t("settings.web_filter.list_url") }}</label>
+                        <details class="info field-info"><summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("settings.web_filter.list_hint") }}</p></div></details>
                         <input type="url" id="bl_url" name="url" value="{{ typed_url }}" placeholder="{{ self.t("settings.web_filter.url_example") }}" required autocapitalize="none" spellcheck="false"{% if refused == "lists" %} aria-invalid="true" aria-describedby="list-error" autofocus{% endif %}>
-                        {% if refused == "lists" %}<p class="field-error" id="list-error">{{ self.t("settings.web_filter.bad_list") }}</p>{% else %}<p class="field-hint">{{ self.t("settings.web_filter.list_hint") }}</p>{% endif %}
+                        {% if refused == "lists" %}<p class="field-error" id="list-error">{{ self.t("settings.web_filter.bad_list") }}</p>{% endif %}
                     </div>
                     <button type="submit" class="button-wide">{{ self.t("settings.web_filter.add_list_button") }}</button>
                 </form>
             </details>
         </div>
-        <p class="group-footer">{{ self.t("settings.web_filter.lists_footer") }}</p>
+        <div class="group-footer"><details class="info"><summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("settings.web_filter.lists_footer") }}</p></div></details></div>
     </section>
 
     <section id="blocked" aria-labelledby="blocked-title">
@@ -79,7 +87,6 @@
             </form>
             {% if refused == "blocked" %}<p class="flash flash-error" role="status" data-flash="blocked">{{ self.t("device.filter.not_a_domain") }}</p>{% endif %}
         </div>
-        <p class="group-footer">{{ self.t("settings.web_filter.blocked_footer") }}</p>
     </section>
 
     <section id="allowed" aria-labelledby="allowed-title">
@@ -104,7 +111,7 @@
             {% if refused == "allowed" %}<p class="flash flash-error" role="status" data-flash="allowed">{{ self.t("device.filter.not_a_domain") }}</p>{% endif %}
             {% if let Some(host) = doh_allowed %}<p class="flash" role="status" data-flash="doh-allowed">{{ self.tp("device.filter.doh_allowed", [("host", host.as_str())]) }}</p>{% endif %}
         </div>
-        <p class="group-footer">{{ self.t("device.filter.allowed_footer") }}</p>
+        <div class="group-footer"><details class="info"><summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("device.filter.allowed_footer") }}</p></div></details></div>
     </section>
 
     {#- Design 31 step 5: a phone's own lists, domains and log are on its Web Filter page. -#}
@@ -119,13 +126,13 @@
             </a>
             {% endfor %}
         </div>
-        <div class="group-footer">{{ self.t("settings.web_filter.each_phone_footer") }}
-            {% if !bypass.is_empty() %}
+        {% if !bypass.is_empty() %}
+        <div class="group-footer">
             <ul class="phone-lines">
-                {% for (id, line) in bypass %}<li data-bypass-phone="{{ id }}">{{ line }}</li>{% endfor %}
+                {% for (id, line) in bypass %}<li class="tone-orange" data-bypass-phone="{{ id }}">{{ line }}</li>{% endfor %}
             </ul>
-            {% endif %}
         </div>
+        {% endif %}
     </section>
     {% endif %}
 
@@ -151,16 +158,15 @@
                 <form method="post" action="/dns/upstream/custom#server" class="form-group">
                     <div class="field">
                         <label class="field-label" for="custom_server">{{ self.t("settings.web_filter.your_server") }}</label>
-                        <p class="field-hint" data-hint="server">{% if let Some(hint) = server.server_hint %}{{ self.tp("settings.hint_set", [("hint", hint.as_str())]) }}{% else %}{{ self.t("settings.hint_not_set") }}{% endif %}</p>
                         <input type="text" id="custom_server" name="custom_server" value="{{ server.typed_server }}" placeholder="{{ self.t("settings.web_filter.server_example") }}" maxlength="512" autocomplete="off" autocapitalize="none" spellcheck="false"{% if server.server_error.is_some() %} aria-invalid="true" aria-describedby="custom_server-error" autofocus{% endif %}>
                         {% if let Some(why) = server.server_error %}<p class="field-error" id="custom_server-error">{{ self.t(why) }}</p>{% endif %}
                     </div>
                     <div class="field">
                         <label class="field-label" for="custom_backup">{{ self.t("settings.web_filter.backup") }}</label>
+                        <details class="info field-info"><summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("settings.web_filter.backup_hint") }}</p></div></details>
                         <p class="field-hint" data-hint="backup">{% if let Some(hint) = server.backup_hint %}{{ self.tp("settings.hint_set", [("hint", hint.as_str())]) }}{% else %}{{ self.t("settings.hint_not_set") }}{% endif %}</p>
                         <input type="text" id="custom_backup" name="custom_backup" value="{{ server.typed_backup }}" placeholder="{{ self.t("settings.web_filter.backup_example") }}" maxlength="512" autocomplete="off" autocapitalize="none" spellcheck="false"{% if server.backup_error.is_some() %} aria-invalid="true" aria-describedby="custom_backup-error"{% if server.server_error.is_none() %} autofocus{% endif %}{% endif %}>
                         {% if let Some(why) = server.backup_error %}<p class="field-error" id="custom_backup-error">{{ self.t(why) }}</p>{% endif %}
-                        <p class="field-hint">{{ self.t("settings.web_filter.backup_hint") }}</p>
                         {% if server.both_names %}<p class="field-hint" data-hint="backup-ip">{{ self.t("settings.web_filter.backup_ip") }}</p>{% endif %}
                     </div>
                     {% if server.stored %}
@@ -173,15 +179,22 @@
                 </form>
             </details>
         </div>
-        <div class="group-footer">{% if server.stale %}{{ self.t("settings.web_filter.stale") }}{% else %}{{ self.t("settings.web_filter.server_footer") }}{% endif %}
+        {#- Design 113: a stored pair no longer valid is one orange line, why behind its ⓘ; the phones' lines are orange
+            but the wait for a report and an ended outage alone. -#}
+        <div class="group-footer">{% if server.stale %}<span class="tone-orange" data-note="stale">{{ self.t("settings.web_filter.stale") }}</span>
+            <details class="info">
+                <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel"><p>{{ self.t("settings.web_filter.stale_why") }}</p></div>
+            </details>{% endif %}
             {% if !server.phones.is_empty() %}
             <ul class="phone-lines">
-                {% for (id, line) in server.phones %}<li data-dns-phone="{{ id }}">{{ line }}</li>{% endfor %}
+                {% for (id, line, warn) in server.phones %}<li{% if warn %} class="tone-orange"{% endif %} data-dns-phone="{{ id }}">{{ line }}</li>{% endfor %}
             </ul>
             {% endif %}
             <details class="info">
                 <summary aria-label="{{ self.t("settings.web_filter.server_info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
+                    <p>{{ self.t("settings.web_filter.server_footer") }}</p>
                     <p>{{ self.t("settings.web_filter.server_info") }}</p>
                 </div>
             </details>

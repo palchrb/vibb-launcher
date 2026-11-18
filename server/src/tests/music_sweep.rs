@@ -2727,7 +2727,6 @@ async fn the_cards_say_what_the_sweep_knows() {
         Some("Nothing on it reported yet"),
         "a report without the entry"
     );
-    assert!(failing_page.contains("On your home network or tailnet."));
     // The failing feed on the LAN, and the one never listed.
     assert!(page.contains(" · home network"));
     assert!(page.contains("Last check failed"));

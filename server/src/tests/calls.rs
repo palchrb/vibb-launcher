@@ -638,12 +638,9 @@ async fn default_country_code_is_validated_and_used() {
     assert!(!html.contains("data-flash=\"setup\""));
     add(&app, &cookie, id, "Farmor", "070-123 45 67").await;
     assert_eq!(contact_rows(&app).await[0].2, "+46701234567");
-    // The calls page names it and where to change it, but has no form for it any more.
+    // The calls page names it (design 113: the code alone), but has no form for it any more.
     let html = calls_page(&app, &cookie, id).await;
-    assert!(
-        html.contains("+46 is used (Settings › Phone Setup)"),
-        "{html}"
-    );
+    assert!(html.contains("No country code: +46"), "{html}");
     assert!(!html.contains("/settings/calls"));
 
     // An unreadable setting is a 500 on Phone Setup, never an empty field.
@@ -1002,14 +999,25 @@ async fn emergency_call_is_shown_on_the_device_page() {
     );
     let oslo = crate::display_time::Zone::from_setting("Europe/Oslo");
     let page = calls_page(&app, &cookie, id).await;
+    // Design 113 D1 P1: both KEEPs show their sentence under the title (`Note.sub`), outside any ⓘ
+    // panel, and neither has a panel of its own.
+    let shown = visible(&page);
+    let sub = |text: &str| format!("<div class=\"attention-sub\">{text}</div>");
     assert!(
-        page.contains(&format!("emergency number ({})", oslo.when(called, now))),
+        shown.contains(&sub(&format!(
+            "The phone called an emergency number ({}).",
+            oslo.when(called, now)
+        ))),
         "{page}"
     );
     assert!(
-        page.contains(&format!("until {}, so", oslo.until(until, now))),
+        shown.contains(&sub(&format!(
+            "Anyone can call until {}.",
+            oslo.until(until, now)
+        ))),
         "{page}"
     );
+    assert!(!page.contains("class=\"info-panel\"><p>Anyone can call"));
     assert!(!visible(&page).contains("UTC"));
 
     // Old ones are not alerted again.

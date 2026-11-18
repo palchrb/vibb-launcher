@@ -19,7 +19,11 @@
     <section id="zones" aria-label="{{ self.t("locate.zones.title") }}">
         {% if zones.needs_regularly %}
         <div class="attention attention-action" data-warning="zones-need-regularly">
-            <span class="attention-text">{{ self.t("locate.zones.need_regularly") }}<span class="attention-sub">{{ self.t("locate.zones.need_regularly_sub") }}</span></span>
+            <div class="attention-text">{{ self.t("locate.zones.need_regularly") }}<div class="attention-sub">
+                <details class="info">
+                    <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                    <div class="info-panel"><p>{{ self.t("locate.zones.need_regularly_sub") }}</p></div>
+                </details></div></div>
         </div>
         <div class="group">
             <form method="post" action="/devices/{{ device.id }}/location-policy#zones" class="cell">
@@ -27,6 +31,16 @@
                 <input type="hidden" name="back" value="zones">
                 <button type="submit" class="row row-button">{{ self.t("locate.zones.locate_regularly") }}</button>
             </form>
+        </div>
+        {% endif %}
+        {#- Design 113: with zones, the phone that can't watch them - one orange line, why behind its ⓘ. -#}
+        {% if let Some(reason) = zones.cant_watch %}
+        <div class="attention attention-action" data-warning="zones-cant-watch">
+            <div class="attention-text">{{ self.t("locate.watch.cant") }}<div class="attention-sub">
+                <details class="info">
+                    <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                    <div class="info-panel"><p>{{ reason }}</p></div>
+                </details></div></div>
         </div>
         {% endif %}
         <div class="group" data-group="zones">
@@ -41,7 +55,7 @@
             {% endfor %}
             {% if zones.location_unlocked %}
             <a class="row" href="/devices/{{ device.id }}/advanced#restrictions" data-note="location-unlocked">
-                <span class="row-label">{{ self.t("locate.zones.unlocked") }}<span class="row-sub">{{ self.t("locate.zones.unlocked_sub") }}</span></span>
+                <span class="row-label">{{ self.t("locate.zones.unlocked") }}</span>
                 <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </a>
             {% endif %}
@@ -51,7 +65,21 @@
             <a class="row row-button" href="/devices/{{ device.id }}/zones/new" data-row="add-zone">{{ self.t("locate.zones.add") }}</a>
             {% endif %}
         </div>
-        <p class="group-footer">{% if zones.rows.is_empty() %}{{ self.t("locate.zones.footer_empty") }}{% else %}{{ zones.footer }}{% if let Some(within) = zones.confirm_within %} {{ self.tp("locate.zones.within", [("within", within.as_str())]) }}{% endif %}{% if let Some(line) = zones.watch_line %} <span data-zone-watch>{{ line }}</span>{% endif %}{% endif %}</p>
+        {#- Design 113: the footer is an ⓘ alone - what the setting means for the zones, the lock's
+            how-to, the phone's watch (quiet: a watch that works says nothing in view). -#}
+        {% if zones.rows.is_empty() || zones.footer.is_some() || zones.location_unlocked || zones.watch_line.is_some() %}
+        <div class="group-footer"><details class="info">
+            <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+            <div class="info-panel">
+                {%- if zones.rows.is_empty() %}<p>{{ self.t("locate.zones.footer_empty") }}</p>
+                {%- else %}
+                {%- if let Some(footer) = zones.footer %}<p>{{ footer }}{% if let Some(within) = zones.confirm_within %} {{ self.tp("locate.zones.within", [("within", within.as_str())]) }}{% endif %}</p>{% endif %}
+                {%- if zones.location_unlocked %}<p>{{ self.t("locate.zones.unlocked_info") }}</p>{% endif %}
+                {%- if let Some(line) = zones.watch_line %}<p data-zone-watch>{{ line }}</p>{% endif %}
+                {%- endif %}
+            </div>
+        </details></div>
+        {% endif %}
     </section>
 
     </div>

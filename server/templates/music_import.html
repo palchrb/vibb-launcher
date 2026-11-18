@@ -31,7 +31,7 @@
         {% endif %}
         <button type="submit" class="button-wide{% if import.preview.is_some() %} button-secondary{% endif %}">{{ self.t("music.import.preview") }}</button>
     </form>
-    <div class="group-footer">{{ self.t("music.import.footer") }} <details class="info"><summary aria-label="{{ self.t("music.import.info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("music.import.info_before") }} <code>{{ self.t("music.import.scp") }}</code> {{ self.t("music.import.info_after") }}</p></div></details></div>
+    <div class="group-footer"><details class="info"><summary aria-label="{{ self.t("music.import.info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("music.import.footer") }}</p><p>{{ self.t("music.import.info_before") }} <code>{{ self.t("music.import.scp") }}</code> {{ self.t("music.import.info_after") }}</p></div></details></div>
 
     {% if let Some(preview) = import.preview %}
     <form method="post" action="/music/import/confirm#import-preview" id="import-preview">
@@ -80,7 +80,7 @@
             <label class="row import-row"><input type="checkbox" name="phone" value="{{ id }}" checked><span class="row-label">{{ name }}</span></label>
             {% endfor %}
         </div>
-        <p class="group-footer">{{ self.t("music.import.phones_footer") }}</p>
+        <div class="group-footer"><details class="info"><summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("music.import.phones_footer") }}</p></div></details></div>
         <button type="submit" class="button-wide"{% if import.error.is_some() %} autofocus{% endif %}>{{ self.t("music.import.submit") }}</button>
         {% else %}
         <div class="group"><p class="row row-note">{% if preview.skipped > 0 %}{{ self.t("music.import.nothing_reasons") }}{% else %}{{ self.t("music.import.nothing") }}{% endif %}</p></div>

@@ -180,12 +180,18 @@ struct ZonesView {
     needs_regularly: bool,
     /// "Keep location on" is off, with zones: the kid can turn Location off.
     location_unlocked: bool,
-    /// The footer under the group (in the reader's language).
-    footer: &'static str,
+    /// The footer ⓘ's first sentence (in the reader's language); none under Off, where
+    /// `cant_watch` says it (design 113).
+    footer: Option<&'static str>,
+    /// Design 113: with zones, why the phone can't watch them - Location Off for this phone, or the
+    /// watch's own report under Regularly (Location off on the phone, no background location): one
+    /// orange "The phone can't watch the zones" with this behind its ⓘ.
+    cant_watch: Option<String>,
     /// Regularly: "within about two intervals (here 60 min)" - not for a phone that watches the
     /// zones itself (design 64 step 2).
     confirm_within: Option<String>,
-    /// Design 64 step 2: what the phone's zone watch says ([watch_line]), with zones and Regularly.
+    /// Design 64 step 2: what the phone's zone watch says ([watch_line]), with zones and Regularly;
+    /// quiet, in the footer's ⓘ (design 113).
     watch_line: Option<String>,
 }
 
@@ -317,15 +323,22 @@ fn zones_view(
     // Design 64 step 2 (§3.6's last rows): a phone whose watch holds fences sends a location as
     // soon as it notices a crossing, so the "two intervals" timing is an older launcher's.
     let watched = mode == "interval" && crate::zones::watching(watch);
-    let footer = t(
-        lang,
-        match mode {
-            "off" => "locate.zones.footer_off",
-            "on_request" => "locate.zones.footer_on_request",
-            _ if watched => "locate.zones.footer_watched",
-            _ => "locate.zones.footer_interval",
-        },
-    );
+    let footer = match mode {
+        "off" => None,
+        "on_request" => Some("locate.zones.footer_on_request"),
+        _ if watched => Some("locate.zones.footer_watched"),
+        _ => Some("locate.zones.footer_interval"),
+    }
+    .map(|key| t(lang, key));
+    // Design 113: the cases the phone can't watch the zones in - one orange line, the reason
+    // behind its ⓘ; a phone that watches says nothing in view.
+    let cant_watch = match (some, mode, watch) {
+        (true, "off", _) => Some("locate.zones.footer_off"),
+        (true, "interval", Some(w)) if !w.location_on => Some("locate.watch.location_off"),
+        (true, "interval", Some(w)) if !w.background_location => Some("locate.watch.no_background"),
+        _ => None,
+    }
+    .map(|key| t(lang, key).to_string());
     ZonesView {
         full: (rows.len() as i64 >= crate::zones::MAX_ZONES).then(|| {
             t_params(
@@ -338,26 +351,30 @@ fn zones_view(
         needs_regularly: some && mode == "on_request",
         location_unlocked: some && !locked && mode != "off",
         footer,
+        cant_watch,
         confirm_within: (mode == "interval" && !watched)
             .then(|| interval_label(lang, interval * 2)),
         watch_line: watch
             .filter(|_| some && mode == "interval")
-            .map(|w| watch_line(lang, w, rows.len(), interval)),
+            .and_then(|w| watch_line(lang, w, rows.len(), interval)),
         rows,
     }
 }
 
-/// What the phone's zone watch says (design 64 §4.1), under the zones while Regularly: the
-/// fences it holds, or why it can't watch. Counts and switches only, never a place.
-fn watch_line(lang: Lang, watch: &crate::zones::ZoneWatch, zones: usize, interval: i64) -> String {
-    if !watch.location_on {
-        return t(lang, "locate.watch.location_off").to_string();
-    }
-    if !watch.background_location {
-        return t(lang, "locate.watch.no_background").to_string();
+/// What the phone's zone watch says (design 64 §4.1), in the zones' footer ⓘ while Regularly: the
+/// fences it holds. Counts and switches only, never a place. None when it can't watch (Location
+/// off, no background location): `ZonesView::cant_watch` says that (design 113).
+fn watch_line(
+    lang: Lang,
+    watch: &crate::zones::ZoneWatch,
+    zones: usize,
+    interval: i64,
+) -> Option<String> {
+    if !watch.location_on || !watch.background_location {
+        return None;
     }
     if watch.fences == 0 {
-        return t(lang, "locate.watch.not_set_up").to_string();
+        return Some(t(lang, "locate.watch.not_set_up").to_string());
     }
     let mut line = t_count(lang, "locate.watch.watching", watch.fences, &[]);
     if (watch.fences as usize) < zones {
@@ -372,7 +389,7 @@ fn watch_line(lang: Lang, watch: &crate::zones::ZoneWatch, zones: usize, interva
             &[("interval", &interval_label(lang, interval))],
         ));
     }
-    line
+    Some(line)
 }
 
 /// What `static/locate.js` needs from the page, as `data-` attributes on the map box: the phone,

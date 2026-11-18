@@ -173,14 +173,15 @@ async fn save_probes_then_seals() {
     assert_eq!(error, None);
     assert_eq!(stored(&app).await, Some((EMAIL.into(), PASSWORD.into())));
     assert_eq!(events(&app, "storytel_login_saved").await.len(), 1);
-    // The card: the notice once, the status line, the picker link; never the login.
+    // The card: the notice once, no status line while the login is fine (design 113), the picker link; never the
+    // login.
     let page = app
         .get_page("/music/settings", &cookie)
         .await
         .text()
         .replace("&#39;", "'");
     assert!(page.contains("Saved - Storytel shows 4 series and books."));
-    assert!(page.contains("Storytel accepted the login (12:02)."));
+    assert!(!page.contains("data-row=\"status\""), "{page}");
     assert!(page.contains("href=\"/music/storytel\""));
     assert!(page.contains("Storytel Family, which isn't supported yet"));
     assert!(
@@ -325,10 +326,12 @@ async fn save_probes_then_seals() {
         .await
         .text()
         .replace("&#39;", "'");
-    assert!(page.contains(
-        "Storytel refused the login (12:02). Nothing is tried again before 13:02 - save \
-         the password again to try now."
-    ));
+    // Design 113: the refusal one orange line, the retry rule behind its (i).
+    assert!(
+        page.contains("Storytel refused the login (12:02)<"),
+        "{page}"
+    );
+    assert!(page.contains("Tried again after 13:02. Save the password again to try now."));
     app.fetch.clear_calls();
     app.state
         .music_sweep
@@ -501,7 +504,7 @@ async fn picker_lists_groups() {
             .await
             .text()
             .replace("&#39;", "'")
-            .contains("Nothing on the Storytel shelf yet.")
+            .contains("The shelf is empty")
     );
     app.fetch.answer(
         BOOKSHELF,
@@ -612,7 +615,7 @@ async fn add_takes_only_shelf_targets() {
         .await
         .text()
         .replace("&#39;", "'");
-    assert!(page.contains("Added 2 - turn them on for a phone on its Music page."));
+    assert!(page.contains("Added 2</p>"), "{page}");
     // On the shelf the shelf cache serves the add (no new bookshelf for each add).
     app.fetch.clear_calls();
 
@@ -1616,7 +1619,7 @@ async fn library_gates_storytel() {
         "{storytel}"
     );
     assert_eq!(super::input_checked(storytel, "storytel", "on"), Some(true));
-    assert!(page.contains("No login saved yet: add it in <a href=\"/music/settings#storytel\">"));
+    assert!(page.contains("No login: <a href=\"/music/settings#storytel\">"));
     // After the clear: every phone's line says why, and a failed check doesn't promise the list.
     let entry_page = app
         .get_page(&format!("/music/entries/{series}"), &cookie)

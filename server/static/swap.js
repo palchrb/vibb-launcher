@@ -31,7 +31,7 @@
 (function (root) {
     "use strict";
 
-    var SOFT_KEYS = ["action", "data-flash", "data-warning", "data-mobile-line", "data-choice", "data-row",
+    var SOFT_KEYS = ["action", "data-flash", "data-warning", "data-note", "data-mobile-line", "data-choice", "data-row",
         "data-setup-step", "for", "name"];
     // A save's one-shot words in the address (scroll-restore.js's ONE_SHOT): each draws a flash once. Code QA L1: every
     // one of them, so a later refresh in place doesn't draw (and speak) the flash again.

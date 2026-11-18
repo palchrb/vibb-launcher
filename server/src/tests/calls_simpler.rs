@@ -443,7 +443,8 @@ async fn the_avansert_row_says_what_it_hides() {
     assert_eq!(kept.as_deref(), Some("@s:example.org"));
 }
 
-/// D1's sub-lines in the page by the modes (M2), and an emergency number's texts row (`sms_out` alone, R2-H1).
+/// D1's sub-lines in the page by the modes (M2; design 113: one quiet word - «Ikke styrt», «SMS av», «Samtaler av»),
+/// and an emergency number's texts row (`sms_out` alone, R2-H1).
 #[tokio::test]
 async fn the_sub_lines_follow_the_channel_modes() {
     let app = TestApp::new().await;
@@ -475,12 +476,17 @@ async fn the_sub_lines_follow_the_channel_modes() {
     let html = page(&app, &cookie, &format!("/devices/{id}/calls")).await;
     let row = contact_html(&html, c);
     // Split calls: the one-line "Tilpasset" has no sub-line (L8).
-    assert!(!row.contains("anyone can call"), "{row}");
-    assert!(row.contains("Applies while SMS is managed by Vibb"));
+    assert!(!row.contains("Not managed"), "{row}");
+    // QA M2: SMS is off, so the texts row says so; pictures say nothing while SMS isn't managed.
+    assert!(
+        row.contains(r#"<span class="row-sub">SMS off</span>"#),
+        "{row}"
+    );
+    assert!(!row.contains("Texts off"), "{row}");
     assert!(row.contains("Shows when Anna can call Mamma"));
     let row = contact_html(&html, ambulance);
     assert!(
-        row.contains("Calls aren't managed - anyone can call. Ambulanse is in the phone book"),
+        row.contains(r#"<span class="row-sub">Not managed</span>"#),
         "{row}"
     );
     assert!(row.contains(r#"<span class="row-label">Anna can text Ambulanse<span class="row-sub">Emergency numbers"#), "{row}");
@@ -501,10 +507,7 @@ async fn the_sub_lines_follow_the_channel_modes() {
         .await
         .unwrap();
     let html = page(&app, &cookie, &format!("/devices/{id}/calls")).await;
-    assert!(
-        contact_html(&html, ambulance)
-            .contains("Calls are off - only emergency numbers can be called")
-    );
+    assert!(contact_html(&html, ambulance).contains(r#"<span class="row-sub">Calls off</span>"#));
 }
 
 /// D5: Add Contact's three ways in, each with its defaults; the held prefill posted unchanged stores exactly
@@ -934,6 +937,8 @@ async fn the_page_keeps_on_view_what_needs_a_decision() {
     assert!(html.contains("data-adv-line=\"messages\">Message button: SMS · 2 sender names<"));
     assert!(!part(&html, "id=\"settings\"", "</section>").contains("chat features in Messages if"));
     assert!(html.contains("data-rcs-row"));
+    // Design 113: Avansert's RCS row is its title alone (the 14-day line stays on the channel only).
+    assert!(!html.contains("chat features in Messages if"), "{html}");
     let nb = page(&app, &cookie, &format!("{calls}?lang=nb")).await;
     assert!(nb.contains("Meldingsknapp: SMS · 2 avsendernavn<"));
     assert!(nb.contains("1 nummer følger anropsreglene"));

@@ -1633,11 +1633,13 @@ pub async fn dismiss_login_warning(
 }
 
 /// A sign-in warning as the Devices list's orange row (design 31 §3.2, qa-31-s2-code L3): a short
-/// title and the action; the full sentence stays on Account.
+/// title and the action; the full sentence stays on Account. `sub` is the visible second line, set
+/// for the sign-in warnings (KEEP: "Someone knows your password") and not for the push warning,
+/// whose card is the link to Notifications (design 113).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WarningRow {
     pub title: String,
-    pub sub: String,
+    pub sub: Option<String>,
 }
 
 /// [live_warning] as a row: "3 wrong two-factor codes since sign-in", "Someone knows your
@@ -1669,7 +1671,7 @@ pub fn live_warning_row(
     }
     Some(WarningRow {
         title: t_count(lang, "devices.warning.live", n, &[]),
-        sub,
+        sub: Some(sub),
     })
 }
 
@@ -1681,7 +1683,7 @@ pub fn login_warning_row(
 ) -> Option<WarningRow> {
     warning.map(|_| WarningRow {
         title: t(lang, "devices.warning.login").to_string(),
-        sub: t(lang, "devices.warning.login_sub").to_string(),
+        sub: Some(t(lang, "devices.warning.login_sub").to_string()),
     })
 }
 

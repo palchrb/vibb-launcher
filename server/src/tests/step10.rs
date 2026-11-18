@@ -157,7 +157,12 @@ async fn kid_pin_saved_sent_and_safe_boot_blocked() {
         .get_page(&device_page(id, Section::Lock), &cookie)
         .await
         .text();
-    assert!(html.contains("Safe mode is allowed"), "{html}");
+    // 2026-11-18: the parent's choice, no warning in the Child PIN section.
+    let start = html
+        .find("<section id=\"child-pin\"")
+        .expect("the Child PIN section");
+    let section = &html[start..start + html[start..].find("</section>").unwrap()];
+    assert!(!section.contains("data-warning"), "{section}");
     assert!(html.contains(">On · 6 digits</span>"), "{html}");
 }
 
@@ -413,9 +418,20 @@ async fn lock_page_warns_about_the_lock_state() {
     app.post_status(&token, json!({ "capabilities": ["call_policy_v1"] }))
         .await;
     let html = lock_page(&app, &cookie, id).await;
+    let group = child_group(&html);
+    assert!(group.contains("Vibb One needs an update"), "{html}");
+    // Design 113 D1 P1 (QA M5): the short consequence under the title, visible; the sentence
+    // behind the ⓘ.
+    let short = group
+        .find("<div class=\"attention-sub\">No lock until then")
+        .expect("the visible sub");
+    let panel = short
+        + group[short..]
+            .find("<div class=\"info-panel\">")
+            .expect("the ⓘ");
     assert!(
-        child_group(&html).contains("Vibb One needs an update"),
-        "{html}"
+        group[panel..].starts_with("<div class=\"info-panel\"><p>This version has no lock."),
+        "{group}"
     );
 
     for (inactive, text) in [
@@ -433,13 +449,29 @@ async fn lock_page_warns_about_the_lock_state() {
         .await;
         let html = lock_page(&app, &cookie, id).await;
         assert!(child_group(&html).contains(text), "{inactive}: {html}");
+        if inactive == "bad_hash" {
+            // Design 113 QA M5: its short consequence visible under the title.
+            assert!(
+                child_group(&html)
+                    .contains("<div class=\"attention-sub\">Only the Parent PIN opens it"),
+                "{html}"
+            );
+        }
     }
-    // The last one's adb command is behind the warning's ⓘ, not in its sentence.
+    // The last one's sentence and adb command are behind the warning's one ⓘ (design 113 D1 P1).
     let html = lock_page(&app, &cookie, id).await;
     let group = child_group(&html);
     let command = group.find("adb shell locksettings clear").expect("the fix");
+    let panel = group[..command]
+        .rfind("<div class=\"info-panel\">")
+        .expect("the ⓘ");
+    let summary = group[..panel].rfind("<summary").unwrap();
     assert!(
-        group[..command].contains("aria-label=\"How to fix it\""),
+        group[summary..panel].contains("aria-label=\"More info\""),
+        "{group}"
+    );
+    assert!(
+        group[panel..command].contains("<p>Remove it so Vibb One&#39;s lock"),
         "{group}"
     );
 
@@ -490,5 +522,5 @@ async fn in_call_ui_failure_is_a_call_warning() {
         .get_page(&super::device_page(id, super::Section::Calls), &cookie)
         .await
         .text();
-    assert!(html.contains("couldn&#39;t show over the lock"), "{html}");
+    assert!(html.contains("didn&#39;t show over the lock"), "{html}");
 }

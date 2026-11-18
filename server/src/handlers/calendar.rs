@@ -1152,7 +1152,7 @@ async fn prune_default_rows(
 }
 
 /// POST `/devices/{id}/calendar/lock`: `glance_next` (missing = off) and `reminders` (`off`, `row` or `ping` - the
-/// select "Reminders on the lock screen": Off / Quiet row / Quiet row + sound; `ping` is stored as `row` with
+/// select "Reminders" under "On the lock screen": Off / Quiet row / Quiet row + sound; `ping` is stored as `row` with
 /// `calendar_lock_ping`, migration 0113), back to `#lock`. Any other `reminders` is a 400.
 pub async fn save_lock(
     State(state): State<AppState>,

@@ -14,18 +14,28 @@
 
     {#- Every form returns to its group (#filter, #lists, #blocked, #allowed, #log): without JS the
         answer lands on the form, with JS scroll-restore.js keeps the place (§5.1.4); the switches
-        and pickers save on change (autosave.js), with a <noscript> Save. -#}
+        and pickers save on change (autosave.js), with a <noscript> Save. Design 113: every group says its
+        state in a row and keeps its explanation behind its ⓘ; the Sign-in row (design 102 §5) shares the
+        filter switch's group. -#}
     <section id="filter" aria-label="{{ self.t("device.filter.label") }}">
-        {#- `section=filter` writes only the filter switch (§5.6, H1), not the quick controls. -#}
-        <form method="post" action="/devices/{{ device.id }}/policy#filter" class="group">
-            <input type="hidden" name="section" value="filter">
-            <label class="row">
-                <span class="row-label">{{ self.t("device.filter.label") }}</span>
-                <input type="checkbox" role="switch" class="sw" name="vpn_filter_enabled" value="on"{% if filter_on %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
-            </label>
-            <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
-        </form>
-        <div class="group-footer" data-note="filter">{% if spotify_on %}{{ self.t("device.filter.footer_spotify") }}{% else %}{{ self.t("device.filter.footer") }}{% endif %}
+        <div class="group">
+            {#- `section=filter` writes only the filter switch (§5.6, H1), not the quick controls. -#}
+            <form method="post" action="/devices/{{ device.id }}/policy#filter" class="cell">
+                <input type="hidden" name="section" value="filter">
+                <label class="row">
+                    <span class="row-label">{{ self.t("device.filter.label") }}</span>
+                    <input type="checkbox" role="switch" class="sw" name="vpn_filter_enabled" value="on"{% if filter_on %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                </label>
+                <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
+            </form>
+            {#- Design 102 §5: Wi-Fi sign-in and Chrome only for logins, a page of their own. -#}
+            <a class="row" href="/devices/{{ device.id }}/logins" data-row="logins">
+                <span class="row-label">{{ self.t("logins.page") }}</span>
+                <span class="row-value">{{ logins_sub }}</span>
+                <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </a>
+        </div>
+        <div class="group-footer" data-note="filter">
             <details class="info">
                 <summary aria-label="{{ self.t("device.filter.info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
@@ -38,16 +48,6 @@
                     {% endif %}
                 </div>
             </details>
-        </div>
-    </section>
-
-    {#- Design 102 §5: Wi-Fi sign-in and Chrome only for logins, a page of their own. -#}
-    <section id="logins" aria-label="{{ self.t("logins.page") }}">
-        <div class="group">
-            <a class="row" href="/devices/{{ device.id }}/logins" data-row="logins">
-                <span class="row-label">{{ self.t("logins.page") }}<span class="row-sub">{{ logins_sub }}</span></span>
-                <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            </a>
         </div>
     </section>
 
@@ -71,7 +71,6 @@
             <p class="row row-note">{{ self.t("device.filter.no_lists") }}</p>
             {% endfor %}
         </div>
-        <p class="group-footer">{{ self.t("device.filter.lists_footer") }}</p>
     </section>
 
     {#- Remove is one tap: a domain can be added again (§5.6). -#}
@@ -128,7 +127,12 @@
             {% if refused == "allowed" %}<p class="flash flash-error" role="status" data-flash="allowed">{{ self.t("device.filter.not_a_domain") }}</p>{% endif %}
             {% if let Some(host) = doh_allowed %}<p class="flash" role="status" data-flash="doh-allowed">{{ self.tp("device.filter.doh_allowed", [("host", host.as_str())]) }}</p>{% endif %}
         </div>
-        <p class="group-footer">{{ self.t("device.filter.allowed_footer") }}</p>
+        <div class="group-footer">
+            <details class="info">
+                <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel"><p>{{ self.t("device.filter.allowed_footer") }}</p></div>
+            </details>
+        </div>
     </section>
 
     <section id="log" aria-labelledby="log-title">
@@ -140,7 +144,14 @@
             </label>
             <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
         </form>
-        <p class="group-footer">{{ self.tc("device.filter.log_footer", retention_days, []) }}</p>
+        {#- Design 113 (QA H1): the switch autosaves with no confirm and off erases the log - that stays in view; the
+            retention goes behind the ⓘ. -#}
+        <div class="group-footer">{{ self.t("device.filter.log_off_erases") }}
+            <details class="info">
+                <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel"><p>{{ self.tc("device.filter.log_footer", retention_days, []) }}</p></div>
+            </details>
+        </div>
         {% if log_on %}
         <div class="group" data-group="log-events">
             {% for e in events %}

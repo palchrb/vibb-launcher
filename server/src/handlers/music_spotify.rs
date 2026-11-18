@@ -4,7 +4,7 @@
 //! (`partials/spotify_setup.html`, [setup_view], every id `spotify-` prefixed): the family's own
 //! developer app (`#spotify-app`: the client ID, the redirect URI to paste into the dashboard, how
 //! to set one up, Clear) and the logged-in Spotify accounts (`#spotify-accounts`: each one's
-//! 6-month line, the phones it plays on and its "Plays on" picker, Remove, "Log in with Spotify"
+//! warning when its login ends, its "Plays on" picker, Remove, "Log in with Spotify"
 //! and, for a server without https, the paste of the address the browser shows).
 //!
 //! The login (§2.3): `POST /music/spotify/login` keeps a PKCE pair in memory and answers 303 to
@@ -37,13 +37,12 @@ use axum::extract::{ConnectInfo, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{AppendHeaders, Html, IntoResponse, Redirect, Response};
 use axum::{Extension, Form};
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 
 use super::music::{BELOW_ENTRY_LIMIT, NEXT_SORT, log_event, nudge, server_error};
 use crate::AppState;
 use crate::i18n::{Lang, t, t_params};
 use crate::music::{self, MAX_ENTRIES, MAX_NAME_CHARS};
-use crate::music_sweep::parse_stamp;
 use crate::security::CurrentAdmin;
 use crate::spotify::{self, LoginOutcome};
 
@@ -51,20 +50,6 @@ type FormMap = HashMap<String, String>;
 
 fn field(form: &FormMap, key: &str) -> String {
     form.get(key).cloned().unwrap_or_default()
-}
-
-/// "12 Oct 2026" (nb "12. okt. 2026"), in the Phone Setup zone (design 31 M4, qa-26c-merge2-code L4).
-fn day(zone: &crate::display_time::Zone, time: DateTime<Utc>) -> String {
-    let date = zone.local(time).date_naive();
-    t_params(
-        zone.lang(),
-        "time.date_year",
-        &[
-            ("day", &chrono::Datelike::day(&date).to_string()),
-            ("month", &zone.month_name(date)),
-            ("year", &chrono::Datelike::year(&date).to_string()),
-        ],
-    )
 }
 
 /// A phone on the add form: its name, whom it plays as (`None` = Spotify is off on it), ticked.
@@ -103,14 +88,12 @@ pub struct AddedView {
 pub struct AccountView {
     pub id: i64,
     pub name: String,
-    /// "Logged in 12 Oct 2026 - log in again before 10 Apr 2027".
-    pub line: String,
     /// The login ended or ends soon, or its token can't be opened.
     pub warning: Option<String>,
     /// A refused Remove of this account.
     pub remove_error: Option<String>,
     /// "Plays on Anna's phone", "Plays on Anna's phone, Ola's phone", "Plays on no phone yet"
-    /// (design 47 §1.6).
+    /// (design 47 §1.6); shown only where the picker can't say it (no phones, or several; design 113).
     pub plays_on: String,
     /// The one phone that plays as it (the picker's choice); `None` with none or several.
     pub bound: Option<i64>,
@@ -168,11 +151,10 @@ pub struct SpotifySetup {
     pub loopback_redirect: &'static str,
 }
 
-/// Why Add from Spotify can't add yet (design 47 §1.3): the attention row's words (keys) and the
+/// Why Add from Spotify can't add yet (design 47 §1.3): the attention row's title (a key) and the
 /// fragment of Music › Settings it leads to.
 pub struct NotReady {
     pub title: &'static str,
-    pub sub: &'static str,
     pub fragment: &'static str,
 }
 
@@ -293,25 +275,21 @@ async fn add_page(
     let not_ready = if state.music_key.is_none() {
         Some(NotReady {
             title: "music.spotify.not_ready.no_key",
-            sub: "music.spotify.not_ready.no_key_sub",
             fragment: "spotify-key",
         })
     } else if app.is_none() {
         Some(NotReady {
             title: "music.spotify.not_ready.no_app",
-            sub: "music.spotify.not_ready.no_app_sub",
             fragment: "spotify",
         })
     } else if usable == 0 && !rows.is_empty() {
         Some(NotReady {
             title: "music.spotify.not_ready.renew",
-            sub: "music.spotify.not_ready.renew_sub",
             fragment: "spotify-accounts",
         })
     } else if usable == 0 {
         Some(NotReady {
             title: "music.spotify.not_ready.no_account",
-            sub: "music.spotify.not_ready.no_account_sub",
             fragment: "spotify",
         })
     } else {
@@ -358,14 +336,6 @@ pub async fn setup_view(
         .map(|row| {
             let ends = row.login_ends();
             let name = row.display_name.as_str();
-            let line = match (parse_stamp(&row.authorized_at), ends) {
-                (Some(at), Some(ends)) => t_params(
-                    lang,
-                    "music.setup.account_line",
-                    &[("since", &day(&zone, at)), ("until", &day(&zone, ends))],
-                ),
-                _ => t(lang, "device.music.logged_in").to_string(),
-            };
             let warning = if row.needs_login != 0 {
                 Some(t_params(
                     lang,
@@ -417,7 +387,6 @@ pub async fn setup_view(
             AccountView {
                 id: row.id,
                 name: row.display_name.clone(),
-                line,
                 warning,
                 remove_error: entered
                     .remove

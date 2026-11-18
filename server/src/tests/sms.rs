@@ -555,7 +555,7 @@ async fn held_rows_go_after_30_days() {
 }
 
 /// The Calls page's two rows (design 77 D2, the minimum until step 4): each channel's three
-/// choices and the chosen sub-line, a save writes both modes (and the derived old columns for a
+/// choices, the chosen modes' sentences in the calls ⓘ (design 113), a save writes both modes (and the derived old columns for a
 /// rollback) and stamps `roles_changed_at` only on a change; an unknown choice is refused.
 #[tokio::test]
 async fn the_calls_page_saves_both_channels() {
@@ -567,8 +567,12 @@ async fn the_calls_page_saves_both_channels() {
         .get_page(&format!("/devices/{id}/calls"), &cookie)
         .await
         .text();
-    assert!(page.contains("Anyone can text, and every messaging app works."));
-    assert!(page.contains("Anyone can call, and the phone can call anyone."));
+    // Design 113: no sub-line under a channel; the chosen modes' sentences lead the calls ⓘ.
+    assert!(page.contains(
+        "<p>Anyone can call, and the phone can call anyone. A rule then stops only outgoing calls. Anyone can text, and every messaging app works. \
+         Vibb doesn&#39;t filter.</p>"
+    ), "{page}");
+    assert!(!page.contains("segmented-sub\">Anyone"));
     assert!(super::autosaves(&page, "calls_mode") && super::autosaves(&page, "sms_mode"));
 
     let save = |calls: &'static str, sms: &'static str| {
@@ -672,8 +676,7 @@ async fn stored_modes(app: &TestApp, id: i64) -> (String, String) {
 
 /// Code QA M2, step 4's capability gate brought forward: without `sms_engine_v1` in the phone's last report, the
 /// pairs an older launcher can't do show disabled with "Update Vibb One first" and a save of one is refused in place
-/// (the page again, nothing written); with the capability they are taken, and SMS's "Managed by Vibb" is the
-/// recommended one.
+/// (the page again, nothing written); with the capability they are taken (design 113: no "recommended" note).
 #[tokio::test]
 async fn the_calls_page_gates_what_an_older_launcher_cant_do() {
     let app = TestApp::new().await;
@@ -729,7 +732,7 @@ async fn the_calls_page_gates_what_an_older_launcher_cant_do() {
     assert_eq!(radio(&page, "calls_mode", "unmanaged"), (false, true));
     assert!(page.contains("Not managed - Update Vibb One first"));
 
-    // With the engine: every pair, and the recommendation.
+    // With the engine: every pair, and no note under a choice (design 113).
     app.post_status(
         &token,
         json!({ "capabilities": ["call_policy_v1", "sms_engine_v1"] }),
@@ -739,7 +742,8 @@ async fn the_calls_page_gates_what_an_older_launcher_cant_do() {
         .get_page(&format!("/devices/{id}/calls"), &cookie)
         .await
         .text();
-    assert!(page.contains(r#"Managed by Vibb<span class="segment-note">recommended</span>"#));
+    assert!(page.contains(r#"Managed by Vibb</span>"#), "{page}");
+    assert!(!page.contains("segment-note"));
     assert!(!page.contains("- Update Vibb One first"));
     assert!(
         super::tags(&page, "input")
@@ -784,7 +788,13 @@ async fn a_stored_pair_an_older_launcher_cant_do_is_explained() {
         .await
         .text();
     assert!(page.contains("The phone needs an update"), "{page}");
-    assert!(page.contains("SMS is lost and calls are contacts-only until then."));
+    // Design 113 (QA M5): what is lost until the update shows under the title, not behind an ⓘ.
+    assert!(
+        page.contains(
+            "<div class=\"attention-sub\">SMS is lost and calls are contacts-only until then.</div>"
+        ),
+        "{page}"
+    );
     assert!(
         save_modes(&app, &cookie, id, "unmanaged", "managed")
             .await

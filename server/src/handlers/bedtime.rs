@@ -181,6 +181,9 @@ struct BedtimeTemplate {
     refusal: Option<String>,
     /// The stored bedtime doesn't read: what shows empty and is saved as shown.
     corrupt: Option<String>,
+    /// Calls aren't managed on the phone: the calls group's ⓘ says only outgoing calls stop (2026-11-18: the
+    /// parent's choice, never a warning).
+    calls_unmanaged: bool,
 }
 crate::i18n::words!(BedtimeTemplate);
 
@@ -258,17 +261,22 @@ pub(crate) fn parse_bedtime_form(
     })
 }
 
-/// The phone's name (a device with its policy row), or the answer: 404 for an unknown phone, 500
-/// on a DB error.
-async fn phone_or_answer(state: &AppState, id: i64, lang: Lang) -> Result<String, Box<Response>> {
-    match sqlx::query_scalar(
-        "SELECT d.name FROM devices d JOIN device_policy p ON p.device_id = d.id WHERE d.id = ?",
+/// The phone's name (a device with its policy row) and whether its calls aren't managed
+/// (`DevicePolicy::calls_managed`'s "no"), or the answer: 404 for an unknown phone, 500 on a DB error.
+async fn phone_or_answer(
+    state: &AppState,
+    id: i64,
+    lang: Lang,
+) -> Result<(String, bool), Box<Response>> {
+    match sqlx::query_as(
+        "SELECT d.name, p.calls_mode = 'unmanaged' FROM devices d JOIN device_policy p ON p.device_id = d.id \
+         WHERE d.id = ?",
     )
     .bind(id)
     .fetch_optional(&state.db)
     .await
     {
-        Ok(Some(name)) => Ok(name),
+        Ok(Some(phone)) => Ok(phone),
         Ok(None) => Err(Box::new(crate::i18n::error(
             lang,
             StatusCode::NOT_FOUND,
@@ -322,8 +330,8 @@ pub async fn show_bedtime(
     Path(id): Path<i64>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Response {
-    let device_name = match phone_or_answer(&state, id, lang).await {
-        Ok(name) => name,
+    let (device_name, calls_unmanaged) = match phone_or_answer(&state, id, lang).await {
+        Ok(phone) => phone,
         Err(answer) => return *answer,
     };
     let (stored, available) = match stored_and_apps(&state, id, lang).await {
@@ -362,6 +370,7 @@ pub async fn show_bedtime(
             saved: params.contains_key("saved"),
             refusal: None,
             rule,
+            calls_unmanaged,
         },
         StatusCode::OK,
     )
@@ -371,7 +380,7 @@ pub async fn show_bedtime(
 async fn refuse(
     state: &AppState,
     id: i64,
-    device_name: String,
+    (device_name, calls_unmanaged): (String, bool),
     fields: &[(String, String)],
     error: BedtimeError,
     lang: Lang,
@@ -424,6 +433,7 @@ async fn refuse(
             saved: false,
             refusal: Some(refusal),
             rule,
+            calls_unmanaged,
         },
         StatusCode::BAD_REQUEST,
     )
@@ -438,13 +448,16 @@ pub async fn save_bedtime(
     body: Bytes,
 ) -> Response {
     let fields = form_pairs(&body);
-    let device_name = match phone_or_answer(&state, id, lang).await {
-        Ok(name) => name,
+    let (device_name, calls_unmanaged) = match phone_or_answer(&state, id, lang).await {
+        Ok(phone) => phone,
         Err(answer) => return *answer,
     };
     let input = match parse_bedtime_form(lang, &fields) {
         Ok(input) => input,
-        Err(error) => return refuse(&state, id, device_name, &fields, error, lang).await,
+        Err(error) => {
+            let phone = (device_name, calls_unmanaged);
+            return refuse(&state, id, phone, &fields, error, lang).await;
+        }
     };
     // The partial unique index is the conflict target: a save of a new bedtime racing another
     // one updates the row the other made, never a second row or a 500.

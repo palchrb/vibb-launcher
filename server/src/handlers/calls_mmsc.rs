@@ -15,21 +15,22 @@ use crate::mmsc_hosts::{self, ALLOWED_MAX, DECLINED_MAX};
 use crate::security::CurrentAdmin;
 
 /// An open question; its anchor is `mmsc-<id>`. Since 2026-11-11 (the user: fewer words) the row shows `ask`, `about`
-/// and `warn`; `list` and how long an allow lasts are folded under "Mer".
+/// and `warn`; `list` and how long an allow lasts are folded under the row's ⓘ ("Mer" its label).
 pub struct Question {
     pub id: i64,
     /// "Hente bilder fra {host}?"
     pub ask: String,
     /// The picture it is about: the contact and when.
     pub about: String,
-    /// What Android's list says about the address for this SIM's operator: behind "Mer".
+    /// What Android's list says about the address for this SIM's operator: behind the row's ⓘ.
     pub list: String,
     /// The address isn't the list's: "Ukjent adresse for {operator}", allow only if the contact really sent a picture
     /// then.
     pub warn: Option<String>,
-    /// The phone no longer reports the picture: the next one is fetched once the address is allowed.
+    /// The phone no longer reports the picture: "Bildet er borte" (the next one is fetched once the address is
+    /// allowed).
     pub gone: bool,
-    /// Eight addresses are allowed for the SIM already: said in place of "Tillat".
+    /// Eight addresses are allowed for the SIM already: "Fullt: 8 av 8 adresser" in place of "Tillat".
     pub full: bool,
 }
 
@@ -162,7 +163,7 @@ pub async fn load(
                 )
             },
             // A SIM that gives no name (or is out of the phone by now) has only its MCC/MNC: the warning says "the
-            // SIM's operator" then, never the bare digits ("Mer"'s list line has them).
+            // SIM's operator" then, never the bare digits (the ⓘ's list line has them).
             warn: (!is_listed).then(|| {
                 if operator == row.mccmnc {
                     t_params(lang, "device.calls.mmsc.warn_unnamed", &[("name", name)])

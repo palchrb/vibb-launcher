@@ -305,6 +305,18 @@ test("103-1: an Attention line inserted before a form keeps that form's node, an
     assert.strictEqual(anchorDelta(doc, chain), 64, "main scrolls by the line's height");
 });
 
+test("113: a quiet note coming in before a group is inserted, never morphed into the group", () => {
+    const group = () => h("div", { class: "group" },
+        h("form", { action: "/devices/1/lock-screen#notifications", "data-h": "100" }, h("input", { type: "checkbox", name: "a", value: "on" })));
+    const doc = page([h("section", { id: "notifications" }, h("h2", { "data-h": "30" }, "Lock screen"), group())]);
+    const kept = doc.querySelector(".group");
+    morph(mainOf(doc), mainOf(page([h("section", { id: "notifications" }, h("h2", { "data-h": "30" }, "Lock screen"),
+        h("div", { "data-note": "no-child-pin", "data-h": "40" }, "No lock without a Child PIN"), group())])), ctxFor(doc));
+    assert.strictEqual(doc.querySelector(".group"), kept, "the group's node stays");
+    assert.deepStrictEqual(shape(doc.getElementById("notifications")),
+        ["H2", "DIV[data-note=no-child-pin]", "DIV"]);
+});
+
 test("103-1: a line removed before a form, an id'd row moved, two id-less forms told apart by action", () => {
     const formA = () => h("form", { action: "/x/a#g" }, h("input", { name: "on", type: "checkbox" }));
     const formB = () => h("form", { action: "/x/b#g" }, h("input", { name: "on", type: "checkbox" }));

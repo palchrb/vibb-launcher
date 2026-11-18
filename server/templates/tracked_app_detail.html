@@ -39,9 +39,6 @@
         </form>
         {% endif %}
     </div>
-    {% if app.is_launcher %}
-    <p class="group-footer">{{ self.t("apps.app.launcher_footer") }}</p>
-    {% endif %}
 
     {#- Design 90 §9.1: a release held for the parent, one waiting out the app's wait, one declined;
         each form names its exact release and comes back here. -#}
@@ -49,8 +46,18 @@
     <div class="group" id="update" data-group="update">
         {% if let Some((text, ok)) = u.flash %}<p class="flash{% if !ok %} flash-warn{% endif %}" role="status" data-flash="update">{{ text }}</p>{% endif %}
         {% if let Some(h) = u.held %}
-        <div class="row" data-update="held">
-            <span class="row-label"><span class="tone-orange">{{ h.release.title }}</span><span class="row-sub">{{ h.sub }}</span></span>
+        {#- Design 113: the row is its own (i) - what the release asks for behind it; the buttons follow on a row
+            of their own (a form isn't allowed inside a <summary>). -#}
+        <details class="info cell" data-update="held">
+            <summary class="row"><span class="row-label"><span class="tone-orange">{{ h.release.title }}</span><span class="row-sub">{{ h.sub }}</span></span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ h.about }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+            <div class="info-panel">
+                {% for line in h.new_lines %}<p>{{ line }}</p>{% endfor %}
+                {% if let Some(had) = h.had %}<p>{{ had }}</p>{% endif %}
+                {% if !h.names.is_empty() %}<p>{{ self.t("apps.update.declared") }}</p><p>{% for name in h.names %}<code class="key">{{ name }}</code>{% if !loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+                <p>{{ h.keeps }}</p>
+            </div>
+        </details>
+        <div class="row" data-update="held-actions">
             <form method="post" action="/apps/tracked/{{ app.id }}/held/approve#update" class="row-form">
                 <input type="hidden" name="tag" value="{{ h.release.tag }}"><input type="hidden" name="asset_id" value="{{ h.release.asset_id }}">
                 <button type="submit" class="button-small">{{ self.t("apps.update.approve") }}</button>
@@ -60,28 +67,18 @@
                 <button type="submit" class="button-small button-secondary">{{ h.keep }}</button>
             </form>
         </div>
-        <details class="info cell" data-update="held-about">
-            <summary class="row"><span class="row-label row-label-quiet">{{ h.about }}</span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ h.about }}"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
-            <div class="info-panel">
-                {% for line in h.new_lines %}<p>{{ line }}</p>{% endfor %}
-                {% if let Some(had) = h.had %}<p>{{ had }}</p>{% endif %}
-                {% if !h.names.is_empty() %}<p>{{ self.t("apps.update.declared") }}</p><p>{% for name in h.names %}<code class="key">{{ name }}</code>{% if !loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
-                <p>{{ h.keeps }}</p>
-            </div>
-        </details>
         {% endif %}
         {% if let Some(w) = u.waiting %}
-        <div class="row" data-update="waiting">
-            <span class="row-label">{{ w.release.title }}<span class="row-sub">{{ w.sub }}</span></span>
+        <details class="info cell" data-update="waiting">
+            <summary class="row"><span class="row-label">{{ w.release.title }}<span class="row-sub">{{ w.sub }}</span></span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("apps.update.wait_about") }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+            <div class="info-panel"><p>{{ self.t("apps.update.wait_info") }}</p></div>
+        </details>
+        <div class="row" data-update="waiting-actions">
             <form method="post" action="/apps/tracked/{{ app.id }}/update-now#update" class="row-form">
                 <input type="hidden" name="tag" value="{{ w.release.tag }}"><input type="hidden" name="asset_id" value="{{ w.release.asset_id }}">
                 <button type="submit" class="button-small">{{ self.t("apps.update.update_now") }}</button>
             </form>
         </div>
-        <details class="info cell" data-update="waiting-about">
-            <summary class="row"><span class="row-label row-label-quiet">{{ self.t("apps.update.wait_about") }}</span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("apps.update.wait_about") }}"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
-            <div class="info-panel"><p>{{ self.t("apps.update.wait_info") }}</p></div>
-        </details>
         {% endif %}
         {% if let Some(d) = u.declined %}
         <div class="row" data-update="declined">
@@ -95,11 +92,14 @@
     </div>
     {% endif %}
 
-    <h2 class="group-header">{{ self.t("apps.app.display_header") }}</h2>
     <div class="group group-display">
         {% include "partials/app_display_form.html" %}
     </div>
-    <p class="group-footer">{% if app.package_name.is_empty() %}{{ self.t("apps.app.display_no_package") }}{% else %}{{ self.t("apps.app.display_footer") }}{% endif %}</p>
+    {% if app.package_name.is_empty() %}
+    <p class="group-footer">{{ self.t("apps.app.display_no_package") }}</p>
+    {% else %}
+    <div class="group-footer"><details class="info"><summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("apps.app.display_footer") }}</p></div></details></div>
+    {% endif %}
     <script src="/static/app-display.js?v=7" defer data-swap-ready></script>
 
     <h2 class="group-header">{{ self.t("apps.on_phones") }}</h2>
@@ -107,7 +107,7 @@
         for a phone without a row, here (design 37 §2.1). -#}
     {% if phones.is_empty() %}
     <div class="group" id="phones">{% if let Some((text, _)) = install_flash %}<p class="row row-note" data-install-flash>{{ text }}</p>{% endif %}<p class="row row-note" data-row="no-phones">{{ self.t("apps.app.no_phones") }}</p></div>
-    <p class="group-footer">{{ self.t("apps.app.no_phones_footer") }}</p>
+    <div class="group-footer"><details class="info"><summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("apps.app.no_phones_footer") }}</p></div></details></div>
     {% else %}
     <div class="group group-avatars group-small" data-group="phones" id="phones"{% if install_polling %} data-install-poll="/apps/tracked/{{ app.id }}/install-now.json?lang={{ lang.code() }}"{% endif %}>
         {% if let Some((text, _)) = install_flash %}<p class="row row-note" data-install-flash>{{ text }}</p>{% endif %}
@@ -140,7 +140,7 @@
         {% endfor %}
     </div>
     {% if app.is_launcher %}
-    <div class="group-footer" data-install-about>{{ self.t("apps.install.about") }} <details class="info"><summary aria-label="{{ self.t("apps.install.about_aria") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("apps.install.about_info") }}</p></div></details></div>
+    <div class="group-footer" data-install-about><details class="info"><summary aria-label="{{ self.t("apps.install.about_aria") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("apps.install.about") }}</p><p>{{ self.t("apps.install.about_info") }}</p></div></details></div>
     {#- On every launcher page, polling only while a row waits (`data-install-poll`), so a row that stops waiting keeps
         the script list and the page refreshes in place (design 103's code QA L7). -#}
     <script src="/static/install-now.js?v=5" defer data-swap-ready></script>
@@ -161,12 +161,15 @@
             {% else if let Some(source) = fdroid_source %}
             {% if let Some(href) = fdroid_page %}
             <a class="row" href="{{ href }}" data-row="source">
-                <span class="row-label">{{ self.t("apps.field.source") }}<span class="row-sub" data-note="one-source">{{ fdroid_note }}</span></span>
+                <span class="row-label">{{ self.t("apps.field.source") }}</span>
                 <span class="row-value">{{ source }}</span>
                 <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </a>
             {% else %}
-            <div class="row" data-row="source"><span class="row-label">{{ self.t("apps.field.source") }}<span class="row-sub" data-note="one-source">{{ fdroid_note }}</span></span><span class="row-value">{{ source }}</span></div>
+            <details class="info cell" data-row="source">
+                <summary class="row"><span class="row-label">{{ self.t("apps.field.source") }}</span><span class="row-value">{{ source }}</span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("common.more_info") }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel"><p data-note="one-source">{{ fdroid_note }}</p></div>
+            </details>
             {% endif %}
             {% else %}
             <div class="row" data-row="source"><span class="row-label">{{ self.t("apps.field.source") }}</span><span class="row-value">{{ self.t("apps.app.uploaded_by_you") }}</span></div>
@@ -189,7 +192,10 @@
                 <div class="info-panel"><p>{{ self.t("apps.app.package_info") }}</p></div>
             </details>
             {% if app.package_name.is_empty() && !package_candidates.is_empty() %}
-            <p class="row row-note">{{ self.t("apps.app.candidates") }}</p>
+            <details class="info cell" data-row="candidates">
+                <summary class="row"><span class="row-label tone-orange">{{ self.t("apps.app.candidates") }}</span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("common.more_info") }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel"><p>{{ self.t("apps.app.candidates_info") }}</p></div>
+            </details>
             {% for candidate in package_candidates %}
             <form method="post" action="/apps/tracked/{{ app.id }}/confirm-package#release" class="cell">
                 <input type="hidden" name="package" value="{{ candidate }}">
@@ -209,6 +215,7 @@
             <details class="confirm cell" id="forget">
                 <summary class="row">{{ self.t("apps.app.forget_summary") }}</summary>
                 <form method="post" action="/apps/tracked/{{ app.id }}/forget-package-name#release" class="confirm-body">
+                    <p>{{ self.t("apps.app.forget_footer") }}</p>
                     <p>{{ self.t("apps.app.forget_confirm") }}</p>
                     {% if wait.is_some() %}<p>{{ self.t("apps.app.forget_holds") }}</p>{% endif %}
                     <button type="submit" class="button-destructive">{{ self.t("apps.app.forget") }}</button>
@@ -217,8 +224,10 @@
             </details>
             {% endif %}
         </div>
-        {% if !app.package_name.is_empty() || app.signer_sha256.is_some() %}
-        <p class="group-footer">{{ self.t("apps.app.forget_footer") }}</p>
+        {#- The one-source line of an F-Droid app whose Source row links to f-droid.org: an (i) never sits
+            inside a link, so it is the group's footer (i) (design 113 P2). -#}
+        {% if fdroid_source.is_some() && fdroid_page.is_some() %}
+        <div class="group-footer"><details class="info"><summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p data-note="one-source">{{ fdroid_note }}</p></div></details></div>
         {% endif %}
 
         <h2 class="group-header">{{ self.t("apps.app.details") }}</h2>
@@ -267,7 +276,7 @@
             {% if app.source_type == "github" %}
             <form method="post" action="/apps/tracked/{{ app.id }}/include-prereleases#updates" class="cell">
                 <label class="row">
-                    <span class="row-label">{{ self.t("apps.field.prereleases") }}<span class="row-sub">{{ self.t("apps.app.prereleases_sub") }}</span></span>
+                    <span class="row-label">{{ self.t("apps.field.prereleases") }}</span>
                     <input type="checkbox" role="switch" class="sw" name="include_prereleases" value="on"{% if app.include_prereleases %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
                 </label>
                 <noscript><div class="row"><button type="submit" class="button-small">{{ self.t("common.save") }}</button></div></noscript>
@@ -294,7 +303,7 @@
             {% if let Some(w) = wait %}
             <form method="post" action="/apps/tracked/{{ app.id }}/always-ask#updates" class="cell">
                 <label class="row">
-                    <span class="row-label">{{ self.t("apps.app.always_ask") }}<span class="row-sub">{{ self.t("apps.app.always_ask_sub") }}</span></span>
+                    <span class="row-label">{{ self.t("apps.app.always_ask") }}</span>
                     <input type="checkbox" role="switch" class="sw" name="always_ask" value="on"{% if app.always_ask %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
                 </label>
                 <noscript><div class="row"><button type="submit" class="button-small">{{ self.t("common.save") }}</button></div></noscript>
@@ -302,18 +311,15 @@
             {#- A number field never autosaves: a half-typed "4" must not save as four hours. -#}
             <form method="post" action="/apps/tracked/{{ app.id }}/release-wait#updates" class="cell" data-form="release-wait">
                 <label class="row">
-                    <span class="row-label">{{ self.t("apps.app.wait") }}<span class="row-sub">{{ self.t("apps.wait.footer") }}</span></span>
+                    <span class="row-label">{{ self.t("apps.app.wait") }}</span>
                     <input type="number" class="row-num" id="release_wait_hours" name="release_wait_hours" value="{{ w.value }}" min="0" max="336" step="1" inputmode="numeric" required{% if w.error.is_some() %} aria-invalid="true" aria-describedby="release_wait_hours-error" autofocus{% endif %}><span class="row-unit">&nbsp;{{ self.t("apps.wait.hours") }}</span>
                 </label>
                 {% if let Some(e) = w.error %}<p class="flash flash-error" id="release_wait_hours-error" data-flash="release_wait_hours">{{ e }}</p>{% endif %}
                 <div class="row"><button type="submit" class="button-small">{{ self.t("common.save") }}</button></div>
             </form>
             {% endif %}
-            <details class="info cell">
-                <summary class="row"><span class="row-label row-label-quiet">{{ self.t("apps.app.switches_about") }}</span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("apps.app.switches_aria") }}"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
-                <div class="info-panel"><p>{{ self.t("apps.app.switches_info") }}</p></div>
-            </details>
         </div>
+        <div class="group-footer"><details class="info"><summary aria-label="{{ self.t("apps.app.switches_aria") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ self.t("apps.app.switches_info") }}</p>{% if app.source_type == "github" %}<p>{{ self.t("apps.app.prereleases_sub") }}</p>{% endif %}{% if wait.is_some() %}<p>{{ self.t("apps.app.always_ask_sub") }}</p><p>{{ self.t("apps.wait.footer") }}</p>{% endif %}</div></details></div>
 
         {% if app.source_type == "manual" %}
         <h2 class="group-header">{{ self.t("apps.app.upload_header") }}</h2>

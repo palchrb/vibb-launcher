@@ -159,7 +159,8 @@ async fn the_switch_needs_a_passkey_and_takes_the_password_and_code_away() {
     assert!(page.contains(
         "<input type=\"password\" id=\"add_password\" name=\"current_password\" autocomplete=\"current-password\" hidden"
     ));
-    assert!(page.contains("The last passkey can't be removed while Passkey Only is on."));
+    // The last passkey's remove confirm says why it stays (design 113: no footer line).
+    assert!(page.contains("the last passkey can't be removed while Passkey Only is on."));
     super::settings_pages::check_forms("/account", &page);
 
     // Switching it on again is a no-op.

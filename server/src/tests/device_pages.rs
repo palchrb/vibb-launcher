@@ -470,10 +470,7 @@ async fn a_live_code_shows_on_connection_without_the_code() {
         .expect("the warning")..];
     let warning = &warning[..warning.find("</div>").unwrap()];
     assert!(warning.contains("Typed codes paused until "), "{warning}");
-    assert!(
-        warning.contains("A setup QR code still works."),
-        "{warning}"
-    );
+    assert!(warning.contains("The QR code still works"), "{warning}");
 }
 
 /// A disconnected phone still shows when it was last in contact (qa-31-s3-code M1): "cut off a
@@ -586,7 +583,13 @@ async fn lock_screen_and_pins_holds_the_moved_forms() {
     for field in ["new_kid_pin", "new_pin"] {
         let input = html.find(&format!("name=\"{field}\"")).unwrap();
         let details = html[..input].rfind("<details class=\"edit cell\"").unwrap();
-        assert!(!html[details..input].contains("</details>"), "{field}");
+        // A field's own ⓘ (design 113) may sit between the two: still open means more
+        // <details> opened than closed.
+        let between = &html[details..input];
+        assert!(
+            between.matches("<details").count() > between.matches("</details>").count(),
+            "{field}"
+        );
     }
     // The Parent PIN stays off the screen and out of autofill (qa-31-s4-code L2); the Child PIN
     // is read back to the child, so it is plain text.
@@ -1092,7 +1095,20 @@ async fn web_filter_holds_the_phones_parts() {
     assert!(list(1).contains("<option value=\"default\">As for everyone (On)</option>"));
     assert!(list(2).contains("<option value=\"default\" selected>As for everyone (Off)</option>"));
     assert!(list(1).contains("<input type=\"hidden\" name=\"back\" value=\"filter\">"));
-    assert!(html.contains("As for everyone follows the switch in Settings › Web Filter."));
+    // Design 113: the option says it; no footer under the lists.
+    assert!(!html.contains("As for everyone follows the switch"));
+    // The Sign-in row shares the filter switch's group, its state as the row's value.
+    let filter_group = &filter[..filter.find("</section>").unwrap()];
+    assert!(
+        filter_group.contains(&format!(
+            "href=\"/devices/{id}/logins\" data-row=\"logins\""
+        )),
+        "{filter_group}"
+    );
+    assert!(
+        filter_group.contains("<span class=\"row-value\">Wi-Fi: on · Apps: off</span>"),
+        "{filter_group}"
+    );
     let nb = app
         .get_page(
             &format!("{}?lang=nb", device_page(id, Section::Filter)),
@@ -1103,8 +1119,8 @@ async fn web_filter_holds_the_phones_parts() {
     assert!(nb.contains("<option value=\"default\">Som for alle (på)</option>"));
     assert!(nb.contains("<option value=\"off\" selected>Av</option>"));
     // Settings › Web Filter tells each list's story from the phones' own settings (the user, 2026-10-26): Anna's
-    // own Off under an On list, nobody's under an Off one; then Emil's own On under the Off list, and Anna's own On
-    // under the On list (the same as the switch: not named).
+    // own Off under an On list, nobody's under an Off one (design 113 P4: no line - the switch says it); then Emil's
+    // own On under the Off list, and Anna's own On under the On list (the same as the switch: not named).
     let global = |html: &str, list_id: i64| {
         let at = html.find(&format!("data-list=\"{list_id}\"")).unwrap();
         html[at..at + html[at..].find("</form>").unwrap()].to_string()
@@ -1119,7 +1135,7 @@ async fn web_filter_holds_the_phones_parts() {
         web.contains("<h2 class=\"group-header\" id=\"lists-title\">Lists for every phone</h2>")
     );
     assert_eq!(scope(&web, 1), "On for every phone except Anna");
-    assert_eq!(scope(&web, 2), "Off for every phone");
+    assert!(!global(&web, 2).contains("data-scope"));
     assert!(
         web.contains("A phone&#39;s own Web Filter page can set a list otherwise for that phone.")
     );
@@ -1149,10 +1165,7 @@ async fn web_filter_holds_the_phones_parts() {
         .execute(&app.db)
         .await
         .unwrap();
-    assert_eq!(
-        scope(&app.get_page("/dns", &cookie).await.text(), 1),
-        "Off for every phone"
-    );
+    assert!(!global(&app.get_page("/dns", &cookie).await.text(), 1).contains("data-scope"));
     sqlx::query("UPDATE dns_blocklists SET enabled = 1 WHERE id = 1")
         .execute(&app.db)
         .await
@@ -1182,8 +1195,14 @@ async fn web_filter_holds_the_phones_parts() {
             .unwrap();
         assert!(field.has("required") && field.has("pattern"));
     }
-    // The log: off by default, no list; the switch saves itself.
+    // The log: off by default, no list; the switch saves itself. Off erases the log: said in view (design 113 QA
+    // H1), the retention behind the ⓘ.
     assert_eq!(input_checked(&html, "dns_log_enabled", "on"), Some(false));
+    assert!(
+        group("log").contains("<div class=\"group-footer\">Off deletes the log."),
+        "{}",
+        group("log")
+    );
     assert!(!html.contains("data-group=\"log-events\""));
     assert_saves_without_js(&html, &["vpn_filter_enabled", "setting", "dns_log_enabled"]);
     assert!(!autosaves(&html, "domain"));
@@ -2190,8 +2209,8 @@ async fn the_permissions_form_returns_to_its_open_details() {
     let page = device_page(id, Section::Apps);
     let html = app.get_page(&page, &cookie).await.text();
     assert!(
-        html.contains("data-row=\"update-note\""),
-        "an older launcher: the note"
+        html.contains("class=\"row row-note tone-orange\" data-row=\"update-note\""),
+        "an older launcher: the note, orange"
     );
     app.post_status(&token, report(json!(["app_permissions_v1"])))
         .await;
@@ -2209,7 +2228,10 @@ async fn the_permissions_form_returns_to_its_open_details() {
         .and_then(|rest| rest.split("</details>").next())
         .expect("the plain app's details");
     assert!(plain.contains("name=\"lock_media\"") && !plain.contains("name=\"camera\""));
-    assert!(html.contains("Media management: not approved"));
+    // Design 113: an access not approved is an orange row, the way to approve it behind its ⓘ.
+    assert!(html.contains(
+        "<summary class=\"row\"><span class=\"row-label tone-orange\">Media management: not approved</span>"
+    ));
     assert!(html.contains("App access › Element X: Media management"));
     let action = format!("/devices/{id}/apps/permissions#{anchor}");
     assert!(html.contains(&format!("action=\"{action}\"")));
@@ -2317,7 +2339,7 @@ async fn the_permissions_form_returns_to_its_open_details() {
     assert_eq!(rows, 0);
 }
 
-/// 2026-11-04: "Show as a media player on the lock screen" - an allowed, installed third-party app's switch in its
+/// 2026-11-04: "Media player on the lock screen" - an allowed, installed third-party app's switch in its
 /// Permissions, back to the open details, sent as the policy's `lock_media_apps`; none for a preinstalled app. The
 /// route keeps the page's rule for on (a preinstalled, an unknown, Vibb, Vibb music and Play's core refused at their
 /// row), takes off for any app, answers 400 for another value, prunes the rows of apps no longer offered when one is
@@ -2350,7 +2372,7 @@ async fn the_lock_media_switch_returns_to_its_open_details() {
     let html = app.get_page(&page, &cookie).await.text();
     let anchor = format!("perms-{pod}");
     assert!(html.contains(&format!("<details class=\"app-display\" id=\"{anchor}\">")));
-    assert!(html.contains("Show as a media player on the lock screen"));
+    assert!(html.contains("Media player on the lock screen"));
     assert!(html.contains("title and picture show on the lock screen"));
     assert!(html.contains(&format!(
         "action=\"/devices/{id}/apps/lock-media#{anchor}\""

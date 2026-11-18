@@ -113,6 +113,12 @@ async fn each_fact_raises_its_own_row() {
             "play-install-mode",
             json!({"install_mode": {"until_ms": now_ms + 600_000}}),
         ),
+        // Design 113: Android's own mobile-data switch off.
+        (
+            "mobile-data-off",
+            json!({"capabilities": ["time_rules_v1", "mobile_data_v1"],
+                   "mobile_data": {"enabled": false, "sink": "off", "settings_locked": true}}),
+        ),
     ];
     for (key, extra) in cases {
         let (id, token) = clean_phone(&app, key).await;
@@ -167,6 +173,17 @@ async fn each_fact_raises_its_own_row() {
         report(&app, &token, extra).await;
         assert_eq!(rows(&app, &cookie, id).await, [key], "{key}");
     }
+    // Design 113: the kid's own switch off (Android's still on) raises nothing.
+    let (kid_off, token) = clean_phone(&app, "kid off").await;
+    report(
+        &app,
+        &token,
+        json!({"capabilities": ["time_rules_v1", "mobile_data_v1"],
+               "mobile_data": {"enabled": true, "sink": "kid", "settings_locked": true, "kid": "off"}}),
+    )
+    .await;
+    assert_eq!(rows(&app, &cookie, kid_off).await, Vec::<String>::new());
+
     // Play not pausable with "Block other apps' screens" on: Play stays blocked, no row.
     let (blocked, token) = clean_phone(&app, "blocked").await;
     report(&app, &token, json!({"play_store_suspendable": false})).await;
@@ -189,7 +206,7 @@ async fn each_fact_raises_its_own_row() {
         .unwrap();
     assert_eq!(rows(&app, &cookie, no_pin).await, ["no-parent-pin"]);
 
-    // A no-calls rule while calls aren't managed: incoming calls still ring.
+    // A no-calls rule while calls aren't managed: the parent's choice, no row (2026-11-18).
     let (rule_phone, _) = clean_phone(&app, "rule").await;
     sqlx::query("UPDATE device_policy SET custom_schedule_enabled = 1 WHERE device_id = ?")
         .bind(rule_phone)
@@ -204,7 +221,7 @@ async fn each_fact_raises_its_own_row() {
     .execute(&app.db)
     .await
     .unwrap();
-    assert_eq!(rows(&app, &cookie, rule_phone).await, ["incoming-calls"]);
+    assert_eq!(rows(&app, &cookie, rule_phone).await, Vec::<String>::new());
 
     // A Child PIN set, but the lock off on the phone.
     let (lock_phone, token) = clean_phone(&app, "lock").await;
@@ -503,7 +520,8 @@ async fn a_phone_not_set_up_has_no_count() {
     assert!(!list.contains("data-attention-count"), "{list}");
 }
 
-/// Every finding of the call report is an Attention row.
+/// Every finding of the call report is an Attention row, but SMS off with the Messages app ticked (2026-11-18: the
+/// parent's choices, a quiet row on the calls page).
 #[tokio::test]
 async fn every_call_warning_is_typed() {
     let app = TestApp::new().await;
@@ -557,7 +575,22 @@ async fn every_call_warning_is_typed() {
             ..Default::default()
         },
     );
-    assert_eq!(rows.len(), report.findings.len(), "{:?}", report.findings);
+    let choices = report
+        .problems()
+        .iter()
+        .filter(|p| **p == crate::handlers::calls::CallProblem::SmsAppAllowed)
+        .count();
+    assert_eq!(choices, 1, "{:?}", report.findings);
+    assert_eq!(
+        rows.len(),
+        report.findings.len() - choices,
+        "{:?}",
+        report.findings
+    );
+    assert!(
+        rows.iter()
+            .all(|r| r.title != "Messages app allowed with SMS off")
+    );
 }
 
 /// A silent time rule makes the launcher turn on its own Do Not Disturb (priority only): the rule's own, so not an
@@ -569,8 +602,6 @@ async fn a_silent_rules_own_do_not_disturb_is_no_row() {
     let (id, token) = clean_phone(&app, "Emma").await;
     let add = |name: &'static str, silent: bool| {
         sqlx::query_scalar::<_, i64>(
-            // Calls allowed: a rule that blocks them raises its own row (incoming-calls) on a phone whose calls
-            // aren't managed, and that row is not this test's.
             "INSERT INTO time_rules (name, kind, calls_allowed, exempt_apps_json, silent, days_json) \
              VALUES (?, 'school', 1, '[]', ?, '[null,null,null,null,null,null,null]') RETURNING id",
         )

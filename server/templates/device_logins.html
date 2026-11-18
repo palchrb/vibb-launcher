@@ -14,35 +14,48 @@
 
     {#- Design 102 §5: each form answers on its own group's anchor (#logins-wifi, #logins-apps, #logins-sites): with JS
         scroll-restore.js keeps the place, without JS the <noscript> Save lands on the group - a save never jumps to the
-        top. The parent code's requirement is Advanced's own row (#wifi-signin); this page shows its state with a link. -#}
+        top. The parent code's requirement is Advanced's own row (#wifi-signin); this page shows its state with a link.
+        Design 113: one group per part, each row a label and its state, every explanation behind the group's ⓘ. -#}
     <section id="logins-wifi" aria-labelledby="logins-wifi-title">
         <h2 class="group-header" id="logins-wifi-title">{{ self.t("logins.wifi.header") }}</h2>
-        <form method="post" action="/devices/{{ device.id }}/logins#logins-wifi" class="group">
-            <input type="hidden" name="section" value="wifi">
-            <label class="row">
-                <span class="row-label">{{ self.t("logins.wifi.label") }}<span class="row-sub">{{ self.t("logins.wifi.sub") }}</span>{% if reported && !portal_capable %}<span class="row-sub tone-orange" data-hint>{{ self.t("logins.needs_update") }}</span>{% endif %}</span>
-                <input type="checkbox" role="switch" class="sw" name="on" value="on"{% if wifi_on %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
-            </label>
-            <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
-        </form>
-        {% if wifi_on %}
         <div class="group">
+            <form method="post" action="/devices/{{ device.id }}/logins#logins-wifi" class="cell">
+                <input type="hidden" name="section" value="wifi">
+                <label class="row">
+                    <span class="row-label">{{ self.t("logins.wifi.label") }}{% if reported && !portal_capable %}<span class="row-sub tone-orange" data-hint>{{ self.t("logins.needs_update") }}</span>{% endif %}</span>
+                    <input type="checkbox" role="switch" class="sw" name="on" value="on"{% if wifi_on %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                </label>
+                <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
+            </form>
+            {% if wifi_on %}
             <a class="row" href="/devices/{{ device.id }}/advanced#wifi-signin" data-row="wifi-code">
-                <span class="row-label">{% if require_code %}{{ self.t("logins.wifi.code_on") }}{% else %}{{ self.t("logins.wifi.code_off") }}{% endif %}</span>
+                <span class="row-label">{{ self.t("logins.wifi.code") }}</span>
+                <span class="row-value">{% if require_code %}{{ self.t("common.on") }}{% else %}{{ self.t("common.off") }}{% endif %}</span>
                 <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </a>
-            {% if let Some(line) = today %}
-            <p class="row row-note" data-row="wifi-today">{{ line }}</p>
+            {% if let Some(value) = today %}
+            <div class="row" data-row="wifi-today">
+                <span class="row-label">{{ self.t("logins.wifi.today_label") }}</span>
+                <span class="row-value">{{ value }}</span>
+            </div>
             {% endif %}
             <form method="post" action="/devices/{{ device.id }}/logins#logins-wifi" class="cell">
                 <input type="hidden" name="section" value="grant">
                 <button type="submit" class="row row-button" data-grant>{{ self.t("logins.wifi.grant") }}</button>
             </form>
-            <p class="row row-note">{{ self.t("logins.wifi.grant_sub") }}</p>
             {% if granted %}<p class="flash" role="status" data-flash="granted">{{ self.t("logins.wifi.granted") }}</p>{% endif %}
+            {% endif %}
         </div>
-        {% endif %}
-        <p class="group-footer">{{ self.t("logins.wifi.footer") }}</p>
+        <div class="group-footer">
+            <details class="info">
+                <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    <p>{{ self.t("logins.wifi.sub") }}</p>
+                    <p>{{ self.t("logins.wifi.grant_sub") }}</p>
+                    <p>{{ self.t("logins.wifi.footer") }}</p>
+                </div>
+            </details>
+        </div>
     </section>
 
     {% if !recent.is_empty() %}
@@ -64,23 +77,35 @@
         <form method="post" action="/devices/{{ device.id }}/logins#logins-apps" class="group">
             <input type="hidden" name="section" value="apps">
             <label class="row">
-                <span class="row-label">{{ self.t("logins.apps.label") }}<span class="row-sub">{{ self.t("logins.apps.sub") }}</span>{% if reported && !browser_capable %}<span class="row-sub tone-orange" data-hint>{{ self.t("logins.needs_update") }}</span>{% endif %}</span>
+                <span class="row-label">{{ self.t("logins.apps.label") }}{% if reported && !browser_capable %}<span class="row-sub tone-orange" data-hint>{{ self.t("logins.needs_update") }}</span>{% endif %}</span>
                 <input type="checkbox" role="switch" class="sw" name="on" value="on"{% if apps_on %} checked{% endif %}{% if chrome_ticked %} disabled{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
             </label>
             {% if chrome_ticked %}
-            <p class="row row-note" data-row="chrome-ticked">{{ self.t("logins.apps.ticked") }}</p>
+            <details class="info cell" data-row="chrome-ticked">
+                <summary class="row">
+                    <span class="row-label">{{ self.t("logins.apps.ticked") }}</span>
+                    <svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("common.more_info") }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>
+                </summary>
+                <div class="info-panel"><p>{{ self.t("logins.apps.ticked_fix") }}</p></div>
+            </details>
             {% else if chrome_present == Some(false) %}
             <p class="row row-note" data-row="no-chrome">{{ self.t("logins.apps.no_chrome") }}</p>
             {% endif %}
-            {% if let Some(key) = apps_state %}
+            {% if let Some((key, wrong)) = apps_state %}
             <div class="row" data-row="apps-state">
                 <span class="row-label">{{ self.t("logins.apps.state") }}</span>
-                <span class="row-value">{{ self.t(key) }}</span>
+                <span class="row-value{% if wrong %} row-value-action{% endif %}">{{ self.t(key) }}</span>
             </div>
             {% endif %}
             <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
         </form>
-        <p class="group-footer">{{ self.t("logins.apps.clear") }}</p>
+        {#- KEEP: turning it on clears Chrome's data - said while it is off; the explanation behind the ⓘ. -#}
+        <div class="group-footer">{% if !apps_on %}{{ self.t("logins.apps.clear") }}{% endif %}
+            <details class="info">
+                <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel"><p>{{ self.t("logins.apps.sub") }}</p></div>
+            </details>
+        </div>
     </section>
 
     <section id="logins-sites" aria-labelledby="logins-sites-title">
@@ -91,7 +116,7 @@
                 <input type="hidden" name="section" value="preset">
                 <input type="hidden" name="preset" value="{{ p.key }}">
                 <label class="row">
-                    <span class="row-label">{{ p.name }}<span class="row-sub">{{ p.hosts }}</span></span>
+                    <span class="row-label">{{ p.name }}</span>
                     <input type="checkbox" role="switch" class="sw" name="on" value="on"{% if p.on %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
                 </label>
                 <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
@@ -127,7 +152,15 @@
             </form>
             {% if let Some(key) = site_notice %}<p class="flash flash-error" role="status" data-flash="site">{{ self.t(key) }}</p>{% endif %}
         </div>
-        <p class="group-footer">{{ self.t("logins.sites.note") }}</p>
+        <div class="group-footer">
+            <details class="info">
+                <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    <p>{{ self.t("logins.sites.note") }}</p>
+                    {% for p in presets %}<p>{{ p.name }}: {{ p.hosts }}</p>{% endfor %}
+                </div>
+            </details>
+        </div>
     </section>
 
     </div>

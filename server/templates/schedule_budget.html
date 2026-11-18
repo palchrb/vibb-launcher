@@ -24,11 +24,12 @@
             <button type="submit" class="row row-button">{{ self.t("common.save") }}</button>
             {% if saved %}<p class="flash" role="status" data-flash="screen-time">{{ self.t("settings.time_rules.budget_saved") }}</p>{% endif %}
         </form>
-        <div class="group-footer">{{ self.t("settings.time_rules.budget_footer") }}
+        <div class="group-footer">
             <details class="info">
                 <summary aria-label="{{ self.t("settings.time_rules.budget_info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
                     <p>{{ self.t("settings.time_rules.budget_info") }}</p>
+                    <p>{{ self.t("settings.time_rules.budget_footer") }}</p>
                 </div>
             </details>
         </div>

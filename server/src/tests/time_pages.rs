@@ -188,7 +188,14 @@ async fn time_rules_lists_rules_the_limit_and_the_phones() {
         .find(&format!("href=\"/devices/{emil}/time\""))
         .unwrap()..];
     assert!(emil_row[..emil_row.find("</a>").unwrap()].contains("data-in-force>2 rules<"));
-    assert!(phones.contains("Emergency calls always work."));
+    // Design 113: the emergency fact once, in the rules' ⓘ; no footer under the phones.
+    let rules_info = &rules[rules.find("<div class=\"group-footer\">").unwrap()..];
+    assert!(
+        rules_info.contains("<details class=\"info\">"),
+        "{rules_info}"
+    );
+    assert!(rules_info.contains("<p>Emergency calls always work.</p>"));
+    assert!(!phones.contains("group-footer"), "{phones}");
     // No device picker any more.
     assert!(!html.contains("Select a device"));
 
@@ -835,15 +842,32 @@ async fn device_time_rules_has_the_rules_alone() {
         assert!(!form.contains("row-dim"));
     }
     assert!(everyone.contains("Mon-Fri 08:15-14:30 · calls off"));
-    assert!(everyone.contains("href=\"/schedules#rules\""));
-    assert!(everyone.contains("A rule added later is on."));
+    // Design 113: the way to everyone's rules is a link row; the footer is an ⓘ alone.
+    assert!(
+        everyone.contains("<a class=\"row\" href=\"/schedules#rules\">"),
+        "{everyone}"
+    );
+    assert!(!everyone.contains("under Settings."), "{everyone}");
+    let panel = &everyone[everyone
+        .find("<div class=\"info-panel\">")
+        .expect("the footer ⓘ")..];
+    assert!(panel.contains("A rule added later is on."), "{everyone}");
     // The own rules: rows to the editor, no switch while on.
     let own_rules = section(&html, "own-rules");
     assert!(own_rules.contains("Anna&#39;s Own Rules"), "{own_rules}");
     assert!(own_rules.contains(&format!("href=\"/schedules/rules/{own}\"")));
     assert!(own_rules.contains(&format!("href=\"/schedules/rules/new?device={id}\"")));
     assert!(tags(own_rules, "form").is_empty());
-    assert!(own_rules.contains("They apply as well as everyone&#39;s rules that are on."));
+    let panel = &own_rules[own_rules
+        .find("<div class=\"info-panel\">")
+        .expect("the footer ⓘ")..];
+    assert!(panel.contains("They apply as well as everyone&#39;s rules that are on."));
+    assert!(
+        panel.contains("Emergency calls always work."),
+        "KEEP, in the ⓘ"
+    );
+    // No footer under Bedtime and the limit (design 113).
+    assert!(!section(&html, "bedtime").contains("group-footer"));
     // The daily limit: the Own limit switch off, everyone's limit as the row's value.
     let limit = section(&html, "screen-time");
     assert!(autosaves(limit, "own_limit"));
@@ -851,6 +875,7 @@ async fn device_time_rules_has_the_rules_alone() {
     assert!(limit.contains("<noscript>"));
     assert!(limit.contains("data-row=\"everyone-limit\""));
     assert!(!limit.contains("name=\"b0\""), "no day rows while off");
+    assert!(!limit.contains("group-footer"), "the row says it: {limit}");
 
     // Skole switched off for Anna: dimmed and unticked; Middag stays on.
     let res = app
@@ -887,7 +912,10 @@ async fn device_time_rules_has_the_rules_alone() {
     assert_eq!(input_checked(limit, "own_limit", ""), Some(true));
     assert!((0..7).all(|i| limit.contains(&format!("name=\"b{i}\""))));
     assert!(!limit.contains("data-row=\"everyone-limit\""));
-    assert!(limit.contains("Minutes a day. Empty means no limit."));
+    assert!(
+        !limit.contains("Minutes a day"),
+        "the unit and the placeholder say it"
+    );
 }
 
 /// The phone's state on Device › Time comes from its last report, in the Phone Setup zone: the
@@ -940,10 +968,35 @@ async fn device_time_shows_the_phones_state_in_local_time() {
     assert!(!now_group.contains("until"));
     assert!(now_group.contains(">42 of 90 min today<"));
 
-    // Once a phone in the Phone Setup zone says so, the end shows.
+    // Once a phone in the Phone Setup zone says so, the end shows. A fresh report: no word of when it came
+    // (design 113: the footer only past window_relock::REPORT_AGE_NOTE_MS).
     report(&app, &token, state(Some("Asia/Tokyo"), &today)).await;
     let html = app.get_page(&time, &cookie).await.text();
     assert!(section(&html, "now").contains("Skole until "), "{html}");
+    assert!(!section(&html, "now").contains("data-reported"), "{html}");
+
+    // 20 minutes old, under the 35: still no footer, so the badge says when itself.
+    let at = now - chrono::Duration::minutes(20) - chrono::Duration::seconds(30);
+    for table in ["device_status SET reported_at", "devices SET last_seen_at"] {
+        let column = if table.starts_with("devices") {
+            "id"
+        } else {
+            "device_id"
+        };
+        sqlx::query(&format!("UPDATE {table} = ? WHERE {column} = ?"))
+            .bind(at.format("%Y-%m-%d %H:%M:%S").to_string())
+            .bind(id)
+            .execute(&app.db)
+            .await
+            .unwrap();
+    }
+    let html = app.get_page(&time, &cookie).await.text();
+    let now_group = section(&html, "now");
+    assert!(!now_group.contains("data-reported"), "{now_group}");
+    assert!(
+        now_group.contains("Skole · at last report ("),
+        "{now_group}"
+    );
 
     // An old report (yesterday 10:00 UTC): its age, the exact local time in `title` - never the
     // UTC clock -, "at last report", no screen time.
@@ -1351,7 +1404,10 @@ async fn the_bedtime_page_adds_saves_refuses_and_removes_in_place() {
         .get_page(&format!("{page}?saved=1"), &cookie)
         .await
         .text();
-    assert!(html.contains("data-flash=\"bedtime\">Saved."));
+    assert!(
+        html.contains("data-flash=\"bedtime\">Saved.</p>"),
+        "design 113: no delivery sentence"
+    );
     assert!(html.contains("Remove Bedtime"));
     assert!(html.contains("value=\"22:30\""));
     let summary = "Sun-Thu 21:00-07:00 · Fri-Sat 22:30-09:00";
@@ -1515,7 +1571,21 @@ async fn a_bedtime_that_cant_be_read() {
     let page = format!("/devices/{id}/bedtime");
     let html = app.get_page(&page, &cookie).await.text();
     assert!(html.contains("data-warning=\"bedtime-corrupt\""));
-    assert!(html.contains("Its nights couldn&#39;t be read"));
+    // Design 113: what couldn't be read in view, how to fix it behind the ⓘ.
+    assert!(
+        html.contains(
+            "<div class=\"attention-sub\">Its nights couldn&#39;t be read <details class=\"info\">"
+        ),
+        "{html}"
+    );
+    let warning = &html[html.find("data-warning=\"bedtime-corrupt\"").unwrap()..];
+    let panel = &warning[warning.find("<div class=\"info-panel\">").expect("the ⓘ")..];
+    assert!(
+        panel.starts_with(
+            "<div class=\"info-panel\"><p>They show empty here and are saved as you see them"
+        ),
+        "{panel}"
+    );
     assert!(!html.contains("value=\"21:00\""), "the rows open empty");
     let res = app
         .request_form(Method::POST, &page, Some(&cookie), BEDTIME_FORM)
@@ -1623,9 +1693,16 @@ async fn the_exceptions_offer_the_vibb_calendar_and_the_allowed_apps() {
         exceptions.find("name=\"calendar_allowed\"").unwrap()
             < exceptions.find("name=\"exempt_apps\"").unwrap()
     );
-    assert!(exceptions.contains(">Vibb calendar<span class=\"row-sub\">"));
+    assert!(
+        exceptions.contains(">Vibb calendar</span>"),
+        "no sub-line (design 113)"
+    );
     assert!(exceptions.contains("data-value=\"apps\">None<"));
-    assert!(exceptions.contains("Only apps the phone allows under Apps are listed."));
+    let panel = &exceptions[exceptions
+        .find("<div class=\"group-footer\">")
+        .expect("the footer ⓘ")..];
+    assert!(panel.contains("<div class=\"info-panel\">"), "{panel}");
+    assert!(panel.contains("Only apps the phone allows under Apps are listed."));
     // Everyone's: the apps allowed on at least one phone; Chrome is allowed on none.
     let html = app.get_page("/schedules/rules/new", &cookie).await.text();
     assert_eq!(offered(&html), ["org.fossify.clock", "com.example.game"]);
@@ -1641,10 +1718,7 @@ async fn the_exceptions_offer_the_vibb_calendar_and_the_allowed_apps() {
         )
         .await
         .text();
-    assert!(
-        section(&html, "exceptions")
-            .contains(">Vibb-kalender<span class=\"row-sub\">Kalender på telefonen")
-    );
+    assert!(section(&html, "exceptions").contains(">Vibb-kalender</span>"));
 
     // A save with the calendar and Chrome (posted by hand: not offered): stored, served, and Chrome
     // stays ticked with its note.
@@ -1785,21 +1859,40 @@ async fn the_silent_switch_saves_serves_and_shows() {
     let cookie = app.admin_cookie().await;
     let (anna, anna_token) = app.enrolled_device("Anna").await;
 
-    // A new rule: school, Silent on, inside the rule's one form with its sub-line.
+    // A new rule: school, Silent on, inside the rule's one form; what it does behind the ⓘ row right after the
+    // switch's label (design 113, QA M8: never inside it).
     let html = app.get_page("/schedules/rules/new", &cookie).await.text();
     assert_eq!(input_checked(&html, "silent", "on"), Some(true));
     assert_eq!(
         form_action_of(&html, "silent"),
         Some("/schedules/rules#rule")
     );
-    assert!(html.contains(
-        ">Silent<span class=\"row-sub\">No sounds, notifications, music or alarms while the rule is on. Calls the rule allows still ring.</span>"
+    let silent_info = |html: &str| -> String {
+        let row = &html[html.find("data-row=\"silent\"").unwrap()..];
+        let label = &row[..row.find("</label>").unwrap()];
+        assert!(
+            label.contains(">Silent<") || label.contains(">Stille<"),
+            "{label}"
+        );
+        assert!(
+            !label.contains("row-sub") && !label.contains("<details"),
+            "{label}"
+        );
+        let after = row[row.find("</label>").unwrap() + "</label>".len()..].trim_start();
+        assert!(
+            after.starts_with("<details class=\"info cell\">"),
+            "{after}"
+        );
+        after[..after.find("</details>").unwrap()].to_string()
+    };
+    assert!(silent_info(&html).contains(
+        "<p>No sounds, notifications, music or alarms while the rule is on. Calls the rule allows still ring.</p>"
     ));
     let nb = app
         .get_page("/schedules/rules/new?lang=nb", &cookie)
         .await
         .text();
-    assert!(nb.contains(">Stille<span class=\"row-sub\">Ingen lyder, varsler, musikk"));
+    assert!(silent_info(&nb).contains("<p>Ingen lyder, varsler, musikk"));
 
     // Saved silent: stored, served, "· silent" in the lists.
     let days = |name: &'static str| -> Vec<(&'static str, String)> {
@@ -1890,9 +1983,12 @@ async fn the_silent_switch_saves_serves_and_shows() {
         .get_page(&format!("/schedules/rules/{rule}"), &cookie)
         .await
         .text();
-    assert!(html.contains(">Silent<span class=\"row-sub\">No sounds or notifications during bedtime. Alarms still ring"));
+    assert!(
+        silent_info(&html)
+            .contains("<p>No sounds or notifications during bedtime. Alarms still ring")
+    );
 
-    // Bedtime: a new one opens silent (alarms still ring, the sub-line says so); a save keeps what is sent.
+    // Bedtime: a new one opens silent (alarms still ring, the group's ⓘ says so); a save keeps what is sent.
     let page = format!("/devices/{anna}/bedtime");
     let html = app.get_page(&page, &cookie).await.text();
     assert_eq!(input_checked(&html, "silent", "on"), Some(true));

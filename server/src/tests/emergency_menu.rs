@@ -82,14 +82,22 @@ async fn adding_keeps_112_first_and_normalises_the_number() {
         ])
     );
     let html = page(&app, &cookie, id).await;
-    assert!(html.contains("First and largest on the phone"), "{html}");
-    assert!(html.contains("Emergency number: always works"));
+    // Design 113: an emergency number's row has no sub-line; only Mamma's says it follows the call rules, orange.
+    assert_eq!(
+        html.matches("row-sub tone-orange\">Not an emergency number")
+            .count(),
+        1,
+        "{html}"
+    );
     assert!(
         html.contains(
-            "row-sub tone-orange\">Not an emergency number to the server: follows the call rules"
+            "row-sub tone-orange\">Not an emergency number - follows the call rules</span>"
         ),
         "Mamma's row is orange"
     );
+    let row_113 = &html[html.find("data-emergency=\"113\"").unwrap()..];
+    let row_113 = &row_113[..row_113.find("</div>").unwrap()];
+    assert!(!row_113.contains("row-sub"), "{row_113}");
 }
 
 #[tokio::test]
@@ -298,14 +306,15 @@ async fn a_removed_phone_takes_its_menu() {
     assert_eq!(left, 0);
 }
 
-/// Code QA L4: on a managed phone a non-emergency number that isn't an outbound contact says the phone dims it.
+/// Code QA L4: on a managed phone a non-emergency number that isn't an outbound contact says it isn't in the phone
+/// book (the phone dims it).
 #[tokio::test]
 async fn a_number_outside_the_phone_book_says_it_is_dimmed() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("phone").await;
     add(&app, &cookie, id, "90000001", "Mamma").await;
-    let dimmed = "Not in the phone book - dimmed on the phone";
+    let dimmed = "<span class=\"row-sub\">Not in the phone book</span>";
     assert!(
         !page(&app, &cookie, id).await.contains(dimmed),
         "unmanaged: no line"

@@ -1032,6 +1032,12 @@ summary.row:active {
     line-height: 1.3;
 }
 
+/* The first opening's offer (partials/push_offer.html, design 113): its line is empty until static/notifications.js
+   writes a blocked or failed text into it. */
+.row-sub[data-offer-line]:empty {
+    display: none;
+}
+
 /* The summary's Activity sub-line (design 101 D5: the newest row's words and clock): it wraps, and the clock sits in a
    .nowrap span, so it is never cut in the middle and never clipped away (a line clamp would hide a clock that wraps
    to a third line, code QA L5). */
@@ -2318,7 +2324,7 @@ code.key {
     font-size: 0.8125rem;
 }
 
-/* "Show on phones as": the shared app_display_form partial as one row of a group. */
+/* Name and icon: the shared app_display_form partial as one row of a group. */
 .group-display > details.app-display {
     border-top: 0;
     padding: 0;
@@ -2604,6 +2610,8 @@ details.info[open] > summary .section-chev { -webkit-transform: rotate(90deg); t
 .music-status-busy { color: var(--orange-text); }
 .music-status-error { color: var(--red-text); }
 .group-music .music-status { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* A library card says nothing while its source is fine (design 113 P4); the block stays for static/music-cards.js. */
+.music-card-tile .music-status-ok { display: none; }
 .music-actions { display: flex; flex-wrap: wrap; align-items: center; padding: 0 16px 10px 72px; margin-top: -4px; }
 .music-actions > * { margin: 4px 16px 0 0; }
 .music-actions form { display: flex; align-items: center; }

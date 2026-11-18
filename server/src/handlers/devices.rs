@@ -1128,8 +1128,8 @@ struct DeviceDetailTemplate {
     filter_value: &'static str,
     /// Device › Mobilnett's row (design 95 rev. 3): its value only when it says something ("Bare Vibb · Roaming på").
     mobile_value: Option<String>,
-    /// Design 95 rev. 3: Mobilnett's lines on the summary - only when they say something (mobile data off on the phone,
-    /// only Vibb on cellular now, a roaming warning), each leading to the page.
+    /// Design 95 rev. 3: Mobilnett's lines on the summary - only when they say something (the kid's Off, a roaming
+    /// warning; mobile data off is the Attention row's, design 113), each leading to the page.
     mobile_lines: Vec<crate::mobile_network::Line>,
     /// Design 98 §6.2: Flymodus' lines - a period ended within 12 h, the one an emergency call ended, the role lost.
     airplane_lines: Vec<crate::airplane_mode::Line>,
@@ -1552,7 +1552,7 @@ pub async fn save_app_permissions(
     }
 }
 
-/// `POST /devices/{id}/apps/lock-media` (2026-11-04): one app's "Show as a media player on the lock screen" - the
+/// `POST /devices/{id}/apps/lock-media` (2026-11-04): one app's "Media player on the lock screen" - the
 /// auto-saving checkbox `lock_media=on`, its field missing = off; another value is a 400 - in its Permissions. Saved,
 /// refused and failed as [save_app_permissions] (`?notice=lock_media_full` past `app_permissions::MAX_ROWS_PER_DEVICE`);
 /// refused at the row for Vibb music too, whose player always shows. On only for an app the page offers it for
@@ -1940,14 +1940,16 @@ pub(crate) async fn app_rows(
         let update = tracked_match.and_then(|t| download_of(t.id));
         let (label, own_label) = shown(&app.package_name, None, &app.label);
         apps.push(UnifiedAppRow {
-            status_label: if app.preinstalled {
-                t(lang, "device.apps.preinstalled").to_string()
-            } else if app.installer.as_deref() == Some(crate::play::PLAY_STORE) {
-                t(lang, "device.apps.from_play").to_string()
-            } else if let Some(update) = update {
-                crate::app_downloads::update_label(update, &zone, now)
-            } else {
-                t(lang, "device.apps.installed").to_string()
+            // Design 113: an installed app says nothing (preinstalled, from Play or plain); an update that waits or
+            // was refused keeps its line.
+            status_label: match update {
+                Some(update)
+                    if !app.preinstalled
+                        && app.installer.as_deref() != Some(crate::play::PLAY_STORE) =>
+                {
+                    crate::app_downloads::update_label(update, &zone, now)
+                }
+                _ => String::new(),
             },
             is_installing: false,
             // An update the phone refused (security review M10) shows like a failed install.
@@ -2234,15 +2236,10 @@ async fn render_device(
         .ok()
         .flatten();
 
-    // The phone's effective rules: the Time row, Pause a rule…, the badge, and whether a calls-off
-    // rule applies while calls aren't managed (an Attention row).
+    // The phone's effective rules: the Time row, Pause a rule…, the badge and the Do Not Disturb row.
     let time_rules = crate::time_rules::effective_rule_rows(&state.db, id)
         .await
         .map_err(|err| tracing::error!(device_id = id, %err, "can't read the phone's rules"));
-    let incoming_calls_unblocked = !policy.calls_managed()
-        && time_rules
-            .as_ref()
-            .is_ok_and(|rules| rules.iter().any(|r| !r.calls_allowed));
     let dnd_is_rules_own = crate::attention::dnd_is_rules_own(
         &state.db,
         id,
@@ -2315,7 +2312,6 @@ async fn render_device(
             latest: latest.as_ref(),
             relock: &relock,
             call_problems: &call_problems,
-            incoming_calls_not_blocked: incoming_calls_unblocked,
             dnd_is_rules_own,
             connection,
             music_ticked: music_ticked.as_deref().unwrap_or(&[]),

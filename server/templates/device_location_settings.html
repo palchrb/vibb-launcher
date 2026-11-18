@@ -50,7 +50,11 @@
                 <noscript><button type="submit" class="row row-button">{{ self.t("locate.settings.save_history") }}</button></noscript>
             </form>
         </div>
-        <p class="group-footer">{{ self.t("locate.settings.footer") }} <span data-note="last-position">{{ self.t("locate.settings.last_position") }}</span></p>
+        {#- Design 113: the one irreversible consequence stays in view (KEEP); the rest behind the ⓘ. -#}
+        <div class="group-footer">{{ self.t("locate.settings.off_erases") }} <details class="info">
+            <summary aria-label="{{ self.t("common.more_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+            <div class="info-panel"><p>{{ self.t("locate.settings.footer") }}</p><p data-note="last-position">{{ self.t("locate.settings.last_position") }}</p></div>
+        </details></div>
     </section>
 
     </div>

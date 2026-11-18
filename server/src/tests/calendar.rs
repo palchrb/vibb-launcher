@@ -220,9 +220,9 @@ async fn the_page_lists_the_groups_and_the_reported_calendars() {
     assert!(at(r#"id="calendars""#) < at(r#"id="rules""#));
     assert!(html.contains("ICSx5 · skole.kommune.no"), "{html}");
     assert!(html.contains("DAVx5 · nextcloud.example.no"));
-    // The contract's report claims calendar_v1; the master switch is off, so each reminder says so.
+    // The contract's report claims calendar_v1; the master switch is off, so the calendars say so once (design 113).
     assert!(!html.contains("calendar-not-capable"));
-    assert_eq!(html.matches("data-reminders-off").count(), 3);
+    assert_eq!(html.matches("data-reminders-off").count(), 1);
     // The kid's calendar: off, the phone's own (the default) and the one writable DAVx5 calendar.
     assert!(
         html.contains(r#"<option value="phone" selected>"#),
@@ -962,8 +962,8 @@ async fn the_rule_editors_examples_follow_the_language() {
 }
 
 /// The 2026-10-27 polish: each group's help behind its "i", the kid's calendar on a line of its own, and the lock
-/// screen's reminders named for what they are ("Reminders on the lock screen": Off / Quiet row - a select, as a third
-/// form is to come; the policy's words unchanged), back to `#lock`, round trip both ways.
+/// screen's reminders named for what they are ("Reminders" under "On the lock screen", design 113: Off / Quiet row - a
+/// select, as a third form is to come; the policy's words unchanged), back to `#lock`, round trip both ways.
 #[tokio::test]
 async fn the_help_is_behind_the_i_and_the_reminders_say_what_they_are() {
     let app = TestApp::new().await;
@@ -975,6 +975,17 @@ async fn the_help_is_behind_the_i_and_the_reminders_say_what_they_are() {
     for (label, text) in [
         ("Om Kalender-appen", "Barnet sveiper fra dag til dag."),
         ("Om låseskjermen", "En tittel kan nevne et sted."),
+        // Design 113: the switches' sub-lines and the footers' sentences joined the panels.
+        (
+            "Om Kalender-appen",
+            "Barnets dag i Vibb One, én dag om gangen.",
+        ),
+        ("Om Kalender-appen", "Av skjuler flisen"),
+        (
+            "Om låseskjermen",
+            "En stille rad før hendelsen - uten lyd, eller med én varsellyd når den kommer",
+        ),
+        ("Om påminnelsene", "Fra telefonens siste melding."),
         ("Om påminnelsene", "uansett hva du velger her."),
     ] {
         let at = html
@@ -1008,15 +1019,16 @@ async fn the_help_is_behind_the_i_and_the_reminders_say_what_they_are() {
         ),
         "{kid}"
     );
-    // The master: Off by default, each calendar's reminder saying so.
-    let master = r#"<span class="row-label">Påminnelser på låseskjermen<span class="row-sub">En stille rad før hendelsen - uten lyd, eller med én varsellyd når den kommer</span></span>
+    // The master: Off by default, the calendars saying so once (design 113: no sub-line under the select).
+    assert!(!html.contains("Alle i nærheten av telefonen kan se låseskjermen."));
+    let master = r#"<span class="row-label">Påminnelser</span>
                 <select class="pick" name="reminders" data-autosave>
                     <option value="off" selected>Av</option>
                     <option value="row">Stille rad</option>
                     <option value="ping">Stille rad + lyd</option>
                 </select>"#;
     assert!(html.contains(master), "{html}");
-    assert_eq!(html.matches("data-reminders-off").count(), 3);
+    assert_eq!(html.matches("data-reminders-off").count(), 1);
     // The quiet row.
     let on = app
         .request_form(
@@ -1054,7 +1066,10 @@ async fn the_help_is_behind_the_i_and_the_reminders_say_what_they_are() {
     );
     // English has its words too.
     let en = app.get_page(&page, &cookie).await.text();
-    assert!(en.contains(">Reminders on the lock screen<"), "{en}");
+    assert!(
+        en.contains(r#"<span class="row-label">Reminders</span>"#),
+        "{en}"
+    );
     assert!(en.contains(r#"<option value="row">Quiet row</option>"#));
     assert!(en.contains(">The kid&#39;s events<"), "{en}");
     assert!(!en.contains("The calm row"));
@@ -1103,7 +1118,7 @@ async fn the_ping_saves_and_reaches_only_a_launcher_that_knows_it() {
         "{html}"
     );
     assert!(html.contains(
-        r#"<span class="row-sub" data-ping-older>Vibb One på telefonen kan ikke lyden ennå - den viser den stille raden</span>"#
+        r#"<span class="row-sub tone-orange" data-ping-older>Vibb One på telefonen kan ikke lyden ennå - den viser den stille raden</span>"#
     ));
     assert!(!html.contains("data-reminders-off"));
     assert!(
@@ -1301,8 +1316,8 @@ async fn every_calendar_route_needs_a_session() {
     assert_eq!(app.fetch.count(), calls, "no fetch without a session");
 }
 
-/// 2026-11-12: Kalender has a row on Device › Apps' allowed list, under Meldinger - "Part of Vibb One", whether it is
-/// on Home, a link to Device › Calendar - before the first report and for a Vibb One with Dagen, never for one without.
+/// 2026-11-12: Kalender has a row on Device › Apps' allowed list, under Meldinger - no sub-line (design 113), whether
+/// it is on Home, a link to Device › Calendar - before the first report and for a Vibb One with Dagen, never for one without.
 #[tokio::test]
 async fn kalender_has_a_row_on_device_apps() {
     use super::{Section, device_page};
@@ -1349,10 +1364,7 @@ async fn kalender_has_a_row_on_device_apps() {
         html.contains(&format!(r##"href="/devices/{id}/calendar#dagen""##)),
         "{html}"
     );
-    assert!(
-        html.contains(r#"row-label">Calendar<span class="row-sub">Part of Vibb One<"#),
-        "{html}"
-    );
+    assert!(html.contains(r#"row-label">Calendar</span>"#), "{html}");
     assert!(
         html.contains(r#"<span class="row-value">On Home</span>"#),
         "{html}"

@@ -376,6 +376,10 @@ on the window's samples (`acked_ms > now - 24 h`, read sorted; at most 5,000 per
 
 ### 7.4 Words and places
 
+(Words changed by designs 112 and 113: Settings › App push has one "Delivery" / "Levering" group, "Last seen from
+outside" and "Usually delivered in" with the 95th percentile and the count under it; Device › Apps' line has no 95th
+percentile.)
+
 **Settings › App push** gets a new group, "Delivery to the phones" / "Levering til telefonene", under "Last seen from
 outside" (`#delivery`). Its rows have no save, so nothing can jump. The rows (L8):
 - "Usually" / "Vanligvis": the median, for example "2 s" or "under a second";

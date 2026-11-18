@@ -434,20 +434,21 @@ async fn an_apps_row_shows_the_name_the_kid_sees() {
     };
     assert!(
         row("com.spotify.music").contains(
-            r#"row-label">Musikk<span class="row-sub" data-installing="false" data-failed="false">Label of com.spotify.music · Installed<"#
+            r#"row-label">Musikk<span class="row-sub" data-installing="false" data-failed="false">Label of com.spotify.music<"#
         ),
         "{}",
         row("com.spotify.music")
     );
     assert!(
         row(ELEMENT).contains(&format!(
-            r#"row-label">Chat<span class="row-sub" data-installing="false" data-failed="false">Label of {ELEMENT} · Installed<"#
+            r#"row-label">Chat<span class="row-sub" data-installing="false" data-failed="false">Label of {ELEMENT}<"#
         )),
         "{}",
         row(ELEMENT)
     );
     assert!(
-        row("org.example.clock").contains(r#"row-label">Label of org.example.clock<span class="row-sub" data-installing="false" data-failed="false">Installed<"#),
+        // Design 113: an installed app with its own name says nothing under it.
+        row("org.example.clock").contains(r#"row-label">Label of org.example.clock</span>"#),
         "{}",
         row("org.example.clock")
     );
@@ -577,9 +578,7 @@ async fn meldinger_has_a_row_and_a_name_and_icon_of_its_own() {
     assert!(res.status.is_success());
     let html = cell().await.expect("the row");
     assert!(
-        html.contains(
-            r#"row-label">Messages<span class="row-sub">Part of Vibb One · SMS is not managed by Vibb<"#
-        ),
+        html.contains(r#"row-label">Messages<span class="row-sub">SMS not managed by Vibb<"#),
         "{html}"
     );
     assert!(
@@ -626,10 +625,7 @@ async fn meldinger_has_a_row_and_a_name_and_icon_of_its_own() {
         .await;
     assert!(res.status.is_success());
     let html = cell().await.expect("the row");
-    assert!(
-        html.contains(r#"row-label">Messages<span class="row-sub">Part of Vibb One<"#),
-        "{html}"
-    );
+    assert!(html.contains(r#"row-label">Messages</span>"#), "{html}");
     assert!(!html.contains("after Vibb One is updated"), "{html}");
 
     // The contract's entry: a name, a glyph on a colour, off Home.
@@ -659,7 +655,7 @@ async fn meldinger_has_a_row_and_a_name_and_icon_of_its_own() {
     );
     let html = cell().await.expect("the row");
     assert!(
-        html.contains(r#"row-label">Tekst<span class="row-sub">Messages · Part of Vibb One<"#),
+        html.contains(r#"row-label">Tekst<span class="row-sub">Messages<"#),
         "{html}"
     );
     assert!(html.contains("· not on Home"), "{html}");

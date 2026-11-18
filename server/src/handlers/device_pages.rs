@@ -40,16 +40,21 @@ use crate::models::{Device, DevicePolicy, DeviceStatus, Hardening};
 use crate::streams::ConnectionState;
 
 /// A row's words from a typed state: a short title, maybe a value, maybe the sentence behind its
-/// ⓘ. A warning shows as an orange row above its group (title + the sentence), anything else as a
-/// row in the group (title · value, the sentence behind ⓘ).
+/// ⓘ. A warning shows as an orange row above its group (its title; then `sub` when set; the sentence
+/// and the fix behind one ⓘ - design 113 D1 P1), anything else as a row in the group (title · value,
+/// the sentence behind ⓘ).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Note {
     pub warning: bool,
     pub title: String,
     pub value: Option<String>,
+    /// A warning's short visible consequence under its title, set only where the title alone
+    /// doesn't carry the news (design 113 D1: Anrop's KEEPs, needs-update, the ledger, two lock
+    /// notes); `None` everywhere else. A row never shows it.
+    pub sub: Option<String>,
     pub detail: Option<String>,
-    /// An expert fix (an adb command, a package name) for a warning: behind its ⓘ, never in the
-    /// visible text (design 31 §4.2).
+    /// An expert fix (an adb command, a package name) for a warning: behind its ⓘ with the sentence,
+    /// never in the visible text (design 31 §4.2).
     pub fix: Option<String>,
 }
 
@@ -157,8 +162,6 @@ impl PolicyProblem {
 pub enum PlayNote {
     /// Play install mode is on: the Play Store opens until then.
     InstallMode { until_ms: i64 },
-    /// The nightly Play update window is open (screen off).
-    UpdateWindow,
     /// A device-admin policy waits for a restart (`models::admin_policy_effects`).
     RestartOnce(Vec<&'static str>),
     /// Android won't suspend Play on this phone; `block_on`: the kiosk app block is on.
@@ -182,20 +185,15 @@ impl PlayNote {
                     )],
                 ),
                 value: None,
+                sub: None,
                 detail: Some(t(lang, "device.advanced.play.install_mode_sub").to_string()),
-                fix: None,
-            },
-            PlayNote::UpdateWindow => Note {
-                warning: false,
-                title: t(lang, "device.advanced.play.store").to_string(),
-                value: Some(t(lang, "device.advanced.play.updating").to_string()),
-                detail: Some(t(lang, "device.advanced.play.updating_sub").to_string()),
                 fix: None,
             },
             PlayNote::RestartOnce(effects) => Note {
                 warning: true,
                 title: t(lang, "device.advanced.play.restart").to_string(),
                 value: None,
+                sub: None,
                 detail: Some(t_params(
                     lang,
                     "device.advanced.play.restart_sub",
@@ -214,6 +212,7 @@ impl PlayNote {
                 warning: true,
                 title: t(lang, "device.advanced.play.not_suspendable").to_string(),
                 value: None,
+                sub: None,
                 detail: Some(
                     t(
                         lang,
@@ -272,9 +271,7 @@ pub(crate) fn play_notes(
     if let Some(until_ms) = status.install_mode_until_ms.filter(|until| *until > now_ms) {
         notes.push(PlayNote::InstallMode { until_ms });
     }
-    if status.play_window_active {
-        notes.push(PlayNote::UpdateWindow);
-    }
+    // The nightly Play update window (`play_window_active`) is the good state: no row (design 113, P4).
     let effects =
         crate::models::admin_policy_effects(status.admin_policies_pending_json.as_deref());
     if !effects.is_empty() {
@@ -876,8 +873,8 @@ struct AdvancedTemplate {
     title: String,
     device: Device,
     hardening: Hardening,
-    /// The last report's `backup_service_enabled`: `Some(true)` a warning, `Some(false)` "Off",
-    /// `None` (older launcher, unreadable) no row.
+    /// The last report's `backup_service_enabled`: `Some(true)` a warning; `Some(false)` and `None`
+    /// (older launcher, unreadable) nothing (design 113: no row in any state).
     backup_service_enabled: Option<bool>,
     block_activity_start: bool,
     /// App screens: warnings above the group, rows in it.
@@ -1528,6 +1525,7 @@ pub(crate) fn notification_access_note(lang: Lang, latest: Option<&DeviceStatus>
             warning: true,
             title: t(lang, "device.home.no_notification_access").to_string(),
             value: None,
+            sub: None,
             detail: Some(t(lang, "device.home.no_notification_access_sub").to_string()),
             // The second sentence lives behind the ⓘ (§4.2: a title and one sentence;
             // qa-31-s5-code N2).
@@ -1538,7 +1536,7 @@ pub(crate) fn notification_access_note(lang: Lang, latest: Option<&DeviceStatus>
 /// The phone should show the parent's clock format but can't (design 34 P12): the policy asks
 /// for "24" or "12" and the last report says `clock_format_applied` false - no "Modify system
 /// settings" access, or Android refused the write. Home Screen's warning above the Language
-/// group; the adb grant and the Settings path behind its ⓘ. "Follow the phone" never warns, nor
+/// group; the adb grant and the Settings path behind its ⓘ. "Same as the phone" never warns, nor
 /// does an older launcher that doesn't report it.
 /// How to grant Vibb One "Modify system settings" (PLAN fix backlog, 2026-10-24) is
 /// `device.write_settings_steps`: the on-phone path first - Vibb One's Settings row that opens Android's page -, adb as
@@ -1555,7 +1553,8 @@ pub(crate) fn clock_format_note(
         warning: true,
         title: t(lang, "device.home.clock_not_applied").to_string(),
         value: None,
-        detail: Some(t(lang, "device.home.clock_not_applied_sub").to_string()),
+        sub: None,
+        detail: None,
         fix: Some(format!(
             "{} {}",
             t(lang, "device.home.clock_not_applied_fix"),
@@ -1591,8 +1590,8 @@ struct HomeTemplate {
     /// Security review S-L5: the Bluetooth page pairs any device (`bluetooth_any_device`).
     bluetooth_any_device: bool,
     /// Design 98 §6.1: the kid's Flymodus switch (bit 64), its row only for a launcher with `airplane_mode_v1` - its
-    /// sub-line when it says something (`airplane_mode::home_sub`).
-    airplane_row: Option<Option<String>>,
+    /// sub-line when it says something and whether it is orange (`airplane_mode::home_sub`).
+    airplane_row: Option<Option<(String, bool)>>,
     quick_airplane: bool,
     /// Design 99 §5.2: Snarveier (bit 128), its row only for a launcher with `shortcuts_v1` - its sub-line when it says
     /// something (`shortcuts::home_sub`).
@@ -1634,7 +1633,7 @@ pub async fn view_home(State(state): State<AppState>, lang: Lang, Path(id): Path
         .filter(|s| has_capability(Some(s), crate::airplane_mode::CAPABILITY))
         .map(|s| {
             let report = crate::airplane_mode::report(s).unwrap_or_default();
-            crate::airplane_mode::home_sub(lang, &device.name, &policy, &report)
+            crate::airplane_mode::home_sub(lang, &policy, &report)
         });
     let shortcuts_row = latest
         .as_ref()
@@ -1759,7 +1758,7 @@ struct FilterTemplate {
     spotify_overridden: Vec<i64>,
     /// The site-wide blocked domains it overrides on this phone.
     spotify_global: Vec<String>,
-    /// Design 102 §5: the Sign-in row's sub-line ("Wi-Fi: på · Apper: av").
+    /// Design 102 §5: the Sign-in row's value ("Wi-Fi: på · Apper: av"; design 113: was its sub-line).
     logins_sub: String,
 }
 crate::i18n::words!(FilterTemplate);
@@ -2276,7 +2275,7 @@ pub(crate) async fn render_apps(
             let off = policy.calls_mode == "off";
             dialer_view = Some(AppView {
                 builtin: true,
-                // Managed: the title and the sub-line already say so - no value, only the chevron.
+                // Managed: the title says so - no value, no sub-line, only the chevron (design 113).
                 link: Some((
                     format!("/devices/{id}/calls#settings"),
                     if off {
@@ -2296,15 +2295,11 @@ pub(crate) async fn render_apps(
                 display: None,
                 anchor,
                 row: crate::handlers::devices::UnifiedAppRow {
-                    status_label: t(
-                        lang,
-                        if off {
-                            "apps.dialer.off_sub"
-                        } else {
-                            "apps.dialer.managed_sub"
-                        },
-                    )
-                    .to_string(),
+                    status_label: if off {
+                        t(lang, "apps.dialer.off_sub").to_string()
+                    } else {
+                        String::new()
+                    },
                     own_label: None,
                     label,
                     checked: true,
@@ -2348,9 +2343,13 @@ pub(crate) async fn render_apps(
                         .filter(|(entered, _)| *entered == package)
                         .map(|(_, e)| e),
                 );
-                form.catalog_default = default.map(|values| values.describe(lang));
                 form.logo = logos.get(&package).cloned();
                 form.own_row = phone_row.is_some() || off_home.contains(&package);
+                // Design 113: the catalog's default is said only beside Tilbakestill (the phone has its own value).
+                form.catalog_default = form
+                    .can_reset()
+                    .then(|| default.map(|values| values.describe(lang)))
+                    .flatten();
                 form.from = from.clone();
                 form.on_home = Some(!off_home.contains(&package));
                 form.on_home_words = Some((
@@ -2453,12 +2452,12 @@ pub(crate) async fn render_apps(
             && !has_capability(latest.as_ref(), crate::lock_glance::MESSAGES_APP_CAPABILITY))
         .then_some(t(lang, "apps.builtin.update_note"));
         let label = current.and_then(|values| values.label.clone());
-        let part_of = t(lang, "apps.builtin.part_of_vibb");
         let row = crate::handlers::devices::UnifiedAppRow {
+            // Design 113: a line only while SMS isn't managed.
             status_label: if policy.sms_mode == "managed" {
-                part_of.to_string()
+                String::new()
             } else {
-                format!("{part_of} · {}", t(lang, "apps.builtin.sms_unmanaged"))
+                t(lang, "apps.builtin.sms_unmanaged").to_string()
             },
             own_label: label.is_some().then(|| name.to_string()),
             label: label.unwrap_or_else(|| name.to_string()),
@@ -2527,7 +2526,7 @@ pub(crate) async fn render_apps(
                 display: None,
                 anchor: "app-calendar".to_string(),
                 row: crate::handlers::devices::UnifiedAppRow {
-                    status_label: t(lang, "apps.builtin.part_of_vibb").to_string(),
+                    status_label: String::new(),
                     own_label: None,
                     label: name.to_string(),
                     package_name: String::new(),
@@ -2596,6 +2595,7 @@ pub(crate) async fn render_apps(
                 warning: true,
                 title: t(lang, "device.apps.corrupt").to_string(),
                 value: None,
+                sub: None,
                 detail: Some(t(lang, "device.apps.corrupt_sub").to_string()),
                 fix: Some(t(lang, "device.apps.corrupt_fix").to_string()),
             }),
@@ -2892,7 +2892,6 @@ mod tests {
         assert!(play_notes(None, true, 0).is_empty());
         let status = DeviceStatus {
             install_mode_until_ms: Some(10_000),
-            play_window_active: true,
             admin_policies_pending_json: Some(r#"["disable-camera","wipe-data"]"#.to_string()),
             play_store_suspendable: Some(false),
             ..Default::default()
@@ -2902,7 +2901,6 @@ mod tests {
             notes,
             vec![
                 PlayNote::InstallMode { until_ms: 10_000 },
-                PlayNote::UpdateWindow,
                 PlayNote::RestartOnce(vec!["device.advanced.play.effect.camera"]),
                 PlayNote::NotSuspendable { block_on: false },
             ]
@@ -2925,10 +2923,9 @@ mod tests {
             .collect();
         assert_eq!(nb[0].title, "Play Butikk er åpen til 01:00");
         assert!(words[0].warning);
-        assert!(!words[1].warning);
-        assert_eq!(words[2].title, "Restart the phone once");
+        assert_eq!(words[1].title, "Restart the phone once");
         assert!(
-            words[3]
+            words[2]
                 .detail
                 .as_deref()
                 .unwrap()

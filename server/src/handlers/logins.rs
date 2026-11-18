@@ -2,11 +2,11 @@
 //! `#wifi-signin` row (revision 5, the user's placement). Server-rendered, no new client JS (Safari 14 is fine).
 //!
 //! - `#logins-wifi`: Part A's switch (`section=wifi`), the parent code's state with a link to Advanced, today's use and
-//!   "Gi én innlogging til nå" (`section=grant`); `#logins-recent`: the last sign-ins (D6).
+//!   "Gi én innlogging til nå" (`section=grant`), one group (design 113); `#logins-recent`: the last sign-ins (D6).
 //! - `#logins-apps`: Part B's switch (`section=apps`), refused while Chrome is ticked under Apps.
 //! - `#logins-sites`: the presets (`section=preset`) and the parent's own sites (`section=site`, `action=add|remove`).
-//! - Advanced's `#wifi-signin`: "Krev foreldrekode for Wi-Fi-innlogging" (`section=wifi_signin`), answered with a 303
-//!   back to its anchor there.
+//! - Advanced's `#wifi-signin`: "Krev foreldrekode" under "Wi-Fi-innlogging" (`section=wifi_signin`), answered with a
+//!   303 back to its anchor there.
 //!
 //! One route, `POST /devices/{id}/logins`. Every save answers with a 303 to its group's anchor, so a save never jumps
 //! to the top (with JS `scroll-restore.js` keeps the place; without, a `<noscript>` Save lands on the group). An
@@ -69,7 +69,7 @@ struct LoginsTemplate {
     browser_capable: bool,
     wifi_on: bool,
     require_code: bool,
-    /// "I dag uten kode: …", only with a report that has `captive_portal`.
+    /// The value of "I dag uten kode": "1 av 4 · 5 av 20 min", only with a report that has `captive_portal`.
     today: Option<String>,
     granted: bool,
     recent: Vec<RecentRow>,
@@ -77,8 +77,9 @@ struct LoginsTemplate {
     chrome_ticked: bool,
     /// The phone's report lists Chrome (`None`: no report of its apps yet).
     chrome_present: Option<bool>,
-    /// The role's state on the phone, while it is on (§5.2's table).
-    apps_state: Option<&'static str>,
+    /// The role's state on the phone, while it is on (§5.2's table), and whether it is a wrong state (orange): `None`
+    /// once it is ready, or while the switch's own hint says the phone needs a newer Vibb One (design 113).
+    apps_state: Option<(&'static str, bool)>,
     presets: Vec<PresetRow>,
     sites: Vec<SiteRow>,
     /// A refused add: the notice's key.
@@ -109,7 +110,7 @@ fn browser_report(latest: Option<&DeviceStatus>) -> Option<BrowserReport> {
         .and_then(|json| serde_json::from_str(json).ok())
 }
 
-/// The Web Filter page's row's sub-line: "Wi-Fi: på · Apper: av".
+/// The Web Filter page's Sign-in row's value: "Wi-Fi: på · Apper: av".
 pub fn row_sub(lang: Lang, policy: &DevicePolicy) -> String {
     let word = |on: bool| {
         t(
@@ -257,17 +258,21 @@ fn start_key(start: &str) -> &'static str {
     }
 }
 
-/// The role's state while it is on (§5.2): the capability missing, no report since the save, Chrome missing, or
-/// failed; "Ready" once the phone says so.
-fn apps_state(latest: Option<&DeviceStatus>, report: Option<&BrowserReport>) -> &'static str {
+/// The role's state while it is on (§5.2), and whether it is wrong (orange): no report since the save (grey), Chrome
+/// missing or failed (orange). Nothing once the phone says it is on (design 113, P4), nor for a phone without the
+/// capability: the switch's own hint says it needs a newer Vibb One (said once).
+fn apps_state(
+    latest: Option<&DeviceStatus>,
+    report: Option<&BrowserReport>,
+) -> Option<(&'static str, bool)> {
     if latest.is_some() && !has_capability(latest, logins::BROWSER_CAPABILITY) {
-        return "logins.apps.state.needs_update";
+        return None;
     }
     match report.map(|r| r.state.as_str()) {
-        Some("on") => "logins.apps.state.on",
-        Some("absent") => "logins.apps.state.absent",
-        Some("failed") => "logins.apps.state.failed",
-        _ => "logins.apps.state.waiting",
+        Some("on") => None,
+        Some("absent") => Some(("logins.apps.state.absent", true)),
+        Some("failed") => Some(("logins.apps.state.failed", true)),
+        _ => Some(("logins.apps.state.waiting", false)),
     }
 }
 
@@ -383,7 +388,13 @@ pub async fn view(
             apps_on,
             chrome_ticked,
             chrome_present,
-            apps_state: apps_on.then(|| apps_state(latest, browser_report(latest).as_ref())),
+            // "Chrome finnes ikke på telefonen" already says what "Chrome mangler" would (said once).
+            apps_state: apps_on
+                .then(|| apps_state(latest, browser_report(latest).as_ref()))
+                .flatten()
+                .filter(|(key, _)| {
+                    !(*key == "logins.apps.state.absent" && chrome_present == Some(false))
+                }),
             presets,
             sites,
             site_notice: match query.get("notice").map(String::as_str) {

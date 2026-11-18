@@ -23,10 +23,10 @@ pub const NETWORK_CAPABILITY: &str = "mobile_network_v2";
 /// "Mobildata for apper" (design 95 rev. 3).
 pub const APPS_CHOICES: &[&str] = &["on", "vibb"];
 
-/// Design 97: "I utlandet" - Ingen data, Bare Vibb, Som hjemme.
+/// Design 97: "I utlandet", since design 113 "Roaming" - Av (`off`), Bare Vibb (`vibb`), På (`home`).
 pub const ABROAD_CHOICES: &[&str] = &["off", "vibb", "home"];
 
-/// The stored "I utlandet" as served: `vibb` and `home` as they are, anything else `off` (fail closed).
+/// The stored "Roaming" as served: `vibb` and `home` as they are, anything else `off` (fail closed).
 pub fn abroad_choice(stored: &str) -> &'static str {
     match stored {
         "vibb" => "vibb",
@@ -264,7 +264,7 @@ fn network_capable(latest: &DeviceStatus) -> bool {
 
 /// Design 94 §6.1's warnings from the report: a roaming session that outlived the lock (with a launcher that sinks it,
 /// only Vibb uses it), a SIM that still reads roaming on under the lock, a ship network the lock doesn't cover (design
-/// 97: unless the phone's abroad sink covers it - Ingen data or Bare Vibb on a launcher with the capability).
+/// 97: unless the phone's abroad sink covers it - Av or Bare Vibb on a launcher with the capability).
 fn roaming_warnings(
     lang: Lang,
     report: &RoamingReport,
@@ -311,34 +311,15 @@ fn sink_covers_ship(policy: &DevicePolicy, latest: &DeviceStatus) -> bool {
     network_capable(latest) && abroad_choice(&policy.abroad) != "home"
 }
 
-/// The "only Vibb" line for the report's sink (design 97 §5): the parent's Bare Vibb, the kid's Off, or abroad.
+/// The "only Vibb" line for the report's sink (design 97 §5): only the kid's Off, a quiet value on the summary (design
+/// 113: the parent's Bare Vibb and the abroad sink restate the chosen radio, so they have no line).
 fn only_vibb_line(lang: Lang, name: &str, sink: &str) -> Option<Line> {
-    match sink {
-        "parent" => Some(Line::new(
-            lang,
-            "only-vibb",
-            "mobile.state.only_vibb",
-            Some("mobile.state.only_vibb_sub"),
-            false,
-        )),
-        "kid" => Some(Line {
-            sub: Some(t(lang, "mobile.state.only_vibb_sub").to_string()),
-            ..Line::named(lang, "only-vibb-kid", "mobile.state.only_vibb_kid", name)
-        }),
-        "abroad" => Some(Line::new(
-            lang,
-            "only-vibb-abroad",
-            "mobile.state.only_vibb_abroad",
-            Some("mobile.state.only_vibb_sub"),
-            false,
-        )),
-        _ => None,
-    }
+    (sink == "kid").then(|| Line::named(lang, "only-vibb-kid", "mobile.state.only_vibb_kid", name))
 }
 
-/// The summary's lines (design 95 rev. 3, the approved mockup): only when they say something - mobile data off on the
-/// phone, only Vibb on cellular now (the parent's, the kid's or abroad), and the roaming warnings. Each leads to the
-/// Mobilnett page.
+/// The summary's lines (design 95 rev. 3; design 113): only when they say something - the kid's Off (grey) and the
+/// roaming warnings. Mobile data off on the phone is the Attention row's (`attention::Kind::MobileDataOff`), said once.
+/// Each leads to the Mobilnett page.
 pub fn summary_lines(
     lang: Lang,
     name: &str,
@@ -350,18 +331,11 @@ pub fn summary_lines(
     };
     let mobile = mobile_report(latest);
     let mut lines = Vec::new();
-    if let Some(m) = &mobile {
-        if m.enabled == Some(false) {
-            lines.push(Line::new(
-                lang,
-                "data-off",
-                "mobile.state.data_off",
-                Some("mobile.state.data_off_sub"),
-                false,
-            ));
-        } else if let Some(line) = only_vibb_line(lang, name, &m.sink) {
-            lines.push(line);
-        }
+    if let Some(m) = &mobile
+        && m.enabled != Some(false)
+        && let Some(line) = only_vibb_line(lang, name, &m.sink)
+    {
+        lines.push(line);
     }
     if let Some(report) = roaming_report(latest) {
         lines.extend(roaming_warnings(
@@ -376,7 +350,8 @@ pub fn summary_lines(
 }
 
 /// The phone page's Mobilnett row value (design 97 §5): the choices away from a new phone's defaults (apps on, Bare
-/// Vibb abroad), the kid's Off and mobile data off on the phone, joined with " · "; `None` when nothing differs.
+/// Vibb abroad) and the kid's Off, joined with " · "; `None` when nothing differs. Mobile data off on the phone is the
+/// Attention row's, not a part here (design 113, QA L6).
 pub fn row_value(
     lang: Lang,
     name: &str,
@@ -392,15 +367,11 @@ pub fn row_value(
         "home" => parts.push(t(lang, "mobile.value.abroad_home").to_string()),
         _ => {}
     }
-    let mobile = latest.and_then(mobile_report);
-    if mobile
-        .as_ref()
+    if latest
+        .and_then(mobile_report)
         .is_some_and(|m| m.kid.as_deref() == Some("off"))
     {
         parts.push(t_params(lang, "mobile.value.kid_off", &[("name", name)]));
-    }
-    if mobile.is_some_and(|m| m.enabled == Some(false)) {
-        parts.push(t(lang, "mobile.value.data_off").to_string());
     }
     (!parts.is_empty()).then(|| parts.join(" · "))
 }
@@ -412,85 +383,71 @@ pub struct Card {
     pub settings_locked: bool,
     /// The parent shows the kid's own Mobildata switch (`quick_controls_mask` bit 32).
     pub kid_shown: bool,
-    /// The latest report claims each capability; the groups' controls wait for it. The "I utlandet" radios need only
+    /// The latest report claims each capability; the groups' controls wait for it. The "Roaming" radios need only
     /// `data_roaming_v1` (the derived value works there, design 97 §3.2); the kid's switch needs `mobile_network_v2`.
     pub mobile_capable: bool,
     pub roaming_capable: bool,
     pub network_capable: bool,
     /// The phone has reported at all: without a report nothing is said about its Vibb One.
     pub reported: bool,
-    /// Android's roaming switch reads on: Ingen data's sub-line says a later choice needs the phone's step again.
-    pub switch_on: bool,
-    /// Under "Mobildata", "I utlandet" and the lock: the phone's state, worded.
+    /// Under "Mobildata", "Roaming" and the lock: the phone's state, worded. A `warn` line is orange above its group,
+    /// its `sub` behind its ⓘ; a grey line has no `sub`.
     pub data_lines: Vec<Line>,
     pub abroad_lines: Vec<Line>,
     pub lock_lines: Vec<Line>,
 }
 
-/// The switch line under "I utlandet" (design 97 §5's table): from the choice, the report's `enabled`, `locked` and
-/// `settings_locked`, and the pause. No line ever asks the parent to wait for Vibb. Code QA L5: none under Bare Vibb on a
-/// launcher without [NETWORK_CAPABILITY] ([network_capable] false) outside a pause - it keeps the derived roaming lock, so
-/// a step on Android's switch wouldn't hold; the radio's update hint says what does.
+/// The switch line under "Roaming" (design 97 §5; design 113: Android's switch is said only when it is wrong). Under Av
+/// (`off`): nothing when the report says `locked` (the lock working as chosen), the grey "not on the phone yet" while it
+/// isn't and no pause runs. Code QA L5: nothing under Bare Vibb on a launcher without [NETWORK_CAPABILITY]
+/// ([network_capable] false) - it keeps the derived roaming lock, so a step on Android's switch wouldn't hold; the
+/// radio's update hint says what does. Otherwise (På or Bare Vibb) one orange line only when the switch reads off -
+/// leading with the place while the phone is abroad -, its fix behind the line's ⓘ; on or unknown says nothing.
 fn switch_line(
     lang: Lang,
     name: &str,
     abroad: &str,
     report: &RoamingReport,
-    mobile: Option<&MobileReport>,
     paused: bool,
     network_capable: bool,
 ) -> Option<Line> {
-    if paused {
-        let key = if report.enabled == Some(true) {
-            "mobile.abroad.switch.paused_on"
-        } else {
-            "mobile.abroad.switch.paused_off"
-        };
-        return Some(Line::new(lang, "switch", key, None, false));
+    if abroad == "off" {
+        // The lock hasn't reached the phone yet (a choice changed since its report); a pause lifts it on purpose.
+        return (!report.locked && !paused)
+            .then(|| Line::new(lang, "pending", "mobile.state.pending", None, false));
     }
     if abroad == "vibb" && !network_capable {
         return None;
     }
-    if abroad == "off" {
-        return Some(if report.locked {
-            Line::new(lang, "switch", "mobile.abroad.switch.locked", None, false)
-        } else {
-            // The lock hasn't reached the phone yet (a choice changed since its report).
-            Line::new(lang, "pending", "mobile.state.pending", None, false)
-        });
+    if report.enabled != Some(false) {
+        return None;
     }
-    Some(match report.enabled? {
-        true if mobile.is_some_and(|m| m.settings_locked) => {
-            Line::named(lang, "switch", "mobile.abroad.switch.on_locked", name)
+    Some(if report.where_is.as_deref() == Some("abroad") {
+        let place = roaming_words(lang, report)
+            .map(|(words, _)| words)
+            .unwrap_or_else(|| t(lang, "data_roaming.plain").to_string());
+        Line {
+            key: "switch",
+            title: t_params(
+                lang,
+                "mobile.abroad.switch.off_abroad",
+                &[("place", &place)],
+            ),
+            sub: Some(t_params(
+                lang,
+                "mobile.abroad.switch.off_abroad_sub",
+                &[("name", name)],
+            )),
+            warn: true,
         }
-        true => Line::named(lang, "switch", "mobile.abroad.switch.on_open", name),
-        // Grey while the phone is home or its place is unknown; orange only abroad, leading with the place.
-        false if report.where_is.as_deref() == Some("abroad") => {
-            let place = roaming_words(lang, report)
-                .map(|(words, _)| words)
-                .unwrap_or_else(|| t(lang, "data_roaming.plain").to_string());
-            Line {
-                key: "switch",
-                title: t_params(
-                    lang,
-                    "mobile.abroad.switch.off_abroad",
-                    &[("place", &place)],
-                ),
-                sub: Some(t_params(
-                    lang,
-                    "mobile.abroad.switch.off_abroad_sub",
-                    &[("name", name)],
-                )),
-                warn: true,
-            }
-        }
-        false => Line::new(
+    } else {
+        Line::new(
             lang,
             "switch",
             "mobile.abroad.switch.off",
             Some("mobile.abroad.switch.off_sub"),
-            false,
-        ),
+            true,
+        )
     })
 }
 
@@ -521,23 +478,19 @@ pub fn card(lang: Lang, name: &str, policy: &DevicePolicy, latest: Option<&Devic
         data_lines.push(update(lang));
     }
     if let Some(m) = &mobile {
+        // Design 113 (the user's call): Android's own mobile-data switch off is orange, its fix behind the ⓘ.
         if m.enabled == Some(false) {
             data_lines.push(Line::new(
                 lang,
                 "data-off",
                 "mobile.state.data_off",
                 Some("mobile.state.data_off_sub"),
-                false,
+                true,
             ));
         }
-        let kid_off = m.kid.as_deref() == Some("off");
-        // Code QA L6: the kid's Off is said once on the page, by its own line; the "only Vibb" form is the summary's.
-        if let Some(line) =
-            only_vibb_line(lang, name, &m.sink).filter(|l| !(kid_off && l.key == "only-vibb-kid"))
-        {
-            data_lines.push(line);
-        }
-        if kid_off {
+        // Code QA L6: the kid's Off is said once on the page, by its own line; the "only Vibb" lines are the summary's
+        // (design 113: the parent's and the abroad one restate the chosen radio, so the page has none).
+        if m.kid.as_deref() == Some("off") {
             data_lines.push(Line::named(lang, "kid-off", "mobile.state.kid_off", name));
         }
     }
@@ -561,14 +514,13 @@ pub fn card(lang: Lang, name: &str, policy: &DevicePolicy, latest: Option<&Devic
             name,
             abroad,
             report,
-            mobile.as_ref(),
             paused,
             network_capable,
         ));
-        // The abroad switch-off line already leads with the place: one mention is enough.
-        let place_in_switch = abroad_lines
-            .iter()
-            .any(|l: &Line| l.key == "switch" && l.warn);
+        // The abroad switch-off line already leads with the place: one mention is enough. QA M1 (design 113): only that
+        // variant - the plain orange "off" at home or with `where` unknown keeps the place or national line below it.
+        let place_in_switch = report.where_is.as_deref() == Some("abroad")
+            && abroad_lines.iter().any(|l: &Line| l.key == "switch");
         if let Some((words, warn)) = roaming_words(lang, report)
             .filter(|_| (report.roaming || abroad_unflagged(report)) && !place_in_switch)
         {
@@ -579,13 +531,13 @@ pub fn card(lang: Lang, name: &str, policy: &DevicePolicy, latest: Option<&Devic
                 warn,
             });
         }
-        // Design 97 §5: Ingen data cuts mobile data in a national-roaming area at home.
+        // Design 97 §5: Av cuts mobile data in a national-roaming area at home.
         if abroad == "off" && report.roaming && report.where_is.as_deref() == Some("home") {
             abroad_lines.push(Line::new(
                 lang,
                 "national",
                 "mobile.abroad.national",
-                None,
+                Some("mobile.abroad.national_sub"),
                 true,
             ));
         }
@@ -621,7 +573,6 @@ pub fn card(lang: Lang, name: &str, policy: &DevicePolicy, latest: Option<&Devic
         roaming_capable,
         network_capable,
         reported,
-        switch_on: roaming.as_ref().is_some_and(|r| r.enabled == Some(true)),
         data_lines,
         abroad_lines,
         lock_lines,
@@ -994,10 +945,78 @@ mod tests {
             keys(&card(Lang::En, "Emma", &policy, Some(&status))),
             (vec!["pending"], vec!["pending"])
         );
+        // Design 113: the pause has no switch line of its own; Av unlocked by it says nothing.
         status.restrictions_paused = true;
         assert_eq!(
             keys(&card(Lang::En, "Emma", &policy, Some(&status))),
-            (vec!["switch"], vec!["lifted"])
+            (vec![], vec!["lifted"])
         );
+    }
+
+    /// Design 113 (QA M1): På, at home on another network of the home country, Android's roaming switch off - the
+    /// orange switch line (its fix behind the ⓘ) and the grey national line both show; abroad the switch line names the
+    /// place and the place line goes. Under Av with the lock in place, nothing about the switch.
+    #[test]
+    fn the_switch_line_shows_only_when_off_and_keeps_the_national_line() {
+        let policy = DevicePolicy {
+            abroad: "home".into(),
+            ..Default::default()
+        };
+        let status = |roaming: &str| DeviceStatus {
+            capabilities_json: Some(format!(
+                "[\"{ROAMING_CAPABILITY}\",\"{MOBILE_CAPABILITY}\",\"{NETWORK_CAPABILITY}\"]"
+            )),
+            data_roaming_json: Some(roaming.into()),
+            mobile_data_json: Some(
+                r#"{"enabled":true,"sink":"off","settings_locked":true}"#.into(),
+            ),
+            ..Default::default()
+        };
+        let lines = |policy: &DevicePolicy, roaming: &str| {
+            card(Lang::Nb, "Emma", policy, Some(&status(roaming)))
+                .abroad_lines
+                .into_iter()
+                .map(|l| (l.key, l.title, l.sub.is_some(), l.warn))
+                .collect::<Vec<_>>()
+        };
+        let national = r#"{"locked":false,"roaming":true,"country":"no","network":"24201","enabled":false,"data_active":false,"where":"home"}"#;
+        assert_eq!(
+            lines(&policy, national),
+            [
+                (
+                    "switch",
+                    "Androids roamingbryter er av".to_string(),
+                    true,
+                    true
+                ),
+                (
+                    "roaming",
+                    "Bruker et annet nett i hjemlandet".to_string(),
+                    false,
+                    false
+                ),
+            ]
+        );
+        let abroad = r#"{"locked":false,"roaming":true,"country":"se","network":"24001","enabled":false,"data_active":false,"where":"abroad"}"#;
+        assert_eq!(
+            lines(&policy, abroad),
+            [(
+                "switch",
+                "Roamer i Sverige – Androids roamingbryter er av".to_string(),
+                true,
+                true
+            )]
+        );
+        // The switch on, or Av with the lock in place: nothing about it.
+        let on =
+            r#"{"locked":false,"roaming":false,"enabled":true,"data_active":false,"where":"home"}"#;
+        assert!(lines(&policy, on).is_empty());
+        let off = DevicePolicy {
+            abroad: "off".into(),
+            ..Default::default()
+        };
+        let locked =
+            r#"{"locked":true,"roaming":false,"enabled":false,"data_active":false,"where":"home"}"#;
+        assert!(lines(&off, locked).is_empty());
     }
 }
