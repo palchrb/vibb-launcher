@@ -550,7 +550,7 @@ class Application : android.app.Application() {
                 }
             } catch (e: Exception) {
                 android.util.Log.e("Application", "Setup (after the lock) failed, continuing", e)
-                com.kidslauncher.mdm.crash.CrashReports.record(app, e)
+                com.kidslauncher.mdm.crash.CrashReports.record(this@Application, e)
             }
             // Design 59 F3 (F3R-5): the tail's own share, next to "Unlocked setup took" (the head).
             android.util.Log.i("Application", "Unlocked setup tail took ${android.os.SystemClock.elapsedRealtime() - tailStart} ms")
