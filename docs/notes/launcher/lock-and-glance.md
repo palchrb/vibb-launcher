@@ -493,3 +493,43 @@ name - Element X's "N new messages" fallback reads "Chat"; a conversation's or a
   - **Not device-checked**: the date line's widths on the Jelly Star at font 1.0/1.3/2.0 (when the weather or the alarm
     falls to its own line), the glyph's centring on the baseline, the 18:00 and noon edges with the screen on, the
     card's push and its 8 dp, TalkBack on the date line.
+
+## Frosted glass on the glance's cards (frosted glass B, approved 2026-11-17; PLAN.md "Frosted glass on the lock glance's cards")
+
+- **What**: over a photo, the glance's cards are frosted glass instead of the solid `kid_music_tile` - the music tile
+  (full and compact), the timer tile, the weather card, the time-rule card, every row (notifications, Meldinger, missed
+  calls, Dagen's reminder) and the torch while off (lit it stays the peach disc). The mockup's variant B
+  (https://claude.ai/artifact/LYDb5KP6kDgBFVqE6459fB): `background: rgba(22,20,34,.58); backdrop-filter: blur(22px)
+  saturate(140%); box-shadow: inset 0 0 0 1px rgba(255,255,255,.08)`, each card's corners as before. The weather card
+  and the timer tile were not named in the approval; they share the music tile's drawable and look, so they follow it
+  (one line each in `GlancePanel`'s init to undo).
+- **How** (pure `lock/GlanceGlass.kt`, `GlanceGlassTest`; glue `lock/GlanceGlassCards.kt`): one small copy of the
+  glance's own ground - its photo under its black scrim, drawn by the same `WallpaperRender.GroundDrawable` at the
+  root's size, one pixel per 4 dp (a 393x873 dp screen is 99x219, 87 KB) - blurred on the CPU (three box passes each
+  way, a Gaussian of 22 dp, edges clamped) and saturated 140 %. Each card's background is a `GlassDrawable`: the copy
+  through a `BitmapShader` placed at the card's spot in the root, scaled up with filtering, clipped by the card's round
+  rect (its radius and shape read from today's drawable, the outline for the media controls' projected ripples), then
+  the tint `kid_music_tile` (#1B1B28, the mockup's #161422 night) at 58 %, then a 1 dp white edge at 8 % (the CSS's
+  1 px); a card whose place isn't measured yet draws today's solid tile for that frame, never a see-through one; a row and the
+  torch keep today's press ripple. Not Android's cross-window blur (`FLAG_BLUR_BEHIND`, `setBackgroundBlurRadius`: off
+  on some phones, it blurs what is behind the window) and no `RenderEffect` (a one-off bitmap is enough, so no API gate
+  at all); not plain transparency.
+- **Redraws**: the copy is made only when the ground (fill, photo, scrim) or the root's size changes - `sync()` in the
+  glance root's pre-draw, before the frame - never per frame, the old one let go (never `recycle`d: a display list may
+  still hold it). Each drawn frame `sync()` compares every shown card's place in the root (`getLocationInWindow`, so a
+  scroll, a layout and a row's sideways swipe count) with where its glass was drawn and redraws only a card that moved:
+  one round rect from the copy, no blur. A fling scrolls in `computeScroll`, inside the draw and after the pre-draw, so
+  the scroller's scroll listener syncs too (code QA M1: the glass was a frame behind during a fling).
+- **Contrast**: the tint is the mockup's 58 % unless the copy is light: then it is raised just as far as every text ink
+  on the cards (`kid_ink`, `kid_core_dim`, `kid_rain`) needs for 4.5:1 over every pixel of the copy - on the card and
+  under the weather card's raised "now" column (`kid_weather_now`, code QA M2) - at most opaque, today's tile
+  (`glassTintAlphaOver`: each pixel rounded up per channel to 16 levels, the lightest first; not the pixel of the highest
+  luminance alone, which a light grey can beat in sRGB blending, code QA L1). White text over a white blurred ground:
+  58 % gives 4.2:1, so it is raised there (`GlanceGlassTest`). The lock's own scrim (`lockScrimForImage`) already
+  darkens a light photo, so the raise is rare: on the gate's light, dark and busy pictures the cards measured 14-18:1
+  for white and 7.7-9.4:1 for `kid_core_dim`.
+- **Fallback**: glass only over a decoded photo (`glassOn`); a colour, a gradient, the night mark, a photo that isn't
+  decoded, an empty root or any fault making the copy (logged by its class) leave the cards exactly as today - the
+  layouts' own drawables. The time-rule screen's card (`activity_lock.xml`) stays solid.
+- **Versions**: no API above 34 (a software `Canvas`, `BitmapShader`, `RippleDrawable`, `Outline`); checked on the
+  emulator on Android 14 (compat34) and 16 (jelly36), `docs/testing/2026-11-18-frosted-glance.md`.

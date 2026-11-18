@@ -185,7 +185,7 @@ class LockUpTest {
         val ground = body(activity, "applyLockGround")
         assertTrue(ground.contains("if (!state.lockReady) return"))
         assertTrue(ground.contains("binding.root.background = lockGround(state)"))
-        assertTrue(ground.contains("glance?.ground(lockGround(state))"))
+        assertTrue(ground.contains("glance?.ground(lockGround(state), GlassGround(state.lock.fill, state.lockBitmap, state.lockScrimArgb))"))
         assertTrue(ground.contains("catch (e: Throwable)"))
         assertTrue(body(activity, "onStart").contains("WallpaperStore.addListener(wallpaperListener)"))
         assertTrue(body(activity, "onStop").contains("WallpaperStore.removeListener(wallpaperListener)"))

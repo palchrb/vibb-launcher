@@ -184,6 +184,9 @@ class GlancePanel(
     /** The layout listeners' work, run after the layout pass, not in it (E6 L1). */
     private val afterLayout = AfterLayout(glance.root)
     private val weather = WeatherLockPanel(activity, glance, clockFace, afterLayout, { rowsHeld() }) { guarded("weather") { weatherChanged() } }
+
+    /** Frosted glass B (2026-11-17): the cards over a photo get its blurred copy behind them, else today's solid look. */
+    private val glass = GlanceGlassCards(glance.root)
     private var started = false
 
     /** The stage (memory only). */
@@ -289,6 +292,21 @@ class GlancePanel(
             refitPending = false
             false
         }
+        // Frosted glass B: the music, timer, weather and rule cards and the torch (the rows as they are made, newRow); the
+        // copy is made again only when the ground or the root's size changed, a card redrawn only when it moved.
+        glass.add(glance.lockMediaTile, R.drawable.bg_music_tile)
+        glass.add(glance.lockMediaCompact, R.drawable.bg_glance_compact_tile)
+        glass.add(glance.lockTimerTile, R.drawable.bg_music_tile)
+        glass.add(glance.lockWeatherCard.root, R.drawable.bg_glance_compact_tile)
+        glass.add(glance.lockRuleCard.root, R.drawable.bg_glance_compact_tile)
+        glass.add(glance.lockGlanceTorch, R.drawable.bg_music_control)
+        glance.root.viewTreeObserver.addOnPreDrawListener {
+            guarded("glass") { glass.sync() }
+            true
+        }
+        // A fling scrolls in computeScroll, inside the draw and after the pre-draw: synced there too, so the moved cards
+        // are recorded at their new place in the same frame (code QA M1).
+        glance.lockGlanceScroll.setOnScrollChangeListener { _, _, _, _, _ -> guarded("glass") { glass.sync() } }
     }
 
     /** onStart: watching the rows and the session; the stage decided if the lock comes up now. */
@@ -438,8 +456,11 @@ class GlancePanel(
 
     /** The lock's background behind the page (design 25, "Lock background") - opaque, the page
      * still covers the keypad stage. */
-    fun ground(drawable: android.graphics.drawable.Drawable) = guarded("ground") {
+    fun ground(drawable: android.graphics.drawable.Drawable, picture: GlassGround) = guarded("ground") {
         glance.root.background = drawable
+        // Made now when the root has its size (this may run inside the frame's pre-draw, after the glass's own).
+        glass.ground(picture)
+        glass.sync()
     }
 
     /** The font scale changed under the lock (it handles `fontScale` itself, emulator round N8): the
@@ -1268,7 +1289,9 @@ class GlancePanel(
         button.visibility = if (look == GlanceTorchButton.HIDDEN) View.GONE else View.VISIBLE
         if (look == GlanceTorchButton.HIDDEN) return
         val lit = look == GlanceTorchButton.LIT
-        button.setBackgroundResource(if (lit) R.drawable.bg_music_play else R.drawable.bg_music_control)
+        // Off over a photo: the frosted glass (the lit peach is always its own).
+        glass.hold(button, lit)
+        if (!glass.drawn(button)) button.setBackgroundResource(if (lit) R.drawable.bg_music_play else R.drawable.bg_music_control)
         button.setImageResource(R.drawable.torch_glyph_on) // one glyph, no strike-through (the user, 2026-10-23): the state is the colours
         button.imageTintList = ColorStateList.valueOf(activity.getColor(if (lit) R.color.kid_ground else R.color.kid_core))
         button.stateDescription = activity.getString(if (lit) R.string.lock_torch_on else R.string.lock_torch_off)
@@ -1361,6 +1384,7 @@ class GlancePanel(
         val params = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
         if (index > 0) params.topMargin = dp(8f)
         glance.lockGlanceRows.addView(view.root, params)
+        glass.add(view.root, R.drawable.bg_glance_row)
         // Only accessibility tools read them - TalkBack, and UiAutomation for the UI dumps (§1.2).
         sensitive(view.root)
         return view
