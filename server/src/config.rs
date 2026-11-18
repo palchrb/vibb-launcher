@@ -20,37 +20,16 @@ pub const SERVER_RELEASE_TAG_PREFIX: &str = "server-v";
 /// Tag prefix of the Vibb music app's releases in the same repo (design 21). A catalog row without
 /// a `release_tag_prefix` never picks one of them, so a launcher row can't install vibb-music.apk.
 pub const MUSIC_RELEASE_TAG_PREFIX: &str = "music-v";
-/// Before the monorepo (2026-10), the server and the launcher had a repo each. Installs from then
-/// may still carry these values in their `.env` (install.sh wrote `SERVER_RELEASE_REPO` there);
-/// they are read as the new defaults, so an existing install follows the move with no edit.
-pub const LEGACY_SERVER_RELEASE_REPO: &str = "palchrb/kid-phone-server";
-pub const LEGACY_LAUNCHER_APK_URL: &str =
-    "https://github.com/palchrb/kids-launcher-mdm/releases/latest/download/kids-launcher-mdm.apk";
 /// The launcher's applicationId is `me.vibb.launcher` since 2026-10-06; its Kotlin namespace (the
 /// class names) stayed `com.kidslauncher.mdm`.
 pub const DEFAULT_LAUNCHER_ADMIN_COMPONENT: &str =
     "me.vibb.launcher/com.kidslauncher.mdm.server.MdmDeviceAdminReceiver";
-/// The default before the package rename; `install.sh` wrote it into `.env`, so it is read as
-/// today's (a QR with the old package would install a build whose admin isn't there).
-pub const LEGACY_LAUNCHER_ADMIN_COMPONENT: &str =
-    "com.kidslauncher.mdm/com.kidslauncher.mdm.server.MdmDeviceAdminReceiver";
 /// `releases/latest` only ever serves a normal (non-prerelease) release, only launcher releases
 /// are ever marked latest (server releases are published with makeLatest false), and the
 /// launcher's release CI always attaches the APK under this one stable asset name - so this URL
 /// keeps pointing at the newest launcher release with nothing to update per release.
 pub const DEFAULT_LAUNCHER_APK_URL: &str =
     "https://github.com/palchrb/vibb-launcher/releases/latest/download/kids-launcher-mdm.apk";
-
-/// Maps an old default to today's (see [`LEGACY_SERVER_RELEASE_REPO`],
-/// [`LEGACY_LAUNCHER_ADMIN_COMPONENT`]).
-fn migrate_legacy(key: &str, value: String, legacy: &str, current: &str) -> String {
-    if value == legacy {
-        tracing::info!("{key}={legacy} is an old default - using {current} instead");
-        current.to_string()
-    } else {
-        value
-    }
-}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ForkConfig {
@@ -133,34 +112,10 @@ impl ForkConfig {
 
         ForkConfig {
             server_release_repo: read("SERVER_RELEASE_REPO", is_valid_repo)
-                .map(|v| {
-                    migrate_legacy(
-                        "SERVER_RELEASE_REPO",
-                        v,
-                        LEGACY_SERVER_RELEASE_REPO,
-                        DEFAULT_SERVER_RELEASE_REPO,
-                    )
-                })
                 .unwrap_or_else(|| DEFAULT_SERVER_RELEASE_REPO.to_string()),
             launcher_admin_component: read("LAUNCHER_ADMIN_COMPONENT", is_valid_component)
-                .map(|v| {
-                    migrate_legacy(
-                        "LAUNCHER_ADMIN_COMPONENT",
-                        v,
-                        LEGACY_LAUNCHER_ADMIN_COMPONENT,
-                        DEFAULT_LAUNCHER_ADMIN_COMPONENT,
-                    )
-                })
                 .unwrap_or_else(|| DEFAULT_LAUNCHER_ADMIN_COMPONENT.to_string()),
             launcher_apk_url: read("LAUNCHER_APK_URL", is_valid_url)
-                .map(|v| {
-                    migrate_legacy(
-                        "LAUNCHER_APK_URL",
-                        v,
-                        LEGACY_LAUNCHER_APK_URL,
-                        DEFAULT_LAUNCHER_APK_URL,
-                    )
-                })
                 .unwrap_or_else(|| DEFAULT_LAUNCHER_APK_URL.to_string()),
             launcher_signature_checksum: read("LAUNCHER_SIGNATURE_CHECKSUM", is_valid_checksum),
             phone_server_url: read("PHONE_SERVER_URL", |url| match check_server_url(url) {
@@ -656,30 +611,9 @@ mod tests {
     }
 
     #[test]
-    fn pre_monorepo_defaults_follow_the_move() {
-        let config = ForkConfig::from_vars(&vars(&[
-            ("SERVER_RELEASE_REPO", LEGACY_SERVER_RELEASE_REPO),
-            ("LAUNCHER_APK_URL", LEGACY_LAUNCHER_APK_URL),
-        ]));
-        assert_eq!(config, ForkConfig::from_vars(&HashMap::new()));
-        assert_eq!(
-            config.launcher_apk_url,
-            "https://github.com/palchrb/vibb-launcher/releases/latest/download/kids-launcher-mdm.apk"
-        );
-    }
-
-    #[test]
-    fn pre_rename_admin_component_follows_the_package_rename() {
-        let config = ForkConfig::from_vars(&vars(&[(
-            "LAUNCHER_ADMIN_COMPONENT",
-            LEGACY_LAUNCHER_ADMIN_COMPONENT,
-        )]));
-        assert_eq!(
-            config.launcher_admin_component,
-            "me.vibb.launcher/com.kidslauncher.mdm.server.MdmDeviceAdminReceiver"
-        );
-        // Any other value (e.g. a debug build on a test server) is kept as written.
-        let debug = "com.kidslauncher.mdm.debug/com.kidslauncher.mdm.server.MdmDeviceAdminReceiver";
+    fn a_set_admin_component_is_read_as_written() {
+        // e.g. a debug build on a test server
+        let debug = "me.vibb.launcher.debug/com.kidslauncher.mdm.server.MdmDeviceAdminReceiver";
         let config = ForkConfig::from_vars(&vars(&[("LAUNCHER_ADMIN_COMPONENT", debug)]));
         assert_eq!(config.launcher_admin_component, debug);
     }

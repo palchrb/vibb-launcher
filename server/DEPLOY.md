@@ -524,7 +524,7 @@ service after editing: `sudo systemctl restart kid-phone-server`):
 
 | Setting | Default |
 |---|---|
-| `LAUNCHER_ADMIN_COMPONENT` | `me.vibb.launcher/com.kidslauncher.mdm.server.MdmDeviceAdminReceiver` (the launcher's package is `me.vibb.launcher` since 2026-10-06; an `.env` that still has the old `com.kidslauncher.mdm/...` default is read as the new one) |
+| `LAUNCHER_ADMIN_COMPONENT` | `me.vibb.launcher/com.kidslauncher.mdm.server.MdmDeviceAdminReceiver` |
 | `LAUNCHER_APK_URL` | `https://github.com/palchrb/vibb-launcher/releases/latest/download/kids-launcher-mdm.apk` (only launcher releases are ever "latest") |
 | `LAUNCHER_SIGNATURE_CHECKSUM` | none - required for the provisioning QR code |
 | `PHONE_SERVER_URL` | none - the phones' server address in the setup QR while Settings > Phone Setup has none saved; an address saved there wins, and the page says which one is used. `https://`, or `http://` to a Tailscale IP address (100.64.0.0/10, `fd7a:115c:a1e0::/48`) - taken with a warning in the log, on Phone Setup and on the Connect page (Tailscale encrypts the way, but only https proves the server to the phone; prefer `https://<name>.ts.net` from `tailscale serve`); any other `http://` (a LAN address, a `*.ts.net` name) is ignored with a log line, and Phone Setup refuses it the same way. The phones apply the same rule to the address they store (launcher security review S-M1): a phone set up earlier with a plain-http LAN address stops reaching the server once Vibb One is updated, until the https address is typed in its Settings (Server URL, behind the parent code) |

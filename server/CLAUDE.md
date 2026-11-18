@@ -16,17 +16,16 @@ from `server-vX.Y.Z` tags (`.github/workflows/server-release.yml` at the root: t
 and the tracked-app sync skips `server-v*` releases. Everything that names a GitHub repo or a launcher build is configuration,
 not code: `src/config.rs` (`ForkConfig`, `AppState.config`) reads `SERVER_RELEASE_REPO`, `LAUNCHER_ADMIN_COMPONENT`,
 `LAUNCHER_APK_URL`, `LAUNCHER_SIGNATURE_CHECKSUM` and `PHONE_SERVER_URL` (0.54.0: the setup QR's server address
-while Phone Setup has none saved - the saved one wins, `provisioning::server_url`) and `PHONE_RECOVERY_URL` (design 76's fix round: the tailnet recovery address, plain http to a Tailscale IP only, `server_tls::recovery_url`) once at startup, with defaults pointing at the monorepo; the
-pre-monorepo defaults (`palchrb/kid-phone-server`, the `kids-launcher-mdm` APK URL) are read as today's, migration
-0031 repoints a catalog row watching `palchrb/kids-launcher-mdm`. The
+while Phone Setup has none saved - the saved one wins, `provisioning::server_url`) and `PHONE_RECOVERY_URL` (design 76's fix round: the tailnet recovery address, plain http to a Tailscale IP only, `server_tls::recovery_url`) once at startup, with defaults pointing at the monorepo
+(a set value is read as written); migration 0031 repoints a catalog row watching `palchrb/kids-launcher-mdm`. The
 checksum has no default: without it the provisioning page shows a banner and no QR. An
 invalid value is logged and treated as unset. The root-run deploy scripts never read `.env` (it's writable by the
 service user): `install.sh`/`update.sh` take `KPS_REPO=owner/repo` (validated). `update.sh` downloads with `curl -f` and unpacks/checks the release before stopping the
 service, restarts it from an `ERR` trap if anything fails after the stop, copies the DB and the old binary to
 `/var/backups/kid-phone-server/` before every swap, and prunes old backups only once the new version is running
 (rollback steps in DEPLOY.md). Production launchers are the release build, package `me.vibb.launcher` (renamed from
-`com.kidslauncher.mdm` on 2026-10-06: `LAUNCHER_ADMIN_COMPONENT`'s old default is read as the new one, migration 0037
-renames the launcher row's package; the Kotlin class names keep `com.kidslauncher.mdm`)
+`com.kidslauncher.mdm` on 2026-10-06: migration 0037 renames the launcher row's package; the Kotlin class names keep
+`com.kidslauncher.mdm`)
 (no `.debug` suffix), from normal GitHub releases with the stable asset name `kids-launcher-mdm.apk` - so the
 launcher's catalog row has `include_prereleases` **off** (release candidates are prereleases). The server creates that
 row at startup when no row is the launcher, watching `LAUNCHER_APK_URL`'s repo (`tracked_apps::ensure_launcher_row`,
