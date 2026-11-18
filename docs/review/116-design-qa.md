@@ -268,3 +268,36 @@ report isn't `paused_at` and no PWA pause or lift is in force; add both cases to
 Copy (§5) against "Words in the UI": the titles are facts of six words or fewer, nothing shows while things work, the
 quiet "kontrollert" is a quiet value, how-tos sit behind an (i), and a parent's choice raises nothing once M3, M4, M5
 and M10 hold. No other change.
+
+## Resolved in revision 2 (2026-11-18)
+
+- H1: resolved. The check is "restorable by this binary": success, a known version, an equal checksum, none newer. An older backup passes (§4).
+- H2: resolved. Every `StopDevice` code is class `stop`, recorded when the stop is set; the parent's retry clears it (§2.1).
+- H3: resolved. The down period is measured on the phone (elapsed realtime + boot count). It never spans a boot and never starts in a process's first 60 s. The report sends `down_ms` and `period`; the server raises on `down_ms` (§3.1, §3.4, §3.5 `periods`).
+- M1: resolved. The state is computed at report time from the live instance's `state.tunnel` and `shape`, never `tunnelShape` (§3.1).
+- M2: resolved. The gate is rewritten: a check that the deny holds, a crash with the deny set, recovery in force-idle, Bare Vibb for PASS, a reboot row; each step reads `dumpsys connectivity` (§3.3).
+- M3: resolved. `met` maps to phones with `lock_weather = 1`, and `#weather` gains an orange line with its (i) (§2.3, §6, step 3).
+- M4: resolved. A feed maps to phones with the filter on and the feed in force (global switch or the phone's override), as the user also asked (§2.3).
+- M5: resolved. Vibb One's catalog row maps to every enrolled phone; only `enabled = 1` apps map (§2.3).
+- M6: resolved. CalDAV stops are recorded at `account:`, everything else at `source:` (§1, §2.1, §2.3).
+- M7: resolved. There is an exhaustive class table per call site with no `_` arm; `Server`/`Removed` are not recorded, and `OlderVersion` records ok (§2.1).
+- M8: resolved. The check runs in a spawned task under a unique scratch name, with a startup sweep; a full disk records nothing; rows are kept per file (`file:<name>`) (§4).
+- M9: resolved. Worktree A runs 1→2→3→4 and worktree B runs 5b then 5; the migration number is taken at build time (§7).
+- M10: resolved. `FilterDown` and its event are raised only while the server's `vpn_filter_enabled = 1`, the report isn't paused, and no known hold is in force (§3.4).
+- M11: resolved. D25 (OSM tiles) and D26 (public resolvers) are added, and D11 and D16 are corrected in the register.
+- L1: resolved. One retry chain (§3.1).
+- L2: resolved. The backstop path and the while-idle quota are named (§3.1, §3.2).
+- L3: resolved. Rows are grouped by title with counts summed; `key()` is unique per title (§2.3).
+- L4: resolved. Accepted and said (§2.2).
+- L5: resolved. On-demand keys are noted (§2.1).
+- L6: resolved. The `met` cell interleave is accepted and said (§2.1).
+- L7: resolved. The event uses the `inbox.title` and `push.title` keys (§6).
+- L8: resolved. " · ved siste rapport" on the filter page; `/dns` says "nede" too (§3.4, §6).
+- L9: resolved. `Integration` joins `read_from_report`'s negative list; `FilterDown` is placed among the alarms (§2.3, §3.4).
+- L10: resolved. `ok()` writes only when failing or after 10 min (§2.1).
+- L11: resolved. The period, alarm and sync decisions are pure, with contract rows (§3.1, §3.5).
+- L12: resolved. The size is about three nights (§7).
+
+Also changed in revision 2, beyond the findings: the user's part E (the backups folder as a host bind mount). It
+needs `snapshot` to copy across filesystems (`EXDEV`), or the next pre-migration backup stops the start. It also needs
+`check_data_writable` to cover `data/backups` (§5).
