@@ -414,25 +414,11 @@ async fn lock_page_warns_about_the_lock_state() {
     let (id, token) = app.enrolled_device("phone").await;
     set_override(&app, &cookie, id, &[("new_pin", "246810")]).await;
     set_kid_pin(&app, &cookie, id, "1357").await;
-    // A launcher without the capability.
+    // A report without a lock state: no update note.
     app.post_status(&token, json!({ "capabilities": ["call_policy_v1"] }))
         .await;
     let html = lock_page(&app, &cookie, id).await;
-    let group = child_group(&html);
-    assert!(group.contains("Vibb One needs an update"), "{html}");
-    // Design 113 D1 P1 (QA M5): the short consequence under the title, visible; the sentence
-    // behind the ⓘ.
-    let short = group
-        .find("<div class=\"attention-sub\">No lock until then")
-        .expect("the visible sub");
-    let panel = short
-        + group[short..]
-            .find("<div class=\"info-panel\">")
-            .expect("the ⓘ");
-    assert!(
-        group[panel..].starts_with("<div class=\"info-panel\"><p>This version has no lock."),
-        "{group}"
-    );
+    assert!(!child_group(&html).contains("needs an update"), "{html}");
 
     for (inactive, text) in [
         ("crash_guard", "Lock turned off after crashes"),

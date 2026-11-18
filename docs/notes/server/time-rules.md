@@ -182,7 +182,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   of the turned-on rule is served with a **twin** for the copy (`twin_lifts`: `-(lift id)`, `rule_id` `-(lock id)`, the
   same expiry); "Alle regler" needs none.
 - **`until_ms` and `card_first`** on every served rule (design 93 §9): the copy's end as epoch ms and `true`; a scheduled
-  rule `null` and `false`, always explicit. rc.8 ignores both; a launcher with `lock_now_v1` drops the copy at
+  rule `null` and `false`, always explicit. The launcher drops the copy at
   `until_ms` (no relock a week later) and shows it on the card while its end is a real unlock. The contract is
   `server/testdata/lock_now.json` (CLAUDE.md), `lock_now::tests::the_contract`.
 - **Time**: wall clock in the phone's zone, never instant + hours (`end_minute`, `instant_of`: a gap moves later, an

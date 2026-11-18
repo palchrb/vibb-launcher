@@ -14,8 +14,6 @@ use crate::models::{DevicePolicy, KidLock};
 use crate::music_secret::MusicKey;
 use crate::security;
 
-/// The launcher capability that understands `kid_lock`.
-pub const PIN_LOCK_CAPABILITY: &str = "pin_lock_v1";
 /// Design 59: the launcher capability that runs [SET_KID_PIN] and can hold Android's lock.
 pub const ANDROID_KEYGUARD_CAPABILITY: &str = "android_keyguard_v1";
 /// Design 59 §2.1: the one-shot command that hands the phone the Child PIN for Android's lock.
@@ -414,8 +412,6 @@ impl Inactive {
 /// What the Child PIN group says about the lock: warnings above the group, states as rows in it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LockNote {
-    /// The reporting launcher doesn't have the lock.
-    NeedsUpdate,
     /// The lock is off on the phone, and why.
     Off(Inactive),
     /// An allowed VoIP app (a valid package name) can't show full-screen notifications, so its
@@ -437,8 +433,6 @@ pub enum LockNote {
     /// warning. `label` is the app's name on this server (else its package), `when` the time as
     /// the device page shows times.
     RangOverLock { label: String, when: String },
-    /// Design 59 §2.3: Android's lock is chosen, but the reporting launcher can't hold it.
-    AndroidNeedsUpdate,
     /// Android's lock is chosen and the phone still runs Vibb One's: it starts the next time the
     /// Child PIN is typed there, or when the PIN being sent (`sending`) arrives.
     AndroidWaiting { sending: bool },
@@ -633,15 +627,6 @@ impl LockNote {
         let w = |key: &str| t(lang, key).to_string();
         let times = |n: i64| t_count(lang, "device.lock.note.times", n, &[]);
         match self {
-            // The title alone doesn't carry the news: a short visible line (design 113, QA M5).
-            LockNote::NeedsUpdate => Note {
-                sub: Some(w("device.lock.note.needs_update_short")),
-                ..warning(
-                    "device.lock.note.needs_update",
-                    w("device.lock.note.needs_update_sub"),
-                    None,
-                )
-            },
             LockNote::Off(Inactive::Unmanaged) => warning(
                 "device.lock.note.unmanaged",
                 w("device.lock.note.unmanaged_sub"),
@@ -745,11 +730,6 @@ impl LockNote {
                 t_params(lang, "device.lock.note.calls_from", &[("app", label)]),
                 t_params(lang, "device.lock.note.rang", &[("at", when)]),
                 Some("device.lock.note.rang_sub"),
-            ),
-            LockNote::AndroidNeedsUpdate => warning(
-                "device.lock.note.android_needs_update",
-                w("device.lock.note.android_needs_update_sub"),
-                None,
             ),
             LockNote::AndroidWaiting { sending: false } => row(
                 w("device.lock.android_lock"),
@@ -888,13 +868,9 @@ pub fn android_requested(policy: &DevicePolicy) -> bool {
 /// What the phone's last report says about its lock, for [lock_card].
 #[derive(Clone, Copy, Debug, Default)]
 pub struct PhoneLock<'a> {
-    /// The report's `lock_state` (`None`: none from a launcher that has the lock).
+    /// The report's `lock_state` (`None`: no report, or none in it).
     pub state: Option<&'a LockState>,
-    /// The phone has reported at all.
-    pub reported: bool,
-    /// The reporting launcher has the lock ([PIN_LOCK_CAPABILITY]).
-    pub capable: bool,
-    /// ... and Android's lock ([ANDROID_KEYGUARD_CAPABILITY]).
+    /// The reporting launcher has Android's lock ([ANDROID_KEYGUARD_CAPABILITY]).
     pub android_capable: bool,
     /// A [SET_KID_PIN] waits to go out.
     pub pin_waiting: bool,
@@ -925,14 +901,7 @@ pub fn lock_card(policy: &DevicePolicy, phone: &PhoneLock, now_ms: i64) -> LockC
     }
     // Safe mode allowed (Block safe mode off) is the parent's choice, never a warning here (2026-11-18): the switch's
     // own ⓘ on Advanced says safe mode skips the lock.
-    if phone.reported && !phone.capable {
-        card.notes.push(LockNote::NeedsUpdate);
-        return card;
-    }
     let android = android_requested(policy);
-    if android && phone.reported && !phone.android_capable {
-        card.notes.push(LockNote::AndroidNeedsUpdate);
-    }
     let Some(state) = phone.state else {
         card.notes.push(LockNote::Waiting);
         return card;
@@ -1002,13 +971,13 @@ pub fn lock_card(policy: &DevicePolicy, phone: &PhoneLock, now_ms: i64) -> LockC
 }
 
 /// A Child PIN is set, but the phone's own lock is off (design 31 L2, an Attention alarm): the
-/// reporting launcher doesn't have the lock, or reports it inactive for a reason [lock_card] warns
-/// about - the same notes, so the row and the page agree.
+/// phone reports it inactive for a reason [lock_card] warns about - the same notes, so the row and
+/// the page agree.
 pub fn lock_off(policy: &DevicePolicy, phone: &PhoneLock) -> bool {
     lock_card(policy, phone, 0)
         .notes
         .iter()
-        .any(|n| matches!(n, LockNote::NeedsUpdate | LockNote::Off(_)))
+        .any(|n| matches!(n, LockNote::Off(_)))
 }
 
 /// Design 59 §2.3: the phone runs Android's lock with a PIN that isn't the Child PIN - the Lock
@@ -1159,12 +1128,10 @@ pub fn flash_text(lang: Lang, code: &str) -> Option<(&'static str, bool)> {
 mod tests {
     use super::*;
 
-    /// A report from a launcher before design 59 (or none, `reported` false).
-    fn phone(state: Option<&LockState>, capable: bool, reported: bool) -> PhoneLock<'_> {
+    /// A report without Android's lock (or none).
+    fn phone(state: Option<&LockState>) -> PhoneLock<'_> {
         PhoneLock {
             state,
-            reported,
-            capable,
             ..Default::default()
         }
     }
@@ -1196,19 +1163,14 @@ mod tests {
         // No Child PIN: nothing to be off.
         assert!(!lock_off(
             &without,
-            &phone(Some(&inactive(Some("crash_guard"))), true, true)
+            &phone(Some(&inactive(Some("crash_guard"))))
         ));
-        // An older launcher without the lock.
-        assert!(lock_off(&with_pin, &phone(None, false, true)));
-        // Not reported yet.
-        assert!(!lock_off(&with_pin, &phone(None, false, false)));
+        // Reported without a lock state, or not reported yet: waiting, not off.
+        assert!(!lock_off(&with_pin, &phone(None)));
+        assert!(!lock_off(&with_pin, &phone(Some(&inactive(None)))));
         assert!(!lock_off(
             &with_pin,
-            &phone(Some(&inactive(None)), true, true)
-        ));
-        assert!(!lock_off(
-            &with_pin,
-            &phone(Some(&inactive(Some("no_pin"))), true, true)
+            &phone(Some(&inactive(Some("no_pin"))))
         ));
         for reason in [
             "unmanaged",
@@ -1218,7 +1180,7 @@ mod tests {
             "odd",
         ] {
             assert!(
-                lock_off(&with_pin, &phone(Some(&inactive(Some(reason))), true, true)),
+                lock_off(&with_pin, &phone(Some(&inactive(Some(reason))))),
                 "{reason}"
             );
         }
@@ -1275,10 +1237,8 @@ mod tests {
     }
 
     #[test]
-    fn card_warns_about_capability_and_inactive_states() {
+    fn card_warns_about_inactive_states() {
         let mut p = policy_with_pins(Some("1234"), Some("999999"));
-        let card = lock_card(&p, &phone(None, false, true), 0);
-        assert_eq!(card.notes, [LockNote::NeedsUpdate]);
 
         p.hardening.disallow_safe_boot = true;
         for (inactive, typed) in [
@@ -1293,7 +1253,7 @@ mod tests {
                 inactive: Some(inactive.to_string()),
                 ..Default::default()
             };
-            let card = lock_card(&p, &phone(Some(&state), true, true), 0);
+            let card = lock_card(&p, &phone(Some(&state)), 0);
             assert_eq!(card.notes, [LockNote::Off(typed)], "{inactive}");
             assert!(card.notes[0].note(Lang::En, None).warning, "{inactive}");
         }
@@ -1301,16 +1261,9 @@ mod tests {
             inactive: Some("no_pin".to_string()),
             ..Default::default()
         };
-        assert!(
-            lock_card(&p, &phone(Some(&state), true, true), 0)
-                .notes
-                .is_empty()
-        );
-        // No report yet from a launcher with the lock.
-        assert_eq!(
-            lock_card(&p, &phone(None, true, false), 0).notes,
-            [LockNote::Waiting]
-        );
+        assert!(lock_card(&p, &phone(Some(&state)), 0).notes.is_empty());
+        // No report yet.
+        assert_eq!(lock_card(&p, &phone(None), 0).notes, [LockNote::Waiting]);
 
         let state = LockState {
             active: true,
@@ -1320,7 +1273,7 @@ mod tests {
             exempt_yields: 2,
             ..Default::default()
         };
-        let card = lock_card(&p, &phone(Some(&state), true, true), 0);
+        let card = lock_card(&p, &phone(Some(&state)), 0);
         assert_eq!(
             card.notes,
             [
@@ -1356,7 +1309,6 @@ mod tests {
     #[test]
     fn warnings_are_short_and_keep_commands_behind_the_info() {
         let notes = [
-            LockNote::NeedsUpdate,
             LockNote::Off(Inactive::Unmanaged),
             LockNote::Off(Inactive::AndroidCredential),
             LockNote::Off(Inactive::KeyguardNotDisabled),
@@ -1374,10 +1326,7 @@ mod tests {
             // the news; the sentence stays behind the ⓘ.
             assert_eq!(
                 words.sub.is_some(),
-                matches!(
-                    note,
-                    LockNote::NeedsUpdate | LockNote::Off(Inactive::BadHash)
-                ),
+                matches!(note, LockNote::Off(Inactive::BadHash)),
                 "{note:?}"
             );
             if let Some(sub) = &words.sub {
@@ -1411,7 +1360,7 @@ mod tests {
             voip_fsi_denied: vec!["io.element.android.x".to_string()],
             ..Default::default()
         };
-        let card = lock_card(&p, &phone(Some(&state), true, true), 0);
+        let card = lock_card(&p, &phone(Some(&state)), 0);
         assert_eq!(
             card.notes,
             [
@@ -1596,7 +1545,7 @@ mod tests {
             "Signal".to_string(),
         )]);
         let p = policy_with_pins(Some("1234"), Some("999999"));
-        let card = lock_card(&p, &phone(Some(&state), true, true), 0);
+        let card = lock_card(&p, &phone(Some(&state)), 0);
         // Not in lock_card's own notes (the page adds them with the names).
         assert!(
             !card
@@ -1626,17 +1575,13 @@ mod tests {
             ]
         );
         // No Child PIN: nothing.
-        let card = lock_card(
-            &DevicePolicy::default(),
-            &phone(Some(&state), true, true),
-            0,
-        );
+        let card = lock_card(&DevicePolicy::default(), &phone(Some(&state)), 0);
         assert!(rang_notes(&card, Some(&state), &labels, &zone, now).is_empty());
     }
 
     #[test]
     fn no_pin_no_warnings() {
-        let card = lock_card(&DevicePolicy::default(), &phone(None, false, true), 0);
+        let card = lock_card(&DevicePolicy::default(), &phone(None), 0);
         assert!(!card.pin_set);
         assert!(card.notes.is_empty());
     }
@@ -1645,8 +1590,6 @@ mod tests {
     fn android_phone(state: &LockState) -> PhoneLock<'_> {
         PhoneLock {
             state: Some(state),
-            reported: true,
-            capable: true,
             android_capable: true,
             pin_waiting: false,
         }
@@ -1677,16 +1620,6 @@ mod tests {
             android,
         };
 
-        // Chosen, an older launcher: the update warning, its lock as before.
-        let old = LockState {
-            active: true,
-            locked: true,
-            ..Default::default()
-        };
-        assert_eq!(
-            lock_card(&p, &phone(Some(&old), true, true), 0).notes,
-            [LockNote::AndroidNeedsUpdate, on(false)]
-        );
         // Chosen, the phone still on Vibb One's: waiting for a PIN typed, or for the one sent.
         let state = reported("own", Some(4), true);
         let mut waiting = android_phone(&state);
@@ -1762,7 +1695,6 @@ mod tests {
         assert!(lock_off(&p, &android_phone(&credential)));
         // The words: warnings short, the commands nowhere; the rows' values.
         for note in [
-            LockNote::AndroidNeedsUpdate,
             LockNote::PinNotChildPin { stored: true },
             LockNote::NoResetToken,
             LockNote::SwitchingBack { stuck: true },
@@ -1913,11 +1845,7 @@ mod tests {
         let mut unkept = p.clone();
         unkept.kid_pin_sealed = None;
         assert!(!offers_send_again(&unkept, &android_phone(&changed), None));
-        assert!(!offers_send_again(
-            &p,
-            &phone(Some(&changed), true, true),
-            None
-        ));
+        assert!(!offers_send_again(&p, &phone(Some(&changed)), None));
     }
 
     /// Design 59 §2.2: the shown PIN, the one the phone still has, and why nothing shows.

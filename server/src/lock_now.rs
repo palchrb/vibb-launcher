@@ -15,7 +15,9 @@ use sqlx::SqlitePool;
 
 use crate::time_rules::{DayWindow, LAST_MINUTE, PolicyLift, PolicyTimeRule, TimeRuleRow};
 
-/// The capability a launcher claims once it honours `until_ms` and `card_first` (design 93 §9.3).
+/// The capability a launcher claims once it honours `until_ms` and `card_first` (design 93 §9.3; the shared
+/// contract's `capability`).
+#[cfg(test)]
 pub const CAPABILITY: &str = "lock_now_v1";
 /// The lengths "Slå på nå" offers, in hours (§4.4); "Ut dagen" is the fourth choice.
 pub const LENGTH_HOURS: [i64; 3] = [1, 2, 3];

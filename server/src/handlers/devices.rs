@@ -1211,17 +1211,10 @@ pub(crate) async fn lock_screen_card(
     let empty_text = lock_glance::empty_text(latest_status.is_some(), allowlist.is_some());
     let launcher =
         |package: &str| crate::handlers::device_api::installed_by_launcher(state, Some(package));
-    let claims = |capability: &str| {
-        latest_status
-            .and_then(|s| s.capabilities_json.as_deref())
-            .is_some_and(|caps| caps.contains(&format!("\"{capability}\"")))
-    };
     // [messages_shown]: Meldinger's row is listed and not Off - its rows need no notification access.
     let notes = |messages_shown: bool| {
         lock_glance::notes(
             crate::kid_lock::policy_kid_lock(policy).is_some(),
-            latest_status.is_some(),
-            claims(lock_glance::LOCK_GLANCE_CAPABILITY),
             latest_status.and_then(|s| s.notification_listener_enabled),
             messages_shown,
         )
@@ -1262,8 +1255,6 @@ pub(crate) async fn lock_screen_card(
             messages_name
                 .unwrap_or_else(|| crate::i18n::t(lang, "device.sms.messages").to_string()),
             ticked.get(crate::builtin::MESSAGES).copied(),
-            latest_status.is_some(),
-            claims(lock_glance::MESSAGES_APP_CAPABILITY),
         )
     });
     let notes = notes(messages.as_ref().is_some_and(|row| row.on));

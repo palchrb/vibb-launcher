@@ -10,7 +10,7 @@ use chrono::{DateTime, Utc};
 
 use crate::display_time::{Zone, parse_db_utc};
 use crate::i18n::{Lang, t, t_params};
-use crate::lock_now::{self, LockNowRow, kind_rank};
+use crate::lock_now::{self, LockNowRow};
 use crate::models::DeviceStatus;
 use crate::time_rules::TimeRuleRow;
 
@@ -155,27 +155,6 @@ pub(crate) fn mode_line(lang: Lang, rule: &TimeRuleRow, apps: &HashMap<String, S
     }
 }
 
-/// For a launcher without `lock_now_v1` (§4.2): the rule of the same or a stronger kind already in
-/// force at the phone's `now_local`, and its end - the card shows it, not the turned-on rule.
-fn already(
-    rule: &TimeRuleRow,
-    rules: &[TimeRuleRow],
-    now_local: chrono::NaiveDateTime,
-) -> Option<(String, chrono::NaiveDateTime)> {
-    rules
-        .iter()
-        .filter(|r| r.id != rule.id && kind_rank(&r.kind) <= kind_rank(&rule.kind))
-        .find_map(|r| {
-            let days = crate::time_rules::parse_days(&r.days_json)
-                .map(|d| crate::time_rules::served_days(&d))
-                .ok()?;
-            let end = crate::time_state::covering_ends(&days, now_local)
-                .into_iter()
-                .max()?;
-            Some((r.name.clone(), end))
-        })
-}
-
 /// What the builder reads, besides the database.
 pub(crate) struct Inputs<'a> {
     pub device_id: i64,
@@ -229,11 +208,6 @@ pub(crate) async fn build(
     let now_local = tz.map(|tz| now.with_timezone(&tz).naive_local());
     let now_minute = now_local.map(lock_now::minute_of).unwrap_or(0);
     let lock = lock_now::running(db, input.device_id, now).await?;
-    let capable_now = input.latest.is_some_and(|s| {
-        s.capabilities_json
-            .as_deref()
-            .is_some_and(|c| c.contains(&format!("\"{}\"", lock_now::CAPABILITY)))
-    });
 
     // The phone's clock: a lock's times are its local wall time; another zone than Phone Setup's says so.
     let phone_time = |lock: &LockNowRow, clock: String| {
@@ -469,24 +443,6 @@ pub(crate) async fn build(
                 ));
             }
             warnings.extend(all_paused.clone());
-            if !capable_now
-                && let Some(local) = now_local
-                && let Some((other, end)) = already(rule, input.rules, local)
-            {
-                let at = if end.date() > local.date() {
-                    t(lang, "device.summary.rules_now.midnight").to_string()
-                } else {
-                    end.format("%H:%M").to_string()
-                };
-                warnings.push(t_params(
-                    lang,
-                    "device.summary.qa.warn_already",
-                    &[
-                        ("rule", &crate::time_rules::shown_name(lang, &other)),
-                        ("at", &at),
-                    ],
-                ));
-            }
             RuleOption {
                 id: rule.id,
                 school: rule.kind == "school",

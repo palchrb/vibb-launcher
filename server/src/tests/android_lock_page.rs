@@ -534,8 +534,7 @@ async fn send_again_queues_the_pin_when_it_can() {
     assert!(summary.contains("PIN on · Android's lock"));
 }
 
-/// §2.3 and qa-59-revision N-C: an older launcher with Android's lock chosen needs an update; a
-/// phone still on Android's lock while Vibb One's is chosen again without its token says
+/// §2.3 and qa-59-revision N-C: no update note for Android's lock; a phone still on Android's lock while Vibb One's is chosen again without its token says
 /// "switching back" with the way out, never own mode's "remove Android's lock".
 #[tokio::test]
 async fn the_page_words_the_phone_against_the_choice() {
@@ -543,7 +542,7 @@ async fn the_page_words_the_phone_against_the_choice() {
     switch(&app, &cookie, id, "android").await;
     report(&app, &token, &["pin_lock_v1"], json!({ "active": true })).await;
     let html = page(&app, &cookie, id).await;
-    assert!(html.contains("Update Vibb One for Android"));
+    assert!(!html.contains("Update Vibb One"));
 
     switch(&app, &cookie, id, "own").await;
     let mut state = lock_state("android", json!(1), false);

@@ -263,10 +263,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `device_policy.lock_buzz_on_notification`, migration 0136, off by default; 404 for an unknown phone), back to
   `#lock-buzz`, the phone nudged, a `lock_buzz_changed` security-log line when the value changed
   (`lock_glance::buzz_log_line`); sent as `launcher_ui.lock_buzz_on_notification`, always. One switch for everything
-  that brings a row to the lock - Meldinger has none of its own, and no app has a buzz choice. A phone that has
-  reported and whose last report lacks `messages_app_v1` (the buzz ships in that launcher release) shows the orange
-  line "This phone does not buzz yet - update Vibb One" under the switch (`lock_buzz_needs_update`); never before
-  the first report. Tests:
+  that brings a row to the lock - Meldinger has none of its own, and no app has a buzz choice. Tests:
   `lock_glance::the_buzz_switch_saves_logs_nudges_and_reaches_the_policy`, the redirect table in `device_pages`,
   `policy_json_keys_snapshot`.
 - **Where the forms return** (§5.1, pinned by `device_pages::lock_forms_return_to_the_page`): `kid-lock` →
@@ -2331,8 +2328,7 @@ Server only: no launcher or API change, no migration. The user's "Vi går for a!
   tid; each running pause with Avslutt nå), then "Noe annet" (or "Regler"): one form to `/rules-now` whose `mode`
   radios (`#m-on`, `#m-pause`, `.qa-mode`) are its first children, so `.when-on` / `.when-pause` switch with sibling
   selectors only (Chrome 80 / iOS 14). `#m-on` is disabled while a rule is on (one at a time), without the phone's zone
-  and in the day's last minute. Each `<option>` carries its mode line and warnings (`data-line`, `data-warn`); "Skole
-  gjelder allerede til 14:30" only for a phone without `lock_now_v1`. A refusal's words show in the sheet it reopens.
+  and in the day's last minute. Each `<option>` carries its mode line and warnings (`data-line`, `data-warn`). A refusal's words show in the sheet it reopens.
 - **`static/quick-sheets.js`** (ES5, `jstest/quick-sheets.test.js`): a tile opens its sheet in place (no reload, the
   address kept, the focus to the sheet's head without a scroll), the open tile or Lukk closes it, the other rule tile
   only switches the mode; "Alle regler" leaves in Slå på nå; a length fills Til, typing Til clears the lengths; the

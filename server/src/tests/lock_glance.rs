@@ -928,10 +928,9 @@ async fn the_page_shows_each_note() {
         !html.contains("attention-action") && !html.contains("data-warning"),
         "{html}"
     );
-    assert!(!html.contains("Vibb One can&#39;t show these yet"));
     assert!(!html.contains("Missed calls only"));
 
-    // A launcher without the capability and without notification access; a Child PIN.
+    // A launcher without notification access; a Child PIN.
     sqlx::query(
         "UPDATE device_policy SET kid_pin_hash = 'aGFzaA', kid_pin_salt = 'c2FsdA', \
          kid_pin_length = 4 WHERE device_id = ?",
@@ -949,10 +948,9 @@ async fn the_page_shows_each_note() {
     .await;
     let html = page().await;
     assert!(!html.contains("without a Child PIN"));
-    assert!(html.contains("Vibb One can&#39;t show these yet"), "{html}");
     assert!(html.contains("Missed calls only"), "{html}");
 
-    // An up-to-date launcher with access: no warnings.
+    // A launcher with access: no warnings.
     report(
         &app,
         &token,
@@ -1037,19 +1035,17 @@ async fn meldingers_row_is_first_only_while_sms_is_managed_and_saves_in_place() 
     );
 }
 
-/// Design 82 D7: the row's own line for Off on a phone that can't hide the row yet, and the no-access note that
-/// counts Meldinger while its row shows.
+/// Design 82 D7: the no-access note counts Meldinger while its row shows.
 #[tokio::test]
-async fn meldingers_row_says_what_an_older_phone_shows_and_the_access_note_counts_it() {
+async fn the_access_note_counts_meldingers_row() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;
     let page =
         || async { subsection(&app.get_page(&lock_page(id), &cookie).await.text()).to_string() };
     sms_managed(&app, id).await;
-    const HINT: &str = "This phone still shows the name and how many - update Vibb One";
 
-    // A launcher from before `messages_app_v1`, without notification access.
+    // A launcher without notification access.
     report(
         &app,
         &token,
@@ -1059,29 +1055,16 @@ async fn meldingers_row_says_what_an_older_phone_shows_and_the_access_note_count
     .await;
     let html = page().await;
     assert!(html.contains("Missed calls and Messages only"), "{html}");
-    assert!(!form_of(&html, MESSAGES).unwrap().contains(HINT));
+    assert!(!form_of(&html, MESSAGES).unwrap().contains("data-hint"));
 
     show(&app, Some(&cookie), id, MESSAGES, "off").await;
     let html = page().await;
     assert!(html.contains("Missed calls only"), "{html}");
     assert!(!html.contains("Missed calls and Messages only"), "{html}");
     let form = form_of(&html, MESSAGES).unwrap();
-    assert!(form.contains(HINT), "{form}");
-    // Still its own cell: the hint is not the "unlisted" note.
+    assert!(!form.contains("data-hint"), "{form}");
+    // Still its own cell: no "unlisted" note.
     assert!(!form.contains("unlisted"), "{form}");
-
-    // An up-to-date launcher hides the row at Off: no line.
-    report(
-        &app,
-        &token,
-        &[],
-        json!({
-            "capabilities": ["lock_glance_v1", crate::lock_glance::MESSAGES_APP_CAPABILITY],
-            "notification_listener_enabled": true,
-        }),
-    )
-    .await;
-    assert!(!page().await.contains(HINT));
 }
 
 /// Design 82 D1: the prefix is reserved. A reported app under it is dropped at intake, and neither the allow switch
@@ -1329,31 +1312,7 @@ async fn the_buzz_switch_saves_logs_nudges_and_reaches_the_policy() {
     // Design 113: no sub-line under the switch (the group's ⓘ says what it buzzes for).
     assert!(!cell.contains("row-sub"), "{cell}");
     assert!(!cell.contains(" checked"), "off by default: {cell}");
-    // Code QA S4: a phone that has reported on a Vibb One from before the buzz (it ships with `messages_app_v1`)
-    // says so under the switch - never before the first report, and not once it is updated.
-    let hint = || async {
-        app.get_page(&lock_page(id), &cookie)
-            .await
-            .text()
-            .contains("This phone does not buzz yet - update Vibb One")
-    };
-    assert!(!cell.contains("data-hint"), "no report yet: {cell}");
-    report(
-        &app,
-        &token,
-        &[],
-        json!({ "capabilities": ["lock_glance_v1"] }),
-    )
-    .await;
-    assert!(hint().await);
-    report(
-        &app,
-        &token,
-        &[],
-        json!({ "capabilities": [crate::lock_glance::MESSAGES_APP_CAPABILITY] }),
-    )
-    .await;
-    assert!(!hint().await);
+    assert!(!cell.contains("data-hint"), "{cell}");
 
     let mut nudges = app.state.command_notify.subscribe();
     for on in [true, true, false] {

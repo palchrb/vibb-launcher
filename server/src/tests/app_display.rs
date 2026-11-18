@@ -547,7 +547,7 @@ async fn meldinger_has_a_row_and_a_name_and_icon_of_its_own() {
     // SMS not managed, nothing chosen, nothing reported: no row.
     assert_eq!(cell().await, None);
 
-    // The phone has threads to read: the row, saying where SMS stands, and an older Vibb One's note.
+    // The phone has threads to read: the row, saying where SMS stands.
     let res = app
         .request(
             Method::POST,
@@ -564,10 +564,7 @@ async fn meldinger_has_a_row_and_a_name_and_icon_of_its_own() {
         html.contains(r#"row-label">Messages<span class="row-sub">SMS not managed by Vibb<"#),
         "{html}"
     );
-    assert!(
-        html.contains("Shows on the phone after Vibb One is updated"),
-        "{html}"
-    );
+    assert!(!html.contains("data-display-note"), "{html}");
     assert!(
         html.contains(r##"data-auto-glyph="sms" data-auto-tile="#347470""##),
         "{html}"
@@ -590,7 +587,7 @@ async fn meldinger_has_a_row_and_a_name_and_icon_of_its_own() {
         "{html}"
     );
 
-    // SMS managed, and a Vibb One that knows the key: the plain row.
+    // SMS managed: the plain row.
     sqlx::query("UPDATE device_policy SET sms_mode = 'managed' WHERE device_id = ?")
         .bind(id)
         .execute(&app.db)
@@ -609,7 +606,6 @@ async fn meldinger_has_a_row_and_a_name_and_icon_of_its_own() {
     assert!(res.status.is_success());
     let html = cell().await.expect("the row");
     assert!(html.contains(r#"row-label">Messages</span>"#), "{html}");
-    assert!(!html.contains("after Vibb One is updated"), "{html}");
 
     // The contract's entry: a name, a glyph on a colour, off Home.
     let display = &contract["app"]["display"];

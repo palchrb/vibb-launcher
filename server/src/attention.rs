@@ -61,7 +61,7 @@ pub enum Kind {
     NotHomeApp,
     /// The boot cover was armed but not shown: another home screen came up at boot.
     BootCoverNotShown,
-    NoNotificationAccess,
+    CallsOnly,
     /// Design 107 §5.3: Meldinger or Tapte anrop turned off on the phone while Vibb runs it, or every Vibb One
     /// notification off while SMS or calls are managed ([Facts::notifications_off] holds which).
     NotificationsOff,
@@ -153,7 +153,7 @@ impl AttentionItem {
             Kind::PlayStoreOpenable => "play-store-openable",
             Kind::NotHomeApp => "not-home-app",
             Kind::BootCoverNotShown => "boot-cover-not-shown",
-            Kind::NoNotificationAccess => "notification-access",
+            Kind::CallsOnly => "notification-access",
             Kind::NotificationsOff => "notifications-off",
             Kind::MobileDataOff => "mobile-data-off",
             Kind::AppPushWaiting => "app-push-waiting",
@@ -250,7 +250,7 @@ pub fn items(lang: Lang, device_id: i64, facts: &Facts) -> Vec<AttentionItem> {
     add(facts.play_store_openable, Kind::PlayStoreOpenable);
     add(facts.not_home_app, Kind::NotHomeApp);
     add(facts.boot_cover_not_shown, Kind::BootCoverNotShown);
-    add(facts.no_notification_access, Kind::NoNotificationAccess);
+    add(facts.no_notification_access, Kind::CallsOnly);
     add(facts.notifications_off.is_some(), Kind::NotificationsOff);
     add(facts.mobile_data_off, Kind::MobileDataOff);
     add(facts.app_push.waiting_since.is_some(), Kind::AppPushWaiting);
@@ -316,7 +316,7 @@ fn level(kind: Kind) -> Level {
         | Kind::PlayStoreOpenable
         | Kind::NotHomeApp
         | Kind::BootCoverNotShown
-        | Kind::NoNotificationAccess
+        | Kind::CallsOnly
         | Kind::NotificationsOff
         | Kind::MobileDataOff
         | Kind::AppPushWaiting
@@ -359,7 +359,7 @@ fn title(lang: Lang, kind: Kind) -> String {
         Kind::PlayStoreOpenable => t(lang, "device.attention.play_store_openable"),
         Kind::NotHomeApp => t(lang, "device.attention.not_home_app"),
         Kind::BootCoverNotShown => t(lang, "device.attention.boot_cover_not_shown"),
-        Kind::NoNotificationAccess => t(lang, "device.attention.notification_access"),
+        Kind::CallsOnly => t(lang, "device.attention.notification_access"),
         // Worded from its facts in [items] (the names); this is its all-off form.
         Kind::NotificationsOff => t(lang, "device.attention.notifications_all_off"),
         Kind::MobileDataOff => t(lang, "device.attention.mobile_data_off"),
@@ -411,7 +411,7 @@ fn target(kind: Kind, id: i64) -> String {
         Kind::NotHomeApp | Kind::BootCoverNotShown => ("/advanced", "updates"),
         Kind::NoParentPin | Kind::EasyParentPin => ("/lock", "parent-pin"),
         Kind::ChildLockOff | Kind::ChildPinChanged => ("/lock", "child-pin"),
-        Kind::NoNotificationAccess => ("/home", "layout"),
+        Kind::CallsOnly => ("/home", "layout"),
         Kind::MobileDataOff => ("/mobile", "mobile-data"),
         Kind::AppPushWaiting | Kind::AppPushRefused(_) | Kind::AppPushOutside(_) => {
             ("/apps", "app-push")
@@ -640,8 +640,6 @@ pub fn facts_of(s: &Sources, now_ms: i64) -> Facts {
         crate::kid_lock::parse_lock_state(latest.and_then(|st| st.lock_state_json.as_deref()));
     let lock_phone = crate::kid_lock::PhoneLock {
         state: lock_state.as_ref(),
-        reported: latest.is_some(),
-        capable: capability(crate::kid_lock::PIN_LOCK_CAPABILITY),
         android_capable: capability(crate::kid_lock::ANDROID_KEYGUARD_CAPABILITY),
         pin_waiting: false,
     };

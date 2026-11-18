@@ -90,8 +90,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   "App logo" radio, Automatic previewed as the chat glyph on `#347470` (`BuiltinLook`, the form's `data-auto-glyph` /
   `data-auto-tile`, read by `static/app-display.js`), a chosen glyph with colour Automatic on the same teal
   (`BuiltinLook::shown`), a colour only with a glyph as for every app, On Home with its own sub
-  (`apps.builtin.on_home_sub`), and `note` "Shows on the phone after Vibb One is updated" while the phone's last
-  report lacks `messages_app_v1`. **The row** on Device › Apps (`render_apps`, `AppView.builtin`,
+  (`apps.builtin.on_home_sub`). **The row** on Device › Apps (`render_apps`, `AppView.builtin`,
   `partials/device_app_row.html`'s own branch): directly under Vibb One's, no switch, no permissions, "Part of Vibb
   One" - listed while `sms_mode` is `managed`, while a row is stored for the key, or while `sms_state.has_history`
   is true in the newest report that carries an `sms_state` (`sms::reported_history`; W2: the tile may linger on Home
@@ -145,8 +144,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   sent as `launcher_ui.lock_weather` (always; `policy_json_keys_snapshot`, the launcher's `PolicyResponseCompatTest`);
   `device_policy.weather_zone_id` (one of the phone's zones, `docs/notes/server/zones.md`) never leaves the server. Each
   save answers on its own anchor of the lock page (`#weather-lock`, `#weather-zone`), logs `lock_weather_changed` /
-  `lock_weather_zone_changed` (the zone's name, never coordinates) only on a change, and nudges the phone. Notes: no
-  fresh position and no zone; a Vibb One without the `lock_weather_v1` capability.
+  `lock_weather_zone_changed` (the zone's name, never coordinates) only on a change, and nudges the phone. Note: no
+  fresh position and no zone.
 - **The routes** (`handlers::weather`, bearer): `GET /api/devices/weather` - `off` (no outside request),
   `no_position`, `unavailable` or `ok` with four hour entries and the card's days (§3.5; `testdata/weather.json`'s
   `answer`, shared with the launcher); `GET /api/devices/weather/now` - `none` or `ok` with the nowcast line or null.

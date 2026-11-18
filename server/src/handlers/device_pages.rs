@@ -1055,8 +1055,6 @@ struct LockTemplate {
     lock_wake: bool,
     /// "Buzz for a notification" (design 82 W3, `/lock-buzz`).
     lock_buzz: bool,
-    /// The phone has reported and its Vibb One is from before the buzz: the switch's orange line (code QA S4).
-    lock_buzz_needs_update: bool,
     /// The Notifications group: one switch per app and, on a ticked one, its text switch.
     lock_screen: crate::lock_glance::LockScreenCard,
     lock_screen_warnings: Vec<Note>,
@@ -1290,8 +1288,6 @@ fn phone_lock<'a>(
 ) -> crate::kid_lock::PhoneLock<'a> {
     crate::kid_lock::PhoneLock {
         state,
-        reported: latest.is_some(),
-        capable: has_capability(latest, crate::kid_lock::PIN_LOCK_CAPABILITY),
         android_capable: has_capability(latest, crate::kid_lock::ANDROID_KEYGUARD_CAPABILITY),
         pin_waiting,
     }
@@ -1398,11 +1394,10 @@ async fn render_lock(
         child_rows.push(crate::kid_lock::LockNote::PinSent(send).note(lang, None));
     }
     let parent = crate::handlers::parent_pin::card(lang, &policy, notice);
-    let weather =
-        match crate::handlers::weather_page::card(state, id, &policy, latest.as_ref()).await {
-            Ok(weather) => weather,
-            Err(err) => return read_failed(lang, id, "the phone's zones", err),
-        };
+    let weather = match crate::handlers::weather_page::card(state, id, &policy).await {
+        Ok(weather) => weather,
+        Err(err) => return read_failed(lang, id, "the phone's zones", err),
+    };
 
     let backgrounds: Vec<_> = crate::handlers::wallpapers::device_choices(state, lang, id)
         .await
@@ -1477,11 +1472,6 @@ async fn render_lock(
         backgrounds,
         lock_wake: policy.lock_wake_on_notification,
         lock_buzz: policy.lock_buzz_on_notification,
-        // Design 82's code QA S4: the buzz ships in the launcher release that reports `messages_app_v1` (there is no
-        // capability of its own), so a phone whose last report lacks it never buzzes - say so by the switch, as the
-        // Apps row's "older Vibb One" note: only once the phone has reported, never before.
-        lock_buzz_needs_update: latest.is_some()
-            && !has_capability(latest.as_ref(), crate::lock_glance::MESSAGES_APP_CAPABILITY),
         lock_screen_warnings: lock_screen.notes.iter().map(|n| n.note(lang)).collect(),
         lock_screen,
         child,
@@ -2427,9 +2417,6 @@ pub(crate) async fn render_apps(
         if !on_home {
             form.summary = format!("{} · {}", form.summary, t(lang, "apps.not_on_home"));
         }
-        form.note = (latest.is_some()
-            && !has_capability(latest.as_ref(), crate::lock_glance::MESSAGES_APP_CAPABILITY))
-        .then_some(t(lang, "apps.builtin.update_note"));
         let label = current.and_then(|values| values.label.clone());
         let row = crate::handlers::devices::UnifiedAppRow {
             // Design 113: a line only while SMS isn't managed.

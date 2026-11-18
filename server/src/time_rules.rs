@@ -113,7 +113,7 @@ pub struct PolicyTimeRule {
     pub silent: bool,
     pub days: Vec<Option<DayWindow>>,
     /// Design 93 §9.1: a rule turned on now ends for good at this instant (epoch ms), whatever its
-    /// weekday window says; `null` on a scheduled rule. A launcher without `lock_now_v1` ignores it.
+    /// weekday window says; `null` on a scheduled rule.
     pub until_ms: Option<i64>,
     /// Design 93 §9.2: the card shows this rule ahead of the kind order while its end is a real
     /// unlock; true on a turned-on rule only.

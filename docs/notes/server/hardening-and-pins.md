@@ -13,8 +13,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 
 - **Migration `0030_kid_lock.sql`**: `device_policy.kid_pin_hash/kid_pin_salt/kid_pin_length` (NULL hash = no lock), `device_status.lock_state_json`.
 - **Kid PIN** (`src/kid_lock.rs`, pure + unit tests): 4-6 ASCII digits, hashed with `security::hash_pin` like the parent (override) PIN. Set/remove on Lock Screen & PINs (design 31 step 4; the device page's "Screen lock" card before; `POST /devices/{id}/kid-lock`, `new_kid_pin` / `clear_kid_pin`; 404 unknown device, 500 nothing written on a DB error; security events `kid_pin_changed`/`kid_pin_cleared`; nudges). Refused (nothing written, `?notice=<code>` flash on the device page, `kid_lock::flash_text`) when not 4-6 digits, **without an override PIN** (it is the lock screen's "Parent code") or when it verifies against the override hash (`security::verify_pin`). The other way round in `update_policy`: a new override PIN that verifies against the kid hash is refused, and the override PIN can't be removed while a kid PIN is set. PBKDF2 for these checks runs in `spawn_blocking`; the kid-PIN `UPDATE` only applies `WHERE override_pin_hash IS NOT NULL` (0 rows = needs_override) and `update_policy`'s SQL keeps the override while a kid PIN is set, so parallel saves can't leave a kid PIN without its parent code. The **first** kid PIN also sets `disallow_safe_boot` (safe mode skips the launcher's lock); later changes leave the switch as the parent set it.
-- **Wire**: `PolicyResponse.kid_lock = {pin_hash, pin_salt, pin_length} | null`, always sent (`policy_json_keys_snapshot`); a half-written row (length outside 4-6, a NULL column) is sent as null - a privacy lock fails open. The kid hash appears only there (never in a status, log or page). Status `lock_state` is stored **re-serialized through `kid_lock::LockState`** (`sanitize_lock_state(value, now_ms)`: only `active, inactive, locked, failures, backoff_until_ms, exempt_yields, voip_fsi_denied, voip_rang`, `inactive` capped at 64 chars), so no unlock times or PIN material can reach the DB. Capability `pin_lock_v1`. **`voip_rang`** (launcher round 7, design `r7-launcher-small-items.md` §1.1.3): `[{package, last_at_ms}]`, the apps whose call rang over the LOCKED lock in the last 7 days; parsed leniently (`#[serde(default)]` + a per-entry `deserialize_with`: a list that isn't one is empty, an entry that doesn't parse is dropped - never the whole `lock_state`), then `valid_package_name`, a time > 0 and at most 5 min past the server's `now_ms` (clock skew), one per package (the newest), newest first, at most 8. Lock Screen & PINs' Child PIN group shows one quiet row per entry, "Calls from <name> · Rang over the lock · 14:02" (`kid_lock::rang_notes`, `LockNote::RangOverLock`: the name the Apps page shows - catalog or the phone's label - else the package; the time as the page's other times, `Zone::when`), only with a Child PIN set.
-- **PWA** (Lock Screen & PINs › Child PIN since design 31 step 4): the footer's ⓘ has the privacy text (since the ⓘ cut, pwa.md: the back-off, the Parent PIN opens it, it doesn't encrypt the phone's data, some bank apps won't work), the phone's state as rows and warnings as typed `kid_lock::LockNote`s: launcher without `pin_lock_v1` (safe boot allowed is no warning: the first Child PIN turns Block safe mode on, a later Off is the parent's choice, with no note), every `inactive` but `no_pin` (`kid_lock::Inactive`; `android_credential`'s adb removal behind the warning's ⓘ), a VoIP app without full-screen intents (its adb fix behind the ⓘ). `call_state.in_call_ui_failed_at` (the in-call screen couldn't come up over the lock) is a call warning for 7 days. The Locate tab's ⓘ under the actions explains what Lock does with and without a Child PIN (the answers "locked (handy lock)" / "locked (Android)" read "Locked with the Child PIN" / "Screen off (no Child PIN set)").
+- **Wire**: `PolicyResponse.kid_lock = {pin_hash, pin_salt, pin_length} | null`, always sent (`policy_json_keys_snapshot`); a half-written row (length outside 4-6, a NULL column) is sent as null - a privacy lock fails open. The kid hash appears only there (never in a status, log or page). Status `lock_state` is stored **re-serialized through `kid_lock::LockState`** (`sanitize_lock_state(value, now_ms)`: only `active, inactive, locked, failures, backoff_until_ms, exempt_yields, voip_fsi_denied, voip_rang`, `inactive` capped at 64 chars), so no unlock times or PIN material can reach the DB. **`voip_rang`** (launcher round 7, design `r7-launcher-small-items.md` §1.1.3): `[{package, last_at_ms}]`, the apps whose call rang over the LOCKED lock in the last 7 days; parsed leniently (`#[serde(default)]` + a per-entry `deserialize_with`: a list that isn't one is empty, an entry that doesn't parse is dropped - never the whole `lock_state`), then `valid_package_name`, a time > 0 and at most 5 min past the server's `now_ms` (clock skew), one per package (the newest), newest first, at most 8. Lock Screen & PINs' Child PIN group shows one quiet row per entry, "Calls from <name> · Rang over the lock · 14:02" (`kid_lock::rang_notes`, `LockNote::RangOverLock`: the name the Apps page shows - catalog or the phone's label - else the package; the time as the page's other times, `Zone::when`), only with a Child PIN set.
+- **PWA** (Lock Screen & PINs › Child PIN since design 31 step 4): the footer's ⓘ has the privacy text (since the ⓘ cut, pwa.md: the back-off, the Parent PIN opens it, it doesn't encrypt the phone's data, some bank apps won't work), the phone's state as rows and warnings as typed `kid_lock::LockNote`s (safe boot allowed is no warning: the first Child PIN turns Block safe mode on, a later Off is the parent's choice, with no note): every `inactive` but `no_pin` (`kid_lock::Inactive`; `android_credential`'s adb removal behind the warning's ⓘ), a VoIP app without full-screen intents (its adb fix behind the ⓘ). `call_state.in_call_ui_failed_at` (the in-call screen couldn't come up over the lock) is a call warning for 7 days. The Locate tab's ⓘ under the actions explains what Lock does with and without a Child PIN (the answers "locked (handy lock)" / "locked (Android)" read "Locked with the Child PIN" / "Screen off (no Child PIN set)").
 - Tests: `src/tests/step10.rs`, `kid_lock::tests`, `security::tests::pin_hash_shared_vector` (same vector as the launcher's `PinHashTest`).
 
 ## Parent PIN (design 24, `docs/design/24-parent-pin-hardening.md`, migrations `0056_parent_pin_easy.sql`, `0057_device_pin_events.sql`)
@@ -47,7 +47,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   notification rows, "Lås opp", "Nødsamtale"): missed calls always, and messages from the apps the parent ticks here,
   sender only unless that app's text switch is on (design 51). A row's tap only reaches the keypad; nothing is answered, marked read or
   dismissed from the lock. The phone reads the notifications in memory only - **no row, name, text or count ever
-  comes to this server** (only the capability `lock_glance_v1`).
+  comes to this server**.
 - **Data** (`src/lock_glance.rs`): `device_lock_glance_apps` (device_id, package_name, `show_text` since 0083 -
   default 0, the sender only; one row per tick, cascades with the device - a table, like `device_tracked_apps`, so
   there is no corrupt state). An untick deletes the row, so a new tick and a re-tick start at the sender only. The
@@ -65,7 +65,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   Apps card's "On the lock screen" before): the explanation and Low 8's warning (names show to anyone holding the
   phone even with the text off, missed-call names included; with an SMS app's text on its login codes show too) in
   the Lock screen group's ⓘ, the warnings (typed `lock_glance::Note`: no Child PIN, `notification_listener_enabled`
-  false, a reporting launcher without `lock_glance_v1`) and, under "Notifications on the lock screen", one
+  false) and, under "Notifications on the lock screen", one
   auto-saving switch per app (`POST /devices/{id}/lock-screen/apps`, `package_name` + checkbox `on`, in the cell
   `#lock-screen-app-<package>`) and, under each ticked one, its own small form "Show message text" (design 51: `POST
   /devices/{id}/lock-screen/apps/text`, `package_name` + checkbox `show_text`; sub-line "Text shown on the lock" /
@@ -97,9 +97,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   row first in the group, with or without an allowlist, **only while `sms_mode` is `managed`** (`messages_row`; the
   same select, the same route and anchor `#lock-screen-app-me.vibb.builtin.messages`, so it saves in place; labelled with the parent's
   name for Meldinger when one is set - design 82 W1, `app_display::device_label`, a failed read is the page's word).
-  With Off stored on a phone that has reported without `messages_app_v1` (`MESSAGES_APP_CAPABILITY`) the row says "This phone
-  still shows the name and how many - update Vibb One" in its own field `LockScreenApp.hint` - never `note`, which
-  would make the form post `unlisted=1` and return to the group. With no notification access while the row is listed
+  With no notification access while the row is listed
   and not Off the note is `Note::NoNotificationAccessButMessages` ("Missed calls and Messages only"). The security log
   never shows the key: `log_line` / `text_log_line` pick `security.detail.lock_screen_messages(.on/.off)` and
   `lock_screen_messages_text(.on/.off)`, without a package parameter. **The reservation** (D1): a reported installed
@@ -186,7 +184,7 @@ bygger for!"; Vibb One's own lock goes in phase D):
   reported `android_keyguard_v1`. Until Android's PIN is set the launcher's own keypad checks the same hash
   (`androidFace` needs `deviceSecure`; design 59 §3.4's keypad migration is the path without a kept copy), so the
   phone is never without a lock once the PIN exists; an older launcher reads `keyguard` as an unknown key and keeps
-  Vibb One's lock, with the page's "Update Vibb One" warning. The launcher was not changed.
+  Vibb One's lock. The launcher was not changed.
 - **Remove Child PIN is refused while Android's lock is chosen**: removing it would roll the phone back to no lock at
   all (design 59 §3.8, `kid_lock` null). The page shows a row instead of the confirm ("Android's lock needs a Child
   PIN. To change it, save a new one above; to remove it, choose Vibb One's lock first."; `data-row="remove-needs-pin"`), and a post from
@@ -216,9 +214,8 @@ bygger for!"; Vibb One's own lock goes in phase D):
   else `pin_sent` + `kid_pin_sent` + a nudge. Offered (`kid_lock::offers_send_again`) while Android's lock is chosen,
   a copy is kept, the phone (its last report since the enrolment, S2P-4) has the capability and doesn't run the current PIN (`keyguard: own`, `pin_rev` null or
   another), nothing waits and the newest row isn't in flight (sent, or taken without an answer).
-- **The group's notes** (`kid_lock::lock_card(policy, &PhoneLock, now)`; `PhoneLock` = the report, its two
-  capabilities, a waiting row): Android's lock chosen and an older launcher - "Update Vibb One for Android's lock";
-  chosen and the phone on Vibb One's - row "Android's lock · Waiting" / "Sending the PIN"; on Android's lock with
+- **The group's notes** (`kid_lock::lock_card(policy, &PhoneLock, now)`; `PhoneLock` = the report, its
+  `android_keyguard_v1`, a waiting row): Android's lock chosen and the phone on Vibb One's - row "Android's lock · Waiting" / "Sending the PIN"; on Android's lock with
   `pin_rev: null` - "Phone's PIN isn't the Child PIN" (also an Attention action row, `Kind::ChildPinChanged`,
   `kid_lock::pin_changed_on_phone`); without the token - "Vibb One can't change Android's PIN"; Vibb One's chosen
   and the phone on Android's - row "Switching back…", or the warning "Android's PIN is still on" without the token or
