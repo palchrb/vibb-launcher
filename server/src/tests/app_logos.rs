@@ -457,6 +457,12 @@ async fn the_pages_show_the_logos() {
     assert!(lily_page.contains(&tile(&sha(&own))), "{lily_page}");
 
     // The Lock page's lock-screen list: the same tile, the logo over its letter, else the letter.
+    sqlx::query("UPDATE device_policy SET allowlist_json = ? WHERE device_id = ?")
+        .bind(r#"["org.example.drawing","org.example.notes"]"#)
+        .bind(emma)
+        .execute(&app.db)
+        .await
+        .unwrap();
     let lock = app
         .get_page(&device_page(emma, Section::Lock), &cookie)
         .await
