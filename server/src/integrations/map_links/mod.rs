@@ -50,6 +50,10 @@ pub struct MapLinks {
     pub(crate) phone_asks: PhoneAsks,
     /// 100 calls to Google or Apple an hour, server-wide.
     pub(crate) outbound: resolve::Window,
+    /// 10 calls out in any 10 minutes, server-wide (the burst under Google's wall).
+    pub(crate) burst: resolve::Window,
+    /// Lookups paused until this instant after Google's wall (`resolve::BLOCKED_PAUSE`).
+    pub(crate) blocked: std::sync::Mutex<Option<tokio::time::Instant>>,
     /// The whole resolve's deadline (hops and the lookup together).
     pub(crate) deadline: Duration,
     pub(crate) health: HealthCell,
@@ -74,6 +78,8 @@ impl MapLinks {
             cache: Default::default(),
             phone_asks: PhoneAsks::new(resolve::PHONE_RESOLVES_AN_HOUR, Duration::from_secs(3600)),
             outbound: resolve::Window::new(resolve::CALLS_AN_HOUR, Duration::from_secs(3600)),
+            burst: resolve::Window::new(resolve::BURST_CALLS, resolve::BURST_WINDOW),
+            blocked: Default::default(),
             deadline: resolve::DEADLINE,
             health: Default::default(),
         }

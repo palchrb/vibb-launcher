@@ -658,3 +658,51 @@ async fn a_lookup_without_an_answer_is_asked_again() {
     assert_eq!(resolve(&app, &token, request).await.1, json!({"url": long}));
     assert_eq!(app.fetch.count(), 2);
 }
+
+/// The emulator gate (2026-11-18): Google's wall pauses the lookups for an hour - nothing more is sent, each ask
+/// counted `blocked`, and the PWA's line shows; and at most 10 calls go out in any 10 minutes.
+#[tokio::test]
+async fn the_wall_pauses_lookups_and_a_burst_is_capped() {
+    let app = TestApp::new().await;
+    let (id, token) = phone_on(&app).await;
+    let first = "0x46416db4338a09ff:0x1";
+    answer_lookup(&app, first, "wall_403");
+    assert_eq!(
+        resolve(&app, &token, json!({"ftid": first})).await,
+        (StatusCode::OK, json!({}))
+    );
+    assert_eq!(app.fetch.count(), 1);
+    // Another id during the pause: nothing sent.
+    let second = "0x46416db4338a09ff:0x2";
+    answer_lookup(&app, second, "artbox");
+    assert_eq!(
+        resolve(&app, &token, json!({"ftid": second})).await,
+        (StatusCode::OK, json!({}))
+    );
+    assert_eq!(app.fetch.count(), 1);
+    let counts = resolve::recent_counts(&app.db).await.unwrap();
+    assert_eq!(counts, vec![("blocked".to_string(), 2)]);
+    let cookie = app.admin_cookie().await;
+    let html = app
+        .get_page(&format!("/devices/{id}/apps"), &cookie)
+        .await
+        .text();
+    assert!(html.contains("data-warning=\"map-lookup\""));
+
+    // The burst: ten short links go out, the eleventh is busy.
+    let app = TestApp::new().await;
+    let (_, token) = phone_on(&app).await;
+    let long = "https://www.google.com/maps/search/Kiwi";
+    for n in 0..=resolve::BURST_CALLS {
+        let short = format!("https://maps.app.goo.gl/Burst{n}");
+        app.fetch.redirect(&short, 302, long);
+        let (status, _) = resolve(&app, &token, json!({"url": short})).await;
+        let want = if n < resolve::BURST_CALLS {
+            StatusCode::OK
+        } else {
+            StatusCode::TOO_MANY_REQUESTS
+        };
+        assert_eq!(status, want, "{n}");
+    }
+    assert_eq!(app.fetch.count(), resolve::BURST_CALLS);
+}

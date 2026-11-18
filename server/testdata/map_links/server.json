@@ -356,6 +356,29 @@
    "place": null
   },
   {
+   "name": "wall_403",
+   "source": "built: Google's wall for the server's address (the emulator gate, 2026-11-18: a 403 and its Sorry page)",
+   "ftid": "0x46416db4338a09ff:0x7d7d788043d1f40e",
+   "text": null,
+   "status": 403,
+   "content_type": "text/html",
+   "body": "<html>Sorry...</html>",
+   "outcome": "blocked",
+   "place": null
+  },
+  {
+   "name": "wall_sorry",
+   "source": "built",
+   "ftid": "0x46416db4338a09ff:0x7d7d788043d1f40e",
+   "text": null,
+   "status": 302,
+   "location": "https://www.google.com/sorry/index?continue=x",
+   "content_type": null,
+   "body": "",
+   "outcome": "blocked",
+   "place": null
+  },
+  {
    "name": "a_500",
    "source": "built",
    "ftid": "0x46416db4338a09ff:0x7d7d788043d1f40e",
@@ -688,6 +711,38 @@
    "counts": {
     "consent": 3,
     "echo": 1
+   },
+   "line": false
+  },
+  {
+   "counts": {
+    "unreachable": 3
+   },
+   "line": true
+  },
+  {
+   "counts": {
+    "unreachable": 2
+   },
+   "line": false
+  },
+  {
+   "counts": {
+    "blocked": 1
+   },
+   "line": true
+  },
+  {
+   "counts": {
+    "blocked": 4,
+    "busy": 9
+   },
+   "line": true
+  },
+  {
+   "counts": {
+    "blocked": 1,
+    "found": 1
    },
    "line": false
   }

@@ -7,7 +7,8 @@
 //! - **Calls out**: one GET per hop (redirects never followed, `Location` read, at most 3 hops, a hop to a short-link
 //!   host rebuilt through [links::short_link]), then one GET to Google's place lookup - all within one 5 s deadline,
 //!   through the integration's own gate (one at a time, 200 ms apart; a third caller is `busy` at once).
-//! - **Limits**: 30 resolves per phone an hour; 100 calls out an hour server-wide.
+//! - **Limits**: 30 resolves per phone an hour; 100 calls out an hour and 10 in any 10 minutes, server-wide; after
+//!   Google's wall (a 403/429 or its "Sorry" page) no lookup for an hour.
 //! - **The cache**: a long link and a place 10 minutes; a dead link and Google's answer without a place 1 minute; a
 //!   call that got no answer not at all. At most 500 entries; in memory only.
 //! - **The log** has the host and the outcome only: no id, no text, no point.
@@ -33,6 +34,13 @@ use crate::security::AuthedDevice;
 pub const BODY_LIMIT: usize = 1024;
 pub const PHONE_RESOLVES_AN_HOUR: usize = 30;
 pub const CALLS_AN_HOUR: usize = 100;
+/// The burst limit on top of the hour's (the emulator gate, 2026-11-18: Google walled the address after about 20
+/// lookups in 5 minutes): at most 10 calls out in any 10 minutes, server-wide.
+pub const BURST_CALLS: usize = 10;
+pub const BURST_WINDOW: Duration = Duration::from_secs(600);
+/// After Google's wall ([Outcome::Blocked]) no lookup is sent for this long (short links' hops still go: another
+/// host); each one asked meanwhile is counted `blocked`.
+pub const BLOCKED_PAUSE: Duration = Duration::from_secs(3600);
 /// Hops and the lookup together: the phone gives up at 6 s.
 pub const DEADLINE: Duration = Duration::from_secs(5);
 const HOPS: usize = 3;
@@ -450,6 +458,15 @@ impl MapLinks {
         let (outcome, place) = tokio::time::timeout_at(deadline, self.lookup(ftid, text, hl))
             .await
             .unwrap_or((Outcome::Unreachable, None));
+        // Google's wall: no lookup for the pause (a new pause only once the last one ended).
+        if outcome == Outcome::Blocked
+            && self
+                .blocked_until()
+                .is_none_or(|until| until <= Instant::now())
+        {
+            *self.blocked.lock().unwrap_or_else(|e| e.into_inner()) =
+                Some(Instant::now() + BLOCKED_PAUSE);
+        }
         count(db, outcome).await;
         let at = chrono::Utc::now();
         if outcome.found() {
@@ -466,7 +483,13 @@ impl MapLinks {
     }
 
     async fn lookup(&self, ftid: &str, text: Option<&str>, hl: &str) -> (Outcome, Option<Place>) {
-        if !self.outbound.take(Instant::now()) {
+        if self
+            .blocked_until()
+            .is_some_and(|until| until > Instant::now())
+        {
+            return (Outcome::Blocked, None);
+        }
+        if !self.calls_out(Instant::now()) {
             return (Outcome::Busy, None);
         }
         let mut request = SourceRequest::new(
@@ -489,12 +512,22 @@ impl MapLinks {
         }
     }
 
+    /// One call out at `now` within both limits (the burst's and the hour's), counted in both.
+    fn calls_out(&self, now: Instant) -> bool {
+        self.burst.take(now) && self.outbound.take(now)
+    }
+
+    /// The end of the pause after Google's wall, if one was met.
+    fn blocked_until(&self) -> Option<Instant> {
+        *self.blocked.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     /// The hops from a short link to a long map link: `Dead` for anything else, `Unreachable` when a hop can't be
     /// asked, `Busy` past the hour's calls.
     pub(crate) async fn hops(&self, short: &str) -> Result<String, Refusal> {
         let mut url = short.to_string();
         for _ in 0..HOPS {
-            if !self.outbound.take(Instant::now()) {
+            if !self.calls_out(Instant::now()) {
                 return Err(Refusal::Busy);
             }
             let mut request = SourceRequest::new(url.as_str(), Kind::ShortLink, Reach::Public);
@@ -541,19 +574,22 @@ fn host_of(url: &str) -> String {
         .unwrap_or_default()
 }
 
-/// The last 24 hours' outcomes say Google's lookup is broken (§8.4): at least 3 broken answers (`consent`, `http`,
-/// `format`), nothing found, and no other check failing (`busy` and `unreachable` are ours or the network's).
+/// The last 24 hours' outcomes say Google's lookup is broken (§8.4): nothing found, no other check failing, and
+/// either Google's wall (`blocked`, once is enough) or at least 3 lookups without a usable answer (`consent`, `http`,
+/// `format`, `unreachable` - the emulator gate saw an outage booked as `unreachable` alone). `busy` is ours.
 pub fn lookup_broken(counts: &[(String, i64)]) -> bool {
     let mut broken = 0;
+    let mut blocked = false;
     for (outcome, n) in counts {
         match outcome.as_str() {
-            "consent" | "http" | "format" => broken += n,
-            "busy" | "unreachable" => {}
+            "consent" | "http" | "format" | "unreachable" => broken += n,
+            "blocked" => blocked |= *n > 0,
+            "busy" => {}
             _ if *n > 0 => return false,
             _ => {}
         }
     }
-    broken >= 3
+    blocked || broken >= 3
 }
 
 /// Today's and yesterday's counts (the counter is by day).

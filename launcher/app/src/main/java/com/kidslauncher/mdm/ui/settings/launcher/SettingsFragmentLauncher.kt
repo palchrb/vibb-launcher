@@ -661,10 +661,16 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
             hosts = runtime.vibbHosts(context),
         )
         group.isVisible = rows.shown
+        // The emulator gate's finding 3: from Android 16 the "Open by default" page has "In the app" / "In your
+        // browser", not the "Open supported links" switch (14's; 15 unverified, the switch's words kept there).
+        val twoChoices = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.BAKLAVA
         for ((key, row, pkg, todo) in listOf(
-            MapLinkRowView(MAP_LINKS_HOLDER, rows.holder, com.kidslauncher.mdm.map.MapLinkForms.SHORT_LINK_HOLDER, R.string.map_links_step_holder_todo),
-            MapLinkRowView(MAP_LINKS_VIBB, rows.vibb, context.packageName, R.string.map_links_step_vibb_todo),
-            MapLinkRowView(MAP_LINKS_BACK, rows.back, com.kidslauncher.mdm.map.MapLinkForms.SHORT_LINK_HOLDER, R.string.map_links_step_back_todo),
+            MapLinkRowView(MAP_LINKS_HOLDER, rows.holder, com.kidslauncher.mdm.map.MapLinkForms.SHORT_LINK_HOLDER,
+                if (twoChoices) R.string.map_links_step_holder_todo_16 else R.string.map_links_step_holder_todo),
+            MapLinkRowView(MAP_LINKS_VIBB, rows.vibb, context.packageName,
+                if (twoChoices) R.string.map_links_step_vibb_todo_16 else R.string.map_links_step_vibb_todo),
+            MapLinkRowView(MAP_LINKS_BACK, rows.back, com.kidslauncher.mdm.map.MapLinkForms.SHORT_LINK_HOLDER,
+                if (twoChoices) R.string.map_links_step_back_todo_16 else R.string.map_links_step_back_todo),
         )) {
             val pref = findPreference<Preference>(key) ?: continue
             pref.isVisible = row.shown

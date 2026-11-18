@@ -31,11 +31,14 @@ pub enum Outcome {
     Unreachable,
     /// The server's own limits: no request was sent.
     Busy,
+    /// Google's wall for this server's address: a 403 or 429, or a redirect to its "Sorry" page (the emulator
+    /// gate, 2026-11-18). Lookups pause for [super::resolve::BLOCKED_PAUSE] after it.
+    Blocked,
 }
 
 impl Outcome {
     #[cfg(test)]
-    pub const ALL: [Outcome; 11] = [
+    pub const ALL: [Outcome; 12] = [
         Outcome::Found,
         Outcome::Disagree,
         Outcome::Consent,
@@ -47,6 +50,7 @@ impl Outcome {
         Outcome::Text,
         Outcome::Unreachable,
         Outcome::Busy,
+        Outcome::Blocked,
     ];
 
     pub fn code(self) -> &'static str {
@@ -62,6 +66,7 @@ impl Outcome {
             Outcome::Text => "text",
             Outcome::Unreachable => "unreachable",
             Outcome::Busy => "busy",
+            Outcome::Blocked => "blocked",
         }
     }
 
@@ -104,18 +109,29 @@ pub fn judge(
     text: Option<&str>,
 ) -> (Outcome, Option<Place>) {
     if (300..400).contains(&status) {
-        let consent = location
-            .and_then(|l| reqwest::Url::parse(l).ok())
-            .and_then(|u| u.host_str().map(str::to_ascii_lowercase))
+        let target = location.and_then(|l| reqwest::Url::parse(l).ok());
+        let host = target
+            .as_ref()
+            .and_then(|u| u.host_str().map(str::to_ascii_lowercase));
+        let consent = host
+            .as_deref()
             .is_some_and(|h| h == "consent.google.com" || h.starts_with("consent.google."));
+        let sorry = target
+            .as_ref()
+            .is_some_and(|u| u.path().starts_with("/sorry"));
         return (
             if consent {
                 Outcome::Consent
+            } else if sorry {
+                Outcome::Blocked
             } else {
                 Outcome::Http
             },
             None,
         );
+    }
+    if status == 403 || status == 429 {
+        return (Outcome::Blocked, None);
     }
     if status != 200 {
         return (Outcome::Http, None);

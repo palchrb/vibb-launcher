@@ -950,4 +950,8 @@
     <string name="map_links_step_back_todo">Slå på «Åpne støttede linker» igjen</string>
     <string name="map_links_pause_first">Sett alle begrensninger på pause først</string>
     <string name="map_links_day_row">Kart</string>
+    <!-- Design 110, the emulator gate's finding 3: Android 16's "Open by default" page has two choices instead of the switch. -->
+    <string name="map_links_step_holder_todo_16">Velg «I nettleseren»</string>
+    <string name="map_links_step_vibb_todo_16">Velg «I appen» og legg til alle linkene</string>
+    <string name="map_links_step_back_todo_16">Velg «I appen» igjen</string>
 </resources>

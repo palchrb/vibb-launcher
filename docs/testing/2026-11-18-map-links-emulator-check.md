@@ -94,3 +94,53 @@ steps' pages, the Organic Maps and CoMaps cards; kept outside the repo.
 
 Owed: G1/G1b on the user's server (with the server itself), G10's card for a mapped place, G11/G11b with Element X,
 Android 17, the Jelly Star.
+
+## Overnight fixes after the gate (no emulator, no request to Google)
+
+**Finding 3.** The PIN-gated Settings rows now name Android 16's choices from `Build.VERSION_CODES.BAKLAVA` on:
+"Velg «I nettleseren»" / "Choose “In your browser”" (step 1), "Velg «I appen» og legg til alle linkene" / "Choose “In
+the app” and add every link" (step 2), "Velg «I appen» igjen" / "Choose “In the app” again" (the way back). Android 14
+keeps the switch's words. Android 15 is unverified and keeps 14's words. The nb labels are taken from Android 16's
+English and need checking on a Norwegian phone. The PWA's ⓘ no longer names the switch: "… and turn its links off" /
+"… and turn on all of them".
+
+**Finding 2: what differs in the server's call, read from the code.**
+- **The lookup request.**
+  - Client: reqwest 0.13 on hyper 1, **HTTP/1.1 only**. The `http2` feature isn't on, so ALPN offers `http/1.1`
+    alone.
+  - TLS: **rustls 0.23 with the ring provider**. Its ClientHello has no GREASE, a different extension and cipher
+    order, and no `compress_certificate` or `status_request`, unlike curl's OpenSSL and Python's OpenSSL. That makes
+    it a different TLS fingerprint.
+  - Headers: `user-agent: vibb/1.0`, `accept: */*` and `accept-encoding: gzip` (reqwest's `gzip` feature). No
+    `Accept-Language`, no cookie, no referer.
+  - DNS: getaddrinfo through the public-only resolver, both address families.
+  - Connect timeout 3 s; 4 s per request; the integration's 5 s deadline from the start of the resolve. A feature-id
+    request has all of it; a short link shares it with its hops.
+- **The body read.** It reads frames to the end of the message, capped at 256 KB.
+- **What the gate measured rules out** DNS, connect, connection reuse, the body read and the deadline. TCP and TLS
+  completed, the request went out, and not one byte came back in 4 s. curl over HTTP/1.1 and /2, IPv4 and IPv6, got
+  200 in 0.2 s. The same client's hops to `maps.app.goo.gl` were answered.
+- **What is left:** the TLS fingerprint and the request headers (the user agent, and `Accept-Encoding: gzip`).
+  - The 403 "Sorry" wall also came only after a 5-6 s delay, which looks like Google's front end holding clients it
+    classes as automated.
+  - Nothing in the client is plainly wrong, so nothing in it was changed.
+  - A browser `User-Agent` would be the trick design 110 §11 rules out.
+- **To verify on the user's server.** At most four requests, a minute or more apart. The burst limit below keeps the
+  server itself within this.
+  1. `curl --http1.1 -A 'vibb/1.0' -H 'Accept-Encoding: gzip' -o /dev/null -w '%{http_code} %{time_total}\n' '<lookup URL>'`.
+     If this hangs too, the user agent or headers are the cause.
+  2. The same with curl's own user agent.
+  3. One tap of the Artbox short link through the server itself, with `RUST_LOG=info`: the outcome line.
+  4. If only the server hangs, the TLS stack is the cause. The way out is another TLS client for this one call (a
+     new dependency, the user's call), or leaving the place lookup off.
+- **Changed.**
+  - A 403 or 429, or a redirect to Google's `/sorry/…`, is now the outcome `blocked`.
+  - After it, no lookup is sent for an hour; each ask in that hour is counted `blocked` without a request. Short
+    links' hops still go out: they are another host.
+  - The PWA's "lookup isn't working" line now shows on one `blocked`, or on 3 lookups in 24 hours that ended
+    `consent`, `http`, `format` or `unreachable` with nothing found. Before, an outage booked as `unreachable` alone
+    left the line silent.
+  - A **burst limit** on top of the hourly 100: **at most 10 calls out in any 10 minutes, server-wide**. Hops and
+    lookups both count. That is half of what tripped the wall (about 20 in 5 minutes) over twice the time.
+  - The server's rows `wall_403`, `wall_sorry` and the new `lookup_line` rows, and
+    `the_wall_pauses_lookups_and_a_burst_is_capped`, pin this.
