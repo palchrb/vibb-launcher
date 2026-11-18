@@ -29,6 +29,7 @@ mod handlers;
 mod i18n;
 mod ics;
 mod install_now;
+mod integrations;
 mod jar_signature;
 mod keys;
 mod kid_lock;
@@ -220,6 +221,9 @@ pub struct AppState {
     /// App push (design 108): the `up` channel and its coalescing, the push routes' buckets and slots, in memory
     /// only (`unified_push::UnifiedPush`).
     pub unified_push: std::sync::Arc<unified_push::UnifiedPush>,
+    /// The integrations behind the boundary (`integrations`, design 110's pilot): each one's own state, client and
+    /// cache; the core reaches them only through `integrations::Integration`.
+    pub integrations: integrations::Integrations,
 }
 
 pub const APP_VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
@@ -538,6 +542,7 @@ async fn main() {
         )),
         weather: Default::default(),
         unified_push: Default::default(),
+        integrations: Default::default(),
     };
     state
         .tokens
@@ -933,6 +938,8 @@ pub fn build_admin_router(
         .layer(from_fn_with_state(state.clone(), security::require_session));
 
     let admin_routes = Router::new()
+        // The integrations' own pages and forms (`integrations::Integration::admin_routes`).
+        .merge(state.integrations.admin_routes())
         .route("/", get(|| async { Redirect::to("/devices") }))
         // static/reconnect.js's ping (2026-10-21): is the server there, and is the session? An
         // empty 204 behind the session check (signed out: the login's redirect).

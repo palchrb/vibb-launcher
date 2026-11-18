@@ -2115,6 +2115,9 @@ struct AppsTemplate {
     network: Option<Row>,
     /// Design 108 §3.10: app push on this phone (`#app-push`).
     app_push: crate::handlers::app_push::AppPushGroup,
+    /// The integrations' groups for this phone, rendered by each (`integrations::Integration::apps_group`; design
+    /// 110's "Map links"), after App push.
+    integration_groups: Vec<String>,
 }
 crate::i18n::words!(AppsTemplate);
 
@@ -2555,10 +2558,19 @@ pub(crate) async fn render_apps(
         Ok(group) => group,
         Err(err) => return read_failed(lang, id, "the phone's app push", err),
     };
+    let integration_groups = match state
+        .integrations
+        .apps_groups(state, lang, id, from.as_deref())
+        .await
+    {
+        Ok(groups) => groups,
+        Err(err) => return read_failed(lang, id, "the phone's integrations", err),
+    };
     Html(
         AppsTemplate {
             lang,
             app_push,
+            integration_groups,
             who: crate::handlers::devices::BandAvatar::of(&device),
             title: format!("{} · {}", t(lang, "nav.apps"), device.name),
             nav_tab,

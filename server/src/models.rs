@@ -1344,6 +1344,10 @@ pub struct PolicyResponse {
     pub server_tls: serde_json::Value,
     /// Design 108 §3.8: app push (`unified_push::policy`), always sent: `on`, `origin`, `regs`, `stopped`, `refresh`.
     pub unified_push: crate::unified_push::UpPolicy,
+    /// The integrations' keys (`integrations::Integrations::policy`), each at the top level and each only for a
+    /// launcher that claims it: design 110's `map_links`.
+    #[serde(flatten)]
+    pub integrations: serde_json::Map<String, serde_json::Value>,
 }
 
 /// `PolicyResponse.kid_lock`.
@@ -1610,6 +1614,10 @@ pub struct StatusReportRequest {
     /// `unified_push::clean_report` into `device_status.up_held`. A full-report field, sent while UP is on.
     #[serde(default)]
     pub unified_push: Option<serde_json::Value>,
+    /// Design 110 §7.5: the map links' state on the phone (`{target, target_state, play_services_links, vibb_hosts,
+    /// reach}`), raw - the integration cleans it (`integrations::map_links::clean`). A full-report field.
+    #[serde(default)]
+    pub map_links: Option<serde_json::Value>,
     /// Design 76: the launcher's certificate check (`testdata/server_tls_report.json`'s `report`), raw - read
     /// within limits by `server_tls::sanitize`, so nothing in it can fail the report.
     #[serde(default)]

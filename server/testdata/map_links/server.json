@@ -1,0 +1,695 @@
+{
+ "_doc": "Design 110, the server's own rows (integrations::map_links::tests): hops, the place lookup's answers cut down to the paths §8.3 reads (everything else null - none of Google's other content is copied), the PWA's lines and the lookup line.",
+ "hops": [
+  {
+   "name": "artbox",
+   "short": "https://maps.app.goo.gl/ZtCcrVTKt54Dx2hVA",
+   "answers": [
+    {
+     "status": 302,
+     "location": "https://maps.google.com?q=Artbox+AS,+Drammensveien+133,+0277+Oslo&ftid=0x46416db4338a09ff:0x7d7d788043d1f40e&entry=gps"
+    }
+   ],
+   "outcome": "long",
+   "url": "https://maps.google.com?q=Artbox+AS,+Drammensveien+133,+0277+Oslo&ftid=0x46416db4338a09ff:0x7d7d788043d1f40e&entry=gps"
+  },
+  {
+   "name": "steak",
+   "short": "https://maps.app.goo.gl/mBtbC6qXLK2baGTV9",
+   "answers": [
+    {
+     "status": 302,
+     "location": "https://www.google.com/maps/place/Steak+no+Don/@34.5945482,133.7583428,17z/data=!4m6!3m5!1s0x3551565394d96b57:0x1c9bdbc5990908bf!8m2!3d34.5945482!4d133.7583428!16s%2Fg%2F1tdvlc5x"
+    }
+   ],
+   "outcome": "long",
+   "url": "https://www.google.com/maps/place/Steak+no+Don/@34.5945482,133.7583428,17z/data=!4m6!3m5!1s0x3551565394d96b57:0x1c9bdbc5990908bf!8m2!3d34.5945482!4d133.7583428!16s%2Fg%2F1tdvlc5x"
+  },
+  {
+   "name": "search",
+   "short": "https://maps.app.goo.gl/FP3EV7tTUKYbmcVp7",
+   "answers": [
+    {
+     "status": 302,
+     "location": "https://www.google.com/maps/search/39.920439,+116.331538?entry=s"
+    }
+   ],
+   "outcome": "long",
+   "url": "https://www.google.com/maps/search/39.920439,+116.331538?entry=s"
+  },
+  {
+   "name": "apple",
+   "short": "https://maps.apple/p/7E-Brjrk_THN14",
+   "answers": [
+    {
+     "status": 301,
+     "location": "https://maps.apple.com/place?address=Thomash%C3%B6he,+12053+Berlin,+Germany&coordinate=52.4737758,13.4373898"
+    }
+   ],
+   "outcome": "long",
+   "url": "https://maps.apple.com/place?address=Thomash%C3%B6he,+12053+Berlin,+Germany&coordinate=52.4737758,13.4373898"
+  },
+  {
+   "name": "two_hops",
+   "short": "https://goo.gl/maps/aBcD123",
+   "answers": [
+    {
+     "status": 301,
+     "location": "https://maps.app.goo.gl/ZtCcrVTKt54Dx2hVA?g_st=x"
+    },
+    {
+     "status": 302,
+     "location": "https://maps.google.com?q=Artbox+AS,+Drammensveien+133,+0277+Oslo&ftid=0x46416db4338a09ff:0x7d7d788043d1f40e&entry=gps"
+    }
+   ],
+   "outcome": "long",
+   "url": "https://maps.google.com?q=Artbox+AS,+Drammensveien+133,+0277+Oslo&ftid=0x46416db4338a09ff:0x7d7d788043d1f40e&entry=gps"
+  },
+  {
+   "name": "a_200",
+   "short": "https://maps.app.goo.gl/Ok200",
+   "answers": [
+    {
+     "status": 200,
+     "location": null
+    }
+   ],
+   "outcome": "dead",
+   "url": null
+  },
+  {
+   "name": "a_404",
+   "short": "https://maps.app.goo.gl/Gone404",
+   "answers": [
+    {
+     "status": 404,
+     "location": null
+    }
+   ],
+   "outcome": "dead",
+   "url": null
+  },
+  {
+   "name": "private",
+   "short": "https://maps.app.goo.gl/Priv1",
+   "answers": [
+    {
+     "status": 302,
+     "location": "https://10.0.0.1/maps?q=x"
+    }
+   ],
+   "outcome": "dead",
+   "url": null
+  },
+  {
+   "name": "elsewhere",
+   "short": "https://maps.app.goo.gl/Else1",
+   "answers": [
+    {
+     "status": 302,
+     "location": "https://example.com/maps?q=x"
+    }
+   ],
+   "outcome": "dead",
+   "url": null
+  },
+  {
+   "name": "http",
+   "short": "https://maps.app.goo.gl/Http1",
+   "answers": [
+    {
+     "status": 302,
+     "location": "http://maps.google.com/maps?q=x"
+    }
+   ],
+   "outcome": "dead",
+   "url": null
+  },
+  {
+   "name": "too_many",
+   "short": "https://maps.app.goo.gl/Loop1",
+   "answers": [
+    {
+     "status": 302,
+     "location": "https://maps.app.goo.gl/Loop2"
+    },
+    {
+     "status": 302,
+     "location": "https://maps.app.goo.gl/Loop3"
+    },
+    {
+     "status": 302,
+     "location": "https://maps.app.goo.gl/Loop4"
+    }
+   ],
+   "outcome": "dead",
+   "url": null
+  },
+  {
+   "name": "relative",
+   "short": "https://maps.app.goo.gl/Rel1",
+   "answers": [
+    {
+     "status": 302,
+     "location": "/maps?q=x"
+    }
+   ],
+   "outcome": "dead",
+   "url": null
+  },
+  {
+   "name": "consent",
+   "short": "https://maps.app.goo.gl/Cons1",
+   "answers": [
+    {
+     "status": 302,
+     "location": "https://consent.google.com/ml?continue=x"
+    }
+   ],
+   "outcome": "dead",
+   "url": null
+  }
+ ],
+ "preview": [
+  {
+   "name": "artbox",
+   "source": "recorded on the build VM (Norway), 2026-11-17, hl=no: 23,839 bytes, cut down",
+   "ftid": "0x46416db4338a09ff:0x7d7d788043d1f40e",
+   "text": "Artbox AS, Drammensveien 133, 0277 Oslo",
+   "status": 200,
+   "content_type": "application/json; charset=UTF-8",
+   "body": ")]}'\n[null,null,null,null,[[1999.5893423285174,10.6868892,59.9223615]],null,[null,null,[\"Drammensveien 133\",\"0277 Oslo\"],null,null,null,null,null,null,[null,null,59.922361499999994,10.6868892],\"0x46416db4338a09ff:0x7d7d788043d1f40e\",\"Artbox AS\",null,null,null,null,null,null,\"Artbox AS, Drammensveien 133, 0277 Oslo\"]]",
+   "outcome": "found",
+   "place": {
+    "lat": 59.9223615,
+    "lon": 10.6868892,
+    "name": "Artbox AS",
+    "address": "Drammensveien 133, 0277 Oslo"
+   }
+  },
+  {
+   "name": "steak_no_don",
+   "source": "the user's server (Norway), 2026-11-17, hl=no: the point, name and address lines as reported (G1b); the echo in Artbox's shape, cut down",
+   "ftid": "0x3551565394d96b57:0x1c9bdbc5990908bf",
+   "text": "Steak no Don",
+   "status": 200,
+   "content_type": "application/json; charset=UTF-8",
+   "body": ")]}'\n[null,null,null,null,null,null,[null,null,[\"4 Chome-7-28 Oimatsucho\",\"Kurashiki, Okayama 710-0826\",\"Japan\"],null,null,null,null,null,null,[null,null,34.5945482,133.75834279999998],\"0x3551565394d96b57:0x1c9bdbc5990908bf\",\"Steak no Don\",null,null,null,null,null,null,null]]",
+   "outcome": "found",
+   "place": {
+    "lat": 34.5945482,
+    "lon": 133.7583428,
+    "name": "Steak no Don",
+    "address": "4 Chome-7-28 Oimatsucho, Kurashiki, Okayama 710-0826, Japan"
+   }
+  },
+  {
+   "name": "viewport_only",
+   "source": "built",
+   "ftid": "0x46416db4338a09ff:0x7d7d788043d1f40e",
+   "text": "Artbox AS, Drammensveien 133, 0277 Oslo",
+   "status": 200,
+   "content_type": "application/json",
+   "body": ")]}'\n[null,null,null,null,[[1999.5893423285174,10.6868892,59.9223615]],null,[null,null,[\"Drammensveien 133\",\"0277 Oslo\"],null,null,null,null,null,null,null,\"0x46416db4338a09ff:0x7d7d788043d1f40e\",\"Artbox AS\",null,null,null,null,null,null,null]]",
+   "outcome": "found",
+   "place": {
+    "lat": 59.9223615,
+    "lon": 10.6868892,
+    "name": "Artbox AS",
+    "address": "Drammensveien 133, 0277 Oslo"
+   }
+  },
+  {
+   "name": "disagree",
+   "source": "built: the place's point 5 km from the viewport",
+   "ftid": "0x46416db4338a09ff:0x7d7d788043d1f40e",
+   "text": "Artbox AS, Drammensveien 133, 0277 Oslo",
+   "status": 200,
+   "content_type": "application/json",
+   "body": ")]}'\n[null,null,null,null,[[1999.5,10.6868892,59.9673615]],null,[null,null,[\"Drammensveien 133\",\"0277 Oslo\"],null,null,null,null,null,null,[null,null,59.922361499999994,10.6868892],\"0x46416db4338a09ff:0x7d7d788043d1f40e\",\"Artbox AS\",null,null,null,null,null,null,null]]",
+   "outcome": "disagree",
+   "place": {
+    "lat": 59.9223615,
+    "lon": 10.6868892,
+    "name": "Artbox AS",
+    "address": "Drammensveien 133, 0277 Oslo"
+   }
+  },
+  {
+   "name": "no_text",
+   "source": "built: a lookup without the link's text",
+   "ftid": "0x46416db4338a09ff:0x7d7d788043d1f40e",
+   "text": null,
+   "status": 200,
+   "content_type": "application/json",
+   "body": ")]}'\n[null,null,null,null,[[1999.5893423285174,10.6868892,59.9223615]],null,[null,null,[\"Drammensveien 133\",\"0277 Oslo\"],null,null,null,null,null,null,[null,null,59.922361499999994,10.6868892],\"0x46416db4338a09ff:0x7d7d788043d1f40e\",\"Artbox AS\",null,null,null,null,null,null,null]]",
+   "outcome": "found",
+   "place": {
+    "lat": 59.9223615,
+    "lon": 10.6868892,
+    "name": "Artbox AS",
+    "address": "Drammensveien 133, 0277 Oslo"
+   }
+  },
+  {
+   "name": "no_name_no_address",
+   "source": "built",
+   "ftid": "0x46416db4338a09ff:0x7d7d788043d1f40e",
+   "text": "Artbox AS",
+   "status": 200,
+   "content_type": "application/json",
+   "body": ")]}'\n[null,null,null,null,[[1999.5893423285174,10.6868892,59.9223615]],null,[null,null,[\"a\",\"b\",\"c\",\"d\",\"e\"],null,null,null,null,null,null,[null,null,59.922361499999994,10.6868892],\"0x46416db4338a09ff:0x7d7d788043d1f40e\",\"NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN\",null,null,null,null,null,null,null]]",
+   "outcome": "found",
+   "place": {
+    "lat": 59.9223615,
+    "lon": 10.6868892,
+    "name": null,
+    "address": null
+   }
+  },
+  {
+   "name": "cid",
+   "source": "built: a cid lookup echoes the full id",
+   "ftid": "0x0:0x7d7d788043d1f40e",
+   "text": null,
+   "status": 200,
+   "content_type": "application/json",
+   "body": ")]}'\n[null,null,null,null,[[1999.5893423285174,10.6868892,59.9223615]],null,[null,null,[\"Drammensveien 133\",\"0277 Oslo\"],null,null,null,null,null,null,[null,null,59.922361499999994,10.6868892],\"0x46416db4338a09ff:0x7d7d788043d1f40e\",\"Artbox AS\",null,null,null,null,null,null,null]]",
+   "outcome": "found",
+   "place": {
+    "lat": 59.9223615,
+    "lon": 10.6868892,
+    "name": "Artbox AS",
+    "address": "Drammensveien 133, 0277 Oslo"
+   }
+  },
+  {
+   "name": "wrong_echo",
+   "source": "built",
+   "ftid": "0x46416db4338a09ff:0x7d7d788043d1f40e",
+   "text": "Artbox AS, Drammensveien 133, 0277 Oslo",
+   "status": 200,
+   "content_type": "application/json",
+   "body": ")]}'\n[null,null,null,null,[[1999.5893423285174,10.6868892,59.9223615]],null,[null,null,[\"Drammensveien 133\",\"0277 Oslo\"],null,null,null,null,null,null,[null,null,59.922361499999994,10.6868892],\"0x3551565394d96b57:0x1c9bdbc5990908bf\",\"Artbox AS\",null,null,null,null,null,null,null]]",
+   "outcome": "echo",
+   "place": null
+  },
+  {
+   "name": "zero",
+   "source": "built",
+   "ftid": "0x46416db4338a09ff:0x7d7d788043d1f40e",
+   "text": null,
+   "status": 200,
+   "content_type": "application/json",
+   "body": ")]}'\n[null,null,null,null,[[1.0,0.0,0.0]],null,[null,null,null,null,null,null,null,null,null,[null,null,0.0,0.0005],\"0x46416db4338a09ff:0x7d7d788043d1f40e\",\"Artbox AS\",null,null,null,null,null,null,null]]",
+   "outcome": "range",
+   "place": null
+  },
+  {
+   "name": "ip_centre",
+   "source": "built: the requester's IP centre (17 shared bits)",
+   "ftid": "0x46416db4338a09ff:0x7d7d788043d1f40e",
+   "text": null,
+   "status": 200,
+   "content_type": "application/json",
+   "body": ")]}'\n[null,null,null,null,[[1999.5,10.46334695,59.80735225]],null,[null,null,null,null,null,null,null,null,null,[null,null,59.80735225,10.46334695],\"0x46416db4338a09ff:0x7d7d788043d1f40e\",\"Artbox AS\",null,null,null,null,null,null,null]]",
+   "outcome": "far",
+   "place": null
+  },
+  {
+   "name": "other_postcode",
+   "source": "built",
+   "ftid": "0x46416db4338a09ff:0x7d7d788043d1f40e",
+   "text": "Artbox AS, Drammensveien 133, 0277 Oslo",
+   "status": 200,
+   "content_type": "application/json",
+   "body": ")]}'\n[null,null,null,null,[[1999.5893423285174,10.6868892,59.9223615]],null,[null,null,[\"Storgata 1\",\"0155 Oslo\"],null,null,null,null,null,null,[null,null,59.922361499999994,10.6868892],\"0x46416db4338a09ff:0x7d7d788043d1f40e\",\"Artbox AS\",null,null,null,null,null,null,null]]",
+   "outcome": "text",
+   "place": null
+  },
+  {
+   "name": "same_street",
+   "source": "built: another postcode, the same street",
+   "ftid": "0x46416db4338a09ff:0x7d7d788043d1f40e",
+   "text": "Artbox AS, Drammensveien 133, 0277 Oslo",
+   "status": 200,
+   "content_type": "application/json",
+   "body": ")]}'\n[null,null,null,null,[[1999.5893423285174,10.6868892,59.9223615]],null,[null,null,[\"Drammensveien 133\",\"0278 Oslo\"],null,null,null,null,null,null,[null,null,59.922361499999994,10.6868892],\"0x46416db4338a09ff:0x7d7d788043d1f40e\",\"Artbox AS\",null,null,null,null,null,null,null]]",
+   "outcome": "found",
+   "place": {
+    "lat": 59.9223615,
+    "lon": 10.6868892,
+    "name": "Artbox AS",
+    "address": "Drammensveien 133, 0278 Oslo"
+   }
+  },
+  {
+   "name": "consent",
+   "source": "built",
+   "ftid": "0x46416db4338a09ff:0x7d7d788043d1f40e",
+   "text": null,
+   "status": 302,
+   "location": "https://consent.google.com/ml?continue=x&gl=NO",
+   "content_type": null,
+   "body": "",
+   "outcome": "consent",
+   "place": null
+  },
+  {
+   "name": "a_500",
+   "source": "built",
+   "ftid": "0x46416db4338a09ff:0x7d7d788043d1f40e",
+   "text": null,
+   "status": 500,
+   "content_type": "text/html",
+   "body": "<html></html>",
+   "outcome": "http",
+   "place": null
+  },
+  {
+   "name": "no_prefix",
+   "source": "built",
+   "ftid": "0x46416db4338a09ff:0x7d7d788043d1f40e",
+   "text": null,
+   "status": 200,
+   "content_type": "application/json",
+   "body": "[null,null,null,null,[[1999.5893423285174,10.6868892,59.9223615]],null,[null,null,null,null,null,null,null,null,null,[null,null,59.922361499999994,10.6868892],\"0x46416db4338a09ff:0x7d7d788043d1f40e\",null,null,null,null,null,null,null,null]]",
+   "outcome": "format",
+   "place": null
+  },
+  {
+   "name": "html",
+   "source": "built",
+   "ftid": "0x46416db4338a09ff:0x7d7d788043d1f40e",
+   "text": null,
+   "status": 200,
+   "content_type": "text/html",
+   "body": ")]}'\n[null,null,null,null,[[1999.5893423285174,10.6868892,59.9223615]],null,[null,null,null,null,null,null,null,null,null,[null,null,59.922361499999994,10.6868892],\"0x46416db4338a09ff:0x7d7d788043d1f40e\",null,null,null,null,null,null,null,null]]",
+   "outcome": "format",
+   "place": null
+  },
+  {
+   "name": "too_short",
+   "source": "built",
+   "ftid": "0x46416db4338a09ff:0x7d7d788043d1f40e",
+   "text": null,
+   "status": 200,
+   "content_type": "application/json",
+   "body": ")]}'\n[null,null,null,null,[[1999.5893423285174,10.6868892,59.9223615]]]",
+   "outcome": "format",
+   "place": null
+  },
+  {
+   "name": "no_point",
+   "source": "built",
+   "ftid": "0x46416db4338a09ff:0x7d7d788043d1f40e",
+   "text": null,
+   "status": 200,
+   "content_type": "application/json",
+   "body": ")]}'\n[null,null,null,null,null,null,[null,null,null,null,null,null,null,null,null,null,\"0x46416db4338a09ff:0x7d7d788043d1f40e\",\"Artbox AS\",null,null,null,null,null,null,null]]",
+   "outcome": "format",
+   "place": null
+  }
+ ],
+ "pwa_lines": [
+  {
+   "name": "off",
+   "on": false,
+   "report": null,
+   "line": null,
+   "orange": false
+  },
+  {
+   "name": "off_play_links_off",
+   "on": false,
+   "report": {
+    "target": "app.organicmaps",
+    "target_state": "allowed",
+    "play_services_links": false,
+    "vibb_hosts": {
+     "selected": 20,
+     "selectable": 20,
+     "declared": 20
+    },
+    "reach": {
+     "short": true,
+     "google": true,
+     "apple": true
+    }
+   },
+   "line": "off_play",
+   "orange": false
+  },
+  {
+   "name": "off_play_links_on",
+   "on": false,
+   "report": {
+    "target": "app.organicmaps",
+    "target_state": "allowed",
+    "play_services_links": true,
+    "vibb_hosts": {
+     "selected": 0,
+     "selectable": 20,
+     "declared": 20
+    },
+    "reach": {
+     "short": false,
+     "google": false,
+     "apple": false
+    }
+   },
+   "line": null,
+   "orange": false
+  },
+  {
+   "name": "waiting",
+   "on": true,
+   "report": null,
+   "line": "waiting",
+   "orange": false
+  },
+  {
+   "name": "missing",
+   "on": true,
+   "report": {
+    "target": "app.organicmaps",
+    "target_state": "missing",
+    "play_services_links": false,
+    "vibb_hosts": {
+     "selected": 20,
+     "selectable": 20,
+     "declared": 20
+    },
+    "reach": {
+     "short": true,
+     "google": true,
+     "apple": true
+    }
+   },
+   "line": "missing",
+   "orange": true
+  },
+  {
+   "name": "hidden",
+   "on": true,
+   "report": {
+    "target": "app.comaps.fdroid",
+    "target_state": "hidden",
+    "play_services_links": null,
+    "vibb_hosts": {
+     "selected": 20,
+     "selectable": 20,
+     "declared": 20
+    },
+    "reach": {
+     "short": true,
+     "google": true,
+     "apple": true
+    }
+   },
+   "line": "hidden",
+   "orange": true
+  },
+  {
+   "name": "step_play",
+   "on": true,
+   "report": {
+    "target": "app.organicmaps",
+    "target_state": "allowed",
+    "play_services_links": true,
+    "vibb_hosts": {
+     "selected": 0,
+     "selectable": 20,
+     "declared": 20
+    },
+    "reach": {
+     "short": false,
+     "google": false,
+     "apple": false
+    }
+   },
+   "line": "step_play",
+   "orange": true
+  },
+  {
+   "name": "step_play_unknown",
+   "on": true,
+   "report": {
+    "target": "app.organicmaps",
+    "target_state": "allowed",
+    "play_services_links": null,
+    "vibb_hosts": {
+     "selected": 0,
+     "selectable": 20,
+     "declared": 20
+    },
+    "reach": {
+     "short": false,
+     "google": false,
+     "apple": false
+    }
+   },
+   "line": "step_play",
+   "orange": true
+  },
+  {
+   "name": "step_vibb",
+   "on": true,
+   "report": {
+    "target": "app.organicmaps",
+    "target_state": "allowed",
+    "play_services_links": false,
+    "vibb_hosts": {
+     "selected": 0,
+     "selectable": 20,
+     "declared": 20
+    },
+    "reach": {
+     "short": false,
+     "google": false,
+     "apple": false
+    }
+   },
+   "line": "step_vibb",
+   "orange": true
+  },
+  {
+   "name": "held",
+   "on": true,
+   "report": {
+    "target": "app.organicmaps",
+    "target_state": "allowed",
+    "play_services_links": false,
+    "vibb_hosts": {
+     "selected": 11,
+     "selectable": 11,
+     "declared": 20
+    },
+    "reach": {
+     "short": true,
+     "google": false,
+     "apple": true
+    }
+   },
+   "line": "held",
+   "orange": false
+  },
+  {
+   "name": "ready",
+   "on": true,
+   "report": {
+    "target": "app.organicmaps",
+    "target_state": "allowed",
+    "play_services_links": false,
+    "vibb_hosts": {
+     "selected": 20,
+     "selectable": 20,
+     "declared": 20
+    },
+    "reach": {
+     "short": true,
+     "google": true,
+     "apple": true
+    }
+   },
+   "line": "ready",
+   "orange": false
+  },
+  {
+   "name": "suspended_ready",
+   "on": true,
+   "report": {
+    "target": "app.organicmaps",
+    "target_state": "suspended",
+    "play_services_links": false,
+    "vibb_hosts": {
+     "selected": 20,
+     "selectable": 20,
+     "declared": 20
+    },
+    "reach": {
+     "short": true,
+     "google": true,
+     "apple": true
+    }
+   },
+   "line": "ready",
+   "orange": false
+  }
+ ],
+ "lookup_line": [
+  {
+   "counts": {},
+   "line": false
+  },
+  {
+   "counts": {
+    "consent": 3
+   },
+   "line": true
+  },
+  {
+   "counts": {
+    "consent": 2
+   },
+   "line": false
+  },
+  {
+   "counts": {
+    "consent": 1,
+    "http": 1,
+    "format": 1
+   },
+   "line": true
+  },
+  {
+   "counts": {
+    "format": 3,
+    "unreachable": 2,
+    "busy": 1
+   },
+   "line": true
+  },
+  {
+   "counts": {
+    "consent": 5,
+    "found": 1
+   },
+   "line": false
+  },
+  {
+   "counts": {
+    "consent": 5,
+    "disagree": 1
+   },
+   "line": false
+  },
+  {
+   "counts": {
+    "consent": 3,
+    "echo": 1
+   },
+   "line": false
+  }
+ ]
+}

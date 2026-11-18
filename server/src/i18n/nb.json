@@ -4581,5 +4581,22 @@
   "app_push.delivery.info": "Fra serveren tar imot et varsel til telefonen har fått det, for alle telefonene samlet. Bare varsler som kom mens telefonen var tilkoblet, er talt med.",
   "app_push.delivery.sub_p95": "95 % innen {p95} · {count} push siste døgn",
   "app_push.delivery.sub.one": "{count} push siste døgn",
-  "app_push.delivery.sub.other": "{count} push siste døgn"
+  "app_push.delivery.sub.other": "{count} push siste døgn",
+
+  "map_links.group": "Kartlenker",
+  "map_links.switch": "Åpne kartlenker i {app}",
+  "map_links.footer": "Lenker fra Google Maps og Apple Maps åpnes i {app} som en nål med stedets navn og adresse. Denne serveren slår opp korte lenker og steder; telefonen spør aldri Google. Finner ikke Google stedet, søker {app} etter det uten nett. Lenker i Meldinger åpnes i {app} med en gang; stegene på telefonen gjelder lenker fra andre apper. Når Google Play-tjenestenes lenker slås av, åpner den heller ikke sine andre korte lenker.",
+  "map_links.line.waiting": "Venter på telefonen.",
+  "map_links.line.missing": "{app} er ikke på telefonen lenger.",
+  "map_links.line.hidden": "{app} er ikke tillatt på telefonen.",
+  "map_links.line.hidden_fix": "Tillat {app} i listen over.",
+  "map_links.line.step": "Ett steg igjen på telefonen",
+  "map_links.line.step_play_fix": "Under en pause: åpne Vibb Ones innstillinger › Kartlenker › Google Play-tjenester, og slå av «Åpne støttede linker».",
+  "map_links.line.step_vibb_fix": "Under en pause: åpne Vibb Ones innstillinger › Kartlenker › Vibb Ones lenker, slå på «Åpne støttede linker» og kryss av alle.",
+  "map_links.line.held": "Google Maps-lenker åpnes i en annen app på denne telefonen (Google Maps er tillatt).",
+  "map_links.line.ready": "Klar.",
+  "map_links.line.off_play": "Google Play-tjenestenes lenker er fortsatt av på telefonen.",
+  "map_links.line.off_play_fix": "For å gi dem tilbake: under en pause, Vibb Ones innstillinger › Kartlenker.",
+  "map_links.line.lookup": "Googles stedsoppslag virker ikke nå",
+  "map_links.line.lookup_fix": "Kartlenker åpnes som et søk i {app}."
 }

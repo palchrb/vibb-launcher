@@ -4581,5 +4581,22 @@
   "app_push.delivery.info": "From the server receiving a notification to the phone having it, for every phone together. Only notifications that came while the phone was connected are counted.",
   "app_push.delivery.sub_p95": "95% within {p95} · {count} pushes in the last 24 hours",
   "app_push.delivery.sub.one": "{count} push in the last 24 hours",
-  "app_push.delivery.sub.other": "{count} pushes in the last 24 hours"
+  "app_push.delivery.sub.other": "{count} pushes in the last 24 hours",
+
+  "map_links.group": "Map links",
+  "map_links.switch": "Open map links in {app}",
+  "map_links.footer": "Google Maps and Apple Maps links open in {app} as a pin with the place's name and address. This server looks up short links and places; the phone never asks Google. If Google can't find the place, {app} searches for it offline. Links in Meldinger open in {app} at once; the two steps on the phone are for links from other apps. Turning off Google Play services' links also stops it opening its other short links.",
+  "map_links.line.waiting": "Waiting for the phone.",
+  "map_links.line.missing": "{app} isn't on the phone any more.",
+  "map_links.line.hidden": "{app} isn't allowed on this phone.",
+  "map_links.line.hidden_fix": "Allow {app} in the list above.",
+  "map_links.line.step": "One step left on the phone",
+  "map_links.line.step_play_fix": "During a pause, open Vibb One's Settings › Map links › Google Play services, and turn off \"Open supported links\".",
+  "map_links.line.step_vibb_fix": "During a pause, open Vibb One's Settings › Map links › Vibb One's links, turn on \"Open supported links\" and tick them all.",
+  "map_links.line.held": "Google Maps links open in another app on this phone (Google Maps is allowed).",
+  "map_links.line.ready": "Ready.",
+  "map_links.line.off_play": "Google Play services' links are still off on the phone.",
+  "map_links.line.off_play_fix": "To give them back: during a pause, Vibb One's Settings › Map links.",
+  "map_links.line.lookup": "Google's place lookup isn't working right now",
+  "map_links.line.lookup_fix": "Map links open as a search in {app}."
 }

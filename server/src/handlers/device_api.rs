@@ -416,6 +416,12 @@ pub(crate) async fn build_policy(
     let server_tls = crate::server_tls::policy(state, device_id).await?;
     // Design 108 §3.8: app push; a read error fails the policy.
     let unified_push = crate::unified_push::policy(&state.db, device_id).await?;
+    // The integrations' keys (design 110's `map_links`), each for a launcher that claims it; a read error fails the
+    // policy.
+    let integrations = state
+        .integrations
+        .policy(state, device_id, &capabilities)
+        .await?;
     let popped = pop_command(&state.db, device_id, policy.kid_pin_rev).await?;
     if let Some((id, _, requested_at, _)) = &popped {
         // Commands run in the order they were asked for (QA Low 1): once this one is out, an older
@@ -556,6 +562,7 @@ pub(crate) async fn build_policy(
         login_browser,
         server_tls,
         unified_push,
+        integrations,
     })
 }
 
@@ -1593,6 +1600,8 @@ async fn status_intake(
     }
     // Design 76: the certificate check's sightings move this phone's state (receive time); an outside one is pushed.
     crate::server_tls::intake(&state, device.id, report.server_tls.as_ref()).await;
+    // The integrations' parts of the report (design 110's `map_links`), each cleaned by its own integration.
+    state.integrations.intake(&state, device.id, &report).await;
     // Design 83: a contact's picture whose address the parent must allow becomes a question; and a phone with
     // another SIM than last time fetches its policy again - it fetched before it reported, so it has the old SIM's
     // row (this design's only nudge from a report).
