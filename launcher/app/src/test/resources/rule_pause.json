@@ -34,6 +34,10 @@
      "body": {"key": "0123456789abcdef0123456789abcd02", "minutes": 15, "started_at_ms": 1794817200000,
               "rules": [{"rule_id": 2, "until_ms": 1794818100000}]},
      "status": 200, "answer": {"accepted": true, "lift_ids": [2], "over": true}},
+    {"case": "a new pause while another phone pause lifts a rule is refused as over: nothing stored",
+     "body": {"key": "0123456789abcdef0123456789abcd09", "minutes": 15, "started_at_ms": 1794826200000,
+              "rules": [{"rule_id": 2, "until_ms": 1794827100000}]},
+     "status": 200, "answer": {"accepted": true, "lift_ids": [], "over": true}},
     {"case": "no rule the phone has",
      "body": {"key": "0123456789abcdef0123456789abcd03", "minutes": 30, "started_at_ms": 1794826200000,
               "rules": [{"rule_id": 99, "until_ms": 1794828000000}]},
@@ -65,6 +69,7 @@
   "phone_answers": [
     {"status": 200, "answer": {"accepted": true, "lift_ids": [1]}, "past_end": false, "action": "acked", "lift_ids": [1]},
     {"status": 200, "answer": {"accepted": true, "lift_ids": [2], "over": true}, "past_end": true, "action": "acked", "lift_ids": [2]},
+    {"status": 200, "answer": {"accepted": true, "lift_ids": [], "over": true}, "past_end": false, "action": "acked", "lift_ids": []},
     {"status": 200, "answer": {"accepted": false, "reason": "unknown_rule"}, "past_end": false, "action": "done", "lift_ids": []},
     {"status": 400, "answer": null, "past_end": false, "action": "done", "lift_ids": []},
     {"status": 401, "answer": null, "past_end": false, "action": "done", "lift_ids": []},

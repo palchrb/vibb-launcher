@@ -68,6 +68,7 @@ mod policy_etag;
 mod power;
 mod provisioning;
 mod rule_pause;
+mod safety_changes;
 pub(crate) mod seeded_family;
 mod server_tls;
 mod settings_log;

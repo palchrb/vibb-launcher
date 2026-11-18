@@ -1525,16 +1525,23 @@ async fn backups_answer_in_their_groups() {
         "{group}"
     );
 
+    // Privacy review 2026-11-17 M1: the right name and the password again; the marker names who asked.
     let res = docker
         .request_form(
             Method::POST,
             &restore,
             Some(&docker_cookie),
-            &[("confirm_filename", docker_file.as_str())],
+            &[
+                ("confirm_filename", docker_file.as_str()),
+                ("password", "correct horse battery staple"),
+            ],
         )
         .await;
     assert_redirect(&res, "/backups?done=restore", Some("backups"));
-    assert_eq!(std::fs::read_to_string(&marker).unwrap(), docker_file);
+    assert_eq!(
+        std::fs::read_to_string(&marker).unwrap(),
+        format!("{docker_file}\nparent\nparent\n")
+    );
     // (The container then exits for its restart - not in tests - with its database closed.)
     drop(docker);
 

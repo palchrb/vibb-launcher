@@ -2881,6 +2881,26 @@ pub async fn update_location_policy(
                 ),
             )
             .await;
+            // Privacy review 2026-11-17 M2: Regularly sends the phone's place every interval - told to every parent
+            // when it is turned on, never on a save that keeps it.
+            if mode == "interval" && before.as_deref() != Some("interval") {
+                let phone: Option<String> =
+                    sqlx::query_scalar("SELECT name FROM devices WHERE id = ?")
+                        .bind(id)
+                        .fetch_optional(&state.db)
+                        .await
+                        .ok()
+                        .flatten();
+                if let Some(phone) = phone {
+                    let event = crate::parent_events::location_regular(
+                        id,
+                        &phone,
+                        admin.name(),
+                        chrono::Utc::now(),
+                    );
+                    crate::parent_events::raise_logged(&state, &event).await;
+                }
+            }
             if mode == "off" {
                 // A failing table is logged by the pass itself (security review L9).
                 crate::retention::prune(&state.db).await;

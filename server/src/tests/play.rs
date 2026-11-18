@@ -290,6 +290,7 @@ async fn play_core_is_never_in_the_allowlist_ui() {
                 axum::extract::State(app.state.clone()),
                 crate::i18n::Lang::En,
                 axum::extract::Path(id),
+                axum::Extension(crate::security::CurrentAdmin(app.an_admin().await)),
                 axum::Form(form),
             )
             .await
@@ -327,6 +328,7 @@ async fn catalog_app_installed_from_play_is_refused() {
                                      "preinstalled": false, "installer": "com.android.vending" }] }),
     )
     .await;
+    let admin = app.an_admin().await;
     let select = |app: &TestApp| {
         let mut form = std::collections::HashMap::new();
         form.insert("package_name".to_string(), "com.example.game".to_string());
@@ -336,6 +338,7 @@ async fn catalog_app_installed_from_play_is_refused() {
             axum::extract::State(app.state.clone()),
             crate::i18n::Lang::En,
             axum::extract::Path(id),
+            axum::Extension(crate::security::CurrentAdmin(admin.clone())),
             axum::Form(form),
         )
     };

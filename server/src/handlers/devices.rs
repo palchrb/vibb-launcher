@@ -2675,6 +2675,7 @@ pub async fn toggle_app(
     State(state): State<AppState>,
     lang: Lang,
     Path(id): Path<i64>,
+    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<std::collections::HashMap<String, String>>,
 ) -> Response {
     let checked = form.contains_key("selected");
@@ -2806,16 +2807,21 @@ pub async fn toggle_app(
         {
             return refused("from_play", &anchor);
         }
-        if let Some(tid) = tracked_app_id
-            && let Err(err) = sqlx::query(
+        // Privacy review 2026-11-17 M2: a catalog app ticked for the phone (it installs) or a package newly allowed is
+        // told to every parent - once per real change, never for a switch already on.
+        let mut added = false;
+        if let Some(tid) = tracked_app_id {
+            match sqlx::query(
                 "INSERT OR IGNORE INTO device_tracked_apps (device_id, tracked_app_id) VALUES (?, ?)",
             )
             .bind(id)
             .bind(tid)
             .execute(&state.db)
             .await
-        {
-            return failed(err);
+            {
+                Ok(done) => added |= done.rows_affected() > 0,
+                Err(err) => return failed(err),
+            }
         }
         // On again before the phone synced: the uninstall the "off" queued is off too - else the
         // next sync would still remove the app ("deleted by your administrator").
@@ -2835,10 +2841,22 @@ pub async fn toggle_app(
                 return failed(err);
             }
         }
-        if !package_name.is_empty()
-            && let Err(err) = add_to_allowlist(&state, id, &package_name).await
-        {
-            return allowlist_error_response(lang, id, &package_name, err);
+        if !package_name.is_empty() {
+            match add_to_allowlist(&state, id, &package_name).await {
+                Ok(allowed) => added |= allowed,
+                Err(err) => return allowlist_error_response(lang, id, &package_name, err),
+            }
+        }
+        if added {
+            app_added_event(
+                &state,
+                id,
+                &admin,
+                &package_name,
+                tracked_app_id,
+                &installed,
+            )
+            .await;
         }
     } else {
         if let Some(tid) = tracked_app_id
@@ -2879,6 +2897,51 @@ pub async fn toggle_app(
         return Redirect::to(&format!("/devices/{id}/music#music-app")).into_response();
     }
     Redirect::to(&page("", &anchor)).into_response()
+}
+
+/// Privacy review 2026-11-17 M2: tells every parent `admin` allowed an app on phone `id` - by the catalog's name, else
+/// the phone's label, else the package (a read error words it by the package).
+async fn app_added_event(
+    state: &AppState,
+    id: i64,
+    admin: &crate::models::AdminUser,
+    package_name: &str,
+    tracked_app_id: Option<i64>,
+    installed: &[InstalledApp],
+) {
+    let catalog: Option<String> = match tracked_app_id {
+        Some(tid) => sqlx::query_scalar("SELECT name FROM tracked_apps WHERE id = ?")
+            .bind(tid)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten(),
+        None => None,
+    };
+    let app = catalog
+        .filter(|name| !name.trim().is_empty())
+        .or_else(|| {
+            installed
+                .iter()
+                .find(|a| a.package_name == package_name)
+                .map(|a| a.label.clone())
+                .filter(|label| !label.trim().is_empty())
+        })
+        .unwrap_or_else(|| package_name.to_string());
+    let Ok(Some(phone)) = sqlx::query_scalar::<_, String>("SELECT name FROM devices WHERE id = ?")
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await
+    else {
+        return;
+    };
+    let key = match tracked_app_id {
+        Some(tid) if package_name.is_empty() => format!("catalog-{tid}"),
+        _ => package_name.to_string(),
+    };
+    let event =
+        crate::parent_events::app_added(id, &phone, admin.name(), &key, &app, chrono::Utc::now());
+    crate::parent_events::raise_logged(state, &event).await;
 }
 
 fn allowlist_error_response(
@@ -2981,14 +3044,19 @@ async fn edit_allowlist(
     state: &AppState,
     device_id: i64,
     edit: impl FnOnce(&mut Vec<String>) -> bool,
-) -> Result<(), AllowlistError> {
+) -> Result<bool, AllowlistError> {
+    let mut changed = false;
     let mut tx = state.db.begin_with("BEGIN IMMEDIATE").await?;
-    let pruned = edit_allowlist_in(&mut tx, device_id, true, edit).await?;
+    let pruned = edit_allowlist_in(&mut tx, device_id, true, |packages| {
+        changed = edit(packages);
+        changed
+    })
+    .await?;
     tx.commit().await?;
     if pruned > 0 {
         let _ = state.command_notify.send(device_id);
     }
-    Ok(())
+    Ok(changed)
 }
 
 /// [edit_allowlist] on a connection already in a transaction (design 109: `calls::save_settings` re-adds the dialer
@@ -3029,7 +3097,7 @@ pub(crate) async fn edit_allowlist_in(
     Ok(pruned)
 }
 
-/// Adds one package to a device's allowlist if it isn't already there. Used by
+/// Adds one package to a device's allowlist if it isn't already there (`true`: it wasn't). Used by
 /// [toggle_app] - see its own doc comment for why. `updated_at` is bumped like every other
 /// `device_policy` write, so the "changed since last sync" nudge story stays consistent even though
 /// this isn't going through the normal `update_policy` form save.
@@ -3037,7 +3105,7 @@ pub(crate) async fn add_to_allowlist(
     state: &AppState,
     device_id: i64,
     package_name: &str,
-) -> Result<(), AllowlistError> {
+) -> Result<bool, AllowlistError> {
     edit_allowlist(state, device_id, |packages| {
         if packages.iter().any(|p| p == package_name) {
             return false;
@@ -3061,6 +3129,7 @@ pub(crate) async fn remove_from_allowlist(
         packages.len() != original_len
     })
     .await
+    .map(|_| ())
 }
 
 /// The quick controls (Home Screen) and the web filter switch (Web Filter). Since design 31 step 5

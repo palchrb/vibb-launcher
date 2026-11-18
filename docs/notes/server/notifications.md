@@ -811,3 +811,18 @@ push varsel ... kanskje man kan få valget". Branch `pwa-fixes-b`.
   QA N5) - inside R2-M3's spirit. Tests: `tests::sms_page::the_push_budget`, `the_digest_counts_past_the_hourly_cap`,
   `a_digest_with_nothing_waiting_isnt_sent`, `every_settling_marks_the_event_read_for_every_parent`,
   `parent_events::tests::a_held_message_is_labelled_and_quoted`.
+
+## Changes that matter to the kid's safety (privacy review 2026-11-17 M1/M2, branch `sec-round-2`)
+
+- Pushed to every parent at once, no switch (as `passkey_added`), and in each inbox, told from `ChangeParams`
+  (`parent_events::change_told`, one line in both forms, the time under it): `app_added` (`toggle_app`: a catalog app
+  ticked for a phone or a package newly allowed), `contact_added` (a new `device_contacts` row: Add Contact, from the
+  family, a held message's or the kid's request's add), `custom_dns_set` (the phones' DNS server becomes the family's
+  own, or its address changes - never the address), `location_regular` (a phone's location turned to Regularly),
+  `backup_downloaded` and `backup_restored`. One per real change: a save that changes nothing raises nothing.
+- Backups: Download (now a POST), Restore and Upload ask for the password again (`admin_auth::reauth`, a passkey
+  where the parent has one here, `passkeys::reauth_route`); `backup_downloaded`/`backup_uploaded` are logged. A
+  restore is pushed from the database it replaces before the restart (`restart_soon` waits up to 10 s for it to
+  leave); the marker names who asked (`backups::restore_marker`), and the next start writes `backup_restored` with
+  them and the inbox's line, not pushed again, into the restored database (`startup::record_restore`).
+- Tests: `tests::safety_changes`, `parent_events::tests` (the rows and every kind in both languages).

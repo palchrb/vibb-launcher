@@ -214,3 +214,11 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   as any lift; Activity words it by its window ("Leggetid på pause 21:10–21:40 (foreldrekoden)"); the parent-PIN
   event's entry `rule_pause` is "Regelskjermen", with its end in the inbox and its place in the push; the Time page's
   Now group has its ⓘ. Tests: `tests::rule_pause`.
+- Bounded (security review 2026-11-17 M2: the parent code is checked on the phone only, so a token alone could lift a
+  rule for good). A new key is refused with `{"accepted": true, "lift_ids": [], "over": true}` and nothing stored -
+  the phone acks it and its pause ends at the next policy, which doesn't carry the key - while another phone pause
+  still lifts a rule (unless the new one is already over), or when `MAX_A_DAY` (3, the kid's own asks for more time
+  are three a day too) other keys started within a day of its start. A retry of a stored key answers as before. Each
+  stored pause raises the time-rule screen's `pin_used` event (`Phone::rule_pause`, under "Parent PIN used"), keyed
+  `rule_pause:<end>` like the phone's own PIN event for it (`Phone::pin_event`), so the inbox has one line whichever
+  arrives first. Tests: `tests::rule_pause::a_phone_pause_is_bounded_and_told`, the contract's refused row.

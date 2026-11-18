@@ -2053,10 +2053,13 @@ pub async fn add_contact(
     State(state): State<AppState>,
     lang: Lang,
     Path(id): Path<i64>,
+    axum::Extension(crate::security::CurrentAdmin(admin)): axum::Extension<
+        crate::security::CurrentAdmin,
+    >,
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
     if let Some(contact_id) = form.get("contact_id") {
-        return add_family_contact(&state, lang, id, contact_id).await;
+        return add_family_contact(&state, lang, id, &admin, contact_id).await;
     }
     // The add form always sends its `switches` marker and both `*_shown` (design 80 D5); without them it is stale.
     if !form.contains_key("switches") || calls_form::resolve(&form, None, false).is_none() {
@@ -2198,7 +2201,7 @@ pub async fn add_contact(
             .and_then(|r| r.matrix_id)
             .filter(|_| form.contains_key("use_matrix"));
         let message_app = message_address.as_ref().map(|_| "element");
-        sqlx::query(
+        let added = sqlx::query(
             "INSERT OR IGNORE INTO device_contacts (device_id, contact_id, sort_order, allow_inbound, \
              allow_outbound, show_on_home, sms_in, sms_out, mms, message_address, message_app) \
              VALUES (?, ?, (SELECT COALESCE(MAX(sort_order) + 1, 0) FROM device_contacts \
@@ -2216,27 +2219,69 @@ pub async fn add_contact(
         .bind(message_address)
         .bind(message_app)
         .execute(&mut *tx)
-        .await?;
+        .await?
+        .rows_affected()
+            > 0;
         tx.commit().await?;
-        Ok::<_, sqlx::Error>(Some(contact_id))
+        Ok::<_, sqlx::Error>(Some((contact_id, added)))
     }
     .await;
     match result {
         Ok(None) => not_found(lang),
-        Ok(Some(contact_id)) => saved(
-            state,
-            id,
-            format!("/devices/{id}/calls#contact-{contact_id}"),
-        ),
+        Ok(Some((contact_id, added))) => {
+            if added {
+                contact_added_event(state, id, &admin, contact_id).await;
+            }
+            saved(
+                state,
+                id,
+                format!("/devices/{id}/calls#contact-{contact_id}"),
+            )
+        }
         Err(err) => db_error(lang, id, err),
     }
+}
+
+/// Privacy review 2026-11-17 M2: tells every parent `admin` put the contact `contact_id` on phone `id` (Add Contact,
+/// from the family, a held message's or the kid's request's add) - once, when the row is new.
+async fn contact_added_event(
+    state: &AppState,
+    id: i64,
+    admin: &crate::models::AdminUser,
+    contact_id: i64,
+) {
+    let names: Result<Option<(String, String)>, sqlx::Error> = sqlx::query_as(
+        "SELECT d.name, c.name FROM devices d, contacts c WHERE d.id = ? AND c.id = ?",
+    )
+    .bind(id)
+    .bind(contact_id)
+    .fetch_optional(&state.db)
+    .await;
+    let Ok(Some((phone, contact))) = names else {
+        return;
+    };
+    let event = crate::parent_events::contact_added(
+        id,
+        &phone,
+        admin.name(),
+        contact_id,
+        &contact,
+        chrono::Utc::now(),
+    );
+    crate::parent_events::raise_logged(state, &event).await;
 }
 
 /// "Add from the family" (the user, 2026-11-03): puts a contact of the family's address book that another phone has
 /// on this one, with every flag on and at the end of the list, as Add Contact does - its name, number and photo are
 /// the contact's. Back to its new row; a contact that no longer exists → `?notice=contact_gone#contacts`, one already
 /// on this phone → its row, nothing written (both refusals, [crate::settings_log::refused]).
-async fn add_family_contact(state: &AppState, lang: Lang, id: i64, contact_id: &str) -> Response {
+async fn add_family_contact(
+    state: &AppState,
+    lang: Lang,
+    id: i64,
+    admin: &crate::models::AdminUser,
+    contact_id: &str,
+) -> Response {
     let contact_id: i64 = contact_id.trim().parse().unwrap_or(0);
     // Design 80 L6: the list leaves the phone's own number out; a post naming it anyway is refused.
     let own = match crate::handlers::calls_sms::phone_numbers(&state.db, id).await {
@@ -2288,11 +2333,14 @@ async fn add_family_contact(state: &AppState, lang: Lang, id: i64, contact_id: &
         Ok((true, true, false)) => {
             crate::settings_log::refused(Redirect::to(&contact_row(id, contact_id)))
         }
-        Ok((true, true, true)) => saved(
-            state,
-            id,
-            format!("/devices/{id}/calls#contact-{contact_id}"),
-        ),
+        Ok((true, true, true)) => {
+            contact_added_event(state, id, admin, contact_id).await;
+            saved(
+                state,
+                id,
+                format!("/devices/{id}/calls#contact-{contact_id}"),
+            )
+        }
         Err(err) => db_error(lang, id, err),
     }
 }

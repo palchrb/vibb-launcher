@@ -246,15 +246,20 @@ async fn the_restore_marker_swaps_in_a_good_backup_and_refuses_bad_ones() {
         assert_eq!(admin_names(&url).await, ["live"], "{name}");
     }
 
-    // A good one: swapped in, the old database kept aside.
+    // A good one, the PWA's marker naming who asked (privacy review 2026-11-17 M1): swapped in, the old database kept
+    // aside.
     std::fs::write(
         data.join(startup::RESTORE_REQUEST),
-        "backup-20261009-020000.zip\n",
+        crate::handlers::backups::restore_marker("backup-20261009-020000.zip", "parent", "Mamma"),
     )
     .unwrap();
     let restored = startup::apply_restore_request(&data, &live)
         .unwrap()
         .expect("applied");
+    assert_eq!(
+        restored.by,
+        Some(("parent".to_string(), "Mamma".to_string()))
+    );
     assert!(!data.join(startup::RESTORE_REQUEST).exists());
     assert_eq!(admin_names(&url).await, ["from-backup"]);
     let aside = restored.prerestore_dir.join("kidphone.db");
@@ -302,6 +307,8 @@ async fn a_restored_database_that_wont_open_is_put_back() {
     let restored = startup::apply_restore_request(&data, &live)
         .unwrap()
         .expect("applied");
+    // The owner's one-line marker over SSH names no one.
+    assert_eq!(restored.by, None);
     assert!(crate::try_connect_db(&url).await.is_err(), "junk opened");
     startup::undo_restore(&live, &restored).unwrap();
     let listing = |dir: &Path| -> Vec<String> {
