@@ -33,7 +33,7 @@ The server runs no DNS listener: each phone filters on-device (the launcher's `K
   `CLOCK_SLACK_MS`, a phone clock ahead; `unreachable_until_ms` only with a kept `unreachable_since_ms`, and neither
   when it ends before it starts), never an address, inside `dns_upstream_json` (no migration; a row stored
   before design 67 reads back with both times `None`). Contract `testdata/dns_upstream_status.json`, byte-identical in the launcher's
-  test resources (root `CLAUDE.md`). Design 67's launcher reports in provider mode too (`rev` 0, `provider`, no since or reason - an older server stores `null`) and
+  test resources (root `CLAUDE.md`). Design 67's launcher reports in provider mode too (`rev` 0, `provider`, no since or reason) and
   only while its tunnel is up; the two times are "DNS can't be reached" (`unreachable_since_ms` alone: ongoing; both:
   the last ended outage), read by the phone as at least 3 dropped queries over at least 30 s with no answer between,
   on a validated network (launcher/CLAUDE.md, "DNS can't be reached").

@@ -71,7 +71,7 @@ count or a time. Kept only within limits: `readable` a bool (else nothing is sto
 `device_api::known_fields` with `calendar::CALENDAR_ROW_FIELDS`, a valid key (16 lowercase hex, once), an account type
 of at most 200, the name cleaned and cut to 100, the source a hostname (`[a-z0-9.-]`, at most 253, lowercased) or null,
 the access level an int (else 0); at most 50 rows; `rules_skipped` at most 30 ids, only ids the phone has. A report
-without the key (an older launcher) leaves the last one. Contract: `testdata/calendar_status_report.json`
+without the key leaves the last one. Contract: `testdata/calendar_status_report.json`
 (byte-identical in the launcher's test resources; `tests::calendar::a_launcher_report_lists_the_calendars`,
 `CalendarReportTest`); `intake_limits::the_field_tables_keep_every_contract_key` checks it too.
 

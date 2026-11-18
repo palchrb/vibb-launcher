@@ -42,7 +42,7 @@ second connection: pushes ride the one SSE stream to the family's own server.
   `UpView.of(policy).on` = the policy's `unified_push.on` **and** an origin - **only for a policy carrying the parent's
   choice** (`parentChoice`: fresh, or a cache that decodes; code QA M3). A fallback plan or a bare policy leaves the
   components as they are: a disabled receiver makes the connector drop Vibb One, and each Element X account would need
-  its manual switch again. No key (an older server) is off. While disabled, `queryBroadcastReceivers` lists no Vibb One.
+  its manual switch again. No key is off. While disabled, `queryBroadcastReceivers` lists no Vibb One.
 - **`UpPackageReceiver`** (`exported="false"`): `PACKAGE_FULLY_REMOVED` / `PACKAGE_DATA_CLEARED` (protected, on the
   implicit-broadcast exception list) drop the app's rows and send a `DELETE` each; the sync's reconcile is the backstop
   (an app no longer installed - a hidden one still is).

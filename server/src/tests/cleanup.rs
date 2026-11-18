@@ -178,7 +178,7 @@ async fn dns_log_is_off_by_default_and_opt_in_per_phone() {
     let events = serde_json::json!([
         { "domain": "ads.example", "category": "Ads", "blocked_at": "2026-10-06T10:00:00Z" }
     ]);
-    // Off: answered, never stored (an older launcher still reports).
+    // Off: answered, never stored.
     let res = app
         .request(
             Method::POST,

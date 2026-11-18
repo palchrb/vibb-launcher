@@ -721,7 +721,6 @@ async fn time_state_is_stored_and_shown() {
             Some(json!({
                 "lock_reason": "SCHOOL",
                 "kiosk_engaged": true,
-                "capabilities": ["call_policy_v1", "time_rules_v1"],
                 "time_state": {
                     "day": today, "used_minutes": 42, "budget_minutes": 90,
                     "extra_minutes": 30, "active_rule_id": 1, "active_rule_name": "Skole",
@@ -1208,7 +1207,6 @@ async fn report_time_state(app: &TestApp, token: &str, state: serde_json::Value)
             Some(token),
             Some(json!({
                 "lock_reason": "NONE", "kiosk_engaged": true,
-                "capabilities": ["call_policy_v1", "time_rules_v1"],
                 "time_state": state
             })),
         )

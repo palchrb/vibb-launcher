@@ -61,7 +61,7 @@ unseen 30 days (`devices.last_seen_at`), tombstones past 30 days.
 
 `AppState::unified_push.up_notify`, a broadcast of its own; `commands_stream` merges it as `event: up` / `data: up`
 (a lag sends only `up`). Coalesced per phone at the sender on the trailing edge (`notify.rs`, 250 ms): the last push of
-a burst is always followed by an `up`. No capability gate: only a distributor makes registrations.
+a burst is always followed by an `up`.
 
 ## Registration
 
@@ -179,7 +179,7 @@ the queue waits on the server under its TTL and caps, as for a phone that is off
 
 - **The report:** `unified_push: {"held": ...}` (a full-report field, in `status_heartbeat::REPORT_KEYS` so a heartbeat
   carries it), cleaned by `unified_push::clean_report` (a word of 1-32 `[a-z_]` other than `none`) into
-  `device_status.up_held` (migration 0156); NULL for `none`, anything else and older launchers.
+  `device_status.up_held` (migration 0156); NULL for `none` and anything else.
 - **The waiting row's guard (arm (a)):** only the policies served after the last report in the window that said held
   **and** named a sink other than `off` in its own `mobile_data_json` (`health::last_held_report`; the server's own
   reading, so a wrong hold never hides the row). A hold that ends: the next three syncs count again.

@@ -24,8 +24,7 @@ The launcher's side is `docs/notes/launcher/logins.md`.
   up. Both told from parameters (`WifiSigninParams`), to `/devices/{id}/logins#logins-wifi`, pushed at once in the day
   and held until 07:00 between 23:00 and 07:00 in the family's zone (`logins::night_push`), one switch "Wi-Fi sign-in".
 - **The parent code's entry**: `parent_pin::Entry::WifiSignin` (`wifi_signin`), its security-log words ("Wi-Fi sign-in
-  opened with the parent code", "at the Wi-Fi sign-in") and the PIN event's place ("Wi-Fi-innlogging"). An older server
-  skips those events with a warning (`handlers/parent_pin.rs`).
+  opened with the parent code", "at the Wi-Fi sign-in") and the PIN event's place ("Wi-Fi-innlogging").
 - **Device › Sign-in** (`/devices/{id}/logins`, `handlers::logins`, `device_logins.html`; linked from the Web Filter
   page's row "Innlogging · Wi-Fi: på · Apper: av"): `#logins-wifi` - the switch with its sub-line (the window, the
   close, the filter's lists not the parent's own DNS server), the code's state linking to Advanced, today's code-free

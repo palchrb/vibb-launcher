@@ -7,7 +7,7 @@
 use crate::i18n::{Lang, t};
 
 /// The latest report's `ringer_mode`, kept only if it is one the launcher sends; anything else
-/// (or a missing field from an older launcher) is stored as NULL.
+/// (or a missing field) is stored as NULL.
 pub fn sanitize_ringer_mode(value: Option<&str>) -> Option<&'static str> {
     match value? {
         "normal" => Some("normal"),

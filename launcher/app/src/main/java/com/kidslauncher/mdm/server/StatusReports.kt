@@ -29,7 +29,7 @@ import java.util.zip.GZIPOutputStream
  *   ([isFullReportAnswer]), and the phone sends the full report at once.
  * Any other field changing - an app installed, a call, a capability, a zone, a setting - changes the hash, so a full
  * report goes. A report over 1 KiB (every full one) is gzip'd while the policy says `status_gzip` ([encodeReport]); the
- * server inflates it inside its token check, within its body limit. An older server says neither: the report goes as before.
+ * server inflates it inside its token check, within its body limit.
  */
 
 /** The report's fields a heartbeat carries and the hash leaves out (the server's `status_heartbeat::HEARTBEAT_FIELDS`,

@@ -29,8 +29,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `v=2` marks today's page; a post without it is a 400), the "Storage limit" picker (1/2/5/10 GB/No limit,
   `storage_limit` = a choice or `none`, else 400, missing too), the storage
   rows and the "Over the storage limit" warning (`music::storage`, typed: stored, downloads against the limit, the
-  played extras, the kept items over the limit; from the report's `audio_bytes`/`extra_bytes`, which a music app from
-  design 30 step 3a on always sends - without them, an older app, only "Stored on the phone"; `MusicState` keeps and
+  played extras, the kept items over the limit; from the report's `audio_bytes`/`extra_bytes`, the music app always sends - without them only "Stored on the phone"; `MusicState` keeps and
   clamps both like `cache_bytes`), event `music_phone_settings` naming both switches and the limit -, volume cap
   Off/90/80/70/60 - NULL = off, the Storytel switch, the Sonos rooms at `#music-sonos` - "All rooms" or one switch per
   room the phone reported, `POST /devices/{id}/music/sonos-rooms`, event `music_sonos_rooms_changed` (detail clipped
@@ -45,7 +44,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   the launcher reads a missing switch as off); `storage_limit_gb` is the stored choice, `null` = no limit, a stored non-choice is sent as 2
   (`music::storage_limit`). The library (`music::library_for`):
   16 hex of SHA-256 over the JSON **without** its `version` (QA #4; `sonos_rooms` - null or the allowed uids, after
-  `covers`, ignored by an older music app, which then allows every room - is hashed like every other field), pinned
+  `covers` - is hashed like every other field), pinned
   by `music_library_snapshot` in `testdata/music_library.json` (the music app keeps a copy). Ticks and uploads that
   would push a phone's library past 3 MB are refused / taken back. Own files not on disk are listed `missing` (startup
   check, and on a 404 while serving), never dropped.

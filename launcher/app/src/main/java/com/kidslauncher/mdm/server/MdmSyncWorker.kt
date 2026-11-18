@@ -167,7 +167,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         // rewrite, the queued DELETEs, then a pull while UP is on - on UP's own executor, never blocking the sync.
         com.kidslauncher.mdm.push.up.UpRuntime.policyAccepted(context, freshPolicy, policyGetStartedMs)
         // Design 95 §3.5: an accepted 200 is kept with its ETag (a 304's body is the kept one already); one with a
-        // command is not (its Child PIN stays out of storage, design 59 §1), nor one without an ETag (an older server).
+        // command is not (its Child PIN stays out of storage, design 59 §1), nor one without an ETag.
         when (val step = keptBodyStep(served, freshPolicy)) {
             is KeptBodyStep.Keep -> etags.keep(owner, step.etag, step.body)
             KeptBodyStep.Drop -> etags.drop()

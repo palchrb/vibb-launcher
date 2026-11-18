@@ -53,8 +53,7 @@ data class UpRow(
     override fun toString() = "UpRow(reg=$reg, package=$pkg, state=$state)"
 }
 
-/** The blob under [UpStore.REGS]: [v] its format, [rows] the registrations. Unknown keys of a newer build are dropped
- * by an older one's decode, never a reason to fail. */
+/** The blob under [UpStore.REGS]: [v] its format, [rows] the registrations. Unknown keys are dropped by the decode, never a reason to fail. */
 @Serializable
 data class UpRegsBlob(val v: Int = 1, val rows: List<UpRow> = emptyList())
 

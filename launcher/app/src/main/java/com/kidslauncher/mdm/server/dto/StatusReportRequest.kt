@@ -41,7 +41,7 @@ data class StatusReportRequest(
      * unreadable. See [com.kidslauncher.mdm.server.ScreenTimeout]. */
     val screenTimeoutSeconds: Int? = null,
     /** Android's backup service (backup to the Google account) is on; `null` = not device owner or
-     * unreadable (left out of the JSON, like an older launcher). Kept off while managed - see
+     * unreadable (left out of the JSON). Kept off while managed - see
      * [com.kidslauncher.mdm.server.BackupService]. */
     val backupServiceEnabled: Boolean? = null,
     /** The ringer mode (design 18): `normal`/`vibrate`/`silent`; `null` = unreadable (left out).
@@ -388,8 +388,7 @@ data class LockStateReport(
      * always sent (`[]`). */
     val voipRang: List<VoipRang>,
     /** Design 59 §1: the gate - `"android"` while Android's PIN is it (our glance its face, or a rollback waiting
-     * for the token: then [inactive] is `android_credential`), else `"own"`. Always sent (no default: the server
-     * reads a missing one as an older launcher). */
+     * for the token: then [inactive] is `android_credential`), else `"own"`. Always sent (no default). */
     val keyguard: String,
     /** The server's `kid_lock.pin_rev` the gate enforces - own: committed with the hash in use; android: the one
      * Android's PIN was set from. `null` = unknown (changed on the phone) or no Child PIN. Never PIN material. */

@@ -746,7 +746,7 @@ pub async fn last_report(
 }
 
 /// Stores a report's `calendar` (status intake): through [sanitize_report] with the phone's rule ids. A report
-/// without it (an older launcher) leaves the last one. Never fails the report: an error is logged.
+/// without it leaves the last one. Never fails the report: an error is logged.
 pub async fn store_report(db: &SqlitePool, device_id: i64, value: Option<&serde_json::Value>) {
     let Some(value) = value else { return };
     let result: Result<Option<CalendarReport>, sqlx::Error> = async {

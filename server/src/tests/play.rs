@@ -207,8 +207,7 @@ async fn status_stores_install_mode_installer_and_logs() {
                   "installer": "com.android.vending" }
             ],
             "install_mode": { "until_ms": until },
-            "play_window_active": false,
-            "capabilities": ["play_policy_v1"]
+            "play_window_active": false
         }),
     )
     .await;
@@ -441,7 +440,7 @@ async fn dns_blocklist_never_blocks_fcm() {
 
 /// `battery_optimization_exempt`: true and false are stored and shown as About This Phone's
 /// "Battery optimisation" row (the "Play and kiosk" card's line until design 31 step 3), the fix
-/// behind its ⓘ; a report without the key (an older launcher, or unreadable) stores NULL and
+/// behind its ⓘ; a report without the key (unreadable) stores NULL and
 /// shows nothing.
 #[tokio::test]
 async fn battery_exemption_is_stored_and_shown() {

@@ -381,8 +381,7 @@ Notifications on it). `docs/design/45-notifications-inbox-first.md`, `docs/desig
   after "Yesterday 21:40 · Bedtime" against `when` "yesterday 21:40" shows "Bedtime".
 - **Superseded** (design 100 §14.4, QA R2-L6): a request stored at intake (only after `raise` returned `Some`, in the
   same transaction - never a retry of the same id, a capped, stale or dropped one) writes `superseded` answers for the
-  phone's other unanswered requests of its day (`time_answers::supersede`): an older launcher asks again after its 30
-  minutes, and the card shows the newest. `EXTRA_TIME_NEWS_MINUTES` only decides the push now: this launcher keeps one
+  phone's other unanswered requests of its day (`time_answers::supersede`): the card shows the newest. `EXTRA_TIME_NEWS_MINUTES` only decides the push now: this launcher keeps one
   request open until it is answered or its day ends and sends it whenever it is back online, so a late one lands in
   the card and the inbox without a push.
 - Tests (r13): `tests::time_request` (the contract's answers and copies, one row and the push by each parent's switch,
@@ -556,8 +555,7 @@ push varsel ... kanskje man kan få valget". Branch `pwa-fixes-b`.
   0.36.0" (Activity: "0.36.0-rc.7 → 0.36.0"); push "Anna: Vibb One updated" / "14:02 · version 0.36.0".
 - **Every other catalog app** (2026-10-25, branch `launcher-small-a`, PLAN "Installed versionCode per catalog app in
   the status report"): the launcher's `installed_apps` entries carry `version_code` (`PackageInfo.longVersionCode`) and
-  `version_name` (trimmed, at most 60 characters), both optional - an older launcher sends neither and is taken as
-  before. `models::InstalledApp` reads them leniently (a code that isn't a non-negative integer, a name that isn't
+  `version_name` (trimmed, at most 60 characters), both optional (missing = taken as before). `models::InstalledApp` reads them leniently (a code that isn't a non-negative integer, a name that isn't
   text: none) and `cap_installed_apps` trims and clips the name (`MAX_APP_VERSION_NAME_CHARS`); they are stored with
   the list in `device_status.installed_apps_json` - **no migration**, the column is the list's JSON. `installed_codes`
   maps each entry with a code by package (`InstalledCodes.apps`), the previous report's from its stored JSON, and
@@ -581,7 +579,7 @@ push varsel ... kanskje man kan få valget". Branch `pwa-fixes-b`.
   number); the launcher and the music app keep theirs. Tests: `apk::tests` (the fixtures' codes 1 and 2, the major's
   arithmetic), `app_updates::a_release_whose_tag_isnt_its_version_name_is_known_by_its_code`, the backfill in
   `catalog_pins::a_release_cached_before_the_update_is_pinned_from_its_file`, the sync in
-  `another_repo_syncs_by_the_index_alone`. A previous report without codes (an older launcher) raises nothing, and neither does the same code again
+  `another_repo_syncs_by_the_index_alone`. A previous report without codes raises nothing, and neither does the same code again
   or a lower one (`is.code <= was.code`: a phone already at the release when its launcher starts sending codes, a step
   back from a beta onto the release; qa-launcher-small-a-code Q-4). Test: `app_updates::every_checked_catalog_app_raises_app_updated_by_its_listed_code`
   and `an_app_already_at_the_release_or_going_back_to_it_raises_nothing`; the status body is the shared contract

@@ -500,7 +500,7 @@ the list shows `contactRequestRows`.
   through `PhoneNumbers.normalize`, never an emergency number - `Emergency.staticSet` or the platform's answer passed
   in; an optional Matrix ID through `isMatrixId`) and the phone's own (a number already a contact or in an open
   request; five open at most). `contactRequestAnswer` reads the server's answer (`accepted`, `capped`, `known`;
-  `invalid`, another 4xx and an old server's 404 are "not sent"; 401/408/429/5xx/no answer retry).
+  `invalid` and another 4xx are "not sent"; 401/408/429/5xx/no answer retry).
   `reconcileContactRequests` at every accepted policy: a week-old request goes; an open one goes when its number is a
   contact (the contact arrived) or the policy's `call_policy.contact_requests` says `added`, and becomes "declined"
   (shown once) when it says `declined`. Since design 79 it returns `Reconciled(records, handOvers)`: the request's
@@ -525,7 +525,7 @@ the list shows `contactRequestRows`.
 ## Group texts switch and the learned own number (design 80 step 3, D13, §4.4; branch `calls-simpler`)
 
 - **`call_policy.sms_groups`** ("Gruppemeldinger", D13): `CallPolicy.smsGroups`, `CallRules.smsGroups`, both
-  defaulting to `true` - an older server's policy and rules stored before it keep today's behaviour (a deliberate
+  defaulting to `true` - rules stored before it keep today's behaviour (a deliberate
   exception to "absent denies": the key loosens nothing, and D12's members rule under it fails closed). Off:
   `MmsGate.group(..., groups = false)` turns every `Many` into `Blocked` (dropped as `group`, no allow path); a
   one-to-one MMS and every SMS are untouched. The engine refuses a send to a group (`Refusal.GROUPS_OFF`) and fails a
@@ -946,8 +946,6 @@ capability, device route or kid-facing string: the bubble is still "Bildet kunne
   then `drainDownloads` checks it once more before the fetch. A row the server takes away again just stops matching.
 - **The debug hook:** `SmsRuntime.withDebugMmsc` merges `MmsDebug.mmscRules()` into the SIM's own row
   (`MmsGate.merged`); appended as a second row for the same MCC/MNC it was never read once the policy had one.
-- **Mixed versions fail closed:** an older server sends `[]` and drops the two keys; an older launcher on this
-  server reports no `sim_operators`, gets no row and keeps every picture unfetched.
 - Tests: `MmsGateTest` (the entry and port vectors, the shape failures, the merge), `MmsEngineTest` (a kept picture is
   fetched once its own entry is allowed and not before; the report's contact rule, 7 days and newest 4; a released
   push at an unlisted address), `SmsContractTest` (the report, the policy row, `mmsc_entries`).

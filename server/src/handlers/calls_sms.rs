@@ -101,7 +101,7 @@ pub(super) struct OwnRow {
 }
 
 /// What the phone's newest report says about its own numbers (design 77 D12, design 80 §4.4): each active SIM's slot and
-/// number (`None` while the SIM doesn't know; empty when the report has none - an older launcher, a new phone), and the
+/// number (`None` while the SIM doesn't know; empty when the report has none - a new phone), and the
 /// number it learned from a message.
 pub(crate) struct ReportedOwn {
     pub sims: Vec<(i64, Option<String>)>,
@@ -318,7 +318,7 @@ fn own_rows(
                     None,
                     Some(t(lang, "device.sms.own.unknown_hint").to_string()),
                 ),
-                // No report (an older launcher, a new phone).
+                // No report (a new phone).
                 (None, None) => (
                     None,
                     Some(t(lang, "device.sms.settings.own_number_hint").to_string()),

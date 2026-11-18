@@ -82,7 +82,7 @@ pub struct PolicyAppDisplay {
     pub icon: Option<String>,
     pub color: String,
     /// Design 69 §4.4: `false` = off Home and the app list except during a pause (a sync app such as ICSx5 or
-    /// DAVx5 that must stay allowed); sent only when `false` (missing = on, as an older server).
+    /// DAVx5 that must stay allowed); sent only when `false` (missing = on).
     #[serde(skip_serializing_if = "is_true")]
     pub on_home: bool,
 }

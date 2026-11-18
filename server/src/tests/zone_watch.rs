@@ -635,7 +635,7 @@ async fn the_locate_page_tells_the_floor_the_watch_and_the_mock_count() {
     assert!(!html.contains("data-zone-watch"));
     assert!(!html.contains("data-row=\"mock-ignored\""));
     add_home(&app, id).await;
-    // Zones and an older launcher (no watch): as step 1 - judged at each fix, two intervals.
+    // Zones and no watch reported: as step 1 - judged at each fix, two intervals.
     let html = page().await;
     assert!(!html.contains("data-interval-note"));
     assert!(

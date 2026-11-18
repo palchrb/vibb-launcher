@@ -119,7 +119,7 @@ pub struct PolicyTimeRule {
     /// unlock; true on a turned-on rule only.
     pub card_first: bool,
     /// Design 98 §4.4.2: on a rule turned on now (a copy), the rule it copies - the phone's parent-code pause pauses
-    /// both, as the PWA's twin lift does. Absent on a scheduled rule; an older launcher ignores it.
+    /// both, as the PWA's twin lift does. Absent on a scheduled rule.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub copy_of: Option<i64>,
 }
@@ -133,7 +133,7 @@ pub struct PolicyLift {
     pub minutes: i64,
     pub expires_at_ms: i64,
     /// Design 98 §4.4.3: the parent code's pause on the phone (`POST /api/devices/rule-pause`) - the phone lifts it
-    /// only through its own record of that key. Absent on the PWA's lifts; an older launcher ignores it.
+    /// only through its own record of that key. Absent on the PWA's lifts.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub phone_key: Option<String>,
     /// Design 100 §14.2: who gave it - the parent's display name (the answer's own snapshot when the lift answered a
@@ -169,8 +169,7 @@ pub struct TimePolicy {
     pub daily_budget_minutes: Vec<Option<i64>>,
     pub lifts: Vec<PolicyLift>,
     /// Design 100 §14.2 (QA R2-L4: inside `time_policy`, so it caches with the answer): this server answers requests
-    /// for more time and closes them only by an answer. Always true; an older server's absence keeps the launcher's
-    /// r13 rule (a newer lift closes the request).
+    /// for more time and closes them only by an answer. Always true.
     pub request_answers: bool,
     /// The newest answer of the phone's day ([PolicyAnswer]); absent when none.
     #[serde(skip_serializing_if = "Option::is_none")]

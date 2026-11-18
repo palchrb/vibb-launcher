@@ -21,11 +21,11 @@ import me.vibb.music.spotify.spotifyTarget
  * server/testdata/music_library.json (byte-identical in src/test/resources, ContractFilesTest).
  * Parsing is lenient per element (21 §4.6): a field that can degrade does (an unknown order is
  * `auto`, a bad cover none), an entry or file that still can't be used is hidden - but its id stays
- * in [Library.entryIds]/[Library.fileIds], so nothing of it is deleted (qa-21-step2-code H1: a newer
- * server must never make an older app prune a kid's place or copies). A document that isn't
+ * in [Library.entryIds]/[Library.fileIds], so nothing of it is deleted (qa-21-step2-code H1: an unreadable
+ * element must never make the app prune a kid's place or copies). A document that isn't
  * `v: 1` with its three arrays is refused (the old library stays). `sonos_rooms` (design 26a §5.5)
  * absent or null is every room; a list is those rooms; anything else is no room (fail closed). A
- * Storytel entry (design 26b §3.1) needs a target of vibb's grammar; an older app drops it with its id
+ * Storytel entry (design 26b §3.1) needs a target of vibb's grammar; a bad one is dropped with its id
  * kept, so nothing of it is pruned. A Spotify entry (design 26c §4.1) needs a canonical
  * `spotify:<kind>:<id>` target and the `spotify` field - its mode, `list` or `context` - else it is
  * hidden with its id kept; it is streamed (cache read as 0 whatever is sent, never `lan`).
@@ -111,7 +111,7 @@ data class Library(
      */
     val sonosRooms: List<String>? = null,
     /**
-     * Every entry's key by id, usable or not (design 29 §1.3): the news rules know a key an older app
+     * Every entry's key by id, usable or not (design 29 §1.3): the news rules know a key the app
      * can't read too, so the update that makes it readable can't flood.
      */
     val keyById: Map<Long, String> = entries.associate { it.id to it.key },
@@ -183,7 +183,7 @@ object LibraryParser {
         return Library(version, categories, entries, files, covers, rawIds(rawEntries), rawIds(rawFiles), sonosRooms(root["sonos_rooms"]), rawKeys(rawEntries))
     }
 
-    /** `sonos_rooms`: absent or null = every room (an older server), a list = those uids, anything else none. */
+    /** `sonos_rooms`: absent or null = every room, a list = those uids, anything else none. */
     private fun sonosRooms(e: JsonElement?): List<String>? = when (e) {
         null, JsonNull -> null
         is JsonArray -> e.mapNotNull { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content }.distinct()
@@ -216,7 +216,7 @@ object LibraryParser {
             "own" -> Source.OWN
             "storytel" -> Source.STORYTEL
             "spotify" -> Source.SPOTIFY
-            else -> return null // a newer server's source: hidden, its id kept
+            else -> return null // an unknown source: hidden, its id kept
         }
         if (d.id <= 0 || !KEY.matches(d.key) || d.name.isBlank()) return null
         // Download-only: "in the library" means downloaded, so a Storytel cache 0 is all (vibb library.py 87-89).

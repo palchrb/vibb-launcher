@@ -6,7 +6,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 
 - **Blocked-domain log**: `device_policy.dns_log_enabled`, **default off** (the migration deleted every existing
   entry), sent as `PolicyResponse.dns_log_enabled` (always; the launcher records and reports only while it is on).
-  `POST /api/devices/dns-events` stores nothing for a phone with the log off (204, an older launcher still sends).
+  `POST /api/devices/dns-events` stores nothing for a phone with the log off (204).
   Since 0.55.0 (security review L3) each event is checked (`DnsEventReport::checked`, the wire shape unchanged): the
   domain only as a lowercased hostname of at most 253 characters (labels of 1-63 letters, digits, `-`, `_`; anything
   else skipped), the category without control characters and at most 64, `blocked_at` as RFC 3339 clamped to the

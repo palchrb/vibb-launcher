@@ -127,7 +127,7 @@ No prior programming experience - build features directly rather than explaining
   "Check Now" does). `docs/notes/server/play-and-updates.md`, "F-Droid source", "The repo's
   signature".
 - **`GET /api/devices/policy` never answers with a default policy** (`handlers::device_api::build_policy`): a missing `device_policy` row, an unparseable `allowlist_json`, or any DB error is an empty 500 (logged). The launcher treats non-2xx as "no fresh policy" and keeps enforcing its cache. A `NULL` allowlist is still served as `null` (a new device before its first heartbeat); `"[]"` is served as `[]` and means "nothing allowed" on the launcher. Upstream returned `DevicePolicy::default()` (kiosk off, no allowlist) on these errors, which unlocked the phone.
-- **The launcher reports what it did with the policy** (`StatusReportRequest.policy_state`, migration `0021`): `"ok"`, `"cache_corrupt"`, `"rejected_suspect"`, `"fresh_decode_failed"` or `"server_error"` (this server answered 5xx) - anything but `"ok"` (or `NULL` from an older launcher) is an Attention alarm ("Phone can't apply its settings", About This Phone › Software says which). `restrictions_paused` reports the launcher's PIN-gated, time-limited "pause all restrictions" switch, an Attention alarm too ("Restrictions paused", to the summary's Quick actions); every page reads it through `DeviceStatus::paused_at` (2026-11-04): a report older than the longest pause (`RESTRICTIONS_PAUSE_MAX_MS`, 2 h, the launcher's `RESTRICTIONS_PAUSE_DURATION_MS` by `testdata/restrictions_pause.json`) isn't paused any more, and Quick actions says how old the report is once it is over 35 min (`report_age`) - a pause re-entered while the phone is offline shows only with its next report.
+- **The launcher reports what it did with the policy** (`StatusReportRequest.policy_state`, migration `0021`): `"ok"`, `"cache_corrupt"`, `"rejected_suspect"`, `"fresh_decode_failed"` or `"server_error"` (this server answered 5xx) - anything but `"ok"` (`NULL` aside) is an Attention alarm ("Phone can't apply its settings", About This Phone › Software says which). `restrictions_paused` reports the launcher's PIN-gated, time-limited "pause all restrictions" switch, an Attention alarm too ("Restrictions paused", to the summary's Quick actions); every page reads it through `DeviceStatus::paused_at` (2026-11-04): a report older than the longest pause (`RESTRICTIONS_PAUSE_MAX_MS`, 2 h, the launcher's `RESTRICTIONS_PAUSE_DURATION_MS` by `testdata/restrictions_pause.json`) isn't paused any more, and Quick actions says how old the report is once it is over 35 min (`report_age`) - a pause re-entered while the phone is offline shows only with its next report.
 - **Allowlist writes never guess**: `devices::add_to_allowlist`/`remove_from_allowlist` read-modify-write in one transaction (`edit_allowlist`) and return an error on a DB error, a missing policy row or a stored allowlist that isn't valid JSON - `toggle_app` then answers 500 and writes nothing. The first-heartbeat bootstrap in `device_api::status` is one `UPDATE ... WHERE allowlist_json IS NULL`, so a read error can't make it overwrite a parent's list.
 - **`create_device` inserts the device and its policy row in one transaction** and returns 500 if either fails, so a device without a policy row can't be created through the UI.
 
@@ -200,74 +200,15 @@ No prior programming experience - build features directly rather than explaining
 **Migration numbers 0058-0060 are skipped on `main`.** Never fill
 them: sqlx would apply them out of order on a 0.24 database, and `startup::pre_migration_backup` (`MAX(version) <
 latest`) would take no backup first. A new migration takes the next number after the highest one on `main`. The same
-hazard holds for any migration that reaches a server after a higher one has run: 0070 (design 27, episode art) goes
-before 0071 (design 26a, Sonos rooms), and both before 0072 (design 26b, Storytel); 0073 (design 30) goes before 0074
-(design 26c, Spotify). Never deploy a build that carries a higher one without the lower.
+hazard holds for any migration that reaches a server after a higher one has run: never deploy a build that carries a
+higher one without the lower.
 **A migration file is frozen from its first commit on a pushed branch, comments included**: sqlx stores a checksum of
 the whole file and refuses to start (`VersionMismatch`) when an applied migration's text changed. Later notes go into
 this file or the design doc; a dev database that ran an earlier text needs a fresh `data/` (qa-26a-merge27-code L2).
-`0075_clock_format.sql` (design 34 P12) follows 0074, `0076_softer_wallpapers.sql` (design 34 P8) follows 0075,
-`0077_vibb_one.sql` (design 34 P11, the launcher's catalog row named "Vibb One") follows 0076
-(`migrations_73_to_96_in_order`); `0078_parent_events.sql` (design 35, all of it in one file) follows 0077 and
-`0079_custom_dns.sql` (design 36) follows 0078, so 0078 must reach a server before or with 0079, never after (the
-out-of-order hazard above).
-`0080_phone_power.sql` (design 38, the two power switches) follows 0079, and
-`0081_music_art_more.sql` (2026-10-19, episode pictures ASAP: `music_listings.art_more`) follows 0080
-(`migrations_73_to_96_in_order`), and `0082_art_backfill_and_last_opened.sql` (server round 5: `art_more` set for
-the listings with untried episode pictures, `push_subscriptions.last_opened_at`) follows 0081, and
-`0083_lock_glance_text_per_app.sql` (design 51: `device_lock_glance_apps.show_text`, backfilled from
-`device_policy.lock_glance_text`, which nothing reads after it) follows 0082, and
-`0084_lock_wake_on_notification.sql` (launcher round 7 §3: `device_policy.lock_wake_on_notification`, default 0)
-follows 0083, and `0085_kid_keyguard.sql` (design 59 step 1: `device_policy.kid_keyguard`, the sealed Child PIN and
-its rev) follows 0084, and `0086_reauth_wrong.sql` (design 59 step 2's fix round: `admin_users.reauth_wrong`, the
-re-auth forms' wrong passwords in a row) follows 0085, and `0087_parent_accounts.sql` (design 62 step 1: `admin_users`'
-`display_name`/`invited_by`/`invite_expires_at`/`removed_at`, `device_commands.requested_by`) follows 0086, and
-`0088_parent_reads_and_prefs.sql` (design 62 step 5: `notification_prefs` and `parent_event_reads` per parent;
-`notification_settings` and `parent_events.read_at` dropped) follows 0087, and `0089_screen_capture.sql` (the
-screen capture switch, 2026-10-23: `device_policy.disallow_screen_capture`, default 0) follows 0088, and
-`0090_write_settings_granted.sql` ("Modify system settings" without adb, 2026-10-24:
-`device_status.write_settings_granted`) follows 0089, and `0091_safe_zones.sql` (design 64 step 1: `device_zones`,
-`notification_prefs.push_zones`, `parent_events.params`) follows 0090, and `0092_zone_watch.sql` (design 64 step 2:
-`device_status.zone_watch_json`) follows 0091, and `0093_location_provider.sql` (design 64 step 2:
-`device_locations.provider`/`mock`/`resent_at`, `devices.mock_logged`/`mock_logged_at`) follows 0092, and
-`0094_tracked_app_fdroid.sql` (the F-Droid source, 2026-10-24: `tracked_apps.fdroid_repo`/`fdroid_package`) follows
-0093, and `0095_push_session_epoch.sql` (security review M1, `pwa-fixes-a`: `push_subscriptions.session_epoch`,
-backfilled with the account's) follows 0094, and `0096_extra_time_request.sql` (design r13:
-`notification_prefs.push_extra_time`, default 1) follows 0095, `0097_shutdown_fix.sql` (the shutdown's last
-position, 2026-10-25: `device_locations.shutdown_at`) follows 0096, and `0098_push_words.sql` (the shorter push
-texts: `parent_events.push_title`/`push_body`) and `0099_app_update_notices.sql` (app update notices:
-`notification_prefs.push_app_updates`, default 0, and `parent_events` rebuilt with a nullable `device_id`, with
-`push_deliveries` and `parent_event_reads`) follow it, and `0100_device_avatar.sql` (server round C, `pwa-fixes-c`:
-`devices.avatar_hash`, the phone's own picture) follows 0099, and `0101_bedtime.sql` (design 66: `time_rules.bedtime`,
-one per phone by `idx_time_rules_bedtime`) follows 0100, and `0102_app_permissions.sql` (design 68:
-`device_app_permissions`, camera off per phone and app) follows 0101, and `0103_calendar.sql` (design 69, Dagen:
-`device_calendars` with the one-writable index, `device_calendar_rules`, the four `device_policy.calendar_*` switches,
-`devices.calendar_report`, `device_app_display.on_home`) follows 0102, and `0104_admin_lang.sql` (design 70:
-`admin_users.lang`, no CHECK) follows 0103, and `0105_calendar_feeds.sql` (design 72's calendar links:
-`calendar_sources`, `device_calendar_feeds`, the trigger `calendar_sources_orphaned`) follows 0104, and
-`0106_calendar_colors.sql` (a colour per calendar, 2026-10-27: `device_calendars.color`, one of eight names or NULL) follows 0105, and
-`0107_security_params.sql` (design 70 slice 2: `security_events.params`, a row's words as a catalog key and its
-parameters) follows 0106, and `0108_spotify_diag.sql` (the Spotify diagnostic log, 2026-11-01:
-`device_policy.music_spotify_diag_until`) follows 0107, and `0109_parent_events_kind_index.sql` (the status lines'
-"Turned off", 2026-11-01: `idx_parent_events_device_kind` on `parent_events(device_id, kind, happened_at)`, for
-`parent_events::offs_now` on the Devices list) follows 0108, and `0110_caldav_accounts.sql` (design 72 step 2:
-`caldav_accounts`, `calendar_sources.account_id`, the triggers `caldav_accounts_unused`/`_used`) follows 0109,
-and `0111_fdroid_repo_keys.sql` (round S4: `fdroid_repo_keys`, a custom F-Droid repo's key pinned at its first
-fetch) follows 0110, and `0112_fdroid_repo_state.sql` (S4's fix round M1: `fdroid_repo_state`, each repo's newest
-entry.json timestamp taken) follows 0111, and `0113_calendar_lock_ping.sql` (the lock reminders' ping, 2026-11-01:
-`device_policy.calendar_lock_ping`, the row's sound) follows 0112, and `0114_emergency_menu.sql` (design 73:
-`device_emergency_numbers`, a phone's emergency menu) follows 0113, and `0115_device_rule_off.sql` (Tidsregler,
-2026-11-01: `device_rule_off`, a switch per rule and phone; the old Own rules choice turned into its rows;
-`extra_time_request` targets repointed to `#quick`) follows 0114, and `0116_passkeys.sql` (design 74 step 1:
-`admin_passkeys`, `admin_users.webauthn_user_id`) follows 0115, and `0118_passkey_only.sql` (design 74 step 2:
-`admin_users.passkey_only`) follows it, and
-`0119_time_rule_calendar.sql` (Kalender in a time rule, 2026-11-02: `time_rules.calendar_allowed`) follows 0118, and `0120_calendar_kid_writes.sql` (design 72b: the kid's events written to a marked CalDAV calendar -
-`device_calendar_feeds.kid_writes`, `device_kid_events`, `kid_caldav_events`, `kid_caldav_tags`, the account's write
-claim and backoff) follows 0119 (`migrations_from_73_in_order` takes every migration from 0073 on). `0121_time_rule_silent.sql`
-(a time rule's Silent switch, 2026-11-02: `time_rules.silent`, on for every school rule and bedtime stored before it)
-follows 0120. `0122_lock_weather.sql` (design 75's lock weather) follows 0121, and `0123_contact_photo_original.sql` (a contact photo's kept original and view, `contacts.photo_original_hash`/`photo_view`) follows 0122 - it merges after lock-weather, so a database never runs 0123 before 0122. `0124_bluetooth_any_device.sql` (security review S-L5's `device_policy.bluetooth_any_device`, launcher round L4b) follows 0123, and `0125_tailnet_joined.sql` (the status report's `device_status.tailnet_joined`, S-L10's fix round) follows 0124, and `0126_weather_no_place.sql` (drops design 75's `weather_places`: the place name went on 2026-11-04) follows 0125, and `0127_lock_media_apps.sql` ("Show as a media player on the lock screen", 2026-11-04: `device_lock_media_apps`) follows 0126, and `0128_push_removed.sql` (Push never lost silently: a parent's Remove/Turn Off notes, `push_removed`) follows 0127, and `0129_server_tls.sql` (design 76: the phones' certificate check, `device_server_tls`) follows 0128, and `0130_sms.sql` (design 77 step 1: `device_policy.calls_mode`/`sms_mode`/`sms_lock_text`, `device_contacts.sms_in`/`sms_out`/`mms`, `device_own_numbers`, `device_sms_names`, `device_sms_held`, `devices.sms_ignored_transitions`, `device_status.sms_state_json`, `notification_prefs.push_sms_held`; a new phone
-starts both channels `unmanaged`, as before it - code QA M2 - and the Calls page offers SMS "Styrt av Vibb" only to a
-phone reporting `sms_engine_v1`) follows 0129, and `0131_spotify_audiobook.sql` (Spotify audiobooks, 2026-11-09: `music_listings.spotify_audiobook` and its library revision trigger) follows 0130, and `0132_push_budget.sql` (design 77 step 4: `parent_events.push_budget_key`, the per-kind push budget of `sms_held`) follows 0131, and `0133_contact_requests.sql` (design 77 §14: the kid's contact requests from the phone book, `device_contact_requests`, and `notification_prefs.push_contact_request`) follows 0132, and `0134_sms_groups.sql` (design 80 D13: `device_policy.sms_groups`, "Gruppemeldinger", default on) follows 0133, and `0135_messages_lock_level.sql` (design 82: Meldinger's lock level as a `device_lock_glance_apps` row under `me.vibb.builtin.messages` - seeded from each phone's `device_policy.sms_lock_text`, which nothing reads after it, and at Name only for a new device by the recreated `devices_get_lock_glance_default` trigger) follows 0134, and `0136_lock_buzz_on_notification.sql` (design 82 W3: `device_policy.lock_buzz_on_notification`, default 0) follows 0135, and `0137_device_mmsc_hosts.sql` (design 83: `device_mmsc_hosts`, the MMS server addresses a phone asked about and the parent's answers) follows 0136, and `0138_device_avatar_tone.sql` (design 85 step 1: `devices.avatar_tone`, every phone's own avatar colour, the phones there numbered by id) follows 0137, and `0139_tracked_app_version_code.sql` (2026-11-12: `tracked_apps.latest_release_version_code`, the stored release APK's own versionCode, by which a phone's report is known to run it for `app_updated`; `docs/notes/server/notifications.md`, "App update notices") follows 0138, and `0140_device_app_logos.sql` (design 87 step 1: `device_app_logos`, which logo each phone reported for each app; the files in `data/app_logos/`, `app_logos.rs`) follows 0139, and `0141_catalog_update_holds.sql` (design 90: `tracked_apps`' `latest_release_permissions`, `accepted_permissions`, `always_ask`, `release_wait_hours` (48, 0-336), `waiting_release_*` and `declined_release_*`, `tracked_app_held_releases` and `tracked_app_seen_releases`; `docs/notes/server/play-and-updates.md`, "Update holds and the per-app wait") follows 0140; 0142-0156 follow in order (`server/migrations/`; 0155 `catalog_app_logo`: `tracked_apps.logo_hash`, the catalog's kept logo; 0156 `up_held`: design 115, a phone's reported app-push hold). The next free number is 0157.
+Every migration follows the one before it: sqlx applies them in number order, and `migrations_from_73_in_order` checks
+every file from 0073 on. The pairs a server must get in that order (the hazard above): 0070 before 0071 before 0072,
+0073 before 0074, 0078 before 0079, 0122 before 0123. What a file adds is its name and its header comment; the tables
+below name the migration of the columns they list. The next free number is 0157.
 
 - `admin_users` - parent login accounts, TOTP secret (+ `totp_last_step`), forced-password-change flag, TOTP failure counter and lock (`lock_count`, `locked_until`), `session_epoch`, `reauth_wrong` (0086: wrong passwords in a row at the re-auth forms); several equal accounts per family since design 62 (0087: `display_name`, `invited_by`, `invite_expires_at` - a one-time password's 72 h, `removed_at` - a soft remove; `docs/notes/server/connectivity.md`, "Parent accounts"), `lang` (0104, design 70: the PWA's language, `en`/`nb`, NULL until the first signed-in request), `webauthn_user_id` (0116, design 74: a passkey's user handle, 16 random bytes made at the first add), `passkey_only` (0118, design 74 step 2: no password, no TOTP, at least one passkey - read an `AdminUser` through `admin_select!()`, which adds its `passkey_count`); `admin_passkeys` (0116: a parent's passkeys - the COSE key, its RP ID, the counter, BE/BS; `docs/notes/server/connectivity.md`, "Passkeys")
 - `devices` - one row per kid's phone: name, enrollment code hash + kind (+ expiry, cleared on use; `enrollment_code` itself is always NULL since 0052), hashed bearer token, enrolled/last-seen timestamps, `avatar_hash` (0100: the phone's own picture, the PWA's alone and never sent to the phone - `photos::DEVICE_AVATARS` in `data/device_avatars/`, backed up like the contact photos; uploaded from the summary's header to `POST /devices/{id}/avatar` (`/avatar/remove`), served **without a session** at `GET /phone-avatars/{hash}` (only a hash a phone names; the admin gate applies - with `ADMIN_PUBLIC=on` the hash is the only guard; never on the phones' listener) because it is also a push's icon; `docs/notes/server/pwa.md`, "A phone's own picture"), `avatar_tone` (0138, design 85: the phone's own colour until a picture is set, an index into `devices::AVATAR_TONES`, picked inside the new phone's `INSERT` by `devices::next_tone` and never moved; `docs/notes/server/pwa.md`, "Every phone's own colour")

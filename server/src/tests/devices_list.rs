@@ -201,7 +201,6 @@ async fn a_locking_rule_and_todays_screen_time_show_on_the_row() {
     // `zone`: the phone says it is in the Phone Setup zone (the launcher since design 34 P13).
     let time_state = |day: chrono::NaiveDate, zone: Option<&str>| {
         json!({
-            "capabilities": ["time_rules_v1", "call_policy_v1"],
             "lock_reason": "SCHOOL",
             "time_state": {
                 "day": day.format("%Y-%m-%d").to_string(), "used_minutes": 42,
@@ -288,7 +287,6 @@ async fn a_locking_rule_and_todays_screen_time_show_on_the_row() {
     app.post_status(
         &token,
         json!({
-            "capabilities": ["time_rules_v1"],
             "battery": { "level": 100, "charging": false, "low": false },
             "time_state": { "day": today.format("%Y-%m-%d").to_string(), "used_minutes": 42,
                             "budget_minutes": 90, "lock_reason": "NONE" }

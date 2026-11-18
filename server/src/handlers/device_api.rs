@@ -226,8 +226,8 @@ impl From<sqlx::Error> for PolicyError {
 /// hashed after [build_policy], so after its `pop_command` and every time-dependent part - and an
 /// `If-None-Match` naming it gets a `304` with no body. The request still counts as the phone's
 /// last access and the pop still happens; the body would only repeat one the phone holds. Never
-/// gzip'd (the PIN hashes, design 95 §3.3) and `no-store` as before. An older launcher sends no
-/// `If-None-Match` and always gets the 200.
+/// gzip'd (the PIN hashes, design 95 §3.3) and `no-store` as before. A request without
+/// `If-None-Match` always gets the 200.
 pub async fn policy(
     State(state): State<AppState>,
     Extension(AuthedDevice(device)): Extension<AuthedDevice>,
@@ -1145,7 +1145,7 @@ pub async fn dns_events(
     Extension(AuthedDevice(device)): Extension<AuthedDevice>,
     Json(events): Json<Vec<DnsEventReport>>,
 ) -> impl IntoResponse {
-    // The log is a per-phone opt-in (off by default): an older launcher that still reports is
+    // The log is a per-phone opt-in (off by default): a launcher that reports anyway is
     // answered 204 and nothing is stored.
     let enabled: Option<bool> =
         sqlx::query_scalar("SELECT dns_log_enabled FROM device_policy WHERE device_id = ?")
@@ -1472,7 +1472,7 @@ async fn status_intake(
         .as_ref()
         .and_then(crate::notification_channels::clean)
         .map(|value| value.to_string());
-    // Design 115 §2.8: why the phone holds its app-push queue (`None`: it doesn't, or an older launcher).
+    // Design 115 §2.8: why the phone holds its app-push queue (`None`: it doesn't, or the report doesn't say).
     let up_held = report
         .unified_push
         .as_ref()
@@ -1917,7 +1917,7 @@ struct PreviousReport {
 }
 
 /// The versionCodes a report names (app update notices): the launcher's, the music app's, and
-/// each listed app's that carries one (`installed`; an older launcher's entries carry none).
+/// each listed app's that carries one (`installed`).
 fn installed_codes(
     app_version: Option<&str>,
     app_version_code: Option<i64>,
@@ -2849,7 +2849,7 @@ pub fn time_request_id_ok(id: &str) -> bool {
 /// else the event `extra_time_request` keyed by the id (a retry is one row, and a retried third
 /// request is no fourth), pushed only while it is news (asked under 30 min ago at intake), to every
 /// parent with "Asks for more time" on; a stored one closes the day's other open requests
-/// (`superseded`, design 100 §14.4: an older launcher asks again after its 30 minutes). Where the phone stood comes from its own latest report, when
+/// (`superseded`, design 100 §14.4). Where the phone stood comes from its own latest report, when
 /// that is at most 15 minutes old.
 pub async fn time_request(
     State(state): State<AppState>,

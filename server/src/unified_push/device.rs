@@ -4,7 +4,7 @@
 //! - `POST /api/devices/up/registrations` `{reg, secret, package, vapid?}`: 200 `{endpoint}` (a retry of the same
 //!   `reg` and secret gets it again), 409 `{refused}` with `off`, `stopped`, `not_allowed`, `limit`, `busy` or
 //!   `conflict`, 400 for a malformed body, 413 above [REGISTER_LIMIT]. The server's side of the phone's own rules, so
-//!   an older or a broken phone can't bypass them. The connection token never leaves the phone; the secret is stored
+//!   a broken phone can't bypass them. The connection token never leaves the phone; the secret is stored
 //!   only as its SHA-256.
 //! - `DELETE /api/devices/up/registrations/{reg}`: 204, also for an unknown `reg`.
 //! - `POST /api/devices/up/messages` `{ack}`: the acknowledged keys (this phone's only) deleted, then

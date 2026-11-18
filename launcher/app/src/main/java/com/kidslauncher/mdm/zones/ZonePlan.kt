@@ -52,7 +52,7 @@ fun fenceFingerprint(zones: List<PolicyZone>): String =
 
 /**
  * The fences for [zones] (decision 10): [watching] = device owner, enrolled and the policy's mode
- * "interval" (the server sends zones only then; an older server none). Idempotent - remove ours,
+ * "interval" (the server sends zones only then). Idempotent - remove ours,
  * add the current set - whenever this process hasn't registered yet ([freshProcess]: fences live
  * in system_server's memory and are gone after a reboot; an update or a crash may have cancelled
  * our PendingIntents) or the zones changed; nothing otherwise. Not watching: every stored fence

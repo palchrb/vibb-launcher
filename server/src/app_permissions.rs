@@ -57,7 +57,6 @@ pub mod words {
 }
 
 /// One entry of the policy's `app_permissions`: a package the parent switched away from the default on this phone.
-/// Later keys are additive; an older launcher ignores the whole key.
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct AppPermission {
     pub package_name: String,

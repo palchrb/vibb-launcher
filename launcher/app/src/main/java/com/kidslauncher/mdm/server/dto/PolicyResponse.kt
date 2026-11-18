@@ -31,13 +31,13 @@ import kotlinx.serialization.Serializable
  * were still on the device - [MdmSyncWorker] uninstalls each silently (Device Owner privilege, no
  * confirmation dialog) on every sync where this is non-empty; the server clears an entry once a
  * later status report confirms the package is actually gone, not on any client-side acknowledgement.
- * [callPolicy] is the calls & SMS rules ([CallPolicy]); `null` only from a server that predates
- * them. [hardening] is the phone-hardening switches ([HardeningPolicy]); `null` (older server)
- * means every switch's default. [launcherUi] is the parent's language and home-grid choice
- * ([LauncherUi]); `null` (older server) means the defaults. [timePolicy] is the named time rules,
+ * [callPolicy] is the calls & SMS rules ([CallPolicy]); `null` when missing.
+ * [hardening] is the phone-hardening switches ([HardeningPolicy]); `null` means every switch's
+ * default. [launcherUi] is the parent's language and home-grid choice
+ * ([LauncherUi]); `null` means the defaults. [timePolicy] is the named time rules,
  * daily budget and the parent's lifts (handy step 6); `null` means no rules. Once a phone has had one, a
  * response without it is rejected ([com.kidslauncher.mdm.server.judgeFresh]). [locationPolicy]: when location
- * goes into the status report; `null` (older server) keeps the old every-sync behaviour.
+ * goes into the status report; `null` keeps the every-sync behaviour.
  * A 0.19 server's `push` (FCM, removed in design 19) is an unknown key and ignored.
  * [kidLock]: the kid's PIN for handy's own lock screen (step 10).
  */
@@ -50,14 +50,14 @@ data class PolicyResponse(
     val overridePinSalt: String? = null,
     val quickControlsMask: Long = 0,
     /** Security review S-L5: Kid Settings' Bluetooth page pairs any device (`true`), or only headphones and speakers
-     * (`false`, also from an older server) - [com.kidslauncher.mdm.server.btPairOffered]. */
+     * (`false`, also when missing) - [com.kidslauncher.mdm.server.btPairOffered]. */
     val bluetoothAnyDevice: Boolean = false,
     val pendingCommand: PendingCommand? = null,
     val vpnFilterEnabled: Boolean = true,
     val dnsFilterVersion: String? = null,
     val dnsUpstreamProvider: String = "cloudflare",
     /** The parent's own DNS server and its backup (design 36 §4.1): `{kind, url | host+port, rev,
-     * backup: {kind, url | host+port}}`, or `null` (missing from an older server) = forward to
+     * backup: {kind, url | host+port}}`, or `null` (missing) = forward to
      * [dnsUpstreamProvider], which the server then sends as "cloudflare". Raw JSON read field by
      * field by [com.kidslauncher.mdm.server.customUpstreamFrom], so nothing in it - a future kind,
      * a wrong type - can fail the policy (like [music]); anything it can't use is the provider.
@@ -79,59 +79,58 @@ data class PolicyResponse(
      * device-protected storage, logs or the status report. */
     val kidLock: KidLock? = null,
     /** The parent's screen timeout in seconds (15/30/60/120/300/600), applied by
-     * [com.kidslauncher.mdm.server.ScreenTimeout]; `null` from an older server = the phone's own
+     * [com.kidslauncher.mdm.server.ScreenTimeout]; `null` = the phone's own
      * setting is left alone. */
     val screenTimeoutSeconds: Int? = null,
     /** The update fence (handy step 11): while our own update is installed every other Home is
-     * suspended and the status bar disabled. Missing (an older server) = **off**; off also releases
+     * suspended and the status bar disabled. Missing = **off**; off also releases
      * a fence that is up. Not in [com.kidslauncher.mdm.server.LastEnforcedPlan]: with no usable
      * cache the fence is off. */
     val updateFence: Boolean = false,
-    /** Other apps' nags are cancelled by our notification listener (handy step 11). Missing (an
-     * older server) = **off**; not in the last-enforced plan, so with an unknown policy nothing is
+    /** Other apps' nags are cancelled by our notification listener (handy step 11). Missing =
+     * **off**; not in the last-enforced plan, so with an unknown policy nothing is
      * cancelled. */
     val notificationAutoCancel: Boolean = false,
     /** The boot cover (design 16b): our own direct-boot-aware HOME with the Vibb mark from the boot
-     * animation to the unlock, instead of the stock launcher. Missing (an older server) = **off**;
+     * animation to the unlock, instead of the stock launcher. Missing = **off**;
      * not in the last-enforced plan, so with an unknown policy the cover stays off. */
     val bootCover: Boolean = false,
     /** The blocked-domain log (cleanup 2026-10-06): only while this is on does the launcher record
-     * and report blocked domains. Missing (an older server) = **off**. */
+     * and report blocked domains. Missing = **off**. */
     val dnsLogEnabled: Boolean = false,
     /** "App updates only on Wi-Fi" (design 13): catalog apps download on an unmetered network
-     * only, our own update after 3 days on any non-roaming one. Missing or `null` (an older
-     * server) = **off**, as before; nullable so nothing the server sends here can fail the policy.
+     * only, our own update after 3 days on any non-roaming one. Missing or `null` =
+     * **off**; nullable so nothing the server sends here can fail the policy.
      * The offline override and the pause don't lift it - it guards data, not the kid. */
     val appUpdatesWifiOnly: Boolean? = null,
     /** Vibb music (design 21): the server's `{library_version, mobile_data, stream_mobile_data,
      * download_mobile_data, volume_cap_pct, storage_limit_gb, storytel_generation, spotify}` (design 30
-     * adds the switches and the limit; `mobile_data` = both); `null` from an older server, or when the
+     * adds the switches and the limit; `mobile_data` = both); `null` when the
      * server couldn't read the library (then the music app keeps what it has - never an empty library).
      * Carried as raw JSON so nothing in it can fail the policy, and read field by field:
      * [com.kidslauncher.mdm.music.musicPolicy] for the music sync, and
      * [com.kidslauncher.mdm.music.musicSpotify] for `spotify` (design 26c §6.2: this phone plays
-     * Spotify, so the DNS filter exempts Spotify's hosts; absent from an older server = false). Since 2026-11-01
+     * Spotify, so the DNS filter exempts Spotify's hosts; absent = false). Since 2026-11-01
      * `spotify_diag_until` too (Device › Advanced's Spotify diagnostic log; read leniently by
      * [com.kidslauncher.mdm.music.spotifyDiagUntil], handed to the music app as `spotify_diag_until`).
      * Not in [com.kidslauncher.mdm.server.LastEnforcedPlan]. */
     val music: kotlinx.serialization.json.JsonElement? = null,
     /** The lock's glance page (design 25): `{apps: [{package, show_text}, ...]}` - the apps whose
-     * messages show on the PIN lock's first page, each with whether its text shows too (design 51;
-     * an older server's `apps` of strings reads as sender only). Raw JSON read field
+     * messages show on the PIN lock's first page, each with whether its text shows too (design 51). Raw JSON read field
      * by field by [com.kidslauncher.mdm.badges.lockGlancePolicy], so nothing in it can fail the
-     * policy (like [music] and `app_display`). Missing from a fresh response (an older server) =
+     * policy (like [music] and `app_display`). Missing from a fresh response =
      * the server's own default (Element X, sender only); missing from the cache (written by a
      * build before design 25) = unknown, missed calls only (QA Low 11). Not in
      * [com.kidslauncher.mdm.server.LastEnforcedPlan]. */
     val lockGlance: kotlinx.serialization.json.JsonElement? = null,
     /** Dagen (design 69 §4.1): `{on_home, kid_adds, glance_next, lock_reminders, calendars: [{key, shown, remind,
      * remind_minutes, writable_for_kid}], rules: [{id, calendar, field, match, pattern, action, text}]}`. Raw JSON read
-     * field by field by [com.kidslauncher.mdm.day.calendarPolicy], so nothing in it can fail the policy. Missing (an
-     * older server) = every calendar shown, no rules, nothing on the lock. Not in
+     * field by field by [com.kidslauncher.mdm.day.calendarPolicy], so nothing in it can fail the policy. Missing =
+     * every calendar shown, no rules, nothing on the lock. Not in
      * [com.kidslauncher.mdm.server.LastEnforcedPlan]: without a usable cache Dagen is off. */
     val calendar: kotlinx.serialization.json.JsonElement? = null,
     /** Design 76 D2: `{"enforce": true}` (the server's `on`), `{"enforce": false}` (the parent's off) or `{}` (the
-     * server's `watching`: keep the flag, R-1); absent from an older server or for a launcher without
+     * server's `watching`: keep the flag, R-1); absent for a launcher without
      * `server_pin_v1`. Raw JSON read by [com.kidslauncher.mdm.server.enforceOf], so nothing in it can fail the
      * policy; taken only by the sync's fresh fetch with that response's handshake ([com.kidslauncher.mdm.server.nextFlag]),
      * never from the cache. Not in [com.kidslauncher.mdm.server.LastEnforcedPlan]. */
@@ -139,13 +138,13 @@ data class PolicyResponse(
     /** Per-app permissions (design 68 §3.1): `[{package_name, camera: "deny"}]`, the packages the parent switched
      * away from the default on this phone. Raw JSON read field by field by
      * [com.kidslauncher.mdm.server.appPermissionsOf], so nothing in it can fail the policy; missing or not a list
-     * (an older server, a `Fallback`) means "touch nothing". Not in `LastEnforcedPlan`: a denial lives in Android's
+     * (a `Fallback`) means "touch nothing". Not in `LastEnforcedPlan`: a denial lives in Android's
      * grant state. */
     val appPermissions: kotlinx.serialization.json.JsonElement? = null,
     /** "Show as a media player on the lock screen" (the server's Device › Apps › Permissions, 2026-11-04): `[package]`,
      * the apps the parent switched on on this phone - the lock's media tile counts them as media apps
      * ([com.kidslauncher.mdm.music.lockMediaApp]). Raw JSON read by [com.kidslauncher.mdm.music.lockMediaAppsOf], so
-     * nothing in it can fail the policy; missing or not a list (an older server, a `Fallback`) = none. Not in
+     * nothing in it can fail the policy; missing or not a list (a `Fallback`) = none. Not in
      * `LastEnforcedPlan`. */
     val lockMediaApps: kotlinx.serialization.json.JsonElement? = null,
     /** Design 97: "I utlandet", `"off"`, `"vibb"` or `"home"`; read through [com.kidslauncher.mdm.server.abroadChoice]
@@ -157,8 +156,8 @@ data class PolicyResponse(
     /** Design 95 rev. 3 item 3: Android's mobile-network settings locked (`DISALLOW_CONFIG_MOBILE_NETWORKS`); missing =
      * not set. Kept by [com.kidslauncher.mdm.server.LastEnforcedPlan]. */
     val mobileSettingsLocked: Boolean? = null,
-    /** Design 95 §3.5 (step 95-T2): the server expands heartbeat reports ([StatusReports]); missing (an older server)
-     * = never send one. */
+    /** Design 95 §3.5 (step 95-T2): the server expands heartbeat reports ([StatusReports]); missing = never
+     * send one. */
     val statusHeartbeat: Boolean = false,
     /** Design 95 §3.5 (code QA M1): the heartbeat fields the server overlays; a heartbeat goes only while this is the
      * launcher's own [com.kidslauncher.mdm.server.HEARTBEAT_FIELDS] ([com.kidslauncher.mdm.server.heartbeatOn]). */
@@ -166,15 +165,15 @@ data class PolicyResponse(
     /** Design 95 §3.5: the server takes a gzip'd status report; missing = never gzip. */
     val statusGzip: Boolean = false,
     /** Design 98 §4.4.6: the server takes `POST /api/devices/rule-pause`; only then is Foreldrekode offered on the
-     * time-rule screen. Missing (an older server) = never. */
+     * time-rule screen. Missing = never. */
     val rulePause: Boolean = false,
     /** Design 102 §6.1: Wi-Fi sign-in - the switch, the parent code required, the limits, the "one more" counter.
-     * Missing (an older server) = on, with the code required ([com.kidslauncher.mdm.logins.portalPolicyOf]). */
+     * Missing = on, with the code required ([com.kidslauncher.mdm.logins.portalPolicyOf]). */
     val captivePortal: com.kidslauncher.mdm.logins.CaptivePortalPolicy? = null,
     /** Design 102 §6.1: Chrome only for logins - its package and the sites; `null` (and missing) = the role off. */
     val loginBrowser: com.kidslauncher.mdm.logins.LoginBrowserPolicy? = null,
     /** Design 108 §3.8: app push (UnifiedPush) - `on`, `origin`, `regs`, `stopped`; sent only to a launcher claiming
-     * `unified_push_v1`. Missing (an older server) = off: the receiver and the Link Activity disabled
+     * `unified_push_v1`. Missing = off: the receiver and the Link Activity disabled
      * ([com.kidslauncher.mdm.push.up.UpView]). */
     val unifiedPush: com.kidslauncher.mdm.push.up.UnifiedPushPolicy? = null,
 )
@@ -182,9 +181,9 @@ data class PolicyResponse(
 /** `PolicyResponse.kidLock` - `security::hash_pin` on the server (PBKDF2-SHA256, see
  * [com.kidslauncher.mdm.server.PinHash]); [pinLength] 4-6, the keypad submits at the last digit.
  * Design 59 §1: [keyguard] `"android"` = Android's own lock screen holds the Child PIN; anything
- * else, missing (an older server) included, is Vibb One's own lock. [pinRev] the server's counter
+ * else, missing included, is Vibb One's own lock. [pinRev] the server's counter
  * of Child PIN saves, sent with this hash: the phone reports the rev its gate enforces, never PIN
- * material (0 from an older server). */
+ * material (0 when missing). */
 @Serializable
 data class KidLock(
     val pinHash: String = "",
@@ -200,7 +199,7 @@ data class KidLock(
 /** `PolicyResponse.locationPolicy`: [mode] "off", "on_request" or "interval" (every
  * [intervalMinutes]); see [com.kidslauncher.mdm.server.locationAction]. Design 64 step 2: [zones]
  * the phone's safe zones to watch (the server sends them only with "interval"; `[]` and a missing
- * key - an older server - mean none), and [intervalMinutes] the served one - at least 30 while the
+ * key mean none), and [intervalMinutes] the served one - at least 30 while the
  * phone has zones and reports fences ([ZoneWatchReport]). */
 @Serializable
 data class LocationPolicy(
@@ -230,10 +229,10 @@ data class LauncherUi(
     val homeColumns: Int = 3,
     /** The phone's clock format (design 34 P12): "system" (follow the phone), "24" or "12" - the
      * launcher writes `Settings.System.TIME_12_24` ([com.kidslauncher.mdm.server.ClockFormatSetting]).
-     * Missing (an older server), `null` or anything else = "system" ([com.kidslauncher.mdm.server.clockFormatChoice]). */
+     * Missing, `null` or anything else = "system" ([com.kidslauncher.mdm.server.clockFormatChoice]). */
     val clockFormat: String? = null,
     /** The wallpapers the parent allows on this phone, in order (design 08-ui-polish.md);
-     * missing from an older server = only the built-in navy
+     * missing = only the built-in navy
      * ([com.kidslauncher.mdm.ui.wallpaper.effectiveWallpaper]). */
     val wallpapers: List<PolicyWallpaper> = emptyList(),
     /** The lock's own background (design 25, "Lock background"): the id of one of [wallpapers], or
@@ -246,14 +245,14 @@ data class LauncherUi(
     val appDisplay: kotlinx.serialization.json.JsonElement? = null,
     /** The parent's "Wake the screen for a notification" (launcher round 7 §3): a new row on the
      * lock's glance page or a missed call turns the screen on, on the lock
-     * ([com.kidslauncher.mdm.lock.PinLockRuntime.noticeCame]). Missing (an older server) = off. */
+     * ([com.kidslauncher.mdm.lock.PinLockRuntime.noticeCame]). Missing = off. */
     val lockWakeOnNotification: Boolean = false,
     /** The parent's "Buzz for a notification" (design 82 W3): the same notices make the locked phone vibrate once,
      * without a sound ([com.kidslauncher.mdm.lock.noticeBuzzAllowed]) - and, since 2026-11-10, a message more in a
-     * row the lock already shows. Missing (an older server) = off. */
+     * row the lock already shows. Missing = off. */
     val lockBuzzOnNotification: Boolean = false,
     /** Device › Weather's "Weather on the lock screen" (design 75 D17): the glance shows yr's symbol and the degrees by
-     * the date and asks `GET /api/devices/weather`. Missing (an older server) = off. */
+     * the date and asks `GET /api/devices/weather`. Missing = off. */
     val lockWeather: Boolean = false,
 )
 

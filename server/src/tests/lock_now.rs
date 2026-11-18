@@ -29,7 +29,6 @@ async fn emma(extra: Value) -> (TestApp, String, i64, String, i64) {
     .await
     .unwrap();
     let mut body = json!({
-        "capabilities": ["time_rules_v1", "window_relock_v1"],
         "time_state": {"day": "2026-11-13", "used_minutes": 0, "lock_reason": "NONE",
                        "lifts_active": [], "zone": roomy_zone()}
     });
@@ -472,7 +471,6 @@ async fn the_state_lines_and_the_badge() {
         .unwrap();
     let report = json!({
         "lock_reason": "SCHOOL",
-        "capabilities": ["time_rules_v1", "window_relock_v1"],
         "time_state": {"day": today, "used_minutes": 0, "lock_reason": "SCHOOL", "active_rule_id": -lock,
                        "active_rule_name": "Skole", "lifts_active": [], "zone": zone}
     });

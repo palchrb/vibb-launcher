@@ -70,8 +70,7 @@ async fn switches_default_off_are_always_sent_and_saved_from_the_device_page() {
     assert!(!page.contains("Update Vibb One"), "{page}");
     app.post_status(
         &token,
-        json!({ "capabilities": ["kiosk_escapes_v1", "boot_cover_v1"],
-                "boot_cover": { "wanted": true, "tripped": true, "last_handover": "nope" } }),
+        json!({ "boot_cover": { "wanted": true, "tripped": true, "last_handover": "nope" } }),
     )
     .await;
     let stored_cover = stored(&app, "boot_cover_json", id).await.unwrap();
@@ -200,7 +199,6 @@ async fn device_page_explains_the_fence_and_the_filter() {
     .await;
     app.post_status(&token,
         json!({
-            "capabilities": ["kiosk_escapes_v1"],
             "notification_listener_enabled": false,
             "update_fence": {
                 "enabled": true, "state": "none", "unsuspendable": ["com.oem.home"],

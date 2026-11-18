@@ -746,7 +746,7 @@ async fn status_stores_capabilities_and_call_state() {
     let (id, token) = app.enrolled_device("phone").await;
     app.post_status(
         &token,
-        json!({ "capabilities": ["call_policy_v1"], "call_state": good_call_state() }),
+        json!({ "capabilities": ["android_keyguard_v1"], "call_state": good_call_state() }),
     )
     .await;
     let (caps, call_state): (Option<String>, Option<String>) = sqlx::query_as(
@@ -756,7 +756,7 @@ async fn status_stores_capabilities_and_call_state() {
     .fetch_one(&app.db)
     .await
     .unwrap();
-    assert_eq!(caps.as_deref(), Some(r#"["call_policy_v1"]"#));
+    assert_eq!(caps.as_deref(), Some(r#"["android_keyguard_v1"]"#));
     let call_state: Value = serde_json::from_str(&call_state.unwrap()).unwrap();
     assert_eq!(call_state, good_call_state());
 
@@ -830,11 +830,8 @@ async fn calls_page_shows_role_problems_and_fail_closed() {
     call_state["last_error"] = json!("setDefaultDialerApplication: IllegalArgumentException");
     call_state["call_log_readable"] = json!(false);
     call_state["boot_policy"] = json!("write_failed");
-    app.post_status(
-        &token,
-        json!({ "capabilities": ["call_policy_v1"], "call_state": call_state }),
-    )
-    .await;
+    app.post_status(&token, json!({ "call_state": call_state }))
+        .await;
     let page = calls_page(&app, &cookie, id).await;
     for expected in [
         "Phone can&#39;t read its call rules",
@@ -907,11 +904,8 @@ async fn calls_page_says_whether_incoming_calls_are_filtered() {
         if let Some(held) = held {
             call_state["screening_role_held"] = json!(held);
         }
-        app.post_status(
-            &token,
-            json!({ "capabilities": ["call_policy_v1"], "call_state": call_state }),
-        )
-        .await;
+        app.post_status(&token, json!({ "call_state": call_state }))
+            .await;
         let page = calls_page(&app, &cookie, id).await;
         let summary = app
             .get_page(&format!("/devices/{id}"), &cookie)
@@ -954,11 +948,8 @@ async fn allowlisted_messages_app_with_sms_off_is_flagged() {
         .execute(&app.db)
         .await
         .unwrap();
-    app.post_status(
-        &token,
-        json!({ "capabilities": ["call_policy_v1"], "call_state": good_call_state() }),
-    )
-    .await;
+    app.post_status(&token, json!({ "call_state": good_call_state() }))
+        .await;
     let page = calls_page(&app, &cookie, id).await;
     assert!(page.contains("Messages app allowed with SMS off"), "{page}");
     // Its package only behind the ⓘ.
@@ -993,11 +984,8 @@ async fn emergency_call_is_shown_on_the_device_page() {
     let mut call_state = good_call_state();
     call_state["last_emergency_call_at"] = json!(called.to_rfc3339());
     call_state["callback_window_until"] = json!(until.to_rfc3339());
-    app.post_status(
-        &token,
-        json!({ "capabilities": ["call_policy_v1"], "call_state": call_state }),
-    )
-    .await;
+    app.post_status(&token, json!({ "call_state": call_state }))
+        .await;
     let page = app
         .get_page(&format!("/devices/{id}"), &cookie)
         .await
@@ -1037,11 +1025,8 @@ async fn emergency_call_is_shown_on_the_device_page() {
     let mut call_state = good_call_state();
     call_state["last_emergency_call_at"] = json!((now - chrono::Duration::days(8)).to_rfc3339());
     call_state["callback_window_until"] = json!((now - chrono::Duration::days(8)).to_rfc3339());
-    app.post_status(
-        &token,
-        json!({ "capabilities": ["call_policy_v1"], "call_state": call_state }),
-    )
-    .await;
+    app.post_status(&token, json!({ "call_state": call_state }))
+        .await;
     let page = app
         .get_page(&format!("/devices/{id}"), &cookie)
         .await
@@ -1063,10 +1048,7 @@ async fn an_emergency_call_leaves_attention_when_read_or_after_a_day() {
         let mut call_state = good_call_state();
         call_state["last_emergency_call_at"] =
             json!(at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true));
-        app.post_status(
-            &token,
-            json!({ "capabilities": ["call_policy_v1"], "call_state": call_state }),
-        )
+        app.post_status(&token, json!({ "call_state": call_state }))
     };
     let in_attention = || async {
         app.get_page(&format!("/devices/{id}"), &cookie)
@@ -1339,11 +1321,8 @@ async fn the_calls_page_escapes_what_it_shows() {
     .unwrap();
     let mut call_state = good_call_state();
     call_state["last_error"] = json!("<img src=x onerror=alert(1)>");
-    app.post_status(
-        &token,
-        json!({ "capabilities": ["call_policy_v1"], "call_state": call_state }),
-    )
-    .await;
+    app.post_status(&token, json!({ "call_state": call_state }))
+        .await;
     let html = calls_page(&app, &cookie, id).await;
     assert!(!html.contains("<b>Mor"), "{html}");
     assert!(html.contains("&#60;b&#62;Mor&#60;/b&#62;"), "{html}");

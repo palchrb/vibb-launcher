@@ -2862,7 +2862,6 @@ async fn music_phone(app: &TestApp, cookie: &str) -> (i64, String, [i64; 2], i64
             .unwrap();
     app.post_status(&token,
         json!({
-            "capabilities": ["music_v1"],
             "music_state": {"package": "me.vibb.music", "bridge": "bound",
                             "sonos_rooms": [{"uid": STUA, "name": "Stua"}, {"uid": KJOKKEN, "name": "Kjøkken"}]}
         }),
@@ -3162,7 +3161,6 @@ async fn music_refusals_land_in_their_group_and_the_page_fails_loudly() {
     app.post_status(
         &token,
         json!({
-            "capabilities": ["music_v1"],
             "installed_apps": [{"package_name": "me.vibb.music", "label": "Musikk",
                                 "installer": "com.android.vending"}]
         }),

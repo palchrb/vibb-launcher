@@ -2471,7 +2471,7 @@ pub(crate) fn catalog_release_installed(app: &TrackedApp, version: &InstalledVer
 /// `apps` (the phone's checked catalog rows, neither the launcher's nor the music app's) whose
 /// package the phone lists at a higher versionCode than the previous report did, which is the
 /// row's stored release ([catalog_release_installed]); with its `from` (the previous versionName,
-/// when it differs from the new version). No previous code (an older launcher's report, or a new
+/// when it differs from the new version). No previous code (a report without one, or a new
 /// app) is no update.
 pub(crate) fn listed_app_updates<'a>(
     apps: &'a [TrackedApp],

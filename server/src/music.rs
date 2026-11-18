@@ -111,7 +111,7 @@ pub struct Storage {
     /// Everything the music app keeps: "1234.5 MB".
     pub stored: String,
     /// The music downloads against the parent's limit (the server's current one): "980.0 MB of
-    /// 2 GB", "980.0 MB (no limit)"; `None` from an older app.
+    /// 2 GB", "980.0 MB (no limit)"; `None` when the app sent none.
     pub downloads: Option<String>,
     /// The played extras in them, only when there are some: "210.0 MB".
     pub extras: Option<String>,
@@ -1302,11 +1302,11 @@ pub struct MusicPolicy {
     pub storytel_generation: i64,
     /// This phone plays Spotify (design 26c §2.5, §6.2): it is bound to an account (the FK makes
     /// the account exist). The launcher exempts Spotify's hosts from its DNS filter while it is
-    /// true; an older launcher ignores it.
+    /// true.
     pub spotify: bool,
     /// Device › Advanced's Spotify diagnostic log (2026-11-01): until when the music app writes its `VibbSpotify` log
     /// lines, epoch seconds; `null` unless it is running ([spotify_diag_until]). The launcher hands it to the music app
-    /// as the managed config's `spotify_diag_until`; an older launcher ignores it.
+    /// as the managed config's `spotify_diag_until`.
     pub spotify_diag_until: Option<i64>,
 }
 
@@ -2318,7 +2318,7 @@ mod tests {
         let state = parse_music_state(sanitize_music_state(&many).as_deref()).unwrap();
         assert_eq!(state.sonos_rooms.len(), MAX_SONOS_ROOMS);
         assert_eq!(state.sonos_rooms[0].name, "Rom 0");
-        // An older music app sends none: an empty list.
+        // A state without rooms: an empty list.
         let old =
             parse_music_state(sanitize_music_state(&serde_json::json!({})).as_deref()).unwrap();
         assert!(old.sonos_rooms.is_empty());

@@ -25,10 +25,8 @@ pub const SMS_NAME: &str = "name";
 pub const SMS_TEXT: &str = "text";
 
 /// `PolicyResponse.lock_glance` - always sent: the ticked apps (sorted, valid package names only),
-/// each with whether its message text shows too (design 51; before it `apps` were strings and one
-/// `show_text` was the phone's). An older launcher drops the objects and shows missed calls only
-/// until it updates; an older server's strings read as sender only on a new launcher. `sms` is Meldinger's level
-/// (design 82 D3, [sms_level]), always sent: a launcher that knows the key reads a missing one as an older server's.
+/// each with whether its message text shows too (design 51). `sms` is Meldinger's level (design 82 D3,
+/// [sms_level]), always sent.
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct LockGlancePolicy {
     pub apps: Vec<LockGlanceApp>,

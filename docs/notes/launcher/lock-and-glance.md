@@ -19,7 +19,7 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
 ## Android's own lock screen as the gate, the glance its face (design 59 steps 3-4, `docs/design/59-android-keyguard-design.md`, at the monorepo root)
 
 - **The switch**: the policy's `kid_lock.keyguard` - exactly `"android"` is Android's lock (pure `androidRequested`),
-  anything else (missing, `"own"`, junk, an older server) is the own lock above, every path unchanged. Glue
+  anything else (missing, `"own"`, junk) is the own lock above, every path unchanged. Glue
   `lock/AndroidLock`, pure `lock/AndroidLockPlan.kt` (`AndroidLockPlanTest`), log tag `AndroidLock`. The prototype's
   debug switch (`HybridDebug`, its receiver) is gone. Since step 4 the capability `android_keyguard_v1` is claimed
   (with its handler), so the server sends the Child PIN by `set_kid_pin` (below); the keypad migration stays for a
@@ -444,8 +444,8 @@ name - Element X's "N new messages" fallback reads "Chat"; a conversation's or a
   no-profile date short while the switch is on, D14). `GlancePanel`: `placeList` counts the open card, `fitNext`
   measures without it. Licences: `legal_info_weather` + `assets/licenses/CC-BY-4.0.txt`.
   No place name since 2026-11-04 (the user: "Vi dropper navnet"; design 75 §13): the card's foot is the low and high
-  alone ("8° / 13°", the dark text beside it as before), TalkBack names no place, the DTO has no `place` (an older
-  server's is an unknown key, ignored; `WeatherContractTest`), and E8's L3 re-pull of a place-less answer after 2 min
+  alone ("8° / 13°", the dark text beside it as before), TalkBack names no place, the DTO has no `place` (an unknown
+  key is ignored; `WeatherContractTest`), and E8's L3 re-pull of a place-less answer after 2 min
   is gone. The evening card (2026-11-04, design 75 §14): from 18:00 to midnight an entry's `tonight` makes the card
   "I kveld" | "I morgen" (`WeatherCard.tonight`; the layout's two groups `weather_group_0`/`_1` with their heads and
   the `weather_card_split` line, weighed 1 | 2 so a plain card's three columns stay equal; the foot

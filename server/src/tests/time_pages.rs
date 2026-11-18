@@ -76,7 +76,6 @@ async fn report(app: &TestApp, token: &str, state: serde_json::Value) {
             Some(json!({
                 "lock_reason": state["lock_reason"].as_str().unwrap_or("NONE"),
                 "kiosk_engaged": true,
-                "capabilities": ["call_policy_v1", "time_rules_v1"],
                 "time_state": state
             })),
         )

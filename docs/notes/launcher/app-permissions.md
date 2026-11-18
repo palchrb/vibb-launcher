@@ -13,7 +13,7 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
 
 - **Camera off** (§3.2): `PolicyResponse.appPermissions` (raw JSON, read field by field by the pure `appPermissionsOf`
   in `server/EnforcementPlan.kt`: a list of `{package_name, camera: "deny"}`, a bad entry dropped, any other `camera`
-  the default; missing or not a list - an older server, a `Fallback` - is `null` = touch nothing; not in
+  the default; missing or not a list - a `Fallback` - is `null` = touch nothing; not in
   `LastEnforcedPlan`: the denial lives in Android's grant state). Pure `cameraGrants` (`EnforcementPlanTest`): every
   third-party app but ours that requests `CAMERA` is `GRANT_STATE_DENIED` when the parent switched it off and no window
   is open, else `GRANT_STATE_DEFAULT` (the fix cleared, the kid's dialog decides) - **we never GRANT a sensor**, and the

@@ -13,7 +13,7 @@ data class PendingCommand(
     val command: String,
     /** When the parent asked for it (the server's UTC "YYYY-MM-DD HH:MM:SS"): with [id] it names
      * the command uniquely, also after a restored server backup reuses an id or on another server
-     * (QA of the launcher wave, Medium 1). `null` from an older server. */
+     * (QA of the launcher wave, Medium 1). `null` when missing. */
     val requestedAt: String? = null,
     /** `allow_blocked` only: the apps the PWA's Status card listed, with the signing keys it
      * showed - only those are let out, each while its key is still that one (QA of cmd-expiry,

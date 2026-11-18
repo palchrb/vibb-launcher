@@ -8,7 +8,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - **`contacts` is a global address book** keyed by the normalised number (`src/phone.rs`): adding a number another device already has reuses the row and renames it for every device (the page says so). Changing the default country code does not renormalise stored numbers.
 - **Number normalisation is a shared contract with the launcher**: `src/phone.rs` and the launcher's `calls/PhoneNumbers.kt` run the same `testdata/phone_vectors.json` (the launcher keeps a byte-identical copy; each test suite compares the two when the sibling repo is checked out next to it). ASCII digits only; `*`/`#`/`,`/`;` rejected (MMI/USSD never allowlisted); 3-6 digits = short number, matched exactly; no suffix matching. Change both sides and both copies together.
 - **`PolicyResponse.call_policy` is always sent, with both channels' modes** (QA blocker 3, `device_api::build_call_policy`): unmanaged devices get `{"calls_mode": "unmanaged", "sms_mode": "unmanaged", ...defaults, "contacts": []}`. The launcher rejects a whole response without the key once its calls were managed, so a rolled-back server can't silently unmanage calls - never make this key optional. Contacts are ordered by `sort_order, name`; `message_app` is resolved against the device default server-side.
-- **Status reports carry `capabilities` and `call_state`** (the launcher's `CallState` object: role holders, restrictions, fail-closed state, last error, last emergency call, callback window), stored capped as JSON in `device_status.capabilities_json`/`call_state_json` - since 0.55.0 (security review L10) `call_state` through its known keys (`device_api::CALL_STATE_FIELDS`, every key the launcher's `CallState` sends: each of its shape or `null`, else dropped; `last_error` clipped to 300 characters, as the launcher keeps it, a package or time longer than its field dropped; any other key dropped; `intake_limits::call_and_time_state_keep_their_known_keys`). `calls::call_report` turns them into typed `calls::Finding`s (design 31 step 8; each one's `CallProblem` is an Attention row, its `note` the calls page's warning): dialer/call-redirection role missing, whether incoming calls are still filtered without the dialer role (`screening_role_held`, security review L7: the call-screening role's holder screens them; neither = "not filtered - anyone can call"), the call-screening role missing while the launcher is the phone app - a plain hint, not an error (`CallReport.screening_hint`, the "Call screening · Not granted" row: the launcher hangs up calls that aren't allowed, but another app could screen first - the phone can't read who holds the role -, so grant it with adb, the command behind the row's ⓘ; absent from older launchers = nothing; no "accept the prompt": Android refuses exclusive-role prompts under the launcher's DISALLOW_CONFIG_DEFAULT_APPS), fail-closed, a reported error, an unreadable call log (`call_log_readable: false`), the Messages app allowlisted while SMS is off, and an emergency call / an open callback window. The calls page keeps an emergency call as a warning for 7 days; its Attention row (`CallReport::problems`) goes once any parent has read the call's `emergency_call` inbox event (`parent_events::emergency_call_read`: the event's dedup key is the call's instant) and at the latest 24 h after the call (`EMERGENCY_ATTENTION_HOURS`; with no event the day alone).
+- **Status reports carry `capabilities` and `call_state`** (the launcher's `CallState` object: role holders, restrictions, fail-closed state, last error, last emergency call, callback window), stored capped as JSON in `device_status.capabilities_json`/`call_state_json` - since 0.55.0 (security review L10) `call_state` through its known keys (`device_api::CALL_STATE_FIELDS`, every key the launcher's `CallState` sends: each of its shape or `null`, else dropped; `last_error` clipped to 300 characters, as the launcher keeps it, a package or time longer than its field dropped; any other key dropped; `intake_limits::call_and_time_state_keep_their_known_keys`). `calls::call_report` turns them into typed `calls::Finding`s (design 31 step 8; each one's `CallProblem` is an Attention row, its `note` the calls page's warning): dialer/call-redirection role missing, whether incoming calls are still filtered without the dialer role (`screening_role_held`, security review L7: the call-screening role's holder screens them; neither = "not filtered - anyone can call"), the call-screening role missing while the launcher is the phone app - a plain hint, not an error (`CallReport.screening_hint`, the "Call screening · Not granted" row: the launcher hangs up calls that aren't allowed, but another app could screen first - the phone can't read who holds the role -, so grant it with adb, the command behind the row's ⓘ; absent = nothing; no "accept the prompt": Android refuses exclusive-role prompts under the launcher's DISALLOW_CONFIG_DEFAULT_APPS), fail-closed, a reported error, an unreadable call log (`call_log_readable: false`), the Messages app allowlisted while SMS is off, and an emergency call / an open callback window. The calls page keeps an emergency call as a warning for 7 days; its Attention row (`CallReport::problems`) goes once any parent has read the call's `emergency_call` inbox event (`parent_events::emergency_call_read`: the event's dedup key is the call's instant) and at the latest 24 h after the call (`EMERGENCY_ATTENTION_HOURS`; with no event the day alone).
 - Emergency numbers are never configured here: the launcher always allows them. The override PIN and "pause" don't open calls beyond the call rules (decision after QA review); since step 6 they do lift a time rule's call block (school), back to the normal call rules.
 
 ## Emulator fixes (handy step 9 part B, design `docs/design/09-sms-and-fixes.md`, at the monorepo root)
@@ -60,8 +60,7 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
 - **Phone Setup's second form** (L6): the default country code (`POST /settings/calls`, `#country-code`, Phone
   Numbers group) → `/settings/provisioning?saved=country-code#country-code` (the flash in its group); 1-3 digits, a
   leading + dropped; a refusal renders Phone Setup (400) with what was typed under the field; an unreadable code is a
-  500 on the page. Every phone is nudged. No `back` field: one form posts there (an older page's `device_id` lands on
-  Phone Setup too).
+  500 on the page. Every phone is nudged. No `back` field: one form posts there .
 - Tests: `src/tests/calls.rs` (the redirect table, refusals in place, gone contacts, the confirm, escaping, the
   warnings and the screening row, local times, the country code), `calls::tests` (every finding's words),
   `settings_pages` (Phone Setup's table), repointed `launcher_ui.rs`, `step9.rs`, `step10.rs`, `catalog_pins.rs`,
@@ -99,8 +98,7 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
   `unmanaged`, `models::CHANNEL_MODES`) replace `calls_managed`/`calls_enabled`/`sms_enabled`, which are no longer
   written or read. The migration maps every phone to what it did (D2's table, `tests::sms`'s
   `the_migration_keeps_every_phone_as_it_was`; no phone goes to SMS `managed`); a phone created since starts as before 0130, both
-  channels `unmanaged` (code QA M2: the setup QR installs the newest stable launcher, which may not have the engine, and
-  an older launcher reads SMS `managed` as SMS off and calls `unmanaged` beside it as contacts-only). The parent picks
+  channels `unmanaged`. The parent picks
   "Styrt av Vibb". `DevicePolicy::any_channel_managed()` is
   either channel not `unmanaged`; `calls_managed()` and `sms_managed()` are each channel alone. The
   readers that mean the calls channel use `calls_managed()`: the call report's role/screening/call-log findings and the
@@ -146,7 +144,7 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
 - **The Calls page, the minimum until step 4**: the three switches became two rows, "Samtaler"/"SMS" ("Calls"/"SMS"),
   each a picker Off / Managed by Vibb / Not managed with D2's sub-line; the form posts `calls_mode` and `sms_mode` (an
   unknown or missing one is a 400). SMS's choice reads "Styrt av Vibb (anbefalt)"; no phone is switched by itself
-  (C1 step 12a took out the capability gate on `sms_engine_v1`: every pair is offered and taken). Built in step 4 (the next section): the segmented control, the contact form's "Meldinger" group, the own-number fields, the lock-text switch, "Meldinger som venter",
+  (every pair is offered and taken). Built in step 4 (the next section): the segmented control, the contact form's "Meldinger" group, the own-number fields, the lock-text switch, "Meldinger som venter",
   the blocked list, the sender-name card, the `sms_held` event with its push and `PushBudget`, the findings.
 - Contract: `testdata/sms_contract.json`, byte-identical in the launcher's test resources (`sms::tests`). Tests:
   `sms::tests`, `tests::sms`.
@@ -261,7 +259,7 @@ parent decides on the Calls page. It follows design r13's time request.
   the body can gain an optional `photo` (the SHA-256 of a picture the phone first uploads on a route of its own, e.g.
   `POST /api/devices/contact-request/photo`, re-encoded and size-checked like a contact photo), a nullable
   `device_contact_requests.photo_hash` column, and "Legg til…" offering it as the contact's photo behind its own
-  switch, as the Matrix ID. An older server takes the request without it; the 1 KiB body limit is untouched.
+  switch, as the Matrix ID. The 1 KiB body limit is untouched.
 - **The code QA's fix round** (`docs/review/qa-contact-request.md`):
   - **A live request** (H1) is `state = 'open' AND asked_at > live_since(now)` (7 days from the kid's ask: `asked_at`
     is clamped to the server's now and refused past 7 days at intake, so this is exactly when the phone drops its
@@ -391,8 +389,7 @@ Steps 1 and 2: server and template only - no policy key, contract file, migratio
     contact, it reaches the phone, which drops the learned number; the page no longer offers a learned number that
     is a contact.
   - **A stale SMS form never writes a slot it didn't change** (L3): every own-number field posts
-    `own_number_<n>_shown` (what the page drew), and `save_sms` writes a slot only when its field differs; an older
-    page without it is as before. The Avansert drawn open from `?advanced=1` carries `data-reopens`, which
+    `own_number_<n>_shown` (what the page drew), and `save_sms` writes a slot only when its field differs. The Avansert drawn open from `?advanced=1` carries `data-reopens`, which
     `auto-reload.js` (v7), `pull-refresh.js` (v4) and `reconnect.js` (v12) skip in `shownOpen` - it comes back open -
     so the page reloads in place again; a `<details>` opened inside it still blocks. Second pass (V1):
     `auto-reload.js` (v8) also waits while a text field has the focus or any field differs from what the page came

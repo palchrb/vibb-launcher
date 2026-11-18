@@ -189,8 +189,6 @@ pub async fn seed(app: &TestApp, lang: crate::i18n::Lang) -> Family {
         &anna_token,
         json!({
             "app_version": "0.36.0", "app_version_code": 360_009,
-            "capabilities": ["call_policy_v1", "time_rules_v1", "zones_v1", "kiosk_escapes_v1", "boot_cover_v1",
-                             "window_relock_v1", "dns_custom_v1"],
             "battery": { "level": 14, "charging": false },
             "location": { "latitude": 59.91417, "longitude": 10.7522, "accuracy_meters": 15.0,
                           "captured_at": fix, "provider": "gps" },
@@ -231,7 +229,6 @@ pub async fn seed(app: &TestApp, lang: crate::i18n::Lang) -> Family {
         &ola_token,
         json!({
             "app_version": "0.30.0", "app_version_code": 30_000,
-            "capabilities": ["time_rules_v1", "kiosk_escapes_v1", "boot_cover_v1"],
             "battery": { "level": 80, "charging": true },
             "restrictions_paused": true,
             "policy_state": "cache_corrupt",

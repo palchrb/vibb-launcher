@@ -2319,7 +2319,7 @@ async fn the_contract_of_115() {
     app.post_status(&token, report("report_open")).await;
     assert_eq!(up_held_latest(&app, emma).await, None);
     app.post_status(&token, json!({})).await;
-    assert_eq!(up_held_latest(&app, emma).await, None, "an older launcher");
+    assert_eq!(up_held_latest(&app, emma).await, None, "no field");
 
     // The held pull: a push accepted on the open stream is handed out with no generation, so its ack writes no sample.
     set_allowlist(&app, emma, &["io.element.android.x"]).await;

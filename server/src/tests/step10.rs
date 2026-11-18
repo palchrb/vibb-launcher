@@ -348,7 +348,7 @@ async fn lock_state_is_stored_sanitized_and_capped() {
         json["voip_rang"],
         json!([{ "package": "org.thoughtcrime.securesms", "last_at_ms": now - 60_000 }])
     );
-    // An older launcher sends none: an empty list.
+    // None sent: an empty list.
     app.post_status(&token, json!({ "lock_state": { "active": true } }))
         .await;
     let json: Value = serde_json::from_str(&stored(&app).await.unwrap()).unwrap();
@@ -364,8 +364,7 @@ async fn lock_page_says_which_apps_rang_over_the_lock() {
     set_kid_pin(&app, &cookie, id, "1357").await;
     let now = chrono::Utc::now().timestamp_millis();
     app.post_status(&token,
-        json!({ "capabilities": ["pin_lock_v1"],
-                "installed_apps": [{ "package_name": "org.thoughtcrime.securesms", "label": "Signal" }],
+        json!({ "installed_apps": [{ "package_name": "org.thoughtcrime.securesms", "label": "Signal" }],
                 "lock_state": { "active": true, "locked": true,
                     "voip_rang": [
                         { "package": "org.thoughtcrime.securesms", "last_at_ms": now - 60_000 },
@@ -415,8 +414,7 @@ async fn lock_page_warns_about_the_lock_state() {
     set_override(&app, &cookie, id, &[("new_pin", "246810")]).await;
     set_kid_pin(&app, &cookie, id, "1357").await;
     // A report without a lock state: no update note.
-    app.post_status(&token, json!({ "capabilities": ["call_policy_v1"] }))
-        .await;
+    app.post_status(&token, json!({})).await;
     let html = lock_page(&app, &cookie, id).await;
     assert!(!child_group(&html).contains("needs an update"), "{html}");
 
@@ -428,11 +426,8 @@ async fn lock_page_warns_about_the_lock_state() {
             "Android&#39;s screen lock is still on",
         ),
     ] {
-        app.post_status(
-            &token,
-            json!({ "capabilities": ["pin_lock_v1"], "lock_state": { "inactive": inactive } }),
-        )
-        .await;
+        app.post_status(&token, json!({ "lock_state": { "inactive": inactive } }))
+            .await;
         let html = lock_page(&app, &cookie, id).await;
         assert!(child_group(&html).contains(text), "{inactive}: {html}");
         if inactive == "bad_hash" {
@@ -462,8 +457,7 @@ async fn lock_page_warns_about_the_lock_state() {
     );
 
     app.post_status(&token,
-        json!({ "capabilities": ["pin_lock_v1"],
-                "lock_state": { "active": true, "locked": false, "failures": 2, "inactive": null } }),
+        json!({ "lock_state": { "active": true, "locked": false, "failures": 2, "inactive": null } }),
     )
     .await;
     let html = lock_page(&app, &cookie, id).await;
@@ -494,8 +488,7 @@ async fn in_call_ui_failure_is_a_call_warning() {
     let at = chrono::Utc::now().to_rfc3339();
     app.post_status(
         &token,
-        json!({ "capabilities": ["call_policy_v1"],
-                "call_state": { "state": "unmanaged", "in_call_ui_failed_at": at } }),
+        json!({ "call_state": { "state": "unmanaged", "in_call_ui_failed_at": at } }),
     )
     .await;
     // An Attention row on the device page, its words on Calls & Contacts (design 31 step 8).

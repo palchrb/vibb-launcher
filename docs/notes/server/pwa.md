@@ -133,8 +133,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   the raw state's word and colour.
 - **Lock badge and screen time** (`src/time_state.rs`, from the last `time_state`): **the end ("until 14:30",
   "until 07:00 tomorrow") only when provably right** (the parent's rule): the phone reports its own zone
-  (`time_state.zone`, the launcher's `ZoneId.systemDefault().id` since design 34 P13; an older launcher sends none and
-  gets no end) and it is exactly Phone Setup's IANA name (another zone, an offset id, garbage or another case: no end;
+  (`time_state.zone`, the launcher's `ZoneId.systemDefault().id` since design 34 P13; none gets no end) and it is exactly Phone Setup's IANA name (another zone, an offset id, garbage or another case: no end;
   `TimeReport::parse` keeps only a non-empty string of at most 64 bytes, nothing else reads it), the report is
   fresh, from today and inside one window of the active rule, the end is exactly one instant in the zone
   (`Zone::single_instant`: not in a spring-forward gap, where the phone unlocks at the jump, nor in a fall-back
@@ -540,7 +539,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `/devices/{id}?done=extra|pause|gone#quick` (`lifts::summary_group`; a refused pause says why there), End now →
   `?done=ended|over#today`; `end-windows`/`start-pause` → `?notice=…#quick`, `allow-blocked` →
   `?notice=allow_blocked_sent#blocked-apps` (the group shows for its flash even when the list is gone). A lift without
-  `back` (an older tab) lands on the summary too. The commands' payloads, `allow_form_value` and the once-per-relock
+  `back` lands on the summary too. The commands' payloads, `allow_form_value` and the once-per-relock
   rule are unchanged.
 - **Reads**: the phone, its settings, its last report, its lifts, the catalog's pins and the 24b answers are a 500 on
   a DB error (without the pins an imposter would be offered, without the answers an answered Allow; the Devices list's
@@ -1378,7 +1377,7 @@ man er inne på en device". Branch `pwa-fixes-b`.
   the static rest were cut; the tests assert the new words. The code QA's fix round (`docs/review/qa-pwa-polish-a-code.md`
   Q-1..Q-5) put back what a parent acts on, in the fewest words: the alarms after a restart on Android's lock, the
   Parent PIN's two hours and lockout remedy, what Vibb One's lock doesn't protect, the Storytel password's truth until
-  design 58 step 3 (a phone with an older music app keeps a copy) and the lost-phone remedy, and a clause each where a
+  design 58 step 3 and the lost-phone remedy, and a clause each where a
   parent would otherwise be surprised (SMS off hides Messages, a phone with its own rules, the 24 h rule, the Install
   Now minute and Update fence, safe mode's restrictions, the filter's kept notifications, Locate needs location, Off
   turns location off, the Tailscale key by hand, what a backup leaves out, the lock's colour without "Also on the lock
@@ -2575,13 +2574,13 @@ Pinned by `shell::the_app_shell_scrolls_main_not_the_document`; measured by `jst
   "Alle av" or an orange channel (Meldinger, Tapte anrop, Samtaler). The ⓘ (only when something is off): the lead, a
   sentence for each named channel with an effect (`effect` keys), the fix (the pause and the phone's "Varsler fra Vibb
   One" row, and - since a channel blocked before the dialer role came back stays locked with a grey switch, gate §6ax -
-  calls and SMS to "Ikke styrt" first if a switch is grey). No row from an older launcher.
+  calls and SMS to "Ikke styrt" first if a switch is grey).
 - **Attention** (`Kind::NotificationsOff`, Action, key `notifications-off`, right after `NoNotificationAccess`, to
   `/about#sound`): a blocked Meldinger or Tapte anrop while its feature counts ("Varsler slått av: Meldinger, Tapte
   anrop", the names unquoted), or the app-wide switch off while SMS or calls are managed ("Alle varsler fra Vibb One er
   av"). Never Samtaler (the phone still rings), the minor channels or Snarveier. The Devices list's badge counts it.
 - Tests: `notification_channels::tests` (the `clean` rows, the table), `tests::notification_channels` (stored reports,
-  every `pages` row through About and the summary, the ⓘ in nb and en, an older launcher and a failed read, the row's
+  every `pages` row through About and the summary, the ⓘ in nb and en, a failed read, the row's
   place and the badge), `intake_limits` (the three reports kept), `attention::tests` (order, title, target).
 
 - **Row values wrap between words only** (2026-11-17, the user's iPhone screenshots: "Manage / d by / Vibb", "O / n"):

@@ -16,7 +16,7 @@
 //! A heartbeat the server can't expand - another list of fields ([fields_tag]), no kept body, another hash, a body kept
 //! by another server version, before the phone's latest enrollment or older than [MAX_AGE_HOURS], or the switch
 //! `STATUS_HEARTBEAT=off` - is answered `{"full_report": true}` ([full_report_wanted]) and stores nothing; the phone
-//! sends the full report at once. An older launcher never sends a hash, and its reports drop whatever was kept.
+//! sends the full report at once. A report without a hash drops whatever was kept.
 
 use axum::Json;
 use axum::response::{IntoResponse, Response};
@@ -240,7 +240,7 @@ async fn expand(
 }
 
 /// After a full report was taken: keeps its [kept_body] under the hash for the phone's next heartbeats, or forgets what
-/// was kept (`None`: an older launcher's report, one sent without a hash, the switch off; a body past
+/// was kept (`None`: a report sent without a hash, the switch off; a body past
 /// [MAX_KEPT_BYTES]).
 pub async fn keep(db: &SqlitePool, device_id: i64, keep: Option<&(String, Value)>) {
     let kept = keep.and_then(|(hash, body)| {

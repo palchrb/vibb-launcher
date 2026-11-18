@@ -83,7 +83,7 @@ data class ChannelReading(val id: String, val importance: Int, val group: String
 
 /**
  * The report from what Android says (pure; the contract's `read` rows). A channel is off at IMPORTANCE_NONE or in a
- * blocked group. Only the table's ids count, Snarveier's only as [shortcutsId] (the channel in use): an older `.N` id,
+ * blocked group. Only the table's ids count, Snarveier's only as [shortcutsId] (the channel in use): an old `.N` id,
  * an unknown id and Android 16's reserved `android.app.*` channels are skipped. A channel that doesn't exist is not
  * off. [appEnabled]: `areNotificationsEnabled()`.
  */

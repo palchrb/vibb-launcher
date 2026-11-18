@@ -24,7 +24,7 @@ import kotlinx.serialization.Serializable
 enum class CatalogApkVerdict(val wire: String) {
     OK(""),
 
-    /** The server has no package or signing key for the app (an older server, or a release whose
+    /** The server has no package or signing key for the app (or a release whose
      * APK it couldn't read): nothing to check against, so nothing is installed. */
     NOT_PINNED("refused_unpinned"),
 
@@ -117,7 +117,7 @@ sealed interface PhonePackage {
  * Whether the release the launcher recorded as installed is still on the phone (the user's
  * emulator, 2026-10-12: an app uninstalled by hand was never installed again, because the record
  * alone said "installed"). Missing, or older than the version the launcher installed for it
- * ([installedVersionCode], `null` = not recorded by an older build), means install it again - the
+ * ([installedVersionCode], `null` = not recorded), means install it again - the
  * download then goes through every check a first install does (M10's pins, refusals).
  */
 fun catalogReleaseStillInstalled(phone: PhonePackage, installedVersionCode: Long?): Boolean = when (phone) {

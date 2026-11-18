@@ -21,7 +21,7 @@ data class UpView(
     val refresh: List<UpRefresh> = emptyList(),
 ) {
     companion object {
-        /** Off without the key (an older server, design 108 §9 `older_server`) and without an origin. */
+        /** Off without the key (design 108 §9) and without an origin. */
         fun of(policy: PolicyResponse?): UpView {
             val up = policy?.unifiedPush
             val origin = up?.origin?.takeIf { it.isNotBlank() }

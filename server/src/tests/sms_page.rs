@@ -18,11 +18,7 @@ async fn managed_phone(app: &TestApp) -> (i64, String) {
         .execute(&app.db)
         .await
         .unwrap();
-    app.post_status(
-        &token,
-        json!({ "capabilities": ["call_policy_v1", "sms_engine_v1"] }),
-    )
-    .await;
+    app.post_status(&token, json!({})).await;
     (id, token)
 }
 
@@ -1078,7 +1074,6 @@ async fn the_pools_and_the_findings() {
     app.post_status(
         &token,
         json!({
-            "capabilities": ["call_policy_v1", "sms_engine_v1"],
             "sms_state": {
                 "role_held": false, "mode_applied": "managed", "parse_failures": 2, "mmsc_known": false,
                 "mms_data_allowed": true, "hold_full": { "numbers": false, "names": true },

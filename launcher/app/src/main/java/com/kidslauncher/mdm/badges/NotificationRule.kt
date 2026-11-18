@@ -289,8 +289,8 @@ fun keepLogDue(reason: NagKeep, totalSoFar: Int): Boolean = when (reason) {
 }
 
 /** Which of the policy's three allowed sets hold [packageName], for an ALLOWED line: "allowlist",
- * "messaging", "lock-usable", joined with "+"; "unknown" when none names it (an older
- * [NagPolicy] built without the parts). */
+ * "messaging", "lock-usable", joined with "+"; "unknown" when none names it ([NagPolicy]
+ * built without the parts). */
 fun allowedBy(policy: NagPolicy?, packageName: String): String {
     if (policy == null) return "unknown"
     val parts = buildList {

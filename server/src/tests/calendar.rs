@@ -61,7 +61,7 @@ async fn a_launcher_report_lists_the_calendars() {
     assert_eq!(kept.calendars[1].access_level, 700);
     assert_eq!(kept.rules_skipped, [9]);
 
-    // A report without `calendar` (an older launcher) leaves the last one; a rule id the phone doesn't have is
+    // A report without `calendar` leaves the last one; a rule id the phone doesn't have is
     // dropped from the next.
     let res = app
         .request(

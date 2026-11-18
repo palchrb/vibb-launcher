@@ -28,7 +28,6 @@ async fn report(app: &TestApp, token: &str, code: i64, extra: Value) {
         "kiosk_engaged": true,
         "app_version": format!("{}.{}.{}", code / 10_000_000, code / 10_000 % 1_000, code / 10 % 1_000),
         "app_version_code": code,
-        "capabilities": ["command_receipt_v1"],
     });
     for (key, value) in extra.as_object().unwrap() {
         body[key] = value.clone();

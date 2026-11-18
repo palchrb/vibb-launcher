@@ -50,7 +50,7 @@ data class SpotifyTokenAnswer(val status: String, val accessToken: String?, val 
  * - `busy` -> its `retry_after_s` in ms (1 s .. 1 h; else [SPOTIFY_BUSY_DEFAULT_MS]);
  * - any other status word passes through as is (a newer server's too: the music app maps an
  *   unknown one to "unreachable");
- * - no status word: 404 -> `off` (an older server has no such route), 5xx -> `unreachable`,
+ * - no status word: 404 -> `off` (no such route), 5xx -> `unreachable`,
  *   anything else -> `launcher`.
  */
 fun spotifyTokenAnswer(httpStatus: Int, body: String?): SpotifyTokenAnswer {

@@ -226,7 +226,7 @@ async fn the_contract_answers() {
         .cloned()
         .unwrap();
     assert_eq!(copy["copy_of"], 2);
-    // An older launcher's lift (no key) serves none.
+    // A lift without a key serves none.
     assert!(
         contract["policy"]["time_policy"]["lifts"][0]
             .get("phone_key")

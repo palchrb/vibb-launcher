@@ -91,7 +91,7 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   minutes' end) is one more `TimeRulesRuntime.nextBoundary` instant where r13's `openUntilMs` was, so the shade and the
   screen follow on time across a process death (QA R2-L3). `TimeRequests.upload` runs in `performMdmSync` right after
   `PowerEvents.upload` and posts only what the pure `uploadStep` says is still open - a request of today, offline all
-  afternoon too; another day's, or one an older server's lift answered while it waited, is dropped unsent (Q-3); one
+  afternoon too; another day's, or one a lift answered while it waited, is dropped unsent (Q-3); one
   this server already answered is counted as taken, `COUNT` - its 200 was lost and a parent answered before the next
   sync: ACCEPTED's step, so the day's count follows, code QA L1 -; the answer writes only the record it sent
   (`recordAfterUpload`); the tap asks `SyncRunner.request(.., "time_request")` and arms `TimeRuleAlarm` (Q-4). The
@@ -109,7 +109,7 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
 
 ## SSE only and SSE hardening (design 19, `docs/design/19-remove-fcm.md`, at the monorepo root)
 
-- **SSE only**: `PushState` keeps only `sseConnected` (memory). There are no `PushPolicy`/`PushReport` DTOs - a server's `push` is an unknown key, and the cache is re-encoded without it (`PolicyResponseCompatTest`). Status capabilities: `server/StatusCapabilities.kt` (`STATUS_CAPABILITIES`: since C1 only `android_keyguard_v1`, which goes with the own lock in C3; `SyncScheduleTest` checks the report has no `push`). One APK works with anyone's server; Play services stays installed and unrestricted for other apps' FCM.
+- **SSE only**: `PushState` keeps only `sseConnected` (memory). There are no `PushPolicy`/`PushReport` DTOs - a server's `push` is an unknown key, and the cache is re-encoded without it (`PolicyResponseCompatTest`). Status capabilities: `server/StatusCapabilities.kt` (`STATUS_CAPABILITIES`: since C1 only `android_keyguard_v1`, which goes with the own lock in C3; `SyncScheduleTest` checks the report has no `push`). Play services stays installed and unrestricted for other apps' FCM.
 - **Build**: the release build needs no Firebase values. `checkReleaseHasNoGoogleServices` (a dependency of `assembleRelease`) walks `releaseRuntimeClasspath` and fails on any `com.google.firebase`, `com.google.android.gms` or `com.google.android.datatransport` module. `PushManifestTest`: no Firebase element, placeholder or `tools:node="remove"` in the manifest.
 - **SSE hardening** (`CommandListenerService`, pure parts in `push/SyncSchedule.kt`, `SyncScheduleTest`, `SseLastByteTest`): (hole 1) `push/SseLastByte.kt`'s `LastByteInterceptor` (network interceptor) stamps elapsed realtime for the headers and every body read - okhttp-sse never shows keepalive comments to the listener; its wrapped body keeps `contentType()` (okhttp-sse 4.12 refuses anything but `text/event-stream`). `checkStream` runs on every sync request (the backstop's included) and at screen-on/unlock (`PinLockRuntime`'s receiver, `CommandListenerService.checkStream`): a stream that is down reconnects now (screen events leave an in-flight attempt alone); one silent for `SSE_STALE_MS` (480 s, ~2 keepalives) is marked down first (`markDown`, like any drop) and reconnected. (hole 3) The up -> down edge takes a 30 s partial wake lock (`kidslauncher:sse_reconnect`, at most every 10 min, released at the next open), so the 5 s/10 s retries run in deep sleep after a server restart. (hole 2, qa-19-code #2) `syncOnSseReopen(sinceLastReopenSyncMs, sinceLastByteMs)`: every reopen after a drop syncs - a nudge sent while no stream was subscribed is lost (a ring right after a server restart) - at most once per 10 min (`SSE_REOPEN_SYNC_EVERY_MS`, so a flapping stream can't loop), and always when the old stream's last byte is >= 300 s ago (every read timeout and staleness drop).
 - **Not device-tested**: the 19 doc's Jelly Star run - a ring's latency in Doze, after a server restart and after a Wi-Fi/mobile switch (tsnet gets no network callbacks), and battery at keepalive 120 s vs 240 s; the emulator check is `docs/testing/emulator.md` §5b (`kill -STOP` the server > 300 s).
@@ -125,8 +125,7 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   else in the sync's fresh block run exactly as for a 200, and the sync counts as having reached the server. A 304 the
   kept body can't answer drops it and asks once more without the header. Kept only after `ACCEPT`, and never a body
   with a `pending_command` (`keepable`: one-shot, and `set_kid_pin`'s carries the Child PIN, design 59 §1); a rejected
-  or undecodable 200 drops it (the pure `keptBodyStep`). An older server sends no ETag: nothing is kept, no header is
-  sent. Enrollment, and a sync that finds no URL or token, drop it too.
+  or undecodable 200 drops it (the pure `keptBodyStep`). A 200 without an ETag keeps nothing and sends no header. Enrollment, and a sync that finds no URL or token, drop it too.
 - **One shared client** (`ServerClients` in `server/ServerTransport.kt`): one base `OkHttpClient` built by
   `toServer(path, pinning)`, kept while the path (base URL, `ServerPath`, tsnet's proxy) and the certificate check's
   flag and pins are the same, built again otherwise (the old pool's idle connections closed). `createMdmApi` (so the
@@ -154,8 +153,7 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   (prefs `status_heartbeat`: the hash, when, and a hash of the server URL and token). While the hash is the acked one
   and the acked full report is under `FULL_REPORT_EVERY_MS` (6 h) old, only `{"heartbeat": true, "hash", <the
   heartbeat fields>}` goes. The server's `{"full_report": true}` sends the full report at once in the same sync; a 4xx
-  to a heartbeat drops the ack. A report over 1 KiB is gzip'd while the policy says `status_gzip`. An older server
-  says neither: no hash, no heartbeat, no gzip, the ack cleared. Enrollment clears the ack.
+  to a heartbeat drops the ack. A report over 1 KiB is gzip'd while the policy says `status_gzip`. Enrollment clears the ack.
 
 ## The stream's `up` event (design 108)
 

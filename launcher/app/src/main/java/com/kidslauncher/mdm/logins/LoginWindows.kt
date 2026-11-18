@@ -11,8 +11,8 @@ import kotlinx.serialization.Serializable
 /** The one browser the role accepts (D8): anything else is `failed` with reason `package`, and nothing is unhidden. */
 const val CHROME_PACKAGE = "com.android.chrome"
 
-/** The policy's `captive_portal` (§6.1). Missing (an older server) reads as these defaults: on, with the parent code
- * required (fail closed - a parent on an older server can't turn the code off), 10 minutes an opening, 4 openings and
+/** The policy's `captive_portal` (§6.1). Missing reads as these defaults: on, with the parent code
+ * required (fail closed), 10 minutes an opening, 4 openings and
  * 20 minutes a day without a code, no grant. */
 @Serializable
 data class CaptivePortalPolicy(
@@ -32,7 +32,7 @@ data class LoginBrowserPolicy(
     val hosts: List<String> = emptyList(),
 )
 
-/** The phone's `captive_portal`, the server's or the older server's defaults. */
+/** The phone's `captive_portal`, the server's or the defaults. */
 fun portalPolicyOf(policy: PolicyResponse?): CaptivePortalPolicy = policy?.captivePortal ?: CaptivePortalPolicy()
 
 /** The phone's `login_browser`'s sites, each through [loginEntry] (an invalid one is dropped, never written to

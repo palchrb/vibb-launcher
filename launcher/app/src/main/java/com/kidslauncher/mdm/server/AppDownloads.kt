@@ -557,7 +557,7 @@ object AppDownloads {
     private suspend fun download(app: Context, record: DownloadRecord, file: File, current: Active, api: MdmApi): Outcome {
         var rec = record
         var have = if (file.isFile) file.length() else 0L
-        // Without the first ETag a partial can't be resumed safely (200 from an older server).
+        // Without the first ETag a partial can't be resumed safely.
         if (have > 0 && (rec.etag == null || rec.total?.let { have > it } == true)) {
             file.delete()
             have = 0

@@ -859,7 +859,7 @@ struct AdvancedTemplate {
     device: Device,
     hardening: Hardening,
     /// The last report's `backup_service_enabled`: `Some(true)` a warning; `Some(false)` and `None`
-    /// (older launcher, unreadable) nothing (design 113: no row in any state).
+    /// (unreadable) nothing (design 113: no row in any state).
     backup_service_enabled: Option<bool>,
     block_activity_start: bool,
     /// App screens: warnings above the group, rows in it.
@@ -1506,7 +1506,7 @@ pub(crate) fn notification_access_note(lang: Lang, latest: Option<&DeviceStatus>
 /// for "24" or "12" and the last report says `clock_format_applied` false - no "Modify system
 /// settings" access, or Android refused the write. Home Screen's warning above the Language
 /// group; the adb grant and the Settings path behind its ⓘ. "Same as the phone" never warns, nor
-/// does an older launcher that doesn't report it.
+/// does a report without it.
 /// How to grant Vibb One "Modify system settings" (PLAN fix backlog, 2026-10-24) is
 /// `device.write_settings_steps`: the on-phone path first - Vibb One's Settings row that opens Android's page -, adb as
 /// the shortcut. About This Phone's row (after a line saying what needs it) and the clock format's warning (code QA

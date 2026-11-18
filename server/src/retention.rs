@@ -203,14 +203,13 @@ fn rows(
 
 /// One pruning pass:
 /// - blocked domains older than [DNS_LOG_RETENTION_DAYS], and every entry of a phone whose log
-///   is off (an older launcher may still send them; the server drops those at the door too);
+///   is off (the server drops those at the door too);
 /// - locations older than the phone's `location_retention_days` (by the server's receive time, or
 ///   the phone's last re-send of it as still current, `resent_at`), except each phone's newest fix:
 ///   its last known position, which Locate shows with its age (the owner's decision on M1 of round
 ///   S3); and every fix of a phone whose location is Off, the newest too (security review P1; the
 ///   location policy's Off save runs the pass at once);
-/// - status reports older than [STATUS_HISTORY_HOURS], except each phone's newest one of them and
-///   the newest one that reported call enforcement (`call_policy_v1`);
+/// - status reports older than [STATUS_HISTORY_HOURS], except each phone's newest one of them;
 /// - crash reports not reported again for [CRASH_REPORT_DAYS];
 /// - security log entries older than [SECURITY_EVENT_DAYS], a phone's own lines after their
 ///   `security::PhoneLine::keep_days`, and a wrong sign-in's typed username after

@@ -7,7 +7,7 @@
 //! comes from the rules' days on this server, and only when every one of these holds:
 //! - the phone says its own time zone (`time_state.zone`) and it is the Phone Setup zone: the
 //!   rules' windows are minutes of the *phone's* local day. The launcher sends its
-//!   `ZoneId.systemDefault().id` since design 34 P13; an older launcher sends none, and then no end
+//!   `ZoneId.systemDefault().id` (design 34 P13); without one no end
 //!   shows. A zone that isn't exactly Phone Setup's IANA name (another zone, an offset id, garbage,
 //!   another case) shows none either;
 //! - the report is fresh (below), from the server's local today, and its local time lies inside
@@ -53,7 +53,7 @@ pub struct TimeReport {
     pub extra_minutes: Option<i64>,
     /// The phone couldn't read its screen-time record and counts today as used up.
     pub ledger_unreadable: bool,
-    /// The phone's own IANA time zone (design 34 P13; `None` from an older launcher, or a value
+    /// The phone's own IANA time zone (design 34 P13; `None` when absent, or a value
     /// that isn't a non-empty string of at most 64 bytes). Only compared with Phone Setup's name.
     pub zone: Option<String>,
 }
@@ -91,7 +91,7 @@ impl TimeReport {
         })
     }
 
-    /// An older launcher without `time_state`: only `device_status.lock_reason`.
+    /// A report without `time_state`: only `device_status.lock_reason`.
     pub fn from_lock_reason(lock_reason: &str) -> TimeReport {
         TimeReport {
             lock_reason: lock_reason.to_ascii_uppercase(),
@@ -311,7 +311,7 @@ pub struct BadgeContext<'a> {
 }
 
 /// The report can't be trusted for what is true now (design 101 §4.1, shared with the lock badge): it is from another
-/// day - one without a day (an older launcher) can't be judged by it -, or the phone is not online and has been away
+/// day - one without a day can't be judged by it -, or the phone is not online and has been away
 /// more than [AWAY_STALE_MINUTES] (offline, off or unreachable at all).
 pub fn report_stale(
     report: &TimeReport,
@@ -330,8 +330,7 @@ pub fn report_stale(
         }
 }
 
-/// A report that can say "no rule locks now" (design 101 §4.1, QA M4): today's - it names its day, which an older
-/// launcher's doesn't - and not [stale](report_stale).
+/// A report that can say "no rule locks now" (design 101 §4.1, QA M4): today's - it names its day - and not [stale](report_stale).
 pub fn report_is_fresh(
     report: &TimeReport,
     connection: &ConnectionState,
@@ -1004,7 +1003,7 @@ mod tests {
             report_is_fresh(r, c, at, &zone, now)
         };
         assert!(fresh(&today, &online(now), now));
-        // Yesterday's, or one with no day at all (an older launcher): not fresh.
+        // Yesterday's, or one with no day at all: not fresh.
         assert!(!fresh(
             &report("Skole", "NONE", "2026-10-12"),
             &online(now),
@@ -1064,7 +1063,7 @@ mod tests {
             ..unlimited
         };
         assert_eq!(screen_time(&idle, &zone, now), None);
-        // An older launcher: the reason's word, no end.
+        // A report without `time_state`: the reason's word, no end.
         let old = TimeReport::from_lock_reason("BEDTIME");
         assert_eq!(
             lock_badge(&old, &ctx, &zone, now)

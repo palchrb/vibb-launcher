@@ -329,8 +329,7 @@ pub async fn copied_rule(
 }
 
 /// A request taken at intake closes the phone's other unanswered requests of the day (`superseded`, §14.4, QA R2-L6):
-/// called only after the new one was stored, in the intake's transaction. An older launcher asks again after its 30
-/// minutes; the card then shows the newest.
+/// called only after the new one was stored, in the intake's transaction; the card then shows the newest.
 pub async fn supersede(
     conn: &mut SqliteConnection,
     device_id: i64,

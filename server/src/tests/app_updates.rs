@@ -398,7 +398,7 @@ async fn report_apps(app: &TestApp, token: &str, apps: Value) {
 /// whose code can't be read) when the new versionName is the stored tag's version, an F-Droid app
 /// when the new
 /// code is the stored release's; once per version. An app not checked for the phone, a version
-/// that isn't the stored release, and an older launcher's entries without the fields raise
+/// that isn't the stored release, and entries without the fields raise
 /// nothing - and such a report is still taken.
 #[tokio::test]
 async fn every_checked_catalog_app_raises_app_updated_by_its_listed_code() {
@@ -448,7 +448,7 @@ async fn every_checked_catalog_app_raises_app_updated_by_its_listed_code() {
              "version_code": other.0, "version_name": other.1},
         ])
     };
-    // An older launcher's report (no fields), then the first with them: no update yet.
+    // A report without the fields, then the first with them: no update yet.
     report_apps(
         &app,
         &token,
@@ -585,7 +585,7 @@ async fn an_app_already_at_the_release_or_going_back_to_it_raises_nothing() {
         json!([{"package_name": "org.thoughtcrime.securesms", "label": "Signal",
                 "preinstalled": false, "version_code": code, "version_name": name}])
     };
-    // An older launcher's report, then the update's first two reports at the release.
+    // A report without the fields, then the update's first two reports at the release.
     report_apps(
         &app,
         &token,

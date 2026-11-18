@@ -13,8 +13,7 @@ async fn report_receipts(app: &TestApp, token: &str) {
             Method::POST,
             "/api/devices/status",
             Some(token),
-            Some(json!({ "lock_reason": "NONE", "kiosk_engaged": true,
-                         "capabilities": ["call_policy_v1", "command_receipt_v1"] })),
+            Some(json!({ "lock_reason": "NONE", "kiosk_engaged": true })),
         )
         .await;
     assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.text());
@@ -611,7 +610,7 @@ async fn an_answer_counts_only_for_the_command_it_names() {
     let next = app.policy(&token).await["pending_command"].clone();
     assert_eq!(next["command"], "lock");
     assert_ne!(next["requested_at"], old_requested.as_str());
-    // Its own receipt counts (one without requested_at - an older launcher - is the first test).
+    // Its own receipt counts (one without requested_at is the first test).
     let res = app
         .request(
             Method::POST,

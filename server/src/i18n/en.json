@@ -2873,7 +2873,7 @@
   "music.remove_login": "Remove Login",
   "music.settings.storytel_footer": "One login for the family; it is never shown again.",
   "music.settings.storytel_info_label": "About the Storytel login",
-  "music.settings.storytel_info": "Kept encrypted on this server; a phone with an older music app keeps a copy. Lost a phone? Remove it, then change the password at Storytel and save it here again. Two phones listening at once need Storytel Family, which isn't supported yet.",
+  "music.settings.storytel_info": "Kept encrypted on this server. Lost a phone? Remove it, then change the password at Storytel and save it here again. Two phones listening at once need Storytel Family, which isn't supported yet.",
   "music.settings.app": "The music app",
   "music.settings.app_phones.one": "On {count} phone",
   "music.settings.app_phones.other": "On {count} phones",

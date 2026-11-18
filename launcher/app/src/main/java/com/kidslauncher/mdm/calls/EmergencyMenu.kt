@@ -22,7 +22,7 @@ const val EMERGENCY_MENU_MAX = 6
 /** A name's length on the sheet (the server's `MAX_NAME_CHARS`). */
 const val EMERGENCY_NAME_MAX = 40
 
-/** What a phone without a menu - an older server, an unreadable cache - offers: 112 alone, today's dialog. */
+/** What a phone without a menu - an unreadable cache - offers: 112 alone, today's dialog. */
 val DEFAULT_EMERGENCY_MENU = listOf(EmergencyEntry(EmergencyCall.NUMBER))
 
 /**

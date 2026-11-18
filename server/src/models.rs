@@ -474,13 +474,12 @@ pub struct DeviceStatus {
     pub app_version: Option<String>,
     pub app_version_code: Option<i64>,
     pub reported_at: String,
-    /// See migrations/0021_device_status_policy_state.sql. `None` from older launchers.
+    /// See migrations/0021_device_status_policy_state.sql.
     pub policy_state: Option<String>,
     pub restrictions_paused: bool,
-    /// The launcher's notification listener (app badges) has access - migrations/0024. `None`
-    /// from older launchers.
+    /// The launcher's notification listener (app badges) has access - migrations/0024.
     pub notification_listener_enabled: Option<bool>,
-    /// What the launcher can enforce, JSON list (migrations/0022). `None` from older launchers.
+    /// What the launcher can enforce, JSON list (migrations/0022).
     pub capabilities_json: Option<String>,
     /// The launcher's `time_state` (active rule, screen time used/budget) - migrations/0025.
     pub time_state_json: Option<String>,
@@ -491,15 +490,14 @@ pub struct DeviceStatus {
     pub play_store_suspendable: Option<bool>,
     /// The launcher's `lock_state` (handy step 10, migrations/0030), see `kid_lock::LockState`.
     pub lock_state_json: Option<String>,
-    /// The screen timeout the phone applied, seconds (migrations/0032). `None` from older
-    /// launchers.
+    /// The screen timeout the phone applied, seconds (migrations/0032).
     pub screen_timeout_seconds: Option<i64>,
     /// The phone's ringer mode and Do Not Disturb filter (design 18, migrations/0047), see
-    /// `sound_mode`. `None` from older launchers or when unreadable.
+    /// `sound_mode`. `None` when unreadable.
     pub ringer_mode: Option<String>,
     pub interruption_filter: Option<String>,
     /// Android's backup service (backup to the Google account) is on (migrations/0041). `None`
-    /// from older launchers, or when the phone couldn't read it.
+    /// when the phone couldn't read it.
     pub backup_service_enabled: Option<bool>,
     /// The phone's `update_fence` (handy step 11, migrations/0036), see
     /// `kiosk_escapes::UpdateFenceState`.
@@ -515,13 +513,13 @@ pub struct DeviceStatus {
     /// The phone's `music_state` (design 21, migrations/0049), see `music::MusicState`.
     pub music_state_json: Option<String>,
     /// The launcher is exempt from battery optimisation (design 19b, migrations/0055). `None`
-    /// from older launchers, or when the phone couldn't read it.
+    /// when the phone couldn't read it.
     pub battery_optimization_exempt: Option<bool>,
     /// The phone's last relock of a parent-PIN window (design 24b), see
-    /// `window_relock::RelockReport`. `None` from older launchers or before any relock.
+    /// `window_relock::RelockReport`. `None` before any relock.
     pub relock_json: Option<String>,
     /// Boots the launcher didn't see and when it last noticed one (design 24b §3), see
-    /// `boot_witness`. `None` from older launchers.
+    /// `boot_witness`.
     pub unseen_boots_count: Option<i64>,
     pub unseen_boots_last_at_ms: Option<i64>,
     /// A device admin or accessibility service of an app outside the allowlist (design 24b's fix
@@ -530,56 +528,53 @@ pub struct DeviceStatus {
     // remote_wipe_ready (migration 0065, QA of the launcher wave Low 4) is read directly by
     // handlers::locate.
     /// The launcher's declared device-admin policies Android hasn't granted yet (JSON list, see
-    /// [admin_policy_effects]; migration 0065). `None` from older launchers.
+    /// [admin_policy_effects]; migration 0065).
     pub admin_policies_pending_json: Option<String>,
     /// Every app the phone has blocked now (design 24b, fix of 2026-10-12, migration 0067), see
-    /// `window_relock::RelockBlock`. `None` from older launchers.
+    /// `window_relock::RelockBlock`.
     pub relock_blocks_json: Option<String>,
     /// How many blocks there are in all; the list holds at most `window_relock::BLOCKS_MAX` (QA
-    /// of cmd-expiry, Low 2, migration 0068). `None` from older launchers.
+    /// of cmd-expiry, Low 2, migration 0068).
     pub relock_blocks_total: Option<i64>,
     /// The phone's clock format is the policy's (design 34 P12, migrations/0075): `false` = it
     /// should be but can't be (no "Modify system settings" access, or the write was refused).
-    /// `None` = "Same as the phone", or an older launcher.
+    /// `None` = "Same as the phone".
     pub clock_format_applied: Option<bool>,
     // dns_upstream_json (migrations/0079, design 36 §4.2) is read directly by
     // handlers::dns_filter::phone_lines.
     /// The battery's level and whether it charged (design 35 §2.5, migrations/0078). `None`
-    /// without a `battery` in the report (an older launcher).
+    /// without a `battery` in the report.
     pub battery_level: Option<i64>,
     pub battery_charging: Option<bool>,
     /// Vibb One holds Android's "Modify system settings" app-op (PLAN fix backlog, 2026-10-24,
-    /// migrations/0090). `None` from older launchers, or when the phone couldn't read it.
+    /// migrations/0090). `None` when the phone couldn't read it.
     pub write_settings_granted: Option<bool>,
     /// The phone has been on the tailnet (the launcher's `tsnet_node_joined` mark; security review S-L10's fix
-    /// round, migration 0125): Advanced › Connection's "Leave Tailnet…" shows only while true. `None` from older
-    /// launchers.
+    /// round, migration 0125): Advanced › Connection's "Leave Tailnet…" shows only while true.
     #[sqlx(default)]
     pub tailnet_joined: Option<bool>,
-    /// Design 94 §5 (migration 0143): the report's `data_roaming`, cleaned (`mobile_network::clean_roaming`). `None`
-    /// from older launchers.
+    /// Design 94 §5 (migration 0143): the report's `data_roaming`, cleaned (`mobile_network::clean_roaming`).
     #[sqlx(default)]
     pub data_roaming_json: Option<String>,
     /// Design 95 rev. 3 (migration 0143): the report's `mobile_data`, cleaned (`mobile_network::clean_mobile`).
     #[sqlx(default)]
     pub mobile_data_json: Option<String>,
     /// Design 98 §5.1 (migration 0146): the report's `airplane_mode`, cleaned (`airplane_mode::clean`); read through
-    /// `airplane_mode::report`. `None` from older launchers.
+    /// `airplane_mode::report`.
     #[sqlx(default)]
     pub airplane_mode_json: Option<String>,
     /// Design 99 §6.1 (migration 0148): the report's `shortcuts`, cleaned (`shortcuts::clean`); read through
-    /// `shortcuts::report`. `None` from older launchers.
+    /// `shortcuts::report`.
     #[sqlx(default)]
     pub shortcuts_json: Option<String>,
-    /// Design 102 §6.2 (migration 0150): the report's `captive_portal`, cleaned (`logins::clean_portal`). `None` from
-    /// older launchers.
+    /// Design 102 §6.2 (migration 0150): the report's `captive_portal`, cleaned (`logins::clean_portal`).
     #[sqlx(default)]
     pub captive_portal_json: Option<String>,
     /// Design 102 §6.2: the report's `login_browser`, cleaned (`logins::clean_browser`).
     #[sqlx(default)]
     pub login_browser_json: Option<String>,
     /// Design 107 §4 (migration 0151): the report's `notification_channels`, cleaned (`notification_channels::clean`);
-    /// read through `notification_channels::report`. `None` from older launchers.
+    /// read through `notification_channels::report`.
     #[sqlx(default)]
     pub notification_channels_json: Option<String>,
     /// The report's `call_state` (migrations/0022_calls.sql), its known keys (`device_api::CALL_STATE_FIELDS`). Read
@@ -1165,7 +1160,7 @@ pub struct InstalledApp {
     #[serde(default)]
     pub preinstalled: bool,
     /// `InstallSourceInfo.installingPackageName` (handy step 7) - `com.android.vending` for an app
-    /// from Play. Absent from older launchers.
+    /// from Play.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub installer: Option<String>,
     /// The installed versionCode (2026-10-25, PLAN "Installed versionCode per catalog app in the status
@@ -1179,7 +1174,7 @@ pub struct InstalledApp {
     )]
     pub version_code: Option<i64>,
     /// The installed versionName, clipped to 60 characters at the intake (`device_api::cap_installed_apps`).
-    /// Absent from older launchers; anything but a string is none.
+    /// Anything but a string is none.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -1188,7 +1183,7 @@ pub struct InstalledApp {
     pub version_name: Option<String>,
     /// The app's camera and special accesses as the phone reads them (design 68 §3.3): only the keys the app
     /// declares, known keys and values only (`app_permissions::AppAccess::of`) - a newer launcher's key is dropped,
-    /// never a refused report. Absent from older launchers and for an app with nothing to say.
+    /// never a refused report. Absent for an app with nothing to say.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -1274,8 +1269,7 @@ pub struct PolicyResponse {
     pub location_policy: crate::time_rules::LocationPolicy,
     /// `LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_IN_TASK` while kiosk is on (handy step 9): the
     /// launcher ORs it in itself, together with the system helpers it pins for emergency calls,
-    /// permission dialogs and pickers. A separate key (never a `lock_task_features` bit) so an
-    /// older launcher without those helpers never gets it. The per-device off switch is the
+    /// permission dialogs and pickers. A separate key, never a `lock_task_features` bit. The per-device off switch is the
     /// remote kill switch.
     pub block_activity_start: bool,
     /// Handy's own PIN lock (handy step 10): `{pin_hash, pin_salt, pin_length}`, or `null` = lock
@@ -1283,13 +1277,11 @@ pub struct PolicyResponse {
     /// (CE storage on the phone) - never in a status report, a log or a page.
     pub kid_lock: Option<KidLock>,
     /// Screen timeout in seconds (migrations/0032), always sent: one of [SCREEN_TIMEOUTS]. The
-    /// launcher applies it with `DevicePolicyManager.setSystemSetting(SCREEN_OFF_TIMEOUT)`; a
-    /// launcher without the key in its DTO (older) ignores it, and an older server's response
-    /// without it leaves the phone's setting alone.
+    /// launcher applies it with `DevicePolicyManager.setSystemSetting(SCREEN_OFF_TIMEOUT)`.
     pub screen_timeout_seconds: i64,
     /// The update fence (handy step 11), always sent: while the launcher installs its own update
     /// every other Home app is suspended and the status bar disabled; `false` also releases a
-    /// fence that is up. A launcher on a server without the key treats it as off.
+    /// fence that is up. Missing = off on the launcher.
     pub update_fence: bool,
     /// Notification auto-cancel (handy step 11), always sent: the launcher's listener removes
     /// other apps' nags (not allowed, not essential). Missing = off on the launcher.
@@ -1302,7 +1294,7 @@ pub struct PolicyResponse {
     pub dns_log_enabled: bool,
     /// "App updates only on Wi-Fi" (design 13), always sent: catalog apps download only on an
     /// unmetered network, the launcher's own update after 3 days on any non-roaming one. Missing
-    /// (an older server) = off on the launcher, as before.
+    /// = off on the launcher.
     pub app_updates_wifi_only: bool,
     /// Vibb music (design 21), always sent: the library version, mobile data, the volume cap and
     /// the Storytel generation (`music::MusicPolicy`). `null` when it couldn't be read - never a
@@ -1311,30 +1303,28 @@ pub struct PolicyResponse {
     /// The lock's glance page (design 25), always sent: `{apps: [{package, show_text}]}` - the apps
     /// whose message notifications the PIN lock's first page shows (missed calls always show), each
     /// with whether its text shows too (design 51) - and `sms`, Meldinger's level `off`/`name`/`text` (design 82 D3).
-    /// A failing query sends `apps: []` and `sms: "off"` (fewer rows, never a 500). An older launcher ignores it; an
-    /// older server's missing key means Element X, sender only.
+    /// A failing query sends `apps: []` and `sms: "off"` (fewer rows, never a 500).
     pub lock_glance: crate::lock_glance::LockGlancePolicy,
     /// Dagen (design 69 §4.1), always sent: the phone-wide switches, the parent's choices per calendar and the title
     /// rules (`calendar::CalendarPolicy`). A DB error is a 500 (a missing hide rule would show what the parent hid).
     pub calendar: crate::calendar::CalendarPolicy,
     /// Per-app permissions (design 68), always a list: `[{package_name, camera: "deny"}]` - the packages the parent
     /// switched away from the default on this phone. A failing query is a 500 for the whole policy (fail closed): a
-    /// lost list would hand the camera back. An older launcher ignores it.
+    /// lost list would hand the camera back.
     pub app_permissions: Vec<crate::app_permissions::AppPermission>,
     /// "Media player on the lock screen" (2026-11-04), always a list of package names, sorted: the apps the
     /// parent switched on on this phone, which the lock's media tile then shows as it does a music, video or browser
-    /// app (`app_permissions::lock_media_apps`). A failing query sends `[]` (it only hides a tile). An older launcher
-    /// ignores it.
+    /// app (`app_permissions::lock_media_apps`). A failing query sends `[]` (it only hides a tile).
     pub lock_media_apps: Vec<String>,
-    /// Design 97: "Roaming" (Mobilnett), `"off"`, `"vibb"` or `"home"`, always sent. An older launcher ignores it.
+    /// Design 97: "Roaming" (Mobilnett), `"off"`, `"vibb"` or `"home"`, always sent.
     pub abroad: String,
     /// Design 95 rev. 3: "Mobildata for apper", `"on"` or `"vibb"` (Bare Vibb), always sent.
     pub apps_mobile: String,
     /// Design 95 rev. 3 item 3: Android's mobile-network settings locked on the phone, always sent.
     pub mobile_settings_locked: bool,
     /// Design 95 §3.5 (step 95-T2): this server expands heartbeat reports (`status_heartbeat`), `true` unless
-    /// `STATUS_HEARTBEAT=off` (`ForkConfig::status_heartbeat`). A
-    /// launcher with `status_heartbeat_v1` sends hashes and heartbeats only while it says so; an older one ignores it.
+    /// `STATUS_HEARTBEAT=off` (`ForkConfig::status_heartbeat`). The
+    /// launcher sends hashes and heartbeats only while it says so.
     pub status_heartbeat: bool,
     /// Design 95 §3.5 (code QA M1): the heartbeat's fields this server overlays (`status_heartbeat::HEARTBEAT_FIELDS`);
     /// a launcher sends heartbeats only while its own list is the same.
@@ -1342,12 +1332,12 @@ pub struct PolicyResponse {
     /// Design 95 §3.5: this server takes a gzip'd status report (`Content-Encoding: gzip`), always `true`.
     pub status_gzip: bool,
     /// Design 98 §4.4.6: this server takes `POST /api/devices/rule-pause`, so the phone offers Foreldrekode on the
-    /// time-rule screen; always `true`. An older launcher ignores it.
+    /// time-rule screen; always `true`.
     pub rule_pause: bool,
-    /// Design 102 §6.1: Wi-Fi sign-in (`logins::portal_policy`), always sent. An older launcher ignores it.
+    /// Design 102 §6.1: Wi-Fi sign-in (`logins::portal_policy`), always sent.
     pub captive_portal: crate::logins::CaptivePortalPolicy,
     /// Design 102 §6.1: Chrome only for logins (`logins::browser_policy`), `null` while the role is off or Chrome is
-    /// ticked as a normal app. Always the key. An older launcher ignores it.
+    /// ticked as a normal app. Always the key.
     pub login_browser: Option<crate::logins::LoginBrowserPolicy>,
     /// Design 76 D2: the certificate check (`server_tls::policy`), always sent: `{}` while watching (no `enforce`: the
     /// phone keeps its flag), `{"enforce": true}` on, `{"enforce": false}` the parent's off.
@@ -1463,13 +1453,13 @@ pub struct StatusReportRequest {
     pub offline_override_used: bool,
     pub location: Option<LocationReport>,
     /// `"ok"` or why the launcher didn't apply a fresh policy - see
-    /// migrations/0021_device_status_policy_state.sql. Absent from older launchers.
+    /// migrations/0021_device_status_policy_state.sql.
     #[serde(default)]
     pub policy_state: Option<String>,
     /// The launcher's PIN-gated "pause all restrictions" switch is on.
     #[serde(default)]
     pub restrictions_paused: bool,
-    /// What this launcher can enforce, e.g. "call_policy_v1". Empty from older launchers.
+    /// The launcher's capability claims (today only `android_keyguard_v1`).
     #[serde(default)]
     pub capabilities: Vec<String>,
     /// The launcher's applied call state (dialer role, restrictions, emergency calls, call-log access), stored as
@@ -1477,10 +1467,10 @@ pub struct StatusReportRequest {
     #[serde(default)]
     pub call_state: Option<serde_json::Value>,
     /// Design 77: the SMS engine's state (role, mode, counts, hold pools; never a message), through its known keys
-    /// (`sms::sanitize_state`). Absent from launchers without `sms_engine_v1`.
+    /// (`sms::sanitize_state`).
     #[serde(default)]
     pub sms_state: Option<serde_json::Value>,
-    /// The launcher's notification listener (app badges) has access. Absent from older launchers.
+    /// The launcher's notification listener (app badges) has access.
     #[serde(default)]
     pub notification_listener_enabled: Option<bool>,
     /// Active rule, screen time used/budget, lifts in force (handy step 6) - stored as JSON text,
@@ -1504,16 +1494,15 @@ pub struct StatusReportRequest {
     /// The screen timeout the phone has now (read back after applying the policy's), seconds.
     #[serde(default)]
     pub screen_timeout_seconds: Option<i64>,
-    /// The ringer mode (design 18): "normal", "vibrate" or "silent". Absent from older launchers
-    /// and when unreadable; anything else is stored as NULL (`sound_mode::sanitize_ringer_mode`).
+    /// The ringer mode (design 18): "normal", "vibrate" or "silent". Absent when unreadable; anything else is stored as NULL (`sound_mode::sanitize_ringer_mode`).
     #[serde(default)]
     pub ringer_mode: Option<String>,
     /// Do Not Disturb (design 18): the interruption filter "all", "priority", "none" or "alarms".
     #[serde(default)]
     pub interruption_filter: Option<String>,
     /// Android's backup service (backup to the Google account) is on, read by the launcher as
-    /// device owner; it keeps it off while the phone is managed. Absent from older launchers and
-    /// when the phone couldn't read it.
+    /// device owner; it keeps it off while the phone is managed. Absent when the phone couldn't
+    /// read it.
     #[serde(default)]
     pub backup_service_enabled: Option<bool>,
     /// The update fence and the pending launcher update (handy step 11) - opaque, stored
@@ -1536,13 +1525,13 @@ pub struct StatusReportRequest {
     /// launcher - opaque, stored through the known fields only (`music::sanitize_music_state`).
     #[serde(default)]
     pub music_state: Option<serde_json::Value>,
-    /// Design 19b: `PowerManager.isIgnoringBatteryOptimizations` for the launcher. Absent from
-    /// older launchers and when the phone couldn't read it.
+    /// Design 19b: `PowerManager.isIgnoringBatteryOptimizations` for the launcher. Absent when
+    /// the phone couldn't read it.
     #[serde(default)]
     pub battery_optimization_exempt: Option<bool>,
     /// QA of the launcher wave, Low 4: the launcher can wipe the phone remotely now - false on
     /// Android 14 until the phone restarts once after the update that declared the wipe policy.
-    /// Absent from older launchers and when the phone couldn't tell.
+    /// Absent when the phone couldn't tell.
     #[serde(default)]
     pub remote_wipe_ready: Option<bool>,
     /// The launcher's declared device-admin policies Android hasn't granted yet - a policy a
@@ -1565,16 +1554,14 @@ pub struct StatusReportRequest {
     pub foreign_access: Option<serde_json::Value>,
     /// Design 24b (fix of 2026-10-12): every app blocked now - a relock's or the install check's -
     /// `[{package_name, signer, reason, found, at_ms}]`, stored through the known fields only
-    /// (`window_relock::sanitize_relock_blocks`). Absent = an older launcher, or not device owner.
+    /// (`window_relock::sanitize_relock_blocks`). Absent = not device owner.
     #[serde(default)]
     pub relock_blocks: Option<serde_json::Value>,
     /// How many apps are blocked in all - `relock_blocks` stops at 16 (QA of cmd-expiry, Low 2).
-    /// Absent = an older launcher.
     #[serde(default)]
     pub relock_blocks_total: Option<i64>,
     /// Design 34 P12: the phone's clock format is the policy's `launcher_ui.clock_format` (true),
     /// it should be but can't be (false), or nothing to apply - "Same as the phone" - (null).
-    /// Absent from older launchers.
     #[serde(default)]
     pub clock_format_applied: Option<bool>,
     /// Design 36 §4.2: `{rev, in_use, since_ms, reason}` - which of
@@ -1583,54 +1570,52 @@ pub struct StatusReportRequest {
     #[serde(default)]
     pub dns_upstream: Option<serde_json::Value>,
     /// "Modify system settings" (PLAN fix backlog, 2026-10-24): `Settings.System.canWrite` - the
-    /// app-op the touch sounds row and the clock format need. Absent from older launchers and when
-    /// the phone couldn't read it.
+    /// app-op the touch sounds row and the clock format need. Absent when the phone couldn't
+    /// read it.
     #[serde(default)]
     pub write_settings_granted: Option<bool>,
     /// Security review S-L10's fix round: the phone has been on the tailnet (`testdata/leave_tailnet.json`'s
-    /// `report`). Absent from older launchers.
+    /// `report`).
     #[serde(default)]
     pub tailnet_joined: Option<bool>,
     /// Design 94 §5: `{locked, roaming, country, network, enabled, data_active,
     /// modems}`, raw - cleaned field by field by `mobile_network::clean_roaming`, so nothing in it can fail the report.
-    /// Absent from older launchers.
     #[serde(default)]
     pub data_roaming: Option<serde_json::Value>,
     /// Design 95 rev. 3: `{enabled, sink, settings_locked}`, raw - cleaned by
-    /// `mobile_network::clean_mobile`. Absent from older launchers.
+    /// `mobile_network::clean_mobile`.
     #[serde(default)]
     pub mobile_data: Option<serde_json::Value>,
     /// Design 98 §5.1: `{on, going_on, assistant, wifi_kept, last_error,
-    /// default_apps_changed, periods}`, raw - cleaned by `airplane_mode::clean`. Absent from older launchers.
+    /// default_apps_changed, periods}`, raw - cleaned by `airplane_mode::clean`.
     #[serde(default)]
     pub airplane_mode: Option<serde_json::Value>,
     /// Design 99 §6.1: `{shown, hidden, items}`, raw - cleaned by `shortcuts::clean`. A
-    /// full-report field, not a heartbeat field. Absent from older launchers.
+    /// full-report field, not a heartbeat field.
     #[serde(default)]
     pub shortcuts: Option<serde_json::Value>,
     /// Design 102 §6.2: `{handler, parent_code_set, today, sessions}`, raw - cleaned
-    /// by `logins::clean_portal`. A full-report field. Absent from older launchers.
+    /// by `logins::clean_portal`. A full-report field.
     #[serde(default)]
     pub captive_portal: Option<serde_json::Value>,
     /// Design 102 §6.2: `{package, state, version_name, written_ms, reason,
-    /// cleared_ms}`, raw - cleaned by `logins::clean_browser`. A full-report field. Absent from older launchers.
+    /// cleared_ms}`, raw - cleaned by `logins::clean_browser`. A full-report field.
     #[serde(default)]
     pub login_browser: Option<serde_json::Value>,
     /// Design 107 §2: `{all_off, blocked}`, raw - cleaned by
-    /// `notification_channels::clean`. A full-report field, not a heartbeat field. Absent from older launchers.
+    /// `notification_channels::clean`. A full-report field, not a heartbeat field.
     #[serde(default)]
     pub notification_channels: Option<serde_json::Value>,
     /// Design 115 §2.8: `{held}` - why the phone holds its app-push queue (`no_network`) or `none`; raw, cleaned by
-    /// `unified_push::clean_report` into `device_status.up_held`. A full-report field, sent while UP is on. Absent from
-    /// older launchers.
+    /// `unified_push::clean_report` into `device_status.up_held`. A full-report field, sent while UP is on.
     #[serde(default)]
     pub unified_push: Option<serde_json::Value>,
     /// Design 76: the launcher's certificate check (`testdata/server_tls_report.json`'s `report`), raw - read
-    /// within limits by `server_tls::sanitize`, so nothing in it can fail the report. Absent from older launchers.
+    /// within limits by `server_tls::sanitize`, so nothing in it can fail the report.
     #[serde(default)]
     pub server_tls: Option<serde_json::Value>,
-    /// Design 35 §2.5: `{level, charging, low}` from Android's battery broadcast. Absent from
-    /// older launchers; anything that isn't one with a level in 0..=100 is dropped, never the
+    /// Design 35 §2.5: `{level, charging, low}` from Android's battery broadcast. Anything
+    /// that isn't one with a level in 0..=100 is dropped, never the
     /// report ([lenient_battery]).
     #[serde(default, deserialize_with = "lenient_battery")]
     pub battery: Option<BatteryReport>,
@@ -1639,19 +1624,18 @@ pub struct StatusReportRequest {
     /// [LocationReport]. Every one goes through [checked_location]; the newest
     /// `zones::MAX_EXTRA_LOCATIONS` are stored, all of them before the zones are judged once
     /// (`zones::intake`). An entry that isn't a fix is dropped, never the report
-    /// ([lenient_locations]). Absent from older launchers. A fix's `provider` and `mock` keys are
+    /// ([lenient_locations]). A fix's `provider` and `mock` keys are
     /// the phone's (a release build never sends a mock fix); stored since 0093 (`location_provider`).
     #[serde(default, deserialize_with = "lenient_locations")]
     pub extra_locations: Vec<LocationReport>,
     /// Design 64 step 2: `{fences, motion_sensor, location_on, background_location,
     /// mock_ignored}` - the phone's zone watch (`zones::sanitize_zone_watch`, known keys only).
-    /// `fences > 0` is what the served interval's floor waits for. Absent from older
-    /// launchers.
+    /// `fences > 0` is what the served interval's floor waits for.
     #[serde(default)]
     pub zone_watch: Option<serde_json::Value>,
     /// Design 69 §4.2: `{readable, calendars: [{key, account_type, name, source, access_level}], rules_skipped}` -
     /// which calendars the phone has, never an event (`calendar::sanitize_report`, stored as
-    /// `devices.calendar_report`). Absent from older launchers.
+    /// `devices.calendar_report`).
     #[serde(default)]
     pub calendar: Option<serde_json::Value>,
 }
@@ -1839,7 +1823,7 @@ pub struct LocationReport {
     pub accuracy_meters: Option<f64>,
     pub captured_at: String,
     /// Design 64 step 2: Android's provider of the fix (`gps`, `network`, `fused`), stored through
-    /// [location_provider] only; absent from older launchers.
+    /// [location_provider] only.
     #[serde(default)]
     pub provider: Option<String>,
     /// Design 64 step 2: `Location.isMock` - only a debug launcher sends `true` (a release one
@@ -1899,7 +1883,7 @@ pub struct CommandResultRequest {
     pub success: bool,
     pub message: Option<String>,
     /// [PendingCommand::requested_at] as the phone got it: when sent, the answer counts only for
-    /// that command (a restored or another server may reuse the id). Older launchers send none.
+    /// that command (a restored or another server may reuse the id).
     #[serde(default)]
     pub requested_at: Option<String>,
 }

@@ -31,7 +31,7 @@ data class CallPolicy(
     /** Design 77 D16: the held messages the parent deleted ("Slett nå"), dropped before anything is released. */
     val smsHeldDrop: List<String> = emptyList(),
     /** Design 77 §14: the kid's contact requests of the last 7 days and what became of them
-     * ([com.kidslauncher.mdm.calls.ContactRequests]); empty from an older server. */
+     * ([com.kidslauncher.mdm.calls.ContactRequests]); empty when missing. */
     val contactRequests: List<PolicyContactRequest> = emptyList(),
     /** Design 80 D13: "Gruppemeldinger" - off blocks every group MMS ([com.kidslauncher.mdm.sms.engine.MmsGate.group]).
      * Always sent; absent is off (fail closed). */
@@ -75,7 +75,7 @@ data class PolicyContact(
     val messageAddress: String? = null,
     val photo: String? = null,
     /** Design 77 D3: the contact may text the kid / the kid may text the contact / pictures both ways. Independent of
-     * [inbound]/[outbound]; absent (an older server) denies. The server never sends [smsIn] for an emergency number. */
+     * [inbound]/[outbound]; absent denies. The server never sends [smsIn] for an emergency number. */
     val smsIn: Boolean = false,
     val smsOut: Boolean = false,
     val mms: Boolean = false,

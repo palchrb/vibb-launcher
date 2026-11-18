@@ -154,11 +154,11 @@ data class LastEnforcedPlan(
     val screenTimeoutSeconds: Int? = null,
     /** "App updates only on Wi-Fi" (design 13), so an unusable cache doesn't spend mobile data. */
     val appUpdatesWifiOnly: Boolean? = null,
-    /** Design 97: "I utlandet"; an older record has none and reads Ingen data ([abroadChoice], fail closed). */
+    /** Design 97: "I utlandet"; a stored record without it reads Ingen data ([abroadChoice], fail closed). */
     val abroad: String? = null,
-    /** Design 95 rev. 3: Bare Vibb (`"vibb"`) or not; an older record or server reads as on. */
+    /** Design 95 rev. 3: Bare Vibb (`"vibb"`) or not; missing reads as on. */
     val appsMobile: String? = null,
-    /** Design 95 rev. 3 item 3: the mobile-network settings lock; an older record reads locked (fail closed). */
+    /** Design 95 rev. 3 item 3: the mobile-network settings lock; missing reads locked (fail closed). */
     val mobileSettingsLocked: Boolean? = true,
     /** Design 97 code QA L3: the Home Screen's switches, so a fallback keeps the kid's own Mobildata Off (bit 32); an
      * older record reads none. */

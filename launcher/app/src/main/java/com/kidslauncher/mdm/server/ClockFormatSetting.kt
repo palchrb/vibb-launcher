@@ -15,8 +15,8 @@ const val CLOCK_FORMAT_SYSTEM = "system"
 fun clockFormatChoice(raw: String?): String = if (raw == "24" || raw == "12") raw else CLOCK_FORMAT_SYSTEM
 
 /**
- * The choice in force, or `null` when there is no `launcher_ui` to read (no policy yet, an older
- * server without it, the last-enforced fallback): then the setting is left alone (qa-34-s6-code L2).
+ * The choice in force, or `null` when there is no `launcher_ui` to read (no policy yet, the
+ * last-enforced fallback): then the setting is left alone (qa-34-s6-code L2).
  */
 fun clockFormatChoiceOf(ui: LauncherUi?): String? = ui?.let { clockFormatChoice(it.clockFormat) }
 
@@ -74,7 +74,7 @@ fun clockFormatApplied(choice: String?, current: String?): Boolean? =
  * `DISALLOW_CONFIG_DATE_TIME` is on is a device check; a refusal reads back as `false` too, and the
  * restriction is never lifted for it. Not a restriction: the override and the pause change nothing.
  * Runs from every [AppEnforcer.apply] (background, under its lock); a policy without `launcher_ui`
- * (none yet, an older server, the last-enforced fallback) leaves the setting alone.
+ * (none yet, the last-enforced fallback) leaves the setting alone.
  */
 object ClockFormatSetting {
     private const val PREFS = "clock_format_state"

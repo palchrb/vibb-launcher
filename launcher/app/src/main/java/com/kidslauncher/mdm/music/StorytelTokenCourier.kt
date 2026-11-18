@@ -59,7 +59,7 @@ data class StorytelTokenAnswer(val status: String, val jwt: String?, val expires
  *   and [STORYTEL_BUSY_DEFAULT_MS]);
  * - any other status word passes through as is (a newer server's too: the music app maps an
  *   unknown one to "unreachable");
- * - no status word: 404 -> `off` (an older server has no such route), 5xx -> `unreachable`,
+ * - no status word: 404 -> `off` (no such route), 5xx -> `unreachable`,
  *   anything else -> `launcher`.
  */
 fun storytelTokenAnswer(httpStatus: Int, body: String?): StorytelTokenAnswer {

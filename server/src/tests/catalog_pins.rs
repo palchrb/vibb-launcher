@@ -526,7 +526,7 @@ async fn a_new_phone_keeps_its_phone_and_sms_apps() {
         .text();
     assert!(!page.contains("Only emergency calls work"), "{page}");
 
-    // An older launcher without call_state: Google's names.
+    // A phone without call_state: Google's names.
     let (_, token) = app.enrolled_device("other phone").await;
     let res = app
         .request(

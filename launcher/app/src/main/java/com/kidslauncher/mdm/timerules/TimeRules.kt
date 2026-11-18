@@ -33,20 +33,20 @@ data class TimeRule(
     val callsAllowed: Boolean = false,
     val exemptApps: List<String> = emptyList(),
     /** Kalender (our own day view, "Vibb-kalender" in the PWA) stays usable while the rule runs (PLAN 2026-11-02,
-     * server migration 0119). Missing - an older server - is false: Kalender stays closed under the rule, as before. */
+     * server migration 0119). Missing is false: Kalender stays closed under the rule. */
     val calendarAllowed: Boolean = false,
     /** The phone is silent while the rule runs (the user, 2026-11-02; server migration 0121, "Stille" in the PWA):
-     * [ruleSilenceFor], our own Do Not Disturb rule ([ZenRuleRuntime]). Missing - an older server - is false. */
+     * [ruleSilenceFor], our own Do Not Disturb rule ([ZenRuleRuntime]). Missing is false. */
     val silent: Boolean = false,
     val days: List<TimeWindow?> = emptyList(),
     /** Design 93 §9.1: a rule the parent turned on now ("Slå på nå") is gone from this instant (epoch ms), whatever its
-     * weekday window says. Null - a scheduled rule, or an older server - never ends. Kept in the cache with the rule. */
+     * weekday window says. Null - a scheduled rule - never ends. Kept in the cache with the rule. */
     val untilMs: Long? = null,
     /** Design 93 §9.2: the card shows this rule ahead of the kind order while its own end is a real unlock. True on a
      * turned-on rule only; missing is false. */
     val cardFirst: Boolean = false,
     /** Design 98 §4.4.2: on a rule turned on now (a copy, negative [id]), the rule it copies - the parent code's pause
-     * pauses both, as the PWA's twin lift does. Missing - a scheduled rule, or an older server - pauses the copy alone. */
+     * pauses both, as the PWA's twin lift does. Missing - a scheduled rule - pauses the copy alone. */
     val copyOf: Long? = null,
 )
 
@@ -65,12 +65,12 @@ data class Lift(
     val minutes: Int = 0,
     val expiresAtMs: Long = 0,
     /** Design 98 §4.4.3: the parent code's pause this phone posted. Such a lift lifts only through this phone's own
-     * record of the key ([phonePauseLifts]), never through a [LiftRecord]; missing - the PWA's lifts - as before. */
+     * record of the key ([phonePauseLifts]), never through a [LiftRecord]; missing - the PWA's lifts. */
     val phoneKey: String? = null,
-    /** Design 100 §14.2: the parent who gave it - their display name, `null` without one (D11: never the login), on a
-     * parent-code pause, or from an older server. */
+    /** Design 100 §14.2: the parent who gave it - their display name, `null` without one (D11: never the login), or on a
+     * parent-code pause. */
     val by: String? = null,
-    /** Design 100 §14.2: when it was given (epoch ms); 0 from an older server. */
+    /** Design 100 §14.2: when it was given (epoch ms); 0 when missing. */
     val atMs: Long = 0,
 )
 

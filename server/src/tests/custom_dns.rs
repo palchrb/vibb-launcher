@@ -573,7 +573,7 @@ async fn dns_upstream_status_contract() {
     };
     assert_eq!(kept().await, Some(report["dns_upstream"].clone()));
 
-    // Never an address, whatever a launcher sends; junk stores nothing; an older report none.
+    // Never an address, whatever a launcher sends; junk stores nothing; a report without it none.
     let mut sneaky = report.clone();
     sneaky["dns_upstream"]["host"] = json!("abc123.dns.example");
     sneaky["dns_upstream"]["reason"] = json!("https://abc123.dns.example");
@@ -701,7 +701,7 @@ async fn the_footer_says_per_phone_which_server_is_in_use() {
             zone.when(since, chrono::Utc::now())
         )
     );
-    // A report without `dns_upstream` waits, like one at an older rev (no update line since C1).
+    // A report without `dns_upstream` waits, like one at an older rev.
     assert_eq!(line(&page, per), "Per · Waiting for the phone");
     assert_eq!(line(&page, kari), "Kari · Waiting for the phone");
     assert_eq!(line(&page, liv), "Liv · Web filter off");
@@ -804,7 +804,7 @@ async fn the_lines_say_when_dns_cant_be_reached() {
         let app = &app;
         async move {
             let body = json!({"lock_reason": "NONE", "kiosk_engaged": true,
-                "capabilities": ["dns_custom_v1", "dns_bypass_v1"], "dns_upstream": upstream});
+                "dns_upstream": upstream});
             post_status(app, &token, body).await;
         }
     };

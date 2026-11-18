@@ -34,7 +34,7 @@ pub fn apps_choice(stored: &str) -> &'static str {
 
 /// Design 94 §5: the report's `data_roaming`, re-serialised field by field. A booleans that isn't one reads as its safe
 /// value (`false`; `null` for `enabled`), `country` must be `[a-z]{2}`, `network` `[0-9]{5,6}`, `modems` 1..=8, design
-/// 97's `where` one of `home`, `abroad`, `unknown` (else `null`, an older launcher); a value that isn't an object is
+/// 97's `where` one of `home`, `abroad`, `unknown` (else `null`); a value that isn't an object is
 /// `None` (stored `NULL`), never a refused report.
 pub fn clean_roaming(value: &Value) -> Option<String> {
     let object = value.as_object()?;
@@ -71,7 +71,7 @@ pub fn clean_roaming(value: &Value) -> Option<String> {
 
 /// Design 95 rev. 3: the report's `mobile_data`, re-serialised: `enabled` a boolean or `null`, `sink` one of the known
 /// words (else `off`), `settings_locked` a boolean (else `false`); design 97's `kid` `on`, `off` or `null` (the row
-/// hidden, or an older launcher).
+/// hidden).
 pub fn clean_mobile(value: &Value) -> Option<String> {
     let object = value.as_object()?;
     let sink = object
@@ -103,7 +103,7 @@ pub struct RoamingReport {
     pub enabled: Option<bool>,
     pub data_active: bool,
     pub modems: Option<i64>,
-    /// Design 97 §4.1: the launcher's own judgement, `home`, `abroad` or `unknown`; `None` from an older launcher.
+    /// Design 97 §4.1: the launcher's own judgement, `home`, `abroad` or `unknown`; `None` when absent.
     #[serde(default, rename = "where")]
     pub where_is: Option<String>,
 }

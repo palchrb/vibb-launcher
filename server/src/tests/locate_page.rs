@@ -1650,7 +1650,7 @@ async fn phones_json_tells_each_phone_fresh_or_old_by_its_own_setting() {
     .unwrap();
     app.post_status(
         &token,
-        serde_json::json!({"capabilities": ["zones_v1"], "zone_watch": {"fences": 1,
+        serde_json::json!({"zone_watch": {"fences": 1,
             "motion_sensor": true, "location_on": true, "background_location": true,
             "mock_ignored": 0}}),
     )

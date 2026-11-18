@@ -32,7 +32,7 @@ sealed interface TokenResult {
     data class Busy(val retryAfterMs: Long) : TokenResult
 
     /** Anything else: the server, the launcher or Spotify couldn't answer now (`unreachable`,
-     * `key`, `launcher`, a timeout, an older launcher without the method, a word this app doesn't know). */
+     * `key`, `launcher`, a timeout, a word this app doesn't know). */
     data object Unreachable : TokenResult
 }
 
@@ -69,8 +69,8 @@ object SpotifyBridgeToken {
     suspend fun get(context: Context): TokenResult = Bridge.withBridge(context) { ask(it) } ?: TokenResult.Unreachable
 
     /**
-     * One `getSpotifyToken` on [bridge], its answer awaited at most [TIMEOUT_MS]: an older launcher
-     * drops the oneway call it doesn't know, which is a timeout - [TokenResult.Unreachable].
+     * One `getSpotifyToken` on [bridge], its answer awaited at most [TIMEOUT_MS]: a hung or slow
+     * launcher is a timeout - [TokenResult.Unreachable].
      */
     suspend fun ask(bridge: IMusicBridge): TokenResult {
         val answer = CompletableDeferred<TokenResult>()

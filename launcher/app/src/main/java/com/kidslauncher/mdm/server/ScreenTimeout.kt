@@ -31,7 +31,7 @@ sealed interface ScreenTimeoutAction {
  * phone is managed ([managed] = [hardeningManaged]: an enforced allowlist or managed calls - a
  * policy without either, no policy at all, or an unenrolled phone release it,
  * qa-fixround-2026-10-06 #3). Out-of-range values are clamped to 15 s..10 min (never "never"), a
- * non-positive one is the 1-minute default. Also released: no value (an older server, or a
+ * non-positive one is the 1-minute default. Also released: no value (or a
  * last-enforced plan saved before this field existed) and the offline override / pause (the
  * standing rule: every restriction is liftable).
  */

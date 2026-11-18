@@ -104,7 +104,6 @@ async fn report(app: &TestApp, token: &str, lock_reason: &str, used: i64, budget
             Some(json!({
                 "lock_reason": lock_reason,
                 "kiosk_engaged": true,
-                "capabilities": ["call_policy_v1", "time_rules_v1"],
                 "time_state": {
                     "day": day.to_string(),
                     "used_minutes": used, "budget_minutes": budget, "extra_minutes": 0,
@@ -418,7 +417,6 @@ async fn the_cap_counts_the_phones_own_day() {
             Some(json!({
                 "lock_reason": "NONE",
                 "kiosk_engaged": true,
-                "capabilities": ["call_policy_v1", "time_rules_v1"],
                 "time_state": {
                     "day": phone.today(now).to_string(), "used_minutes": 10, "budget_minutes": 90,
                     "lock_reason": "NONE", "zone": name,
@@ -982,7 +980,6 @@ async fn a_pause_of_the_copied_rule_answers_a_request_under_its_copy() {
             Some(json!({
                 "lock_reason": "RULE",
                 "kiosk_engaged": true,
-                "capabilities": ["call_policy_v1", "time_rules_v1"],
                 "time_state": {
                     "day": today.to_string(),
                     "used_minutes": 10, "budget_minutes": 90, "extra_minutes": 0,
@@ -1022,8 +1019,7 @@ async fn a_pause_of_the_copied_rule_answers_a_request_under_its_copy() {
     );
 }
 
-/// §14.4 (QA R2-L6): a newer request of the day supersedes the open one (an older launcher asks again after its 30
-/// minutes) - the card shows the newer, the older's card says so; a request of another day is no longer open; a
+/// §14.4 (QA R2-L6): a newer request of the day supersedes the open one - the card shows the newer, the older's card says so; a request of another day is no longer open; a
 /// retry of the newer one supersedes nothing more.
 #[tokio::test]
 async fn a_second_request_supersedes_the_first() {

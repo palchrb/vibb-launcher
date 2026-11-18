@@ -391,8 +391,8 @@ fn backup_row(html: &str) -> bool {
 
 /// Google account on the phone (docs/setup/google-account.md, migrations/0041): the launcher
 /// reports whether Android's backup service is on. On is a warning above Advanced › Restrictions
-/// (and an Attention alarm), its words behind its ⓘ; off, or a report without it (an older
-/// launcher, or the phone couldn't read it), shows nothing (design 113).
+/// (and an Attention alarm), its words behind its ⓘ; off, or a report without it (the
+/// phone couldn't read it), shows nothing (design 113).
 #[tokio::test]
 async fn backup_service_state_is_stored_and_shown() {
     let app = TestApp::new().await;
@@ -410,7 +410,7 @@ async fn backup_service_state_is_stored_and_shown() {
     assert!(!backup_row(&html));
     assert!(!html.contains(warning));
 
-    // An older launcher: the field is missing - stored as NULL, nothing shown.
+    // The field missing: stored as NULL, nothing shown.
     report_backup(&app, &token, None).await;
     assert_eq!(stored_backup(&app, id).await, None);
     let html = advanced().await;

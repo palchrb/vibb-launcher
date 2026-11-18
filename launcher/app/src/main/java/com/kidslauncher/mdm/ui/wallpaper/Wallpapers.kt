@@ -47,7 +47,7 @@ data class Wallpaper(
 
 const val NAVY_ARGB: Int = 0xFF14213D.toInt()
 
-/** The launcher's own default: the built-in navy (also what an older server means). */
+/** The launcher's own default: the built-in navy (also what a missing policy means). */
 val NAVY = Wallpaper(1, WallpaperFill.Solid(NAVY_ARGB), "Navy", "navy")
 
 /** `#RRGGBB` → opaque ARGB, or null. */

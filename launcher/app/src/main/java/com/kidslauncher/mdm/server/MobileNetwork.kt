@@ -82,12 +82,12 @@ fun whereOf(
     return if (simMcc == net.take(3)) Where.HOME else Where.ABROAD
 }
 
-/** Design 95 rev. 3 item 3: `DISALLOW_CONFIG_MOBILE_NETWORKS` while the parent's switch is on, lifted by the pause. An
- * older server's missing key (`null`) sets nothing. */
+/** Design 95 rev. 3 item 3: `DISALLOW_CONFIG_MOBILE_NETWORKS` while the parent's switch is on, lifted by the pause. A missing
+ * key (`null`) sets nothing. */
 fun mobileSettingsLocked(value: Boolean?, overrideActive: Boolean): Boolean = value == true && !overrideActive
 
 /** The parent's "Mobildata for apper: Bare Vibb" in force: `"vibb"`, and fail closed on a value this build doesn't
- * know; `"on"` and an older server's `null` don't. Lifted by the pause (D3). */
+ * know; `"on"` and `null` don't. Lifted by the pause (D3). */
 fun parentSinkOn(appsMobile: String?, overrideActive: Boolean): Boolean = when (appsMobile) {
     null, "on" -> false
     else -> !overrideActive

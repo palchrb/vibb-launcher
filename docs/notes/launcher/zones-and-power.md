@@ -63,7 +63,7 @@ Moved from launcher/CLAUDE.md on 2026-11-01.
   `PowerEvents`' lock with one `commit()` (`update`): the shutdown receiver on the main thread races the sync's thread
   (qa-38-design L3). A sent shutdown is **kept** (`off_sent`) and sent again with the next start until a later
   boot's start is accepted, so the server pairs them in one body (QA H1); kept parts older than 7 days go unsent
-  (`stale`, `POWER_STALE_MS`) - an old server's 404 ends there too.
+  (`stale`, `POWER_STALE_MS`).
 - **The shutdown**: `BootCover`'s `ACTION_SHUTDOWN` receiver (from `PinLockRuntime.init`, `RECEIVER_NOT_EXPORTED`;
   ShutdownThread sends it to registered receivers only) is the process's **one** shutdown receiver (QA M3): first
   the cover's synchronous writes as before (`coverAtShutdown`: `KeyguardCover.onShutdown`, the boot cover's arm),

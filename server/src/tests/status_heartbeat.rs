@@ -235,7 +235,7 @@ async fn a_heartbeat_stands_for_the_full_report_it_names() {
             .unwrap();
     assert_eq!(hash, contract["full"]["hash"].as_str().unwrap());
 
-    // An older launcher's report (no hash) forgets what was kept.
+    // A report without a hash forgets what was kept.
     let mut plain = contract["full"].clone();
     plain.as_object_mut().unwrap().remove("hash");
     assert_eq!(

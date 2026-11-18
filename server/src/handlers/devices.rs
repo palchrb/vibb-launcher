@@ -396,7 +396,7 @@ pub(crate) async fn time_glance(
     (lock, screen, battery)
 }
 
-/// A report's time and its typed `time_state` (or, from an older launcher, its lock reason).
+/// A report's time and its typed `time_state` (or, without one, its lock reason).
 pub(crate) fn time_report(
     reported_at: &str,
     lock_reason: &str,
@@ -873,7 +873,7 @@ pub struct AccessCard {
     /// The flash after Disconnect Phone: the text, and whether it is a refusal.
     pub notice: Option<(&'static str, bool)>,
     /// The last report says the phone is on the tailnet (`tailnet_joined`): "Leave Tailnet…" shows. Set by
-    /// Advanced only; false from an older launcher.
+    /// Advanced only.
     pub tailnet_joined: bool,
 }
 

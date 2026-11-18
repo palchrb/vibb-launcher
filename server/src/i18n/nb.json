@@ -2873,7 +2873,7 @@
   "music.remove_login": "Fjern innlogging",
   "music.settings.storytel_footer": "Én innlogging for familien; den vises aldri igjen.",
   "music.settings.storytel_info_label": "Om Storytel-innloggingen",
-  "music.settings.storytel_info": "Lagres kryptert på serveren; en telefon med en eldre musikkapp har en kopi. Mistet en telefon? Fjern den, bytt passord hos Storytel og lagre det her igjen. To telefoner som lytter samtidig trenger Storytel Familie, som ikke støttes ennå.",
+  "music.settings.storytel_info": "Lagres kryptert på serveren. Mistet en telefon? Fjern den, bytt passord hos Storytel og lagre det her igjen. To telefoner som lytter samtidig trenger Storytel Familie, som ikke støttes ennå.",
   "music.settings.app": "Musikkappen",
   "music.settings.app_phones.one": "På {count} telefon",
   "music.settings.app_phones.other": "På {count} telefoner",

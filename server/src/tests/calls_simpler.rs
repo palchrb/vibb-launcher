@@ -26,11 +26,8 @@ async fn managed_phone(app: &TestApp) -> (i64, String) {
 
 /// A status report with the engine and this `sms_state`.
 async fn report(app: &TestApp, token: &str, sms_state: serde_json::Value) {
-    app.post_status(
-        token,
-        json!({ "capabilities": ["call_policy_v1", "sms_engine_v1"], "sms_state": sms_state }),
-    )
-    .await;
+    app.post_status(token, json!({ "sms_state": sms_state }))
+        .await;
 }
 
 /// A contact on the phone with its six flags `[inbound, outbound, home, sms_in, sms_out, mms]`.
@@ -974,11 +971,8 @@ async fn the_page_keeps_on_view_what_needs_a_decision() {
 
 /// A report claiming the engine and the group switch, with this `sms_state`.
 async fn report_groups(app: &TestApp, token: &str, sms_state: serde_json::Value) {
-    app.post_status(
-        token,
-        json!({ "capabilities": ["call_policy_v1", "sms_engine_v1", "sms_groups_v1"], "sms_state": sms_state }),
-    )
-    .await;
+    app.post_status(token, json!({ "sms_state": sms_state }))
+        .await;
 }
 
 async fn groups_on(app: &TestApp, id: i64) -> bool {

@@ -124,8 +124,7 @@ counts.
   `interval_minutes` is the **served** interval, `zones::served_interval(mode, chosen, zones, watching)` =
   `max(chosen, HEARTBEAT_FLOOR_MINUTES = 30)` only while Regularly, the phone has zones and its latest report since its
   enrollment holds fences (`zones::last_zone_watch`, `zones::watching`: `zone_watch.fences > 0`) - the user's decision
-  3: no separate heartbeat setting, the parent's choice never written, the last zone deleted gives it back. An older
-  launcher (no watch), a watch without fences (a refused registration) or a choice of 30 min or more: as chosen.
+  3: no separate heartbeat setting, the parent's choice never written, the last zone deleted gives it back. No watch, a watch without fences (a refused registration) or a choice of 30 min or more: as chosen.
   `zones::served_interval_of` reads the same for the pages (`freshness_inputs`, so "Here now" counts in the served
   interval). Pinned by `policy_json_keys_snapshot` (`location_policy`'s keys) and the launcher's
   `PolicyResponseCompatTest`.

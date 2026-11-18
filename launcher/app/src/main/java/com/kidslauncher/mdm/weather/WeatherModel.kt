@@ -234,7 +234,7 @@ val WEATHER_DARK_KINDS = setOf("at", "never", "all_day")
 val WEATHER_EVENING_PARTS = listOf("morning", "afternoon")
 
 /** The card for [line] (its day), or null when the line has no card. Unknown parts and dark kinds are left out. A
- * line with the rest of this evening on tomorrow's card makes the evening card; without it (an older server, the
+ * line with the rest of this evening on tomorrow's card makes the evening card; without it (the
  * phone's zone just changed) the plain one. */
 fun weatherCard(
     answer: WeatherAnswer,

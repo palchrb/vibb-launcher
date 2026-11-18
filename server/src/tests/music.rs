@@ -1466,7 +1466,6 @@ async fn report_music_state(app: &TestApp, token: &str, state: Value) {
             Some(json!({
                 "lock_reason": "NONE",
                 "kiosk_engaged": true,
-                "capabilities": ["music_v1"],
                 "music_state": state
             })),
         )
@@ -1596,7 +1595,7 @@ async fn the_storage_rows_show_the_limit_and_the_extras() {
             extras: None,
             over_limit: None,
         },
-        "an older app: what it stores only"
+        "no `audio_bytes`: what it stores only"
     );
 }
 
@@ -1645,7 +1644,7 @@ fn the_page_warns_when_kept_items_alone_pass_the_limit() {
         10,
         "the round-up never overflows"
     );
-    // No limit: never a warning. An older app (no `audio_bytes`): never a warning.
+    // No limit: never a warning. No `audio_bytes`: never a warning.
     assert_eq!(over(0, Some(i64::MAX), Some(0), None), None);
     assert_eq!(over(i64::MAX, None, None, Some(1)), None);
     // Phone numbers that don't add up never overflow.
@@ -3268,7 +3267,6 @@ async fn report_rooms(app: &TestApp, token: &str, rooms: &[(&str, &str)]) {
             Some(json!({
                 "lock_reason": "NONE",
                 "kiosk_engaged": true,
-                "capabilities": ["music_v1"],
                 "music_state": {"package": "me.vibb.music", "bridge": "bound", "sonos_rooms": rooms}
             })),
         )
@@ -3516,7 +3514,6 @@ async fn the_phone_reports_music_state_with_known_fields_only() {
             Some(json!({
                 "lock_reason": "NONE",
                 "kiosk_engaged": true,
-                "capabilities": ["music_v1"],
                 "music_state": {
                     "package": "me.vibb.music",
                     "version_code": 10_020_039,
@@ -3631,7 +3628,7 @@ async fn the_phone_reports_music_state_with_known_fields_only() {
     assert!(!page.contains("login failed") && !page.contains("login_failed"));
 
     // A phone without the music app: it sends no music_state (qa-21-step3-code L13).
-    let report_without_state = |apps: serde_json::Value| json!({"lock_reason": "NONE", "kiosk_engaged": true, "capabilities": ["music_v1"], "installed_apps": apps});
+    let report_without_state = |apps: serde_json::Value| json!({"lock_reason": "NONE", "kiosk_engaged": true, "installed_apps": apps});
     app.request(
         Method::POST,
         "/api/devices/status",

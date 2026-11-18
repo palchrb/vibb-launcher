@@ -50,7 +50,7 @@ sealed interface RequestState {
     data class Waiting(val atMs: Long) : RequestState
 
     /** A parent answered it: [no], or a yes of [minutes]; [by] the display name (`null` without one, D11); [atMs] when
-     * (0 from an older server). [canAskAgain]: the day's accepted count is under [TIME_REQUESTS_A_DAY]. */
+     * (0 when missing). [canAskAgain]: the day's accepted count is under [TIME_REQUESTS_A_DAY]. */
     data class Answered(val no: Boolean, val by: String?, val atMs: Long, val minutes: Int?, val canAskAgain: Boolean) : RequestState
 
     /** The day's three were asked and nothing of today is open or answered on the phone. */

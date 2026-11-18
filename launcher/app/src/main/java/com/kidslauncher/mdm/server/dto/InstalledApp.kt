@@ -18,8 +18,7 @@ data class InstalledApp(
      * catalog. `null` if unknown. */
     val installer: String? = null,
     /** `PackageInfo.longVersionCode` (2026-10-25, PLAN "Installed versionCode per catalog app in the status report"):
-     * the server's "<app> updated on <phone>" for every catalog app. `null` (left out) if unreadable - an older
-     * server ignores it, an older launcher never sends it. */
+     * the server's "<app> updated on <phone>" for every catalog app. `null` (left out) if unreadable. */
     val versionCode: Long? = null,
     /** `PackageInfo.versionName`, trimmed and cut to [INSTALLED_VERSION_NAME_MAX] characters ([installedVersionName]);
      * `null` (left out) when there is none. */
@@ -31,7 +30,7 @@ data class InstalledApp(
     val access: Map<String, String>? = null,
     /** Design 87: the SHA-256 (64 lowercase hex) of the app's logo as the phone draws it, a [APP_LOGO_SIZE_PX] px
      * PNG; the server asks for the file in the report's answer ([WantedLogos]). `null` (left out) when there is
-     * nothing to say this time - never "no logo". An older server ignores it. */
+     * nothing to say this time - never "no logo". */
     val logo: String? = null,
 )
 

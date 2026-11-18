@@ -76,7 +76,7 @@ object ListingParser {
                 safeUrl(d.url),
                 d.hls,
                 d.durationMs?.takeIf { it > 0 },
-                // A hash, never a URL: an older server's URL is dropped (design 27 §1.5).
+                // A hash, never a URL: anything else is dropped (design 27 §1.5).
                 d.art?.takeIf { ART_HASH.matches(it) },
             )
         }.distinctBy { it.key }

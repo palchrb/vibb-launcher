@@ -71,7 +71,7 @@ object RestrictionKeys {
     const val SPOTIFY_DIAG_UNTIL = "spotify_diag_until"
 }
 
-/** The limit without a word from the launcher (an older one): 2 GB (design 30 §1.3, §1.8). */
+/** The limit absent from the launcher's restrictions: 2 GB (design 30 §1.3, §1.8). */
 const val DEFAULT_STORAGE_LIMIT_GB = 2
 
 /** The largest limit read; anything above is junk, read as [DEFAULT_STORAGE_LIMIT_GB] (the launcher's bound). */
@@ -131,7 +131,7 @@ fun mobileSwitch(values: Map<String, Any?>, key: String): Boolean = values[key] 
 
 /**
  * The parent's storage limit in GB (design 30 §1.3): an Int 1..[MAX_STORAGE_LIMIT_GB] is that many,
- * 0 is no limit (null); absent (an older launcher) or anything else is [DEFAULT_STORAGE_LIMIT_GB].
+ * 0 is no limit (null); absent or anything else is [DEFAULT_STORAGE_LIMIT_GB].
  */
 fun storageLimit(values: Map<String, Any?>): Int? = when (val gb = values[RestrictionKeys.STORAGE_LIMIT_GB]) {
     is Int -> when (gb) {

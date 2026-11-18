@@ -56,7 +56,7 @@ async fn leave_tailnet_is_queued_only_when_ticked() {
         }
     };
     let form = format!("action=\"/devices/{id}/leave-tailnet#connection\"");
-    // Hidden without a report that says so (an older launcher), and while the phone says it isn't on one.
+    // Hidden without a report that says so, and while the phone says it isn't on one.
     assert!(!advanced("").await.contains(&form));
     app.post_status(&token, serde_json::json!({"tailnet_joined": false}))
         .await;

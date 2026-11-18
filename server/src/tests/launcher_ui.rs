@@ -693,7 +693,7 @@ async fn the_clock_format_column_takes_only_its_three_values() {
 
 /// Design 34 P12: the phone reports `clock_format_applied`; false while the policy asks for 24 h
 /// or 12 h is a warning on Home Screen (its title alone, the adb grant behind its ⓘ - design 113).
-/// True, null, an older launcher (no field) and "Same as the phone" show nothing.
+/// True, null, no field and "Same as the phone" show nothing.
 #[tokio::test]
 async fn clock_format_not_applied_is_a_warning() {
     let app = TestApp::new().await;

@@ -1050,7 +1050,7 @@ async fn the_access_note_counts_meldingers_row() {
         &app,
         &token,
         &[],
-        json!({ "capabilities": ["lock_glance_v1"], "notification_listener_enabled": false }),
+        json!({ "notification_listener_enabled": false }),
     )
     .await;
     let html = page().await;

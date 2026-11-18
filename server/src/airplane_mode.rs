@@ -199,8 +199,7 @@ pub struct Line {
 
 /// The summary's lines under the header (§6.2): "An emergency call turned airplane mode off at 14:02" when the call
 /// ended the newest period within [ENDED_SHOWN_MS] (any other ended period is an Activity row since design 101), and the warning
-/// while the kid's switch is on and the role, held before ([assistant_held_before]), is lost now. Empty for an older
-/// launcher.
+/// while the kid's switch is on and the role, held before ([assistant_held_before]), is lost now. Empty without a report.
 pub fn summary_lines(
     zone: &Zone,
     now: DateTime<Utc>,

@@ -52,7 +52,7 @@ pub fn live_since(now: DateTime<Utc>) -> i64 {
 
 /// The phone's request (`contact_request.json`'s `request`). Unknown keys are ignored (no `deny_unknown_fields`), so a
 /// later optional photo can be added as one more key - a reference such as `photo: "<sha256>"` to a picture the phone
-/// uploads on its own route first - and an older server simply takes the request without it.
+/// uploads on its own route first.
 #[derive(Debug, serde::Deserialize)]
 pub struct Body {
     pub id: String,

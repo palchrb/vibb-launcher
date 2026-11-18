@@ -1251,7 +1251,7 @@ mod tests {
             (vec![answered(lock.clone(), true)], false, false, false),
             // Play install mode still on at the newest report: Lock again still waits (Q-3).
             (vec![answered(lock.clone(), true)], false, true, true),
-            // An older launcher's answer has no flag: as a success.
+            // An answer without the flag: as a success.
             (
                 vec![CommandAnswer {
                     succeeded: None,

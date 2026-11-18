@@ -28,8 +28,7 @@ async fn report_receipts(app: &TestApp, token: &str) {
             Method::POST,
             "/api/devices/status",
             Some(token),
-            Some(json!({ "lock_reason": "NONE", "kiosk_engaged": true,
-                         "capabilities": ["command_receipt_v1"] })),
+            Some(json!({ "lock_reason": "NONE", "kiosk_engaged": true })),
         )
         .await;
     assert_eq!(res.status, StatusCode::NO_CONTENT);

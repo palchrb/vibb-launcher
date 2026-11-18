@@ -87,7 +87,7 @@ private val JSON = Json { ignoreUnknownKeys = true; explicitNulls = false }
 private val HASH = Regex("[0-9a-f]{64}")
 private val VERSION = Regex("[0-9a-f]{16}")
 
-/** An older server sends no `storage_limit_gb`: the music storage limit it means is this (design 30 §1.3). */
+/** The music storage limit when `storage_limit_gb` is absent (design 30 §1.3). */
 const val DEFAULT_STORAGE_LIMIT_GB = 2
 
 /** The largest limit the launcher takes from the policy (design 30 §1.3); anything above reads as [DEFAULT_STORAGE_LIMIT_GB]. */
@@ -110,8 +110,8 @@ data class MusicPolicy(
 )
 
 /**
- * `PolicyResponse.music`; null when it isn't an object or any field isn't what 21 §1.3 sends (an
- * older or newer server, or one that couldn't build it): the launcher and the music app then keep
+ * `PolicyResponse.music`; null when it isn't an object or any field isn't what 21 §1.3 sends (or one the
+ * server couldn't build): the launcher and the music app then keep
  * what they have. Only a JSON `null` `library_version` means "nothing ticked" - a value the launcher
  * can't read never wipes the kid's downloads or login (qa-21-step3-code M4).
  */
@@ -136,7 +136,7 @@ fun musicPolicy(element: JsonElement?): MusicPolicy? {
 
 /**
  * The policy's `music.spotify_diag_until` (2026-11-01, Device › Advanced's Spotify diagnostic log): a positive integer
- * is its end in epoch seconds; absent (an older server), `null` (not running) or anything else is 0 - the least
+ * is its end in epoch seconds; absent, `null` (not running) or anything else is 0 - the least
  * important field never refuses the music object, and junk never turns the log on.
  */
 fun spotifyDiagUntil(element: JsonElement?): Long =
@@ -157,7 +157,7 @@ fun storageLimitGb(element: JsonElement?): Int? = when (element) {
 
 /**
  * The policy's volume cap (design 26a §5.3) with a music object [musicPolicy] refuses kept closed
- * (qa-30-s2-code L1): absent (an older server, or one that couldn't build it) = the policy's
+ * (qa-30-s2-code L1): absent (or one the server couldn't build) = the policy's
  * none; readable = its cap (null = off); present but refused = [remembered], the last cap read.
  */
 fun policyCapPct(music: JsonElement?, remembered: Int?): Int? {
@@ -178,8 +178,8 @@ private fun mobileSwitch(o: JsonObject, key: String): Boolean? = when (val v = o
 
 /**
  * The policy's `music.spotify` (design 26c §6.2): this phone plays Spotify (it is bound to an
- * account), so the DNS filter lets Spotify's hosts through. Read on its own and leniently: absent
- * (an older server), not a boolean, or no `music` object at all is false - whatever else the object
+ * account), so the DNS filter lets Spotify's hosts through. Read on its own and leniently: absent,
+ * not a boolean, or no `music` object at all is false - whatever else the object
  * holds.
  */
 fun musicSpotify(element: JsonElement?): Boolean =

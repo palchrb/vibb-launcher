@@ -68,13 +68,6 @@ struct Kid {
     calendar: String,
 }
 
-const CAPABILITIES: [&str; 3] = ["calendar_v1", "calendar_feeds_v1", "calendar_kid_caldav_v1"];
-
-async fn report_capabilities(app: &TestApp, token: &str, capabilities: &[&str]) {
-    app.post_status(token, json!({ "capabilities": capabilities }))
-        .await;
-}
-
 /// The account inserted as a passing Test leaves it (its password sealed), the calendar ticked on the phone through
 /// the account page's form, then marked through Kalender's select.
 async fn kid_with(writable: Option<bool>) -> Kid {
@@ -82,7 +75,7 @@ async fn kid_with(writable: Option<bool>) -> Kid {
     app.state.kid_writes.set_clock(t0());
     let cookie = app.admin_cookie().await;
     let (device, token) = app.enrolled_device("Anna").await;
-    report_capabilities(&app, &token, &CAPABILITIES).await;
+    app.post_status(&token, json!({})).await;
     let dav = FakeDav::new(COLLECTION);
     dav.serve_on(&app.fetch);
     // The family's calendar holds the parent's own events too (an empty answer would be held, design 72 QA M1).
@@ -564,7 +557,7 @@ async fn the_contract() {
     answer("bad_set", &res);
     // A second phone (the same phone enrolled again) posting the first one's tag.
     let (second, token) = k.app.enrolled_device("Anna ny").await;
-    report_capabilities(&k.app, &token, &CAPABILITIES).await;
+    k.app.post_status(&token, json!({})).await;
     let found = crate::caldav::calendar_id(COLLECTION);
     let on = format!("on_{found}");
     k.app

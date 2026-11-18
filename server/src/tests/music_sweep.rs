@@ -2206,7 +2206,6 @@ async fn report_errors(app: &TestApp, token: &str, errors: Value) {
             Some(json!({
                 "lock_reason": "NONE",
                 "kiosk_engaged": true,
-                "capabilities": ["music_v1"],
                 "music_state": {"item_errors": errors}
             })),
         )
