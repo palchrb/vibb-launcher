@@ -191,13 +191,6 @@ pub fn event_detail(upstream: &str, server: &str, backup: &str) -> String {
     detail.to_string()
 }
 
-/// The launcher capability that reports [DnsUpstreamState] (design 36 §4.2).
-pub const DNS_CUSTOM_CAPABILITY: &str = "dns_custom_v1";
-
-/// The launcher capability for design 67's bypass fixes: the browsers' managed config, the
-/// built-in secure-DNS hosts and Firefox's canary.
-pub const DNS_BYPASS_CAPABILITY: &str = "dns_bypass_v1";
-
 /// Why a phone is on the backup (design 36 §4.2's words).
 pub const BACKUP_REASONS: [&str; 6] = ["bootstrap", "connect", "tls", "http", "refused", "timeout"];
 

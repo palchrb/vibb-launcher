@@ -2370,8 +2370,7 @@ column allows `eea` for a later round, the page doesn't offer it), and "Lås mob
 (`mobile_settings_locked`, on by default). An unknown value or group is a 400 with nothing written; `settings_log`
 writes the line; each save nudges the phone. The radio rows are `.pick-row` (style.css v110).
 
-The choices are disabled with "Virker etter at Vibb One er oppdatert" while the latest report doesn't claim
-`mobile_data_v1` / `data_roaming_v1`; a phone not set up has them live. The phone's state, worded by
+The phone's state, worded by
 `mobile_network::card` from the report's cleaned `data_roaming` and `mobile_data`, sits under each group: design 94
 §6.1's table (locked, unlocked in a pause, the phone's choice on/off, where it roams, the lingering session - "Bare
 Vibb bruker roamingdata fra før låsen" when the launcher sinks it - and a SIM still reading roaming on), "Mobildata:

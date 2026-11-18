@@ -264,20 +264,12 @@ fn backup_reason_text(reason: &str) -> Option<&'static str> {
     })
 }
 
-/// A phone's last report, as its lines need it: its capabilities and its `dns_upstream`.
+/// A phone's last report, as its lines need it: its `dns_upstream`.
 struct LastReport<'a> {
-    capabilities: Option<&'a str>,
     dns_upstream: Option<&'a str>,
     /// When it came, while the phone is Offline or Disconnected (the Attention rows' rule):
     /// what it says may be over.
     stale_since: Option<chrono::DateTime<chrono::Utc>>,
-}
-
-impl LastReport<'_> {
-    fn claims(&self, capability: &str) -> bool {
-        self.capabilities
-            .is_some_and(|caps| caps.contains(&format!("\"{capability}\"")))
-    }
 }
 
 /// Where the phones look names up, for the DNS Server group's lines: the parent's servers at
@@ -427,9 +419,6 @@ fn phone_line(
                 format!("{line}{at_last_report}")
             }),
         Lookups::Custom { rev } => Some(match (&report, &state) {
-            (Some(report), _) if !report.claims(dns_server::DNS_CUSTOM_CAPABILITY) => {
-                t(lang, "settings.web_filter.line.update_for_custom").to_string()
-            }
             // A provider report while Custom is in force (even at rev 0) is never the backup.
             (Some(_), Some(state)) if state.rev == rev && state.in_use != "provider" => {
                 match outage_since(state) {
@@ -478,26 +467,12 @@ fn phone_line(
 }
 
 /// A phone's lines under the Each Phone group (design 67 §2.4), only while its filter is on and
-/// only what is owed: an update while its last report lacks `dns_bypass_v1`, and a line for each
-/// allowed browser in [DOH_IGNORING_BROWSERS]; in `lang`.
-fn bypass_lines(
-    lang: Lang,
-    name: &str,
-    filter_on: bool,
-    report: Option<&LastReport>,
-    allowlist: Option<&str>,
-) -> Vec<String> {
+/// only what is owed: a line for each allowed browser in [DOH_IGNORING_BROWSERS]; in `lang`.
+fn bypass_lines(lang: Lang, name: &str, filter_on: bool, allowlist: Option<&str>) -> Vec<String> {
     if !filter_on {
         return Vec::new();
     }
     let mut lines = Vec::new();
-    if report.is_some_and(|report| !report.claims(dns_server::DNS_BYPASS_CAPABILITY)) {
-        lines.push(t_params(
-            lang,
-            "settings.web_filter.line.update_for_bypass",
-            &[("name", name)],
-        ));
-    }
     let allowed: Vec<String> = allowlist
         .and_then(|json| serde_json::from_str(json).ok())
         .unwrap_or_default();
@@ -525,11 +500,10 @@ async fn phone_lines(
         Option<String>,
         Option<String>,
         Option<String>,
-        Option<String>,
     );
     let rows: Vec<Row> = sqlx::query_as(
         "SELECT d.id, d.name, COALESCE(p.vpn_filter_enabled, 1), s.reported_at, \
-                s.capabilities_json, s.dns_upstream_json, p.allowlist_json \
+                s.dns_upstream_json, p.allowlist_json \
          FROM devices d \
          LEFT JOIN device_policy p ON p.device_id = d.id \
          LEFT JOIN device_status s ON s.id = (SELECT id FROM device_status \
@@ -542,7 +516,7 @@ async fn phone_lines(
     let zone = Zone::load(&state.db, lang).await;
     let now = chrono::Utc::now();
     let (mut server, mut bypass) = (Vec::new(), Vec::new());
-    for (id, name, filter_on, reported_at, caps, upstream, allowlist) in &rows {
+    for (id, name, filter_on, reported_at, upstream, allowlist) in &rows {
         let stale = devices.iter().find(|d| d.id == *id).is_some_and(|device| {
             matches!(
                 crate::handlers::devices::connection_of(state, device, now),
@@ -550,17 +524,10 @@ async fn phone_lines(
             )
         });
         let report = reported_at.as_deref().map(|at| LastReport {
-            capabilities: caps.as_deref(),
             dns_upstream: upstream.as_deref(),
             stale_since: crate::display_time::parse_db_utc(at).filter(|_| stale),
         });
-        let lines = bypass_lines(
-            lang,
-            name,
-            *filter_on,
-            report.as_ref(),
-            allowlist.as_deref(),
-        );
+        let lines = bypass_lines(lang, name, *filter_on, allowlist.as_deref());
         bypass.extend(lines.into_iter().map(|line| (*id, line)));
         if let Some(line) = phone_line(name, *filter_on, report, lookups, &zone, now) {
             server.push((*id, line));

@@ -2675,8 +2675,8 @@ pub async fn view_music(
     .into_response()
 }
 
-/// The escapes card from the policy and the last report (capabilities, the fence, the filter,
-/// the listener, the boot cover).
+/// The escapes card from the policy and the last report (the fence, the filter, the listener,
+/// the boot cover).
 pub(crate) fn escapes_card(
     policy: &DevicePolicy,
     latest: Option<&DeviceStatus>,
@@ -2684,12 +2684,9 @@ pub(crate) fn escapes_card(
     last_phone_on_ms: Option<i64>,
 ) -> crate::kiosk_escapes::EscapesCard {
     use crate::kiosk_escapes as ke;
-    let capability = |name: &str| has_capability(latest, name);
     let mut card = ke::escapes_card(
         policy.update_fence,
         policy.notification_auto_cancel,
-        capability(ke::KIOSK_ESCAPES_CAPABILITY),
-        latest.is_some(),
         ke::parse_update_fence(latest.and_then(|s| s.update_fence_json.as_deref())).as_ref(),
         ke::parse_notification_cancels(latest.and_then(|s| s.notification_cancels_json.as_deref()))
             .as_ref(),
@@ -2700,8 +2697,6 @@ pub(crate) fn escapes_card(
     // Design 16b (qa-16b-code #5): what the phone says about the boot cover.
     card.notes.extend(ke::boot_cover_notes(
         policy.boot_cover,
-        capability(ke::BOOT_COVER_CAPABILITY),
-        latest.is_some(),
         ke::parse_boot_cover(latest.and_then(|s| s.boot_cover_json.as_deref())).as_ref(),
         last_phone_on_ms,
     ));

@@ -1717,14 +1717,9 @@ async fn status_intake(
         {
             crate::logins::intake(&state, phone, captive_portal_json.as_deref()).await;
         }
-        // Design 97 §6: the roaming notice, only from a launcher that judges where it is (`where`).
-        let judges_where = report
-            .capabilities
-            .iter()
-            .any(|c| c == crate::mobile_network::NETWORK_CAPABILITY);
+        // Design 97 §6: the roaming notice, from a report that says where the phone is (`where`).
         if let Some(roaming) = data_roaming_json
             .as_deref()
-            .filter(|_| judges_where)
             .and_then(|json| serde_json::from_str(json).ok())
         {
             crate::mobile_network::roaming_intake(&state, phone, &roaming).await;

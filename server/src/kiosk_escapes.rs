@@ -9,10 +9,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::i18n::{t, t_params};
 
-/// Status-report capability of a launcher that has the update fence, the night update window and
-/// the notification rule.
-pub const KIOSK_ESCAPES_CAPABILITY: &str = "kiosk_escapes_v1";
-
 /// At most this many entries of a list are stored (unsuspendable packages, notification counts).
 pub const MAX_ENTRIES: usize = 20;
 /// Package and channel ids are cut to this many characters (qa-11-design.md #13).
@@ -221,8 +217,6 @@ pub enum Handover {
 /// cover (design 31 M5: typed; [EscapeNote::note] words it).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EscapeNote {
-    /// The reporting launcher has neither the fence nor the filter: update it.
-    NeedsUpdate,
     /// A fence is up (planned or fenced). `stale`: it started more than 15 minutes ago and the
     /// phone hasn't reported since, so it is no longer "now".
     Fencing {
@@ -245,8 +239,6 @@ pub enum EscapeNote {
     FilterWithoutAccess,
     /// The filter is on, but not active on the phone yet.
     FilterNotActive,
-    /// The boot cover is on, but the reporting launcher hasn't got it.
-    BootCoverNeedsUpdate,
     /// The boot cover crashed twice in one start and switched itself off.
     BootCoverTripped,
     /// Armed at the next shutdown or restart.
@@ -265,11 +257,9 @@ impl EscapeNote {
     /// A warning (an orange row above the group), not a plain row in it.
     pub fn is_warning(&self) -> bool {
         match self {
-            EscapeNote::NeedsUpdate
-            | EscapeNote::Unsuspendable(_)
+            EscapeNote::Unsuspendable(_)
             | EscapeNote::PartialFence
             | EscapeNote::FilterWithoutAccess
-            | EscapeNote::BootCoverNeedsUpdate
             | EscapeNote::BootCoverTripped
             | EscapeNote::BootCoverNotShown { .. } => true,
             EscapeNote::LastRelease(release) => release.failed(),
@@ -295,11 +285,6 @@ impl EscapeNote {
         let lang = zone.lang();
         let w = |key: &str| Some(t(lang, key).to_string());
         let (title, value, detail): (&str, Option<String>, Option<String>) = match self {
-            EscapeNote::NeedsUpdate => (
-                "device.advanced.escape.needs_update",
-                None,
-                w("device.advanced.escape.needs_update_sub"),
-            ),
             EscapeNote::Fencing {
                 started_at_ms,
                 stale: false,
@@ -416,11 +401,6 @@ impl EscapeNote {
                 w("device.advanced.escape.filter_not_active"),
                 w("device.advanced.escape.filter_not_active_sub"),
             ),
-            EscapeNote::BootCoverNeedsUpdate => (
-                "device.advanced.escape.cover_needs_update",
-                None,
-                w("device.advanced.escape.cover_needs_update_sub"),
-            ),
             EscapeNote::BootCoverTripped => (
                 "device.advanced.escape.cover_tripped",
                 None,
@@ -466,14 +446,10 @@ impl EscapeNote {
     }
 }
 
-/// What the latest report and the switches mean for the parent. `capable`: the reporting
-/// launcher has [KIOSK_ESCAPES_CAPABILITY]; `reported`: there is a report at all.
-#[allow(clippy::too_many_arguments)]
+/// What the latest report and the switches mean for the parent.
 pub fn escapes_card(
     update_fence: bool,
     notification_auto_cancel: bool,
-    capable: bool,
-    reported: bool,
     fence: Option<&UpdateFenceState>,
     cancels: Option<&NotificationCancels>,
     listener_enabled: Option<bool>,
@@ -484,10 +460,6 @@ pub fn escapes_card(
         notification_auto_cancel,
         ..Default::default()
     };
-    if reported && !capable {
-        card.notes.push(EscapeNote::NeedsUpdate);
-        return card;
-    }
     if let Some(fence) = fence {
         if fence.state == "fenced" || fence.state == "planned" {
             // A phone that went silent while fenced must not say "now" forever.
@@ -537,9 +509,6 @@ pub fn escapes_card(
     card
 }
 
-/// Status-report capability: the launcher has the boot cover and reads `boot_cover` (design 16b).
-pub const BOOT_COVER_CAPABILITY: &str = "boot_cover_v1";
-
 /// The phone's `boot_cover` (design 16b, qa-16b-code #5).
 #[derive(Deserialize, Serialize, Default, Debug, Clone, PartialEq, Eq)]
 #[serde(default)]
@@ -577,8 +546,8 @@ pub fn parse_boot_cover(json: Option<&str>) -> Option<BootCoverState> {
     json.and_then(|j| serde_json::from_str(j).ok())
 }
 
-/// What the phone says about the boot cover: nothing while the switch is off; "update Vibb" when
-/// the reporting launcher hasn't got it; the phone's state otherwise - a tripped guard is a
+/// What the phone says about the boot cover: nothing while the switch is off; the phone's state
+/// otherwise - a tripped guard is a
 /// warning, so "test it on this phone first" can be checked on Advanced. "Not shown" only once
 /// the phone has started since the arm - a `phone_on` newer than it ([last_on_ms], the newest
 /// `phone_on`'s instant, both the phone's clock): a report sent during the shutdown that armed it
@@ -586,16 +555,11 @@ pub fn parse_boot_cover(json: Option<&str>) -> Option<BootCoverState> {
 /// the last start's cover, or as armed.
 pub fn boot_cover_notes(
     switch_on: bool,
-    capable: bool,
-    reported: bool,
     state: Option<&BootCoverState>,
     last_on_ms: Option<i64>,
 ) -> Vec<EscapeNote> {
     if !switch_on {
         return Vec::new();
-    }
-    if reported && !capable {
-        return vec![EscapeNote::BootCoverNeedsUpdate];
     }
     let Some(state) = state else {
         return Vec::new();
@@ -649,18 +613,15 @@ mod tests {
         assert!(!stored.contains("extra"));
         assert!(sanitize_boot_cover(&serde_json::json!("on")).is_none());
 
-        // Switch off: nothing; an older launcher: update it.
-        assert!(boot_cover_notes(false, true, true, Some(&state), None).is_empty());
-        assert_eq!(
-            boot_cover_notes(true, false, true, None, None),
-            vec![EscapeNote::BootCoverNeedsUpdate]
-        );
+        // Switch off: nothing; no report yet: nothing.
+        assert!(boot_cover_notes(false, Some(&state), None).is_empty());
+        assert!(boot_cover_notes(true, None, None).is_empty());
         // Shown after the arm: a row.
         let shown = BootCoverState {
             last_handover: Some("cover".into()),
             ..state.clone()
         };
-        let notes = boot_cover_notes(true, true, true, Some(&shown), Some(1_500));
+        let notes = boot_cover_notes(true, Some(&shown), Some(1_500));
         assert_eq!(
             notes,
             vec![EscapeNote::BootCoverShown {
@@ -677,7 +638,7 @@ mod tests {
             last_shown_at_ms: None,
             ..state.clone()
         };
-        let notes = boot_cover_notes(true, true, true, Some(&missed), Some(1_500));
+        let notes = boot_cover_notes(true, Some(&missed), Some(1_500));
         assert_eq!(
             notes,
             vec![EscapeNote::BootCoverNotShown { armed_at_ms: 1_000 }]
@@ -699,7 +660,7 @@ mod tests {
         };
         for last_on in [None, Some(1_500), Some(3_000)] {
             assert_eq!(
-                boot_cover_notes(true, true, true, Some(&rearmed), last_on),
+                boot_cover_notes(true, Some(&rearmed), last_on),
                 vec![EscapeNote::BootCoverShown {
                     at_ms: 2_000,
                     handover: Some(Handover::ByItself)
@@ -709,13 +670,13 @@ mod tests {
         }
         for last_on in [None, Some(900), Some(1_000)] {
             assert_eq!(
-                boot_cover_notes(true, true, true, Some(&missed), last_on),
+                boot_cover_notes(true, Some(&missed), last_on),
                 vec![EscapeNote::BootCoverArmed],
                 "{last_on:?}"
             );
         }
         assert_eq!(
-            boot_cover_notes(true, true, true, Some(&rearmed), Some(3_001)),
+            boot_cover_notes(true, Some(&rearmed), Some(3_001)),
             vec![EscapeNote::BootCoverNotShown { armed_at_ms: 3_000 }]
         );
         // Tripped: a warning, nothing else.
@@ -723,7 +684,7 @@ mod tests {
             tripped: true,
             ..state.clone()
         };
-        let notes = boot_cover_notes(true, true, true, Some(&tripped), None);
+        let notes = boot_cover_notes(true, Some(&tripped), None);
         assert_eq!(notes, vec![EscapeNote::BootCoverTripped]);
         assert!(
             notes[0]
@@ -733,7 +694,7 @@ mod tests {
                 .contains("crashed twice")
         );
         // Not armed yet.
-        let notes = boot_cover_notes(true, true, true, Some(&BootCoverState::default()), None);
+        let notes = boot_cover_notes(true, Some(&BootCoverState::default()), None);
         assert_eq!(notes, vec![EscapeNote::BootCoverArmed]);
         assert!(
             notes[0]
@@ -805,14 +766,10 @@ mod tests {
     }
 
     #[test]
-    fn card_without_the_capability_only_says_update() {
-        let card = escapes_card(true, true, false, true, None, None, Some(true), 0);
-        assert_eq!(card.notes, vec![EscapeNote::NeedsUpdate]);
-        assert!(card.notes[0].is_warning());
-        assert!(card.removed.is_empty());
-        // No report at all: nothing to say.
-        let card = escapes_card(true, true, false, false, None, None, None, 0);
+    fn card_without_a_report_says_nothing() {
+        let card = escapes_card(true, true, None, None, None, 0);
         assert!(card.notes.is_empty());
+        assert!(card.removed.is_empty());
     }
 
     #[test]
@@ -829,7 +786,7 @@ mod tests {
             ..Default::default()
         };
         let day = 24 * 60 * 60 * 1000;
-        let card = escapes_card(true, false, true, true, Some(&fence), None, None, day);
+        let card = escapes_card(true, false, Some(&fence), None, None, day);
         assert_eq!(
             card.notes,
             vec![
@@ -868,7 +825,7 @@ mod tests {
             "{waiting}"
         );
         // The switch off: no partial-fence warning.
-        let card = escapes_card(false, false, true, true, Some(&fence), None, None, day);
+        let card = escapes_card(false, false, Some(&fence), None, None, day);
         assert!(!card.notes.contains(&EscapeNote::PartialFence));
     }
 
@@ -886,13 +843,13 @@ mod tests {
                 .collect(),
             dropped: 1,
         };
-        let card = escapes_card(false, true, true, true, None, Some(&cancels), Some(true), 0);
+        let card = escapes_card(false, true, None, Some(&cancels), Some(true), 0);
         assert!(card.notes.is_empty(), "{:?}", card.notes);
         assert_eq!(card.removed.len(), REMOVED_SHOWN);
         assert_eq!(card.removed[0].package_name, "pkg0");
         assert_eq!(card.removed[0].snoozed, 1);
         assert_eq!(card.more_removed, 3);
-        let no_access = escapes_card(false, true, true, true, None, None, Some(false), 0);
+        let no_access = escapes_card(false, true, None, None, Some(false), 0);
         assert_eq!(no_access.notes, vec![EscapeNote::FilterWithoutAccess]);
         assert!(
             no_access.notes[0]
@@ -906,7 +863,7 @@ mod tests {
             active: false,
             ..Default::default()
         };
-        let card = escapes_card(false, true, true, true, None, Some(&idle), Some(true), 0);
+        let card = escapes_card(false, true, None, Some(&idle), Some(true), 0);
         assert_eq!(card.notes, vec![EscapeNote::FilterNotActive]);
     }
 
@@ -943,16 +900,7 @@ mod tests {
             dropped: i64::MAX,
         };
         for now in [i64::MIN, 0, i64::MAX] {
-            let card = escapes_card(
-                true,
-                true,
-                true,
-                true,
-                Some(&raw_fence),
-                Some(&raw_cancels),
-                None,
-                now,
-            );
+            let card = escapes_card(true, true, Some(&raw_fence), Some(&raw_cancels), None, now);
             assert!(!card.notes.is_empty());
             for note in &card.notes {
                 note.note(&oslo(), at(0));
@@ -968,7 +916,7 @@ mod tests {
             last_fenced_at_ms: Some(1_000),
             ..Default::default()
         };
-        let card = |now: i64| escapes_card(true, false, true, true, Some(&fence), None, None, now);
+        let card = |now: i64| escapes_card(true, false, Some(&fence), None, None, now);
         assert_eq!(
             card(1_000 + 60_000).notes,
             vec![EscapeNote::Fencing {
