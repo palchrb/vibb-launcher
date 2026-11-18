@@ -48,8 +48,8 @@ class AssistantSetupTest {
         assertEquals(emptyList<String>(), stillMoved(all, before, before))
         assertEquals(listOf("browser"), stillMoved(listOf("home", "browser"), before, moved.copy(home = true)))
         assertEquals(listOf("home"), stillMoved(listOf("home", "browser"), before, moved.copy(browser = "org.mozilla.firefox")))
-        // A list from an older build (no snapshot kept): home is read back, the browser stays listed.
-        assertEquals(listOf("browser"), stillMoved(listOf("home", "browser", "call_screening"), null, before))
+        // A list without its window's snapshot is reset (no older format carried).
+        assertEquals(emptyList<String>(), stillMoved(listOf("home", "browser", "call_screening"), null, moved))
     }
 
     /** §2.2.1: the flow's "Standardapper" opens the pick window without a new snapshot, so the list and the original

@@ -44,15 +44,18 @@ fun windowCloses(stored: Boolean, active: Boolean, pauseOpen: Boolean): Boolean 
 /**
  * Design 114 §2.2.1 (QA H1): the [stored] moved roles still moved - `home` while Vibb doesn't hold HOME, `browser` while
  * `https` resolves elsewhere than [before]'s, `dialer` and `sms` while not held as [before] held them. Call screening
- * and redirection leave (row 13 reads them). Without [before] (a list stored by an older build) only `home` can be read
- * back; the browser stays listed.
+ * and redirection leave (row 13 reads them). A list without its window's snapshot ([before] `null`) is reset: no
+ * older format is carried (the user, 2026-11-18: no backwards compatibility on the phones yet).
  */
-fun stillMoved(stored: List<String>, before: DefaultAppsSnapshot?, now: DefaultAppsSnapshot): List<String> = stored.filter { role ->
-    when (role) {
-        "home" -> !now.home
-        "browser" -> before?.browser == null || now.browser != before.browser
-        "dialer" -> before == null || before.dialer != now.dialer
-        "sms" -> before == null || before.sms != now.sms
-        else -> false
+fun stillMoved(stored: List<String>, before: DefaultAppsSnapshot?, now: DefaultAppsSnapshot): List<String> {
+    before ?: return emptyList()
+    return stored.filter { role ->
+        when (role) {
+            "home" -> !now.home
+            "browser" -> now.browser != before.browser
+            "dialer" -> before.dialer != now.dialer
+            "sms" -> before.sms != now.sms
+            else -> false
+        }
     }
 }
