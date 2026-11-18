@@ -205,7 +205,8 @@ async fn kiosk_block_switch_and_play_not_suspendable() {
     let html = page(&app, &cookie, &format!("/devices/{id}/advanced")).await;
     // The parent's block-off choice: no warning row, the sentence behind the block switch's (i) alone.
     assert_eq!(
-        html.matches("Play can&#39;t be paused on this phone").count(),
+        html.matches("Play can&#39;t be paused on this phone")
+            .count(),
         1,
         "{html}"
     );
@@ -256,11 +257,9 @@ async fn an_error_page_never_reloads_itself() {
     )
     .await;
     // Waiting: the plain page reloads, a 400 with the typed contact doesn't (qa-09-code #9).
-    assert!(
-        page(&app, &cookie, &format!("/devices/{id}/calls"))
-            .await
-            .contains("data-waits")
-    );
+    assert!(page(&app, &cookie, &format!("/devices/{id}/calls"))
+        .await
+        .contains("data-waits"));
     let res = app
         .request_form(
             Method::POST,
