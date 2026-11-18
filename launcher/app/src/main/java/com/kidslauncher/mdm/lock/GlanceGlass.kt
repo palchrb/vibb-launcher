@@ -23,7 +23,7 @@ const val GLASS_TINT_RGB: Int = 0x1B1B28
 /** The tint's least alpha, the mockup's 58 % as an 8-bit alpha. */
 const val GLASS_MIN_TINT: Int = 148
 
-/** The faint light edge: white at 8 %, 1 px inside the card. */
+/** The faint light edge: white at 8 %, 1 dp inside the card (the CSS's 1 px). */
 const val GLASS_EDGE_ARGB: Int = 0x14FFFFFF
 
 /** CSS `blur(22px)`: a Gaussian of this standard deviation, in dp. */
@@ -38,6 +38,9 @@ const val GLASS_SATURATION = 1.4
 /** Every text ink on the glance's cards (alpha = as drawn): `kid_ink`, `kid_core_dim`, `kid_rain`. The tint is raised
  * until each has 4.5:1 on the card over the copy's lightest pixel ([glassTintAlpha]). */
 val GLASS_INKS: List<Int> = listOf(0xFFFFFFFF.toInt(), 0xC7FBE4DC.toInt(), 0xFF7CC4F2.toInt())
+
+/** The weather card's raised "now" column (`kid_weather_now`, white at 6 %) - a second ground the inks must read on. */
+const val GLASS_RAISED_ARGB: Int = 0x0FFFFFFF
 
 /** Glass only over a picture: the glance's ground is a photo that was decoded. A colour, a gradient, the night mark or a
  * photo that can't be read keep today's solid cards. */
@@ -86,7 +89,8 @@ private fun boxPass(src: IntArray, dst: IntArray, w: Int, h: Int, radius: Int, h
             b += p and 0xFF
         }
         for (i in 0 until len) {
-            val out = (0xFF shl 24) or ((r / size) shl 16) or ((g / size) shl 8) or (b / size)
+            val half = size / 2
+            val out = (0xFF shl 24) or (((r + half) / size) shl 16) or (((g + half) / size) shl 8) or ((b + half) / size)
             if (horizontal) dst[line * w + i] = out else dst[i * w + line] = out
             val gone = at(i - radius)
             val come = at(i + radius + 1)
@@ -141,9 +145,6 @@ fun glassCopy(pixels: IntArray, w: Int, h: Int): IntArray {
     return out
 }
 
-/** The copy's lightest pixel by luminance (opaque ARGB); black for an empty copy. */
-fun glassLightest(pixels: IntArray): Int = pixels.maxByOrNull { relativeLuminance(it or (0xFF shl 24)) } ?: 0xFF000000.toInt()
-
 /** [top] (ARGB, its alpha as drawn) over the opaque [under], blended in sRGB values as Android draws. */
 fun glassOver(top: Int, under: Int): Int {
     val a = ((top ushr 24) and 0xFF) / 255.0
@@ -155,21 +156,48 @@ fun glassOver(top: Int, under: Int): Int {
     return (0xFF shl 24) or (ch(16) shl 16) or (ch(8) shl 8) or ch(0)
 }
 
-/** Whether every one of [inks] has 4.5:1 on the opaque [card]. */
-fun glassInksRead(card: Int, inks: List<Int> = GLASS_INKS): Boolean {
-    val ground = relativeLuminance(card)
-    return inks.all { contrastRatio(relativeLuminance(glassOver(it, card)), ground) >= 4.5 }
+/** Whether every one of [inks] has 4.5:1 on the opaque [card], and on it under the weather card's raised column
+ * ([GLASS_RAISED_ARGB], code QA M2). */
+fun glassInksRead(card: Int, inks: List<Int> = GLASS_INKS): Boolean = listOf(card, glassOver(GLASS_RAISED_ARGB, card)).all { ground ->
+    val lum = relativeLuminance(ground)
+    inks.all { contrastRatio(relativeLuminance(glassOver(it, ground)), lum) >= 4.5 }
 }
 
-/** The tint's alpha over a copy whose lightest pixel is [lightest]: the mockup's 58 % ([GLASS_MIN_TINT]), raised only as
- * far as every card ink needs for 4.5:1 there - at most 255, today's solid tile, which they all read on. */
-fun glassTintAlpha(lightest: Int, inks: List<Int> = GLASS_INKS): Int {
-    for (alpha in GLASS_MIN_TINT..255) {
+/** The tint's alpha over a copy whose lightest pixel is [lightest] (from [from] up): the mockup's 58 %
+ * ([GLASS_MIN_TINT]), raised only as far as every card ink needs for 4.5:1 there ([glassInksRead]) - at most 255, today's
+ * solid tile, which they all read on. */
+fun glassTintAlpha(lightest: Int, inks: List<Int> = GLASS_INKS, from: Int = GLASS_MIN_TINT): Int {
+    for (alpha in from..255) {
         val card = glassOver((alpha shl 24) or GLASS_TINT_RGB, lightest or (0xFF shl 24))
         if (glassInksRead(card, inks)) return alpha
     }
     return 255
 }
 
-/** The tint as ARGB for a copy whose lightest pixel is [lightest]. */
-fun glassTintArgb(lightest: Int): Int = (glassTintAlpha(lightest) shl 24) or GLASS_TINT_RGB
+/**
+ * The tint's alpha over the whole copy: the least that [glassTintAlpha] allows over every one of its pixels. The pixel
+ * of the highest luminance alone is not enough (code QA L1: blended in sRGB values, a light grey can make a lighter card
+ * than a brighter saturated green), and each channel's maximum would treat a colourful picture as white. So every
+ * pixel counts, rounded up per channel to 16 levels (the blend is monotone per channel, so the bound holds) - at most
+ * 4096 colours, the lightest first; each needs one check at the alpha so far, a raise only where it fails.
+ */
+fun glassTintAlphaOver(pixels: IntArray): Int {
+    val seen = BooleanArray(4096)
+    val colours = ArrayList<Int>()
+    for (p in pixels) {
+        val r = (p shr 16) and 0xFF
+        val g = (p shr 8) and 0xFF
+        val b = p and 0xFF
+        val key = ((r shr 4) shl 8) or ((g shr 4) shl 4) or (b shr 4)
+        if (seen[key]) continue
+        seen[key] = true
+        colours += (0xFF shl 24) or ((r or 0x0F) shl 16) or ((g or 0x0F) shl 8) or (b or 0x0F)
+    }
+    colours.sortByDescending { relativeLuminance(it) }
+    var alpha = GLASS_MIN_TINT
+    for (c in colours) {
+        if (alpha == 255) break
+        if (!glassInksRead(glassOver((alpha shl 24) or GLASS_TINT_RGB, c))) alpha = glassTintAlpha(c, from = alpha)
+    }
+    return alpha
+}

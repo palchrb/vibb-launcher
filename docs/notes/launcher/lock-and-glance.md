@@ -509,7 +509,8 @@ name - Element X's "N new messages" fallback reads "Chat"; a conversation's or a
   way, a Gaussian of 22 dp, edges clamped) and saturated 140 %. Each card's background is a `GlassDrawable`: the copy
   through a `BitmapShader` placed at the card's spot in the root, scaled up with filtering, clipped by the card's round
   rect (its radius and shape read from today's drawable, the outline for the media controls' projected ripples), then
-  the tint `kid_music_tile` (#1B1B28, the mockup's #161422 night) at 58 %, then a 1 px white edge at 8 %; a row and the
+  the tint `kid_music_tile` (#1B1B28, the mockup's #161422 night) at 58 %, then a 1 dp white edge at 8 % (the CSS's
+  1 px); a card whose place isn't measured yet draws today's solid tile for that frame, never a see-through one; a row and the
   torch keep today's press ripple. Not Android's cross-window blur (`FLAG_BLUR_BEHIND`, `setBackgroundBlurRadius`: off
   on some phones, it blurs what is behind the window) and no `RenderEffect` (a one-off bitmap is enough, so no API gate
   at all); not plain transparency.
@@ -517,12 +518,16 @@ name - Element X's "N new messages" fallback reads "Chat"; a conversation's or a
   glance root's pre-draw, before the frame - never per frame, the old one let go (never `recycle`d: a display list may
   still hold it). Each drawn frame `sync()` compares every shown card's place in the root (`getLocationInWindow`, so a
   scroll, a layout and a row's sideways swipe count) with where its glass was drawn and redraws only a card that moved:
-  one round rect from the copy, no blur.
-- **Contrast**: the tint is the mockup's 58 % unless the copy is light: then it is raised, over the copy's lightest
-  pixel, just as far as every text ink on the cards (`kid_ink`, `kid_core_dim`, `kid_rain`) needs for 4.5:1, at most
-  opaque - today's tile (`glassTintAlpha`). White text over a white blurred ground: 58 % gives 4.2:1, so it is raised
-  there (`GlanceGlassTest`). The lock's own scrim (`lockScrimForImage`) already darkens a light photo, so the raise is
-  rare.
+  one round rect from the copy, no blur. A fling scrolls in `computeScroll`, inside the draw and after the pre-draw, so
+  the scroller's scroll listener syncs too (code QA M1: the glass was a frame behind during a fling).
+- **Contrast**: the tint is the mockup's 58 % unless the copy is light: then it is raised just as far as every text ink
+  on the cards (`kid_ink`, `kid_core_dim`, `kid_rain`) needs for 4.5:1 over every pixel of the copy - on the card and
+  under the weather card's raised "now" column (`kid_weather_now`, code QA M2) - at most opaque, today's tile
+  (`glassTintAlphaOver`: each pixel rounded up per channel to 16 levels, the lightest first; not the pixel of the highest
+  luminance alone, which a light grey can beat in sRGB blending, code QA L1). White text over a white blurred ground:
+  58 % gives 4.2:1, so it is raised there (`GlanceGlassTest`). The lock's own scrim (`lockScrimForImage`) already
+  darkens a light photo, so the raise is rare: on the gate's light, dark and busy pictures the cards measured 14-18:1
+  for white and 7.7-9.5:1 for `kid_core_dim`.
 - **Fallback**: glass only over a decoded photo (`glassOn`); a colour, a gradient, the night mark, a photo that isn't
   decoded, an empty root or any fault making the copy (logged by its class) leave the cards exactly as today - the
   layouts' own drawables. The time-rule screen's card (`activity_lock.xml`) stays solid.

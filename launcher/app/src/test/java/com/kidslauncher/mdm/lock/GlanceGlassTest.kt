@@ -78,6 +78,7 @@ class GlanceGlassTest {
             listOf("FFFFFF", "C7FBE4DC", "7CC4F2"),
             listOf(colour("kid_ink"), colour("kid_core_dim"), colour("kid_rain")),
         )
+        assertEquals("%08X".format(GLASS_RAISED_ARGB), colour("kid_weather_now"))
         assertEquals(GLASS_INKS, listOf(0xFFFFFFFF.toInt(), 0xC7FBE4DC.toInt(), 0xFF7CC4F2.toInt()))
         assertEquals(Math.round(0.58 * 255).toInt(), GLASS_MIN_TINT)
     }
@@ -98,7 +99,35 @@ class GlanceGlassTest {
         assertFalse(glassInksRead(glassOver(((alpha - 1) shl 24) or GLASS_TINT_RGB, white)))
         // At most today's solid tile, which every ink reads on.
         assertTrue(glassInksRead(0xFF000000.toInt() or GLASS_TINT_RGB))
-        assertEquals(0xFF000000.toInt() or 0x2A2A2A, glassLightest(intArrayOf(0xFF000000.toInt(), 0xFF2A2A2A.toInt(), 0xFF100000.toInt())))
+    }
+
+    /** Code QA L1: every pixel of the copy counts, not only the one of the highest luminance. */
+    @Test
+    fun `the tint holds over every pixel of the copy`() {
+        val green = 0xFF00FF00.toInt()
+        val grey = 0xFFDBDBDB.toInt()
+        // The green is the brighter, yet the grey needs more tint.
+        assertTrue(relativeLuminance(green) > relativeLuminance(grey))
+        assertTrue(glassTintAlpha(grey) > glassTintAlpha(green))
+        val alpha = glassTintAlphaOver(intArrayOf(0xFF101018.toInt(), green, grey))
+        for (p in listOf(green, grey)) assertTrue(glassInksRead(glassOver((alpha shl 24) or GLASS_TINT_RGB, p)))
+        // A dark copy keeps the mockup's 58 %; a colourful one without a light pixel is not judged as white.
+        assertEquals(GLASS_MIN_TINT, glassTintAlphaOver(IntArray(50) { 0xFF202030.toInt() }))
+        val colourful = intArrayOf(0xFF6E1E1E.toInt(), 0xFF1E6E1E.toInt(), 0xFF1E1E6E.toInt())
+        assertTrue(glassTintAlphaOver(colourful) < glassTintAlpha(white))
+    }
+
+    /** Code QA M2: the weather card's raised "now" column is a second ground for the same inks. */
+    @Test
+    fun `the inks read under the weather card's raised column too`() {
+        for (lightest in listOf(white, 0xFF808080.toInt(), 0xFFDBDBDB.toInt(), 0xFF101018.toInt())) {
+            val card = glassOver((glassTintAlphaOver(intArrayOf(lightest)) shl 24) or GLASS_TINT_RGB, lightest)
+            val raised = glassOver(GLASS_RAISED_ARGB, card)
+            for (ink in GLASS_INKS) {
+                val ratio = contrastRatio(relativeLuminance(glassOver(ink, raised)), relativeLuminance(raised))
+                assertTrue("%08X over %08X: %.2f".format(ink, lightest, ratio), ratio >= 4.5)
+            }
+        }
     }
 
     /** The glue: which cards, the ground passed from the lock, no cross-window blur anywhere. */
@@ -115,6 +144,7 @@ class GlanceGlassTest {
             "glass.add(view.root, R.drawable.bg_glance_row)",
             "guarded(\"glass\") { glass.sync() }",
             "glass.hold(button, lit)",
+            "glance.lockGlanceScroll.setOnScrollChangeListener { _, _, _, _, _ -> guarded(\"glass\") { glass.sync() } }",
         )) {
             assertTrue(card, panel.contains(card))
         }

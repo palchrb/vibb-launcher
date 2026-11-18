@@ -304,6 +304,9 @@ class GlancePanel(
             guarded("glass") { glass.sync() }
             true
         }
+        // A fling scrolls in computeScroll, inside the draw and after the pre-draw: synced there too, so the moved cards
+        // are recorded at their new place in the same frame (code QA M1).
+        glance.lockGlanceScroll.setOnScrollChangeListener { _, _, _, _, _ -> guarded("glass") { glass.sync() } }
     }
 
     /** onStart: watching the rows and the session; the stage decided if the lock comes up now. */

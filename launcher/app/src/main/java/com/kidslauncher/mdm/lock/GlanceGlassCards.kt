@@ -34,7 +34,8 @@ data class GlassGround(val fill: WallpaperFill, val bitmap: Bitmap?, val scrimAr
  *   (a ~100x220 render of the ground, three box passes each way: a few ms), never per frame; the old copy is let go,
  *   never recycled (a display list may still hold it - the GC frees it).
  * - Each drawn frame [sync] compares every shown card's place in the root with the place its glass was last drawn
- *   for (a scroll, a layout, a row's swipe) and redraws only a card that moved - one round rect from the copy.
+ *   for (a scroll, a layout, a row's swipe) and redraws only a card that moved - one round rect from the copy. A fling
+ *   moves the scroll inside the draw, after the pre-draw, so the scroller's scroll listener syncs too (code QA M1).
  * - No picture ([glassOn]: not a decoded photo), an empty root or any fault making the copy: the cards keep today's
  *   solid drawables.
  */
@@ -76,9 +77,11 @@ internal class GlanceGlassCards(private val root: View) {
     private inner class GlassDrawable(private val card: Card) : Drawable() {
         private val picture = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
         private val tint = Paint(Paint.ANTI_ALIAS_FLAG)
+        /** The edge's width: 1 dp, the CSS's 1 px (code QA L2). */
+        private val edgePx = root.resources.displayMetrics.density
         private val edge = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
-            strokeWidth = 1f
+            strokeWidth = edgePx
             color = GLASS_EDGE_ARGB
         }
         private val matrix = Matrix()
@@ -91,7 +94,15 @@ internal class GlanceGlassCards(private val root: View) {
 
         override fun draw(canvas: Canvas) {
             val src = source ?: return
-            if (bounds.isEmpty || card.x == Int.MIN_VALUE) return
+            if (bounds.isEmpty) return
+            val r = radius()
+            rect.set(bounds)
+            if (card.x == Int.MIN_VALUE) {
+                // Its place isn't measured yet (code QA L3): today's solid tile for this frame, never a see-through card.
+                tint.color = (0xFF shl 24) or GLASS_TINT_RGB
+                canvas.drawRoundRect(rect, r, r, tint)
+                return
+            }
             if (shaderOf !== src) {
                 shader = BitmapShader(src.bitmap, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
                 shaderOf = src
@@ -102,13 +113,12 @@ internal class GlanceGlassCards(private val root: View) {
             matrix.postTranslate(-card.x.toFloat(), -card.y.toFloat())
             s.setLocalMatrix(matrix)
             picture.shader = s
-            val r = radius()
-            rect.set(bounds)
             canvas.drawRoundRect(rect, r, r, picture)
             tint.color = src.tintArgb
             canvas.drawRoundRect(rect, r, r, tint)
-            rect.inset(EDGE_INSET, EDGE_INSET)
-            canvas.drawRoundRect(rect, r - EDGE_INSET, r - EDGE_INSET, edge)
+            val inset = edgePx / 2
+            rect.inset(inset, inset)
+            canvas.drawRoundRect(rect, r - inset, r - inset, edge)
         }
 
         override fun getOutline(outline: Outline) {
@@ -210,7 +220,7 @@ internal class GlanceGlassCards(private val root: View) {
             val glass = glassCopy(pixels, cw, ch)
             copy.setPixels(glass, 0, cw, 0, 0, cw, ch)
             copy.prepareToDraw()
-            Source(copy, key.width / cw.toFloat(), key.height / ch.toFloat(), glassTintArgb(glassLightest(glass)))
+            Source(copy, key.width / cw.toFloat(), key.height / ch.toFloat(), (glassTintAlphaOver(glass) shl 24) or GLASS_TINT_RGB)
         }
     } catch (t: Throwable) {
         Log.w(LOG_TAG, "Glance glass failed, the cards stay solid: ${t.javaClass.simpleName}")
@@ -222,8 +232,5 @@ internal class GlanceGlassCards(private val root: View) {
 
         /** Today's press ripple on a row and the torch (`bg_glance_row`, `bg_music_control`). */
         const val RIPPLE_ARGB = 0x33FFFFFF
-
-        /** The 1 px edge drawn inside the card: its stroke's centre half a pixel in. */
-        const val EDGE_INSET = 0.5f
     }
 }
