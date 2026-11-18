@@ -191,8 +191,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   last minute. Without a zone in the newest report "Slå på nå" is refused (`on_no_zone`).
 - **Routes** (`handlers/rules_now.rs`, in `settings_log::NOT_SAVES`): `POST /devices/{id}/rules-now` (`mode=pause` through
   `lifts::record_lift`, `create_lift`'s core; `mode=on` turns a rule on: the pauses of that rule and an "Alle regler"
-  pause end in the same transaction, `end_windows` is queued when the report shows the phone open for setup on a
-  `window_relock_v1` launcher), `/lock-now/{lock_id}` (`add=30|60|day` or `til`, refused as `changed_elsewhere` when
+  pause end in the same transaction, `end_windows` is queued when the report shows the phone open for setup), `/lock-now/{lock_id}` (`add=30|60|day` or `til`, refused as `changed_elsewhere` when
   `seen` isn't the stored end) and `/lock-now/{lock_id}/end`. Each writes `time_lock_now`, `time_lock_now_changed` or
   `time_lock_now_ended` to the security log and nudges; no inbox event, no push. A refusal returns
   `?done=<code>&open=rules&mode=..&rule=..#quick`; the flashes name the rule and its end (the newest row's).

@@ -243,12 +243,10 @@
         <div class="group" id="setup-open" data-warning="restrictions-paused">
             <div class="row">
                 <span class="tile tile-graphite qa-row-tile"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><rect x="3" y="7.2" width="11" height="7.6" rx="1.7" fill="currentColor"/><path d="M5.4 7.2V5.3a3.1 3.1 0 0 1 6-1.1" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></span>
-                <span class="row-label">{{ s.text }}{% if let Some(sub) = s.sub %}<span class="row-sub">{{ sub }}</span>{% endif %}</span>
-                {% if s.lock_again %}
+                <span class="row-label">{{ s.text }}</span>
                 <form method="post" action="/devices/{{ device.id }}/end-windows#quick" class="row-end">
                     <button type="submit" class="row-action">{{ self.t("device.summary.lock_again") }}</button>
                 </form>
-                {% endif %}
             </div>
         </div>
         {% endif %}

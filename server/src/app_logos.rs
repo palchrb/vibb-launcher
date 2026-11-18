@@ -5,10 +5,9 @@
 //! - **The report** ([intake]): a valid `logo` (64 lowercase hex, `device_api::cap_installed_apps`) upserts the
 //!   phone's `device_app_logos` row for that package; an app without `logo` keeps its row; a package missing from
 //!   the report loses it. The logos never reach `device_status.installed_apps_json` ([take_logos]).
-//! - **The answer** ([answer]): to a launcher claiming [CAPABILITY], `200 {"wanted_logos": [...]}` - the hashes
-//!   this report names whose file isn't stored, not refused in the last day, within the phone's daily budget and
-//!   the store's and the phone's caps, at most [MAX_WANTED], allowed apps first, then by package name; `204` to
-//!   every other report, as before.
+//! - **The answer** ([answer]): `200 {"wanted_logos": [...]}` - the hashes this report names whose file isn't
+//!   stored, not refused in the last day, within the phone's daily budget and the store's and the phone's caps, at
+//!   most [MAX_WANTED], allowed apps first, then by package name; `204` when it wants none.
 //! - **The upload** ([upload], `POST /api/devices/app-logos/{hash}`): raw `image/png`, at most [MAX_BYTES]; the
 //!   hash must match the bytes and name one of this phone's rows; the PNG is decoded under limits ([reencode]:
 //!   exactly [SIZE_PX] square) and written again by the server's own encoder, so no chunk of the phone's survives.
@@ -46,7 +45,9 @@ use crate::models::InstalledApp;
 use crate::photos::is_valid_hash;
 use crate::security::AuthedDevice;
 
-/// What a launcher that reports and uploads logos claims in its status report's `capabilities`.
+/// What a launcher that reports and uploads logos claims in its status report's `capabilities` (the shared
+/// contract's `capability`).
+#[cfg(test)]
 pub const CAPABILITY: &str = "app_logos_v1";
 /// A logo is exactly this many pixels a side.
 pub const SIZE_PX: u32 = 128;
@@ -287,17 +288,12 @@ async fn apply_rows(
     Ok(lost)
 }
 
-/// The answer to a status report: the wanted list to a launcher claiming [CAPABILITY], else `204` as before.
-pub async fn answer(
-    state: &AppState,
-    device_id: i64,
-    capabilities: &[String],
-    logos: &[(String, String)],
-) -> Response {
-    if !capabilities.iter().any(|c| c == CAPABILITY) {
+/// The answer to a status report: the wanted list, or `204` when it wants none.
+pub async fn answer(state: &AppState, device_id: i64, logos: &[(String, String)]) -> Response {
+    let wanted_logos = wanted(state, device_id, logos).await;
+    if wanted_logos.is_empty() {
         return StatusCode::NO_CONTENT.into_response();
     }
-    let wanted_logos = wanted(state, device_id, logos).await;
     Json(serde_json::json!({ "wanted_logos": wanted_logos })).into_response()
 }
 

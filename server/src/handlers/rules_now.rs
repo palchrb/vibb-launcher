@@ -61,7 +61,7 @@ async fn latest_status(
 }
 
 /// The phone is open for setup at its newest report: the restrictions pause or Play install mode
-/// (`RelockCard::lock_again`'s condition).
+/// (Lås igjen is offered then).
 pub(crate) fn open_for_setup(status: &DeviceStatus, now_ms: i64) -> bool {
     status.paused_at(now_ms) || status.install_mode_until_ms.is_some_and(|u| u > now_ms)
 }
@@ -220,12 +220,10 @@ async fn turn_on(
         Err(err) => return server_error(lang, err, "failed to turn a rule on"),
     }
 
-    // The phone's opening for setup (a pause or Play install mode) ends in the same tap, on a
-    // launcher that takes the command (§5.1 step 4).
+    // The phone's opening for setup (a pause or Play install mode) ends in the same tap (§5.1
+    // step 4).
     let now_ms = now.timestamp_millis();
-    let open = latest.as_ref().is_some_and(|s| {
-        crate::handlers::window_relock::takes_commands(Some(s)) && open_for_setup(s, now_ms)
-    });
+    let open = latest.as_ref().is_some_and(|s| open_for_setup(s, now_ms));
     if open
         && let Err(err) = crate::handlers::window_relock::queue_end_windows(state, id, admin).await
     {

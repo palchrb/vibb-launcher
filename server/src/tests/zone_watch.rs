@@ -41,13 +41,9 @@ fn watch(fences: i64, mock_ignored: i64) -> Value {
            "background_location": true, "mock_ignored": mock_ignored})
 }
 
-/// A status report with `extra`; one with a `zone_watch` and no `capabilities` claims `zones_v1`
-/// (a launcher with the watch).
+/// A status report with `extra`.
 async fn post(app: &TestApp, token: &str, extra: Value) {
     let mut body = json!({"lock_reason": "NONE", "kiosk_engaged": true});
-    if extra.get("zone_watch").is_some() && extra.get("capabilities").is_none() {
-        body["capabilities"] = json!(["zones_v1"]);
-    }
     body.as_object_mut()
         .unwrap()
         .extend(extra.as_object().unwrap().clone());
@@ -225,16 +221,8 @@ async fn the_policy_serves_the_zones_and_the_floor() {
         json!({"mode": "interval", "interval_minutes": 10, "zones": []})
     );
     let home = add_home(&app, id).await;
-    // Zones and a launcher that doesn't claim `zones_v1` (none reported yet, or an older one):
-    // no centres, no floor (Q-10).
-    assert_eq!(
-        location_policy(&app, &token).await,
-        json!({"mode": "interval", "interval_minutes": 10, "zones": []})
-    );
-    post(&app, &token, json!({"capabilities": ["call_policy_v1"]})).await;
-    assert_eq!(location_policy(&app, &token).await["zones"], json!([]));
-    // A launcher with the watch but no zone_watch yet: as chosen, the zones sent.
-    post(&app, &token, json!({"capabilities": ["zones_v1"]})).await;
+    // Zones and no zone_watch yet (none reported, or no watch in the report): as chosen, the zones
+    // sent.
     let policy = location_policy(&app, &token).await;
     assert_eq!(policy["interval_minutes"], 10);
     assert_eq!(
@@ -277,8 +265,8 @@ async fn the_policy_serves_the_zones_and_the_floor() {
     );
 }
 
-/// Q-11 (S6): a watch - and its `zones_v1` - reported before the phone was enrolled into the row
-/// anew belongs to the earlier install: no floor, no zones until the new one reports.
+/// Q-11 (S6): a watch reported before the phone was enrolled into the row anew belongs to the
+/// earlier install: no floor until the new one reports.
 #[tokio::test]
 async fn a_watch_from_before_a_re_enrollment_gives_no_floor() {
     let app = TestApp::new().await;
@@ -296,10 +284,9 @@ async fn a_watch_from_before_a_re_enrollment_gives_no_floor() {
         .execute(&app.db)
         .await
         .unwrap();
-    assert_eq!(
-        location_policy(&app, &token).await,
-        json!({"mode": "interval", "interval_minutes": 10, "zones": []})
-    );
+    let policy = location_policy(&app, &token).await;
+    assert_eq!(policy["interval_minutes"], 10);
+    assert_eq!(policy["zones"].as_array().unwrap().len(), 1);
 }
 
 /// Q-11 (S8): a report whose own location is older than its extra (a confirm whose GPS failed and

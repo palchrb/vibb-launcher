@@ -874,7 +874,7 @@ struct AdvancedTemplate {
     spotify_diag: Option<SpotifyDiagCard>,
     /// Design 76: the certificate check's group; `None` until the phone's last report has `server_pin_v1`.
     server_tls: Option<crate::server_tls::Card>,
-    /// Design 93 §6.6: "Åpne for oppsett", the first row (a `window_relock_v1` phone only).
+    /// Design 93 §6.6: "Åpne for oppsett", the first row (once the phone has reported).
     setup: Option<crate::handlers::quick_actions::SetupCard>,
     /// Design 102 revision 5: "Krev foreldrekode for Wi-Fi-innlogging" (`#wifi-signin`).
     wifi_signin: crate::handlers::logins::CodeCard,
@@ -1037,14 +1037,12 @@ struct LockTemplate {
     /// The page answers Show Child PIN: `static/reveal.js` turns its history entry into a GET
     /// (a reload never posts the password again) and hides the PIN when the page is left.
     reveal_answer: bool,
-    /// Parent PIN: set, easy, its flash, whether the phone reports its uses.
+    /// Parent PIN: set, easy, its flash.
     parent: crate::handlers::parent_pin::ParentPinCard,
     /// A refused (or easy) Parent PIN opens its form again.
     parent_open: bool,
     /// Managed without a Parent PIN (the Attention alarm's facts).
     no_parent_pin: bool,
-    /// An older launcher's "the offline override was used" (no PIN events).
-    offline_override_used: bool,
     /// Screen: "Turn off after", the options, and what the phone last applied when it differs.
     screen_timeout_seconds: i64,
     screen_timeout_options: Vec<(i64, &'static str)>,
@@ -1399,7 +1397,7 @@ async fn render_lock(
     if let Some(send) = pin_send.filter(|_| child.pin_set) {
         child_rows.push(crate::kid_lock::LockNote::PinSent(send).note(lang, None));
     }
-    let parent = crate::handlers::parent_pin::card(lang, &policy, latest.as_ref(), notice);
+    let parent = crate::handlers::parent_pin::card(lang, &policy, notice);
     let weather =
         match crate::handlers::weather_page::card(state, id, &policy, latest.as_ref()).await {
             Ok(weather) => weather,
@@ -1466,7 +1464,6 @@ async fn render_lock(
         reveal_shown,
         parent_open: parent.notice.is_some_and(|(_, warning)| warning),
         no_parent_pin: crate::handlers::devices::managed_without_pin(&policy),
-        offline_override_used: latest.as_ref().is_some_and(|s| s.offline_override_used),
         screen_timeout_seconds,
         screen_timeout_options: crate::models::SCREEN_TIMEOUTS.to_vec(),
         // Only when the phone runs another value than the chosen one (it applies it at its
@@ -2102,9 +2099,6 @@ struct AppsTemplate {
     reported: bool,
     /// Design 102 §5.2: Chrome is the phone's login browser (the role on, Chrome not ticked) - its row says so.
     login_role: bool,
-    /// Design 68: the phone reported its apps without `app_permissions_v1` - "Update Vibb One to manage apps'
-    /// permissions" above the Allowed list.
-    update_note: Option<&'static str>,
     /// Something installs now: the page reloads every 3 s for the percentage
     /// (`static/auto-reload.js`) - never on a refused save's page, the answer to a POST.
     installing: bool,
@@ -2585,9 +2579,6 @@ pub(crate) async fn render_apps(
             }),
             allowed,
             not_allowed,
-            update_note: (latest.is_some()
-                && !has_capability(latest.as_ref(), crate::models::APP_PERMISSIONS_CAPABILITY))
-            .then_some(crate::i18n::t(lang, "apps.perms.update_note")),
             reported: latest.is_some(),
             login_role: policy.login_browser_enabled && !crate::logins::chrome_ticked(&policy),
             installing,

@@ -120,9 +120,7 @@ arrival and departure from the stored fixes (decision 1): nothing new comes from
 counts.
 
 - **The policy** (`device_api::build_policy`): `location_policy` always has `zones`, `[{id, latitude, longitude,
-  radius_m}]` while the mode is `interval` **and the phone's latest report since its enrollment claims `zones_v1`**
-  (`models::ZONES_CAPABILITY`, read by `last_capabilities`; qa-design-64-step2-code Q-10: an older launcher can't use
-  the centres, so it isn't sent them), `[]` otherwise (`zones::policy_zones`; **never a name**, decision 9);
+  radius_m}]` while the mode is `interval`, `[]` otherwise (`zones::policy_zones`; **never a name**, decision 9);
   `interval_minutes` is the **served** interval, `zones::served_interval(mode, chosen, zones, watching)` =
   `max(chosen, HEARTBEAT_FLOOR_MINUTES = 30)` only while Regularly, the phone has zones and its latest report since its
   enrollment holds fences (`zones::last_zone_watch`, `zones::watching`: `zone_watch.fences > 0`) - the user's decision
@@ -140,8 +138,7 @@ counts.
   `mock: true`), not part of its identity (the dedupe is unchanged) and shown only in the Locate page's newest-fix row's
   title ("... · gps", "... · fused · test location", `locate::fix_title`). `zone_watch` - `{fences, motion_sensor, location_on, background_location, mock_ignored}`, all five or nothing
   (`zones::sanitize_zone_watch`: types, fences 0..=100, mock 0..=10^9, at most 512 bytes; other keys dropped), stored in
-  `device_status.zone_watch_json` (0092). The launcher also claims `zones_v1`, which gates only the zones' coordinates
-  in the policy (Q-10); the floor keys on the watch. `zone_watch.still` (Q-3, not stored with the watch -
+  `device_status.zone_watch_json` (0092). The floor keys on the watch. `zone_watch.still` (Q-3, not stored with the watch -
   `zones::report_still`, a JSON `true` only): the report re-sends its cached fix while the phone's motion sensor says it
   hasn't moved since; `intake` then stamps that fix's row `device_locations.resent_at` (0093) with now, and "Here now"
   (`freshness_inputs`, `DeviceLocation::seen_at` on the Locate page) counts from the later of `captured_at` and it -

@@ -331,16 +331,7 @@ pub(crate) async fn build_policy(
             zones.len(),
             crate::zones::watching(watch.as_ref()),
         ),
-        // Q-10: the centres and radii only to a launcher that watches zones itself.
-        zones: if last_capabilities(&state.db, device_id)
-            .await?
-            .iter()
-            .any(|c| c == crate::models::ZONES_CAPABILITY)
-        {
-            crate::zones::policy_zones(&policy.location_mode, &zones)
-        } else {
-            Vec::new()
-        },
+        zones: crate::zones::policy_zones(&policy.location_mode, &zones),
     };
 
     // Design 36 §4.1: Custom with a valid pair is the `dns_upstream` object and "cloudflare" for a
@@ -1921,8 +1912,8 @@ async fn status_intake(
         .and_then(|loc| crate::models::checked_location(loc).map(|at| (loc, at)));
     crate::zones::intake(&state, device.id, &fixes, resent.as_ref()).await;
 
-    // Design 87 §4.2: a launcher claiming `app_logos_v1` gets the logos the server wants (200), any other 204.
-    crate::app_logos::answer(&state, device.id, &report.capabilities, &reported_logos).await
+    // Design 87 §4.2: the logos the server wants (200), or 204 when it wants none.
+    crate::app_logos::answer(&state, device.id, &reported_logos).await
 }
 
 /// The phone's report before this one, as the intake compares with it.

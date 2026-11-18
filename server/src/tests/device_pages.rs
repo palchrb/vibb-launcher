@@ -2177,24 +2177,21 @@ async fn apps_forms_return_to_their_rows() {
 /// Design 68 §4.1: an allowed app's Permissions - the sub-line, the camera switch only for an app that asks for the
 /// camera, a declared access with the way to approve it - and its form: a save lands on its own details, open
 /// (`?perms=<package>#perms-<package>`), writes the row the policy sends and nudges; a bad camera value is a 400, Play's
-/// core and Vibb are refused at their row; the update note while the launcher lacks `app_permissions_v1`.
+/// core and Vibb are refused at their row.
 #[tokio::test]
 async fn the_permissions_form_returns_to_its_open_details() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("Anna").await;
     let element = "io.element.android.x";
-    let report = |caps: serde_json::Value| {
-        json!({
-            "capabilities": caps,
-            "installed_apps": [
-                { "package_name": element, "label": "Element X", "preinstalled": false,
-                  "access": { "camera": "requested", "manage_media": "denied" } },
-                { "package_name": "org.example.plain", "label": "Plain", "preinstalled": false },
-            ],
-        })
-    };
-    app.post_status(&token, report(json!([]))).await;
+    let report = json!({
+        "installed_apps": [
+            { "package_name": element, "label": "Element X", "preinstalled": false,
+              "access": { "camera": "requested", "manage_media": "denied" } },
+            { "package_name": "org.example.plain", "label": "Plain", "preinstalled": false },
+        ],
+    });
+    app.post_status(&token, report).await;
     sqlx::query("UPDATE device_policy SET allowlist_json = ? WHERE device_id = ?")
         .bind(format!("[\"{element}\", \"org.example.plain\"]"))
         .bind(id)
@@ -2202,13 +2199,6 @@ async fn the_permissions_form_returns_to_its_open_details() {
         .await
         .unwrap();
     let page = device_page(id, Section::Apps);
-    let html = app.get_page(&page, &cookie).await.text();
-    assert!(
-        html.contains("class=\"row row-note tone-orange\" data-row=\"update-note\""),
-        "an older launcher: the note, orange"
-    );
-    app.post_status(&token, report(json!(["app_permissions_v1"])))
-        .await;
     let html = app.get_page(&page, &cookie).await.text();
     assert!(!html.contains("data-row=\"update-note\""));
     let anchor = format!("perms-{element}");

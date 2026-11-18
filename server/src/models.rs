@@ -473,7 +473,6 @@ pub struct DeviceStatus {
     pub installed_apps_json: Option<String>,
     pub app_version: Option<String>,
     pub app_version_code: Option<i64>,
-    pub offline_override_used: bool,
     pub reported_at: String,
     /// See migrations/0021_device_status_policy_state.sql. `None` from older launchers.
     pub policy_state: Option<String>,
@@ -958,14 +957,6 @@ pub const ENROLLED_AT: &str =
 /// Status-report capability of a launcher that confirms each command before running it
 /// (`POST /api/devices/command-receipt`, security review L12).
 pub const COMMAND_RECEIPT_CAPABILITY: &str = "command_receipt_v1";
-
-/// Status-report capability of a launcher that watches its zones itself (design 64 step 2): only
-/// such a phone is sent the zones' centres and radii (qa-design-64-step2-code Q-10).
-pub const ZONES_CAPABILITY: &str = "zones_v1";
-
-/// Status-report capability of a launcher that applies the policy's `app_permissions` and reports
-/// `installed_apps[].access` (design 68): without it Device › Apps says to update Vibb One.
-pub const APP_PERMISSIONS_CAPABILITY: &str = "app_permissions_v1";
 
 fn minutes_since(at: &str, now: chrono::NaiveDateTime) -> Option<i64> {
     chrono::NaiveDateTime::parse_from_str(at, "%Y-%m-%d %H:%M:%S")

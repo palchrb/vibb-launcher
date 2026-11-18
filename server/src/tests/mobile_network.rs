@@ -42,7 +42,7 @@ async fn report(app: &TestApp, token: &str, extra: Value, capabilities: &[&str])
     let res = app
         .request(Method::POST, "/api/devices/status", Some(token), Some(body))
         .await;
-    // 204, or 200 for a launcher that claims app_logos_v1.
+    // 204, or 200 when logos are wanted.
     assert!(res.status.is_success(), "{} {}", res.status, res.text());
 }
 

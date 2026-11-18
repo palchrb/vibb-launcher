@@ -24,7 +24,7 @@ fn png(side: u32, shade: u8) -> Vec<u8> {
     out.into_inner()
 }
 
-/// A status body from a launcher claiming `app_logos_v1` with these apps.
+/// A status body with these apps.
 fn status_body(apps: serde_json::Value) -> serde_json::Value {
     json!({
         "lock_reason": "NONE",
@@ -48,11 +48,17 @@ async fn report(app: &TestApp, token: &str, body: serde_json::Value) -> TestResp
         .await
 }
 
-/// A report's wanted list (a 200).
+/// A report's wanted list (a 200), or `[]` for a 204 (nothing wanted).
 async fn wanted(app: &TestApp, token: &str, body: serde_json::Value) -> serde_json::Value {
     let res = report(app, token, body).await;
+    if res.status == StatusCode::NO_CONTENT {
+        assert!(res.body.is_empty());
+        return json!([]);
+    }
     assert_eq!(res.status, StatusCode::OK, "{}", res.text());
-    res.json()["wanted_logos"].clone()
+    let wanted = res.json()["wanted_logos"].clone();
+    assert_ne!(wanted, json!([]), "an empty list is a 204");
+    wanted
 }
 
 async fn upload(
@@ -131,7 +137,7 @@ async fn the_contract() {
     assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.text());
     // Stored: a second report wants nothing.
     let res = report(&app, &token, contract["report"].clone()).await;
-    assert_eq!(res.json(), json!({ "wanted_logos": [] }));
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.text());
     // Written again by the server: 128 x 128, without the test PNG's text chunk.
     let stored = std::fs::read(file(&app, hash)).unwrap();
     assert_ne!(stored, png_bytes);
@@ -188,7 +194,7 @@ async fn the_contract() {
     assert_eq!(launcher_copy, CONTRACT);
 }
 
-/// R2-M5: a malformed logo is no logo, never a refused report; an older launcher gets 204 and no rows; a report
+/// R2-M5: a malformed logo is no logo, never a refused report; a report without logos gets 204 and no rows; a report
 /// without `logo` keeps the row, one without the package drops it and the file; a missing file (a restore) is
 /// wanted again.
 #[tokio::test]
@@ -198,7 +204,7 @@ async fn the_rows_follow_the_reports_and_the_files_follow_the_rows() {
     let logo = png(SIZE_PX, 10);
     let hash = sha(&logo);
 
-    // An older launcher: 204 as before, no rows.
+    // No logos: 204, no rows.
     let res = report(
         &app,
         &token,

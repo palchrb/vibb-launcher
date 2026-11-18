@@ -16,15 +16,12 @@ use crate::models::DeviceStatus;
 use crate::security::{self, CurrentAdmin};
 use crate::window_relock::{
     self, ALLOW_BLOCKED, AllowedBlock, BlockContext, Blocks, END_WINDOWS, Findings, ForeignView,
-    START_PAUSE, WINDOW_RELOCK_CAPABILITY,
+    START_PAUSE,
 };
 
 /// What the summary shows for design 24b, typed (the words are the template's).
 #[derive(Default)]
 pub struct RelockCard {
-    /// "Lock again": the launcher takes the commands (`window_relock_v1`) and a pause or Play
-    /// install mode is open at the last report.
-    pub lock_again: bool,
     /// The page reloads itself (`static/auto-reload.js`) while the phone hasn't shown what Lock
     /// again or Unlock 2 h… did, for at most 2 minutes ([window_relock::waiting_for_phone]).
     pub wait_for_phone: bool,
@@ -34,7 +31,7 @@ pub struct RelockCard {
     pub findings: Option<Findings>,
     /// The phone refuses the Parent PIN ([window_relock::foreign_view]).
     pub foreign: Option<ForeignView>,
-    /// What the phone blocks now - or, from an older launcher, what its last relock blocked.
+    /// What the phone blocks now.
     pub blocks: Blocks,
     /// "Allow these apps…"'s hidden `blocks` value: the listed apps and the keys shown
     /// ([window_relock::allow_form_value], QA of cmd-expiry Low 1).
@@ -65,15 +62,6 @@ impl RelockCard {
             .filter(|(g, _)| *g == group)
             .map(|(_, text)| text)
     }
-}
-
-/// The launcher takes this design's commands (`window_relock_v1`) at its newest report.
-pub(crate) fn takes_commands(latest: Option<&DeviceStatus>) -> bool {
-    latest.is_some_and(|s| {
-        s.capabilities_json
-            .as_deref()
-            .is_some_and(|caps| caps.contains(&format!("\"{WINDOW_RELOCK_CAPABILITY}\"")))
-    })
 }
 
 /// "Lock again" queued by another action (design 93 §5.1 step 4: a rule turned on ends the
@@ -110,7 +98,6 @@ pub async fn card(
     allowed: Option<&std::collections::HashSet<String>>,
 ) -> Result<RelockCard, sqlx::Error> {
     let now_ms = now.timestamp_millis();
-    let capable = takes_commands(latest);
     let open = latest.is_some_and(|s| {
         s.paused_at(now_ms) || s.install_mode_until_ms.is_some_and(|until| until > now_ms)
     });
@@ -125,31 +112,16 @@ pub async fn card(
         now,
     };
     let relock = window_relock::parse_relock(latest.and_then(|s| s.relock_json.as_deref()));
-    // The phone's current blocks (`relock_blocks`, fix of 2026-10-12), the install check's too;
-    // an older launcher has only its last relock's, until it answered an "Allow" pressed after it
-    // (QA Low 10).
-    let blocks = match window_relock::parse_relock_blocks(
-        latest.and_then(|s| s.relock_blocks_json.as_deref()),
-    ) {
-        Some(list) => {
-            window_relock::blocks(&list, latest.and_then(|s| s.relock_blocks_total), &ctx)
-        }
-        None => match &relock {
-            Some(r) => {
-                let allowed = answers.iter().find(|a| a.command == ALLOW_BLOCKED);
-                window_relock::relock_blocked(
-                    r,
-                    window_relock::allowed_since_relock(allowed, r.at_ms),
-                    &ctx,
-                )
-            }
-            None => Blocks::default(),
-        },
-    };
+    // The phone's current blocks (`relock_blocks`, fix of 2026-10-12), the install check's too.
+    let blocks =
+        window_relock::parse_relock_blocks(latest.and_then(|s| s.relock_blocks_json.as_deref()))
+            .map(|list| {
+                window_relock::blocks(&list, latest.and_then(|s| s.relock_blocks_total), &ctx)
+            })
+            .unwrap_or_default();
     let paused = latest.is_some_and(|s| s.paused_at(now_ms));
     let waited = window_relock::waited_for(&answers, paused, open, now_ms);
     Ok(RelockCard {
-        lock_again: capable && open,
         wait_for_phone: window_relock::waiting_for_phone(&answers, paused, open, now_ms),
         // While it waits, the "Sent." line stays on every reload (Q-2).
         notice: notice

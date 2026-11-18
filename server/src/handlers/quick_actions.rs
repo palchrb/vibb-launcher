@@ -50,9 +50,6 @@ pub(crate) struct RunningView {
 /// The row right under the phone's header while it is open for setup (§6.1 item 1).
 pub(crate) struct SetupRow {
     pub text: String,
-    /// Only for a launcher that can't be locked again from here (`pause_ends_old`).
-    pub sub: Option<String>,
-    pub lock_again: bool,
 }
 
 pub(crate) struct QuickActions {
@@ -191,9 +188,6 @@ pub(crate) struct Inputs<'a> {
     /// - the screen-time lock counts as none (design 101 §4.1): the Pause tile may say "Ingen regel nå".
     pub no_rule_now: bool,
     pub screen: Option<&'a crate::time_state::ScreenTime>,
-    /// `RelockCard::lock_again` and whether the launcher takes the commands.
-    pub lock_again: bool,
-    pub relock_capable: bool,
     /// A refusal's words from `?done=` (shown in the sheet).
     pub refusal: Option<String>,
     pub zone: &'a Zone,
@@ -428,8 +422,6 @@ pub(crate) async fn build(
                 (true, None) => t(lang, "device.summary.qa.setup_open").to_string(),
                 (false, _) => t(lang, "device.summary.qa.setup_play").to_string(),
             },
-            sub: (!input.lock_again).then(|| t(lang, "device.summary.pause_ends_old").to_string()),
-            lock_again: input.lock_again,
         }
     });
 
@@ -453,9 +445,7 @@ pub(crate) async fn build(
             let name = crate::time_rules::shown_name(lang, &rule.name);
             let mut warnings = Vec::new();
             if open_for_setup {
-                warnings.push(if !input.relock_capable {
-                    t(lang, "device.summary.qa.warn_no_relock").to_string()
-                } else if let Some(at) = until {
+                warnings.push(if let Some(at) = until {
                     t_params(
                         lang,
                         "device.summary.qa.warn_setup",
@@ -587,8 +577,8 @@ pub(crate) async fn build(
     })
 }
 
-/// The Avansert page's first row, "Åpne for oppsett" (design 93 §6.6), for a launcher that takes
-/// the commands (`window_relock_v1`); `None` for an older one.
+/// The Avansert page's first row, "Åpne for oppsett" (design 93 §6.6), for a phone that has
+/// reported; `None` before its first report.
 pub(crate) struct SetupCard {
     /// Open for setup at the newest report: the sheet holds Lås igjen instead of the open button.
     pub open: bool,
@@ -613,7 +603,7 @@ pub(crate) async fn setup_card(
     zone: &Zone,
     now: DateTime<Utc>,
 ) -> Result<Option<SetupCard>, sqlx::Error> {
-    if !crate::handlers::window_relock::takes_commands(latest) {
+    if latest.is_none() {
         return Ok(None);
     }
     let lang = zone.lang();

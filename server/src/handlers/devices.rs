@@ -2522,8 +2522,6 @@ async fn render_device(
                         .unwrap_or_else(|| b.name.clone())
                 }),
             screen: screen_time.as_ref(),
-            lock_again: relock.lock_again,
-            relock_capable: crate::handlers::window_relock::takes_commands(latest.as_ref()),
             refusal,
             zone: &zone,
             now,

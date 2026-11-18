@@ -321,7 +321,7 @@ fn zones_view(
         .collect::<Vec<_>>();
     let some = !rows.is_empty();
     // Design 64 step 2 (§3.6's last rows): a phone whose watch holds fences sends a location as
-    // soon as it notices a crossing, so the "two intervals" timing is an older launcher's.
+    // soon as it notices a crossing; without fences the "two intervals" timing holds.
     let watched = mode == "interval" && crate::zones::watching(watch);
     let footer = match mode {
         "off" => None,
@@ -525,14 +525,6 @@ struct AnswerView {
 /// How long "Found within 5 m · 14:29" stays after the phone's answer.
 const ANSWER_SHOWN_MINUTES: i64 = 10;
 
-/// The launcher's Update Location answers that say it found nothing (`locateResultMessage`, an
-/// older launcher's): a "done" with these words is a failure all the same.
-const LOCATE_FAILURES: [&str; 3] = [
-    "location is off for this device",
-    "no location fix",
-    "unknown command - update the launcher",
-];
-
 /// The newest Update Location's row ([AnswerView]), or none.
 #[derive(Debug, PartialEq)]
 enum AnswerState {
@@ -583,12 +575,7 @@ fn answer_state(
             ..
         } => Some(AnswerState::Asking),
         CommandStatus::Cancelled { .. } | CommandStatus::Erasing { .. } => None,
-        CommandStatus::Done { .. }
-            if !command
-                .result
-                .as_deref()
-                .is_some_and(|r| LOCATE_FAILURES.contains(&r.trim())) =>
-        {
+        CommandStatus::Done { .. } => {
             let at = answered?;
             let age = now - at;
             let its_fix = fixed_since(asked) && !fixed_since(Some(at));
@@ -600,9 +587,7 @@ fn answer_state(
                 at,
             })
         }
-        CommandStatus::Done { .. } | CommandStatus::Failed { .. } => {
-            failed(said("locate.answer.no_fix"), answered)
-        }
+        CommandStatus::Failed { .. } => failed(said("locate.answer.no_fix"), answered),
         CommandStatus::Expired => failed(
             Answer {
                 text: t(lang, "locate.answer.offline").to_string(),
@@ -3135,7 +3120,7 @@ mod tests {
         assert_eq!(state(&found, done(), older, "2026-10-25 12:30:00"), None);
         let newer = Some("2026-10-25 12:29:30");
         assert_eq!(state(&found, done(), newer, "2026-10-25 12:30:00"), None);
-        // An older launcher's plain "ok" counts as found.
+        // A plain "ok" (an answer without a message) counts as found.
         let ok = command(Some("ok"), Some("2026-10-25 12:29:00"));
         assert_eq!(
             words(state(&ok, done(), its_fix, "2026-10-25 12:30:00")).map(|w| w.1),
@@ -3147,17 +3132,20 @@ mod tests {
             Some("location is off for this device"),
             Some("2026-10-25 12:29:00"),
         );
-        for status in [CommandStatus::Failed { at: None }, done()] {
-            let later = "2026-10-26 09:00:00";
-            assert_eq!(
-                words(state(&off, status, Some("2026-10-25 12:00:00"), later)),
-                Some((
-                    "failed",
-                    "Location is off on the phone".to_string(),
-                    "13:29".to_string()
-                ))
-            );
-        }
+        let later = "2026-10-26 09:00:00";
+        assert_eq!(
+            words(state(
+                &off,
+                CommandStatus::Failed { at: None },
+                Some("2026-10-25 12:00:00"),
+                later
+            )),
+            Some((
+                "failed",
+                "Location is off on the phone".to_string(),
+                "13:29".to_string()
+            ))
+        );
         let status = CommandStatus::Failed { at: None };
         assert_eq!(
             state(

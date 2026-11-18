@@ -426,8 +426,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 
 ## Device › Apps: Permissions (design 68, `docs/design/68-app-permissions.md` §4.1, migration `0102_app_permissions.sql`)
 
-- **What the parent sees**: an allowed app the phone reports something about (`installed_apps[].access`, launcher
-  `app_permissions_v1`; third-party apps only, the phone reports none for a system app) gets a second sub-line under
+- **What the parent sees**: an allowed app the phone reports something about (`installed_apps[].access`; third-party apps
+  only, the phone reports none for a system app) gets a second sub-line under
   its row with only what needs a look - "Camera off" (a stored row and the report reads `admin_denied`; "Camera off ·
   waiting for the phone" while it still reads `requested`, "Camera off · back on while restrictions are paused" while
   the last report says paused - the pause lifts it), then each declared access "<name>: not approved / unknown" (an
@@ -439,8 +439,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   allowed the camera."), and one line per declared access with the way to approve it while it isn't ("On the phone:
   Settings (parent code) › Pause all restrictions › App access › <app>: <access>"; Alarms & reminders add ", then open
   <app> once while restrictions are paused" - Etar's first start outside a pause crashes, E4's M2). A stored row for an app that no
-  longer asks is inert (no switch, no word). While the phone has reported its apps without `app_permissions_v1`, one
-  `row-note` "Update Vibb One to manage apps' permissions" sits above the Allowed list.
+  longer asks is inert (no switch, no word).
 - **Show as a media player on the lock screen** (2026-11-04, the user: "En bryter per app i pwa, tastefully
   implementert"; migration `0127_lock_media_apps.sql`, `device_lock_media_apps`): the phone's lock tile shows another
   app's playback only for a media app (its manifest's category audio or video, or a browser - so a messenger's voice
@@ -521,11 +520,10 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   to Advanced › Connection; the lock only while a rule locks - `devices::badge_and_screen`, the Devices list's rules,
   so no end unless the phone reports Phone Setup's zone -; today's bar while a line says the screen time); **Attention** (`attention::items`, the list's count); the
   **foreign-app warning** with its steps (`#foreign-access`); **Quick Actions** (`#quick`: while the last report has the restrictions paused, one plain line first,
-  `.quick-note` - "The pause ends by itself, or tap Lock again to end it now.", an older launcher's own words; no red
+  `.quick-note` - "The pause ends by itself, or tap Lock again to end it now."; no red
   since 2026-10-26: the Attention row "Restrictions paused ›" that lands here is the one red alert -; +15 min, +30 min, +1 h,
   Pause a rule… as a `<details>` sheet with only the rules that apply, Lock again while a pause or Play install mode
-  runs, Unlock for 2 h… behind a `<details>` confirm while no pause is on - both only for a `window_relock_v1`
-  launcher -, Locate as a link to `/devices/locate?device={id}`; an open sheet spans the grid; after Lock again or
+  runs, Unlock for 2 h… behind a `<details>` confirm while no pause is on, Locate as a link to `/devices/locate?device={id}`; an open sheet spans the grid; after Lock again or
   Unlock the summary loads `auto-reload.js` (`?v=4`, every 3 s, the place kept, never once a save started or while a
   `<details>` is open) while the newer of the two is unanswered or answered but not in the newest report yet -
   `restrictions_paused` after Unlock, no pause or Play install mode after Lock again -, never after a refusal or a
@@ -749,12 +747,10 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   as in Requests; qa-pwa-fixes-d Q-9) and its `CommandStatus` with the newest fix's own time (`captured_at`):
   **asking** while it waits, is sent (not yet confirmed, offered again, can't confirm) or is received in time -
   "Asking the phone…", left out right after the press (`?requested=1`: the wait's own `#fix_wait` line
-  says it); **found** - a done answer that isn't one of the launcher's no-fix words (`LOCATE_FAILURES`: location off,
-  no fix, too old) - for `ANSWER_SHOWN_MINUTES` (10) after `acknowledged_at`, and only while the newest fix is the
+  says it); **found** - a done answer - for `ANSWER_SHOWN_MINUTES` (10) after `acknowledged_at`, and only while the newest fix is the
   one it found (taken after the ask, not after the answer: an older fix - an upload that lagged, a mock kept out -
   would contradict it, a newer one says it itself; Q-8), "Found within 5 m" with its time ("14:29", exact in
-  `title`; an older launcher's plain "ok" reads "Found"); **failed** - those words or a failed
-  result ("Location is off on the phone", "The phone couldn't find its location"), never fetched within its hour
+  `title`; a plain "ok" reads "Found"); **failed** - a failed result ("Location is off on the phone", "The phone couldn't find its location"), never fetched within its hour
   ("No position - the phone is offline", the ask's time), received but never answered or never confirmed ("No
   position - the phone didn't answer") - until a fix taken after the answer (or the ask).
   Otherwise no row: the newest point and the time row say it. No "Answer to" line under it any more;
@@ -2163,8 +2159,7 @@ pointer here.
   for. Step 1 is the server and the contract alone: no launcher sends `logo` yet, so every page looks as before.
 - **`app_logos.rs`**: the intake (`take_logos` strips the logos from the stored snapshot, `intake` moves
   `device_app_logos` - 0140 - and prunes the files only the removed or replaced rows named), the answer (`answer`:
-  `200 {"wanted_logos"}` to a launcher claiming `app_logos_v1`, at most 40, allowed apps first, then by package; 204
-  otherwise), the upload (`upload`: the table of design 87 §4.3 in its order; `reencode` decodes under limits - the
+  `200 {"wanted_logos"}`, at most 40, allowed apps first, then by package; 204 when it wants none), the upload (`upload`: the table of design 87 §4.3 in its order; `reencode` decodes under limits - the
   PNG signature, `PngDecoder::with_limits` at 128 x 128 and 1 MiB, exactly 128 square - and writes 8-bit RGBA with
   the server's own encoder; under `photos::PROCESSING`), the caps (4,000 files and 64 MB in all, 300 files and 12 MB
   named by one phone's rows, 300 uploads a phone a day charged before the decode, a refused hash not asked for again
@@ -2346,8 +2341,8 @@ Server only: no launcher or API change, no migration. The user's "Vi går for a!
   the words; a save in place closes a shown sheet, as the reload did.
 - **Open for setup**: while the report shows the restrictions pause or Play install mode, `#setup-open` sits inside
   `#quick` above its header (where Attention's row lands): "Åpnet for oppsett til 17:10" (the newest answered
-  `start_pause` + 2 h), "Apper og Play Butikk er åpne" and Lås igjen (`/end-windows`); an older launcher's own words and
-  no action. **Avansert's first row** (`device_advanced.html`, `#setup`, a `window_relock_v1` phone only,
+  `start_pause` + 2 h), "Apper og Play Butikk er åpne" and Lås igjen (`/end-windows`). **Avansert's first row**
+  (`device_advanced.html`, `#setup`, once the phone has reported,
   `quick_actions::setup_card`): since design 103 §3 one row that opens in place - `<details class="row-sheet">`, its
   chevron turning down, no outline, no second tile or title, no Lukk - whose sheet holds one line ("Apper,
   innstillinger og Play åpnes i 2 timer.", `device.advanced.setup.line`), the orange line while a rule is turned on,
