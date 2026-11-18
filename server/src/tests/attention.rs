@@ -520,7 +520,8 @@ async fn a_phone_not_set_up_has_no_count() {
     assert!(!list.contains("data-attention-count"), "{list}");
 }
 
-/// Every finding of the call report is an Attention row.
+/// Every finding of the call report is an Attention row, but SMS off with the Messages app ticked (2026-11-18: the
+/// parent's choices, a quiet row on the calls page).
 #[tokio::test]
 async fn every_call_warning_is_typed() {
     let app = TestApp::new().await;
@@ -574,7 +575,22 @@ async fn every_call_warning_is_typed() {
             ..Default::default()
         },
     );
-    assert_eq!(rows.len(), report.findings.len(), "{:?}", report.findings);
+    let choices = report
+        .problems()
+        .iter()
+        .filter(|p| **p == crate::handlers::calls::CallProblem::SmsAppAllowed)
+        .count();
+    assert_eq!(choices, 1, "{:?}", report.findings);
+    assert_eq!(
+        rows.len(),
+        report.findings.len() - choices,
+        "{:?}",
+        report.findings
+    );
+    assert!(
+        rows.iter()
+            .all(|r| r.title != "Messages app allowed with SMS off")
+    );
 }
 
 /// A silent time rule makes the launcher turn on its own Do Not Disturb (priority only): the rule's own, so not an
