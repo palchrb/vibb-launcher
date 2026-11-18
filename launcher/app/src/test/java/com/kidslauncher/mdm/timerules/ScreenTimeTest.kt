@@ -180,7 +180,10 @@ class ScreenTimeTest {
         assertTrue("a free screen sharing the screen (split, PiP)", screenTimeCounts(true, false, true, true))
         assertFalse("screen off", screenTimeCounts(false, false, false, false))
         assertFalse("keyguard", screenTimeCounts(true, true, false, false))
-        assertEquals(6, FREE_SCREENS.size)
+        assertEquals(7, FREE_SCREENS.size)
+        // Design 114 (QA L8): the parent's setup flow is free, and nothing counts while the setup hold lasts.
+        assertTrue("com.kidslauncher.mdm.setup.SetupFlowActivity" in FREE_SCREENS)
+        assertFalse("the setup hold", screenTimeCounts(true, false, false, false, setupHold = true))
         // The phone book in either look (its own task and two classes since 2026-11-16).
         assertTrue("com.kidslauncher.mdm.calls.PhoneBookActivity" in FREE_SCREENS)
         assertTrue("com.kidslauncher.mdm.calls.LightPhoneBookActivity" in FREE_SCREENS)

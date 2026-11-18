@@ -5,7 +5,6 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.hardware.biometrics.BiometricManager
 import android.provider.Settings
-import com.kidslauncher.mdm.R
 
 /*
  * Fingerprint enrolment without adb (the user, 2026-10-24; design 59d §8.4: the parent enrols it again during a
@@ -37,21 +36,6 @@ fun fingerprintEnrolled(canAuthenticate: Int?): Boolean? = when (canAuthenticate
     BiometricManager.BIOMETRIC_SUCCESS -> true
     BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED -> false
     else -> null
-}
-
-/** The row's state line: registered / not registered / unknown (code QA Q-3: pinned by test). */
-fun fingerprintStateText(enrolled: Boolean?): Int = when (enrolled) {
-    true -> R.string.settings_mdm_fingerprint_enrolled
-    false -> R.string.settings_mdm_fingerprint_not_enrolled
-    null -> R.string.settings_mdm_fingerprint_unknown
-}
-
-/** The row's action line for [SystemPageAccess]. */
-fun fingerprintActionText(access: SystemPageAccess): Int = when (access) {
-    SystemPageAccess.CAN_OPEN -> R.string.settings_mdm_fingerprint_open
-    SystemPageAccess.PAUSE_FIRST -> R.string.settings_mdm_fingerprint_pause_first
-    SystemPageAccess.WAIT -> R.string.settings_mdm_fingerprint_wait
-    SystemPageAccess.NO_PAGE -> R.string.settings_mdm_fingerprint_no_page
 }
 
 object FingerprintEnrol {

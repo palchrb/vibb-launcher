@@ -4,7 +4,6 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
-import com.kidslauncher.mdm.R
 
 /*
  * "Modify system settings" without adb (PLAN "Fix backlog", 2026-10-24): the touch sounds row (design
@@ -34,31 +33,6 @@ fun systemPageAccess(pageAvailable: Boolean, windowOpen: Boolean, overrideApplie
     !windowOpen -> SystemPageAccess.PAUSE_FIRST
     overrideApplied -> SystemPageAccess.NO_PAGE
     else -> SystemPageAccess.WAIT
-}
-
-/** The "Modify system settings" row's states: the grant, else [SystemPageAccess]'s. */
-enum class WriteSettingsRow { GRANTED, UNKNOWN, CAN_OPEN, PAUSE_FIRST, WAIT, NO_PAGE }
-
-/** [granted]: `Settings.System.canWrite` (null = unreadable); [access]: [systemPageAccess]. */
-fun writeSettingsRowState(granted: Boolean?, access: SystemPageAccess): WriteSettingsRow = when {
-    granted == true -> WriteSettingsRow.GRANTED
-    granted == null -> WriteSettingsRow.UNKNOWN
-    else -> when (access) {
-        SystemPageAccess.CAN_OPEN -> WriteSettingsRow.CAN_OPEN
-        SystemPageAccess.PAUSE_FIRST -> WriteSettingsRow.PAUSE_FIRST
-        SystemPageAccess.WAIT -> WriteSettingsRow.WAIT
-        SystemPageAccess.NO_PAGE -> WriteSettingsRow.NO_PAGE
-    }
-}
-
-/** The row's summary for each state (code QA Q-3: the mapping is pinned by test). */
-fun writeSettingsText(row: WriteSettingsRow): Int = when (row) {
-    WriteSettingsRow.GRANTED -> R.string.settings_mdm_write_settings_granted
-    WriteSettingsRow.UNKNOWN -> R.string.settings_mdm_write_settings_unknown
-    WriteSettingsRow.CAN_OPEN -> R.string.settings_mdm_write_settings_open
-    WriteSettingsRow.PAUSE_FIRST -> R.string.settings_mdm_write_settings_pause_first
-    WriteSettingsRow.WAIT -> R.string.settings_mdm_write_settings_wait
-    WriteSettingsRow.NO_PAGE -> R.string.settings_mdm_write_settings_no_page
 }
 
 /** The data URI of Android's page for one app: `package:` + its applicationId. */

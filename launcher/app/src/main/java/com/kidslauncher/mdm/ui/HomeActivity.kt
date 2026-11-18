@@ -467,7 +467,9 @@ class HomeActivity : UIObjectActivity() {
             LauncherPreferences.internal().started(true)
             LauncherPreferences.internal().startedTime(System.currentTimeMillis() / 1000L)
             setDefaultHomeScreen(this, checkDefault = true)
-            requestNotificationPermission(this)
+            // Design 114 (QA M4): a device owner grants itself the permission (the setup hold's start, the relock), so
+            // Android's dialog never covers the setup flow.
+            if (!com.kidslauncher.mdm.setup.SetupReadings.deviceOwner(this)) requestNotificationPermission(this)
         }
 
         LauncherPreferences.getSharedPreferences()
@@ -556,6 +558,12 @@ class HomeActivity : UIObjectActivity() {
         // Checked here (not just via the preference listener) so pressing Home while the lock
         // screen is showing can't be used to bounce back into the drawer/home list underneath it.
         if (redirectToLockScreenIfLocked()) return
+        // Design 114 §6.2.1: during the setup hold Home leads to the setup flow (guidance, not a lock) - its own task
+        // brought to the front, so a Home press from Android's page returns to the same screen.
+        if (com.kidslauncher.mdm.server.RestrictionsPause.holdActive()) {
+            com.kidslauncher.mdm.setup.SetupFlowActivity.startFromHome(this)
+            return
+        }
         resumeContent()
     }
 

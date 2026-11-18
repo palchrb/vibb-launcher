@@ -386,8 +386,9 @@ fun blockAfterInstall(
     return if (bad) blocked + (pkg.name to locked) else null
 }
 
-/** An adopted window's start is unknown: as early as the longest window could have started. */
-fun adoptedStartMs(nowMs: Long): Long = nowMs - maxOf(OVERRIDE_DURATION_MS, RESTRICTIONS_PAUSE_DURATION_MS)
+/** An adopted window's start is unknown: as early as the longest window could have started (design 114: the setup
+ * hold's ceiling included, so a relock after an adopted hold checks the apps installed in its whole length). */
+fun adoptedStartMs(nowMs: Long): Long = nowMs - maxOf(OVERRIDE_DURATION_MS, RESTRICTIONS_PAUSE_DURATION_MS, SETUP_HOLD_DURATION_MS)
 
 /** `relock_blocked` treated as not allowlisted (§1.6): hidden, never pinned, not in the keyboard
  * or accessibility lists. `null` stays unmanaged. */

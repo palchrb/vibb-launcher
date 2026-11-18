@@ -494,7 +494,7 @@
     <string name="settings_mdm_server_url">Server URL</string>
     <!-- Security review S-M1: the phone uses only https, or plain http to a Tailscale IP (only through the tailnet). -->
     <string name="settings_mdm_server_url_not_used">Not used: this isn\'t an address the phone takes, so it doesn\'t contact the server. Type the server\'s https:// address.</string>
-    <string name="settings_mdm_server_url_tailnet_http">Plain http, only through the tailnet. https://&lt;name&gt;.ts.net is better.</string>
+    <string name="settings_mdm_server_url_tailnet_http">Plain http, only through the tailnet.</string>
     <!-- Design 76: the server's certificate issuer, checked once the server switches it on (Settings, under Server URL). -->
     <string name="settings_mdm_server_cert">Server certificate</string>
     <string name="settings_mdm_server_cert_on">Checked: only Let\'s Encrypt and ZeroSSL</string>
@@ -522,18 +522,8 @@
 
     <string name="settings_mdm_sync_now">Sync now</string>
     <!-- Design 19b: the launcher on Android's power-save allowlist. -->
-    <string name="settings_mdm_background_connection">Background connection</string>
-    <string name="settings_mdm_background_connection_exempt">Unrestricted - changes arrive while the phone sleeps</string>
-    <string name="settings_mdm_background_connection_ask">Battery optimisation is on - tap to allow</string>
-    <string name="settings_mdm_background_connection_pause_first">Pause all restrictions first (Android\'s Settings is hidden while the phone is managed), tap here, then end the pause</string>
-    <string name="settings_mdm_background_connection_unknown">Unknown</string>
     <string name="settings_mdm_write_settings">Modify system settings</string>
-    <string name="settings_mdm_write_settings_granted">Allowed - touch sounds and the clock format can change</string>
-    <string name="settings_mdm_write_settings_open">Not allowed - tap, turn on \"Allow modifying system settings\", then come back</string>
     <string name="settings_mdm_write_settings_pause_first">Pause all restrictions first (Android\'s Settings is hidden while the phone is managed), tap here, then end the pause</string>
-    <string name="settings_mdm_write_settings_no_page">Not allowed - Android has no page for this on this phone</string>
-    <string name="settings_mdm_write_settings_wait">Not allowed - the pause is starting, a moment…</string>
-    <string name="settings_mdm_write_settings_unknown">Unknown</string>
     <!-- Design 107 §6: the row that opens Android's notification page for Vibb One while something is turned off. -->
     <!-- Design 108 §6.5: the app-push diagnostics row (PIN-gated Settings). -->
     <string name="settings_up_title">App push</string>
@@ -548,16 +538,6 @@
     <string name="settings_up_no_raise">%1$s: gets its messages without the wake-up</string>
     <string name="settings_up_unanswered">%1$s didn\'t answer for 30 days; its registration was removed</string>
     <string name="settings_up_bad_key">%1$s sent a key that isn\'t valid; the old one is kept</string>
-    <string name="settings_notifications">Vibb One notifications</string>
-    <string name="settings_notifications_off">Off: %1$s</string>
-    <string name="settings_notifications_all_off">All off</string>
-    <string name="settings_notifications_quoted">“%1$s”</string>
-    <string name="settings_notifications_summary" translatable="false">%1$s · %2$s</string>
-    <string name="settings_notifications_open">Tap to turn on</string>
-    <string name="settings_notifications_open_role">Tap to turn on. If a switch is grey, first set Calls and SMS to “Not managed” under Calls and SMS on the server, and set them back afterwards</string>
-    <string name="settings_notifications_pause_first">Pause all restrictions first</string>
-    <string name="settings_notifications_wait">The pause is starting, a moment…</string>
-    <string name="settings_notifications_no_page">Android has no page for this on this phone</string>
     <!-- Design 68 §4.2: the PIN-gated Settings' "App access" rows (Android's page per app and access, in a pause). -->
     <string name="app_access_category">App access</string>
     <string name="app_access_row_title">%1$s: %2$s</string>
@@ -572,20 +552,6 @@
     <string name="app_access_unknown">Can\'t be read here - tap to open the page</string>
     <string name="app_access_wait">Not approved - the pause is starting, a moment…</string>
     <string name="app_access_no_page">Not approved - Android has no page for this on this phone</string>
-    <string name="settings_mdm_fingerprint">Fingerprint</string>
-    <string name="settings_mdm_fingerprint_summary">%1$s - %2$s</string>
-    <string name="settings_mdm_fingerprint_enrolled">Registered</string>
-    <string name="settings_mdm_fingerprint_not_enrolled">Not registered</string>
-    <string name="settings_mdm_fingerprint_unknown">Unknown</string>
-    <string name="settings_mdm_fingerprint_open">tap to add one (Android asks for the Child PIN first)</string>
-    <string name="settings_mdm_fingerprint_pause_first">pause all restrictions first (Android\'s Settings is hidden while the phone is managed), tap here, then end the pause</string>
-    <string name="settings_mdm_fingerprint_wait">the pause is starting, a moment…</string>
-    <string name="settings_mdm_fingerprint_no_page">Android has no page for this on this phone</string>
-    <string name="settings_mdm_media_lock">Media on the lock screen</string>
-    <string name="settings_mdm_media_lock_open">Tap, then Sound &amp; vibration › Media › Show media on lock screen off, and come back</string>
-    <string name="settings_mdm_media_lock_pause_first">Pause all restrictions first (Android\'s Settings is hidden while the phone is managed), tap here, then Sound &amp; vibration › Media › Show media on lock screen off, and end the pause</string>
-    <string name="settings_mdm_media_lock_wait">The pause is starting, a moment…</string>
-    <string name="settings_mdm_media_lock_no_page">Android has no page for this on this phone - Settings › Sound &amp; vibration › Media › Show media on lock screen off</string>
     <string name="toast_mdm_sync_done">Sync complete.</string>
     <string name="toast_mdm_sync_failed">Sync failed - couldn\'t reach the server.</string>
 
@@ -917,23 +883,7 @@
     <string name="weather_card_hint">see the day</string>
     <string name="weather_card_close">close the day</string>
     <!-- Design 98 §3.3: "Fullfør oppsett" - the assistant, Wi-Fi in airplane mode, the call filter. -->
-    <string name="settings_assistant_title">Digital assistant</string>
-    <string name="settings_assistant_chosen">Vibb One is chosen</string>
-    <string name="settings_assistant_open">Choose Vibb One - needed for Flymodus. Tap: Default digital assistant app › Vibb One › OK. Android asks whether the assistant may read the screen. Vibb One never does.</string>
-    <string name="settings_assistant_pause_first">Choose Vibb One - needed for Flymodus. Pause all restrictions first, then tap here</string>
-    <string name="settings_assistant_wait">Choose Vibb One - the pause is starting, a moment…</string>
-    <string name="settings_assistant_no_page">Android has no page for this on this phone</string>
-    <string name="settings_wifi_apm_title">Wi-Fi in airplane mode</string>
-    <string name="settings_wifi_apm_kept">Wi-Fi stays on in airplane mode</string>
-    <string name="settings_wifi_apm_turns_off">This phone turns off Wi-Fi in airplane mode</string>
-    <string name="settings_wifi_apm_not_set">Not set up</string>
-    <string name="settings_wifi_apm_start">Not set up - tap: airplane mode goes on, turn on Wi-Fi in the panel, then go back</string>
-    <string name="settings_wifi_apm_pause_first">Not set up - pause all restrictions first, then tap here</string>
-    <string name="settings_wifi_apm_line">Turn on Wi-Fi here, then go back</string>
     <string name="settings_wifi_apm_failed">Couldn\'t turn on airplane mode. Try again.</string>
-    <string name="settings_call_filter_title">Call filter</string>
-    <string name="settings_call_filter_open">Not chosen - tap and choose Vibb One (Android asks twice)</string>
-    <string name="settings_call_filter_pause_first">Not chosen - pause all restrictions first, then tap here</string>
     <string name="notification_channel_setup">Setup</string>
     <string name="setup_notice_title">Finish setting up Vibb One</string>
     <plurals name="setup_notice_steps">
@@ -1021,4 +971,70 @@
     <string name="wifi_portal_reopen">Open the sign-in page</string>
     <string name="wifi_portal_reopen_sub">Log out or see time left</string>
     <string name="home_portal_line">This Wi-Fi wants you to sign in</string>
+    <!-- Design 114: the phone's setup steps (names checked against setup_steps.json) and the setup flow. -->
+    <string name="setup_step_parent_pin">Parent PIN</string>
+    <string name="setup_step_device_owner">Device owner</string>
+    <string name="setup_step_location">Location access</string>
+    <string name="setup_step_notification_access">Notification access</string>
+    <string name="setup_step_mobile_data">Mobile data</string>
+    <string name="setup_step_data_saver">Data Saver</string>
+    <string name="setup_step_background">Background connection</string>
+    <string name="setup_step_vibb_notifications">Vibb One notifications</string>
+    <string name="setup_step_full_screen_intent">Full-screen notifications</string>
+    <string name="setup_step_write_settings">Modify system settings</string>
+    <string name="setup_step_assistant">Digital assistant</string>
+    <string name="setup_step_wifi_airplane">Wi-Fi in airplane mode</string>
+    <string name="setup_step_call_filter">Call filter</string>
+    <string name="setup_step_default_apps">Default apps</string>
+    <string name="setup_step_map_play_links">Play services\' links</string>
+    <string name="setup_step_map_vibb_links">Vibb One\'s links</string>
+    <string name="setup_step_fingerprint">Fingerprint</string>
+    <string name="setup_step_vibration">Vibration</string>
+    <string name="setup_step_touch_feedback">Touch feedback</string>
+    <string name="setup_step_lock_clock">One-line clock</string>
+    <string name="setup_step_media_on_lock">Media on the lock screen</string>
+    <string name="setup_step_message_banners">Message banners</string>
+    <string name="setup_how_location">Permissions › Location › Allow.</string>
+    <string name="setup_how_notification_access">Turn on Allow notification access.</string>
+    <string name="setup_how_mobile_data">Turn on Mobile data.</string>
+    <string name="setup_how_data_saver">Turn on Unrestricted data.</string>
+    <string name="setup_how_background">Choose Allow.</string>
+    <string name="setup_how_vibb_notifications">Turn on the notifications that are off.</string>
+    <string name="setup_how_vibb_notifications_role">If a switch is grey: set Calls and SMS to “Not managed” in the parent app first, and back afterwards.</string>
+    <string name="setup_how_full_screen_intent">Turn on Allow full-screen notifications.</string>
+    <string name="setup_how_write_settings">Turn on Allow.</string>
+    <string name="setup_how_assistant">Choose Vibb One, then OK.</string>
+    <string name="setup_how_wifi_airplane">Turn on Wi-Fi in the panel.</string>
+    <string name="setup_how_call_filter">Choose Vibb One both times.</string>
+    <string name="setup_how_default_apps">Choose them back.</string>
+    <string name="setup_how_map_play_links">Open by default: turn off Open supported links.</string>
+    <string name="setup_how_map_vibb_links">Open by default: turn on Open supported links, and tick them all.</string>
+    <string name="setup_how_fingerprint">Add a fingerprint.</string>
+    <string name="setup_how_vibration">Sound &amp; vibration › Vibration &amp; haptics: ring and notification vibration on.</string>
+    <string name="setup_how_touch_feedback">Sound &amp; vibration › Vibration &amp; haptics: touch feedback on.</string>
+    <string name="setup_how_lock_clock">Display › Lock screen: double-line clock off.</string>
+    <string name="setup_how_media_on_lock">Sound &amp; vibration › Media: show media on lock screen off.</string>
+    <string name="setup_how_message_banners">The app › Notifications › the message channel › Pop on screen.</string>
+    <string name="settings_setup_title">Setup</string>
+    <string name="settings_setup_complete">Complete</string>
+    <string name="setup_flow_progress">%1$d of %2$d</string>
+    <string name="setup_flow_open">Open</string>
+    <string name="setup_flow_later">Later</string>
+    <string name="setup_flow_skip">Skip</string>
+    <string name="setup_flow_did_it">Done</string>
+    <string name="setup_flow_finish">Finish</string>
+    <string name="setup_flow_wait">One moment …</string>
+    <string name="setup_flow_retry">Try again</string>
+    <string name="setup_flow_no_page">Not on this phone</string>
+    <string name="setup_flow_pause">Pause for 2 h</string>
+    <string name="setup_flow_ready">Ready</string>
+    <string name="setup_flow_finish_line">Finish turns the restrictions on.</string>
+    <plurals name="settings_setup_left">
+        <item quantity="one">%d step left</item>
+        <item quantity="other">%d steps left</item>
+    </plurals>
+    <plurals name="setup_flow_left">
+        <item quantity="one">%d step left</item>
+        <item quantity="other">%d steps left</item>
+    </plurals>
 </resources>

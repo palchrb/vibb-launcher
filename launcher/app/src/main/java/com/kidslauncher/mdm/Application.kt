@@ -514,6 +514,8 @@ class Application : android.app.Application() {
                 com.kidslauncher.mdm.shortcuts.ShortcutsRuntime.init(this)
                 // Design 107 §3: a channel, a group or the whole app turned off or on asks for a sync at once.
                 com.kidslauncher.mdm.notify.NotificationChannelsWatch.init(this)
+                // Design 114 §4.1: Data Saver's switch asks for a report, so the PWA's setup step follows within seconds.
+                com.kidslauncher.mdm.setup.SetupReadings.watch(this)
                 // The lock's glance page (design 25): the parent's choice from the cached policy (off the
                 // main thread), and our missed-call notification known again if it is still on screen.
                 com.kidslauncher.mdm.badges.GlanceStore.loadAtStart()

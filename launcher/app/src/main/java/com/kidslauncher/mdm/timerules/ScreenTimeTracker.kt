@@ -73,6 +73,7 @@ object ScreenTimeTracker {
             com.kidslauncher.mdm.music.MusicForeground.inFront,
             com.kidslauncher.mdm.music.MusicNowPlaying.playing(context),
         ),
+        setupHold = com.kidslauncher.mdm.server.RestrictionsPause.holdActive(),
     )
 
     /** Folds the running stretch into the ledger and decides whether to keep counting. */

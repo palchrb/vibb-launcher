@@ -1,0 +1,63 @@
+package com.kidslauncher.mdm.setup
+
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
+import com.kidslauncher.mdm.assistant.AssistantSetup
+import com.kidslauncher.mdm.badges.BadgeListenerService
+import com.kidslauncher.mdm.notify.NotificationChannelsReader
+import com.kidslauncher.mdm.server.BatteryExemption
+import com.kidslauncher.mdm.server.FingerprintEnrol
+import com.kidslauncher.mdm.server.MediaLockScreen
+import com.kidslauncher.mdm.server.WriteSettingsAccess
+import com.kidslauncher.mdm.server.systemPageIntent
+
+/** The package whose links design 110's step 15 takes back from Play services. */
+private const val PLAY_SERVICES = "com.google.android.gms"
+
+/**
+ * Design 114 §6.2.2: the Android pages a step's "Åpne" tries, in order, each explicit to an unsuspended system package
+ * (`systemPageIntent`) - so empty outside a window on a managed phone. The actions are the step's own
+ * ([SetupStep.pageActions], pinned by the contract); the steps that had a row in parent Settings keep their builders.
+ * The Wi-Fi panel (row 12) and the role requests (row 13) go through design 98's windows ([AssistantSetup]).
+ */
+object SetupPages {
+    private fun ours(context: Context): Uri = Uri.parse("package:${context.packageName}")
+
+    private fun page(context: Context, intent: Intent): Intent? = systemPageIntent(context, intent)
+
+    fun intents(context: Context, step: SetupStep): List<Intent> {
+        val actions = step.pageActions ?: return emptyList()
+        return when (step) {
+            SetupStep.PARENT_PIN, SetupStep.DEVICE_OWNER -> emptyList()
+            SetupStep.NOTIFICATION_ACCESS -> listOfNotNull(
+                page(
+                    context,
+                    Intent(actions[0]).putExtra(
+                        Settings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME,
+                        ComponentName(context, BadgeListenerService::class.java).flattenToString(),
+                    ),
+                ),
+                page(context, Intent(actions[1])),
+            )
+            SetupStep.MOBILE_DATA -> actions.mapNotNull { page(context, Intent(it)) }
+            SetupStep.LOCATION, SetupStep.DATA_SAVER, SetupStep.FULL_SCREEN_INTENT, SetupStep.MAP_VIBB_LINKS ->
+                listOfNotNull(page(context, Intent(actions[0], ours(context))))
+            SetupStep.MAP_PLAY_LINKS -> listOfNotNull(page(context, Intent(actions[0], Uri.parse("package:$PLAY_SERVICES"))))
+            SetupStep.BACKGROUND -> listOfNotNull(BatteryExemption.dialogIntent(context))
+            SetupStep.VIBB_NOTIFICATIONS -> NotificationChannelsReader.pageIntents(context)
+            SetupStep.WRITE_SETTINGS -> WriteSettingsAccess.pageIntents(context)
+            SetupStep.ASSISTANT -> AssistantSetup.assistantPageIntents(context)
+            // The panel isn't a Settings page: it opens once design 98's Wi-Fi step has turned airplane mode on.
+            SetupStep.WIFI_AIRPLANE -> listOf(AssistantSetup.wifiPanelIntent())
+            SetupStep.CALL_FILTER -> AssistantSetup.screeningRoleIntents(context)
+            SetupStep.FINGERPRINT -> FingerprintEnrol.pageIntents(context)
+            SetupStep.MEDIA_ON_LOCK -> MediaLockScreen.pageIntents(context)
+            SetupStep.DEFAULT_APPS, SetupStep.VIBRATION, SetupStep.TOUCH_FEEDBACK, SetupStep.LOCK_CLOCK,
+            SetupStep.MESSAGE_BANNERS,
+            -> listOfNotNull(page(context, Intent(actions[0])))
+        }
+    }
+}

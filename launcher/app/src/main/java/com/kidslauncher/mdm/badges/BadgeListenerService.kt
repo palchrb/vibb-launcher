@@ -42,6 +42,8 @@ class BadgeListenerService : NotificationListenerService() {
         AlarmNoticeReader.attach { keys -> activeOrNull(keys) }
         sweep()
         GlanceReader.connected(this)
+        // Design 114 §4.1: notification access is a setup step - the PWA hears of it at once.
+        com.kidslauncher.mdm.push.SyncRunner.request(applicationContext, com.kidslauncher.mdm.setup.SETUP_SYNC_REASON)
     }
 
     override fun onListenerDisconnected() {
@@ -53,6 +55,7 @@ class BadgeListenerService : NotificationListenerService() {
         GlanceReader.disconnected()
         ClockReader.disconnected()
         AlarmNoticeReader.disconnected()
+        com.kidslauncher.mdm.push.SyncRunner.request(applicationContext, com.kidslauncher.mdm.setup.SETUP_SYNC_REASON)
     }
 
     override fun onDestroy() {

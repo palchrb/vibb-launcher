@@ -134,14 +134,14 @@ object WindowRelock {
      * reset-password token and - as device owner - the "Lock again" notification. Never throws: the parent's PIN was right, the window opens whatever.
      * Background thread (inside ParentPin's lock).
      */
-    fun opened(context: Context, kind: WindowKind, start: WindowStart, lift: () -> Unit) {
+    fun opened(context: Context, kind: WindowKind, start: WindowStart, secureKnown: Boolean = true, lift: () -> Unit) {
         val app = context.applicationContext
         var lifted = false
         try {
             val store = store(app)
             synchronized(WindowRelockStore.LOCK) {
                 val marker = store.marker()
-                val startState = if (takesStartSnapshot(marker)) startState(app) else null
+                val startState = if (takesStartSnapshot(marker)) startState(app, secureKnown) else null
                 // A failed commit still holds in memory (SharedPreferences): this process relocks.
                 if (!store.saveOpened(markerOpened(marker, kind), startState)) Log.w(LOG_TAG, "Couldn't commit the relock marker")
                 lift()
@@ -174,7 +174,9 @@ object WindowRelock {
     }
 
     @Suppress("DEPRECATION") // WifiConfiguration's proxy and SSID
-    private fun startState(app: Context): RelockStart {
+    /** [secureKnown] false (design 114's setup hold, QA M1): the screen lock is recorded unknown, so the relock never
+     * removes one the parent sets in Android's setup wizard after the hold started. */
+    private fun startState(app: Context, secureKnown: Boolean): RelockStart {
         val packages = try {
             installedPackages(app, withInstaller = false).associate { it.name to PackageState(it.signers, it.updatedAt) }
         } catch (e: Exception) {
@@ -199,7 +201,7 @@ object WindowRelock {
             null
         }
         return RelockStart(
-            secure = deviceSecure(app),
+            secure = if (secureKnown) deviceSecure(app) else null,
             packages = packages,
             disabled = disabled,
             atMs = System.currentTimeMillis(),
@@ -217,32 +219,26 @@ object WindowRelock {
     }
 
     /**
-     * Runs [block] on the saved Wi-Fi networks. The Wi-Fi config APIs need location on and fine
-     * location granted (QA #3), so both are switched on around it and location restored; no fix
-     * is taken. A permission granted here stays granted - revoking a runtime permission kills our
-     * process - only its policy state goes back. Device owner only.
+     * Runs [block] on the saved Wi-Fi networks. The Wi-Fi config APIs need location on and fine location granted (QA
+     * #3): fine location is always Vibb's since design 114 §7.1 (`AppEnforcer.apply`), so only the location switch is
+     * turned on around it and put back; no fix is taken. Device owner only.
      */
     @Suppress("DEPRECATION")
     private fun <T> withWifiConfigs(app: Context, dpm: DevicePolicyManager, block: (WifiManager, List<android.net.wifi.WifiConfiguration>) -> T): T? {
         val wm = app.getSystemService(WifiManager::class.java) ?: return null
         val admin = admin(app)
-        val fine = android.Manifest.permission.ACCESS_FINE_LOCATION
         val locationWasOn = QuickControls.isLocationEnabled(app)
-        val fineGranted = ContextCompat.checkSelfPermission(app, fine) == PackageManager.PERMISSION_GRANTED
-        val fineState = dpm.getPermissionGrantState(admin, app.packageName, fine)
         try {
-            if (!fineGranted) QuickControls.selfGrantPermission(app, dpm, admin, fine)
             if (!locationWasOn) QuickControls.setLocationEnabled(dpm, admin, true)
-            return block(wm, wm.configuredNetworks.orEmpty())
+            val configs = try {
+                wm.configuredNetworks.orEmpty()
+            } catch (e: SecurityException) {
+                // Fine location refused after all (the apply grants it): unreadable, never "none".
+                return null
+            }
+            return block(wm, configs)
         } finally {
             if (!locationWasOn) QuickControls.setLocationEnabled(dpm, admin, false)
-            if (!fineGranted && fineState != DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED) {
-                try {
-                    dpm.setPermissionGrantState(admin, app.packageName, fine, fineState)
-                } catch (e: Exception) {
-                    Log.w(LOG_TAG, "Couldn't put the location permission's state back", e)
-                }
-            }
         }
     }
 
@@ -534,6 +530,17 @@ object WindowRelock {
                 .setOngoing(true)
                 .setSilent(true)
                 .addAction(0, app.getString(R.string.window_lock_again), lockAgain)
+                .apply {
+                    // Design 114 §6.1.2 (QA L2): during the setup hold the body's tap opens the setup flow.
+                    if (kind == WindowKind.PAUSE && RestrictionsPause.holdActive()) {
+                        setContentIntent(
+                            PendingIntent.getActivity(
+                                app, notificationId(kind), com.kidslauncher.mdm.setup.SetupFlowActivity.intent(app),
+                                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+                            ),
+                        )
+                    }
+                }
                 .build()
             app.getSystemService(NotificationManager::class.java)?.notify(notificationId(kind), notification)
         } catch (e: Exception) {
