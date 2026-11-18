@@ -1,12 +1,14 @@
 package com.kidslauncher.mdm.map
 
 import android.app.KeyguardManager
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.util.Log
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.AppCompatDelegate
 import androidx.lifecycle.lifecycleScope
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.preferences.LauncherPreferences
@@ -42,6 +44,12 @@ class MapLinkActivity : AppCompatActivity() {
     private var dialog: AlertDialog? = null
     private var target: String? = null
     private var original: String? = null
+
+    /** Not a page: night as a constant, as every such AppCompat activity (`PageLookScanTest`) - the kid's dialog look. */
+    override fun attachBaseContext(newBase: Context) {
+        delegate.localNightMode = AppCompatDelegate.MODE_NIGHT_YES
+        super.attachBaseContext(newBase)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
