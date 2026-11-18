@@ -241,6 +241,12 @@ impl Kind {
         }
     }
 
+    /// Whether a kind past its [PushBudget] gets the hour's digest push ([waiting_count] counts it): `sms_held` and
+    /// `contact_request`; `wifi_signin_wide` past its budget is an inbox line alone.
+    pub fn digest(self) -> bool {
+        matches!(self, Kind::SmsHeld | Kind::ContactRequest)
+    }
+
     /// Where a [PushBudget] digest of the kind leads: `sms_held`'s to the Calls page's waiting messages.
     pub fn digest_target(self, device_id: i64) -> String {
         match self {
@@ -261,6 +267,12 @@ impl Kind {
             Kind::ContactRequest => Some(PushBudget {
                 per_hour: 3,
                 per_key_hour: 3,
+            }),
+            // Design 102, the user 2026-11-18: with the parent code off (`logins::push_key`), once an hour a phone;
+            // the rest are inbox lines only, no digest. With the code on no key, so no limit.
+            Kind::WifiSigninWide => Some(PushBudget {
+                per_hour: 1,
+                per_key_hour: 1,
             }),
             _ => None,
         }
@@ -536,6 +548,7 @@ impl Phone {
         NewEvent {
             target: format!("/devices/{}/logins#logins-wifi", self.id),
             push,
+            budget_key: crate::logins::push_key(session),
             ..self.with_params(
                 Kind::WifiSigninWide,
                 session.opened_ms.to_string(),
@@ -1245,7 +1258,7 @@ pub async fn raise(
             );
             // Code QA M2: a kind with a push budget is past it too, so the hour's digest still goes (it counts what
             // waits when it is pushed, these included). Its anchor is the kind's newest stored event of the phone.
-            if event.kind.push_budget().is_some() && event.push != Push::No {
+            if event.kind.digest() && event.push != Push::No {
                 let anchor: Option<i64> = sqlx::query_scalar(
                     "SELECT MAX(id) FROM parent_events WHERE device_id = ? AND kind = ?",
                 )
@@ -1315,7 +1328,10 @@ pub async fn raise(
             Push::Held(until) => crate::push::queue(conn, id, event.kind, Some(until)).await?,
             Push::No => {}
         }
-        if past_budget && let Some(device_id) = event.device_id {
+        if past_budget
+            && event.kind.digest()
+            && let Some(device_id) = event.device_id
+        {
             budget_digest(conn, device_id, event.kind, id).await?;
         }
     }

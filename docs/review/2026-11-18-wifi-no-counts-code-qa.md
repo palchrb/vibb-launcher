@@ -141,7 +141,10 @@ old and the new rules, so it pins nothing about the cap.
 
 - L1: no code - both sides ship together in the next server and launcher releases.
 - M1: the grant row, its flash and its (i) line show only with Foreldrekode on; `tests::logins` checks both states.
-- M2: waits for the user's answer; unchanged.
+- M2 (the user, "enig"): with the code off (`approved: "none"`) a timeout alone raises nothing (`logins::wide`); the
+  sites and frames events always land in the inbox but push once an hour a phone (`Kind::WifiSigninWide`'s
+  `PushBudget` 1/1, keyed by `logins::push_key` only with the code off; no digest, `Kind::digest`). With the code on,
+  unchanged. `logins::tests::the_wide_session` and `tests::logins::code_off_events_push_once_an_hour`.
 - L2: `storedGrants` (pure, PortalRuntime.kt) with the four cases in `PortalRulesTest`.
 - L3: the review's wording; `logins.wifi.footer` gone.
 - L4: two rows the old cap would have refused (a jump of 5; a fourth step in a day).

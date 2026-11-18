@@ -19,7 +19,9 @@ The launcher's side is `docs/notes/launcher/logins.md`.
   a known outcome, start, approval or `opened_ms` is dropped); the events.
 - **The events** (`logins::intake`, from the stored report): `wifi_signin_wide` for a session
   that visited more than 3 sites, had a blocked frame (never a blocked sub-resource alone: portal pages load blocked
-  analytics, R2-L3) or timed out, keyed by its `opened_ms` (every report repeats the last 10). `wifi_signin_budget` (the
+  analytics, R2-L3) or timed out, keyed by its `opened_ms` (every report repeats the last 10). With the parent code off
+  (`approved: "none"`, the user 2026-11-18) a timeout alone raises nothing, and the rest push at most once an hour a
+  phone (`PushBudget` 1/1 under the key `logins::push_key`, no digest; the inbox line always lands). `wifi_signin_budget` (the
   day's code-free openings used up) is no longer raised since the daily count went (2026-11-18); its kind stays so the
   stored rows are still told, and an older launcher's `today` is dropped by `clean_portal`. Told from parameters (`WifiSigninParams`), to `/devices/{id}/logins#logins-wifi`, pushed at once in the day
   and held until 07:00 between 23:00 and 07:00 in the family's zone (`logins::night_push`), one switch "Wi-Fi sign-in".

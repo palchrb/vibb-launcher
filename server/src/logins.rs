@@ -450,9 +450,19 @@ pub struct BrowserReport {
 }
 
 /// A session the parent should hear about (§3.7, R2-L3): more than 3 sites visited, a blocked frame (never a blocked
-/// sub-resource: portal pages load blocked analytics), or the time ran out.
+/// sub-resource: portal pages load blocked analytics), or the time ran out - but not a timeout of an opening with the
+/// parent code off (`approved: "none"`; the user, 2026-11-18: the parent chose free sign-ins, so a window left open
+/// isn't news).
 pub fn wide(session: &Session) -> bool {
-    session.visited_count > 3 || !session.blocked_frames.is_empty() || session.outcome == "timeout"
+    session.visited_count > 3
+        || !session.blocked_frames.is_empty()
+        || (session.outcome == "timeout" && session.approved != "none")
+}
+
+/// The push key of a wide session with the parent code off (`approved: "none"`): those push at most once an hour a
+/// phone ([crate::parent_events::Kind::push_budget]), the rest stay in the inbox. `None` with the code on (no limit).
+pub fn push_key(session: &Session) -> Option<String> {
+    (session.approved == "none").then(|| "code_off".to_string())
 }
 
 /// The push of a Wi-Fi sign-in event (§3.7): at once in the day, held until 07:00 between 23:00 and 07:00 in the
@@ -533,6 +543,7 @@ mod tests {
             blocked_frames: frames.iter().map(|f| f.to_string()).collect(),
             outcome: outcome.to_string(),
             blocked_hosts: vec!["ads.example".to_string()],
+            approved: "code".to_string(),
             ..Default::default()
         };
         assert!(
@@ -542,6 +553,19 @@ mod tests {
         assert!(wide(&session(4, &[], "validated")));
         assert!(wide(&session(1, &["video.example"], "closed")));
         assert!(wide(&session(1, &[], "timeout")));
+        // The code off (the user, 2026-11-18): a timeout alone is no event; sites and frames still are.
+        let free = |s: Session| Session {
+            approved: "none".to_string(),
+            ..s
+        };
+        assert!(!wide(&free(session(1, &[], "timeout"))));
+        assert!(wide(&free(session(4, &[], "timeout"))));
+        assert!(wide(&free(session(1, &["video.example"], "closed"))));
+        assert_eq!(
+            push_key(&free(session(4, &[], "closed"))).as_deref(),
+            Some("code_off")
+        );
+        assert_eq!(push_key(&session(4, &[], "closed")), None);
     }
 
     #[test]
