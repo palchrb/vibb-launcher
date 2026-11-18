@@ -810,8 +810,9 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - **Software Updates shows versions only** (the user, 2026-11-04: the server never acts on its host): this server's
   version (with "(Docker image)" in the container), the newest stable `server-v*` release from the in-memory cache
   (`system_update::ServerRelease`, read at start and in the background when an hour old - "Checking…", "Couldn't
-  check", "Version X is out" or "You have the latest version", nb "Du har nyeste versjon" - E9 L5), and How to Update behind its ⓘ: in Docker `./update-image.sh` with the newer version (`X.Y.Z`
-  when none; the host script checks the image's attestation first, privacy review 2026-11-17 H1), on a systemd
+  check", "Version X is out" or "You have the latest version", nb "Du har nyeste versjon" - E9 L5), and How to Update behind its ⓘ: in Docker Watchtower (unchecked) or `./update-image.sh` with the
+  newer version (`X.Y.Z` when none; the host script checks the image's attestation first, privacy review 2026-11-17
+  H1), on a systemd
   install the project's `update.sh` command (`settings.updates.update_command`, always `palchrb/vibb-launcher`; a
   `SERVER_RELEASE_REPO` that differs is named in a line under it, never put in the command - `.env` is the service
   user's, security QA L1). A backup's systemd restore command is shown only for a plain

@@ -361,8 +361,7 @@ never hides the client's address. The files are in the repo: `server/deploy/comp
 ```yaml
 services:
   handy:
-    image: ghcr.io/palchrb/handy-server:${HANDY_VERSION}@${HANDY_DIGEST:?run ./update-image.sh X.Y.Z first}
-    labels: {com.centurylinklabs.watchtower.enable: "false"}
+    image: ghcr.io/palchrb/handy-server:${HANDY_VERSION}${HANDY_DIGEST:-}
     restart: unless-stopped
     network_mode: host
     env_file: .env
@@ -374,17 +373,17 @@ services:
 volumes: {handy-data: {}, handy-keys: {}}
 ```
 
-`.env` next to it (the settings from section 2 and "Launcher provisioning settings" go here too; `update-image.sh`
-writes `HANDY_VERSION` and `HANDY_DIGEST`):
+`.env` next to it (the settings from section 2 and "Launcher provisioning settings" go here too):
 
 ```
+HANDY_VERSION=latest
 TZ=Europe/Oslo
 DEVICE_BIND_ADDR=127.0.0.1:3101
 LAUNCHER_SIGNATURE_CHECKSUM=...
 ```
 
 `TZ` matters: backups and the update check run on local time, and the image is UTC otherwise. Then
-`./update-image.sh X.Y.Z` with the newest release (see "Updating" below): it verifies the image and starts it. With no `ADMIN_PASSWORD` set, the first start writes a password to
+`docker compose up -d`, or `./update-image.sh X.Y.Z` to start a verified image (see "Updating" below). With no `ADMIN_PASSWORD` set, the first start writes a password to
 `/app/data/initial-admin-password` (the log names the file, never the password). The image has no shell, so copy it
 out: `docker compose cp handy:/app/data/initial-admin-password . && cat initial-admin-password && rm
 initial-admin-password`. Sign in as `admin` and change it - the server deletes its copy then.
@@ -393,30 +392,30 @@ initial-admin-password`. Sign in as `admin` and change it - the server deletes i
   volume, so copies of the data volume don't carry it. Use named volumes: a bind-mounted directory isn't seeded from
   the image and must belong to uid 65532 (`chown -R 65532:65532 dir`), or the server stops with "data/ is not
   writable by uid 65532".
-- **Updating** (privacy review 2026-11-17 H1): by hand, `./update-image.sh X.Y.Z` in the folder with `compose.yaml`.
-  It looks up the release's image digest and runs `gh attestation verify oci://ghcr.io/palchrb/handy-server@<digest>`
-  pinned to `--repo palchrb/vibb-launcher`, `--signer-workflow .../server-release.yml`, `--source-ref
-  refs/tags/server-vX.Y.Z` and `--deny-self-hosted-runners`: a pass means the project's release workflow, on GitHub's
-  own runners, built exactly that image for that tag - not just any workflow of the account. Only then it writes
-  `HANDY_VERSION` and `HANDY_DIGEST` into `.env` and runs `docker compose pull && docker compose up -d`. Compose pulls
-  by the digest, so what runs is what was verified, and a refused check changes nothing. It needs `docker` with
-  buildx, `jq` and `gh` signed in (`gh auth login`, any account: it only reads). No Watchtower for this
-  container, and never `latest`: an image pushed to the tag would otherwise run within the hour, unchecked - the
-  GitHub account alone would be the key to the server and so to the phones. The label in `compose.yaml` keeps a
-  Watchtower the host runs for other containers off this one. Settings › Software Updates shows this server's
-  version and the newest release; it never updates anything itself. Before migrating the database, the new
-  version copies it to `data/backups/pre-migrate-<from>-<to>.db` (the newest 3 are kept). A pre-migration copy keeps
-  what the old schema held until it rotates out (e.g. 0126's dropped `weather_places`, the cells' old place names).
-- **Moving from Watchtower** (an install from before 2026-11-18, `HANDY_VERSION=latest`): copy the new
-  `compose.yaml` and `update-image.sh` from `server/deploy/` over the old ones, then `./update-image.sh X.Y.Z` with the
-  version Settings › Software Updates shows; check `docker compose config | grep image` names `@sha256:`. The label
-  keeps Watchtower off this container from then on; remove Watchtower if nothing else uses it.
-- **Rolling back**: put the pre-migration copy back, then the old release, verified the same way:
+- **Updating**, either way (privacy review 2026-11-17 H1; the user's choice, 2026-11-18: both are supported):
+  - **Watchtower** ([containrrr.dev/watchtower](https://containrrr.dev/watchtower/)) with `HANDY_VERSION=latest`:
+    automatic. Nothing checks who built the image, so whoever can push to the package runs code on the server - the
+    operator's own risk.
+  - **Verified**: `./update-image.sh X.Y.Z` (from `server/deploy/`, next to `compose.yaml`). It runs `gh attestation
+    verify` on the release's image digest, pinned to `--repo palchrb/vibb-launcher`, `--signer-workflow
+    .../server-release.yml`, `--source-ref refs/tags/server-vX.Y.Z` and `--deny-self-hosted-runners` - a pass means
+    the project's release workflow, on GitHub's own runners, built exactly that image for that tag - and only then
+    writes `HANDY_VERSION` and `HANDY_DIGEST=@sha256:...` into `.env` and runs `docker compose pull && docker compose
+    up -d`. What runs is what was verified; a refused check changes nothing. It needs `docker` with buildx, `jq` and
+    `gh` signed in (`gh auth login`, any account: it only reads). Back to Watchtower: `HANDY_VERSION=latest` and an
+    empty `HANDY_DIGEST`.
+
+  Settings › Software Updates shows this server's version and the newest release; it never updates anything itself.
+  Before migrating the database, the new version copies it to `data/backups/pre-migrate-<from>-<to>.db` (the newest 3
+  are kept). A pre-migration copy keeps what the old schema held until it rotates out (e.g. 0126's dropped
+  `weather_places`, the cells' old place names).
+- **Rolling back**: put the pre-migration copy back, then the old release (Watchtower must not pull `latest` meanwhile:
+  pin `HANDY_VERSION`):
 
   ```
   docker compose stop handy
   docker run --rm -v handy-data:/data busybox sh -c 'cp /data/backups/pre-migrate-<from>-<to>.db /data/kidphone.db && rm -f /data/kidphone.db-wal /data/kidphone.db-shm && chown 65532:65532 /data/kidphone.db'
-  ./update-image.sh <the old X.Y.Z>
+  ./update-image.sh <the old X.Y.Z>        # or set HANDY_VERSION=<the old X.Y.Z> and: docker compose up -d
   ```
 
   (The volume's name may carry the compose project's prefix: `docker volume ls`.)
@@ -499,6 +498,9 @@ doesn't match the pinned key, the run stops there and nothing is pushed or publi
    then `cargo test deploy_scripts` (from `server/`) and commit.
 4. Optional, as the review suggests: turn on immutable releases (Settings > General > Releases). The `release`
    environment's required reviewer, if it has one, then approves each server release too.
+
+The tarballs carry no build attestation (`server-release.yml` attests only the Docker image), so `gh attestation
+verify` has nothing to check on this path: the minisign signature is its check.
 
 Until the key is pinned, the scripts refuse every release ("No release signing key is pinned"). A `server-v*` tag
 pushed before steps 2-3 stops at the signing job, with nothing pushed or published: delete the tag, finish the setup,

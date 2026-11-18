@@ -6,8 +6,9 @@
 #   ./update-image.sh 0.85.0
 #
 # It finds the release's multi-arch image digest, runs `gh attestation verify` on that digest, and only then writes
-# HANDY_VERSION and HANDY_DIGEST into .env and runs `docker compose up -d` - compose pulls the image by that digest,
-# so what runs is what was verified. Going back to an older release is the same command with its version.
+# HANDY_VERSION and HANDY_DIGEST (`@sha256:...`) into .env and runs `docker compose up -d` - compose pulls the image by
+# that digest, so what runs is what was verified. Going back to an older release is the same command with its version.
+# The verified way, beside Watchtower's automatic one (the user's choice, 2026-11-18: both are supported).
 # A pass means the project's release workflow (server-release.yml in palchrb/vibb-launcher, on GitHub's own runners)
 # built that image for the tag server-vX.Y.Z - not just any workflow of the account.
 # Needs docker (with buildx), jq and gh, signed in (`gh auth login`; any account, it only reads). The server never
@@ -63,7 +64,7 @@ set_env() {
     fi
 }
 set_env HANDY_VERSION "$version"
-set_env HANDY_DIGEST "$digest"
+set_env HANDY_DIGEST "@$digest"
 
 docker compose pull
 docker compose up -d

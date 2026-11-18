@@ -82,7 +82,7 @@ green). Findings: **0 High, 2 Medium, 5 Low**.
 
 ### L4. Existing installs keep Watchtower and `latest` until the host's files change
 
-**Resolved 2026-11-18:** DEPLOY.md "Moving from Watchtower"; the review line says "fixed in code, live when the host moves" (the PLAN item is the coordinator's).
+**Resolved 2026-11-18 by the user's change of direction:** Watchtower stays a supported way (the operator's own risk), and the verified script is offered beside it, so there is nothing to move: DEPLOY.md "Updating" names both, and the review line says so.
 
 - **Where:** `server/DEPLOY.md` "Docker"; `docs/review/privacy-review-2026-11-17.md:93` ("Server half fixed").
 - **What:** the fix protects a host only once it has the new `compose.yaml` and `update-image.sh`, and Watchtower no

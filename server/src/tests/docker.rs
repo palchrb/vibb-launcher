@@ -487,8 +487,9 @@ fn the_updates_page_says_how_to_update() {
     assert!(docker.contains("Version 0.24.0 is out"), "{docker}");
     let (summary, panel) = how(&docker);
     assert!(!summary.contains("docker compose"), "{summary}");
-    // Privacy review 2026-11-17 H1: the host script that checks the attestation, never Watchtower.
-    assert!(!panel.contains("Watchtower"), "{panel}");
+    // Privacy review 2026-11-17 H1, the user's choice (2026-11-18): Watchtower, and the host script that checks the
+    // attestation.
+    assert!(panel.contains("Watchtower"), "{panel}");
     assert!(
         panel.contains("<code>./update-image.sh 0.24.0</code>"),
         "{panel}"

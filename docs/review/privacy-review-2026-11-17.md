@@ -90,10 +90,10 @@ SMS, calls, zones, DNS, portal, calendar and push code found counts, verdicts an
 
 #### H1. The GitHub account is a key to the kid's phone, with no human step after it
 
-**Server half fixed in code 2026-11-18** (branch `sec-round-2`): no Watchtower, the image pinned by digest, and
-`server/deploy/update-image.sh` runs `gh attestation verify` (pinned to the release workflow and tag) before `docker
-compose up -d` (DEPLOY.md "Docker"). Live when the host moves ("Moving from Watchtower"). The launcher and music half is
-still open.
+**Server half resolved 2026-11-18 by the user's choice** (branch `sec-round-2`): Watchtower stays supported, its risk
+the operator's; a verified update script (`server/deploy/update-image.sh`, `gh attestation verify` pinned to the
+release workflow and tag, then the image pinned by digest) is offered beside it (DEPLOY.md "Updating"). The systemd
+path keeps its minisign check (the tarballs carry no attestation). The launcher and music half is still open.
 
 - **What:** two automatic paths turn control of the GitHub account (or a token with `packages: write`) into control of
   the phone.
