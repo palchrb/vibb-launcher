@@ -300,6 +300,8 @@ fn migrations_from_73_in_order() {
             (154, "up attention".to_string()),
             (155, "catalog app logo".to_string()),
             (156, "up held".to_string()),
+            // 0157/0158 are reserved by designs 114 and 116.
+            (159, "map links".to_string()),
         ],
         "0073 (design 30), 0074 (Spotify), 0075 (the clock format), 0076 (the softer \
          wallpapers), 0077 (Vibb One), 0078 (design 35), 0079 (the custom DNS server), 0080 \
