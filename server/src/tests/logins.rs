@@ -212,6 +212,21 @@ async fn the_pages_and_their_saves() {
     .await
     .unwrap();
     assert!(!require);
+    // With the code off every opening is free: no grant button, no word about it behind the (i).
+    let off = app.get_page(&page, &cookie).await.text();
+    assert!(
+        !off.contains("data-grant") && !off.contains("Allow one more sign-in now"),
+        "{off}"
+    );
+    save(
+        &app,
+        &cookie,
+        id,
+        &[("section", "wifi_signin"), ("on", "on")],
+    )
+    .await;
+    let on = app.get_page(&page, &cookie).await.text();
+    assert!(on.contains("data-grant"), "{on}");
 
     for (fields, anchor) in [
         (vec![("section", "wifi"), ("on", "on")], "logins-wifi"),
@@ -347,7 +362,8 @@ async fn the_apps_page_names_the_login_role() {
 }
 
 /// `wifi_signin_wide` once across two reports (its key is the session's `opened_ms`), never for blocked
-/// sub-resources alone; `wifi_signin_budget` once a day; the parent code's Wi-Fi entry worded.
+/// sub-resources alone; an older launcher's spent daily count raises nothing and shows nowhere (no daily count since
+/// 2026-11-18); the parent code's Wi-Fi entry worded.
 #[tokio::test]
 async fn the_reports_events() {
     let app = TestApp::new().await;
@@ -360,7 +376,6 @@ async fn the_reports_events() {
             "start": "system", "approved": "code"})
     };
     let body = json!({"captive_portal": {"handler": "vibb", "parent_code_set": true,
-    "today": {"openings": 1, "ms": 60_000, "grant_used": 0},
     "sessions": [
         session(now - 600_000, &["portal.example"], &[]),
         session(now - 300_000, &["portal.example", "a.example", "b.example", "c.example"], &[]),
@@ -380,15 +395,28 @@ async fn the_reports_events() {
         .unwrap();
     assert_eq!(target, format!("/devices/{id}/logins#logins-wifi"));
 
-    // The day's code-free openings used up: one event, however many reports say so.
+    // An older launcher's `today` with its daily count spent: dropped, no event, nothing on the page.
     let spent = json!({"captive_portal": {"handler": "vibb", "parent_code_set": true,
-        "today": {"openings": 4, "ms": 600_000, "grant_used": 0}, "sessions": []}});
-    report(&app, &token, spent.clone()).await;
+        "today": {"openings": 4, "ms": 1_200_000, "grant_used": 3}, "sessions": []}});
     report(&app, &token, spent).await;
     assert_eq!(
         kinds(super::told_events(&app, id, crate::i18n::Lang::En).await),
-        ["wifi_signin_wide", "wifi_signin_budget"]
+        ["wifi_signin_wide"]
     );
+    let portal = stored(&app, id).await.0.unwrap();
+    assert!(!portal.contains("today"), "{portal}");
+    let cookie = app.admin_cookie().await;
+    let page = app
+        .get_page(&format!("/devices/{id}/logins"), &cookie)
+        .await
+        .text();
+    assert!(
+        !page.contains("wifi-today")
+            && !page.contains("Today without a code")
+            && !page.contains(" a day"),
+        "{page}"
+    );
+    assert!(page.contains("data-grant"), "the grant button stays");
 
     // The Wi-Fi keypad's right code: a stored PIN event, worded as the Wi-Fi sign-in's.
     let body = json!({"events": [{"id": "00112233445566778899aabbccddeeff", "kind": "unlocked",
@@ -416,4 +444,56 @@ async fn the_reports_events() {
             .any(|w| w.contains("Wi-Fi sign-in opened with the parent code.")),
         "{words:?}"
     );
+}
+
+/// The user, 2026-11-18: with the parent code off (`approved: "none"`) a timeout alone raises nothing, and the sites
+/// and frames events land in the inbox but push once an hour a phone, with no digest; with the code on, unchanged.
+#[tokio::test]
+async fn code_off_events_push_once_an_hour() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    super::web_push::subscribe(&app, &cookie, super::web_push::ENDPOINT).await;
+    let (id, token) = app.enrolled_device("Emma").await;
+    let now = chrono::Utc::now().timestamp_millis();
+    let session = |ago_min: i64, sites: usize, approved: &str| {
+        let visited: Vec<String> = (0..sites).map(|n| format!("s{n}.example")).collect();
+        json!({"opened_ms": now - ago_min * 60_000, "closed_ms": now - ago_min * 60_000 + 600_000,
+            "outcome": "timeout", "visited": visited, "visited_count": sites, "blocked_hosts": [],
+            "blocked_frames": [], "start": "system", "approved": approved})
+    };
+    let sessions = vec![
+        session(90, 1, "none"),
+        session(80, 1, "none"),
+        session(70, 4, "none"),
+        session(60, 4, "none"),
+        session(50, 4, "none"),
+        session(40, 1, "code"),
+        session(30, 1, "code"),
+    ];
+    let body = json!({"captive_portal": {"handler": "vibb", "parent_code_set": true, "sessions": sessions}});
+    report(&app, &token, body).await;
+    let rows: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT dedup_key, push_budget_key FROM parent_events WHERE device_id = ? \
+         AND kind = 'wifi_signin_wide' ORDER BY happened_at",
+    )
+    .bind(id)
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
+    let keys: Vec<Option<&str>> = rows.iter().map(|(_, k)| k.as_deref()).collect();
+    assert_eq!(
+        keys,
+        [Some("code_off"), None, None, None, None],
+        "three code-off sites events (one pushed), two code-on timeouts, no code-off timeout"
+    );
+    let deliveries: Vec<String> = sqlx::query_scalar("SELECT kind FROM push_deliveries")
+        .fetch_all(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        deliveries.len(),
+        3,
+        "one code-off push and both code-on: {deliveries:?}"
+    );
+    assert!(!deliveries.iter().any(|k| k == "digest"), "{deliveries:?}");
 }

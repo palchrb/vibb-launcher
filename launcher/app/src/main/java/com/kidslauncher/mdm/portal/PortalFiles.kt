@@ -34,8 +34,6 @@ data class PortalSnapshot(
     val network: String? = null,
     val userAgent: String? = null,
     val minutes: Int,
-    /** The day's code-free time left at the opening; only binds a code-free opening. */
-    val budgetLeftMs: Long,
     /** The running PIN pause's end (wall ms), `null` without one: the fallback when Vibb One's "close now" is lost. */
     val pauseEndMs: Long? = null,
     /** The filter's lists apply (the phone's filter on, no pause). */

@@ -77,7 +77,7 @@ private const val LISTS_FAILED = 2
  *   judged at its commit in `onPageStarted`. Not seen by these hooks (§7): a sub-resource's redirect target, WebSockets,
  *   WebRTC, an app-like site's in-page moves, the parent's own DNS upstream. Service workers are off.
  * - Closes ([portalClose]): `validated` (with `reportCaptivePortalDismissed()`) or `passes` for a sign-in, `lost`,
- *   `closed`, `closed_by_vibb` (Vibb One's "close now", a pause's end), `timeout`, `budget`.
+ *   `closed`, `closed_by_vibb` (Vibb One's "close now", a pause's end), `timeout`.
  */
 class PortalWindowActivity : ComponentActivity() {
     private lateinit var binding: ActivityPortalWindowBinding
@@ -272,8 +272,6 @@ class PortalWindowActivity : ComponentActivity() {
                     passes = passes,
                     elapsedMs = elapsed,
                     minutes = snapshot.minutes,
-                    codeFree = snapshot.approved == "none" || snapshot.approved == "grant",
-                    budgetLeftMs = snapshot.budgetLeftMs,
                     openedInPause = snapshot.pauseEndMs != null,
                     pauseOn = pauseOn(),
                 ),
@@ -577,7 +575,6 @@ class PortalWindowActivity : ComponentActivity() {
         }
         val toast = when (outcome) {
             "timeout" -> R.string.portal_timeout
-            "budget" -> R.string.portal_budget
             else -> null
         }
         if (toast != null) {

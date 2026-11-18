@@ -4,7 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 
-/** The window's session is in (design 102 §3.1): folded into the report and the budget, and a sync asked for so the
+/** The window's session is in (design 102 §3.1): folded into the report, and a sync asked for so the
  * parent sees it. Not exported: only this app's `:portal` process sends it. */
 class PortalSessionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {

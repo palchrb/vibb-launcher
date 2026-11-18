@@ -67,7 +67,6 @@ class PortalRulesTest {
                 requireCode = row.bool("require_code"),
                 pause = row.bool("pause"),
                 grantLeft = row.bool("grant_left"),
-                budgetLeft = row.bool("budget_left"),
             )
             val result = when (val a = portalApprove(input, PinOutcome.of(row.str("pin")))) {
                 Approval.Keypad -> "keypad"
@@ -99,8 +98,6 @@ class PortalRulesTest {
                 passes = row.bool("passes"),
                 elapsedMs = row.getValue("elapsed_ms").jsonPrimitive.long,
                 minutes = 10,
-                codeFree = row.bool("code_free"),
-                budgetLeftMs = row.getValue("budget_left_ms").jsonPrimitive.long,
                 openedInPause = row.bool("opened_in_pause"),
                 pauseOn = row.bool("pause_on"),
             )
@@ -108,26 +105,31 @@ class PortalRulesTest {
         }
     }
 
-    private fun budgetOf(o: JsonObject) = PortalBudget(
+    private fun grantsOf(o: JsonObject) = PortalGrants(
         date = o.str("date")!!,
-        openings = o.getValue("openings").jsonPrimitive.int,
-        ms = o.getValue("ms").jsonPrimitive.long,
-        grantUsed = o.getValue("grant_used").jsonPrimitive.int,
-        grantOpenings = o.getValue("grant_openings").jsonPrimitive.int,
-        grantSeen = o.getValue("grant_seen").jsonPrimitive.long,
+        left = o.getValue("left").jsonPrimitive.int,
+        seen = o.getValue("seen").jsonPrimitive.long,
     )
 
     @Test
-    fun `budget`() {
-        for (row in rows("budget")) {
-            val stored = row["stored"]?.takeIf { it !is JsonNull }?.jsonObject?.let(::budgetOf)
-            var b = budgetToday(stored, LocalDate.parse(row.str("today")), row.getValue("grant").jsonPrimitive.long)
-            for (charge in row.getValue("charges").jsonArray) b = chargeOpening(b, charge.jsonPrimitive.content)
-            b = chargeTime(b, row.getValue("time_ms").jsonPrimitive.long)
-            assertEquals(row.name(), budgetOf(row.getValue("expect").jsonObject), b)
-            assertEquals(row.name(), row.bool("budget_left"), budgetLeft(b, 4, 20, 10))
-            assertEquals(row.name(), row.bool("grant_left"), grantLeft(b))
+    fun `grants and open sessions`() {
+        for (row in rows("grants")) {
+            val stored = row["stored"]?.takeIf { it !is JsonNull }?.jsonObject?.let(::grantsOf)
+            var g = grantsToday(stored, LocalDate.parse(row.str("today")), row.getValue("grant").jsonPrimitive.long)
+            for (take in row.getValue("takes").jsonArray) g = takeGrant(g, take.jsonPrimitive.content)
+            assertEquals(row.name(), grantsOf(row.getValue("expect").jsonObject), g)
+            assertEquals(row.name(), row.bool("grant_left"), grantLeft(g))
         }
+        // The daily count's old pref hands today's unused grants over once (2026-11-18).
+        val old = """{"date":"2026-11-18","openings":4,"ms":1200000,"grantUsed":2,"grantOpenings":1,"grantSeen":7}"""
+        assertEquals(PortalGrants("2026-11-18", 1, 7), storedGrants(null, old))
+        assertEquals(
+            PortalGrants("2026-11-18", 0, 7),
+            storedGrants(null, """{"date":"2026-11-18","openings":4,"ms":0,"grantUsed":1,"grantOpenings":2,"grantSeen":7}"""),
+        )
+        assertNull(storedGrants(null, "{not json"))
+        assertNull(storedGrants(null, null))
+        assertEquals(PortalGrants("2026-11-18", 3, 9), storedGrants("""{"date":"2026-11-18","left":3,"seen":9}""", old))
         val now = 1_794_000_000_000L
         for (row in rows("open_sessions")) {
             val opened = now - row.getValue("opened_ago_ms").jsonPrimitive.long
@@ -144,7 +146,7 @@ class PortalRulesTest {
     @Test
     fun `wifi rows and the reopen's match`() {
         for (row in rows("wifi_rows")) {
-            val got = wifiRowState(row.bool("part_on"), row.bool("captive"), row.bool("require_code"), row.bool("budget_left"), row.bool("grant_left"), row.bool("revisit"))
+            val got = wifiRowState(row.bool("part_on"), row.bool("captive"), row.bool("revisit"))
             assertEquals(row.name(), row.str("row"), got.name.lowercase())
         }
         for (row in rows("revisit")) {

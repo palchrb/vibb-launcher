@@ -12,15 +12,13 @@ import kotlinx.serialization.Serializable
 const val CHROME_PACKAGE = "com.android.chrome"
 
 /** The policy's `captive_portal` (§6.1). Missing reads as these defaults: on, with the parent code
- * required (fail closed), 10 minutes an opening, 4 openings and
- * 20 minutes a day without a code, no grant. */
+ * required (fail closed), 10 minutes an opening, no grant. No daily count (2026-11-18): an older server's
+ * `day_openings`/`day_minutes` are ignored. */
 @Serializable
 data class CaptivePortalPolicy(
     val enabled: Boolean = true,
     val requireCode: Boolean = true,
     val minutes: Int = 10,
-    val dayOpenings: Int = 4,
-    val dayMinutes: Int = 20,
     /** The parent's "one more sign-in now" counter (D14): each step this phone hasn't used is one code-free opening. */
     val grant: Long = 0,
 )

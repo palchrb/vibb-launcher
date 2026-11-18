@@ -26,8 +26,11 @@ import java.time.LocalDate
 import java.util.concurrent.CopyOnWriteArraySet
 
 private const val LOG_TAG = "PortalRuntime"
+/** The main process's own preferences (the file keeps design 102's first name): the grants, the sessions, the boot. */
 private const val PREFS = "portal_budget"
-private const val KEY_BUDGET = "budget"
+private const val KEY_GRANTS = "grants"
+/** The daily count's state until 2026-11-18: its grant fields carried into [KEY_GRANTS] once, then removed. */
+private const val KEY_OLD_BUDGET = "budget"
 private const val KEY_SESSIONS = "sessions"
 private const val KEY_BOOT = "records_boot"
 
@@ -43,7 +46,7 @@ const val ACTION_SESSION_DONE = "com.kidslauncher.mdm.portal.SESSION_DONE"
 const val ACTION_CLOSE_WINDOW = "com.kidslauncher.mdm.portal.CLOSE_WINDOW"
 
 /**
- * Design 102 Part A in Vibb One's main process: the day's code-free budget ([PortalBudget], in this process's own
+ * Design 102 Part A in Vibb One's main process: the parent's grants ([PortalGrants], in this process's own
  * preferences), the sessions the window sent back (the report's last 10), the reopen's records, the snapshot each
  * opening starts from, the captive Wi-Fi Home and the Wi-Fi page show ([wifi]), and the report.
  */
@@ -122,24 +125,27 @@ object PortalRuntime {
 
     fun policy(): CaptivePortalPolicy = portalPolicyOf(runCatching { currentPolicyDecision().policy }.getOrNull())
 
-    /** The day's budget now (the date, the policy's grant), stored again when it moved. */
+    /** The grants now (the date, the policy's counter), stored again when they moved. */
     @Synchronized
-    fun budget(context: Context, policy: CaptivePortalPolicy = policy()): PortalBudget {
+    fun grants(context: Context, policy: CaptivePortalPolicy = policy()): PortalGrants {
         val prefs = prefs(context)
-        val stored = prefs.getString(KEY_BUDGET, null)?.let { runCatching { PortalJson.decodeFromString(PortalBudgetJson.serializer(), it).budget() }.getOrNull() }
-        val budget = budgetToday(stored, LocalDate.now(), policy.grant)
-        if (budget != stored) save(context, budget)
-        return budget
+        val stored = storedGrants(prefs.getString(KEY_GRANTS, null), prefs.getString(KEY_OLD_BUDGET, null))
+        val grants = grantsToday(stored, LocalDate.now(), policy.grant)
+        if (grants != stored || prefs.contains(KEY_OLD_BUDGET)) save(context, grants)
+        return grants
     }
 
-    private fun save(context: Context, budget: PortalBudget) {
-        prefs(context).edit().putString(KEY_BUDGET, PortalJson.encodeToString(PortalBudgetJson.serializer(), PortalBudgetJson.of(budget))).commit()
+    private fun save(context: Context, grants: PortalGrants) {
+        prefs(context).edit()
+            .putString(KEY_GRANTS, PortalJson.encodeToString(PortalGrantsJson.serializer(), PortalGrantsJson.of(grants)))
+            .remove(KEY_OLD_BUDGET)
+            .commit()
     }
 
-    /** An opening charged at the entry, before the start (a killed window still counts). */
+    /** A grant's opening taken at the entry, before the start (a killed window has used it). */
     @Synchronized
-    fun charge(context: Context, approved: String) {
-        save(context, chargeOpening(budget(context), approved))
+    fun take(context: Context, approved: String) {
+        save(context, takeGrant(grants(context), approved))
     }
 
     /** One window at a time (R3-L5): read from the session files, not from memory. */
@@ -152,7 +158,6 @@ object PortalRuntime {
     /** The approval's inputs now (§3.2), but the network's and the check's, which the entry reads itself. */
     fun approveInput(context: Context, kind: PortalKind, networkOk: Boolean, passes: Boolean): ApproveInput {
         val policy = policy()
-        val budget = budget(context, policy)
         return ApproveInput(
             kind = kind,
             networkOk = networkOk,
@@ -161,8 +166,7 @@ object PortalRuntime {
             windowOpen = windowOpen(context),
             requireCode = policy.requireCode,
             pause = RestrictionsPause.isActive(),
-            grantLeft = grantLeft(budget),
-            budgetLeft = budgetLeft(budget, policy.dayOpenings, policy.dayMinutes, policy.minutes),
+            grantLeft = grantLeft(grants(context, policy)),
         )
     }
 
@@ -170,14 +174,10 @@ object PortalRuntime {
     fun row(context: Context): WifiPortalRow {
         val policy = policy()
         if (!policy.enabled) return WifiPortalRow.NONE
-        val budget = budget(context, policy)
         val now = wifiNow
         return wifiRowState(
             partOn = true,
             captive = now.captive,
-            requireCode = policy.requireCode,
-            budgetLeft = budgetLeft(budget, policy.dayOpenings, policy.dayMinutes, policy.minutes),
-            grantLeft = grantLeft(budget),
             revisit = now.network != null && !now.captive && revisitRecord(context, now) != null,
         )
     }
@@ -233,7 +233,6 @@ object PortalRuntime {
         userAgent: String?,
     ): PortalSnapshot {
         val policy = policy()
-        val budget = budget(context, policy)
         val decision = runCatching { currentPolicyDecision().policy }.getOrNull()
         val pause = RestrictionsPause.isActive()
         return PortalSnapshot(
@@ -246,7 +245,6 @@ object PortalRuntime {
             network = network,
             userAgent = userAgent,
             minutes = policy.minutes,
-            budgetLeftMs = (budgetMs(budget, policy.dayMinutes, policy.minutes) - budget.ms).coerceAtLeast(0L),
             pauseEndMs = if (pause) LauncherPreferences.mdm().restrictionsPausedUntil() else null,
             filterOn = !pause && (decision?.vpnFilterEnabled ?: true),
             blocklistPath = File(context.filesDir, "dns_blocklist.tsv").absolutePath,
@@ -256,10 +254,9 @@ object PortalRuntime {
     }
 
     /**
-     * The sessions the window sent back, folded in: each ended file into the report's last 10 and, for a code-free
-     * opening, its time into the budget; a working sign-in's first page into the reopen's records (§3.8); a file that
-     * never ended within its minutes counts the whole minutes (`lost`). Called by [PortalSessionReceiver] and before
-     * each report.
+     * The sessions the window sent back, folded in: each ended file into the report's last 10; a working sign-in's first
+     * page into the reopen's records (§3.8); a file that never ended within its minutes is `lost` at its minutes' end.
+     * Called by [PortalSessionReceiver] and before each report.
      */
     @Synchronized
     fun fold(context: Context) {
@@ -273,8 +270,6 @@ object PortalRuntime {
             } else {
                 file
             }
-            val codeFree = ended.approved == "none" || ended.approved == "grant"
-            if (codeFree) save(context, chargeTime(budget(context, policy), (ended.closedMs!! - ended.openedMs)))
             addSession(context, ended)
             if (ended.kind == PortalKind.SIGN_IN.wire && (ended.outcome == "validated" || ended.outcome == "passes")) {
                 keepRecord(context, ended)
@@ -340,11 +335,10 @@ object PortalRuntime {
     /** The report's `captive_portal` (§6.2); `null` when it can't be read. */
     fun report(context: Context): CaptivePortalReport? = try {
         fold(context)
-        val budget = budget(context)
+        grants(context) // keeps the counter seen current, so a grant after this is one (a fresh state takes it as seen)
         CaptivePortalReport(
             handler = handler(context),
             parentCodeSet = com.kidslauncher.mdm.server.ParentPin.status(context).configured,
-            today = PortalToday(openings = budget.openings, ms = budget.ms, grantUsed = budget.grantUsed),
             sessions = sessions(context),
         )
     } catch (e: Exception) {
@@ -367,21 +361,35 @@ object PortalRuntime {
     }
 }
 
-/** [PortalBudget] as stored. */
+/** [PortalGrants] as stored. */
 @kotlinx.serialization.Serializable
-internal data class PortalBudgetJson(
+internal data class PortalGrantsJson(
     val date: String,
-    val openings: Int,
-    val ms: Long,
-    val grantUsed: Int,
-    val grantOpenings: Int,
-    val grantSeen: Long,
+    val left: Int,
+    val seen: Long,
 ) {
-    fun budget() = PortalBudget(date, openings, ms, grantUsed, grantOpenings, grantSeen)
+    fun grants() = PortalGrants(date, left, seen)
 
     companion object {
-        fun of(b: PortalBudget) = PortalBudgetJson(b.date, b.openings, b.ms, b.grantUsed, b.grantOpenings, b.grantSeen)
+        fun of(g: PortalGrants) = PortalGrantsJson(g.date, g.left, g.seen)
     }
+}
+
+/** The stored grants: the `grants` pref, else the daily count's old `budget` pref's grant fields (today's unused grants
+ * handed over once), else `null` (a fresh state); a malformed pref is `null`. Pure, `PortalRulesTest`. */
+internal fun storedGrants(grantsJson: String?, oldBudgetJson: String?): PortalGrants? =
+    grantsJson?.let { runCatching { PortalJson.decodeFromString(PortalGrantsJson.serializer(), it).grants() }.getOrNull() }
+        ?: oldBudgetJson?.let { runCatching { PortalJson.decodeFromString(OldBudgetJson.serializer(), it).grants() }.getOrNull() }
+
+/** The daily count's stored state until 2026-11-18, read once for its grant fields (an update keeps a grant). */
+@kotlinx.serialization.Serializable
+internal data class OldBudgetJson(
+    val date: String,
+    val grantUsed: Int = 0,
+    val grantOpenings: Int = 0,
+    val grantSeen: Long = 0L,
+) {
+    fun grants() = PortalGrants(date, (grantUsed - grantOpenings).coerceAtLeast(0), grantSeen)
 }
 
 /** [RevisitRecord] as stored in `revisit.json`. */

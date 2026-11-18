@@ -11,17 +11,8 @@ data class CaptivePortalReport(
     val handler: String,
     /** The phone has a parent code (Advanced's warning when it hasn't). */
     val parentCodeSet: Boolean,
-    val today: PortalToday,
     /** The last 10 openings, oldest first. */
     val sessions: List<PortalSession>,
-)
-
-/** Today's code-free openings and their milliseconds, and the grants used today. */
-@Serializable
-data class PortalToday(
-    val openings: Int,
-    val ms: Long,
-    val grantUsed: Int,
 )
 
 /** One opening of the window (§6.2). */
@@ -32,7 +23,7 @@ data class PortalSession(
     /** The SSID when Android gave it, else `null`. */
     val network: String?,
     val firstHost: String?,
-    /** `validated`, `passes`, `closed`, `closed_by_vibb`, `timeout`, `budget` or `lost`. */
+    /** `validated`, `passes`, `closed`, `closed_by_vibb`, `timeout` or `lost`. */
     val outcome: String,
     /** The registrable domains of the main frames, in order, at most 20; [visitedCount] the true count. */
     val visited: List<String>,

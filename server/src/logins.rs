@@ -1,8 +1,9 @@
 //! Design 102: Wi-Fi sign-in pages and in-app logins without free Chrome (`docs/design/102-captive-portals-and-logins.md`).
 //!
 //! - **Part A**, the Wi-Fi sign-in window on the phone: the policy's `captive_portal` ([portal_policy]: the switch, the
-//!   parent code required, the limits, the "one more" counter), the report's `captive_portal` ([clean_portal]) and its
-//!   two Activity events ([intake]: `wifi_signin_wide`, `wifi_signin_budget`).
+//!   parent code required, each opening's minutes, the "one more" counter), the report's `captive_portal`
+//!   ([clean_portal]) and its Activity event ([intake]: `wifi_signin_wide`). No daily count since 2026-11-18: the
+//!   phone no longer counts openings a day, and `wifi_signin_budget` is no longer raised (older rows are still told).
 //! - **Part B**, Chrome only for logins: the policy's `login_browser` ([browser_policy]: Chrome's package and the sites,
 //!   the ticked [PRESETS] expanded and the parent's own entries, [valid_entry]), the report's `login_browser`
 //!   ([clean_browser]).
@@ -21,13 +22,8 @@ use crate::models::DevicePolicy;
 /// The one browser the role accepts (D8); the launcher refuses any other package.
 pub const CHROME: &str = "com.android.chrome";
 
-/// Each opening's minutes (D2).
+/// Each opening's minutes (D2), the only limit: no count a day since 2026-11-18.
 pub const MINUTES: i64 = 10;
-/// The code-free openings and minutes a day (D2, D17: a correct parent code opens past them).
-pub const DAY_OPENINGS: i64 = 4;
-pub const DAY_MINUTES: i64 = 20;
-/// The parent's "one more" counts at most this many a day on the phone (D14).
-pub const GRANTS_A_DAY: i64 = 3;
 
 /// At most this many own entries per phone (Chrome takes 1000).
 pub const MAX_OWN_ENTRIES: i64 = 100;
@@ -45,7 +41,7 @@ const MAX_HOST: usize = 253;
 const MAX_NETWORK: usize = 64;
 const MAX_VERSION: usize = 64;
 
-/// The window's outcomes (§6.2).
+/// The window's outcomes (§6.2); `budget` only from a launcher of before 2026-11-18 (the daily count).
 pub const OUTCOMES: &[&str] = &[
     "validated",
     "passes",
@@ -224,8 +220,6 @@ pub struct CaptivePortalPolicy {
     pub enabled: bool,
     pub require_code: bool,
     pub minutes: i64,
-    pub day_openings: i64,
-    pub day_minutes: i64,
     /// The parent's "one more" counter (D14): the phone adds a code-free opening for each step it hasn't used.
     pub grant: i64,
 }
@@ -245,8 +239,6 @@ pub fn portal_policy(policy: &DevicePolicy) -> CaptivePortalPolicy {
         enabled: policy.captive_portal_enabled,
         require_code: policy.captive_portal_require_code,
         minutes: MINUTES,
-        day_openings: DAY_OPENINGS,
-        day_minutes: DAY_MINUTES,
         grant: policy.captive_portal_grant,
     }
 }
@@ -358,14 +350,12 @@ fn count(value: Option<&Value>, max: i64) -> Option<i64> {
 const MS_MAX: i64 = 4_102_444_800_000;
 
 /// The report's `captive_portal`, re-built field by field (§6.2, the contract's `clean`): `handler` one of
-/// [HANDLERS] (else `other`), `parent_code_set` a boolean (else false), `today` its three counts (else 0), and the
-/// last [MAX_SESSIONS] sessions - a session without a known `outcome`, `start`, `approved` or an `opened_ms` is
-/// dropped; its hosts cleaned and cut ([MAX_VISITED], [MAX_BLOCKED]), `visited_count` at least the list's length.
-/// `None` when it isn't an object.
+/// [HANDLERS] (else `other`), `parent_code_set` a boolean (else false), and the last [MAX_SESSIONS] sessions - a
+/// session without a known `outcome`, `start`, `approved` or an `opened_ms` is dropped; its hosts cleaned and cut
+/// ([MAX_VISITED], [MAX_BLOCKED]), `visited_count` at least the list's length. An older launcher's `today` (the daily
+/// count) is dropped. `None` when it isn't an object.
 pub fn clean_portal(value: &Value) -> Option<Value> {
     let object = value.as_object()?;
-    let today = object.get("today").and_then(Value::as_object);
-    let today_count = |key: &str, max: i64| today.and_then(|t| count(t.get(key), max)).unwrap_or(0);
     let sessions: Vec<Value> = object
         .get("sessions")
         .and_then(Value::as_array)
@@ -378,11 +368,6 @@ pub fn clean_portal(value: &Value) -> Option<Value> {
     Some(json!({
         "handler": word(object.get("handler"), HANDLERS).unwrap_or("other"),
         "parent_code_set": object.get("parent_code_set").and_then(Value::as_bool).unwrap_or(false),
-        "today": {
-            "openings": today_count("openings", 1_000),
-            "ms": today_count("ms", 86_400_000),
-            "grant_used": today_count("grant_used", 1_000),
-        },
         "sessions": sessions,
     }))
 }
@@ -445,22 +430,12 @@ pub struct Session {
     pub approved: String,
 }
 
-/// The stored `today`.
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default)]
-pub struct Today {
-    pub openings: i64,
-    pub ms: i64,
-    pub grant_used: i64,
-}
-
 /// The stored `captive_portal`.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct PortalReport {
     pub handler: String,
     pub parent_code_set: bool,
-    pub today: Today,
     pub sessions: Vec<Session>,
 }
 
@@ -475,15 +450,19 @@ pub struct BrowserReport {
 }
 
 /// A session the parent should hear about (§3.7, R2-L3): more than 3 sites visited, a blocked frame (never a blocked
-/// sub-resource: portal pages load blocked analytics), or the time ran out.
+/// sub-resource: portal pages load blocked analytics), or the time ran out - but not a timeout of an opening with the
+/// parent code off (`approved: "none"`; the user, 2026-11-18: the parent chose free sign-ins, so a window left open
+/// isn't news).
 pub fn wide(session: &Session) -> bool {
-    session.visited_count > 3 || !session.blocked_frames.is_empty() || session.outcome == "timeout"
+    session.visited_count > 3
+        || !session.blocked_frames.is_empty()
+        || (session.outcome == "timeout" && session.approved != "none")
 }
 
-/// Today's code-free budget is used up (§3.4): the openings or the minutes, with each grant's opening and minutes.
-pub fn budget_spent(today: &Today) -> bool {
-    let grants = today.grant_used.clamp(0, GRANTS_A_DAY);
-    today.openings >= DAY_OPENINGS + grants || today.ms >= (DAY_MINUTES + MINUTES * grants) * 60_000
+/// The push key of a wide session with the parent code off (`approved: "none"`): those push at most once an hour a
+/// phone ([crate::parent_events::Kind::push_budget]), the rest stay in the inbox. `None` with the code on (no limit).
+pub fn push_key(session: &Session) -> Option<String> {
+    (session.approved == "none").then(|| "code_off".to_string())
 }
 
 /// The push of a Wi-Fi sign-in event (§3.7): at once in the day, held until 07:00 between 23:00 and 07:00 in the
@@ -509,8 +488,7 @@ pub fn night_push(
     }
 }
 
-/// The report's events (§3.7): each wide session once (keyed by its `opened_ms`), and the budget used up once a day
-/// (keyed by the family's local date).
+/// The report's events (§3.7): each wide session once (keyed by its `opened_ms`).
 pub async fn intake(
     state: &crate::AppState,
     phone: &crate::parent_events::Phone,
@@ -523,10 +501,6 @@ pub async fn intake(
     let push = night_push(&phone.zone, phone.now);
     for session in report.sessions.iter().filter(|s| wide(s)) {
         crate::parent_events::raise_logged(state, &phone.wifi_signin_wide(session, push)).await;
-    }
-    if budget_spent(&report.today) {
-        let date = phone.zone.today(phone.now).to_string();
-        crate::parent_events::raise_logged(state, &phone.wifi_signin_budget(&date, push)).await;
     }
 }
 
@@ -563,22 +537,13 @@ mod tests {
     }
 
     #[test]
-    fn the_budget_and_the_wide_session() {
-        let today = |openings, ms, grant_used| Today {
-            openings,
-            ms,
-            grant_used,
-        };
-        assert!(!budget_spent(&today(3, 19 * 60_000, 0)));
-        assert!(budget_spent(&today(4, 0, 0)));
-        assert!(budget_spent(&today(0, 20 * 60_000, 0)));
-        assert!(!budget_spent(&today(4, 0, 1)), "a grant adds an opening");
-        assert!(!budget_spent(&today(1, 25 * 60_000, 1)), "and 10 minutes");
+    fn the_wide_session() {
         let session = |visited_count, frames: &[&str], outcome: &str| Session {
             visited_count,
             blocked_frames: frames.iter().map(|f| f.to_string()).collect(),
             outcome: outcome.to_string(),
             blocked_hosts: vec!["ads.example".to_string()],
+            approved: "code".to_string(),
             ..Default::default()
         };
         assert!(
@@ -588,6 +553,19 @@ mod tests {
         assert!(wide(&session(4, &[], "validated")));
         assert!(wide(&session(1, &["video.example"], "closed")));
         assert!(wide(&session(1, &[], "timeout")));
+        // The code off (the user, 2026-11-18): a timeout alone is no event; sites and frames still are.
+        let free = |s: Session| Session {
+            approved: "none".to_string(),
+            ..s
+        };
+        assert!(!wide(&free(session(1, &[], "timeout"))));
+        assert!(wide(&free(session(4, &[], "timeout"))));
+        assert!(wide(&free(session(1, &["video.example"], "closed"))));
+        assert_eq!(
+            push_key(&free(session(4, &[], "closed"))).as_deref(),
+            Some("code_off")
+        );
+        assert_eq!(push_key(&session(4, &[], "closed")), None);
     }
 
     #[test]

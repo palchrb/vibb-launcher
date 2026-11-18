@@ -28,8 +28,8 @@ import kotlinx.coroutines.withContext
  * for the system's start, R3). The component is enabled only while Part A is on ([PortalRuntime.setEntryEnabled]).
  *
  * The order ([portalApprove]): the network, Vibb's https check, then the parent code (on `ParentPin` with the one-shot
- * [ParentPinEntry.WIFI_SIGNIN], asked here - never in `:portal`), a grant or a pause, the budget, one window at a time.
- * Then the opening is charged, the snapshot written and [PortalWindowActivity] started. Cancel tells Android
+ * [ParentPinEntry.WIFI_SIGNIN], asked here - never in `:portal`), a grant or a pause, one window at a time. Then a
+ * grant's opening is taken, the snapshot written and [PortalWindowActivity] started. Cancel tells Android
  * (`reportCaptivePortalDismissed`), so its notification stays. Closes on `onStop`: a parent handing the phone back
  * leaves no keypad a kid can finish.
  */
@@ -128,7 +128,6 @@ class CaptivePortalEntry : UIObjectActivity() {
         binding.portalEntryMessage.setText(
             when (reason) {
                 "works" -> R.string.portal_works
-                "budget" -> R.string.portal_ask
                 "no_code" -> R.string.portal_no_code
                 "network" -> R.string.portal_no_sign_in
                 else -> R.string.portal_not_now
@@ -136,14 +135,14 @@ class CaptivePortalEntry : UIObjectActivity() {
         )
     }
 
-    /** Charged before the start, so a killed window still counts; then the snapshot and the window. */
+    /** A grant taken before the start, so a killed window has used it; then the snapshot and the window. */
     private fun open(approved: String) {
         val net = network ?: return refuse("network")
         val first = url ?: return refuse("network")
         lifecycleScope.launch {
             val ssid = PortalRuntime.wifi().takeIf { it.network == net }?.ssid
             withContext(Dispatchers.IO) {
-                PortalRuntime.charge(applicationContext, approved)
+                PortalRuntime.take(applicationContext, approved)
                 PortalRuntime.writeSnapshot(
                     applicationContext,
                     PortalRuntime.snapshotFor(applicationContext, kind, start, approved, first, record?.site, ssid ?: record?.ssid, userAgent),
